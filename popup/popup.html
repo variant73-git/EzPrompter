@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>EzPrompter</h1>
+      <p class="subtitle">AI Image Prompt Describer</p>
+    </header>
+
+    <form id="settings-form">
+      <div class="field">
+        <label for="apiProvider">AI Provider</label>
+        <select id="apiProvider">
+          <option value="openai">OpenAI (GPT-4o)</option>
+          <option value="anthropic">Anthropic (Claude)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="apiKey">API Key</label>
+        <input type="password" id="apiKey" placeholder="sk-... or sk-ant-...">
+        <button type="button" id="toggleKey" class="toggle-btn">Show</button>
+      </div>
+
+      <div class="field">
+        <label for="model">Model</label>
+        <input type="text" id="model" placeholder="gpt-4o">
+      </div>
+
+      <div class="field">
+        <label for="language">Response Language</label>
+        <select id="language">
+          <option value="en">English</option>
+          <option value="pt">Portugues (BR)</option>
+          <option value="es">Espanol</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="downloadFolder">Download Folder</label>
+        <input type="text" id="downloadFolder" placeholder="EzPrompter">
+      </div>
+
+      <button type="submit" class="save-btn">Save Settings</button>
+      <div id="status" class="status"></div>
+    </form>
+
+    <footer>
+      <p>Right-click any image &rarr; <strong>EzPrompter</strong></p>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
