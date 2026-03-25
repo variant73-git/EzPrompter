@@ -291,6 +291,9 @@ async function describeWithOllama(imageDataUrl, systemPrompt, settings) {
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
+    if (response.status === 403) {
+      throw new Error('Ollama bloqueou a requisição (CORS). Reinicie com: OLLAMA_ORIGINS="*" ollama serve');
+    }
     throw new Error(`Ollama error: ${err.error || response.status}. Is Ollama running?`);
   }
 
