@@ -435,27 +435,28 @@ function generateFileName(url, timestamp) {
 }
 
 async function saveAllFiles(imageDataUrl, metadata, safeName, folder) {
-  const imageBlob = await (await fetch(imageDataUrl)).blob();
-  const ext = getExtensionFromMime(imageBlob.type);
+  // URL.createObjectURL is not available in MV3 service workers.
+  // Extract mime type directly from the data URL instead.
+  const mimeMatch = imageDataUrl.match(/^data:(.+?);base64,/);
+  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+  const ext = getExtensionFromMime(mimeType);
 
-  // 1. Save image
-  const imageBlobUrl = URL.createObjectURL(imageBlob);
-  await downloadFile(imageBlobUrl, `${folder}/${safeName}.${ext}`);
-  URL.revokeObjectURL(imageBlobUrl);
+  // 1. Save image - data URL works directly with chrome.downloads
+  await downloadFile(imageDataUrl, `${folder}/${safeName}.${ext}`);
 
   // 2. Save .md with prompt
   const mdContent = buildMarkdown(metadata, ext);
-  const mdBlob = new Blob([mdContent], { type: 'text/markdown' });
-  const mdBlobUrl = URL.createObjectURL(mdBlob);
-  await downloadFile(mdBlobUrl, `${folder}/${safeName}.md`);
-  URL.revokeObjectURL(mdBlobUrl);
+  await downloadFile(textToDataUrl(mdContent, 'text/markdown'), `${folder}/${safeName}.md`);
 
   // 3. Save .json with metadata
   const jsonContent = JSON.stringify(metadata, null, 2);
-  const jsonBlob = new Blob([jsonContent], { type: 'application/json' });
-  const jsonBlobUrl = URL.createObjectURL(jsonBlob);
-  await downloadFile(jsonBlobUrl, `${folder}/${safeName}.json`);
-  URL.revokeObjectURL(jsonBlobUrl);
+  await downloadFile(textToDataUrl(jsonContent, 'application/json'), `${folder}/${safeName}.json`);
+}
+
+function textToDataUrl(text, mimeType) {
+  // btoa only handles latin1 — encode UTF-8 safely first
+  const encoded = btoa(unescape(encodeURIComponent(text)));
+  return `data:${mimeType};charset=utf-8;base64,${encoded}`;
 }
 
 function buildMarkdown(metadata, ext) {
