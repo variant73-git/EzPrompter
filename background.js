@@ -22,7 +22,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   try {
     const settings = await getSettings();
 
-    if (!settings.apiKey) {
+    if (!settings.apiKey && settings.apiProvider !== 'ollama') {
       throw new Error('API key not configured. Click the EzPrompter icon to set it up.');
     }
 
@@ -277,28 +277,67 @@ async function describeWithOllama(imageDataUrl, systemPrompt, settings) {
 
   const baseUrl = (settings.ollamaUrl || 'http://localhost:11434').replace(/\/$/, '');
   const model = settings.model || 'moondream';
+  const userPrompt = `${systemPrompt}\n\nAnalyze this image and describe the detailed prompt that could recreate it. Be specific about style, subjects, composition, colors, lighting, and mood.`;
 
-  const response = await fetch(`${baseUrl}/api/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: model,
-      prompt: `${systemPrompt}\n\nAnalyze this image and describe the detailed prompt that could recreate it. Be specific about style, subjects, composition, colors, lighting, and mood.`,
-      images: [base64Data],
-      stream: false
-    })
-  });
+  // Strategy: open a background tab at localhost:11434 so the injected
+  // content script has Origin: http://localhost:11434 — same-origin for Ollama,
+  // bypassing CORS entirely without any server-side configuration.
+  const tab = await chrome.tabs.create({ url: baseUrl, active: false });
+  const tabId = tab.id;
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    if (response.status === 403) {
-      throw new Error('Ollama bloqueou a requisição (CORS). Reinicie com: OLLAMA_ORIGINS="*" ollama serve');
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      chrome.tabs.remove(tabId).catch(() => {});
+      reject(new Error('Ollama request timed out. Is the model loaded?'));
+    }, 180000); // 3 minutes for large models
+
+    function cleanup() {
+      clearTimeout(timeoutId);
+      chrome.tabs.remove(tabId).catch(() => {});
     }
-    throw new Error(`Ollama error: ${err.error || response.status}. Is Ollama running?`);
-  }
 
-  const data = await response.json();
-  return data.response;
+    const messageListener = (message, sender) => {
+      if (sender.tab?.id === tabId && message.type === 'EZPROMPTER_OLLAMA') {
+        chrome.runtime.onMessage.removeListener(messageListener);
+        cleanup();
+        if (message.success) resolve(message.result);
+        else reject(new Error(message.error));
+      }
+    };
+    chrome.runtime.onMessage.addListener(messageListener);
+
+    const tabListener = (updatedTabId, changeInfo) => {
+      if (updatedTabId !== tabId || changeInfo.status !== 'complete') return;
+      chrome.tabs.onUpdated.removeListener(tabListener);
+
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: (url, mdl, prompt, imgData) => {
+          fetch(`${url}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: mdl, prompt, images: [imgData], stream: false })
+          })
+          .then(r => {
+            if (!r.ok) return r.text().then(t => { throw new Error(`HTTP ${r.status}: ${t}`); });
+            return r.json();
+          })
+          .then(data => chrome.runtime.sendMessage({
+            type: 'EZPROMPTER_OLLAMA', success: true, result: data.response
+          }))
+          .catch(err => chrome.runtime.sendMessage({
+            type: 'EZPROMPTER_OLLAMA', success: false, error: err.message
+          }));
+        },
+        args: [baseUrl, model, userPrompt, base64Data]
+      }).catch(err => {
+        chrome.runtime.onMessage.removeListener(messageListener);
+        cleanup();
+        reject(new Error(`Script injection failed: ${err.message}. Make sure Ollama is running.`));
+      });
+    };
+    chrome.tabs.onUpdated.addListener(tabListener);
+  });
 }
 
 async function describeWithGemini(imageDataUrl, systemPrompt, settings) {

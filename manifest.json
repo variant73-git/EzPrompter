@@ -8,6 +8,7 @@
     "storage",
     "downloads",
     "activeTab",
+    "tabs",
     "notifications",
     "scripting"
   ],
