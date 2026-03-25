@@ -1,14 +1,15 @@
 // EzPrompter - Popup Script
 
 const DEFAULTS = {
-  apiProvider: 'openai',
+  apiProvider: 'gemini',
   apiKey: '',
-  model: 'gpt-4o',
+  model: 'gemini-2.0-flash',
   language: 'en',
   downloadFolder: 'EzPrompter'
 };
 
 const MODEL_DEFAULTS = {
+  gemini: 'gemini-2.0-flash',
   openai: 'gpt-4o',
   anthropic: 'claude-sonnet-4-6'
 };

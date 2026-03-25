@@ -189,9 +189,9 @@ function showOverlayInPage(state) {
 function getSettings() {
   return new Promise(resolve => {
     chrome.storage.sync.get({
-      apiProvider: 'openai',
+      apiProvider: 'gemini',
       apiKey: '',
-      model: 'gpt-4o',
+      model: 'gemini-2.0-flash',
       language: 'en',
       downloadFolder: 'EzPrompter'
     }, resolve);
@@ -221,6 +221,9 @@ async function describeImageWithAI(imageDataUrl, settings) {
 
   if (settings.apiProvider === 'anthropic') {
     return describeWithAnthropic(imageDataUrl, systemPrompt, settings);
+  }
+  if (settings.apiProvider === 'gemini') {
+    return describeWithGemini(imageDataUrl, systemPrompt, settings);
   }
   return describeWithOpenAI(imageDataUrl, systemPrompt, settings);
 }
@@ -261,6 +264,38 @@ async function describeWithOpenAI(imageDataUrl, systemPrompt, settings) {
 
   const data = await response.json();
   return data.choices[0].message.content;
+}
+
+async function describeWithGemini(imageDataUrl, systemPrompt, settings) {
+  const match = imageDataUrl.match(/^data:(.+?);base64,(.+)$/);
+  if (!match) throw new Error('Invalid image data');
+  const [, mediaType, base64Data] = match;
+
+  const model = settings.model || 'gemini-2.0-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: systemPrompt }] },
+      contents: [{
+        parts: [
+          { text: 'Analyze this image and describe the detailed prompt that could recreate it. Be specific about style, subjects, composition, colors, lighting, and mood.' },
+          { inline_data: { mime_type: mediaType, data: base64Data } }
+        ]
+      }],
+      generationConfig: { maxOutputTokens: 2000 }
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(`Gemini API error: ${err.error?.message || response.status}`);
+  }
+
+  const data = await response.json();
+  return data.candidates[0].content.parts[0].text;
 }
 
 async function describeWithAnthropic(imageDataUrl, systemPrompt, settings) {
