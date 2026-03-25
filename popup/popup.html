@@ -16,6 +16,7 @@
         <label for="apiProvider">AI Provider</label>
         <select id="apiProvider">
           <option value="gemini">Google Gemini (Gratis)</option>
+          <option value="ollama">Ollama (Local/Offline)</option>
           <option value="openai">OpenAI (GPT-4o)</option>
           <option value="anthropic">Anthropic (Claude)</option>
         </select>
@@ -30,6 +31,11 @@
       <div class="field">
         <label for="model">Model</label>
         <input type="text" id="model" placeholder="gpt-4o">
+      </div>
+
+      <div class="field" id="ollama-url-field" style="display:none">
+        <label for="ollamaUrl">Ollama URL</label>
+        <input type="text" id="ollamaUrl" placeholder="http://localhost:11434">
       </div>
 
       <div class="field">

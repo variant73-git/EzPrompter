@@ -192,6 +192,7 @@ function getSettings() {
       apiProvider: 'gemini',
       apiKey: '',
       model: 'gemini-2.0-flash',
+      ollamaUrl: 'http://localhost:11434',
       language: 'en',
       downloadFolder: 'EzPrompter'
     }, resolve);
@@ -224,6 +225,9 @@ async function describeImageWithAI(imageDataUrl, settings) {
   }
   if (settings.apiProvider === 'gemini') {
     return describeWithGemini(imageDataUrl, systemPrompt, settings);
+  }
+  if (settings.apiProvider === 'ollama') {
+    return describeWithOllama(imageDataUrl, systemPrompt, settings);
   }
   return describeWithOpenAI(imageDataUrl, systemPrompt, settings);
 }
@@ -264,6 +268,34 @@ async function describeWithOpenAI(imageDataUrl, systemPrompt, settings) {
 
   const data = await response.json();
   return data.choices[0].message.content;
+}
+
+async function describeWithOllama(imageDataUrl, systemPrompt, settings) {
+  const match = imageDataUrl.match(/^data:(.+?);base64,(.+)$/);
+  if (!match) throw new Error('Invalid image data');
+  const [, , base64Data] = match;
+
+  const baseUrl = (settings.ollamaUrl || 'http://localhost:11434').replace(/\/$/, '');
+  const model = settings.model || 'moondream';
+
+  const response = await fetch(`${baseUrl}/api/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: model,
+      prompt: `${systemPrompt}\n\nAnalyze this image and describe the detailed prompt that could recreate it. Be specific about style, subjects, composition, colors, lighting, and mood.`,
+      images: [base64Data],
+      stream: false
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(`Ollama error: ${err.error || response.status}. Is Ollama running?`);
+  }
+
+  const data = await response.json();
+  return data.response;
 }
 
 async function describeWithGemini(imageDataUrl, systemPrompt, settings) {
