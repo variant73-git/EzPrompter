@@ -31,14 +31,17 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const imageData = await fetchImageAsBase64(imageUrl, maxSize);
 
     // 2. Send to AI for prompt description
-    const promptDescription = await describeImageWithAI(imageData, settings);
+    const { title, prompt: promptDescription } = await describeImageWithAI(imageData, settings);
 
     // 3. Build metadata
     const timestamp = new Date().toISOString();
     const safeName = generateFileName(imageUrl, timestamp);
+    const domain = extractDomain(tab.url || '');
+    const subFolder = `${settings.downloadFolder}/${sanitizeFolderName(`${title} - ${domain}`)}`;
 
     const metadata = {
       fileName: safeName,
+      title: title,
       originalUrl: imageUrl,
       pageUrl: tab.url || '',
       pageTitle: tab.title || '',
@@ -48,13 +51,13 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       prompt: promptDescription
     };
 
-    // 4. Save all files
-    await saveAllFiles(imageData, metadata, safeName, settings.downloadFolder);
+    // 4. Save all files inside the subfolder
+    await saveAllFiles(imageData, metadata, safeName, subFolder);
 
     // 5. Success feedback
     setBadge('OK', '#065f46', tabId);
-    showNotification('EzPrompter - Saved!', `Prompt generated and saved as ${safeName}`);
-    injectOverlay(tabId, { success: true, prompt: promptDescription, fileName: safeName });
+    showNotification('EzPrompter - Saved!', `${title} — ${domain}`);
+    injectOverlay(tabId, { success: true, prompt: promptDescription, fileName: safeName, folder: subFolder });
 
     setTimeout(() => setBadge('', '', tabId), 5000);
 
@@ -146,7 +149,7 @@ function showOverlayInPage(state) {
   } else if (state.success) {
     bodyContent = `
       <div class="ezp-success-badge">Saved!</div>
-      <p class="ezp-filename">${escapeHtml(state.fileName)}</p>
+      <p class="ezp-filename">📁 ${escapeHtml(state.folder || '')}</p>
       <div class="ezp-prompt-box">
         <label>Generated Prompt:</label>
         <div class="ezp-prompt-text">${escapeHtml(state.prompt)}</div>
@@ -243,7 +246,11 @@ async function describeImageWithAI(imageDataUrl, settings) {
     ? 'Responda en español.'
     : 'Respond in English.';
 
-  const systemPrompt = `You are an expert at reverse-engineering image generation prompts. Given an image, describe in detail the prompt that could have been used to generate it. Include style, composition, lighting, colors, subjects, mood, and any technical parameters (like aspect ratio, art style references). ${langInstruction}`;
+  const systemPrompt = `You are an expert at reverse-engineering image generation prompts. Given an image:
+1. First line MUST be exactly: TITLE: [2-4 words describing the image, e.g. "TITLE: blue vintage car"]
+2. Then a blank line.
+3. Then the full detailed prompt that could recreate this image (style, composition, lighting, colors, subjects, mood, technical parameters).
+${langInstruction}`;
 
   if (settings.apiProvider === 'anthropic') {
     return describeWithAnthropic(imageDataUrl, systemPrompt, settings);
@@ -292,7 +299,7 @@ async function describeWithOpenAI(imageDataUrl, systemPrompt, settings) {
   }
 
   const data = await response.json();
-  return data.choices[0].message.content;
+  return parseAIResponse(data.choices[0].message.content);
 }
 
 async function describeWithOllama(imageDataUrl, systemPrompt, settings) {
@@ -325,7 +332,7 @@ async function describeWithOllama(imageDataUrl, systemPrompt, settings) {
       if (sender.tab?.id === tabId && message.type === 'EZPROMPTER_OLLAMA') {
         chrome.runtime.onMessage.removeListener(messageListener);
         cleanup();
-        if (message.success) resolve(message.result);
+        if (message.success) resolve(parseAIResponse(message.result));
         else reject(new Error(message.error));
       }
     };
@@ -348,7 +355,7 @@ async function describeWithOllama(imageDataUrl, systemPrompt, settings) {
             return r.json();
           })
           .then(data => chrome.runtime.sendMessage({
-            type: 'EZPROMPTER_OLLAMA', success: true, result: data.response
+            type: 'EZPROMPTER_OLLAMA', success: true, result: data.response  // parsed in background
           }))
           .catch(err => chrome.runtime.sendMessage({
             type: 'EZPROMPTER_OLLAMA', success: false, error: err.message
@@ -394,7 +401,7 @@ async function describeWithGemini(imageDataUrl, systemPrompt, settings) {
   }
 
   const data = await response.json();
-  return data.candidates[0].content.parts[0].text;
+  return parseAIResponse(data.candidates[0].content.parts[0].text);
 }
 
 async function describeWithAnthropic(imageDataUrl, systemPrompt, settings) {
@@ -442,7 +449,35 @@ async function describeWithAnthropic(imageDataUrl, systemPrompt, settings) {
   }
 
   const data = await response.json();
-  return data.content[0].text;
+  return parseAIResponse(data.content[0].text);
+}
+
+function parseAIResponse(text) {
+  const titleMatch = text.match(/^TITLE:\s*(.+)/im);
+  if (titleMatch) {
+    const title = titleMatch[1].trim().slice(0, 60);
+    const prompt = text.replace(/^TITLE:\s*.+\n*/im, '').trim();
+    return { title, prompt };
+  }
+  // Fallback: first 4 words as title
+  const title = text.trim().split(/\s+/).slice(0, 4).join(' ');
+  return { title, prompt: text.trim() };
+}
+
+function extractDomain(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return 'unknown';
+  }
+}
+
+function sanitizeFolderName(name) {
+  return name
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
 }
 
 function generateFileName(url, timestamp) {
