@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "EzPrompter - AI Image Prompt Describer",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Use AI to describe the prompt of any image and save it with metadata (.md + .json)",
   "permissions": [
     "contextMenus",

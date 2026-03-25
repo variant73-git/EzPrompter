@@ -26,8 +26,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       throw new Error('API key not configured. Click the EzPrompter icon to set it up.');
     }
 
-    // 1. Fetch image as base64
-    const imageData = await fetchImageAsBase64(imageUrl);
+    // 1. Fetch image as base64 (smaller limit for local models)
+    const maxSize = settings.apiProvider === 'ollama' ? 768 : 1536;
+    const imageData = await fetchImageAsBase64(imageUrl, maxSize);
 
     // 2. Send to AI for prompt description
     const promptDescription = await describeImageWithAI(imageData, settings);
@@ -199,10 +200,34 @@ function getSettings() {
   });
 }
 
-async function fetchImageAsBase64(url) {
+async function fetchImageAsBase64(url, maxSize = 1536) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
   const blob = await response.blob();
+
+  // Resize large images to prevent model crashes (especially moondream)
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const { width, height } = bitmap;
+    const needsResize = width > maxSize || height > maxSize;
+
+    if (needsResize) {
+      const ratio = Math.min(maxSize / width, maxSize / height);
+      const canvas = new OffscreenCanvas(Math.round(width * ratio), Math.round(height * ratio));
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      const resized = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.88 });
+      return blobToDataUrl(resized);
+    }
+    bitmap.close();
+  } catch (e) {
+    // OffscreenCanvas not available or image undecodable — use original
+  }
+
+  return blobToDataUrl(blob);
+}
+
+function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result);
