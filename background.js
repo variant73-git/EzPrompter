@@ -13,47 +13,24 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-// ─── Open floating window on icon click ─────────────────────────────────────
+// ─── Open floating panel inside active tab ──────────────────────────────────
 
-let panelWindowId = null;
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!tab || !tab.id) return;
+  const tabId = tab.id;
 
-chrome.action.onClicked.addListener(async () => {
-  // If window already open, focus it
-  if (panelWindowId !== null) {
-    try {
-      const win = await chrome.windows.get(panelWindowId);
-      if (win) {
-        chrome.windows.update(panelWindowId, { focused: true });
-        return;
-      }
-    } catch (e) {
-      panelWindowId = null;
-    }
+  try {
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      files: ['panel/panel.css']
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['panel/panel.js']
+    });
+  } catch (e) {
+    console.warn('Could not inject panel:', e);
   }
-
-  // Get the current window to position near the top-right
-  const currentWin = await chrome.windows.getCurrent();
-  const width = 400;
-  const height = 540;
-  const left = Math.max(0, (currentWin.left + currentWin.width) - width - 20);
-  const top = currentWin.top + 80;
-
-  const win = await chrome.windows.create({
-    url: chrome.runtime.getURL('popup/popup.html'),
-    type: 'popup',
-    width,
-    height,
-    left,
-    top,
-    focused: true
-  });
-
-  panelWindowId = win.id;
-});
-
-// Clean up reference when window is closed
-chrome.windows.onRemoved.addListener((windowId) => {
-  if (windowId === panelWindowId) panelWindowId = null;
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {

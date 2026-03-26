@@ -1,0 +1,393 @@
+// RepixBridge — Floating Panel (injected into page)
+(function() {
+  // Toggle: if already open, close
+  const existing = document.getElementById('repixbridge-panel');
+  if (existing) { existing.remove(); return; }
+
+  const GEAR_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const CLOSE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+  const BACK_SVG = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4L6 9l5 5"/></svg>';
+
+  // Build panel
+  const panel = document.createElement('div');
+  panel.id = 'repixbridge-panel';
+  panel.innerHTML = `
+    <div class="rb-inner">
+      <header class="rb-header">
+        <div class="rb-logo">
+          <div class="rb-logo-name">
+            <span class="rb-logo-repix">Repix</span><span class="rb-logo-bridge">Bridge</span>
+          </div>
+          <div class="rb-logo-slogan">Design without borders</div>
+        </div>
+        <div class="rb-header-actions">
+          <button type="button" class="rb-icon-btn" id="rb-cog" aria-label="Settings">${GEAR_SVG}</button>
+          <button type="button" class="rb-icon-btn" id="rb-close" aria-label="Close">${CLOSE_SVG}</button>
+        </div>
+      </header>
+
+      <!-- Onboarding -->
+      <div class="rb-view rb-onboarding rb-active" id="rb-viewOnboarding">
+        <button type="button" class="rb-skip" id="rb-skip">Skip</button>
+        <article class="rb-slide" data-step="0">
+          <div class="rb-slide-icon">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M8 24h32M24 8v32" stroke-linecap="round"/><circle cx="12" cy="12" r="4"/><circle cx="36" cy="36" r="4"/>
+            </svg>
+          </div>
+          <h2 class="rb-slide-title">Bridge the gap</h2>
+          <p class="rb-slide-text">Take anything from the web straight into your design tools and AI models.</p>
+        </article>
+        <article class="rb-slide" data-step="1" hidden>
+          <div class="rb-slide-icon">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="4" y="8" width="17" height="32" rx="3"/><rect x="27" y="8" width="17" height="32" rx="3"/>
+              <path d="M8 16h9M31 16h9" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h2 class="rb-slide-title">Two superpowers</h2>
+          <p class="rb-slide-text">HTML to Design captures full pages. Image Remix reverse-engineers any image's prompt.</p>
+        </article>
+        <article class="rb-slide" data-step="2" hidden>
+          <div class="rb-slide-icon">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="24" cy="24" r="18"/><path d="M16 24l5 5 11-11" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <span class="rb-badge-free">Free setup available</span>
+          <h2 class="rb-slide-title">Zero-cost start</h2>
+          <p class="rb-slide-text">Use Ollama for AI and Pencil/Paper for design. No API keys, no subscriptions needed.</p>
+        </article>
+        <div class="rb-dots">
+          <span class="rb-dot active" data-dot="0"></span>
+          <span class="rb-dot" data-dot="1"></span>
+          <span class="rb-dot" data-dot="2"></span>
+        </div>
+        <button type="button" class="rb-btn rb-btn-primary" id="rb-next">Next</button>
+      </div>
+
+      <!-- Main -->
+      <div class="rb-view" id="rb-viewMain">
+        <div class="rb-toggle">
+          <button type="button" class="rb-toggle-seg active" data-mode="dark">HTML -> Design</button>
+          <button type="button" class="rb-toggle-seg" data-mode="light">Image Remix</button>
+        </div>
+        <div class="rb-content-scroll" id="rb-contentDark">
+          <p class="rb-empty">No captures yet. Right-click any page to capture layout.</p>
+        </div>
+        <div class="rb-content-scroll" id="rb-contentLight" style="display:none">
+          <p class="rb-empty">No prompts yet. Right-click any image to get started.</p>
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div class="rb-view" id="rb-viewSettings">
+        <div class="rb-settings-header">
+          <button type="button" class="rb-back" id="rb-settingsBack">${BACK_SVG}</button>
+          <h2 class="rb-settings-title">Settings</h2>
+        </div>
+        <form class="rb-settings-form" id="rb-settingsForm">
+          <div class="rb-field">
+            <label>AI Provider</label>
+            <select id="rb-apiProvider">
+              <option value="gemini">Google Gemini (Free)</option>
+              <option value="ollama">Ollama (Local/Offline)</option>
+              <option value="openai">OpenAI (GPT-4o)</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+            </select>
+          </div>
+          <div class="rb-field" id="rb-apiKeyField">
+            <label>API Key</label>
+            <div class="rb-field-row">
+              <input type="password" id="rb-apiKey" placeholder="AIza... / sk-... / sk-ant-...">
+              <button type="button" class="rb-key-toggle" id="rb-toggleKey">Show</button>
+            </div>
+          </div>
+          <div class="rb-field">
+            <label>Model</label>
+            <input type="text" id="rb-model" placeholder="gemini-2.0-flash">
+          </div>
+          <div class="rb-field" id="rb-ollamaField" style="display:none">
+            <label>Ollama URL</label>
+            <input type="text" id="rb-ollamaUrl" placeholder="http://localhost:11434">
+          </div>
+          <div class="rb-field">
+            <label>Design Tool</label>
+            <select id="rb-designTool">
+              <option value="figma">Figma</option>
+              <option value="sketch">Sketch</option>
+              <option value="pencil">Pencil</option>
+              <option value="paper">Paper</option>
+            </select>
+          </div>
+          <div class="rb-field">
+            <label>Language</label>
+            <select id="rb-language">
+              <option value="en">English</option>
+              <option value="pt">Portugues (BR)</option>
+              <option value="es">Espanol</option>
+            </select>
+          </div>
+          <button type="submit" class="rb-btn rb-btn-primary rb-btn-full">Save Settings</button>
+          <div class="rb-status" id="rb-status"></div>
+        </form>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(panel);
+
+  // --- State ---
+  let currentStep = 0;
+  let currentMode = 'dark';
+  const MODEL_DEFAULTS = { gemini: 'gemini-2.0-flash', ollama: 'moondream', openai: 'gpt-4o', anthropic: 'claude-sonnet-4-6' };
+  const AI_URLS = {
+    ChatGPT: 'https://chatgpt.com/', Gemini: 'https://gemini.google.com/app',
+    Leonardo: 'https://leonardo.ai/ai-art-generator', Ideogram: 'https://ideogram.ai/',
+    Midjourney: 'https://www.midjourney.com/', DreamStudio: 'https://dreamstudio.ai/'
+  };
+
+  const $ = (sel) => panel.querySelector(sel);
+  const $$ = (sel) => panel.querySelectorAll(sel);
+
+  // --- Close ---
+  $('#rb-close').addEventListener('click', () => panel.remove());
+
+  // --- Drag ---
+  const header = panel.querySelector('.rb-header');
+  let dragging = false, startX, startY, origX, origY;
+  header.style.cursor = 'grab';
+  header.addEventListener('mousedown', (e) => {
+    if (e.target.closest('button')) return;
+    dragging = true;
+    startX = e.clientX; startY = e.clientY;
+    const rect = panel.getBoundingClientRect();
+    origX = rect.left; origY = rect.top;
+    header.style.cursor = 'grabbing';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    panel.style.right = 'auto';
+    panel.style.left = (origX + e.clientX - startX) + 'px';
+    panel.style.top = (origY + e.clientY - startY) + 'px';
+  });
+  document.addEventListener('mouseup', () => { dragging = false; header.style.cursor = 'grab'; });
+
+  // --- View switching ---
+  function showView(name) {
+    $$('.rb-view').forEach(v => v.classList.remove('rb-active'));
+    const target = $(`#rb-view${name.charAt(0).toUpperCase() + name.slice(1)}`);
+    if (target) target.classList.add('rb-active');
+  }
+
+  // --- Onboarding ---
+  const slides = $$('.rb-slide');
+  const dots = $$('.rb-dot');
+
+  function updateSlides() {
+    slides.forEach((s, i) => s.hidden = i !== currentStep);
+    dots.forEach((d, i) => d.classList.toggle('active', i === currentStep));
+    $('#rb-next').textContent = currentStep === 2 ? 'Get Started' : 'Next';
+  }
+
+  $('#rb-next').addEventListener('click', () => {
+    if (currentStep < 2) { currentStep++; updateSlides(); }
+    else { chrome.storage.sync.set({ onboardingDone: true }); showView('main'); loadContent(); }
+  });
+  $('#rb-skip').addEventListener('click', () => {
+    chrome.storage.sync.set({ onboardingDone: true }); showView('main'); loadContent();
+  });
+
+  // --- Mode toggle ---
+  function applyMode(mode) {
+    currentMode = mode;
+    panel.classList.toggle('rb-light', mode === 'light');
+    $$('.rb-toggle-seg').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    $('#rb-contentDark').style.display = mode === 'dark' ? '' : 'none';
+    $('#rb-contentLight').style.display = mode === 'light' ? '' : 'none';
+    chrome.storage.sync.set({ activeMode: mode });
+  }
+
+  panel.querySelector('.rb-toggle').addEventListener('click', (e) => {
+    const btn = e.target.closest('.rb-toggle-seg');
+    if (btn) { applyMode(btn.dataset.mode); loadContent(); }
+  });
+
+  // --- Settings ---
+  $('#rb-cog').addEventListener('click', () => { showView('settings'); loadSettings(); });
+  $('#rb-settingsBack').addEventListener('click', () => showView('main'));
+
+  $('#rb-toggleKey').addEventListener('click', () => {
+    const inp = $('#rb-apiKey');
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+    $('#rb-toggleKey').textContent = inp.type === 'password' ? 'Show' : 'Hide';
+  });
+
+  $('#rb-apiProvider').addEventListener('change', () => {
+    const p = $('#rb-apiProvider').value;
+    const isOllama = p === 'ollama';
+    $('#rb-ollamaField').style.display = isOllama ? '' : 'none';
+    $('#rb-apiKeyField').style.display = isOllama ? 'none' : '';
+    const cur = $('#rb-model').value;
+    if (!cur || Object.values(MODEL_DEFAULTS).includes(cur)) $('#rb-model').value = MODEL_DEFAULTS[p];
+  });
+
+  $('#rb-settingsForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    chrome.storage.sync.set({
+      apiProvider: $('#rb-apiProvider').value,
+      apiKey: $('#rb-apiKey').value.trim(),
+      model: $('#rb-model').value.trim() || MODEL_DEFAULTS[$('#rb-apiProvider').value],
+      designTool: $('#rb-designTool').value,
+      ollamaUrl: $('#rb-ollamaUrl').value.trim() || 'http://localhost:11434',
+      language: $('#rb-language').value
+    }, () => {
+      $('#rb-status').textContent = 'Settings saved!';
+      setTimeout(() => { $('#rb-status').textContent = ''; }, 2000);
+    });
+  });
+
+  function loadSettings() {
+    chrome.storage.sync.get({
+      apiProvider: 'gemini', apiKey: '', model: 'gemini-2.0-flash',
+      designTool: 'figma', ollamaUrl: 'http://localhost:11434', language: 'en'
+    }, (s) => {
+      $('#rb-apiProvider').value = s.apiProvider;
+      $('#rb-apiKey').value = s.apiKey;
+      $('#rb-model').value = s.model;
+      $('#rb-designTool').value = s.designTool;
+      $('#rb-ollamaUrl').value = s.ollamaUrl;
+      $('#rb-language').value = s.language;
+      $('#rb-ollamaField').style.display = s.apiProvider === 'ollama' ? '' : 'none';
+      $('#rb-apiKeyField').style.display = s.apiProvider === 'ollama' ? 'none' : '';
+    });
+  }
+
+  // --- Content loading ---
+  function esc(t) { const d = document.createElement('div'); d.textContent = t || ''; return d.innerHTML; }
+  function timeAgo(ts) {
+    if (!ts) return '';
+    const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+    if (s < 60) return 'just now';
+    const m = Math.floor(s/60); if (m < 60) return m + ' min ago';
+    const h = Math.floor(m/60); if (h < 24) return h + 'h ago';
+    return Math.floor(h/24) + 'd ago';
+  }
+
+  function loadContent() {
+    if (currentMode === 'light') loadPrompts(); else loadCaptures();
+  }
+
+  function loadPrompts() {
+    const c = $('#rb-contentLight');
+    chrome.storage.local.get({ recentPrompts: [] }, (d) => {
+      const items = d.recentPrompts || [];
+      if (!items.length) { c.innerHTML = '<p class="rb-empty">No prompts yet. Right-click any image to get started.</p>'; return; }
+      c.innerHTML = '';
+      items.slice(0, 20).forEach(item => {
+        const pills = Object.keys(AI_URLS).map(n =>
+          `<button class="rb-pill" data-url="${AI_URLS[n]}">${n}</button>`
+        ).join('');
+        const card = document.createElement('div');
+        card.className = 'rb-card';
+        card.innerHTML = `
+          <div class="rb-card-header">
+            <span class="rb-card-prompt">"${esc((item.title || item.prompt || '').slice(0,60))}"</span>
+            <button type="button" class="rb-edit">Edit</button>
+          </div>
+          <div class="rb-card-meta">
+            ${item.style ? `<span class="rb-tag">${esc(item.style)}</span>` : ''}
+            ${item.aspectRatio ? `<span class="rb-tag">${esc(item.aspectRatio)}</span>` : ''}
+          </div>
+          <div class="rb-card-actions">${pills}</div>
+          <div class="rb-card-edit" hidden>
+            <textarea class="rb-edit-textarea">${esc(item.prompt || '')}</textarea>
+            <button class="rb-btn rb-btn-sm rb-btn-primary">Save</button>
+          </div>
+        `;
+        // AI button clicks
+        card.querySelectorAll('.rb-pill').forEach(btn => {
+          btn.addEventListener('click', () => {
+            navigator.clipboard.writeText(item.prompt || '').catch(() => {});
+            window.open(btn.dataset.url, '_blank');
+          });
+        });
+        // Edit toggle
+        card.querySelector('.rb-edit').addEventListener('click', () => {
+          const ed = card.querySelector('.rb-card-edit');
+          ed.hidden = !ed.hidden;
+        });
+        // Save edit
+        card.querySelector('.rb-btn-primary').addEventListener('click', () => {
+          const newPrompt = card.querySelector('.rb-edit-textarea').value;
+          chrome.storage.local.get({ recentPrompts: [] }, (data) => {
+            const all = data.recentPrompts || [];
+            const idx = all.findIndex(p => p.id === item.id);
+            if (idx !== -1) { all[idx].prompt = newPrompt; chrome.storage.local.set({ recentPrompts: all }, loadPrompts); }
+          });
+        });
+        c.appendChild(card);
+      });
+    });
+  }
+
+  function loadCaptures() {
+    const c = $('#rb-contentDark');
+    chrome.storage.sync.get({ designTool: 'figma' }, (sync) => {
+      const tool = sync.designTool || 'figma';
+      const toolName = tool.charAt(0).toUpperCase() + tool.slice(1);
+      chrome.storage.local.get({ recentCaptures: [] }, (d) => {
+        const items = d.recentCaptures || [];
+        if (!items.length) { c.innerHTML = '<p class="rb-empty">No captures yet. Right-click any page to capture layout.</p>'; return; }
+        c.innerHTML = '';
+        items.slice(0, 20).forEach(item => {
+          const card = document.createElement('div');
+          card.className = 'rb-card';
+          card.innerHTML = `
+            <div class="rb-card-header">
+              <span class="rb-card-domain">${esc(item.domain || 'Unknown')}</span>
+              <span class="rb-card-time">${timeAgo(item.timestamp)}</span>
+            </div>
+            <div class="rb-card-actions">
+              <button class="rb-btn rb-btn-outline rb-btn-sm" data-action="open">Open in ${esc(toolName)}</button>
+              <button class="rb-btn rb-btn-outline rb-btn-sm" data-action="preview">Preview</button>
+            </div>
+            <div class="rb-card-export">
+              <span class="rb-export-label">Export</span>
+              <button class="rb-pill" data-fmt="svg">SVG</button>
+              <button class="rb-pill" data-fmt="png">PNG</button>
+              <button class="rb-pill" data-fmt="jpg">JPG</button>
+              <button class="rb-pill" data-fmt="figma">Figma</button>
+            </div>
+          `;
+          card.querySelector('[data-action="preview"]').addEventListener('click', () => {
+            if (item.url) window.open(item.url, '_blank');
+          });
+          card.querySelector('[data-action="open"]').addEventListener('click', () => {
+            chrome.runtime.sendMessage({ action: 'openInDesignTool', captureId: item.captureId });
+          });
+          card.querySelectorAll('[data-fmt]').forEach(btn => {
+            btn.addEventListener('click', () => {
+              chrome.runtime.sendMessage({ action: 'exportCapture', captureId: item.captureId, format: btn.dataset.fmt });
+              btn.textContent = '...';
+              setTimeout(() => { btn.textContent = btn.dataset.fmt.toUpperCase(); }, 2000);
+            });
+          });
+          c.appendChild(card);
+        });
+      });
+    });
+  }
+
+  // --- Init ---
+  chrome.storage.sync.get({ onboardingDone: false, activeMode: 'dark' }, (data) => {
+    if (data.onboardingDone) {
+      showView('main');
+      applyMode(data.activeMode || 'dark');
+      loadContent();
+    } else {
+      showView('onboarding');
+    }
+  });
+})();
