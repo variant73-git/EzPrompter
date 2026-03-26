@@ -70,9 +70,11 @@
 }
 #repixbridge-panel .rb-logo-repix {
   font-family: 'Instrument Serif', serif;
+  font-style: italic;
   font-size: 18px;
   color: var(--rb-fg);
 }
+#repixbridge-panel .rb-logo-repix i { font-style: italic; }
 #repixbridge-panel .rb-logo-bridge {
   font-family: 'Instrument Sans', sans-serif;
   font-weight: 500;
@@ -107,7 +109,9 @@
 #repixbridge-panel .rb-view.rb-active { display: flex; }
 
 /* --- Onboarding --- */
-#repixbridge-panel .rb-onboarding { text-align: center; justify-content: center; position: relative; }
+#repixbridge-panel .rb-onboarding {
+  text-align: left; justify-content: flex-end; position: relative; padding-bottom: 0;
+}
 #repixbridge-panel .rb-skip {
   position: absolute; top: 0; right: 0;
   background: none; border: none; color: var(--rb-fg-muted);
@@ -115,19 +119,28 @@
   transition: color 150ms;
 }
 #repixbridge-panel .rb-skip:hover { color: var(--rb-fg); }
-#repixbridge-panel .rb-slide { padding: 32px 16px 24px; }
+#repixbridge-panel .rb-slide { padding: 0 0 20px; }
 #repixbridge-panel .rb-slide[hidden] { display: none; }
-#repixbridge-panel .rb-slide-icon { display: flex; justify-content: center; margin-bottom: 20px; color: var(--rb-fg); opacity: 0.7; }
-#repixbridge-panel .rb-slide-title {
-  font-family: 'Instrument Serif', serif; font-size: 20px; font-weight: 400;
-  margin-bottom: 8px; color: var(--rb-fg);
+#repixbridge-panel .rb-slide-text {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 16px;
+  color: var(--rb-fg);
+  line-height: 1.6;
 }
-#repixbridge-panel .rb-slide-text { font-size: 13px; color: var(--rb-fg-muted); line-height: 1.5; max-width: 260px; margin: 0 auto; }
+#repixbridge-panel .rb-slide-text em {
+  font-family: 'Instrument Serif', serif;
+  font-style: italic;
+  font-size: 17.6px; /* 10% larger */
+  color: var(--rb-fg);
+}
 #repixbridge-panel .rb-badge-free {
   display: inline-block; font-size: 11px; font-weight: 600; padding: 4px 12px;
   border-radius: 999px; background: rgba(34,197,94,0.12); color: #22c55e; margin-bottom: 12px;
 }
-#repixbridge-panel .rb-dots { display: flex; justify-content: center; gap: 8px; margin-bottom: 20px; }
+#repixbridge-panel .rb-onboarding-footer {
+  display: flex; align-items: center; justify-content: space-between; padding-top: 8px;
+}
+#repixbridge-panel .rb-dots { display: flex; gap: 8px; }
 #repixbridge-panel .rb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--rb-border); transition: background 150ms; }
 #repixbridge-panel .rb-dot.active { background: var(--rb-fg); }
 
@@ -189,6 +202,29 @@
 }
 #repixbridge-panel .rb-empty { text-align: center; font-size: 12px; color: var(--rb-fg-muted); padding: 24px 0 8px; }
 
+/* --- Site Analysis --- */
+#repixbridge-panel .rb-site-analysis {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 16px; min-height: 0;
+}
+#repixbridge-panel .rb-loader-ring { position: relative; width: 80px; height: 80px; }
+#repixbridge-panel .rb-loader-arc {
+  transition: stroke-dashoffset 150ms ease-out;
+  transform: rotate(-90deg); transform-origin: center;
+}
+#repixbridge-panel .rb-loader-pct {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  font-size: 14px; font-weight: 600; color: var(--rb-fg);
+}
+#repixbridge-panel .rb-site-msg {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 14px; color: var(--rb-fg-muted); line-height: 1.5; max-width: 280px;
+}
+#repixbridge-panel .rb-site-domain {
+  display: block; font-weight: 600; font-size: 12px; color: var(--rb-fg);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;
+}
+
 /* --- Buttons --- */
 #repixbridge-panel .rb-btn {
   font-family: inherit; font-size: 13px; font-weight: 600; border-radius: 12px;
@@ -198,6 +234,7 @@
 #repixbridge-panel .rb-btn:active { transform: scale(0.97); }
 #repixbridge-panel .rb-btn-primary { background: var(--rb-accent); color: var(--rb-bg); border-color: var(--rb-accent); }
 #repixbridge-panel .rb-btn-primary:hover { opacity: 0.85; }
+#repixbridge-panel .rb-btn-outline { background: none; color: var(--rb-fg); border: 1px solid var(--rb-border); }
 #repixbridge-panel .rb-btn-outline:hover { background: var(--rb-accent); color: var(--rb-bg); border-color: var(--rb-accent); }
 #repixbridge-panel .rb-btn-sm { font-size: 12px; padding: 6px 14px; }
 #repixbridge-panel .rb-btn-full { width: 100%; }

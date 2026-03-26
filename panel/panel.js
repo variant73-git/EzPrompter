@@ -9,7 +9,7 @@
     const link = document.createElement('link');
     link.id = 'rb-fonts';
     link.rel = 'stylesheet';
-    link.href = 'https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif&display=swap';
+    link.href = 'https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap';
     document.head.appendChild(link);
   }
 
@@ -25,7 +25,7 @@
       <header class="rb-header">
         <div class="rb-logo">
           <div class="rb-logo-name">
-            <span class="rb-logo-repix">Repix</span><span class="rb-logo-bridge">Bridge</span>
+            <span class="rb-logo-repix"><i>Repix</i></span><span class="rb-logo-bridge">Bridge</span>
           </div>
           <div class="rb-logo-slogan">Design without borders</div>
         </div>
@@ -39,40 +39,23 @@
       <div class="rb-view rb-onboarding rb-active" id="rb-viewOnboarding">
         <button type="button" class="rb-skip" id="rb-skip">Skip</button>
         <article class="rb-slide" data-step="0">
-          <div class="rb-slide-icon">
-            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M8 24h32M24 8v32" stroke-linecap="round"/><circle cx="12" cy="12" r="4"/><circle cx="36" cy="36" r="4"/>
-            </svg>
-          </div>
-          <h2 class="rb-slide-title">Bridge the gap</h2>
-          <p class="rb-slide-text">Take anything from the web straight into your design tools and AI models.</p>
+          <p class="rb-slide-text">Take <em>anything</em> from the web straight into your design tools and AI models.</p>
         </article>
         <article class="rb-slide" data-step="1" hidden>
-          <div class="rb-slide-icon">
-            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
-              <rect x="4" y="8" width="17" height="32" rx="3"/><rect x="27" y="8" width="17" height="32" rx="3"/>
-              <path d="M8 16h9M31 16h9" stroke-linecap="round"/>
-            </svg>
-          </div>
-          <h2 class="rb-slide-title">Two superpowers</h2>
-          <p class="rb-slide-text">HTML to Design captures full pages. Image Remix reverse-engineers any image's prompt.</p>
+          <p class="rb-slide-text"><em>HTML to Design</em> captures full pages. <em>Image Remix</em> reverse-engineers any image's prompt.</p>
         </article>
         <article class="rb-slide" data-step="2" hidden>
-          <div class="rb-slide-icon">
-            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
-              <circle cx="24" cy="24" r="18"/><path d="M16 24l5 5 11-11" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </div>
           <span class="rb-badge-free">Free setup available</span>
-          <h2 class="rb-slide-title">Zero-cost start</h2>
-          <p class="rb-slide-text">Use Ollama for AI and Pencil/Paper for design. No API keys, no subscriptions needed.</p>
+          <p class="rb-slide-text">Use <em>Ollama</em> for AI and <em>Pencil</em> or <em>Paper</em> for design. No API keys, no subscriptions.</p>
         </article>
-        <div class="rb-dots">
-          <span class="rb-dot active" data-dot="0"></span>
-          <span class="rb-dot" data-dot="1"></span>
-          <span class="rb-dot" data-dot="2"></span>
+        <div class="rb-onboarding-footer">
+          <div class="rb-dots">
+            <span class="rb-dot active" data-dot="0"></span>
+            <span class="rb-dot" data-dot="1"></span>
+            <span class="rb-dot" data-dot="2"></span>
+          </div>
+          <button type="button" class="rb-btn rb-btn-outline" id="rb-next">Next</button>
         </div>
-        <button type="button" class="rb-btn rb-btn-primary" id="rb-next">Next</button>
       </div>
 
       <!-- Main -->
@@ -81,12 +64,23 @@
           <button type="button" class="rb-toggle-seg active" data-mode="dark">HTML -> Design</button>
           <button type="button" class="rb-toggle-seg" data-mode="light">Image Remix</button>
         </div>
-        <div class="rb-content-scroll" id="rb-contentDark">
-          <p class="rb-empty">No captures yet. Right-click any page to capture layout.</p>
+
+        <!-- Site Analysis (shown initially, replaced by history when available) -->
+        <div class="rb-site-analysis" id="rb-siteAnalysis">
+          <div class="rb-loader-ring" id="rb-loader">
+            <svg viewBox="0 0 80 80" width="80" height="80">
+              <circle cx="40" cy="40" r="34" stroke="var(--rb-border)" stroke-width="3" fill="none"/>
+              <circle cx="40" cy="40" r="34" stroke="var(--rb-accent)" stroke-width="3" fill="none"
+                stroke-dasharray="214" stroke-dashoffset="214" stroke-linecap="round" class="rb-loader-arc"/>
+            </svg>
+            <span class="rb-loader-pct" id="rb-loaderPct">0%</span>
+          </div>
+          <p class="rb-site-msg" id="rb-siteMsg">Analyzing...</p>
+          <button type="button" class="rb-btn rb-btn-primary rb-btn-full" id="rb-remixSite" style="display:none">Remix this site</button>
         </div>
-        <div class="rb-content-scroll" id="rb-contentLight" style="display:none">
-          <p class="rb-empty">No prompts yet. Right-click any image to get started.</p>
-        </div>
+
+        <div class="rb-content-scroll" id="rb-contentDark" style="display:none"></div>
+        <div class="rb-content-scroll" id="rb-contentLight" style="display:none"></div>
       </div>
 
       <!-- Settings -->
@@ -389,12 +383,111 @@
     });
   }
 
+  // --- Site Analysis ---
+  function analyzeSite() {
+    const analysis = $('#rb-siteAnalysis');
+    const loader = $('#rb-loader');
+    const pct = $('#rb-loaderPct');
+    const msg = $('#rb-siteMsg');
+    const remixBtn = $('#rb-remixSite');
+    if (!analysis) return;
+
+    const domain = window.location.hostname.replace(/^www\./, '');
+    const title = document.title || '';
+    const desc = (document.querySelector('meta[name="description"]')?.content || '').toLowerCase();
+    const images = document.querySelectorAll('img').length;
+    const videos = document.querySelectorAll('video, iframe[src*="youtube"], iframe[src*="vimeo"]').length;
+    const links = document.querySelectorAll('a').length;
+
+    // Known site detection
+    const KNOWN_SITES = {
+      'dribbble.com': { type: 'design', label: 'Design showcase' },
+      'behance.net': { type: 'design', label: 'Creative portfolio' },
+      'pinterest.com': { type: 'inspiration', label: 'Visual inspiration board' },
+      'awwwards.com': { type: 'design', label: 'Award-winning design' },
+      'figma.com': { type: 'tool', label: 'Design tool' },
+      'unsplash.com': { type: 'photo', label: 'Photography library' },
+      'pexels.com': { type: 'photo', label: 'Stock photography' },
+      'instagram.com': { type: 'social', label: 'Visual feed' },
+      'artstation.com': { type: 'art', label: 'Digital art gallery' },
+      'deviantart.com': { type: 'art', label: 'Art community' },
+      'github.com': { type: 'code', label: 'Code repository' },
+      'medium.com': { type: 'editorial', label: 'Editorial content' },
+      'youtube.com': { type: 'video', label: 'Video platform' },
+    };
+
+    // Detect site type from content
+    const bodyText = (desc + ' ' + title).toLowerCase();
+    let siteType = 'website';
+    if (bodyText.match(/portfolio|designer|creative|agency/)) siteType = 'portfolio';
+    else if (bodyText.match(/shop|store|buy|cart|price/)) siteType = 'e-commerce';
+    else if (bodyText.match(/blog|article|post|news/)) siteType = 'editorial';
+    else if (bodyText.match(/dashboard|analytics|admin/)) siteType = 'dashboard';
+    else if (images > 20) siteType = 'visual-heavy';
+
+    const known = KNOWN_SITES[domain];
+
+    // Animate loader
+    const arc = panel.querySelector('.rb-loader-arc');
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress += Math.random() * 15 + 5;
+      if (progress > 100) progress = 100;
+      const offset = 214 - (214 * progress / 100);
+      if (arc) arc.style.strokeDashoffset = offset;
+      pct.textContent = Math.round(progress) + '%';
+      if (progress >= 100) {
+        clearInterval(interval);
+        showResult();
+      }
+    }, 120);
+
+    function showResult() {
+      loader.style.display = 'none';
+
+      let message = '';
+      if (known) {
+        message = `${known.label}. Great eye.`;
+      } else if (siteType === 'portfolio') {
+        message = `Creative portfolio with ${images} visuals. Good taste.`;
+      } else if (siteType === 'e-commerce') {
+        message = `Product page. ${images} images to work with.`;
+      } else if (siteType === 'visual-heavy') {
+        message = `${images} images found. Visual goldmine.`;
+      } else if (siteType === 'editorial') {
+        message = `Editorial layout. Clean structure to capture.`;
+      } else if (siteType === 'dashboard') {
+        message = `Dashboard UI. Great for component extraction.`;
+      } else if (images > 5) {
+        message = `${images} images on this page. Let's remix.`;
+      } else {
+        message = `Nice layout. Let's start here?`;
+      }
+
+      msg.innerHTML = `<span class="rb-site-domain">${esc(domain)}</span>${message}`;
+      remixBtn.style.display = '';
+    }
+
+    remixBtn.addEventListener('click', () => {
+      // Switch to HTML->Design mode and trigger capture
+      applyMode('dark');
+      chrome.runtime.sendMessage({ action: 'captureCurrentPage' });
+      msg.textContent = 'Capturing...';
+      remixBtn.style.display = 'none';
+      loader.style.display = '';
+      pct.textContent = '';
+      const arc2 = panel.querySelector('.rb-loader-arc');
+      if (arc2) { arc2.style.strokeDashoffset = '160'; }
+    });
+  }
+
   // --- Init ---
   chrome.storage.sync.get({ onboardingDone: false, activeMode: 'dark' }, (data) => {
     if (data.onboardingDone) {
       showView('main');
       applyMode(data.activeMode || 'dark');
       loadContent();
+      analyzeSite();
     } else {
       showView('onboarding');
     }
