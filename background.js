@@ -19,17 +19,21 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || !tab.id) return;
   const tabId = tab.id;
 
+  console.log('RepixBridge: icon clicked, injecting into tab', tabId);
+
   try {
     await chrome.scripting.insertCSS({
       target: { tabId },
       files: ['panel/panel.css']
     });
+    console.log('RepixBridge: CSS injected');
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ['panel/panel.js']
     });
+    console.log('RepixBridge: JS injected');
   } catch (e) {
-    console.warn('Could not inject panel:', e);
+    console.error('RepixBridge: injection failed:', e);
   }
 });
 
