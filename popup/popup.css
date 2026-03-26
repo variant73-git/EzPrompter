@@ -42,7 +42,6 @@ body {
 /* --- Widget shell --- */
 .rb-widget {
   background: var(--rb-bg);
-  border-radius: 40px;
   overflow: hidden;
   padding: 28px 24px 32px;
   height: 100vh;

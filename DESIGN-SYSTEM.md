@@ -41,7 +41,7 @@
 - Element gap: 8px / 12px
 
 ## Radii
-- Widget (popup): 40px
+- Widget (window): OS-native (~10px macOS)
 - Cards: 20px
 - Buttons: 12px
 - Pills/tags: 999px
