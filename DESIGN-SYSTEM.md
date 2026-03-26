@@ -12,16 +12,16 @@
 | Token | Value | Usage |
 |-------|-------|-------|
 | --bg | #000000 | Background |
-| --fg | #E0E2EB | Primary text |
-| --fg-muted | rgba(224,226,235,0.5) | Secondary text |
-| --accent | #E0E2EB | Buttons, outlines |
-| --surface | rgba(224,226,235,0.06) | Cards, elevated surfaces |
-| --border | rgba(224,226,235,0.12) | Borders |
+| --fg | #EFEEEB | Primary text |
+| --fg-muted | rgba(239,238,235,0.5) | Secondary text |
+| --accent | #EFEEEB | Buttons, outlines |
+| --surface | rgba(239,238,235,0.06) | Cards, elevated surfaces |
+| --border | rgba(239,238,235,0.12) | Borders |
 
 ### Mode: Image Remix (Light)
 | Token | Value | Usage |
 |-------|-------|-------|
-| --bg | #E0E2EB | Background |
+| --bg | #EFEEEB | Background |
 | --fg | #000000 | Primary text |
 | --fg-muted | rgba(0,0,0,0.5) | Secondary text |
 | --accent | #000000 | Buttons, outlines |
@@ -41,7 +41,7 @@
 - Element gap: 8px / 12px
 
 ## Radii
-- Widget (popup): 60px
+- Widget (popup): 40px
 - Cards: 20px
 - Buttons: 12px
 - Pills/tags: 999px

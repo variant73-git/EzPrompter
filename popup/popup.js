@@ -531,6 +531,13 @@ document.addEventListener('DOMContentLoaded', () => {
         <button type="button" class="rb-btn rb-btn-outline rb-btn-sm capture-open-btn" data-capture-id="${escapeHtml(item.captureId || '')}">Open in ${escapeHtml(toolName)}</button>
         <button type="button" class="rb-btn rb-btn-outline rb-btn-sm capture-preview-btn" data-url="${escapeHtml(item.url || '')}">Preview</button>
       </div>
+      <div class="rb-card-export">
+        <span class="rb-export-label">Export</span>
+        <button type="button" class="rb-pill rb-export-btn" data-format="svg" data-capture-id="${escapeHtml(item.captureId || '')}">SVG</button>
+        <button type="button" class="rb-pill rb-export-btn" data-format="png" data-capture-id="${escapeHtml(item.captureId || '')}">PNG</button>
+        <button type="button" class="rb-pill rb-export-btn" data-format="jpg" data-capture-id="${escapeHtml(item.captureId || '')}">JPG</button>
+        <button type="button" class="rb-pill rb-export-btn" data-format="figma" data-capture-id="${escapeHtml(item.captureId || '')}">Figma</button>
+      </div>
     `;
 
     card.addEventListener('click', (e) => {
@@ -550,6 +557,24 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
         const url = previewBtn.dataset.url;
         if (url) chrome.tabs.create({ url });
+        return;
+      }
+
+      const exportBtn = e.target.closest('.rb-export-btn');
+      if (exportBtn) {
+        e.preventDefault();
+        const format = exportBtn.dataset.format;
+        const captureId = exportBtn.dataset.captureId;
+        chrome.runtime.sendMessage({
+          action: 'exportCapture',
+          captureId,
+          format
+        });
+        exportBtn.textContent = 'Exporting...';
+        setTimeout(() => {
+          const labels = { svg: 'SVG', png: 'PNG', jpg: 'JPG', figma: 'Figma' };
+          exportBtn.textContent = labels[format] || format;
+        }, 2000);
         return;
       }
     });

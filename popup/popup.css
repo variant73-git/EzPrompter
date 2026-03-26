@@ -6,14 +6,14 @@
 /* --- Theme tokens --- */
 body[data-mode="dark"] {
   --rb-bg: #000000;
-  --rb-fg: #E0E2EB;
-  --rb-fg-muted: rgba(224,226,235,0.5);
-  --rb-surface: rgba(224,226,235,0.06);
-  --rb-border: rgba(224,226,235,0.12);
-  --rb-accent: #E0E2EB;
+  --rb-fg: #EFEEEB;
+  --rb-fg-muted: rgba(239,238,235,0.5);
+  --rb-surface: rgba(239,238,235,0.06);
+  --rb-border: rgba(239,238,235,0.12);
+  --rb-accent: #EFEEEB;
 }
 body[data-mode="light"] {
-  --rb-bg: #E0E2EB;
+  --rb-bg: #EFEEEB;
   --rb-fg: #000000;
   --rb-fg-muted: rgba(0,0,0,0.5);
   --rb-surface: rgba(0,0,0,0.04);
@@ -35,7 +35,7 @@ body {
 /* --- Widget shell --- */
 .rb-widget {
   background: var(--rb-bg);
-  border-radius: 60px;
+  border-radius: 40px;
   overflow: hidden;
   padding: 28px 24px 32px;
   transition: background-color 300ms ease, color 300ms ease;
@@ -51,7 +51,7 @@ body {
 .rb-logo-name {
   display: flex;
   align-items: baseline;
-  gap: 4px;
+  gap: 0;
 }
 .rb-logo-repix {
   font-family: 'Instrument Serif', serif;
@@ -270,6 +270,24 @@ body {
   border-color: var(--rb-accent);
 }
 .rb-pill:active { transform: scale(0.97); }
+
+/* --- Export row --- */
+.rb-card-export {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rb-border);
+}
+.rb-export-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--rb-fg-muted);
+  margin-right: 2px;
+}
 
 /* --- Empty state --- */
 .rb-empty {
