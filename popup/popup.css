@@ -24,16 +24,17 @@ body[data-mode="light"] {
 html, body {
   margin: 0;
   padding: 0;
+  background: transparent !important;
 }
 
 body {
-  width: 380px;
-  height: 520px;
+  width: 400px;
+  height: 540px;
+  padding: 10px;
   font-family: 'Instrument Sans', sans-serif;
   font-weight: 400;
   font-size: 13px;
   line-height: 1.4;
-  background: var(--rb-bg);
   color: var(--rb-fg);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -42,10 +43,10 @@ body {
 /* --- Widget shell --- */
 .rb-widget {
   background: var(--rb-bg);
-  border-radius: 0;
+  border-radius: 40px;
   overflow: hidden;
   padding: 28px 24px 32px;
-  height: 520px;
+  height: 100%;
   display: flex;
   flex-direction: column;
   transition: background-color 300ms ease, color 300ms ease;
