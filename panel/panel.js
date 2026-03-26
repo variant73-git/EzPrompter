@@ -209,6 +209,8 @@
     currentMode = mode;
     panel.classList.toggle('rb-light', mode === 'light');
     $$('.rb-toggle-seg').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+    const siteAnalysis = $('#rb-siteAnalysis');
+    if (siteAnalysis) siteAnalysis.style.display = mode === 'dark' ? '' : 'none';
     $('#rb-contentDark').style.display = mode === 'dark' ? '' : 'none';
     $('#rb-contentLight').style.display = mode === 'light' ? '' : 'none';
     chrome.storage.sync.set({ activeMode: mode });
