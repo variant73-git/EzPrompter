@@ -130,6 +130,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.action === 'generateImage') {
+    const { prompt, imageProvider } = message;
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (!tabs[0]) return;
+      const tabId = tabs[0].id;
+      try {
+        const dataUrl = await generateImageWithAI(prompt, imageProvider);
+        chrome.tabs.sendMessage(tabId, { action: 'imageGenerated', dataUrl });
+      } catch (err) {
+        chrome.tabs.sendMessage(tabId, { action: 'imageGenError', error: err.message });
+      }
+    });
+    return true;
+  }
+
   if (message.action === 'describeImage') {
     // Trigger image describe from panel (same as context menu)
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
@@ -632,7 +647,10 @@ function getSettings() {
       model: 'gemini-2.0-flash',
       ollamaUrl: 'http://localhost:11434',
       language: 'en',
-      downloadFolder: 'EzPrompter'
+      downloadFolder: 'EzPrompter',
+      stabilityApiKey: '',
+      replicateApiKey: '',
+      imageProvider: 'stability'
     }, resolve);
   });
 }
@@ -982,6 +1000,153 @@ function getExtensionFromMime(mimeType) {
     'image/avif': 'avif'
   };
   return map[mimeType] || 'png';
+}
+
+// ─── Image Generation ─────────────────────────────────────────────────────
+
+async function generateImageWithAI(prompt, imageProvider) {
+  const settings = await getSettings();
+
+  if (imageProvider === 'stability') {
+    return generateWithStability(prompt, settings);
+  } else if (imageProvider === 'openai') {
+    return generateWithDallE(prompt, settings);
+  } else if (imageProvider === 'gemini') {
+    return generateWithImagen(prompt, settings);
+  } else if (imageProvider === 'replicate') {
+    return generateWithReplicate(prompt, settings);
+  } else {
+    throw new Error('Unsupported image generation provider: ' + imageProvider);
+  }
+}
+
+async function generateWithStability(prompt, settings) {
+  const key = settings.stabilityApiKey;
+  if (!key) throw new Error('Stability AI API key not configured.');
+
+  const formData = new FormData();
+  formData.append('prompt', prompt);
+  formData.append('output_format', 'png');
+
+  const response = await fetch('https://api.stability.ai/v2beta/stable-image/generate/sd3', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${key}`,
+      'Accept': 'image/*'
+    },
+    body: formData
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    throw new Error(`Stability AI error: ${response.status} ${errText}`);
+  }
+
+  const blob = await response.blob();
+  return blobToDataUrl(blob);
+}
+
+async function generateWithDallE(prompt, settings) {
+  const key = settings.apiKey;
+  if (!key) throw new Error('OpenAI API key not configured.');
+
+  const response = await fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`
+    },
+    body: JSON.stringify({
+      model: 'dall-e-3',
+      prompt: prompt,
+      size: '1024x1024',
+      response_format: 'b64_json'
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(`OpenAI DALL-E error: ${err.error?.message || response.status}`);
+  }
+
+  const data = await response.json();
+  const b64 = data.data[0].b64_json;
+  return `data:image/png;base64,${b64}`;
+}
+
+async function generateWithImagen(prompt, settings) {
+  const key = settings.apiKey;
+  if (!key) throw new Error('Gemini API key not configured.');
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${key}`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      instances: [{ prompt: prompt }],
+      parameters: { sampleCount: 1 }
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(`Gemini Imagen error: ${err.error?.message || response.status}`);
+  }
+
+  const data = await response.json();
+  const b64 = data.predictions[0].bytesBase64Encoded;
+  return `data:image/png;base64,${b64}`;
+}
+
+async function generateWithReplicate(prompt, settings) {
+  const key = settings.replicateApiKey;
+  if (!key) throw new Error('Replicate API key not configured.');
+
+  // Create prediction
+  const createResponse = await fetch('https://api.replicate.com/v1/predictions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`
+    },
+    body: JSON.stringify({
+      version: '39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b',
+      input: { prompt: prompt }
+    })
+  });
+
+  if (!createResponse.ok) {
+    const err = await createResponse.json().catch(() => ({}));
+    throw new Error(`Replicate error: ${err.detail || createResponse.status}`);
+  }
+
+  const prediction = await createResponse.json();
+  let pollUrl = prediction.urls?.get || `https://api.replicate.com/v1/predictions/${prediction.id}`;
+
+  // Poll until complete (max 120 seconds)
+  const maxAttempts = 60;
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    const pollResponse = await fetch(pollUrl, {
+      headers: { 'Authorization': `Bearer ${key}` }
+    });
+    if (!pollResponse.ok) throw new Error(`Replicate poll error: ${pollResponse.status}`);
+    const result = await pollResponse.json();
+
+    if (result.status === 'succeeded') {
+      const outputUrl = Array.isArray(result.output) ? result.output[0] : result.output;
+      if (!outputUrl) throw new Error('Replicate returned no output.');
+      // Fetch the image and convert to data URL
+      const imgResponse = await fetch(outputUrl);
+      if (!imgResponse.ok) throw new Error('Failed to fetch generated image from Replicate.');
+      const blob = await imgResponse.blob();
+      return blobToDataUrl(blob);
+    } else if (result.status === 'failed' || result.status === 'canceled') {
+      throw new Error(`Replicate generation ${result.status}: ${result.error || 'unknown error'}`);
+    }
+    // else still processing, keep polling
+  }
+  throw new Error('Replicate generation timed out after 120 seconds.');
 }
 
 function downloadFile(url, filename) {

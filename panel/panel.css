@@ -360,3 +360,148 @@
 }
 #repixbridge-panel .rb-img-remix:hover { background: #fff; color: #000; border-color: #fff; }
 #repixbridge-panel .rb-img-remix:disabled { opacity: 0.6; cursor: wait; }
+
+/* --- Settings divider & group label --- */
+#repixbridge-panel .rb-settings-divider {
+  height: 1px; background: var(--rb-border); margin: 4px 0;
+}
+#repixbridge-panel .rb-field-group-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.6px; color: var(--rb-fg-muted); margin-bottom: -4px;
+}
+
+/* --- Generation Card --- */
+#repixbridge-panel .rb-gen-card {
+  border: 1px solid var(--rb-border); border-radius: 20px; padding: 16px;
+  margin-bottom: 16px; animation: rb-panel-in 0.2s ease-out;
+}
+#repixbridge-panel .rb-gen-label {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--rb-fg-muted); margin-bottom: 10px;
+}
+#repixbridge-panel .rb-gen-prompt {
+  width: 100%; min-height: 72px; padding: 10px 12px; background: var(--rb-surface);
+  border: 1px solid var(--rb-border); border-radius: 12px; color: var(--rb-fg);
+  font-family: 'Instrument Sans', sans-serif; font-size: 12px; line-height: 1.5;
+  resize: vertical; outline: none; margin-bottom: 12px; transition: border-color 150ms;
+  box-sizing: border-box;
+}
+#repixbridge-panel .rb-gen-prompt:focus { border-color: var(--rb-accent); }
+
+/* Provider dropdown */
+#repixbridge-panel .rb-gen-provider-wrap {
+  position: relative; margin-bottom: 12px;
+}
+#repixbridge-panel .rb-gen-provider-btn {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; padding: 9px 12px; background: var(--rb-surface);
+  border: 1px solid var(--rb-border); border-radius: 12px;
+  color: var(--rb-fg); font-family: inherit; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: border-color 150ms;
+}
+#repixbridge-panel .rb-gen-provider-btn:hover { border-color: var(--rb-fg-muted); }
+#repixbridge-panel .rb-gen-provider-btn svg {
+  opacity: 0.5; transition: transform 150ms;
+}
+
+#repixbridge-panel .rb-gen-provider-list {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--rb-bg); border: 1px solid var(--rb-border);
+  border-radius: 14px; padding: 4px; z-index: 100;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.25);
+  animation: rb-panel-in 0.15s ease-out;
+}
+#repixbridge-panel .rb-gen-provider-list[hidden] { display: none; }
+
+#repixbridge-panel .rb-gen-provider-option {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 10px; border: none; background: none; border-radius: 10px;
+  color: var(--rb-fg); font-family: inherit; font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: background 100ms;
+}
+#repixbridge-panel .rb-gen-provider-option:hover { background: var(--rb-surface); }
+#repixbridge-panel .rb-gen-provider-option.rb-provider-active {
+  background: var(--rb-surface);
+}
+#repixbridge-panel .rb-gen-provider-option.rb-provider-disabled {
+  opacity: 0.5; cursor: default;
+}
+#repixbridge-panel .rb-gen-provider-option.rb-provider-disabled:hover {
+  background: none;
+}
+#repixbridge-panel .rb-gen-provider-option-name { flex: 1; text-align: left; }
+#repixbridge-panel .rb-provider-status {
+  font-size: 10px; color: var(--rb-fg-muted); margin-left: auto;
+}
+
+/* Status dots */
+#repixbridge-panel .rb-status-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+}
+#repixbridge-panel .rb-dot-green { background: #22c55e; }
+#repixbridge-panel .rb-dot-red { background: #ef4444; }
+#repixbridge-panel .rb-dot-gray { background: var(--rb-fg-muted); }
+
+/* Tooltip */
+#repixbridge-panel .rb-gen-tooltip {
+  background: var(--rb-surface); border: 1px solid var(--rb-border);
+  border-radius: 12px; padding: 12px; margin-bottom: 12px;
+  animation: rb-panel-in 0.15s ease-out;
+}
+#repixbridge-panel .rb-gen-tooltip[hidden] { display: none; }
+#repixbridge-panel .rb-gen-tooltip-text {
+  font-size: 12px; color: var(--rb-fg-muted); margin: 0 0 8px;
+}
+
+/* Disabled generate button */
+#repixbridge-panel .rb-btn-disabled {
+  opacity: 0.4; cursor: not-allowed;
+}
+#repixbridge-panel .rb-btn-disabled:hover { opacity: 0.4; }
+
+/* Loading state */
+#repixbridge-panel .rb-btn-loading {
+  opacity: 0.7; cursor: wait;
+}
+
+/* Spinner inline */
+#repixbridge-panel .rb-gen-spinner {
+  display: inline-block; width: 14px; height: 14px;
+  border: 2px solid var(--rb-bg); border-top-color: transparent;
+  border-radius: 50%; animation: rb-spin 0.6s linear infinite;
+  vertical-align: middle; margin-right: 6px;
+}
+@keyframes rb-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Result area */
+#repixbridge-panel .rb-gen-result { margin-top: 14px; }
+#repixbridge-panel .rb-gen-result[hidden] { display: none; }
+
+#repixbridge-panel .rb-gen-image-wrap {
+  position: relative; border-radius: 12px; overflow: hidden;
+  background: var(--rb-surface); margin-bottom: 10px; min-height: 120px;
+}
+#repixbridge-panel .rb-gen-skeleton {
+  width: 100%; height: 200px; border-radius: 12px;
+  background: linear-gradient(110deg, var(--rb-surface) 8%, var(--rb-border) 18%, var(--rb-surface) 33%);
+  background-size: 200% 100%;
+  animation: rb-skeleton 1.5s linear infinite;
+}
+@keyframes rb-skeleton {
+  to { background-position-x: -200%; }
+}
+#repixbridge-panel .rb-gen-image {
+  width: 100%; display: block; border-radius: 12px;
+}
+
+#repixbridge-panel .rb-gen-actions {
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+
+#repixbridge-panel .rb-gen-error {
+  background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2);
+  border-radius: 10px; padding: 10px 12px;
+  font-size: 12px; color: #ef4444; line-height: 1.5;
+}

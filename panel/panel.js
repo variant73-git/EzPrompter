@@ -14,6 +14,8 @@
   }
 
   const GEAR_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const CHEVRON_SVG = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5L6 7.5L9 4.5"/></svg>';
+  const DOWNLOAD_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
   const CLOSE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>';
   const BACK_SVG = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4L6 9l5 5"/></svg>';
 
@@ -88,6 +90,7 @@
         <div class="rb-content-scroll" id="rb-contentDark" style="display:none"></div>
         <div class="rb-content-scroll" id="rb-contentLight" style="display:none">
           <div class="rb-img-grid" id="rb-imgGrid"></div>
+          <div id="rb-genCardContainer"></div>
           <div id="rb-promptsList"></div>
         </div>
       </div>
@@ -139,6 +142,20 @@
               <option value="pt">Portugues (BR)</option>
               <option value="es">Espanol</option>
             </select>
+          </div>
+          <div class="rb-settings-divider"></div>
+          <div class="rb-field-group-label">Image Generation</div>
+          <div class="rb-field">
+            <label>Stability AI Key</label>
+            <div class="rb-field-row">
+              <input type="password" id="rb-stabilityKey" placeholder="sk-...">
+            </div>
+          </div>
+          <div class="rb-field">
+            <label>Replicate Key</label>
+            <div class="rb-field-row">
+              <input type="password" id="rb-replicateKey" placeholder="r8_...">
+            </div>
           </div>
           <button type="submit" class="rb-btn rb-btn-primary rb-btn-full">Save Settings</button>
           <div class="rb-status" id="rb-status"></div>
@@ -255,7 +272,9 @@
       model: $('#rb-model').value.trim() || MODEL_DEFAULTS[$('#rb-apiProvider').value],
       designTool: $('#rb-designTool').value,
       ollamaUrl: $('#rb-ollamaUrl').value.trim() || 'http://localhost:11434',
-      language: $('#rb-language').value
+      language: $('#rb-language').value,
+      stabilityApiKey: $('#rb-stabilityKey').value.trim(),
+      replicateApiKey: $('#rb-replicateKey').value.trim()
     }, () => {
       $('#rb-status').textContent = 'Settings saved!';
       setTimeout(() => { $('#rb-status').textContent = ''; }, 2000);
@@ -265,7 +284,8 @@
   function loadSettings() {
     chrome.storage.sync.get({
       apiProvider: 'gemini', apiKey: '', model: 'gemini-2.0-flash',
-      designTool: 'figma', ollamaUrl: 'http://localhost:11434', language: 'en'
+      designTool: 'figma', ollamaUrl: 'http://localhost:11434', language: 'en',
+      stabilityApiKey: '', replicateApiKey: ''
     }, (s) => {
       $('#rb-apiProvider').value = s.apiProvider;
       $('#rb-apiKey').value = s.apiKey;
@@ -273,6 +293,8 @@
       $('#rb-designTool').value = s.designTool;
       $('#rb-ollamaUrl').value = s.ollamaUrl;
       $('#rb-language').value = s.language;
+      $('#rb-stabilityKey').value = s.stabilityApiKey;
+      $('#rb-replicateKey').value = s.replicateApiKey;
       $('#rb-ollamaField').style.display = s.apiProvider === 'ollama' ? '' : 'none';
       $('#rb-apiKeyField').style.display = s.apiProvider === 'ollama' ? 'none' : '';
     });
@@ -558,16 +580,266 @@
     });
   }
 
+  // ─── Image Generation Card ─────────────────────────────────────────────
+
+  const IMG_PROVIDERS = [
+    { id: 'stability', name: 'Stability AI', keyField: 'stabilityApiKey', keyType: 'own' },
+    { id: 'openai', name: 'OpenAI DALL-E', keyField: 'apiKey', keyType: 'shared', requireProvider: 'openai' },
+    { id: 'gemini', name: 'Gemini Imagen', keyField: 'apiKey', keyType: 'shared', requireProvider: 'gemini' },
+    { id: 'replicate', name: 'Replicate', keyField: 'replicateApiKey', keyType: 'own' },
+    { id: 'ollama', name: 'Ollama (Local)', keyField: null, keyType: 'none', comingSoon: true }
+  ];
+
+  let activeGenProvider = 'stability';
+
+  function buildGenCard(promptText) {
+    const container = $('#rb-genCardContainer');
+    if (!container) return;
+
+    container.innerHTML = '';
+    const card = document.createElement('div');
+    card.className = 'rb-gen-card';
+    card.innerHTML = `
+      <div class="rb-gen-label">Edit prompt & generate</div>
+      <textarea class="rb-gen-prompt" id="rb-genPrompt">${esc(promptText)}</textarea>
+      <div class="rb-gen-provider-wrap">
+        <button type="button" class="rb-gen-provider-btn" id="rb-providerDropdown">
+          <span class="rb-gen-provider-name" id="rb-providerName">Stability AI</span>
+          ${CHEVRON_SVG}
+        </button>
+        <div class="rb-gen-provider-list" id="rb-providerList" hidden></div>
+      </div>
+      <div class="rb-gen-tooltip" id="rb-genTooltip" hidden>
+        <p class="rb-gen-tooltip-text" id="rb-genTooltipText"></p>
+        <button type="button" class="rb-btn rb-btn-outline rb-btn-sm" id="rb-genTooltipConnect">Connect API</button>
+      </div>
+      <button type="button" class="rb-btn rb-btn-primary rb-btn-full" id="rb-genBtn">Generate</button>
+      <div class="rb-gen-result" id="rb-genResult" hidden>
+        <div class="rb-gen-image-wrap">
+          <div class="rb-gen-skeleton" id="rb-genSkeleton"></div>
+          <img class="rb-gen-image" id="rb-genImage"/>
+        </div>
+        <div class="rb-gen-actions">
+          <button class="rb-pill" id="rb-genDownload">${DOWNLOAD_SVG} Download</button>
+          <button class="rb-pill" id="rb-genAgain">Generate again</button>
+        </div>
+      </div>
+    `;
+    container.appendChild(card);
+
+    // Dropdown toggle
+    const dropdownBtn = card.querySelector('#rb-providerDropdown');
+    const dropdownList = card.querySelector('#rb-providerList');
+
+    dropdownBtn.addEventListener('click', () => {
+      if (dropdownList.hidden) {
+        refreshProviderList();
+        dropdownList.hidden = false;
+      } else {
+        dropdownList.hidden = true;
+      }
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!card.contains(e.target)) dropdownList.hidden = true;
+    }, { once: false });
+
+    // Generate button
+    const genBtn = card.querySelector('#rb-genBtn');
+    genBtn.addEventListener('click', () => {
+      const prompt = card.querySelector('#rb-genPrompt').value.trim();
+      if (!prompt) return;
+      startGeneration(prompt);
+    });
+
+    // Generate again
+    card.querySelector('#rb-genAgain').addEventListener('click', () => {
+      const prompt = card.querySelector('#rb-genPrompt').value.trim();
+      if (!prompt) return;
+      card.querySelector('#rb-genResult').hidden = true;
+      startGeneration(prompt);
+    });
+
+    // Download
+    card.querySelector('#rb-genDownload').addEventListener('click', () => {
+      const img = card.querySelector('#rb-genImage');
+      if (img.src) {
+        const a = document.createElement('a');
+        a.href = img.src;
+        a.download = 'repixbridge-generated.png';
+        a.click();
+      }
+    });
+
+    // Tooltip connect
+    card.querySelector('#rb-genTooltipConnect').addEventListener('click', () => {
+      showView('settings');
+      loadSettings();
+    });
+
+    // Set initial provider
+    refreshProviderStatus();
+  }
+
+  function refreshProviderList() {
+    const list = $('#rb-providerList');
+    if (!list) return;
+    list.innerHTML = '';
+
+    chrome.storage.sync.get({
+      apiKey: '', apiProvider: 'gemini',
+      stabilityApiKey: '', replicateApiKey: ''
+    }, (s) => {
+      IMG_PROVIDERS.forEach(p => {
+        let connected = false;
+        if (p.comingSoon) {
+          connected = false;
+        } else if (p.keyType === 'own') {
+          connected = !!(s[p.keyField]);
+        } else if (p.keyType === 'shared') {
+          connected = !!(s.apiKey) && s.apiProvider === p.requireProvider;
+        }
+
+        const dotClass = p.comingSoon ? 'rb-dot-gray' : (connected ? 'rb-dot-green' : 'rb-dot-red');
+        const statusText = p.comingSoon ? 'coming soon' : (connected ? 'ready' : 'connect API');
+        const disabledClass = (p.comingSoon || !connected) ? 'rb-provider-disabled' : '';
+        const activeClass = (p.id === activeGenProvider) ? 'rb-provider-active' : '';
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `rb-gen-provider-option ${disabledClass} ${activeClass}`.trim();
+        btn.dataset.provider = p.id;
+        btn.innerHTML = `
+          <span class="rb-status-dot ${dotClass}"></span>
+          <span class="rb-gen-provider-option-name">${esc(p.name)}</span>
+          <span class="rb-provider-status">${statusText}</span>
+        `;
+
+        btn.addEventListener('click', () => {
+          if (p.comingSoon) return;
+          selectProvider(p.id, p.name, connected);
+          list.hidden = true;
+        });
+
+        list.appendChild(btn);
+      });
+    });
+  }
+
+  function selectProvider(id, name, connected) {
+    activeGenProvider = id;
+    const nameEl = $('#rb-providerName');
+    if (nameEl) nameEl.textContent = name;
+
+    const tooltip = $('#rb-genTooltip');
+    const genBtn = $('#rb-genBtn');
+    const tooltipText = $('#rb-genTooltipText');
+
+    if (!connected) {
+      if (tooltip) {
+        tooltip.hidden = false;
+        tooltipText.textContent = 'Connect your ' + name + ' API key to generate images.';
+      }
+      if (genBtn) { genBtn.disabled = true; genBtn.classList.add('rb-btn-disabled'); }
+    } else {
+      if (tooltip) tooltip.hidden = true;
+      if (genBtn) { genBtn.disabled = false; genBtn.classList.remove('rb-btn-disabled'); }
+    }
+  }
+
+  function refreshProviderStatus() {
+    chrome.storage.sync.get({
+      apiKey: '', apiProvider: 'gemini',
+      stabilityApiKey: '', replicateApiKey: ''
+    }, (s) => {
+      // Find the best connected provider, default to stability
+      const providerConfig = IMG_PROVIDERS.find(p => p.id === activeGenProvider);
+      if (!providerConfig) return;
+
+      let connected = false;
+      if (providerConfig.keyType === 'own') {
+        connected = !!(s[providerConfig.keyField]);
+      } else if (providerConfig.keyType === 'shared') {
+        connected = !!(s.apiKey) && s.apiProvider === providerConfig.requireProvider;
+      }
+
+      selectProvider(activeGenProvider, providerConfig.name, connected);
+    });
+  }
+
+  function startGeneration(prompt) {
+    const genBtn = $('#rb-genBtn');
+    const result = $('#rb-genResult');
+    const skeleton = $('#rb-genSkeleton');
+    const genImage = $('#rb-genImage');
+
+    if (genBtn) {
+      genBtn.disabled = true;
+      genBtn.innerHTML = '<span class="rb-gen-spinner"></span> Generating...';
+      genBtn.classList.add('rb-btn-loading');
+    }
+    if (result) { result.hidden = false; }
+    if (skeleton) { skeleton.style.display = ''; }
+    if (genImage) { genImage.style.display = 'none'; genImage.src = ''; }
+
+    chrome.runtime.sendMessage({
+      action: 'generateImage',
+      prompt: prompt,
+      imageProvider: activeGenProvider
+    });
+  }
+
+  function handleImageGenerated(dataUrl) {
+    const genBtn = $('#rb-genBtn');
+    const result = $('#rb-genResult');
+    const skeleton = $('#rb-genSkeleton');
+    const genImage = $('#rb-genImage');
+
+    if (genBtn) {
+      genBtn.disabled = false;
+      genBtn.textContent = 'Generate';
+      genBtn.classList.remove('rb-btn-loading');
+    }
+    if (result) result.hidden = false;
+    if (skeleton) skeleton.style.display = 'none';
+    if (genImage) { genImage.src = dataUrl; genImage.style.display = ''; }
+  }
+
+  function handleImageGenError(errorMsg) {
+    const genBtn = $('#rb-genBtn');
+    const result = $('#rb-genResult');
+    const skeleton = $('#rb-genSkeleton');
+
+    if (genBtn) {
+      genBtn.disabled = false;
+      genBtn.textContent = 'Generate';
+      genBtn.classList.remove('rb-btn-loading');
+    }
+    if (skeleton) skeleton.style.display = 'none';
+    if (result) {
+      result.hidden = false;
+      result.innerHTML = `<div class="rb-gen-error">${esc(errorMsg)}</div>`;
+    }
+  }
+
   // Listen for prompt results from background
   chrome.runtime.onMessage.addListener((message) => {
     if (message.action === 'promptReady') {
       // Refresh the image grid buttons
       $$('.rb-img-remix').forEach(btn => { btn.textContent = 'Remix'; btn.disabled = false; });
-      // Could also switch to prompts view or show a toast
+      // Show generation card with the prompt
+      buildGenCard(message.prompt || '');
       loadPrompts();
     }
     if (message.action === 'promptError') {
       $$('.rb-img-remix').forEach(btn => { btn.textContent = 'Remix'; btn.disabled = false; });
+    }
+    if (message.action === 'imageGenerated') {
+      handleImageGenerated(message.dataUrl);
+    }
+    if (message.action === 'imageGenError') {
+      handleImageGenError(message.error);
     }
   });
 
