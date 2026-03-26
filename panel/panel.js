@@ -39,12 +39,15 @@
       <div class="rb-view rb-onboarding rb-active" id="rb-viewOnboarding">
         <button type="button" class="rb-skip" id="rb-skip">Skip</button>
         <article class="rb-slide" data-step="0">
+          <h2 class="rb-slide-title"><em>Bridge</em> the gap</h2>
           <p class="rb-slide-text">Take <em>anything</em> from the web straight into your design tools and AI models.</p>
         </article>
         <article class="rb-slide" data-step="1" hidden>
+          <h2 class="rb-slide-title">Two <em>superpowers</em></h2>
           <p class="rb-slide-text"><em>HTML to Design</em> captures full pages. <em>Image Remix</em> reverse-engineers any image's prompt.</p>
         </article>
         <article class="rb-slide" data-step="2" hidden>
+          <h2 class="rb-slide-title"><em>Zero-cost</em> start</h2>
           <span class="rb-badge-free">Free setup available</span>
           <p class="rb-slide-text">Use <em>Ollama</em> for AI and <em>Pencil</em> or <em>Paper</em> for design. No API keys, no subscriptions.</p>
         </article>
@@ -67,16 +70,19 @@
 
         <!-- Site Analysis (shown initially, replaced by history when available) -->
         <div class="rb-site-analysis" id="rb-siteAnalysis">
-          <div class="rb-loader-ring" id="rb-loader">
-            <svg viewBox="0 0 80 80" width="80" height="80">
-              <circle cx="40" cy="40" r="34" stroke="var(--rb-border)" stroke-width="3" fill="none"/>
-              <circle cx="40" cy="40" r="34" stroke="var(--rb-accent)" stroke-width="3" fill="none"
-                stroke-dasharray="214" stroke-dashoffset="214" stroke-linecap="round" class="rb-loader-arc"/>
-            </svg>
-            <span class="rb-loader-pct" id="rb-loaderPct">0%</span>
+          <div class="rb-site-analysis-center">
+            <div class="rb-loader-ring" id="rb-loader">
+              <svg viewBox="0 0 80 80" width="80" height="80">
+                <circle cx="40" cy="40" r="34" stroke="var(--rb-border)" stroke-width="3" fill="none"/>
+                <circle cx="40" cy="40" r="34" stroke="var(--rb-accent)" stroke-width="3" fill="none"
+                  stroke-dasharray="214" stroke-dashoffset="214" stroke-linecap="round" class="rb-loader-arc"/>
+              </svg>
+              <span class="rb-loader-pct" id="rb-loaderPct">0%</span>
+            </div>
+            <div class="rb-site-msg" id="rb-siteMsg">Analyzing...</div>
+            <button type="button" class="rb-btn rb-btn-primary rb-btn-full" id="rb-remixSite" style="display:none">Remix this site</button>
           </div>
-          <p class="rb-site-msg" id="rb-siteMsg">Analyzing...</p>
-          <button type="button" class="rb-btn rb-btn-primary rb-btn-full" id="rb-remixSite" style="display:none">Remix this site</button>
+          <p class="rb-site-footer" id="rb-siteFooter">No captures yet. Right-click any page to capture.</p>
         </div>
 
         <div class="rb-content-scroll" id="rb-contentDark" style="display:none"></div>
@@ -449,6 +455,9 @@
       }
     }, 120);
 
+    // Store image count for later use in Image Remix tab
+    panel._pageImageCount = images;
+
     function showResult() {
       loader.style.display = 'none';
 
@@ -456,22 +465,20 @@
       if (known) {
         message = `${known.label}. Great eye.`;
       } else if (siteType === 'portfolio') {
-        message = `Creative portfolio with ${images} visuals. Good taste.`;
+        message = 'Creative portfolio. Good taste.';
       } else if (siteType === 'e-commerce') {
-        message = `Product page. ${images} images to work with.`;
+        message = 'Product page. Ready to capture.';
       } else if (siteType === 'visual-heavy') {
-        message = `${images} images found. Visual goldmine.`;
+        message = 'Visual-heavy page. Let\'s capture it.';
       } else if (siteType === 'editorial') {
-        message = `Editorial layout. Clean structure to capture.`;
+        message = 'Editorial layout. Clean structure.';
       } else if (siteType === 'dashboard') {
-        message = `Dashboard UI. Great for component extraction.`;
-      } else if (images > 5) {
-        message = `${images} images on this page. Let's remix.`;
+        message = 'Dashboard UI. Great for components.';
       } else {
-        message = `Nice layout. Let's start here?`;
+        message = 'Nice layout. Let\'s start here?';
       }
 
-      msg.innerHTML = `<span class="rb-site-domain">${esc(domain)}</span>${message}`;
+      msg.innerHTML = `<span class="rb-site-domain">${esc(domain)}</span><span class="rb-site-tagline">${message}</span>`;
       remixBtn.style.display = '';
     }
 
@@ -528,7 +535,8 @@
       return;
     }
 
-    grid.innerHTML = '';
+    const totalImgs = panel._pageImageCount || allImgs.length;
+    grid.innerHTML = `<div class="rb-img-grid-header">${totalImgs} image${totalImgs !== 1 ? 's' : ''} found</div>`;
     top.forEach(img => {
       const item = document.createElement('div');
       item.className = 'rb-img-item';

@@ -119,18 +119,29 @@
   transition: color 150ms;
 }
 #repixbridge-panel .rb-skip:hover { color: var(--rb-fg); }
-#repixbridge-panel .rb-slide { padding: 0 0 20px; }
+#repixbridge-panel .rb-slide { padding: 0 0 20px; text-align: left; }
 #repixbridge-panel .rb-slide[hidden] { display: none; }
+#repixbridge-panel .rb-slide-title {
+  font-family: 'Instrument Serif', serif;
+  font-size: 32px;
+  font-weight: 400;
+  line-height: 1.15;
+  color: var(--rb-fg);
+  margin-bottom: 12px;
+}
+#repixbridge-panel .rb-slide-title em {
+  font-style: italic;
+}
 #repixbridge-panel .rb-slide-text {
   font-family: 'Instrument Sans', sans-serif;
-  font-size: 16px;
-  color: var(--rb-fg);
+  font-size: 14px;
+  color: var(--rb-fg-muted);
   line-height: 1.6;
 }
 #repixbridge-panel .rb-slide-text em {
   font-family: 'Instrument Serif', serif;
   font-style: italic;
-  font-size: 17.6px; /* 10% larger */
+  font-size: 15.4px; /* 10% larger */
   color: var(--rb-fg);
 }
 #repixbridge-panel .rb-badge-free {
@@ -204,8 +215,11 @@
 
 /* --- Site Analysis --- */
 #repixbridge-panel .rb-site-analysis {
-  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  text-align: center; gap: 16px; min-height: 0;
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+}
+#repixbridge-panel .rb-site-analysis-center {
+  flex: 1; display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+  gap: 16px; text-align: left;
 }
 #repixbridge-panel .rb-loader-ring { position: relative; width: 80px; height: 80px; }
 #repixbridge-panel .rb-loader-arc {
@@ -218,11 +232,28 @@
 }
 #repixbridge-panel .rb-site-msg {
   font-family: 'Instrument Sans', sans-serif;
-  font-size: 14px; color: var(--rb-fg-muted); line-height: 1.5; max-width: 280px;
+  font-size: 14px; color: var(--rb-fg-muted); line-height: 1.5;
 }
 #repixbridge-panel .rb-site-domain {
-  display: block; font-weight: 600; font-size: 12px; color: var(--rb-fg);
-  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;
+  display: block; font-weight: 500; font-size: 14px; color: var(--rb-fg);
+  margin-bottom: 2px;
+}
+#repixbridge-panel .rb-site-tagline {
+  display: block; font-size: 14px; color: var(--rb-fg-muted);
+}
+#repixbridge-panel .rb-site-footer {
+  font-size: 11px; color: var(--rb-fg-muted); opacity: 0.6;
+  padding-top: 12px; border-top: 1px solid var(--rb-border); margin-top: auto;
+  text-align: center;
+}
+
+/* --- Image Grid Header --- */
+#repixbridge-panel .rb-img-grid-header {
+  grid-column: 1 / -1;
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 12px; font-weight: 600; color: var(--rb-fg-muted);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 4px;
 }
 
 /* --- Buttons --- */
