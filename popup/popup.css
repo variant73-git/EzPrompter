@@ -21,19 +21,19 @@ body[data-mode="light"] {
   --rb-accent: #000000;
 }
 
-html {
-  background: transparent;
+html, body {
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  width: 396px;
-  height: 536px;
-  padding: 8px;
+  width: 380px;
+  height: 520px;
   font-family: 'Instrument Sans', sans-serif;
   font-weight: 400;
   font-size: 13px;
   line-height: 1.4;
-  background: transparent;
+  background: var(--rb-bg);
   color: var(--rb-fg);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -42,10 +42,10 @@ body {
 /* --- Widget shell --- */
 .rb-widget {
   background: var(--rb-bg);
-  border-radius: 40px;
+  border-radius: 0;
   overflow: hidden;
   padding: 28px 24px 32px;
-  height: 100%;
+  height: 520px;
   display: flex;
   flex-direction: column;
   transition: background-color 300ms ease, color 300ms ease;
