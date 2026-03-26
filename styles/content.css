@@ -34,10 +34,16 @@
 
 .ezp-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   padding: 16px 20px;
   border-bottom: 1px solid #30305a;
+}
+
+.ezp-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .ezp-logo {
@@ -45,6 +51,13 @@
   font-weight: 700;
   color: #a78bfa;
   letter-spacing: 0.5px;
+}
+
+.ezp-tagline {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 400;
+  letter-spacing: 0.2px;
 }
 
 .ezp-close {
@@ -113,6 +126,53 @@
   margin-bottom: 16px;
 }
 
+/* Tabs */
+.ezp-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: #0f0f23;
+  border-radius: 10px;
+  padding: 4px;
+  border: 1px solid #30305a;
+}
+
+.ezp-tab {
+  flex: 1;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ezp-tab:hover {
+  color: #c4b5fd;
+  background: rgba(167, 139, 250, 0.08);
+}
+
+.ezp-tab-active {
+  background: #7c3aed;
+  color: #fff;
+}
+
+.ezp-tab-active:hover {
+  background: #6d28d9;
+  color: #fff;
+}
+
+.ezp-tab-content {
+  display: none;
+}
+
+.ezp-tab-visible {
+  display: block;
+}
+
 .ezp-prompt-box {
   margin-bottom: 16px;
 }
@@ -157,4 +217,60 @@
 
 .ezp-copy-btn:hover {
   background: #6d28d9;
+}
+
+/* Open in... section */
+.ezp-openin {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #30305a;
+}
+
+.ezp-openin > label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #a78bfa;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ezp-ai-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.ezp-ai-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px;
+  background: #0f0f23;
+  border: 1px solid #30305a;
+  border-radius: 8px;
+  color: #c4b5fd;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.ezp-ai-btn:hover {
+  background: #1e1b4b;
+  border-color: #7c3aed;
+  color: #fff;
+}
+
+.ezp-ai-btn-copied {
+  background: #065f46 !important;
+  border-color: #059669 !important;
+  color: #6ee7b7 !important;
+}
+
+.ezp-ai-icon {
+  font-size: 14px;
+  flex-shrink: 0;
 }

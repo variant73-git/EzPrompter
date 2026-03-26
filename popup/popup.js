@@ -1,5 +1,7 @@
 // EzPrompter - Popup Script
 
+const API_BASE = 'https://ezprompter.vercel.app'; // Change to your deployed URL
+
 const DEFAULTS = {
   apiProvider: 'gemini',
   apiKey: '',
@@ -27,6 +29,83 @@ document.addEventListener('DOMContentLoaded', () => {
   const ollamaUrlField = document.getElementById('ollama-url-field');
   const toggleBtn = document.getElementById('toggleKey');
   const status = document.getElementById('status');
+
+  // Account elements
+  const loggedOutEl = document.getElementById('logged-out');
+  const loggedInEl = document.getElementById('logged-in');
+  const userEmailEl = document.getElementById('userEmail');
+  const userPlanEl = document.getElementById('userPlan');
+  const usageInfoEl = document.getElementById('usageInfo');
+  const signInBtn = document.getElementById('signInBtn');
+  const dashboardBtn = document.getElementById('dashboardBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+
+  // ─── Account Management ─────────────────────────────────────
+
+  function showLoggedIn(user) {
+    loggedOutEl.style.display = 'none';
+    loggedInEl.style.display = 'block';
+    userEmailEl.textContent = user.email;
+    const isPro = user.plan === 'pro';
+    userPlanEl.textContent = isPro ? 'PRO' : 'FREE';
+    userPlanEl.className = 'account-badge' + (isPro ? ' badge-pro' : '');
+    if (isPro) {
+      usageInfoEl.textContent = 'Unlimited captures';
+    } else {
+      const used = user.capturesUsed || 0;
+      const limit = user.capturesLimit || 5;
+      usageInfoEl.textContent = `${used}/${limit} captures this month`;
+    }
+  }
+
+  function showLoggedOut() {
+    loggedOutEl.style.display = 'block';
+    loggedInEl.style.display = 'none';
+  }
+
+  async function checkAuth() {
+    const { authToken } = await chrome.storage.sync.get({ authToken: '' });
+    if (!authToken) {
+      showLoggedOut();
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/validate`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (!res.ok) throw new Error('Invalid token');
+      const { user } = await res.json();
+      showLoggedIn(user);
+    } catch (e) {
+      chrome.storage.sync.remove('authToken');
+      showLoggedOut();
+    }
+  }
+
+  signInBtn.addEventListener('click', () => {
+    chrome.tabs.create({ url: `${API_BASE}` });
+  });
+
+  dashboardBtn.addEventListener('click', () => {
+    chrome.tabs.create({ url: `${API_BASE}/dashboard` });
+  });
+
+  logoutBtn.addEventListener('click', () => {
+    chrome.storage.sync.remove('authToken', () => {
+      showLoggedOut();
+    });
+  });
+
+  // Check auth on popup open
+  checkAuth();
+
+  // Listen for token being set from the web portal
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.authToken) checkAuth();
+  });
+
+  // ─── Settings ───────────────────────────────────────────────
 
   function updateProviderUI(provider) {
     const isOllama = provider === 'ollama';

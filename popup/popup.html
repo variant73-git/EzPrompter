@@ -8,8 +8,29 @@
   <div class="container">
     <header>
       <h1>EzPrompter</h1>
-      <p class="subtitle">AI Image Prompt Describer</p>
+      <p class="subtitle">Remix everything.</p>
     </header>
+
+    <!-- Account Section -->
+    <div id="account-section">
+      <div id="logged-out" class="account-card">
+        <p class="account-label">Sign in to unlock Pro features</p>
+        <button type="button" id="signInBtn" class="accent-btn">Sign In / Create Account</button>
+      </div>
+      <div id="logged-in" class="account-card" style="display:none">
+        <div class="account-info">
+          <span class="account-email" id="userEmail"></span>
+          <span class="account-badge" id="userPlan">FREE</span>
+        </div>
+        <div class="account-usage" id="usageInfo"></div>
+        <div class="account-actions">
+          <button type="button" id="dashboardBtn" class="small-btn">Dashboard</button>
+          <button type="button" id="logoutBtn" class="small-btn small-btn-ghost">Log out</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-divider">AI Settings</div>
 
     <form id="settings-form">
       <div class="field">
@@ -57,7 +78,8 @@
     </form>
 
     <footer>
-      <p>Right-click any image &rarr; <strong>EzPrompter</strong></p>
+      <p>Right-click any image &rarr; <strong>Describe Prompt</strong></p>
+      <p>Right-click page &rarr; <strong>Capture Layout → Figma</strong> <span class="pro-tag">PRO</span></p>
     </footer>
   </div>
 

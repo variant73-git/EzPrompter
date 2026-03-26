@@ -6,9 +6,17 @@ chrome.runtime.onInstalled.addListener(() => {
     title: 'EzPrompter: Descrever prompt desta imagem',
     contexts: ['image']
   });
+  chrome.contextMenus.create({
+    id: 'ezprompter-capture',
+    title: 'EzPrompter: Capture Layout → Figma',
+    contexts: ['page']
+  });
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId === 'ezprompter-capture') {
+    return handleCaptureLayout(tab);
+  }
   if (info.menuItemId !== 'ezprompter-describe') return;
 
   const imageUrl = info.srcUrl;
@@ -57,7 +65,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     // 5. Success feedback
     setBadge('OK', '#065f46', tabId);
     showNotification('EzPrompter - Saved!', `${title} — ${domain}`);
-    injectOverlay(tabId, { success: true, prompt: promptDescription, fileName: safeName, folder: subFolder });
+    injectOverlay(tabId, { success: true, prompt: promptDescription, fileName: safeName, folder: subFolder, metadata });
 
     setTimeout(() => setBadge('', '', tabId), 5000);
 
@@ -147,21 +155,71 @@ function showOverlayInPage(state) {
       <p class="ezp-error">${escapeHtml(state.text)}</p>
     `;
   } else if (state.success) {
+    const jsonStr = state.metadata ? JSON.stringify(state.metadata, null, 2) : '{}';
     bodyContent = `
       <div class="ezp-success-badge">Saved!</div>
       <p class="ezp-filename">📁 ${escapeHtml(state.folder || '')}</p>
-      <div class="ezp-prompt-box">
-        <label>Generated Prompt:</label>
-        <div class="ezp-prompt-text">${escapeHtml(state.prompt)}</div>
+      <div class="ezp-tabs">
+        <button class="ezp-tab ezp-tab-active" data-tab="both">Prompt + Json</button>
+        <button class="ezp-tab" data-tab="prompt">Prompt</button>
+        <button class="ezp-tab" data-tab="json">Json</button>
+      </div>
+      <div class="ezp-tab-content ezp-tab-visible" data-content="both">
+        <div class="ezp-prompt-box">
+          <label>Generated Prompt:</label>
+          <div class="ezp-prompt-text">${escapeHtml(state.prompt)}</div>
+        </div>
+        <div class="ezp-prompt-box">
+          <label>Metadata (JSON):</label>
+          <div class="ezp-prompt-text ezp-json-text">${escapeHtml(jsonStr)}</div>
+        </div>
+      </div>
+      <div class="ezp-tab-content" data-content="prompt">
+        <div class="ezp-prompt-box">
+          <label>Generated Prompt:</label>
+          <div class="ezp-prompt-text">${escapeHtml(state.prompt)}</div>
+        </div>
+      </div>
+      <div class="ezp-tab-content" data-content="json">
+        <div class="ezp-prompt-box">
+          <label>Metadata (JSON):</label>
+          <div class="ezp-prompt-text ezp-json-text">${escapeHtml(jsonStr)}</div>
+        </div>
       </div>
       <button class="ezp-copy-btn" id="ezp-copy">Copy Prompt</button>
+      <div class="ezp-openin">
+        <label>Open in...</label>
+        <div class="ezp-ai-grid">
+          <button class="ezp-ai-btn" data-url="https://chatgpt.com/" data-name="ChatGPT">
+            <span class="ezp-ai-icon">✦</span> ChatGPT
+          </button>
+          <button class="ezp-ai-btn" data-url="https://gemini.google.com/app" data-name="Gemini">
+            <span class="ezp-ai-icon">◆</span> Gemini
+          </button>
+          <button class="ezp-ai-btn" data-url="https://leonardo.ai/ai-art-generator" data-name="Leonardo">
+            <span class="ezp-ai-icon">▲</span> Leonardo
+          </button>
+          <button class="ezp-ai-btn" data-url="https://ideogram.ai/" data-name="Ideogram">
+            <span class="ezp-ai-icon">◎</span> Ideogram
+          </button>
+          <button class="ezp-ai-btn" data-url="https://www.midjourney.com/" data-name="Midjourney">
+            <span class="ezp-ai-icon">⬡</span> Midjourney
+          </button>
+          <button class="ezp-ai-btn" data-url="https://dreamstudio.ai/" data-name="DreamStudio">
+            <span class="ezp-ai-icon">★</span> DreamStudio
+          </button>
+        </div>
+      </div>
     `;
   }
 
   overlay.innerHTML = `
     <div class="ezp-modal">
       <div class="ezp-header">
-        <span class="ezp-logo">EzPrompter</span>
+        <div class="ezp-header-left">
+          <span class="ezp-logo">EzPrompter</span>
+          <span class="ezp-tagline">Remix everything. Paste your prompt in the AI of your choice.</span>
+        </div>
         <button class="ezp-close" id="ezp-close">&times;</button>
       </div>
       <div class="ezp-body">
@@ -178,16 +236,276 @@ function showOverlayInPage(state) {
     if (e.target === overlay) overlay.remove();
   });
 
+  // Tab switching
+  const tabs = overlay.querySelectorAll('.ezp-tab');
+  const contents = overlay.querySelectorAll('.ezp-tab-content');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('ezp-tab-active'));
+      contents.forEach(c => c.classList.remove('ezp-tab-visible'));
+      tab.classList.add('ezp-tab-active');
+      const target = tab.getAttribute('data-tab');
+      const content = overlay.querySelector(`.ezp-tab-content[data-content="${target}"]`);
+      if (content) content.classList.add('ezp-tab-visible');
+      // Update copy button label
+      const copyBtn = overlay.querySelector('#ezp-copy');
+      if (copyBtn) {
+        if (target === 'json') copyBtn.textContent = 'Copy JSON';
+        else if (target === 'prompt') copyBtn.textContent = 'Copy Prompt';
+        else copyBtn.textContent = 'Copy All';
+      }
+    });
+  });
+
   // Copy button
   const copyBtn = overlay.querySelector('#ezp-copy');
   if (copyBtn && state.prompt) {
+    const jsonStr = state.metadata ? JSON.stringify(state.metadata, null, 2) : '{}';
     copyBtn.addEventListener('click', () => {
-      navigator.clipboard.writeText(state.prompt).then(() => {
+      const activeTab = overlay.querySelector('.ezp-tab-active');
+      const target = activeTab ? activeTab.getAttribute('data-tab') : 'both';
+      let textToCopy = '';
+      if (target === 'json') textToCopy = jsonStr;
+      else if (target === 'prompt') textToCopy = state.prompt;
+      else textToCopy = state.prompt + '\n\n---\n\n' + jsonStr;
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        const origLabel = copyBtn.textContent;
         copyBtn.textContent = 'Copied!';
-        setTimeout(() => { copyBtn.textContent = 'Copy Prompt'; }, 2000);
+        setTimeout(() => { copyBtn.textContent = origLabel; }, 2000);
       });
     });
   }
+
+  // Open in... buttons
+  overlay.querySelectorAll('.ezp-ai-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const url = btn.getAttribute('data-url');
+      const name = btn.getAttribute('data-name');
+      if (state.prompt) {
+        navigator.clipboard.writeText(state.prompt).then(() => {
+          btn.classList.add('ezp-ai-btn-copied');
+          const orig = btn.innerHTML;
+          btn.innerHTML = `<span class="ezp-ai-icon">✓</span> Copied! Opening...`;
+          window.open(url, '_blank');
+          setTimeout(() => {
+            btn.innerHTML = orig;
+            btn.classList.remove('ezp-ai-btn-copied');
+          }, 2000);
+        });
+      } else {
+        window.open(url, '_blank');
+      }
+    });
+  });
+}
+
+// ─── Layout Capture for Figma ───────────────────────────────────────────────
+
+const API_BASE = 'https://ezprompter.vercel.app'; // Change to your deployed URL
+
+async function handleCaptureLayout(tab) {
+  const tabId = tab.id;
+
+  setBadge('...', '#7c3aed', tabId);
+  injectOverlay(tabId, { loading: true, text: 'Checking account...' });
+
+  try {
+    // Check auth
+    const { authToken } = await chrome.storage.sync.get({ authToken: '' });
+    if (!authToken) {
+      throw new Error('Sign in required. Click the EzPrompter icon to connect your account.');
+    }
+
+    // Validate token and check plan/usage
+    const authRes = await fetch(`${API_BASE}/api/auth/validate`, {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+    if (!authRes.ok) {
+      chrome.storage.sync.remove('authToken');
+      throw new Error('Session expired. Please sign in again.');
+    }
+    const { user } = await authRes.json();
+    if (user.plan === 'free' && user.capturesUsed >= user.capturesLimit) {
+      throw new Error(`Free plan limit reached (${user.capturesLimit}/month). Upgrade to Pro for unlimited captures.`);
+    }
+
+    injectOverlay(tabId, { loading: true, text: 'Capturing layout...' });
+    const backendUrl = API_BASE;
+
+    // 1. Take screenshot
+    const screenshotDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+      format: 'png', quality: 92
+    });
+
+    // 2. Inject DOM capture script
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: captureDOMTree
+    });
+
+    const domTree = result.result;
+
+    // 3. Send to backend
+    const payload = {
+      url: tab.url,
+      title: tab.title,
+      screenshot: screenshotDataUrl,
+      viewport: domTree.viewport,
+      tree: domTree.tree,
+      timestamp: new Date().toISOString()
+    };
+
+    const response = await fetch(`${backendUrl}/api/captures`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) throw new Error(`Backend error: ${response.status}`);
+    const { id } = await response.json();
+
+    // 4. Success
+    setBadge('OK', '#065f46', tabId);
+    injectOverlay(tabId, {
+      success: true,
+      prompt: `Capture ID: ${id}\n\nOpen the EzPrompter plugin in Figma and paste this ID to import the layout.`,
+      metadata: { captureId: id, url: tab.url, title: tab.title, backendUrl },
+      fileName: '',
+      folder: `Layout captured → ${extractDomain(tab.url)}`
+    });
+    setTimeout(() => setBadge('', '', tabId), 5000);
+
+  } catch (error) {
+    console.error('EzPrompter capture error:', error);
+    setBadge('ERR', '#dc2626', tabId);
+    injectOverlay(tabId, { error: true, text: `Capture failed: ${error.message}` });
+    setTimeout(() => setBadge('', '', tabId), 5000);
+  }
+}
+
+// This function runs IN the page context to capture the DOM tree
+function captureDOMTree() {
+  const MAX_DEPTH = 15;
+  const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'LINK', 'META', 'HEAD', 'BR', 'HR']);
+  const INLINE_TEXT_TAGS = new Set(['SPAN', 'A', 'STRONG', 'EM', 'B', 'I', 'U', 'SMALL', 'CODE', 'MARK', 'SUB', 'SUP']);
+
+  function getTextContent(el) {
+    let text = '';
+    for (const child of el.childNodes) {
+      if (child.nodeType === 3) text += child.textContent;
+      else if (child.nodeType === 1 && INLINE_TEXT_TAGS.has(child.tagName)) text += child.textContent;
+    }
+    return text.trim();
+  }
+
+  function extractStyles(el) {
+    const cs = window.getComputedStyle(el);
+    return {
+      display: cs.display,
+      position: cs.position,
+      overflow: cs.overflow,
+      flexDirection: cs.flexDirection,
+      justifyContent: cs.justifyContent,
+      alignItems: cs.alignItems,
+      gap: cs.gap,
+      backgroundColor: cs.backgroundColor,
+      color: cs.color,
+      fontSize: cs.fontSize,
+      fontFamily: cs.fontFamily,
+      fontWeight: cs.fontWeight,
+      lineHeight: cs.lineHeight,
+      letterSpacing: cs.letterSpacing,
+      textAlign: cs.textAlign,
+      borderRadius: cs.borderRadius,
+      border: cs.border,
+      borderColor: cs.borderColor,
+      borderWidth: cs.borderWidth,
+      borderStyle: cs.borderStyle,
+      padding: cs.padding,
+      paddingTop: cs.paddingTop,
+      paddingRight: cs.paddingRight,
+      paddingBottom: cs.paddingBottom,
+      paddingLeft: cs.paddingLeft,
+      margin: cs.margin,
+      opacity: cs.opacity,
+      boxShadow: cs.boxShadow,
+      backgroundImage: cs.backgroundImage,
+      visibility: cs.visibility,
+      width: cs.width,
+      height: cs.height,
+      maxWidth: cs.maxWidth,
+      minHeight: cs.minHeight
+    };
+  }
+
+  function walkDOM(el, depth) {
+    if (depth > MAX_DEPTH) return null;
+    if (!(el instanceof HTMLElement)) return null;
+    if (SKIP_TAGS.has(el.tagName)) return null;
+
+    const styles = extractStyles(el);
+    if (styles.display === 'none' || styles.visibility === 'hidden') return null;
+
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 && rect.height < 1) return null;
+
+    const classes = Array.from(el.classList).slice(0, 5).join('.');
+    const tag = el.tagName.toLowerCase();
+    const name = classes ? `${tag}.${classes}` : tag;
+
+    const node = {
+      tag,
+      name,
+      rect: {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        w: Math.round(rect.width),
+        h: Math.round(rect.height)
+      },
+      styles
+    };
+
+    // Check if it's an image
+    if (tag === 'img') {
+      node.isImage = true;
+      node.src = el.src;
+      node.alt = el.alt || '';
+    }
+
+    // Check for background image
+    if (styles.backgroundImage && styles.backgroundImage !== 'none') {
+      node.hasBackgroundImage = true;
+    }
+
+    // Extract text content (only direct text, not nested)
+    const text = getTextContent(el);
+    if (text) {
+      node.text = text.slice(0, 500);
+    }
+
+    // Recurse children
+    const children = [];
+    for (const child of el.children) {
+      const childNode = walkDOM(child, depth + 1);
+      if (childNode) children.push(childNode);
+    }
+    if (children.length > 0) node.children = children;
+
+    return node;
+  }
+
+  const tree = walkDOM(document.body, 0);
+  return {
+    viewport: {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      scrollHeight: document.documentElement.scrollHeight
+    },
+    tree
+  };
 }
 
 function getSettings() {

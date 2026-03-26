@@ -8,7 +8,7 @@ Clique direito em uma imagem → "EzPrompter" → salva imagem + `.md` + `.json`
 `claude/ai-image-description-extension-Tp3jY`
 
 ## Versão atual
-`1.0.3`
+`1.0.5`
 
 ## Estrutura
 ```
