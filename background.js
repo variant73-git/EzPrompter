@@ -115,11 +115,65 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// Also listen for messages from content script (fallback)
+// Listen for messages from content scripts and panel
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'getSettings') {
     getSettings().then(settings => sendResponse(settings));
     return true;
+  }
+
+  if (message.action === 'captureCurrentPage') {
+    // Get the active tab and run the capture flow
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) handleCaptureLayout(tabs[0]);
+    });
+    return false;
+  }
+
+  if (message.action === 'describeImage') {
+    // Trigger image describe from panel (same as context menu)
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (!tabs[0]) return;
+      const tab = tabs[0];
+      const tabId = tab.id;
+      const imageUrl = message.imageUrl;
+      if (!imageUrl) return;
+
+      setBadge('...', '#7c3aed', tabId);
+      try {
+        const settings = await getSettings();
+        if (!settings.apiKey && settings.apiProvider !== 'ollama') {
+          throw new Error('API key not configured.');
+        }
+        const maxSize = settings.apiProvider === 'ollama' ? 768 : 1536;
+        const imageData = await fetchImageAsBase64(imageUrl, maxSize);
+        const { title, prompt: promptDescription } = await describeImageWithAI(imageData, settings);
+        const timestamp = new Date().toISOString();
+        const domain = extractDomain(tab.url || '');
+
+        await saveRecentPrompt({
+          id: Date.now().toString(),
+          title,
+          prompt: promptDescription,
+          style: 'photorealistic',
+          aspectRatio: '1:1',
+          timestamp,
+          domain,
+          imageUrl
+        });
+
+        setBadge('OK', '#065f46', tabId);
+        setTimeout(() => setBadge('', '', tabId), 3000);
+        // Notify panel that prompt is ready
+        chrome.tabs.sendMessage(tabId, { action: 'promptReady', title, prompt: promptDescription });
+      } catch (error) {
+        console.error('Image describe error:', error);
+        setBadge('ERR', '#dc2626', tabId);
+        setTimeout(() => setBadge('', '', tabId), 3000);
+        chrome.tabs.sendMessage(tabId, { action: 'promptError', error: error.message });
+      }
+    });
+    return false;
   }
 });
 

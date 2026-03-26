@@ -281,3 +281,51 @@
   resize: vertical; outline: none; margin-bottom: 8px;
 }
 #repixbridge-panel .rb-edit-textarea:focus { border-color: var(--rb-accent); }
+
+/* --- Image Grid --- */
+#repixbridge-panel .rb-img-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+#repixbridge-panel .rb-img-item {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  aspect-ratio: 1;
+  background: var(--rb-surface);
+}
+#repixbridge-panel .rb-img-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 200ms ease;
+}
+#repixbridge-panel .rb-img-item:hover img { transform: scale(1.05); }
+#repixbridge-panel .rb-img-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+#repixbridge-panel .rb-img-item:hover .rb-img-overlay { opacity: 1; }
+#repixbridge-panel .rb-img-remix {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.5);
+  background: none;
+  color: #fff;
+  cursor: pointer;
+  transition: all 150ms;
+}
+#repixbridge-panel .rb-img-remix:hover { background: #fff; color: #000; border-color: #fff; }
+#repixbridge-panel .rb-img-remix:disabled { opacity: 0.6; cursor: wait; }

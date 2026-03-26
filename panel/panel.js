@@ -80,7 +80,9 @@
         </div>
 
         <div class="rb-content-scroll" id="rb-contentDark" style="display:none"></div>
-        <div class="rb-content-scroll" id="rb-contentLight" style="display:none"></div>
+        <div class="rb-content-scroll" id="rb-contentLight" style="display:none">
+          <div class="rb-img-grid" id="rb-imgGrid"></div>
+        </div>
       </div>
 
       <!-- Settings -->
@@ -279,7 +281,8 @@
   }
 
   function loadContent() {
-    if (currentMode === 'light') loadPrompts(); else loadCaptures();
+    if (currentMode === 'light') { loadPageImages(); loadPrompts(); }
+    else loadCaptures();
   }
 
   function loadPrompts() {
@@ -480,6 +483,81 @@
       if (arc2) { arc2.style.strokeDashoffset = '160'; }
     });
   }
+
+  // --- Image Gallery (Pinterest-style) ---
+  function loadPageImages() {
+    const grid = $('#rb-imgGrid');
+    if (!grid) return;
+
+    // Collect all images > 100x100 (skip icons, avatars, tracking pixels)
+    const allImgs = Array.from(document.querySelectorAll('img'));
+    const candidates = [];
+
+    allImgs.forEach(img => {
+      const w = img.naturalWidth || img.width || 0;
+      const h = img.naturalHeight || img.height || 0;
+      const src = img.currentSrc || img.src || '';
+      if (!src || src.startsWith('data:image/svg') || src.startsWith('data:image/gif')) return;
+      if (w < 100 || h < 100) return;
+      // Skip duplicates
+      if (candidates.some(c => c.src === src)) return;
+      candidates.push({ src, w, h, alt: img.alt || '' });
+    });
+
+    // Also check CSS background images on major containers
+    document.querySelectorAll('[style*="background-image"], section, div, article').forEach(el => {
+      const bg = getComputedStyle(el).backgroundImage;
+      if (bg && bg !== 'none') {
+        const match = bg.match(/url\(["']?(https?:\/\/[^"')]+)["']?\)/);
+        if (match && !candidates.some(c => c.src === match[1])) {
+          candidates.push({ src: match[1], w: 200, h: 200, alt: '' });
+        }
+      }
+    });
+
+    // Sort by size (largest first), limit to 12
+    candidates.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+    const top = candidates.slice(0, 12);
+
+    if (top.length === 0) {
+      grid.innerHTML = '<p class="rb-empty">No images found on this page.</p>';
+      return;
+    }
+
+    grid.innerHTML = '';
+    top.forEach(img => {
+      const item = document.createElement('div');
+      item.className = 'rb-img-item';
+      item.innerHTML = `
+        <img src="${esc(img.src)}" alt="${esc(img.alt)}" loading="lazy"/>
+        <div class="rb-img-overlay">
+          <button class="rb-img-remix" data-src="${esc(img.src)}">Remix</button>
+        </div>
+      `;
+      // Click to remix this specific image
+      item.querySelector('.rb-img-remix').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const btn = e.target;
+        btn.textContent = 'Analyzing...';
+        btn.disabled = true;
+        chrome.runtime.sendMessage({ action: 'describeImage', imageUrl: img.src });
+      });
+      grid.appendChild(item);
+    });
+  }
+
+  // Listen for prompt results from background
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.action === 'promptReady') {
+      // Refresh the image grid buttons
+      $$('.rb-img-remix').forEach(btn => { btn.textContent = 'Remix'; btn.disabled = false; });
+      // Could also switch to prompts view or show a toast
+      loadPrompts();
+    }
+    if (message.action === 'promptError') {
+      $$('.rb-img-remix').forEach(btn => { btn.textContent = 'Remix'; btn.disabled = false; });
+    }
+  });
 
   // --- Init ---
   chrome.storage.sync.get({ onboardingDone: false, activeMode: 'dark' }, (data) => {
