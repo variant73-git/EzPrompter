@@ -425,7 +425,8 @@
     const pct = $('#rb-loaderPct');
     const msg = $('#rb-siteMsg');
     const remixBtn = $('#rb-remixSite');
-    if (!analysis) return;
+    console.log('RepixBridge analyzeSite:', { analysis: !!analysis, loader: !!loader, pct: !!pct, msg: !!msg, remixBtn: !!remixBtn });
+    if (!analysis) { console.warn('RepixBridge: rb-siteAnalysis not found'); return; }
 
     const domain = window.location.hostname.replace(/^www\./, '');
     const title = document.title || '';
