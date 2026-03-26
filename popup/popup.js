@@ -143,7 +143,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function applyMode(mode) {
     document.body.dataset.mode = mode;
-    document.body.style.background = mode === 'dark' ? '#000' : '#EFEEEB';
     const htmlContent = document.getElementById('contentDark');
     const remixContent = document.getElementById('contentLight');
     if (htmlContent) htmlContent.hidden = mode !== 'dark';

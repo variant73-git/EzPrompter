@@ -21,19 +21,19 @@ body[data-mode="light"] {
   --rb-accent: #000000;
 }
 
-html, body {
-  background: var(--rb-bg);
-  margin: 0;
-  padding: 0;
+html {
+  background: transparent;
 }
 
 body {
-  width: 380px;
-  height: 520px;
+  width: 396px;
+  height: 536px;
+  padding: 8px;
   font-family: 'Instrument Sans', sans-serif;
   font-weight: 400;
   font-size: 13px;
   line-height: 1.4;
+  background: transparent;
   color: var(--rb-fg);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -45,7 +45,7 @@ body {
   border-radius: 40px;
   overflow: hidden;
   padding: 28px 24px 32px;
-  height: 520px;
+  height: 100%;
   display: flex;
   flex-direction: column;
   transition: background-color 300ms ease, color 300ms ease;
