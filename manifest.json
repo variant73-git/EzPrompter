@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "EzPrompter - AI Image Prompt Describer",
-  "version": "1.0.5",
-  "description": "Remix everything — AI prompt reverse-engineering + layout capture to Figma",
+  "name": "RepixBridge",
+  "version": "2.0.0",
+  "description": "Design without borders — bridge web references to design tools and AI image models",
   "permissions": [
     "contextMenus",
     "storage",

@@ -87,7 +87,7 @@ function showOverlayInPage(state) {
     <div class="ezp-modal">
       <div class="ezp-header">
         <div class="ezp-header-left">
-          <span class="ezp-logo">EzPrompter</span>
+          <span class="ezp-logo">RepixBridge</span>
           <span class="ezp-tagline">Remix everything. Paste your prompt in the AI of your choice.</span>
         </div>
         <button class="ezp-close" id="ezp-close">&times;</button>

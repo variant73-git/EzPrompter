@@ -3,12 +3,12 @@
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: 'ezprompter-describe',
-    title: 'EzPrompter: Descrever prompt desta imagem',
+    title: 'RepixBridge: Image Remix — Describe Prompt',
     contexts: ['image']
   });
   chrome.contextMenus.create({
     id: 'ezprompter-capture',
-    title: 'EzPrompter: Capture Layout → Figma',
+    title: 'RepixBridge: Capture Layout → Design Tool',
     contexts: ['page']
   });
 });
@@ -62,9 +62,21 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     // 4. Save all files inside the subfolder
     await saveAllFiles(imageData, metadata, safeName, subFolder);
 
+    // 4b. Save to recent prompts (for popup repository)
+    await saveRecentPrompt({
+      id: Date.now().toString(),
+      title,
+      prompt: promptDescription,
+      style: 'photorealistic',
+      aspectRatio: '1:1',
+      timestamp,
+      domain,
+      metadata
+    });
+
     // 5. Success feedback
     setBadge('OK', '#065f46', tabId);
-    showNotification('EzPrompter - Saved!', `${title} — ${domain}`);
+    showNotification('RepixBridge - Saved!', `${title} — ${domain}`);
     injectOverlay(tabId, { success: true, prompt: promptDescription, fileName: safeName, folder: subFolder, metadata });
 
     setTimeout(() => setBadge('', '', tabId), 5000);
@@ -217,7 +229,7 @@ function showOverlayInPage(state) {
     <div class="ezp-modal">
       <div class="ezp-header">
         <div class="ezp-header-left">
-          <span class="ezp-logo">EzPrompter</span>
+          <span class="ezp-logo">RepixBridge</span>
           <span class="ezp-tagline">Remix everything. Paste your prompt in the AI of your choice.</span>
         </div>
         <button class="ezp-close" id="ezp-close">&times;</button>
@@ -367,11 +379,21 @@ async function handleCaptureLayout(tab) {
     if (!response.ok) throw new Error(`Backend error: ${response.status}`);
     const { id } = await response.json();
 
-    // 4. Success
+    // 4b. Save to recent captures
+    await saveRecentCapture({
+      id: Date.now().toString(),
+      captureId: id,
+      url: tab.url,
+      domain: extractDomain(tab.url),
+      title: tab.title,
+      timestamp: new Date().toISOString()
+    });
+
+    // 4c. Success
     setBadge('OK', '#065f46', tabId);
     injectOverlay(tabId, {
       success: true,
-      prompt: `Capture ID: ${id}\n\nOpen the EzPrompter plugin in Figma and paste this ID to import the layout.`,
+      prompt: `Capture ID: ${id}\n\nOpen the RepixBridge plugin in your design tool and paste this ID to import the layout.`,
       metadata: { captureId: id, url: tab.url, title: tab.title, backendUrl },
       fileName: '',
       folder: `Layout captured → ${extractDomain(tab.url)}`
@@ -506,6 +528,22 @@ function captureDOMTree() {
     },
     tree
   };
+}
+
+// ─── Storage Helpers for Popup Repository ───────────────────────────────────
+
+async function saveRecentPrompt(prompt) {
+  const { recentPrompts = [] } = await chrome.storage.local.get({ recentPrompts: [] });
+  recentPrompts.unshift(prompt);
+  if (recentPrompts.length > 50) recentPrompts.length = 50;
+  await chrome.storage.local.set({ recentPrompts });
+}
+
+async function saveRecentCapture(capture) {
+  const { recentCaptures = [] } = await chrome.storage.local.get({ recentCaptures: [] });
+  recentCaptures.unshift(capture);
+  if (recentCaptures.length > 50) recentCaptures.length = 50;
+  await chrome.storage.local.set({ recentCaptures });
 }
 
 function getSettings() {
