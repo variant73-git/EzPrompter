@@ -82,6 +82,7 @@
         <div class="rb-content-scroll" id="rb-contentDark" style="display:none"></div>
         <div class="rb-content-scroll" id="rb-contentLight" style="display:none">
           <div class="rb-img-grid" id="rb-imgGrid"></div>
+          <div id="rb-promptsList"></div>
         </div>
       </div>
 
@@ -288,10 +289,11 @@
   }
 
   function loadPrompts() {
-    const c = $('#rb-contentLight');
+    const c = $('#rb-promptsList');
+    if (!c) return;
     chrome.storage.local.get({ recentPrompts: [] }, (d) => {
       const items = d.recentPrompts || [];
-      if (!items.length) { c.innerHTML = '<p class="rb-empty">No prompts yet. Right-click any image to get started.</p>'; return; }
+      if (!items.length) { c.innerHTML = ''; return; }
       c.innerHTML = '';
       items.slice(0, 20).forEach(item => {
         const pills = Object.keys(AI_URLS).map(n =>
