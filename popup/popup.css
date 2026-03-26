@@ -24,20 +24,19 @@ body[data-mode="light"] {
 html, body {
   margin: 0;
   padding: 0;
-  background: transparent !important;
+  background: var(--rb-bg);
+  overflow: hidden;
 }
 
 body {
-  width: 400px;
-  height: 540px;
-  padding: 10px;
+  width: 100%;
+  height: 100vh;
   font-family: 'Instrument Sans', sans-serif;
   font-weight: 400;
   font-size: 13px;
   line-height: 1.4;
   color: var(--rb-fg);
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
 }
 
 /* --- Widget shell --- */
@@ -46,7 +45,7 @@ body {
   border-radius: 40px;
   overflow: hidden;
   padding: 28px 24px 32px;
-  height: 100%;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   transition: background-color 300ms ease, color 300ms ease;
