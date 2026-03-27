@@ -224,7 +224,6 @@
 #repixbridge-panel .rb-loader-ring { position: relative; width: 80px; height: 80px; }
 #repixbridge-panel .rb-loader-arc {
   transition: stroke-dashoffset 150ms ease-out;
-  transform: rotate(-90deg); transform-origin: center;
 }
 #repixbridge-panel .rb-loader-pct {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);

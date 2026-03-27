@@ -77,7 +77,8 @@
               <svg viewBox="0 0 80 80" width="80" height="80">
                 <circle cx="40" cy="40" r="34" stroke="var(--rb-border)" stroke-width="3" fill="none"/>
                 <circle cx="40" cy="40" r="34" stroke="var(--rb-accent)" stroke-width="3" fill="none"
-                  stroke-dasharray="214" stroke-dashoffset="214" stroke-linecap="round" class="rb-loader-arc"/>
+                  stroke-dasharray="214" stroke-dashoffset="214" stroke-linecap="round"
+                  transform="rotate(-90 40 40)" class="rb-loader-arc"/>
               </svg>
               <span class="rb-loader-pct" id="rb-loaderPct">0%</span>
             </div>
@@ -425,8 +426,7 @@
     const pct = $('#rb-loaderPct');
     const msg = $('#rb-siteMsg');
     const remixBtn = $('#rb-remixSite');
-    console.log('RepixBridge analyzeSite:', { analysis: !!analysis, loader: !!loader, pct: !!pct, msg: !!msg, remixBtn: !!remixBtn });
-    if (!analysis) { console.warn('RepixBridge: rb-siteAnalysis not found'); return; }
+    if (!analysis) return;
 
     const domain = window.location.hostname.replace(/^www\./, '');
     const title = document.title || '';

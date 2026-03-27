@@ -19,21 +19,17 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || !tab.id) return;
   const tabId = tab.id;
 
-  console.log('RepixBridge: icon clicked, injecting into tab', tabId);
-
   try {
     await chrome.scripting.insertCSS({
       target: { tabId },
       files: ['panel/panel.css']
     });
-    console.log('RepixBridge: CSS injected');
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ['panel/panel.js']
     });
-    console.log('RepixBridge: JS injected');
   } catch (e) {
-    console.error('RepixBridge: injection failed:', e);
+    console.warn('RepixBridge: injection failed:', e);
   }
 });
 
@@ -142,7 +138,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         chrome.tabs.sendMessage(tabId, { action: 'imageGenError', error: err.message });
       }
     });
-    return true;
+    return false;
   }
 
   if (message.action === 'describeImage') {
