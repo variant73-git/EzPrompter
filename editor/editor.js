@@ -10,6 +10,10 @@
   var ftueShown = {};
   try { ftueShown = JSON.parse(localStorage.getItem('rb-ftue') || '{}'); } catch(e) {}
 
+  // The target document — either iframe (rebuild mode) or page document (fallback)
+  var targetDoc = document;
+  var rebuildActive = false;
+
   // Skip tags
   var SKIP = new Set(['HTML','BODY','HEAD','SCRIPT','STYLE','META','LINK','BR','HR','NOSCRIPT','TITLE','BASE']);
 
@@ -70,7 +74,18 @@
   // Build UI components
   buildBanner();
   buildInspector();
-  listen();
+
+  // Try rebuild engine first, fallback to direct DOM editing
+  if (window.__rbRebuild) {
+    window.__rbRebuild.rebuild(function(iframeDoc) {
+      targetDoc = iframeDoc;
+      rebuildActive = true;
+      listen();
+      showFtue('rebuild', 'Editing rebuilt page. Every element is independent.', 100, 80);
+    });
+  } else {
+    listen();
+  }
 
   // ============ HELPERS ============
 
@@ -197,11 +212,117 @@
     // Body
     inspBody = mk('div');
     inspBody.id = 'rb-ed-insp-body';
-    var empty = mk('div', 'rb-insp-empty');
-    empty.textContent = 'Select an element';
-    inspBody.appendChild(empty);
+    showGlobalCSS();
     inspector.appendChild(inspBody);
     root.appendChild(inspector);
+  }
+
+  function showGlobalCSS() {
+    inspBody.innerHTML = '';
+    var cs = getComputedStyle(document.body);
+    var docEl = getComputedStyle(document.documentElement);
+
+    // Page info
+    var pageSec = addSection('Page', false);
+    addRow(pageSec, 'URL', window.location.hostname);
+    addRow(pageSec, 'Title', (document.title || '').slice(0, 30));
+    addRow(pageSec, 'Viewport', window.innerWidth + ' × ' + window.innerHeight);
+    addRow(pageSec, 'Sheets', document.styleSheets.length + ' stylesheets');
+
+    // Global typography
+    var typSec = addSection('Typography', false);
+    addRow(typSec, 'Font', cs.fontFamily.split(',')[0].replace(/['"]/g, '').trim());
+    addRow(typSec, 'Size', cs.fontSize);
+    addRow(typSec, 'Weight', cs.fontWeight);
+    addRow(typSec, 'Line H', cs.lineHeight);
+    addRow(typSec, 'Color', rgbHex(cs.color));
+
+    // Detect fonts used on the page
+    var fontsUsed = new Set();
+    document.querySelectorAll('h1,h2,h3,p,a,span,div,li,button').forEach(function(el) {
+      if(fontsUsed.size > 8) return;
+      var f = getComputedStyle(el).fontFamily.split(',')[0].replace(/['"]/g, '').trim();
+      if(f) fontsUsed.add(f);
+    });
+    if(fontsUsed.size > 0) {
+      var pills = mk('div', 'rb-insp-pills');
+      fontsUsed.forEach(function(f) {
+        var p = mk('span', 'rb-insp-pill'); p.textContent = f;
+        p.style.fontFamily = f;
+        pills.appendChild(p);
+      });
+      addRow(typSec, 'In use', pills);
+    }
+
+    // Colors
+    var colSec = addSection('Colors', false);
+    addColor(colSec, 'Body BG', cs.backgroundColor, document.body, 'backgroundColor');
+    addColor(colSec, 'Text', cs.color, document.body, 'color');
+    // Detect link color
+    var link = document.querySelector('a');
+    if(link) addRow(colSec, 'Links', rgbHex(getComputedStyle(link).color));
+
+    // Extract dominant colors from the page
+    var colorSet = new Set();
+    document.querySelectorAll('h1,h2,h3,button,a,.btn,[class*=primary],[class*=accent]').forEach(function(el) {
+      if(colorSet.size > 6) return;
+      var bg = getComputedStyle(el).backgroundColor;
+      var c = getComputedStyle(el).color;
+      if(bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') colorSet.add(rgbHex(bg));
+      if(c) colorSet.add(rgbHex(c));
+    });
+    if(colorSet.size > 0) {
+      var swatches = mk('div', 'rb-insp-color-row');
+      colorSet.forEach(function(hex) {
+        var sw = mk('div', 'rb-insp-swatch');
+        sw.style.background = hex;
+        sw.title = hex;
+        swatches.appendChild(sw);
+      });
+      addRow(colSec, 'Palette', swatches);
+    }
+
+    // CSS Variables
+    var vars = [];
+    try {
+      var rootStyles = getComputedStyle(document.documentElement);
+      var sheets = document.styleSheets;
+      for(var i = 0; i < sheets.length && vars.length < 10; i++) {
+        try {
+          var rules = sheets[i].cssRules || [];
+          for(var j = 0; j < rules.length && vars.length < 10; j++) {
+            if(rules[j].selectorText === ':root' || rules[j].selectorText === ':root, :host') {
+              var text = rules[j].cssText;
+              var matches = text.match(/--[\w-]+/g);
+              if(matches) matches.forEach(function(v) { if(vars.length < 10) vars.push(v); });
+            }
+          }
+        } catch(e) {} // CORS blocked sheets
+      }
+    } catch(e) {}
+
+    if(vars.length > 0) {
+      var varsSec = addSection('CSS Variables', true);
+      vars.forEach(function(v) {
+        var val = docEl.getPropertyValue(v).trim();
+        if(val) addRow(varsSec, v.replace('--',''), val.slice(0, 20));
+      });
+    }
+
+    // Layout
+    var laySec = addSection('Layout', true);
+    addRow(laySec, 'Display', cs.display);
+    addRow(laySec, 'Box Size', cs.boxSizing);
+    addRow(laySec, 'Overflow', cs.overflow);
+    addRow(laySec, 'Margin', cs.margin);
+    addRow(laySec, 'Padding', cs.padding);
+
+    // Hint
+    var hint = mk('div', 'rb-insp-empty');
+    hint.textContent = 'Click any element to inspect';
+    hint.style.paddingTop = '12px';
+    hint.style.paddingBottom = '12px';
+    inspBody.appendChild(hint);
   }
 
   // ============ SECTIONS & ROWS ============
@@ -559,10 +680,7 @@
     var lock = document.getElementById('rb-ed-lock');
     if (lock) lock.remove();
     hideSpacingGuides();
-    inspBody.innerHTML = '';
-    var empty = mk('div', 'rb-insp-empty');
-    empty.textContent = 'Select an element';
-    inspBody.appendChild(empty);
+    showGlobalCSS();
   }
 
   // ============ UPDATE OVERLAYS ============
@@ -904,7 +1022,9 @@
     // Hover
     var tMove = throttle(function(e) {
       if (isDragging) return;
-      var el = document.elementFromPoint(e.clientX, e.clientY);
+      var el = rebuildActive
+        ? targetDoc.elementFromPoint(e.clientX, e.clientY)
+        : document.elementFromPoint(e.clientX, e.clientY);
       if (!el || !isValid(el) || el === selectedEl) {
         if (lastHoverEl) {
           lastHoverEl.classList.remove('rb-ed-text-hint');
@@ -930,7 +1050,9 @@
         e.stopPropagation();
       }
 
-      var el = document.elementFromPoint(e.clientX, e.clientY);
+      var el = rebuildActive
+        ? targetDoc.elementFromPoint(e.clientX, e.clientY)
+        : document.elementFromPoint(e.clientX, e.clientY);
       if (!el || isEditorEl(el)) return;
       if (!isValid(el)) return;
 
@@ -952,7 +1074,9 @@
     var dragThreshold = false;
     document.addEventListener('mousedown', function(e) {
       if (!selectedEl || isEditorEl(e.target)) return;
-      var el = document.elementFromPoint(e.clientX, e.clientY);
+      var el = rebuildActive
+        ? targetDoc.elementFromPoint(e.clientX, e.clientY)
+        : document.elementFromPoint(e.clientX, e.clientY);
       if (el !== selectedEl) return;
       if (selectedEl.contentEditable === 'true') return;
       dragStart = {x: e.clientX, y: e.clientY};
@@ -1071,6 +1195,13 @@
     document.body.classList.remove('rb-ed-active', 'rb-ed-dragging');
     document.body.style.overflow = '';
     document.body.style.paddingTop = '';
+
+    // Clean up rebuild engine
+    if (window.__rbRebuild) {
+      window.__rbRebuild.destroy();
+      rebuildActive = false;
+      targetDoc = document;
+    }
 
     document.querySelectorAll('[data-rb-editing]').forEach(function(el) {
       el.contentEditable = 'false';

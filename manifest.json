@@ -46,7 +46,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["editor/editor.css", "editor/editor.js"],
+      "resources": ["editor/editor.css", "editor/editor.js", "editor/rebuild.js"],
       "matches": ["<all_urls>"]
     }
   ]
