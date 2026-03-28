@@ -487,10 +487,15 @@
             "background:" + bodyBg
           ].join(";");
 
-          // Hide original page
-          originalBodyDisplay = document.body.style.display;
-          document.body.style.opacity = "0";
-          document.body.style.pointerEvents = "none";
+          // Hide original page content (but NOT editor overlays)
+          originalBodyDisplay = [];
+          Array.from(document.body.children).forEach(function (child) {
+            if (child.id === 'rb-editor-root' || child.id === 'repixbridge-panel') return;
+            if (child === iframeEl) return;
+            originalBodyDisplay.push({ el: child, opacity: child.style.opacity, pe: child.style.pointerEvents });
+            child.style.opacity = '0';
+            child.style.pointerEvents = 'none';
+          });
 
           document.documentElement.appendChild(iframeEl);
 
@@ -530,12 +535,14 @@
     }
     iframeEl = null;
 
-    // Restore original page
-    document.body.style.opacity = "";
-    document.body.style.pointerEvents = "";
-    if (originalBodyDisplay !== undefined) {
-      document.body.style.display = originalBodyDisplay;
+    // Restore original page content
+    if (Array.isArray(originalBodyDisplay)) {
+      originalBodyDisplay.forEach(function (item) {
+        item.el.style.opacity = item.opacity || '';
+        item.el.style.pointerEvents = item.pe || '';
+      });
     }
+    originalBodyDisplay = [];
 
     nodeMap = {};
     nodeCounter = 0;
