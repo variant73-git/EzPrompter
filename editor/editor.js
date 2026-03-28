@@ -10,9 +10,8 @@
   var ftueShown = {};
   try { ftueShown = JSON.parse(localStorage.getItem('rb-ftue') || '{}'); } catch(e) {}
 
-  // The target document — either iframe (rebuild mode) or page document (fallback)
+  // Target document is always the page document (no iframe in v4)
   var targetDoc = document;
-  var rebuildActive = false;
 
   // Skip tags
   var SKIP = new Set(['HTML','BODY','HEAD','SCRIPT','STYLE','META','LINK','BR','HR','NOSCRIPT','TITLE','BASE']);
@@ -75,13 +74,10 @@
   buildBanner();
   buildInspector();
 
-  // Try rebuild engine first, fallback to direct DOM editing
+  // Prepare page for editing (tag elements, disable interactivity)
   if (window.__rbRebuild) {
-    window.__rbRebuild.rebuild(function(iframeDoc) {
-      targetDoc = iframeDoc;
-      rebuildActive = true;
+    window.__rbRebuild.rebuild(function() {
       listen();
-      showFtue('rebuild', 'Editing rebuilt page. Every element is independent.', 100, 80);
     });
   } else {
     listen();
@@ -1097,9 +1093,7 @@
     // Hover
     var tMove = throttle(function(e) {
       if (isDragging) return;
-      var el = rebuildActive
-        ? targetDoc.elementFromPoint(e.clientX, e.clientY)
-        : document.elementFromPoint(e.clientX, e.clientY);
+      var el = document.elementFromPoint(e.clientX, e.clientY);
       if (!el || !isValid(el) || el === selectedEl) {
         if (lastHoverEl) {
           lastHoverEl.classList.remove('rb-ed-text-hint');
@@ -1125,9 +1119,7 @@
         e.stopPropagation();
       }
 
-      var el = rebuildActive
-        ? targetDoc.elementFromPoint(e.clientX, e.clientY)
-        : document.elementFromPoint(e.clientX, e.clientY);
+      var el = document.elementFromPoint(e.clientX, e.clientY);
       if (!el || isEditorEl(el)) return;
       if (!isValid(el)) return;
 
@@ -1149,9 +1141,7 @@
     var dragThreshold = false;
     document.addEventListener('mousedown', function(e) {
       if (!selectedEl || isEditorEl(e.target)) return;
-      var el = rebuildActive
-        ? targetDoc.elementFromPoint(e.clientX, e.clientY)
-        : document.elementFromPoint(e.clientX, e.clientY);
+      var el = document.elementFromPoint(e.clientX, e.clientY);
       if (el !== selectedEl) return;
       if (selectedEl.contentEditable === 'true') return;
       dragStart = {x: e.clientX, y: e.clientY};
@@ -1274,8 +1264,6 @@
     // Clean up rebuild engine
     if (window.__rbRebuild) {
       window.__rbRebuild.destroy();
-      rebuildActive = false;
-      targetDoc = document;
     }
 
     document.querySelectorAll('[data-rb-editing]').forEach(function(el) {
