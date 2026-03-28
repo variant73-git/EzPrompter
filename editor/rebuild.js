@@ -171,6 +171,69 @@
     return span;
   }
 
+  // ── Text collapsing (for Framer/Webflow fragmented text) ────────────
+
+  function isTextOnlyContainer(el) {
+    // Returns true if this element contains only inline text children
+    // (spans, strongs, ems, a, etc. with only text inside)
+    var dominated = true;
+    var hasText = false;
+    var child = el.firstChild;
+    while (child) {
+      if (child.nodeType === 3) {
+        if (child.textContent.trim()) hasText = true;
+      } else if (child.nodeType === 1) {
+        var tag = child.tagName.toUpperCase();
+        var INLINE = { SPAN: 1, A: 1, STRONG: 1, EM: 1, B: 1, I: 1, U: 1, SMALL: 1, SUB: 1, SUP: 1, MARK: 1, CODE: 1, LABEL: 1 };
+        if (!INLINE[tag]) { dominated = false; break; }
+        // Check the inline child only has text
+        var grandChild = child.firstChild;
+        while (grandChild) {
+          if (grandChild.nodeType === 1 && !INLINE[grandChild.tagName.toUpperCase()]) {
+            dominated = false; break;
+          }
+          if (grandChild.nodeType === 3 && grandChild.textContent.trim()) hasText = true;
+          grandChild = grandChild.nextSibling;
+        }
+        if (!dominated) break;
+        if (child.textContent.trim()) hasText = true;
+      }
+      child = child.nextSibling;
+    }
+    return dominated && hasText;
+  }
+
+  function collapseText(el) {
+    // Extract all text from inline children into a single string
+    var text = '';
+    var child = el.firstChild;
+    while (child) {
+      if (child.nodeType === 3) {
+        text += child.textContent;
+      } else if (child.nodeType === 1) {
+        text += child.textContent;
+      }
+      child = child.nextSibling;
+    }
+    return text;
+  }
+
+  // Check if element's children are all absolutely positioned small text fragments
+  // (Framer pattern: each word/letter in its own absolute-positioned span)
+  function isFramerFragmented(el) {
+    var children = el.children;
+    if (!children || children.length < 3) return false;
+    var absCount = 0;
+    var textCount = 0;
+    for (var i = 0; i < children.length; i++) {
+      var childCs = window.getComputedStyle(children[i]);
+      if (childCs.position === 'absolute') absCount++;
+      if (children[i].textContent.trim().length > 0 && children[i].children.length === 0) textCount++;
+    }
+    // If most children are absolute-positioned text fragments
+    return absCount > children.length * 0.6 && textCount > children.length * 0.5;
+  }
+
   // ── Core capture ─────────────────────────────────────────────────────
 
   function captureNode(el, depth) {
@@ -239,9 +302,14 @@
 
       // Special handling
       if (prop === "position") {
-        if (val === "fixed" || val === "absolute") {
+        if (val === "fixed") {
+          val = "relative";
+        } else if (val === "absolute") {
           var parentCs = el.parentElement ? window.getComputedStyle(el.parentElement) : null;
-          if (parentCs && parentCs.position === "relative" && val === "absolute") {
+          // Keep absolute only if parent is position:relative (intentional layout)
+          // AND parent is NOT flex/grid (where absolute breaks the flow)
+          if (parentCs && parentCs.position === "relative" &&
+              parentCs.display.indexOf("flex") === -1 && parentCs.display.indexOf("grid") === -1) {
             // keep absolute
           } else {
             val = "relative";
@@ -323,7 +391,44 @@
       result.children.push(beforePseudo);
     }
 
-    // Children
+    // ── FIX: Collapse fragmented text (Framer/Webflow pattern) ──
+    // If children are all absolutely-positioned text fragments, collapse into one text block
+    if (isFramerFragmented(el)) {
+      var collapsedText = collapseText(el);
+      if (collapsedText.trim()) {
+        result.collapsed = true;
+        result.style = result.style.replace(/position:[^;]+;/g, '');
+        result.style += 'position:relative;';
+        result.children.push({ tag: "#text", text: collapsedText, children: [] });
+        // Skip normal children processing
+        var afterP = capturePseudo(el, "::after");
+        if (afterP) {
+          nodeCounter++;
+          afterP.attrs = 'data-rb-node="' + nodeCounter + '" ' + (afterP.attrs || "");
+          result.children.push(afterP);
+        }
+        return result;
+      }
+    }
+
+    // ── FIX: Collapse inline text containers ──
+    // If element only has inline text children (spans, strongs, etc.), collapse text
+    if (isTextOnlyContainer(el)) {
+      var inlineText = collapseText(el);
+      if (inlineText.trim()) {
+        result.collapsed = true;
+        result.children.push({ tag: "#text", text: inlineText, children: [] });
+        var afterP2 = capturePseudo(el, "::after");
+        if (afterP2) {
+          nodeCounter++;
+          afterP2.attrs = 'data-rb-node="' + nodeCounter + '" ' + (afterP2.attrs || "");
+          result.children.push(afterP2);
+        }
+        return result;
+      }
+    }
+
+    // Children (normal path)
     var child = el.firstChild;
     while (child) {
       var captured = captureNode(child, depth + 1);
@@ -346,10 +451,12 @@
 
   // ── Serialize captured tree to HTML ──────────────────────────────────
 
-  function serializeNode(node) {
+  function serializeNode(node, insideTextBlock) {
     if (!node) return "";
 
     if (node.tag === "#text") {
+      // If inside a collapsed text container, output raw text (no wrapping span)
+      if (insideTextBlock) return escapeHTML(node.text);
       return '<span contenteditable="false">' + escapeHTML(node.text) + "</span>";
     }
 
@@ -371,8 +478,10 @@
       html += escapeHTML(node.text);
     }
 
+    // Check if this node was a collapsed text container
+    var isTextParent = node.collapsed || false;
     for (var i = 0; i < node.children.length; i++) {
-      html += serializeNode(node.children[i]);
+      html += serializeNode(node.children[i], isTextParent);
     }
 
     // Void elements
