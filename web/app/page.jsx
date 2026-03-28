@@ -46,7 +46,7 @@ export default function HomePage() {
   return (
     <div className="container" style={{ paddingTop: '4rem' }}>
       <div className="text-center" style={{ marginBottom: '2rem' }}>
-        <h1>EzPrompter</h1>
+        <h1>Repix</h1>
         <p className="tagline">Remix everything.</p>
       </div>
 

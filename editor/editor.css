@@ -1,0 +1,330 @@
+/* ===== 0. ANIMATIONS ===== */
+@keyframes rb-ed-glow { 0%{box-shadow:0 0 0 4px rgba(147,197,253,0.25)} 100%{box-shadow:0 0 0 0 transparent} }
+@keyframes rb-ed-slide-in { from{transform:translateX(20px);opacity:0} to{transform:translateX(0);opacity:1} }
+@keyframes rb-ed-fade { from{opacity:0} to{opacity:1} }
+@keyframes rb-holo { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+@keyframes rb-ed-pulse { 0%,100%{box-shadow:0 0 0 0 transparent,0 16px 48px rgba(0,0,0,0.5)} 50%{box-shadow:0 0 0 6px rgba(147,197,253,0.35),0 16px 48px rgba(0,0,0,0.5)} }
+
+/* ===== 1. ROOT ===== */
+#rb-editor-root {
+  position:fixed; top:0; left:0; width:100vw; height:100vh;
+  pointer-events:none; z-index:2147483640; margin:0; padding:0;
+}
+
+/* ===== 2. BODY STATE ===== */
+body.rb-ed-active { padding-top:32px !important; }
+body.rb-ed-active a { pointer-events:none !important; }
+
+/* Custom cursor — blue arrow */
+body.rb-ed-active, body.rb-ed-active *:not(#rb-editor-root *):not(input):not(textarea):not(select) {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='24'%3E%3Cpath d='M2 1L2 19L7 14L11 22L14 21L10 13L17 13Z' fill='%2393C5FD' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") 2 1, default !important;
+}
+
+/* Text cursor hint — blue arrow + T */
+body.rb-ed-active .rb-ed-text-hint {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Cpath d='M2 1L2 17L6 13L9 19L12 18L9 12L15 12Z' fill='%2393C5FD' stroke='%23000' stroke-width='1'/%3E%3Ctext x='15' y='22' font-family='sans-serif' font-size='10' font-weight='700' fill='%2393C5FD' stroke='%23000' stroke-width='0.5'%3ET%3C/text%3E%3C/svg%3E") 2 1, text !important;
+}
+
+/* Drag states */
+body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
+
+/* ===== 3. BANNER ===== */
+#rb-ed-banner {
+  position:fixed; top:0; left:0; right:0; height:32px;
+  background:linear-gradient(90deg,#080808,#1a0a2e 20%,#0a1628 40%,#0d1f1a 60%,#1a0a2e 80%,#080808);
+  background-size:300% 100%; animation:rb-holo 6s ease infinite;
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  font:500 10px/1 'Instrument Sans',sans-serif; color:rgba(239,238,235,0.5);
+  z-index:2147483645; pointer-events:auto;
+}
+#rb-ed-banner-close {
+  position:absolute; right:10px; top:50%; transform:translateY(-50%);
+  background:none; border:none; color:rgba(239,238,235,0.4); cursor:pointer;
+  width:20px; height:20px; display:flex; align-items:center; justify-content:center;
+  padding:0; -webkit-appearance:none;
+}
+#rb-ed-banner-close:hover { color:#EFEEEB; }
+
+/* ===== 4. INSPECTOR PANEL ===== */
+#rb-editor-inspector {
+  position:fixed; right:8px; top:40px;
+  width:260px; max-height:calc(100vh - 52px);
+  background:#1A1A1A; border-radius:16px;
+  box-shadow:0 16px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+  overflow-y:auto; overflow-x:hidden;
+  pointer-events:auto; z-index:2147483643;
+  animation:rb-ed-slide-in 200ms ease-out;
+  scrollbar-width:thin; scrollbar-color:rgba(255,255,255,0.06) transparent;
+  -webkit-font-smoothing:antialiased;
+  font-family:'Instrument Sans',sans-serif;
+}
+#rb-editor-inspector::-webkit-scrollbar { width:3px; }
+#rb-editor-inspector::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.06); border-radius:2px; }
+
+/* Attention pulse */
+#rb-editor-inspector.rb-ed-attention { animation:rb-ed-pulse 1.2s ease; }
+
+/* ===== 5. INSPECTOR HEADER ===== */
+#rb-ed-insp-header {
+  padding:14px 14px 10px; display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; background:#1A1A1A; z-index:1; border-radius:16px 16px 0 0;
+}
+.rb-ed-logo { font-family:'Instrument Serif',serif; font-style:italic; font-size:14px; color:#EFEEEB; }
+.rb-ed-logo-live { font-family:'Instrument Sans',sans-serif; font-size:10px; font-weight:500; color:rgba(239,238,235,0.4); margin-left:5px; }
+.rb-ed-export-btn {
+  background:rgba(255,255,255,0.05); border:none; border-radius:999px;
+  padding:4px 10px; font:500 10px 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.5); cursor:pointer; display:flex; align-items:center; gap:4px;
+}
+.rb-ed-export-btn:hover { background:#EFEEEB; color:#000; }
+.rb-ed-export-btn svg { width:12px; height:12px; }
+
+/* ===== 6. EXPORT DROPDOWN ===== */
+.rb-ed-export-dd {
+  position:absolute; top:calc(100% + 4px); right:0; min-width:140px;
+  background:#1A1A1A; border-radius:10px; padding:4px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.5); z-index:10;
+  animation:rb-ed-fade 100ms ease-out;
+}
+.rb-ed-export-dd[hidden] { display:none; }
+.rb-ed-export-dd button {
+  display:block; width:100%; padding:7px 10px; text-align:left;
+  background:none; border:none; border-radius:6px;
+  font:400 11px 'Instrument Sans',sans-serif; color:rgba(239,238,235,0.7); cursor:pointer;
+}
+.rb-ed-export-dd button:hover { background:rgba(255,255,255,0.06); color:#EFEEEB; }
+
+/* ===== 7. INSPECTOR SECTIONS ===== */
+.rb-insp-sec { border-top:1px solid rgba(255,255,255,0.06); padding:10px 14px; }
+.rb-insp-sec-hd {
+  display:flex; align-items:center; justify-content:space-between;
+  cursor:pointer; user-select:none; padding:0 0 6px;
+}
+.rb-insp-sec-title {
+  font:600 10px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.35); text-transform:uppercase; letter-spacing:0.5px;
+}
+.rb-insp-sec-chev {
+  width:10px; height:10px; stroke:rgba(239,238,235,0.3); stroke-width:1.5; fill:none;
+  transition:transform 150ms ease; transform:rotate(180deg); flex-shrink:0;
+}
+.rb-insp-sec.collapsed .rb-insp-sec-chev { transform:rotate(0deg); }
+.rb-insp-sec.collapsed .rb-insp-sec-body { display:none; }
+
+/* ===== 8. FIELDS ===== */
+.rb-insp-row {
+  display:grid; grid-template-columns:52px 1fr; gap:2px;
+  align-items:center; margin-bottom:2px;
+}
+.rb-insp-lbl {
+  font:400 9px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.3);
+}
+.rb-insp-val,
+.rb-insp-inp {
+  font:400 11px/1.3 'Instrument Sans',sans-serif;
+  color:#EFEEEB; background:transparent;
+  padding:3px 5px; border:none; border-radius:3px;
+  outline:none; width:100%; box-sizing:border-box;
+}
+.rb-insp-val:hover, .rb-insp-inp:hover { background:rgba(255,255,255,0.05); }
+.rb-insp-inp:focus { background:rgba(255,255,255,0.08); }
+select.rb-insp-inp {
+  -webkit-appearance:none; appearance:none; cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath d='M1 3l3 3 3-3' stroke='%23666' fill='none' stroke-width='1'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 6px center;
+  padding-right:16px;
+}
+option { background:#1A1A1A; color:#EFEEEB; }
+
+/* ===== 9. COLOR SWATCH ===== */
+.rb-insp-color-row { display:flex; align-items:center; gap:6px; }
+.rb-insp-swatch {
+  width:14px; height:14px; border-radius:3px; border:1px solid rgba(255,255,255,0.1);
+  cursor:pointer; flex-shrink:0; position:relative;
+}
+.rb-insp-swatch input[type=color] {
+  position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%;
+  border:none; padding:0;
+}
+
+/* ===== 10. BOX MODEL ===== */
+.rb-insp-boxmodel {
+  width:100%; border:1px dashed rgba(239,238,235,0.1); border-radius:4px;
+  padding:8px; position:relative; margin:4px 0;
+}
+.rb-insp-bm-inner {
+  border:1px dashed rgba(239,238,235,0.15); border-radius:3px;
+  padding:8px; position:relative;
+}
+.rb-insp-bm-core {
+  background:rgba(255,255,255,0.03); border-radius:2px;
+  text-align:center; padding:6px; font:400 10px 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.4);
+}
+.rb-insp-bm-lbl {
+  position:absolute; font:400 9px 'Instrument Sans',sans-serif; color:rgba(239,238,235,0.3);
+  cursor:text;
+}
+.rb-insp-bm-lbl:hover { color:#EFEEEB; }
+/* positions */
+.rb-insp-bm-lbl[data-s=mt] { top:1px; left:50%; transform:translateX(-50%); }
+.rb-insp-bm-lbl[data-s=mr] { right:2px; top:50%; transform:translateY(-50%); }
+.rb-insp-bm-lbl[data-s=mb] { bottom:1px; left:50%; transform:translateX(-50%); }
+.rb-insp-bm-lbl[data-s=ml] { left:2px; top:50%; transform:translateY(-50%); }
+.rb-insp-bm-lbl[data-s=pt] { top:1px; left:50%; transform:translateX(-50%); }
+.rb-insp-bm-lbl[data-s=pr] { right:2px; top:50%; transform:translateY(-50%); }
+.rb-insp-bm-lbl[data-s=pb] { bottom:1px; left:50%; transform:translateX(-50%); }
+.rb-insp-bm-lbl[data-s=pl] { left:2px; top:50%; transform:translateY(-50%); }
+
+/* ===== 11. CLASS PILLS ===== */
+.rb-insp-pills { display:flex; flex-wrap:wrap; gap:3px; }
+.rb-insp-pill {
+  font:400 9px 'Instrument Sans',sans-serif; color:rgba(239,238,235,0.4);
+  background:rgba(255,255,255,0.04); padding:2px 6px; border-radius:999px;
+}
+
+/* ===== 12. EMPTY STATE ===== */
+.rb-insp-empty {
+  text-align:center; padding:40px 16px;
+  font:italic 13px 'Instrument Serif',serif; color:rgba(239,238,235,0.3);
+}
+
+/* ===== 13. FONT PICKER ===== */
+.rb-insp-font-sel {
+  width:100%; padding:3px 5px; background:rgba(255,255,255,0.05);
+  border:none; border-radius:3px; color:#EFEEEB;
+  font:400 11px 'Instrument Sans',sans-serif;
+  -webkit-appearance:none; cursor:pointer; outline:none;
+}
+.rb-insp-font-sel:hover { background:rgba(255,255,255,0.08); }
+.rb-insp-font-global {
+  display:block; width:100%; margin-top:4px; padding:4px;
+  background:none; border:none; border-radius:3px;
+  font:400 9px 'Instrument Sans',sans-serif; color:rgba(239,238,235,0.3);
+  cursor:pointer; text-align:center;
+}
+.rb-insp-font-global:hover { background:#EFEEEB; color:#000; }
+
+/* ===== 14. HOVER OVERLAY ===== */
+.rb-sel-hover {
+  position:fixed; pointer-events:none;
+  background:rgba(147,197,253,0.05); border:1px solid rgba(147,197,253,0.3);
+  border-radius:2px; transition:all 60ms ease;
+  z-index:2147483641;
+}
+.rb-sel-hover-tag {
+  position:absolute; top:-17px; left:0;
+  background:rgba(147,197,253,0.85); color:#000;
+  font:500 9px 'Instrument Sans',sans-serif;
+  padding:1px 5px; border-radius:3px; white-space:nowrap;
+}
+
+/* ===== 15. SELECTION BOX ===== */
+.rb-sel-box {
+  position:fixed; pointer-events:none;
+  border:1.5px solid #93C5FD;
+  z-index:2147483642;
+  animation:rb-ed-glow 600ms ease-out forwards;
+}
+.rb-sel-label {
+  position:absolute; top:-19px; left:0;
+  background:#93C5FD; color:#000;
+  font:500 9px 'Instrument Sans',sans-serif;
+  padding:1px 6px; border-radius:3px; white-space:nowrap;
+  pointer-events:none;
+}
+
+/* ===== 16. RESIZE HANDLES ===== */
+.rb-sel-handle {
+  position:absolute; width:6px; height:6px;
+  background:#93C5FD; pointer-events:auto;
+}
+
+/* ===== 17. PARENT HIGHLIGHT ===== */
+.rb-sel-parent {
+  position:fixed; pointer-events:none;
+  border:1px dashed rgba(147,197,253,0.15);
+  z-index:2147483640;
+}
+
+/* ===== 18. SPACING GUIDES (pink hatch) ===== */
+.rb-ed-gap {
+  position:fixed; pointer-events:none; z-index:2147483641;
+  background:repeating-linear-gradient(-45deg,rgba(244,114,182,0.1),rgba(244,114,182,0.1) 2px,transparent 2px,transparent 5px);
+  border:1px solid rgba(244,114,182,0.2);
+}
+.rb-ed-gap-handle {
+  position:absolute; width:20px; height:4px;
+  background:rgba(244,114,182,0.4); border-radius:2px;
+  cursor:ns-resize; pointer-events:auto;
+  left:50%; transform:translateX(-50%);
+}
+.rb-ed-gap-handle:hover { background:#F472B6; }
+.rb-ed-gap-lbl {
+  position:absolute; font:400 9px 'Instrument Sans',sans-serif;
+  color:rgba(244,114,182,0.6); pointer-events:none;
+}
+
+/* Pink cursor for gap handles */
+.rb-ed-gap-handle {
+  cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='24'%3E%3Cpath d='M2 1L2 19L7 14L11 22L14 21L10 13L17 13Z' fill='%23F472B6' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") 2 1, ns-resize !important;
+}
+
+/* ===== 19. SNAP LINE ===== */
+.rb-ed-snap {
+  position:fixed; background:rgba(147,197,253,0.35);
+  pointer-events:none; z-index:2147483641;
+}
+
+/* ===== 20. SCROLL LOCK TOOLTIP ===== */
+.rb-ed-lock {
+  position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+  background:#000; color:rgba(239,238,235,0.5);
+  font:400 10px 'Instrument Sans',sans-serif;
+  padding:4px 12px; border-radius:999px; z-index:2147483645;
+  pointer-events:none; animation:rb-ed-fade 200ms ease-out;
+}
+
+/* ===== 21. CONTENT EDITABLE ===== */
+[data-rb-editing] {
+  outline:1px dashed rgba(147,197,253,0.25) !important;
+  background:rgba(147,197,253,0.03) !important;
+}
+
+/* ===== 22. IMAGE MENU ===== */
+.rb-ed-img-menu {
+  position:fixed; background:#1A1A1A; border-radius:10px; padding:4px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.5); z-index:2147483645;
+  pointer-events:auto; animation:rb-ed-fade 100ms ease-out;
+}
+.rb-ed-img-menu button {
+  display:flex; align-items:center; gap:6px; width:100%;
+  padding:7px 10px; background:none; border:none; border-radius:6px;
+  font:400 11px 'Instrument Sans',sans-serif; color:rgba(239,238,235,0.7); cursor:pointer;
+}
+.rb-ed-img-menu button:hover { background:rgba(255,255,255,0.06); color:#EFEEEB; }
+.rb-ed-img-menu button svg { width:14px; height:14px; }
+
+/* ===== 23. FTUE TOOLTIP ===== */
+.rb-ed-ftue {
+  position:fixed; z-index:2147483647;
+  background:#000; color:#EFEEEB;
+  font:400 11px/1.4 'Instrument Sans',sans-serif;
+  padding:5px 10px; border-radius:6px;
+  box-shadow:0 4px 12px rgba(0,0,0,0.5);
+  pointer-events:none; animation:rb-ed-fade 200ms ease-out;
+  max-width:180px;
+}
+.rb-ed-ftue::after {
+  content:''; position:absolute; top:100%; left:16px;
+  border:4px solid transparent; border-top-color:#000;
+}
+.rb-ed-ftue kbd {
+  display:inline; background:rgba(255,255,255,0.1);
+  padding:1px 4px; border-radius:2px; font-size:10px; font-weight:600;
+}
+
+/* ===== 24. MOVABLE ===== */
+.rb-ed-movable { cursor:grab !important; }
+.rb-ed-movable:active { cursor:grabbing !important; }

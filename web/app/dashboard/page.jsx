@@ -94,7 +94,7 @@ export default function DashboardPage() {
   return (
     <div className="container" style={{ paddingTop: '3rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-        <h1 style={{ fontSize: '1.5rem', marginBottom: 0 }}>EzPrompter</h1>
+        <h1 style={{ fontSize: '1.5rem', marginBottom: 0 }}>Repix</h1>
         <button className="btn btn-danger" style={{ width: 'auto', padding: '0.5rem 1rem', fontSize: '0.875rem' }} onClick={handleLogout}>
           Log out
         </button>
@@ -137,7 +137,7 @@ export default function DashboardPage() {
       <div className="card section">
         <h2>Your Extension Token</h2>
         <p style={{ color: '#94a3b8', fontSize: '0.875rem', marginBottom: '0.75rem' }}>
-          Paste this token in the EzPrompter extension popup to link your account.
+          Paste this token in the Repix extension popup to link your account.
         </p>
         <div className="token-box">{token}</div>
         <button className="btn btn-outline" onClick={handleCopy}>

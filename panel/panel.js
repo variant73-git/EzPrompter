@@ -18,6 +18,14 @@
   const DOWNLOAD_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
   const CLOSE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>';
   const BACK_SVG = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4L6 9l5 5"/></svg>';
+  const ARROW_RIGHT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>';
+
+  // Monochrome tool logos (simplified SVG)
+  const LOGO_FIGMA = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 24c2.2 0 4-1.8 4-4v-4H8c-2.2 0-4 1.8-4 4s1.8 4 4 4zm0-20C5.8 4 4 5.8 4 8s1.8 4 4 4h4V4H8zm0 8c-2.2 0-4 1.8-4 4s1.8 4 4 4h4v-8H8zm8-8h-4v8h4c2.2 0 4-1.8 4-4s-1.8-4-4-4zm0 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg>';
+  const LOGO_SKETCH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1.5L3 8.25 12 22.5l9-14.25L12 1.5zm0 2.4l6.15 4.6L12 19.8 5.85 8.5 12 3.9z"/></svg>';
+  const LOGO_PENCIL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+  const LOGO_PAPER = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>';
+  const TOOL_LOGOS = { figma: LOGO_FIGMA, sketch: LOGO_SKETCH, pencil: LOGO_PENCIL, paper: LOGO_PAPER };
 
   // Build panel
   const panel = document.createElement('div');
@@ -41,17 +49,23 @@
       <div class="rb-view rb-onboarding rb-active" id="rb-viewOnboarding">
         <button type="button" class="rb-skip" id="rb-skip">Skip</button>
         <article class="rb-slide" data-step="0">
-          <h2 class="rb-slide-title"><em>Bridge</em> the gap</h2>
-          <p class="rb-slide-text">Take <em>anything</em> from the web straight into your design tools and AI models.</p>
+          <h2 class="rb-slide-title"><span class="rb-serif">HTML</span> <em>to</em>
+            <span class="rb-pill-rotate" id="rb-pillRotate">
+              <span class="rb-pill-word rb-pill-active">Figma</span>
+              <span class="rb-pill-word">Pencil</span>
+              <span class="rb-pill-word">Paper</span>
+              <span class="rb-pill-word">Sketch</span>
+            </span><br><em>from</em> <span class="rb-serif">where it</span><br><span class="rb-serif">happens.</span></h2>
+          <p class="rb-slide-text"><span class="rb-sans">Import any website to</span> <em>Figma</em><br><span class="rb-sans">in one click.</span></p>
         </article>
         <article class="rb-slide" data-step="1" hidden>
-          <h2 class="rb-slide-title">Two <em>superpowers</em></h2>
-          <p class="rb-slide-text"><em>HTML to Design</em> captures full pages. <em>Image Remix</em> reverse-engineers any image's prompt.</p>
+          <h2 class="rb-slide-title"><span class="rb-sans-title">Two</span> <em>superpowers</em></h2>
+          <p class="rb-slide-text"><em>HTML to Design</em> <span class="rb-sans">captures full pages.</span> <em>Image Remix</em> <span class="rb-sans">reverse-engineers any image's prompt.</span></p>
         </article>
         <article class="rb-slide" data-step="2" hidden>
-          <h2 class="rb-slide-title"><em>Zero-cost</em> start</h2>
+          <h2 class="rb-slide-title"><em>Zero-cost</em> <span class="rb-sans-title">start</span></h2>
           <span class="rb-badge-free">Free setup available</span>
-          <p class="rb-slide-text">Use <em>Ollama</em> for AI and <em>Pencil</em> or <em>Paper</em> for design. No API keys, no subscriptions.</p>
+          <p class="rb-slide-text"><span class="rb-sans">Use</span> <em>Ollama</em> <span class="rb-sans">for AI and</span> <em>Pencil</em> <span class="rb-sans">or</span> <em>Paper</em> <span class="rb-sans">for design. No API keys, no subscriptions.</span></p>
         </article>
         <div class="rb-onboarding-footer">
           <div class="rb-dots">
@@ -59,7 +73,7 @@
             <span class="rb-dot" data-dot="1"></span>
             <span class="rb-dot" data-dot="2"></span>
           </div>
-          <button type="button" class="rb-btn rb-btn-outline" id="rb-next">Next</button>
+          <button type="button" class="rb-motion-btn rb-motion-outline" id="rb-next"><span class="rb-motion-arrow">${ARROW_RIGHT_SVG}</span><span class="rb-motion-label">next</span></button>
         </div>
       </div>
 
@@ -67,29 +81,36 @@
       <div class="rb-view" id="rb-viewMain">
         <div class="rb-toggle">
           <button type="button" class="rb-toggle-seg active" data-mode="dark">HTML -> Design</button>
-          <button type="button" class="rb-toggle-seg" data-mode="light">Image Remix</button>
+          <button type="button" class="rb-toggle-seg" data-mode="light">Smart Remix</button>
         </div>
 
         <!-- Site Analysis (shown initially, replaced by history when available) -->
         <div class="rb-site-analysis" id="rb-siteAnalysis">
           <div class="rb-site-analysis-center">
-            <div class="rb-loader-ring" id="rb-loader">
-              <svg viewBox="0 0 80 80" width="80" height="80">
-                <circle cx="40" cy="40" r="34" stroke="var(--rb-border)" stroke-width="3" fill="none"/>
-                <circle cx="40" cy="40" r="34" stroke="var(--rb-accent)" stroke-width="3" fill="none"
-                  stroke-dasharray="214" stroke-dashoffset="214" stroke-linecap="round"
-                  transform="rotate(-90 40 40)" class="rb-loader-arc"/>
-              </svg>
-              <span class="rb-loader-pct" id="rb-loaderPct">0%</span>
+            <div class="rb-dots-loader" id="rb-loader">
+              <span class="rb-bounce-dot"></span>
+              <span class="rb-bounce-dot"></span>
+              <span class="rb-bounce-dot"></span>
             </div>
             <div class="rb-site-msg" id="rb-siteMsg">Analyzing...</div>
-            <button type="button" class="rb-btn rb-btn-primary rb-btn-full" id="rb-remixSite" style="display:none">Remix this site</button>
+            <button type="button" class="rb-motion-btn rb-motion-full" id="rb-remixSite" style="display:none"><span class="rb-motion-arrow">${ARROW_RIGHT_SVG}</span><span class="rb-motion-label">Live Remix</span></button>
           </div>
-          <p class="rb-site-footer" id="rb-siteFooter">No captures yet. Right-click any page to capture.</p>
+          <p class="rb-site-footer" id="rb-siteFooter">Don't know where to start?<br><span style="text-decoration:underline;cursor:pointer">Use the Quick Setup Wizard</span></p>
         </div>
 
         <div class="rb-content-scroll" id="rb-contentDark" style="display:none"></div>
         <div class="rb-content-scroll" id="rb-contentLight" style="display:none">
+          <div class="rb-img-row-header">
+            <div class="rb-img-grid-header" id="rb-imgCount"></div>
+            <div style="position:relative">
+              <button type="button" class="rb-api-pill" id="rb-apiPill">
+                <span class="rb-status-dot rb-dot-red" id="rb-apiPillDot"></span>
+                <span id="rb-apiPillLabel">connect API</span>
+                ${CHEVRON_SVG}
+              </button>
+              <div class="rb-api-dropdown" id="rb-apiDropdown" hidden></div>
+            </div>
+          </div>
           <div class="rb-img-grid" id="rb-imgGrid"></div>
           <div id="rb-genCardContainer"></div>
           <div id="rb-promptsList"></div>
@@ -102,65 +123,114 @@
           <button type="button" class="rb-back" id="rb-settingsBack">${BACK_SVG}</button>
           <h2 class="rb-settings-title">Settings</h2>
         </div>
-        <form class="rb-settings-form" id="rb-settingsForm">
-          <div class="rb-field">
-            <label>AI Provider</label>
-            <select id="rb-apiProvider">
-              <option value="gemini">Google Gemini (Free)</option>
-              <option value="ollama">Ollama (Local/Offline)</option>
-              <option value="openai">OpenAI (GPT-4o)</option>
-              <option value="anthropic">Anthropic (Claude)</option>
-            </select>
-          </div>
-          <div class="rb-field" id="rb-apiKeyField">
-            <label>API Key</label>
-            <div class="rb-field-row">
-              <input type="password" id="rb-apiKey" placeholder="AIza... / sk-... / sk-ant-...">
-              <button type="button" class="rb-key-toggle" id="rb-toggleKey">Show</button>
+        <div class="rb-content-scroll">
+          <!-- Quick Setup shortcut -->
+          <div class="rb-preset" id="rb-settingsQuickSetup">
+            <div class="rb-preset-row">
+              <div class="rb-preset-body">
+                <div class="rb-preset-top"><span class="rb-preset-name">Preset Assist</span></div>
+                <div class="rb-preset-desc">Quick setup with recommended presets</div>
+              </div>
+              <span class="rb-preset-arrow">${ARROW_RIGHT_SVG}</span>
             </div>
           </div>
-          <div class="rb-field">
-            <label>Model</label>
-            <input type="text" id="rb-model" placeholder="gemini-2.0-flash">
-          </div>
-          <div class="rb-field" id="rb-ollamaField" style="display:none">
-            <label>Ollama URL</label>
-            <input type="text" id="rb-ollamaUrl" placeholder="http://localhost:11434">
-          </div>
-          <div class="rb-field">
-            <label>Design Tool</label>
-            <select id="rb-designTool">
-              <option value="figma">Figma</option>
-              <option value="sketch">Sketch</option>
-              <option value="pencil">Pencil</option>
-              <option value="paper">Paper</option>
-            </select>
-          </div>
-          <div class="rb-field">
-            <label>Language</label>
-            <select id="rb-language">
-              <option value="en">English</option>
-              <option value="pt">Portugues (BR)</option>
-              <option value="es">Espanol</option>
-            </select>
-          </div>
-          <div class="rb-settings-divider"></div>
-          <div class="rb-field-group-label">Image Generation</div>
-          <div class="rb-field">
-            <label>Stability AI Key</label>
-            <div class="rb-field-row">
-              <input type="password" id="rb-stabilityKey" placeholder="sk-...">
+
+          <form class="rb-settings-form" id="rb-settingsForm" style="padding-top:14px">
+            <div class="rb-field-group-label">AI Description</div>
+            <div class="rb-field">
+              <label>Provider</label>
+              <select id="rb-apiProvider">
+                <option value="gemini">Google Gemini (Free)</option>
+                <option value="ollama">Ollama (Local/Offline)</option>
+                <option value="openai">OpenAI (GPT-4o)</option>
+                <option value="anthropic">Anthropic (Claude)</option>
+              </select>
             </div>
-          </div>
-          <div class="rb-field">
-            <label>Replicate Key</label>
-            <div class="rb-field-row">
-              <input type="password" id="rb-replicateKey" placeholder="r8_...">
+            <div class="rb-field" id="rb-apiKeyField">
+              <label>API Key</label>
+              <div class="rb-field-row">
+                <input type="password" id="rb-apiKey" placeholder="AIza... / sk-... / sk-ant-...">
+                <button type="button" class="rb-key-toggle" id="rb-toggleKey">Show</button>
+              </div>
             </div>
-          </div>
-          <button type="submit" class="rb-btn rb-btn-primary rb-btn-full">Save Settings</button>
-          <div class="rb-status" id="rb-status"></div>
-        </form>
+            <div class="rb-field">
+              <label>Model</label>
+              <input type="text" id="rb-model" placeholder="gemini-1.5-flash">
+            </div>
+            <div class="rb-field" id="rb-ollamaField" style="display:none">
+              <label>Ollama URL</label>
+              <input type="text" id="rb-ollamaUrl" placeholder="http://localhost:11434">
+            </div>
+
+            <div class="rb-settings-divider"></div>
+            <div class="rb-field-group-label">Image Generation</div>
+            <div class="rb-field">
+              <label>Stability AI Key</label>
+              <div class="rb-field-row">
+                <input type="password" id="rb-stabilityKey" placeholder="sk-...">
+              </div>
+            </div>
+            <div class="rb-field">
+              <label>Replicate Key</label>
+              <div class="rb-field-row">
+                <input type="password" id="rb-replicateKey" placeholder="r8_...">
+              </div>
+            </div>
+
+            <div class="rb-settings-divider"></div>
+            <div class="rb-field-group-label">Design Tool</div>
+            <div class="rb-field">
+              <label>Target</label>
+              <select id="rb-designTool">
+                <option value="figma">Figma</option>
+                <option value="sketch">Sketch</option>
+                <option value="pencil">Pencil</option>
+                <option value="paper">Paper</option>
+              </select>
+            </div>
+
+            <div class="rb-settings-divider"></div>
+            <div class="rb-field-group-label">Preferences</div>
+            <div class="rb-field">
+              <label>Language</label>
+              <select id="rb-language">
+                <option value="en">English</option>
+                <option value="pt">Portugues (BR)</option>
+                <option value="es">Espanol</option>
+              </select>
+            </div>
+
+            <button type="submit" class="rb-gen-solid" style="width:100%;margin-top:8px">Save</button>
+            <div class="rb-status" id="rb-status"></div>
+
+            <div class="rb-settings-divider" style="margin-top:8px"></div>
+            <div class="rb-field-group-label">Account</div>
+            <div class="rb-field">
+              <label>Plan</label>
+              <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-size:13px;color:var(--rb-fg)">Free</span>
+                <button type="button" class="rb-pill" id="rb-upgradePlan" style="font-size:10px">Upgrade to Pro</button>
+              </div>
+            </div>
+            <div class="rb-field">
+              <label>Auth Token</label>
+              <div class="rb-field-row">
+                <input type="password" id="rb-authToken" placeholder="Paste from dashboard...">
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Quick Setup Wizard -->
+      <div class="rb-view" id="rb-viewWizard">
+        <div class="rb-settings-header">
+          <button type="button" class="rb-back" id="rb-wizardBack">${BACK_SVG}</button>
+          <h2 class="rb-settings-title">Preset Assist</h2>
+        </div>
+        <div class="rb-wizard">
+          <div class="rb-wizard-scroll" id="rb-wizardPresets"></div>
+        </div>
       </div>
     </div>
   `;
@@ -170,7 +240,7 @@
   // --- State ---
   let currentStep = 0;
   let currentMode = 'dark';
-  const MODEL_DEFAULTS = { gemini: 'gemini-2.0-flash', ollama: 'moondream', openai: 'gpt-4o', anthropic: 'claude-sonnet-4-6' };
+  const MODEL_DEFAULTS = { gemini: 'gemini-1.5-flash', ollama: 'moondream', openai: 'gpt-4o', anthropic: 'claude-sonnet-4-6' };
   const AI_URLS = {
     ChatGPT: 'https://chatgpt.com/', Gemini: 'https://gemini.google.com/app',
     Leonardo: 'https://leonardo.ai/ai-art-generator', Ideogram: 'https://ideogram.ai/',
@@ -205,10 +275,15 @@
   document.addEventListener('mouseup', () => { dragging = false; header.style.cursor = 'grab'; });
 
   // --- View switching ---
+  let previousView = 'main';
   function showView(name) {
+    const current = panel.querySelector('.rb-view.rb-active');
+    if (current) previousView = current.id.replace('rb-view', '').toLowerCase();
     $$('.rb-view').forEach(v => v.classList.remove('rb-active'));
     const target = $(`#rb-view${name.charAt(0).toUpperCase() + name.slice(1)}`);
     if (target) target.classList.add('rb-active');
+    // Toggle gray background for settings/wizard
+    panel.classList.toggle('rb-settings-active', name === 'settings' || name === 'wizard');
   }
 
   // --- Onboarding ---
@@ -218,21 +293,23 @@
   function updateSlides() {
     slides.forEach((s, i) => s.hidden = i !== currentStep);
     dots.forEach((d, i) => d.classList.toggle('active', i === currentStep));
-    $('#rb-next').textContent = currentStep === 2 ? 'Get Started' : 'Next';
+    const nextLabel = $('#rb-next .rb-motion-label');
+    if (nextLabel) nextLabel.textContent = currentStep === 2 ? 'get started' : 'next';
   }
 
   $('#rb-next').addEventListener('click', () => {
     if (currentStep < 2) { currentStep++; updateSlides(); }
-    else { chrome.storage.sync.set({ onboardingDone: true }); showView('main'); loadContent(); }
+    else { chrome.storage.sync.set({ onboardingDone: true }); showView('main'); loadContent(); analyzeSite(); }
   });
   $('#rb-skip').addEventListener('click', () => {
-    chrome.storage.sync.set({ onboardingDone: true }); showView('main'); loadContent();
+    chrome.storage.sync.set({ onboardingDone: true }); showView('main'); loadContent(); analyzeSite();
   });
 
   // --- Mode toggle ---
   function applyMode(mode) {
     currentMode = mode;
     panel.classList.toggle('rb-light', mode === 'light');
+    panel.classList.remove('rb-expanded');
     $$('.rb-toggle-seg').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     const siteAnalysis = $('#rb-siteAnalysis');
     if (siteAnalysis) siteAnalysis.style.display = mode === 'dark' ? '' : 'none';
@@ -248,7 +325,117 @@
 
   // --- Settings ---
   $('#rb-cog').addEventListener('click', () => { showView('settings'); loadSettings(); });
-  $('#rb-settingsBack').addEventListener('click', () => showView('main'));
+  $('#rb-settingsBack').addEventListener('click', () => {
+    if (previousView === 'wizard') { showWizard(); } else { showView('main'); }
+  });
+  $('#rb-settingsQuickSetup').addEventListener('click', () => goToWizard());
+
+  // --- Quick Setup Wizard ---
+  $('#rb-wizardBack').addEventListener('click', () => showView('main'));
+
+  const PRESETS = [
+    { id: 'free', name: 'Zero Setup', badge: 'Free', badgePaid: false, costLevel: 0,
+      desc: 'Google Gemini for everything. One key, zero cost.',
+      keys: '1 key: Google API',
+      describer: 'gemini', generator: 'gemini',
+      speed: 4, quality: 3, intelligence: 4 },
+    { id: 'openai', name: 'OpenAI All-in-One', badge: '1 key', badgePaid: true, costLevel: 2,
+      desc: 'GPT-4o describes, DALL-E generates. Same API key.',
+      keys: '1 key: OpenAI',
+      describer: 'openai', generator: 'openai',
+      speed: 3, quality: 4, intelligence: 5 },
+    { id: 'pro', name: 'Pro Quality', badge: 'Best results', badgePaid: true, costLevel: 2,
+      desc: 'Gemini describes (free), Stability AI generates (best quality).',
+      keys: '2 keys: Google + Stability AI',
+      describer: 'gemini', generator: 'stability',
+      speed: 3, quality: 5, intelligence: 4 },
+    { id: 'offline', name: 'Offline', badge: '100% local', badgePaid: false, costLevel: 0,
+      desc: 'Ollama runs on your machine. No internet, no API keys.',
+      keys: '0 keys (requires Ollama installed)',
+      describer: 'ollama', generator: null,
+      speed: 2, quality: 2, intelligence: 3 },
+    { id: 'custom', name: 'Custom', badge: 'Advanced', badgePaid: true, costLevel: -1,
+      desc: 'Mix and match providers. Full control.',
+      keys: 'You choose',
+      describer: null, generator: null,
+      speed: 0, quality: 0, intelligence: 0 }
+  ];
+
+  function showWizard() {
+    showView('wizard');
+    const container = $('#rb-wizardPresets');
+    if (!container) return;
+    container.innerHTML = '';
+
+    PRESETS.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'rb-preset';
+      const hasBars = p.speed > 0;
+      card.innerHTML = `
+        <div class="rb-preset-row">
+          <div class="rb-preset-body">
+            <div class="rb-preset-top">
+              <span class="rb-preset-name">${esc(p.name)}</span>
+              ${hasBars ? `<span class="rb-preset-info">i
+                <div class="rb-preset-tip" hidden>
+                  <div class="rb-tip-cost">${renderCost(p.costLevel)}</div>
+                  <div class="rb-tip-row"><span class="rb-tip-label">Speed</span><div class="rb-tip-bar">${renderBar(p.speed)}</div></div>
+                  <div class="rb-tip-row"><span class="rb-tip-label">Quality</span><div class="rb-tip-bar">${renderBar(p.quality)}</div></div>
+                  <div class="rb-tip-row"><span class="rb-tip-label">Intelligence</span><div class="rb-tip-bar">${renderBar(p.intelligence)}</div></div>
+                </div>
+              </span>` : ''}
+              ${p.badge ? `<span class="rb-preset-badge ${p.badgePaid ? 'rb-badge-paid' : ''}">${esc(p.badge)}</span>` : ''}
+            </div>
+            <div class="rb-preset-desc">${esc(p.desc)}</div>
+            ${p.keys ? `<div class="rb-preset-keys">${esc(p.keys)}</div>` : ''}
+          </div>
+          <span class="rb-preset-arrow">${ARROW_RIGHT_SVG}</span>
+        </div>
+      `;
+
+      // Select preset
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.rb-preset-info')) return;
+        if (p.id === 'custom') {
+          showView('settings'); loadSettings();
+          return;
+        }
+        const settings = { apiProvider: p.describer };
+        if (p.describer === 'ollama') {
+          settings.ollamaUrl = 'http://localhost:11434';
+        }
+        chrome.storage.sync.set(settings, () => {
+          if (p.describer !== 'ollama') {
+            showView('settings'); loadSettings();
+          } else {
+            showView('main'); loadContent();
+          }
+        });
+      });
+
+      container.appendChild(card);
+    });
+  }
+
+  function renderBar(level) {
+    let html = '';
+    for (let i = 0; i < 5; i++) {
+      html += `<span class="rb-tip-dot ${i < level ? 'rb-tip-filled' : ''}"></span>`;
+    }
+    return html;
+  }
+
+  function renderCost(level) {
+    if (level <= 0) return `<span class="rb-cost-active">FREE</span>`;
+    let html = '';
+    for (let i = 0; i < 3; i++) {
+      html += `<span class="${i < level ? 'rb-cost-active' : 'rb-cost-dim'}">$</span>`;
+    }
+    return html;
+  }
+
+  // Global helper to show wizard from anywhere
+  function goToWizard() { showWizard(); }
 
   $('#rb-toggleKey').addEventListener('click', () => {
     const inp = $('#rb-apiKey');
@@ -275,7 +462,8 @@
       ollamaUrl: $('#rb-ollamaUrl').value.trim() || 'http://localhost:11434',
       language: $('#rb-language').value,
       stabilityApiKey: $('#rb-stabilityKey').value.trim(),
-      replicateApiKey: $('#rb-replicateKey').value.trim()
+      replicateApiKey: $('#rb-replicateKey').value.trim(),
+      authToken: ($('#rb-authToken')?.value || '').trim()
     }, () => {
       $('#rb-status').textContent = 'Settings saved!';
       setTimeout(() => { $('#rb-status').textContent = ''; }, 2000);
@@ -284,9 +472,9 @@
 
   function loadSettings() {
     chrome.storage.sync.get({
-      apiProvider: 'gemini', apiKey: '', model: 'gemini-2.0-flash',
+      apiProvider: 'gemini', apiKey: '', model: 'gemini-1.5-flash',
       designTool: 'figma', ollamaUrl: 'http://localhost:11434', language: 'en',
-      stabilityApiKey: '', replicateApiKey: ''
+      stabilityApiKey: '', replicateApiKey: '', authToken: ''
     }, (s) => {
       $('#rb-apiProvider').value = s.apiProvider;
       $('#rb-apiKey').value = s.apiKey;
@@ -296,6 +484,8 @@
       $('#rb-language').value = s.language;
       $('#rb-stabilityKey').value = s.stabilityApiKey;
       $('#rb-replicateKey').value = s.replicateApiKey;
+      const authField = $('#rb-authToken');
+      if (authField) authField.value = s.authToken;
       $('#rb-ollamaField').style.display = s.apiProvider === 'ollama' ? '' : 'none';
       $('#rb-apiKeyField').style.display = s.apiProvider === 'ollama' ? 'none' : '';
     });
@@ -313,7 +503,7 @@
   }
 
   function loadContent() {
-    if (currentMode === 'light') { loadPageImages(); loadPrompts(); }
+    if (currentMode === 'light') { refreshApiPill(); loadPageImages(); loadPrompts(); }
     else loadCaptures();
   }
 
@@ -378,7 +568,10 @@
       const toolName = tool.charAt(0).toUpperCase() + tool.slice(1);
       chrome.storage.local.get({ recentCaptures: [] }, (d) => {
         const items = d.recentCaptures || [];
-        if (!items.length) { c.innerHTML = '<p class="rb-empty">No captures yet. Right-click any page to capture layout.</p>'; return; }
+        if (!items.length) { c.innerHTML = ''; c.style.display = 'none'; return; }
+        c.style.display = '';
+        const siteAnalysis = $('#rb-siteAnalysis');
+        if (siteAnalysis) siteAnalysis.style.display = 'none';
         c.innerHTML = '';
         items.slice(0, 20).forEach(item => {
           const card = document.createElement('div');
@@ -423,7 +616,6 @@
   function analyzeSite() {
     const analysis = $('#rb-siteAnalysis');
     const loader = $('#rb-loader');
-    const pct = $('#rb-loaderPct');
     const msg = $('#rb-siteMsg');
     const remixBtn = $('#rb-remixSite');
     if (!analysis) return;
@@ -463,20 +655,12 @@
 
     const known = KNOWN_SITES[domain];
 
-    // Animate loader
-    const arc = panel.querySelector('.rb-loader-arc');
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += Math.random() * 15 + 5;
-      if (progress > 100) progress = 100;
-      const offset = 214 - (214 * progress / 100);
-      if (arc) arc.style.strokeDashoffset = offset;
-      pct.textContent = Math.round(progress) + '%';
-      if (progress >= 100) {
-        clearInterval(interval);
-        showResult();
-      }
-    }, 120);
+    // Bouncing dots loader — fade out after analysis
+    const analysisDuration = 800 + Math.random() * 600;
+    setTimeout(() => {
+      loader.classList.add('rb-fade-out');
+      setTimeout(() => showResult(), 600);
+    }, analysisDuration);
 
     // Store image count for later use in Image Remix tab
     panel._pageImageCount = images;
@@ -486,19 +670,15 @@
 
       let message = '';
       if (known) {
-        message = `${known.label}. Great eye.`;
+        message = `This page looks cool.<br><em>${esc(known.label)}.</em> Start from here?`;
       } else if (siteType === 'portfolio') {
-        message = 'Creative portfolio. Good taste.';
+        message = `This page looks cool.<br><em>Start</em> from here?`;
       } else if (siteType === 'e-commerce') {
-        message = 'Product page. Ready to capture.';
+        message = `This page looks cool.<br><em>Start</em> from here?`;
       } else if (siteType === 'visual-heavy') {
-        message = 'Visual-heavy page. Let\'s capture it.';
-      } else if (siteType === 'editorial') {
-        message = 'Editorial layout. Clean structure.';
-      } else if (siteType === 'dashboard') {
-        message = 'Dashboard UI. Great for components.';
+        message = `This page looks cool.<br><em>Start</em> from here?`;
       } else {
-        message = 'Nice layout. Let\'s start here?';
+        message = `This page looks cool.<br><em>Start</em> from here?`;
       }
 
       msg.innerHTML = `<span class="rb-site-domain">${esc(domain)}</span><span class="rb-site-tagline">${message}</span>`;
@@ -506,16 +686,69 @@
     }
 
     remixBtn.addEventListener('click', () => {
-      // Switch to HTML->Design mode and trigger capture
-      applyMode('dark');
-      chrome.runtime.sendMessage({ action: 'captureCurrentPage' });
-      msg.textContent = 'Capturing...';
-      remixBtn.style.display = 'none';
-      loader.style.display = '';
-      pct.textContent = '';
-      const arc2 = panel.querySelector('.rb-loader-arc');
-      if (arc2) { arc2.style.strokeDashoffset = '160'; }
+      // Launch the page editor (toolbar + inspector)
+      chrome.runtime.sendMessage({ action: 'toggleEditor' });
+      panel.remove();
     });
+
+    function showConnectState() {
+      const center = panel.querySelector('.rb-site-analysis-center');
+      if (!center) return;
+
+      center.innerHTML = `
+        <div class="rb-connect">
+          <h3 class="rb-connect-title">Almost there.</h3>
+          <p class="rb-connect-sub">Connect an API to send layouts to your design tool.</p>
+
+          <div class="rb-connect-tools">
+            <button type="button" class="rb-connect-tool" data-tool="figma">
+              <span class="rb-connect-tool-icon">${LOGO_FIGMA}</span>
+              <span class="rb-connect-tool-name">Figma</span>
+              <span class="rb-connect-tool-status"><span class="rb-status-dot rb-dot-red"></span> connect</span>
+            </button>
+            <button type="button" class="rb-connect-tool" data-tool="sketch">
+              <span class="rb-connect-tool-icon">${LOGO_SKETCH}</span>
+              <span class="rb-connect-tool-name">Sketch</span>
+              <span class="rb-connect-tool-status"><span class="rb-status-dot rb-dot-red"></span> connect</span>
+            </button>
+            <button type="button" class="rb-connect-tool" data-tool="pencil">
+              <span class="rb-connect-tool-icon">${LOGO_PENCIL}</span>
+              <span class="rb-connect-tool-name">Pencil</span>
+              <span class="rb-connect-tool-status"><span class="rb-status-dot rb-dot-red"></span> connect</span>
+            </button>
+            <button type="button" class="rb-connect-tool" data-tool="paper">
+              <span class="rb-connect-tool-icon">${LOGO_PAPER}</span>
+              <span class="rb-connect-tool-name">Paper</span>
+              <span class="rb-connect-tool-status"><span class="rb-status-dot rb-dot-red"></span> connect</span>
+            </button>
+          </div>
+
+          <button type="button" class="rb-gen-solid" style="width:100%;margin-top:8px" id="rb-connectQuickSetup">Quick Setup</button>
+        </div>
+      `;
+
+      // Connect tool buttons → go to settings
+      center.querySelectorAll('.rb-connect-tool').forEach(btn => {
+        btn.addEventListener('click', () => {
+          showView('settings');
+          loadSettings();
+        });
+      });
+      const qsBtn = center.querySelector('#rb-connectQuickSetup');
+      if (qsBtn) qsBtn.addEventListener('click', () => goToWizard());
+
+      // Local export buttons
+      const exportSvg = center.querySelector('#rb-exportSvg');
+      const exportPng = center.querySelector('#rb-exportPng');
+      if (exportSvg) exportSvg.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ action: 'exportCurrentPage', format: 'svg' });
+        exportSvg.textContent = 'Exporting...';
+      });
+      if (exportPng) exportPng.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ action: 'exportCurrentPage', format: 'png' });
+        exportPng.textContent = 'Exporting...';
+      });
+    }
   }
 
   // --- Image Gallery (Pinterest-style) ---
@@ -554,32 +787,118 @@
     const top = candidates.slice(0, 12);
 
     if (top.length === 0) {
-      grid.innerHTML = '<p class="rb-empty">No images found on this page.</p>';
+      grid.innerHTML = '<div class="rb-empty-bounce-wrap"><div class="rb-empty-bounce"></div><p class="rb-empty-bounce-label">Nenhuma imagem aqui :(</p></div>';
       return;
     }
 
     const totalImgs = panel._pageImageCount || allImgs.length;
-    grid.innerHTML = `<div class="rb-img-grid-header">${totalImgs} image${totalImgs !== 1 ? 's' : ''} found</div>`;
+    const countEl = $('#rb-imgCount');
+    if (countEl) countEl.innerHTML = `<span class="rb-img-count">${totalImgs}</span> image${totalImgs !== 1 ? 's' : ''} found`;
+    grid.innerHTML = '';
     top.forEach(img => {
       const item = document.createElement('div');
       item.className = 'rb-img-item';
       item.innerHTML = `
         <img src="${esc(img.src)}" alt="${esc(img.alt)}" loading="lazy"/>
         <div class="rb-img-overlay">
-          <button class="rb-img-remix" data-src="${esc(img.src)}">Remix</button>
+          <button class="rb-img-remix" data-src="${esc(img.src)}">Repix</button>
         </div>
       `;
       // Click to remix this specific image
       item.querySelector('.rb-img-remix').addEventListener('click', (e) => {
         e.stopPropagation();
         const btn = e.target;
-        btn.textContent = 'Analyzing...';
+        btn.textContent = 'Repixing...';
         btn.disabled = true;
         chrome.runtime.sendMessage({ action: 'describeImage', imageUrl: img.src });
       });
       grid.appendChild(item);
     });
   }
+
+  // ─── API Pill (Image Remix header) ────────────────────────────────────
+
+  const AI_PROVIDERS = [
+    { id: 'gemini', name: 'Google Gemini', keyField: 'apiKey', requireProvider: 'gemini' },
+    { id: 'openai', name: 'OpenAI', keyField: 'apiKey', requireProvider: 'openai' },
+    { id: 'anthropic', name: 'Anthropic', keyField: 'apiKey', requireProvider: 'anthropic' },
+    { id: 'ollama', name: 'Ollama (Local)', keyField: null, noKey: true }
+  ];
+
+  function refreshApiPill() {
+    chrome.storage.sync.get({ apiKey: '', apiProvider: 'gemini', stabilityApiKey: '', replicateApiKey: '' }, (s) => {
+      const pill = $('#rb-apiPill');
+      const dot = $('#rb-apiPillDot');
+      const label = $('#rb-apiPillLabel');
+      if (!pill) return;
+
+      const hasKey = !!(s.apiKey) || s.apiProvider === 'ollama';
+      if (hasKey) {
+        const prov = AI_PROVIDERS.find(p => p.id === s.apiProvider);
+        if (dot) { dot.className = 'rb-status-dot rb-dot-green'; }
+        if (label) { label.textContent = prov ? prov.name : s.apiProvider; }
+        // Also update the image gen provider to match
+        activeGenProvider = s.apiProvider === 'openai' ? 'openai' : (s.apiProvider === 'gemini' ? 'gemini' : 'stability');
+      } else {
+        if (dot) { dot.className = 'rb-status-dot rb-dot-red'; }
+        if (label) { label.textContent = 'connect API'; }
+      }
+    });
+  }
+
+  (function initApiPill() {
+    const pill = $('#rb-apiPill');
+    const dropdown = $('#rb-apiDropdown');
+    if (!pill || !dropdown) return;
+
+    pill.addEventListener('click', () => {
+      if (dropdown.hidden) {
+        chrome.storage.sync.get({ apiKey: '', apiProvider: 'gemini' }, (s) => {
+          const hasKey = !!(s.apiKey) || s.apiProvider === 'ollama';
+          dropdown.innerHTML = '';
+
+          AI_PROVIDERS.forEach(p => {
+            const isActive = s.apiProvider === p.id && hasKey;
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'rb-gen-provider-option' + (isActive ? ' rb-provider-active' : '');
+            btn.innerHTML = `
+              <span class="rb-status-dot ${isActive ? 'rb-dot-green' : 'rb-dot-red'}"></span>
+              <span class="rb-gen-provider-option-name">${esc(p.name)}</span>
+              <span class="rb-provider-status">${isActive ? 'active' : 'connect'}</span>
+            `;
+            btn.addEventListener('click', () => {
+              if (!isActive) { showView('settings'); loadSettings(); }
+              dropdown.hidden = true;
+            });
+            dropdown.appendChild(btn);
+          });
+
+          // Check if all are exhausted (unlikely but handle)
+          const allConnected = AI_PROVIDERS.every(p => {
+            if (p.noKey) return s.apiProvider === 'ollama';
+            return !!(s.apiKey) && s.apiProvider === p.id;
+          });
+          if (!allConnected) {
+            const addMore = document.createElement('button');
+            addMore.type = 'button';
+            addMore.className = 'rb-gen-provider-option';
+            addMore.innerHTML = '<span class="rb-gen-provider-option-name" style="color:var(--rb-fg-muted)">+ Add more</span>';
+            addMore.addEventListener('click', () => { showView('settings'); loadSettings(); dropdown.hidden = true; });
+            dropdown.appendChild(addMore);
+          }
+
+          dropdown.hidden = false;
+        });
+      } else {
+        dropdown.hidden = true;
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!pill.contains(e.target) && !dropdown.contains(e.target)) dropdown.hidden = true;
+    });
+  })();
 
   // ─── Image Generation Card ─────────────────────────────────────────────
 
@@ -593,28 +912,118 @@
 
   let activeGenProvider = 'stability';
 
-  function buildGenCard(promptText) {
+  // Pretty-print a JSON key for display
+  function humanizeKey(key) {
+    return key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+  }
+
+  function buildGenCard(promptText, messageData) {
     const container = $('#rb-genCardContainer');
     if (!container) return;
 
+    const jsonData = messageData?.structuredJson || messageData?.metadata || { style: 'photorealistic', aspectRatio: '1:1' };
+    const sourceImg = messageData?.imageUrl || '';
+    const providerName = messageData?.provider || 'gemini';
+    const providerLabel = { gemini: 'Gemini', openai: 'ChatGPT', anthropic: 'Claude', ollama: 'Ollama' }[providerName] || providerName;
+
+    // Mutable copy of JSON for editing
+    const editableJson = JSON.parse(JSON.stringify(jsonData));
+
     container.innerHTML = '';
+    panel.classList.add('rb-expanded');
+
     const card = document.createElement('div');
-    card.className = 'rb-gen-card';
+    card.className = 'rb-gen-card rb-repix-output';
+
+    // Category display names
+    const CATEGORY_LABELS = {
+      subject: 'Subject', environment: 'Environment', style: 'Style',
+      color: 'Color', mood: 'Mood', camera: 'Camera',
+      lighting: 'Lighting', technical: 'Technical'
+    };
+
+    // Build categorized editor HTML
+    function buildEditorHTML(obj) {
+      let html = '';
+      for (const [catKey, catVal] of Object.entries(obj)) {
+        if (typeof catVal === 'object' && catVal !== null && !Array.isArray(catVal)) {
+          // This is a category with sub-fields
+          const label = CATEGORY_LABELS[catKey] || humanizeKey(catKey);
+          html += `<div class="rb-json-category" data-cat="${esc(catKey)}">`;
+          html += `<div class="rb-json-cat-title">${esc(label)}</div>`;
+          html += `<div class="rb-json-cat-fields">`;
+          for (const [fieldKey, fieldVal] of Object.entries(catVal)) {
+            html += `<div class="rb-json-field">`;
+            html += `<div class="rb-json-key">${esc(humanizeKey(fieldKey))}</div>`;
+            html += `<div class="rb-json-values">`;
+            if (Array.isArray(fieldVal)) {
+              fieldVal.forEach((item, i) => {
+                const isColor = /^#[0-9a-fA-F]{3,8}$/.test(String(item));
+                const cls = isColor ? 'rb-json-pill rb-color-pill' : 'rb-json-pill';
+                const style = isColor ? ` style="--rb-swatch-color:${esc(String(item))}"` : '';
+                html += `<span class="${cls}" contenteditable="true" data-cat="${esc(catKey)}" data-key="${esc(fieldKey)}" data-index="${i}"${style}>${esc(String(item))}</span>`;
+              });
+            } else {
+              const sv = String(fieldVal);
+              const isColor = /^#[0-9a-fA-F]{3,8}$/.test(sv);
+              const cls = isColor ? 'rb-json-pill rb-color-pill' : 'rb-json-pill';
+              const style = isColor ? ` style="--rb-swatch-color:${esc(sv)}"` : '';
+              html += `<span class="${cls}" contenteditable="true" data-cat="${esc(catKey)}" data-key="${esc(fieldKey)}"${style}>${esc(sv)}</span>`;
+            }
+            html += `</div></div>`;
+          }
+          html += `</div></div>`;
+        } else {
+          // Flat field (fallback for non-categorized JSON)
+          html += `<div class="rb-json-field">`;
+          html += `<div class="rb-json-key">${esc(humanizeKey(catKey))}</div>`;
+          html += `<div class="rb-json-values">`;
+          if (Array.isArray(catVal)) {
+            catVal.forEach((item, i) => {
+              html += `<span class="rb-json-pill" contenteditable="true" data-key="${esc(catKey)}" data-index="${i}">${esc(String(item))}</span>`;
+            });
+          } else {
+            html += `<span class="rb-json-pill" contenteditable="true" data-key="${esc(catKey)}">${esc(String(catVal))}</span>`;
+          }
+          html += `</div></div>`;
+        }
+      }
+      return html;
+    }
+
+    // Hide image grid and old prompt cards when showing Smart Remix result
+    const imgGrid = $('#rb-imgGrid');
+    if (imgGrid) imgGrid.style.display = 'none';
+    const imgRowHeader = panel.querySelector('.rb-img-row-header');
+    if (imgRowHeader) imgRowHeader.style.display = 'none';
+    const promptsList = $('#rb-promptsList');
+    if (promptsList) promptsList.style.display = 'none';
+
     card.innerHTML = `
-      <div class="rb-gen-label">Edit prompt & generate</div>
-      <textarea class="rb-gen-prompt" id="rb-genPrompt">${esc(promptText)}</textarea>
-      <div class="rb-gen-provider-wrap">
-        <button type="button" class="rb-gen-provider-btn" id="rb-providerDropdown">
-          <span class="rb-gen-provider-name" id="rb-providerName">Stability AI</span>
-          ${CHEVRON_SVG}
+      ${sourceImg ? `
+      <div class="rb-smart-img-wrap">
+        <img class="rb-smart-img" src="${esc(sourceImg)}" alt="Source"/>
+        <a class="rb-smart-provider-pill" id="rb-editInProvider" href="#" title="Continue editing">edit in ${esc(providerLabel)}</a>
+      </div>
+      ` : ''}
+
+      <div class="rb-json-editor-title">Edit Live</div>
+      <div class="rb-json-tooltip" id="rb-jsonTooltip">write over each value</div>
+      <div class="rb-json-editor" id="rb-jsonEditor">
+        ${buildEditorHTML(editableJson)}
+      </div>
+
+      <div class="rb-smart-actions">
+        <button type="button" class="rb-copy-mini" id="rb-copyPromptJson">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          copy prompt + json
         </button>
-        <div class="rb-gen-provider-list" id="rb-providerList" hidden></div>
+        <button type="button" class="rb-gen-solid" id="rb-genBtn" style="margin-left:auto">
+          <span class="rb-motion-arrow">${ARROW_RIGHT_SVG}</span>
+          <span class="rb-motion-label">Generate</span>
+        </button>
       </div>
-      <div class="rb-gen-tooltip" id="rb-genTooltip" hidden>
-        <p class="rb-gen-tooltip-text" id="rb-genTooltipText"></p>
-        <button type="button" class="rb-btn rb-btn-outline rb-btn-sm" id="rb-genTooltipConnect">Connect API</button>
-      </div>
-      <button type="button" class="rb-btn rb-btn-primary rb-btn-full" id="rb-genBtn">Generate</button>
+
       <div class="rb-gen-result" id="rb-genResult" hidden>
         <div class="rb-gen-image-wrap">
           <div class="rb-gen-skeleton" id="rb-genSkeleton"></div>
@@ -628,59 +1037,108 @@
     `;
     container.appendChild(card);
 
-    // Dropdown toggle
-    const dropdownBtn = card.querySelector('#rb-providerDropdown');
-    const dropdownList = card.querySelector('#rb-providerList');
-
-    dropdownBtn.addEventListener('click', () => {
-      if (dropdownList.hidden) {
-        refreshProviderList();
-        dropdownList.hidden = false;
-      } else {
-        dropdownList.hidden = true;
-      }
+    // --- Pill editing: sync back to editableJson (supports nested categories) ---
+    const tooltip = card.querySelector('#rb-jsonTooltip');
+    card.querySelectorAll('.rb-json-pill').forEach(pill => {
+      pill.addEventListener('focus', () => {
+        if (tooltip) tooltip.classList.add('rb-hidden');
+      });
+      pill.addEventListener('blur', () => {
+        const cat = pill.dataset.cat;
+        const key = pill.dataset.key;
+        const idx = pill.dataset.index;
+        const val = pill.textContent.trim();
+        // Determine target object (nested or flat)
+        const target = cat && editableJson[cat] ? editableJson[cat] : editableJson;
+        if (idx !== undefined && idx !== '') {
+          if (Array.isArray(target[key])) target[key][parseInt(idx)] = val;
+        } else {
+          target[key] = val;
+        }
+        // Update color swatch if it's a color pill
+        if (pill.classList.contains('rb-color-pill') && /^#[0-9a-fA-F]{3,8}$/.test(val)) {
+          pill.style.setProperty('--rb-swatch-color', val);
+        }
+      });
+      pill.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); pill.blur(); }
+      });
     });
 
-    // Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-      if (!card.contains(e.target)) dropdownList.hidden = true;
-    }, { once: false });
+    // --- Copy prompt + json ---
+    card.querySelector('#rb-copyPromptJson').addEventListener('click', () => {
+      const combined = promptText + '\n\n' + JSON.stringify(editableJson, null, 2);
+      navigator.clipboard.writeText(combined).then(() => {
+        const btn = card.querySelector('#rb-copyPromptJson');
+        const orig = btn.innerHTML;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.innerHTML = orig; }, 1500);
+      }).catch(() => {});
+    });
 
-    // Generate button
+    // --- Edit in provider ---
+    const editLink = card.querySelector('#rb-editInProvider');
+    if (editLink) {
+      const providerUrls = {
+        gemini: 'https://gemini.google.com/app',
+        openai: 'https://chatgpt.com/',
+        anthropic: 'https://claude.ai/',
+        ollama: '#'
+      };
+      editLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        const combined = promptText + '\n\n' + JSON.stringify(editableJson, null, 2);
+        navigator.clipboard.writeText(combined).catch(() => {});
+        const url = providerUrls[providerName] || providerUrls.gemini;
+        if (url !== '#') window.open(url, '_blank');
+      });
+    }
+
+    // --- Generate (with progressive gate) ---
     const genBtn = card.querySelector('#rb-genBtn');
     genBtn.addEventListener('click', () => {
-      const prompt = card.querySelector('#rb-genPrompt').value.trim();
-      if (!prompt) return;
-      startGeneration(prompt);
+      // Check if any image generation provider is configured
+      chrome.storage.sync.get({ apiKey: '', apiProvider: 'gemini', stabilityApiKey: '', replicateApiKey: '' }, (s) => {
+        const hasGen = !!(s.stabilityApiKey) || !!(s.replicateApiKey) ||
+          (!!(s.apiKey) && (s.apiProvider === 'openai' || s.apiProvider === 'gemini'));
+        if (!hasGen) {
+          // Show gate inline below button
+          let gate = card.querySelector('.rb-gate');
+          if (!gate) {
+            gate = document.createElement('div');
+            gate.className = 'rb-gate';
+            gate.innerHTML = `
+              <span class="rb-gate-text">Connect an image provider to generate.</span>
+              <button type="button" class="rb-gate-btn" id="rb-gateSetup">Quick Setup</button>
+            `;
+            genBtn.parentElement.insertAdjacentElement('afterend', gate);
+            gate.querySelector('#rb-gateSetup').addEventListener('click', () => goToWizard());
+          }
+          return;
+        }
+        const editedPrompt = promptText + '\n\n' + JSON.stringify(editableJson, null, 2);
+        startGeneration(editedPrompt);
+      });
     });
 
     // Generate again
-    card.querySelector('#rb-genAgain').addEventListener('click', () => {
-      const prompt = card.querySelector('#rb-genPrompt').value.trim();
-      if (!prompt) return;
+    const againBtn = card.querySelector('#rb-genAgain');
+    if (againBtn) againBtn.addEventListener('click', () => {
+      const editedPrompt = promptText + '\n\n' + JSON.stringify(editableJson, null, 2);
       card.querySelector('#rb-genResult').hidden = true;
-      startGeneration(prompt);
+      startGeneration(editedPrompt);
     });
 
     // Download
-    card.querySelector('#rb-genDownload').addEventListener('click', () => {
+    const dlBtn = card.querySelector('#rb-genDownload');
+    if (dlBtn) dlBtn.addEventListener('click', () => {
       const img = card.querySelector('#rb-genImage');
-      if (img.src) {
+      if (img?.src) {
         const a = document.createElement('a');
-        a.href = img.src;
-        a.download = 'repixbridge-generated.png';
-        a.click();
+        a.href = img.src; a.download = 'repix-generated.png'; a.click();
       }
     });
 
-    // Tooltip connect
-    card.querySelector('#rb-genTooltipConnect').addEventListener('click', () => {
-      showView('settings');
-      loadSettings();
-    });
-
-    // Set initial provider
-    refreshProviderStatus();
   }
 
   function refreshProviderList() {
@@ -828,13 +1286,37 @@
   chrome.runtime.onMessage.addListener((message) => {
     if (message.action === 'promptReady') {
       // Refresh the image grid buttons
-      $$('.rb-img-remix').forEach(btn => { btn.textContent = 'Remix'; btn.disabled = false; });
-      // Show generation card with the prompt
-      buildGenCard(message.prompt || '');
+      $$('.rb-img-remix').forEach(btn => { btn.textContent = 'Repix'; btn.disabled = false; });
+      // Show generation card with the prompt + scroll into view
+      buildGenCard(message.prompt || '', message);
       loadPrompts();
+      // Scroll to the output
+      const genContainer = $('#rb-genCardContainer');
+      if (genContainer) genContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     if (message.action === 'promptError') {
-      $$('.rb-img-remix').forEach(btn => { btn.textContent = 'Remix'; btn.disabled = false; });
+      $$('.rb-img-remix').forEach(btn => { btn.textContent = 'Repix'; btn.disabled = false; });
+      // Show error inline
+      const container = $('#rb-genCardContainer');
+      if (container) {
+        const errMsg = message.error || 'Something went wrong.';
+        const isApiError = errMsg.toLowerCase().includes('api key');
+        container.innerHTML = `
+          <div class="rb-gen-card">
+            ${isApiError ? `
+              <h3 class="rb-connect-title" style="font-size:18px;margin-bottom:6px">Connect an AI provider</h3>
+              <p class="rb-connect-sub" style="margin-bottom:14px">To reverse-engineer image prompts, connect at least one AI provider.</p>
+              <div style="display:flex;gap:8px">
+                <button type="button" class="rb-gen-solid" id="rb-errGoSettings">Quick Setup</button>
+              </div>
+            ` : `
+              <div class="rb-gen-error">${esc(errMsg)}</div>
+            `}
+          </div>
+        `;
+        const settingsBtn = container.querySelector('#rb-errGoSettings');
+        if (settingsBtn) settingsBtn.addEventListener('click', () => goToWizard());
+      }
     }
     if (message.action === 'imageGenerated') {
       handleImageGenerated(message.dataUrl);
@@ -842,7 +1324,47 @@
     if (message.action === 'imageGenError') {
       handleImageGenError(message.error);
     }
+    if (message.action === 'captureError') {
+      const loader = $('#rb-loader');
+      const msg = $('#rb-siteMsg');
+      const remixBtn = $('#rb-remixSite');
+      if (loader) loader.style.display = 'none';
+      if (msg) msg.innerHTML = `<span class="rb-site-domain" style="color:#ef4444">${esc(message.error)}</span>`;
+      if (remixBtn) { remixBtn.style.display = ''; remixBtn.textContent = 'Try again'; }
+    }
+    if (message.action === 'captureSuccess') {
+      const loader = $('#rb-loader');
+      const msg = $('#rb-siteMsg');
+      const remixBtn = $('#rb-remixSite');
+      if (loader) loader.style.display = 'none';
+      if (msg) msg.innerHTML = '<span class="rb-site-domain" style="color:#22c55e">Captured!</span><span class="rb-site-tagline">Open your design tool plugin to import.</span>';
+      if (remixBtn) remixBtn.style.display = 'none';
+      loadCaptures();
+    }
   });
+
+  // --- Rotating pill animation ---
+  (function initPillRotate() {
+    const container = $('#rb-pillRotate');
+    if (!container) return;
+    const words = container.querySelectorAll('.rb-pill-word');
+    if (words.length < 2) return;
+    let idx = 0;
+    setInterval(() => {
+      const current = words[idx];
+      const next = words[(idx + 1) % words.length];
+      current.classList.remove('rb-pill-active');
+      current.classList.add('rb-pill-exit');
+      next.classList.remove('rb-pill-exit');
+      next.classList.add('rb-pill-active');
+      setTimeout(() => { current.classList.remove('rb-pill-exit'); }, 400);
+      idx = (idx + 1) % words.length;
+    }, 2200);
+  })();
+
+  // --- Wire footer Quick Setup link ---
+  const siteFooter = $('#rb-siteFooter');
+  if (siteFooter) siteFooter.addEventListener('click', () => goToWizard());
 
   // --- Init ---
   chrome.storage.sync.get({ onboardingDone: false, activeMode: 'dark' }, (data) => {

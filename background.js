@@ -1,13 +1,13 @@
-// EzPrompter - Background Service Worker
+// Repix - Background Service Worker
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
-    id: 'ezprompter-describe',
+    id: 'repix-describe',
     title: 'RepixBridge: Image Remix — Describe Prompt',
     contexts: ['image']
   });
   chrome.contextMenus.create({
-    id: 'ezprompter-capture',
+    id: 'repix-capture',
     title: 'RepixBridge: Capture Layout → Design Tool',
     contexts: ['page']
   });
@@ -19,39 +19,37 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || !tab.id) return;
   const tabId = tab.id;
 
-  try {
-    await chrome.scripting.insertCSS({
-      target: { tabId },
-      files: ['panel/panel.css']
-    });
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['panel/panel.js']
-    });
-  } catch (e) {
-    console.warn('RepixBridge: injection failed:', e);
-  }
+  // Check if editor is active by trying to send a message
+  chrome.tabs.sendMessage(tabId, { action: 'editorAttention' }, (response) => {
+    if (chrome.runtime.lastError) {
+      // No listener = editor not active, inject panel
+      chrome.scripting.insertCSS({ target: { tabId }, files: ['panel/panel.css'] }).then(() => {
+        return chrome.scripting.executeScript({ target: { tabId }, files: ['panel/panel.js'] });
+      }).catch(e => console.warn('Repix: injection failed:', e));
+    }
+    // If no error, editor handled it (attention glow)
+  });
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === 'ezprompter-capture') {
+  if (info.menuItemId === 'repix-capture') {
     return handleCaptureLayout(tab);
   }
-  if (info.menuItemId !== 'ezprompter-describe') return;
+  if (info.menuItemId !== 'repix-describe') return;
 
   const imageUrl = info.srcUrl;
   const tabId = tab.id;
 
   // Show loading feedback immediately
   setBadge('...', '#7c3aed', tabId);
-  showNotification('EzPrompter', 'Analyzing image with AI...');
+  showNotification('Repix', 'Analyzing image with AI...');
   injectOverlay(tabId, { loading: true, text: 'Analyzing image with AI...' });
 
   try {
     const settings = await getSettings();
 
     if (!settings.apiKey && settings.apiProvider !== 'ollama') {
-      throw new Error('API key not configured. Click the EzPrompter icon to set it up.');
+      throw new Error('API key not configured. Click the Repix icon to set it up.');
     }
 
     // 1. Fetch image as base64 (smaller limit for local models)
@@ -102,9 +100,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     setTimeout(() => setBadge('', '', tabId), 5000);
 
   } catch (error) {
-    console.error('EzPrompter error:', error);
+    console.error('Repix error:', error);
     setBadge('ERR', '#dc2626', tabId);
-    showNotification('EzPrompter - Error', error.message);
+    showNotification('Repix - Error', error.message);
     injectOverlay(tabId, { error: true, text: error.message });
 
     setTimeout(() => setBadge('', '', tabId), 5000);
@@ -126,6 +124,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.action === 'toggleEditor') {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (!tabs[0]) return;
+      const tabId = tabs[0].id;
+      try {
+        await chrome.scripting.insertCSS({ target: { tabId }, files: ['editor/editor.css'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/editor.js'] });
+      } catch (e) { console.warn('Editor injection failed:', e); }
+    });
+    return false;
+  }
+
+  if (message.action === 'reopenPanel') {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (!tabs[0]) return;
+      const tabId = tabs[0].id;
+      try {
+        await chrome.scripting.insertCSS({ target: { tabId }, files: ['panel/panel.css'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['panel/panel.js'] });
+      } catch (e) { console.warn('Panel reopen failed:', e); }
+    });
+    return false;
+  }
+
+  if (message.action === 'captureScreenshot') {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (!tabs[0]) return;
+      try {
+        const dataUrl = await chrome.tabs.captureVisibleTab(tabs[0].windowId, { format: 'png', quality: 100 });
+        // Download the screenshot
+        chrome.downloads.download({
+          url: dataUrl,
+          filename: 'repix-screenshot.png',
+          saveAs: true
+        });
+      } catch (e) { console.error('Screenshot failed:', e); }
+    });
+    return false;
+  }
+
   if (message.action === 'generateImage') {
     const { prompt, imageProvider } = message;
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
@@ -133,9 +171,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const tabId = tabs[0].id;
       try {
         const dataUrl = await generateImageWithAI(prompt, imageProvider);
-        chrome.tabs.sendMessage(tabId, { action: 'imageGenerated', dataUrl });
+        chrome.tabs.sendMessage(tabId, { action: 'imageGenerated', dataUrl }, () => { if (chrome.runtime.lastError) { /* panel may not be open */ } });
       } catch (err) {
-        chrome.tabs.sendMessage(tabId, { action: 'imageGenError', error: err.message });
+        chrome.tabs.sendMessage(tabId, { action: 'imageGenError', error: err.message }, () => { if (chrome.runtime.lastError) { /* panel may not be open */ } });
       }
     });
     return false;
@@ -158,30 +196,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         const maxSize = settings.apiProvider === 'ollama' ? 768 : 1536;
         const imageData = await fetchImageAsBase64(imageUrl, maxSize);
-        const { title, prompt: promptDescription } = await describeImageWithAI(imageData, settings);
+        const { title, prompt: promptDescription, structuredJson } = await describeImageWithAI(imageData, settings);
         const timestamp = new Date().toISOString();
         const domain = extractDomain(tab.url || '');
+
+        const jsonData = structuredJson || { style: 'photorealistic', aspectRatio: '1:1' };
 
         await saveRecentPrompt({
           id: Date.now().toString(),
           title,
           prompt: promptDescription,
-          style: 'photorealistic',
-          aspectRatio: '1:1',
+          style: jsonData.style || 'photorealistic',
+          aspectRatio: jsonData.aspectRatio || '1:1',
           timestamp,
           domain,
-          imageUrl
+          imageUrl,
+          structuredJson: jsonData
         });
 
         setBadge('OK', '#065f46', tabId);
         setTimeout(() => setBadge('', '', tabId), 3000);
         // Notify panel that prompt is ready
-        chrome.tabs.sendMessage(tabId, { action: 'promptReady', title, prompt: promptDescription });
+        chrome.tabs.sendMessage(tabId, {
+          action: 'promptReady',
+          title,
+          prompt: promptDescription,
+          imageUrl,
+          structuredJson: jsonData,
+          provider: settings.apiProvider,
+          metadata: { style: jsonData.style, aspectRatio: jsonData.aspectRatio, domain, timestamp }
+        }, () => { if (chrome.runtime.lastError) { /* panel may not be open */ } });
       } catch (error) {
         console.error('Image describe error:', error);
         setBadge('ERR', '#dc2626', tabId);
         setTimeout(() => setBadge('', '', tabId), 3000);
-        chrome.tabs.sendMessage(tabId, { action: 'promptError', error: error.message });
+        chrome.tabs.sendMessage(tabId, { action: 'promptError', error: error.message }, () => {
+          if (chrome.runtime.lastError) { /* panel may not be open — ignore */ }
+        });
       }
     });
     return false;
@@ -232,11 +283,11 @@ async function injectOverlay(tabId, state) {
 // This function runs IN the page context
 function showOverlayInPage(state) {
   // Remove existing overlay
-  const existing = document.getElementById('ezprompter-overlay');
+  const existing = document.getElementById('repix-overlay');
   if (existing) existing.remove();
 
   const overlay = document.createElement('div');
-  overlay.id = 'ezprompter-overlay';
+  overlay.id = 'repix-overlay';
 
   function escapeHtml(text) {
     const div = document.createElement('div');
@@ -402,7 +453,7 @@ function showOverlayInPage(state) {
 
 // ─── Layout Capture for Figma ───────────────────────────────────────────────
 
-const API_BASE = 'https://ezprompter.vercel.app'; // Change to your deployed URL
+const API_BASE = 'https://repix.vercel.app'; // Change to your deployed URL
 
 async function handleCaptureLayout(tab) {
   const tabId = tab.id;
@@ -414,7 +465,7 @@ async function handleCaptureLayout(tab) {
     // Check auth
     const { authToken } = await chrome.storage.sync.get({ authToken: '' });
     if (!authToken) {
-      throw new Error('Sign in required. Click the EzPrompter icon to connect your account.');
+      throw new Error('Sign in required. Click the Repix icon to connect your account.');
     }
 
     // Validate token and check plan/usage
@@ -487,12 +538,14 @@ async function handleCaptureLayout(tab) {
       fileName: '',
       folder: `Layout captured → ${extractDomain(tab.url)}`
     });
+    chrome.tabs.sendMessage(tabId, { action: 'captureSuccess', captureId: id }, () => { if (chrome.runtime.lastError) { /* panel may not be open */ } });
     setTimeout(() => setBadge('', '', tabId), 5000);
 
   } catch (error) {
-    console.error('EzPrompter capture error:', error);
+    console.error('Repix capture error:', error);
     setBadge('ERR', '#dc2626', tabId);
     injectOverlay(tabId, { error: true, text: `Capture failed: ${error.message}` });
+    chrome.tabs.sendMessage(tabId, { action: 'captureError', error: error.message }, () => { if (chrome.runtime.lastError) { /* panel may not be open */ } });
     setTimeout(() => setBadge('', '', tabId), 5000);
   }
 }
@@ -640,10 +693,10 @@ function getSettings() {
     chrome.storage.sync.get({
       apiProvider: 'gemini',
       apiKey: '',
-      model: 'gemini-2.0-flash',
+      model: 'gemini-1.5-flash',
       ollamaUrl: 'http://localhost:11434',
       language: 'en',
-      downloadFolder: 'EzPrompter',
+      downloadFolder: 'Repix',
       stabilityApiKey: '',
       replicateApiKey: '',
       imageProvider: 'stability'
@@ -694,10 +747,78 @@ async function describeImageWithAI(imageDataUrl, settings) {
     ? 'Responda en español.'
     : 'Respond in English.';
 
-  const systemPrompt = `You are an expert at reverse-engineering image generation prompts. Given an image:
-1. First line MUST be exactly: TITLE: [2-4 words describing the image, e.g. "TITLE: blue vintage car"]
-2. Then a blank line.
-3. Then the full detailed prompt that could recreate this image (style, composition, lighting, colors, subjects, mood, technical parameters).
+  const systemPrompt = `You are an expert at reverse-engineering image generation prompts. Analyze the image in extreme detail. Respond with EXACTLY this format (no extra text):
+
+TITLE: [2-4 words]
+
+PROMPT: [full detailed prompt to recreate this image — be very specific and lengthy]
+
+JSON:
+\`\`\`json
+{
+  "subject": {
+    "main": "[main subject described in detail]",
+    "details": ["detail1", "detail2", "detail3"],
+    "action": "[what the subject is doing]",
+    "pose": "[body pose if applicable]",
+    "expression": "[facial expression if applicable]",
+    "skinTone": "[skin tone if person visible]",
+    "hair": "[hair description if applicable]",
+    "clothing": "[outfit/clothing description]",
+    "accessories": "[accessories, jewelry, props]"
+  },
+  "environment": {
+    "setting": "[indoor, outdoor, studio, urban, nature, etc.]",
+    "foreground": "[foreground elements]",
+    "background": "[background description]",
+    "objects": ["object1", "object2", "object3"],
+    "atmosphere": "[foggy, clear, hazy, ethereal, etc.]",
+    "weather": "[sunny, rainy, cloudy, etc. if applicable]",
+    "timeOfDay": "[morning, golden hour, night, etc.]"
+  },
+  "style": {
+    "medium": "[photography, digital art, watercolor, oil painting, 3d render, anime, vector, etc.]",
+    "artStyle": "[photorealistic, impressionist, minimalist, surreal, etc.]",
+    "designStyle": "[flat, material, brutalist, art deco, etc. if applicable]",
+    "era": "[modern, vintage, retro, futuristic, etc.]",
+    "influences": ["artist or style reference 1", "reference 2"]
+  },
+  "color": {
+    "palette": ["#hex1", "#hex2", "#hex3", "#hex4", "#hex5"],
+    "temperature": "[warm, cool, neutral]",
+    "contrast": "[high, low, medium]",
+    "saturation": "[vivid, muted, desaturated, monochrome]",
+    "dominantColor": "[the dominant color]",
+    "accentColor": "[the accent/highlight color]"
+  },
+  "mood": {
+    "emotion": "[serene, dramatic, joyful, melancholic, tense, etc.]",
+    "tone": "[dark, bright, dreamy, gritty, elegant, etc.]",
+    "energy": "[calm, dynamic, chaotic, peaceful, etc.]"
+  },
+  "camera": {
+    "angle": "[eye level, high angle, low angle, bird's eye, dutch, etc.]",
+    "lens": "[wide angle, telephoto, macro, fisheye, 35mm, 85mm, etc.]",
+    "depthOfField": "[shallow/bokeh, deep, tilt-shift]",
+    "perspective": "[first person, third person, isometric, etc.]",
+    "framing": "[close-up, medium shot, wide shot, extreme close-up, etc.]"
+  },
+  "lighting": {
+    "type": "[natural, studio, dramatic, rim light, neon, etc.]",
+    "direction": "[front, back, side, top, bottom, ambient]",
+    "shadows": "[soft, hard, long, minimal, etc.]",
+    "highlights": "[specular, diffused, bloom, etc.]"
+  },
+  "technical": {
+    "texture": "[smooth, grainy, rough, glossy, matte]",
+    "postProcessing": "[film grain, vignette, bloom, chromatic aberration, none]",
+    "aspectRatio": "[1:1, 16:9, 4:3, 9:16, 3:2]",
+    "quality": "[4k, 8k, ultra detailed, masterpiece]",
+    "negativePrompt": "[what to avoid]"
+  }
+}
+\`\`\`
+Fill EVERY field. Use hex for colors. Be specific. If a field doesn't apply, use "n/a".
 ${langInstruction}`;
 
   if (settings.apiProvider === 'anthropic') {
@@ -777,7 +898,7 @@ async function describeWithOllama(imageDataUrl, systemPrompt, settings) {
     }
 
     const messageListener = (message, sender) => {
-      if (sender.tab?.id === tabId && message.type === 'EZPROMPTER_OLLAMA') {
+      if (sender.tab?.id === tabId && message.type === 'REPIX_OLLAMA') {
         chrome.runtime.onMessage.removeListener(messageListener);
         cleanup();
         if (message.success) resolve(parseAIResponse(message.result));
@@ -803,10 +924,10 @@ async function describeWithOllama(imageDataUrl, systemPrompt, settings) {
             return r.json();
           })
           .then(data => chrome.runtime.sendMessage({
-            type: 'EZPROMPTER_OLLAMA', success: true, result: data.response  // parsed in background
+            type: 'REPIX_OLLAMA', success: true, result: data.response  // parsed in background
           }))
           .catch(err => chrome.runtime.sendMessage({
-            type: 'EZPROMPTER_OLLAMA', success: false, error: err.message
+            type: 'REPIX_OLLAMA', success: false, error: err.message
           }));
         },
         args: [baseUrl, model, userPrompt, base64Data]
@@ -825,7 +946,7 @@ async function describeWithGemini(imageDataUrl, systemPrompt, settings) {
   if (!match) throw new Error('Invalid image data');
   const [, mediaType, base64Data] = match;
 
-  const model = settings.model || 'gemini-2.0-flash';
+  const model = settings.model || 'gemini-1.5-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`;
 
   const response = await fetch(url, {
@@ -902,14 +1023,26 @@ async function describeWithAnthropic(imageDataUrl, systemPrompt, settings) {
 
 function parseAIResponse(text) {
   const titleMatch = text.match(/^TITLE:\s*(.+)/im);
-  if (titleMatch) {
-    const title = titleMatch[1].trim().slice(0, 60);
-    const prompt = text.replace(/^TITLE:\s*.+\n*/im, '').trim();
-    return { title, prompt };
+  const title = titleMatch ? titleMatch[1].trim().slice(0, 60) : text.trim().split(/\s+/).slice(0, 4).join(' ');
+
+  // Extract PROMPT section
+  const promptMatch = text.match(/PROMPT:\s*([\s\S]*?)(?=\nJSON:|```json|$)/im);
+  const prompt = promptMatch ? promptMatch[1].trim() : text.replace(/^TITLE:\s*.+\n*/im, '').trim();
+
+  // Extract JSON block
+  let structuredJson = null;
+  const jsonMatch = text.match(/```json\s*([\s\S]*?)```/);
+  if (jsonMatch) {
+    try { structuredJson = JSON.parse(jsonMatch[1].trim()); } catch (e) { /* ignore parse errors */ }
   }
-  // Fallback: first 4 words as title
-  const title = text.trim().split(/\s+/).slice(0, 4).join(' ');
-  return { title, prompt: text.trim() };
+  if (!structuredJson) {
+    const rawJson = text.match(/\{[\s\S]*"style"[\s\S]*\}/);
+    if (rawJson) {
+      try { structuredJson = JSON.parse(rawJson[0]); } catch (e) { /* ignore */ }
+    }
+  }
+
+  return { title, prompt, structuredJson };
 }
 
 function extractDomain(url) {
@@ -968,7 +1101,7 @@ function textToDataUrl(text, mimeType) {
 }
 
 function buildMarkdown(metadata, ext) {
-  return `# EzPrompter - Image Prompt Description
+  return `# Repix - Image Prompt Description
 
 ## Image
 ![${metadata.fileName}](./${metadata.fileName}.${ext})

@@ -1,7 +1,7 @@
 import './globals.css';
 
 export const metadata = {
-  title: 'EzPrompter',
+  title: 'Repix',
   description: 'Remix everything.',
 };
 

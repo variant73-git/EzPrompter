@@ -1,4 +1,4 @@
-// EzPrompter Figma Plugin - Main Code
+// Repix Figma Plugin - Main Code
 // Receives captured website layouts and recreates them as Figma frames.
 
 const MAX_DEPTH = 15;

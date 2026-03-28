@@ -12,7 +12,9 @@
   top: 16px;
   right: 16px;
   width: 380px;
-  height: 520px;
+  height: auto;
+  min-height: 480px;
+  max-height: calc(100vh - 32px);
   background: var(--rb-bg);
   border-radius: 40px;
   overflow: hidden;
@@ -48,7 +50,7 @@
 
 /* --- Inner padding wrapper --- */
 #repixbridge-panel .rb-inner {
-  padding: 28px 24px 32px;
+  padding: 24px 22px 28px;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -60,7 +62,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
   flex-shrink: 0;
 }
 #repixbridge-panel .rb-logo-name {
@@ -112,18 +114,38 @@
 #repixbridge-panel .rb-onboarding {
   text-align: left; justify-content: flex-end; position: relative; padding-bottom: 0;
 }
+/* Dotted surface background at onboarding base */
+#repixbridge-panel .rb-onboarding::after {
+  content: '';
+  position: absolute; bottom: 0; left: 0; right: 0; height: 50%;
+  background-image: radial-gradient(circle, var(--rb-fg-muted) 1px, transparent 1px);
+  background-size: 16px 16px;
+  opacity: 0.18;
+  pointer-events: none;
+  mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.6) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.6) 100%);
+  animation: rb-dots-wave 6s ease-in-out infinite;
+  z-index: 0;
+}
+@keyframes rb-dots-wave {
+  0%, 100% { background-position: 0px 0px; opacity: 0.18; }
+  25% { background-position: 4px 2px; opacity: 0.25; }
+  50% { background-position: 8px 0px; opacity: 0.18; }
+  75% { background-position: 4px -2px; opacity: 0.25; }
+}
+#repixbridge-panel .rb-onboarding > * { position: relative; z-index: 1; }
 #repixbridge-panel .rb-skip {
-  position: absolute; top: 0; right: 0;
+  position: absolute; top: 0; right: 0; z-index: 2;
   background: none; border: none; color: var(--rb-fg-muted);
   font-family: inherit; font-size: 12px; cursor: pointer;
   transition: color 150ms;
 }
 #repixbridge-panel .rb-skip:hover { color: var(--rb-fg); }
-#repixbridge-panel .rb-slide { padding: 0 0 20px; text-align: left; }
-#repixbridge-panel .rb-slide[hidden] { display: none; }
+#repixbridge-panel .rb-slide { padding: 0 0 20px; text-align: left; flex: 1; display: flex; flex-direction: column; justify-content: center; }
+#repixbridge-panel .rb-slide[hidden] { display: none !important; }
 #repixbridge-panel .rb-slide-title {
   font-family: 'Instrument Serif', serif;
-  font-size: 32px;
+  font-size: 36.8px; /* 32 * 1.15 */
   font-weight: 400;
   line-height: 1.15;
   color: var(--rb-fg);
@@ -131,6 +153,7 @@
 }
 #repixbridge-panel .rb-slide-title em {
   font-style: italic;
+  font-size: inherit;
 }
 #repixbridge-panel .rb-slide-text {
   font-family: 'Instrument Sans', sans-serif;
@@ -141,19 +164,61 @@
 #repixbridge-panel .rb-slide-text em {
   font-family: 'Instrument Serif', serif;
   font-style: italic;
-  font-size: 15.4px; /* 10% larger */
+  font-size: 17.7px; /* 15.4 * 1.15 */
   color: var(--rb-fg);
 }
+/* Explicit font helpers for mixed typography */
+#repixbridge-panel .rb-serif {
+  font-family: 'Instrument Serif', serif; font-style: normal;
+}
+#repixbridge-panel .rb-sans {
+  font-family: 'Instrument Sans', sans-serif; font-style: normal;
+}
+#repixbridge-panel .rb-sans-title {
+  font-family: 'Instrument Sans', sans-serif; font-style: normal; font-weight: 400;
+}
+#repixbridge-panel .rb-slide-title .rb-sans-title {
+  font-size: inherit;
+}
+/* Rotating pill (onboarding) */
+#repixbridge-panel .rb-pill-rotate {
+  display: inline-flex; align-items: center; justify-content: center;
+  position: relative;
+  background: none; border: 1.5px solid var(--rb-fg-muted);
+  border-radius: 999px; padding: 4px 20px;
+  font-family: 'Instrument Sans', sans-serif; font-weight: 400;
+  font-size: inherit; color: var(--rb-fg); font-style: normal;
+  overflow: hidden; height: 1.25em;
+  min-width: 80px; text-align: center;
+  vertical-align: baseline;
+  line-height: 1.15;
+}
+#repixbridge-panel .rb-pill-word {
+  display: flex; align-items: center; justify-content: center;
+  transition: transform 350ms ease, opacity 350ms ease;
+  position: absolute; inset: 0;
+  transform: translateY(100%); opacity: 0;
+}
+#repixbridge-panel .rb-pill-word.rb-pill-active {
+  position: relative;
+  transform: translateY(0); opacity: 1;
+}
+#repixbridge-panel .rb-pill-word.rb-pill-exit {
+  position: absolute;
+  transform: translateY(-100%); opacity: 0;
+}
+
 #repixbridge-panel .rb-badge-free {
   display: inline-block; font-size: 11px; font-weight: 600; padding: 4px 12px;
   border-radius: 999px; background: rgba(34,197,94,0.12); color: #22c55e; margin-bottom: 12px;
 }
 #repixbridge-panel .rb-onboarding-footer {
-  display: flex; align-items: center; justify-content: space-between; padding-top: 8px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: 8px; margin-top: auto;
 }
 #repixbridge-panel .rb-dots { display: flex; gap: 8px; }
-#repixbridge-panel .rb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--rb-border); transition: background 150ms; }
-#repixbridge-panel .rb-dot.active { background: var(--rb-fg); }
+#repixbridge-panel .rb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--rb-fg); opacity: 0.3; transition: opacity 150ms; }
+#repixbridge-panel .rb-dot.active { opacity: 1; }
 
 /* --- Mode Toggle --- */
 #repixbridge-panel .rb-toggle {
@@ -178,10 +243,11 @@
 
 /* --- Cards --- */
 #repixbridge-panel .rb-card {
-  border: 1px solid var(--rb-border); border-radius: 20px; padding: 16px;
-  margin-bottom: 12px; transition: border-color 150ms;
+  border: none; border-radius: 16px; padding: 16px;
+  margin-bottom: 12px; background: var(--rb-surface);
+  transition: background 150ms;
 }
-#repixbridge-panel .rb-card:hover { border-color: var(--rb-fg-muted); }
+#repixbridge-panel .rb-card:hover { background: rgba(255,255,255,0.08); }
 #repixbridge-panel .rb-card-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
 #repixbridge-panel .rb-card-domain { font-weight: 600; font-size: 14px; color: var(--rb-fg); }
 #repixbridge-panel .rb-card-time { font-size: 11px; color: var(--rb-fg-muted); }
@@ -197,11 +263,12 @@
 }
 #repixbridge-panel .rb-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 #repixbridge-panel .rb-pill {
-  font-family: inherit; font-size: 11px; font-weight: 500; padding: 5px 12px;
-  border-radius: 999px; border: 1px solid var(--rb-border); background: none;
-  color: var(--rb-fg); cursor: pointer; transition: all 150ms;
+  font-family: 'Instrument Sans', sans-serif; font-size: 11px; font-weight: 500;
+  padding: 5px 12px; border-radius: 999px; border: none;
+  background: var(--rb-surface); color: var(--rb-fg);
+  cursor: pointer; transition: all 150ms;
 }
-#repixbridge-panel .rb-pill:hover { background: var(--rb-accent); color: var(--rb-bg); border-color: var(--rb-accent); }
+#repixbridge-panel .rb-pill:hover { background: var(--rb-fg); color: var(--rb-bg); }
 #repixbridge-panel .rb-pill:active { transform: scale(0.97); }
 #repixbridge-panel .rb-card-export {
   display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-top: 10px;
@@ -213,70 +280,154 @@
 }
 #repixbridge-panel .rb-empty { text-align: center; font-size: 12px; color: var(--rb-fg-muted); padding: 24px 0 8px; }
 
+/* --- DVD-style bouncing empty state --- */
+#repixbridge-panel .rb-empty-bounce-wrap {
+  width: 100%; height: 300px; position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  grid-column: 1 / -1;
+}
+#repixbridge-panel .rb-empty-bounce {
+  width: 100px; height: 30px; border-radius: 50%;
+  position: relative;
+  animation: rb-dvd-bounce 6s infinite linear;
+}
+#repixbridge-panel .rb-empty-bounce::before {
+  content: 'DVD';
+  position: absolute; display: block;
+  left: 5%; bottom: 55%;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 3em; font-weight: 900; font-style: italic;
+  animation: rb-dvd-color 6s infinite linear;
+}
+#repixbridge-panel .rb-empty-bounce::after {
+  content: 'no images found';
+  position: absolute; top: 40%; left: 0; right: 0;
+  text-align: center;
+  color: var(--rb-fg-muted);
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 0.45em; font-weight: 500;
+  letter-spacing: 2px; text-transform: uppercase;
+  opacity: 0.5;
+}
+#repixbridge-panel .rb-empty-bounce-label {
+  position: absolute; bottom: 12px; left: 0; right: 0;
+  text-align: center; font-family: 'Instrument Sans', sans-serif;
+  font-size: 14px; color: var(--rb-fg-muted); opacity: 0.6;
+}
+@keyframes rb-dvd-bounce {
+  0%   { background-color: #ef4444; transform: translateX(0) translateY(40px); }
+  25%  { background-color: #3b82f6; transform: translateX(50px) translateY(-20px); }
+  50%  { background-color: #22c55e; transform: translateX(-30px) translateY(-50px); }
+  75%  { background-color: #eab308; transform: translateX(-50px) translateY(10px); }
+  100% { background-color: #a855f7; transform: translateX(0) translateY(40px); }
+}
+@keyframes rb-dvd-color {
+  0%   { color: #ef4444; }
+  25%  { color: #3b82f6; }
+  50%  { color: #22c55e; }
+  75%  { color: #eab308; }
+  100% { color: #a855f7; }
+}
+
 /* --- Site Analysis --- */
 #repixbridge-panel .rb-site-analysis {
   flex: 1; display: flex; flex-direction: column; min-height: 0;
 }
 #repixbridge-panel .rb-site-analysis-center {
-  flex: 1; display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
-  gap: 16px; text-align: left;
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 20px; text-align: center;
 }
-#repixbridge-panel .rb-loader-ring { position: relative; width: 80px; height: 80px; }
-#repixbridge-panel .rb-loader-arc {
-  transition: stroke-dashoffset 150ms ease-out;
+/* --- Bouncing Dots Loader --- */
+#repixbridge-panel .rb-dots-loader {
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px; padding: 20px 0; flex-shrink: 0;
 }
-#repixbridge-panel .rb-loader-pct {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  font-size: 14px; font-weight: 600; color: var(--rb-fg);
+#repixbridge-panel .rb-dots-loader.rb-fade-out {
+  opacity: 0;
+  transition: opacity 600ms ease-out;
+}
+#repixbridge-panel .rb-bounce-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--rb-fg); opacity: 0.4;
+  animation: rb-bounce 1.4s ease-in-out infinite;
+}
+#repixbridge-panel .rb-bounce-dot:nth-child(1) { animation-delay: 0s; }
+#repixbridge-panel .rb-bounce-dot:nth-child(2) { animation-delay: 0.16s; }
+#repixbridge-panel .rb-bounce-dot:nth-child(3) { animation-delay: 0.32s; }
+@keyframes rb-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-12px); opacity: 1; }
 }
 #repixbridge-panel .rb-site-msg {
   font-family: 'Instrument Sans', sans-serif;
   font-size: 14px; color: var(--rb-fg-muted); line-height: 1.5;
 }
 #repixbridge-panel .rb-site-domain {
-  display: block; font-weight: 500; font-size: 14px; color: var(--rb-fg);
-  margin-bottom: 2px;
+  display: block; font-family: 'Instrument Sans', sans-serif;
+  font-weight: 400; font-size: 13px; color: var(--rb-fg-muted);
+  margin-bottom: 8px;
 }
 #repixbridge-panel .rb-site-tagline {
-  display: block; font-size: 14px; color: var(--rb-fg-muted);
+  display: block; font-family: 'Instrument Sans', sans-serif;
+  font-size: 24px; font-weight: 400; color: var(--rb-fg); line-height: 1.3;
+}
+#repixbridge-panel .rb-site-tagline em {
+  font-family: 'Instrument Serif', serif; font-style: italic;
+  font-weight: 400; font-size: 26.4px; /* 10% bigger */
 }
 #repixbridge-panel .rb-site-footer {
-  font-size: 11px; color: var(--rb-fg-muted); opacity: 0.6;
-  padding-top: 12px; border-top: 1px solid var(--rb-border); margin-top: auto;
-  text-align: center;
+  font-size: 13px; color: var(--rb-fg-muted); opacity: 0.8;
+  padding-top: 12px; margin-top: auto;
+  text-align: center; line-height: 1.5;
 }
 
 /* --- Image Grid Header --- */
 #repixbridge-panel .rb-img-grid-header {
   grid-column: 1 / -1;
-  font-family: 'Instrument Sans', sans-serif;
-  font-size: 12px; font-weight: 600; color: var(--rb-fg-muted);
-  text-transform: uppercase; letter-spacing: 0.5px;
+  font-family: 'Instrument Serif', serif;
+  font-size: 13.2px; font-weight: 400; color: var(--rb-fg-muted);
+  letter-spacing: 0.2px;
   margin-bottom: 4px;
 }
+#repixbridge-panel .rb-img-grid-header .rb-img-count {
+  font-family: 'Instrument Sans', sans-serif;
+  font-weight: 600;
+}
 
-/* --- Buttons --- */
+/* --- Buttons (unified system) --- */
 #repixbridge-panel .rb-btn {
-  font-family: inherit; font-size: 13px; font-weight: 600; border-radius: 12px;
-  padding: 10px 20px; cursor: pointer; border: 1px solid var(--rb-border);
-  background: none; color: var(--rb-fg); transition: all 150ms;
+  font-family: 'Instrument Sans', sans-serif; font-size: 13px; font-weight: 500;
+  border-radius: 999px; padding: 10px 20px; cursor: pointer;
+  border: none; transition: all 150ms;
 }
 #repixbridge-panel .rb-btn:active { transform: scale(0.97); }
-#repixbridge-panel .rb-btn-primary { background: var(--rb-accent); color: var(--rb-bg); border-color: var(--rb-accent); }
-#repixbridge-panel .rb-btn-primary:hover { opacity: 0.85; }
-#repixbridge-panel .rb-btn-outline { background: none; color: var(--rb-fg); border: 1px solid var(--rb-border); }
-#repixbridge-panel .rb-btn-outline:hover { background: var(--rb-accent); color: var(--rb-bg); border-color: var(--rb-accent); }
+/* Primary: white text on dark bg */
+#repixbridge-panel .rb-btn-primary { background: var(--rb-fg); color: var(--rb-bg); }
+#repixbridge-panel .rb-btn-primary:hover { background: var(--rb-bg); color: var(--rb-fg); }
+/* Ghost: transparent, hover inverts */
+#repixbridge-panel .rb-btn-outline { background: none; color: var(--rb-fg); }
+#repixbridge-panel .rb-btn-outline:hover { background: var(--rb-fg); color: var(--rb-bg); }
 #repixbridge-panel .rb-btn-sm { font-size: 12px; padding: 6px 14px; }
 #repixbridge-panel .rb-btn-full { width: 100%; }
 
 /* --- Settings --- */
-#repixbridge-panel .rb-settings-header { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; flex-shrink: 0; }
+/* Settings & Wizard: gray theme covering entire panel */
+#repixbridge-panel.rb-settings-active {
+  --rb-bg: #1A1A1A;
+  --rb-fg: #EFEEEB;
+  --rb-fg-muted: rgba(239,238,235,0.45);
+  --rb-surface: rgba(255,255,255,0.05);
+  --rb-border: rgba(255,255,255,0.08);
+  --rb-accent: #EFEEEB;
+  background: #1A1A1A;
+}
+#repixbridge-panel .rb-settings-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-shrink: 0; }
 #repixbridge-panel .rb-back {
   background: none; border: none; color: var(--rb-fg); cursor: pointer;
   padding: 2px; line-height: 0; opacity: 0.6; transition: opacity 150ms;
 }
 #repixbridge-panel .rb-back:hover { opacity: 1; }
-#repixbridge-panel .rb-settings-title { font-family: 'Instrument Serif', serif; font-size: 18px; font-weight: 400; color: var(--rb-fg); }
+#repixbridge-panel .rb-settings-title { font-family: 'Instrument Sans', sans-serif; font-size: 14px; font-weight: 400; color: var(--rb-fg); }
 #repixbridge-panel .rb-settings-form { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; flex: 1; min-height: 0; }
 #repixbridge-panel .rb-field label {
   display: block; font-size: 11px; font-weight: 600; text-transform: uppercase;
@@ -284,12 +435,12 @@
 }
 #repixbridge-panel .rb-field input,
 #repixbridge-panel .rb-field select {
-  width: 100%; padding: 9px 12px; background: var(--rb-surface); border: 1px solid var(--rb-border);
+  width: 100%; padding: 9px 12px; background: var(--rb-surface); border: none;
   border-radius: 10px; color: var(--rb-fg); font-family: inherit; font-size: 13px; outline: none;
-  transition: border-color 150ms;
+  transition: background 150ms;
 }
 #repixbridge-panel .rb-field input:focus,
-#repixbridge-panel .rb-field select:focus { border-color: var(--rb-accent); }
+#repixbridge-panel .rb-field select:focus { background: rgba(255,255,255,0.08); }
 #repixbridge-panel .rb-field select { cursor: pointer; }
 #repixbridge-panel .rb-field-row { position: relative; }
 #repixbridge-panel .rb-field-row input { padding-right: 52px; }
@@ -351,13 +502,14 @@
   font-weight: 600;
   padding: 6px 14px;
   border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.5);
-  background: none;
+  border: none;
+  background: rgba(255,255,255,0.2);
   color: #fff;
   cursor: pointer;
   transition: all 150ms;
+  backdrop-filter: blur(4px);
 }
-#repixbridge-panel .rb-img-remix:hover { background: #fff; color: #000; border-color: #fff; }
+#repixbridge-panel .rb-img-remix:hover { background: #fff; color: #000; }
 #repixbridge-panel .rb-img-remix:disabled { opacity: 0.6; cursor: wait; }
 
 /* --- Settings divider & group label --- */
@@ -365,13 +517,14 @@
   height: 1px; background: var(--rb-border); margin: 4px 0;
 }
 #repixbridge-panel .rb-field-group-label {
-  font-size: 11px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.6px; color: var(--rb-fg-muted); margin-bottom: -4px;
+  font-family: 'Instrument Serif', serif; font-style: italic;
+  font-size: 16px; font-weight: 400;
+  color: var(--rb-fg); margin-bottom: 2px;
 }
 
 /* --- Generation Card --- */
 #repixbridge-panel .rb-gen-card {
-  border: 1px solid var(--rb-border); border-radius: 20px; padding: 16px;
+  border: none; border-radius: 16px; padding: 16px;
   margin-bottom: 16px; animation: rb-panel-in 0.2s ease-out;
 }
 #repixbridge-panel .rb-gen-label {
@@ -504,3 +657,459 @@
   border-radius: 10px; padding: 10px 12px;
   font-size: 12px; color: #ef4444; line-height: 1.5;
 }
+
+/* --- Connect API Empty State --- */
+#repixbridge-panel .rb-connect {
+  flex: 1; display: flex; flex-direction: column; justify-content: center;
+  animation: rb-panel-in 0.3s ease-out;
+}
+#repixbridge-panel .rb-connect-title {
+  font-family: 'Instrument Serif', serif; font-style: italic;
+  font-size: 26px; font-weight: 400; line-height: 1.2;
+  color: var(--rb-fg); margin-bottom: 8px;
+}
+#repixbridge-panel .rb-connect-sub {
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 13px; color: var(--rb-fg-muted); line-height: 1.6;
+  margin-bottom: 24px;
+}
+#repixbridge-panel .rb-connect-tools {
+  display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px;
+}
+#repixbridge-panel .rb-connect-tool {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: 14px;
+  border: none; background: var(--rb-surface); color: var(--rb-fg);
+  font-family: 'Instrument Sans', sans-serif; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all 150ms; text-align: left; width: 100%;
+}
+#repixbridge-panel .rb-connect-tool:hover { background: var(--rb-fg); color: var(--rb-bg); }
+#repixbridge-panel .rb-connect-tool-icon {
+  width: 28px; height: 28px; border-radius: 8px; background: rgba(255,255,255,0.06);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Instrument Serif', serif; font-size: 14px; font-style: italic;
+  color: var(--rb-fg); flex-shrink: 0;
+}
+#repixbridge-panel .rb-connect-tool-name { flex: 1; }
+#repixbridge-panel .rb-connect-tool-status {
+  font-size: 10px; color: var(--rb-fg-muted); display: flex; align-items: center; gap: 5px;
+}
+#repixbridge-panel .rb-connect-or {
+  font-size: 11px; color: var(--rb-fg-muted); text-align: center;
+  margin-bottom: 12px; opacity: 0.5;
+}
+#repixbridge-panel .rb-connect-free {
+  text-align: center; padding: 14px; border-radius: 14px;
+  background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.15);
+}
+#repixbridge-panel .rb-connect-free-label {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: #22c55e; margin-bottom: 4px;
+}
+#repixbridge-panel .rb-connect-free-text {
+  font-size: 12px; color: var(--rb-fg-muted); line-height: 1.5;
+}
+
+/* --- Panel expansion transition --- */
+#repixbridge-panel.rb-expanded {
+  height: calc(100vh - 32px);
+  max-height: calc(100vh - 32px);
+  transition: height 400ms ease-out, max-height 400ms ease-out;
+}
+/* Image Remix mode: allow full content height */
+#repixbridge-panel.rb-light {
+  height: auto;
+  min-height: 520px;
+  max-height: calc(100vh - 32px);
+}
+
+/* --- Repix Output Section --- */
+#repixbridge-panel .rb-repix-output {
+  animation: rb-panel-in 0.25s ease-out;
+}
+#repixbridge-panel .rb-repix-source {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+}
+#repixbridge-panel .rb-repix-thumb {
+  width: 48px; height: 48px; border-radius: 10px; object-fit: cover;
+  border: 1px solid var(--rb-border);
+}
+#repixbridge-panel .rb-repix-source-info {
+  flex: 1; min-width: 0;
+}
+#repixbridge-panel .rb-repix-source-title {
+  font-family: 'Instrument Serif', serif; font-size: 14px; font-weight: 400;
+  color: var(--rb-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#repixbridge-panel .rb-repix-source-domain {
+  font-size: 11px; color: var(--rb-fg-muted);
+}
+
+/* Output tabs */
+#repixbridge-panel .rb-output-tabs {
+  display: flex; background: var(--rb-surface); border-radius: 999px;
+  padding: 3px; margin-bottom: 12px;
+}
+#repixbridge-panel .rb-output-tab {
+  flex: 1; padding: 7px 0; border: none; background: none; border-radius: 999px;
+  font-family: inherit; font-size: 11px; font-weight: 600; color: var(--rb-fg-muted);
+  cursor: pointer; transition: all 150ms ease-out; text-align: center;
+}
+#repixbridge-panel .rb-output-tab.active { background: var(--rb-accent); color: var(--rb-bg); }
+#repixbridge-panel .rb-output-tab:not(.active):hover { color: var(--rb-fg); }
+
+/* Output panel (single visible block at a time) */
+#repixbridge-panel .rb-output-panel { display: none; }
+#repixbridge-panel .rb-output-panel.rb-active { display: block; animation: rb-panel-in 0.15s ease-out; }
+
+#repixbridge-panel .rb-output-header {
+  display: flex; align-items: center; justify-content: flex-end; margin-bottom: 6px;
+}
+#repixbridge-panel .rb-output-copy {
+  background: none; border: none; color: var(--rb-fg-muted);
+  font-family: inherit; font-size: 10px; cursor: pointer;
+  transition: color 150ms; padding: 0;
+}
+#repixbridge-panel .rb-output-copy:hover { color: var(--rb-fg); }
+#repixbridge-panel .rb-output-content {
+  width: 100%; padding: 10px 12px; background: var(--rb-surface);
+  border: 1px solid var(--rb-border); border-radius: 12px; color: var(--rb-fg);
+  font-family: 'Instrument Sans', sans-serif; font-size: 11px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word; max-height: 160px;
+  overflow-y: auto; box-sizing: border-box;
+  scrollbar-width: thin; scrollbar-color: var(--rb-border) transparent;
+}
+#repixbridge-panel .rb-output-content::-webkit-scrollbar { width: 3px; }
+#repixbridge-panel .rb-output-content::-webkit-scrollbar-thumb { background: var(--rb-border); border-radius: 999px; }
+#repixbridge-panel .rb-output-content.rb-output-json {
+  font-family: 'Courier New', monospace; font-size: 10px;
+}
+
+/* --- Motion Button --- */
+#repixbridge-panel .rb-motion-btn {
+  display: inline-flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 14px 22px;
+  background: rgba(255,255,255,0.12); color: var(--rb-fg);
+  border: none; border-radius: 999px;
+  font-family: 'Instrument Sans', sans-serif; font-size: 16px; font-weight: 400;
+  cursor: pointer; transition: all 200ms ease;
+  max-width: 280px;
+}
+#repixbridge-panel .rb-motion-btn:hover { background: var(--rb-fg); color: var(--rb-bg); }
+#repixbridge-panel .rb-motion-btn:hover .rb-motion-arrow svg { stroke: var(--rb-bg); }
+#repixbridge-panel .rb-motion-btn:active { transform: scale(0.98); }
+#repixbridge-panel .rb-motion-arrow {
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: transform 250ms ease;
+}
+#repixbridge-panel .rb-motion-arrow svg {
+  width: 20px; height: 20px; stroke: var(--rb-fg); stroke-width: 1.5;
+  fill: none; transition: stroke 200ms;
+}
+#repixbridge-panel .rb-motion-btn:hover .rb-motion-arrow { transform: translateX(4px); }
+#repixbridge-panel .rb-motion-label { transition: transform 250ms ease; }
+/* Small variant (onboarding) */
+#repixbridge-panel .rb-motion-btn.rb-motion-outline {
+  padding: 8px 16px; font-size: 12px; background: none;
+}
+#repixbridge-panel .rb-motion-btn.rb-motion-outline:hover { background: var(--rb-fg); color: var(--rb-bg); }
+/* Full width */
+#repixbridge-panel .rb-motion-btn.rb-motion-full { width: 100%; }
+/* Light mode */
+#repixbridge-panel.rb-light .rb-motion-btn { background: rgba(0,0,0,0.06); }
+#repixbridge-panel.rb-light .rb-motion-btn:hover { background: var(--rb-fg); color: var(--rb-bg); }
+#repixbridge-panel.rb-light .rb-motion-btn:hover .rb-motion-arrow svg { stroke: var(--rb-bg); }
+
+/* --- Manage APIs pill (header) --- */
+#repixbridge-panel .rb-manage-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px 5px 8px;
+  background: var(--rb-bg); border: 1px solid var(--rb-border);
+  border-radius: 999px; cursor: pointer;
+  font-family: 'Instrument Sans', sans-serif; font-size: 10px; font-weight: 500;
+  color: var(--rb-fg-muted); transition: all 150ms;
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+#repixbridge-panel .rb-manage-pill:hover { border-color: var(--rb-fg-muted); color: var(--rb-fg); }
+#repixbridge-panel .rb-manage-pill svg { opacity: 0.5; }
+
+/* --- Connect API pill (image remix header) --- */
+#repixbridge-panel .rb-api-pill-wrap {
+  display: flex; align-items: center; justify-content: flex-end; margin-bottom: 8px;
+}
+#repixbridge-panel .rb-img-row-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+#repixbridge-panel .rb-api-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 999px;
+  border: none; background: var(--rb-surface);
+  font-family: 'Instrument Sans', sans-serif; font-size: 11px; font-weight: 500;
+  color: var(--rb-fg); cursor: pointer; transition: all 150ms;
+}
+#repixbridge-panel .rb-api-pill:hover { background: var(--rb-fg); color: var(--rb-bg); }
+#repixbridge-panel .rb-api-dropdown {
+  position: absolute; top: calc(100% + 4px); right: 0; min-width: 180px;
+  background: var(--rb-bg); border: 1px solid var(--rb-border);
+  border-radius: 14px; padding: 4px; z-index: 100;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.25);
+  animation: rb-panel-in 0.15s ease-out;
+}
+#repixbridge-panel .rb-api-dropdown[hidden] { display: none; }
+
+/* --- Tool SVG icons in connect list --- */
+#repixbridge-panel .rb-connect-tool-icon svg {
+  width: 16px; height: 16px; fill: var(--rb-fg); opacity: 0.8;
+}
+
+/* --- Smart Remix Output --- */
+#repixbridge-panel .rb-smart-img-wrap {
+  position: relative; border-radius: 14px; overflow: hidden;
+  margin: -16px -24px 14px -24px; /* bleed to panel edges */
+  background: var(--rb-surface);
+}
+#repixbridge-panel .rb-smart-img {
+  width: 100%; display: block; max-height: 50vh; object-fit: cover;
+}
+#repixbridge-panel .rb-smart-provider-pill {
+  position: absolute; bottom: 10px; right: 10px;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 999px;
+  background: rgba(0,0,0,0.5); backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.15);
+  font-family: 'Instrument Sans', sans-serif; font-size: 10px; font-weight: 500;
+  color: rgba(255,255,255,0.85); cursor: pointer;
+  transition: all 150ms; text-decoration: none;
+}
+#repixbridge-panel .rb-smart-provider-pill:hover {
+  background: rgba(0,0,0,0.7); color: #fff;
+}
+
+/* JSON visual editor */
+#repixbridge-panel .rb-json-editor-title {
+  font-family: 'Instrument Sans', sans-serif; font-weight: 500;
+  font-size: 14px; color: var(--rb-fg); margin-bottom: 10px;
+}
+#repixbridge-panel .rb-json-tooltip {
+  display: inline-block; background: #000; color: #fff;
+  font-family: 'Instrument Sans', sans-serif; font-size: 10px; font-weight: 500;
+  padding: 4px 10px; border-radius: 6px; margin-bottom: 8px;
+  animation: rb-panel-in 0.2s ease-out;
+  position: relative;
+}
+#repixbridge-panel .rb-json-tooltip::after {
+  content: ''; position: absolute; top: 100%; left: 16px;
+  border: 4px solid transparent; border-top-color: #000;
+}
+#repixbridge-panel .rb-json-tooltip.rb-hidden { display: none; }
+#repixbridge-panel .rb-json-editor {
+  display: flex; flex-direction: column; gap: 16px; margin-bottom: 14px;
+}
+
+/* Category block */
+#repixbridge-panel .rb-json-category {
+  position: relative; padding-left: 14px;
+}
+#repixbridge-panel .rb-json-category::before {
+  content: ''; position: absolute; left: 0; top: 24px; bottom: 4px;
+  width: 1px; background: var(--rb-border);
+}
+#repixbridge-panel .rb-json-cat-title {
+  font-family: 'Instrument Serif', serif; font-style: italic;
+  font-size: 14px; color: var(--rb-fg); margin-bottom: 8px;
+}
+#repixbridge-panel .rb-json-cat-fields {
+  display: flex; flex-direction: column; gap: 6px;
+}
+
+/* Field row: key + values */
+#repixbridge-panel .rb-json-field {
+  position: relative; padding-left: 10px;
+}
+#repixbridge-panel .rb-json-field::before {
+  content: ''; position: absolute; left: -14px; top: 11px;
+  width: 12px; height: 1px; background: var(--rb-border);
+}
+#repixbridge-panel .rb-json-key {
+  font-family: 'Instrument Sans', sans-serif; font-size: 10px;
+  font-weight: 500; text-transform: uppercase; letter-spacing: 0.3px;
+  color: var(--rb-fg-muted); margin-bottom: 3px;
+}
+#repixbridge-panel .rb-json-values {
+  display: flex; flex-wrap: wrap; gap: 4px;
+}
+#repixbridge-panel .rb-json-pill {
+  display: inline-flex; align-items: center;
+  padding: 5px 12px; border-radius: 999px;
+  background: var(--rb-surface); border: none;
+  font-family: 'Instrument Sans', sans-serif; font-size: 11px; font-weight: 400;
+  color: var(--rb-fg); cursor: text; transition: all 150ms;
+  outline: none; min-width: 20px;
+}
+#repixbridge-panel .rb-json-pill:focus { background: rgba(255,255,255,0.10); }
+#repixbridge-panel .rb-json-pill:hover { background: rgba(255,255,255,0.08); }
+/* Color swatch pill */
+#repixbridge-panel .rb-json-pill.rb-color-pill {
+  padding-left: 24px; position: relative;
+}
+#repixbridge-panel .rb-json-pill.rb-color-pill::before {
+  content: ''; position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--rb-swatch-color, #888);
+}
+
+/* Copy + Generate row */
+#repixbridge-panel .rb-smart-actions {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+#repixbridge-panel .rb-copy-mini {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px 12px; border-radius: 999px;
+  background: var(--rb-surface); border: none;
+  font-family: 'Instrument Sans', sans-serif; font-size: 10px; font-weight: 500;
+  color: var(--rb-fg-muted); cursor: pointer; transition: all 150ms;
+}
+#repixbridge-panel .rb-copy-mini:hover { background: var(--rb-fg); color: var(--rb-bg); }
+#repixbridge-panel .rb-copy-mini svg { width: 12px; height: 12px; }
+
+/* --- Quick Setup Wizard --- */
+#repixbridge-panel .rb-wizard {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+}
+#repixbridge-panel .rb-wizard-title {
+  font-family: 'Instrument Serif', serif; font-style: italic;
+  font-size: 22px; color: var(--rb-fg); margin-bottom: 4px;
+}
+#repixbridge-panel .rb-wizard-sub {
+  font-family: 'Instrument Sans', sans-serif; font-size: 12px;
+  color: var(--rb-fg-muted); margin-bottom: 16px; line-height: 1.5;
+}
+#repixbridge-panel .rb-wizard-scroll {
+  flex: 1; overflow-y: auto; min-height: 0; overflow-x: hidden;
+  scrollbar-width: thin; scrollbar-color: var(--rb-border) transparent;
+}
+#repixbridge-panel .rb-wizard-scroll::-webkit-scrollbar { width: 3px; }
+#repixbridge-panel .rb-wizard-scroll::-webkit-scrollbar-thumb { background: var(--rb-border); border-radius: 999px; }
+
+/* Preset card */
+#repixbridge-panel .rb-preset {
+  all: unset;
+  display: block; box-sizing: border-box; width: 100%;
+  padding: 14px 0;
+  border-top: 1px solid var(--rb-border);
+  cursor: pointer; transition: background 150ms;
+  font-family: 'Instrument Sans', sans-serif; color: var(--rb-fg);
+  position: relative;
+}
+#repixbridge-panel .rb-preset:last-child { border-bottom: 1px solid var(--rb-border); }
+#repixbridge-panel .rb-preset:hover { background: var(--rb-surface); }
+#repixbridge-panel .rb-preset-row {
+  display: flex; align-items: flex-start; gap: 8px;
+}
+#repixbridge-panel .rb-preset-body { flex: 1; min-width: 0; }
+#repixbridge-panel .rb-preset-top {
+  display: flex; align-items: center; gap: 5px; margin-bottom: 2px;
+}
+#repixbridge-panel .rb-preset-name { font-size: 15px; font-weight: 500; }
+#repixbridge-panel .rb-preset-badge {
+  font-size: 9px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  background: rgba(34,197,94,0.12); color: #22c55e;
+  text-transform: uppercase; letter-spacing: 0.3px;
+}
+#repixbridge-panel .rb-preset-badge.rb-badge-paid {
+  background: rgba(239,238,235,0.08); color: var(--rb-fg-muted);
+}
+#repixbridge-panel .rb-preset-desc {
+  font-size: 11px; color: var(--rb-fg-muted); line-height: 1.4;
+}
+#repixbridge-panel .rb-preset-keys {
+  font-size: 10px; color: var(--rb-fg-muted); opacity: 0.5; margin-top: 2px;
+}
+#repixbridge-panel .rb-preset-arrow {
+  flex-shrink: 0; opacity: 0.3; margin-top: 2px;
+  transition: opacity 150ms, transform 150ms;
+}
+#repixbridge-panel .rb-preset-arrow svg { width: 16px; height: 16px; stroke: var(--rb-fg); stroke-width: 1.5; fill: none; }
+#repixbridge-panel .rb-preset:hover .rb-preset-arrow { opacity: 0.8; transform: translateX(3px); }
+
+/* Info button — inline after title, anchors tooltip */
+#repixbridge-panel .rb-preset-info {
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 1px solid var(--rb-border); background: none;
+  color: var(--rb-fg-muted); font-size: 9px;
+  cursor: default; display: inline-flex; align-items: center; justify-content: center;
+  font-family: 'Instrument Serif', serif; font-style: italic;
+  flex-shrink: 0; position: relative;
+}
+#repixbridge-panel .rb-preset-info:hover { border-color: var(--rb-fg-muted); color: var(--rb-fg); }
+#repixbridge-panel .rb-preset-info:hover .rb-preset-tip { display: block; }
+
+/* Preset tooltip — floating above info button */
+#repixbridge-panel .rb-preset-tip {
+  position: absolute; z-index: 20;
+  bottom: calc(100% + 8px); left: 50%;
+  transform: translateX(-50%);
+  background: #000; color: #fff; border-radius: 8px;
+  padding: 8px 12px; white-space: nowrap;
+  font-family: 'Instrument Sans', sans-serif;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  animation: rb-panel-in 0.1s ease-out;
+  pointer-events: none;
+}
+#repixbridge-panel .rb-preset-tip::after {
+  content: ''; position: absolute; top: 100%; left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #000;
+}
+#repixbridge-panel .rb-preset-tip[hidden] { display: none; }
+#repixbridge-panel .rb-tip-cost {
+  font-size: 10px; font-weight: 600; margin-bottom: 5px;
+  letter-spacing: 1px;
+}
+#repixbridge-panel .rb-tip-cost .rb-cost-active { color: #fff; }
+#repixbridge-panel .rb-tip-cost .rb-cost-dim { color: rgba(255,255,255,0.2); }
+#repixbridge-panel .rb-tip-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 3px; font-size: 10px;
+}
+#repixbridge-panel .rb-tip-label { color: rgba(255,255,255,0.5); }
+#repixbridge-panel .rb-tip-bar { display: flex; gap: 2px; }
+#repixbridge-panel .rb-tip-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: rgba(255,255,255,0.15);
+}
+#repixbridge-panel .rb-tip-dot.rb-tip-filled { background: #fff; }
+
+/* --- Progressive Gate (inline connect nudge) --- */
+#repixbridge-panel .rb-gate {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-radius: 12px;
+  background: var(--rb-surface); border: none;
+  margin: 8px 0; animation: rb-panel-in 0.2s ease-out;
+}
+#repixbridge-panel .rb-gate-text {
+  flex: 1; font-family: 'Instrument Sans', sans-serif;
+  font-size: 11px; color: var(--rb-fg-muted); line-height: 1.4;
+}
+#repixbridge-panel .rb-gate-btn {
+  flex-shrink: 0; padding: 6px 14px; border-radius: 999px;
+  background: var(--rb-fg); color: var(--rb-bg);
+  border: none; font-family: 'Instrument Sans', sans-serif;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  transition: opacity 150ms;
+}
+#repixbridge-panel .rb-gate-btn:hover { opacity: 0.85; }
+
+/* Generate button: solid, hover inverts */
+#repixbridge-panel .rb-gen-solid {
+  padding: 12px 20px; border-radius: 999px;
+  background: var(--rb-fg); color: var(--rb-bg);
+  border: none; font-family: 'Instrument Sans', sans-serif;
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: all 150ms;
+}
+#repixbridge-panel .rb-gen-solid:hover { background: var(--rb-bg); color: var(--rb-fg); }
+#repixbridge-panel .rb-gen-solid:active { transform: scale(0.97); }
+#repixbridge-panel .rb-gen-solid:disabled { opacity: 0.3; cursor: not-allowed; }
+#repixbridge-panel .rb-gen-solid:disabled:hover { background: var(--rb-fg); color: var(--rb-bg); }

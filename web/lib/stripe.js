@@ -17,7 +17,7 @@ export async function createCheckoutSession(userId, email) {
         price_data: {
           currency: 'usd',
           product_data: {
-            name: 'EzPrompter Pro',
+            name: 'Repix Pro',
             description: 'Unlimited captures per month',
           },
           unit_amount: 700,

@@ -1,6 +1,6 @@
 // RepixBridge - Popup Script
 
-const API_BASE = 'https://ezprompter.vercel.app';
+const API_BASE = 'https://repix.vercel.app';
 
 const MODEL_DEFAULTS = {
   gemini: 'gemini-2.0-flash',

@@ -1,4 +1,4 @@
-// EzPrompter - Content Script (minimal - overlay is injected by background.js via scripting API)
+// Repix - Content Script (minimal - overlay is injected by background.js via scripting API)
 // This file exists as a fallback listener in case direct scripting injection fails.
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -8,11 +8,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 function showOverlayInPage(state) {
-  const existing = document.getElementById('ezprompter-overlay');
+  const existing = document.getElementById('repix-overlay');
   if (existing) existing.remove();
 
   const overlay = document.createElement('div');
-  overlay.id = 'ezprompter-overlay';
+  overlay.id = 'repix-overlay';
 
   function esc(text) {
     const d = document.createElement('div');
@@ -22,7 +22,7 @@ function showOverlayInPage(state) {
 
   let body = '';
   if (state.loading) {
-    body = `<div class="ezp-spinner"></div><p class="ezp-status">${esc(state.text)}</p>`;
+    body = `<div class="ezp-spinner"><span></span></div><p class="ezp-status">${esc(state.text)}</p>`;
   } else if (state.error) {
     body = `<p class="ezp-error">${esc(state.text)}</p>`;
   } else if (state.success) {
@@ -87,8 +87,8 @@ function showOverlayInPage(state) {
     <div class="ezp-modal">
       <div class="ezp-header">
         <div class="ezp-header-left">
-          <span class="ezp-logo">RepixBridge</span>
-          <span class="ezp-tagline">Remix everything. Paste your prompt in the AI of your choice.</span>
+          <span class="ezp-logo">Repix</span>
+          <span class="ezp-tagline">Copy, paste, create.</span>
         </div>
         <button class="ezp-close" id="ezp-close">&times;</button>
       </div>

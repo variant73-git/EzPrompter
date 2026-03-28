@@ -1,6 +1,6 @@
 {
-  "name": "EzPrompter",
-  "id": "ezprompter-figma-plugin",
+  "name": "Repix",
+  "id": "repix-figma-plugin",
   "api": "1.0.0",
   "main": "code.js",
   "ui": "ui.html",
