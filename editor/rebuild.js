@@ -89,6 +89,13 @@
     var tag = original.tagName.toUpperCase();
     if (SKIP_TAGS[tag]) return;
 
+    // SVG elements: don't try to bake styles, just preserve as-is
+    if (tag === "SVG" || original instanceof SVGElement) {
+      nodeCounter++;
+      clone.setAttribute("data-rb-node", nodeCounter);
+      return;
+    }
+
     // Skip invisible elements
     var cs;
     try { cs = window.getComputedStyle(original); } catch (e) { return; }
@@ -131,7 +138,8 @@
     clone.removeAttribute("class");
     clone.removeAttribute("id");
 
-    // Recurse children (match original children to clone children)
+    // Recurse children — walk both trees in sync
+    // Use element children (not childNodes) to stay aligned
     var origChildren = original.children;
     var cloneChildren = clone.children;
     var len = Math.min(origChildren.length, cloneChildren.length);
@@ -154,16 +162,18 @@
       var bodyClone = document.body.cloneNode(true);
       updateProgress(20);
 
-      // Step 2: Remove script/style/noscript/template from clone
-      var toRemove = bodyClone.querySelectorAll("script,style,noscript,template,link[rel=stylesheet],iframe");
-      for (var i = toRemove.length - 1; i >= 0; i--) {
-        toRemove[i].parentNode.removeChild(toRemove[i]);
-      }
       updateProgress(30);
 
-      // Step 3: Bake computed styles (read from original, write to clone)
+      // Step 2: Bake computed styles FIRST (before removing anything from clone)
+      // This keeps original.children and clone.children aligned
       requestAnimationFrame(function () {
         bakeStyles(document.body, bodyClone, 0);
+
+        // Step 3: NOW remove scripts/styles from clone (after baking)
+        var toRemove = bodyClone.querySelectorAll("script,style,noscript,template,link[rel=stylesheet]");
+        for (var i = toRemove.length - 1; i >= 0; i--) {
+          toRemove[i].parentNode.removeChild(toRemove[i]);
+        }
         updateProgress(70);
 
         requestAnimationFrame(function () {
@@ -207,7 +217,7 @@
           // Step 7: Build iframe
           var fullHTML = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>' +
             fontCSS +
-            '\n*{margin:0;padding:0;box-sizing:border-box;}' +
+            '\n*{box-sizing:border-box;}' +
             '\nbody{overflow:auto;background:' + bodyBg + ';color:' + bodyColor + ';font-family:' + bodyFont + ';}' +
             '\n[data-rb-node]{transition:outline 80ms;}' +
             '\n[data-rb-node]:hover{outline:1px solid rgba(147,197,253,0.3);}' +
