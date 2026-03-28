@@ -493,6 +493,13 @@
     var u = undoStack.pop();
     if (u.prop === '__removed') {
       u.parent.insertBefore(u.el, u.next);
+    } else if (u.prop === '__move') {
+      // Undo move: put element back in original position
+      if (u.next) {
+        u.parent.insertBefore(u.el, u.next);
+      } else {
+        u.parent.appendChild(u.el);
+      }
     } else if (u.prop === '__src') {
       u.el.src = u.old;
     } else {
@@ -714,42 +721,166 @@
     if (m) m.remove();
   }
 
-  // ============ MOVE / SNAP ============
+  // ============ MOVE / SNAP (Figma-style) ============
+
+  var dragGhost = null;
+  var dropIndicator = null;
+  var lastDropTarget = null;
+  var lastDropPos = null; // 'before' or 'after'
+
+  function createDragGhost(el) {
+    if (dragGhost) dragGhost.remove();
+    var r = el.getBoundingClientRect();
+    dragGhost = mk('div', 'rb-ed-ghost');
+    dragGhost.style.width = r.width + 'px';
+    dragGhost.style.height = Math.min(r.height, 120) + 'px';
+    dragGhost.style.left = r.left + 'px';
+    dragGhost.style.top = r.top + 'px';
+    // Capture visual snapshot
+    dragGhost.style.background = getComputedStyle(el).backgroundColor || 'rgba(147,197,253,0.1)';
+    dragGhost.style.borderRadius = getComputedStyle(el).borderRadius || '4px';
+    var tagLabel = mk('span', 'rb-ed-ghost-tag');
+    tagLabel.textContent = el.tagName.toLowerCase() + (el.className ? '.' + el.className.split(' ')[0] : '');
+    dragGhost.appendChild(tagLabel);
+    root.appendChild(dragGhost);
+    // Dim the original
+    el.style.opacity = '0.25';
+    el.style.transition = 'opacity 100ms';
+  }
+
+  function updateDragGhost(x, y) {
+    if (!dragGhost) return;
+    dragGhost.style.left = (x - parseInt(dragGhost.style.width) / 2) + 'px';
+    dragGhost.style.top = (y - 20) + 'px';
+  }
+
+  function removeDragGhost(el) {
+    if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+    if (el) { el.style.opacity = ''; el.style.transition = ''; }
+  }
+
+  function showDropIndicator(targetEl, position) {
+    if (!dropIndicator) {
+      dropIndicator = mk('div', 'rb-ed-drop-indicator');
+      root.appendChild(dropIndicator);
+    }
+    var r = targetEl.getBoundingClientRect();
+    var parentStyle = getComputedStyle(targetEl.parentElement);
+    var isVertical = parentStyle.flexDirection === 'column' ||
+                     parentStyle.display === 'block' ||
+                     parentStyle.display === '' ||
+                     (!parentStyle.display.includes('flex') && !parentStyle.display.includes('grid'));
+
+    if (isVertical) {
+      var yPos = position === 'before' ? r.top : r.bottom;
+      Object.assign(dropIndicator.style, {
+        top: (yPos - 1.5) + 'px', left: r.left + 'px',
+        width: r.width + 'px', height: '3px',
+        display: 'block'
+      });
+    } else {
+      var xPos = position === 'before' ? r.left : r.right;
+      Object.assign(dropIndicator.style, {
+        top: r.top + 'px', left: (xPos - 1.5) + 'px',
+        width: '3px', height: r.height + 'px',
+        display: 'block'
+      });
+    }
+  }
+
+  function hideDropIndicator() {
+    if (dropIndicator) dropIndicator.style.display = 'none';
+    lastDropTarget = null;
+    lastDropPos = null;
+  }
 
   function handleMove(el, e) {
     var parent = el.parentElement;
     if (!parent) return;
+
+    updateDragGhost(e.clientX, e.clientY);
+
     var siblings = Array.from(parent.children).filter(function(c) {
       return c !== el && isValid(c);
     });
-    var target = null;
+    if (!siblings.length) { hideDropIndicator(); return; }
+
+    // Find closest sibling by center-point proximity
+    var closest = null;
+    var closestDist = Infinity;
+    var closestPos = 'before';
+
     siblings.forEach(function(sib) {
       var r = sib.getBoundingClientRect();
-      if (e.clientX >= r.left && e.clientX <= r.right &&
-          e.clientY >= r.top && e.clientY <= r.bottom) {
-        target = sib;
+      var cx = r.left + r.width / 2;
+      var cy = r.top + r.height / 2;
+      var dist = Math.sqrt(Math.pow(e.clientX - cx, 2) + Math.pow(e.clientY - cy, 2));
+
+      if (dist < closestDist) {
+        closestDist = dist;
+        closest = sib;
+        // Determine if before or after based on cursor position relative to center
+        var parentStyle = getComputedStyle(parent);
+        var isHorizontal = parentStyle.flexDirection === 'row' ||
+                          parentStyle.flexDirection === 'row-reverse' ||
+                          (parentStyle.display.includes('flex') && parentStyle.flexDirection !== 'column');
+        if (isHorizontal) {
+          closestPos = e.clientX < cx ? 'before' : 'after';
+        } else {
+          closestPos = e.clientY < cy ? 'before' : 'after';
+        }
       }
     });
-    if (target) {
-      var next = el.nextElementSibling;
-      if (target === next) {
-        parent.insertBefore(el, target.nextElementSibling);
-      } else {
-        parent.insertBefore(el, target);
-      }
-      // Snap line
-      var old = root.querySelector('.rb-ed-snap');
-      if (old) old.remove();
-      var r = target.getBoundingClientRect();
-      var line = mk('div', 'rb-ed-snap');
-      Object.assign(line.style, {
-        top: r.top + 'px', left: r.left + 'px',
-        width: r.width + 'px', height: '1px'
-      });
-      root.appendChild(line);
-      setTimeout(function() { if (line.parentNode) line.remove(); }, 400);
-      updateSelBox(el);
+
+    if (closest && closestDist < 300) {
+      // Only show indicator, don't swap yet
+      showDropIndicator(closest, closestPos);
+      lastDropTarget = closest;
+      lastDropPos = closestPos;
+    } else {
+      hideDropIndicator();
     }
+  }
+
+  function commitDrop(el) {
+    if (!lastDropTarget || !el.parentElement) {
+      hideDropIndicator();
+      removeDragGhost(el);
+      return;
+    }
+
+    var parent = el.parentElement;
+    var oldNext = el.nextElementSibling;
+    var oldParent = parent;
+
+    // Save undo state
+    undoStack.push({ el: el, prop: '__move', parent: oldParent, next: oldNext });
+
+    // Perform the swap
+    if (lastDropPos === 'before') {
+      lastDropTarget.parentElement.insertBefore(el, lastDropTarget);
+    } else {
+      var nextSib = lastDropTarget.nextElementSibling;
+      if (nextSib) {
+        lastDropTarget.parentElement.insertBefore(el, nextSib);
+      } else {
+        lastDropTarget.parentElement.appendChild(el);
+      }
+    }
+
+    // Snap animation on the dropped element
+    el.style.transition = 'transform 150ms cubic-bezier(0.2, 0, 0, 1)';
+    el.style.transform = 'scale(1.02)';
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() {
+        el.style.transform = '';
+        setTimeout(function() { el.style.transition = ''; }, 150);
+      });
+    });
+
+    hideDropIndicator();
+    removeDragGhost(el);
+    updateSelBox(el);
   }
 
   // ============ FTUE ============
@@ -816,33 +947,44 @@
       selectEl(el);
     }, {signal: sig, capture: true});
 
-    // Drag (move elements)
+    // Drag (move elements — Figma-style with ghost + drop indicator)
     var dragStart = null;
+    var dragThreshold = false;
     document.addEventListener('mousedown', function(e) {
       if (!selectedEl || isEditorEl(e.target)) return;
       var el = document.elementFromPoint(e.clientX, e.clientY);
       if (el !== selectedEl) return;
       if (selectedEl.contentEditable === 'true') return;
-      isDragging = true;
       dragStart = {x: e.clientX, y: e.clientY};
-      document.body.classList.add('rb-ed-dragging');
+      dragThreshold = false;
     }, {signal: sig});
 
     document.addEventListener('mousemove', function(e) {
-      if (!isDragging || !selectedEl) return;
+      if (!dragStart || !selectedEl) return;
       var dx = e.clientX - dragStart.x;
       var dy = e.clientY - dragStart.y;
-      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
-        handleMove(selectedEl, e);
-        dragStart = {x: e.clientX, y: e.clientY};
+      // Start drag after 5px threshold
+      if (!dragThreshold) {
+        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+          dragThreshold = true;
+          isDragging = true;
+          document.body.classList.add('rb-ed-dragging');
+          createDragGhost(selectedEl);
+          selBox.style.display = 'none';
+        }
+        return;
       }
+      handleMove(selectedEl, e);
     }, {signal: sig});
 
     document.addEventListener('mouseup', function() {
-      if (isDragging) {
+      if (isDragging && selectedEl) {
+        commitDrop(selectedEl);
         isDragging = false;
         document.body.classList.remove('rb-ed-dragging');
       }
+      dragStart = null;
+      dragThreshold = false;
     }, {signal: sig});
 
     // Keyboard

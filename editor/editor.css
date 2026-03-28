@@ -328,3 +328,45 @@ option { background:#1A1A1A; color:#EFEEEB; }
 /* ===== 24. MOVABLE ===== */
 .rb-ed-movable { cursor:grab !important; }
 .rb-ed-movable:active { cursor:grabbing !important; }
+
+/* ===== 25. DRAG GHOST ===== */
+.rb-ed-ghost {
+  position:fixed; pointer-events:none; z-index:2147483644;
+  border:1.5px solid #93C5FD;
+  opacity:0.85;
+  box-shadow:0 12px 32px rgba(0,0,0,0.3), 0 0 0 1px rgba(147,197,253,0.2);
+  display:flex; align-items:flex-end; justify-content:flex-start;
+  padding:6px 8px;
+  transition:left 30ms ease, top 30ms ease;
+}
+.rb-ed-ghost-tag {
+  font:500 9px 'Instrument Sans',sans-serif;
+  color:rgba(147,197,253,0.9);
+  background:rgba(0,0,0,0.7);
+  padding:2px 6px;
+  border-radius:3px;
+  white-space:nowrap;
+}
+
+/* ===== 26. DROP INDICATOR ===== */
+.rb-ed-drop-indicator {
+  position:fixed; pointer-events:none; z-index:2147483643;
+  background:#93C5FD;
+  border-radius:2px;
+  display:none;
+  transition:top 80ms cubic-bezier(0.2,0,0,1), left 80ms cubic-bezier(0.2,0,0,1), width 80ms cubic-bezier(0.2,0,0,1), height 80ms cubic-bezier(0.2,0,0,1);
+}
+.rb-ed-drop-indicator::before,
+.rb-ed-drop-indicator::after {
+  content:''; position:absolute;
+  width:7px; height:7px;
+  border:2px solid #93C5FD;
+  border-radius:50%;
+  background:#000;
+}
+/* Horizontal indicator: dots at left and right */
+.rb-ed-drop-indicator[style*="height: 3px"]::before { top:-2px; left:-4px; }
+.rb-ed-drop-indicator[style*="height: 3px"]::after { top:-2px; right:-4px; }
+/* Vertical indicator: dots at top and bottom */
+.rb-ed-drop-indicator[style*="width: 3px"]::before { left:-2px; top:-4px; }
+.rb-ed-drop-indicator[style*="width: 3px"]::after { left:-2px; bottom:-4px; }
