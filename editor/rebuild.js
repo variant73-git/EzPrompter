@@ -1,11 +1,7 @@
 /**
- * Repix Rebuild Engine v2
- * Clones the entire page DOM, freezes computed styles inline,
- * and renders in an iframe for the editor to manipulate.
- *
- * Approach: cloneNode(true) preserves 100% structure fidelity.
- * Then we walk the clone and bake computed styles inline,
- * removing class/stylesheet dependencies.
+ * Repix Rebuild Engine v3
+ * Clones the entire page (DOM + stylesheets) into an iframe.
+ * 100% visual fidelity — it's the same page, just in an editable context.
  */
 (function () {
   "use strict";
@@ -15,40 +11,6 @@
   var iframeEl = null;
   var overlayEl = null;
   var hiddenEls = [];
-
-  var SKIP_TAGS = {
-    SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, META: 1, LINK: 1, IFRAME: 1, TEMPLATE: 1
-  };
-
-  // Styles to bake inline (all visual properties)
-  var STYLE_PROPS = [
-    "display", "position", "top", "right", "bottom", "left",
-    "width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight",
-    "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
-    "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
-    "border", "borderTop", "borderRight", "borderBottom", "borderLeft",
-    "borderRadius", "borderTopLeftRadius", "borderTopRightRadius",
-    "borderBottomLeftRadius", "borderBottomRightRadius",
-    "backgroundColor", "color", "opacity",
-    "fontSize", "fontFamily", "fontWeight", "fontStyle", "fontVariant",
-    "lineHeight", "letterSpacing", "textAlign", "textDecoration", "textTransform",
-    "whiteSpace", "wordBreak", "wordSpacing", "overflowWrap",
-    "overflow", "overflowX", "overflowY",
-    "flexDirection", "flexWrap", "justifyContent", "alignItems", "alignContent",
-    "alignSelf", "flex", "flexGrow", "flexShrink", "flexBasis", "order", "gap",
-    "gridTemplateColumns", "gridTemplateRows", "gridColumn", "gridRow", "gridGap",
-    "boxShadow", "textShadow",
-    "backgroundImage", "backgroundSize", "backgroundPosition", "backgroundRepeat",
-    "objectFit", "objectPosition",
-    "transform", "transformOrigin",
-    "zIndex", "cursor", "pointerEvents",
-    "verticalAlign", "float", "clear",
-    "listStyleType", "listStylePosition",
-    "tableLayout", "borderCollapse", "borderSpacing",
-    "outline", "outlineOffset",
-    "clipPath", "filter", "backdropFilter", "mixBlendMode",
-    "aspectRatio", "contain"
-  ];
 
   // ── Overlay ────────────────────────────────────────────────────────
 
@@ -64,7 +26,7 @@
     overlayEl.innerHTML =
       '<div style="text-align:center">' +
       '<span id="rb-rebuild-pct" style="font-size:48px;font-weight:700;display:block;margin-bottom:12px">0%</span>' +
-      '<p style="font-size:14px;opacity:0.6;margin:0">Freezing page\u2026</p>' +
+      '<p style="font-size:14px;opacity:0.6;margin:0">Preparing canvas\u2026</p>' +
       '</div>';
     document.documentElement.appendChild(overlayEl);
   }
@@ -80,71 +42,61 @@
     overlayEl = null;
   }
 
-  // ── Bake styles onto a cloned element tree ─────────────────────────
+  // ── Collect all stylesheets as text ────────────────────────────────
 
-  function bakeStyles(original, clone, depth) {
-    if (depth > 30) return;
-    if (original.nodeType !== 1 || clone.nodeType !== 1) return;
+  function collectStyles() {
+    var css = "";
 
-    var tag = original.tagName.toUpperCase();
-    if (SKIP_TAGS[tag]) return;
-
-    // SVG elements: don't try to bake styles, just preserve as-is
-    if (tag === "SVG" || original instanceof SVGElement) {
-      nodeCounter++;
-      clone.setAttribute("data-rb-node", nodeCounter);
-      return;
+    // Inline <style> tags
+    var styleTags = document.querySelectorAll("style");
+    for (var i = 0; i < styleTags.length; i++) {
+      css += styleTags[i].textContent + "\n";
     }
 
-    // Skip invisible elements
-    var cs;
-    try { cs = window.getComputedStyle(original); } catch (e) { return; }
-    if (cs.display === "none") { clone.style.display = "none"; return; }
+    // External stylesheets (read via CSSOM where possible)
+    var sheets = document.styleSheets;
+    for (var s = 0; s < sheets.length; s++) {
+      try {
+        var rules = sheets[s].cssRules || sheets[s].rules;
+        if (rules) {
+          for (var r = 0; r < rules.length; r++) {
+            css += rules[r].cssText + "\n";
+          }
+        }
+      } catch (e) {
+        // Cross-origin stylesheet — include as @import
+        if (sheets[s].href) {
+          css += '@import url("' + sheets[s].href + '");\n';
+        }
+      }
+    }
 
-    // Assign node ID
+    return css;
+  }
+
+  // ── Tag elements with data-rb-node IDs ─────────────────────────────
+
+  function tagElements(el) {
+    if (el.nodeType !== 1) return;
+
+    var tag = el.tagName.toUpperCase();
+    if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT" || tag === "META" || tag === "LINK") return;
+
     nodeCounter++;
     var nid = nodeCounter;
-    clone.setAttribute("data-rb-node", nid);
+    el.setAttribute("data-rb-node", nid);
 
-    // Store metadata
-    var rect = original.getBoundingClientRect();
+    var rect = el.getBoundingClientRect();
     nodeMap[nid] = {
       originalTag: tag.toLowerCase(),
-      classes: original.className || "",
-      id: original.id || "",
+      classes: el.className || "",
+      id: el.id || "",
       rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
     };
 
-    // Bake computed styles inline
-    for (var i = 0; i < STYLE_PROPS.length; i++) {
-      var prop = STYLE_PROPS[i];
-      try {
-        var val = cs[prop];
-        if (val !== undefined && val !== "") {
-          clone.style[prop] = val;
-        }
-      } catch (e) { /* some props may throw */ }
-    }
-
-    // Use bounding rect for width/height when computed is "auto"
-    if (cs.width === "auto" || cs.width === "") {
-      clone.style.width = rect.width + "px";
-    }
-    if (cs.height === "auto" || cs.height === "") {
-      clone.style.height = rect.height + "px";
-    }
-
-    // Strip classes and IDs (decouple from stylesheets)
-    clone.removeAttribute("class");
-    clone.removeAttribute("id");
-
-    // Recurse children — walk both trees in sync
-    // Use element children (not childNodes) to stay aligned
-    var origChildren = original.children;
-    var cloneChildren = clone.children;
-    var len = Math.min(origChildren.length, cloneChildren.length);
-    for (var c = 0; c < len; c++) {
-      bakeStyles(origChildren[c], cloneChildren[c], depth + 1);
+    var children = el.children;
+    for (var c = 0; c < children.length; c++) {
+      tagElements(children[c]);
     }
   }
 
@@ -155,93 +107,78 @@
     nodeMap = {};
 
     showOverlay();
-    updateProgress(5);
+    updateProgress(10);
 
-    // Step 1: Clone the entire body
     requestAnimationFrame(function () {
-      var bodyClone = document.body.cloneNode(true);
-      updateProgress(20);
-
+      // Step 1: Tag all elements in the original DOM with data-rb-node
+      tagElements(document.body);
       updateProgress(30);
 
-      // Step 2: Bake computed styles FIRST (before removing anything from clone)
-      // This keeps original.children and clone.children aligned
       requestAnimationFrame(function () {
-        bakeStyles(document.body, bodyClone, 0);
+        // Step 2: Collect all CSS
+        var allCSS = collectStyles();
+        updateProgress(50);
 
-        // Step 3: NOW remove scripts/styles from clone (after baking)
-        var toRemove = bodyClone.querySelectorAll("script,style,noscript,template,link[rel=stylesheet]");
+        // Step 3: Clone body (tags are already on it)
+        var bodyClone = document.body.cloneNode(true);
+
+        // Remove scripts and noscripts from clone (keep styles — they reference classes)
+        var toRemove = bodyClone.querySelectorAll("script,noscript,template");
         for (var i = toRemove.length - 1; i >= 0; i--) {
           toRemove[i].parentNode.removeChild(toRemove[i]);
         }
-        updateProgress(70);
+        updateProgress(60);
 
         requestAnimationFrame(function () {
-          // Step 4: Collect font families from computed styles
-          var fontSet = {};
-          var allOriginal = document.body.querySelectorAll("*");
-          for (var f = 0; f < allOriginal.length; f++) {
-            try {
-              var ff = window.getComputedStyle(allOriginal[f]).fontFamily;
-              if (ff) {
-                var parts = ff.split(",");
-                for (var p = 0; p < parts.length; p++) {
-                  var fname = parts[p].trim().replace(/^["']|["']$/g, "");
-                  if (fname && !fontSet[fname]) fontSet[fname] = true;
-                }
-              }
-            } catch (e) {}
-          }
-          var generics = { serif:1, "sans-serif":1, monospace:1, cursive:1, fantasy:1, "system-ui":1, inherit:1, initial:1 };
-          var fontImports = [];
-          for (var fn in fontSet) {
-            if (!generics[fn.toLowerCase()]) {
-              fontImports.push(fn.replace(/ /g, "+") + ":wght@100;200;300;400;500;600;700;800;900");
-            }
-          }
-          var fontCSS = fontImports.length > 0
-            ? '@import url("https://fonts.googleapis.com/css2?family=' + fontImports.join("&family=") + '&display=swap");'
-            : "";
-
-          updateProgress(80);
-
-          // Step 5: Get body background
+          // Step 4: Get body properties
           var bodyCs = window.getComputedStyle(document.body);
-          var bodyBg = bodyCs.backgroundColor || "#ffffff";
-          var bodyFont = bodyCs.fontFamily || "system-ui, sans-serif";
-          var bodyColor = bodyCs.color || "#000000";
+          var htmlCs = window.getComputedStyle(document.documentElement);
+          var bodyBg = bodyCs.backgroundColor;
+          var htmlBg = htmlCs.backgroundColor;
+          // Use whichever is not transparent
+          var pageBg = (bodyBg && bodyBg !== "rgba(0, 0, 0, 0)") ? bodyBg : htmlBg;
+          if (!pageBg || pageBg === "rgba(0, 0, 0, 0)") pageBg = "#ffffff";
 
-          // Step 6: Serialize the clone
           var cloneHTML = bodyClone.innerHTML;
+          updateProgress(75);
 
-          // Step 7: Build iframe
-          var fullHTML = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>' +
-            fontCSS +
-            '\n*{box-sizing:border-box;}' +
-            '\nbody{overflow:auto;background:' + bodyBg + ';color:' + bodyColor + ';font-family:' + bodyFont + ';}' +
-            '\n[data-rb-node]{transition:outline 80ms;}' +
-            '\n[data-rb-node]:hover{outline:1px solid rgba(147,197,253,0.3);}' +
-            '\nimg{max-width:100%;}' +
-            '</style></head><body>' + cloneHTML + '</body></html>';
+          // Step 5: Build the iframe HTML
+          var fullHTML = '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="UTF-8">\n' +
+            '<meta name="viewport" content="width=device-width,initial-scale=1">\n' +
+            '<base href="' + window.location.origin + window.location.pathname + '">\n' +
+            '<style>\n' + allCSS + '\n</style>\n' +
+            '<style>\n' +
+            '[data-rb-node]{transition:outline 80ms;}\n' +
+            '[data-rb-node]:hover{outline:1.5px solid rgba(147,197,253,0.4);outline-offset:1px;}\n' +
+            'body{overflow:auto !important;height:auto !important;}\n' +
+            'a{pointer-events:none;}\n' +
+            '</style>\n' +
+            '</head>\n<body style="background:' + pageBg + '">' +
+            cloneHTML +
+            '</body>\n</html>';
 
-          updateProgress(90);
+          updateProgress(85);
 
-          // Step 8: Create iframe
+          // Step 6: Create iframe
           iframeEl = document.createElement("iframe");
           iframeEl.id = "rb-rebuild-frame";
           iframeEl.style.cssText = [
             "position:fixed", "top:0", "left:0", "width:100vw", "height:100vh",
-            "z-index:2147483630", "border:none", "background:" + bodyBg
+            "z-index:2147483630", "border:none", "background:" + pageBg
           ].join(";");
 
-          // Hide original page content (but NOT editor overlays)
+          // Hide original page content (not editor overlays)
           hiddenEls = [];
           var bodyChildren = document.body.children;
           for (var h = 0; h < bodyChildren.length; h++) {
             var child = bodyChildren[h];
             if (child.id === "rb-editor-root" || child.id === "repixbridge-panel") continue;
             if (child === iframeEl) continue;
-            hiddenEls.push({ el: child, opacity: child.style.opacity, pe: child.style.pointerEvents, vis: child.style.visibility });
+            hiddenEls.push({
+              el: child,
+              vis: child.style.visibility,
+              pe: child.style.pointerEvents
+            });
             child.style.visibility = "hidden";
             child.style.pointerEvents = "none";
           }
@@ -253,15 +190,18 @@
           iframeDoc.write(fullHTML);
           iframeDoc.close();
 
-          updateProgress(100);
+          updateProgress(95);
 
-          // Wait for iframe to render
+          // Wait for iframe to render + external resources to load
           setTimeout(function () {
-            removeOverlay();
-            if (typeof callback === "function") {
-              callback(iframeDoc);
-            }
-          }, 200);
+            updateProgress(100);
+            setTimeout(function () {
+              removeOverlay();
+              if (typeof callback === "function") {
+                callback(iframeDoc);
+              }
+            }, 150);
+          }, 300);
         });
       });
     });
@@ -286,6 +226,13 @@
       item.el.style.pointerEvents = item.pe || "";
     }
     hiddenEls = [];
+
+    // Remove data-rb-node tags from original page
+    var tagged = document.querySelectorAll("[data-rb-node]");
+    for (var t = 0; t < tagged.length; t++) {
+      tagged[t].removeAttribute("data-rb-node");
+    }
+
     nodeMap = {};
     nodeCounter = 0;
   }
