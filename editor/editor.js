@@ -127,6 +127,12 @@
 
   function px(v) { return parseFloat(v) || 0; }
 
+  // getComputedStyle that works across iframe boundaries
+  function getCS(el) {
+    var doc = el.ownerDocument || document;
+    return doc.defaultView.getComputedStyle(el);
+  }
+
   function rgbHex(s) {
     if (!s || s === 'transparent') return '#000000';
     var m = s.match(/\d+/g);
@@ -241,7 +247,7 @@
     var fontsUsed = new Set();
     document.querySelectorAll('h1,h2,h3,p,a,span,div,li,button').forEach(function(el) {
       if(fontsUsed.size > 8) return;
-      var f = getComputedStyle(el).fontFamily.split(',')[0].replace(/['"]/g, '').trim();
+      var f = getCS(el).fontFamily.split(',')[0].replace(/['"]/g, '').trim();
       if(f) fontsUsed.add(f);
     });
     if(fontsUsed.size > 0) {
@@ -266,8 +272,8 @@
     var colorSet = new Set();
     document.querySelectorAll('h1,h2,h3,button,a,.btn,[class*=primary],[class*=accent]').forEach(function(el) {
       if(colorSet.size > 6) return;
-      var bg = getComputedStyle(el).backgroundColor;
-      var c = getComputedStyle(el).color;
+      var bg = getCS(el).backgroundColor;
+      var c = getCS(el).color;
       if(bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') colorSet.add(rgbHex(bg));
       if(c) colorSet.add(rgbHex(c));
     });
@@ -408,7 +414,7 @@
 
   function updateInspector(el) {
     inspBody.innerHTML = '';
-    var cs = getComputedStyle(el);
+    var cs = getCS(el);
     var r = getBox(el);
 
     // Element section
@@ -578,25 +584,13 @@
   // ============ APPLY STYLE ============
 
   function applyStyle(el, prop, value) {
-    var cssProp = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
-    var old = el.style[prop] || getComputedStyle(el)[prop];
+    var old = el.style[prop] || getCS(el)[prop];
     undoStack.push({el: el, prop: prop, old: old});
 
-    var classes = Array.from(el.classList).filter(function(c) {
-      return c.indexOf('rb-') === -1 && c.length > 1;
-    });
-    if (classes.length > 0) {
-      var s = document.getElementById('rb-editor-styles') || (function() {
-        var st = mk('style');
-        st.id = 'rb-editor-styles';
-        document.head.appendChild(st);
-        return st;
-      })();
-      s.textContent += '\n.' + classes[0] + ' { ' + cssProp + ': ' + value + ' !important; }';
-    } else {
-      el.style[prop] = value;
-    }
+    // Element is already decoupled — always apply inline
+    el.style[prop] = value;
 
+    // Auto-resize for typography changes
     var typoProps = ['fontSize','fontFamily','fontWeight','lineHeight','letterSpacing'];
     if (typoProps.indexOf(prop) !== -1) {
       el.style.width = '';
@@ -632,6 +626,80 @@
     }
   }
 
+  // ============ LAZY DECOUPLE (bake inline styles on select) ============
+
+  var DECOUPLE_PROPS = [
+    'display','position','top','right','bottom','left',
+    'width','height','minWidth','minHeight','maxWidth','maxHeight',
+    'margin','marginTop','marginRight','marginBottom','marginLeft',
+    'padding','paddingTop','paddingRight','paddingBottom','paddingLeft',
+    'border','borderTop','borderRight','borderBottom','borderLeft',
+    'borderRadius','borderTopLeftRadius','borderTopRightRadius',
+    'borderBottomLeftRadius','borderBottomRightRadius',
+    'backgroundColor','color','opacity',
+    'fontSize','fontFamily','fontWeight','fontStyle','fontVariant',
+    'lineHeight','letterSpacing','textAlign','textDecoration','textTransform',
+    'whiteSpace','wordBreak','overflowWrap',
+    'overflow','overflowX','overflowY',
+    'flexDirection','flexWrap','justifyContent','alignItems','alignContent',
+    'alignSelf','flex','flexGrow','flexShrink','flexBasis','order','gap',
+    'gridTemplateColumns','gridTemplateRows','gridColumn','gridRow',
+    'boxShadow','textShadow',
+    'backgroundImage','backgroundSize','backgroundPosition','backgroundRepeat',
+    'objectFit','objectPosition',
+    'transform','transformOrigin',
+    'zIndex','verticalAlign','float','clear',
+    'listStyleType','listStylePosition',
+    'clipPath','filter','backdropFilter','mixBlendMode','aspectRatio'
+  ];
+
+  var decoupledSet = new Set();
+
+  function decoupleElement(el) {
+    if (!el || !el.getAttribute) return;
+    var nid = el.getAttribute('data-rb-node');
+    if (!nid || decoupledSet.has(nid)) return;
+
+    // Read all computed styles from the live element
+    var cs = getCS(el);
+    var rect = el.getBoundingClientRect();
+
+    // Bake inline
+    for (var i = 0; i < DECOUPLE_PROPS.length; i++) {
+      var prop = DECOUPLE_PROPS[i];
+      try {
+        var val = cs[prop];
+        if (val !== undefined && val !== '') {
+          el.style[prop] = val;
+        }
+      } catch (e) {}
+    }
+
+    // Use bounding rect for explicit dimensions
+    el.style.width = rect.width + 'px';
+    el.style.height = rect.height + 'px';
+
+    // Strip classes (now independent of stylesheets)
+    el.removeAttribute('class');
+
+    decoupledSet.add(nid);
+  }
+
+  // Also decouple parent so its flex/grid layout is preserved when children move
+  function decoupleForMove(el) {
+    decoupleElement(el);
+    if (el.parentElement && el.parentElement.getAttribute('data-rb-node')) {
+      decoupleElement(el.parentElement);
+      // Decouple siblings so their positions stay stable
+      var siblings = el.parentElement.children;
+      for (var s = 0; s < siblings.length; s++) {
+        if (siblings[s].getAttribute('data-rb-node')) {
+          decoupleElement(siblings[s]);
+        }
+      }
+    }
+  }
+
   // ============ SELECT / DESELECT ============
 
   function selectEl(el) {
@@ -640,6 +708,10 @@
       selectedEl.removeAttribute('data-rb-editing');
       selectedEl.classList.remove('rb-ed-movable');
     }
+
+    // Lazy decouple: bake inline styles, strip classes
+    decoupleElement(el);
+
     selectedEl = el;
     updateSelBox(el);
     updateParentBox(el);
@@ -734,7 +806,7 @@
 
   function showSpacingGuides(el) {
     hideSpacingGuides();
-    var cs = getComputedStyle(el);
+    var cs = getCS(el);
     var r = getBox(el);
 
     var margins = {
@@ -855,8 +927,8 @@
     dragGhost.style.left = r.left + 'px';
     dragGhost.style.top = r.top + 'px';
     // Capture visual snapshot
-    dragGhost.style.background = getComputedStyle(el).backgroundColor || 'rgba(147,197,253,0.1)';
-    dragGhost.style.borderRadius = getComputedStyle(el).borderRadius || '4px';
+    dragGhost.style.background = getCS(el).backgroundColor || 'rgba(147,197,253,0.1)';
+    dragGhost.style.borderRadius = getCS(el).borderRadius || '4px';
     var tagLabel = mk('span', 'rb-ed-ghost-tag');
     tagLabel.textContent = el.tagName.toLowerCase() + (el.className ? '.' + el.className.split(' ')[0] : '');
     dragGhost.appendChild(tagLabel);
@@ -966,6 +1038,9 @@
       removeDragGhost(el);
       return;
     }
+
+    // Decouple the element, its parent, and siblings before moving
+    decoupleForMove(el);
 
     var parent = el.parentElement;
     var oldNext = el.nextElementSibling;
