@@ -8,7 +8,7 @@ Duas frentes principais:
 2. **Image Remix** — reverse-engineer do prompt de qualquer imagem + geração inline de novas imagens via IA
 
 ## Branch ativa
-`claude/ai-image-description-extension-Tp3jY`
+`feat/semantic-overlay`
 
 ## Versão atual
 `2.1.0`
@@ -17,6 +17,8 @@ Duas frentes principais:
 ```
 manifest.json           # Manifest V3 (Chrome/Opera), sem default_popup
 background.js           # Service worker: context menus, injeção do panel, APIs de IA, captura de layout
+                        # importScripts('overlay/semantic.js') no topo
+                        # handleAnalyzeOverlay() — pipeline completo do overlay semântico
 content.js              # Overlay de resultado (legacy, usado para feedback de sucesso/erro)
 styles/content.css      # CSS do overlay de resultado
 panel/panel.js          # PRINCIPAL: widget flutuante injetado na página ativa
@@ -25,10 +27,25 @@ popup/popup.html        # Popup legado (não mais usado como default_popup)
 popup/popup.css         # CSS do popup legado
 popup/popup.js          # JS do popup legado
 icons/                  # Ícones 16/48/128px
+overlay/                # NOVO: Pipeline "papel vegetal" (semantic overlay)
+  extractor.js          # Roda no page context: extrai tokens CSS (cores, fontes, raios, sombras)
+                        #   + cleanHTML (4 níveis, 12k chars) + bounds de seções
+                        #   Exporta window.__rbExtractor.extract()
+  semantic.js           # Roda no service worker: chama IA (Gemini/OpenAI/Anthropic)
+                        #   com tokens + cleanHTML + screenshot → retorna Semantic Map JSON
+                        #   buildSemanticMap(extractionData, screenshotDataUrl, settings)
+  renderer.js           # Roda no page context: cria #rb-design-layer com rb-node sobre site congelado
+                        #   window.__rbRender(map, onSelect) — window.__rbApplyStyle(id, prop, value)
+                        #   window.__rbExportState()
+  editor-panel.js       # Roda no page context: painel lateral estilo Figma
+                        #   window.__rbInitEditorPanel(tokens, onChange)
+                        #   window.__rbShowEditorPanel(descriptor) / __rbHideEditorPanel()
+                        #   Sliders + inputs numéricos, paleta de cores do site, font controls
+  overlay.css           # Estilos do design layer, rb-node, handles, editor panel
 figma-plugin/           # Plugin Figma companion (importa capturas de layout)
-  manifest.json         # Manifest do plugin Figma
-  code.js               # Tradução DOM → Figma nodes
-  ui.html               # UI do plugin (input de capture ID)
+  manifest.json
+  code.js
+  ui.html
 web/                    # Portal Next.js (auth + pagamentos + relay API)
   app/api/auth/         # Signup, login, validate (JWT)
   app/api/captures/     # Relay: armazena capturas em Redis (30min TTL)
@@ -87,18 +104,20 @@ DESIGN-SYSTEM.md        # Design tokens, tipografia, cores, espaçamentos
 ## Features implementadas
 1. ✅ Context menu "Image Remix — Describe Prompt" (clique direito em imagem)
 2. ✅ Context menu "Capture Layout → Design Tool" (clique direito na página)
-3. ✅ Panel flutuante com onboarding, dual-mode, settings
-4. ✅ Análise contextual do site (loader circular, detecta tipo de site, sites conhecidos)
-5. ✅ Grid de imagens estilo Pinterest na aba Image Remix (filtra >100x100px, top 12)
-6. ✅ Botão "Remix" em cada imagem → descreve prompt via IA
-7. ✅ Geração inline de imagens com dropdown de provedores + status de API
-8. ✅ Botão "Remix this site" na aba HTML→Design
-9. ✅ Export options (SVG, PNG, JPG, Figma) nos cards de captura
-10. ✅ "Open in..." AI models (ChatGPT, Gemini, Leonardo, Ideogram, Midjourney, DreamStudio)
-11. ✅ Portal web (Next.js) com auth, Stripe, relay API
-12. ✅ Figma plugin companion
-13. ✅ Prompts e capturas salvos em chrome.storage.local (repositório editável)
-14. ✅ Tags editáveis inline nos prompt cards (style, aspectRatio)
+3. ✅ Context menu "Overlay Edit Mode (AI)" (clique direito na página) — NOVO
+4. ✅ Panel flutuante com onboarding, dual-mode, settings
+5. ✅ Análise contextual do site (loader circular, detecta tipo de site, sites conhecidos)
+6. ✅ Grid de imagens estilo Pinterest na aba Image Remix (filtra >100x100px, top 12)
+7. ✅ Botão "Remix" em cada imagem → descreve prompt via IA
+8. ✅ Geração inline de imagens com dropdown de provedores + status de API
+9. ✅ Botão "Live Remix" na aba HTML→Design → aciona pipeline do overlay semântico — NOVO
+10. ✅ Export options (SVG, PNG, JPG, Figma) nos cards de captura
+11. ✅ "Open in..." AI models (ChatGPT, Gemini, Leonardo, Ideogram, Midjourney, DreamStudio)
+12. ✅ Portal web (Next.js) com auth, Stripe, relay API
+13. ✅ Figma plugin companion
+14. ✅ Prompts e capturas salvos em chrome.storage.local (repositório editável)
+15. ✅ Tags editáveis inline nos prompt cards (style, aspectRatio)
+16. ✅ Pipeline "papel vegetal": extração CSS → IA semântica → overlay renderer → editor Figma-like — NOVO
 
 ## Bugs conhecidos / em investigação
 - Analyzer do site: roda mas loader SVG pode não ser visível em alguns sites (CSS conflicts)
@@ -123,9 +142,59 @@ O Ollama bloqueia requisições de `chrome-extension://` por CORS.
 4. Clicar no ícone da extensão → panel aparece
 5. Configurar API keys via Settings (ícone de engrenagem)
 
+## Como instalar para testar (branch atual)
+1. `git clone` + `git checkout feat/semantic-overlay`
+2. `chrome://extensions/` ou `opera://extensions/` → Developer mode → Load unpacked → pasta raiz
+3. Navegar para qualquer site (não funciona em chrome:// pages)
+4. Configurar API key via Settings (ícone de engrenagem) — Gemini gratuito recomendado
+5. Clicar no ícone → "Live Remix" para ativar o overlay semântico
+
+## Semantic Overlay — Arquitetura
+```
+Clique "Live Remix" / context menu "Overlay Edit Mode (AI)"
+  → background.js: handleAnalyzeOverlay(tab)
+      1. injeta overlay/extractor.js → window.__rbExtractor.extract()
+         retorna: { tokens, cleanHTML, sections, pageUrl, pageTitle, viewport }
+      2. chrome.tabs.captureVisibleTab → screenshotDataUrl
+      3. overlay/semantic.js: buildSemanticMap(extractionData, screenshot, settings)
+         → prompt para IA (Gemini/OpenAI/Anthropic) com SEMANTIC_SCHEMA + SEMANTIC_RULES
+         → retorna Semantic Map JSON: { sections[], globalTokens }
+      4. injeta overlay/overlay.css + renderer.js + editor-panel.js
+      5. executeScript: __rbInitEditorPanel(tokens) + __rbRender(map, onSelect)
+
+Interação do designer:
+  hover rb-node → label + indigo outline
+  click rb-node → __rbShowEditorPanel(descriptor)
+    → painel lateral: sliders + inputs numéricos + paleta de cores do site
+    → edição → __rbApplyStyle(id, prop, value) → aplica no DOM real via descriptor.selector
+```
+
+## Semantic Map JSON (schema)
+```json
+{
+  "sections": [{
+    "id": "hero-1",
+    "selector": "section.hero",
+    "role": "hero",
+    "bounds": { "x": 0, "y": 0, "w": 1440, "h": 600 },
+    "elements": [{
+      "id": "hero-headline",
+      "selector": "section.hero h1",
+      "role": "headline",
+      "type": "text",
+      "content": "Welcome",
+      "style": { "fontSize": "64px", "color": "#1a1a2e", "fontWeight": "700" },
+      "editableProps": ["fontSize", "fontWeight", "color", "content", "letterSpacing"]
+    }]
+  }],
+  "globalTokens": { "colors": ["#1a1a2e", ...], "fonts": ["Inter", ...] }
+}
+```
+
 ## Próximos passos discutidos
+- overlay/qa.js — loop de QA visual com IA (screenshot original vs overlay, auto-correção)
+- Testar e ajustar fidelidade visual do overlay em sites reais
 - Background animado com dotted surface (canvas 2D ou CSS radial-gradient)
-- Melhoria visual do analyzer (pode ter problemas de visibilidade em alguns sites)
 - Deploy do portal web no Vercel
 - Publicação na Chrome Web Store / Opera Add-ons
 
