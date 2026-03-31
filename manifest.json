@@ -46,7 +46,14 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["editor/editor.css", "editor/editor.js"],
+      "resources": [
+        "editor/editor.css",
+        "editor/editor.js",
+        "overlay/extractor.js",
+        "overlay/renderer.js",
+        "overlay/editor-panel.js",
+        "overlay/overlay.css"
+      ],
       "matches": ["<all_urls>"]
     }
   ]

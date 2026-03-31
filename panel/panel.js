@@ -686,8 +686,13 @@
     }
 
     remixBtn.addEventListener('click', () => {
-      // Launch the page editor (toolbar + inspector)
-      chrome.runtime.sendMessage({ action: 'toggleEditor' });
+      // Launch the semantic overlay pipeline
+      const loader = $('#rb-loader');
+      const msg = $('#rb-siteMsg');
+      if (loader) loader.style.display = '';
+      if (msg) msg.innerHTML = '<span class="rb-site-tagline">Analyzing with AI...</span>';
+      remixBtn.style.display = 'none';
+      chrome.runtime.sendMessage({ action: 'analyzeOverlay' });
       panel.remove();
     });
 

@@ -1,5 +1,7 @@
 // Repix - Background Service Worker
 
+importScripts('overlay/semantic.js');
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: 'repix-describe',
@@ -9,6 +11,11 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: 'repix-capture',
     title: 'RepixBridge: Capture Layout → Design Tool',
+    contexts: ['page']
+  });
+  chrome.contextMenus.create({
+    id: 'repix-overlay',
+    title: 'RepixBridge: Overlay Edit Mode (AI)',
     contexts: ['page']
   });
 });
@@ -34,6 +41,9 @@ chrome.action.onClicked.addListener(async (tab) => {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'repix-capture') {
     return handleCaptureLayout(tab);
+  }
+  if (info.menuItemId === 'repix-overlay') {
+    return handleAnalyzeOverlay(tab);
   }
   if (info.menuItemId !== 'repix-describe') return;
 
@@ -174,6 +184,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         chrome.tabs.sendMessage(tabId, { action: 'imageGenerated', dataUrl }, () => { if (chrome.runtime.lastError) { /* panel may not be open */ } });
       } catch (err) {
         chrome.tabs.sendMessage(tabId, { action: 'imageGenError', error: err.message }, () => { if (chrome.runtime.lastError) { /* panel may not be open */ } });
+      }
+    });
+    return false;
+  }
+
+  if (message.action === 'analyzeOverlay') {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (!tabs[0]) return;
+      const tab = tabs[0];
+      const tabId = tab.id;
+      try {
+        await handleAnalyzeOverlay(tab);
+      } catch (e) {
+        console.error('Overlay analysis failed:', e);
+        chrome.tabs.sendMessage(tabId, { action: 'overlayError', error: e.message }, () => { if (chrome.runtime.lastError) {} });
       }
     });
     return false;
@@ -1288,4 +1313,64 @@ function downloadFile(url, filename) {
       }
     });
   });
+}
+
+// ─── Semantic Overlay Pipeline ─────────────────────────────────────────────
+
+async function handleAnalyzeOverlay(tab) {
+  const tabId = tab.id;
+
+  setBadge('...', '#6366f1', tabId);
+  chrome.tabs.sendMessage(tabId, { action: 'overlayStatus', text: 'Extracting page structure...' }, () => { if (chrome.runtime.lastError) {} });
+
+  // 1. Inject extractor + run extraction in page context
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/extractor.js'] });
+
+  const [extractResult] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => window.__rbExtractor?.extract?.()
+  });
+
+  const extractionData = extractResult?.result;
+  if (!extractionData) throw new Error('Page extraction failed');
+
+  // 2. Take screenshot
+  chrome.tabs.sendMessage(tabId, { action: 'overlayStatus', text: 'Taking screenshot...' }, () => { if (chrome.runtime.lastError) {} });
+  const screenshotDataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png', quality: 90 });
+
+  // 3. Build semantic map via AI
+  chrome.tabs.sendMessage(tabId, { action: 'overlayStatus', text: 'AI is analyzing the site...' }, () => { if (chrome.runtime.lastError) {} });
+
+  const settings = await getSettings();
+  const semanticMap = await buildSemanticMap(extractionData, screenshotDataUrl, settings);
+
+  // 4. Inject renderer + editor panel CSS
+  await chrome.scripting.insertCSS({ target: { tabId }, files: ['overlay/overlay.css'] });
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/renderer.js'] });
+  await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/editor-panel.js'] });
+
+  // 5. Activate overlay in page context
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (map, tokens) => {
+      // Init editor panel
+      window.__rbInitEditorPanel(tokens, (id, prop, value) => {
+        // Changes handled locally by __rbApplyStyle
+      });
+
+      // Render semantic overlay
+      window.__rbRender(map, (descriptor) => {
+        if (descriptor) {
+          window.__rbShowEditorPanel(descriptor);
+        } else {
+          window.__rbHideEditorPanel();
+        }
+      });
+    },
+    args: [semanticMap, extractionData.tokens]
+  });
+
+  setBadge('✓', '#6366f1', tabId);
+  chrome.tabs.sendMessage(tabId, { action: 'overlayReady', semanticMap }, () => { if (chrome.runtime.lastError) {} });
+  setTimeout(() => setBadge('', '', tabId), 3000);
 }
