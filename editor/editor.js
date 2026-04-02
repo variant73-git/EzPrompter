@@ -1147,28 +1147,9 @@
         break;
       }
 
-      if (!found && i > 0) {
-        // Row doesn't exist — force-render it
-        var rowContainer = buildLayerRow(target, i);
-        if (rowContainer) {
-          currentContainer.appendChild(rowContainer);
-          var forceRow = rowContainer.querySelector('.rb-layer-row');
-          if (i === chain.length - 1) {
-            forceRow.classList.add('rb-layer-selected');
-            forceRow.scrollIntoView({block: 'nearest', behavior: 'smooth'});
-          } else {
-            var forceChild = rowContainer.querySelector('.rb-layer-children');
-            if (forceChild) {
-              if (forceChild.children.length === 0) {
-                renderLayerChildren(target, forceChild, i + 1);
-              }
-              forceChild.classList.add('rb-layer-expanded');
-              var forceChev = forceRow.querySelector('.rb-layer-chev');
-              if (forceChev) forceChev.classList.add('rb-layer-open');
-              currentContainer = forceChild;
-            }
-          }
-        }
+      if (!found) {
+        // Row not in tree (possibly filtered as inert) — stop searching
+        break;
       }
     }
   }
