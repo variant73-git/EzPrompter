@@ -863,6 +863,7 @@
 
   var inspector, inspBody;
   var layersPanel, layersBody;
+  var layerHoverLock = false;
 
   // Does this element have its own visual contribution?
   // true = hiding it would have NO visible effect (pure structural wrapper)
@@ -3017,8 +3018,6 @@
     }
 
     // Hover — selects containers, not inline text
-    var layerHoverLock = false; // true when hovering a layer row — prevents tMove from clearing hoverBox
-
     var tMove = throttle(function(e) {
       if (isDragging) return;
       if (layerHoverLock) return;
