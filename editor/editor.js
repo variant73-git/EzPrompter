@@ -1122,37 +1122,6 @@
       if (ics && (ics.display === 'none' || ics.visibility === 'hidden' || r.width < 10 || r.height < 10)) return null;
     }
 
-    // Filter out empty semantic wrappers (section/article with no visual properties and no meaningful text)
-    if (tag === 'section' || tag === 'article' || tag === 'aside') {
-      var scs; try { scs = getComputedStyle(el); } catch(e) {}
-      if (scs) {
-        var sBg = scs.backgroundColor;
-        var hasVisual = false;
-        if (sBg && sBg !== 'rgba(0, 0, 0, 0)' && sBg !== 'transparent') hasVisual = true;
-        if (scs.backgroundImage && scs.backgroundImage !== 'none') hasVisual = true;
-        if ((parseFloat(scs.borderWidth) || 0) > 0 && scs.borderStyle !== 'none') hasVisual = true;
-        if (scs.boxShadow && scs.boxShadow !== 'none') hasVisual = true;
-        // No visual + no direct text = treat as inert wrapper
-        var hasDirectText = false;
-        for (var ti = 0; ti < el.childNodes.length; ti++) {
-          if (el.childNodes[ti].nodeType === 3 && el.childNodes[ti].textContent.trim().length > 0) { hasDirectText = true; break; }
-        }
-        if (!hasVisual && !hasDirectText) {
-          // Skip this semantic wrapper, promote children
-          if (skipBudget > 0) {
-            var skipC = mk('div');
-            skipC.setAttribute('data-rb-layer-skip', '');
-            var svk = getVisibleChildren(el);
-            for (var ski = 0; ski < svk.length; ski++) {
-              var skRow = buildLayerRow(svk[ski], depth, skipBudget - 1);
-              if (skRow) skipC.appendChild(skRow);
-            }
-            return skipC.children.length > 0 ? skipC : null;
-          }
-        }
-      }
-    }
-
     var isInert = isVisuallyInert(el);
 
     // Skip inert layers — promote their children to this level
@@ -1404,15 +1373,19 @@
 
   // ---- SECTIONS TAB ----
   function getSections() {
-    // Get top-level visible sections: direct children of body or one level deep
+    // Collect the top-level visible rows from the layers panel
+    // These match what the user sees in the Layers tab
     var sections = [];
-    var candidates = document.body.children;
-    for (var i = 0; i < candidates.length; i++) {
-      var el = candidates[i];
-      if (SKIP.has(el.tagName) || isEditorEl(el)) continue;
-      var r = el.getBoundingClientRect();
-      if (r.width < 50 || r.height < 20) continue;
-      sections.push(el);
+    if (!layersBody) return sections;
+    var rows = layersBody.children;
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i].querySelector('.rb-layer-row');
+      if (row && row._rbEl) {
+        var r = row._rbEl.getBoundingClientRect();
+        if (r.width > 50 && r.height > 20) {
+          sections.push(row._rbEl);
+        }
+      }
     }
     return sections;
   }
