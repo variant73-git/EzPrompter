@@ -868,13 +868,20 @@
   function isUselessWrapper(el) {
     if (!el || el.tagName !== 'DIV') return false;
     var cs = getComputedStyle(el);
+    // Hidden elements are useless
+    if (cs.display === 'none' || cs.visibility === 'hidden') return true;
+    // Has visible background? Not useless.
     if (cs.backgroundImage && cs.backgroundImage !== 'none') return false;
     if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') return false;
+    // Has border? Not useless.
     if (cs.borderWidth && cs.borderWidth !== '0px') return false;
+    // Has box shadow? Not useless.
     if (cs.boxShadow && cs.boxShadow !== 'none') return false;
+    // Has direct text? Not useless.
     for (var i = 0; i < el.childNodes.length; i++) {
       if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) return false;
     }
+    // Has only one visible child? It's a wrapper.
     var visibleKids = Array.from(el.children).filter(function(c) {
       if (SKIP.has(c.tagName)) return false;
       var r = c.getBoundingClientRect();
@@ -884,6 +891,31 @@
     return false;
   }
 
+  // Get short label for an element: tag.firstClass
+  function elLabel(el) {
+    var tag = el.tagName.toLowerCase();
+    var cls = '';
+    if (el.className && typeof el.className === 'string') {
+      var first = el.className.split(' ').filter(function(c) {
+        return c.indexOf('rb-') === -1 && c.length < 25;
+      })[0];
+      if (first) cls = '.' + first;
+    }
+    return tag + cls;
+  }
+
+  // Get visible children of an element (filtered)
+  function getVisibleChildren(el) {
+    var kids = [];
+    for (var i = 0; i < el.children.length; i++) {
+      var ch = el.children[i];
+      if (SKIP.has(ch.tagName) || isEditorEl(ch)) continue;
+      var cr = ch.getBoundingClientRect();
+      if (cr.width >= 2 || cr.height >= 2) kids.push(ch);
+    }
+    return kids;
+  }
+
   function buildLayerRow(el, depth) {
     if (!el || !el.tagName || SKIP.has(el.tagName) || isEditorEl(el)) return null;
     var r = el.getBoundingClientRect();
@@ -891,14 +923,24 @@
 
     var tag = el.tagName.toLowerCase();
     var isWrapper = isUselessWrapper(el);
-    var hasVisibleChildren = false;
-    for (var i = 0; i < el.children.length; i++) {
-      var ch = el.children[i];
-      if (!SKIP.has(ch.tagName) && !isEditorEl(ch)) {
-        var cr = ch.getBoundingClientRect();
-        if (cr.width >= 2 || cr.height >= 2) { hasVisibleChildren = true; break; }
+
+    // Collapse chains of single-child wrappers: div.a > div.b > div.c → show as collapsed chain
+    var chainLabels = [];
+    var chainEnd = el;
+    if (isWrapper) {
+      chainLabels.push(elLabel(el));
+      var vk = getVisibleChildren(chainEnd);
+      while (vk.length === 1 && isUselessWrapper(vk[0])) {
+        chainEnd = vk[0];
+        chainLabels.push(elLabel(chainEnd));
+        vk = getVisibleChildren(chainEnd);
       }
     }
+    // If chain collapsed, chainEnd is the last wrapper; its children are what we show
+    var effectiveEl = chainLabels.length > 1 ? chainEnd : el;
+
+    var visKids = getVisibleChildren(effectiveEl);
+    var hasVisibleChildren = visKids.length > 0;
 
     var container = mk('div');
     container.setAttribute('data-rb-layer-el', '');
@@ -917,7 +959,7 @@
         var isOpen = childContainer.classList.contains('rb-layer-expanded');
         if (!isOpen) {
           if (childContainer.children.length === 0) {
-            renderLayerChildren(el, childContainer, depth + 1);
+            renderLayerChildren(effectiveEl, childContainer, depth + 1);
           }
           childContainer.classList.add('rb-layer-expanded');
           chev.classList.add('rb-layer-open');
@@ -937,27 +979,48 @@
     row.appendChild(icon);
 
     var label = mk('span', 'rb-layer-label');
-    var clsName = '';
-    if (el.className && typeof el.className === 'string') {
-      var firstCls = el.className.split(' ').filter(function(c) {
-        return c.indexOf('rb-') === -1 && c.length < 30;
-      })[0];
-      if (firstCls) clsName = '.' + firstCls;
-    }
-    if (!hasVisibleChildren && isText(el)) {
+    if (chainLabels.length > 1) {
+      // Collapsed chain: show "div.a › div.b › div.c"
+      label.textContent = chainLabels.join(' › ');
+      label.title = chainLabels.join(' > ');
+    } else if (!hasVisibleChildren && isText(el)) {
       var txt = (el.innerText || '').trim();
       if (txt.length > 30) txt = txt.substring(0, 30) + '...';
-      label.textContent = txt || tag + clsName;
+      label.textContent = txt || elLabel(el);
     } else {
-      label.textContent = tag + clsName;
+      label.textContent = elLabel(el);
     }
     row.appendChild(label);
 
-    // Hover → highlight element on page
+    // Eye toggle — show/hide element (appears on hover)
+    var eyeBtn = mk('button', 'rb-layer-eye');
+    eyeBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/></svg>';
+    eyeBtn.title = 'Toggle visibility';
+    var isHidden = false;
+    eyeBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      isHidden = !isHidden;
+      if (isHidden) {
+        el.style.setProperty('visibility', 'hidden', 'important');
+        el.style.setProperty('opacity', '0', 'important');
+        row.classList.add('rb-layer-hidden');
+        eyeBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/><line x1="2" y1="14" x2="14" y2="2"/></svg>';
+      } else {
+        el.style.removeProperty('visibility');
+        el.style.removeProperty('opacity');
+        row.classList.remove('rb-layer-hidden');
+        eyeBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/></svg>';
+      }
+    });
+    row.appendChild(eyeBtn);
+
+    // Hover → highlight element on page (lock prevents tMove from clearing it)
     row.addEventListener('mouseenter', function() {
-      if (el !== selectedEl) updateHoverBox(el);
+      layerHoverLock = true;
+      updateHoverBox(el);
     });
     row.addEventListener('mouseleave', function() {
+      layerHoverLock = false;
       hoverBox.style.display = 'none';
     });
 
@@ -2943,8 +3006,11 @@
     }
 
     // Hover — selects containers, not inline text
+    var layerHoverLock = false; // true when hovering a layer row — prevents tMove from clearing hoverBox
+
     var tMove = throttle(function(e) {
       if (isDragging) return;
+      if (layerHoverLock) return;
       var rawEl = document.elementFromPoint(e.clientX, e.clientY);
       if (!rawEl || !isValid(rawEl)) {
         if (lastHoverEl) { lastHoverEl.classList.remove('rb-ed-text-hint'); lastHoverEl = null; }

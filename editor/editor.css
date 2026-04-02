@@ -162,6 +162,18 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 .rb-layer-icon[data-tag="li"] { background:#FBBF24; }
 
 .rb-layer-label { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* Eye toggle button — visible on row hover */
+.rb-layer-eye {
+  display:none; flex-shrink:0; background:none; border:none;
+  color:rgba(239,238,235,0.3); cursor:pointer; padding:0; margin-left:auto;
+  width:16px; height:16px; align-items:center; justify-content:center;
+}
+.rb-layer-row:hover .rb-layer-eye { display:flex; }
+.rb-layer-eye:hover { color:#EFEEEB; }
+.rb-layer-row.rb-layer-hidden { opacity:0.25; }
+.rb-layer-row.rb-layer-hidden .rb-layer-eye { display:flex; color:rgba(239,238,235,0.2); }
+
 .rb-layer-children { display:none; }
 .rb-layer-children.rb-layer-expanded { display:block; }
 #rb-editor-layers.rb-ed-minimized #rb-ed-layers-body { display:none; }
