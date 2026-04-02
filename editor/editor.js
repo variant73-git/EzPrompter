@@ -1006,15 +1006,31 @@
       if (/\bprice|pricing\b/.test(cls)) return 'Pricing';
       if (/\btestimonial|review\b/.test(cls)) return 'Testimonial';
 
-      // 6. Position heuristics
+      // 6. Position & role heuristics
       var cs;
       try { cs = getComputedStyle(el); } catch(e) {}
       if (cs) {
-        // Full-width background image = Hero/Banner
         var r = el.getBoundingClientRect();
-        if (cs.backgroundImage && cs.backgroundImage !== 'none' && r.width > window.innerWidth * 0.8) return 'Background';
-        // Fixed/sticky at top = Sticky Nav
+        // Fixed/sticky at top = Sticky Bar
         if ((cs.position === 'fixed' || cs.position === 'sticky') && parseFloat(cs.top) < 10) return 'Sticky Bar';
+
+        // "Background" = purely decorative layer (no text, positioned behind siblings or no meaningful children)
+        var hasOwnBg = (cs.backgroundImage && cs.backgroundImage !== 'none') ||
+                        (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent');
+        if (hasOwnBg) {
+          // Check if this is decorative (no meaningful text, absolute/fixed, or no visible children with text)
+          var elText = (el.innerText || '').trim();
+          var isDecorative = false;
+          // Absolute/fixed positioned with no text = decorative background
+          if ((cs.position === 'absolute' || cs.position === 'fixed') && elText.length === 0) isDecorative = true;
+          // Has background but zero text and covers a large area = decorative
+          if (elText.length === 0 && r.width > 100 && r.height > 100) isDecorative = true;
+          // Has z-index lower than siblings = behind content
+          if (cs.zIndex && parseInt(cs.zIndex) < 0) isDecorative = true;
+
+          if (isDecorative) return 'Background';
+          // Otherwise it's a content container that happens to have a background — don't rename it
+        }
       }
 
       // 7. Fallback: tag.firstClass
