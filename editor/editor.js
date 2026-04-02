@@ -974,7 +974,6 @@
       if (cs.maxWidth !== 'none' && parseFloat(cs.maxWidth) < 2000) ownWeight++;
       if (cs.marginLeft === 'auto' || cs.marginRight === 'auto') ownWeight++;
       if ((cs.overflow === 'hidden' || cs.overflow === 'clip') && cs.borderRadius && cs.borderRadius !== '0px') ownWeight++;
-      if (cs.position === 'absolute' || cs.position === 'fixed' || cs.position === 'sticky') ownWeight++;
     }
     // Direct text
     for (var i = 0; i < el.childNodes.length; i++) {
@@ -1338,19 +1337,20 @@
       if (old) old.remove();
       var picker = mk('div');
       picker.id = 'rb-layer-colorpicker';
-      picker.style.cssText = 'position:fixed;z-index:2147483647;background:#1A1A1A;border-radius:8px;padding:6px 8px;box-shadow:0 8px 24px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.06);display:flex;gap:4px;align-items:center;';
+      picker.style.cssText = 'position:fixed;z-index:2147483647;background:#1A1A1A;border-radius:8px;padding:6px 8px;box-shadow:0 8px 24px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.06);display:flex;gap:6px;align-items:center;pointer-events:auto;';
       picker.style.left = e.clientX + 'px';
       picker.style.top = e.clientY + 'px';
       LAYER_COLORS.forEach(function(c) {
         var dot = mk('div');
-        dot.style.cssText = 'width:12px;height:12px;border-radius:50%;cursor:pointer;transition:transform 80ms;background:' + c.hex + ';';
+        dot.style.cssText = 'width:14px;height:14px;border-radius:50%;cursor:pointer;transition:transform 80ms;background:' + c.hex + ';';
         dot.title = c.name;
         dot.addEventListener('mouseenter', function() { dot.style.transform = 'scale(1.3)'; });
         dot.addEventListener('mouseleave', function() { dot.style.transform = ''; });
-        dot.addEventListener('click', function(ce) {
+        dot.addEventListener('mousedown', function(ce) {
+          ce.preventDefault();
           ce.stopPropagation();
-          row.style.borderLeft = '2px solid ' + c.hex;
-          row.style.paddingLeft = (parseInt(getComputedStyle(row).paddingLeft) - 2) + 'px';
+          row.style.borderLeft = '3px solid ' + c.hex;
+          icon.style.background = c.hex;
           icon.style.borderColor = c.hex;
           picker.remove();
         });
@@ -1358,24 +1358,26 @@
       });
       // "None" option — clear color
       var none = mk('div');
-      none.style.cssText = 'width:12px;height:12px;border-radius:50%;cursor:pointer;border:1px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:8px;color:rgba(255,255,255,0.3);';
+      none.style.cssText = 'width:14px;height:14px;border-radius:50%;cursor:pointer;border:1px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:9px;color:rgba(255,255,255,0.3);transition:transform 80ms;';
       none.textContent = '×';
       none.title = 'Remove color';
-      none.addEventListener('click', function(ce) {
+      none.addEventListener('mousedown', function(ce) {
+        ce.preventDefault();
         ce.stopPropagation();
         row.style.borderLeft = '';
-        row.style.paddingLeft = '';
+        icon.style.background = '';
         icon.style.borderColor = '';
         picker.remove();
       });
       picker.appendChild(none);
-      document.body.appendChild(picker);
-      // Close on click outside
-      var closePicker = function() {
-        picker.remove();
-        document.removeEventListener('click', closePicker);
+      root.appendChild(picker);
+      // Close on any mousedown outside picker
+      var closePicker = function(ev) {
+        if (picker.contains(ev.target)) return;
+        if (picker.parentElement) picker.remove();
+        document.removeEventListener('mousedown', closePicker, true);
       };
-      setTimeout(function() { document.addEventListener('click', closePicker); }, 0);
+      setTimeout(function() { document.addEventListener('mousedown', closePicker, true); }, 50);
     });
 
     row._rbEl = el;
