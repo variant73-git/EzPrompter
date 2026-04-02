@@ -202,6 +202,9 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 .rb-layer-children.rb-layer-expanded { display:block; }
 #rb-editor-layers.rb-ed-minimized #rb-ed-layers-body { display:none; }
 #rb-editor-layers.rb-ed-minimized #rb-ed-sections-body { display:none; }
+#rb-editor-layers.rb-ed-minimized .rb-layer-tab { display:none; }
+#rb-editor-layers.rb-ed-minimized #rb-layers-resize { display:none; }
+#rb-editor-layers.rb-ed-minimized { height:auto !important; }
 
 /* Tabs */
 .rb-layer-tab {
