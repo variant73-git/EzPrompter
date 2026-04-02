@@ -166,6 +166,25 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 .rb-layer-children.rb-layer-expanded { display:block; }
 #rb-editor-layers.rb-ed-minimized #rb-ed-layers-body { display:none; }
 
+/* ===== DEPTH BREADCRUMB ===== */
+.rb-ed-breadcrumb {
+  display:flex; align-items:center; gap:2px;
+  padding:4px 14px 8px; flex-wrap:wrap;
+}
+.rb-ed-crumb {
+  font:400 9px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.3);
+  cursor:pointer; padding:2px 4px; border-radius:3px;
+  transition:background 80ms, color 80ms;
+  background:none; border:none;
+}
+.rb-ed-crumb:hover { background:rgba(255,255,255,0.06); color:#EFEEEB; }
+.rb-ed-crumb.rb-ed-crumb-active { color:#EFEEEB; font-weight:500; }
+.rb-ed-crumb-sep {
+  font:400 9px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.15);
+}
+
 /* Attention pulse */
 #rb-editor-inspector.rb-ed-attention { animation:rb-ed-pulse 1.2s ease; }
 

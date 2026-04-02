@@ -1597,6 +1597,38 @@
     var cs = getCS(el);
     var r = getBox(el);
 
+    // Breadcrumb
+    var breadcrumb = mk('div', 'rb-ed-breadcrumb');
+    var chain = [];
+    var bcWalk = el;
+    while (bcWalk && bcWalk !== document.body && chain.length < 6) {
+      chain.unshift(bcWalk);
+      bcWalk = bcWalk.parentElement;
+    }
+    chain.forEach(function(ancestor, i) {
+      if (i > 0) {
+        var sep = mk('span', 'rb-ed-crumb-sep');
+        sep.textContent = '\u203A';
+        breadcrumb.appendChild(sep);
+      }
+      var crumb = mk('button', 'rb-ed-crumb');
+      var tag = ancestor.tagName.toLowerCase();
+      var cls = '';
+      if (ancestor.className && typeof ancestor.className === 'string') {
+        var first = ancestor.className.split(' ').filter(function(c) {
+          return c.indexOf('rb-') === -1 && c.length < 20;
+        })[0];
+        if (first) cls = '.' + first;
+      }
+      crumb.textContent = tag + cls;
+      if (ancestor === el) crumb.classList.add('rb-ed-crumb-active');
+      crumb.addEventListener('click', function() {
+        selectEl(ancestor);
+      });
+      breadcrumb.appendChild(crumb);
+    });
+    inspBody.appendChild(breadcrumb);
+
     // ---- POSITION ----
     var posSec = addSection('Position', false);
 
@@ -3115,7 +3147,18 @@
           updateSelBox(selectedEl);
           return;
         }
-        deselectEl();
+        if (selectedEl && selectionDepth > 0) {
+          var parent = selectedEl.parentElement;
+          if (parent && parent !== document.body && isValid(parent)) {
+            selectionDepth--;
+            selectEl(parent);
+          }
+          return;
+        }
+        if (selectedEl) {
+          deselectEl();
+          return;
+        }
       }
       if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
