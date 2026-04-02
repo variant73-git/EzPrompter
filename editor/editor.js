@@ -1081,7 +1081,35 @@
       if (/\bprice|pricing\b/.test(cls)) return 'Pricing';
       if (/\btestimonial|review\b/.test(cls)) return 'Testimonial';
 
-      // 6. Position & role heuristics
+      // 6. Structural heuristics — detect header, content, footer by position + children
+      var elR = el.getBoundingClientRect();
+      var parentEl = el.parentElement;
+      if (parentEl && parentEl !== document.body) {
+        var siblings = Array.from(parentEl.children).filter(function(s) {
+          if (SKIP.has(s.tagName) || isEditorEl(s)) return false;
+          var sr = s.getBoundingClientRect();
+          return sr.width > 50 && sr.height > 10;
+        });
+        if (siblings.length >= 2) {
+          var idx = siblings.indexOf(el);
+          // First sibling with nav or links = Header area
+          if (idx === 0 && (el.querySelector('nav') || el.querySelectorAll('a').length > 2)) return 'Header';
+          // Last sibling in a section = Footer area (only if it has links/text)
+          if (idx === siblings.length - 1 && el.querySelectorAll('a').length > 2) return 'Footer';
+        }
+      }
+      // Div with multiple meaningful children (text, buttons, images) = Content
+      var contentKids = 0;
+      for (var ci = 0; ci < el.children.length; ci++) {
+        var ck = el.children[ci];
+        if (SKIP.has(ck.tagName) || isEditorEl(ck)) continue;
+        var ckTag = ck.tagName;
+        if (/^H[1-6]$/.test(ckTag) || ckTag === 'P' || ckTag === 'IMG' || ckTag === 'BUTTON' || ckTag === 'A' || ckTag === 'UL' || ckTag === 'OL' || ckTag === 'FORM') contentKids++;
+        else if (ckTag === 'DIV' && (ck.innerText || '').trim().length > 20) contentKids++;
+      }
+      if (contentKids >= 3) return 'Content';
+
+      // 7. Position & role heuristics
       var cs;
       try { cs = getComputedStyle(el); } catch(e) {}
       if (cs) {
@@ -1265,6 +1293,89 @@
       selectEl(el);
       selectionDepth = depth;
       selectionAncestor = null;
+    });
+
+    // Double-click → rename layer
+    row.addEventListener('dblclick', function(e) {
+      e.stopPropagation();
+      var inp = mk('input', 'rb-layer-rename');
+      inp.value = label.textContent;
+      inp.style.cssText = 'flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(0,149,255,0.4);border-radius:3px;color:#EFEEEB;font:400 10px/1.3 "Instrument Sans",sans-serif;padding:1px 4px;outline:none;';
+      label.style.display = 'none';
+      row.insertBefore(inp, label.nextSibling);
+      inp.focus();
+      inp.select();
+      var commit = function() {
+        var newName = inp.value.trim();
+        if (newName) label.textContent = newName;
+        label.style.display = '';
+        if (inp.parentElement) inp.parentElement.removeChild(inp);
+      };
+      inp.addEventListener('blur', commit);
+      inp.addEventListener('keydown', function(ke) {
+        if (ke.key === 'Enter') { ke.preventDefault(); commit(); }
+        if (ke.key === 'Escape') { ke.preventDefault(); label.style.display = ''; if (inp.parentElement) inp.parentElement.removeChild(inp); }
+      });
+    });
+
+    // Right-click → color picker
+    var LAYER_COLORS = [
+      {name:'Blue',   hex:'#3B82F6'},
+      {name:'Cyan',   hex:'#06B6D4'},
+      {name:'Green',  hex:'#22C55E'},
+      {name:'Lime',   hex:'#84CC16'},
+      {name:'Yellow', hex:'#EAB308'},
+      {name:'Orange', hex:'#F97316'},
+      {name:'Red',    hex:'#EF4444'},
+      {name:'Purple', hex:'#A855F7'},
+      {name:'Gray',   hex:'#6B7280'}
+    ];
+    row.addEventListener('contextmenu', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      // Remove any existing color picker
+      var old = document.getElementById('rb-layer-colorpicker');
+      if (old) old.remove();
+      var picker = mk('div');
+      picker.id = 'rb-layer-colorpicker';
+      picker.style.cssText = 'position:fixed;z-index:2147483647;background:#1A1A1A;border-radius:8px;padding:6px 8px;box-shadow:0 8px 24px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.06);display:flex;gap:4px;align-items:center;';
+      picker.style.left = e.clientX + 'px';
+      picker.style.top = e.clientY + 'px';
+      LAYER_COLORS.forEach(function(c) {
+        var dot = mk('div');
+        dot.style.cssText = 'width:12px;height:12px;border-radius:50%;cursor:pointer;transition:transform 80ms;background:' + c.hex + ';';
+        dot.title = c.name;
+        dot.addEventListener('mouseenter', function() { dot.style.transform = 'scale(1.3)'; });
+        dot.addEventListener('mouseleave', function() { dot.style.transform = ''; });
+        dot.addEventListener('click', function(ce) {
+          ce.stopPropagation();
+          row.style.borderLeft = '2px solid ' + c.hex;
+          row.style.paddingLeft = (parseInt(getComputedStyle(row).paddingLeft) - 2) + 'px';
+          icon.style.borderColor = c.hex;
+          picker.remove();
+        });
+        picker.appendChild(dot);
+      });
+      // "None" option — clear color
+      var none = mk('div');
+      none.style.cssText = 'width:12px;height:12px;border-radius:50%;cursor:pointer;border:1px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:8px;color:rgba(255,255,255,0.3);';
+      none.textContent = '×';
+      none.title = 'Remove color';
+      none.addEventListener('click', function(ce) {
+        ce.stopPropagation();
+        row.style.borderLeft = '';
+        row.style.paddingLeft = '';
+        icon.style.borderColor = '';
+        picker.remove();
+      });
+      picker.appendChild(none);
+      document.body.appendChild(picker);
+      // Close on click outside
+      var closePicker = function() {
+        picker.remove();
+        document.removeEventListener('click', closePicker);
+      };
+      setTimeout(function() { document.addEventListener('click', closePicker); }, 0);
     });
 
     row._rbEl = el;
