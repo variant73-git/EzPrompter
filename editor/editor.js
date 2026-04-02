@@ -1053,14 +1053,29 @@
       if (/\bprice|pricing\b/.test(cls)) return 'Pricing';
       if (/\btestimonial|review\b/.test(cls)) return 'Testimonial';
 
-      // 6. Structural heuristics — detect header, content, footer by position + content
+      // 6. Structural heuristics
       var elR = el.getBoundingClientRect();
-      // Top of page + has nav or logo or links = Header
-      if (elR.top < 150 && elR.width > window.innerWidth * 0.7) {
-        if (el.querySelector('nav') || el.querySelector('[class*="logo"]') || el.querySelectorAll('a').length > 2) return 'Header';
+      // Header = first visible child of body (or first inside a top wrapper), at top of page, narrow height
+      var isFirstChild = false;
+      var par = el.parentElement;
+      if (par) {
+        var sibs = Array.from(par.children).filter(function(s) {
+          if (SKIP.has(s.tagName) || isEditorEl(s)) return false;
+          var sr = s.getBoundingClientRect();
+          return sr.width > 50 && sr.height > 5;
+        });
+        if (sibs.indexOf(el) === 0) isFirstChild = true;
       }
-      // Bottom of page with links = Footer
-      if (elR.bottom > document.documentElement.scrollHeight - 200 && el.querySelectorAll('a').length > 3) return 'Footer';
+      if (isFirstChild && elR.top < 10 && elR.height < 200 && elR.width > window.innerWidth * 0.7) return 'Header';
+      // Footer = last child of body area, at bottom of page
+      if (par) {
+        var sibs2 = Array.from(par.children).filter(function(s) {
+          if (SKIP.has(s.tagName) || isEditorEl(s)) return false;
+          var sr = s.getBoundingClientRect();
+          return sr.width > 50 && sr.height > 5;
+        });
+        if (sibs2.indexOf(el) === sibs2.length - 1 && el.querySelectorAll('a').length > 3) return 'Footer';
+      }
       // Div with multiple meaningful children (text, buttons, images) = Content
       var contentKids = 0;
       for (var ci = 0; ci < el.children.length; ci++) {
@@ -1396,34 +1411,38 @@
     return sections;
   }
 
-  function buildSectionThumb(el) {
-    var cs;
-    try { cs = getComputedStyle(el); } catch(e) { return null; }
+  function buildSectionThumb(el, screenshotImg) {
     var r = el.getBoundingClientRect();
     var card = mk('div', 'rb-section-card');
     card.setAttribute('draggable', 'true');
 
-    // Thumbnail — mini preview
-    var thumb = mk('div', 'rb-section-thumb');
-    var bg = cs.backgroundColor;
-    if (bg && bg !== 'rgba(0, 0, 0, 0)') thumb.style.background = bg;
-    else thumb.style.background = '#222';
-    if (cs.backgroundImage && cs.backgroundImage !== 'none') {
-      thumb.style.backgroundImage = cs.backgroundImage;
-      thumb.style.backgroundSize = 'cover';
-      thumb.style.backgroundPosition = 'center';
-    }
-    // Show aspect ratio proportionally
-    var aspect = Math.min(r.height / Math.max(r.width, 1), 1.5);
-    thumb.style.height = Math.max(24, Math.round(60 * aspect)) + 'px';
-    // Mini text preview inside thumb
-    var textPreview = (el.innerText || '').trim();
-    if (textPreview.length > 40) textPreview = textPreview.substring(0, 40) + '...';
-    if (textPreview) {
-      var miniText = mk('div');
-      miniText.style.cssText = 'font:400 6px/1.2 sans-serif;color:rgba(255,255,255,0.4);padding:3px 4px;overflow:hidden;max-height:100%;';
-      miniText.textContent = textPreview;
-      thumb.appendChild(miniText);
+    // Thumbnail — cropped from screenshot
+    var thumb = mk('canvas', 'rb-section-thumb');
+    var thumbW = 208; // panel width - padding
+    var scale = thumbW / r.width;
+    var thumbH = Math.max(20, Math.min(120, Math.round(r.height * scale)));
+    thumb.width = thumbW;
+    thumb.height = thumbH;
+    thumb.style.cssText = 'width:100%;height:' + thumbH + 'px;border-radius:4px;';
+    if (screenshotImg) {
+      try {
+        var ctx = thumb.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        // Crop the section area from the full screenshot
+        var sx = r.left * dpr;
+        var sy = r.top * dpr;
+        var sw = r.width * dpr;
+        var sh = r.height * dpr;
+        ctx.drawImage(screenshotImg, sx, sy, sw, sh, 0, 0, thumbW, thumbH);
+      } catch(e) {}
+    } else {
+      // Fallback: colored rectangle
+      var cs;
+      try { cs = getComputedStyle(el); } catch(e) {}
+      var ctx = thumb.getContext('2d');
+      var bg = cs && cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' ? cs.backgroundColor : '#222';
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, thumbW, thumbH);
     }
     card.appendChild(thumb);
 
@@ -1507,9 +1526,25 @@
     if (!sb) return;
     sb.innerHTML = '';
     var sections = getSections();
-    sections.forEach(function(el) {
-      var card = buildSectionThumb(el);
-      if (card) sb.appendChild(card);
+    // Request screenshot from background.js, then render with real thumbnails
+    chrome.runtime.sendMessage({action: 'captureScreenshot', format: 'png', returnData: true}, function(response) {
+      var dataUrl = response && response.dataUrl;
+      if (dataUrl) {
+        var img = new Image();
+        img.onload = function() {
+          sections.forEach(function(el) {
+            var card = buildSectionThumb(el, img);
+            if (card) sb.appendChild(card);
+          });
+        };
+        img.src = dataUrl;
+      } else {
+        // Fallback without screenshot
+        sections.forEach(function(el) {
+          var card = buildSectionThumb(el, null);
+          if (card) sb.appendChild(card);
+        });
+      }
     });
   }
 
@@ -1648,17 +1683,6 @@
     var layersTitle = mk('span');
     layersTitle.textContent = 'Layers';
     layersHd.appendChild(layersTitle);
-
-    // "Show hidden layers" toggle
-    var showInertBtn = mk('button', 'rb-layer-toggle-inert');
-    showInertBtn.textContent = 'Show all';
-    showInertBtn.title = 'Show hidden layers';
-    showInertBtn.addEventListener('click', function() {
-      showInertLayers = !showInertLayers;
-      showInertBtn.textContent = showInertLayers ? 'Clean' : 'Show all';
-      populateLayers();
-    }, {signal: sig});
-    layersHd.appendChild(showInertBtn);
 
     var layersMinBtn = mk('button', 'rb-ed-minmax-btn');
     layersMinBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';

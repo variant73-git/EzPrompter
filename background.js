@@ -1,14 +1,16 @@
 // Repix - Background Service Worker
 
+importScripts('overlay/semantic.js');
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: 'repix-describe',
-    title: 'RepixBridge: Image Remix — Describe Prompt',
+    title: 'Repix: Image Remix — Describe Prompt',
     contexts: ['image']
   });
   chrome.contextMenus.create({
     id: 'repix-capture',
-    title: 'RepixBridge: Capture Layout → Design Tool',
+    title: 'Repix: Capture Layout → Design Tool',
     contexts: ['page']
   });
 });
@@ -94,7 +96,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
     // 5. Success feedback
     setBadge('OK', '#065f46', tabId);
-    showNotification('RepixBridge - Saved!', `${title} — ${domain}`);
+    showNotification('Repix - Saved!', `${title} — ${domain}`);
     injectOverlay(tabId, { success: true, prompt: promptDescription, fileName: safeName, folder: subFolder, metadata });
 
     setTimeout(() => setBadge('', '', tabId), 5000);
@@ -108,6 +110,17 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     setTimeout(() => setBadge('', '', tabId), 5000);
   }
 });
+
+// Hash utility for cache invalidation
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + ch;
+    hash |= 0;
+  }
+  return hash.toString(36);
+}
 
 // Listen for messages from content scripts and panel
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -138,6 +151,70 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.action === 'semanticAnalyze') {
+    const forceRefresh = message.forceRefresh || false;
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (!tabs[0]) return;
+      const tab = tabs[0];
+      const tabId = tab.id;
+      try {
+        const cacheKey = 'rb-semantic-' + new URL(tab.url).hostname + new URL(tab.url).pathname;
+
+        // Extract page structure (always — needed for hash comparison)
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/extractor.js'] });
+        const [extractResult] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => window.__rbExtractor?.extract?.()
+        });
+        const extractionData = extractResult?.result;
+        if (!extractionData) throw new Error('Page extraction failed');
+
+        // Compute hash of the page structure
+        const pageHash = simpleHash(extractionData.cleanHTML || '');
+
+        // Check permanent cache — only re-analyze if site changed or forced
+        if (!forceRefresh) {
+          const cached = await new Promise(r => chrome.storage.local.get(cacheKey, d => r(d[cacheKey])));
+          if (cached && cached.map && cached.map.sections && cached.map.sections.length > 0 && cached.hash === pageHash) {
+            console.log('[Repix] Cache hit — site unchanged (hash match). Sections:', cached.map.sections.length);
+            chrome.tabs.sendMessage(tabId, { action: 'semanticResult', map: cached.map, fromCache: true }, () => { if (chrome.runtime.lastError) {} });
+            return;
+          }
+          if (cached && cached.hash !== pageHash) {
+            console.log('[Repix] Cache stale — site changed (hash mismatch). Re-analyzing...');
+          }
+        }
+
+        // Build semantic map via AI
+        const settings = await getSettings();
+        console.log('[Repix] Building semantic map via AI...');
+        const semanticMap = await buildSemanticMap(extractionData, null, settings);
+
+        // Cache permanently with hash
+        const obj = {};
+        obj[cacheKey] = { map: semanticMap, hash: pageHash, timestamp: Date.now() };
+        chrome.storage.local.set(obj);
+        console.log('[Repix] Cached semantic map for', cacheKey, '| hash:', pageHash);
+
+        chrome.tabs.sendMessage(tabId, { action: 'semanticResult', map: semanticMap }, () => { if (chrome.runtime.lastError) {} });
+      } catch (e) {
+        console.error('[Repix] Semantic analysis failed:', e);
+        chrome.tabs.sendMessage(tabId, { action: 'semanticError', error: e.message }, () => { if (chrome.runtime.lastError) {} });
+      }
+    });
+    return false;
+  }
+
+  if (message.action === 'injectNormalize') {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (!tabs[0]) return;
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: tabs[0].id }, files: ['editor/normalize.js'] });
+      } catch (e) { console.warn('Normalize injection failed:', e); }
+    });
+    return false;
+  }
+
   if (message.action === 'reopenPanel') {
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (!tabs[0]) return;
@@ -155,15 +232,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!tabs[0]) return;
       try {
         const dataUrl = await chrome.tabs.captureVisibleTab(tabs[0].windowId, { format: 'png', quality: 100 });
-        // Download the screenshot
-        chrome.downloads.download({
-          url: dataUrl,
-          filename: 'repix-screenshot.png',
-          saveAs: true
-        });
+        if (message.returnData) {
+          sendResponse({dataUrl: dataUrl});
+        } else {
+          chrome.downloads.download({
+            url: dataUrl,
+            filename: 'repix-screenshot.png',
+            saveAs: true
+          });
+        }
       } catch (e) { console.error('Screenshot failed:', e); }
     });
-    return false;
+    return true; // keep channel open for async sendResponse
   }
 
   if (message.action === 'generateImage') {
@@ -371,8 +451,8 @@ function showOverlayInPage(state) {
     <div class="ezp-modal">
       <div class="ezp-header">
         <div class="ezp-header-left">
-          <span class="ezp-logo">RepixBridge</span>
-          <span class="ezp-tagline">Remix everything. Paste your prompt in the AI of your choice.</span>
+          <span class="ezp-logo">Repix</span>
+          <span class="ezp-tagline">Copy, paste, create.</span>
         </div>
         <button class="ezp-close" id="ezp-close">&times;</button>
       </div>
@@ -535,7 +615,7 @@ async function handleCaptureLayout(tab) {
     setBadge('OK', '#065f46', tabId);
     injectOverlay(tabId, {
       success: true,
-      prompt: `Capture ID: ${id}\n\nOpen the RepixBridge plugin in your design tool and paste this ID to import the layout.`,
+      prompt: `Capture ID: ${id}\n\nOpen the Repix plugin in your design tool and paste this ID to import the layout.`,
       metadata: { captureId: id, url: tab.url, title: tab.title, backendUrl },
       fileName: '',
       folder: `Layout captured → ${extractDomain(tab.url)}`
@@ -695,7 +775,7 @@ function getSettings() {
     chrome.storage.sync.get({
       apiProvider: 'gemini',
       apiKey: '',
-      model: 'gemini-1.5-flash',
+      model: 'gemini-flash-latest',
       ollamaUrl: 'http://localhost:11434',
       language: 'en',
       downloadFolder: 'Repix',
@@ -948,7 +1028,7 @@ async function describeWithGemini(imageDataUrl, systemPrompt, settings) {
   if (!match) throw new Error('Invalid image data');
   const [, mediaType, base64Data] = match;
 
-  const model = settings.model || 'gemini-1.5-flash';
+  const model = settings.model || 'gemini-flash-latest';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`;
 
   const response = await fetch(url, {
