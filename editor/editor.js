@@ -864,6 +864,7 @@
   var inspector, inspBody;
   var layersPanel, layersBody;
   var layerHoverLock = false;
+  var showInertLayers = false;
 
   // Does this element have its own visual contribution?
   // true = hiding it would have NO visible effect (pure structural wrapper)
@@ -928,13 +929,26 @@
     return kids;
   }
 
-  function buildLayerRow(el, depth) {
+  function buildLayerRow(el, depth, _skipBudget) {
     if (!el || !el.tagName || SKIP.has(el.tagName) || isEditorEl(el)) return null;
     var r = el.getBoundingClientRect();
     if (r.width < 2 && r.height < 2) return null;
+    var skipBudget = (_skipBudget === undefined) ? 8 : _skipBudget;
 
     var tag = el.tagName.toLowerCase();
     var isInert = isVisuallyInert(el);
+
+    // Skip inert layers — promote their children to this level
+    if (isInert && !showInertLayers && skipBudget > 0) {
+      var skipContainer = mk('div');
+      skipContainer.setAttribute('data-rb-layer-skip', '');
+      var vk = getVisibleChildren(el);
+      for (var si = 0; si < vk.length; si++) {
+        var childRow = buildLayerRow(vk[si], depth, skipBudget - 1);
+        if (childRow) skipContainer.appendChild(childRow);
+      }
+      return skipContainer.children.length > 0 ? skipContainer : null;
+    }
 
     // Collapse chains of single-child inert wrappers: div.a > div.b > div.c → show as collapsed chain
     var chainLabels = [];
@@ -1062,8 +1076,15 @@
       var child = parentEl.children[i];
       var rowContainer = buildLayerRow(child, depth);
       if (rowContainer) {
-        container.appendChild(rowContainer);
-        count++;
+        if (rowContainer.hasAttribute('data-rb-layer-skip')) {
+          while (rowContainer.firstChild) {
+            container.appendChild(rowContainer.firstChild);
+            count++;
+          }
+        } else {
+          container.appendChild(rowContainer);
+          count++;
+        }
       }
     }
   }
@@ -1228,6 +1249,17 @@
     var layersTitle = mk('span');
     layersTitle.textContent = 'Layers';
     layersHd.appendChild(layersTitle);
+
+    // "Show hidden layers" toggle
+    var showInertBtn = mk('button', 'rb-layer-toggle-inert');
+    showInertBtn.textContent = 'Show all';
+    showInertBtn.title = 'Show hidden layers';
+    showInertBtn.addEventListener('click', function() {
+      showInertLayers = !showInertLayers;
+      showInertBtn.textContent = showInertLayers ? 'Clean' : 'Show all';
+      populateLayers();
+    }, {signal: sig});
+    layersHd.appendChild(showInertBtn);
 
     var layersMinBtn = mk('button', 'rb-ed-minmax-btn');
     layersMinBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
