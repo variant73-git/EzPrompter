@@ -1053,39 +1053,7 @@
       if (/\bprice|pricing\b/.test(cls)) return 'Pricing';
       if (/\btestimonial|review\b/.test(cls)) return 'Testimonial';
 
-      // 6. Structural heuristics
-      var elR = el.getBoundingClientRect();
-      // Header = first visible child of body (or first inside a top wrapper), at top of page, narrow height
-      var isFirstChild = false;
-      var par = el.parentElement;
-      if (par) {
-        var sibs = Array.from(par.children).filter(function(s) {
-          if (SKIP.has(s.tagName) || isEditorEl(s)) return false;
-          var sr = s.getBoundingClientRect();
-          return sr.width > 50 && sr.height > 5;
-        });
-        if (sibs.indexOf(el) === 0) isFirstChild = true;
-      }
-      if (isFirstChild && elR.top < 10 && elR.height < 200 && elR.width > window.innerWidth * 0.7) return 'Header';
-      // Footer = last child of body area, at bottom of page
-      if (par) {
-        var sibs2 = Array.from(par.children).filter(function(s) {
-          if (SKIP.has(s.tagName) || isEditorEl(s)) return false;
-          var sr = s.getBoundingClientRect();
-          return sr.width > 50 && sr.height > 5;
-        });
-        if (sibs2.indexOf(el) === sibs2.length - 1 && el.querySelectorAll('a').length > 3) return 'Footer';
-      }
-      // Div with multiple meaningful children (text, buttons, images) = Content
-      var contentKids = 0;
-      for (var ci = 0; ci < el.children.length; ci++) {
-        var ck = el.children[ci];
-        if (SKIP.has(ck.tagName) || isEditorEl(ck)) continue;
-        var ckTag = ck.tagName;
-        if (/^H[1-6]$/.test(ckTag) || ckTag === 'P' || ckTag === 'IMG' || ckTag === 'BUTTON' || ckTag === 'A' || ckTag === 'UL' || ckTag === 'OL' || ckTag === 'FORM') contentKids++;
-        else if (ckTag === 'DIV' && (ck.innerText || '').trim().length > 20) contentKids++;
-      }
-      if (contentKids >= 3) return 'Content';
+      // 6. No position heuristics — too fragile. Fall through to tag.class
 
       // 7. Position & role heuristics
       var cs;
@@ -1147,6 +1115,13 @@
     var skipBudget = (_skipBudget === undefined) ? 8 : _skipBudget;
 
     var tag = el.tagName.toLowerCase();
+
+    // Filter out invisible iframes (analytics, tracking pixels)
+    if (tag === 'iframe') {
+      var ics; try { ics = getComputedStyle(el); } catch(e) {}
+      if (ics && (ics.display === 'none' || ics.visibility === 'hidden' || r.width < 10 || r.height < 10)) return null;
+    }
+
     var isInert = isVisuallyInert(el);
 
     // Skip inert layers — promote their children to this level
