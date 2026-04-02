@@ -189,6 +189,42 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 .rb-layer-children { display:none; }
 .rb-layer-children.rb-layer-expanded { display:block; }
 #rb-editor-layers.rb-ed-minimized #rb-ed-layers-body { display:none; }
+#rb-editor-layers.rb-ed-minimized #rb-ed-sections-body { display:none; }
+
+/* Tabs */
+.rb-layer-tab {
+  flex:1; background:none; border:none; padding:6px 0;
+  font:400 9px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.3); cursor:pointer;
+  transition:color 80ms, border-color 80ms;
+  border-bottom:2px solid transparent;
+}
+.rb-layer-tab:hover { color:rgba(239,238,235,0.6); }
+.rb-layer-tab-active { color:#EFEEEB; border-bottom-color:#0095FF; }
+
+/* Section cards */
+#rb-ed-sections-body { padding:6px; display:flex; flex-direction:column; gap:4px; }
+.rb-section-card {
+  border-radius:6px; overflow:hidden; cursor:grab;
+  border:1px solid rgba(255,255,255,0.06);
+  transition:box-shadow 80ms, transform 80ms;
+  user-select:none;
+}
+.rb-section-card:hover { box-shadow:0 2px 8px rgba(0,0,0,0.3); }
+.rb-section-card:active { cursor:grabbing; }
+.rb-section-dragging { opacity:0.4; }
+.rb-section-thumb {
+  width:100%; min-height:24px; overflow:hidden;
+  border-bottom:1px solid rgba(255,255,255,0.04);
+}
+.rb-section-label {
+  font:400 9px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.6); padding:4px 6px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+/* Drop indicators */
+.rb-section-drop-above { border-top:2px solid #0095FF; }
+.rb-section-drop-below { border-bottom:2px solid #0095FF; }
 
 /* ===== DEPTH BREADCRUMB ===== */
 .rb-ed-breadcrumb {

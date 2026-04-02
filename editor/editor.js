@@ -1382,6 +1382,138 @@
     renderLayerChildren(document.body, layersBody, 0);
   }
 
+  // ---- SECTIONS TAB ----
+  function getSections() {
+    // Get top-level visible sections: direct children of body or one level deep
+    var sections = [];
+    var candidates = document.body.children;
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      if (SKIP.has(el.tagName) || isEditorEl(el)) continue;
+      var r = el.getBoundingClientRect();
+      if (r.width < 50 || r.height < 20) continue;
+      sections.push(el);
+    }
+    return sections;
+  }
+
+  function buildSectionThumb(el) {
+    var cs;
+    try { cs = getComputedStyle(el); } catch(e) { return null; }
+    var r = el.getBoundingClientRect();
+    var card = mk('div', 'rb-section-card');
+    card.setAttribute('draggable', 'true');
+
+    // Thumbnail — mini preview
+    var thumb = mk('div', 'rb-section-thumb');
+    var bg = cs.backgroundColor;
+    if (bg && bg !== 'rgba(0, 0, 0, 0)') thumb.style.background = bg;
+    else thumb.style.background = '#222';
+    if (cs.backgroundImage && cs.backgroundImage !== 'none') {
+      thumb.style.backgroundImage = cs.backgroundImage;
+      thumb.style.backgroundSize = 'cover';
+      thumb.style.backgroundPosition = 'center';
+    }
+    // Show aspect ratio proportionally
+    var aspect = Math.min(r.height / Math.max(r.width, 1), 1.5);
+    thumb.style.height = Math.max(24, Math.round(60 * aspect)) + 'px';
+    // Mini text preview inside thumb
+    var textPreview = (el.innerText || '').trim();
+    if (textPreview.length > 40) textPreview = textPreview.substring(0, 40) + '...';
+    if (textPreview) {
+      var miniText = mk('div');
+      miniText.style.cssText = 'font:400 6px/1.2 sans-serif;color:rgba(255,255,255,0.4);padding:3px 4px;overflow:hidden;max-height:100%;';
+      miniText.textContent = textPreview;
+      thumb.appendChild(miniText);
+    }
+    card.appendChild(thumb);
+
+    // Label
+    var label = mk('div', 'rb-section-label');
+    label.textContent = elLabel(el);
+    card.appendChild(label);
+
+    // Drag handlers
+    card._rbEl = el;
+    card.addEventListener('dragstart', function(e) {
+      e.dataTransfer.effectAllowed = 'move';
+      card.classList.add('rb-section-dragging');
+      // Store reference
+      window.__rbDragSection = el;
+    });
+    card.addEventListener('dragend', function() {
+      card.classList.remove('rb-section-dragging');
+      window.__rbDragSection = null;
+      // Remove all drop indicators
+      var indicators = document.querySelectorAll('.rb-section-drop-indicator');
+      indicators.forEach(function(ind) { ind.remove(); });
+    });
+    card.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      var rect = card.getBoundingClientRect();
+      var midY = rect.top + rect.height / 2;
+      // Show indicator above or below
+      card.classList.remove('rb-section-drop-above', 'rb-section-drop-below');
+      if (e.clientY < midY) {
+        card.classList.add('rb-section-drop-above');
+      } else {
+        card.classList.add('rb-section-drop-below');
+      }
+    });
+    card.addEventListener('dragleave', function() {
+      card.classList.remove('rb-section-drop-above', 'rb-section-drop-below');
+    });
+    card.addEventListener('drop', function(e) {
+      e.preventDefault();
+      card.classList.remove('rb-section-drop-above', 'rb-section-drop-below');
+      var draggedEl = window.__rbDragSection;
+      if (!draggedEl || draggedEl === el) return;
+      var rect = card.getBoundingClientRect();
+      var midY = rect.top + rect.height / 2;
+      // Move the actual DOM element
+      if (e.clientY < midY) {
+        el.parentElement.insertBefore(draggedEl, el);
+      } else {
+        el.parentElement.insertBefore(draggedEl, el.nextSibling);
+      }
+      // Rebuild sections panel
+      populateSections();
+    });
+
+    // Click to select
+    card.addEventListener('click', function(e) {
+      e.stopPropagation();
+      selectEl(el);
+    });
+    // Hover highlight
+    card.addEventListener('mouseenter', function() {
+      layerHoverLock = true;
+      updateHoverBox(el);
+      hoverBox.style.background = 'rgba(0,149,255,0.12)';
+      hoverBox.style.borderColor = 'rgba(0,149,255,0.4)';
+    });
+    card.addEventListener('mouseleave', function() {
+      layerHoverLock = false;
+      hoverBox.style.display = 'none';
+      hoverBox.style.background = '';
+      hoverBox.style.borderColor = '';
+    });
+
+    return card;
+  }
+
+  function populateSections() {
+    var sb = document.getElementById('rb-ed-sections-body');
+    if (!sb) return;
+    sb.innerHTML = '';
+    var sections = getSections();
+    sections.forEach(function(el) {
+      var card = buildSectionThumb(el);
+      if (card) sb.appendChild(card);
+    });
+  }
+
   function syncLayersSelection(el) {
     if (!layersBody) return;
 
@@ -1544,9 +1676,39 @@
 
     layersPanel.appendChild(layersHd);
 
+    // Tab bar
+    var tabBar = mk('div');
+    tabBar.style.cssText = 'display:flex;border-bottom:1px solid rgba(255,255,255,0.06);';
+    var tabLayers = mk('button', 'rb-layer-tab rb-layer-tab-active');
+    tabLayers.textContent = 'Layers';
+    var tabSections = mk('button', 'rb-layer-tab');
+    tabSections.textContent = 'Sections';
+    tabBar.appendChild(tabLayers);
+    tabBar.appendChild(tabSections);
+    layersPanel.appendChild(tabBar);
+
     layersBody = mk('div');
     layersBody.id = 'rb-ed-layers-body';
     layersPanel.appendChild(layersBody);
+
+    var sectionsBody = mk('div');
+    sectionsBody.id = 'rb-ed-sections-body';
+    sectionsBody.style.display = 'none';
+    layersPanel.appendChild(sectionsBody);
+
+    tabLayers.addEventListener('click', function() {
+      layersBody.style.display = '';
+      sectionsBody.style.display = 'none';
+      tabLayers.classList.add('rb-layer-tab-active');
+      tabSections.classList.remove('rb-layer-tab-active');
+    }, {signal: sig});
+    tabSections.addEventListener('click', function() {
+      layersBody.style.display = 'none';
+      sectionsBody.style.display = '';
+      tabSections.classList.add('rb-layer-tab-active');
+      tabLayers.classList.remove('rb-layer-tab-active');
+      populateSections();
+    }, {signal: sig});
 
     root.appendChild(layersPanel);
 
