@@ -368,7 +368,7 @@ option { background:#1A1A1A; color:#EFEEEB; }
 /* ===== 14. HOVER OVERLAY ===== */
 .rb-sel-hover {
   position:fixed; pointer-events:none;
-  background:rgba(0,149,255,0.12); border:1px solid rgba(0,149,255,0.4);
+  background:rgba(147,197,253,0.05); border:1px solid rgba(147,197,253,0.3);
   border-radius:2px; transition:all 60ms ease;
   z-index:2147483641;
 }

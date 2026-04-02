@@ -871,31 +871,40 @@
   function isVisuallyInert(el) {
     if (!el) return true;
     var tag = el.tagName;
-    // Non-div containers are never inert (semantic tags, links, buttons, media)
+    // Non-div/span tags are never inert (semantic, interactive, media)
     if (tag !== 'DIV' && tag !== 'SPAN') return false;
     var cs;
     try { cs = getComputedStyle(el); } catch(e) { return false; }
     // Already hidden = inert
     if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
-    // Has own background color (non-transparent)?
+    // --- VISUAL PROPERTIES (would change appearance if removed) ---
     var bg = cs.backgroundColor;
     if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return false;
-    // Has background image/gradient?
     if (cs.backgroundImage && cs.backgroundImage !== 'none') return false;
-    // Has visible border?
     var bw = parseFloat(cs.borderWidth) || 0;
     if (bw > 0 && cs.borderStyle !== 'none') return false;
-    // Has box shadow?
     if (cs.boxShadow && cs.boxShadow !== 'none') return false;
-    // Has outline?
     var ow = parseFloat(cs.outlineWidth) || 0;
     if (ow > 0 && cs.outlineStyle !== 'none') return false;
-    // Has its own text content (not from children)?
+    // --- LAYOUT PROPERTIES (would change positioning if removed) ---
+    // Meaningful padding = contributes spacing
+    var pt = parseFloat(cs.paddingTop) || 0, pr = parseFloat(cs.paddingRight) || 0;
+    var pb = parseFloat(cs.paddingBottom) || 0, pl = parseFloat(cs.paddingLeft) || 0;
+    if (pt + pr + pb + pl > 8) return false;
+    // Gap in flex/grid = contributes spacing between children
+    if ((cs.display === 'flex' || cs.display === 'grid' || cs.display === 'inline-flex' || cs.display === 'inline-grid') && parseFloat(cs.gap) > 0) return false;
+    // Max-width constraining content = layout role
+    if (cs.maxWidth !== 'none' && parseFloat(cs.maxWidth) < 2000) return false;
+    // Centering via margin auto = layout role
+    if (cs.marginLeft === 'auto' || cs.marginRight === 'auto') return false;
+    // Overflow hidden/clip crops children visually
+    if ((cs.overflow === 'hidden' || cs.overflow === 'clip') && cs.borderRadius && cs.borderRadius !== '0px') return false;
+    // Position relative/absolute/fixed with offset = layout role
+    if (cs.position === 'absolute' || cs.position === 'fixed' || cs.position === 'sticky') return false;
+    // --- TEXT CONTENT ---
     for (var i = 0; i < el.childNodes.length; i++) {
       if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) return false;
     }
-    // Has overflow clip that crops children (visual effect)?
-    if ((cs.overflow === 'hidden' || cs.overflow === 'clip') && (cs.borderRadius && cs.borderRadius !== '0px')) return false;
     return true;
   }
 
@@ -904,17 +913,122 @@
     return isVisuallyInert(el);
   }
 
-  // Get short label for an element: tag.firstClass
+  // Contextual label for an element — tries to infer its role
   function elLabel(el) {
     var tag = el.tagName.toLowerCase();
-    var cls = '';
-    if (el.className && typeof el.className === 'string') {
-      var first = el.className.split(' ').filter(function(c) {
-        return c.indexOf('rb-') === -1 && c.length < 25;
-      })[0];
-      if (first) cls = '.' + first;
+
+    // 1. Semantic tags → human name
+    var semanticMap = {
+      header: 'Header', footer: 'Footer', main: 'Main', nav: 'Nav',
+      aside: 'Sidebar', article: 'Article', section: 'Section',
+      form: 'Form', table: 'Table', ul: 'List', ol: 'List',
+      li: 'List Item', figure: 'Figure', figcaption: 'Caption',
+      dialog: 'Dialog', details: 'Details', summary: 'Summary'
+    };
+    if (semanticMap[tag]) return semanticMap[tag];
+
+    // 2. Interactive / media
+    if (tag === 'a') {
+      var txt = (el.textContent || '').trim();
+      return txt.length > 0 && txt.length < 20 ? 'Link: ' + txt : 'Link';
     }
-    return tag + cls;
+    if (tag === 'button') {
+      var txt = (el.textContent || '').trim();
+      return txt.length > 0 && txt.length < 20 ? 'Button: ' + txt : 'Button';
+    }
+    if (tag === 'img') return el.alt ? 'Image: ' + el.alt.substring(0, 20) : 'Image';
+    if (tag === 'video') return 'Video';
+    if (tag === 'svg') return 'Icon';
+    if (tag === 'input') return 'Input (' + (el.type || 'text') + ')';
+    if (tag === 'textarea') return 'Textarea';
+    if (tag === 'select') return 'Select';
+    if (tag === 'iframe') return 'Embed';
+    if (tag === 'canvas') return 'Canvas';
+
+    // 3. Headings with text preview
+    if (/^h[1-6]$/.test(tag)) {
+      var txt = (el.textContent || '').trim();
+      if (txt.length > 25) txt = txt.substring(0, 25) + '...';
+      return tag.toUpperCase() + (txt ? ': ' + txt : '');
+    }
+    // Paragraphs with text preview
+    if (tag === 'p') {
+      var txt = (el.textContent || '').trim();
+      if (txt.length > 25) txt = txt.substring(0, 25) + '...';
+      return txt || 'Paragraph';
+    }
+
+    // 4. ARIA roles
+    var role = el.getAttribute('role');
+    if (role) {
+      var roleMap = {
+        banner: 'Header', navigation: 'Nav', main: 'Main',
+        contentinfo: 'Footer', complementary: 'Sidebar',
+        search: 'Search', alert: 'Alert', dialog: 'Dialog',
+        tablist: 'Tabs', tab: 'Tab', tabpanel: 'Tab Panel',
+        menu: 'Menu', menubar: 'Menu Bar', menuitem: 'Menu Item',
+        toolbar: 'Toolbar', progressbar: 'Progress', slider: 'Slider'
+      };
+      if (roleMap[role]) return roleMap[role];
+    }
+
+    // 5. Class-based heuristics for divs/spans
+    if (tag === 'div' || tag === 'span') {
+      var cls = (el.className && typeof el.className === 'string') ? el.className.toLowerCase() : '';
+      // Check for common patterns
+      if (/\bhero\b/.test(cls)) return 'Hero';
+      if (/\blogo\b/.test(cls)) return 'Logo';
+      if (/\bnav(bar|igation)?\b/.test(cls)) return 'Nav';
+      if (/\bheader\b/.test(cls)) return 'Header';
+      if (/\bfooter\b/.test(cls)) return 'Footer';
+      if (/\bsidebar\b/.test(cls)) return 'Sidebar';
+      if (/\bcta\b/.test(cls)) return 'CTA';
+      if (/\bbanner\b/.test(cls)) return 'Banner';
+      if (/\bmodal\b/.test(cls)) return 'Modal';
+      if (/\bcard\b/.test(cls)) return 'Card';
+      if (/\bgrid\b/.test(cls)) return 'Grid';
+      if (/\bcontainer\b/.test(cls)) return 'Container';
+      if (/\bwrapper?\b/.test(cls)) return 'Wrapper';
+      if (/\bcontent\b/.test(cls)) return 'Content';
+      if (/\boverlay\b/.test(cls)) return 'Overlay';
+      if (/\bbackdrop\b/.test(cls)) return 'Backdrop';
+      if (/\bicon\b/.test(cls)) return 'Icon';
+      if (/\bavatar\b/.test(cls)) return 'Avatar';
+      if (/\bbadge\b/.test(cls)) return 'Badge';
+      if (/\btooltip\b/.test(cls)) return 'Tooltip';
+      if (/\bdropdown\b/.test(cls)) return 'Dropdown';
+      if (/\btab[s-]?\b/.test(cls)) return 'Tabs';
+      if (/\baccordion\b/.test(cls)) return 'Accordion';
+      if (/\bcarousel|slider|swiper\b/.test(cls)) return 'Carousel';
+      if (/\bform\b/.test(cls)) return 'Form';
+      if (/\bsearch\b/.test(cls)) return 'Search';
+      if (/\bmenu\b/.test(cls)) return 'Menu';
+      if (/\bprice|pricing\b/.test(cls)) return 'Pricing';
+      if (/\btestimonial|review\b/.test(cls)) return 'Testimonial';
+
+      // 6. Position heuristics
+      var cs;
+      try { cs = getComputedStyle(el); } catch(e) {}
+      if (cs) {
+        // Full-width background image = Hero/Banner
+        var r = el.getBoundingClientRect();
+        if (cs.backgroundImage && cs.backgroundImage !== 'none' && r.width > window.innerWidth * 0.8) return 'Background';
+        // Fixed/sticky at top = Sticky Nav
+        if ((cs.position === 'fixed' || cs.position === 'sticky') && parseFloat(cs.top) < 10) return 'Sticky Bar';
+      }
+
+      // 7. Fallback: tag.firstClass
+      if (el.className && typeof el.className === 'string') {
+        var first = el.className.split(' ').filter(function(c) {
+          return c.indexOf('rb-') === -1 && c.length < 25;
+        })[0];
+        if (first) return 'div.' + first;
+      }
+      return 'div';
+    }
+
+    // 8. Everything else: tag name
+    return tag;
   }
 
   // Get visible children of an element (filtered)
@@ -1040,14 +1154,18 @@
     });
     row.appendChild(eyeBtn);
 
-    // Hover → highlight element on page (lock prevents tMove from clearing it)
+    // Hover → highlight element on page with blue fill (lock prevents tMove from clearing it)
     row.addEventListener('mouseenter', function() {
       layerHoverLock = true;
       updateHoverBox(el);
+      hoverBox.style.background = 'rgba(0,149,255,0.12)';
+      hoverBox.style.borderColor = 'rgba(0,149,255,0.4)';
     });
     row.addEventListener('mouseleave', function() {
       layerHoverLock = false;
       hoverBox.style.display = 'none';
+      hoverBox.style.background = '';
+      hoverBox.style.borderColor = '';
     });
 
     // Click → select element
