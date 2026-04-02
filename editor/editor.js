@@ -974,8 +974,8 @@
       if (cs.maxWidth !== 'none' && parseFloat(cs.maxWidth) < 2000) ownWeight++;
       if (cs.marginLeft === 'auto' || cs.marginRight === 'auto') ownWeight++;
       if ((cs.overflow === 'hidden' || cs.overflow === 'clip') && cs.borderRadius && cs.borderRadius !== '0px') ownWeight++;
+      if (cs.position === 'absolute' || cs.position === 'fixed' || cs.position === 'sticky') ownWeight++;
     }
-    if (cs.position === 'absolute' || cs.position === 'fixed' || cs.position === 'sticky') ownWeight++;
     // Direct text
     for (var i = 0; i < el.childNodes.length; i++) {
       if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) { ownWeight++; break; }
