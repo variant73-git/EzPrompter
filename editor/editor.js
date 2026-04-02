@@ -863,7 +863,6 @@
 
   var inspector, inspBody;
   var layersPanel, layersBody;
-  var showInertLayers = false;
 
   // Does this element have its own visual contribution?
   // true = hiding it would have NO visible effect (pure structural wrapper)
@@ -936,23 +935,10 @@
     var tag = el.tagName.toLowerCase();
     var isInert = isVisuallyInert(el);
 
-    // Skip inert layers unless "show all" is toggled
-    if (isInert && !showInertLayers) {
-      // But still render children — skip this wrapper, render its kids at same depth
-      var skipContainer = mk('div');
-      skipContainer.setAttribute('data-rb-layer-skip', '');
-      var vk = getVisibleChildren(el);
-      for (var si = 0; si < vk.length; si++) {
-        var childRow = buildLayerRow(vk[si], depth);
-        if (childRow) skipContainer.appendChild(childRow);
-      }
-      return skipContainer.children.length > 0 ? skipContainer : null;
-    }
-
-    // Collapse chains of single-child wrappers: div.a > div.b > div.c → show as collapsed chain
+    // Collapse chains of single-child inert wrappers: div.a > div.b > div.c → show as collapsed chain
     var chainLabels = [];
     var chainEnd = el;
-    if (isWrapper) {
+    if (isInert) {
       chainLabels.push(elLabel(el));
       var vk = getVisibleChildren(chainEnd);
       while (vk.length === 1 && isUselessWrapper(vk[0])) {
@@ -972,7 +958,7 @@
 
     var row = mk('div', 'rb-layer-row');
     row.style.setProperty('--rb-layer-depth', depth);
-    if (isWrapper) row.classList.add('rb-layer-wrapper');
+    if (isInert) row.classList.add('rb-layer-wrapper');
 
     if (hasVisibleChildren) {
       var chev = mk('div', 'rb-layer-chev');
@@ -1075,16 +1061,8 @@
       var child = parentEl.children[i];
       var rowContainer = buildLayerRow(child, depth);
       if (rowContainer) {
-        // If it's a skip container (inert wrapper skipped), append its children directly
-        if (rowContainer.hasAttribute('data-rb-layer-skip')) {
-          while (rowContainer.firstChild) {
-            container.appendChild(rowContainer.firstChild);
-            count++;
-          }
-        } else {
-          container.appendChild(rowContainer);
-          count++;
-        }
+        container.appendChild(rowContainer);
+        count++;
       }
     }
   }
@@ -1249,17 +1227,6 @@
     var layersTitle = mk('span');
     layersTitle.textContent = 'Layers';
     layersHd.appendChild(layersTitle);
-
-    // "Show hidden layers" toggle
-    var showInertBtn = mk('button', 'rb-layer-toggle-inert');
-    showInertBtn.textContent = 'Show all';
-    showInertBtn.title = 'Show visually inert layers';
-    showInertBtn.addEventListener('click', function() {
-      showInertLayers = !showInertLayers;
-      showInertBtn.textContent = showInertLayers ? 'Hide inert' : 'Show all';
-      populateLayers();
-    }, {signal: sig});
-    layersHd.appendChild(showInertBtn);
 
     var layersMinBtn = mk('button', 'rb-ed-minmax-btn');
     layersMinBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
