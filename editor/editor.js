@@ -866,46 +866,100 @@
   var layerHoverLock = false;
   var showInertLayers = false;
 
-  // Does this element have its own visual contribution?
-  // true = hiding it would have NO visible effect (pure structural wrapper)
+  // Visual weight: measures how much meaningful content an element contains
+  // Returns a score: 0 = purely structural, higher = more content
+  var _weightCache = new WeakMap();
+  function visualWeight(el, _depth) {
+    if (!el || !el.tagName) return 0;
+    if (_weightCache.has(el)) return _weightCache.get(el);
+    var depth = _depth || 0;
+    if (depth > 8) return 0; // safety limit
+    var tag = el.tagName;
+    var w = 0;
+
+    // The element itself scores points based on what it IS
+    // Interactive elements
+    if (tag === 'BUTTON' || tag === 'SELECT' || tag === 'TEXTAREA') w += 2;
+    if (tag === 'INPUT') w += 2;
+    if (tag === 'A' && (el.textContent || '').trim().length > 0) w += 2;
+    // Media
+    if (tag === 'IMG' || tag === 'VIDEO' || tag === 'CANVAS' || tag === 'IFRAME') w += 2;
+    if (tag === 'SVG') w += 1;
+    // Semantic content
+    if (/^H[1-6]$/.test(tag)) w += 2;
+    if (tag === 'P' || tag === 'LI' || tag === 'BLOCKQUOTE' || tag === 'PRE' || tag === 'CODE') w += 1;
+    // Direct text nodes
+    for (var i = 0; i < el.childNodes.length; i++) {
+      if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) { w += 1; break; }
+    }
+
+    // Its own visual contribution (background, border, shadow)
+    if (tag === 'DIV' || tag === 'SPAN' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'MAIN' || tag === 'HEADER' || tag === 'FOOTER' || tag === 'NAV' || tag === 'ASIDE') {
+      var cs;
+      try { cs = getComputedStyle(el); } catch(e) {}
+      if (cs) {
+        if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') {
+          _weightCache.set(el, 0);
+          return 0;
+        }
+        var bg = cs.backgroundColor;
+        if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') w += 1;
+        if (cs.backgroundImage && cs.backgroundImage !== 'none') w += 1;
+        var bw = parseFloat(cs.borderWidth) || 0;
+        if (bw > 0 && cs.borderStyle !== 'none') w += 1;
+        if (cs.boxShadow && cs.boxShadow !== 'none') w += 1;
+      }
+    }
+
+    // Children contribute with 50% decay per depth level
+    var decay = depth === 0 ? 1 : 0.5;
+    for (var i = 0; i < el.children.length; i++) {
+      var ch = el.children[i];
+      if (SKIP.has(ch.tagName) || isEditorEl(ch)) continue;
+      w += visualWeight(ch, depth + 1) * decay;
+    }
+
+    _weightCache.set(el, w);
+    return w;
+  }
+
+  // An element is visually inert if it has zero visual weight
+  // (no content, no visual properties, no meaningful children)
   function isVisuallyInert(el) {
     if (!el) return true;
     var tag = el.tagName;
-    // Non-div/span tags are never inert (semantic, interactive, media)
+    // Non-div/span are never inert
     if (tag !== 'DIV' && tag !== 'SPAN') return false;
+    // Hidden = inert
     var cs;
     try { cs = getComputedStyle(el); } catch(e) { return false; }
-    // Already hidden = inert
     if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
-    // --- VISUAL PROPERTIES (would change appearance if removed) ---
+    // Weight check: if this element's OWN weight (excluding children) is 0, it's inert
+    // We check the element itself, not its subtree — children get their own layer rows
+    var ownWeight = 0;
+    // Visual properties
     var bg = cs.backgroundColor;
-    if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return false;
-    if (cs.backgroundImage && cs.backgroundImage !== 'none') return false;
+    if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') ownWeight++;
+    if (cs.backgroundImage && cs.backgroundImage !== 'none') ownWeight++;
     var bw = parseFloat(cs.borderWidth) || 0;
-    if (bw > 0 && cs.borderStyle !== 'none') return false;
-    if (cs.boxShadow && cs.boxShadow !== 'none') return false;
+    if (bw > 0 && cs.borderStyle !== 'none') ownWeight++;
+    if (cs.boxShadow && cs.boxShadow !== 'none') ownWeight++;
     var ow = parseFloat(cs.outlineWidth) || 0;
-    if (ow > 0 && cs.outlineStyle !== 'none') return false;
-    // --- LAYOUT PROPERTIES (would change positioning if removed) ---
-    // Meaningful padding = contributes spacing
+    if (ow > 0 && cs.outlineStyle !== 'none') ownWeight++;
+    // Layout contribution
     var pt = parseFloat(cs.paddingTop) || 0, pr = parseFloat(cs.paddingRight) || 0;
     var pb = parseFloat(cs.paddingBottom) || 0, pl = parseFloat(cs.paddingLeft) || 0;
-    if (pt + pr + pb + pl > 8) return false;
-    // Gap in flex/grid = contributes spacing between children
-    if ((cs.display === 'flex' || cs.display === 'grid' || cs.display === 'inline-flex' || cs.display === 'inline-grid') && parseFloat(cs.gap) > 0) return false;
-    // Max-width constraining content = layout role
-    if (cs.maxWidth !== 'none' && parseFloat(cs.maxWidth) < 2000) return false;
-    // Centering via margin auto = layout role
-    if (cs.marginLeft === 'auto' || cs.marginRight === 'auto') return false;
-    // Overflow hidden/clip crops children visually
-    if ((cs.overflow === 'hidden' || cs.overflow === 'clip') && cs.borderRadius && cs.borderRadius !== '0px') return false;
-    // Position relative/absolute/fixed with offset = layout role
-    if (cs.position === 'absolute' || cs.position === 'fixed' || cs.position === 'sticky') return false;
-    // --- TEXT CONTENT ---
+    if (pt + pr + pb + pl > 8) ownWeight++;
+    if ((cs.display === 'flex' || cs.display === 'grid' || cs.display === 'inline-flex' || cs.display === 'inline-grid') && parseFloat(cs.gap) > 0) ownWeight++;
+    if (cs.maxWidth !== 'none' && parseFloat(cs.maxWidth) < 2000) ownWeight++;
+    if (cs.marginLeft === 'auto' || cs.marginRight === 'auto') ownWeight++;
+    if ((cs.overflow === 'hidden' || cs.overflow === 'clip') && cs.borderRadius && cs.borderRadius !== '0px') ownWeight++;
+    if (cs.position === 'absolute' || cs.position === 'fixed' || cs.position === 'sticky') ownWeight++;
+    // Direct text
     for (var i = 0; i < el.childNodes.length; i++) {
-      if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) return false;
+      if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) { ownWeight++; break; }
     }
-    return true;
+    return ownWeight === 0;
   }
 
   // Backward compat alias
