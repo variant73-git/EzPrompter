@@ -1053,7 +1053,9 @@
       if (/\bprice|pricing\b/.test(cls)) return 'Pricing';
       if (/\btestimonial|review\b/.test(cls)) return 'Testimonial';
 
-      // 6. No position heuristics — too fragile. Fall through to tag.class
+      // 6. Site wrapper detection — div containing all page sections
+      var siteWrapper = findSiteWrapper();
+      if (el === siteWrapper && el !== document.body) return 'Page';
 
       // 7. Position & role heuristics
       var cs;
@@ -1365,6 +1367,22 @@
     }
   }
 
+  // Highlight a layer row when hovering its element on the page (subtle, different from selected)
+  function highlightLayerRow(el) {
+    var oldHl = layersBody ? layersBody.querySelectorAll('.rb-layer-hover') : [];
+    oldHl.forEach(function(r) { r.classList.remove('rb-layer-hover'); });
+    if (!el || !layersBody) return;
+    // Find matching row
+    var allRows = layersBody.querySelectorAll('.rb-layer-row');
+    for (var i = 0; i < allRows.length; i++) {
+      if (allRows[i]._rbEl === el) {
+        allRows[i].classList.add('rb-layer-hover');
+        allRows[i].scrollIntoView({block: 'nearest', behavior: 'smooth'});
+        break;
+      }
+    }
+  }
+
   function populateLayers() {
     if (!layersBody) return;
     layersBody.innerHTML = '';
@@ -1372,20 +1390,38 @@
   }
 
   // ---- SECTIONS TAB ----
-  function getSections() {
-    // Collect the top-level visible rows from the layers panel
-    // These match what the user sees in the Layers tab
-    var sections = [];
-    if (!layersBody) return sections;
-    var rows = layersBody.children;
-    for (var i = 0; i < rows.length; i++) {
-      var row = rows[i].querySelector('.rb-layer-row');
-      if (row && row._rbEl) {
-        var r = row._rbEl.getBoundingClientRect();
-        if (r.width > 50 && r.height > 20) {
-          sections.push(row._rbEl);
-        }
+  // Find the "site wrapper" — the element whose direct children are the page's stacked sections.
+  // Pattern: the deepest single-branch ancestor from body that contains multiple visible full-width children.
+  function findSiteWrapper() {
+    var el = document.body;
+    var maxDrill = 10;
+    while (maxDrill-- > 0) {
+      var visKids = [];
+      for (var i = 0; i < el.children.length; i++) {
+        var ch = el.children[i];
+        if (SKIP.has(ch.tagName) || isEditorEl(ch)) continue;
+        var r = ch.getBoundingClientRect();
+        if (r.width > window.innerWidth * 0.5 && r.height > 15) visKids.push(ch);
       }
+      // If this element has 3+ wide children, it's the wrapper
+      if (visKids.length >= 3) return el;
+      // If it has exactly 1 wide child, drill into it (it's a pass-through wrapper)
+      if (visKids.length === 1) { el = visKids[0]; continue; }
+      // 0 or 2 wide children — stop here
+      return el;
+    }
+    return el;
+  }
+
+  function getSections() {
+    var wrapper = findSiteWrapper();
+    var sections = [];
+    for (var i = 0; i < wrapper.children.length; i++) {
+      var ch = wrapper.children[i];
+      if (SKIP.has(ch.tagName) || isEditorEl(ch)) continue;
+      var r = ch.getBoundingClientRect();
+      if (r.width < 50 || r.height < 15) continue;
+      sections.push(ch);
     }
     return sections;
   }
@@ -1395,18 +1431,25 @@
     var card = mk('div', 'rb-section-card');
     card.setAttribute('draggable', 'true');
 
-    // Thumbnail — scaled-down clone of the element
+    // Thumbnail — scaled-down clone of the element, fills full width
     var thumb = mk('div', 'rb-section-thumb');
-    var thumbW = 196;
-    var scale = thumbW / Math.max(r.width, 1);
-    var thumbH = Math.max(24, Math.min(100, Math.round(r.height * scale)));
-    thumb.style.height = thumbH + 'px';
     thumb.style.overflow = 'hidden';
     thumb.style.position = 'relative';
-
-    // Create a mini clone inside an iframe-like container
+    thumb.style.width = '100%';
+    // We'll set height after measuring the container width
+    var scale = 1;
     var miniWrap = mk('div');
-    miniWrap.style.cssText = 'transform:scale(' + scale.toFixed(4) + ');transform-origin:top left;width:' + r.width + 'px;height:' + r.height + 'px;pointer-events:none;overflow:hidden;';
+    miniWrap.style.cssText = 'pointer-events:none;overflow:hidden;transform-origin:top left;';
+    // Use requestAnimationFrame to measure actual width after append
+    var setThumbSize = function() {
+      var thumbW = thumb.offsetWidth || 208;
+      scale = thumbW / Math.max(r.width, 1);
+      var thumbH = Math.max(24, Math.min(120, Math.round(r.height * scale)));
+      thumb.style.height = thumbH + 'px';
+      miniWrap.style.transform = 'scale(' + scale.toFixed(4) + ')';
+      miniWrap.style.width = r.width + 'px';
+      miniWrap.style.height = r.height + 'px';
+    };
     try {
       var clone = el.cloneNode(true);
       // Remove editor elements from clone
@@ -1498,6 +1541,8 @@
       hoverBox.style.borderColor = '';
     });
 
+    // Measure thumb width after DOM insert
+    requestAnimationFrame(setThumbSize);
     return card;
   }
 
@@ -3495,6 +3540,7 @@
       if (!rawEl || !isValid(rawEl)) {
         if (lastHoverEl) { lastHoverEl.classList.remove('rb-ed-text-hint'); lastHoverEl = null; }
         hoverBox.style.display = 'none';
+        highlightLayerRow(null);
         return;
       }
       var el = resolveContainer(rawEl);
@@ -3503,6 +3549,8 @@
       lastHoverEl = el;
       if (isText(el)) el.classList.add('rb-ed-text-hint');
       updateHoverBox(el);
+      // Highlight matching layer row in panel
+      highlightLayerRow(el);
     }, 16);
     document.addEventListener('mousemove', tMove, {signal: sig, capture: true});
 

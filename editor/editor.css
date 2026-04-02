@@ -138,6 +138,7 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
   min-height:22px;
 }
 .rb-layer-row:hover { background:rgba(255,255,255,0.04); color:#EFEEEB; }
+.rb-layer-row.rb-layer-hover { background:rgba(255,255,255,0.03); color:rgba(239,238,235,0.8); }
 .rb-layer-row.rb-layer-selected { background:rgba(0,149,255,0.12); color:#EFEEEB; }
 .rb-layer-row.rb-layer-wrapper { opacity:0.4; }
 
