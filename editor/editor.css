@@ -86,7 +86,7 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 /* ===== LAYERS PANEL (left) ===== */
 #rb-editor-layers {
   position:fixed; left:8px; top:40px;
-  width:220px; max-height:calc(100vh - 52px);
+  width:220px; height:calc(100vh - 52px);
   background:#1A1A1A; border-radius:16px;
   box-shadow:0 16px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
   overflow-y:auto; overflow-x:hidden;
@@ -95,6 +95,17 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
   scrollbar-width:thin; scrollbar-color:rgba(255,255,255,0.06) transparent;
   -webkit-font-smoothing:antialiased;
   font-family:'Instrument Sans',sans-serif;
+  display:flex; flex-direction:column;
+}
+#rb-ed-layers-body, #rb-ed-sections-body { flex:1; overflow-y:auto; }
+/* Resize handle at bottom */
+#rb-layers-resize {
+  height:6px; cursor:ns-resize; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+}
+#rb-layers-resize::after {
+  content:''; width:24px; height:2px; border-radius:1px;
+  background:rgba(255,255,255,0.1);
 }
 #rb-editor-layers::-webkit-scrollbar { width:3px; }
 #rb-editor-layers::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.06); border-radius:2px; }

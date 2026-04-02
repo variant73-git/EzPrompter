@@ -1122,6 +1122,37 @@
       if (ics && (ics.display === 'none' || ics.visibility === 'hidden' || r.width < 10 || r.height < 10)) return null;
     }
 
+    // Filter out empty semantic wrappers (section/article with no visual properties and no meaningful text)
+    if (tag === 'section' || tag === 'article' || tag === 'aside') {
+      var scs; try { scs = getComputedStyle(el); } catch(e) {}
+      if (scs) {
+        var sBg = scs.backgroundColor;
+        var hasVisual = false;
+        if (sBg && sBg !== 'rgba(0, 0, 0, 0)' && sBg !== 'transparent') hasVisual = true;
+        if (scs.backgroundImage && scs.backgroundImage !== 'none') hasVisual = true;
+        if ((parseFloat(scs.borderWidth) || 0) > 0 && scs.borderStyle !== 'none') hasVisual = true;
+        if (scs.boxShadow && scs.boxShadow !== 'none') hasVisual = true;
+        // No visual + no direct text = treat as inert wrapper
+        var hasDirectText = false;
+        for (var ti = 0; ti < el.childNodes.length; ti++) {
+          if (el.childNodes[ti].nodeType === 3 && el.childNodes[ti].textContent.trim().length > 0) { hasDirectText = true; break; }
+        }
+        if (!hasVisual && !hasDirectText) {
+          // Skip this semantic wrapper, promote children
+          if (skipBudget > 0) {
+            var skipC = mk('div');
+            skipC.setAttribute('data-rb-layer-skip', '');
+            var svk = getVisibleChildren(el);
+            for (var ski = 0; ski < svk.length; ski++) {
+              var skRow = buildLayerRow(svk[ski], depth, skipBudget - 1);
+              if (skRow) skipC.appendChild(skRow);
+            }
+            return skipC.children.length > 0 ? skipC : null;
+          }
+        }
+      }
+    }
+
     var isInert = isVisuallyInert(el);
 
     // Skip inert layers — promote their children to this level
@@ -1386,39 +1417,40 @@
     return sections;
   }
 
-  function buildSectionThumb(el, screenshotImg) {
+  function buildSectionThumb(el) {
     var r = el.getBoundingClientRect();
     var card = mk('div', 'rb-section-card');
     card.setAttribute('draggable', 'true');
 
-    // Thumbnail — cropped from screenshot
-    var thumb = mk('canvas', 'rb-section-thumb');
-    var thumbW = 208; // panel width - padding
-    var scale = thumbW / r.width;
-    var thumbH = Math.max(20, Math.min(120, Math.round(r.height * scale)));
-    thumb.width = thumbW;
-    thumb.height = thumbH;
-    thumb.style.cssText = 'width:100%;height:' + thumbH + 'px;border-radius:4px;';
-    if (screenshotImg) {
-      try {
-        var ctx = thumb.getContext('2d');
-        var dpr = window.devicePixelRatio || 1;
-        // Crop the section area from the full screenshot
-        var sx = r.left * dpr;
-        var sy = r.top * dpr;
-        var sw = r.width * dpr;
-        var sh = r.height * dpr;
-        ctx.drawImage(screenshotImg, sx, sy, sw, sh, 0, 0, thumbW, thumbH);
-      } catch(e) {}
-    } else {
+    // Thumbnail — scaled-down clone of the element
+    var thumb = mk('div', 'rb-section-thumb');
+    var thumbW = 196;
+    var scale = thumbW / Math.max(r.width, 1);
+    var thumbH = Math.max(24, Math.min(100, Math.round(r.height * scale)));
+    thumb.style.height = thumbH + 'px';
+    thumb.style.overflow = 'hidden';
+    thumb.style.position = 'relative';
+
+    // Create a mini clone inside an iframe-like container
+    var miniWrap = mk('div');
+    miniWrap.style.cssText = 'transform:scale(' + scale.toFixed(4) + ');transform-origin:top left;width:' + r.width + 'px;height:' + r.height + 'px;pointer-events:none;overflow:hidden;';
+    try {
+      var clone = el.cloneNode(true);
+      // Remove editor elements from clone
+      var edEls = clone.querySelectorAll('[id^="rb-editor"],[id^="rb-ed"],[class^="rb-"]');
+      edEls.forEach(function(e) { e.remove(); });
+      // Remove scripts
+      clone.querySelectorAll('script').forEach(function(s) { s.remove(); });
+      clone.style.margin = '0';
+      clone.style.position = 'static';
+      miniWrap.appendChild(clone);
+    } catch(e) {
       // Fallback: colored rectangle
-      var cs;
-      try { cs = getComputedStyle(el); } catch(e) {}
-      var ctx = thumb.getContext('2d');
-      var bg = cs && cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' ? cs.backgroundColor : '#222';
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, thumbW, thumbH);
+      var cs; try { cs = getComputedStyle(el); } catch(e2) {}
+      var bgCol = cs && cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' ? cs.backgroundColor : '#222';
+      miniWrap.style.background = bgCol;
     }
+    thumb.appendChild(miniWrap);
     card.appendChild(thumb);
 
     // Label
@@ -1501,25 +1533,9 @@
     if (!sb) return;
     sb.innerHTML = '';
     var sections = getSections();
-    // Request screenshot from background.js, then render with real thumbnails
-    chrome.runtime.sendMessage({action: 'captureScreenshot', format: 'png', returnData: true}, function(response) {
-      var dataUrl = response && response.dataUrl;
-      if (dataUrl) {
-        var img = new Image();
-        img.onload = function() {
-          sections.forEach(function(el) {
-            var card = buildSectionThumb(el, img);
-            if (card) sb.appendChild(card);
-          });
-        };
-        img.src = dataUrl;
-      } else {
-        // Fallback without screenshot
-        sections.forEach(function(el) {
-          var card = buildSectionThumb(el, null);
-          if (card) sb.appendChild(card);
-        });
-      }
+    sections.forEach(function(el) {
+      var card = buildSectionThumb(el);
+      if (card) sb.appendChild(card);
     });
   }
 
@@ -1707,6 +1723,27 @@
       tabLayers.classList.remove('rb-layer-tab-active');
       populateSections();
     }, {signal: sig});
+
+    // Resize handle
+    var resizeHandle = mk('div');
+    resizeHandle.id = 'rb-layers-resize';
+    layersPanel.appendChild(resizeHandle);
+    resizeHandle.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      var startY = e.clientY;
+      var startH = layersPanel.offsetHeight;
+      var onMove = function(me) {
+        var newH = startH + (me.clientY - startY);
+        newH = Math.max(120, Math.min(window.innerHeight - 60, newH));
+        layersPanel.style.height = newH + 'px';
+      };
+      var onUp = function() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
 
     root.appendChild(layersPanel);
 
