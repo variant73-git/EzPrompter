@@ -923,63 +923,37 @@
     return w;
   }
 
-  // An element is visually inert if it has zero visual weight
-  // (no content, no visual properties, no meaningful children)
+  // Is this div/span visually inert?
+  // true = hiding it changes nothing the designer can see
+  // Only VISUAL properties count: background, border, shadow, outline, text, overflow+radius
+  // Layout props (padding, gap, max-width, margin, position) do NOT count — they're structural
   function isVisuallyInert(el) {
     if (!el) return true;
     var tag = el.tagName;
-    // Non-div/span are never inert
-    if (tag !== 'DIV' && tag !== 'SPAN') return false;
-    // Hidden = inert
+    // Only divs, spans, and generic semantic wrappers can be inert
+    var inertableTags = {DIV:1, SPAN:1, SECTION:1, ARTICLE:1, ASIDE:1, MAIN:1};
+    if (!inertableTags[tag]) return false;
     var cs;
     try { cs = getComputedStyle(el); } catch(e) { return false; }
     if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
-    // Weight check: if this element's OWN weight (excluding children) is 0, it's inert
-    // We check the element itself, not its subtree — children get their own layer rows
-    var ownWeight = 0;
-    // Visual properties
+    // Background color
     var bg = cs.backgroundColor;
-    if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') ownWeight++;
-    if (cs.backgroundImage && cs.backgroundImage !== 'none') ownWeight++;
-    var bw = parseFloat(cs.borderWidth) || 0;
-    if (bw > 0 && cs.borderStyle !== 'none') ownWeight++;
-    if (cs.boxShadow && cs.boxShadow !== 'none') ownWeight++;
-    var ow = parseFloat(cs.outlineWidth) || 0;
-    if (ow > 0 && cs.outlineStyle !== 'none') ownWeight++;
-    // Layout contribution — but only if it actually changes child layout
-    // (a wrapper with max-width but whose single child is the same size = pass-through)
-    var visKids = [];
-    for (var ki = 0; ki < el.children.length; ki++) {
-      var kc = el.children[ki];
-      if (SKIP.has(kc.tagName) || isEditorEl(kc)) continue;
-      var kr = kc.getBoundingClientRect();
-      if (kr.width >= 2 || kr.height >= 2) visKids.push(kc);
-    }
-    var isSingleChild = visKids.length === 1;
-    var isPassThrough = false;
-    if (isSingleChild) {
-      // If the single child occupies ~same area as parent, this div is a pass-through
-      var elR = el.getBoundingClientRect();
-      var chR = visKids[0].getBoundingClientRect();
-      var wDiff = Math.abs(elR.width - chR.width);
-      var hDiff = Math.abs(elR.height - chR.height);
-      if (wDiff < 20 && hDiff < 20) isPassThrough = true;
-    }
-    // Only count layout props if NOT a pass-through (they actually shape the layout)
-    if (!isPassThrough) {
-      var pt = parseFloat(cs.paddingTop) || 0, pr = parseFloat(cs.paddingRight) || 0;
-      var pb = parseFloat(cs.paddingBottom) || 0, pl = parseFloat(cs.paddingLeft) || 0;
-      if (pt + pr + pb + pl > 8) ownWeight++;
-      if ((cs.display === 'flex' || cs.display === 'grid' || cs.display === 'inline-flex' || cs.display === 'inline-grid') && parseFloat(cs.gap) > 0) ownWeight++;
-      if (cs.maxWidth !== 'none' && parseFloat(cs.maxWidth) < 2000) ownWeight++;
-      if (cs.marginLeft === 'auto' || cs.marginRight === 'auto') ownWeight++;
-      if ((cs.overflow === 'hidden' || cs.overflow === 'clip') && cs.borderRadius && cs.borderRadius !== '0px') ownWeight++;
-    }
-    // Direct text
+    if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return false;
+    // Background image/gradient
+    if (cs.backgroundImage && cs.backgroundImage !== 'none') return false;
+    // Border
+    if ((parseFloat(cs.borderWidth) || 0) > 0 && cs.borderStyle !== 'none') return false;
+    // Box shadow
+    if (cs.boxShadow && cs.boxShadow !== 'none') return false;
+    // Outline
+    if ((parseFloat(cs.outlineWidth) || 0) > 0 && cs.outlineStyle !== 'none') return false;
+    // Overflow clip with border-radius = visible rounded mask
+    if ((cs.overflow === 'hidden' || cs.overflow === 'clip') && cs.borderRadius && cs.borderRadius !== '0px') return false;
+    // Direct text content
     for (var i = 0; i < el.childNodes.length; i++) {
-      if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) { ownWeight++; break; }
+      if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) return false;
     }
-    return ownWeight === 0;
+    return true;
   }
 
   // Backward compat alias
@@ -1080,23 +1054,14 @@
       if (/\bprice|pricing\b/.test(cls)) return 'Pricing';
       if (/\btestimonial|review\b/.test(cls)) return 'Testimonial';
 
-      // 6. Structural heuristics — detect header, content, footer by position + children
+      // 6. Structural heuristics — detect header, content, footer by position + content
       var elR = el.getBoundingClientRect();
-      var parentEl = el.parentElement;
-      if (parentEl && parentEl !== document.body) {
-        var siblings = Array.from(parentEl.children).filter(function(s) {
-          if (SKIP.has(s.tagName) || isEditorEl(s)) return false;
-          var sr = s.getBoundingClientRect();
-          return sr.width > 50 && sr.height > 10;
-        });
-        if (siblings.length >= 2) {
-          var idx = siblings.indexOf(el);
-          // First sibling with nav or links = Header area
-          if (idx === 0 && (el.querySelector('nav') || el.querySelectorAll('a').length > 2)) return 'Header';
-          // Last sibling in a section = Footer area (only if it has links/text)
-          if (idx === siblings.length - 1 && el.querySelectorAll('a').length > 2) return 'Footer';
-        }
+      // Top of page + has nav or logo or links = Header
+      if (elR.top < 150 && elR.width > window.innerWidth * 0.7) {
+        if (el.querySelector('nav') || el.querySelector('[class*="logo"]') || el.querySelectorAll('a').length > 2) return 'Header';
       }
+      // Bottom of page with links = Footer
+      if (elR.bottom > document.documentElement.scrollHeight - 200 && el.querySelectorAll('a').length > 3) return 'Footer';
       // Div with multiple meaningful children (text, buttons, images) = Content
       var contentKids = 0;
       for (var ci = 0; ci < el.children.length; ci++) {
