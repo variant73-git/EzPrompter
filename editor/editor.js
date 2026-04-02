@@ -864,8 +864,27 @@
   var inspector, inspBody;
   var layersPanel, layersBody;
 
+  // Detect if a div is a useless wrapper (no visual content of its own)
+  function isUselessWrapper(el) {
+    if (!el || el.tagName !== 'DIV') return false;
+    var cs = getComputedStyle(el);
+    if (cs.backgroundImage && cs.backgroundImage !== 'none') return false;
+    if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') return false;
+    if (cs.borderWidth && cs.borderWidth !== '0px') return false;
+    if (cs.boxShadow && cs.boxShadow !== 'none') return false;
+    for (var i = 0; i < el.childNodes.length; i++) {
+      if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) return false;
+    }
+    var visibleKids = Array.from(el.children).filter(function(c) {
+      if (SKIP.has(c.tagName)) return false;
+      var r = c.getBoundingClientRect();
+      return r.width > 5 && r.height > 5;
+    });
+    if (visibleKids.length <= 1) return true;
+    return false;
+  }
+
   function buildLayerRow(el, depth) {
-    try {
     if (!el || !el.tagName || SKIP.has(el.tagName) || isEditorEl(el)) return null;
     var r = el.getBoundingClientRect();
     if (r.width < 2 && r.height < 2) return null;
@@ -959,7 +978,6 @@
     }
 
     return container;
-    } catch(e) { return null; }
   }
 
   function renderLayerChildren(parentEl, container, depth) {
@@ -2815,30 +2833,7 @@
     // Visual elements that should NEVER resolve to parent
     var VISUAL_TAGS = new Set(['IMG','VIDEO','IFRAME','CANVAS','SVG','BUTTON','INPUT','TEXTAREA','SELECT','A']);
 
-    // Detect if a div is a useless wrapper (no visual content of its own)
-    function isUselessWrapper(el) {
-      if (!el || el.tagName !== 'DIV') return false;
-      var cs = getComputedStyle(el);
-      // Has visible background? Not useless.
-      if (cs.backgroundImage && cs.backgroundImage !== 'none') return false;
-      if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') return false;
-      // Has border? Not useless.
-      if (cs.borderWidth && cs.borderWidth !== '0px') return false;
-      // Has box shadow? Not useless.
-      if (cs.boxShadow && cs.boxShadow !== 'none') return false;
-      // Has direct text? Not useless.
-      for (var i = 0; i < el.childNodes.length; i++) {
-        if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) return false;
-      }
-      // Has only one visible child? It's a wrapper.
-      var visibleKids = Array.from(el.children).filter(function(c) {
-        if (SKIP.has(c.tagName)) return false;
-        var r = c.getBoundingClientRect();
-        return r.width > 5 && r.height > 5;
-      });
-      if (visibleKids.length <= 1) return true;
-      return false;
-    }
+    // isUselessWrapper is defined in outer scope (used by both layers panel and resolveContainer)
 
     function drillIntoChild(parentEl, x, y) {
       var stack = document.elementsFromPoint(x, y);
