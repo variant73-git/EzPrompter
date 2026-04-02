@@ -946,14 +946,35 @@
     if (cs.boxShadow && cs.boxShadow !== 'none') ownWeight++;
     var ow = parseFloat(cs.outlineWidth) || 0;
     if (ow > 0 && cs.outlineStyle !== 'none') ownWeight++;
-    // Layout contribution
-    var pt = parseFloat(cs.paddingTop) || 0, pr = parseFloat(cs.paddingRight) || 0;
-    var pb = parseFloat(cs.paddingBottom) || 0, pl = parseFloat(cs.paddingLeft) || 0;
-    if (pt + pr + pb + pl > 8) ownWeight++;
-    if ((cs.display === 'flex' || cs.display === 'grid' || cs.display === 'inline-flex' || cs.display === 'inline-grid') && parseFloat(cs.gap) > 0) ownWeight++;
-    if (cs.maxWidth !== 'none' && parseFloat(cs.maxWidth) < 2000) ownWeight++;
-    if (cs.marginLeft === 'auto' || cs.marginRight === 'auto') ownWeight++;
-    if ((cs.overflow === 'hidden' || cs.overflow === 'clip') && cs.borderRadius && cs.borderRadius !== '0px') ownWeight++;
+    // Layout contribution — but only if it actually changes child layout
+    // (a wrapper with max-width but whose single child is the same size = pass-through)
+    var visKids = [];
+    for (var ki = 0; ki < el.children.length; ki++) {
+      var kc = el.children[ki];
+      if (SKIP.has(kc.tagName) || isEditorEl(kc)) continue;
+      var kr = kc.getBoundingClientRect();
+      if (kr.width >= 2 || kr.height >= 2) visKids.push(kc);
+    }
+    var isSingleChild = visKids.length === 1;
+    var isPassThrough = false;
+    if (isSingleChild) {
+      // If the single child occupies ~same area as parent, this div is a pass-through
+      var elR = el.getBoundingClientRect();
+      var chR = visKids[0].getBoundingClientRect();
+      var wDiff = Math.abs(elR.width - chR.width);
+      var hDiff = Math.abs(elR.height - chR.height);
+      if (wDiff < 20 && hDiff < 20) isPassThrough = true;
+    }
+    // Only count layout props if NOT a pass-through (they actually shape the layout)
+    if (!isPassThrough) {
+      var pt = parseFloat(cs.paddingTop) || 0, pr = parseFloat(cs.paddingRight) || 0;
+      var pb = parseFloat(cs.paddingBottom) || 0, pl = parseFloat(cs.paddingLeft) || 0;
+      if (pt + pr + pb + pl > 8) ownWeight++;
+      if ((cs.display === 'flex' || cs.display === 'grid' || cs.display === 'inline-flex' || cs.display === 'inline-grid') && parseFloat(cs.gap) > 0) ownWeight++;
+      if (cs.maxWidth !== 'none' && parseFloat(cs.maxWidth) < 2000) ownWeight++;
+      if (cs.marginLeft === 'auto' || cs.marginRight === 'auto') ownWeight++;
+      if ((cs.overflow === 'hidden' || cs.overflow === 'clip') && cs.borderRadius && cs.borderRadius !== '0px') ownWeight++;
+    }
     if (cs.position === 'absolute' || cs.position === 'fixed' || cs.position === 'sticky') ownWeight++;
     // Direct text
     for (var i = 0; i < el.childNodes.length; i++) {
