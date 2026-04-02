@@ -1372,14 +1372,23 @@
     var oldHl = layersBody ? layersBody.querySelectorAll('.rb-layer-hover') : [];
     oldHl.forEach(function(r) { r.classList.remove('rb-layer-hover'); });
     if (!el || !layersBody) return;
-    // Find matching row
+    // Build a lookup of all rendered rows
     var allRows = layersBody.querySelectorAll('.rb-layer-row');
+    var rowMap = new Map();
     for (var i = 0; i < allRows.length; i++) {
-      if (allRows[i]._rbEl === el) {
-        allRows[i].classList.add('rb-layer-hover');
-        allRows[i].scrollIntoView({block: 'nearest', behavior: 'smooth'});
-        break;
+      if (allRows[i]._rbEl) rowMap.set(allRows[i]._rbEl, allRows[i]);
+    }
+    // Walk up from el to find the nearest ancestor that has a row in the panel
+    var walk = el;
+    var maxUp = 15;
+    while (walk && walk !== document.body && maxUp-- > 0) {
+      if (rowMap.has(walk)) {
+        var matchRow = rowMap.get(walk);
+        matchRow.classList.add('rb-layer-hover');
+        matchRow.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+        return;
       }
+      walk = walk.parentElement;
     }
   }
 
