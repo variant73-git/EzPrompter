@@ -863,32 +863,44 @@
 
   var inspector, inspBody;
   var layersPanel, layersBody;
+  var showInertLayers = false;
 
-  // Detect if a div is a useless wrapper (no visual content of its own)
-  function isUselessWrapper(el) {
-    if (!el || el.tagName !== 'DIV') return false;
-    var cs = getComputedStyle(el);
-    // Hidden elements are useless
-    if (cs.display === 'none' || cs.visibility === 'hidden') return true;
-    // Has visible background? Not useless.
+  // Does this element have its own visual contribution?
+  // true = hiding it would have NO visible effect (pure structural wrapper)
+  function isVisuallyInert(el) {
+    if (!el) return true;
+    var tag = el.tagName;
+    // Non-div containers are never inert (semantic tags, links, buttons, media)
+    if (tag !== 'DIV' && tag !== 'SPAN') return false;
+    var cs;
+    try { cs = getComputedStyle(el); } catch(e) { return false; }
+    // Already hidden = inert
+    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
+    // Has own background color (non-transparent)?
+    var bg = cs.backgroundColor;
+    if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return false;
+    // Has background image/gradient?
     if (cs.backgroundImage && cs.backgroundImage !== 'none') return false;
-    if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') return false;
-    // Has border? Not useless.
-    if (cs.borderWidth && cs.borderWidth !== '0px') return false;
-    // Has box shadow? Not useless.
+    // Has visible border?
+    var bw = parseFloat(cs.borderWidth) || 0;
+    if (bw > 0 && cs.borderStyle !== 'none') return false;
+    // Has box shadow?
     if (cs.boxShadow && cs.boxShadow !== 'none') return false;
-    // Has direct text? Not useless.
+    // Has outline?
+    var ow = parseFloat(cs.outlineWidth) || 0;
+    if (ow > 0 && cs.outlineStyle !== 'none') return false;
+    // Has its own text content (not from children)?
     for (var i = 0; i < el.childNodes.length; i++) {
       if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) return false;
     }
-    // Has only one visible child? It's a wrapper.
-    var visibleKids = Array.from(el.children).filter(function(c) {
-      if (SKIP.has(c.tagName)) return false;
-      var r = c.getBoundingClientRect();
-      return r.width > 5 && r.height > 5;
-    });
-    if (visibleKids.length <= 1) return true;
-    return false;
+    // Has overflow clip that crops children (visual effect)?
+    if ((cs.overflow === 'hidden' || cs.overflow === 'clip') && (cs.borderRadius && cs.borderRadius !== '0px')) return false;
+    return true;
+  }
+
+  // Backward compat alias
+  function isUselessWrapper(el) {
+    return isVisuallyInert(el);
   }
 
   // Get short label for an element: tag.firstClass
@@ -922,7 +934,20 @@
     if (r.width < 2 && r.height < 2) return null;
 
     var tag = el.tagName.toLowerCase();
-    var isWrapper = isUselessWrapper(el);
+    var isInert = isVisuallyInert(el);
+
+    // Skip inert layers unless "show all" is toggled
+    if (isInert && !showInertLayers) {
+      // But still render children — skip this wrapper, render its kids at same depth
+      var skipContainer = mk('div');
+      skipContainer.setAttribute('data-rb-layer-skip', '');
+      var vk = getVisibleChildren(el);
+      for (var si = 0; si < vk.length; si++) {
+        var childRow = buildLayerRow(vk[si], depth);
+        if (childRow) skipContainer.appendChild(childRow);
+      }
+      return skipContainer.children.length > 0 ? skipContainer : null;
+    }
 
     // Collapse chains of single-child wrappers: div.a > div.b > div.c → show as collapsed chain
     var chainLabels = [];
@@ -1050,8 +1075,16 @@
       var child = parentEl.children[i];
       var rowContainer = buildLayerRow(child, depth);
       if (rowContainer) {
-        container.appendChild(rowContainer);
-        count++;
+        // If it's a skip container (inert wrapper skipped), append its children directly
+        if (rowContainer.hasAttribute('data-rb-layer-skip')) {
+          while (rowContainer.firstChild) {
+            container.appendChild(rowContainer.firstChild);
+            count++;
+          }
+        } else {
+          container.appendChild(rowContainer);
+          count++;
+        }
       }
     }
   }
@@ -1216,6 +1249,17 @@
     var layersTitle = mk('span');
     layersTitle.textContent = 'Layers';
     layersHd.appendChild(layersTitle);
+
+    // "Show hidden layers" toggle
+    var showInertBtn = mk('button', 'rb-layer-toggle-inert');
+    showInertBtn.textContent = 'Show all';
+    showInertBtn.title = 'Show visually inert layers';
+    showInertBtn.addEventListener('click', function() {
+      showInertLayers = !showInertLayers;
+      showInertBtn.textContent = showInertLayers ? 'Hide inert' : 'Show all';
+      populateLayers();
+    }, {signal: sig});
+    layersHd.appendChild(showInertBtn);
 
     var layersMinBtn = mk('button', 'rb-ed-minmax-btn');
     layersMinBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
