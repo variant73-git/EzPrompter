@@ -859,9 +859,125 @@
     if (fab) fab.style.display = 'none';
   }
 
-  // ============ INSPECTOR ============
+  // ============ LAYERS + INSPECTOR ============
 
   var inspector, inspBody;
+  var layersPanel, layersBody;
+
+  function buildLayerRow(el, depth) {
+    if (!el || SKIP.has(el.tagName) || isEditorEl(el)) return null;
+    var r = el.getBoundingClientRect();
+    if (r.width < 2 && r.height < 2) return null;
+
+    var tag = el.tagName.toLowerCase();
+    var isWrapper = isUselessWrapper(el);
+    var hasVisibleChildren = false;
+    for (var i = 0; i < el.children.length; i++) {
+      var ch = el.children[i];
+      if (!SKIP.has(ch.tagName) && !isEditorEl(ch)) {
+        var cr = ch.getBoundingClientRect();
+        if (cr.width >= 2 || cr.height >= 2) { hasVisibleChildren = true; break; }
+      }
+    }
+
+    var container = mk('div');
+    container.setAttribute('data-rb-layer-el', '');
+
+    var row = mk('div', 'rb-layer-row');
+    row.style.setProperty('--rb-layer-depth', depth);
+    if (isWrapper) row.classList.add('rb-layer-wrapper');
+
+    if (hasVisibleChildren) {
+      var chev = mk('div', 'rb-layer-chev');
+      chev.innerHTML = '<svg viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1l4 3-4 3"/></svg>';
+      chev.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var childContainer = container.querySelector('.rb-layer-children');
+        if (!childContainer) return;
+        var isOpen = childContainer.classList.contains('rb-layer-expanded');
+        if (!isOpen) {
+          if (childContainer.children.length === 0) {
+            renderLayerChildren(el, childContainer, depth + 1);
+          }
+          childContainer.classList.add('rb-layer-expanded');
+          chev.classList.add('rb-layer-open');
+        } else {
+          childContainer.classList.remove('rb-layer-expanded');
+          chev.classList.remove('rb-layer-open');
+        }
+      });
+      row.appendChild(chev);
+    } else {
+      var placeholder = mk('div', 'rb-layer-chev-placeholder');
+      row.appendChild(placeholder);
+    }
+
+    var icon = mk('div', 'rb-layer-icon');
+    icon.setAttribute('data-tag', tag);
+    row.appendChild(icon);
+
+    var label = mk('span', 'rb-layer-label');
+    var clsName = '';
+    if (el.className && typeof el.className === 'string') {
+      var firstCls = el.className.split(' ').filter(function(c) {
+        return c.indexOf('rb-') === -1 && c.length < 30;
+      })[0];
+      if (firstCls) clsName = '.' + firstCls;
+    }
+    if (!hasVisibleChildren && isText(el)) {
+      var txt = (el.innerText || '').trim();
+      if (txt.length > 30) txt = txt.substring(0, 30) + '...';
+      label.textContent = txt || tag + clsName;
+    } else {
+      label.textContent = tag + clsName;
+    }
+    row.appendChild(label);
+
+    // Hover → highlight element on page
+    row.addEventListener('mouseenter', function() {
+      if (el !== selectedEl) updateHoverBox(el);
+    });
+    row.addEventListener('mouseleave', function() {
+      hoverBox.style.display = 'none';
+    });
+
+    // Click → select element
+    row.addEventListener('click', function(e) {
+      e.stopPropagation();
+      selectEl(el);
+      selectionDepth = depth;
+      selectionAncestor = null;
+    });
+
+    row._rbEl = el;
+    container.appendChild(row);
+
+    if (hasVisibleChildren) {
+      var childContainer = mk('div', 'rb-layer-children');
+      container.appendChild(childContainer);
+    }
+
+    return container;
+  }
+
+  function renderLayerChildren(parentEl, container, depth) {
+    var maxChildren = 50;
+    var count = 0;
+    for (var i = 0; i < parentEl.children.length && count < maxChildren; i++) {
+      var child = parentEl.children[i];
+      var rowContainer = buildLayerRow(child, depth);
+      if (rowContainer) {
+        container.appendChild(rowContainer);
+        count++;
+      }
+    }
+  }
+
+  function populateLayers() {
+    if (!layersBody) return;
+    layersBody.innerHTML = '';
+    renderLayerChildren(document.body, layersBody, 0);
+  }
 
   function buildInspector() {
     inspector = mk('div');
@@ -929,6 +1045,39 @@
     showGlobalCSS();
     inspector.appendChild(inspBody);
     root.appendChild(inspector);
+
+    // ---- LAYERS PANEL (left side) ----
+    layersPanel = mk('div');
+    layersPanel.id = 'rb-editor-layers';
+
+    var layersHd = mk('div');
+    layersHd.id = 'rb-ed-layers-header';
+    var layersTitle = mk('span');
+    layersTitle.textContent = 'Layers';
+    layersHd.appendChild(layersTitle);
+
+    var layersMinBtn = mk('button', 'rb-ed-minmax-btn');
+    layersMinBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
+    layersMinBtn.title = 'Minimize layers';
+    var layersMinimized = false;
+    layersMinBtn.addEventListener('click', function() {
+      layersMinimized = !layersMinimized;
+      layersPanel.classList.toggle('rb-ed-minimized', layersMinimized);
+      layersMinBtn.innerHTML = layersMinimized
+        ? '<span class="rb-ed-icon-maximize"></span>'
+        : '<span class="rb-ed-icon-minimize"></span>';
+    }, {signal: sig});
+    layersHd.appendChild(layersMinBtn);
+
+    layersPanel.appendChild(layersHd);
+
+    layersBody = mk('div');
+    layersBody.id = 'rb-ed-layers-body';
+    layersPanel.appendChild(layersBody);
+
+    root.appendChild(layersPanel);
+
+    populateLayers();
   }
 
   function showGlobalCSS() {
