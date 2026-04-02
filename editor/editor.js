@@ -3136,6 +3136,13 @@
         if (editorPaused) resumeEditor(); else pauseEditor();
         return;
       }
+      if (e.altKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault();
+        if (layersPanel) {
+          layersPanel.style.display = layersPanel.style.display === 'none' ? '' : 'none';
+        }
+        return;
+      }
       if (e.key === 'Escape') {
         if (isTextEditing) {
           selectedEl.contentEditable = 'false';
@@ -3309,6 +3316,10 @@
     if (fab) fab.remove();
     var hk = document.getElementById('rb-hover-kill');
     if (hk) hk.remove();
+
+    if (layersPanel && layersPanel.parentElement) {
+      layersPanel.parentElement.removeChild(layersPanel);
+    }
 
     window.__rbEditorActive = false;
     ac.abort();
