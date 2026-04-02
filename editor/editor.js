@@ -930,9 +930,8 @@
   function isVisuallyInert(el) {
     if (!el) return true;
     var tag = el.tagName;
-    // Only divs, spans, and generic semantic wrappers can be inert
-    var inertableTags = {DIV:1, SPAN:1, SECTION:1, ARTICLE:1, ASIDE:1, MAIN:1};
-    if (!inertableTags[tag]) return false;
+    // Only divs and spans can be inert — semantic tags are always visible
+    if (tag !== 'DIV' && tag !== 'SPAN') return false;
     var cs;
     try { cs = getComputedStyle(el); } catch(e) { return false; }
     if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
