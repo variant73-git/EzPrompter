@@ -865,7 +865,8 @@
   var layersPanel, layersBody;
 
   function buildLayerRow(el, depth) {
-    if (!el || SKIP.has(el.tagName) || isEditorEl(el)) return null;
+    try {
+    if (!el || !el.tagName || SKIP.has(el.tagName) || isEditorEl(el)) return null;
     var r = el.getBoundingClientRect();
     if (r.width < 2 && r.height < 2) return null;
 
@@ -958,6 +959,7 @@
     }
 
     return container;
+    } catch(e) { return null; }
   }
 
   function renderLayerChildren(parentEl, container, depth) {
@@ -2838,7 +2840,7 @@
       return false;
     }
 
-    function drillInto(parentEl, x, y) {
+    function drillIntoChild(parentEl, x, y) {
       var stack = document.elementsFromPoint(x, y);
       var directChild = null;
       for (var i = 0; i < stack.length; i++) {
@@ -3004,7 +3006,7 @@
         }
       } else {
         // REPEAT CLICK on same area: drill deeper
-        var deeper = drillInto(selectedEl, e.clientX, e.clientY);
+        var deeper = drillIntoChild(selectedEl, e.clientX, e.clientY);
 
         if (deeper) {
           if (isText(deeper) && deeper.children.length === 0) {
