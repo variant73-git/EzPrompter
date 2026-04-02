@@ -979,6 +979,84 @@
     renderLayerChildren(document.body, layersBody, 0);
   }
 
+  function syncLayersSelection(el) {
+    if (!layersBody) return;
+
+    // Remove old selection highlight
+    var oldSel = layersBody.querySelectorAll('.rb-layer-selected');
+    oldSel.forEach(function(r) { r.classList.remove('rb-layer-selected'); });
+
+    if (!el) return;
+
+    // Build ancestor chain from body to el
+    var chain = [];
+    var walk = el;
+    while (walk && walk !== document.body) {
+      chain.unshift(walk);
+      walk = walk.parentElement;
+    }
+
+    // Walk the layers tree, expanding each ancestor level
+    var currentContainer = layersBody;
+    for (var i = 0; i < chain.length; i++) {
+      var target = chain[i];
+      var found = false;
+
+      // Search rows in currentContainer
+      var rowContainers = currentContainer.children;
+      for (var j = 0; j < rowContainers.length; j++) {
+        var rc = rowContainers[j];
+        var row = rc.querySelector('.rb-layer-row');
+        if (!row || row._rbEl !== target) continue;
+
+        found = true;
+
+        if (i === chain.length - 1) {
+          // Target element — highlight
+          row.classList.add('rb-layer-selected');
+          row.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+        } else {
+          // Ancestor — expand it
+          var chev = row.querySelector('.rb-layer-chev');
+          var childContainer = rc.querySelector('.rb-layer-children');
+          if (childContainer) {
+            if (childContainer.children.length === 0) {
+              renderLayerChildren(target, childContainer, i + 1);
+            }
+            childContainer.classList.add('rb-layer-expanded');
+            if (chev) chev.classList.add('rb-layer-open');
+            currentContainer = childContainer;
+          }
+        }
+        break;
+      }
+
+      if (!found && i > 0) {
+        // Row doesn't exist — force-render it
+        var rowContainer = buildLayerRow(target, i);
+        if (rowContainer) {
+          currentContainer.appendChild(rowContainer);
+          var forceRow = rowContainer.querySelector('.rb-layer-row');
+          if (i === chain.length - 1) {
+            forceRow.classList.add('rb-layer-selected');
+            forceRow.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+          } else {
+            var forceChild = rowContainer.querySelector('.rb-layer-children');
+            if (forceChild) {
+              if (forceChild.children.length === 0) {
+                renderLayerChildren(target, forceChild, i + 1);
+              }
+              forceChild.classList.add('rb-layer-expanded');
+              var forceChev = forceRow.querySelector('.rb-layer-chev');
+              if (forceChev) forceChev.classList.add('rb-layer-open');
+              currentContainer = forceChild;
+            }
+          }
+        }
+      }
+    }
+  }
+
   function buildInspector() {
     inspector = mk('div');
     inspector.id = 'rb-editor-inspector';
@@ -2148,6 +2226,7 @@
       showFtue('dblclick', 'Double-click to edit text', box.left, box.top);
     }
     showFtue('undo', 'Press <kbd>' + modKey + '+Z</kbd> to undo', box.left, box.top - 24);
+    syncLayersSelection(el);
   }
 
   function enterTextEdit(el) {
@@ -2190,6 +2269,7 @@
     if (lock) lock.remove();
     hideSpacingGuides();
     showGlobalCSS();
+    syncLayersSelection(null);
   }
 
   // ============ UPDATE OVERLAYS ============
