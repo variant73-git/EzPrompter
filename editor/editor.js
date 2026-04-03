@@ -3,6 +3,14 @@
   window.__rbEditorActive = true;
 
   var ac = new AbortController(), sig = ac.signal;
+
+  // Detect web builder and freeze animations
+  var builderInfo = window.__rbDetectBuilder ? window.__rbDetectBuilder() : {builder: 'generic', features: {}};
+  if (builderInfo.builder !== 'generic' && window.__rbFreeze) {
+    window.__rbFreeze(builderInfo);
+    console.log('[RepixBridge] Detected builder:', builderInfo.builder, builderInfo.features);
+  }
+
   var selectedEl = null, lastHoverEl = null, isDragging = false;
   var selectionDepth = 0;
   var selectionAncestor = null;
