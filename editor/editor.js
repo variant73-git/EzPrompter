@@ -3607,7 +3607,8 @@
         var deeper = drillIntoChild(selectedEl, e.clientX, e.clientY);
 
         if (deeper) {
-          if (isText(deeper) && deeper.children.length === 0) {
+          // If the deeper element is a text element (p, h1, span with text, etc.) — enter text edit
+          if (isText(deeper) && !deeper.querySelector('img,video,canvas,iframe,svg,button,input,select,textarea')) {
             selectEl(deeper);
             enterTextEdit(deeper);
             dragStart = null;
