@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "open-pencil": {
+      "source": "open-pencil/skills",
+      "sourceType": "github",
+      "computedHash": "43ff67989ab1f59fed144de8590d817b03867ff8a88ce8d7d4246feeededb980"
+    }
+  }
+}

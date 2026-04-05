@@ -145,7 +145,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const tabId = tabs[0].id;
       try {
         await chrome.scripting.insertCSS({ target: { tabId }, files: ['editor/editor.css'] });
-        // Inject rebuild engine first, then editor (editor checks for window.__rbRebuild)
+        // Inject detection + freeze before editor
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/detect.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/freeze.js'] });
+        // Inject rebuild engine, then editor
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/rebuild.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/editor.js'] });
       } catch (e) { console.warn('Editor injection failed:', e); }
