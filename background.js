@@ -3,15 +3,17 @@
 importScripts('overlay/semantic.js');
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: 'repix-describe',
-    title: 'Repix: Image Remix — Describe Prompt',
-    contexts: ['image']
-  });
-  chrome.contextMenus.create({
-    id: 'repix-capture',
-    title: 'Repix: Capture Layout → Design Tool',
-    contexts: ['page']
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: 'repix-describe',
+      title: 'Repix: Image Remix — Describe Prompt',
+      contexts: ['image']
+    });
+    chrome.contextMenus.create({
+      id: 'repix-capture',
+      title: 'Repix: Capture Layout → Design Tool',
+      contexts: ['page']
+    });
   });
 });
 
