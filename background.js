@@ -145,9 +145,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const tabId = tabs[0].id;
       try {
         await chrome.scripting.insertCSS({ target: { tabId }, files: ['editor/editor.css'] });
-        // Inject detection + freeze before editor
+        // Inject detection + freeze + mode-e before editor
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/detect.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/freeze.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e.js'] });
         // Inject rebuild engine, then editor
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/rebuild.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/editor.js'] });
@@ -249,6 +250,51 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } catch (e) { console.error('Screenshot failed:', e); }
     });
     return true; // keep channel open for async sendResponse
+  }
+
+  // Mode E: Screenshot → Gemini Vision → HTML rebuild
+  if (message.action === 'modeERebuild') {
+    (async () => {
+      try {
+        const settings = await chrome.storage.sync.get(['apiKey', 'model']);
+        const apiKey = settings.apiKey;
+        if (!apiKey) { sendResponse({error: 'No API key configured'}); return; }
+
+        const match = message.imageDataUrl.match(/^data:(.+?);base64,(.+)$/);
+        if (!match) { sendResponse({error: 'Invalid image data'}); return; }
+        const [, mediaType, base64Data] = match;
+
+        const model = settings.model || 'gemini-flash-latest';
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: message.prompt },
+                { inline_data: { mime_type: mediaType, data: base64Data } }
+              ]
+            }],
+            generationConfig: { maxOutputTokens: 8000 }
+          })
+        });
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          sendResponse({error: `Gemini API error: ${err.error?.message || response.status}`});
+          return;
+        }
+
+        const data = await response.json();
+        const html = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        sendResponse({html: html});
+      } catch(e) {
+        sendResponse({error: e.message});
+      }
+    })();
+    return true;
   }
 
   if (message.action === 'generateImage') {

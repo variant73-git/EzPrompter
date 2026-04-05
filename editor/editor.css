@@ -277,6 +277,15 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 }
 .rb-ed-export-btn:hover { background:#EFEEEB; color:#000; }
 .rb-ed-export-btn svg { width:12px; height:12px; }
+.rb-ed-rebuild-btn {
+  font:500 8px/1 'Instrument Sans',sans-serif;
+  color:#0095FF; background:rgba(0,149,255,0.08);
+  border:1px solid rgba(0,149,255,0.2); border-radius:4px;
+  padding:3px 8px; cursor:pointer; transition:all 80ms;
+  white-space:nowrap;
+}
+.rb-ed-rebuild-btn:hover { background:rgba(0,149,255,0.15); }
+.rb-ed-rebuild-btn:disabled { opacity:0.6; cursor:wait; }
 
 /* ===== 6. EXPORT DROPDOWN ===== */
 .rb-ed-export-dd {
