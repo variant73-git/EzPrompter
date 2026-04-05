@@ -146,7 +146,7 @@
     if (!el) return true;
     var n = el;
     while (n) {
-      if (n.id && (n.id.indexOf('rb-editor') === 0 || n.id === 'repixbridge-panel')) return true;
+      if (n.id && (n.id.indexOf('rb-editor') === 0 || n.id.indexOf('rb-ed-') === 0 || n.id === 'repixbridge-panel')) return true;
       // Canvas wrapper is editor UI, but its CHILDREN (the cloned page) are NOT
       if (n.id === 'rb-ed-canvas') return false;
       if (n.id === 'rb-ed-canvas-wrapper') return false;
@@ -547,31 +547,34 @@
   var semanticGroups = [];
 
   function activateModeE() {
-    // Show loading in inspector
-    inspBody.innerHTML = '';
-    var loading = mk('div', 'rb-insp-empty');
-    loading.textContent = 'AI is mapping this site...';
-    inspBody.appendChild(loading);
+    if (!window.__rbModeE) {
+      inspBody.innerHTML = '';
+      var err = mk('div', 'rb-insp-empty');
+      err.textContent = 'Mode E not available';
+      err.style.color = '#f87171';
+      inspBody.appendChild(err);
+      return;
+    }
 
-    // Listen for result
-    chrome.runtime.onMessage.addListener(function onSemantic(msg) {
-      if (msg.action === 'semanticResult') {
-        chrome.runtime.onMessage.removeListener(onSemantic);
-        semanticMap = msg.map;
-        applySemantic(semanticMap, msg.fromCache);
+    inspBody.innerHTML = '';
+    var status = mk('div', 'rb-insp-empty');
+    status.textContent = 'Starting rebuild...';
+    inspBody.appendChild(status);
+
+    window.__rbModeE.run(function(progress) {
+      status.textContent = progress.message;
+      if (progress.step === 'done') {
+        status.style.color = '#22c55e';
+        // Refresh layers and inspector after rebuild
+        setTimeout(function() {
+          populateLayers();
+          showGlobalCSS();
+        }, 500);
       }
-      if (msg.action === 'semanticError') {
-        chrome.runtime.onMessage.removeListener(onSemantic);
-        inspBody.innerHTML = '';
-        var err = mk('div', 'rb-insp-empty');
-        err.textContent = 'AI error: ' + msg.error;
-        err.style.color = '#f87171';
-        inspBody.appendChild(err);
+      if (progress.step === 'error') {
+        status.style.color = '#f87171';
       }
     });
-
-    // Request analysis from background
-    chrome.runtime.sendMessage({ action: 'semanticAnalyze' });
   }
 
   function applySemantic(map, fromCache) {
