@@ -258,38 +258,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         const settings = await chrome.storage.sync.get(['apiKey', 'model']);
         const apiKey = settings.apiKey;
-        if (!apiKey) { sendResponse({error: 'No API key configured'}); return; }
+        if (!apiKey) { sendResponse({error: 'No API key configured. Go to Settings and add your Gemini API key.'}); return; }
 
         const match = message.imageDataUrl.match(/^data:(.+?);base64,(.+)$/);
         if (!match) { sendResponse({error: 'Invalid image data'}); return; }
         const [, mediaType, base64Data] = match;
 
-        const model = settings.model || 'gemini-flash-latest';
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        // Try models in order of preference (best → fallback)
+        const MODELS = ['gemini-2.5-flash-preview-05-20', 'gemini-2.0-flash', 'gemini-1.5-flash-latest'];
+        const userModel = settings.model;
+        const modelsToTry = userModel && !MODELS.includes(userModel) ? [userModel, ...MODELS] : MODELS;
 
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { text: message.prompt },
-                { inline_data: { mime_type: mediaType, data: base64Data } }
-              ]
-            }],
-            generationConfig: { maxOutputTokens: 8000 }
-          })
-        });
+        let lastError = '';
+        for (const model of modelsToTry) {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { text: message.prompt },
+                  { inline_data: { mime_type: mediaType, data: base64Data } }
+                ]
+              }],
+              generationConfig: { maxOutputTokens: 8000 }
+            })
+          });
 
-        if (!response.ok) {
+          if (response.ok) {
+            const data = await response.json();
+            const html = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            sendResponse({html: html});
+            return;
+          }
+
           const err = await response.json().catch(() => ({}));
-          sendResponse({error: `Gemini API error: ${err.error?.message || response.status}`});
-          return;
+          lastError = err.error?.message || String(response.status);
+          console.warn('[Mode E] Model', model, 'failed:', lastError, '— trying next...');
         }
 
-        const data = await response.json();
-        const html = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        sendResponse({html: html});
+        sendResponse({error: `All models failed. Last error: ${lastError}`});
       } catch(e) {
         sendResponse({error: e.message});
       }
@@ -826,7 +835,7 @@ function getSettings() {
     chrome.storage.sync.get({
       apiProvider: 'gemini',
       apiKey: '',
-      model: 'gemini-flash-latest',
+      model: 'gemini-2.5-flash-preview-05-20',
       ollamaUrl: 'http://localhost:11434',
       language: 'en',
       downloadFolder: 'Repix',
@@ -1079,7 +1088,7 @@ async function describeWithGemini(imageDataUrl, systemPrompt, settings) {
   if (!match) throw new Error('Invalid image data');
   const [, mediaType, base64Data] = match;
 
-  const model = settings.model || 'gemini-flash-latest';
+  const model = settings.model || 'gemini-2.5-flash-preview-05-20';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`;
 
   const response = await fetch(url, {
