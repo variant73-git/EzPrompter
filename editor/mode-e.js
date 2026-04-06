@@ -61,36 +61,44 @@
   function scrollToAndWait(y) {
     return new Promise(function(resolve) {
       window.scrollTo(0, y);
-      setTimeout(resolve, 400); // wait for render + lazy-loaded content
+      setTimeout(resolve, 800); // longer wait for lazy-loaded content + animations to settle
     });
   }
 
   // Capture the entire page as an array of viewport screenshots
+  var MAX_VIEWPORTS = 8; // Safety limit — prevents excessive API calls on very long pages
   async function captureFullPage() {
     var viewportH = window.innerHeight;
     var pageH = document.documentElement.scrollHeight;
     var screenshots = [];
     var originalScroll = window.scrollY;
 
-    // Hide editor UI during capture
-    var editorRoot = document.getElementById('rb-editor-root');
-    if (editorRoot) editorRoot.style.display = 'none';
+    // Hide ALL editor UI during capture
+    var editorEls = document.querySelectorAll('[id^="rb-editor"], [id^="rb-ed-"]');
+    editorEls.forEach(function(el) { el.style.setProperty('display', 'none', 'important'); });
 
-    for (var y = 0; y < pageH; y += viewportH) {
+    var totalViewports = Math.min(Math.ceil(pageH / viewportH), MAX_VIEWPORTS);
+
+    for (var i = 0; i < totalViewports; i++) {
+      var y = i * viewportH;
       await scrollToAndWait(y);
-      var dataUrl = await captureViewport();
-      if (dataUrl) {
-        screenshots.push({
-          y: y,
-          height: Math.min(viewportH, pageH - y),
-          dataUrl: dataUrl
-        });
+      try {
+        var dataUrl = await captureViewport();
+        if (dataUrl) {
+          screenshots.push({
+            y: y,
+            height: Math.min(viewportH, pageH - y),
+            dataUrl: dataUrl
+          });
+        }
+      } catch(e) {
+        console.error('[Mode E] Capture failed at y=' + y, e);
       }
     }
 
     // Restore scroll and editor UI
     window.scrollTo(0, originalScroll);
-    if (editorRoot) editorRoot.style.display = '';
+    editorEls.forEach(function(el) { el.style.removeProperty('display'); });
 
     return screenshots;
   }
@@ -226,12 +234,15 @@
     var builderInfo = window.__rbDetectBuilder ? window.__rbDetectBuilder() : {builder: 'generic'};
     log({step: 'detect', message: 'Detected: ' + builderInfo.builder, current: 0, total: 5});
 
-    // Step 2: Freeze animations
+    // Step 2: Freeze animations — wait for freeze to fully take effect
     if (builderInfo.builder !== 'generic' && window.__rbFreeze) {
       window.__rbFreeze(builderInfo);
-      log({step: 'freeze', message: 'Animations frozen', current: 1, total: 5});
+      log({step: 'freeze', message: 'Freezing animations...', current: 1, total: 6});
+      // Wait 2 seconds for all animations/GSAP/Lenis to fully stop
+      await new Promise(function(r) { setTimeout(r, 2000); });
+      log({step: 'freeze', message: 'Animations frozen', current: 1, total: 6});
     } else {
-      log({step: 'freeze', message: 'No animations to freeze', current: 1, total: 5});
+      log({step: 'freeze', message: 'No animations to freeze', current: 1, total: 6});
     }
 
     // Step 3: Extract design tokens BEFORE capture (colors, fonts, spacing from the live site)
@@ -241,9 +252,8 @@
       log({step: 'tokens', message: 'Extracted ' + (tokens.colors || []).length + ' colors, ' + (tokens.fonts || []).length + ' fonts', current: 2, total: 6});
     }
 
-    // Step 4: Wait for freeze, then capture
-    await new Promise(function(r) { setTimeout(r, 500); });
-    log({step: 'capture', message: 'Capturing page...', current: 3, total: 6});
+    // Step 4: Capture page
+    log({step: 'capture', message: 'Capturing page (' + MAX_VIEWPORTS + ' viewports max)...', current: 3, total: 6});
     var screenshots = await captureFullPage();
     log({step: 'capture', message: 'Captured ' + screenshots.length + ' viewports', current: 3, total: 6});
 
