@@ -5,29 +5,45 @@
 (function() {
   'use strict';
 
-  var REBUILD_PROMPT = [
-    'You are a senior front-end developer. I will give you a screenshot of a website section.',
-    'Your job is to recreate this section as clean, semantic HTML and CSS.',
-    '',
-    'RULES:',
-    '- Output ONLY valid HTML inside a single <div class="rb-section"> wrapper.',
-    '- Use inline styles for all styling (no external CSS, no <style> tags).',
-    '- Use semantic HTML: header, nav, section, h1-h6, p, a, button, img, ul, li.',
-    '- Give each element a descriptive class name (e.g. "hero-title", "cta-button", "nav-logo").',
-    '- For complex backgrounds (gradients, images), use a solid color approximation or a CSS gradient.',
-    '- For images/photos/3D renders, use a placeholder <img> with src="data:image/svg+xml,..." showing a gray rectangle with the text "[image]" centered. Set width and height to approximate the original.',
-    '- For icons/logos, use simple inline SVGs or placeholder images.',
-    '- Match fonts as closely as possible using system fonts or Google Fonts (specify via inline style font-family).',
-    '- Match colors exactly (use the hex values you see).',
-    '- Match spacing, padding, margins as closely as possible.',
-    '- Use flexbox for layout.',
-    '- Make it responsive (use %, max-width, not fixed px widths for containers).',
-    '- Do NOT include any JavaScript.',
-    '- Do NOT include <html>, <head>, <body> — just the <div class="rb-section"> and its contents.',
-    '',
-    'OUTPUT FORMAT:',
-    'Return ONLY the HTML code. No explanation, no markdown, no code fences. Just raw HTML starting with <div class="rb-section">.'
-  ].join('\n');
+  // Build the rebuild prompt dynamically with extracted tokens
+  function buildPrompt(tokens) {
+    var colorHint = tokens && tokens.colors && tokens.colors.length > 0
+      ? '\n\nDESIGN TOKENS from the original site:\nColors: ' + tokens.colors.join(', ') +
+        '\nFonts: ' + (tokens.fonts || []).join(', ') +
+        '\nBorder radii: ' + (tokens.radii || []).join(', ') +
+        '\nUse THESE EXACT colors and fonts in your rebuild.'
+      : '';
+
+    return [
+      'You are a pixel-perfect front-end developer. I will give you a screenshot of ONE viewport section of a website.',
+      'Recreate EXACTLY what you see as clean HTML with inline CSS styles.',
+      '',
+      'CRITICAL RULES:',
+      '- Reproduce the layout, spacing, colors, typography, and proportions EXACTLY as shown.',
+      '- Use a single wrapper: <div class="rb-section" style="...">',
+      '- ALL styling must be inline (style="..."). No <style> tags, no external CSS.',
+      '- Use semantic tags: header, nav, section, h1-h6, p, a, button, img, span, ul, li.',
+      '- Give every element a descriptive class: hero-title, cta-button, nav-logo, etc.',
+      '- COLORS: Match every color exactly using hex values. Backgrounds, text, borders — all must match.',
+      '- FONTS: Use the exact font-family. If unsure, use system-ui or sans-serif.',
+      '- FONT SIZES: Match sizes carefully. Use px values that match the screenshot.',
+      '- SPACING: Match all padding, margins, and gaps precisely in px.',
+      '- LAYOUT: Use flexbox. Match the exact positioning (centered, left-aligned, etc.).',
+      '- BACKGROUNDS: If a section has a solid color or gradient background, reproduce it exactly with CSS.',
+      '  For photo/image backgrounds, use a solid color that matches the dominant color of the image.',
+      '- IMAGES: For photos, product shots, or illustrations, use a placeholder div with the dominant color',
+      '  and approximate dimensions: <div style="width:400px;height:300px;background:#3d5a2e;border-radius:16px;"></div>',
+      '- TEXT: Reproduce ALL visible text content exactly as shown. Every heading, paragraph, button label, nav item.',
+      '- The section should be full-width (width:100%) with content centered via max-width + margin:0 auto.',
+      '- Do NOT include <html>, <head>, <body> tags.',
+      '- Do NOT include any JavaScript.',
+      '- Do NOT add comments or explanations.',
+      colorHint,
+      '',
+      'OUTPUT: Return ONLY the raw HTML. No markdown, no code fences, no explanation.',
+      'Start directly with <div class="rb-section"'
+    ].join('\n');
+  }
 
   // Capture visible viewport as base64 PNG
   function captureViewport() {
@@ -80,13 +96,13 @@
   }
 
   // Send a screenshot to Gemini Vision and get HTML back
-  function screenshotToHTML(screenshotDataUrl) {
+  function screenshotToHTML(screenshotDataUrl, tokens) {
     return new Promise(function(resolve, reject) {
       chrome.runtime.sendMessage(
         {
           action: 'modeERebuild',
           imageDataUrl: screenshotDataUrl,
-          prompt: REBUILD_PROMPT
+          prompt: buildPrompt(tokens)
         },
         function(response) {
           if (response && response.html) {
@@ -113,9 +129,23 @@
 
   // Replace page content with rebuilt sections
   function replacePageContent(sectionsHTML) {
-    // Save original page in memory for undo
+    // Collect editor elements to preserve
+    var editorEls = [];
+    Array.from(document.body.children).forEach(function(child) {
+      if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
+        editorEls.push(child);
+      }
+    });
+
+    // Save original non-editor content for undo
+    var originalChildren = [];
+    Array.from(document.body.children).forEach(function(child) {
+      if (editorEls.indexOf(child) === -1) {
+        originalChildren.push(child);
+      }
+    });
     window.__rbOriginalPage = {
-      html: document.body.innerHTML,
+      children: originalChildren,
       scrollY: window.scrollY
     };
 
@@ -133,7 +163,6 @@
     sectionsHTML.forEach(function(html) {
       var section = document.createElement('div');
       section.innerHTML = html;
-      // Unwrap if the AI returned exactly one root element
       if (section.children.length === 1) {
         wrapper.appendChild(section.children[0]);
       } else {
@@ -144,16 +173,20 @@
       }
     });
 
-    // Clear body and insert rebuilt page
-    document.body.innerHTML = '';
-    document.body.appendChild(wrapper);
+    // Remove original content but keep editor elements
+    originalChildren.forEach(function(child) {
+      if (child.parentElement) child.parentElement.removeChild(child);
+    });
+
+    // Insert rebuilt page before editor elements
+    if (editorEls.length > 0) {
+      document.body.insertBefore(wrapper, editorEls[0]);
+    } else {
+      document.body.appendChild(wrapper);
+    }
+
     document.body.style.margin = '0';
     document.body.style.padding = '0';
-
-    // Re-inject editor root
-    var root = document.createElement('div');
-    root.id = 'rb-editor-root';
-    document.body.appendChild(root);
 
     return wrapper;
   }
@@ -161,7 +194,24 @@
   // Restore original page
   function restoreOriginalPage() {
     if (window.__rbOriginalPage) {
-      document.body.innerHTML = window.__rbOriginalPage.html;
+      // Remove the rebuilt page
+      var rebuilt = document.getElementById('rb-rebuilt-page');
+      if (rebuilt) rebuilt.remove();
+      // Re-insert original children before editor elements
+      var editorEls = [];
+      Array.from(document.body.children).forEach(function(child) {
+        if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
+          editorEls.push(child);
+        }
+      });
+      var insertBefore = editorEls.length > 0 ? editorEls[0] : null;
+      window.__rbOriginalPage.children.forEach(function(child) {
+        if (insertBefore) {
+          document.body.insertBefore(child, insertBefore);
+        } else {
+          document.body.appendChild(child);
+        }
+      });
       window.scrollTo(0, window.__rbOriginalPage.scrollY);
       window.__rbOriginalPage = null;
     }
@@ -184,18 +234,25 @@
       log({step: 'freeze', message: 'No animations to freeze', current: 1, total: 5});
     }
 
-    // Step 3: Wait a moment for freeze to take effect, then capture
-    await new Promise(function(r) { setTimeout(r, 500); });
-    log({step: 'capture', message: 'Capturing page...', current: 2, total: 5});
-    var screenshots = await captureFullPage();
-    log({step: 'capture', message: 'Captured ' + screenshots.length + ' viewports', current: 2, total: 5});
+    // Step 3: Extract design tokens BEFORE capture (colors, fonts, spacing from the live site)
+    var tokens = null;
+    if (window.__rbExtractor) {
+      tokens = window.__rbExtractor.extractTokens();
+      log({step: 'tokens', message: 'Extracted ' + (tokens.colors || []).length + ' colors, ' + (tokens.fonts || []).length + ' fonts', current: 2, total: 6});
+    }
 
-    // Step 4: Send each screenshot to Gemini Vision
-    log({step: 'rebuild', message: 'Rebuilding with AI (0/' + screenshots.length + ')...', current: 3, total: 5});
+    // Step 4: Wait for freeze, then capture
+    await new Promise(function(r) { setTimeout(r, 500); });
+    log({step: 'capture', message: 'Capturing page...', current: 3, total: 6});
+    var screenshots = await captureFullPage();
+    log({step: 'capture', message: 'Captured ' + screenshots.length + ' viewports', current: 3, total: 6});
+
+    // Step 5: Send each screenshot + tokens to Gemini Vision
+    log({step: 'rebuild', message: 'Rebuilding with AI (0/' + screenshots.length + ')...', current: 4, total: 6});
     var sectionsHTML = [];
     for (var i = 0; i < screenshots.length; i++) {
       try {
-        var html = await screenshotToHTML(screenshots[i].dataUrl);
+        var html = await screenshotToHTML(screenshots[i].dataUrl, tokens);
         var cleaned = cleanHTML(html);
         if (cleaned.length > 10) {
           sectionsHTML.push(cleaned);
@@ -203,24 +260,24 @@
         log({
           step: 'rebuild',
           message: 'Rebuilding with AI (' + (i + 1) + '/' + screenshots.length + ')...',
-          current: 3,
-          total: 5
+          current: 4,
+          total: 6
         });
       } catch(err) {
         console.error('[Mode E] Rebuild failed for viewport ' + i + ':', err);
-        log({step: 'error', message: 'Failed viewport ' + i + ': ' + err.message, current: 3, total: 5});
+        log({step: 'error', message: 'Failed viewport ' + i + ': ' + err.message, current: 4, total: 6});
       }
     }
 
     if (sectionsHTML.length === 0) {
-      log({step: 'error', message: 'No sections rebuilt. Check API key.', current: 5, total: 5});
+      log({step: 'error', message: 'No sections rebuilt. Check API key.', current: 6, total: 6});
       return null;
     }
 
-    // Step 5: Replace page content
-    log({step: 'replace', message: 'Replacing page content...', current: 4, total: 5});
+    // Step 6: Replace page content
+    log({step: 'replace', message: 'Replacing page content...', current: 5, total: 6});
     var rebuilt = replacePageContent(sectionsHTML);
-    log({step: 'done', message: 'Rebuild complete! ' + sectionsHTML.length + ' sections.', current: 5, total: 5});
+    log({step: 'done', message: 'Rebuild complete! ' + sectionsHTML.length + ' sections.', current: 6, total: 6});
 
     return rebuilt;
   }

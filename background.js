@@ -148,6 +148,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // Inject detection + freeze + mode-e before editor
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/detect.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/freeze.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/extractor.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e.js'] });
         // Inject rebuild engine, then editor
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/rebuild.js'] });
