@@ -40,6 +40,7 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 #rb-ed-banner * {
   text-transform: none !important;
   letter-spacing: normal !important;
+  pointer-events: auto !important;
 }
 #rb-ed-banner {
   position:fixed; top:0; left:0; right:0; height:32px;
@@ -786,6 +787,9 @@ html.rb-scroll-locked body {
   cursor: pointer;
   transition: all 150ms;
   -webkit-appearance: none;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 1;
 }
 .rb-ed-mode:hover { color: rgba(239,238,235,0.6); }
 .rb-ed-mode.active { background: rgba(239,238,235,0.1); color: #EFEEEB; }
