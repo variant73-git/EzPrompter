@@ -123,6 +123,19 @@
   buildBanner();
   buildInspector();
 
+  // Force visibility on all editor UI — site CSS (Webflow IX3, GSAP) can hide our elements
+  function forceEditorVisible() {
+    [root, document.getElementById('rb-ed-banner'), document.getElementById('rb-editor-inspector'), document.getElementById('rb-editor-layers')].forEach(function(el) {
+      if (!el) return;
+      el.style.setProperty('opacity', '1', 'important');
+      el.style.setProperty('visibility', 'visible', 'important');
+    });
+  }
+  forceEditorVisible();
+  // Re-force after a delay in case site JS overrides after load
+  setTimeout(forceEditorVisible, 500);
+  setTimeout(forceEditorVisible, 1500);
+
   // Prepare page for editing (tag elements, disable interactivity)
   if (window.__rbRebuild) {
     window.__rbRebuild.rebuild(function() {
