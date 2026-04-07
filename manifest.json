@@ -46,7 +46,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["editor/editor.css", "editor/editor.js", "editor/rebuild.js"],
+      "resources": ["editor/editor.css", "editor/editor.js", "editor/rebuild.js", "editor/detect.js", "editor/freeze.js", "editor/mode-e.js", "overlay/extractor.js"],
       "matches": ["<all_urls>"]
     }
   ]

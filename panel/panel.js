@@ -689,9 +689,19 @@
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      console.log('[Repix Panel] Live Remix clicked — sending toggleEditor');
-      chrome.runtime.sendMessage({ action: 'toggleEditor' });
-      panel.remove();
+      console.log('[Repix Panel] Live Remix clicked');
+      // Send message first, THEN remove panel (panel.remove may disconnect the sender)
+      try {
+        chrome.runtime.sendMessage({ action: 'toggleEditor' }, () => {
+          if (chrome.runtime.lastError) {
+            console.warn('[Repix Panel] sendMessage error:', chrome.runtime.lastError.message);
+          }
+        });
+      } catch(err) {
+        console.warn('[Repix Panel] sendMessage threw:', err);
+      }
+      // Delay panel removal to keep sender alive during message delivery
+      setTimeout(() => panel.remove(), 100);
     }, true);
 
     function showConnectState() {
