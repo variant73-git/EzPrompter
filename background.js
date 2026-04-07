@@ -140,22 +140,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'toggleEditor') {
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      if (!tabs[0]) return;
-      const tabId = tabs[0].id;
+    (async () => {
       try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tabs[0]) return;
+        const tabId = tabs[0].id;
         await chrome.scripting.insertCSS({ target: { tabId }, files: ['editor/editor.css'] });
-        // Inject detection + freeze + mode-e before editor
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/detect.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/freeze.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/extractor.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e.js'] });
-        // Inject rebuild engine, then editor
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/rebuild.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/editor.js'] });
       } catch (e) { console.warn('Editor injection failed:', e); }
-    });
-    return false;
+    })();
+    return true;
   }
 
   if (message.action === 'semanticAnalyze') {
