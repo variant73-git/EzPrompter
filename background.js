@@ -23,16 +23,34 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || !tab.id) return;
   const tabId = tab.id;
 
-  // Check if editor is active by trying to send a message
-  chrome.tabs.sendMessage(tabId, { action: 'editorAttention' }, (response) => {
-    if (chrome.runtime.lastError) {
-      // No listener = editor not active, inject panel
-      chrome.scripting.insertCSS({ target: { tabId }, files: ['panel/panel.css'] }).then(() => {
-        return chrome.scripting.executeScript({ target: { tabId }, files: ['panel/panel.js'] });
-      }).catch(e => console.warn('Repix: injection failed:', e));
+  // Check if panel or editor is already on the page
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => ({
+        panel: !!document.getElementById('repixbridge-panel'),
+        editor: !!window.__rbEditorActive && !!document.getElementById('rb-editor-root')
+      })
+    });
+    const state = results[0]?.result || {};
+
+    if (state.editor) {
+      // Editor is active — send attention glow
+      chrome.tabs.sendMessage(tabId, { action: 'editorAttention' });
+    } else if (state.panel) {
+      // Panel already open — remove it
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => { const p = document.getElementById('repixbridge-panel'); if (p) p.remove(); }
+      });
+    } else {
+      // Nothing active — inject panel
+      await chrome.scripting.insertCSS({ target: { tabId }, files: ['panel/panel.css'] });
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['panel/panel.js'] });
     }
-    // If no error, editor handled it (attention glow)
-  });
+  } catch (e) {
+    console.warn('Repix: action click failed:', e);
+  }
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {

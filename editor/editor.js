@@ -1,6 +1,11 @@
 (function() {
-  if (window.__rbEditorActive) { deactivate(); return; }
+  if (window.__rbEditorActive) {
+    // Editor already active — toggle off
+    if (typeof deactivate === 'function') deactivate();
+    return;
+  }
   window.__rbEditorActive = true;
+  try {
 
   var ac = new AbortController(), sig = ac.signal;
 
@@ -3991,5 +3996,9 @@
     chrome.runtime.sendMessage({action: 'reopenPanel'}, function() {
       if (chrome.runtime.lastError) { /* ignore */ }
     });
+  }
+  } catch(initError) {
+    console.error('[RepixBridge] Editor initialization failed:', initError);
+    window.__rbEditorActive = false;
   }
 })();
