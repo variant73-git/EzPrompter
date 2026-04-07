@@ -690,18 +690,11 @@
       e.stopPropagation();
       e.stopImmediatePropagation();
       console.log('[Repix Panel] Live Remix clicked');
-      // Send message first, THEN remove panel (panel.remove may disconnect the sender)
-      try {
-        chrome.runtime.sendMessage({ action: 'toggleEditor' }, () => {
-          if (chrome.runtime.lastError) {
-            console.warn('[Repix Panel] sendMessage error:', chrome.runtime.lastError.message);
-          }
-        });
-      } catch(err) {
-        console.warn('[Repix Panel] sendMessage threw:', err);
-      }
-      // Delay panel removal to keep sender alive during message delivery
-      setTimeout(() => panel.remove(), 100);
+      // Set flag for the extension icon click handler to detect
+      window.__rbWantsEditor = true;
+      panel.remove();
+      // Simulate clicking the extension icon by signaling via storage
+      chrome.storage.session.set({ pendingEditor: Date.now() });
     }, true);
 
     function showConnectState() {
