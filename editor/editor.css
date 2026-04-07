@@ -69,6 +69,14 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
   text-indent: 0;
   font-style: normal;
 }
+/* Force editor UI visible — prevent site CSS (Webflow IX3, GSAP) from hiding our elements */
+#rb-editor-root,
+#rb-editor-inspector,
+#rb-editor-layers,
+#rb-ed-banner {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
 #rb-editor-inspector {
   position:fixed; right:8px; top:40px;
   width:260px; max-height:calc(100vh - 52px);
