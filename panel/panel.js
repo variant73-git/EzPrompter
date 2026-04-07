@@ -685,11 +685,14 @@
       remixBtn.style.display = '';
     }
 
-    remixBtn.addEventListener('click', () => {
-      // Launch the page editor (toolbar + inspector)
+    remixBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      console.log('[Repix Panel] Live Remix clicked — sending toggleEditor');
       chrome.runtime.sendMessage({ action: 'toggleEditor' });
       panel.remove();
-    });
+    }, true);
 
     function showConnectState() {
       const center = panel.querySelector('.rb-site-analysis-center');

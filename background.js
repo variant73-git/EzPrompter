@@ -140,6 +140,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'toggleEditor') {
+    console.log('[Repix BG] toggleEditor received');
     (async () => {
       try {
         const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
