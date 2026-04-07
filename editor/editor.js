@@ -1,15 +1,22 @@
 (function() {
   if (window.__rbEditorActive) { deactivate(); return; }
   window.__rbEditorActive = true;
+  console.log('[RB] Editor starting...');
 
   var ac = new AbortController(), sig = ac.signal;
+  console.log('[RB] AbortController created');
 
   // Detect web builder and freeze animations
-  var builderInfo = window.__rbDetectBuilder ? window.__rbDetectBuilder() : {builder: 'generic', features: {}};
-  if (builderInfo.builder !== 'generic' && window.__rbFreeze) {
-    window.__rbFreeze(builderInfo);
-    console.log('[RepixBridge] Detected builder:', builderInfo.builder, builderInfo.features);
-  }
+  var builderInfo = {builder: 'generic', features: {}};
+  try {
+    if (window.__rbDetectBuilder) builderInfo = window.__rbDetectBuilder();
+    if (builderInfo.builder !== 'generic' && window.__rbFreeze) {
+      window.__rbFreeze(builderInfo);
+      console.log('[RepixBridge] Detected builder:', builderInfo.builder);
+    }
+  } catch(detectErr) { console.warn('[RB] Detect/freeze error:', detectErr); }
+  console.log('[RB] Detect done');
+  console.log('[RB] body exists:', !!document.body, 'body tag:', document.body?.tagName);
 
   var selectedEl = null, lastHoverEl = null, isDragging = false;
   var selectionDepth = 0;
@@ -38,6 +45,15 @@
   var EXPORT = '<svg '+IC+'><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>';
   var DL = '<svg '+IC+'><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
   var UL = '<svg '+IC+'><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
+
+  // Ensure editor CSS is loaded
+  if (!document.getElementById('rb-editor-styles')) {
+    var cssLink = document.createElement('link');
+    cssLink.id = 'rb-editor-styles';
+    cssLink.rel = 'stylesheet';
+    cssLink.href = chrome.runtime.getURL('editor/editor.css');
+    document.head.appendChild(cssLink);
+  }
 
   // DOM root
   var root = document.createElement('div');
@@ -3997,4 +4013,5 @@
       if (chrome.runtime.lastError) { /* ignore */ }
     });
   }
+
 })();
