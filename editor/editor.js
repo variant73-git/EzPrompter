@@ -458,7 +458,7 @@
     var x = mk('button');
     x.id = 'rb-ed-banner-close';
     x.innerHTML = CLOSE;
-    x.addEventListener('click', deactivate, {signal: sig});
+    x.addEventListener('mousedown', function(e) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); deactivate(); }, {signal: sig, capture: true});
     b.appendChild(x);
     root.appendChild(b);
     b.querySelectorAll('.rb-ed-mode').forEach(function(btn) {
@@ -1699,10 +1699,10 @@
       expDD.appendChild(btn);
     });
 
-    expBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
+    expBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       expDD.hidden = !expDD.hidden;
-    }, {signal: sig});
+    }, {signal: sig, capture: true});
     document.addEventListener('click', function() { expDD.hidden = true; }, {signal: sig});
 
     exportWrap.appendChild(expBtn);
@@ -1714,14 +1714,15 @@
     minBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
     minBtn.title = 'Minimize panel';
     var isMinimized = false;
-    minBtn.addEventListener('click', function() {
+    minBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       isMinimized = !isMinimized;
       inspector.classList.toggle('rb-ed-minimized', isMinimized);
       minBtn.innerHTML = isMinimized
         ? '<span class="rb-ed-icon-maximize"></span>'
         : '<span class="rb-ed-icon-minimize"></span>';
       minBtn.title = isMinimized ? 'Maximize panel' : 'Minimize panel';
-    }, {signal: sig});
+    }, {signal: sig, capture: true});
     hd.appendChild(minBtn);
 
     inspector.appendChild(hd);
@@ -1747,13 +1748,14 @@
     layersMinBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
     layersMinBtn.title = 'Minimize layers';
     var layersMinimized = false;
-    layersMinBtn.addEventListener('click', function() {
+    layersMinBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       layersMinimized = !layersMinimized;
       layersPanel.classList.toggle('rb-ed-minimized', layersMinimized);
       layersMinBtn.innerHTML = layersMinimized
         ? '<span class="rb-ed-icon-maximize"></span>'
         : '<span class="rb-ed-icon-minimize"></span>';
-    }, {signal: sig});
+    }, {signal: sig, capture: true});
     layersHd.appendChild(layersMinBtn);
 
     layersPanel.appendChild(layersHd);

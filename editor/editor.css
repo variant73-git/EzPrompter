@@ -821,6 +821,9 @@ body.rb-ed-canvas-mode { overflow: hidden !important; }
   -webkit-appearance: none;
   opacity: 0.4;
   transition: opacity 150ms;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 1;
 }
 .rb-ed-minmax-btn:hover { opacity: 1; }
 
