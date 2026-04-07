@@ -158,28 +158,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'toggleEditor') {
-    console.log('[Repix BG] toggleEditor received');
-    const doInject = async () => {
-      try {
-        const tabId = sender.tab?.id;
-        if (!tabId) {
-          const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (!tabs[0]) return;
-          var tid = tabs[0].id;
-        } else {
-          var tid = tabId;
-        }
-        await chrome.scripting.insertCSS({ target: { tabId: tid }, files: ['editor/editor.css'] });
-        await chrome.scripting.executeScript({ target: { tabId: tid }, files: ['editor/detect.js'] });
-        await chrome.scripting.executeScript({ target: { tabId: tid }, files: ['editor/freeze.js'] });
-        await chrome.scripting.executeScript({ target: { tabId: tid }, files: ['overlay/extractor.js'] });
-        await chrome.scripting.executeScript({ target: { tabId: tid }, files: ['editor/mode-e.js'] });
-        await chrome.scripting.executeScript({ target: { tabId: tid }, files: ['editor/rebuild.js'] });
-        await chrome.scripting.executeScript({ target: { tabId: tid }, files: ['editor/editor.js'] });
-        console.log('[Repix BG] Editor injected successfully');
-      } catch (e) { console.warn('[Repix BG] Editor injection failed:', e); }
-    };
-    doInject();
+    console.log('[Repix BG] toggleEditor received, sender tab:', sender.tab?.id);
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs[0]) { console.warn('[Repix BG] No active tab'); return; }
+      const tid = tabs[0].id;
+      console.log('[Repix BG] Injecting editor into tab', tid);
+      chrome.scripting.insertCSS({ target: { tabId: tid }, files: ['editor/editor.css'] })
+        .then(() => chrome.scripting.executeScript({ target: { tabId: tid }, files: ['editor/detect.js'] }))
+        .then(() => chrome.scripting.executeScript({ target: { tabId: tid }, files: ['editor/freeze.js'] }))
+        .then(() => chrome.scripting.executeScript({ target: { tabId: tid }, files: ['overlay/extractor.js'] }))
+        .then(() => chrome.scripting.executeScript({ target: { tabId: tid }, files: ['editor/mode-e.js'] }))
+        .then(() => chrome.scripting.executeScript({ target: { tabId: tid }, files: ['editor/rebuild.js'] }))
+        .then(() => chrome.scripting.executeScript({ target: { tabId: tid }, files: ['editor/editor.js'] }))
+        .then(() => console.log('[Repix BG] Editor injected successfully'))
+        .catch(e => console.warn('[Repix BG] Editor injection failed:', e));
+    });
     return false;
   }
 

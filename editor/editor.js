@@ -132,9 +132,35 @@
     });
   }
   forceEditorVisible();
-  // Re-force after a delay in case site JS overrides after load
   setTimeout(forceEditorVisible, 500);
-  setTimeout(forceEditorVisible, 1500);
+  setTimeout(function() {
+    forceEditorVisible();
+    // Deep debug — dump every computed property that could hide the inspector
+    var _i = document.getElementById('rb-editor-inspector');
+    if (_i) {
+      var cs = getComputedStyle(_i);
+      console.log('[RB-VIS] Inspector:', JSON.stringify({
+        opacity: cs.opacity,
+        visibility: cs.visibility,
+        display: cs.display,
+        overflow: cs.overflow,
+        clipPath: cs.clipPath,
+        clip: cs.clip,
+        width: cs.width,
+        height: cs.height,
+        maxHeight: cs.maxHeight,
+        top: cs.top,
+        right: cs.right,
+        position: cs.position,
+        zIndex: cs.zIndex,
+        transform: cs.transform,
+        filter: cs.filter,
+        pointerEvents: cs.pointerEvents,
+        inlineOpacity: _i.style.opacity,
+        inlineVis: _i.style.visibility
+      }));
+    }
+  }, 1500);
 
   // Prepare page for editing (tag elements, disable interactivity)
   if (window.__rbRebuild) {
