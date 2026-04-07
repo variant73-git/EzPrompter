@@ -1,10 +1,8 @@
 (function() {
   if (window.__rbEditorActive) { deactivate(); return; }
   window.__rbEditorActive = true;
-  console.log('[RB] Editor starting...');
 
   var ac = new AbortController(), sig = ac.signal;
-  console.log('[RB] AbortController created');
 
   // Detect web builder and freeze animations
   var builderInfo = {builder: 'generic', features: {}};
@@ -12,11 +10,8 @@
     if (window.__rbDetectBuilder) builderInfo = window.__rbDetectBuilder();
     if (builderInfo.builder !== 'generic' && window.__rbFreeze) {
       window.__rbFreeze(builderInfo);
-      console.log('[RepixBridge] Detected builder:', builderInfo.builder);
     }
-  } catch(detectErr) { console.warn('[RB] Detect/freeze error:', detectErr); }
-  console.log('[RB] Detect done');
-  console.log('[RB] body exists:', !!document.body, 'body tag:', document.body?.tagName);
+  } catch(detectErr) {}
 
   var selectedEl = null, lastHoverEl = null, isDragging = false;
   var selectionDepth = 0;
@@ -48,11 +43,15 @@
 
   // Ensure editor CSS is loaded
   if (!document.getElementById('rb-editor-styles')) {
-    var cssLink = document.createElement('link');
-    cssLink.id = 'rb-editor-styles';
-    cssLink.rel = 'stylesheet';
-    cssLink.href = chrome.runtime.getURL('editor/editor.css');
-    document.head.appendChild(cssLink);
+    var cssUrl = '';
+    try { cssUrl = chrome.runtime.getURL('editor/editor.css'); } catch(e) {}
+    if (cssUrl) {
+      var cssLink = document.createElement('link');
+      cssLink.id = 'rb-editor-styles';
+      cssLink.rel = 'stylesheet';
+      cssLink.href = cssUrl;
+      document.head.appendChild(cssLink);
+    }
   }
 
   // DOM root

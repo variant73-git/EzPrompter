@@ -686,17 +686,9 @@
     }
 
     remixBtn.addEventListener('click', () => {
-      console.log('[Repix Panel] __rbEditorActive BEFORE:', window.__rbEditorActive);
-      // Force clear stale flag
       window.__rbEditorActive = false;
-      console.log('[Repix Panel] Sending toggleEditor...');
-      chrome.runtime.sendMessage({ action: 'toggleEditor' }, (response) => {
-        console.log('[Repix Panel] Response:', response, 'Error:', chrome.runtime.lastError?.message);
-        console.log('[Repix Panel] __rbEditorActive AFTER:', window.__rbEditorActive);
-        console.log('[Repix Panel] root exists:', !!document.getElementById('rb-editor-root'));
-        console.log('[Repix Panel] banner exists:', !!document.getElementById('rb-ed-banner'));
-        console.log('[Repix Panel] body data-rb-editor-ready:', document.body.getAttribute('data-rb-editor-ready'));
-        console.log('[Repix Panel] body classList:', document.body.className);
+      chrome.runtime.sendMessage({ action: 'toggleEditor' }, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
         panel.remove();
       });
     });
