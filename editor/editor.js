@@ -473,15 +473,16 @@
     var x = mk('button');
     x.id = 'rb-ed-banner-close';
     x.innerHTML = CLOSE;
-    x.addEventListener('click', deactivate, {signal: sig});
+    x.addEventListener('mousedown', function(e) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); deactivate(); }, {signal: sig, capture: true});
     b.appendChild(x);
     root.appendChild(b);
     b.querySelectorAll('.rb-ed-mode').forEach(function(btn) {
-      btn.addEventListener('click', function() {
+      btn.addEventListener('mousedown', function(e) {
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
         switchMode(btn.dataset.mode);
         b.querySelectorAll('.rb-ed-mode').forEach(function(m) { m.classList.remove('active'); });
         btn.classList.add('active');
-      }, {signal: sig});
+      }, {signal: sig, capture: true});
     });
   }
 
@@ -1681,10 +1682,10 @@
       expDD.appendChild(btn);
     });
 
-    expBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
+    expBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       expDD.hidden = !expDD.hidden;
-    }, {signal: sig});
+    }, {signal: sig, capture: true});
     document.addEventListener('click', function() { expDD.hidden = true; }, {signal: sig});
 
     exportWrap.appendChild(expBtn);
@@ -1696,55 +1697,17 @@
     minBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
     minBtn.title = 'Minimize panel';
     var isMinimized = false;
-    minBtn.addEventListener('click', function() {
+    minBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       isMinimized = !isMinimized;
       inspector.classList.toggle('rb-ed-minimized', isMinimized);
       minBtn.innerHTML = isMinimized
         ? '<span class="rb-ed-icon-maximize"></span>'
         : '<span class="rb-ed-icon-minimize"></span>';
       minBtn.title = isMinimized ? 'Maximize panel' : 'Minimize panel';
-    }, {signal: sig});
+    }, {signal: sig, capture: true});
     hd.appendChild(minBtn);
 
-    // Mode E rebuild button (only for web builder sites or always available)
-    var rebuildBtn = mk('button', 'rb-ed-rebuild-btn');
-    rebuildBtn.textContent = '⚡ Rebuild';
-    rebuildBtn.title = 'Rebuild page with AI (screenshot → clean HTML)';
-    if (builderInfo.builder !== 'generic') {
-      rebuildBtn.textContent = '⚡ Rebuild (' + builderInfo.builder + ')';
-    }
-    rebuildBtn.addEventListener('click', function() {
-      if (!window.__rbModeE) { alert('Mode E not loaded'); return; }
-      rebuildBtn.disabled = true;
-      rebuildBtn.textContent = '⏳ Capturing...';
-
-      window.__rbModeE.run(function(progress) {
-        rebuildBtn.textContent = '⏳ ' + progress.message;
-        if (progress.step === 'done') {
-          rebuildBtn.textContent = '✅ Rebuilt!';
-          rebuildBtn.disabled = false;
-          // Re-init editor on the rebuilt page
-          setTimeout(function() {
-            rebuildBtn.textContent = '↩ Restore';
-            rebuildBtn.onclick = function() {
-              window.__rbModeE.restore();
-              rebuildBtn.textContent = '⚡ Rebuild';
-              rebuildBtn.onclick = null; // will be re-bound on next click
-              location.reload();
-            };
-            // Refresh layers panel
-            populateLayers();
-            showGlobalCSS();
-          }, 1000);
-        }
-        if (progress.step === 'error') {
-          rebuildBtn.textContent = '❌ ' + progress.message;
-          rebuildBtn.disabled = false;
-          setTimeout(function() { rebuildBtn.textContent = '⚡ Rebuild'; }, 3000);
-        }
-      });
-    }, {signal: sig});
-    hd.appendChild(rebuildBtn);
 
     inspector.appendChild(hd);
 
@@ -1769,13 +1732,14 @@
     layersMinBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
     layersMinBtn.title = 'Minimize layers';
     var layersMinimized = false;
-    layersMinBtn.addEventListener('click', function() {
+    layersMinBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       layersMinimized = !layersMinimized;
       layersPanel.classList.toggle('rb-ed-minimized', layersMinimized);
       layersMinBtn.innerHTML = layersMinimized
         ? '<span class="rb-ed-icon-maximize"></span>'
         : '<span class="rb-ed-icon-minimize"></span>';
-    }, {signal: sig});
+    }, {signal: sig, capture: true});
     layersHd.appendChild(layersMinBtn);
 
     layersPanel.appendChild(layersHd);
