@@ -686,15 +686,11 @@
     }
 
     remixBtn.addEventListener('click', () => {
-      console.log('[Repix Panel] chrome.runtime exists:', !!chrome.runtime, 'sendMessage exists:', !!chrome.runtime?.sendMessage);
-      try {
-        chrome.runtime.sendMessage({ action: 'toggleEditor' }, () => {
-          console.log('[Repix Panel] sendMessage callback, lastError:', chrome.runtime.lastError?.message);
-        });
-      } catch(err) {
-        console.error('[Repix Panel] sendMessage THREW:', err);
-      }
-      setTimeout(() => panel.remove(), 200);
+      console.log('[Repix Panel] Sending toggleEditor...');
+      chrome.runtime.sendMessage({ action: 'toggleEditor' }, (response) => {
+        console.log('[Repix Panel] Response:', response, 'Error:', chrome.runtime.lastError?.message);
+        panel.remove();
+      });
     });
 
     function showConnectState() {

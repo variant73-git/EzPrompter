@@ -140,9 +140,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'toggleEditor') {
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      if (!tabs[0]) { sendResponse({ok: false}); return; }
-      const tabId = tabs[0].id;
+    const tabId = sender.tab && sender.tab.id;
+    if (!tabId) { sendResponse({ok: false}); return true; }
+    (async () => {
       try {
         await chrome.scripting.insertCSS({ target: { tabId }, files: ['editor/editor.css'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/detect.js'] });
@@ -155,7 +155,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.warn('Editor injection failed:', e);
         sendResponse({ok: false, error: e.message});
       }
-    });
+    })();
     return true;
   }
 
