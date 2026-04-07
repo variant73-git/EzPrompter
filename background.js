@@ -54,10 +54,10 @@ chrome.action.onClicked.addListener(async (tab) => {
 });
 
 // Listen for editor injection request via storage (workaround for sleeping service worker)
-chrome.storage.session.onChanged.addListener(async (changes) => {
+chrome.storage.onChanged.addListener(async (changes) => {
   if (changes.pendingEditor) {
     console.log('[Repix BG] pendingEditor detected via storage');
-    chrome.storage.session.remove('pendingEditor');
+    chrome.storage.local.remove('pendingEditor');
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tabs[0]) return;

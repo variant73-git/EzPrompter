@@ -694,7 +694,7 @@
       window.__rbWantsEditor = true;
       panel.remove();
       // Simulate clicking the extension icon by signaling via storage
-      chrome.storage.session.set({ pendingEditor: Date.now() });
+      chrome.storage.local.set({ pendingEditor: Date.now() });
     }, true);
 
     function showConnectState() {
