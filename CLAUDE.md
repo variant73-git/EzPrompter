@@ -32,20 +32,14 @@ O Repix é o único tool que **edita sites visualmente no browser** com controle
 | Wireframeit | ~few hundred | <$10K ARR | $12/mês | Site → wireframes |
 
 ### Tamanho do mercado
-- Site-to-Design: ~$5-8M ARR (líder: html.to.design)
-- Site Cloning: ~$3.5-4M ARR (líder: same.new)
-- CSS Inspection: ~$500K-1M ARR (líder: CSS Peeper)
-- CSS Editing: ~$50-100K ARR (líder: CSS Pro)
 - **Total: ~$9-14M ARR** dentro de um mercado de design tools de $14.9B
 
 ### Pricing recomendado
 - **Free**: Mode A (CSS Live editing), 3 rebuilds/mês cortesia
 - **Pro ($12/mês)**: Mode E (IA rebuild ilimitado), web builder detection, export .fig
-- Alinhado com html.to.design e Wireframeit ($12/mês)
 
 ## Branches
 - `feat/normalize-engine` — branch principal (editor + layers + Mode E + detect/freeze)
-- `feat/webflow-rebuild` — branch legada (detect/freeze, já merged na normalize-engine)
 - `claude/ai-image-description-extension-Tp3jY` — main branch
 
 ## Versão atual
@@ -55,12 +49,12 @@ O Repix é o único tool que **edita sites visualmente no browser** com controle
 ```
 manifest.json           # Manifest V3 (Chrome/Opera)
 background.js           # Service worker: injeção, APIs IA, captureVisibleTab
-editor/editor.js        # EDITOR PRINCIPAL: ~3500 linhas
+editor/editor.js        # EDITOR PRINCIPAL: ~3800 linhas
 editor/editor.css       # Estilos (seleção, layers, inspector, guides)
 editor/mode-e.js        # Mode E: screenshot → Gemini Vision → HTML rebuild
 editor/detect.js        # Detecção de web builder (8 builders)
 editor/freeze.js        # Congela animações (GSAP, Lenis, Webflow IX)
-editor/rebuild.js       # Rebuild engine (getComputedStyle → baked styles)
+editor/rebuild.js       # Rebuild engine v4 (tag elements + disable interactivity)
 editor/normalize.js     # Curate engine
 overlay/semantic.js     # AI semantic mapping (legado, substituído por Mode E)
 overlay/extractor.js    # Extração de tokens: cores, fonts, radii, shadows, HTML limpo
@@ -96,7 +90,7 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 21. ✅ Alt+L toggle layers panel
 
 ### Mode E: Papel Vegetal (IA Rebuild)
-- ✅ Builder detection (8 builders: Webflow, Framer, Squarespace, Wix, Readymag, Cargo, WordPress, Shopify)
+- ✅ Builder detection (8 builders)
 - ✅ Animation freeze (GSAP, Lenis, Webflow IX2/IX3)
 - ✅ Scroll-capture (max 8 viewports)
 - ✅ Design token extraction (cores, fonts via extractor.js)
@@ -106,105 +100,74 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 - ⬜ Component chunking (segmentar em componentes antes de enviar ao LLM)
 - ⬜ DOM + Screenshot hybrid (enviar cleanHTML junto com screenshot)
 - ⬜ Multi-breakpoint capture (desktop + tablet + mobile)
-- ⬜ Asset localization (baixar imagens/fonts para data URLs)
 - ⬜ Refinement loop (comparar output com original, iterar)
 
-### Sistemas internos
-- **isVisuallyInert(el)** — apenas DIV/SPAN. Checa bg, border, shadow, outline, text. Sem layout props (padding/gap/position não contam).
-- **visualWeight(el)** — pontua conteúdo (buttons=2, images=2, headings=2, text=1). 50% decay/nível. WeakMap cache.
-- **elLabel(el)** — naming: semantic → ARIA → class patterns → decorative check → fallback tag.class
-- **findSiteWrapper()** — drill through single-child wrappers até 3+ filhos full-width
-- **isEditorEl(el)** — reconhece `rb-editor*` E `rb-ed-*` (banner, layers, inspector)
-- **layerHoverLock** — previne tMove de limpar hoverBox quando mouse está sobre layer row
+### Mode B: Rebuild (DOM Mirroring)
+- ✅ rebuild.js v4 funcional (tag elements + disable interactivity)
+- ❌ rebuild.js v5 (stylesheet extraction) **causava crash silencioso** — revertido
+- ⬜ Re-implementar v5 com cuidado (extrair stylesheets originais como Reforge faz)
 
-### Cores do editor
-- `#0095FF` — seleção azul
-- `#FF00DD` — spacing rosa
-- `#1A1A1A` — background painéis
-- `#EFEEEB` — texto painéis
+## Bugs conhecidos e padrões descobertos
 
-## Abordagens Técnicas de Clonagem (pesquisa consolidada)
+### Padrão crítico: botões do editor
+**TODOS os botões do editor UI devem usar `mousedown` com `capture:true` + `stopImmediatePropagation()`.**
+O click handler do document com `capture:true` intercepta clicks normais antes dos listeners dos botões. Usar `mousedown` com `capture` garante que o botão roda primeiro.
+Afeta: banner mode buttons, close button, export button, minimize buttons (inspector + layers).
+
+### CSS do editor: self-injection
+O `chrome.scripting.insertCSS` no background **pode falhar silenciosamente**. O editor.js agora injeta o próprio CSS via `<link>` tag usando `chrome.runtime.getURL('editor/editor.css')`. O arquivo deve estar em `web_accessible_resources` no manifest.
+
+### CSS de sites interferindo
+Sites com Webflow IX3/GSAP podem aplicar `opacity:0` ou `visibility:hidden` aos painéis do editor via seletores genéricos. O editor.css tem proteção: `opacity:1 !important; visibility:visible !important` nos painéis principais.
+
+### rebuild.js v5 crashava o editor
+O rebuild.js v5 (DOM mirroring com stylesheet extraction) causava crash silencioso que impedia o editor de inicializar. Causa não investigada a fundo — provavelmente conflito de escopo com `"use strict"` ou shadowing de variáveis. Revertido para v4. Re-implementar com mais cuidado.
+
+### Service worker e sendMessage
+O `toggleEditor` handler no background.js deve usar `return true` + `sendResponse()` para manter o service worker acordado durante a injeção async. O panel.js faz `window.__rbEditorActive = false` antes de enviar para limpar flags stuck.
+
+### Injeção de scripts — ordem importa
+A ordem de injeção no background.js é: detect.js → freeze.js → extractor.js → mode-e.js → rebuild.js → editor.js. O rebuild.js v5 era o último antes do editor.js e quebrava a inicialização.
+
+## Abordagens Técnicas de Clonagem
 
 ### Três estratégias identificadas
-1. **DOM Mirroring** — headless browser → getComputedStyle → Tailwind. 95% fidelidade. É o que rebuild.js faz.
-2. **Vision-to-Code** ⭐ — screenshot → Vision LLM → HTML/CSS novo. 80-90% fidelidade. É o que Mode E faz. Same.new, Orchids, Open Lovable usam isso.
-3. **Runtime Interception** — reverse-engineer do runtime do builder (webflow.js, framer-motion). 100% fidelidade mas frágil. NÃO implementar.
+1. **DOM Mirroring** — getComputedStyle ou stylesheets originais → CSS preservado. Fidelidade 95%.
+2. **Vision-to-Code** ⭐ — screenshot → Vision LLM → HTML novo. Fidelidade 80-90%. Mode E usa isso.
+3. **Runtime Interception** — reverse-engineer do builder runtime. 100% fidelidade mas frágil. NÃO implementar.
+
+### Reforge (build.reforge.com) — engenharia reversa feita
+- Usa Strategy 1 (DOM Mirroring) com **stylesheets originais** (não computed)
+- 13 arquivos CSS preservados, 35 componentes React auto-gerados
+- SafeImage com proxy CORS para imagens
+- Esconde elementos animados com `visibility:hidden !important` em vez de reproduzir
+- Confirma que extrair stylesheets originais via `document.styleSheets` é superior a `getComputedStyle`
 
 ### Técnica recomendada: DOM + Screenshot Hybrid
-Enviar AMBOS para o LLM: screenshot (fidelidade visual) + cleanHTML (textos exatos, hierarquia, classes). Nosso extractor.js já produz cleanHTML — falta integrar no prompt do Mode E.
-
-### Pipeline ideal (baseada em same.new + pesquisa)
-```
-1. Detect builder
-2. Freeze animações
-3. Extract design tokens (cores, fonts, @font-face, @keyframes, media queries)
-4. Scroll-capture (multi-breakpoint: desktop + tablet + mobile)
-5. Component chunking (segmentar em nav, hero, sections, footer)
-6. Para cada componente: screenshot + DOM structure → LLM
-7. Rebuild → HTML/CSS limpo
-8. Asset localization (imagens → data URLs)
-9. Refinement loop (comparar screenshot output vs original)
-```
-
-### Tools/técnicas a investigar
-- **NoCodeExport** — re-inicializa webflow.js em vez de substituir. Preserva animações.
-- **CSS Coverage API** — extrai só as regras CSS realmente usadas (incluindo CSS-in-JS runtime)
-- **Replay (video-to-code)** — grava animação em vídeo, extrai timing/easing para Framer Motion
-- **ClonewebX** — estudar como extrai componentes preservando estilos
-- **HTML to Framer extension** — modelo para Repix → OpenPencil (copiar seção → colar no editor)
+Enviar AMBOS para o LLM: screenshot (fidelidade visual) + cleanHTML (textos, hierarquia). Extractor.js já produz cleanHTML — falta integrar no prompt do Mode E.
 
 ## Integração OpenPencil (futuro)
-**OpenPencil** — editor Figma-like MIT, lê/escreve .fig, 100% browser (WASM/Canvas), zero servidor.
-
-Visão: embed no Repix como iframe inline para edição avançada (pen tool, vetores, components). Designer captura site → edita no Repix → Quick Edit no OpenPencil → exporta .fig. Nunca sai do browser.
-
-Status técnico:
-- MCP só suporta HTTP (incompatível com Claude Code stdio)
-- Skill `open-pencil` instalada em `.agents/skills/open-pencil`
-- App roda em localhost:7600 (HTTP) / 7601 (WS)
-- Pacote: `@open-pencil/mcp` v0.11.2 (bun global)
-
-vs Penpot: Penpot precisa de servidor (PostgreSQL+Redis+Clojure), não lê .fig, pesado demais para embed. OpenPencil é a escolha certa.
+OpenPencil — editor Figma-like MIT, lê/escreve .fig, 100% browser (WASM/Canvas), zero servidor.
+Visão: embed no Repix como iframe inline. Designer edita → Quick Edit no OpenPencil → exporta .fig.
+MCP só suporta HTTP (incompatível com Claude Code stdio). Skill instalada.
 
 ## Modelo de Negócio
 
-### Pricing planejado
+### Pricing
 | Tier | Preço | Features |
 |---|---|---|
 | Free | $0 | Mode A (CSS Live), 3 rebuilds/mês |
-| Pro | $12/mês | Mode E ilimitado, web builder detection, export .fig, naming IA |
+| Pro | $12/mês | Mode E ilimitado, web builder detection, export .fig |
 
-### Custo por usuário Pro
-- Gemini 2.5 Flash: ~$0.01-0.05 por rebuild
-- ~$1-2/mês por usuário ativo
-- Margem: ~80%
-
-### Decisão: cobrar pela IA, não deixar BYOK
-- Experiência seamless (zero config)
-- Margem saudável
-- Barreira de entrada zero
-- A API key própria que já existe no Settings continua para Image Remix (feature gratuita)
-
-### TAM realista
-- CSS Peeper tem 500K users de designers que inspecionam sites
-- Repix é "CSS Peeper que edita" — se capturar 5-10% = 25-50K users
-- $12/mês × 5% Pro = $180-360K ARR primeiro ano
-- Potencial $1-3M ARR em 2-3 anos
+### Decisão: cobrar pela IA, não BYOK
+Experiência seamless, margem ~80%, zero config para o usuário.
 
 ## Legal & Ética
-- Posicionar como ferramenta de **inspiração e aprendizado**, não cópia
-- Designer edita para criar algo novo ("papel vegetal")
-- Substituir assets com copyright antes de publicar
-- Não copiar API keys, analytics, scripts de terceiros
-
-## Portal Web (web/)
-- Stack: Next.js 15, Neon Postgres, Upstash Redis, Stripe
-- Planos: Free (5 capturas/mês) | Pro ($12/mês, ilimitado)
-- Deploy: Vercel (ainda não deployado)
+Ferramenta de **inspiração e aprendizado** — designer edita para criar algo novo ("papel vegetal").
 
 ## Branding
 - **Nome:** RepixBridge
-- **Logo:** "*Repix*" em Instrument Serif Italic 18px + "Bridge" em Instrument Sans 500 16.2px
+- **Logo:** "*Repix*" em Instrument Serif Italic + "Bridge" em Instrument Sans 500
 - **Slogan:** "Design without borders"
 - **Tipografia:** Instrument Serif (display) + Instrument Sans (body/UI)
 
@@ -213,7 +176,10 @@ vs Penpot: Penpot precisa de servidor (PostgreSQL+Redis+Clojure), não lê .fig,
 - Injeção: detect.js → freeze.js → extractor.js → mode-e.js → rebuild.js → editor.js
 - CSS scoped via IDs `rb-editor-*` e classes `rb-*`
 - `isEditorEl(el)` reconhece `rb-editor*` E `rb-ed-*`
+- **TODOS os botões do editor: `mousedown` + `capture:true` + `stopImmediatePropagation`**
+- Editor.js self-injeta CSS via `<link>` tag (não depender de `insertCSS` do background)
 - Funções compartilhadas entre escopos: escopo externo da IIFE (NÃO dentro de `listen()`)
-- Banner buttons: usar `mousedown` com `capture:true` + `stopImmediatePropagation`
+- Variáveis compartilhadas (ex: `layerHoverLock`, `isUselessWrapper`): escopo externo
 - Checkpoint stash: `git stash push -m "checkpoint-NNN"`
 - Gemini model fallback: 2.5-flash → 2.0-flash → 1.5-flash-latest
+- rebuild.js v5 crasha o editor — usar v4 até re-implementar com cuidado
