@@ -689,12 +689,9 @@
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      console.log('[Repix Panel] Live Remix clicked');
-      // Set flag for the extension icon click handler to detect
+      // Set flag on window so the extension icon click handler knows to inject editor
       window.__rbWantsEditor = true;
       panel.remove();
-      // Simulate clicking the extension icon by signaling via storage
-      chrome.storage.local.set({ pendingEditor: Date.now() });
     }, true);
 
     function showConnectState() {

@@ -23,26 +23,38 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || !tab.id) return;
   const tabId = tab.id;
 
-  // Check if panel or editor is already on the page
   try {
+    // Check page state
     const results = await chrome.scripting.executeScript({
       target: { tabId },
       func: () => ({
         panel: !!document.getElementById('repixbridge-panel'),
-        editor: !!window.__rbEditorActive && !!document.getElementById('rb-editor-root')
+        editor: !!window.__rbEditorActive && !!document.getElementById('rb-editor-root'),
+        wantsEditor: !!window.__rbWantsEditor
       })
     });
     const state = results[0]?.result || {};
 
     if (state.editor) {
-      // Editor is active — send attention glow
-      chrome.tabs.sendMessage(tabId, { action: 'editorAttention' });
-    } else if (state.panel) {
-      // Panel already open — remove it
+      // Editor active — toggle off (deactivate)
       chrome.scripting.executeScript({
         target: { tabId },
-        func: () => { const p = document.getElementById('repixbridge-panel'); if (p) p.remove(); }
+        func: () => { if (window.__rbEditorActive) window.__rbEditorActive = false; }
       });
+      // Re-inject to trigger the deactivate path
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/editor.js'] });
+    } else if (state.wantsEditor || state.panel) {
+      // Panel was open and user wants editor, OR panel is still open — inject editor
+      // First clear the flag and remove panel
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          window.__rbWantsEditor = false;
+          const p = document.getElementById('repixbridge-panel');
+          if (p) p.remove();
+        }
+      });
+      await injectEditor(tabId);
     } else {
       // Nothing active — inject panel
       await chrome.scripting.insertCSS({ target: { tabId }, files: ['panel/panel.css'] });
@@ -50,20 +62,6 @@ chrome.action.onClicked.addListener(async (tab) => {
     }
   } catch (e) {
     console.warn('Repix: action click failed:', e);
-  }
-});
-
-// Listen for editor injection request via storage (workaround for sleeping service worker)
-chrome.storage.onChanged.addListener(async (changes) => {
-  if (changes.pendingEditor) {
-    console.log('[Repix BG] pendingEditor detected via storage');
-    chrome.storage.local.remove('pendingEditor');
-    try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tabs[0]) return;
-      const tid = tabs[0].id;
-      await injectEditor(tid);
-    } catch (e) { console.warn('[Repix BG] Editor injection failed:', e); }
   }
 });
 
