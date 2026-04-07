@@ -682,7 +682,34 @@
   }
 
   function activateModeB() {
-    if (window.__rbRebuild) window.__rbRebuild.rebuild();
+    if (!window.__rbRebuild) return;
+
+    inspBody.innerHTML = '';
+    var status = mk('div', 'rb-insp-empty');
+    status.textContent = 'Rebuilding page...';
+    inspBody.appendChild(status);
+
+    // Run rebuild: kills animations, cleans DOM, tags elements, disables interactivity
+    window.__rbRebuild.rebuild();
+
+    status.textContent = 'Page rebuilt — animations frozen, scripts removed.';
+    status.style.color = '#22c55e';
+
+    // Show extracted CSS stats
+    var cssData = window.__rbRebuild.getExtractedCSS();
+    if (cssData) {
+      var stats = mk('div', 'rb-insp-empty');
+      stats.style.color = 'rgba(239,238,235,0.5)';
+      stats.style.fontSize = '9px';
+      stats.style.marginTop = '8px';
+      stats.textContent = cssData.stylesheets.length + ' stylesheets preserved, ' + cssData.fontLinks.length + ' font links detected';
+      inspBody.appendChild(stats);
+    }
+
+    // Refresh layers panel
+    setTimeout(function() {
+      populateLayers();
+    }, 300);
   }
 
   function activateModeC() {
