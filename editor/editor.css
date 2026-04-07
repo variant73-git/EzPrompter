@@ -40,7 +40,6 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 #rb-ed-banner * {
   text-transform: none !important;
   letter-spacing: normal !important;
-  pointer-events: auto !important;
 }
 #rb-ed-banner {
   position:fixed; top:0; left:0; right:0; height:32px;
@@ -58,15 +57,6 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 }
 #rb-ed-banner-close:hover { color:#EFEEEB; }
 
-/* Force editor UI visible — prevent site CSS (Webflow IX3, GSAP) from hiding our elements */
-#rb-editor-root,
-#rb-editor-inspector,
-#rb-editor-layers,
-#rb-ed-banner {
-  opacity: 1 !important;
-  visibility: visible !important;
-}
-
 /* ===== 4. INSPECTOR PANEL ===== */
 #rb-editor-inspector,
 #rb-editor-inspector *,
@@ -77,14 +67,6 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
   word-spacing: normal;
   text-indent: 0;
   font-style: normal;
-}
-/* Force editor UI visible — prevent site CSS (Webflow IX3, GSAP) from hiding our elements */
-#rb-editor-root,
-#rb-editor-inspector,
-#rb-editor-layers,
-#rb-ed-banner {
-  opacity: 1 !important;
-  visibility: visible !important;
 }
 #rb-editor-inspector {
   position:fixed; right:8px; top:40px;
@@ -804,9 +786,6 @@ html.rb-scroll-locked body {
   cursor: pointer;
   transition: all 150ms;
   -webkit-appearance: none;
-  pointer-events: auto !important;
-  position: relative;
-  z-index: 1;
 }
 .rb-ed-mode:hover { color: rgba(239,238,235,0.6); }
 .rb-ed-mode.active { background: rgba(239,238,235,0.1); color: #EFEEEB; }
@@ -838,9 +817,6 @@ body.rb-ed-canvas-mode { overflow: hidden !important; }
   -webkit-appearance: none;
   opacity: 0.4;
   transition: opacity 150ms;
-  pointer-events: auto !important;
-  position: relative;
-  z-index: 1;
 }
 .rb-ed-minmax-btn:hover { opacity: 1; }
 
