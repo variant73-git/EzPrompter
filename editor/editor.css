@@ -58,6 +58,15 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 }
 #rb-ed-banner-close:hover { color:#EFEEEB; }
 
+/* Force editor UI visible — prevent site CSS (Webflow IX3, GSAP) from hiding our elements */
+#rb-editor-root,
+#rb-editor-inspector,
+#rb-editor-layers,
+#rb-ed-banner {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
 /* ===== 4. INSPECTOR PANEL ===== */
 #rb-editor-inspector,
 #rb-editor-inspector *,

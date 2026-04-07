@@ -1,11 +1,6 @@
 (function() {
-  if (window.__rbEditorActive) {
-    // Editor already active — toggle off
-    if (typeof deactivate === 'function') deactivate();
-    return;
-  }
+  if (window.__rbEditorActive) { deactivate(); return; }
   window.__rbEditorActive = true;
-  try {
 
   var ac = new AbortController(), sig = ac.signal;
 
@@ -122,45 +117,6 @@
   // Build UI components
   buildBanner();
   buildInspector();
-
-  // Force visibility on all editor UI — site CSS (Webflow IX3, GSAP) can hide our elements
-  function forceEditorVisible() {
-    [root, document.getElementById('rb-ed-banner'), document.getElementById('rb-editor-inspector'), document.getElementById('rb-editor-layers')].forEach(function(el) {
-      if (!el) return;
-      el.style.setProperty('opacity', '1', 'important');
-      el.style.setProperty('visibility', 'visible', 'important');
-    });
-  }
-  forceEditorVisible();
-  setTimeout(forceEditorVisible, 500);
-  setTimeout(function() {
-    forceEditorVisible();
-    // Deep debug — dump every computed property that could hide the inspector
-    var _i = document.getElementById('rb-editor-inspector');
-    if (_i) {
-      var cs = getComputedStyle(_i);
-      console.log('[RB-VIS] Inspector:', JSON.stringify({
-        opacity: cs.opacity,
-        visibility: cs.visibility,
-        display: cs.display,
-        overflow: cs.overflow,
-        clipPath: cs.clipPath,
-        clip: cs.clip,
-        width: cs.width,
-        height: cs.height,
-        maxHeight: cs.maxHeight,
-        top: cs.top,
-        right: cs.right,
-        position: cs.position,
-        zIndex: cs.zIndex,
-        transform: cs.transform,
-        filter: cs.filter,
-        pointerEvents: cs.pointerEvents,
-        inlineOpacity: _i.style.opacity,
-        inlineVis: _i.style.visibility
-      }));
-    }
-  }, 1500);
 
   // Prepare page for editing (tag elements, disable interactivity)
   if (window.__rbRebuild) {
@@ -507,9 +463,7 @@
     root.appendChild(b);
     b.querySelectorAll('.rb-ed-mode').forEach(function(btn) {
       btn.addEventListener('mousedown', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
         switchMode(btn.dataset.mode);
         b.querySelectorAll('.rb-ed-mode').forEach(function(m) { m.classList.remove('active'); });
         btn.classList.add('active');
@@ -726,34 +680,7 @@
   }
 
   function activateModeB() {
-    if (!window.__rbRebuild) return;
-
-    inspBody.innerHTML = '';
-    var status = mk('div', 'rb-insp-empty');
-    status.textContent = 'Rebuilding page...';
-    inspBody.appendChild(status);
-
-    // Run rebuild: kills animations, cleans DOM, tags elements, disables interactivity
-    window.__rbRebuild.rebuild();
-
-    status.textContent = 'Page rebuilt — animations frozen, scripts removed.';
-    status.style.color = '#22c55e';
-
-    // Show extracted CSS stats
-    var cssData = window.__rbRebuild.getExtractedCSS();
-    if (cssData) {
-      var stats = mk('div', 'rb-insp-empty');
-      stats.style.color = 'rgba(239,238,235,0.5)';
-      stats.style.fontSize = '9px';
-      stats.style.marginTop = '8px';
-      stats.textContent = cssData.stylesheets.length + ' stylesheets preserved, ' + cssData.fontLinks.length + ' font links detected';
-      inspBody.appendChild(stats);
-    }
-
-    // Refresh layers panel
-    setTimeout(function() {
-      populateLayers();
-    }, 300);
+    if (window.__rbRebuild) window.__rbRebuild.rebuild();
   }
 
   function activateModeC() {
@@ -1768,6 +1695,46 @@
       minBtn.title = isMinimized ? 'Maximize panel' : 'Minimize panel';
     }, {signal: sig, capture: true});
     hd.appendChild(minBtn);
+
+    // Mode E rebuild button (only for web builder sites or always available)
+    var rebuildBtn = mk('button', 'rb-ed-rebuild-btn');
+    rebuildBtn.textContent = '⚡ Rebuild';
+    rebuildBtn.title = 'Rebuild page with AI (screenshot → clean HTML)';
+    if (builderInfo.builder !== 'generic') {
+      rebuildBtn.textContent = '⚡ Rebuild (' + builderInfo.builder + ')';
+    }
+    rebuildBtn.addEventListener('click', function() {
+      if (!window.__rbModeE) { alert('Mode E not loaded'); return; }
+      rebuildBtn.disabled = true;
+      rebuildBtn.textContent = '⏳ Capturing...';
+
+      window.__rbModeE.run(function(progress) {
+        rebuildBtn.textContent = '⏳ ' + progress.message;
+        if (progress.step === 'done') {
+          rebuildBtn.textContent = '✅ Rebuilt!';
+          rebuildBtn.disabled = false;
+          // Re-init editor on the rebuilt page
+          setTimeout(function() {
+            rebuildBtn.textContent = '↩ Restore';
+            rebuildBtn.onclick = function() {
+              window.__rbModeE.restore();
+              rebuildBtn.textContent = '⚡ Rebuild';
+              rebuildBtn.onclick = null; // will be re-bound on next click
+              location.reload();
+            };
+            // Refresh layers panel
+            populateLayers();
+            showGlobalCSS();
+          }, 1000);
+        }
+        if (progress.step === 'error') {
+          rebuildBtn.textContent = '❌ ' + progress.message;
+          rebuildBtn.disabled = false;
+          setTimeout(function() { rebuildBtn.textContent = '⚡ Rebuild'; }, 3000);
+        }
+      });
+    }, {signal: sig});
+    hd.appendChild(rebuildBtn);
 
     inspector.appendChild(hd);
 
@@ -4035,9 +4002,5 @@
     chrome.runtime.sendMessage({action: 'reopenPanel'}, function() {
       if (chrome.runtime.lastError) { /* ignore */ }
     });
-  }
-  } catch(initError) {
-    console.error('[RepixBridge] Editor initialization failed:', initError);
-    window.__rbEditorActive = false;
   }
 })();

@@ -685,14 +685,11 @@
       remixBtn.style.display = '';
     }
 
-    remixBtn.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      // Set flag on window so the extension icon click handler knows to inject editor
-      window.__rbWantsEditor = true;
+    remixBtn.addEventListener('click', () => {
+      // Launch the page editor (toolbar + inspector)
+      chrome.runtime.sendMessage({ action: 'toggleEditor' });
       panel.remove();
-    }, true);
+    });
 
     function showConnectState() {
       const center = panel.querySelector('.rb-site-analysis-center');

@@ -23,59 +23,17 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || !tab.id) return;
   const tabId = tab.id;
 
-  try {
-    // Check page state
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => ({
-        panel: !!document.getElementById('repixbridge-panel'),
-        editor: !!window.__rbEditorActive && !!document.getElementById('rb-editor-root'),
-        wantsEditor: !!window.__rbWantsEditor
-      })
-    });
-    const state = results[0]?.result || {};
-
-    if (state.editor) {
-      // Editor active — toggle off (deactivate)
-      chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => { if (window.__rbEditorActive) window.__rbEditorActive = false; }
-      });
-      // Re-inject to trigger the deactivate path
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/editor.js'] });
-    } else if (state.wantsEditor || state.panel) {
-      // Panel was open and user wants editor, OR panel is still open — inject editor
-      // First clear the flag and remove panel
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => {
-          window.__rbWantsEditor = false;
-          const p = document.getElementById('repixbridge-panel');
-          if (p) p.remove();
-        }
-      });
-      await injectEditor(tabId);
-    } else {
-      // Nothing active — inject panel
-      await chrome.scripting.insertCSS({ target: { tabId }, files: ['panel/panel.css'] });
-      await chrome.scripting.executeScript({ target: { tabId }, files: ['panel/panel.js'] });
+  // Check if editor is active by trying to send a message
+  chrome.tabs.sendMessage(tabId, { action: 'editorAttention' }, (response) => {
+    if (chrome.runtime.lastError) {
+      // No listener = editor not active, inject panel
+      chrome.scripting.insertCSS({ target: { tabId }, files: ['panel/panel.css'] }).then(() => {
+        return chrome.scripting.executeScript({ target: { tabId }, files: ['panel/panel.js'] });
+      }).catch(e => console.warn('Repix: injection failed:', e));
     }
-  } catch (e) {
-    console.warn('Repix: action click failed:', e);
-  }
+    // If no error, editor handled it (attention glow)
+  });
 });
-
-// Shared editor injection function
-async function injectEditor(tabId) {
-  await chrome.scripting.insertCSS({ target: { tabId }, files: ['editor/editor.css'] });
-  await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/detect.js'] });
-  await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/freeze.js'] });
-  await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/extractor.js'] });
-  await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e.js'] });
-  await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/rebuild.js'] });
-  await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/editor.js'] });
-  console.log('[Repix BG] Editor injected into tab', tabId);
-}
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'repix-capture') {
@@ -182,10 +140,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'toggleEditor') {
-    console.log('[Repix BG] toggleEditor received');
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (!tabs[0]) return;
-      injectEditor(tabs[0].id).catch(e => console.warn('[Repix BG] injection failed:', e));
+      const tabId = tabs[0].id;
+      try {
+        await chrome.scripting.insertCSS({ target: { tabId }, files: ['editor/editor.css'] });
+        // Inject detection + freeze + mode-e before editor
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/detect.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/freeze.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/extractor.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e.js'] });
+        // Inject rebuild engine, then editor
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/rebuild.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/editor.js'] });
+      } catch (e) { console.warn('Editor injection failed:', e); }
     });
     return false;
   }
@@ -291,47 +259,38 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         const settings = await chrome.storage.sync.get(['apiKey', 'model']);
         const apiKey = settings.apiKey;
-        if (!apiKey) { sendResponse({error: 'No API key configured. Go to Settings and add your Gemini API key.'}); return; }
+        if (!apiKey) { sendResponse({error: 'No API key configured'}); return; }
 
         const match = message.imageDataUrl.match(/^data:(.+?);base64,(.+)$/);
         if (!match) { sendResponse({error: 'Invalid image data'}); return; }
         const [, mediaType, base64Data] = match;
 
-        // Try models in order of preference (best → fallback)
-        const MODELS = ['gemini-2.5-flash-preview-05-20', 'gemini-2.0-flash', 'gemini-1.5-flash-latest'];
-        const userModel = settings.model;
-        const modelsToTry = userModel && !MODELS.includes(userModel) ? [userModel, ...MODELS] : MODELS;
+        const model = settings.model || 'gemini-flash-latest';
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-        let lastError = '';
-        for (const model of modelsToTry) {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{
-                parts: [
-                  { text: message.prompt },
-                  { inline_data: { mime_type: mediaType, data: base64Data } }
-                ]
-              }],
-              generationConfig: { maxOutputTokens: 8000 }
-            })
-          });
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { text: message.prompt },
+                { inline_data: { mime_type: mediaType, data: base64Data } }
+              ]
+            }],
+            generationConfig: { maxOutputTokens: 8000 }
+          })
+        });
 
-          if (response.ok) {
-            const data = await response.json();
-            const html = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            sendResponse({html: html});
-            return;
-          }
-
+        if (!response.ok) {
           const err = await response.json().catch(() => ({}));
-          lastError = err.error?.message || String(response.status);
-          console.warn('[Mode E] Model', model, 'failed:', lastError, '— trying next...');
+          sendResponse({error: `Gemini API error: ${err.error?.message || response.status}`});
+          return;
         }
 
-        sendResponse({error: `All models failed. Last error: ${lastError}`});
+        const data = await response.json();
+        const html = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        sendResponse({html: html});
       } catch(e) {
         sendResponse({error: e.message});
       }
@@ -868,7 +827,7 @@ function getSettings() {
     chrome.storage.sync.get({
       apiProvider: 'gemini',
       apiKey: '',
-      model: 'gemini-2.5-flash-preview-05-20',
+      model: 'gemini-flash-latest',
       ollamaUrl: 'http://localhost:11434',
       language: 'en',
       downloadFolder: 'Repix',
@@ -1121,7 +1080,7 @@ async function describeWithGemini(imageDataUrl, systemPrompt, settings) {
   if (!match) throw new Error('Invalid image data');
   const [, mediaType, base64Data] = match;
 
-  const model = settings.model || 'gemini-2.5-flash-preview-05-20';
+  const model = settings.model || 'gemini-flash-latest';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`;
 
   const response = await fetch(url, {
