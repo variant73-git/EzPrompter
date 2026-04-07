@@ -141,20 +141,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'toggleEditor') {
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      if (!tabs[0]) return;
+      if (!tabs[0]) { sendResponse({ok: false}); return; }
       const tabId = tabs[0].id;
       try {
         await chrome.scripting.insertCSS({ target: { tabId }, files: ['editor/editor.css'] });
-        // Inject detection + freeze + mode-e before editor
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/detect.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/freeze.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e.js'] });
-        // Inject rebuild engine, then editor
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/rebuild.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/editor.js'] });
-      } catch (e) { console.warn('Editor injection failed:', e); }
+        sendResponse({ok: true});
+      } catch (e) {
+        console.warn('Editor injection failed:', e);
+        sendResponse({ok: false, error: e.message});
+      }
     });
-    return false;
+    return true;
   }
 
   if (message.action === 'semanticAnalyze') {

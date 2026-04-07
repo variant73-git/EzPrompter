@@ -686,9 +686,15 @@
     }
 
     remixBtn.addEventListener('click', () => {
-      // Launch the page editor (toolbar + inspector)
-      chrome.runtime.sendMessage({ action: 'toggleEditor' });
-      panel.remove();
+      console.log('[Repix Panel] chrome.runtime exists:', !!chrome.runtime, 'sendMessage exists:', !!chrome.runtime?.sendMessage);
+      try {
+        chrome.runtime.sendMessage({ action: 'toggleEditor' }, () => {
+          console.log('[Repix Panel] sendMessage callback, lastError:', chrome.runtime.lastError?.message);
+        });
+      } catch(err) {
+        console.error('[Repix Panel] sendMessage THREW:', err);
+      }
+      setTimeout(() => panel.remove(), 200);
     });
 
     function showConnectState() {
