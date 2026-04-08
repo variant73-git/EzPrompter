@@ -3,7 +3,7 @@
 const API_BASE = 'https://repix.vercel.app';
 
 const MODEL_DEFAULTS = {
-  gemini: 'gemini-2.0-flash',
+  gemini: 'gemini-3.1-pro-preview',
   ollama: 'moondream',
   openai: 'gpt-4o',
   anthropic: 'claude-sonnet-4-6'
@@ -14,7 +14,7 @@ const SYNC_DEFAULTS = {
   activeMode: 'dark',
   apiProvider: 'gemini',
   apiKey: '',
-  model: 'gemini-2.0-flash',
+  model: 'gemini-3.1-pro-preview',
   designTool: 'figma',
   ollamaUrl: 'http://localhost:11434',
   language: 'en',

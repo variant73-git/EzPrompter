@@ -89,23 +89,33 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 20. ✅ Auto-save (localStorage + hash cache)
 21. ✅ Alt+L toggle layers panel
 
-### Mode E: Papel Vegetal (IA Rebuild)
+### Mode E: Papel Vegetal (Vision-to-Code)
+**O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.
+
+**Implementado:**
 - ✅ Builder detection (8 builders)
 - ✅ Animation freeze (GSAP, Lenis, Webflow IX2/IX3)
 - ✅ Scroll-capture (max 8 viewports)
 - ✅ Design token extraction (cores, fonts via extractor.js)
-- ✅ Screenshot → Gemini 2.5 Flash Vision → HTML/CSS rebuild
+- ✅ Screenshot → Gemini 2.5 Flash Vision → HTML/CSS rebuild (~70-80% fidelidade)
 - ✅ Model fallback chain (2.5-flash → 2.0-flash → 1.5-flash-latest)
 - ✅ Preserva editor UI durante rebuild
-- ⬜ Component chunking (segmentar em componentes antes de enviar ao LLM)
-- ⬜ DOM + Screenshot hybrid (enviar cleanHTML junto com screenshot)
-- ⬜ Multi-breakpoint capture (desktop + tablet + mobile)
-- ⬜ Refinement loop (comparar output com original, iterar)
 
-### Mode B: Rebuild (DOM Mirroring)
+**Roadmap para melhorar fidelidade:**
+1. ⬜ **DOM + Screenshot hybrid** — integrar cleanHTML do extractor.js no prompt do Mode E (já temos os dados, falta conectar)
+2. ⬜ **Component chunking** — segmentar página antes de enviar (navbar, hero, sections, footer separados) como same.new faz
+3. ⬜ **Asset localization** — baixar imagens/fonts para data URLs
+4. ⬜ **Multi-breakpoint capture** — desktop + tablet + mobile
+5. ⬜ **Refinement loop** — comparar output com original, iterar
+
+### Mode B: Rebuild (DOM Mirroring) — baseado no Reforge
+**O que aprendemos:** O Reforge usa DOM Mirroring com stylesheets originais — extrai CSS rules via `document.styleSheets` (não `getComputedStyle`). Isso preserva media queries, hover states, keyframes, cascade. Resultado: 95% de fidelidade visual.
+
+**Implementado:**
 - ✅ rebuild.js v4 funcional (tag elements + disable interactivity)
 - ❌ rebuild.js v5 (stylesheet extraction) **causava crash silencioso** — revertido
-- ⬜ Re-implementar v5 com cuidado (extrair stylesheets originais como Reforge faz)
+
+**Caminho:** Re-implementar v5 como arquivo separado (não dentro do rebuild.js) para evitar conflitos de escopo com o editor. Causa provável do crash: conflito de escopo com `"use strict"` ou shadowing de variáveis.
 
 ## Bugs conhecidos e padrões descobertos
 
@@ -132,8 +142,8 @@ A ordem de injeção no background.js é: detect.js → freeze.js → extractor.
 ## Abordagens Técnicas de Clonagem
 
 ### Três estratégias identificadas
-1. **DOM Mirroring** — getComputedStyle ou stylesheets originais → CSS preservado. Fidelidade 95%.
-2. **Vision-to-Code** ⭐ — screenshot → Vision LLM → HTML novo. Fidelidade 80-90%. Mode E usa isso.
+1. **DOM Mirroring** — `document.styleSheets` (stylesheets originais) → CSS preservado com cascade, media queries, hover states. Fidelidade 95%. Mode B usa isso.
+2. **Vision-to-Code** ⭐ — screenshot → Vision LLM → HTML novo. Fidelidade 70-90% dependendo do prompt. Mode E usa isso. Recomendada para longevidade.
 3. **Runtime Interception** — reverse-engineer do builder runtime. 100% fidelidade mas frágil. NÃO implementar.
 
 ### Reforge (build.reforge.com) — engenharia reversa feita
@@ -141,10 +151,23 @@ A ordem de injeção no background.js é: detect.js → freeze.js → extractor.
 - 13 arquivos CSS preservados, 35 componentes React auto-gerados
 - SafeImage com proxy CORS para imagens
 - Esconde elementos animados com `visibility:hidden !important` em vez de reproduzir
-- Confirma que extrair stylesheets originais via `document.styleSheets` é superior a `getComputedStyle`
+- Confirma que `document.styleSheets` é superior a `getComputedStyle`
+
+### Fontes de pesquisa (abril 2026)
+Múltiplas fontes validaram a abordagem Vision-to-Code + component chunking: Khoj, Tavily, Scira, Kragent, Morphic. O same.new (YC W24, $3M ARR) é a referência principal para component chunking.
+
+### Aura.build — engenharia reversa feita (abril 2026)
+- Usa 3 fontes com hierarquia: **screenshot** (visual primário) > **captured page structure** (estrutura DOM) > **DESIGN.md** (tipografia + assets, secundário)
+- DESIGN.md é **Markdown semântico** (~15KB): Overview, Colors (brand/semantic/neutrals), Typography (families + weights + usage + hierarchy), Elevation (borders vs shadows), Components (inventário), Do's/Don'ts, Assets (URLs categorizados)
+- O "Overview" do DESIGN.md dá ao LLM o **tom** do site antes dos detalhes — crucial para qualidade
+- Assets categorizados: Image, Font, Background, Other — com URLs reais para `@font-face`
+- Usa **Gemini 3.1** para geração
+- Resultado: alta fidelidade em sites complexos (testado em sanity.io)
+- Referência salva: `.firecrawl/aura-sanity-design.md`
+- **Implicação para RepixBridge:** nosso extractor.js deve gerar output no formato DESIGN.md (markdown semântico, não JSON)
 
 ### Técnica recomendada: DOM + Screenshot Hybrid
-Enviar AMBOS para o LLM: screenshot (fidelidade visual) + cleanHTML (textos, hierarquia). Extractor.js já produz cleanHTML — falta integrar no prompt do Mode E.
+Enviar AMBOS para o LLM: screenshot (fidelidade visual) + cleanHTML (textos, hierarquia, semântica). O extractor.js já produz cleanHTML e design tokens — falta integrar no prompt do Mode E. Essa é a próxima melhoria de maior impacto.
 
 ## Integração OpenPencil (futuro)
 OpenPencil — editor Figma-like MIT, lê/escreve .fig, 100% browser (WASM/Canvas), zero servidor.

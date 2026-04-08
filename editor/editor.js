@@ -562,122 +562,56 @@
     }
   }
 
-  // ============ MODE E: AI SEMANTIC ============
+  // ============ MODE E: AI REBUILD (Papel Vegetal) ============
 
-  var semanticMap = null;
   var semanticGroups = [];
 
   function activateModeE() {
-    // Show loading in inspector
-    inspBody.innerHTML = '';
-    var loading = mk('div', 'rb-insp-empty');
-    loading.textContent = 'AI is mapping this site...';
-    inspBody.appendChild(loading);
-
-    // Listen for result
-    chrome.runtime.onMessage.addListener(function onSemantic(msg) {
-      if (msg.action === 'semanticResult') {
-        chrome.runtime.onMessage.removeListener(onSemantic);
-        semanticMap = msg.map;
-        applySemantic(semanticMap, msg.fromCache);
-      }
-      if (msg.action === 'semanticError') {
-        chrome.runtime.onMessage.removeListener(onSemantic);
-        inspBody.innerHTML = '';
-        var err = mk('div', 'rb-insp-empty');
-        err.textContent = 'AI error: ' + msg.error;
-        err.style.color = '#f87171';
-        inspBody.appendChild(err);
-      }
-    });
-
-    // Request analysis from background
-    chrome.runtime.sendMessage({ action: 'semanticAnalyze' });
-  }
-
-  function applySemantic(map, fromCache) {
-    inspBody.innerHTML = '';
-    var info = mk('div', 'rb-insp-empty');
-
-    if (!map || !map.sections || !map.sections.length) {
-      info.textContent = 'AI mapped 0 sections. Try a different page.';
-      inspBody.appendChild(info);
+    if (!window.__rbModeE) {
+      inspBody.innerHTML = '';
+      var err = mk('div', 'rb-insp-empty');
+      err.textContent = 'Mode E not loaded. Reload the page and try again.';
+      err.style.color = '#f87171';
+      inspBody.appendChild(err);
       return;
     }
 
-    info.textContent = 'AI mapped ' + map.sections.length + ' sections.' + (fromCache ? ' (cached)' : '');
-    info.style.color = '#22c55e';
-    inspBody.appendChild(info);
+    // Show progress in inspector
+    inspBody.innerHTML = '';
+    var progressEl = mk('div', 'rb-insp-empty');
+    progressEl.textContent = 'Starting AI rebuild...';
+    inspBody.appendChild(progressEl);
 
-    // Re-analyze button (force refresh, ignores cache)
-    if (fromCache) {
-      var reBtn = mk('button', 'rb-insp-inp');
-      reBtn.textContent = 'Re-analyze';
-      reBtn.style.cssText = 'cursor:pointer;text-align:center;margin-top:4px;width:100%;';
-      reBtn.addEventListener('click', function() {
-        semanticGroups.forEach(function(g) { g.remove(); });
-        semanticGroups = [];
-        inspBody.innerHTML = '';
-        var loading = mk('div', 'rb-insp-empty');
-        loading.textContent = 'Re-analyzing...';
-        inspBody.appendChild(loading);
-        chrome.runtime.onMessage.addListener(function onRe(msg) {
-          if (msg.action === 'semanticResult') {
-            chrome.runtime.onMessage.removeListener(onRe);
-            semanticMap = msg.map;
-            applySemantic(semanticMap, false);
-          }
-          if (msg.action === 'semanticError') {
-            chrome.runtime.onMessage.removeListener(onRe);
-            inspBody.innerHTML = '';
-            var err = mk('div', 'rb-insp-empty');
-            err.textContent = 'Error: ' + msg.error;
-            err.style.color = '#f87171';
-            inspBody.appendChild(err);
-          }
-        });
-        chrome.runtime.sendMessage({ action: 'semanticAnalyze', forceRefresh: true });
-      });
-      inspBody.appendChild(reBtn);
-    }
+    // Restore button (shown after rebuild completes)
+    var restoreBtn = mk('button', 'rb-insp-inp');
+    restoreBtn.textContent = 'Restore original page';
+    restoreBtn.style.cssText = 'cursor:pointer;text-align:center;margin-top:8px;width:100%;display:none;';
+    restoreBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      window.__rbModeE.restore();
+      switchMode('A');
+    }, {capture: true, signal: sig});
+    inspBody.appendChild(restoreBtn);
 
-    // Highlight sections on the page
-    semanticGroups = [];
-    map.sections.forEach(function(section) {
-      if (!section.bounds) return;
-      var b = section.bounds;
-      var overlay = mk('div', 'rb-ed-semantic-block');
-      overlay.style.cssText = 'position:fixed;top:'+b.y+'px;left:'+b.x+'px;width:'+b.width+'px;height:'+b.height+'px;pointer-events:none;';
-      var label = mk('span', 'rb-ed-semantic-label');
-      label.textContent = section.type + (section.id ? ' #' + section.id : '');
-      overlay.appendChild(label);
-      root.appendChild(overlay);
-      semanticGroups.push(overlay);
-
-      // Find and mark the real DOM element at this position
-      var centerX = b.x + b.width / 2;
-      var centerY = b.y + b.height / 2;
-      var realEl = document.elementFromPoint(centerX, centerY);
-      if (realEl && isValid(realEl)) {
-        realEl.setAttribute('data-rb-semantic', section.type);
+    window.__rbModeE.run(function(progress) {
+      if (progress.step === 'error') {
+        progressEl.style.color = '#f87171';
+        progressEl.textContent = progress.message;
+      } else if (progress.step === 'done') {
+        progressEl.style.color = '#22c55e';
+        progressEl.textContent = progress.message;
+        restoreBtn.style.display = '';
+      } else {
+        progressEl.textContent = progress.message;
       }
     });
-
-    // After 3s, fade out overlays — selection works via normal click on marked elements
-    setTimeout(function() {
-      semanticGroups.forEach(function(g) {
-        g.style.opacity = '0';
-        g.style.transition = 'opacity 800ms';
-      });
-      setTimeout(function() {
-        semanticGroups.forEach(function(g) { g.remove(); });
-        semanticGroups = [];
-      }, 800);
-    }, 3000);
   }
 
+  // applySemantic removed — Mode E now uses the full rebuild pipeline (mode-e.js)
+
   function cleanupMode() {
-    // Clean Mode E semantic overlays
+    // Clean Mode E rebuild
+    if (window.__rbModeE) window.__rbModeE.restore();
     semanticGroups.forEach(function(g) { g.remove(); });
     semanticGroups = [];
     // Clean Mode F normalized DOM

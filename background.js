@@ -3,6 +3,16 @@
 importScripts('overlay/semantic.js');
 
 chrome.runtime.onInstalled.addListener(() => {
+  // Migrate old model names to current defaults
+  chrome.storage.sync.get(['model'], (settings) => {
+    var old = settings.model || '';
+    var outdated = ['gemini-flash-latest', 'gemini-1.5-flash-latest', 'gemini-1.5-pro-latest',
+                    'gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'];
+    if (!old || outdated.indexOf(old) !== -1) {
+      chrome.storage.sync.set({ model: 'gemini-3.1-pro-preview' });
+    }
+  });
+
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: 'repix-describe',
@@ -261,13 +271,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         const settings = await chrome.storage.sync.get(['apiKey', 'model']);
         const apiKey = settings.apiKey;
-        if (!apiKey) { sendResponse({error: 'No API key configured'}); return; }
+        if (!apiKey) { sendResponse({error: 'No API key configured. Open the extension popup and go to Settings to add your API key.'}); return; }
 
         const match = message.imageDataUrl.match(/^data:(.+?);base64,(.+)$/);
         if (!match) { sendResponse({error: 'Invalid image data'}); return; }
         const [, mediaType, base64Data] = match;
 
-        const model = settings.model || 'gemini-flash-latest';
+        const model = settings.model || 'gemini-3.1-pro-preview';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
         const response = await fetch(url, {
@@ -829,7 +839,7 @@ function getSettings() {
     chrome.storage.sync.get({
       apiProvider: 'gemini',
       apiKey: '',
-      model: 'gemini-flash-latest',
+      model: 'gemini-3.1-pro-preview',
       ollamaUrl: 'http://localhost:11434',
       language: 'en',
       downloadFolder: 'Repix',
@@ -1082,7 +1092,7 @@ async function describeWithGemini(imageDataUrl, systemPrompt, settings) {
   if (!match) throw new Error('Invalid image data');
   const [, mediaType, base64Data] = match;
 
-  const model = settings.model || 'gemini-flash-latest';
+  const model = settings.model || 'gemini-3.1-pro-preview';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${settings.apiKey}`;
 
   const response = await fetch(url, {
