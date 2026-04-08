@@ -60,6 +60,11 @@
   document.body.appendChild(root);
   document.body.classList.add('rb-ed-active');
 
+  // Font isolation: inline <style> injected LAST to beat any site CSS
+  var rbFontStyle = document.createElement('style');
+  rbFontStyle.textContent = '#rb-editor-root, #rb-editor-root *, #rb-editor-root *::before, #rb-editor-root *::after { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif !important; }';
+  root.appendChild(rbFontStyle);
+
   // Overlay: hover highlight
   var hoverBox = mk('div', 'rb-sel-hover');
   var hoverTag = mk('div', 'rb-sel-hover-tag');
@@ -1764,19 +1769,21 @@
     sectionsBody.style.display = 'none';
     layersPanel.appendChild(sectionsBody);
 
-    tabLayers.addEventListener('click', function() {
+    tabLayers.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
       layersBody.style.display = '';
       sectionsBody.style.display = 'none';
       tabLayers.classList.add('rb-layer-tab-active');
       tabSections.classList.remove('rb-layer-tab-active');
-    }, {signal: sig});
-    tabSections.addEventListener('click', function() {
+    }, {capture: true, signal: sig});
+    tabSections.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
       layersBody.style.display = 'none';
       sectionsBody.style.display = '';
       tabSections.classList.add('rb-layer-tab-active');
       tabLayers.classList.remove('rb-layer-tab-active');
       populateSections();
-    }, {signal: sig});
+    }, {capture: true, signal: sig});
 
     // Resize handle
     var resizeHandle = mk('div');
@@ -1841,133 +1848,7 @@
       addRow(typSec, 'In use', pills);
     }
 
-    // Colors
-    var colSec = addSection('Colors', false);
-    var bodyBg = cs.backgroundColor;
-    if (!bodyBg || bodyBg === 'rgba(0, 0, 0, 0)' || bodyBg === 'transparent') {
-      bodyBg = getComputedStyle(document.documentElement).backgroundColor || '#ffffff';
-    }
-    var bgHexGlobal = rgbHex(bodyBg) || 'transparent';
-    var bgSw = mk('div', 'rb-insp-swatch');
-    bgSw.style.background = isTransparent(bodyBg) ? '#fff' : bodyBg;
-    bgSw.title = bgHexGlobal;
-    addRow(colSec, 'Body BG', bgSw);
-
-    var txtHexGlobal = rgbHex(cs.color) || '#000000';
-    var txtSw = mk('div', 'rb-insp-swatch');
-    txtSw.style.background = cs.color;
-    txtSw.title = txtHexGlobal;
-    addRow(colSec, 'Text', txtSw);
-
-    var link = document.querySelector('a');
-    if (link) addRow(colSec, 'Links', rgbHex(getComputedStyle(link).color) || '#0000ff');
-
-    // Background — separated into Colors and Images
-    var bgSec = addSection('Background', false);
-
-    // Scan all bg colors
-    var bgColors = new Set();
-    var bgImages = [];
-    var bgCandidates = [document.body, document.documentElement];
-    document.querySelectorAll('section,header,main,footer,div,article').forEach(function(el) {
-      if (isEditorEl(el)) return;
-      var r = el.getBoundingClientRect();
-      if (r.width < 100 || r.height < 50) return;
-      bgCandidates.push(el);
-    });
-    bgCandidates.forEach(function(el) {
-      var elCs = getCS(el);
-      var bgC = rgbHex(elCs.backgroundColor);
-      if (bgC) bgColors.add(bgC);
-      var bgImg = elCs.backgroundImage;
-      if (bgImg && bgImg !== 'none') {
-        if (!bgImages.some(function(b) { return b.bgImg === bgImg; })) {
-          bgImages.push({ el: el, bgImg: bgImg });
-        }
-      }
-    });
-
-    // Colors subsection
-    if (bgColors.size > 0) {
-      var colRow = mk('div', 'rb-insp-color-row');
-      colRow.style.flexWrap = 'wrap';
-      colRow.style.gap = '3px';
-      bgColors.forEach(function(hex) {
-        var sw = mk('div', 'rb-insp-swatch');
-        sw.style.background = hex;
-        sw.title = hex;
-        colRow.appendChild(sw);
-      });
-      addRow(bgSec, 'Colors', colRow);
-    }
-
-    // Images subsection — small swatches that expand on click
-    var IMPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
-
-    if (bgImages.length > 0) {
-      var imgRow = mk('div');
-      imgRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;';
-      bgImages.forEach(function(item) {
-        var thumb = mk('div');
-        thumb.style.cssText = 'width:32px;height:32px;border-radius:6px;background-image:'+item.bgImg+';background-size:cover;background-position:center;cursor:pointer;transition:all 150ms;';
-        // Click to expand
-        thumb.addEventListener('click', function() {
-          if (thumb.style.width === '32px') {
-            thumb.style.width = '100%';
-            thumb.style.height = '80px';
-          } else {
-            thumb.style.width = '32px';
-            thumb.style.height = '32px';
-          }
-        });
-        imgRow.appendChild(thumb);
-      });
-      // Import button
-      var impBtn = mk('button', 'rb-insp-align-btn');
-      impBtn.innerHTML = IMPORT_ICON;
-      impBtn.title = 'Upload background';
-      var impFile = mk('input');
-      impFile.type = 'file'; impFile.accept = 'image/*'; impFile.style.display = 'none';
-      impBtn.addEventListener('click', function() { impFile.click(); });
-      impFile.addEventListener('change', function(e) {
-        var f = e.target.files[0]; if (!f) return;
-        var reader = new FileReader();
-        reader.onload = function() {
-          bgImages[0].el.style.backgroundImage = 'url('+reader.result+')';
-          bgImages[0].el.style.backgroundSize = 'cover';
-        };
-        reader.readAsDataURL(f);
-      });
-      imgRow.appendChild(impFile);
-      imgRow.appendChild(impBtn);
-      addRow(bgSec, 'Images', imgRow);
-    } else {
-      var noneRow = mk('div');
-      noneRow.style.cssText = 'display:flex;gap:4px;align-items:center;';
-      var noneLabel = mk('span', 'rb-insp-val');
-      noneLabel.textContent = 'none';
-      noneLabel.style.flex = '1';
-      var impBtn = mk('button', 'rb-insp-align-btn');
-      impBtn.innerHTML = IMPORT_ICON;
-      impBtn.title = 'Upload background';
-      var impFile = mk('input');
-      impFile.type = 'file'; impFile.accept = 'image/*'; impFile.style.display = 'none';
-      impBtn.addEventListener('click', function() { impFile.click(); });
-      impFile.addEventListener('change', function(e) {
-        var f = e.target.files[0]; if (!f) return;
-        var reader = new FileReader();
-        reader.onload = function() {
-          document.body.style.backgroundImage = 'url('+reader.result+')';
-          document.body.style.backgroundSize = 'cover';
-          noneLabel.textContent = 'uploaded';
-        };
-        reader.readAsDataURL(f);
-      });
-      noneRow.appendChild(noneLabel);
-      noneRow.appendChild(impFile);
-      noneRow.appendChild(impBtn);
-      addRow(bgSec, 'Images', noneRow);
-    }
+    // Colors and Background hidden until element selected
 
     // Advanced (merged: Layout + CSS Variables)
     var advSec = addSection('Advanced', true);
@@ -2278,29 +2159,33 @@
     // ---- POSITION ----
     var posSec = addSection('Position', false);
 
-    // Alignment row (6 Figma-style SVG icons)
+    // Alignment row (3 horizontal icons — vertical disabled for now)
     var IC14 = 'width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"';
     var alignRow = mk('div', 'rb-insp-align-row');
+    // Detect current horizontal alignment state
+    var curAlignSelf = cs.alignSelf || 'auto';
+    var curMarginL = cs.marginLeft;
+    var curMarginR = cs.marginRight;
+    var curTextAlign = cs.textAlign;
+    var posAlignState = 'left'; // default
+    if (curAlignSelf === 'center' || (curMarginL === 'auto' && curMarginR === 'auto') || curTextAlign === 'center' || curTextAlign === '-webkit-center') {
+      posAlignState = 'center';
+    } else if (curAlignSelf === 'flex-end' || curAlignSelf === 'end' || (curMarginL === 'auto' && curMarginR !== 'auto') || curTextAlign === 'right') {
+      posAlignState = 'right';
+    }
     var aligns = [
-      // First 3: HORIZONTAL — position div inside its parent
       {svg: '<svg '+IC14+'><line x1="2" y1="2" x2="2" y2="14" stroke-width="2"/><line x1="4" y1="4" x2="13" y2="4"/><line x1="4" y1="8" x2="10" y2="8"/><line x1="4" y1="12" x2="13" y2="12"/></svg>',
-       title: 'Align left', fn: function() { var p = el.parentElement; if (!p) return; var pcs = getCS(p); if (pcs.display !== 'flex' && pcs.display !== 'grid') { p.style.display = 'flex'; } p.style.alignItems = 'flex-start'; p.style.justifyContent = pcs.flexDirection === 'column' ? p.style.justifyContent : 'flex-start'; if (pcs.flexDirection === 'column') p.style.alignItems = 'flex-start'; el.style.marginRight = 'auto'; el.style.marginLeft = ''; }},
+       title: 'Align left', state: 'left', fn: function() { el.style.setProperty('text-align', 'left', 'important'); el.style.setProperty('align-self', 'flex-start', 'important'); el.style.setProperty('margin-left', '', ''); el.style.setProperty('margin-right', 'auto', 'important'); }},
       {svg: '<svg '+IC14+'><line x1="3" y1="4" x2="13" y2="4"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="3" y1="12" x2="13" y2="12"/><line x1="8" y1="2" x2="8" y2="14" stroke-width="2"/></svg>',
-       title: 'Center H', fn: function() { var p = el.parentElement; if (!p) return; var pcs = getCS(p); if (pcs.display !== 'flex' && pcs.display !== 'grid') { p.style.display = 'flex'; } if (pcs.flexDirection === 'column') { p.style.alignItems = 'center'; } else { el.style.marginLeft = 'auto'; el.style.marginRight = 'auto'; } }},
+       title: 'Center H', state: 'center', fn: function() { el.style.setProperty('text-align', 'center', 'important'); el.style.setProperty('align-self', 'center', 'important'); el.style.setProperty('margin-left', 'auto', 'important'); el.style.setProperty('margin-right', 'auto', 'important'); }},
       {svg: '<svg '+IC14+'><line x1="14" y1="2" x2="14" y2="14" stroke-width="2"/><line x1="3" y1="4" x2="12" y2="4"/><line x1="6" y1="8" x2="12" y2="8"/><line x1="3" y1="12" x2="12" y2="12"/></svg>',
-       title: 'Align right', fn: function() { var p = el.parentElement; if (!p) return; var pcs = getCS(p); if (pcs.display !== 'flex' && pcs.display !== 'grid') { p.style.display = 'flex'; } if (pcs.flexDirection === 'column') { p.style.alignItems = 'flex-end'; } else { el.style.marginLeft = 'auto'; el.style.marginRight = ''; } }},
-      // Last 3: VERTICAL — position div inside its parent
-      {svg: '<svg '+IC14+'><line x1="2" y1="2" x2="14" y2="2"/><rect x="5" y="4" width="6" height="3" rx="0.5" fill="currentColor" stroke="none"/><rect x="4" y="9" width="8" height="3" rx="0.5" fill="currentColor" stroke="none" opacity="0.3"/></svg>',
-       title: 'Align top', fn: function() { var p = el.parentElement; if (!p) return; var pcs = getCS(p); if (pcs.display !== 'flex' && pcs.display !== 'grid') { p.style.display = 'flex'; p.style.flexDirection = 'column'; } if (pcs.flexDirection === 'column') { p.style.justifyContent = 'flex-start'; } else { p.style.alignItems = 'flex-start'; } }},
-      {svg: '<svg '+IC14+'><rect x="5" y="3" width="6" height="3" rx="0.5" fill="currentColor" stroke="none" opacity="0.3"/><line x1="2" y1="8" x2="14" y2="8"/><rect x="4" y="10" width="8" height="3" rx="0.5" fill="currentColor" stroke="none" opacity="0.3"/></svg>',
-       title: 'Center V', fn: function() { var p = el.parentElement; if (!p) return; var pcs = getCS(p); if (pcs.display !== 'flex' && pcs.display !== 'grid') { p.style.display = 'flex'; p.style.flexDirection = 'column'; } if (pcs.flexDirection === 'column') { p.style.justifyContent = 'center'; } else { p.style.alignItems = 'center'; } }},
-      {svg: '<svg '+IC14+'><rect x="5" y="4" width="6" height="3" rx="0.5" fill="currentColor" stroke="none" opacity="0.3"/><rect x="4" y="9" width="8" height="3" rx="0.5" fill="currentColor" stroke="none"/><line x1="2" y1="14" x2="14" y2="14"/></svg>',
-       title: 'Align bottom', fn: function() { var p = el.parentElement; if (!p) return; var pcs = getCS(p); if (pcs.display !== 'flex' && pcs.display !== 'grid') { p.style.display = 'flex'; p.style.flexDirection = 'column'; } if (pcs.flexDirection === 'column') { p.style.justifyContent = 'flex-end'; } else { p.style.alignItems = 'flex-end'; } }}
+       title: 'Align right', state: 'right', fn: function() { el.style.setProperty('text-align', 'right', 'important'); el.style.setProperty('align-self', 'flex-end', 'important'); el.style.setProperty('margin-left', 'auto', 'important'); el.style.setProperty('margin-right', '', ''); }}
     ];
-    aligns.forEach(function(a, i) {
+    aligns.forEach(function(a) {
       var btn = mk('button', 'rb-insp-align-btn');
       btn.innerHTML = a.svg;
       btn.title = a.title;
+      if (a.state === posAlignState) btn.classList.add('active');
       btn.addEventListener('click', function() {
         a.fn();
         updateSelBox(el);
@@ -2308,11 +2193,6 @@
         alignRow.querySelectorAll('.rb-insp-align-btn').forEach(function(b) { b.classList.remove('active'); });
         btn.classList.add('active');
       });
-      if (i === 3) {
-        var sep = mk('div');
-        sep.style.cssText = 'width:1px;height:16px;background:rgba(255,255,255,0.08);margin:0 2px;';
-        alignRow.appendChild(sep);
-      }
       alignRow.appendChild(btn);
     });
     addRow(posSec, 'Alignment', alignRow);
@@ -2531,11 +2411,23 @@
       {svg: '<svg '+IC14+'><line x1="4" y1="5" x2="12" y2="5" opacity="0.3"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="4" y1="11" x2="12" y2="11"/><line x1="2" y1="14" x2="14" y2="14" stroke-width="2"/></svg>',
        title: 'Align bottom', fn: function() { el.style.display = 'flex'; el.style.flexDirection = 'column'; el.style.justifyContent = 'flex-end'; }}
     ];
+    // Detect current vertical alignment state
+    var vertState = '';
+    if (cs.display === 'flex' && cs.flexDirection === 'column') {
+      if (cs.justifyContent === 'center') vertState = 'center';
+      else if (cs.justifyContent === 'flex-end' || cs.justifyContent === 'end') vertState = 'bottom';
+      else vertState = 'top';
+    }
     vertAligns.forEach(function(va) {
       var btn = mk('button', 'rb-insp-align-btn');
       btn.innerHTML = va.svg;
       btn.title = va.title;
       btn.classList.add('rb-ta-v');
+      if ((va.title === 'Align top' && vertState === 'top') ||
+          (va.title === 'Center V' && vertState === 'center') ||
+          (va.title === 'Align bottom' && vertState === 'bottom')) {
+        btn.classList.add('active');
+      }
       btn.addEventListener('click', function() {
         va.fn();
         taRow.querySelectorAll('.rb-insp-align-btn.rb-ta-v').forEach(function(b) { b.classList.remove('active'); });
@@ -2588,13 +2480,14 @@
     });
     addRow(typSec, 'Decoration', decRow);
 
-    // Text color — show own color, plus scan visible text children
-    addColor(typSec, 'Color', cs.color, el, 'color');
+    // Text colors — unified list: own color + distinct child colors
+    var colorEntries = []; // {hex, targets: [elements], isSelf: bool}
+    var selfHex = rgbHex(cs.color);
+    if (selfHex) colorEntries.push({hex: selfHex, targets: [el], isSelf: true});
     if (el.children.length > 0) {
-      var childColors = [];
+      var colorMap = {};
       el.querySelectorAll('*').forEach(function(child) {
         if (child.closest('svg')) return;
-        // Only elements with direct text nodes
         var hasText = false;
         for (var cn = 0; cn < child.childNodes.length; cn++) {
           if (child.childNodes[cn].nodeType === 3 && child.childNodes[cn].textContent.trim().length > 0) { hasText = true; break; }
@@ -2604,27 +2497,41 @@
         if (cr.width < 1 || cr.height < 1) return;
         var cc = getCS(child).color;
         var hex = rgbHex(cc);
-        if (hex && childColors.indexOf(hex) === -1 && hex !== rgbHex(cs.color)) {
-          childColors.push(hex);
+        if (!hex) return;
+        if (hex === selfHex) {
+          colorEntries[0].targets.push(child);
+        } else {
+          if (!colorMap[hex]) colorMap[hex] = [];
+          colorMap[hex].push(child);
         }
       });
-      if (childColors.length > 0) {
-        var ccRow = mk('div', 'rb-insp-color-row');
-        ccRow.style.flexWrap = 'wrap';
-        ccRow.style.gap = '3px';
-        childColors.forEach(function(hex) {
-          var sw = mk('div', 'rb-insp-swatch');
-          sw.style.background = hex;
-          sw.title = hex;
-          sw.style.position = 'relative';
-          var cinp = mk('input');
-          cinp.type = 'color';
-          cinp.value = hex;
-          sw.appendChild(cinp);
-          ccRow.appendChild(sw);
-        });
-        addRow(typSec, 'Nested', ccRow);
-      }
+      Object.keys(colorMap).forEach(function(hex) {
+        colorEntries.push({hex: hex, targets: colorMap[hex], isSelf: false});
+      });
+    }
+    if (colorEntries.length > 0) {
+      var colorsRow = mk('div', 'rb-insp-color-row');
+      colorsRow.style.flexWrap = 'wrap';
+      colorsRow.style.gap = '3px';
+      colorEntries.forEach(function(entry) {
+        var sw = mk('div', 'rb-insp-swatch');
+        sw.style.background = entry.hex;
+        sw.title = entry.hex;
+        sw.style.position = 'relative';
+        var cinp = mk('input');
+        cinp.type = 'color';
+        cinp.value = entry.hex;
+        cinp.addEventListener('input', function() {
+          sw.style.background = cinp.value;
+          sw.title = cinp.value;
+          entry.targets.forEach(function(t) {
+            applyStyle(t, 'color', cinp.value);
+          });
+        }, {signal: sig});
+        sw.appendChild(cinp);
+        colorsRow.appendChild(sw);
+      });
+      addRow(typSec, 'Colors', colorsRow);
     }
 
     // ---- FILL ----
@@ -2692,22 +2599,7 @@
       reader.readAsDataURL(file);
     });
 
-    // URL paste
-    var bgUrlInp = mk('input', 'rb-insp-inp');
-    bgUrlInp.placeholder = 'Paste image URL';
-    bgUrlInp.style.flex = '1';
-    bgUrlInp.addEventListener('change', function() {
-      var url = bgUrlInp.value.trim();
-      if (url) {
-        undoStack.push({el: el, prop: 'backgroundImage', old: el.style.backgroundImage});
-        el.style.backgroundImage = 'url(' + url + ')';
-        el.style.backgroundSize = 'cover';
-        el.style.backgroundPosition = 'center';
-        updateInspector();
-      }
-    });
     bgUploadRow.appendChild(bgFileInp);
-    bgUploadRow.appendChild(bgUrlInp);
     bgUploadRow.appendChild(bgFileBtn);
     addRow(fillSec, currentBgImg && currentBgImg !== 'none' ? 'Replace' : 'Image', bgUploadRow);
 
@@ -3607,8 +3499,19 @@
       lastClickTime = now;
       lastClickEl = rawEl;
 
-      // Already in text edit mode — let browser handle
+      // Already in text edit mode — click outside exits, click inside lets browser handle
       if (selectedEl && selectedEl.contentEditable === 'true') {
+        if (!selectedEl.contains(rawEl)) {
+          e.preventDefault();
+          selectedEl.contentEditable = 'false';
+          selectedEl.removeAttribute('data-rb-editing');
+          selectedEl.classList.add('rb-ed-movable');
+          exitTextEdit();
+          isTextEditing = false;
+          var s = window.getSelection(); if (s) s.removeAllRanges();
+          var newEl = resolveContainer(rawEl);
+          if (newEl && isValid(newEl)) { selectEl(newEl); } else { deselectEl(); }
+        }
         return;
       }
 
