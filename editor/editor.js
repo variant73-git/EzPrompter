@@ -593,11 +593,14 @@
     }, {capture: true, signal: sig});
     inspBody.appendChild(restoreBtn);
 
+    rebuildInProgress = true;
     window.__rbModeE.run(function(progress) {
       if (progress.step === 'error') {
+        rebuildInProgress = false;
         progressEl.style.color = '#f87171';
         progressEl.textContent = progress.message;
       } else if (progress.step === 'done') {
+        rebuildInProgress = false;
         progressEl.style.color = '#22c55e';
         progressEl.textContent = progress.message;
         restoreBtn.style.display = '';
@@ -780,8 +783,9 @@
 
   // ============ BEFOREUNLOAD WARNING ============
 
+  var rebuildInProgress = false;
   function onBeforeUnload(e) {
-    if (undoStack.length > 0) {
+    if (undoStack.length > 0 || rebuildInProgress) {
       e.preventDefault();
       e.returnValue = '';
     }

@@ -438,16 +438,45 @@
       fontUrls.forEach(function(url) { md.push('- **Font**: ' + url); });
     }
 
-    // Images
-    var imgUrls = new Set();
+    // Images with context (where they appear, what they likely are)
+    var imgEntries = [];
     document.querySelectorAll('img[src]').forEach(function(img) {
       var src = img.src;
-      if (src && src.indexOf('data:') === -1 && img.getBoundingClientRect().width > 50) {
-        imgUrls.add(src);
+      if (!src || src.indexOf('data:') !== -1) return;
+      var r = img.getBoundingClientRect();
+      if (r.width < 20 || r.height < 20) return;
+
+      // Detect context
+      var context = '';
+      var alt = (img.alt || '').toLowerCase();
+      var cls = ((img.className || '') + ' ' + (img.parentElement ? img.parentElement.className || '' : '')).toLowerCase();
+      var parent = img.parentElement;
+      var inHeader = false;
+      var walk = img;
+      for (var w = 0; w < 6 && walk; w++) {
+        var tag = walk.tagName;
+        if (tag === 'HEADER' || tag === 'NAV') { inHeader = true; break; }
+        walk = walk.parentElement;
       }
+
+      if (inHeader || alt.indexOf('logo') !== -1 || cls.indexOf('logo') !== -1 || cls.indexOf('brand') !== -1) {
+        context = 'logo';
+      } else if (r.width > 600 && r.height > 300) {
+        context = 'hero/banner';
+      } else if (r.width < 60 && r.height < 60) {
+        context = 'icon';
+      } else if (alt.indexOf('avatar') !== -1 || cls.indexOf('avatar') !== -1 || (r.width < 100 && r.width === r.height)) {
+        context = 'avatar';
+      } else {
+        context = 'photo';
+      }
+
+      imgEntries.push({src: src, context: context, w: Math.round(r.width), h: Math.round(r.height), alt: img.alt || ''});
     });
-    if (imgUrls.size > 0) {
-      [...imgUrls].slice(0, 10).forEach(function(url) { md.push('- **Image**: ' + url); });
+    if (imgEntries.length > 0) {
+      imgEntries.slice(0, 15).forEach(function(e) {
+        md.push('- **Image (' + e.context + ')**: `' + e.w + 'x' + e.h + '` ' + (e.alt ? '"' + e.alt.slice(0, 40) + '" ' : '') + e.src);
+      });
     }
 
     // Background SVG patterns

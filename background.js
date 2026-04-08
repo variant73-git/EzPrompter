@@ -2,17 +2,17 @@
 
 importScripts('overlay/semantic.js');
 
-chrome.runtime.onInstalled.addListener(() => {
-  // Migrate old model names to current defaults
-  chrome.storage.sync.get(['model'], (settings) => {
-    var old = settings.model || '';
-    var outdated = ['gemini-flash-latest', 'gemini-1.5-flash-latest', 'gemini-1.5-pro-latest',
-                    'gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'];
-    if (!old || outdated.indexOf(old) !== -1) {
-      chrome.storage.sync.set({ model: 'gemini-3.1-pro-preview' });
-    }
-  });
+// Migrate old model names on every startup (not just onInstalled)
+chrome.storage.sync.get(['model'], (settings) => {
+  var old = settings.model || '';
+  var outdated = ['gemini-flash-latest', 'gemini-1.5-flash-latest', 'gemini-1.5-pro-latest',
+                  'gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'];
+  if (!old || outdated.indexOf(old) !== -1) {
+    chrome.storage.sync.set({ model: 'gemini-3.1-pro-preview' });
+  }
+});
 
+chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: 'repix-describe',
