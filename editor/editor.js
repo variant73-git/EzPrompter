@@ -193,49 +193,7 @@
     return el && !SKIP.has(el.tagName) && !isEditorEl(el);
   }
 
-  // Disable ALL site :hover effects by disabling stylesheets and replacing with hover-free copies
-  (function disableSiteHover() {
-    var killStyle = document.createElement('style');
-    killStyle.id = 'rb-hover-kill';
-    // Nuclear option: use a wildcard rule that prevents hover state changes
-    // This works because it overrides display/visibility/opacity/transform changes on :hover
-    killStyle.textContent = [
-      'body.rb-ed-active *:not(#rb-editor-root *):not(#rb-editor-inspector *):not(#rb-editor-layers *):not(#rb-ed-banner *):hover {',
-      '  display: revert !important;',
-      '  visibility: revert !important;',
-      '  opacity: revert !important;',
-      '  transform: revert !important;',
-      '  height: revert !important;',
-      '  max-height: revert !important;',
-      '  overflow: revert !important;',
-      '  top: revert !important;',
-      '  left: revert !important;',
-      '  right: revert !important;',
-      '  bottom: revert !important;',
-      '  clip: revert !important;',
-      '  clip-path: revert !important;',
-      '  pointer-events: revert !important;',
-      '}'
-    ].join('\n');
-    document.head.appendChild(killStyle);
-  })();
 
-  function probeElementAt(x, y) {
-    return document.elementFromPoint(x, y);
-  }
-  function probeElementsAt(x, y) {
-    return document.elementsFromPoint(x, y);
-  }
-
-  function isInsideHiddenOverlay(el) {
-    var walk = el;
-    var max = 10;
-    while (walk && walk !== document.body && max-- > 0) {
-      if (isHoverMenu(walk)) return true;
-      walk = walk.parentElement;
-    }
-    return false;
-  }
 
   function isText(el) {
     if (!el) return false;
@@ -3402,7 +3360,7 @@
     // isUselessWrapper is defined in outer scope (used by both layers panel and resolveContainer)
 
     function drillIntoChild(parentEl, x, y) {
-      var stack = probeElementsAt(x, y);
+      var stack = document.elementsFromPoint(x, y);
       var directChild = null;
       for (var i = 0; i < stack.length; i++) {
         var el = stack[i];
@@ -3512,7 +3470,7 @@
     var tMove = throttle(function(e) {
       if (isDragging) return;
       if (layerHoverLock) return;
-      var rawEl = probeElementAt(e.clientX, e.clientY);
+      var rawEl = document.elementFromPoint(e.clientX, e.clientY);
       if (!rawEl || !isValid(rawEl)) {
         if (lastHoverEl) { lastHoverEl.classList.remove('rb-ed-text-hint'); lastHoverEl = null; }
         hoverBox.style.display = 'none';
@@ -3520,7 +3478,7 @@
         return;
       }
       var el = resolveContainer(rawEl);
-      if (!isValid(el) || el === selectedEl || isInsideHiddenOverlay(el)) { hoverBox.style.display = 'none'; return; }
+      if (!isValid(el) || el === selectedEl) { hoverBox.style.display = 'none'; return; }
       if (lastHoverEl && lastHoverEl !== el) lastHoverEl.classList.remove('rb-ed-text-hint');
       lastHoverEl = el;
       if (isText(el)) el.classList.add('rb-ed-text-hint');
@@ -3536,7 +3494,7 @@
 
     document.addEventListener('mousedown', function(e) {
       if (isEditorEl(e.target)) return;
-      var rawEl = probeElementAt(e.clientX, e.clientY);
+      var rawEl = document.elementFromPoint(e.clientX, e.clientY);
       if (!rawEl || !isValid(rawEl)) return;
 
       var link = e.target.closest('a');
@@ -3569,7 +3527,7 @@
       if (!isRepeatClick) {
         // NEW AREA: reset depth, resolve outermost container
         var el = resolveContainer(rawEl);
-        if (!isValid(el) || isInsideHiddenOverlay(el)) return;
+        if (!isValid(el)) return;
         selectionDepth = 0;
         selectionAncestor = el;
 
