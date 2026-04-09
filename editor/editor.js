@@ -149,6 +149,20 @@
     initAutoSave();
   }
 
+  // ============ LOCAL FONTS ============
+
+  var localFonts = null;
+  function getLocalFonts(callback) {
+    if (localFonts) { callback(localFonts); return; }
+    if (!window.queryLocalFonts) { callback([]); return; }
+    window.queryLocalFonts().then(function(fonts) {
+      var families = new Set();
+      fonts.forEach(function(f) { families.add(f.family); });
+      localFonts = [...families].sort();
+      callback(localFonts);
+    }).catch(function() { callback([]); });
+  }
+
   // ============ HELPERS ============
 
   function mk(tag, cls) {
@@ -1065,6 +1079,30 @@
     return tag;
   }
 
+  function isFloatingWidget(el) {
+    var s; try { s = getComputedStyle(el); } catch(e) { return false; }
+    if (s.position !== 'fixed' && s.position !== 'sticky') return false;
+    var r = el.getBoundingClientRect();
+    if (r.width < 200 && r.height < 200) return true;
+    if (r.bottom > window.innerHeight - 20 && (r.left < 100 || r.right > window.innerWidth - 100) && r.width < 400) return true;
+    return false;
+  }
+
+  function isHoverMenu(el) {
+    var s; try { s = getComputedStyle(el); } catch(e) { return false; }
+    if (s.opacity === '0' || s.visibility === 'hidden' || s.pointerEvents === 'none') return true;
+    if (s.transform && s.transform !== 'none') {
+      var r = el.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) return true;
+    }
+    var cls = (el.className || '').toString().toLowerCase();
+    if (cls.match(/dropdown|menu-overlay|submenu|popup|popover|tooltip|flyout|drawer|nav-content|nav-overlay|w-nav-overlay|mobile.?menu|hamburger.?menu|off.?canvas/)) {
+      if (s.position === 'absolute' || s.position === 'fixed') return true;
+    }
+    if (el.classList && (el.classList.contains('w-nav-overlay') || el.classList.contains('w--overlay'))) return true;
+    return false;
+  }
+
   // Get visible children of an element (filtered)
   function getVisibleChildren(el) {
     var kids = [];
@@ -1072,13 +1110,17 @@
       var ch = el.children[i];
       if (SKIP.has(ch.tagName) || isEditorEl(ch)) continue;
       var cr = ch.getBoundingClientRect();
-      if (cr.width >= 2 || cr.height >= 2) kids.push(ch);
+      if (cr.width < 2 && cr.height < 2) continue;
+      if (isHoverMenu(ch)) continue;
+      kids.push(ch);
     }
     return kids;
   }
 
   function buildLayerRow(el, depth, _skipBudget) {
     if (!el || !el.tagName || SKIP.has(el.tagName) || isEditorEl(el)) return null;
+    if (isHoverMenu(el)) return null;
+    if (depth === 0 && isFloatingWidget(el)) return null;
     var r = el.getBoundingClientRect();
     if (r.width < 2 && r.height < 2) return null;
     var skipBudget = (_skipBudget === undefined) ? 8 : _skipBudget;
@@ -1397,6 +1439,8 @@
       if (SKIP.has(ch.tagName) || isEditorEl(ch)) continue;
       var r = ch.getBoundingClientRect();
       if (r.width < 50 || r.height < 15) continue;
+      if (isFloatingWidget(ch)) continue;
+      if (isHoverMenu(ch)) continue;
       sections.push(ch);
     }
     return sections;
@@ -2208,14 +2252,27 @@
 
     // ---- TYPOGRAPHY ----
     var typSec = addSection('Typography', false);
-    // Font family
+    // Font family — current + web safe + local fonts
     var curFont = cs.fontFamily.split(',')[0].replace(/['"]/g, '').trim();
     var fontSel = mk('select', 'rb-insp-font-sel');
-    var fonts = [curFont,'Arial','Helvetica','Verdana','Georgia','Times New Roman','Courier New','system-ui','Roboto','Inter'];
-    fonts.forEach(function(f, i) {
+    var curOpt = mk('option'); curOpt.value = curFont; curOpt.textContent = curFont; curOpt.selected = true;
+    fontSel.appendChild(curOpt);
+    var webSafe = ['Arial','Helvetica','Verdana','Georgia','Times New Roman','Courier New','system-ui','Roboto','Inter'];
+    webSafe.forEach(function(f) {
+      if (f === curFont) return;
       var o = mk('option'); o.value = f; o.textContent = f;
-      if (i === 0) o.selected = true;
       fontSel.appendChild(o);
+    });
+    getLocalFonts(function(locals) {
+      if (locals.length === 0) return;
+      var group = mk('optgroup');
+      group.label = 'Local Fonts (' + locals.length + ')';
+      locals.forEach(function(f) {
+        if (f === curFont || webSafe.indexOf(f) !== -1) return;
+        var o = mk('option'); o.value = f; o.textContent = f;
+        group.appendChild(o);
+      });
+      fontSel.appendChild(group);
     });
     fontSel.addEventListener('change', function() { applyStyle(el, 'fontFamily', fontSel.value); });
     addRow(typSec, 'Font', fontSel);
