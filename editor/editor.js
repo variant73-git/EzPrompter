@@ -149,6 +149,20 @@
     initAutoSave();
   }
 
+  // ============ LOCAL FONTS ============
+
+  var localFonts = null; // cached after first query
+  function getLocalFonts(callback) {
+    if (localFonts) { callback(localFonts); return; }
+    if (!window.queryLocalFonts) { callback([]); return; }
+    window.queryLocalFonts().then(function(fonts) {
+      var families = new Set();
+      fonts.forEach(function(f) { families.add(f.family); });
+      localFonts = [...families].sort();
+      callback(localFonts);
+    }).catch(function() { callback([]); });
+  }
+
   // ============ HELPERS ============
 
   function mk(tag, cls) {
@@ -177,6 +191,50 @@
 
   function isValid(el) {
     return el && !SKIP.has(el.tagName) && !isEditorEl(el);
+  }
+
+  // Disable ALL site :hover effects by disabling stylesheets and replacing with hover-free copies
+  (function disableSiteHover() {
+    var killStyle = document.createElement('style');
+    killStyle.id = 'rb-hover-kill';
+    // Nuclear option: use a wildcard rule that prevents hover state changes
+    // This works because it overrides display/visibility/opacity/transform changes on :hover
+    killStyle.textContent = [
+      'body.rb-ed-active *:not(#rb-editor-root *):not(#rb-editor-inspector *):not(#rb-editor-layers *):not(#rb-ed-banner *):hover {',
+      '  display: revert !important;',
+      '  visibility: revert !important;',
+      '  opacity: revert !important;',
+      '  transform: revert !important;',
+      '  height: revert !important;',
+      '  max-height: revert !important;',
+      '  overflow: revert !important;',
+      '  top: revert !important;',
+      '  left: revert !important;',
+      '  right: revert !important;',
+      '  bottom: revert !important;',
+      '  clip: revert !important;',
+      '  clip-path: revert !important;',
+      '  pointer-events: revert !important;',
+      '}'
+    ].join('\n');
+    document.head.appendChild(killStyle);
+  })();
+
+  function probeElementAt(x, y) {
+    return document.elementFromPoint(x, y);
+  }
+  function probeElementsAt(x, y) {
+    return document.elementsFromPoint(x, y);
+  }
+
+  function isInsideHiddenOverlay(el) {
+    var walk = el;
+    var max = 10;
+    while (walk && walk !== document.body && max-- > 0) {
+      if (isHoverMenu(walk)) return true;
+      walk = walk.parentElement;
+    }
+    return false;
   }
 
   function isText(el) {
@@ -1066,13 +1124,45 @@
   }
 
   // Get visible children of an element (filtered)
+  function isFloatingWidget(el) {
+    var s; try { s = getComputedStyle(el); } catch(e) { return false; }
+    if (s.position !== 'fixed' && s.position !== 'sticky') return false;
+    var r = el.getBoundingClientRect();
+    // Small fixed elements are widgets (chat buttons, cookie banners, floating CTAs)
+    if (r.width < 200 && r.height < 200) return true;
+    // Fixed elements anchored to bottom corners
+    if (r.bottom > window.innerHeight - 20 && (r.left < 100 || r.right > window.innerWidth - 100) && r.width < 400) return true;
+    return false;
+  }
+
+  function isHoverMenu(el) {
+    var s; try { s = getComputedStyle(el); } catch(e) { return false; }
+    // Hidden by opacity, visibility, or pointer-events
+    if (s.opacity === '0' || s.visibility === 'hidden' || s.pointerEvents === 'none') return true;
+    // Transformed off-screen (Webflow pattern: translate3d(0, -100%, 0))
+    if (s.transform && s.transform !== 'none') {
+      var r = el.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) return true;
+    }
+    // Overlay/menu patterns by class name
+    var cls = (el.className || '').toString().toLowerCase();
+    if (cls.match(/dropdown|menu-overlay|submenu|popup|popover|tooltip|flyout|drawer|nav-content|nav-overlay|w-nav-overlay|mobile.?menu|hamburger.?menu|off.?canvas/)) {
+      if (s.position === 'absolute' || s.position === 'fixed') return true;
+    }
+    // Webflow specific: w-nav-overlay is always an overlay menu
+    if (el.classList && (el.classList.contains('w-nav-overlay') || el.classList.contains('w--overlay'))) return true;
+    return false;
+  }
+
   function getVisibleChildren(el) {
     var kids = [];
     for (var i = 0; i < el.children.length; i++) {
       var ch = el.children[i];
       if (SKIP.has(ch.tagName) || isEditorEl(ch)) continue;
       var cr = ch.getBoundingClientRect();
-      if (cr.width >= 2 || cr.height >= 2) kids.push(ch);
+      if (cr.width < 2 && cr.height < 2) continue;
+      if (isHoverMenu(ch)) continue;
+      kids.push(ch);
     }
     return kids;
   }
@@ -1081,6 +1171,8 @@
     if (!el || !el.tagName || SKIP.has(el.tagName) || isEditorEl(el)) return null;
     var r = el.getBoundingClientRect();
     if (r.width < 2 && r.height < 2) return null;
+    if (isHoverMenu(el)) return null;
+    if (depth === 0 && isFloatingWidget(el)) return null;
     var skipBudget = (_skipBudget === undefined) ? 8 : _skipBudget;
 
     var tag = el.tagName.toLowerCase();
@@ -1397,6 +1489,8 @@
       if (SKIP.has(ch.tagName) || isEditorEl(ch)) continue;
       var r = ch.getBoundingClientRect();
       if (r.width < 50 || r.height < 15) continue;
+      if (isFloatingWidget(ch)) continue;
+      if (isHoverMenu(ch)) continue;
       sections.push(ch);
     }
     return sections;
@@ -2208,14 +2302,30 @@
 
     // ---- TYPOGRAPHY ----
     var typSec = addSection('Typography', false);
-    // Font family
+    // Font family — shows current + web safe + local fonts
     var curFont = cs.fontFamily.split(',')[0].replace(/['"]/g, '').trim();
     var fontSel = mk('select', 'rb-insp-font-sel');
-    var fonts = [curFont,'Arial','Helvetica','Verdana','Georgia','Times New Roman','Courier New','system-ui','Roboto','Inter'];
-    fonts.forEach(function(f, i) {
+    // Start with current font
+    var curOpt = mk('option'); curOpt.value = curFont; curOpt.textContent = curFont; curOpt.selected = true;
+    fontSel.appendChild(curOpt);
+    // Web safe fallbacks
+    var webSafe = ['Arial','Helvetica','Verdana','Georgia','Times New Roman','Courier New','system-ui','Roboto','Inter'];
+    webSafe.forEach(function(f) {
+      if (f === curFont) return;
       var o = mk('option'); o.value = f; o.textContent = f;
-      if (i === 0) o.selected = true;
       fontSel.appendChild(o);
+    });
+    // Load local fonts async and append as optgroup
+    getLocalFonts(function(locals) {
+      if (locals.length === 0) return;
+      var group = mk('optgroup');
+      group.label = 'Local Fonts (' + locals.length + ')';
+      locals.forEach(function(f) {
+        if (f === curFont || webSafe.indexOf(f) !== -1) return;
+        var o = mk('option'); o.value = f; o.textContent = f;
+        group.appendChild(o);
+      });
+      fontSel.appendChild(group);
     });
     fontSel.addEventListener('change', function() { applyStyle(el, 'fontFamily', fontSel.value); });
     addRow(typSec, 'Font', fontSel);
@@ -3292,7 +3402,7 @@
     // isUselessWrapper is defined in outer scope (used by both layers panel and resolveContainer)
 
     function drillIntoChild(parentEl, x, y) {
-      var stack = document.elementsFromPoint(x, y);
+      var stack = probeElementsAt(x, y);
       var directChild = null;
       for (var i = 0; i < stack.length; i++) {
         var el = stack[i];
@@ -3402,7 +3512,7 @@
     var tMove = throttle(function(e) {
       if (isDragging) return;
       if (layerHoverLock) return;
-      var rawEl = document.elementFromPoint(e.clientX, e.clientY);
+      var rawEl = probeElementAt(e.clientX, e.clientY);
       if (!rawEl || !isValid(rawEl)) {
         if (lastHoverEl) { lastHoverEl.classList.remove('rb-ed-text-hint'); lastHoverEl = null; }
         hoverBox.style.display = 'none';
@@ -3410,7 +3520,7 @@
         return;
       }
       var el = resolveContainer(rawEl);
-      if (!isValid(el) || el === selectedEl) { hoverBox.style.display = 'none'; return; }
+      if (!isValid(el) || el === selectedEl || isInsideHiddenOverlay(el)) { hoverBox.style.display = 'none'; return; }
       if (lastHoverEl && lastHoverEl !== el) lastHoverEl.classList.remove('rb-ed-text-hint');
       lastHoverEl = el;
       if (isText(el)) el.classList.add('rb-ed-text-hint');
@@ -3426,7 +3536,7 @@
 
     document.addEventListener('mousedown', function(e) {
       if (isEditorEl(e.target)) return;
-      var rawEl = document.elementFromPoint(e.clientX, e.clientY);
+      var rawEl = probeElementAt(e.clientX, e.clientY);
       if (!rawEl || !isValid(rawEl)) return;
 
       var link = e.target.closest('a');
@@ -3459,7 +3569,7 @@
       if (!isRepeatClick) {
         // NEW AREA: reset depth, resolve outermost container
         var el = resolveContainer(rawEl);
-        if (!isValid(el)) return;
+        if (!isValid(el) || isInsideHiddenOverlay(el)) return;
         selectionDepth = 0;
         selectionAncestor = el;
 

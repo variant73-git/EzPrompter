@@ -22,6 +22,7 @@ body.rb-ed-active *:not(#rb-editor-root *):not(#rb-editor-inspector *):not(#rb-e
   animation-play-state: paused !important;
 }
 
+
 /* Custom cursor — blue arrow */
 body.rb-ed-active, body.rb-ed-active *:not(#rb-editor-root *):not(input):not(textarea):not(select) {
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='24'%3E%3Cpath d='M2 1L2 19L7 14L11 22L14 21L10 13L17 13Z' fill='%2393C5FD' stroke='%23000' stroke-width='1'/%3E%3C/svg%3E") 2 1, default !important;
