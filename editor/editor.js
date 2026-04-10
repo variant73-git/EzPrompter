@@ -59,6 +59,7 @@
   root.id = 'rb-editor-root';
   document.body.appendChild(root);
   document.body.classList.add('rb-ed-active');
+  document.documentElement.style.setProperty('--rb-insp-width', '260px');
 
   // Font isolation: inline <style> injected LAST to beat any site CSS
   var rbFontStyle = document.createElement('style');
@@ -1679,8 +1680,8 @@
     exportWrap.appendChild(expDD);
     hd.appendChild(exportWrap);
 
-    // Minimize/maximize button
-    var minBtn = mk('button', 'rb-ed-minmax-btn');
+    // Minimize/maximize button (only visible in floating mode)
+    var minBtn = mk('button', 'rb-ed-minmax-btn rb-ed-btn-minimize');
     minBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
     minBtn.title = 'Minimize panel';
     var isMinimized = false;
@@ -1696,7 +1697,44 @@
     hd.appendChild(minBtn);
 
 
+    // Float/dock toggle button
+    var floatBtn = mk('button', 'rb-ed-minmax-btn');
+    floatBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><line x1="6" y1="2" x2="6" y2="14"/></svg>';
+    floatBtn.title = 'Undock panel';
+    var isFloating = false;
+    floatBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      isFloating = !isFloating;
+      inspector.classList.toggle('rb-insp-floating', isFloating);
+      document.body.classList.toggle('rb-ed-floating', isFloating);
+      floatBtn.title = isFloating ? 'Dock panel' : 'Undock panel';
+    }, {signal: sig, capture: true});
+    hd.appendChild(floatBtn);
+
     inspector.appendChild(hd);
+
+    // Resize handle (left edge of sidebar)
+    var resizeH = mk('div');
+    resizeH.id = 'rb-insp-resize';
+    resizeH.addEventListener('mousedown', function(e) {
+      if (isFloating) return;
+      e.preventDefault();
+      var startX = e.clientX;
+      var startW = inspector.offsetWidth;
+      var onMove = function(me) {
+        var newW = startW + (startX - me.clientX);
+        newW = Math.max(240, Math.min(400, newW));
+        inspector.style.width = newW + 'px';
+        document.documentElement.style.setProperty('--rb-insp-width', newW + 'px');
+      };
+      var onUp = function() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    inspector.appendChild(resizeH);
 
     // Body
     inspBody = mk('div');
@@ -1874,15 +1912,41 @@
 
   // ============ SECTIONS & ROWS ============
 
-  function addSection(title, collapsed) {
+  var MORE_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><circle cx="8" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r="1" fill="currentColor" stroke="none"/></svg>';
+
+  function addSection(title, collapsed, onMore) {
     var sec = mk('div', 'rb-insp-sec');
     sec.setAttribute('data-rb-sec', title.toLowerCase());
     if (collapsed) sec.classList.add('collapsed');
     var hd = mk('div', 'rb-insp-sec-hd');
-    hd.innerHTML = '<span class="rb-insp-sec-title">' + title + '</span>' +
-      '<svg class="rb-insp-sec-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">' +
-      '<path d="M6 9l6 6 6-6"/></svg>';
-    hd.addEventListener('click', function() { sec.classList.toggle('collapsed'); }, {signal: sig});
+    var titleSpan = mk('span', 'rb-insp-sec-title');
+    titleSpan.textContent = title;
+    hd.appendChild(titleSpan);
+    var hdRight = mk('div');
+    hdRight.style.cssText = 'display:flex;align-items:center;gap:4px;';
+    if (onMore) {
+      var moreBtn = mk('button', 'rb-insp-adv-btn');
+      moreBtn.innerHTML = MORE_ICON;
+      moreBtn.title = 'More options';
+      moreBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        onMore(moreBtn, sec);
+      }, {capture: true, signal: sig});
+      hdRight.appendChild(moreBtn);
+    }
+    var chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chev.setAttribute('class', 'rb-insp-sec-chev');
+    chev.setAttribute('viewBox', '0 0 24 24');
+    chev.setAttribute('fill', 'none');
+    chev.setAttribute('stroke', 'currentColor');
+    chev.setAttribute('stroke-width', '1.5');
+    chev.innerHTML = '<path d="M6 9l6 6 6-6"/>';
+    hdRight.appendChild(chev);
+    hd.appendChild(hdRight);
+    hd.addEventListener('click', function(e) {
+      if (e.target.closest('.rb-insp-adv-btn')) return;
+      sec.classList.toggle('collapsed');
+    }, {signal: sig});
     var body = mk('div', 'rb-insp-sec-body');
     sec.appendChild(hd);
     sec.appendChild(body);
@@ -1892,9 +1956,11 @@
 
   function addRow(parent, label, content) {
     var row = mk('div', 'rb-insp-row');
-    var lbl = mk('span', 'rb-insp-lbl');
-    lbl.textContent = label;
-    row.appendChild(lbl);
+    if (label) {
+      var lbl = mk('span', 'rb-insp-lbl');
+      lbl.textContent = label;
+      row.appendChild(lbl);
+    }
     if (typeof content === 'string') {
       var val = mk('span', 'rb-insp-val');
       val.textContent = content;
@@ -1909,6 +1975,15 @@
   // Font size presets (Adobe standard)
   var FONT_SIZES = [6,7,8,9,10,11,12,13,14,16,18,21,24,28,32,36,42,48,56,64,72,80,96];
 
+  // Icons for numeric fields
+  var IC12 = 'width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"';
+  var FIELD_ICONS = {
+    opacity: '<svg '+IC12+'><circle cx="8" cy="8" r="6" opacity="0.4"/><path d="M8 2a6 6 0 0 1 0 12" fill="currentColor" opacity="0.6"/></svg>',
+    borderRadius: '<svg '+IC12+'><path d="M2 10V6a4 4 0 0 1 4-4h4"/><line x1="12" y1="2" x2="12" y2="14" opacity="0.3"/><line x1="2" y1="14" x2="2" y2="14" opacity="0.3"/></svg>',
+    borderWidth: '<svg '+IC12+'><rect x="2" y="2" width="12" height="12" rx="2" stroke-width="2"/></svg>',
+    transform: '<svg '+IC12+'><path d="M4 12L8 2L12 12" /><line x1="5" y1="9" x2="11" y2="9" stroke-width="1" opacity="0.4"/></svg>'
+  };
+
   function addInput(parent, label, value, el, prop) {
     var numVal = parseFloat(value);
     var hasUnit = /px|em|rem|%|pt|vw|vh/.test(String(value));
@@ -1918,24 +1993,39 @@
     // Font size gets a dropdown with presets
     if (prop === 'fontSize') {
       var wrap = mk('div');
-      wrap.style.cssText = 'display:flex;align-items:center;gap:2px;';
-      var sel = mk('select', 'rb-insp-inp');
+      wrap.style.cssText = 'display:flex;align-items:center;gap:0;position:relative;';
       var currentPx = Math.round(numVal);
-      var hasMatch = false;
+      // Editable text input
+      var fsInp = mk('input', 'rb-insp-inp');
+      fsInp.type = 'text';
+      fsInp.value = currentPx + 'px';
+      fsInp.style.cssText = 'flex:1;border-top-right-radius:0;border-bottom-right-radius:0;border-right:none;';
+      fsInp.addEventListener('change', function() {
+        var v = fsInp.value.trim();
+        if (/^\d+$/.test(v)) v = v + 'px';
+        applyStyle(el, prop, v);
+      }, {signal: sig});
+      // Hidden select triggered by arrow button
+      var sel = mk('select');
+      sel.style.cssText = 'position:absolute;right:0;top:0;width:24px;height:100%;opacity:0;cursor:pointer;';
       FONT_SIZES.forEach(function(s) {
         var o = mk('option'); o.value = s + 'px'; o.textContent = s;
-        if (s === currentPx) { o.selected = true; hasMatch = true; }
+        if (s === currentPx) o.selected = true;
         sel.appendChild(o);
       });
-      if (!hasMatch) {
-        var custom = mk('option'); custom.value = value; custom.textContent = currentPx;
-        custom.selected = true;
-        sel.insertBefore(custom, sel.firstChild);
-      }
-      sel.addEventListener('change', function() { applyStyle(el, prop, sel.value); }, {signal: sig});
+      sel.addEventListener('change', function() {
+        fsInp.value = sel.value;
+        applyStyle(el, prop, sel.value);
+      }, {signal: sig});
+      // Arrow button that opens the select
+      var arrowBtn = mk('div');
+      arrowBtn.style.cssText = 'width:24px;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.05);border-radius:0 4px 4px 0;border-left:1px solid rgba(255,255,255,0.1);cursor:pointer;flex-shrink:0;';
+      arrowBtn.innerHTML = '<svg width="8" height="8" viewBox="0 0 8 8"><path d="M1 3l3 3 3-3" stroke="#999" fill="none" stroke-width="1"/></svg>';
+      wrap.appendChild(fsInp);
+      wrap.appendChild(arrowBtn);
       wrap.appendChild(sel);
       addRow(parent, label, wrap);
-      return sel;
+      return fsInp;
     }
 
     // Convert value for applying to CSS (opacity % → 0-1)
@@ -1947,61 +2037,26 @@
       return raw;
     };
 
-    // Numeric values get stepper arrows + drag-to-adjust
+    // Numeric values: field-wrap with optional icon + input + steppers
     if (isNumeric) {
-      var wrap = mk('div');
-      wrap.style.cssText = 'display:flex;align-items:center;gap:1px;';
+      var wrap = mk('div', 'rb-insp-field-wrap');
       var inp = mk('input', 'rb-insp-inp');
       inp.type = 'text';
       inp.value = value;
-      inp.style.flex = '1';
       inp.addEventListener('change', function() { applyStyle(el, prop, applyVal(inp.value)); }, {signal: sig});
 
-      // Drag-to-adjust: drag handle label to the left of the input
-      var dragHandle = mk('div');
-      dragHandle.style.cssText = 'cursor:ew-resize;display:flex;align-items:center;padding:0 3px;user-select:none;opacity:0.4;transition:opacity 150ms;';
-      dragHandle.innerHTML = '<svg width="8" height="12" viewBox="0 0 8 12" fill="none"><polygon points="0,6 3,3 3,9" fill="currentColor"/><polygon points="8,6 5,3 5,9" fill="currentColor"/></svg>';
-      dragHandle.title = 'Drag to adjust';
-      dragHandle.addEventListener('mouseenter', function() { dragHandle.style.opacity = '1'; });
-      dragHandle.addEventListener('mouseleave', function() { dragHandle.style.opacity = '0.4'; });
+      // Icon (set via data-icon attribute by caller, or default)
+      var iconSvg = FIELD_ICONS[prop] || '';
+      if (iconSvg) {
+        var iconEl = mk('span', 'rb-insp-field-icon');
+        iconEl.innerHTML = iconSvg;
+        wrap.appendChild(iconEl);
+      }
 
-      var dragIcon = mk('div');
-      dragIcon.style.cssText = 'position:fixed;pointer-events:none;display:none;z-index:999999;';
-      dragIcon.innerHTML = '<svg width="16" height="10" viewBox="0 0 16 10" fill="none"><polygon points="0,5 5,1 5,9" fill="#0095FF" stroke="#fff" stroke-width="0.8"/><polygon points="16,5 11,1 11,9" fill="#0095FF" stroke="#fff" stroke-width="0.8"/></svg>';
+      wrap.appendChild(inp);
 
-      dragHandle.addEventListener('mousedown', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        var dragStartX = e.clientX;
-        var dragStartVal = parseFloat(inp.value) || 0;
-        document.body.appendChild(dragIcon);
-        dragIcon.style.display = 'block';
-        dragIcon.style.left = (e.clientX - 8) + 'px';
-        dragIcon.style.top = (e.clientY - 5) + 'px';
-        dragHandle.style.opacity = '1';
-
-        var onMove = function(me) {
-          var dx = me.clientX - dragStartX;
-          var newVal = dragStartVal + Math.round(dx / 2);
-          if (prop === 'opacity') newVal = Math.max(0, Math.min(100, newVal));
-          inp.value = newVal + unit;
-          applyStyle(el, prop, applyVal(inp.value));
-          dragIcon.style.left = (me.clientX - 8) + 'px';
-          dragIcon.style.top = (me.clientY - 5) + 'px';
-        };
-        var onUp = function() {
-          dragIcon.style.display = 'none';
-          if (dragIcon.parentElement) dragIcon.parentElement.removeChild(dragIcon);
-          dragHandle.style.opacity = '0.4';
-          document.removeEventListener('mousemove', onMove);
-          document.removeEventListener('mouseup', onUp);
-        };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
-      });
-
-      var btnWrap = mk('div');
-      btnWrap.style.cssText = 'display:flex;flex-direction:column;gap:0;';
+      // Stepper arrows inside field
+      var steppers = mk('div', 'rb-insp-field-steppers');
       var upBtn = mk('button', 'rb-insp-step');
       upBtn.textContent = '▲';
       upBtn.addEventListener('click', function() {
@@ -2018,11 +2073,9 @@
         inp.value = Math.max(0, n - 1) + unit;
         applyStyle(el, prop, applyVal(inp.value));
       }, {signal: sig});
-      btnWrap.appendChild(upBtn);
-      btnWrap.appendChild(dnBtn);
-      wrap.appendChild(dragHandle);
-      wrap.appendChild(inp);
-      wrap.appendChild(btnWrap);
+      steppers.appendChild(upBtn);
+      steppers.appendChild(dnBtn);
+      wrap.appendChild(steppers);
       addRow(parent, label, wrap);
       return inp;
     }
@@ -2102,6 +2155,7 @@
   // ============ UPDATE INSPECTOR ============
 
   function updateInspector(el) {
+    var scrollPos = inspector ? inspector.scrollTop : 0;
     inspBody.innerHTML = '';
     var cs = getCS(el);
     var r = getBox(el);
@@ -2138,8 +2192,8 @@
     });
     inspBody.appendChild(breadcrumb);
 
-    // ---- POSITION ----
-    var posSec = addSection('Position', false);
+    // ---- CONTAINER ----
+    var posSec = addSection('Container', false);
 
     // Alignment row (3 horizontal icons — vertical disabled for now)
     var IC14 = 'width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"';
@@ -2177,7 +2231,23 @@
       });
       alignRow.appendChild(btn);
     });
-    addRow(posSec, 'Alignment', alignRow);
+    // Alignment + Rotation side by side
+    var alignRotRow = mk('div');
+    alignRotRow.style.cssText = 'display:flex;gap:6px;align-items:stretch;';
+    var alignWrap = mk('div');
+    alignWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:3px;';
+    var alignLbl = mk('span', 'rb-insp-lbl'); alignLbl.textContent = 'Alignment';
+    alignWrap.appendChild(alignLbl);
+    alignRow.style.cssText += ';flex:1;';
+    alignWrap.appendChild(alignRow);
+    var rotWrap = mk('div');
+    rotWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:3px;';
+    var rotLbl = mk('span', 'rb-insp-lbl'); rotLbl.textContent = 'Rotation';
+    rotWrap.appendChild(rotLbl);
+    addInput(rotWrap, '', cs.transform === 'none' ? '0\u00B0' : cs.transform, el, 'transform');
+    alignRotRow.appendChild(alignWrap);
+    alignRotRow.appendChild(rotWrap);
+    posSec.appendChild(alignRotRow);
 
     // X/Y position
     var posRow = mk('div', 'rb-insp-pos-row');
@@ -2189,18 +2259,37 @@
     yInp.style.width = '48%';
     posRow.appendChild(xInp);
     posRow.appendChild(yInp);
-    posRow.style.cssText = 'display:flex;gap:4px;';
+    posRow.style.cssText = 'display:flex;gap:6px;';
     addRow(posSec, 'Position', posRow);
 
-    // Rotation
-    addInput(posSec, 'Rotation', cs.transform === 'none' ? '0\u00B0' : cs.transform, el, 'transform');
-
     // ---- LAYOUT ----
-    var laySec = addSection('Layout', false);
+    var laySec = addSection('Layout', false, function(btn) {
+      // Advanced popup from ⋯ icon
+      var existing = document.querySelector('.rb-insp-adv-popup');
+      if (existing) { existing.remove(); return; }
+      var popup = mk('div', 'rb-insp-adv-popup');
+      var popTitle = mk('div', 'rb-insp-sec-title');
+      popTitle.textContent = 'Advanced';
+      popTitle.style.marginBottom = '10px';
+      popup.appendChild(popTitle);
+      var inspRect = inspector.getBoundingClientRect();
+      var btnRect = btn.getBoundingClientRect();
+      popup.style.cssText = 'position:fixed;top:' + btnRect.top + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;';
+      addSelect(popup, 'Display', ['block','flex','grid','inline','inline-block','none'], cs.display, el, 'display');
+      addSelect(popup, 'Position', ['static','relative','absolute','fixed','sticky'], cs.position, el, 'position');
+      root.appendChild(popup);
+      var closePopup = function(ev) {
+        if (popup && !popup.contains(ev.target) && !btn.contains(ev.target)) {
+          if (popup.parentElement) popup.remove();
+          document.removeEventListener('mousedown', closePopup, true);
+        }
+      };
+      setTimeout(function() { document.addEventListener('mousedown', closePopup, true); }, 50);
+    });
 
     // Dimensions W x H
     var dimRow = mk('div');
-    dimRow.style.cssText = 'display:flex;gap:4px;';
+    dimRow.style.cssText = 'display:flex;gap:6px;';
     var wInp = mk('input', 'rb-insp-inp');
     wInp.value = 'W  ' + Math.round(r.width);
     wInp.style.width = '48%';
@@ -2226,29 +2315,39 @@
       {label: 'L', prop: 'paddingLeft'}
     ];
     sides.forEach(function(s) {
-      var field = mk('div', 'rb-insp-spacing-field');
-      field.innerHTML = '<span class="rb-insp-spacing-label">' + s.label + '</span>';
+      var field = mk('div');
+      field.style.cssText = 'display:flex;flex-direction:row;align-items:center;background:rgba(255,255,255,0.05);border-radius:4px;overflow:hidden;flex:1;';
+      var letter = mk('span', 'rb-insp-field-letter');
+      letter.textContent = s.label;
       var inp = mk('input', 'rb-insp-inp');
       inp.value = parseInt(cs[s.prop]) || 0;
-      inp.style.width = '36px';
-      inp.style.textAlign = 'center';
+      inp.style.cssText = 'width:32px;text-align:center;background:none;border:none;padding:5px 2px;';
       inp.addEventListener('change', function() {
         applyStyle(el, s.prop, inp.value + 'px');
       });
+      field.appendChild(letter);
       field.appendChild(inp);
       spacingRow.appendChild(field);
     });
     addRow(laySec, 'Spacing', spacingRow);
 
-    // Advanced (collapsed)
-    var advSec = addSection('Advanced', true);
-    addSelect(advSec, 'Display', ['block','flex','grid','inline','inline-block','none'], cs.display, el, 'display');
-    addSelect(advSec, 'Position', ['static','relative','absolute','fixed','sticky'], cs.position, el, 'position');
-
     // ---- APPEARANCE ----
     var appSec = addSection('Appearance', false);
-    addInput(appSec, 'Opacity', Math.round(parseFloat(cs.opacity) * 100) + '%', el, 'opacity');
-    addInput(appSec, 'Radius', cs.borderRadius, el, 'borderRadius');
+    var appRow = mk('div');
+    appRow.style.cssText = 'display:flex;gap:6px;';
+    var appOpWrap = mk('div');
+    appOpWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:3px;';
+    var appOpLbl = mk('span', 'rb-insp-lbl'); appOpLbl.textContent = 'Opacity';
+    appOpWrap.appendChild(appOpLbl);
+    var opInp = addInput(appOpWrap, '', Math.round(parseFloat(cs.opacity) * 100) + '%', el, 'opacity');
+    var appRdWrap = mk('div');
+    appRdWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:3px;';
+    var appRdLbl = mk('span', 'rb-insp-lbl'); appRdLbl.textContent = 'Radius';
+    appRdWrap.appendChild(appRdLbl);
+    var rdInp = addInput(appRdWrap, '', cs.borderRadius, el, 'borderRadius');
+    appRow.appendChild(appOpWrap);
+    appRow.appendChild(appRdWrap);
+    appSec.appendChild(appRow);
 
     // ---- TYPOGRAPHY ----
     var typSec = addSection('Typography', false);
@@ -2279,7 +2378,7 @@
 
     // Weight + Size row
     var wsRow = mk('div');
-    wsRow.style.cssText = 'display:flex;gap:4px;';
+    wsRow.style.cssText = 'display:flex;gap:6px;';
     var weightSel = mk('select', 'rb-insp-inp');
     ['100','200','300','400','500','600','700','800','900'].forEach(function(w) {
       var o = mk('option'); o.value = w; o.textContent = w;
@@ -2315,9 +2414,8 @@
     // Line height field with icon inside
     var lhWrap = mk('div');
     lhWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:2px;';
-    var lhLabel = mk('span', 'rb-insp-label');
+    var lhLabel = mk('span', 'rb-insp-lbl');
     lhLabel.textContent = 'Line height';
-    lhLabel.style.cssText = 'font-size:9px;opacity:0.5;';
     var lhField = mk('div');
     lhField.style.cssText = 'display:flex;align-items:center;background:rgba(255,255,255,0.05);border-radius:4px;padding:0 4px;';
     var lhIcon = mk('span');
@@ -2325,7 +2423,7 @@
     lhIcon.style.cssText = 'flex-shrink:0;display:flex;margin-right:4px;';
     var lhInp = mk('input', 'rb-insp-inp');
     lhInp.value = cs.lineHeight === 'normal' ? 'auto' : (Math.round(parseFloat(cs.lineHeight) / parseFloat(cs.fontSize) * 100) + '%');
-    lhInp.style.cssText = 'flex:1;background:none;border:none;padding:2px 0;';
+    lhInp.style.cssText = 'flex:1;background:none;border:none;padding:5px 0;';
     lhInp.addEventListener('change', function() {
       var v = lhInp.value.trim();
       if (v.indexOf('%') !== -1) v = String(parseFloat(v) / 100);
@@ -2339,9 +2437,8 @@
     // Letter spacing field with icon inside
     var lsWrap = mk('div');
     lsWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:2px;';
-    var lsLabel = mk('span', 'rb-insp-label');
+    var lsLabel = mk('span', 'rb-insp-lbl');
     lsLabel.textContent = 'Letter spacing';
-    lsLabel.style.cssText = 'font-size:9px;opacity:0.5;';
     var lsField = mk('div');
     lsField.style.cssText = 'display:flex;align-items:center;background:rgba(255,255,255,0.05);border-radius:4px;padding:0 4px;';
     var lsIcon = mk('span');
@@ -2350,7 +2447,7 @@
     var lsInp = mk('input', 'rb-insp-inp');
     var lsRaw = parseFloat(cs.letterSpacing) || 0;
     lsInp.value = (cs.letterSpacing === 'normal') ? '0%' : (Math.round(lsRaw / parseFloat(cs.fontSize) * 100) + '%');
-    lsInp.style.cssText = 'flex:1;background:none;border:none;padding:2px 0;';
+    lsInp.style.cssText = 'flex:1;background:none;border:none;padding:5px 0;';
     lsInp.addEventListener('change', function() {
       var v = lsInp.value.trim();
       if (v.indexOf('%') !== -1) {
@@ -2391,7 +2488,7 @@
 
     // Separator
     var taSep = mk('div');
-    taSep.style.cssText = 'width:1px;height:16px;background:rgba(255,255,255,0.08);margin:0 2px;';
+    taSep.style.cssText = 'width:1px;height:16px;background:rgba(255,255,255,0.08);margin:0 2px;align-self:center;';
     taRow.appendChild(taSep);
 
     // Vertical text position (top/center/bottom) — positions text within its div
@@ -2433,12 +2530,13 @@
     addRow(typSec, 'Alignment', taRow);
 
     // Case (text-transform): none, uppercase, lowercase, capitalize
+    var IC18 = 'width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"';
     var caseRow = mk('div', 'rb-insp-align-row');
     var cases = [
       {svg: '<svg '+IC14+'><line x1="4" y1="12" x2="12" y2="12" stroke-width="2"/></svg>', val: 'none', title: 'None'},
-      {svg: '<svg '+IC14+'><text x="2" y="12" font-size="11" font-weight="700" fill="currentColor" stroke="none" font-family="sans-serif">AG</text></svg>', val: 'uppercase', title: 'UPPERCASE'},
-      {svg: '<svg '+IC14+'><text x="2" y="12" font-size="11" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">ag</text></svg>', val: 'lowercase', title: 'lowercase'},
-      {svg: '<svg '+IC14+'><text x="1" y="12" font-size="11" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">Ag</text></svg>', val: 'capitalize', title: 'Sentence Case'}
+      {svg: '<svg '+IC18+'><text x="2" y="15" font-size="14" font-weight="700" fill="currentColor" stroke="none" font-family="sans-serif">AG</text></svg>', val: 'uppercase', title: 'UPPERCASE'},
+      {svg: '<svg '+IC18+'><text x="3" y="15" font-size="14" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">ag</text></svg>', val: 'lowercase', title: 'lowercase'},
+      {svg: '<svg '+IC18+'><text x="2" y="15" font-size="14" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">Ag</text></svg>', val: 'capitalize', title: 'Sentence Case'}
     ];
     cases.forEach(function(c) {
       var btn = mk('button', 'rb-insp-align-btn');
@@ -2458,8 +2556,8 @@
     var decRow = mk('div', 'rb-insp-align-row');
     var decos = [
       {svg: '<svg '+IC14+'><line x1="4" y1="8" x2="12" y2="8" stroke-width="2"/></svg>', val: 'none', title: 'None'},
-      {svg: '<svg '+IC14+'><text x="3" y="10" font-size="10" font-weight="600" fill="currentColor" stroke="none" font-family="sans-serif">U</text><line x1="3" y1="13" x2="11" y2="13" stroke-width="1.5"/></svg>', val: 'underline', title: 'Underline'},
-      {svg: '<svg '+IC14+'><text x="2" y="11" font-size="11" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">S</text><line x1="2" y1="8" x2="12" y2="8" stroke-width="1.5"/></svg>', val: 'line-through', title: 'Strikethrough'}
+      {svg: '<svg '+IC18+'><text x="4" y="13" font-size="13" font-weight="600" fill="currentColor" stroke="none" font-family="sans-serif">U</text><line x1="4" y1="16" x2="14" y2="16" stroke-width="1.5"/></svg>', val: 'underline', title: 'Underline'},
+      {svg: '<svg '+IC18+'><text x="4" y="14" font-size="13" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">S</text><line x1="3" y1="10" x2="15" y2="10" stroke-width="1.5"/></svg>', val: 'line-through', title: 'Strikethrough'}
     ];
     decos.forEach(function(d) {
       var btn = mk('button', 'rb-insp-align-btn');
@@ -2531,6 +2629,30 @@
 
     // ---- FILL ----
     var fillSec = addSection('Fill', false);
+    // Eye toggle for fill
+    var fillHd = fillSec.parentElement.querySelector('.rb-insp-sec-hd');
+    var hasBg = cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent';
+    if (hasBg) {
+      var eyeFill = mk('button', 'rb-insp-eye-btn');
+      eyeFill.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+      eyeFill.title = 'Toggle visibility';
+      var fillHidden = false;
+      var fillOrigBg = cs.backgroundColor;
+      eyeFill.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        fillHidden = !fillHidden;
+        if (fillHidden) {
+          el.style.setProperty('background-color', 'transparent', 'important');
+          eyeFill.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+          eyeFill.classList.add('rb-insp-eye-off');
+        } else {
+          el.style.setProperty('background-color', fillOrigBg, 'important');
+          eyeFill.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+          eyeFill.classList.remove('rb-insp-eye-off');
+        }
+      }, {capture: true, signal: sig});
+      fillHd.querySelector('div').appendChild(eyeFill);
+    }
     addColor(fillSec, 'Background', cs.backgroundColor, el, 'backgroundColor');
 
     // Show current background image as preview swatch
@@ -2600,14 +2722,118 @@
 
     // ---- STROKE ----
     var strkSec = addSection('Stroke', true);
-    addInput(strkSec, 'Width', cs.borderWidth, el, 'borderWidth');
+    var hasStroke = cs.borderStyle !== 'none' && (parseFloat(cs.borderWidth) || 0) > 0;
+    var strkHd = strkSec.parentElement.querySelector('.rb-insp-sec-hd');
+    if (!hasStroke) {
+      var addStrokeBtn = mk('button', 'rb-insp-add-btn');
+      addStrokeBtn.textContent = '+';
+      addStrokeBtn.title = 'Add stroke';
+      addStrokeBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        applyStyle(el, 'borderWidth', '1px');
+        applyStyle(el, 'borderStyle', 'solid');
+        applyStyle(el, 'borderColor', '#EFEEEB');
+        updateInspector(el);
+      }, {capture: true, signal: sig});
+      strkHd.querySelector('div').appendChild(addStrokeBtn);
+    } else {
+      var rmStrokeBtn = mk('button', 'rb-insp-add-btn');
+      rmStrokeBtn.innerHTML = '−';
+      rmStrokeBtn.title = 'Remove stroke';
+      rmStrokeBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        applyStyle(el, 'borderWidth', '0');
+        applyStyle(el, 'borderStyle', 'none');
+        updateInspector(el);
+      }, {capture: true, signal: sig});
+      var eyeStroke = mk('button', 'rb-insp-eye-btn');
+      eyeStroke.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+      eyeStroke.title = 'Toggle visibility';
+      var strkHidden = false;
+      var strkOriginal = {w: cs.borderWidth, s: cs.borderStyle, c: cs.borderColor};
+      eyeStroke.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        strkHidden = !strkHidden;
+        if (strkHidden) {
+          el.style.setProperty('border', 'none', 'important');
+          eyeStroke.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+          eyeStroke.classList.add('rb-insp-eye-off');
+        } else {
+          el.style.removeProperty('border');
+          eyeStroke.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+          eyeStroke.classList.remove('rb-insp-eye-off');
+        }
+      }, {capture: true, signal: sig});
+      strkHd.querySelector('div').appendChild(eyeStroke);
+      strkHd.querySelector('div').appendChild(rmStrokeBtn);
+    }
+    // Width + Radius side by side
+    var strkRow = mk('div');
+    strkRow.style.cssText = 'display:flex;gap:6px;';
+    var strkWWrap = mk('div');
+    strkWWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:3px;';
+    var strkWLbl = mk('span', 'rb-insp-lbl'); strkWLbl.textContent = 'Width';
+    strkWWrap.appendChild(strkWLbl);
+    addInput(strkWWrap, '', cs.borderWidth, el, 'borderWidth');
+    var strkRWrap = mk('div');
+    strkRWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:3px;';
+    var strkRLbl = mk('span', 'rb-insp-lbl'); strkRLbl.textContent = 'Radius';
+    strkRWrap.appendChild(strkRLbl);
+    addInput(strkRWrap, '', cs.borderRadius, el, 'borderRadius');
+    strkRow.appendChild(strkWWrap);
+    strkRow.appendChild(strkRWrap);
+    strkSec.appendChild(strkRow);
     addSelect(strkSec, 'Style', ['none','solid','dashed','dotted'], cs.borderStyle, el, 'borderStyle');
     addColor(strkSec, 'Color', cs.borderColor, el, 'borderColor');
-    addInput(strkSec, 'Radius', cs.borderRadius, el, 'borderRadius');
 
     // ---- EFFECTS ----
     var fxSec = addSection('Effects', true);
+    var hasShadow = cs.boxShadow && cs.boxShadow !== 'none';
+    var fxHd = fxSec.parentElement.querySelector('.rb-insp-sec-hd');
+    if (!hasShadow) {
+      var addFxBtn = mk('button', 'rb-insp-add-btn');
+      addFxBtn.textContent = '+';
+      addFxBtn.title = 'Add shadow';
+      addFxBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        applyStyle(el, 'boxShadow', '0 4px 12px rgba(0,0,0,0.15)');
+        updateInspector(el);
+      }, {capture: true, signal: sig});
+      fxHd.querySelector('div').appendChild(addFxBtn);
+    } else {
+      var rmFxBtn = mk('button', 'rb-insp-add-btn');
+      rmFxBtn.innerHTML = '−';
+      rmFxBtn.title = 'Remove shadow';
+      rmFxBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        applyStyle(el, 'boxShadow', 'none');
+        updateInspector(el);
+      }, {capture: true, signal: sig});
+      var eyeFx = mk('button', 'rb-insp-eye-btn');
+      eyeFx.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+      eyeFx.title = 'Toggle visibility';
+      var fxHidden = false;
+      var fxOriginal = cs.boxShadow;
+      eyeFx.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        fxHidden = !fxHidden;
+        if (fxHidden) {
+          el.style.setProperty('box-shadow', 'none', 'important');
+          eyeFx.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+          eyeFx.classList.add('rb-insp-eye-off');
+        } else {
+          el.style.setProperty('box-shadow', fxOriginal, 'important');
+          eyeFx.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+          eyeFx.classList.remove('rb-insp-eye-off');
+        }
+      }, {capture: true, signal: sig});
+      fxHd.querySelector('div').appendChild(eyeFx);
+      fxHd.querySelector('div').appendChild(rmFxBtn);
+    }
     addInput(fxSec, 'Shadow', cs.boxShadow === 'none' ? '' : cs.boxShadow, el, 'boxShadow');
+
+    // Restore scroll position
+    requestAnimationFrame(function() { if (inspector) inspector.scrollTop = scrollPos; });
   }
 
   // ============ APPLY STYLE ============
@@ -3842,6 +4068,7 @@
     if (fab) fab.remove();
     var hk = document.getElementById('rb-hover-kill');
     if (hk) hk.remove();
+    document.documentElement.style.removeProperty('--rb-insp-width');
 
     if (layersPanel && layersPanel.parentElement) {
       layersPanel.parentElement.removeChild(layersPanel);
