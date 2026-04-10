@@ -60,6 +60,7 @@
   document.body.appendChild(root);
   document.body.classList.add('rb-ed-active');
   document.documentElement.style.setProperty('--rb-insp-width', '260px');
+  document.documentElement.style.setProperty('--rb-layers-width', '240px');
 
   // Font isolation: inline <style> injected LAST to beat any site CSS
   var rbFontStyle = document.createElement('style');
@@ -1174,10 +1175,13 @@
     if (isInert) row.classList.add('rb-layer-wrapper');
 
     if (hasVisibleChildren) {
-      var chev = mk('div', 'rb-layer-chev');
-      chev.innerHTML = '<svg viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1l4 3-4 3"/></svg>';
-      chev.addEventListener('click', function(e) {
+      var collapseBtn = depth === 0 ? mk('button', 'rb-layer-collapse rb-collapsed') : mk('div', 'rb-layer-chev');
+      collapseBtn.innerHTML = depth === 0
+        ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>'
+        : '<svg viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1l4 3-4 3"/></svg>';
+      collapseBtn.addEventListener('mousedown', function(e) {
         e.stopPropagation();
+        e.stopImmediatePropagation();
         var childContainer = container.querySelector('.rb-layer-children');
         if (!childContainer) return;
         var isOpen = childContainer.classList.contains('rb-layer-expanded');
@@ -1186,13 +1190,15 @@
             renderLayerChildren(effectiveEl, childContainer, depth + 1);
           }
           childContainer.classList.add('rb-layer-expanded');
-          chev.classList.add('rb-layer-open');
+          if (depth === 0) collapseBtn.classList.remove('rb-collapsed');
+          else collapseBtn.classList.add('rb-layer-open');
         } else {
           childContainer.classList.remove('rb-layer-expanded');
-          chev.classList.remove('rb-layer-open');
+          if (depth === 0) collapseBtn.classList.add('rb-collapsed');
+          else collapseBtn.classList.remove('rb-layer-open');
         }
-      });
-      row.appendChild(chev);
+      }, {capture: true});
+      row.appendChild(collapseBtn);
     } else {
       var placeholder = mk('div', 'rb-layer-chev-placeholder');
       row.appendChild(placeholder);
@@ -1567,6 +1573,65 @@
     return card;
   }
 
+  function populateAssets() {
+    var ab = document.getElementById('rb-ed-assets-body');
+    if (!ab) return;
+    ab.innerHTML = '';
+
+    // Collect all images > 80x80
+    var imgs = [];
+    document.querySelectorAll('img').forEach(function(img) {
+      var w = img.naturalWidth || img.width || 0;
+      var h = img.naturalHeight || img.height || 0;
+      var src = img.currentSrc || img.src || '';
+      if (!src || src.indexOf('data:image/svg') === 0 || src.indexOf('data:image/gif') === 0) return;
+      if (w < 80 || h < 80) return;
+      if (imgs.some(function(c) { return c.src === src; })) return;
+      imgs.push({src: src, w: w, h: h, alt: img.alt || ''});
+    });
+
+    // Also background images
+    document.querySelectorAll('section,div,article,header,footer').forEach(function(el) {
+      if (isEditorEl(el)) return;
+      var bg = getCS(el).backgroundImage;
+      if (bg && bg !== 'none') {
+        var match = bg.match(/url\(["']?(https?:\/\/[^"')]+)["']?\)/);
+        if (match && !imgs.some(function(c) { return c.src === match[1]; })) {
+          imgs.push({src: match[1], w: 200, h: 200, alt: ''});
+        }
+      }
+    });
+
+    imgs.sort(function(a, b) { return (b.w * b.h) - (a.w * a.h); });
+
+    var countEl = mk('div');
+    countEl.style.cssText = 'padding:8px 14px;font:500 11px "Instrument Sans",sans-serif;color:rgba(239,238,235,0.5);';
+    countEl.textContent = imgs.length + ' image' + (imgs.length !== 1 ? 's' : '') + ' found';
+    ab.appendChild(countEl);
+
+    var grid = mk('div');
+    grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:3px;padding:0 8px 8px;';
+    imgs.slice(0, 30).forEach(function(img) {
+      var item = mk('div');
+      item.style.cssText = 'aspect-ratio:1;overflow:hidden;border-radius:4px;cursor:pointer;position:relative;';
+      var imgEl = mk('img');
+      imgEl.src = img.src;
+      imgEl.alt = img.alt;
+      imgEl.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+      imgEl.loading = 'lazy';
+      item.appendChild(imgEl);
+
+      // Click to select the image on the page
+      item.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        var pageImg = document.querySelector('img[src="' + img.src + '"]');
+        if (pageImg && isValid(pageImg)) selectEl(pageImg);
+      }, {capture: true});
+      grid.appendChild(item);
+    });
+    ab.appendChild(grid);
+  }
+
   function populateSections() {
     var sb = document.getElementById('rb-ed-sections-body');
     if (!sb) return;
@@ -1641,11 +1706,58 @@
     inspector = mk('div');
     inspector.id = 'rb-editor-inspector';
 
-    // Header
+    // Header — user avatar + export
     var hd = mk('div');
     hd.id = 'rb-ed-insp-header';
-    hd.innerHTML = '<div><span class="rb-ed-logo"><i>Repix</i></span>' +
-      '<span class="rb-ed-logo-live">Live Remix</span></div>';
+
+    // User avatar
+    var userWrap = mk('div');
+    userWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    var userAvatar = mk('div');
+    userAvatar.style.cssText = 'width:26px;height:26px;border-radius:50%;background:#0095FF;display:flex;align-items:center;justify-content:center;font:600 11px "Instrument Sans",sans-serif;color:#fff;box-shadow:0 0 0 2px #1A1A1A,0 0 0 4px rgba(255,255,255,0.5);flex-shrink:0;cursor:pointer;';
+    userAvatar.textContent = 'A';
+    var userChev = mk('button', 'rb-ed-project-chev');
+    userChev.style.cssText = 'border:none;background:none;';
+    userChev.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
+    userChev.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      var existing = document.querySelector('.rb-ed-dropdown.rb-user-dd');
+      if (existing) { existing.remove(); return; }
+      var dd = mk('div', 'rb-ed-dropdown rb-user-dd');
+      var rect = userAvatar.getBoundingClientRect();
+      dd.style.cssText = 'position:fixed;top:' + (rect.bottom + 8) + 'px;right:' + (window.innerWidth - rect.right) + 'px;min-width:220px;';
+
+      // Name + Free tag + Upgrade button row
+      var nameRow = mk('div');
+      nameRow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:10px 14px 8px;';
+      var nameEl = mk('span');
+      nameEl.textContent = 'Adilson Porto';
+      nameEl.style.cssText = 'font:500 12px "Instrument Sans",sans-serif;color:#EFEEEB;flex:1;';
+      var freeTag = mk('span');
+      freeTag.textContent = 'Free';
+      freeTag.style.cssText = 'font:500 9px "Instrument Sans",sans-serif;color:rgba(239,238,235,0.5);background:rgba(255,255,255,0.08);padding:2px 6px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px;';
+      var upgradeBtn = mk('button');
+      upgradeBtn.textContent = 'Upgrade to PRO';
+      upgradeBtn.style.cssText = 'font:600 9px "Instrument Sans",sans-serif;color:#fff;background:#0095FF;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;text-transform:uppercase;letter-spacing:0.3px;-webkit-appearance:none;';
+      nameRow.appendChild(nameEl);
+      nameRow.appendChild(freeTag);
+      nameRow.appendChild(upgradeBtn);
+      dd.appendChild(nameRow);
+
+      dd.appendChild(mk('div', 'rb-ed-dropdown-divider'));
+      var settingsBtn = mk('button', 'rb-ed-dropdown-item'); settingsBtn.textContent = 'User account settings';
+      dd.appendChild(settingsBtn);
+      var billingBtn = mk('button', 'rb-ed-dropdown-item'); billingBtn.textContent = 'Billing';
+      dd.appendChild(billingBtn);
+
+      root.appendChild(dd);
+      var close = function(ev) { if (!dd.contains(ev.target) && !userChev.contains(ev.target) && !userAvatar.contains(ev.target)) { dd.remove(); document.removeEventListener('mousedown', close, true); }};
+      setTimeout(function() { document.addEventListener('mousedown', close, true); }, 50);
+    }, {capture: true, signal: sig});
+    userAvatar.addEventListener('mousedown', function(e) { userChev.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true})); }, {capture: true, signal: sig});
+    userWrap.appendChild(userAvatar);
+    userWrap.appendChild(userChev);
+    hd.appendChild(userWrap);
 
     var exportWrap = mk('div');
     exportWrap.style.position = 'relative';
@@ -1680,37 +1792,6 @@
     exportWrap.appendChild(expDD);
     hd.appendChild(exportWrap);
 
-    // Minimize/maximize button (only visible in floating mode)
-    var minBtn = mk('button', 'rb-ed-minmax-btn rb-ed-btn-minimize');
-    minBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
-    minBtn.title = 'Minimize panel';
-    var isMinimized = false;
-    minBtn.addEventListener('mousedown', function(e) {
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      isMinimized = !isMinimized;
-      inspector.classList.toggle('rb-ed-minimized', isMinimized);
-      minBtn.innerHTML = isMinimized
-        ? '<span class="rb-ed-icon-maximize"></span>'
-        : '<span class="rb-ed-icon-minimize"></span>';
-      minBtn.title = isMinimized ? 'Maximize panel' : 'Minimize panel';
-    }, {signal: sig, capture: true});
-    hd.appendChild(minBtn);
-
-
-    // Float/dock toggle button
-    var floatBtn = mk('button', 'rb-ed-minmax-btn');
-    floatBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><line x1="6" y1="2" x2="6" y2="14"/></svg>';
-    floatBtn.title = 'Undock panel';
-    var isFloating = false;
-    floatBtn.addEventListener('mousedown', function(e) {
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      isFloating = !isFloating;
-      inspector.classList.toggle('rb-insp-floating', isFloating);
-      document.body.classList.toggle('rb-ed-floating', isFloating);
-      floatBtn.title = isFloating ? 'Dock panel' : 'Undock panel';
-    }, {signal: sig, capture: true});
-    hd.appendChild(floatBtn);
-
     inspector.appendChild(hd);
 
     // Resize handle (left edge of sidebar)
@@ -1743,43 +1824,217 @@
     inspector.appendChild(inspBody);
     root.appendChild(inspector);
 
-    // ---- LAYERS PANEL (left side) ----
+    // ---- LAYERS PANEL (left side, docked) ----
     layersPanel = mk('div');
     layersPanel.id = 'rb-editor-layers';
 
+    // Header: Logo + actions
     var layersHd = mk('div');
     layersHd.id = 'rb-ed-layers-header';
-    var layersTitle = mk('span');
-    layersTitle.textContent = 'Layers';
-    layersHd.appendChild(layersTitle);
 
-    var layersMinBtn = mk('button', 'rb-ed-minmax-btn');
-    layersMinBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
-    layersMinBtn.title = 'Minimize layers';
-    var layersMinimized = false;
-    layersMinBtn.addEventListener('mousedown', function(e) {
+    // Top row: Logo + chevron + minimize + undock
+    var logoRow = mk('div');
+    logoRow.id = 'rb-ed-layers-logo';
+    var logoLeft = mk('div');
+    logoLeft.style.cssText = 'display:flex;align-items:center;gap:4px;';
+    var logoEl = mk('span', 'rb-ed-logo');
+    logoEl.innerHTML = '<i>Repix</i>';
+    var logoChev = mk('button', 'rb-ed-project-chev');
+    logoChev.style.cssText = 'border:none;background:none;';
+    logoChev.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
+    logoChev.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      var existing = document.querySelector('.rb-ed-dropdown.rb-logo-dd');
+      if (existing) { existing.remove(); return; }
+      var dd = mk('div', 'rb-ed-dropdown rb-logo-dd');
+      var rect = logoChev.getBoundingClientRect();
+      dd.style.cssText = 'position:fixed;top:' + (rect.bottom + 4) + 'px;left:' + rect.left + 'px;';
+      ['Preferences','Save','Edit','View','Text'].forEach(function(item) {
+        var btn = mk('button', 'rb-ed-dropdown-item'); btn.textContent = item; dd.appendChild(btn);
+      });
+      dd.appendChild(mk('div', 'rb-ed-dropdown-divider'));
+      ['Help','Account'].forEach(function(item) {
+        var btn = mk('button', 'rb-ed-dropdown-item'); btn.textContent = item; dd.appendChild(btn);
+      });
+      root.appendChild(dd);
+      var close = function(ev) { if (!dd.contains(ev.target) && !logoChev.contains(ev.target)) { dd.remove(); document.removeEventListener('mousedown', close, true); }};
+      setTimeout(function() { document.addEventListener('mousedown', close, true); }, 50);
+    }, {capture: true, signal: sig});
+    logoLeft.appendChild(logoEl);
+    logoLeft.appendChild(logoChev);
+
+    var logoActions = mk('div');
+    logoActions.id = 'rb-ed-layers-logo-actions';
+
+    // Minimize → small floating widget
+    var panelMinBtn = mk('button', 'rb-ed-minmax-btn');
+    panelMinBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
+    panelMinBtn.title = 'Minimize panels';
+    var panelsMinimized = false;
+    var miniWidgetL = null, miniWidgetR = null;
+    var DRAG_HANDLE = '<div class="rb-mini-handle"><div class="rb-mini-dots"><span></span><span></span><span></span><span></span></div><div class="rb-mini-dots"><span></span><span></span><span></span><span></span></div></div>';
+
+    function makeDraggable(widget) {
+      var handle = widget.querySelector('.rb-mini-handle');
+      if (!handle) return;
+      handle.addEventListener('mousedown', function(e) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        var startX = e.clientX, startY = e.clientY;
+        var startL = widget.offsetLeft, startT = widget.offsetTop;
+        var onMove = function(me) {
+          widget.style.left = (startL + me.clientX - startX) + 'px';
+          widget.style.top = (startT + me.clientY - startY) + 'px';
+          widget.style.right = 'auto';
+        };
+        var onUp = function() { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      }, {capture: true});
+    }
+
+    function restorePanels() {
+      panelsMinimized = false;
+      layersPanel.style.display = '';
+      inspector.style.display = '';
+      // Only remove floating if panels are docked (not floating mode)
+      var isFloating = layersPanel.classList.contains('rb-layers-floating');
+      if (!isFloating) document.body.classList.remove('rb-ed-floating');
+      if (miniWidgetL) { miniWidgetL.remove(); miniWidgetL = null; }
+      if (miniWidgetR) { miniWidgetR.remove(); miniWidgetR = null; }
+    }
+
+    panelMinBtn.addEventListener('mousedown', function(e) {
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      layersMinimized = !layersMinimized;
-      layersPanel.classList.toggle('rb-ed-minimized', layersMinimized);
-      layersMinBtn.innerHTML = layersMinimized
-        ? '<span class="rb-ed-icon-maximize"></span>'
-        : '<span class="rb-ed-icon-minimize"></span>';
+      panelsMinimized = true;
+      layersPanel.style.display = 'none';
+      inspector.style.display = 'none';
+      document.body.classList.add('rb-ed-floating');
+
+      // Left widget: handle + logo + minimize/undock icons
+      if (miniWidgetL) miniWidgetL.remove();
+      miniWidgetL = mk('div');
+      miniWidgetL.className = 'rb-mini-widget';
+      miniWidgetL.style.cssText = 'left:12px;top:12px;';
+      miniWidgetL.innerHTML = DRAG_HANDLE + '<span class="rb-ed-logo" style="font-size:12px"><i>Repix</i></span>';
+      var restoreBtnL = mk('button', 'rb-ed-minmax-btn');
+      restoreBtnL.innerHTML = '<span class="rb-ed-icon-maximize"></span>';
+      restoreBtnL.addEventListener('mousedown', function(we) { we.stopImmediatePropagation(); restorePanels(); }, {capture: true});
+      miniWidgetL.appendChild(restoreBtnL);
+      root.appendChild(miniWidgetL);
+      makeDraggable(miniWidgetL);
+
+      // Right widget: handle + avatar + export
+      if (miniWidgetR) miniWidgetR.remove();
+      miniWidgetR = mk('div');
+      miniWidgetR.className = 'rb-mini-widget';
+      miniWidgetR.style.cssText = 'right:12px;top:12px;';
+      miniWidgetR.innerHTML = DRAG_HANDLE;
+      var miniAvatar = mk('div');
+      miniAvatar.style.cssText = 'width:22px;height:22px;border-radius:50%;background:#0095FF;display:flex;align-items:center;justify-content:center;font:600 9px "Instrument Sans",sans-serif;color:#fff;box-shadow:0 0 0 2px #1A1A1A,0 0 0 3px rgba(255,255,255,0.5);';
+      miniAvatar.textContent = 'A';
+      miniWidgetR.appendChild(miniAvatar);
+      var miniExp = mk('button', 'rb-ed-export-btn');
+      miniExp.innerHTML = 'Export';
+      miniExp.style.cssText += 'color:#fff;font-size:10px;padding:4px 8px;';
+      miniWidgetR.appendChild(miniExp);
+      var restoreBtnR = mk('button', 'rb-ed-minmax-btn');
+      restoreBtnR.innerHTML = '<span class="rb-ed-icon-maximize"></span>';
+      restoreBtnR.addEventListener('mousedown', function(we) { we.stopImmediatePropagation(); restorePanels(); }, {capture: true});
+      miniWidgetR.appendChild(restoreBtnR);
+      root.appendChild(miniWidgetR);
+      makeDraggable(miniWidgetR);
     }, {signal: sig, capture: true});
-    layersHd.appendChild(layersMinBtn);
+
+    // Undock
+    var panelUndockBtn = mk('button', 'rb-ed-minmax-btn');
+    panelUndockBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><line x1="6" y1="2" x2="6" y2="14"/></svg>';
+    panelUndockBtn.title = 'Undock panels';
+    panelUndockBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      var floating = layersPanel.classList.contains('rb-layers-floating');
+      layersPanel.classList.toggle('rb-layers-floating', !floating);
+      inspector.classList.toggle('rb-insp-floating', !floating);
+      document.body.classList.toggle('rb-ed-floating', !floating);
+      panelUndockBtn.title = floating ? 'Undock panels' : 'Dock panels';
+    }, {signal: sig, capture: true});
+
+    logoActions.appendChild(panelMinBtn);
+    logoActions.appendChild(panelUndockBtn);
+    logoRow.appendChild(logoLeft);
+    logoRow.appendChild(logoActions);
+    layersHd.appendChild(logoRow);
+
+    // Project name field (below logo)
+    var projectField = mk('div', 'rb-ed-project-field');
+    var projectName = mk('input', 'rb-ed-project-name');
+    projectName.value = (document.title || 'Untitled').slice(0, 40);
+    projectName.readOnly = true;
+    projectName.style.cursor = 'default';
+    projectName.addEventListener('click', function() {
+      projectName.readOnly = false;
+      projectName.style.cursor = 'text';
+      projectName.select();
+    });
+    projectName.addEventListener('blur', function() {
+      projectName.readOnly = true;
+      projectName.style.cursor = 'default';
+    });
+    var projectChev = mk('div', 'rb-ed-project-chev');
+    projectChev.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
+    projectChev.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      var existing = document.querySelector('.rb-ed-dropdown.rb-project-dd');
+      if (existing) { existing.remove(); return; }
+      var dd = mk('div', 'rb-ed-dropdown rb-project-dd');
+      var rect = projectField.getBoundingClientRect();
+      dd.style.cssText = 'position:fixed;top:' + (rect.bottom + 4) + 'px;left:' + rect.left + 'px;';
+      var histBtn = mk('button', 'rb-ed-dropdown-item'); histBtn.textContent = 'Show version history';
+      dd.appendChild(histBtn);
+      var expBtn = mk('button', 'rb-ed-dropdown-item'); expBtn.textContent = 'Export';
+      dd.appendChild(expBtn);
+      dd.appendChild(mk('div', 'rb-ed-dropdown-divider'));
+      var renameBtn = mk('button', 'rb-ed-dropdown-item'); renameBtn.textContent = 'Rename';
+      renameBtn.addEventListener('click', function() { dd.remove(); projectName.click(); });
+      dd.appendChild(renameBtn);
+      root.appendChild(dd);
+      var close = function(ev) { if (!dd.contains(ev.target) && !projectChev.contains(ev.target)) { dd.remove(); document.removeEventListener('mousedown', close, true); }};
+      setTimeout(function() { document.addEventListener('mousedown', close, true); }, 50);
+    }, {capture: true, signal: sig});
+    projectField.appendChild(projectName);
+    projectField.appendChild(projectChev);
+    layersHd.appendChild(projectField);
 
     layersPanel.appendChild(layersHd);
 
-    // Tab bar
+    // Tab bar: Layers | Sections | Assets | 🔍
     var tabBar = mk('div');
-    tabBar.style.cssText = 'display:flex;border-bottom:1px solid rgba(255,255,255,0.06);';
+    tabBar.style.cssText = 'display:flex;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0;';
     var tabLayers = mk('button', 'rb-layer-tab rb-layer-tab-active');
     tabLayers.textContent = 'Layers';
     var tabSections = mk('button', 'rb-layer-tab');
     tabSections.textContent = 'Sections';
+    var tabAssets = mk('button', 'rb-layer-tab');
+    tabAssets.textContent = 'Assets';
+    var tabFind = mk('button', 'rb-layer-tab');
+    tabFind.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+    tabFind.title = 'Find';
+    tabFind.style.cssText = 'flex:0 0 auto;width:36px;display:flex;align-items:center;justify-content:center;';
     tabBar.appendChild(tabLayers);
     tabBar.appendChild(tabSections);
+    tabBar.appendChild(tabAssets);
+    tabBar.appendChild(tabFind);
     layersPanel.appendChild(tabBar);
 
+    // Search bar (hidden by default)
+    var searchWrap = mk('div');
+    searchWrap.id = 'rb-ed-search-wrap';
+    var searchInp = mk('input');
+    searchInp.id = 'rb-ed-search-inp';
+    searchInp.placeholder = 'Search layers or images...';
+    searchWrap.appendChild(searchInp);
+    layersPanel.appendChild(searchWrap);
+
+    // Tab bodies
     layersBody = mk('div');
     layersBody.id = 'rb-ed-layers-body';
     layersPanel.appendChild(layersBody);
@@ -1789,20 +2044,29 @@
     sectionsBody.style.display = 'none';
     layersPanel.appendChild(sectionsBody);
 
-    tabLayers.addEventListener('mousedown', function(e) {
+    var assetsBody = mk('div');
+    assetsBody.id = 'rb-ed-assets-body';
+    assetsBody.style.display = 'none';
+    layersPanel.appendChild(assetsBody);
+
+    function switchLeftTab(active) {
+      layersBody.style.display = active === 'layers' ? '' : 'none';
+      sectionsBody.style.display = active === 'sections' ? '' : 'none';
+      assetsBody.style.display = active === 'assets' ? '' : 'none';
+      tabLayers.classList.toggle('rb-layer-tab-active', active === 'layers');
+      tabSections.classList.toggle('rb-layer-tab-active', active === 'sections');
+      tabAssets.classList.toggle('rb-layer-tab-active', active === 'assets');
+      if (active === 'sections') populateSections();
+      if (active === 'assets') populateAssets();
+    }
+
+    tabLayers.addEventListener('mousedown', function(e) { e.stopImmediatePropagation(); switchLeftTab('layers'); }, {capture: true, signal: sig});
+    tabSections.addEventListener('mousedown', function(e) { e.stopImmediatePropagation(); switchLeftTab('sections'); }, {capture: true, signal: sig});
+    tabAssets.addEventListener('mousedown', function(e) { e.stopImmediatePropagation(); switchLeftTab('assets'); }, {capture: true, signal: sig});
+    tabFind.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
-      layersBody.style.display = '';
-      sectionsBody.style.display = 'none';
-      tabLayers.classList.add('rb-layer-tab-active');
-      tabSections.classList.remove('rb-layer-tab-active');
-    }, {capture: true, signal: sig});
-    tabSections.addEventListener('mousedown', function(e) {
-      e.stopImmediatePropagation();
-      layersBody.style.display = 'none';
-      sectionsBody.style.display = '';
-      tabSections.classList.add('rb-layer-tab-active');
-      tabLayers.classList.remove('rb-layer-tab-active');
-      populateSections();
+      searchWrap.classList.toggle('rb-ed-search-open');
+      if (searchWrap.classList.contains('rb-ed-search-open')) searchInp.focus();
     }, {capture: true, signal: sig});
 
     // Resize handle
@@ -1913,6 +2177,39 @@
   // ============ SECTIONS & ROWS ============
 
   var MORE_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><circle cx="8" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r="1" fill="currentColor" stroke="none"/></svg>';
+
+  // Reusable settings popup (anchored to panel left edge, 3px gap)
+  function openSettingsPopup(title, anchorBtn, buildContent) {
+    var existing = document.querySelector('.rb-insp-adv-popup');
+    if (existing) { existing.remove(); return null; }
+    var popup = mk('div', 'rb-insp-adv-popup');
+    var inspRect = inspector.getBoundingClientRect();
+    var btnRect = anchorBtn.getBoundingClientRect();
+    popup.style.cssText = 'position:fixed;top:' + btnRect.top + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;';
+    // Header: title + close button
+    var popHd = mk('div');
+    popHd.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.06);';
+    var popTitle = mk('span', 'rb-insp-sec-title');
+    popTitle.textContent = title + ' settings';
+    popTitle.style.cssText = 'text-transform:none;letter-spacing:0;';
+    var closeBtn = mk('button', 'rb-ed-minmax-btn');
+    closeBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    closeBtn.addEventListener('mousedown', function(e) { e.stopImmediatePropagation(); popup.remove(); }, {capture: true, signal: sig});
+    popHd.appendChild(popTitle);
+    popHd.appendChild(closeBtn);
+    popup.appendChild(popHd);
+    // Content
+    buildContent(popup);
+    root.appendChild(popup);
+    var closeOutside = function(ev) {
+      if (popup && !popup.contains(ev.target) && !anchorBtn.contains(ev.target)) {
+        if (popup.parentElement) popup.remove();
+        document.removeEventListener('mousedown', closeOutside, true);
+      }
+    };
+    setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 50);
+    return popup;
+  }
 
   function addSection(title, collapsed, onMore) {
     var sec = mk('div', 'rb-insp-sec');
@@ -2264,27 +2561,10 @@
 
     // ---- LAYOUT ----
     var laySec = addSection('Layout', false, function(btn) {
-      // Advanced popup from ⋯ icon
-      var existing = document.querySelector('.rb-insp-adv-popup');
-      if (existing) { existing.remove(); return; }
-      var popup = mk('div', 'rb-insp-adv-popup');
-      var popTitle = mk('div', 'rb-insp-sec-title');
-      popTitle.textContent = 'Advanced';
-      popTitle.style.marginBottom = '10px';
-      popup.appendChild(popTitle);
-      var inspRect = inspector.getBoundingClientRect();
-      var btnRect = btn.getBoundingClientRect();
-      popup.style.cssText = 'position:fixed;top:' + btnRect.top + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;';
-      addSelect(popup, 'Display', ['block','flex','grid','inline','inline-block','none'], cs.display, el, 'display');
-      addSelect(popup, 'Position', ['static','relative','absolute','fixed','sticky'], cs.position, el, 'position');
-      root.appendChild(popup);
-      var closePopup = function(ev) {
-        if (popup && !popup.contains(ev.target) && !btn.contains(ev.target)) {
-          if (popup.parentElement) popup.remove();
-          document.removeEventListener('mousedown', closePopup, true);
-        }
-      };
-      setTimeout(function() { document.addEventListener('mousedown', closePopup, true); }, 50);
+      openSettingsPopup('Layout', btn, function(popup) {
+        addSelect(popup, 'Display', ['block','flex','grid','inline','inline-block','none'], cs.display, el, 'display');
+        addSelect(popup, 'Position', ['static','relative','absolute','fixed','sticky'], cs.position, el, 'position');
+      });
     });
 
     // Dimensions W x H
@@ -2350,7 +2630,49 @@
     appSec.appendChild(appRow);
 
     // ---- TYPOGRAPHY ----
-    var typSec = addSection('Typography', false);
+    var typSec = addSection('Typography', false, function(btn) {
+      openSettingsPopup('Typography', btn, function(popup) {
+        // Case (text-transform)
+        var IC18t = 'width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"';
+        var caseRowP = mk('div', 'rb-insp-align-row');
+        var casesP = [
+          {svg: '<svg '+IC18t+'><line x1="4" y1="10" x2="16" y2="10" stroke-width="2"/></svg>', val: 'none', title: 'None'},
+          {svg: '<svg '+IC18t+'><text x="1" y="15" font-size="13" font-weight="500" fill="currentColor" stroke="none" font-family="sans-serif">AG</text></svg>', val: 'uppercase', title: 'UPPERCASE'},
+          {svg: '<svg '+IC18t+'><text x="3" y="15" font-size="14" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">ag</text></svg>', val: 'lowercase', title: 'lowercase'},
+          {svg: '<svg '+IC18t+'><text x="2" y="15" font-size="14" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">Ag</text></svg>', val: 'capitalize', title: 'Sentence Case'}
+        ];
+        casesP.forEach(function(c) {
+          var b = mk('button', 'rb-insp-align-btn'); b.innerHTML = c.svg; b.title = c.title;
+          if (cs.textTransform === c.val) b.classList.add('active');
+          b.addEventListener('click', function() {
+            applyStyle(el, 'textTransform', c.val);
+            caseRowP.querySelectorAll('.rb-insp-align-btn').forEach(function(x) { x.classList.remove('active'); });
+            b.classList.add('active');
+          });
+          caseRowP.appendChild(b);
+        });
+        addRow(popup, 'Case', caseRowP);
+
+        // Decoration (text-decoration)
+        var decRowP = mk('div', 'rb-insp-align-row');
+        var decsP = [
+          {svg: '<svg '+IC18t+'><line x1="4" y1="10" x2="16" y2="10" stroke-width="2"/></svg>', val: 'none', title: 'None'},
+          {svg: '<svg '+IC18t+'><text x="4" y="13" font-size="13" font-weight="600" fill="currentColor" stroke="none" font-family="sans-serif">U</text><line x1="4" y1="16" x2="14" y2="16" stroke-width="1.5"/></svg>', val: 'underline', title: 'Underline'},
+          {svg: '<svg '+IC18t+'><text x="3" y="15" font-size="15" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">S</text><line x1="2" y1="10" x2="16" y2="10" stroke-width="1.5"/></svg>', val: 'line-through', title: 'Strikethrough'}
+        ];
+        decsP.forEach(function(d) {
+          var b = mk('button', 'rb-insp-align-btn'); b.innerHTML = d.svg; b.title = d.title;
+          if (cs.textDecorationLine === d.val || cs.textDecoration.indexOf(d.val) !== -1) b.classList.add('active');
+          b.addEventListener('click', function() {
+            applyStyle(el, 'textDecoration', d.val);
+            decRowP.querySelectorAll('.rb-insp-align-btn').forEach(function(x) { x.classList.remove('active'); });
+            b.classList.add('active');
+          });
+          decRowP.appendChild(b);
+        });
+        addRow(popup, 'Decoration', decRowP);
+      });
+    });
     // Font family — current + web safe + local fonts
     var curFont = cs.fontFamily.split(',')[0].replace(/['"]/g, '').trim();
     var fontSel = mk('select', 'rb-insp-font-sel');
@@ -2529,49 +2851,7 @@
     });
     addRow(typSec, 'Alignment', taRow);
 
-    // Case (text-transform): none, uppercase, lowercase, capitalize
-    var IC18 = 'width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"';
-    var caseRow = mk('div', 'rb-insp-align-row');
-    var cases = [
-      {svg: '<svg '+IC14+'><line x1="4" y1="12" x2="12" y2="12" stroke-width="2"/></svg>', val: 'none', title: 'None'},
-      {svg: '<svg '+IC18+'><text x="2" y="15" font-size="14" font-weight="700" fill="currentColor" stroke="none" font-family="sans-serif">AG</text></svg>', val: 'uppercase', title: 'UPPERCASE'},
-      {svg: '<svg '+IC18+'><text x="3" y="15" font-size="14" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">ag</text></svg>', val: 'lowercase', title: 'lowercase'},
-      {svg: '<svg '+IC18+'><text x="2" y="15" font-size="14" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">Ag</text></svg>', val: 'capitalize', title: 'Sentence Case'}
-    ];
-    cases.forEach(function(c) {
-      var btn = mk('button', 'rb-insp-align-btn');
-      btn.innerHTML = c.svg;
-      btn.title = c.title;
-      if (cs.textTransform === c.val) btn.classList.add('active');
-      btn.addEventListener('click', function() {
-        applyStyle(el, 'textTransform', c.val);
-        caseRow.querySelectorAll('.rb-insp-align-btn').forEach(function(b) { b.classList.remove('active'); });
-        btn.classList.add('active');
-      });
-      caseRow.appendChild(btn);
-    });
-    addRow(typSec, 'Case', caseRow);
-
-    // Decoration (text-decoration): none, underline, line-through
-    var decRow = mk('div', 'rb-insp-align-row');
-    var decos = [
-      {svg: '<svg '+IC14+'><line x1="4" y1="8" x2="12" y2="8" stroke-width="2"/></svg>', val: 'none', title: 'None'},
-      {svg: '<svg '+IC18+'><text x="4" y="13" font-size="13" font-weight="600" fill="currentColor" stroke="none" font-family="sans-serif">U</text><line x1="4" y1="16" x2="14" y2="16" stroke-width="1.5"/></svg>', val: 'underline', title: 'Underline'},
-      {svg: '<svg '+IC18+'><text x="4" y="14" font-size="13" font-weight="400" fill="currentColor" stroke="none" font-family="sans-serif">S</text><line x1="3" y1="10" x2="15" y2="10" stroke-width="1.5"/></svg>', val: 'line-through', title: 'Strikethrough'}
-    ];
-    decos.forEach(function(d) {
-      var btn = mk('button', 'rb-insp-align-btn');
-      btn.innerHTML = d.svg;
-      btn.title = d.title;
-      if (cs.textDecorationLine === d.val || cs.textDecoration.indexOf(d.val) !== -1) btn.classList.add('active');
-      btn.addEventListener('click', function() {
-        applyStyle(el, 'textDecoration', d.val);
-        decRow.querySelectorAll('.rb-insp-align-btn').forEach(function(b) { b.classList.remove('active'); });
-        btn.classList.add('active');
-      });
-      decRow.appendChild(btn);
-    });
-    addRow(typSec, 'Decoration', decRow);
+    // Case and Decoration moved to Typography settings popup (⋯ icon)
 
     // Text colors — unified list: own color + distinct child colors
     var colorEntries = []; // {hex, targets: [elements], isSelf: bool}
@@ -4069,6 +4349,7 @@
     var hk = document.getElementById('rb-hover-kill');
     if (hk) hk.remove();
     document.documentElement.style.removeProperty('--rb-insp-width');
+    document.documentElement.style.removeProperty('--rb-layers-width');
 
     if (layersPanel && layersPanel.parentElement) {
       layersPanel.parentElement.removeChild(layersPanel);
