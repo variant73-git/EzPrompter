@@ -98,7 +98,10 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 #rb-editor-inspector.rb-insp-floating {
   top:8px; right:8px; width:260px; height:calc(100vh - 16px);
   border-radius:16px; border-left:none;
-  box-shadow:0 16px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+  background:rgba(23,23,23,0.85);
+  backdrop-filter:blur(40px); -webkit-backdrop-filter:blur(40px);
+  box-shadow:0 4px 30px rgba(0,0,0,0.1);
+  border:1px solid rgba(255,255,255,0.12);
 }
 #rb-editor-inspector.rb-insp-floating #rb-insp-resize { display:none; }
 body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
@@ -120,15 +123,20 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 #rb-editor-layers.rb-layers-floating {
   top:8px; left:8px; width:240px; height:calc(100vh - 16px);
   border-radius:16px; border-right:none;
-  box-shadow:0 16px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+  background:rgba(23,23,23,0.85);
+  backdrop-filter:blur(40px); -webkit-backdrop-filter:blur(40px);
+  box-shadow:0 4px 30px rgba(0,0,0,0.1);
+  border:1px solid rgba(255,255,255,0.12);
 }
 #rb-ed-layers-body, #rb-ed-sections-body, #rb-ed-assets-body { flex:1; overflow-y:auto; }
 
 /* Left panel header */
 #rb-ed-layers-header {
   padding:12px 14px 0; flex-shrink:0;
-  position:sticky; top:0; z-index:1; background:#1A1A1A;
+  position:sticky; top:0; z-index:1;
+  background:#1A1A1A;
 }
+#rb-editor-layers.rb-layers-floating #rb-ed-layers-header { background:transparent; }
 #rb-ed-layers-logo {
   display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;
 }
@@ -355,6 +363,7 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
   border-bottom:1px solid rgba(255,255,255,0.06);
   margin-bottom:0;
 }
+#rb-editor-inspector.rb-insp-floating .rb-ed-breadcrumb { background:transparent; }
 .rb-ed-crumb {
   font:400 9px/1 'Instrument Sans',sans-serif;
   color:rgba(239,238,235,0.3);
@@ -401,8 +410,10 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 /* ===== 5. INSPECTOR HEADER ===== */
 #rb-ed-insp-header {
   padding:14px 14px 10px; display:flex; align-items:center; justify-content:space-between;
-  position:sticky; top:0; background:#1A1A1A; z-index:1; border-radius:16px 16px 0 0;
+  position:sticky; top:0; z-index:1; border-radius:16px 16px 0 0;
+  background:#1A1A1A;
 }
+#rb-editor-inspector.rb-insp-floating #rb-ed-insp-header { background:transparent; }
 .rb-ed-logo { font-family:'Instrument Serif',serif; font-style:italic; font-size:14px; color:#EFEEEB; }
 .rb-ed-logo-live { font-family:'Instrument Sans',sans-serif; font-size:10px; font-weight:500; color:rgba(239,238,235,0.4); margin-left:5px; }
 .rb-ed-export-btn {
