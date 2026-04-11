@@ -1311,39 +1311,45 @@
       if (old) old.remove();
       var picker = mk('div');
       picker.id = 'rb-layer-colorpicker';
-      picker.style.cssText = 'position:fixed;z-index:2147483647;background:#1A1A1A;border-radius:8px;padding:6px 8px;box-shadow:0 8px 24px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.06);display:flex;gap:6px;align-items:center;pointer-events:auto;';
-      picker.style.left = e.clientX + 'px';
-      picker.style.top = e.clientY + 'px';
-      LAYER_COLORS.forEach(function(c) {
+      var radius = 40;
+      var dotSize = 16;
+      var totalSize = (radius + dotSize) * 2 + 4;
+      picker.style.cssText = 'position:fixed;z-index:2147483647;width:' + totalSize + 'px;height:' + totalSize + 'px;pointer-events:auto;';
+      picker.style.left = (e.clientX - totalSize / 2) + 'px';
+      picker.style.top = (e.clientY - totalSize / 2) + 'px';
+      // Frosted glass donut
+      var donut = mk('div');
+      var outerR = radius + dotSize / 2 + 6;
+      var innerR = radius - dotSize / 2 - 4;
+      donut.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:' + (outerR * 2) + 'px;height:' + (outerR * 2) + 'px;border-radius:50%;background:rgba(23,23,23,0.85);backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);border:1px solid rgba(255,255,255,0.12);mask:radial-gradient(circle ' + innerR + 'px at center,transparent ' + innerR + 'px,black ' + (innerR + 1) + 'px);-webkit-mask:radial-gradient(circle ' + innerR + 'px at center,transparent ' + innerR + 'px,black ' + (innerR + 1) + 'px);';
+      picker.appendChild(donut);
+      var allItems = LAYER_COLORS.concat([{name:'None', hex:'none'}]);
+      var count = allItems.length;
+      allItems.forEach(function(c, i) {
+        var angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+        var cx = totalSize / 2 + Math.cos(angle) * radius - dotSize / 2;
+        var cy = totalSize / 2 + Math.sin(angle) * radius - dotSize / 2;
         var dot = mk('div');
-        dot.style.cssText = 'width:14px;height:14px;border-radius:50%;cursor:pointer;transition:transform 80ms;background:' + c.hex + ';';
+        if (c.hex === 'none') {
+          dot.style.cssText = 'position:absolute;width:' + dotSize + 'px;height:' + dotSize + 'px;border-radius:50%;cursor:pointer;border:1px solid rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;font-size:9px;color:rgba(255,255,255,0.4);transition:transform 80ms;left:' + cx + 'px;top:' + cy + 'px;';
+          dot.textContent = '×';
+        } else {
+          dot.style.cssText = 'position:absolute;width:' + dotSize + 'px;height:' + dotSize + 'px;border-radius:50%;cursor:pointer;transition:transform 80ms;background:' + c.hex + ';left:' + cx + 'px;top:' + cy + 'px;';
+        }
         dot.title = c.name;
-        dot.addEventListener('mouseenter', function() { dot.style.transform = 'scale(1.3)'; });
+        dot.addEventListener('mouseenter', function() { dot.style.transform = 'scale(1.35)'; });
         dot.addEventListener('mouseleave', function() { dot.style.transform = ''; });
         dot.addEventListener('mousedown', function(ce) {
-          ce.preventDefault();
-          ce.stopPropagation();
-          row.style.borderLeft = '3px solid ' + c.hex;
-          icon.style.background = c.hex;
-          icon.style.borderColor = c.hex;
+          ce.preventDefault(); ce.stopPropagation();
+          if (c.hex === 'none') {
+            row.style.borderLeft = ''; icon.style.background = ''; icon.style.borderColor = '';
+          } else {
+            row.style.borderLeft = '3px solid ' + c.hex; icon.style.background = c.hex; icon.style.borderColor = c.hex;
+          }
           picker.remove();
         });
         picker.appendChild(dot);
       });
-      // "None" option — clear color
-      var none = mk('div');
-      none.style.cssText = 'width:14px;height:14px;border-radius:50%;cursor:pointer;border:1px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:9px;color:rgba(255,255,255,0.3);transition:transform 80ms;';
-      none.textContent = '×';
-      none.title = 'Remove color';
-      none.addEventListener('mousedown', function(ce) {
-        ce.preventDefault();
-        ce.stopPropagation();
-        row.style.borderLeft = '';
-        icon.style.background = '';
-        icon.style.borderColor = '';
-        picker.remove();
-      });
-      picker.appendChild(none);
       root.appendChild(picker);
       // Close on any mousedown outside picker
       var closePicker = function(ev) {
@@ -2243,13 +2249,12 @@
   // Font size presets (Adobe standard)
   var FONT_SIZES = [6,7,8,9,10,11,12,13,14,16,18,21,24,28,32,36,42,48,56,64,72,80,96];
 
-  // Icons for numeric fields
-  var IC12 = 'width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"';
+  // Icons for numeric fields (custom SVGs, white, opacity via CSS)
   var FIELD_ICONS = {
-    opacity: '<svg '+IC12+'><circle cx="8" cy="8" r="6" opacity="0.4"/><path d="M8 2a6 6 0 0 1 0 12" fill="currentColor" opacity="0.6"/></svg>',
-    borderRadius: '<svg '+IC12+'><path d="M2 10V6a4 4 0 0 1 4-4h4"/><line x1="12" y1="2" x2="12" y2="14" opacity="0.3"/><line x1="2" y1="14" x2="2" y2="14" opacity="0.3"/></svg>',
-    borderWidth: '<svg '+IC12+'><rect x="2" y="2" width="12" height="12" rx="2" stroke-width="2"/></svg>',
-    transform: '<svg '+IC12+'><path d="M4 12L8 2L12 12" /><line x1="5" y1="9" x2="11" y2="9" stroke-width="1" opacity="0.4"/></svg>'
+    opacity: '<svg width="12" height="12" viewBox="0 0 41.96 41.96" fill="#fff"><path d="M41.46,22.32c-1.38-5.4-5.34-9.58-10.62-11.21-.75-2.43-2.1-4.68-3.92-6.49C23.95,1.64,19.99,0,15.77,0S7.6,1.64,4.62,4.62C.66,8.59-.89,14.2.5,19.64c1.38,5.4,5.33,9.58,10.61,11.21,1.63,5.28,5.8,9.24,11.21,10.62,1.31.33,2.64.5,3.94.5,4.11,0,8.07-1.61,11.07-4.62,3.97-3.97,5.51-9.58,4.12-15.02ZM10.48,27.6c-3.79-1.69-6.53-5.1-7.38-9.21-.89-4.28.43-8.69,3.52-11.78,2.46-2.46,5.74-3.79,9.13-3.79.88,0,1.77.09,2.65.27,4.11.85,7.52,3.59,9.21,7.38-4.68-.43-9.23,1.22-12.57,4.56-3.34,3.34-4.98,7.89-4.56,12.57ZM23.89,25.88c-.94.76-1.98,1.38-3.1,1.85l-6.56-6.56c.47-1.12,1.09-2.16,1.85-3.1l7.81,7.81ZM27.73,20.79c-.47,1.11-1.09,2.15-1.85,3.1l-7.81-7.81c.94-.76,1.98-1.38,3.1-1.85l6.56,6.56ZM28.59,17.68l-4.31-4.31c1.41-.21,2.83-.18,4.24.07.26,1.41.28,2.83.07,4.24ZM17.68,28.59c-1.41.21-2.83.19-4.24-.07-.26-1.41-.28-2.83-.07-4.24l4.31,4.31ZM31.49,14.36c3.79,1.69,6.53,5.1,7.38,9.21.89,4.28-.42,8.69-3.52,11.78-3.09,3.09-7.51,4.41-11.78,3.52-4.11-.85-7.51-3.59-9.21-7.38,4.68.42,9.23-1.22,12.57-4.56,3.34-3.34,4.98-7.89,4.56-12.57Z"/></svg>',
+    borderRadius: '<svg width="12" height="12" viewBox="0 0 42.38 42.38" fill="#fff"><path d="M32.86,2.9c3.65,0,6.61,2.97,6.61,6.61v6.3h2.9v-6.3c0-5.25-4.27-9.52-9.52-9.52h-6.3v2.9h6.3Z"/><path d="M2.9,9.52c0-3.65,2.97-6.61,6.61-6.61h6.3V0h-6.3C4.27,0,0,4.27,0,9.52v6.3h2.9v-6.3Z"/><path d="M9.52,39.48c-3.65,0-6.61-2.97-6.61-6.61v-6.3H0v6.3c0,5.25,4.27,9.52,9.52,9.52h6.3v-2.9h-6.3Z"/><path d="M39.48,32.86c0,3.65-2.97,6.61-6.61,6.61h-6.3v2.9h6.3c5.25,0,9.52-4.27,9.52-9.52v-6.3h-2.9v6.3Z"/></svg>',
+    borderWidth: '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="2"><rect x="2" y="2" width="12" height="12" rx="2"/></svg>',
+    transform: '<svg width="14" height="14" viewBox="0 0 43.62 43.33" fill="#fff"><path d="M42.12,35.36H11.12c-1.97,0-3.57-1.6-3.57-3.57V1.5c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5,1.5v30.29c0,3.62,2.95,6.57,6.57,6.57h31c.83,0,1.5-.67,1.5-1.5s-.67-1.5-1.5-1.5Z"/><path d="M29.21,39.33c-.83,0-1.5.67-1.5,1.5v1c0,.83.67,1.5,1.5,1.5s1.5-.67,1.5-1.5v-1c0-.83-.67-1.5-1.5-1.5Z"/><path d="M21.96,22.82c.29.31.69.47,1.09.47.37,0,.74-.14,1.03-.41.6-.57.63-1.52.06-2.12-.46-.48-.94-.95-1.43-1.39-.62-.55-1.57-.5-2.12.12-.55.62-.5,1.57.12,2.12.43.39.86.8,1.25,1.22Z"/><path d="M27.41,28.31c-.78.28-1.19,1.14-.91,1.92.19.54.37,1.1.52,1.67.18.67.78,1.12,1.45,1.12.13,0,.25-.02.38-.05.8-.21,1.28-1.03,1.07-1.83-.17-.65-.37-1.29-.59-1.91-.28-.78-1.14-1.19-1.92-.91Z"/><path d="M11.5,16.79c.57.13,1.13.29,1.68.47.15.05.31.07.46.07.63,0,1.22-.4,1.43-1.04.26-.79-.17-1.63-.96-1.89-.63-.21-1.28-.39-1.93-.54-.81-.19-1.61.31-1.8,1.12-.19.81.31,1.61,1.12,1.8Z"/><path d="M2.5,13.24h-1c-.83,0-1.5.67-1.5,1.5s.67,1.5,1.5,1.5h1c.83,0,1.5-.67,1.5-1.5s-.67-1.5-1.5-1.5Z"/><circle cx="29.35" cy="14.04" r="5.53"/></svg>'
   };
 
   function addInput(parent, label, value, el, prop) {
@@ -2482,7 +2487,10 @@
       });
       breadcrumb.appendChild(crumb);
     });
-    inspBody.appendChild(breadcrumb);
+    // Insert breadcrumb before inspBody (outside scroll area), remove old one first
+    var oldBc = inspector.querySelector('.rb-ed-breadcrumb');
+    if (oldBc) oldBc.remove();
+    inspector.insertBefore(breadcrumb, inspBody);
 
     // ---- CONTAINER ----
     var posSec = addSection('Container', false);
@@ -2691,7 +2699,14 @@
       fontSel.appendChild(group);
     });
     fontSel.addEventListener('change', function() { applyStyle(el, 'fontFamily', fontSel.value); });
-    addRow(typSec, 'Font', fontSel);
+    var fontWrap = mk('div', 'rb-insp-field-wrap');
+    fontWrap.style.cssText = 'display:flex;align-items:center;background:rgba(255,255,255,0.05);border-radius:4px;';
+    var fontIcon = mk('span', 'rb-insp-field-icon');
+    fontIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 36.23 42.5" fill="#fff"><polygon points="25.58 14.61 10.21 14.61 10.21 17.22 10.22 17.22 10.22 19.84 12.83 19.84 12.83 17.22 16.59 17.22 16.59 28.77 14.52 28.77 14.52 31.38 21.28 31.38 21.28 28.77 19.2 28.77 19.2 17.22 23 17.22 23 19.84 25.61 19.84 25.61 14.61 25.58 14.61"/><path d="M34.31,9.33l-7.41-7.41c-1.24-1.24-2.89-1.93-4.65-1.93H5.72C2.57,0,0,2.57,0,5.72v31.06c0,3.15,2.57,5.72,5.72,5.72h24.79c3.15,0,5.72-2.57,5.72-5.72V13.98c0-1.73-.7-3.42-1.93-4.65ZM33.06,13.98v22.79c0,1.43-1.12,2.54-2.54,2.54H5.72c-1.43,0-2.54-1.12-2.54-2.54V5.72c0-1.43,1.12-2.54,2.54-2.54h16.53c.91,0,1.76.35,2.4,1l7.41,7.41c.64.64,1,1.5,1,2.4Z"/></svg>';
+    fontWrap.appendChild(fontIcon);
+    fontSel.style.cssText += 'background:none;border:none;border-radius:0;';
+    fontWrap.appendChild(fontSel);
+    addRow(typSec, 'Font', fontWrap);
 
     // Weight + Size row
     // Weight + Size side by side with labels
@@ -2732,8 +2747,8 @@
     var lhField = mk('div');
     lhField.style.cssText = 'display:flex;align-items:center;background:rgba(255,255,255,0.05);border-radius:4px;padding:0 4px;';
     var lhIcon = mk('span');
-    lhIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#EFEEEB" stroke-width="1.5" stroke-linecap="round"><path d="M5 3L8 1L11 3"/><line x1="8" y1="1.5" x2="8" y2="6"/><path d="M5 13L8 15L11 13"/><line x1="8" y1="15" x2="8" y2="10"/><line x1="3" y1="5.5" x2="13" y2="5.5" stroke-width="1" opacity="0.3"/><line x1="3" y1="10.5" x2="13" y2="10.5" stroke-width="1" opacity="0.3"/></svg>';
-    lhIcon.style.cssText = 'flex-shrink:0;display:flex;margin-right:4px;';
+    lhIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 39.24 34.36" fill="#fff"><path d="M37.56,31.36c.93,0,1.68.67,1.68,1.5s-.75,1.5-1.68,1.5H1.68c-.93,0-1.68-.67-1.68-1.5s.75-1.5,1.68-1.5h35.87Z"/><path fill-rule="evenodd" d="M16.38,7.47c1.14-3.02,5.41-3.02,6.55,0l7.12,18.97c.29.78-.1,1.64-.88,1.93-.78.29-1.64-.1-1.93-.88l-1.89-5.03h-11.41l-1.89,5.03c-.29.78-1.15,1.17-1.93.88-.78-.29-1.17-1.15-.88-1.93l7.13-18.97ZM20.12,8.53c-.16-.43-.77-.43-.94,0l-4.11,10.94h9.16l-4.11-10.94Z"/><path d="M37.56,0c.93,0,1.68.67,1.68,1.5s-.75,1.5-1.68,1.5H1.68c-.93,0-1.68-.67-1.68-1.5S.75,0,1.68,0h35.87Z"/></svg>';
+    lhIcon.className = 'rb-insp-field-icon';
     var lhInp = mk('input', 'rb-insp-inp');
     lhInp.value = cs.lineHeight === 'normal' ? 'auto' : (Math.round(parseFloat(cs.lineHeight) / parseFloat(cs.fontSize) * 100) + '%');
     lhInp.style.cssText = 'flex:1;background:none;border:none;padding:5px 0;';
@@ -2755,8 +2770,8 @@
     var lsField = mk('div');
     lsField.style.cssText = 'display:flex;align-items:center;background:rgba(255,255,255,0.05);border-radius:4px;padding:0 4px;';
     var lsIcon = mk('span');
-    lsIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#EFEEEB" stroke-width="1.5" stroke-linecap="round"><line x1="1" y1="4" x2="1" y2="12"/><line x1="15" y1="4" x2="15" y2="12"/><path d="M4 8L1.5 8"/><path d="M3 6L1 8L3 10"/><path d="M12 8L14.5 8"/><path d="M13 6L15 8L13 10"/><text x="5.5" y="11" font-size="8" font-weight="600" fill="#EFEEEB" stroke="none" font-family="sans-serif">A</text></svg>';
-    lsIcon.style.cssText = 'flex-shrink:0;display:flex;margin-right:4px;';
+    lsIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 39 35" fill="#fff"><path d="M3,33.5c0,.83-.67,1.5-1.5,1.5s-1.5-.67-1.5-1.5V1.5C0,.67.67,0,1.5,0s1.5.67,1.5,1.5v32Z"/><path fill-rule="evenodd" d="M16.23,8c1.14-3.02,5.41-3.02,6.55,0l7.12,18.97c.29.78-.1,1.64-.88,1.93-.78.29-1.64-.1-1.93-.88l-1.89-5.03h-11.41l-1.89,5.03c-.29.78-1.15,1.17-1.93.88-.78-.29-1.17-1.15-.88-1.93l7.13-18.97ZM19.97,9.06c-.16-.43-.77-.43-.94,0l-4.11,10.94h9.16l-4.11-10.94Z"/><path d="M39,33.5c0,.83-.67,1.5-1.5,1.5s-1.5-.67-1.5-1.5V1.5c0-.83.67-1.5,1.5-1.5s1.5.67,1.5,1.5v32Z"/></svg>';
+    lsIcon.className = 'rb-insp-field-icon';
     var lsInp = mk('input', 'rb-insp-inp');
     var lsRaw = parseFloat(cs.letterSpacing) || 0;
     lsInp.value = (cs.letterSpacing === 'normal') ? '0%' : (Math.round(lsRaw / parseFloat(cs.fontSize) * 100) + '%');
