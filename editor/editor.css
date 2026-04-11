@@ -144,6 +144,7 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 .rb-ed-project-name {
   flex:1; padding:6px 8px; background:none; border:none; color:#EFEEEB;
   font:400 12px 'Instrument Sans',sans-serif; outline:none; cursor:text;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .rb-ed-project-chev {
   width:24px; height:100%; display:flex; align-items:center; justify-content:center;
@@ -368,6 +369,32 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
   color:rgba(239,238,235,0.15);
 }
 
+/* Ghost state — pre-selection: disable only position-dependent fields */
+#rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="container"] .rb-insp-align-btn,
+#rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="container"] .rb-insp-field-wrap,
+#rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="container"] .rb-insp-inp,
+#rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="layout"] .rb-insp-spacing-field {
+  background:transparent !important; border:1px solid rgba(255,255,255,0.06) !important;
+  color:rgba(239,238,235,0.2) !important; pointer-events:none;
+  opacity:0.4;
+}
+#rb-editor-inspector.rb-insp-ghost .rb-ed-breadcrumb { display:none; }
+#rb-editor-inspector.rb-insp-ghost .rb-insp-add-btn,
+#rb-editor-inspector.rb-insp-ghost .rb-insp-eye-btn,
+#rb-editor-inspector.rb-insp-ghost .rb-insp-adv-btn { display:none; }
+#rb-editor-inspector.rb-insp-ghost .rb-insp-upload-row { display:none; }
+
+/* Ghost placeholder image button */
+.rb-insp-ghost-img-placeholder {
+  width:26px; height:26px; border:1px solid rgba(255,255,255,0.15);
+  border-radius:4px; background:transparent; position:relative; cursor:default;
+  display:flex; align-items:center; justify-content:center;
+}
+.rb-insp-ghost-img-placeholder::after {
+  content:''; position:absolute; width:1px; background:rgba(255,255,255,0.15);
+  height:calc(100% * 1.41); transform:rotate(-45deg); transform-origin:center;
+}
+
 /* Attention pulse */
 #rb-editor-inspector.rb-ed-attention { animation:rb-ed-pulse 1.2s ease; }
 
@@ -485,7 +512,7 @@ select.rb-insp-inp {
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath d='M1 3l3 3 3-3' stroke='%23999' fill='none' stroke-width='1'/%3E%3C/svg%3E"), linear-gradient(to right, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.1) 100%);
   background-repeat:no-repeat, no-repeat;
   background-position:right 6px center, right 20px center;
-  background-size:8px 8px, 1px 70%;
+  background-size:8px 8px, 1px 100%;
   padding-right:28px;
   background-color:rgba(255,255,255,0.05);
 }
@@ -493,23 +520,23 @@ select.rb-insp-inp:hover { background-color:rgba(255,255,255,0.08); }
 option { background:#1A1A1A; color:#EFEEEB; }
 
 /* ===== 9. COLOR SWATCH ===== */
-.rb-insp-color-row { display:flex; align-items:center; gap:6px; }
+.rb-insp-color-row { display:flex; align-items:stretch; gap:6px; }
 .rb-insp-swatch {
-  width:22px; height:22px; border-radius:12px;
-  border:1px solid rgba(255,255,255,0.5);
-  cursor:pointer; flex-shrink:0; position:relative;
+  width:16px; height:16px; border-radius:8px;
+  border:1px solid rgba(255,255,255,0.1);
+  cursor:pointer; flex-shrink:0; position:relative; align-self:center;
   outline:none; box-shadow:none;
   overflow:hidden;
 }
 .rb-insp-swatch input[type=color] {
   position:absolute; top:-2px; left:-2px; width:calc(100% + 4px); height:calc(100% + 4px);
   opacity:0.01; cursor:pointer;
-  border:none !important; padding:0; margin:0; border-radius:12px;
+  border:none !important; padding:0; margin:0; border-radius:8px;
   -webkit-appearance:none; appearance:none;
   outline:none !important; box-shadow:none !important;
 }
-.rb-insp-swatch input[type=color]::-webkit-color-swatch-wrapper { padding:0; border-radius:12px; border:none; }
-.rb-insp-swatch input[type=color]::-webkit-color-swatch { border:none !important; border-radius:12px; outline:none !important; }
+.rb-insp-swatch input[type=color]::-webkit-color-swatch-wrapper { padding:0; border-radius:8px; border:none; }
+.rb-insp-swatch input[type=color]::-webkit-color-swatch { border:none !important; border-radius:8px; outline:none !important; }
 .rb-insp-swatch input[type=color]::-moz-color-swatch { border:none !important; border-radius:10px; }
 .rb-insp-swatch input[type=color]:focus { outline:none !important; box-shadow:none !important; }
 
@@ -564,7 +591,7 @@ option { background:#1A1A1A; color:#EFEEEB; }
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath d='M1 3l3 3 3-3' stroke='%23999' fill='none' stroke-width='1'/%3E%3C/svg%3E"), linear-gradient(to right, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.1) 100%);
   background-repeat:no-repeat, no-repeat;
   background-position:right 6px center, right 20px center;
-  background-size:8px 8px, 1px 70%;
+  background-size:8px 8px, 1px 100%;
   padding-right:28px;
 }
 .rb-insp-font-sel:hover { background-color:rgba(255,255,255,0.08); }
@@ -985,7 +1012,7 @@ body.rb-ed-canvas-mode { overflow: hidden !important; }
   transition: color 150ms, background 150ms;
   border-radius: 4px;
 }
-.rb-ed-minmax-btn:hover { color:#EFEEEB; background:rgba(255,255,255,0.06); }
+.rb-ed-minmax-btn:hover { color:#EFEEEB !important; background:rgba(255,255,255,0.06) !important; }
 .rb-ed-minmax-btn svg { stroke:currentColor; }
 /* Minimize button hidden in sidebar mode, visible in floating */
 .rb-ed-btn-minimize { display:none; }
