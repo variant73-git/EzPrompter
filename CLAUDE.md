@@ -70,7 +70,7 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 1. ✅ Click-depth selection (drill into nested elements)
 2. ✅ Layers panel (esquerda) — árvore DOM lazy, hover sync bidirecional
 3. ✅ Sections tab — thumbnails com drag-to-reorder
-4. ✅ Inspector panel (direita) — Position, Layout, Typography, Fill, Stroke, Effects
+4. ✅ Inspector panel (direita) — Container, Typography, Appearance, Fill, Stroke, Effects
 5. ✅ Spacing guides — rosa, draggable (margin/padding/gap)
 6. ✅ Breadcrumb — caminho de ancestrais
 7. ✅ Escape key — sobe nível na seleção
@@ -88,6 +88,12 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 19. ✅ Opacity em porcentagem
 20. ✅ Auto-save (localStorage + hash cache)
 21. ✅ Alt+L toggle layers panel
+22. ✅ Light/dark mode — sun/moon toggle, localStorage persistence, dark default
+23. ✅ Image popup panel — swatch field + popup with thumbnail/replace/download
+24. ✅ Fill/Stroke/Effects auto-expand — collapsed with "+" when empty, expanded when has content
+25. ✅ Drag-to-adjust on line-height/letter-spacing icons
+26. ✅ Frosted glass mini widgets
+27. ✅ CSS isolation — font-family !important to prevent site CSS bleed
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.

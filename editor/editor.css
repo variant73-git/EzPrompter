@@ -64,13 +64,33 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
 #rb-editor-inspector,
 #rb-editor-inspector *,
 #rb-editor-inspector *::before,
-#rb-editor-inspector *::after {
+#rb-editor-inspector *::after,
+#rb-editor-layers,
+#rb-editor-layers *,
+#rb-editor-layers *::before,
+#rb-editor-layers *::after {
   text-transform: none !important;
-  letter-spacing: normal;
-  word-spacing: normal;
-  text-indent: 0;
-  font-style: normal;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+  text-indent: 0 !important;
+  font-style: normal !important;
 }
+/* Force font on interactive/text elements to prevent site CSS bleeding */
+#rb-editor-inspector input,
+#rb-editor-inspector select,
+#rb-editor-inspector button,
+#rb-editor-inspector span,
+#rb-editor-inspector div,
+#rb-editor-layers input,
+#rb-editor-layers select,
+#rb-editor-layers button,
+#rb-editor-layers span,
+#rb-editor-layers div {
+  font-family: 'Instrument Sans', sans-serif !important;
+}
+/* Preserve Instrument Serif on logo */
+#rb-editor-inspector .rb-ed-logo,
+#rb-editor-layers .rb-ed-logo { font-family: 'Instrument Serif', serif !important; font-style: italic !important; }
 #rb-editor-inspector {
   position:fixed; right:0; top:0;
   width:260px; min-width:240px; max-width:400px; height:100vh;
@@ -156,7 +176,7 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 }
 .rb-ed-project-name {
   flex:1; padding:6px 8px; background:none; border:none; color:#EFEEEB;
-  font:400 12px 'Instrument Sans',sans-serif; outline:none; cursor:text;
+  font:600 12px 'Instrument Sans',sans-serif; outline:none; cursor:text;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .rb-ed-project-chev {
@@ -196,10 +216,13 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 /* ===== MINIMIZED WIDGETS ===== */
 .rb-mini-widget {
   position:fixed; z-index:2147483646;
-  background:#1A1A1A; border-radius:10px;
+  background:rgba(23,23,23,0.85);
+  backdrop-filter:blur(40px); -webkit-backdrop-filter:blur(40px);
+  border:1px solid rgba(255,255,255,0.12);
+  border-radius:10px;
   padding:6px 10px; display:flex; align-items:center; gap:8px;
   pointer-events:auto;
-  box-shadow:0 8px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.06);
+  box-shadow:0 8px 24px rgba(0,0,0,0.4);
 }
 .rb-mini-handle {
   display:flex; gap:2px; cursor:grab; padding:2px 0;
@@ -270,7 +293,7 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 .rb-layer-chev.rb-layer-open { transform:rotate(90deg); }
 .rb-layer-chev svg { width:8px; height:8px; }
 
-.rb-layer-chev-placeholder { width:10px; height:10px; flex-shrink:0; }
+.rb-layer-chev-placeholder { width:14px; height:14px; flex-shrink:0; }
 
 .rb-layer-icon {
   width:10px; height:10px; border-radius:2px; flex-shrink:0;
@@ -385,7 +408,7 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 #rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="container"] .rb-insp-align-btn,
 #rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="container"] .rb-insp-field-wrap,
 #rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="container"] .rb-insp-inp,
-#rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="layout"] .rb-insp-spacing-field {
+#rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="container"] .rb-insp-spacing-field {
   background:transparent !important; border:1px solid rgba(255,255,255,0.06) !important;
   color:rgba(239,238,235,0.2) !important; pointer-events:none;
   opacity:0.4;
@@ -395,6 +418,10 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 #rb-editor-inspector.rb-insp-ghost .rb-insp-eye-btn,
 #rb-editor-inspector.rb-insp-ghost .rb-insp-adv-btn { display:none; }
 #rb-editor-inspector.rb-insp-ghost .rb-insp-upload-row { display:none; }
+/* Ghost: hide image row in fill, hide stroke & effects */
+#rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="fill"] .rb-insp-color-row { display:none; }
+#rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="stroke"] { display:none; }
+#rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="effects"] { display:none; }
 
 /* Ghost placeholder image button */
 .rb-insp-ghost-img-placeholder {
@@ -468,6 +495,8 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 }
 .rb-insp-sec.collapsed .rb-insp-sec-chev { transform:rotate(0deg); }
 .rb-insp-sec.collapsed .rb-insp-sec-body { display:none; }
+.rb-insp-sec.rb-insp-sec-empty .rb-insp-sec-chev { display:none; }
+.rb-insp-sec.rb-insp-sec-empty .rb-insp-sec-hd { cursor:default; }
 .rb-insp-add-btn {
   background:none; border:1px solid rgba(255,255,255,0.12); border-radius:3px;
   color:rgba(239,238,235,0.5); cursor:pointer; font:500 11px/1 'Instrument Sans',sans-serif;
@@ -846,10 +875,17 @@ option { background:#1A1A1A; color:#EFEEEB; }
 .rb-insp-step {
   display:flex; align-items:center; justify-content:center;
   background:none; border:none;
-  color:rgba(239,238,235,0.3); font-size:7px; line-height:1;
+  color:rgba(239,238,235,0.3); line-height:1;
   flex:1; cursor:pointer; -webkit-appearance:none; padding:0;
 }
 .rb-insp-step:hover { color:#EFEEEB; background:rgba(255,255,255,0.05); }
+
+/* Generic field background + divider */
+.rb-insp-field-bg { background:rgba(255,255,255,0.05); }
+.rb-insp-field-divider { background:rgba(255,255,255,0.1); }
+
+/* Font size dropdown arrow */
+.rb-insp-fs-arrow { background:none; border-left:1px solid rgba(255,255,255,0.1); color:rgba(239,238,235,0.4); }
 .rb-insp-step + .rb-insp-step { border-top:1px solid rgba(255,255,255,0.1); }
 
 /* ===== SPACING FIELD LETTERS ===== */
@@ -1165,3 +1201,238 @@ body.rb-ed-canvas-mode { overflow: hidden !important; }
   display: flex;
   gap: 4px;
 }
+
+/* ===================================================================
+   LIGHT MODE — triggered by body.rb-ed-light
+   =================================================================== */
+
+/* Panels (docked) */
+body.rb-ed-light #rb-editor-inspector { background:#E8E8E8; border-left-color:rgba(255,255,255,0.8); }
+body.rb-ed-light #rb-editor-layers { background:#E8E8E8; border-right-color:rgba(255,255,255,0.8); }
+
+/* Panels (floating) — frosted glass → light gray */
+body.rb-ed-light #rb-editor-inspector.rb-insp-floating {
+  background:rgba(232,232,232,0.88); border-color:rgba(255,255,255,1);
+  box-shadow:0 4px 30px rgba(0,0,0,0.06);
+}
+body.rb-ed-light #rb-editor-layers.rb-layers-floating {
+  background:rgba(232,232,232,0.88); border-color:rgba(255,255,255,1);
+  box-shadow:0 4px 30px rgba(0,0,0,0.06);
+}
+
+/* Headers */
+body.rb-ed-light #rb-ed-layers-header { background:#E8E8E8; }
+body.rb-ed-light #rb-ed-insp-header { background:#E8E8E8; }
+body.rb-ed-light #rb-editor-inspector.rb-insp-floating #rb-ed-insp-header { background:transparent; }
+body.rb-ed-light #rb-editor-layers.rb-layers-floating #rb-ed-layers-header { background:transparent; }
+
+/* Scrollbars */
+body.rb-ed-light #rb-editor-layers::-webkit-scrollbar-thumb { background:rgba(0,0,0,0.08); }
+body.rb-ed-light #rb-ed-insp-body::-webkit-scrollbar-thumb { background:rgba(0,0,0,0.08); }
+body.rb-ed-light #rb-editor-layers { scrollbar-color:rgba(0,0,0,0.08) transparent; }
+body.rb-ed-light #rb-ed-insp-body { scrollbar-color:rgba(0,0,0,0.08) transparent; }
+
+/* Text — primary */
+body.rb-ed-light .rb-ed-logo { color:#333; }
+body.rb-ed-light .rb-ed-logo-live { color:rgba(51,51,51,0.45); }
+body.rb-ed-light .rb-ed-project-name { color:#333; }
+body.rb-ed-light .rb-insp-val { color:#333; }
+body.rb-ed-light .rb-insp-inp { color:#333; }
+body.rb-ed-light select.rb-insp-inp { color:#333; }
+body.rb-ed-light option { background:#E8E8E8; color:#333; }
+body.rb-ed-light .rb-insp-font-sel { color:#333; }
+
+/* Text — muted */
+body.rb-ed-light .rb-ed-project-chev { color:rgba(51,51,51,0.35); }
+body.rb-ed-light .rb-ed-project-chev:hover { color:#333; background:rgba(0,0,0,0.05); }
+body.rb-ed-light .rb-insp-lbl { color:rgba(51,51,51,0.5); }
+body.rb-ed-light .rb-insp-sec-title { color:rgba(51,51,51,0.55); }
+body.rb-ed-light .rb-insp-sec-chev { stroke:rgba(51,51,51,0.3); }
+body.rb-ed-light .rb-ed-crumb { color:rgba(51,51,51,0.4); }
+body.rb-ed-light .rb-ed-crumb:hover { background:rgba(0,0,0,0.05); color:#333; }
+body.rb-ed-light .rb-ed-crumb.rb-ed-crumb-active { color:#333; }
+body.rb-ed-light .rb-ed-crumb-sep { color:rgba(51,51,51,0.2); }
+
+/* Text — layers */
+body.rb-ed-light .rb-layer-row { color:rgba(51,51,51,0.6); }
+body.rb-ed-light .rb-layer-row:hover { background:rgba(0,0,0,0.04); color:#333; }
+body.rb-ed-light .rb-layer-row.rb-layer-selected { color:#333; }
+body.rb-ed-light .rb-layer-collapse { color:rgba(51,51,51,0.3); }
+body.rb-ed-light .rb-layer-collapse:hover { color:rgba(51,51,51,0.7); }
+body.rb-ed-light #rb-ed-layers-header span { color:rgba(51,51,51,0.4); }
+
+/* Tabs */
+body.rb-ed-light .rb-layer-toggle-inert { color:rgba(51,51,51,0.35); border-color:rgba(51,51,51,0.12); }
+body.rb-ed-light .rb-layer-toggle-inert:hover { color:#333; border-color:rgba(51,51,51,0.3); }
+
+/* Surfaces & inputs */
+body.rb-ed-light .rb-ed-project-field { background:rgba(0,0,0,0.05); }
+body.rb-ed-light #rb-ed-search-inp { background:rgba(0,0,0,0.05); border-color:rgba(0,0,0,0.1); color:#333; }
+body.rb-ed-light #rb-ed-search-inp::placeholder { color:rgba(51,51,51,0.3); }
+body.rb-ed-light .rb-insp-inp { background-color:rgba(0,0,0,0.05); }
+body.rb-ed-light .rb-insp-inp:hover { background-color:rgba(0,0,0,0.07); }
+body.rb-ed-light .rb-insp-inp:focus { background-color:rgba(0,0,0,0.09); }
+body.rb-ed-light select.rb-insp-inp {
+  background-color:rgba(0,0,0,0.05);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath d='M1 3l3 3 3-3' stroke='%23555' fill='none' stroke-width='1'/%3E%3C/svg%3E"), linear-gradient(to right, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.1) 100%);
+}
+body.rb-ed-light select.rb-insp-inp:hover { background-color:rgba(0,0,0,0.07); }
+body.rb-ed-light .rb-insp-font-sel:hover { background-color:rgba(0,0,0,0.07); }
+body.rb-ed-light .rb-insp-field-wrap,
+body.rb-ed-light .rb-insp-field-bg { background:rgba(0,0,0,0.05); }
+body.rb-ed-light .rb-insp-field-divider { background:rgba(0,0,0,0.1); }
+body.rb-ed-light .rb-insp-field-wrap .rb-insp-inp,
+body.rb-ed-light .rb-insp-field-bg .rb-insp-inp { background:none; }
+
+/* Borders & dividers */
+body.rb-ed-light .rb-insp-sec { border-top-color:rgba(0,0,0,0.06); }
+body.rb-ed-light .rb-insp-swatch { border-color:rgba(0,0,0,0.12); }
+body.rb-ed-light .rb-insp-field-wrap .rb-insp-field-steppers { border-left-color:rgba(0,0,0,0.1); }
+body.rb-ed-light .rb-insp-step + .rb-insp-step { border-top-color:rgba(0,0,0,0.1); }
+body.rb-ed-light .rb-ed-dropdown-divider { background:rgba(0,0,0,0.06); }
+
+/* Steppers */
+body.rb-ed-light .rb-insp-step { color:rgba(51,51,51,0.3); background:rgba(0,0,0,0.02); }
+body.rb-ed-light .rb-insp-step:hover { color:#333; background:rgba(0,0,0,0.05); }
+body.rb-ed-light .rb-insp-fs-arrow { background:none; border-left-color:rgba(0,0,0,0.1); color:rgba(51,51,51,0.4); }
+
+/* Buttons */
+body.rb-ed-light .rb-ed-export-btn { background:rgba(0,0,0,0.06); color:#333; }
+body.rb-ed-light .rb-ed-export-btn:hover { background:#333; color:#fff; }
+body.rb-ed-light .rb-ed-minmax-btn { color:rgba(51,51,51,0.5); }
+body.rb-ed-light .rb-ed-minmax-btn:hover { color:#333 !important; background:rgba(0,0,0,0.06) !important; }
+body.rb-ed-light .rb-insp-add-btn { border-color:rgba(0,0,0,0.12); color:rgba(51,51,51,0.5); }
+body.rb-ed-light .rb-insp-add-btn:hover { border-color:rgba(0,0,0,0.3); color:#333; }
+body.rb-ed-light .rb-insp-eye-btn { color:rgba(51,51,51,0.4); }
+body.rb-ed-light .rb-insp-eye-btn:hover { color:#333; }
+body.rb-ed-light .rb-insp-eye-btn.rb-insp-eye-off { color:rgba(51,51,51,0.2); }
+body.rb-ed-light .rb-insp-adv-btn { color:rgba(51,51,51,0.4); }
+body.rb-ed-light .rb-insp-adv-btn:hover { color:#333; }
+body.rb-ed-light .rb-insp-font-global { color:rgba(51,51,51,0.35); }
+body.rb-ed-light .rb-insp-font-global:hover { background:#333; color:#fff; }
+
+/* Alignment buttons */
+body.rb-ed-light .rb-insp-align-btn { background:rgba(0,0,0,0.04); color:rgba(51,51,51,0.4); }
+body.rb-ed-light .rb-insp-align-btn:hover { background:rgba(0,0,0,0.06); color:#333; }
+body.rb-ed-light .rb-insp-align-btn.active { background:rgba(0,0,0,0.1); color:#333; }
+
+/* Dropdowns */
+body.rb-ed-light .rb-ed-dropdown { background:#E8E8E8; box-shadow:0 12px 36px rgba(0,0,0,0.12), 0 0 0 1px rgba(255,255,255,0.8); }
+body.rb-ed-light .rb-ed-dropdown-item { color:rgba(51,51,51,0.7); }
+body.rb-ed-light .rb-ed-dropdown-item:hover { background:rgba(0,0,0,0.05); color:#333; }
+body.rb-ed-light .rb-ed-export-dd { background:#E8E8E8; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
+body.rb-ed-light .rb-ed-export-dd button { color:rgba(51,51,51,0.7); }
+body.rb-ed-light .rb-ed-export-dd button:hover { background:rgba(0,0,0,0.05); color:#333; }
+
+/* Advanced popup */
+body.rb-ed-light .rb-insp-adv-popup { background:#E8E8E8; box-shadow:0 16px 48px rgba(0,0,0,0.12), 0 0 0 1px rgba(255,255,255,0.8); }
+
+/* Mini widgets */
+body.rb-ed-light .rb-mini-widget { background:rgba(232,232,232,0.88); border-color:rgba(255,255,255,1); box-shadow:0 8px 24px rgba(0,0,0,0.1); }
+body.rb-ed-light .rb-mini-dots span { background:rgba(51,51,51,0.2); }
+body.rb-ed-light .rb-mini-handle { border-right-color:rgba(0,0,0,0.08); }
+
+/* Resize handles */
+body.rb-ed-light #rb-layers-resize::after { background:rgba(51,51,51,0.18); }
+
+/* Box model */
+body.rb-ed-light .rb-insp-boxmodel { border-color:rgba(51,51,51,0.1); }
+body.rb-ed-light .rb-insp-bm-inner { border-color:rgba(51,51,51,0.15); }
+body.rb-ed-light .rb-insp-bm-core { background:rgba(0,0,0,0.03); color:rgba(51,51,51,0.4); }
+body.rb-ed-light .rb-insp-bm-lbl { color:rgba(51,51,51,0.35); }
+body.rb-ed-light .rb-insp-bm-lbl:hover { color:#333; }
+
+/* Pills */
+body.rb-ed-light .rb-insp-pill { color:rgba(51,51,51,0.45); background:rgba(0,0,0,0.04); }
+
+/* Empty state */
+body.rb-ed-light .rb-insp-empty { color:rgba(51,51,51,0.35); }
+
+/* Spacing widget */
+body.rb-ed-light .rb-spacing-widget { background:#E8E8E8; }
+
+/* Image menu */
+body.rb-ed-light .rb-ed-img-menu { background:#E8E8E8; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
+body.rb-ed-light .rb-ed-img-menu button { color:rgba(51,51,51,0.7); }
+body.rb-ed-light .rb-ed-img-menu button:hover { background:rgba(0,0,0,0.05); color:#333; }
+
+/* FTUE tooltip */
+body.rb-ed-light .rb-ed-ftue { background:#E8E8E8; color:#333; box-shadow:0 4px 12px rgba(0,0,0,0.1); }
+body.rb-ed-light .rb-ed-ftue::after { border-top-color:#E8E8E8; }
+body.rb-ed-light .rb-ed-ftue kbd { background:rgba(0,0,0,0.08); }
+
+/* FAB */
+body.rb-ed-light #rb-ed-fab { background:#E8E8E8; color:#333; box-shadow:0 8px 32px rgba(0,0,0,0.1); }
+
+/* Scroll lock tooltip */
+body.rb-ed-light .rb-ed-lock { background:#E8E8E8; color:rgba(51,51,51,0.5); }
+
+/* Restore prompt */
+body.rb-ed-light .rb-ed-restore-prompt { background:#E8E8E8; color:#333; box-shadow:0 8px 32px rgba(0,0,0,0.1); }
+body.rb-ed-light .rb-ed-restore-yes { background:#333; color:#fff; }
+body.rb-ed-light .rb-ed-restore-no { color:rgba(51,51,51,0.4); }
+body.rb-ed-light .rb-ed-restore-no:hover { color:#333; }
+
+/* Mode switcher */
+body.rb-ed-light .rb-ed-mode { color:rgba(51,51,51,0.3); }
+body.rb-ed-light .rb-ed-mode:hover { color:rgba(51,51,51,0.6); }
+body.rb-ed-light .rb-ed-mode.active { background:rgba(51,51,51,0.1); color:#333; }
+body.rb-ed-light .rb-ed-layout-btn { background:rgba(0,0,0,0.05); color:rgba(51,51,51,0.5); }
+body.rb-ed-light .rb-ed-layout-btn:hover { color:#333; }
+body.rb-ed-light .rb-ed-layout-btn.active { background:#333; color:#fff; }
+
+/* Maximize icon bg */
+body.rb-ed-light .rb-ed-icon-maximize { background:rgba(0,0,0,0.05); }
+
+/* Ghost state */
+body.rb-ed-light #rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="container"] .rb-insp-align-btn,
+body.rb-ed-light #rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="container"] .rb-insp-field-wrap,
+body.rb-ed-light #rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="container"] .rb-insp-inp,
+body.rb-ed-light #rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="container"] .rb-insp-spacing-field {
+  border-color:rgba(0,0,0,0.06) !important; color:rgba(51,51,51,0.2) !important;
+}
+body.rb-ed-light .rb-insp-ghost-img-placeholder { border-color:rgba(0,0,0,0.15); }
+body.rb-ed-light .rb-insp-ghost-img-placeholder::after { background:rgba(0,0,0,0.15); }
+
+/* Spacing labels */
+body.rb-ed-light .rb-insp-spacing-label { color:rgba(51,51,51,0.35); }
+body.rb-ed-light .rb-insp-field-letter { color:rgba(51,51,51,0.35); }
+
+/* Tabs */
+body.rb-ed-light .rb-layer-tab { color:rgba(51,51,51,0.35); }
+body.rb-ed-light .rb-layer-tab:hover { color:rgba(51,51,51,0.6); }
+body.rb-ed-light .rb-layer-tab-active { color:#333; }
+
+/* Breadcrumb */
+body.rb-ed-light .rb-ed-breadcrumb { background:#E8E8E8; border-bottom-color:rgba(0,0,0,0.06); }
+body.rb-ed-light #rb-editor-inspector.rb-insp-floating .rb-ed-breadcrumb { background:transparent; border-bottom-color:rgba(0,0,0,0.04); }
+
+/* Field icons — invert to dark gray in light mode */
+body.rb-ed-light .rb-insp-field-icon { filter:invert(1); }
+.rb-insp-field-chev { color:rgba(239,238,235,0.4); }
+.rb-insp-drag-icon { cursor:ew-resize !important; }
+body.rb-ed-light .rb-insp-field-chev { color:rgba(51,51,51,0.4); }
+
+/* Drop indicator dots */
+body.rb-ed-light .rb-ed-drop-indicator::before,
+body.rb-ed-light .rb-ed-drop-indicator::after { background:#E8E8E8; }
+
+/* Save indicator — keep green */
+
+/* Banner */
+body.rb-ed-light #rb-ed-banner { background:#E8E8E8; color:#333; border-bottom-color:rgba(0,0,0,0.06); }
+body.rb-ed-light #rb-ed-banner-close { color:rgba(51,51,51,0.4); }
+body.rb-ed-light #rb-ed-banner-close:hover { color:#333; background:rgba(0,0,0,0.06); }
+
+/* Theme toggle button */
+.rb-ed-theme-btn {
+  background:none; border:none; cursor:pointer; padding:5px;
+  display:flex; align-items:center; justify-content:center;
+  -webkit-appearance:none; color:rgba(239,238,235,0.5);
+  transition:color 150ms; border-radius:4px;
+}
+.rb-ed-theme-btn:hover { color:#EFEEEB; }
+body.rb-ed-light .rb-ed-theme-btn { color:rgba(51,51,51,0.5); }
+body.rb-ed-light .rb-ed-theme-btn:hover { color:#333; }
+.rb-ed-theme-btn svg { transition:transform 300ms ease; }
+.rb-ed-theme-btn:active svg { transform:rotate(30deg); }

@@ -177,6 +177,8 @@
     return e;
   }
 
+  function isLight() { return document.body.classList.contains('rb-ed-light'); }
+
   function getBox(el) {
     var r = el.getBoundingClientRect();
     return {top: r.top, left: r.left, width: r.width, height: r.height, bottom: r.bottom, right: r.right};
@@ -1177,10 +1179,8 @@
     if (isInert) row.classList.add('rb-layer-wrapper');
 
     if (hasVisibleChildren) {
-      var collapseBtn = depth === 0 ? mk('button', 'rb-layer-collapse rb-collapsed') : mk('div', 'rb-layer-chev');
-      collapseBtn.innerHTML = depth === 0
-        ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>'
-        : '<svg viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 1l4 3-4 3"/></svg>';
+      var collapseBtn = mk('button', 'rb-layer-collapse rb-collapsed');
+      collapseBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>';
       collapseBtn.addEventListener('mousedown', function(e) {
         e.stopPropagation();
         e.stopImmediatePropagation();
@@ -1192,12 +1192,10 @@
             renderLayerChildren(effectiveEl, childContainer, depth + 1);
           }
           childContainer.classList.add('rb-layer-expanded');
-          if (depth === 0) collapseBtn.classList.remove('rb-collapsed');
-          else collapseBtn.classList.add('rb-layer-open');
+          collapseBtn.classList.remove('rb-collapsed');
         } else {
           childContainer.classList.remove('rb-layer-expanded');
-          if (depth === 0) collapseBtn.classList.add('rb-collapsed');
-          else collapseBtn.classList.remove('rb-layer-open');
+          collapseBtn.classList.add('rb-collapsed');
         }
       }, {capture: true});
       row.appendChild(collapseBtn);
@@ -1273,7 +1271,7 @@
       e.stopPropagation();
       var inp = mk('input', 'rb-layer-rename');
       inp.value = label.textContent;
-      inp.style.cssText = 'flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(0,149,255,0.4);border-radius:3px;color:#EFEEEB;font:400 10px/1.3 "Instrument Sans",sans-serif;padding:1px 4px;outline:none;';
+      inp.style.cssText = 'flex:1;background:' + (isLight() ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.08)') + ';border:1px solid rgba(0,149,255,0.4);border-radius:3px;color:' + (isLight() ? '#333' : '#EFEEEB') + ';font:400 10px/1.3 "Instrument Sans",sans-serif;padding:1px 4px;outline:none;';
       label.style.display = 'none';
       row.insertBefore(inp, label.nextSibling);
       inp.focus();
@@ -1321,7 +1319,7 @@
       var donut = mk('div');
       var outerR = radius + dotSize / 2 + 6;
       var innerR = radius - dotSize / 2 - 4;
-      donut.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:' + (outerR * 2) + 'px;height:' + (outerR * 2) + 'px;border-radius:50%;background:rgba(23,23,23,0.85);backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);border:1px solid rgba(255,255,255,0.12);mask:radial-gradient(circle ' + innerR + 'px at center,transparent ' + innerR + 'px,black ' + (innerR + 1) + 'px);-webkit-mask:radial-gradient(circle ' + innerR + 'px at center,transparent ' + innerR + 'px,black ' + (innerR + 1) + 'px);';
+      donut.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:' + (outerR * 2) + 'px;height:' + (outerR * 2) + 'px;border-radius:50%;background:' + (isLight() ? 'rgba(232,232,232,0.88)' : 'rgba(23,23,23,0.85)') + ';backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);border:1px solid ' + (isLight() ? 'rgba(255,255,255,1)' : 'rgba(255,255,255,0.12)') + ';mask:radial-gradient(circle ' + innerR + 'px at center,transparent ' + innerR + 'px,black ' + (innerR + 1) + 'px);-webkit-mask:radial-gradient(circle ' + innerR + 'px at center,transparent ' + innerR + 'px,black ' + (innerR + 1) + 'px);';
       picker.appendChild(donut);
       var allItems = LAYER_COLORS.concat([{name:'None', hex:'none'}]);
       var count = allItems.length;
@@ -1613,7 +1611,7 @@
     imgs.sort(function(a, b) { return (b.w * b.h) - (a.w * a.h); });
 
     var countEl = mk('div');
-    countEl.style.cssText = 'padding:8px 14px;font:500 11px "Instrument Sans",sans-serif;color:rgba(239,238,235,0.5);';
+    countEl.style.cssText = 'padding:8px 14px;font:500 11px "Instrument Sans",sans-serif;color:' + (isLight() ? 'rgba(51,51,51,0.5)' : 'rgba(239,238,235,0.5)') + ';';
     countEl.textContent = imgs.length + ' image' + (imgs.length !== 1 ? 's' : '') + ' found';
     ab.appendChild(countEl);
 
@@ -1722,7 +1720,7 @@
     var userWrap = mk('div');
     userWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
     var userAvatar = mk('div');
-    userAvatar.style.cssText = 'width:26px;height:26px;border-radius:50%;background:#0095FF;display:flex;align-items:center;justify-content:center;font:600 11px "Instrument Sans",sans-serif;color:#fff;box-shadow:0 0 0 2px #1A1A1A,0 0 0 4px rgba(255,255,255,0.5);flex-shrink:0;cursor:pointer;';
+    userAvatar.style.cssText = 'width:26px;height:26px;border-radius:50%;background:#0095FF;display:flex;align-items:center;justify-content:center;font:600 11px "Instrument Sans",sans-serif;color:#fff;box-shadow:0 0 0 2px ' + (isLight() ? '#E8E8E8' : '#1A1A1A') + ',0 0 0 4px rgba(' + (isLight() ? '0,0,0,0.15' : '255,255,255,0.5') + ');flex-shrink:0;cursor:pointer;';
     userAvatar.textContent = 'A';
     var userChev = mk('button', 'rb-ed-project-chev');
     userChev.style.cssText = 'border:none;background:none;';
@@ -1740,10 +1738,10 @@
       nameRow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:10px 14px 8px;';
       var nameEl = mk('span');
       nameEl.textContent = 'Adilson Porto';
-      nameEl.style.cssText = 'font:500 12px "Instrument Sans",sans-serif;color:#EFEEEB;flex:1;';
+      nameEl.style.cssText = 'font:500 12px "Instrument Sans",sans-serif;color:' + (isLight() ? '#333' : '#EFEEEB') + ';flex:1;';
       var freeTag = mk('span');
       freeTag.textContent = 'Free';
-      freeTag.style.cssText = 'font:500 9px "Instrument Sans",sans-serif;color:rgba(239,238,235,0.5);background:rgba(255,255,255,0.08);padding:2px 6px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px;';
+      freeTag.style.cssText = 'font:500 9px "Instrument Sans",sans-serif;color:' + (isLight() ? 'rgba(51,51,51,0.5)' : 'rgba(239,238,235,0.5)') + ';background:' + (isLight() ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)') + ';padding:2px 6px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px;';
       var upgradeBtn = mk('button');
       upgradeBtn.textContent = 'Upgrade to PRO';
       upgradeBtn.style.cssText = 'font:600 9px "Instrument Sans",sans-serif;color:#fff;background:#0095FF;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;text-transform:uppercase;letter-spacing:0.3px;-webkit-appearance:none;';
@@ -1939,7 +1937,7 @@
       miniWidgetR.style.cssText = 'right:12px;top:12px;';
       miniWidgetR.innerHTML = DRAG_HANDLE;
       var miniAvatar = mk('div');
-      miniAvatar.style.cssText = 'width:22px;height:22px;border-radius:50%;background:#0095FF;display:flex;align-items:center;justify-content:center;font:600 9px "Instrument Sans",sans-serif;color:#fff;box-shadow:0 0 0 2px #1A1A1A,0 0 0 3px rgba(255,255,255,0.5);';
+      miniAvatar.style.cssText = 'width:22px;height:22px;border-radius:50%;background:#0095FF;display:flex;align-items:center;justify-content:center;font:600 9px "Instrument Sans",sans-serif;color:#fff;box-shadow:0 0 0 2px ' + (isLight() ? '#E8E8E8' : '#1A1A1A') + ',0 0 0 3px rgba(' + (isLight() ? '0,0,0,0.15' : '255,255,255,0.5') + ');';
       miniAvatar.textContent = 'A';
       miniWidgetR.appendChild(miniAvatar);
       var miniExp = mk('button', 'rb-ed-export-btn');
@@ -1967,6 +1965,34 @@
       panelUndockBtn.title = floating ? 'Undock panels' : 'Dock panels';
     }, {signal: sig, capture: true});
 
+    // Theme toggle (sun/moon)
+    var SUN_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+    var MOON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+    var themeBtn = mk('button', 'rb-ed-theme-btn');
+    themeBtn.title = 'Toggle light/dark mode';
+
+    function applyTheme(light) {
+      document.body.classList.toggle('rb-ed-light', light);
+      themeBtn.innerHTML = light ? MOON_SVG : SUN_SVG;
+      themeBtn.title = light ? 'Switch to dark mode' : 'Switch to light mode';
+      // Update inline styles that depend on theme
+      var bg = light ? '#E8E8E8' : '#1A1A1A';
+      var fg = light ? '#333' : '#EFEEEB';
+      var ring = light ? '0 0 0 2px #E8E8E8,0 0 0 4px rgba(0,0,0,0.15)' : '0 0 0 2px #1A1A1A,0 0 0 4px rgba(255,255,255,0.5)';
+      if (userAvatar) userAvatar.style.boxShadow = ring;
+      try { localStorage.setItem('rb-ed-theme', light ? 'light' : 'dark'); } catch(e) {}
+    }
+
+    var savedTheme = null;
+    try { savedTheme = localStorage.getItem('rb-ed-theme'); } catch(e) {}
+    applyTheme(savedTheme === 'light');
+
+    themeBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      applyTheme(!isLight());
+    }, {capture: true, signal: sig});
+
+    logoActions.appendChild(themeBtn);
     logoActions.appendChild(panelMinBtn);
     logoActions.appendChild(panelUndockBtn);
     logoRow.appendChild(logoLeft);
@@ -2122,33 +2148,7 @@
       fontSel.title = allFonts;
     }
 
-    // Add ghost placeholder for image in Fill section
-    var fillBody = inspBody.querySelector('[data-rb-sec="fill"] .rb-insp-sec-body');
-    if (fillBody) {
-      var phRow = mk('div', 'rb-insp-row');
-      var phLbl = mk('span', 'rb-insp-lbl'); phLbl.textContent = 'Image';
-      var phBtn = mk('div', 'rb-insp-ghost-img-placeholder');
-      phBtn.title = 'Select something first';
-      phBtn.addEventListener('mouseenter', function() {
-        var tip = document.getElementById('rb-ghost-tooltip');
-        if (tip) tip.remove();
-        tip = mk('div');
-        tip.id = 'rb-ghost-tooltip';
-        tip.textContent = 'Select something first';
-        tip.style.cssText = 'position:fixed;z-index:2147483647;background:#1A1A1A;color:rgba(239,238,235,0.7);font:400 11px "Instrument Sans",sans-serif;padding:4px 8px;border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,0.3);pointer-events:none;';
-        var r = phBtn.getBoundingClientRect();
-        tip.style.top = (r.top - 28) + 'px';
-        tip.style.left = r.left + 'px';
-        root.appendChild(tip);
-      });
-      phBtn.addEventListener('mouseleave', function() {
-        var tip = document.getElementById('rb-ghost-tooltip');
-        if (tip) tip.remove();
-      });
-      phRow.appendChild(phLbl);
-      phRow.appendChild(phBtn);
-      fillBody.appendChild(phRow);
-    }
+    // Ghost image placeholder removed — unified into updateInspector single Image row
   }
 
   // ============ SECTIONS & ROWS ============
@@ -2219,6 +2219,7 @@
     hd.appendChild(hdRight);
     hd.addEventListener('click', function(e) {
       if (e.target.closest('.rb-insp-adv-btn')) return;
+      if (sec.classList.contains('rb-insp-sec-empty')) return;
       sec.classList.toggle('collapsed');
     }, {signal: sig});
     var body = mk('div', 'rb-insp-sec-body');
@@ -2265,14 +2266,14 @@
 
     // Font size gets a dropdown with presets
     if (prop === 'fontSize') {
-      var wrap = mk('div');
-      wrap.style.cssText = 'display:flex;align-items:center;gap:0;position:relative;';
+      var wrap = mk('div', 'rb-insp-field-bg');
+      wrap.style.cssText = 'display:flex;align-items:center;gap:0;position:relative;border-radius:4px;overflow:hidden;';
       var currentPx = Math.round(numVal);
       // Editable text input
       var fsInp = mk('input', 'rb-insp-inp');
       fsInp.type = 'text';
       fsInp.value = currentPx + 'px';
-      fsInp.style.cssText = 'flex:1;border-top-right-radius:0;border-bottom-right-radius:0;border-right:none;';
+      fsInp.style.cssText = 'flex:1;background:none;border:none;border-radius:0;';
       fsInp.addEventListener('change', function() {
         var v = fsInp.value.trim();
         if (/^\d+$/.test(v)) v = v + 'px';
@@ -2280,7 +2281,7 @@
       }, {signal: sig});
       // Hidden select triggered by arrow button
       var sel = mk('select');
-      sel.style.cssText = 'position:absolute;right:0;top:0;width:24px;height:100%;opacity:0;cursor:pointer;';
+      sel.style.cssText = 'position:absolute;right:0;top:0;width:22px;height:100%;opacity:0;cursor:pointer;';
       FONT_SIZES.forEach(function(s) {
         var o = mk('option'); o.value = s + 'px'; o.textContent = s;
         if (s === currentPx) o.selected = true;
@@ -2292,8 +2293,9 @@
       }, {signal: sig});
       // Arrow button that opens the select
       var arrowBtn = mk('div');
-      arrowBtn.style.cssText = 'width:24px;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.05);border-radius:0 4px 4px 0;border-left:1px solid rgba(255,255,255,0.1);cursor:pointer;flex-shrink:0;';
-      arrowBtn.innerHTML = '<svg width="8" height="8" viewBox="0 0 8 8"><path d="M1 3l3 3 3-3" stroke="#999" fill="none" stroke-width="1"/></svg>';
+      arrowBtn.className = 'rb-insp-fs-arrow';
+      arrowBtn.style.cssText = 'width:22px;height:100%;display:flex;align-items:center;justify-content:center;border-radius:0 4px 4px 0;cursor:pointer;flex-shrink:0;';
+      arrowBtn.innerHTML = '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>';
       wrap.appendChild(fsInp);
       wrap.appendChild(arrowBtn);
       wrap.appendChild(sel);
@@ -2331,7 +2333,7 @@
       // Stepper arrows inside field
       var steppers = mk('div', 'rb-insp-field-steppers');
       var upBtn = mk('button', 'rb-insp-step');
-      upBtn.textContent = '▲';
+      upBtn.innerHTML = '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 15l-6-6-6 6"/></svg>';
       upBtn.addEventListener('click', function() {
         var n = parseFloat(inp.value) || 0;
         var nv = (n + 1) + unit;
@@ -2340,7 +2342,7 @@
         applyStyle(el, prop, applyVal(inp.value));
       }, {signal: sig});
       var dnBtn = mk('button', 'rb-insp-step');
-      dnBtn.textContent = '▼';
+      dnBtn.innerHTML = '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>';
       dnBtn.addEventListener('click', function() {
         var n = parseFloat(inp.value) || 0;
         inp.value = Math.max(0, n - 1) + unit;
@@ -2378,8 +2380,8 @@
   }
 
   function addColor(parent, label, value, el, prop) {
-    var wrap = mk('div', 'rb-insp-color-row');
-    wrap.style.cssText = 'display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.05);border-radius:4px;padding:4px 6px;';
+    var wrap = mk('div', 'rb-insp-color-row rb-insp-field-bg');
+    wrap.style.cssText = 'display:flex;align-items:center;gap:6px;border-radius:4px;padding:4px 6px;';
     var swatch = mk('div', 'rb-insp-swatch');
     var hex = rgbHex(value);
     var displayVal = hex || 'transparent';
@@ -2424,8 +2426,8 @@
     // Opacity/alpha control
     var alphaMatch = value.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
     var curAlpha = alphaMatch && alphaMatch[4] !== undefined ? Math.round(parseFloat(alphaMatch[4]) * 100) : 100;
-    var divider = mk('div');
-    divider.style.cssText = 'width:1px;align-self:stretch;background:rgba(255,255,255,0.1);flex-shrink:0;';
+    var divider = mk('div', 'rb-insp-field-divider');
+    divider.style.cssText = 'width:1px;align-self:stretch;flex-shrink:0;';
     var alphaInp = mk('input', 'rb-insp-inp');
     alphaInp.value = curAlpha + '%';
     alphaInp.style.cssText = 'width:42px;text-align:right;flex:none;background:none;';
@@ -2493,7 +2495,12 @@
     inspector.insertBefore(breadcrumb, inspBody);
 
     // ---- CONTAINER ----
-    var posSec = addSection('Container', false);
+    var posSec = addSection('Container', false, function(btn) {
+      openSettingsPopup('Container', btn, function(popup) {
+        addSelect(popup, 'Display', ['block','flex','grid','inline','inline-block','none'], cs.display, el, 'display');
+        addSelect(popup, 'Position', ['static','relative','absolute','fixed','sticky'], cs.position, el, 'position');
+      });
+    });
 
     // Alignment row (3 horizontal icons — vertical disabled for now)
     var IC14 = 'width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"';
@@ -2562,15 +2569,7 @@
     posRow.style.cssText = 'display:flex;gap:6px;';
     addRow(posSec, 'Position', posRow);
 
-    // ---- LAYOUT ----
-    var laySec = addSection('Layout', false, function(btn) {
-      openSettingsPopup('Layout', btn, function(popup) {
-        addSelect(popup, 'Display', ['block','flex','grid','inline','inline-block','none'], cs.display, el, 'display');
-        addSelect(popup, 'Position', ['static','relative','absolute','fixed','sticky'], cs.position, el, 'position');
-      });
-    });
-
-    // Dimensions W x H
+    // Dimensions W x H (part of Container)
     var dimRow = mk('div');
     dimRow.style.cssText = 'display:flex;gap:6px;';
     var wInp = mk('input', 'rb-insp-inp');
@@ -2587,7 +2586,7 @@
     });
     dimRow.appendChild(wInp);
     dimRow.appendChild(hInp);
-    addRow(laySec, 'Dimensions', dimRow);
+    addRow(posSec, 'Dimensions', dimRow);
 
     // Spacing (T/R/B/L) as visual box
     var spacingRow = mk('div', 'rb-insp-spacing-box');
@@ -2598,8 +2597,8 @@
       {label: 'L', prop: 'paddingLeft'}
     ];
     sides.forEach(function(s) {
-      var field = mk('div');
-      field.style.cssText = 'display:flex;flex-direction:row;align-items:center;background:rgba(255,255,255,0.05);border-radius:4px;overflow:hidden;flex:1;';
+      var field = mk('div', 'rb-insp-field-bg');
+      field.style.cssText = 'display:flex;flex-direction:row;align-items:center;border-radius:4px;overflow:hidden;flex:1;';
       var letter = mk('span', 'rb-insp-field-letter');
       letter.textContent = s.label;
       var inp = mk('input', 'rb-insp-inp');
@@ -2612,7 +2611,7 @@
       field.appendChild(inp);
       spacingRow.appendChild(field);
     });
-    addRow(laySec, 'Spacing', spacingRow);
+    addRow(posSec, 'Spacing', spacingRow);
 
     // ---- APPEARANCE ----
     var appSec = addSection('Appearance', false);
@@ -2700,12 +2699,21 @@
     });
     fontSel.addEventListener('change', function() { applyStyle(el, 'fontFamily', fontSel.value); });
     var fontWrap = mk('div', 'rb-insp-field-wrap');
-    fontWrap.style.cssText = 'display:flex;align-items:center;background:rgba(255,255,255,0.05);border-radius:4px;';
+    fontWrap.style.cssText = 'display:flex;align-items:center;border-radius:4px;';
     var fontIcon = mk('span', 'rb-insp-field-icon');
     fontIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 36.23 42.5" fill="#fff"><polygon points="25.58 14.61 10.21 14.61 10.21 17.22 10.22 17.22 10.22 19.84 12.83 19.84 12.83 17.22 16.59 17.22 16.59 28.77 14.52 28.77 14.52 31.38 21.28 31.38 21.28 28.77 19.2 28.77 19.2 17.22 23 17.22 23 19.84 25.61 19.84 25.61 14.61 25.58 14.61"/><path d="M34.31,9.33l-7.41-7.41c-1.24-1.24-2.89-1.93-4.65-1.93H5.72C2.57,0,0,2.57,0,5.72v31.06c0,3.15,2.57,5.72,5.72,5.72h24.79c3.15,0,5.72-2.57,5.72-5.72V13.98c0-1.73-.7-3.42-1.93-4.65ZM33.06,13.98v22.79c0,1.43-1.12,2.54-2.54,2.54H5.72c-1.43,0-2.54-1.12-2.54-2.54V5.72c0-1.43,1.12-2.54,2.54-2.54h16.53c.91,0,1.76.35,2.4,1l7.41,7.41c.64.64,1,1.5,1,2.4Z"/></svg>';
     fontWrap.appendChild(fontIcon);
-    fontSel.style.cssText += 'background:none;border:none;border-radius:0;';
+    fontSel.style.cssText += 'background:none;border:none;border-radius:0;flex:1;padding-right:4px;';
     fontWrap.appendChild(fontSel);
+    var fontDivider = mk('div');
+    fontDivider.className = 'rb-insp-field-divider';
+    fontDivider.style.cssText = 'width:1px;align-self:stretch;flex-shrink:0;';
+    fontWrap.appendChild(fontDivider);
+    var fontChev = mk('div');
+    fontChev.className = 'rb-insp-field-chev';
+    fontChev.style.cssText = 'display:flex;align-items:center;justify-content:center;width:22px;flex-shrink:0;pointer-events:none;';
+    fontChev.innerHTML = '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>';
+    fontWrap.appendChild(fontChev);
     addRow(typSec, 'Font', fontWrap);
 
     // Weight + Size row
@@ -2745,7 +2753,8 @@
     var lhLabel = mk('span', 'rb-insp-lbl');
     lhLabel.textContent = 'Line height';
     var lhField = mk('div');
-    lhField.style.cssText = 'display:flex;align-items:center;background:rgba(255,255,255,0.05);border-radius:4px;padding:0 4px;';
+    lhField.className = 'rb-insp-field-bg';
+    lhField.style.cssText = 'display:flex;align-items:center;border-radius:4px;padding:0 4px;';
     var lhIcon = mk('span');
     lhIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 39.24 34.36" fill="#fff"><path d="M37.56,31.36c.93,0,1.68.67,1.68,1.5s-.75,1.5-1.68,1.5H1.68c-.93,0-1.68-.67-1.68-1.5s.75-1.5,1.68-1.5h35.87Z"/><path fill-rule="evenodd" d="M16.38,7.47c1.14-3.02,5.41-3.02,6.55,0l7.12,18.97c.29.78-.1,1.64-.88,1.93-.78.29-1.64-.1-1.93-.88l-1.89-5.03h-11.41l-1.89,5.03c-.29.78-1.15,1.17-1.93.88-.78-.29-1.17-1.15-.88-1.93l7.13-18.97ZM20.12,8.53c-.16-.43-.77-.43-.94,0l-4.11,10.94h9.16l-4.11-10.94Z"/><path d="M37.56,0c.93,0,1.68.67,1.68,1.5s-.75,1.5-1.68,1.5H1.68c-.93,0-1.68-.67-1.68-1.5S.75,0,1.68,0h35.87Z"/></svg>';
     lhIcon.className = 'rb-insp-field-icon';
@@ -2757,6 +2766,24 @@
       if (v.indexOf('%') !== -1) v = String(parseFloat(v) / 100);
       applyStyle(el, 'lineHeight', v);
     });
+    lhIcon.classList.add('rb-insp-drag-icon');
+    lhIcon.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      var startX = e.clientX;
+      var startVal = parseFloat(lhInp.value) || 100;
+      var onMove = function(me) {
+        var delta = Math.round((me.clientX - startX) / 2);
+        var nv = Math.max(0, startVal + delta);
+        lhInp.value = nv + '%';
+        applyStyle(el, 'lineHeight', String(nv / 100));
+      };
+      var onUp = function() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }, {capture: true, signal: sig});
     lhField.appendChild(lhIcon);
     lhField.appendChild(lhInp);
     lhWrap.appendChild(lhLabel);
@@ -2768,7 +2795,8 @@
     var lsLabel = mk('span', 'rb-insp-lbl');
     lsLabel.textContent = 'Letter spacing';
     var lsField = mk('div');
-    lsField.style.cssText = 'display:flex;align-items:center;background:rgba(255,255,255,0.05);border-radius:4px;padding:0 4px;';
+    lsField.className = 'rb-insp-field-bg';
+    lsField.style.cssText = 'display:flex;align-items:center;border-radius:4px;padding:0 4px;';
     var lsIcon = mk('span');
     lsIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 39 35" fill="#fff"><path d="M3,33.5c0,.83-.67,1.5-1.5,1.5s-1.5-.67-1.5-1.5V1.5C0,.67.67,0,1.5,0s1.5.67,1.5,1.5v32Z"/><path fill-rule="evenodd" d="M16.23,8c1.14-3.02,5.41-3.02,6.55,0l7.12,18.97c.29.78-.1,1.64-.88,1.93-.78.29-1.64-.1-1.93-.88l-1.89-5.03h-11.41l-1.89,5.03c-.29.78-1.15,1.17-1.93.88-.78-.29-1.17-1.15-.88-1.93l7.13-18.97ZM19.97,9.06c-.16-.43-.77-.43-.94,0l-4.11,10.94h9.16l-4.11-10.94Z"/><path d="M39,33.5c0,.83-.67,1.5-1.5,1.5s-1.5-.67-1.5-1.5V1.5c0-.83.67-1.5,1.5-1.5s1.5.67,1.5,1.5v32Z"/></svg>';
     lsIcon.className = 'rb-insp-field-icon';
@@ -2784,6 +2812,25 @@
       }
       applyStyle(el, 'letterSpacing', v);
     });
+    lsIcon.classList.add('rb-insp-drag-icon');
+    lsIcon.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      var startX = e.clientX;
+      var startVal = parseFloat(lsInp.value) || 0;
+      var fSize = parseFloat(cs.fontSize) || 16;
+      var onMove = function(me) {
+        var delta = Math.round((me.clientX - startX) / 2);
+        var nv = startVal + delta;
+        lsInp.value = nv + '%';
+        applyStyle(el, 'letterSpacing', (nv / 100 * fSize) + 'px');
+      };
+      var onUp = function() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }, {capture: true, signal: sig});
     lsField.appendChild(lsIcon);
     lsField.appendChild(lsInp);
     lsWrap.appendChild(lsLabel);
@@ -2973,10 +3020,24 @@
     }
 
     // ---- FILL ----
-    var fillSec = addSection('Fill', false);
-    // Eye toggle for fill
-    var fillHd = fillSec.parentElement.querySelector('.rb-insp-sec-hd');
     var hasBg = cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent';
+    var _fillBgImg = cs.backgroundImage;
+    var _fillHasImg = (_fillBgImg && _fillBgImg !== 'none') || el.tagName === 'IMG' || el.tagName === 'SVG' || (el.tagName && el.tagName.toLowerCase() === 'svg') || el.querySelector(':scope > img') || el.querySelector(':scope > svg');
+    var hasFill = hasBg || _fillHasImg;
+    var fillSec = addSection('Fill', !hasFill);
+    var fillHd = fillSec.parentElement.querySelector('.rb-insp-sec-hd');
+    if (!hasFill) {
+      fillSec.parentElement.classList.add('rb-insp-sec-empty');
+      var addFillBtn = mk('button', 'rb-insp-add-btn');
+      addFillBtn.textContent = '+';
+      addFillBtn.title = 'Add background';
+      addFillBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        applyStyle(el, 'backgroundColor', isLight() ? '#E8E8E8' : '#1A1A1A');
+        updateInspector(el);
+      }, {capture: true, signal: sig});
+      fillHd.querySelector('div').appendChild(addFillBtn);
+    }
     if (hasBg) {
       var eyeFill = mk('button', 'rb-insp-eye-btn');
       eyeFill.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -3000,7 +3061,7 @@
     }
     addColor(fillSec, 'Background color', cs.backgroundColor, el, 'backgroundColor');
 
-    // Show selected IMG or SVG as preview (check element itself or direct child)
+    // ---- IMAGE (field matching color row structure) ----
     var visualEl = null;
     if (el.tagName === 'IMG') visualEl = el;
     else if (el.tagName === 'SVG' || (el.tagName && el.tagName.toLowerCase() === 'svg')) visualEl = el;
@@ -3010,138 +3071,174 @@
       if (childImg) visualEl = childImg;
       else if (childSvg) visualEl = childSvg;
     }
-    if (visualEl) {
-      var vTag = visualEl.tagName.toUpperCase();
-      var imgPreviewRow = mk('div');
-      imgPreviewRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
-      var imgThumb = mk('div');
-      imgThumb.style.cssText = 'width:32px;height:32px;border-radius:6px;overflow:hidden;border:1px solid rgba(255,255,255,0.15);flex-shrink:0;position:relative;display:flex;align-items:center;justify-content:center;background:#222;';
-      if (vTag === 'IMG') {
-        var thumbImg = mk('img');
-        thumbImg.src = visualEl.src;
-        thumbImg.style.cssText = 'width:100%;height:100%;object-fit:cover;';
-        imgThumb.appendChild(thumbImg);
-      } else {
-        try {
-          var svgClone = visualEl.cloneNode(true);
-          svgClone.setAttribute('width', '20');
-          svgClone.setAttribute('height', '20');
-          svgClone.style.cssText = 'width:20px;height:20px;';
-          svgClone.removeAttribute('class');
-          imgThumb.appendChild(svgClone);
-        } catch(e) {}
-        var svgBadge = mk('span');
-        svgBadge.textContent = 'SVG';
-        svgBadge.style.cssText = 'position:absolute;bottom:1px;right:1px;font:600 6px "Instrument Sans",sans-serif;color:#fff;background:rgba(0,0,0,0.6);padding:1px 3px;border-radius:2px;';
-        imgThumb.appendChild(svgBadge);
-      }
-      var imgHex = mk('span', 'rb-insp-val');
-      var vCs = getCS(visualEl);
-      var dominantColor = vTag === 'IMG' ? (rgbHex(cs.backgroundColor) || 'transparent') : (rgbHex(vCs.color) || rgbHex(vCs.fill) || '#000000');
-      imgHex.textContent = dominantColor;
-      imgPreviewRow.appendChild(imgThumb);
-      imgPreviewRow.appendChild(imgHex);
-      addRow(fillSec, 'Image', imgPreviewRow);
-    }
-
-    // Show current background image as preview swatch
     var currentBgImg = cs.backgroundImage;
-    if (currentBgImg && currentBgImg !== 'none') {
-      var bgPreviewRow = mk('div');
-      bgPreviewRow.style.cssText = 'display:flex;gap:4px;align-items:center;flex-wrap:wrap;';
-      var bgThumb = mk('div');
-      bgThumb.style.cssText = 'width:32px;height:32px;border-radius:6px;background-image:'+currentBgImg+';background-size:cover;background-position:center;cursor:pointer;transition:all 150ms;border:1px solid rgba(255,255,255,0.15);';
-      bgThumb.title = 'Click to expand';
-      bgThumb.addEventListener('click', function() {
-        if (bgThumb.style.width === '32px') {
-          bgThumb.style.width = '100%';
-          bgThumb.style.height = '80px';
+    var hasBgImg = currentBgImg && currentBgImg !== 'none';
+    var hasImage = visualEl || hasBgImg;
+
+    var imgFieldWrap = mk('div', 'rb-insp-color-row rb-insp-field-bg');
+    imgFieldWrap.style.cssText = 'display:flex;align-items:center;gap:6px;border-radius:4px;padding:4px 6px;';
+
+    // Swatch-sized thumbnail (16x16 to match color swatch)
+    var imgSwatch = mk('div', 'rb-insp-swatch');
+    if (hasImage) {
+      imgSwatch.style.cssText += 'overflow:hidden;position:relative;';
+      if (visualEl) {
+        var vTag = visualEl.tagName.toUpperCase();
+        if (vTag === 'IMG') {
+          imgSwatch.style.backgroundImage = 'url(' + visualEl.src + ')';
+          imgSwatch.style.backgroundSize = 'cover';
+          imgSwatch.style.backgroundPosition = 'center';
         } else {
-          bgThumb.style.width = '32px';
-          bgThumb.style.height = '32px';
+          imgSwatch.style.background = '#222';
         }
-      });
-      var bgSizeLabel = mk('span', 'rb-insp-val');
-      bgSizeLabel.textContent = cs.backgroundSize || 'auto';
-      bgSizeLabel.style.flex = '1';
-      // Action buttons: upload, download, delete
-      var bgActions = mk('div');
-      bgActions.style.cssText = 'display:flex;gap:2px;margin-left:auto;';
-      // Upload replacement
-      var bgReplaceBtn = mk('button', 'rb-insp-align-btn'); bgReplaceBtn.style.cssText = 'width:26px;height:26px;flex:none;';
-      bgReplaceBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
-      bgReplaceBtn.title = 'Replace image';
-      var bgReplInp = mk('input'); bgReplInp.type = 'file'; bgReplInp.accept = 'image/*'; bgReplInp.style.display = 'none';
-      bgReplaceBtn.addEventListener('click', function() { bgReplInp.click(); });
-      bgReplInp.addEventListener('change', function(ev) {
-        var f = ev.target.files[0]; if (!f) return;
-        var rd = new FileReader();
-        rd.onload = function() { undoStack.push({el: el, prop: 'backgroundImage', old: el.style.backgroundImage}); el.style.backgroundImage = 'url(' + rd.result + ')'; updateInspector(el); };
-        rd.readAsDataURL(f);
-      });
-      bgActions.appendChild(bgReplInp);
-      bgActions.appendChild(bgReplaceBtn);
-      // Download
-      var bgDlBtn = mk('button', 'rb-insp-align-btn'); bgDlBtn.style.cssText = 'width:26px;height:26px;flex:none;';
-      bgDlBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-      bgDlBtn.title = 'Download image';
-      bgDlBtn.addEventListener('click', function() {
-        var url = currentBgImg.match(/url\(["']?([^"')]+)["']?\)/);
-        if (url && url[1]) { var a = document.createElement('a'); a.href = url[1]; a.download = 'background'; a.click(); }
-      });
-      bgActions.appendChild(bgDlBtn);
-      // Delete
-      var bgDelBtn = mk('button', 'rb-insp-align-btn'); bgDelBtn.style.cssText = 'width:26px;height:26px;flex:none;';
-      bgDelBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
-      bgDelBtn.title = 'Remove image';
-      bgDelBtn.addEventListener('click', function() {
-        undoStack.push({el: el, prop: 'backgroundImage', old: el.style.backgroundImage});
-        el.style.backgroundImage = 'none';
-        updateInspector(el);
-      });
-      bgActions.appendChild(bgDelBtn);
-      bgPreviewRow.appendChild(bgThumb);
-      bgPreviewRow.appendChild(bgSizeLabel);
-      bgPreviewRow.appendChild(bgActions);
-      addRow(fillSec, 'Image', bgPreviewRow);
+      } else {
+        imgSwatch.style.backgroundImage = currentBgImg;
+        imgSwatch.style.backgroundSize = 'cover';
+        imgSwatch.style.backgroundPosition = 'center';
+      }
+    } else {
+      // Empty: checkerboard like transparent color
+      imgSwatch.style.background = 'linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%),linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%)';
+      imgSwatch.style.backgroundSize = '8px 8px';
+      imgSwatch.style.backgroundPosition = '0 0, 4px 4px';
     }
+    imgFieldWrap.appendChild(imgSwatch);
 
-    // Background image upload + URL
-    var bgUploadRow = mk('div');
-    bgUploadRow.style.cssText = 'display:flex;gap:4px;align-items:center;';
-    var UPLOAD_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
-    var bgFileBtn = mk('button', 'rb-insp-align-btn');
-    bgFileBtn.innerHTML = UPLOAD_ICON;
-    bgFileBtn.title = 'Upload background image';
-    var bgFileInp = mk('input');
-    bgFileInp.type = 'file';
-    bgFileInp.accept = 'image/*';
-    bgFileInp.style.display = 'none';
-    bgFileBtn.addEventListener('click', function() { bgFileInp.click(); });
-    bgFileInp.addEventListener('change', function(e) {
-      var file = e.target.files[0];
-      if (!file) return;
-      var reader = new FileReader();
-      reader.onload = function() {
-        undoStack.push({el: el, prop: 'backgroundImage', old: el.style.backgroundImage});
-        el.style.backgroundImage = 'url(' + reader.result + ')';
-        el.style.backgroundSize = 'cover';
-        el.style.backgroundPosition = 'center';
-        updateInspector(el);
-      };
-      reader.readAsDataURL(file);
-    });
+    // Text label
+    var imgLabel = mk('span', 'rb-insp-val');
+    imgLabel.style.cssText = 'flex:1;background:none;padding:0;';
+    if (hasImage) {
+      if (visualEl) {
+        var vTag2 = visualEl.tagName.toUpperCase();
+        imgLabel.textContent = vTag2 === 'IMG' ? 'image' : 'SVG';
+      } else {
+        imgLabel.textContent = 'background';
+      }
+      imgLabel.style.cursor = 'pointer';
+    } else {
+      imgLabel.textContent = 'none';
+      imgLabel.style.color = 'rgba(239,238,235,0.3)';
+    }
+    imgFieldWrap.appendChild(imgLabel);
 
-    bgUploadRow.appendChild(bgFileInp);
-    bgUploadRow.appendChild(bgFileBtn);
-    bgUploadRow.classList.add('rb-insp-upload-row');
-    addRow(fillSec, currentBgImg && currentBgImg !== 'none' ? 'Replace' : 'Image', bgUploadRow);
+    // If has image: click field to open image panel
+    if (hasImage) {
+      var imgPanelBtn = imgFieldWrap;
+      imgPanelBtn.style.cursor = 'pointer';
+      imgPanelBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        var existing = document.querySelector('.rb-insp-img-popup');
+        if (existing) { existing.remove(); return; }
+        var popup = mk('div', 'rb-insp-adv-popup rb-insp-img-popup');
+        var inspRect = inspector.getBoundingClientRect();
+        var fieldRect = imgFieldWrap.getBoundingClientRect();
+        var popupTop = Math.min(fieldRect.top, window.innerHeight - 260);
+        popup.style.cssText = 'position:fixed;top:' + popupTop + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;min-width:200px;';
+
+        // Header
+        var popHd = mk('div');
+        popHd.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.06);';
+        var popTitle = mk('span', 'rb-insp-sec-title');
+        popTitle.textContent = 'Image';
+        popTitle.style.cssText = 'text-transform:none;letter-spacing:0;';
+        var closeBtn = mk('button', 'rb-ed-minmax-btn');
+        closeBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+        closeBtn.addEventListener('mousedown', function(ev) { ev.stopImmediatePropagation(); popup.remove(); }, {capture: true, signal: sig});
+        popHd.appendChild(popTitle);
+        popHd.appendChild(closeBtn);
+        popup.appendChild(popHd);
+
+        // Large thumbnail
+        var lgThumb = mk('div');
+        lgThumb.style.cssText = 'width:100%;height:120px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);margin-bottom:10px;display:flex;align-items:center;justify-content:center;background:#222;';
+        if (visualEl) {
+          var vt = visualEl.tagName.toUpperCase();
+          if (vt === 'IMG') {
+            var lgImg = mk('img');
+            lgImg.src = visualEl.src;
+            lgImg.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+            lgThumb.appendChild(lgImg);
+          } else {
+            try {
+              var svClone = visualEl.cloneNode(true);
+              svClone.setAttribute('width', '60');
+              svClone.setAttribute('height', '60');
+              svClone.style.cssText = 'width:60px;height:60px;';
+              svClone.removeAttribute('class');
+              lgThumb.appendChild(svClone);
+            } catch(err) {}
+          }
+        } else {
+          lgThumb.style.backgroundImage = currentBgImg;
+          lgThumb.style.backgroundSize = 'cover';
+          lgThumb.style.backgroundPosition = 'center';
+        }
+        popup.appendChild(lgThumb);
+
+        // Action buttons row
+        var actRow = mk('div');
+        actRow.style.cssText = 'display:flex;gap:4px;';
+
+        // Replace
+        var replBtn = mk('button', 'rb-insp-align-btn');
+        replBtn.style.cssText = 'flex:1;height:28px;gap:4px;';
+        replBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span style="font:400 10px \'Instrument Sans\',sans-serif">Replace</span>';
+        var replInp = mk('input'); replInp.type = 'file'; replInp.accept = 'image/*'; replInp.style.display = 'none';
+        replBtn.addEventListener('mousedown', function(ev) { ev.stopImmediatePropagation(); replInp.click(); }, {capture: true});
+        replInp.addEventListener('change', function(ev) {
+          var f = ev.target.files[0]; if (!f) return;
+          var rd = new FileReader();
+          rd.onload = function() {
+            if (visualEl && visualEl.tagName === 'IMG') {
+              undoStack.push({el: visualEl, prop: 'src', old: visualEl.src});
+              visualEl.src = rd.result;
+            } else {
+              undoStack.push({el: el, prop: 'backgroundImage', old: el.style.backgroundImage});
+              el.style.backgroundImage = 'url(' + rd.result + ')';
+              el.style.backgroundSize = 'cover';
+              el.style.backgroundPosition = 'center';
+            }
+            popup.remove();
+            updateInspector(el);
+          };
+          rd.readAsDataURL(f);
+        });
+        actRow.appendChild(replInp);
+        actRow.appendChild(replBtn);
+
+        // Download
+        var dlBtn = mk('button', 'rb-insp-align-btn');
+        dlBtn.style.cssText = 'flex:1;height:28px;gap:4px;';
+        dlBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span style="font:400 10px \'Instrument Sans\',sans-serif">Download</span>';
+        dlBtn.addEventListener('mousedown', function(ev) {
+          ev.stopImmediatePropagation();
+          var dlUrl = '';
+          if (visualEl && visualEl.tagName === 'IMG') dlUrl = visualEl.src;
+          else if (hasBgImg) { var m = currentBgImg.match(/url\(["']?([^"')]+)["']?\)/); if (m) dlUrl = m[1]; }
+          if (dlUrl) { var a = document.createElement('a'); a.href = dlUrl; a.download = 'image'; a.click(); }
+        }, {capture: true});
+        actRow.appendChild(dlBtn);
+
+        popup.appendChild(actRow);
+        root.appendChild(popup);
+
+        var closeOutside = function(ev) {
+          if (popup && !popup.contains(ev.target) && !imgFieldWrap.contains(ev.target)) {
+            if (popup.parentElement) popup.remove();
+            document.removeEventListener('mousedown', closeOutside, true);
+          }
+        };
+        setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 50);
+      }, {capture: true, signal: sig});
+    }
+    addRow(fillSec, 'Image', imgFieldWrap);
 
     // ---- STROKE ----
-    var strkSec = addSection('Stroke', true);
     var hasStroke = cs.borderStyle !== 'none' && (parseFloat(cs.borderWidth) || 0) > 0;
+    var strkSec = addSection('Stroke', !hasStroke);
     var strkHd = strkSec.parentElement.querySelector('.rb-insp-sec-hd');
     if (!hasStroke) {
+      strkSec.parentElement.classList.add('rb-insp-sec-empty');
       var addStrokeBtn = mk('button', 'rb-insp-add-btn');
       addStrokeBtn.textContent = '+';
       addStrokeBtn.title = 'Add stroke';
@@ -3149,7 +3246,7 @@
         e.stopImmediatePropagation();
         applyStyle(el, 'borderWidth', '1px');
         applyStyle(el, 'borderStyle', 'solid');
-        applyStyle(el, 'borderColor', '#EFEEEB');
+        applyStyle(el, 'borderColor', isLight() ? '#333' : '#EFEEEB');
         updateInspector(el);
       }, {capture: true, signal: sig});
       strkHd.querySelector('div').appendChild(addStrokeBtn);
@@ -3204,10 +3301,11 @@
     addColor(strkSec, 'Color', cs.borderColor, el, 'borderColor');
 
     // ---- EFFECTS ----
-    var fxSec = addSection('Effects', true);
     var hasShadow = cs.boxShadow && cs.boxShadow !== 'none';
+    var fxSec = addSection('Effects', !hasShadow);
     var fxHd = fxSec.parentElement.querySelector('.rb-insp-sec-hd');
     if (!hasShadow) {
+      fxSec.parentElement.classList.add('rb-insp-sec-empty');
       var addFxBtn = mk('button', 'rb-insp-add-btn');
       addFxBtn.textContent = '+';
       addFxBtn.title = 'Add shadow';
