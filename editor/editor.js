@@ -1720,7 +1720,7 @@
     var userWrap = mk('div');
     userWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
     var userAvatar = mk('div');
-    userAvatar.style.cssText = 'width:26px;height:26px;border-radius:50%;background:#0095FF;display:flex;align-items:center;justify-content:center;font:600 11px "Instrument Sans",sans-serif;color:#fff;box-shadow:0 0 0 2px ' + (isLight() ? '#E8E8E8' : '#1A1A1A') + ',0 0 0 4px rgba(' + (isLight() ? '0,0,0,0.15' : '255,255,255,0.5') + ');flex-shrink:0;cursor:pointer;';
+    userAvatar.style.cssText = 'width:26px;height:26px;border-radius:50%;background:#7E828A;display:flex;align-items:center;justify-content:center;font:600 11px "Instrument Sans",sans-serif;color:#fff;box-shadow:0 0 0 2px ' + (isLight() ? '#E8E8E8' : '#1A1A1A') + ',0 0 0 4px rgba(' + (isLight() ? '0,0,0,0.15' : '255,255,255,0.5') + ');flex-shrink:0;cursor:pointer;';
     userAvatar.textContent = 'A';
     var userChev = mk('button', 'rb-ed-project-chev');
     userChev.style.cssText = 'border:none;background:none;';
@@ -1937,7 +1937,7 @@
       miniWidgetR.style.cssText = 'right:12px;top:12px;';
       miniWidgetR.innerHTML = DRAG_HANDLE;
       var miniAvatar = mk('div');
-      miniAvatar.style.cssText = 'width:22px;height:22px;border-radius:50%;background:#0095FF;display:flex;align-items:center;justify-content:center;font:600 9px "Instrument Sans",sans-serif;color:#fff;box-shadow:0 0 0 2px ' + (isLight() ? '#E8E8E8' : '#1A1A1A') + ',0 0 0 3px rgba(' + (isLight() ? '0,0,0,0.15' : '255,255,255,0.5') + ');';
+      miniAvatar.style.cssText = 'width:22px;height:22px;border-radius:50%;background:#7E828A;display:flex;align-items:center;justify-content:center;font:600 9px "Instrument Sans",sans-serif;color:#fff;box-shadow:0 0 0 2px ' + (isLight() ? '#E8E8E8' : '#1A1A1A') + ',0 0 0 3px rgba(' + (isLight() ? '0,0,0,0.15' : '255,255,255,0.5') + ');';
       miniAvatar.textContent = 'A';
       miniWidgetR.appendChild(miniAvatar);
       var miniExp = mk('button', 'rb-ed-export-btn');

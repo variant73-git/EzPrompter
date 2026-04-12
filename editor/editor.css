@@ -448,11 +448,11 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 .rb-ed-logo { font-family:'Instrument Serif',serif; font-style:italic; font-size:14px; color:#EFEEEB; }
 .rb-ed-logo-live { font-family:'Instrument Sans',sans-serif; font-size:10px; font-weight:500; color:rgba(239,238,235,0.4); margin-left:5px; }
 .rb-ed-export-btn {
-  background:rgba(255,255,255,0.05); border:none; border-radius:999px;
+  background:#0095FF; border:none; border-radius:999px;
   padding:4px 10px; font:500 10px 'Instrument Sans',sans-serif;
-  color:#EFEEEB; cursor:pointer; display:flex; align-items:center; gap:4px;
+  color:#fff; cursor:pointer; display:flex; align-items:center; gap:4px;
 }
-.rb-ed-export-btn:hover { background:#EFEEEB; color:#000; }
+.rb-ed-export-btn:hover { background:#007ad6; }
 .rb-ed-export-btn svg { width:12px; height:12px; }
 .rb-ed-rebuild-btn {
   font:500 8px/1 'Instrument Sans',sans-serif;
@@ -1297,8 +1297,8 @@ body.rb-ed-light .rb-insp-step:hover { color:#333; background:rgba(0,0,0,0.05); 
 body.rb-ed-light .rb-insp-fs-arrow { background:none; border-left-color:rgba(0,0,0,0.1); color:rgba(51,51,51,0.4); }
 
 /* Buttons */
-body.rb-ed-light .rb-ed-export-btn { background:rgba(0,0,0,0.06); color:#333; }
-body.rb-ed-light .rb-ed-export-btn:hover { background:#333; color:#fff; }
+body.rb-ed-light .rb-ed-export-btn { background:#0095FF; color:#fff; }
+body.rb-ed-light .rb-ed-export-btn:hover { background:#007ad6; }
 body.rb-ed-light .rb-ed-minmax-btn { color:rgba(51,51,51,0.5); }
 body.rb-ed-light .rb-ed-minmax-btn:hover { color:#333 !important; background:rgba(0,0,0,0.06) !important; }
 body.rb-ed-light .rb-insp-add-btn { border-color:rgba(0,0,0,0.12); color:rgba(51,51,51,0.5); }
