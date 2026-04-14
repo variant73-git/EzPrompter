@@ -439,6 +439,27 @@
       localStorage.setItem(saveKey, JSON.stringify(state));
       // Show subtle save indicator
       showSaveIndicator();
+
+      // Additionally save a persistent snapshot if there's an active project
+      // (i.e., the user came here via Mode E chunking, which creates a project).
+      // Auto-snapshots are labeled so the history UI can distinguish them.
+      if (window.__rbPersist && window.__rbActiveProjectId) {
+        try {
+          // Serialize the current edited state as the snapshot "html"
+          var rebuiltEl = document.getElementById('rb-rebuilt-page');
+          var snapshotHtml = rebuiltEl ? rebuiltEl.outerHTML : JSON.stringify(state);
+          window.__rbPersist.saveSnapshot(
+            window.__rbActiveProjectId,
+            snapshotHtml,
+            {auto: true, label: 'Auto-save'}
+          ).then(function() {
+            // Occasionally prune old auto-saves to cap storage growth
+            if (Math.random() < 0.1) {
+              window.__rbPersist.pruneAutoSnapshots(window.__rbActiveProjectId);
+            }
+          }).catch(function(e) { console.warn('[persist] snapshot failed:', e); });
+        } catch(e) { console.warn('[persist] snapshot error:', e); }
+      }
     } catch(e) {}
   }
 
