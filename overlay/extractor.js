@@ -553,6 +553,11 @@
     var bodyColor = rgbToHex(bodyCs.color) || '#000000';
     var theme = isLight(bodyBg) ? 'light' : 'dark';
     var bodyFont = bodyCs.fontFamily.split(',')[0].replace(/['"]/g, '').trim();
+    // Reserve a slot for the tone sentence — filled in at the end once we
+    // have collected shapes, palette dominance, and structural signals.
+    var toneSlotIndex = md.length;
+    md.push(''); // placeholder
+
     md.push('- **Theme**: ' + theme + ' mode (background: `' + bodyBg + '`, text: `' + bodyColor + '`)');
     md.push('- **Primary font**: ' + bodyFont);
     md.push('- **URL**: ' + location.href);
@@ -1212,7 +1217,32 @@
     if (cssVars.length > 0) {
       md.push('## CSS Custom Properties\n');
       cssVars.slice(0, 15).forEach(function(v) {
-        md.push('- `' + v.name + '`: `' + v.value.slice(0, 60) + '`');
+        var val = v.value.slice(0, 60);
+        var twHint = '';
+
+        // Infer Tailwind equivalents from the value type
+        var hex = rgbToHex(val);
+        if (hex) {
+          twHint = ' → `bg-[' + hex + ']` / `text-[' + hex + ']` / `border-[' + hex + ']`';
+        } else if (/^[\d.]+$/.test(val) && parseFloat(val) > 0 && parseFloat(val) < 3) {
+          // Unitless small number — line-height ratio (checked BEFORE numeric px)
+          twHint = ' → `leading-[' + val + ']`';
+        } else if (/^-?\d+(\.\d+)?(px|rem)$/.test(val)) {
+          // Numeric value with explicit unit — spacing or radius token
+          var px = parseFloat(val);
+          if (/rem$/.test(val)) px = px * 16;
+          if (!isNaN(px) && px >= 0 && px <= 500) {
+            var twSpacing = pxToTw(px);
+            var twRadius  = radiusToTw(px);
+            if (twSpacing && twSpacing !== String(px) + 'px') {
+              twHint = ' → spacing `' + twSpacing + '` / radius `' + twRadius + '`';
+            }
+          }
+        } else if (/font|serif|sans|mono/i.test(val)) {
+          twHint = ' → font-family token';
+        }
+
+        md.push('- `' + v.name + '`: `' + val + '`' + twHint);
       });
       md.push('');
     }
@@ -1284,9 +1314,64 @@
       });
     }
 
-    // Background SVG patterns
-    if (bgPatterns.size > 0) {
-      [...bgPatterns].slice(0, 10).forEach(function(url) { md.push('- **Background**: ' + url); });
+    // Background-image assets (all URLs used via CSS background-image)
+    // Distinct from the Graphic Elements & Shapes section (that one is for
+    // CSS-drawn shapes; this one is for raster/vector ASSETS placed via background).
+    var bgAssets = [];
+    var bgSeen = new Set();
+    document.querySelectorAll('*').forEach(function(el) {
+      var s = getComputedStyle(el);
+      var bi = s.backgroundImage;
+      if (!bi || bi === 'none') return;
+      if (bi.indexOf('url(') === -1 || bi.indexOf('data:') !== -1) return;
+      var m = bi.match(/url\(["']?([^"')]+)["']?\)/);
+      if (!m) return;
+      var url = m[1];
+      if (bgSeen.has(url)) return;
+      bgSeen.add(url);
+
+      var r = el.getBoundingClientRect();
+      if (r.width < 16 || r.height < 16) return;
+
+      // Classify context by ext + size + ancestry
+      var ctx = 'background';
+      if (/\.svg(\?|$)/i.test(url)) ctx = 'svg-pattern';
+      else if (r.width > 600 && r.height > 300) ctx = 'hero/banner';
+      else if (r.width < 80 && r.height < 80) ctx = 'icon';
+      // Walk up to header/nav
+      var walk = el;
+      for (var w = 0; w < 6 && walk; w++) {
+        if (walk.tagName === 'HEADER' || walk.tagName === 'NAV') { ctx = 'logo-or-header'; break; }
+        walk = walk.parentElement;
+      }
+      // Detect CSS tiled pattern (repeat)
+      if (s.backgroundRepeat === 'repeat' || s.backgroundRepeat === 'repeat-x' || s.backgroundRepeat === 'repeat-y') {
+        ctx = 'tiled-texture';
+      }
+
+      bgAssets.push({
+        url: url,
+        ctx: ctx,
+        w: Math.round(r.width),
+        h: Math.round(r.height),
+        size: s.backgroundSize || 'auto',
+        position: s.backgroundPosition || '0% 0%'
+      });
+    });
+
+    if (bgAssets.length > 0) {
+      // Sort: logo/hero first, then patterns, then others
+      var ctxOrder = {'logo-or-header':1, 'hero/banner':2, 'svg-pattern':3, 'tiled-texture':4, 'icon':5, 'background':6};
+      bgAssets.sort(function(a, b) { return (ctxOrder[a.ctx]||9) - (ctxOrder[b.ctx]||9); });
+      bgAssets.slice(0, 12).forEach(function(a) {
+        md.push('- **Background-image (' + a.ctx + ')**: `' + a.w + 'x' + a.h
+              + '` size=`' + a.size + '` position=`' + a.position + '` → ' + a.url);
+      });
+    }
+
+    // Legacy SVG pattern list (for backward compat — may overlap with above)
+    if (bgPatterns.size > 0 && bgAssets.length === 0) {
+      [...bgPatterns].slice(0, 10).forEach(function(url) { md.push('- **SVG pattern**: ' + url); });
     }
     md.push('');
 
@@ -1381,6 +1466,67 @@
     md.push("- **Don't**: Replace the source's font families with system defaults.");
     md.push("- **Don't**: Add design interpretation beyond what's visible in the screenshot.");
     md.push('');
+
+    // ── Compose the tone sentence retroactively into the Overview slot ──
+    // Uses every signal we collected: borders vs shadows, fluid typography,
+    // decorative shapes, palette warmth, accent saturation.
+    var adjectives = [];
+    var techniques = [];
+
+    // Structural personality
+    if (hasBorders && !hasShadows) adjectives.push('brutalist-leaning');
+    else if (hasShadows && !hasBorders) adjectives.push('soft and elevated');
+    if (hasLargeVwType) adjectives.push('bold');
+
+    // Shape personality
+    var shapePersonality = '';
+    if (hasTallPills || hasExtremeRadii || hasRotatedShapes) {
+      shapePersonality = 'friendly';
+      techniques.push('decorative CSS shapes');
+    }
+    if (hasRotatedShapes) techniques.push('slight rotations');
+
+    // Typography as a technique
+    if (hasLargeVwType) techniques.push('oversized display typography');
+
+    // Layout techniques
+    if (hasBorders && !hasShadows) techniques.push('thin visible borders');
+    if (layout.gridBackgrounds.length > 0) techniques.push('a graph-paper background');
+
+    // Palette warmth + saturation
+    var paletteDescriptor = '';
+    var bodyBgName = colorName(bodyBg);
+    var isWarmBase = /beige|orange|yellow|red|pink/.test(bodyBgName);
+    var isCoolBase = /slate|blue|teal|indigo/.test(bodyBgName);
+    var hasVibrantAccent = false;
+    try {
+      classified.forEach(function(c) {
+        if (c.u.role.indexOf('accent') !== -1 && c.u.name.indexOf('vibrant') !== -1) hasVibrantAccent = true;
+      });
+    } catch(e) {}
+    if (isWarmBase && hasVibrantAccent) paletteDescriptor = 'earthy-yet-vibrant';
+    else if (isWarmBase) paletteDescriptor = 'warm, earthy';
+    else if (isCoolBase && hasVibrantAccent) paletteDescriptor = 'cool with vibrant accents';
+    else if (hasVibrantAccent) paletteDescriptor = 'high-contrast with vibrant accents';
+    else paletteDescriptor = 'restrained';
+
+    if (shapePersonality && adjectives.indexOf('brutalist-leaning') !== -1) {
+      // The "brutalist yet friendly" paradox that defines this style
+      adjectives = adjectives.map(function(a) { return a === 'brutalist-leaning' ? 'brutalist-inspired yet friendly' : a; });
+    } else if (shapePersonality) {
+      adjectives.push(shapePersonality);
+    }
+
+    function joinNatural(arr) {
+      if (arr.length === 0) return '';
+      if (arr.length === 1) return arr[0];
+      if (arr.length === 2) return arr[0] + ' and ' + arr[1];
+      return arr.slice(0, -1).join(', ') + ', and ' + arr[arr.length - 1];
+    }
+    var adjStr = adjectives.length > 0 ? joinNatural(adjectives) : 'minimal';
+    var techStr = techniques.length > 0 ? ' that relies on ' + joinNatural(techniques) : '';
+    var palStr = paletteDescriptor ? ' — ' + paletteDescriptor + ' color palette' : '';
+    md[toneSlotIndex] = '- **Tone**: A ' + adjStr + ' design' + techStr + palStr + '.';
 
     return md.join('\n');
   };
