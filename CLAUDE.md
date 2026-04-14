@@ -103,8 +103,8 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 - ✅ Animation freeze (GSAP, Lenis, Webflow IX2/IX3)
 - ✅ Scroll-capture (max 8 viewports)
 - ✅ Design token extraction (cores, fonts via extractor.js)
-- ✅ Screenshot → Gemini 2.5 Flash Vision → HTML/CSS rebuild
-- ✅ Model fallback chain (2.5-flash → 2.0-flash → 1.5-flash-latest)
+- ✅ Screenshot → Gemini 3.1 Pro Preview (vision) → HTML/CSS rebuild
+- ✅ Migrado da geração Flash para 3.1 Pro (mesma família que o Aura usa)
 - ✅ Preserva editor UI durante rebuild
 - ✅ DOM + Screenshot hybrid — cleanHTML do extractor.js no prompt
 - ✅ **DESIGN.md generator Aura-parity** (extractor.js `generateDesignMD()`, 1543 linhas):
@@ -227,5 +227,5 @@ Ferramenta de **inspiração e aprendizado** — designer edita para criar algo 
 - Funções compartilhadas entre escopos: escopo externo da IIFE (NÃO dentro de `listen()`)
 - Variáveis compartilhadas (ex: `layerHoverLock`, `isUselessWrapper`): escopo externo
 - Checkpoint stash: `git stash push -m "checkpoint-NNN"`
-- Gemini model fallback: 2.5-flash → 2.0-flash → 1.5-flash-latest
+- Modelo Gemini atual: `gemini-3.1-pro-preview` (definido em popup/popup.js e background.js). Modelos 2.x são marcados como outdated no background.js
 - rebuild.js v5 crasha o editor — usar v4 até re-implementar com cuidado
