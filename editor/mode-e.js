@@ -305,6 +305,245 @@
     return html;
   }
 
+  function cleanMarkdown(raw) {
+    var md = raw.trim();
+    // Strip ```markdown or ```md or ``` wrappers if the model added them
+    md = md.replace(/^```(?:markdown|md)?\s*/i, '').replace(/\s*```$/i, '');
+    return md.trim();
+  }
+
+  // ─── Vision-based DESIGN.md generator ────────────────────────────────
+  // Produces a DESIGN.md from a screenshot alone, no DOM access needed.
+  // The prompt uses a synthetic high-quality example as few-shot guidance,
+  // so the LLM reproduces the exact format our downstream chunked pipeline
+  // expects (same format as extractor.js generateDesignMD() output).
+  //
+  // This is the "image upload" counterpart to the DOM-based path — together
+  // they let Mode E work on both live sites AND standalone screenshots.
+
+  var DESIGN_MD_TEMPLATE_EXAMPLE = [
+    '# Design System',
+    '',
+    '## Overview',
+    '- **Tone**: A brutalist-leaning yet friendly design that relies on oversized display typography, thin visible borders, and decorative CSS shapes — warm, earthy color palette.',
+    '- **Theme**: light mode (background: `#f0eee4`, text: `#1b3115`)',
+    '- **Primary font**: Inter',
+    '- **Viewport**: 1440 x 900',
+    '',
+    '## Layout & Grid',
+    '',
+    '- **Sticky header**: height 64px (`h-16`), backdrop-filter `blur(12px)` (`backdrop-blur-md`), bg `rgba(240,238,228,0.8)`',
+    '- **Graph-paper background** on `body`: size `80px 80px` (use `bg-[size:80px_80px]`)',
+    '- **Dominant section paddings**: 96px (`py-24`), 128px (`py-32`)',
+    '- **Separation strategy**: thin 1px borders between sections, use `border border-[#dcdacd]`',
+    '',
+    '## Color Palette',
+    '',
+    '- **Background (Base)**: `#f0eee4` (off-white beige) — used for body surface',
+    '- **Primary Text & Elements**: `#1b3115` (deep forest green) — used for headings, body text, borders',
+    '- **Borders & Grid Lines**: `#dcdacd` (light greige) — used for section dividers and grid patterns',
+    '- **Accent 1 (Brand Primary)**: `#5ee37f` (vibrant mint green) — used for selection, section backgrounds, shapes',
+    '- **Accent 2 (Decorative)**: `#ffb5d9` (soft pink) — used for decorative pills and dots',
+    '',
+    '## Typography',
+    '',
+    '### Sans-Serif: Inter',
+    '- **Weights**: 400 (`font-normal`), 500 (`font-medium`), 600 (`font-semibold`)',
+    '- **Used in**: headings, body text, links, UI elements',
+    '- **Sizes**: 14px (`text-sm`), 16px (`text-base`), 18px (`text-lg`), 48px (`text-5xl`), 180px (`text-[18vw]`)',
+    '- **Letter-spacing**: -0.03em (`tracking-tight`) on headings',
+    '',
+    '### Hierarchy',
+    '- **H1**: 180px (`text-[18vw]`), weight 600 (`font-semibold`), line-height 0.88 (`leading-[0.88]`), (`tracking-tight`)',
+    '- **H2**: 48px (`text-5xl`), weight 600 (`font-semibold`)',
+    '- **H3**: 32px (`text-3xl`), weight 600 (`font-semibold`)',
+    '',
+    '## Components',
+    '',
+    '### Buttons',
+    '- **Variant 1** (primary, 3 instances): `bg-[#1b3115] text-[#f0eee4] rounded-full px-5 py-2 font-medium`, inner icon container `rounded-full bg-white/20`',
+    '- **Variant 2** (text link, 5 instances): `text-[#1b3115] font-medium hover:opacity-70`',
+    '',
+    '### Pills / Tags',
+    '- **Variant 1** (12 instances): `border border-[#1b3115] rounded-full px-4 py-1.5 text-xs font-medium bg-transparent`',
+    '',
+    '### Header',
+    '- **header**: `sticky top-0 z-50 h-16 backdrop-blur-md bg-[#f0eee4]/80 border-b border-[#dcdacd]`',
+    '',
+    '## Graphic Elements & Shapes',
+    '',
+    '- The design uses CSS-drawn decorative shapes (not images) placed around headings and sections.',
+    '- **Tall pill shapes** (2): vertical rounded-full bars, likely decorative punctuation between words. Example: `w-[30px] h-[70px] rounded-full bg-[#ffb5d9]`',
+    '- **Abstract blocks with extreme border-radii** (4): `rounded-[4rem] bg-[#5ee37f]`, `rounded-full bg-[#1b3115]`',
+    '- **Implementation guidance**: reproduce each shape as a `<div>` with Tailwind classes. Do NOT use inline SVG for these — CSS `border-radius` + `transform` is the source technique.',
+    '',
+    '## Animations & Interactions',
+    '',
+    '- **Custom text selection**: `selection:bg-[#5ee37f]` `selection:text-[#1b3115]`',
+    '- **Hover states detected** (preserve these interactions):',
+    '  - `a:hover` → `hover:bg-black/5`',
+    '  - `button:hover` → `hover:opacity-90`',
+    '- **Marquee motion**: continuous scrolling text detected at footer. Implement with `@keyframes` + `animation: marquee <duration> linear infinite` on a track with duplicated content.',
+    '',
+    '## Source Implementation Cues',
+    '',
+    'These are MUST-preserve behaviors detected in the source. They are often invisible in the screenshot alone:',
+    '',
+    '- Source uses a sticky `header` (height 64px, with `backdrop-filter: blur(12px)`). Preserve this positioning and the blur effect exactly.',
+    '- Source uses a graph-paper background pattern (size `80px 80px`). Reproduce with linear-gradient, not images.',
+    '- Source defines custom text selection colors. Preserve this rule.',
+    '- Marquee-style motion is present in the source. Implement it with CSS `@keyframes` + duplicated content, not a static section.',
+    '- Source uses tall `rounded-full` vertical pill shapes as decorative typographic punctuation (not circles).',
+    '- Source uses fluid viewport-relative display typography (>120px rendered). Use `text-[Nvw]` or `clamp()`.',
+    '',
+    "## Do's and Don'ts",
+    '',
+    '- **Do**: Use Tailwind `font-semibold` (600) for all headings, not `font-black` (900). Weight matters for this aesthetic.',
+    "- **Don't**: Use heavy box shadows; the source uses thin borders for elevation.",
+    "- **Don't**: Replace the source's font families with system defaults.",
+    "- **Don't**: Add design interpretation beyond what's visible in the screenshot."
+  ].join('\n');
+
+  function buildDesignMDVisionPrompt() {
+    return [
+      'ROLE: You are an expert design system analyst. You specialize in looking at website screenshots and producing precise, Tailwind-aware design system documentation.',
+      '',
+      'TASK: Analyze the attached screenshot and produce a DESIGN.md document in markdown. This document will be consumed by another LLM to reconstruct the website as HTML + Tailwind CSS, so every value you produce directly influences the quality of the final clone.',
+      '',
+      'CRITICAL RULES:',
+      '- Look at the screenshot carefully before writing. Sample actual pixel values for colors.',
+      '- Infer hex values precisely — do NOT approximate to round values. If you see a soft pink, it might be `#ffb5d9` or `#f5b9d1`, not generic `#ffb0d0`.',
+      '- Identify the primary font family when possible (Inter, Fraunces, Geist, Satoshi, Instrument Serif, etc). If unsure, describe as "sans-serif (Inter-like)" or similar.',
+      '- Use Tailwind class annotations wherever relevant: `bg-[#hex]`, `text-[#hex]`, `border-[#hex]`, `text-7xl`, `font-semibold`, `rounded-full`, `py-24`, etc.',
+      '- Be specific and concrete. Avoid vague descriptions like "modern" or "clean".',
+      '- OMIT sections that you cannot reasonably infer from the screenshot. For example, if there are no visible decorative shapes, OMIT the Graphic Elements & Shapes section entirely.',
+      '- DO NOT fabricate interactions you cannot observe. Hover states and animations are often invisible in a static screenshot — only mention them if there is clear visual evidence (e.g., a pill that looks interactive, a blur that suggests a sticky header, a marquee edge suggesting scrolling text).',
+      '- Follow the EXACT section order, headings, and formatting shown in the reference example below.',
+      '',
+      'REFERENCE EXAMPLE (match this format exactly):',
+      '',
+      '```markdown',
+      DESIGN_MD_TEMPLATE_EXAMPLE,
+      '```',
+      '',
+      'FORMAT REQUIREMENTS:',
+      '- Start with `# Design System`',
+      '- Use `##` for top-level sections and `###` for subsections',
+      '- Use hex colors in lowercase (`#f0eee4` not `#F0EEE4`)',
+      '- Always annotate numeric values with their Tailwind equivalents in backticks when possible',
+      '- For colors, describe them in parentheses using natural language (e.g., "off-white beige", "deep forest green", "vibrant mint green")',
+      '- The Tone line in the Overview should be 1 sentence summarizing the design personality',
+      '',
+      'NOW ANALYZE THE ATTACHED SCREENSHOT AND PRODUCE THE DESIGN.MD:',
+      '',
+      'Return ONLY the markdown document. No explanations, no preamble, no code fences wrapping the whole output. Start directly with `# Design System`.'
+    ].join('\n');
+  }
+
+  // Generate a DESIGN.md from a screenshot alone (1 LLM call).
+  // imageDataUrl: base64 data URL (PNG or JPG).
+  // Returns: Promise<string> — the generated markdown.
+  function generateDesignMDFromImage(imageDataUrl) {
+    return new Promise(function(resolve, reject) {
+      if (!imageDataUrl || typeof imageDataUrl !== 'string' || imageDataUrl.indexOf('data:') !== 0) {
+        reject(new Error('generateDesignMDFromImage: imageDataUrl must be a base64 data URL'));
+        return;
+      }
+      chrome.runtime.sendMessage(
+        {
+          action: 'modeERebuild',
+          imageDataUrl: imageDataUrl,
+          prompt: buildDesignMDVisionPrompt()
+        },
+        function(response) {
+          if (response && response.html) {
+            resolve(cleanMarkdown(response.html));
+          } else if (response && response.error) {
+            reject(new Error(response.error));
+          } else {
+            reject(new Error('No response from vision API'));
+          }
+        }
+      );
+    });
+  }
+
+  // Full pipeline from an uploaded image: generate DESIGN.md → reconstruct HTML.
+  // This is the standalone-image equivalent of runModeEChunked().
+  async function runModeEFromImage(imageDataUrl, onProgress) {
+    var log = onProgress || function() {};
+    if (!imageDataUrl) {
+      log({step: 'error', message: 'No image provided', current: 0, total: 1});
+      return null;
+    }
+
+    // Step 1: Generate DESIGN.md from the image (vision call)
+    log({step: 'designmd', message: 'Analyzing screenshot with vision...', current: 0, total: 4});
+    var designMD;
+    try {
+      designMD = await generateDesignMDFromImage(imageDataUrl);
+    } catch(e) {
+      log({step: 'error', message: 'Vision analysis failed: ' + e.message, current: 0, total: 4});
+      return null;
+    }
+    log({
+      step: 'designmd',
+      message: 'DESIGN.md generated (' + Math.round(designMD.length / 1024) + 'KB)',
+      current: 1, total: 4
+    });
+
+    // Step 2: Reconstruct HTML using the DESIGN.md + the same screenshot
+    // Since we have a single image (not a live DOM), we treat the whole image
+    // as one "section" and skip the chunked per-section loop.
+    log({step: 'rebuild', message: 'Reconstructing HTML...', current: 2, total: 4});
+    var syntheticSection = {
+      id: 'image-full',
+      selector: '',
+      tag: 'div',
+      className: '',
+      bounds: {x: 0, y: 0, w: 0, h: 0},
+      isSticky: false,
+      isFooter: false,
+      cleanHTML: ''
+    };
+    var html;
+    try {
+      var raw = await chunkToHTML(imageDataUrl, designMD, syntheticSection, 0, 1);
+      html = cleanHTML(raw);
+    } catch(e) {
+      log({step: 'error', message: 'Reconstruction failed: ' + e.message, current: 2, total: 4});
+      return {designMD: designMD, html: null, error: e.message};
+    }
+    log({
+      step: 'rebuild',
+      message: 'HTML generated (' + Math.round(html.length / 1024) + 'KB)',
+      current: 3, total: 4
+    });
+
+    // Step 3: Save as a project (same persistence path as chunked runs)
+    log({step: 'persist', message: 'Saving project...', current: 3, total: 4});
+    var projectMeta = null;
+    if (window.__rbPersist) {
+      try {
+        var created = await window.__rbPersist.createProject({
+          url: 'image://upload-' + Date.now(),
+          title: 'Image import — ' + new Date().toLocaleString(),
+          designMD: designMD,
+          stitchedHTML: html,
+          sourceScreenshot: imageDataUrl.slice(0, 80000), // capped thumbnail
+          chunks: [{sectionId: 'image-full', html: html}]
+        });
+        projectMeta = created.project;
+        window.__rbActiveProjectId = projectMeta.id;
+      } catch(e) {
+        console.warn('[Mode E] image persist failed:', e);
+      }
+    }
+
+    log({step: 'done', message: 'Image import complete', current: 4, total: 4});
+    return {designMD: designMD, html: html, project: projectMeta};
+  }
+
   // Replace page content with rebuilt sections
   function replacePageContent(sectionsHTML) {
     // Collect editor elements to preserve
@@ -628,6 +867,8 @@
     run: runModeEChunked,
     runChunked: runModeEChunked,
     runViewport: runModeE,
+    runFromImage: runModeEFromImage,
+    generateDesignMDFromImage: generateDesignMDFromImage,
     restore: restoreOriginalPage,
     captureFullPage: captureFullPage
   };
