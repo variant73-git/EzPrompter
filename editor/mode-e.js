@@ -8,7 +8,7 @@
   // Build the rebuild prompt with DESIGN.md context (Aura-style hierarchy)
   function buildPrompt(designMD, cleanHTML) {
     var designContext = designMD
-      ? '\n\n--- DESIGN.MD (typography and asset inventory reference) ---\n' + designMD.slice(0, 8000)
+      ? '\n\n--- DESIGN.MD (typography and asset inventory reference) ---\n' + designMD.slice(0, 14000)
       : '';
 
     var structureContext = cleanHTML
