@@ -538,6 +538,365 @@
     return el.tagName.toLowerCase();
   }
 
+  // ─── Per-element clean HTML ────────────────────────────────────────────────
+  // Variant of extractCleanHTML that works on a single element subtree
+  // instead of document.body. Used for per-section context in chunking.
+
+  function cleanHTMLFromEl(el, maxDepth, maxLength) {
+    if (!el) return '';
+    maxDepth = maxDepth || 6;
+    maxLength = maxLength || 8000;
+    var clone = el.cloneNode(true);
+
+    // Strip noise
+    clone.querySelectorAll(
+      'script,style,link[rel="stylesheet"],noscript,canvas,iframe,video,audio'
+    ).forEach(function(n) { n.remove(); });
+
+    // Drop large inline SVGs; keep small ones (likely icons)
+    clone.querySelectorAll('svg').forEach(function(svg) {
+      if (svg.outerHTML.length > 500) svg.remove();
+    });
+
+    // Strip noisy attributes
+    clone.querySelectorAll('*').forEach(function(n) {
+      [].slice.call(n.attributes).forEach(function(attr) {
+        if (attr.name.indexOf('on') === 0 || attr.name.indexOf('data-') === 0) {
+          n.removeAttribute(attr.name);
+        }
+      });
+    });
+
+    trimDepth(clone, maxDepth);
+
+    var out = clone.outerHTML
+      .replace(/\s{2,}/g, ' ')
+      .replace(/>\s+</g, '><')
+      .trim();
+    if (out.length > maxLength) out = out.slice(0, maxLength) + '…';
+    return out;
+  }
+
+  // ─── Section extraction (chunking input) ──────────────────────────────────
+  // Richer than extractSectionBounds: detects sections semantically,
+  // deduplicates nested candidates (keeps outermost), sorts by vertical
+  // position, identifies the sticky header specially, and returns per-section
+  // cleanHTML + bounds ready for screenshot cropping.
+
+  RB.extractSections = function() {
+    var minW = 200;
+    var minH = 80;
+
+    // Candidate selectors — order matters for tiebreaks. Explicit semantic
+    // tags first, then utility-class heuristics for sites that don't use them.
+    var candidateSel = [
+      'header', 'nav[role="navigation"]', 'main', 'footer', 'aside',
+      'main > section', 'main > div', 'body > section', 'body > main > section',
+      'section',
+      '[class*="hero"]', '[class*="banner"]',
+      '[class*="section"]', '[class*="features"]', '[class*="pricing"]',
+      '[class*="testimonial"]', '[class*="footer"]', '[class*="cta"]',
+      '[class*="marquee"]'
+    ];
+
+    var seen = new Set();
+    var raw = [];
+
+    candidateSel.forEach(function(sel) {
+      try {
+        document.querySelectorAll(sel).forEach(function(el) {
+          if (seen.has(el)) return;
+          if (isEditorLikeNode(el)) return;
+          var r = el.getBoundingClientRect();
+          if (r.width < minW || r.height < minH) return;
+          // Skip absolutely hidden
+          var s = getComputedStyle(el);
+          if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return;
+          seen.add(el);
+          raw.push({el: el, rect: r, style: s});
+        });
+      } catch(e) {}
+    });
+
+    // Remove nested candidates: if element A contains element B and both are
+    // candidates, keep A only (outermost wins).
+    var kept = [];
+    for (var i = 0; i < raw.length; i++) {
+      var ei = raw[i].el;
+      var nested = false;
+      for (var j = 0; j < raw.length; j++) {
+        if (i === j) continue;
+        var ej = raw[j].el;
+        if (ej !== ei && ej.contains(ei)) { nested = true; break; }
+      }
+      if (!nested) kept.push(raw[i]);
+    }
+
+    // If nothing was kept (weird DOM), fall back to direct children of body/main
+    if (kept.length === 0) {
+      var host = document.querySelector('main') || document.body;
+      [].slice.call(host.children).forEach(function(el) {
+        var r = el.getBoundingClientRect();
+        if (r.width < minW || r.height < minH) return;
+        kept.push({el: el, rect: r, style: getComputedStyle(el)});
+      });
+    }
+
+    // Sort by vertical position (scroll-adjusted)
+    kept.sort(function(a, b) {
+      return (a.rect.top + window.scrollY) - (b.rect.top + window.scrollY);
+    });
+
+    // Detect the sticky header: the first sticky/fixed element at top
+    // of the page. It'll be treated specially in the chunking pipeline to
+    // avoid duplicating it on every chunk screenshot.
+    var stickyHeader = null;
+    for (var k = 0; k < kept.length; k++) {
+      var ent = kept[k];
+      var pos = ent.style.position;
+      var y = ent.rect.top + window.scrollY;
+      if ((pos === 'sticky' || pos === 'fixed') && y < 100) {
+        stickyHeader = ent;
+        break;
+      }
+    }
+
+    // Detect footer: explicit <footer> or the last section
+    var footer = null;
+    for (var m = kept.length - 1; m >= 0; m--) {
+      if (kept[m].el.tagName === 'FOOTER') { footer = kept[m]; break; }
+    }
+    if (!footer && kept.length > 0) {
+      // Heuristic: last section is footer only if it's in the bottom 20% of the page
+      var last = kept[kept.length - 1];
+      var pageH = document.documentElement.scrollHeight;
+      if ((last.rect.top + window.scrollY) > pageH * 0.8) footer = last;
+    }
+
+    // Build the result objects
+    function makeSection(ent, idx) {
+      var r = ent.rect;
+      return {
+        id: 'section-' + idx,
+        selector: getSelector(ent.el),
+        tag: ent.el.tagName.toLowerCase(),
+        className: (ent.el.className && typeof ent.el.className === 'string')
+          ? ent.el.className.toString().slice(0, 120) : '',
+        bounds: {
+          x: Math.round(r.left + window.scrollX),
+          y: Math.round(r.top + window.scrollY),
+          w: Math.round(r.width),
+          h: Math.round(r.height)
+        },
+        position: ent.style.position,
+        isSticky: ent === stickyHeader,
+        isFooter: ent === footer,
+        cleanHTML: cleanHTMLFromEl(ent.el, 6, 8000)
+      };
+    }
+
+    var sections = kept.map(function(ent, idx) { return makeSection(ent, idx); });
+
+    return {
+      stickyHeader: stickyHeader ? makeSection(stickyHeader, -1) : null,
+      footer: footer ? makeSection(footer, -2) : null,
+      sections: sections,
+      pageHeight: Math.round(document.documentElement.scrollHeight),
+      viewportHeight: window.innerHeight,
+      viewportWidth: window.innerWidth
+    };
+  };
+
+  // Helper: skip our own editor DOM when iterating candidates
+  function isEditorLikeNode(el) {
+    var n = el;
+    while (n && n.nodeType === 1) {
+      if (n.id && (n.id.indexOf('rb-editor') === 0 || n.id.indexOf('rb-ed') === 0 || n.id === 'repixbridge-panel')) return true;
+      n = n.parentElement;
+    }
+    return false;
+  }
+
+  // ─── Responsive Behavior extractor ────────────────────────────────────────
+  // Parses all @media queries from same-origin stylesheets and groups the
+  // rules by inferred breakpoint (mobile / tablet / desktop / xl / custom).
+  // This is how we produce responsive output without multi-viewport capture:
+  // the LLM sees the CSS rules that fire at different widths and can
+  // translate them into Tailwind responsive prefixes (md:, lg:, xl:).
+  //
+  // Also extracts <img srcset> for responsive assets and flags fluid
+  // typography (clamp() / vw units).
+
+  function parseMediaQuery(mediaText) {
+    // Normalize: drop whitespace, lowercase
+    var m = (mediaText || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    var info = {
+      raw: mediaText,
+      minWidth: null,
+      maxWidth: null,
+      isMobile: false,
+      isTablet: false,
+      isDesktop: false,
+      isXl: false,
+      isPrintOnly: m.indexOf('print') !== -1 && m.indexOf('screen') === -1
+    };
+    var minMatch = m.match(/min-width:\s*(\d+)px/);
+    var maxMatch = m.match(/max-width:\s*(\d+)px/);
+    if (minMatch) info.minWidth = parseInt(minMatch[1], 10);
+    if (maxMatch) info.maxWidth = parseInt(maxMatch[1], 10);
+
+    // Bucket by common breakpoints
+    if (info.maxWidth !== null && info.maxWidth <= 640) info.isMobile = true;
+    else if (info.maxWidth !== null && info.maxWidth <= 820) info.isMobile = true;
+    else if (info.minWidth !== null && info.minWidth >= 1280) info.isXl = true;
+    else if (info.minWidth !== null && info.minWidth >= 1024) info.isDesktop = true;
+    else if (info.minWidth !== null && info.minWidth >= 768) info.isTablet = true;
+    else if (info.maxWidth !== null && info.maxWidth <= 1024) info.isTablet = true;
+
+    return info;
+  }
+
+  function bucketLabel(info) {
+    if (info.isPrintOnly) return 'print';
+    if (info.isMobile) return 'mobile';
+    if (info.isTablet) return 'tablet';
+    if (info.isXl) return 'xl';
+    if (info.isDesktop) return 'desktop';
+    return 'custom';
+  }
+
+  function extractResponsiveBehavior() {
+    var out = {
+      buckets: { mobile: [], tablet: [], desktop: [], xl: [], custom: [] },
+      srcsetAssets: [],
+      fluidTypography: [],
+      hasContainerQueries: false,
+      hasCssInJsMatchMedia: false,
+      readableSheetCount: 0,
+      crossOriginSheetCount: 0
+    };
+
+    // Parse stylesheets
+    var sheets = document.styleSheets;
+    for (var i = 0; i < sheets.length; i++) {
+      var rules;
+      try {
+        rules = sheets[i].cssRules || sheets[i].rules;
+      } catch(e) {
+        out.crossOriginSheetCount++;
+        continue;
+      }
+      if (!rules) continue;
+      out.readableSheetCount++;
+      walkRules(rules, null);
+    }
+
+    function walkRules(rules, parentMediaInfo) {
+      for (var j = 0; j < rules.length; j++) {
+        var rule = rules[j];
+        if (!rule) continue;
+
+        // @media rule
+        if (rule.type === 4 /* CSSMediaRule */) {
+          var info = parseMediaQuery(rule.conditionText || rule.media.mediaText);
+          walkRules(rule.cssRules || [], info);
+          continue;
+        }
+
+        // @container rule
+        if (rule.type === 12 /* CSSContainerRule */ || (rule.cssText && rule.cssText.indexOf('@container') === 0)) {
+          out.hasContainerQueries = true;
+          if (rule.cssRules) walkRules(rule.cssRules, parentMediaInfo);
+          continue;
+        }
+
+        // @supports — just walk into
+        if (rule.type === 12 /* CSSSupportsRule */ || (rule.cssText && rule.cssText.indexOf('@supports') === 0)) {
+          if (rule.cssRules) walkRules(rule.cssRules, parentMediaInfo);
+          continue;
+        }
+
+        // Only CSSStyleRule cares, and only if it's inside a media query
+        if (rule.type !== 1 /* CSSStyleRule */) continue;
+        if (!parentMediaInfo) continue;
+
+        // Capture the interesting declarations from this rule
+        var decl = {};
+        var st = rule.style || {};
+        var interesting = [
+          'display', 'position', 'flex-direction', 'grid-template-columns',
+          'grid-template-rows', 'font-size', 'line-height', 'padding',
+          'padding-top', 'padding-bottom', 'padding-left', 'padding-right',
+          'margin', 'width', 'max-width', 'height', 'gap', 'column-gap',
+          'row-gap', 'order', 'visibility', 'opacity', 'transform', 'color',
+          'background-color', 'background', 'border-radius'
+        ];
+        interesting.forEach(function(prop) {
+          var v = st.getPropertyValue(prop);
+          if (v) decl[prop] = v.trim();
+        });
+        if (Object.keys(decl).length === 0) continue;
+
+        var entry = {
+          selector: (rule.selectorText || '').slice(0, 120),
+          decl: decl
+        };
+
+        var bkt = bucketLabel(parentMediaInfo);
+        if (!out.buckets[bkt]) out.buckets[bkt] = [];
+        if (out.buckets[bkt].length < 40) out.buckets[bkt].push(entry);
+      }
+    }
+
+    // srcset assets
+    document.querySelectorAll('img[srcset], source[srcset]').forEach(function(el) {
+      var ss = el.getAttribute('srcset');
+      if (!ss) return;
+      // Skip our editor images
+      if (isEditorLikeNode(el)) return;
+      var parts = ss.split(',').map(function(p) { return p.trim(); }).filter(Boolean);
+      if (parts.length === 0) return;
+      out.srcsetAssets.push({
+        tag: el.tagName.toLowerCase(),
+        currentSrc: el.currentSrc || el.src || '',
+        srcset: parts.slice(0, 5) // keep first 5 candidates
+      });
+      if (out.srcsetAssets.length >= 12) return;
+    });
+
+    // Fluid typography detection: scan headings for clamp() or vw units
+    document.querySelectorAll('h1,h2,h3,h4').forEach(function(el) {
+      var r = el.getBoundingClientRect();
+      if (r.width < 10) return;
+      var s = getComputedStyle(el);
+      // Computed styles resolve clamp() to px, so we must look at the
+      // inline style or the matched CSS rule. As a proxy: if the computed
+      // font-size is unusually large (>120px) it's likely fluid.
+      var px = parseFloat(s.fontSize);
+      if (px > 120) {
+        out.fluidTypography.push({
+          tag: el.tagName.toLowerCase(),
+          computedSize: s.fontSize,
+          note: 'large size (>120px) suggests fluid clamp() or vw typography'
+        });
+      }
+    });
+
+    // Detect CSS-in-JS runtime matchMedia (approximate: look for inline
+    // style changes triggered by matchMedia listeners). Hard to detect
+    // deterministically — we set a flag if the document uses React/emotion
+    // signatures as a weak proxy.
+    try {
+      var html = document.documentElement.outerHTML.slice(0, 20000);
+      if (/data-emotion|styled-components|css-\w{5}/.test(html)) {
+        out.hasCssInJsMatchMedia = true;
+      }
+    } catch(e) {}
+
+    return out;
+  }
+  RB.extractResponsiveBehavior = extractResponsiveBehavior;
+
   // ─── DESIGN.MD Generator (Aura-style) ─────────────────────────────────────
   // Generates a semantic markdown design system document for LLM context.
 
@@ -568,6 +927,7 @@
     // Pre-compute structural + interaction data (used across multiple sections)
     var layout = detectLayoutStructure();
     var interactions = extractInteractionStates();
+    var responsive = extractResponsiveBehavior();
 
     // ── Layout & Grid ── (before Colors so LLM gets structure first)
     md.push('## Layout & Grid\n');
@@ -1214,6 +1574,71 @@
       }
     } catch(e) {}
 
+    // ── Responsive Behavior ──
+    // Parsed from @media queries. The LLM uses this to generate responsive
+    // Tailwind classes (md:, lg:, xl:) without needing multi-breakpoint
+    // screenshots. Single-capture strategy.
+    var responsiveHasData = false;
+    ['mobile', 'tablet', 'desktop', 'xl'].forEach(function(b) {
+      if (responsive.buckets[b] && responsive.buckets[b].length > 0) responsiveHasData = true;
+    });
+    if (responsiveHasData || responsive.srcsetAssets.length > 0 || responsive.fluidTypography.length > 0) {
+      md.push('## Responsive Behavior\n');
+      md.push('The LLM MUST translate these CSS rules into Tailwind responsive classes (`sm:`, `md:`, `lg:`, `xl:`). Base styles (no prefix) match the screenshot (desktop). Breakpoint-prefixed classes come from the rules below.');
+      md.push('');
+
+      var BUCKET_LABEL = {
+        mobile:  { title: 'Mobile (max-width ≤ 768px)', tw: 'base/no prefix in mobile-first, or `md:` override from desktop' },
+        tablet:  { title: 'Tablet (768–1024px)',         tw: 'use `md:`' },
+        desktop: { title: 'Desktop (≥ 1024px)',          tw: 'use `lg:`' },
+        xl:      { title: 'XL (≥ 1280px)',               tw: 'use `xl:`' }
+      };
+
+      ['mobile', 'tablet', 'desktop', 'xl'].forEach(function(b) {
+        var entries = responsive.buckets[b];
+        if (!entries || entries.length === 0) return;
+        md.push('### ' + BUCKET_LABEL[b].title);
+        md.push('_' + BUCKET_LABEL[b].tw + '_');
+        md.push('');
+        entries.slice(0, 20).forEach(function(e) {
+          var decls = Object.keys(e.decl).map(function(k) {
+            return '`' + k + ': ' + e.decl[k] + '`';
+          }).join(', ');
+          md.push('- `' + e.selector + '` → ' + decls);
+        });
+        if (entries.length > 20) md.push('- _…and ' + (entries.length - 20) + ' more rules in this breakpoint_');
+        md.push('');
+      });
+
+      if (responsive.srcsetAssets.length > 0) {
+        md.push('### Responsive Image Assets (srcset)');
+        responsive.srcsetAssets.slice(0, 8).forEach(function(a) {
+          md.push('- `<' + a.tag + ' srcset="' + a.srcset.join(', ') + '">`');
+        });
+        md.push('');
+      }
+
+      if (responsive.fluidTypography.length > 0) {
+        md.push('### Fluid Typography Detected');
+        responsive.fluidTypography.forEach(function(f) {
+          md.push('- `' + f.tag + '` at ' + f.computedSize + ' — ' + f.note);
+        });
+        md.push('- **Implementation**: use Tailwind arbitrary values like `text-[clamp(48px,10vw,180px)]` or viewport units `text-[15vw]` to preserve the fluid behavior.');
+        md.push('');
+      }
+
+      if (responsive.hasContainerQueries) {
+        md.push('- **Container queries** detected — prefer Tailwind container queries plugin or fallback to media queries.');
+      }
+      if (responsive.hasCssInJsMatchMedia) {
+        md.push('- **Warning**: site appears to use CSS-in-JS (styled-components or emotion). Some responsive behavior may be applied at runtime via `window.matchMedia` and is NOT captured in @media rules. Output may need manual tuning for those breakpoints.');
+      }
+      if (responsive.crossOriginSheetCount > 0) {
+        md.push('- **Note**: ' + responsive.crossOriginSheetCount + ' stylesheets are cross-origin and could not be read. Responsive rules from those are missing.');
+      }
+      md.push('');
+    }
+
     if (cssVars.length > 0) {
       md.push('## CSS Custom Properties\n');
       cssVars.slice(0, 15).forEach(function(v) {
@@ -1537,7 +1962,9 @@
     return {
       tokens: RB.extractTokens(),
       cleanHTML: RB.extractCleanHTML(),
-      sections: RB.extractSectionBounds(),
+      sections: RB.extractSectionBounds(), // legacy, kept for compat
+      sectionsRich: RB.extractSections(),  // new chunking input
+      responsive: RB.extractResponsiveBehavior(),
       designMD: RB.generateDesignMD(),
       pageUrl: location.href,
       pageTitle: document.title,
