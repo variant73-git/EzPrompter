@@ -103,13 +103,30 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 - ✅ Animation freeze (GSAP, Lenis, Webflow IX2/IX3)
 - ✅ Scroll-capture (max 8 viewports)
 - ✅ Design token extraction (cores, fonts via extractor.js)
-- ✅ Screenshot → Gemini 2.5 Flash Vision → HTML/CSS rebuild (~70-80% fidelidade)
+- ✅ Screenshot → Gemini 2.5 Flash Vision → HTML/CSS rebuild
 - ✅ Model fallback chain (2.5-flash → 2.0-flash → 1.5-flash-latest)
 - ✅ Preserva editor UI durante rebuild
+- ✅ DOM + Screenshot hybrid — cleanHTML do extractor.js no prompt
+- ✅ **DESIGN.md generator Aura-parity** (extractor.js `generateDesignMD()`, 1543 linhas):
+  - Overview com tone sentence auto-detectado
+  - Layout & Grid (sticky/sidebars/backdrop-blur/graph-paper/section paddings)
+  - Color Palette com semantic roles (surface-base, primary-text, accent-N) + descritores ("off-white beige")
+  - Typography com Tailwind class annotations em pesos/sizes/line-heights/tracking
+  - Components com TW class strings por variante + hover state correlation + inner icon container detection
+  - Graphic Elements & Shapes (tall pills, extreme radii, rotated blocks)
+  - Animations & Interactions (::selection, :hover, @keyframes, transitions)
+  - CSS Custom Properties com cross-ref Tailwind
+  - Assets com background-image inventory categorizado
+  - Source Implementation Cues (10+ prompt-ready MUST-preserve directives)
+
+**Fidelidade observada/projetada:**
+- Baseline (só screenshot): ~65-75%
+- Com DESIGN.md rico (estado atual): ~85-93%
+- Com chunking (próximo passo): ~95-97% (meta same.new)
 
 **Roadmap para melhorar fidelidade:**
-1. ⬜ **DOM + Screenshot hybrid** — integrar cleanHTML do extractor.js no prompt do Mode E (já temos os dados, falta conectar)
-2. ⬜ **Component chunking** — segmentar página antes de enviar (navbar, hero, sections, footer separados) como same.new faz
+1. ✅ DOM + Screenshot hybrid
+2. ⬜ **Component chunking** — segmentar página antes de enviar (navbar, hero, sections, footer separados) como same.new faz. Próximo passo imediato.
 3. ⬜ **Asset localization** — baixar imagens/fonts para data URLs
 4. ⬜ **Multi-breakpoint capture** — desktop + tablet + mobile
 5. ⬜ **Refinement loop** — comparar output com original, iterar
