@@ -18,6 +18,30 @@
   var selectionAncestor = null;
   var currentMode = 'A';
   var undoStack = [];
+  var redoStack = [];
+  var UNDO_STACK_MAX = 100;
+
+  // Canonical push for the undo stack. Every site that previously called
+  // `undoStack.push(...)` now calls `pushUndo(...)` so we can (a) enforce
+  // max size, (b) invalidate redoStack on new operations (standard
+  // undo/redo semantics), (c) centralize telemetry if we add any.
+  function pushUndo(entry) {
+    undoStack.push(entry);
+    if (undoStack.length > UNDO_STACK_MAX) {
+      // Drop the oldest entry when we overflow. The oldest entry is the
+      // furthest-back state the user can recover, so we prefer to keep
+      // recent history which is what users actually expect.
+      undoStack.shift();
+    }
+    // Any new user action clears the redo stack. If the user had undone
+    // some steps and then made a new edit, the "redo path" no longer
+    // applies — classical undo/redo behavior.
+    redoStack.length = 0;
+  }
+  // Exposed globally so mode-e.js can push a __modeERun entry when it
+  // replaces the page. Ensures Cmd+Z works after a Mode E run.
+  window.__rbPushUndo = pushUndo;
+
   var isMac = /Mac/.test(navigator.platform);
   var modKey = isMac ? '\u2318' : 'Ctrl';
   var ftueShown = {};
@@ -1876,14 +1900,69 @@
       if (existing) { existing.remove(); return; }
       var dd = mk('div', 'rb-ed-dropdown rb-logo-dd');
       var rect = logoChev.getBoundingClientRect();
-      dd.style.cssText = 'position:fixed;top:' + (rect.bottom + 4) + 'px;left:' + rect.left + 'px;';
-      ['Preferences','Save','Edit','View','Text'].forEach(function(item) {
-        var btn = mk('button', 'rb-ed-dropdown-item'); btn.textContent = item; dd.appendChild(btn);
+      dd.style.cssText = 'position:fixed;top:' + (rect.bottom + 4) + 'px;left:' + rect.left + 'px;min-width:220px;';
+
+      // Dropdown structure:
+      // - Placeholders stay as requested (Preferences, Save, Edit, View, Text)
+      // - Functional items added alongside them and wired to real handlers
+      // - Shortcut labels shown on the right for discoverability
+      // Each entry: {label, action?, disabled?, divider?, shortcut?}
+      var items = [
+        {label: 'Preferences', disabled: true},
+        {divider: true},
+        {label: 'Save', disabled: true},
+        {label: 'Saved versions history', action: function() { openSavedVersionsHistory(); }},
+        {label: 'Export', action: function() {
+          var expBtn = document.querySelector('.rb-ed-export-btn');
+          if (expBtn) expBtn.click();
+        }},
+        {divider: true},
+        {label: 'Edit', disabled: true},
+        {label: 'Undo', shortcut: modKey + 'Z', action: function() { undo(); }},
+        {label: 'Redo', shortcut: modKey + '\u21e7Z', action: function() { redo(); }},
+        {label: 'Cut', shortcut: modKey + 'X', action: function() { clipCut(); }},
+        {label: 'Copy', shortcut: modKey + 'C', action: function() { clipCopy(); }},
+        {label: 'Paste', shortcut: modKey + 'V', action: function() { clipPaste(); }},
+        {label: 'Find', shortcut: modKey + 'F', action: function() { openFind(); }},
+        {divider: true},
+        {label: 'View', disabled: true},
+        {label: 'Text', disabled: true},
+        {divider: true},
+        {label: 'Help', disabled: true},
+        {label: 'Account', disabled: true}
+      ];
+
+      items.forEach(function(item) {
+        if (item.divider) {
+          dd.appendChild(mk('div', 'rb-ed-dropdown-divider'));
+          return;
+        }
+        var btn = mk('button', 'rb-ed-dropdown-item');
+        btn.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:16px;';
+        var lblEl = mk('span');
+        lblEl.textContent = item.label;
+        btn.appendChild(lblEl);
+        if (item.shortcut) {
+          var kb = mk('span');
+          kb.textContent = item.shortcut;
+          kb.style.cssText = 'font:400 10px "Instrument Sans",sans-serif;color:rgba(239,238,235,0.35);margin-left:auto;';
+          btn.appendChild(kb);
+        }
+        if (item.disabled) {
+          btn.style.opacity = '0.35';
+          btn.style.cursor = 'default';
+        } else if (item.action) {
+          btn.addEventListener('mousedown', function(ev) {
+            ev.stopImmediatePropagation();
+            ev.preventDefault();
+            dd.remove();
+            // Defer the action so the click doesn't interfere with focus
+            setTimeout(item.action, 0);
+          }, {capture: true});
+        }
+        dd.appendChild(btn);
       });
-      dd.appendChild(mk('div', 'rb-ed-dropdown-divider'));
-      ['Help','Account'].forEach(function(item) {
-        var btn = mk('button', 'rb-ed-dropdown-item'); btn.textContent = item; dd.appendChild(btn);
-      });
+
       root.appendChild(dd);
       var close = function(ev) { if (!dd.contains(ev.target) && !logoChev.contains(ev.target)) { dd.remove(); document.removeEventListener('mousedown', close, true); }};
       setTimeout(function() { document.addEventListener('mousedown', close, true); }, 50);
@@ -2732,8 +2811,20 @@
     fontWrap.appendChild(fontDivider);
     var fontChev = mk('div');
     fontChev.className = 'rb-insp-field-chev';
-    fontChev.style.cssText = 'display:flex;align-items:center;justify-content:center;width:22px;flex-shrink:0;pointer-events:none;';
+    fontChev.style.cssText = 'display:flex;align-items:center;justify-content:center;width:22px;flex-shrink:0;cursor:pointer;';
     fontChev.innerHTML = '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>';
+    // Click-forwarder: chevron is visual, but we need it to actually open the
+    // <select>. HTMLSelectElement.showPicker() is the modern API; fall back to
+    // a programmatic click on the select element if showPicker isn't available.
+    fontChev.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (typeof fontSel.showPicker === 'function') {
+        try { fontSel.showPicker(); return; } catch(err) {}
+      }
+      fontSel.focus();
+      fontSel.click();
+    }, {capture: true, signal: sig});
     fontWrap.appendChild(fontChev);
     addRow(typSec, 'Font', fontWrap);
 
@@ -3211,10 +3302,10 @@
           var rd = new FileReader();
           rd.onload = function() {
             if (visualEl && visualEl.tagName === 'IMG') {
-              undoStack.push({el: visualEl, prop: 'src', old: visualEl.src});
+              pushUndo({el: visualEl, prop: 'src', old: visualEl.src});
               visualEl.src = rd.result;
             } else {
-              undoStack.push({el: el, prop: 'backgroundImage', old: el.style.backgroundImage});
+              pushUndo({el: el, prop: 'backgroundImage', old: el.style.backgroundImage});
               el.style.backgroundImage = 'url(' + rd.result + ')';
               el.style.backgroundSize = 'cover';
               el.style.backgroundPosition = 'center';
@@ -3380,7 +3471,7 @@
 
   function applyStyle(el, prop, value) {
     var old = el.style[prop] || getCS(el)[prop];
-    undoStack.push({el: el, prop: prop, old: old});
+    pushUndo({el: el, prop: prop, old: old});
 
     // Apply to element
     el.style[prop] = value;
@@ -3406,51 +3497,453 @@
     });
   }
 
-  // ============ UNDO ============
+  // ============ UNDO / REDO ============
+  //
+  // Design: undoStack holds operation entries. Each entry has `prop` which
+  // identifies the type. When undo() runs, it pops the top, captures the
+  // *current* state as the "redo target" for that operation, applies the
+  // reverse, and pushes the redo entry to redoStack. When redo() runs, it
+  // pops redoStack and re-applies the forward operation.
+  //
+  // Important: pushUndo() clears redoStack (new operation invalidates redo
+  // path). undo() / redo() do NOT clear each other's stacks — they move
+  // entries between them.
+
+  function pushRedo(entry) {
+    redoStack.push(entry);
+    if (redoStack.length > UNDO_STACK_MAX) redoStack.shift();
+  }
+
+  // Reverse a single undo entry. Returns a redo entry describing how to
+  // re-apply the operation. Shared between undo() and redo() so the logic
+  // stays symmetric.
+  function applyUndoEntry(u, forward) {
+    // forward=false means undoing (restore old state)
+    // forward=true means redoing (re-apply new state)
+    if (u.prop === '__removed') {
+      if (forward) {
+        // Redo of a remove: delete again
+        u.el.remove();
+      } else {
+        u.parent.insertBefore(u.el, u.next);
+      }
+    } else if (u.prop === '__move') {
+      if (forward) {
+        // Redo of a move: re-apply new position stored in `new`
+        if (u.newNext) u.newParent.insertBefore(u.el, u.newNext);
+        else u.newParent.appendChild(u.el);
+      } else {
+        if (u.next) u.parent.insertBefore(u.el, u.next);
+        else u.parent.appendChild(u.el);
+      }
+    } else if (u.prop === '__coordswap') {
+      if (forward) {
+        u.el.style.top = u.newElTop;
+        u.el.style.left = u.newElLeft;
+        u.target.style.top = u.newTTop;
+        u.target.style.left = u.newTLeft;
+      } else {
+        u.el.style.top = u.elTop;
+        u.el.style.left = u.elLeft;
+        u.target.style.top = u.tTop;
+        u.target.style.left = u.tLeft;
+      }
+    } else if (u.prop === '__freemove') {
+      if (forward) {
+        u.el.style.top = u.newTop;
+        u.el.style.left = u.newLeft;
+      } else {
+        u.el.style.top = u.oldTop;
+        u.el.style.left = u.oldLeft;
+      }
+    } else if (u.prop === '__resize') {
+      if (forward) {
+        u.el.style.width = u.newW || '';
+        u.el.style.height = u.newH || '';
+      } else {
+        u.el.style.width = u.oldW;
+        u.el.style.height = u.oldH;
+        u.el.style.marginLeft = u.oldML;
+        u.el.style.marginTop = u.oldMT || '';
+        u.el.style.transform = '';
+        if (u.unlocked) {
+          u.unlocked.forEach(function(item) {
+            if (item.prop === '__parentOverflow') item.el.style.overflow = item.old || '';
+            else u.el.style[item.prop] = item.old || '';
+          });
+        }
+      }
+    } else if (u.prop === '__src') {
+      var now = u.el.src;
+      u.el.src = forward ? u.newSrc : u.old;
+      if (!forward) u.newSrc = now;
+      else u.old = u.old; // keep
+    } else if (u.prop === '__textEdit') {
+      var currentHTML = u.el.innerHTML;
+      u.el.innerHTML = forward ? u.newHTML : u.old;
+      if (!forward) u.newHTML = currentHTML;
+    } else if (u.prop === '__modeERun') {
+      if (forward) {
+        // Redo of Mode E: put the rebuilt wrapper back
+        var editorEls = getEditorElsInBody();
+        var before = editorEls[0] || null;
+        // Remove current (the originals we restored on undo)
+        u.originalChildren.forEach(function(child) {
+          if (child.parentElement === document.body) child.remove();
+        });
+        if (before) document.body.insertBefore(u.rebuiltWrapper, before);
+        else document.body.appendChild(u.rebuiltWrapper);
+        window.scrollTo(0, u.newScrollY || 0);
+      } else {
+        // Undo of Mode E: remove rebuilt wrapper, re-insert originals
+        u.newScrollY = window.scrollY;
+        if (u.rebuiltWrapper && u.rebuiltWrapper.parentElement) u.rebuiltWrapper.remove();
+        var editorEls2 = getEditorElsInBody();
+        var before2 = editorEls2[0] || null;
+        u.originalChildren.forEach(function(child) {
+          if (before2) document.body.insertBefore(child, before2);
+          else document.body.appendChild(child);
+        });
+        window.scrollTo(0, u.scrollY || 0);
+      }
+    } else {
+      // Generic style prop change
+      var currentVal = u.el.style[u.prop];
+      u.el.style[u.prop] = forward ? (u.newVal || '') : (u.old || '');
+      if (!forward) u.newVal = currentVal;
+    }
+  }
+
+  function getEditorElsInBody() {
+    var out = [];
+    Array.from(document.body.children).forEach(function(child) {
+      if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
+        out.push(child);
+      }
+    });
+    return out;
+  }
 
   function undo() {
     if (!undoStack.length) return;
     var u = undoStack.pop();
-    if (u.prop === '__removed') {
-      u.parent.insertBefore(u.el, u.next);
-    } else if (u.prop === '__move') {
-      if (u.next) {
-        u.parent.insertBefore(u.el, u.next);
-      } else {
-        u.parent.appendChild(u.el);
-      }
-    } else if (u.prop === '__coordswap') {
-      u.el.style.top = u.elTop;
-      u.el.style.left = u.elLeft;
-      u.target.style.top = u.tTop;
-      u.target.style.left = u.tLeft;
-    } else if (u.prop === '__freemove') {
-      u.el.style.top = u.oldTop;
-      u.el.style.left = u.oldLeft;
-    } else if (u.prop === '__resize') {
-      u.el.style.width = u.oldW;
-      u.el.style.height = u.oldH;
-      u.el.style.marginLeft = u.oldML;
-      u.el.style.marginTop = u.oldMT || '';
-      u.el.style.transform = '';
-      if (u.unlocked) {
-        u.unlocked.forEach(function(item) {
-          if (item.prop === '__parentOverflow') {
-            item.el.style.overflow = item.old || '';
-          } else {
-            u.el.style[item.prop] = item.old || '';
-          }
-        });
-      }
-    } else if (u.prop === '__src') {
-      u.el.src = u.old;
-    } else {
-      u.el.style[u.prop] = u.old || '';
-    }
+    // Capture current state into the entry so redo can reverse
+    applyUndoEntry(u, false);
+    pushRedo(u);
     if (selectedEl) {
       updateSelBox(selectedEl);
       updateInspector(selectedEl);
     }
+  }
+
+  function redo() {
+    if (!redoStack.length) return;
+    var u = redoStack.pop();
+    applyUndoEntry(u, true);
+    undoStack.push(u);
+    if (undoStack.length > UNDO_STACK_MAX) undoStack.shift();
+    if (selectedEl) {
+      updateSelBox(selectedEl);
+      updateInspector(selectedEl);
+    }
+  }
+
+  // ============ CLIPBOARD (Cut / Copy / Paste) ============
+  //
+  // Clipboard operations work on the currently selected element. We store
+  // the element's outerHTML as text, which means cross-tab / cross-app
+  // paste also works (you can Copy here and Paste into a text editor).
+  //
+  // Paste inserts the content as a sibling AFTER the selected element
+  // (closest to how word processors and design tools behave). If nothing
+  // is selected, paste is a no-op.
+
+  var clipboardHTML = null; // internal fallback when navigator.clipboard is unavailable
+
+  function clipCopy() {
+    if (!selectedEl) return false;
+    var html = selectedEl.outerHTML;
+    clipboardHTML = html;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(html).catch(function() {});
+    }
+    return true;
+  }
+
+  function clipCut() {
+    if (!selectedEl) return false;
+    clipCopy();
+    var parent = selectedEl.parentElement;
+    var next = selectedEl.nextElementSibling;
+    var el = selectedEl;
+    pushUndo({el: el, prop: '__removed', parent: parent, next: next});
+    deselectEl();
+    el.remove();
+    return true;
+  }
+
+  async function clipPaste() {
+    var html = clipboardHTML;
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      try {
+        var fromSystem = await navigator.clipboard.readText();
+        if (fromSystem && /^\s*</.test(fromSystem)) html = fromSystem;
+      } catch(e) { /* permission denied, use internal fallback */ }
+    }
+    if (!html) return false;
+    var target = selectedEl || document.body.firstElementChild;
+    if (!target || isEditorEl(target)) return false;
+
+    // Parse into a DOM fragment
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    var newEl = tmp.firstElementChild;
+    if (!newEl) return false;
+
+    // Insert as sibling after the selected element
+    var parent = target.parentElement;
+    if (!parent) return false;
+    parent.insertBefore(newEl, target.nextSibling);
+
+    // Push an undo entry so Cmd+Z removes the pasted element
+    pushUndo({el: newEl, prop: '__removed', parent: parent, next: newEl.nextSibling});
+    return true;
+  }
+
+  // ============ FIND ============
+  //
+  // Simple find-in-page for the editor: user types a query, we find the
+  // first element containing that text (case-insensitive), scroll it into
+  // view, select it. Enter cycles to next match. Escape closes the overlay.
+
+  var findOverlay = null;
+  var findMatches = [];
+  var findIndex = 0;
+
+  function openFind() {
+    if (findOverlay) { findOverlay.querySelector('input').focus(); return; }
+    findOverlay = mk('div', 'rb-ed-find');
+    findOverlay.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483646;background:rgba(23,23,23,0.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:6px 8px;display:flex;align-items:center;gap:6px;box-shadow:0 8px 24px rgba(0,0,0,0.4);font-family:"Instrument Sans",sans-serif;';
+    var input = mk('input');
+    input.type = 'text';
+    input.placeholder = 'Find text on page…';
+    input.style.cssText = 'background:none;border:none;color:#EFEEEB;font:400 13px "Instrument Sans",sans-serif;outline:none;width:260px;padding:4px 6px;';
+    var counter = mk('span');
+    counter.style.cssText = 'color:rgba(239,238,235,0.4);font:400 11px "Instrument Sans",sans-serif;min-width:48px;text-align:right;';
+    counter.textContent = '';
+    var close = mk('button');
+    close.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    close.style.cssText = 'background:none;border:none;color:rgba(239,238,235,0.5);cursor:pointer;padding:4px;display:flex;align-items:center;';
+    close.addEventListener('click', closeFind, {signal: sig});
+    findOverlay.appendChild(input);
+    findOverlay.appendChild(counter);
+    findOverlay.appendChild(close);
+    root.appendChild(findOverlay);
+
+    function runSearch() {
+      var q = input.value.trim().toLowerCase();
+      findMatches = [];
+      findIndex = 0;
+      if (q.length < 2) { counter.textContent = ''; return; }
+      // Walk visible text-containing elements
+      var all = document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,a,button,li,td,th,label,div');
+      all.forEach(function(el) {
+        if (isEditorEl(el)) return;
+        var r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) return;
+        // Match direct text only (not descendants' text) to avoid selecting huge containers
+        var direct = '';
+        for (var i = 0; i < el.childNodes.length; i++) {
+          var n = el.childNodes[i];
+          if (n.nodeType === 3) direct += n.nodeValue;
+        }
+        if (direct.toLowerCase().indexOf(q) !== -1) findMatches.push(el);
+      });
+      counter.textContent = findMatches.length ? (findIndex + 1) + '/' + findMatches.length : '0';
+      if (findMatches.length) focusFindMatch();
+    }
+
+    function focusFindMatch() {
+      var el = findMatches[findIndex];
+      if (!el) return;
+      el.scrollIntoView({behavior: 'smooth', block: 'center'});
+      try { selectEl(el); } catch(e) {}
+      counter.textContent = (findIndex + 1) + '/' + findMatches.length;
+    }
+
+    input.addEventListener('input', runSearch, {signal: sig});
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (findMatches.length === 0) return;
+        findIndex = (findIndex + (e.shiftKey ? -1 : 1) + findMatches.length) % findMatches.length;
+        focusFindMatch();
+      }
+      if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+    }, {signal: sig});
+
+    setTimeout(function() { input.focus(); }, 10);
+  }
+
+  function closeFind() {
+    if (findOverlay) { findOverlay.remove(); findOverlay = null; }
+    findMatches = [];
+    findIndex = 0;
+  }
+
+  // ============ SAVED VERSIONS HISTORY ============
+  //
+  // Surfaces the persistent snapshot history (in IndexedDB via persist.js)
+  // as a floating panel with a timestamped list and Restore buttons. This
+  // is the UI for Priority 1 — catastrophic recovery. Users can return to
+  // any previously auto-saved state even after the session has ended.
+
+  var savedVersionsPanel = null;
+
+  function formatTimestamp(ts) {
+    if (!ts) return '—';
+    var d = new Date(ts);
+    var now = Date.now();
+    var diff = now - ts;
+    // Relative label for recent entries
+    var rel;
+    if (diff < 60000) rel = 'just now';
+    else if (diff < 3600000) rel = Math.floor(diff / 60000) + ' min ago';
+    else if (diff < 86400000) rel = Math.floor(diff / 3600000) + 'h ago';
+    else rel = Math.floor(diff / 86400000) + 'd ago';
+    // Absolute label (always shown for precision)
+    var pad = function(n) { return n < 10 ? '0' + n : String(n); };
+    var abs = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+              ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    return {rel: rel, abs: abs};
+  }
+
+  async function openSavedVersionsHistory() {
+    if (savedVersionsPanel) { savedVersionsPanel.remove(); savedVersionsPanel = null; return; }
+    if (!window.__rbPersist) {
+      console.warn('[history] persist.js not loaded');
+      return;
+    }
+
+    var projectId = window.__rbActiveProjectId;
+    var snapshots = [];
+    try {
+      if (projectId) {
+        snapshots = await window.__rbPersist.getSnapshots(projectId, 100);
+      } else {
+        // No active project yet — still let the user see any projects they have
+        var projects = await window.__rbPersist.listProjects(20);
+        if (projects.length > 0) {
+          // Default to showing the most recent project's history
+          projectId = projects[0].id;
+          snapshots = await window.__rbPersist.getSnapshots(projectId, 100);
+        }
+      }
+    } catch(e) {
+      console.error('[history] failed to load snapshots:', e);
+      return;
+    }
+
+    savedVersionsPanel = mk('div', 'rb-ed-history');
+    savedVersionsPanel.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:2147483646;background:rgba(23,23,23,0.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:0;min-width:420px;max-width:520px;max-height:70vh;box-shadow:0 16px 48px rgba(0,0,0,0.5);font-family:"Instrument Sans",sans-serif;display:flex;flex-direction:column;overflow:hidden;';
+
+    // Header
+    var header = mk('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,0.06);';
+    var title = mk('span');
+    title.textContent = 'Saved versions history';
+    title.style.cssText = 'font:600 13px "Instrument Sans",sans-serif;color:#EFEEEB;letter-spacing:0.2px;';
+    var closeBtn = mk('button');
+    closeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    closeBtn.style.cssText = 'background:none;border:none;color:rgba(239,238,235,0.5);cursor:pointer;padding:4px;display:flex;align-items:center;';
+    closeBtn.addEventListener('click', function() { savedVersionsPanel.remove(); savedVersionsPanel = null; });
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+    savedVersionsPanel.appendChild(header);
+
+    // Body
+    var body = mk('div');
+    body.style.cssText = 'overflow-y:auto;padding:8px 0;scrollbar-width:thin;';
+
+    if (snapshots.length === 0) {
+      var empty = mk('div');
+      empty.style.cssText = 'padding:40px 20px;text-align:center;color:rgba(239,238,235,0.4);font:400 12px "Instrument Sans",sans-serif;';
+      empty.innerHTML = 'No saved versions yet.<br><span style="font-size:11px;opacity:0.7">Snapshots are auto-created every 30 seconds once you start editing, and before any Mode E run.</span>';
+      body.appendChild(empty);
+    } else {
+      snapshots.forEach(function(snap) {
+        var row = mk('div');
+        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:default;';
+
+        var left = mk('div');
+        left.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:2px;min-width:0;';
+        var label = mk('div');
+        label.textContent = snap.label || 'Snapshot';
+        label.style.cssText = 'font:500 12px "Instrument Sans",sans-serif;color:#EFEEEB;' + (snap.isInitial ? 'color:#5ee37f;' : '');
+        var ts = formatTimestamp(snap.createdAt);
+        var time = mk('div');
+        time.innerHTML = '<span style="color:rgba(239,238,235,0.6)">' + ts.abs + '</span><span style="color:rgba(239,238,235,0.35);margin-left:8px">' + ts.rel + '</span>';
+        time.style.cssText = 'font:400 11px "Instrument Sans",sans-serif;';
+        left.appendChild(label);
+        left.appendChild(time);
+
+        var restoreBtn = mk('button');
+        restoreBtn.textContent = 'Restore';
+        restoreBtn.style.cssText = 'background:rgba(255,255,255,0.08);color:#EFEEEB;border:none;border-radius:999px;padding:5px 14px;font:500 11px "Instrument Sans",sans-serif;cursor:pointer;flex-shrink:0;transition:background 120ms;';
+        restoreBtn.addEventListener('mouseenter', function() { restoreBtn.style.background = 'rgba(94,227,127,0.25)'; });
+        restoreBtn.addEventListener('mouseleave', function() { restoreBtn.style.background = 'rgba(255,255,255,0.08)'; });
+        restoreBtn.addEventListener('click', async function() {
+          if (!confirm('Restore this version? Current unsaved changes will be lost.')) return;
+          // Apply the snapshot HTML to the current rebuilt page or body
+          var container = document.getElementById('rb-rebuilt-page');
+          if (container) {
+            container.outerHTML = snap.html;
+          } else {
+            // No rebuilt page — this is a Mode A edit context. Restore
+            // means replacing the body content with the snapshot HTML
+            // (user confirmed). Keep editor elements intact.
+            var editorEls = [];
+            Array.from(document.body.children).forEach(function(child) {
+              if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
+                editorEls.push(child);
+              }
+            });
+            Array.from(document.body.children).forEach(function(child) {
+              if (editorEls.indexOf(child) === -1) child.remove();
+            });
+            var frag = document.createElement('div');
+            frag.innerHTML = snap.html;
+            var insertBefore = editorEls[0] || null;
+            Array.from(frag.children).forEach(function(child) {
+              if (insertBefore) document.body.insertBefore(child, insertBefore);
+              else document.body.appendChild(child);
+            });
+          }
+          // Reset in-memory undo/redo since the state we came from no longer exists
+          undoStack.length = 0;
+          redoStack.length = 0;
+          savedVersionsPanel.remove();
+          savedVersionsPanel = null;
+        });
+
+        row.appendChild(left);
+        row.appendChild(restoreBtn);
+        body.appendChild(row);
+      });
+    }
+
+    savedVersionsPanel.appendChild(body);
+    root.appendChild(savedVersionsPanel);
+
+    // Close on outside click
+    var closeOutside = function(ev) {
+      if (savedVersionsPanel && !savedVersionsPanel.contains(ev.target)) {
+        savedVersionsPanel.remove();
+        savedVersionsPanel = null;
+        document.removeEventListener('mousedown', closeOutside, true);
+      }
+    };
+    setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 100);
   }
 
   // ============ LAZY DECOUPLE (bake inline styles on select) ============
@@ -3556,12 +4049,20 @@
     syncLayersSelection(el);
   }
 
+  // Snapshot of innerHTML when user enters text edit mode. Used to detect
+  // changes and push a single undo entry on exit instead of flooding the
+  // undoStack with per-keystroke mutations.
+  var textEditOriginalHTML = null;
+  var textEditTarget = null;
+
   function enterTextEdit(el) {
     el.contentEditable = 'true';
     el.setAttribute('data-rb-editing', '');
     el.classList.remove('rb-ed-movable');
     selBox.style.display = 'none';
     isTextEditing = true;
+    textEditTarget = el;
+    textEditOriginalHTML = el.innerHTML;
     // No scroll lock — causes too many issues on custom scroll sites
     el.focus();
     try {
@@ -3574,6 +4075,21 @@
   }
 
   function exitTextEdit() {
+    // If the user actually edited anything, capture it as a single undo
+    // entry with the whole innerHTML before/after. Undo handler type is
+    // __textEdit.
+    if (textEditTarget && textEditOriginalHTML !== null) {
+      var newHTML = textEditTarget.innerHTML;
+      if (newHTML !== textEditOriginalHTML) {
+        pushUndo({
+          el: textEditTarget,
+          prop: '__textEdit',
+          old: textEditOriginalHTML
+        });
+      }
+    }
+    textEditTarget = null;
+    textEditOriginalHTML = null;
     isTextEditing = false;
   }
 
@@ -3730,7 +4246,7 @@
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         // Push undo
-        undoStack.push({ el: targetEl, prop: prop, old: dragStartValue + 'px' });
+        pushUndo({ el: targetEl, prop: prop, old: dragStartValue + 'px' });
       }
 
       document.addEventListener('mousemove', onMove);
@@ -3864,7 +4380,7 @@
       if (!f) return;
       var reader = new FileReader();
       reader.onload = function() {
-        undoStack.push({el: img, prop: '__src', old: img.src});
+        pushUndo({el: img, prop: '__src', old: img.src});
         img.src = reader.result;
         removeImgMenu();
       };
@@ -4036,7 +4552,7 @@
       var tTop = lastDropTarget.style.top || tRect.top + 'px';
       var tLeft = lastDropTarget.style.left || tRect.left + 'px';
 
-      undoStack.push({
+      pushUndo({
         el: el, prop: '__coordswap',
         elTop: elTop, elLeft: elLeft,
         target: lastDropTarget, tTop: tTop, tLeft: tLeft
@@ -4055,7 +4571,7 @@
       var oldNext = el.nextElementSibling;
       var oldParent = el.parentElement;
 
-      undoStack.push({ el: el, prop: '__move', parent: oldParent, next: oldNext });
+      pushUndo({ el: el, prop: '__move', parent: oldParent, next: oldNext });
 
       if (lastDropPos === 'before') {
         lastDropTarget.parentElement.insertBefore(el, lastDropTarget);
@@ -4383,7 +4899,7 @@
           // Mode D: commit the free move, save undo
           var newTop = selectedEl.style.top;
           var newLeft = selectedEl.style.left;
-          undoStack.push({
+          pushUndo({
             el: selectedEl, prop: '__freemove',
             oldTop: dragOrigTop + 'px', oldLeft: dragOrigLeft + 'px'
           });
@@ -4458,14 +4974,44 @@
       if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault();
         e.stopPropagation();
-        undo();
+        if (e.shiftKey) redo();
+        else undo();
+      }
+      // Cmd+Y as alternative redo (Windows convention)
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        e.stopPropagation();
+        redo();
+      }
+      // Cut / Copy / Paste — only when an element is selected and we're
+      // not in text edit mode (let native clipboard work during text edit)
+      if ((e.ctrlKey || e.metaKey) && !isTextEditing) {
+        if ((e.key === 'x' || e.key === 'X') && selectedEl) {
+          e.preventDefault();
+          e.stopPropagation();
+          clipCut();
+        } else if ((e.key === 'c' || e.key === 'C') && selectedEl) {
+          e.preventDefault();
+          e.stopPropagation();
+          clipCopy();
+        } else if (e.key === 'v' || e.key === 'V') {
+          e.preventDefault();
+          e.stopPropagation();
+          clipPaste();
+        }
+      }
+      // Find — Cmd+F
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        e.stopPropagation();
+        openFind();
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedEl && selectedEl.contentEditable !== 'true') {
           e.preventDefault();
           var parent = selectedEl.parentElement;
           var next = selectedEl.nextElementSibling;
-          undoStack.push({el: selectedEl, prop: '__removed', parent: parent, next: next});
+          pushUndo({el: selectedEl, prop: '__removed', parent: parent, next: next});
           selectedEl.remove();
           deselectEl();
         }
@@ -4567,7 +5113,7 @@
           document.removeEventListener('mousemove', onM);
           document.removeEventListener('mouseup', onU);
           // Save undo with all unlocked props
-          undoStack.push({
+          pushUndo({
             el: selectedEl, prop: '__resize',
             oldW: origW + 'px', oldH: origH + 'px',
             oldML: origML + 'px', oldMT: origMT + 'px',

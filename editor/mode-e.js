@@ -809,6 +809,11 @@
       scrollY: window.scrollY
     };
 
+    // Reference kept so the undo entry below can restore it (we push the
+    // entry after the wrapper is actually inserted in the DOM).
+    var savedOriginalChildren = originalChildren.slice();
+    var savedScrollY = window.scrollY;
+
     // Build the rebuilt page
     var wrapper = document.createElement('div');
     wrapper.id = 'rb-rebuilt-page';
@@ -847,6 +852,20 @@
 
     document.body.style.margin = '0';
     document.body.style.padding = '0';
+
+    // Push a __modeERun entry to the editor's undoStack so Cmd+Z can
+    // revert the entire page replacement. This is the critical fix for
+    // Priority 1 (catastrophic Mode E output).
+    if (typeof window.__rbPushUndo === 'function') {
+      try {
+        window.__rbPushUndo({
+          prop: '__modeERun',
+          originalChildren: savedOriginalChildren,
+          scrollY: savedScrollY,
+          rebuiltWrapper: wrapper
+        });
+      } catch(e) { console.warn('[mode-e] pushUndo failed:', e); }
+    }
 
     return wrapper;
   }
