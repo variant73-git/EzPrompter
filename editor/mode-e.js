@@ -243,9 +243,18 @@
 
   // Send a section screenshot + context to Gemini Vision (chunked mode)
   // Low-level LLM call for a single chunk (no validation, used by the
-  // retry wrapper below).
+  // retry wrapper below). Wraps chrome.runtime.sendMessage in a 90-second
+  // timeout so stuck or silently-failing calls surface as errors instead
+  // of leaving the user staring at "Reconstructing with AI..." forever.
+  var CHUNK_CALL_TIMEOUT_MS = 90000;
   function chunkToHTMLRaw(screenshotDataUrl, prompt) {
     return new Promise(function(resolve, reject) {
+      var settled = false;
+      var timer = setTimeout(function() {
+        if (settled) return;
+        settled = true;
+        reject(new Error('Gemini call timed out after ' + Math.round(CHUNK_CALL_TIMEOUT_MS / 1000) + 's (check extension service worker or network)'));
+      }, CHUNK_CALL_TIMEOUT_MS);
       chrome.runtime.sendMessage(
         {
           action: 'modeERebuild',
@@ -253,6 +262,9 @@
           prompt: prompt
         },
         function(response) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
           if (response && response.html) resolve(response.html);
           else if (response && response.error) reject(new Error(response.error));
           else reject(new Error('No response from AI'));

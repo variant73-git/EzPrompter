@@ -4,6 +4,7 @@
 @keyframes rb-ed-fade { from{opacity:0} to{opacity:1} }
 @keyframes rb-holo { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
 @keyframes rb-ed-pulse { 0%,100%{box-shadow:0 0 0 0 transparent,0 16px 48px rgba(0,0,0,0.5)} 50%{box-shadow:0 0 0 6px rgba(147,197,253,0.35),0 16px 48px rgba(0,0,0,0.5)} }
+@keyframes rb-ed-spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
 
 /* ===== 1. ROOT ===== */
 #rb-editor-root {
@@ -894,32 +895,6 @@ option { background:#1A1A1A; color:#EFEEEB; }
   margin-left:5px; padding-right:2px; display:flex; align-items:center; flex-shrink:0;
 }
 
-/* ===== PAUSE/RESUME FAB ===== */
-#rb-ed-fab {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  background: #1A1A1A;
-  color: #EFEEEB;
-  border: none;
-  border-radius: 999px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-  font: 500 12px 'Instrument Sans', sans-serif;
-  cursor: pointer;
-  z-index: 2147483647;
-  transition: transform 150ms ease, box-shadow 150ms ease;
-}
-#rb-ed-fab:hover {
-  transform: scale(1.05);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
-}
-.rb-ed-fab-icon { font-size: 14px; }
-.rb-ed-fab-label { white-space: nowrap; }
-
 /* ===== SCROLL LOCK (universal — works on any site) ===== */
 html.rb-scroll-locked,
 html.rb-scroll-locked body {
@@ -1360,9 +1335,6 @@ body.rb-ed-light .rb-ed-img-menu button:hover { background:rgba(0,0,0,0.05); col
 body.rb-ed-light .rb-ed-ftue { background:#E8E8E8; color:#333; box-shadow:0 4px 12px rgba(0,0,0,0.1); }
 body.rb-ed-light .rb-ed-ftue::after { border-top-color:#E8E8E8; }
 body.rb-ed-light .rb-ed-ftue kbd { background:rgba(0,0,0,0.08); }
-
-/* FAB */
-body.rb-ed-light #rb-ed-fab { background:#E8E8E8; color:#333; box-shadow:0 8px 32px rgba(0,0,0,0.1); }
 
 /* Scroll lock tooltip */
 body.rb-ed-light .rb-ed-lock { background:#E8E8E8; color:rgba(51,51,51,0.5); }

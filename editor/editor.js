@@ -369,7 +369,7 @@
     var banner = document.getElementById('rb-ed-banner');
     if (!banner) return;
     var txt = currentDepth === 0
-      ? 'Live Remix \u2014 click any element'
+      ? 'Click any element to edit'
       : 'Depth ' + currentDepth + ' \u2014 double-click to go deeper \u00B7 Esc to go up';
     var first = banner.childNodes[0];
     if (first && first.nodeType === 3) { first.textContent = txt; }
@@ -494,6 +494,92 @@
     ind.textContent = 'Saved';
     root.appendChild(ind);
     setTimeout(function() { if (ind.parentNode) ind.remove(); }, 1500);
+  }
+
+  // Persistent toast notification for long-running operations like Mode E.
+  // Unlike showSaveIndicator, this stays visible until explicitly dismissed
+  // so the user can walk away and still see the result when they return.
+  //
+  // status: 'running' | 'success' | 'error'
+  // onDismiss: optional callback when user clicks X
+  function showToast(message, status, onDismiss) {
+    var existing = root.querySelector('.rb-ed-toast');
+    if (existing) existing.remove();
+
+    var toast = mk('div', 'rb-ed-toast rb-ed-toast-' + (status || 'running'));
+    toast.style.cssText = [
+      'position:fixed',
+      'top:20px',
+      'right:20px',
+      'z-index:2147483646',
+      'display:flex',
+      'align-items:center',
+      'gap:10px',
+      'padding:12px 16px',
+      'min-width:240px',
+      'max-width:420px',
+      'background:rgba(23,23,23,0.92)',
+      'backdrop-filter:blur(20px)',
+      '-webkit-backdrop-filter:blur(20px)',
+      'border:1px solid rgba(255,255,255,0.12)',
+      'border-radius:10px',
+      'box-shadow:0 8px 32px rgba(0,0,0,0.5)',
+      'font:500 12px "Instrument Sans",sans-serif',
+      'color:#EFEEEB'
+    ].join(';');
+
+    // Status icon
+    var icon = mk('span');
+    icon.style.cssText = 'flex-shrink:0;width:16px;height:16px;display:flex;align-items:center;justify-content:center;';
+    if (status === 'success') {
+      icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    } else if (status === 'error') {
+      icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+    } else {
+      // Running spinner
+      icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EFEEEB" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+      icon.style.animation = 'rb-ed-spin 1s linear infinite';
+    }
+
+    var text = mk('span');
+    text.style.cssText = 'flex:1;line-height:1.4;word-break:break-word;';
+    text.textContent = message;
+
+    var close = mk('button');
+    close.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    close.style.cssText = 'background:none;border:none;color:rgba(239,238,235,0.5);cursor:pointer;padding:4px;display:flex;align-items:center;flex-shrink:0;';
+    close.addEventListener('click', function() {
+      toast.remove();
+      if (typeof onDismiss === 'function') onDismiss();
+    });
+
+    toast.appendChild(icon);
+    toast.appendChild(text);
+    toast.appendChild(close);
+    root.appendChild(toast);
+    return toast;
+  }
+
+  function updateToast(toast, message, status) {
+    if (!toast || !toast.parentNode) return;
+    var text = toast.querySelector('span:nth-child(2)');
+    if (text) text.textContent = message;
+    // If status changed, rebuild icon
+    if (status) {
+      toast.className = 'rb-ed-toast rb-ed-toast-' + status;
+      var icon = toast.querySelector('span:first-child');
+      if (icon) {
+        icon.style.animation = '';
+        if (status === 'success') {
+          icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        } else if (status === 'error') {
+          icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+        } else {
+          icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EFEEEB" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+          icon.style.animation = 'rb-ed-spin 1s linear infinite';
+        }
+      }
+    }
   }
 
   function showRestorePrompt(data) {
@@ -661,18 +747,25 @@
     inspBody.appendChild(restoreBtn);
 
     rebuildInProgress = true;
+    // Persistent toast that stays visible even if the user walks away
+    // from the inspector panel. Stays until dismissed or updated to
+    // success/error.
+    var modeEToast = showToast('Mode E: starting…', 'running');
     window.__rbModeE.run(function(progress) {
       if (progress.step === 'error') {
         rebuildInProgress = false;
         progressEl.style.color = '#f87171';
         progressEl.textContent = progress.message;
+        updateToast(modeEToast, 'Mode E failed — ' + progress.message, 'error');
       } else if (progress.step === 'done') {
         rebuildInProgress = false;
         progressEl.style.color = '#22c55e';
         progressEl.textContent = progress.message;
         restoreBtn.style.display = '';
+        updateToast(modeEToast, 'Mode E complete — ' + progress.message, 'success');
       } else {
         progressEl.textContent = progress.message;
+        updateToast(modeEToast, 'Mode E: ' + progress.message, 'running');
       }
     });
   }
@@ -736,7 +829,7 @@
     canvas.style.cssText = 'position:relative;width:'+vw+'px;min-height:'+vh+'px;background:#fff;transform-origin:0 0;margin:40px auto;box-shadow:0 4px 40px rgba(0,0,0,0.3);';
 
     Array.from(document.body.children).forEach(function(child) {
-      if (child.id === 'rb-editor-root' || child.id === 'rb-ed-fab' || child.id === 'rb-ed-canvas-wrapper') return;
+      if (child.id === 'rb-editor-root' || child.id === 'rb-ed-canvas-wrapper') return;
       if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE' || child.tagName === 'LINK') return;
       var clone = child.cloneNode(true);
       bakeStyles(child, clone);
@@ -856,40 +949,6 @@
     e.returnValue = '';
   }
   window.addEventListener('beforeunload', onBeforeUnload);
-
-  // ============ PAUSE/RESUME FAB ============
-
-  var editorPaused = false;
-
-  function buildFab() {
-    var fab = mk('div', 'rb-ed-fab');
-    fab.id = 'rb-ed-fab';
-    fab.innerHTML = '<span class="rb-ed-fab-icon">✏️</span><span class="rb-ed-fab-label">Live Remix</span>';
-    fab.style.display = 'none'; // hidden while editor is active
-    fab.addEventListener('click', function() {
-      resumeEditor();
-    });
-    // Append to body, not root (so it persists when root is hidden)
-    document.body.appendChild(fab);
-  }
-  buildFab();
-
-  function pauseEditor() {
-    editorPaused = true;
-    deselectEl();
-    root.style.display = 'none';
-    document.body.classList.remove('rb-ed-active');
-    var fab = document.getElementById('rb-ed-fab');
-    if (fab) fab.style.display = 'flex';
-  }
-
-  function resumeEditor() {
-    editorPaused = false;
-    root.style.display = '';
-    document.body.classList.add('rb-ed-active');
-    var fab = document.getElementById('rb-ed-fab');
-    if (fab) fab.style.display = 'none';
-  }
 
   // ============ LAYERS + INSPECTOR ============
 
@@ -4970,12 +5029,6 @@
 
     // Keyboard
     document.addEventListener('keydown', function(e) {
-      // Ctrl/Cmd+Shift+E = toggle pause/resume
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'E') {
-        e.preventDefault();
-        if (editorPaused) resumeEditor(); else pauseEditor();
-        return;
-      }
       if (e.altKey && (e.key === 'l' || e.key === 'L')) {
         e.preventDefault();
         if (layersPanel) {
@@ -5187,8 +5240,10 @@
     saveState();
     if (autoSaveInterval) clearInterval(autoSaveInterval);
     window.removeEventListener('beforeunload', onBeforeUnload);
-    var fab = document.getElementById('rb-ed-fab');
-    if (fab) fab.remove();
+    // Clean up any stale FAB from older builds (defensive — the FAB feature
+    // was removed but a leftover DOM node could persist on a page reload)
+    var staleFab = document.getElementById('rb-ed-fab');
+    if (staleFab) staleFab.remove();
     var hk = document.getElementById('rb-hover-kill');
     if (hk) hk.remove();
     document.documentElement.style.removeProperty('--rb-insp-width');
