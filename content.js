@@ -1,6 +1,42 @@
 // Repix - Content Script (minimal - overlay is injected by background.js via scripting API)
 // This file exists as a fallback listener in case direct scripting injection fails.
 
+// ─── QA auto-activation bridge (dev mode only) ───────────────────────────
+// When the extension is loaded unpacked (dev mode) AND the current URL has
+// `#rb-qa-activate` in its hash, we automatically dispatch the toggleEditor
+// action after the page finishes loading. This lets the Playwright smoke
+// test in tests/e2e/smoke.mjs activate the editor programmatically without
+// requiring manual UI interaction.
+//
+// Safety: this path is GATED by isDevMode() which returns true only when
+// the extension has no update_url (i.e., was loaded via chrome://extensions
+// "Load unpacked"). Store-published extensions have an update_url and this
+// bridge is a no-op for them — no security surface for end users.
+function isDevMode() {
+  try {
+    const manifest = chrome.runtime.getManifest();
+    return !manifest.update_url;
+  } catch (e) {
+    return false;
+  }
+}
+
+if (isDevMode() && typeof location !== 'undefined' && location.hash === '#rb-qa-activate') {
+  const activate = () => {
+    // Small delay to let the page settle (fonts, hydration, lazy content)
+    setTimeout(() => {
+      chrome.runtime.sendMessage({ action: 'toggleEditor' }, () => {
+        // Ignore response — the test harness polls for window.__rbModeE
+        if (chrome.runtime.lastError) {
+          console.warn('[rb-qa] auto-activate failed:', chrome.runtime.lastError.message);
+        }
+      });
+    }, 1500);
+  };
+  if (document.readyState === 'complete') activate();
+  else window.addEventListener('load', activate, { once: true });
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'showOverlay') {
     showOverlayInPage(message.state);

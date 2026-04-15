@@ -54,17 +54,15 @@ Each site goes through 8 tests in sequence. A failed prerequisite (like injectio
 
 Priority is editing fluidity over Mode E fidelity. Tests 5-6 validate the core Mode A user loop (the common path). Tests 2-4 validate the extractor that feeds Mode E. Test 7 is an expensive integration test that should only run before a release.
 
-## Current limitation: editor must be manually activated
+## Auto-activation (how the test harness gets past injection)
 
-Test 1 (`inject`) currently requires the editor to be activated manually before the test runs. Chrome extension APIs can't be triggered from Playwright's public API (popups, commands, keyboard shortcuts go through the isolated world that Playwright can't reach directly).
+**Resolved via URL hash fragment.** The test harness navigates to each site with `#rb-qa-activate` appended to the URL. The extension's `content.js` detects this hash and automatically dispatches `toggleEditor` after the page loads, which injects the editor chain (`extractor.js`, `persist.js`, `mode-e.js`, `editor.js`).
 
-**Workarounds to implement later:**
+This bridge is **gated by dev mode**: `content.js` only honors the hash when `chrome.runtime.getManifest().update_url` is absent, which is true only for extensions loaded unpacked via `chrome://extensions` "Load unpacked". Extensions published to the Chrome Web Store have an `update_url` and the bridge becomes a no-op — there is no security surface for real users.
 
-- Add a `window.postMessage` listener in `editor.js` that triggers injection when it receives a test signal. Then the test calls `page.evaluate(() => window.postMessage({type: 'rb-test-inject'}))`.
-- Or: build a "test mode" version of the extension that auto-injects on load.
-- Or: use Playwright's `chromium.launchPersistentContext` with a pre-set user data dir that has the extension already activated.
+So for the smoke test to work, the extension must be loaded **unpacked** (which Playwright already does via `--load-extension`). No manual activation needed.
 
-For MVP, run the tests with the editor manually enabled. The harness will still collect meaningful data for the non-injection tests even if `inject` itself fails — the remaining tests degrade gracefully.
+If you ever want to disable this bridge, remove the `#rb-qa-activate` block in `content.js`.
 
 ## Curated site list
 

@@ -340,10 +340,24 @@ async function runSite(site) {
   });
 
   try {
-    // Navigate with a generous timeout; some sites are slow on first load
-    await page.goto(site.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    // Give the page a moment to settle (JS hydration, fonts, etc)
-    await page.waitForTimeout(2500);
+    // Navigate with a generous timeout; some sites are slow on first load.
+    // The `#rb-qa-activate` hash triggers content.js (dev-mode-gated) to
+    // auto-dispatch the toggleEditor action, so window.__rbModeE becomes
+    // available without manual UI interaction.
+    const urlWithHash = site.url + (site.url.includes('#') ? '' : '#rb-qa-activate');
+    await page.goto(urlWithHash, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    // Give the page a moment to settle (JS hydration, fonts, etc) and
+    // wait for the auto-activate to fire (1500ms delay in content.js + buffer).
+    await page.waitForTimeout(4500);
+    // Best-effort: wait for editor globals to be exposed. Timeout is non-fatal
+    // — downstream tests will surface the issue as "editor not injected".
+    try {
+      await page.waitForFunction(() => !!(window.__rbModeE && window.__rbExtractor), {
+        timeout: 5000
+      });
+    } catch (e) {
+      // Editor didn't inject in time — continue anyway, tests will log the failure
+    }
 
     // Run tests in order. If a test marks skipRemaining, abort.
     const testOrder = [

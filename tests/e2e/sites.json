@@ -1,6 +1,7 @@
 {
   "_description": "Curated site list for the RepixBridge smoke test. Each entry has a url, category, complexity rating (1-5), and notes. The runner visits each in order and runs the test suite. Sites are chosen to cover the fluidity surface area: landing pages, editorial, SaaS, e-commerce, docs, and a few edge cases.",
   "_lastReviewed": "2026-04-15",
+  "_strategy": "Web-builder sites (Framer, Webflow) are intentionally excluded. The project decided 2026-04-15 to stop trying to crack their animations — too hard, too fragile, too slow to pay off. Focus on simpler editable sites.",
   "sites": [
     {
       "url": "https://stripe.com",
@@ -69,10 +70,10 @@
       "notes": "Design tool landing page, our closest competitor in spirit"
     },
     {
-      "url": "https://obys.agency",
-      "category": "brutalist-typography",
-      "complexity": 5,
-      "notes": "Extreme typography, heavy animations — known to be hard"
+      "url": "https://laravel.com",
+      "category": "landing-framework",
+      "complexity": 2,
+      "notes": "PHP framework landing, simple marketing"
     },
     {
       "url": "https://wise.com",
@@ -87,10 +88,10 @@
       "notes": "Complex marketing page with many product cards"
     },
     {
-      "url": "https://framer.com",
-      "category": "design-tool",
-      "complexity": 5,
-      "notes": "Heavy Framer animations, edge case"
+      "url": "https://astro.build",
+      "category": "landing-framework",
+      "complexity": 3,
+      "notes": "Static site framework, themes matter"
     },
     {
       "url": "https://supabase.com",
@@ -159,10 +160,10 @@
       "notes": "Creative showcase site"
     },
     {
-      "url": "https://blvd.co",
-      "category": "brutalist-typography",
-      "complexity": 5,
-      "notes": "Massive typography, known edge case"
+      "url": "https://markdoc.dev",
+      "category": "docs",
+      "complexity": 2,
+      "notes": "Minimal doc site, good baseline"
     },
     {
       "url": "https://www.jwst-observations.org",
