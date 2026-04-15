@@ -3516,33 +3516,45 @@
 
   // Reverse a single undo entry. Returns a redo entry describing how to
   // re-apply the operation. Shared between undo() and redo() so the logic
-  // stays symmetric.
+  // stays symmetric. Every branch MUST capture the current state into
+  // u.newX fields when reverting (forward=false), so redo (forward=true)
+  // has something to re-apply.
   function applyUndoEntry(u, forward) {
     // forward=false means undoing (restore old state)
     // forward=true means redoing (re-apply new state)
     if (u.prop === '__removed') {
       if (forward) {
-        // Redo of a remove: delete again
+        // Redo of a remove: delete again. Re-capture parent/next for the
+        // next round of undo in case the DOM shifted.
+        u.parent = u.el.parentElement;
+        u.next = u.el.nextElementSibling;
         u.el.remove();
       } else {
         u.parent.insertBefore(u.el, u.next);
       }
     } else if (u.prop === '__move') {
       if (forward) {
-        // Redo of a move: re-apply new position stored in `new`
         if (u.newNext) u.newParent.insertBefore(u.el, u.newNext);
         else u.newParent.appendChild(u.el);
       } else {
+        // Capture current (post-move) position before reverting so redo
+        // can re-apply the move.
+        u.newParent = u.el.parentElement;
+        u.newNext = u.el.nextElementSibling;
         if (u.next) u.parent.insertBefore(u.el, u.next);
         else u.parent.appendChild(u.el);
       }
     } else if (u.prop === '__coordswap') {
       if (forward) {
-        u.el.style.top = u.newElTop;
-        u.el.style.left = u.newElLeft;
-        u.target.style.top = u.newTTop;
-        u.target.style.left = u.newTLeft;
+        u.el.style.top = u.newElTop || '';
+        u.el.style.left = u.newElLeft || '';
+        u.target.style.top = u.newTTop || '';
+        u.target.style.left = u.newTLeft || '';
       } else {
+        u.newElTop = u.el.style.top;
+        u.newElLeft = u.el.style.left;
+        u.newTTop = u.target.style.top;
+        u.newTLeft = u.target.style.left;
         u.el.style.top = u.elTop;
         u.el.style.left = u.elLeft;
         u.target.style.top = u.tTop;
@@ -3550,9 +3562,11 @@
       }
     } else if (u.prop === '__freemove') {
       if (forward) {
-        u.el.style.top = u.newTop;
-        u.el.style.left = u.newLeft;
+        u.el.style.top = u.newTop || '';
+        u.el.style.left = u.newLeft || '';
       } else {
+        u.newTop = u.el.style.top;
+        u.newLeft = u.el.style.left;
         u.el.style.top = u.oldTop;
         u.el.style.left = u.oldLeft;
       }
@@ -3560,7 +3574,30 @@
       if (forward) {
         u.el.style.width = u.newW || '';
         u.el.style.height = u.newH || '';
+        if (u.newML !== undefined) u.el.style.marginLeft = u.newML;
+        if (u.newMT !== undefined) u.el.style.marginTop = u.newMT;
+        // Re-apply unlocked props if we saved their new values too
+        if (u.unlockedNew) {
+          u.unlockedNew.forEach(function(item) {
+            if (item.prop === '__parentOverflow') item.el.style.overflow = item.val || '';
+            else u.el.style[item.prop] = item.val || '';
+          });
+        }
       } else {
+        // Capture current (post-resize) dimensions for redo
+        u.newW = u.el.style.width;
+        u.newH = u.el.style.height;
+        u.newML = u.el.style.marginLeft;
+        u.newMT = u.el.style.marginTop;
+        // Also capture current values of unlocked props
+        if (u.unlocked) {
+          u.unlockedNew = u.unlocked.map(function(item) {
+            if (item.prop === '__parentOverflow') {
+              return {prop: '__parentOverflow', el: item.el, val: item.el.style.overflow};
+            }
+            return {prop: item.prop, val: u.el.style[item.prop]};
+          });
+        }
         u.el.style.width = u.oldW;
         u.el.style.height = u.oldH;
         u.el.style.marginLeft = u.oldML;
@@ -3577,7 +3614,6 @@
       var now = u.el.src;
       u.el.src = forward ? u.newSrc : u.old;
       if (!forward) u.newSrc = now;
-      else u.old = u.old; // keep
     } else if (u.prop === '__textEdit') {
       var currentHTML = u.el.innerHTML;
       u.el.innerHTML = forward ? u.newHTML : u.old;
@@ -4972,6 +5008,10 @@
         }
       }
       if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        // During text edit, let the browser's native contentEditable undo
+        // handle it (character-level granularity). Our own undo only kicks
+        // in for non-text-edit operations.
+        if (isTextEditing) return;
         e.preventDefault();
         e.stopPropagation();
         if (e.shiftKey) redo();
@@ -4979,6 +5019,7 @@
       }
       // Cmd+Y as alternative redo (Windows convention)
       if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+        if (isTextEditing) return;
         e.preventDefault();
         e.stopPropagation();
         redo();
