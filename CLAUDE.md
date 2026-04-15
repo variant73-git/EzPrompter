@@ -104,10 +104,9 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 - ✅ Scroll-capture (max 8 viewports)
 - ✅ Design token extraction (cores, fonts via extractor.js)
 - ✅ Screenshot → Gemini 3.1 Pro Preview (vision) → HTML/CSS rebuild
-- ✅ Migrado da geração Flash para 3.1 Pro (mesma família que o Aura usa)
 - ✅ Preserva editor UI durante rebuild
 - ✅ DOM + Screenshot hybrid — cleanHTML do extractor.js no prompt
-- ✅ **DESIGN.md generator Aura-parity** (extractor.js `generateDesignMD()`, 1543 linhas):
+- ✅ **DESIGN.md generator Aura-parity** (extractor.js `generateDesignMD()`, 1974 linhas):
   - Overview com tone sentence auto-detectado
   - Layout & Grid (sticky/sidebars/backdrop-blur/graph-paper/section paddings)
   - Color Palette com semantic roles (surface-base, primary-text, accent-N) + descritores ("off-white beige")
@@ -115,21 +114,44 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
   - Components com TW class strings por variante + hover state correlation + inner icon container detection
   - Graphic Elements & Shapes (tall pills, extreme radii, rotated blocks)
   - Animations & Interactions (::selection, :hover, @keyframes, transitions)
+  - **Responsive Behavior** — parsing de @media queries, agrupado por breakpoint, com guidance Tailwind (md:, lg:, xl:). Substitui multi-breakpoint capture.
   - CSS Custom Properties com cross-ref Tailwind
   - Assets com background-image inventory categorizado
   - Source Implementation Cues (10+ prompt-ready MUST-preserve directives)
+- ✅ **Component chunking** (mode-e.js `runModeEChunked`):
+  - `extractSections()` no extractor.js — detecção semântica + dedup nested + sticky/footer identification + per-section cleanHTML
+  - Pipeline chunked com captura por section, sticky-header dedup, queue paralelo (concurrency=2, 500ms stagger)
+  - Stitcher monta HTML responsivo por ordem visual
+  - Fallback automático para viewport-mode quando sections detection falha
+- ✅ **Image upload path** (mode-e.js `runModeEFromImage`):
+  - `generateDesignMDFromImage()` — produz DESIGN.md a partir de screenshot via vision call
+  - Few-shot com exemplo sintético de ~3KB embedded no prompt
+  - Pipeline standalone que NÃO precisa de site ao vivo — funciona em qualquer screenshot (Dribbble, Twitter, mockup, PDF)
+- ✅ **Persistência IndexedDB** (editor/persist.js, 308 linhas):
+  - Stores: projects + snapshots
+  - createProject ao final do chunking, snapshots automáticos a cada 30s
+  - prune automático (50/projeto, 7 dias retenção)
+- ✅ **Aura prompt style** em buildChunkPrompt + buildPrompt:
+  - "EXACTLY mode" declarado upfront
+  - SOURCE HIERARCHY com role labels + CONFLICT RESOLUTION block
+  - PRESERVATION RULES (6 "do nots" do Aura)
+  - Detected Source Implementation Cues extraídas do DESIGN.md via regex e injetadas no prompt
+  - Conflict rule repetida no fim (Aura technique para fight LLM drift)
 
 **Fidelidade observada/projetada:**
 - Baseline (só screenshot): ~65-75%
 - Com DESIGN.md rico (estado atual): ~85-93%
-- Com chunking (próximo passo): ~95-97% (meta same.new)
+- Com chunking (implementado): ~92-95%
+- Com refinement loop (próximo): ~95-97% (meta same.new)
 
 **Roadmap para melhorar fidelidade:**
 1. ✅ DOM + Screenshot hybrid
-2. ⬜ **Component chunking** — segmentar página antes de enviar (navbar, hero, sections, footer separados) como same.new faz. Próximo passo imediato.
-3. ⬜ **Asset localization** — baixar imagens/fonts para data URLs
-4. ⬜ **Multi-breakpoint capture** — desktop + tablet + mobile
-5. ⬜ **Refinement loop** — comparar output com original, iterar
+2. ✅ Component chunking
+3. ✅ Image upload path (vision-based DESIGN.md)
+4. ⬜ **Refinement loop** — comparar output com original, re-gerar chunks divergentes
+5. ⬜ **Asset localization** — baixar imagens/fonts para data URLs
+6. ⬜ **History UI** + **Projects UI** (persist.js já tem a API, falta UI)
+7. ⬜ **Smart stitcher** — eliminar declarações CSS duplicadas entre chunks
 
 ### Mode B: Rebuild (DOM Mirroring) — baseado no Reforge
 **O que aprendemos:** O Reforge usa DOM Mirroring com stylesheets originais — extrai CSS rules via `document.styleSheets` (não `getComputedStyle`). Isso preserva media queries, hover states, keyframes, cascade. Resultado: 95% de fidelidade visual.
