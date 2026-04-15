@@ -1,0 +1,16 @@
+{
+  "name": "repixbridge-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright-based smoke tests for RepixBridge Chrome extension. Tests editing operations (Mode A) and vision-based reconstruction (Mode E) across a curated list of real sites.",
+  "scripts": {
+    "smoke": "node e2e/smoke.mjs",
+    "smoke:dry": "node e2e/smoke.mjs --dry-run",
+    "smoke:full": "node e2e/smoke.mjs --full",
+    "smoke:one": "node e2e/smoke.mjs --site"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

@@ -1,0 +1,186 @@
+{
+  "_description": "Curated site list for the RepixBridge smoke test. Each entry has a url, category, complexity rating (1-5), and notes. The runner visits each in order and runs the test suite. Sites are chosen to cover the fluidity surface area: landing pages, editorial, SaaS, e-commerce, docs, and a few edge cases.",
+  "_lastReviewed": "2026-04-15",
+  "sites": [
+    {
+      "url": "https://stripe.com",
+      "category": "landing-saas",
+      "complexity": 3,
+      "notes": "Heavy brand design, subtle animations, good baseline for modern SaaS"
+    },
+    {
+      "url": "https://linear.app",
+      "category": "landing-saas",
+      "complexity": 3,
+      "notes": "Minimal dark mode, typography-focused, known responsive edge cases"
+    },
+    {
+      "url": "https://vercel.com",
+      "category": "landing-saas",
+      "complexity": 3,
+      "notes": "Next.js canonical site, marketing-focused"
+    },
+    {
+      "url": "https://tailwindcss.com",
+      "category": "docs",
+      "complexity": 2,
+      "notes": "Simple typography, code blocks, sidebar nav"
+    },
+    {
+      "url": "https://react.dev",
+      "category": "docs",
+      "complexity": 3,
+      "notes": "Multi-level nav, code examples, theme switcher"
+    },
+    {
+      "url": "https://overreacted.io",
+      "category": "blog",
+      "complexity": 1,
+      "notes": "Minimal blog — should work perfectly. Baseline test."
+    },
+    {
+      "url": "https://paulgraham.com",
+      "category": "blog",
+      "complexity": 1,
+      "notes": "HTML 1.0 vibes — tests extraction of semantically weak markup"
+    },
+    {
+      "url": "https://www.nytimes.com",
+      "category": "editorial",
+      "complexity": 5,
+      "notes": "Complex grid, many images, heavy JS — stress test"
+    },
+    {
+      "url": "https://www.theverge.com",
+      "category": "editorial",
+      "complexity": 5,
+      "notes": "Image-heavy editorial"
+    },
+    {
+      "url": "https://github.com",
+      "category": "saas-dashboard",
+      "complexity": 4,
+      "notes": "Logged-out landing page, tests logged-out flow"
+    },
+    {
+      "url": "https://figma.com",
+      "category": "landing-product",
+      "complexity": 4,
+      "notes": "Design tool landing page, our closest competitor in spirit"
+    },
+    {
+      "url": "https://obys.agency",
+      "category": "brutalist-typography",
+      "complexity": 5,
+      "notes": "Extreme typography, heavy animations — known to be hard"
+    },
+    {
+      "url": "https://wise.com",
+      "category": "landing-fintech",
+      "complexity": 3,
+      "notes": "Typical fintech landing"
+    },
+    {
+      "url": "https://notion.so",
+      "category": "saas-landing",
+      "complexity": 4,
+      "notes": "Complex marketing page with many product cards"
+    },
+    {
+      "url": "https://framer.com",
+      "category": "design-tool",
+      "complexity": 5,
+      "notes": "Heavy Framer animations, edge case"
+    },
+    {
+      "url": "https://supabase.com",
+      "category": "landing-saas",
+      "complexity": 3,
+      "notes": "Dark mode, green accent, simple"
+    },
+    {
+      "url": "https://posthog.com",
+      "category": "landing-saas",
+      "complexity": 3,
+      "notes": "Yellow accent, playful illustrations"
+    },
+    {
+      "url": "https://cal.com",
+      "category": "landing-saas",
+      "complexity": 3,
+      "notes": "Calendar tool, gradient heavy"
+    },
+    {
+      "url": "https://resend.com",
+      "category": "landing-saas",
+      "complexity": 2,
+      "notes": "Minimal, typography-focused"
+    },
+    {
+      "url": "https://planetscale.com",
+      "category": "landing-saas",
+      "complexity": 3,
+      "notes": "Dark gradient backgrounds"
+    },
+    {
+      "url": "https://www.apple.com",
+      "category": "ecommerce",
+      "complexity": 5,
+      "notes": "Heavy JS, lazy loading, complex product grid"
+    },
+    {
+      "url": "https://shopify.com",
+      "category": "ecommerce",
+      "complexity": 4,
+      "notes": "E-commerce landing"
+    },
+    {
+      "url": "https://www.airbnb.com",
+      "category": "marketplace",
+      "complexity": 5,
+      "notes": "Card grid, image heavy, search UI"
+    },
+    {
+      "url": "https://www.pinterest.com",
+      "category": "social",
+      "complexity": 5,
+      "notes": "Masonry grid, edge case for section detection"
+    },
+    {
+      "url": "https://dribbble.com",
+      "category": "creative",
+      "complexity": 4,
+      "notes": "Image-first grid"
+    },
+    {
+      "url": "https://www.awwwards.com",
+      "category": "creative",
+      "complexity": 4,
+      "notes": "Creative showcase site"
+    },
+    {
+      "url": "https://blvd.co",
+      "category": "brutalist-typography",
+      "complexity": 5,
+      "notes": "Massive typography, known edge case"
+    },
+    {
+      "url": "https://www.jwst-observations.org",
+      "category": "content",
+      "complexity": 3,
+      "notes": "Static content site with images"
+    },
+    {
+      "url": "https://example.com",
+      "category": "minimal",
+      "complexity": 1,
+      "notes": "The absolute minimum HTML page — should always pass injection"
+    },
+    {
+      "url": "https://motherfuckingwebsite.com",
+      "category": "minimal",
+      "complexity": 1,
+      "notes": "Pure HTML, no CSS — edge case for extractResponsiveBehavior"
+    }
+  ]
+}
