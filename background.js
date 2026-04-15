@@ -281,15 +281,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const model = settings.model || 'gemini-3.1-pro-preview';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-        // generationConfig tuned for deterministic code output:
-        // - maxOutputTokens bumped to 16000 to prevent mid-SVG truncation
-        // - temperature lowered to reduce creative drift and "reasoning out loud"
-        // - topP lowered for same reason
-        // NOTE: a previous version added `thinkingConfig: {thinkingBudget: 0}`
-        // speculatively. It caused every chunk to fail because Gemini 3.1 Pro
-        // Preview did not accept the field. Removed. If thinking-mode control
-        // is needed later, verify the exact field name against the current
-        // API docs before re-adding.
+        // generationConfig: only raise maxOutputTokens (prevents mid-SVG
+        // truncation). temperature and topP left at model defaults.
+        //
+        // HISTORY: an earlier version dropped temperature to 0.2 and topP
+        // to 0.9 to reduce "reasoning out loud" after the gistr.so bug.
+        // The result was a significant quality regression — the model
+        // became lazy/conservative on normal cases. Defaults restored.
+        // Validator + prompt hardening are kept as the defense against
+        // reasoning leak, but with softer prompts (see mode-e.js).
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -301,9 +301,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               ]
             }],
             generationConfig: {
-              maxOutputTokens: 16000,
-              temperature: 0.2,
-              topP: 0.9
+              maxOutputTokens: 16000
             }
           })
         });

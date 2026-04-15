@@ -63,16 +63,7 @@
       designContext,
       structureContext,
       '',
-      'CRITICAL OUTPUT CONSTRAINT (absolute — any violation makes your response unusable):',
-      '- Your response MUST contain ONLY raw HTML markup starting with `<div class="rb-section"`.',
-      '- NO reasoning, thinking, commentary, "Let me consider", "Wait, let me", or any prose.',
-      '- NO markdown code fences: no ```html, no ```xml, no triple backticks.',
-      '- NO echoing of these rules back to me.',
-      '- If you would have included SVG icons but they risk breaking the output, OMIT the icons.',
-      '- The FIRST character of your response MUST be "<".',
-      '- If you cannot follow these constraints, return the empty string instead of broken output.',
-      '',
-      'Start the HTML now:'
+      'OUTPUT: Return ONLY the raw HTML. No markdown, no code fences, no explanation. Start directly with <div class="rb-section"'
     ].join('\n');
   }
 
@@ -166,19 +157,7 @@
       designContext,
       sectionContext,
       '',
-      'CRITICAL OUTPUT CONSTRAINT (absolute — any violation makes your response unusable):',
-      '- Your response MUST contain ONLY raw HTML markup. Nothing else.',
-      '- NO reasoning, thinking, commentary, "Let me consider", "Wait, let me", "Looking at", or any prose.',
-      '- NO markdown code fences: no ```html, no ```xml, no ```markdown, no triple backticks of any kind.',
-      '- NO echoing of these rules back to me. NO quoting of the prompt.',
-      '- NO explanations before or after the HTML.',
-      '- If you feel uncertain, produce your best-guess HTML silently. Do NOT explain your uncertainty.',
-      '- If you would have included SVG icons but they risk breaking the output, OMIT the icons. A missing icon is always better than malformed markup.',
-      '- The FIRST character of your response MUST be "<".',
-      '- The LAST character of your response MUST be ">".',
-      '- If you cannot follow these constraints, return the empty string instead of broken output.',
-      '',
-      'Start the HTML now:'
+      'OUTPUT: Return only the raw HTML for this single section. No markdown code fences, no preamble, no explanations. Start directly with the opening tag of the root element.'
     ].join('\n');
   }
 
@@ -292,13 +271,13 @@
     var check = validateLLMOutput(cleaned, {expectedKind: 'html'});
 
     if (!check.valid && check.severity === 'fatal') {
-      console.warn('[Mode E] chunk ' + idx + ' validator failed (' + check.reason + '), retrying with stricter prompt');
-      var strictPrompt = basePrompt
-        + '\n\nRETRY INSTRUCTION: Your previous response was REJECTED because ' + check.reason + '.'
-        + '\nThis time, output ONLY the raw HTML. Start with `<`. End with `>`.'
-        + '\nDo NOT include markdown code fences, reasoning, explanations, or any prose.'
-        + '\nIf the previous failure was caused by SVG icons, OMIT the icons entirely — a missing icon is better than broken markup.';
-      raw = await chunkToHTMLRaw(screenshotDataUrl, strictPrompt);
+      console.warn('[Mode E] chunk ' + idx + ' validator failed (' + check.reason + '), retrying');
+      // Gentle retry: just append a brief note. The original prompt is
+      // already clear about output format; an aggressive "REJECTED"
+      // retry prompt tends to produce even more conservative output.
+      var retryPrompt = basePrompt
+        + '\n\nNote: please return only the raw HTML for this section, starting with the opening tag. No prose, no code fences.';
+      raw = await chunkToHTMLRaw(screenshotDataUrl, retryPrompt);
       cleaned = cleanHTML(raw);
       var recheck = validateLLMOutput(cleaned, {expectedKind: 'html'});
       if (!recheck.valid && recheck.severity === 'fatal') {
@@ -659,15 +638,7 @@
       '',
       'NOW ANALYZE THE ATTACHED SCREENSHOT AND PRODUCE THE DESIGN.MD:',
       '',
-      'CRITICAL OUTPUT CONSTRAINT (absolute — any violation makes your response unusable):',
-      '- Your response MUST contain ONLY the markdown document starting with `# Design System`.',
-      '- NO reasoning, thinking, "Let me analyze", "Looking at this", or any prose before the document.',
-      '- NO wrapping code fences (no ```markdown, no ```md, no triple backticks surrounding the whole response).',
-      '- NO explanations after the document.',
-      '- The FIRST 15 characters of your response MUST be exactly "# Design System".',
-      '- Do NOT include the reference example in your output. Produce a NEW DESIGN.md for the ATTACHED screenshot.',
-      '',
-      'Start the markdown now:'
+      'Return ONLY the markdown document. No explanations, no preamble, no code fences wrapping the whole output. Do not include the reference example in your output — produce a NEW DESIGN.md for the ATTACHED screenshot. Start directly with `# Design System`.'
     ].join('\n');
   }
 
@@ -699,10 +670,9 @@
 
     if (!check.valid && check.severity === 'fatal') {
       console.warn('[Mode E] DESIGN.md validator failed (' + check.reason + '), retrying');
-      var strictPrompt = basePrompt
-        + '\n\nRETRY INSTRUCTION: Your previous response was REJECTED because ' + check.reason + '.'
-        + '\nThis time, output ONLY the markdown document. Start with `# Design System`. Do NOT include reasoning, explanations, or wrapping code fences.';
-      raw = await callOnce(strictPrompt);
+      var retryPrompt = basePrompt
+        + '\n\nNote: please return only the markdown document, starting with `# Design System`. No preamble or code fences around the whole thing.';
+      raw = await callOnce(retryPrompt);
       cleaned = cleanMarkdown(raw);
       var recheck = validateLLMOutput(cleaned, {expectedKind: 'markdown'});
       if (!recheck.valid && recheck.severity === 'fatal') {
