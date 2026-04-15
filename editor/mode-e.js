@@ -7,27 +7,41 @@
 
   // Build the rebuild prompt for VIEWPORT mode (legacy fallback when
   // extractSections() returns no chunks — e.g., weird single-page sites).
+  // Mirrors the chunked prompt structure (Aura "EXACTLY mode" style) but
+  // reconstructs an entire viewport at once instead of a single section.
   function buildPrompt(designMD, cleanHTML) {
     var designContext = designMD
-      ? '\n\n--- DESIGN.MD (typography and asset inventory reference) ---\n' + designMD.slice(0, 14000)
+      ? '\n\n--- DESIGN.MD (secondary typography and asset inventory reference) ---\n' + designMD.slice(0, 14000)
       : '';
 
     var structureContext = cleanHTML
-      ? '\n\n--- CAPTURED PAGE STRUCTURE (structural reference) ---\n' + cleanHTML.slice(0, 12000)
+      ? '\n\n--- CAPTURED PAGE STRUCTURE (structural source of truth) ---\n' + cleanHTML.slice(0, 12000)
       : '';
 
     return [
-      'You are a pixel-perfect front-end developer. I will give you a screenshot of ONE viewport section of a website.',
-      'Recreate EXACTLY what you see as clean HTML with inline CSS styles.',
+      'Recreate the attached webpage EXACTLY like the screenshot as an HTML implementation.',
+      '',
+      'This import is in EXACTLY mode. Treat the screenshot as the primary visual reference, the captured page structure as the structural source of truth, and the attached DESIGN.md as a secondary typography and asset inventory reference.',
       '',
       'SOURCE HIERARCHY (follow this priority order):',
-      '1. SCREENSHOT: Primary visual reference — colors, layout, composition, spacing.',
-      '2. CAPTURED PAGE STRUCTURE: Structural source — use for text content, semantic tags, hierarchy.',
-      '3. DESIGN.MD: Secondary reference — use ONLY for font families, font weights, typographic tone, and asset URLs.',
-      '   If DESIGN.MD conflicts with the screenshot on colors, surfaces, layout, or composition, follow the screenshot.',
+      '1. SCREENSHOT (primary): visual fidelity — exact colors, surfaces, layout, composition, spacing, motion as shown in the image.',
+      '2. CAPTURED PAGE STRUCTURE (secondary): use for text content, semantic tags, hierarchy, original brand references.',
+      '3. DESIGN.MD (tertiary): use ONLY for font families, font weights, typographic tone, asset URLs, color hex values.',
       '',
-      'CRITICAL RULES:',
-      '- Reproduce the layout, spacing, colors, typography, and proportions EXACTLY as shown in the screenshot.',
+      'CONFLICT RESOLUTION:',
+      '- If DESIGN.MD conflicts with the screenshot on colors, surfaces, layout, or composition, FOLLOW THE SCREENSHOT.',
+      '- If the captured structure conflicts with the screenshot on layout or composition, FOLLOW THE SCREENSHOT.',
+      '- Use DESIGN.md only for what the screenshot cannot directly reveal (exact hex values, font family names, asset URLs).',
+      '',
+      'PRESERVATION RULES (do not deviate from the source):',
+      '- Match the original texts, names, numbers, and brand references exactly from the captured page structure. Do NOT paraphrase or invent.',
+      '- Preserve motion cues from the screenshot when present (marquee, animations).',
+      '- Preserve the source CSS custom properties and theme tokens for backgrounds, text, buttons, and contrast instead of swapping in generic defaults.',
+      '- Typography is explicitly defined in DESIGN.md. Match the original font families, weights, and headline/body hierarchy instead of defaulting to a system stack.',
+      '- Do NOT replace the imported design with a new house style or generic defaults.',
+      '- Do NOT add design interpretation beyond what is visible in the screenshot.',
+      '',
+      'OUTPUT RULES:',
       '- Use a single wrapper: <div class="rb-section" style="...">',
       '- ALL styling must be inline (style="..."). No <style> tags, no external CSS.',
       '- Use semantic tags: header, nav, section, h1-h6, p, a, button, img, span, ul, li.',
@@ -36,18 +50,16 @@
       '- FONTS: Use the exact font-family from DESIGN.MD. Include font-weight as specified.',
       '- FONT SIZES: Match sizes carefully. Use px values that match the screenshot.',
       '- SPACING: Match all padding, margins, and gaps precisely in px.',
-      '- LAYOUT: Use flexbox. Match the exact positioning (centered, left-aligned, etc.).',
-      '- BACKGROUNDS: If a section has a solid color or gradient background, reproduce it exactly with CSS.',
-      '  For photo/image backgrounds, use the actual image URL from DESIGN.MD Assets if available,',
-      '  otherwise use a solid color that matches the dominant color of the image.',
+      '- BACKGROUNDS: If a section has a solid color or gradient background, reproduce it exactly with CSS. For photo/image backgrounds, use the actual image URL from DESIGN.MD Assets if available.',
       '- LOGOS AND BRAND MARKS: NEVER recreate logos as HTML, CSS, SVG, or text. Always use <img src="REAL_URL"> with the URL marked as "logo" in DESIGN.MD Assets.',
       '- IMAGES: Use actual image URLs from DESIGN.MD Assets section. Match by context (logo, hero, photo, avatar). Never generate SVG or HTML approximations of images.',
-      '- TEXT: Reproduce ALL visible text content exactly. Use CAPTURED PAGE STRUCTURE for accurate text.',
       '- The section should be full-width (width:100%) with content centered via max-width + margin:0 auto.',
-      '- Preserve motion cues from the screenshot (marquee, animations) when visible.',
+      '- Avoid long inline SVG markup unless absolutely necessary.',
       '- Do NOT include <html>, <head>, <body> tags.',
       '- Do NOT include any JavaScript.',
       '- Do NOT add comments or explanations.',
+      '',
+      'Conflict resolution reminder (this rule is repeated because the LLM tends to drift): if anything in DESIGN.md disagrees with the screenshot on visual properties — colors, surfaces, layout, composition — the screenshot wins.',
       designContext,
       structureContext,
       '',
@@ -57,15 +69,20 @@
   }
 
   // Build the rebuild prompt for CHUNKED mode (one section at a time).
+  // Merges the Aura "EXACTLY mode" prompt structure (assertive, repeated
+  // conflict resolution, no-house-style-drift directives) with the
+  // chunked-specific context (per-section role, metadata, partial HTML,
+  // shared DESIGN.md, Responsive Behavior translation).
+  //
   // The shared designMD ensures all chunks use the same tokens/fonts/colors.
   // Per-chunk cleanHTML gives structural context for this specific section.
   function buildChunkPrompt(designMD, section, sectionIdx, totalSections) {
     var designContext = designMD
-      ? '\n\n--- DESIGN.MD (shared across all sections — use for consistency) ---\n' + designMD.slice(0, 14000)
+      ? '\n\n--- DESIGN.MD (shared across all sections — secondary typography and asset inventory reference) ---\n' + designMD.slice(0, 14000)
       : '';
 
     var sectionContext = section.cleanHTML
-      ? '\n\n--- THIS SECTION\'S CAPTURED HTML (structural reference for text content and hierarchy) ---\n' + section.cleanHTML.slice(0, 8000)
+      ? '\n\n--- CAPTURED PAGE STRUCTURE FOR THIS SECTION (structural source of truth) ---\n' + section.cleanHTML.slice(0, 8000)
       : '';
 
     var role;
@@ -73,31 +90,62 @@
     else if (section.isFooter) role = 'the FOOTER';
     else role = 'a content SECTION';
 
+    // Pull out the Source Implementation Cues block from DESIGN.md so we can
+    // surface it explicitly at the end of the prompt (Aura technique).
+    var detectedCues = '';
+    if (designMD) {
+      var cuesMatch = designMD.match(/## Source Implementation Cues[\s\S]*?(?=\n## |$)/);
+      if (cuesMatch) {
+        // Strip the heading and the explanatory blurb, keep the bullet list
+        var cuesBody = cuesMatch[0]
+          .replace(/^## Source Implementation Cues\s*\n?/, '')
+          .replace(/^These are MUST-preserve.*\n\n?/, '')
+          .trim();
+        if (cuesBody) detectedCues = cuesBody;
+      }
+    }
+
     return [
-      'You are reconstructing ' + role + ' of a website as production-ready Tailwind CSS.',
-      'This is section ' + (sectionIdx + 1) + ' of ' + totalSections + '. Other sections are being reconstructed separately and will be stitched together.',
+      'Recreate ' + role + ' of the attached webpage EXACTLY like the screenshot as an HTML implementation using Tailwind CSS.',
+      'This is section ' + (sectionIdx + 1) + ' of ' + totalSections + '. Other sections are being reconstructed separately and stitched together — produce ONLY the HTML for this section.',
       '',
-      'SOURCE HIERARCHY:',
-      '1. SCREENSHOT (primary): visual fidelity — exact colors, layout, composition, spacing shown in the image.',
-      '2. THIS SECTION\'S HTML (secondary): use for text content, semantic tags, hierarchy only.',
-      '3. DESIGN.MD (shared): use for font families, weights, color tokens, asset URLs, and MOST IMPORTANTLY the Responsive Behavior section which tells you how to generate Tailwind responsive prefixes (md:, lg:, xl:).',
+      'This import is in EXACTLY mode. Treat the screenshot as the primary visual reference, the captured page structure as the structural source of truth, and the attached DESIGN.md as a secondary typography and asset inventory reference.',
       '',
-      'CONSISTENCY RULES (critical — other chunks depend on this):',
-      '- Use EXACT hex values from DESIGN.md Color Palette. Do not improvise colors.',
-      '- Use EXACT font-family values from DESIGN.md Typography. Do not substitute system fonts.',
-      '- Follow DESIGN.md Source Implementation Cues literally (e.g., "use text-[Nvw]" means do that).',
-      '- If DESIGN.md has a Responsive Behavior section, TRANSLATE those CSS rules into Tailwind responsive classes (md:, lg:, xl:).',
+      'SOURCE HIERARCHY (follow this priority order):',
+      '1. SCREENSHOT (primary): visual fidelity — exact colors, surfaces, layout, composition, spacing, motion as shown in the image.',
+      '2. CAPTURED PAGE STRUCTURE (secondary): use for text content, semantic tags, hierarchy, original brand references.',
+      '3. DESIGN.MD (tertiary): use ONLY for font families, font weights, typographic tone, asset URLs, color hex values, and Responsive Behavior rules.',
+      '',
+      'CONFLICT RESOLUTION:',
+      '- If DESIGN.MD conflicts with the screenshot on colors, surfaces, layout, or composition, FOLLOW THE SCREENSHOT.',
+      '- If the captured structure conflicts with the screenshot on layout or composition, FOLLOW THE SCREENSHOT.',
+      '- Use DESIGN.md only for what the screenshot cannot directly reveal (exact hex values, font family names, asset URLs).',
+      '',
+      'PRESERVATION RULES (do not deviate from the source):',
+      '- Match the original texts, names, numbers, and brand references exactly from the captured page structure. Do NOT paraphrase or invent.',
+      '- Preserve motion cues from the screenshot when present (marquee, scroll-triggered animations, hover states). Implement marquee with CSS @keyframes + duplicated content, never as a static block.',
+      '- Preserve the source CSS custom properties and theme tokens for backgrounds, text, buttons, and contrast instead of swapping in generic defaults.',
+      '- Typography is explicitly defined in DESIGN.md. Match the original font families, weights, and headline/body hierarchy instead of defaulting to a system stack.',
+      '- Do NOT replace the imported design with a new house style or generic Tailwind defaults.',
+      '- Do NOT add design interpretation beyond what is visible in the screenshot.',
+      '',
+      'CONSISTENCY RULES (other chunks depend on this — they share the same DESIGN.md):',
+      '- Use EXACT hex values from the DESIGN.MD Color Palette. Do not improvise colors or round to "close enough" values.',
+      '- Use EXACT font-family names from DESIGN.MD Typography. Do not substitute system fonts.',
+      '- Follow DESIGN.MD Source Implementation Cues literally (e.g., "use text-[Nvw]" means do that).',
+      '- If DESIGN.MD has a Responsive Behavior section, TRANSLATE those CSS rules into Tailwind responsive prefixes (sm:, md:, lg:, xl:). Base styles match the desktop screenshot; smaller breakpoints come from the @media rules.',
       '',
       'OUTPUT RULES:',
       '- Produce ONE root element for this section (<header>, <section>, <nav>, <footer>, or <div>).',
-      '- Use Tailwind CSS classes for all styling. No inline style="...", no <style> tags.',
-      '- Include responsive classes where DESIGN.md indicates behavior differences per breakpoint.',
+      '- Use Tailwind CSS classes for all styling. NO inline style="...", NO <style> tags, NO long inline SVG markup unless absolutely necessary.',
       '- Use semantic tags throughout (h1-h6, p, a, button, nav, ul/li).',
-      '- For logos and images: use actual URLs from DESIGN.md Assets. Never recreate logos as SVG/CSS.',
-      '- Preserve motion cues (marquee, animations) — implement with CSS @keyframes OR Tailwind animate utilities.',
-      '- Match every visible text string exactly from the captured HTML.',
+      '- For logos and brand marks: use actual <img src="REAL_URL"> from DESIGN.md Assets section. NEVER recreate logos as inline SVG, CSS shapes, or text.',
+      '- For decorative shapes (rounded blocks, tall pills, rotated elements): reproduce with <div> elements + Tailwind border-radius/transform classes, NOT inline SVG.',
+      '- Match every visible text string exactly from the captured page structure.',
       '- Do NOT include <html>, <head>, <body>. Do NOT re-declare global styles or Tailwind directives.',
-      '- Do NOT include comments, explanations, or markdown fences.',
+      '- Do NOT include comments, explanations, or markdown code fences.',
+      '',
+      'Conflict resolution reminder (this rule is repeated because the LLM tends to drift): if anything in DESIGN.md disagrees with the screenshot on visual properties — colors, surfaces, layout, composition — the screenshot wins.',
       '',
       'Section metadata: ' + JSON.stringify({
         id: section.id,
@@ -106,10 +154,11 @@
         isSticky: section.isSticky,
         isFooter: section.isFooter
       }),
+      detectedCues ? '\n\n--- DETECTED SOURCE IMPLEMENTATION CUES (MUST be preserved when supported by the source) ---\n' + detectedCues : '',
       designContext,
       sectionContext,
       '',
-      'OUTPUT: Return ONLY the HTML for this single section. Start directly with the opening tag.'
+      'OUTPUT: Return ONLY the raw HTML for this single section. No markdown fences, no preamble, no explanations. Start directly with the opening tag of the root element.'
     ].join('\n');
   }
 
