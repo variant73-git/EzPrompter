@@ -1003,7 +1003,18 @@
     // Step 5: Filter successful results and sort by visual order
     var successful = results.filter(function(r) { return r && r.html && !r.error; });
     if (successful.length === 0) {
-      log({step: 'error', message: 'All chunks failed. Check API key and try again.', current: 8, total: 8});
+      // Surface the actual error from the first failed chunk instead of a
+      // generic "Check API key". The real cause is often a bad payload
+      // field or a rate limit — blaming the API key sends users on a wild
+      // goose chase.
+      var firstErr = results.find(function(r) { return r && r.error; });
+      var errMsg = 'All chunks failed';
+      if (firstErr && firstErr.error && firstErr.error.message) {
+        errMsg += ' — ' + firstErr.error.message;
+      }
+      console.error('[Mode E] ' + errMsg);
+      if (firstErr) console.error('[Mode E] first failure detail:', firstErr.error);
+      log({step: 'error', message: errMsg, current: 8, total: 8});
       return null;
     }
     successful.sort(function(a, b) { return a.idx - b.idx; });

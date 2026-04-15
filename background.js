@@ -285,10 +285,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // - maxOutputTokens bumped to 16000 to prevent mid-SVG truncation
         // - temperature lowered to reduce creative drift and "reasoning out loud"
         // - topP lowered for same reason
-        // - thinkingConfig.thinkingBudget=0 attempts to disable chain-of-thought
-        //   on Gemini 3.1 Pro Preview. If the model rejects this field, the API
-        //   returns an error that callers will surface — but as of the 3.1 Pro
-        //   spec this is a documented parameter.
+        // NOTE: a previous version added `thinkingConfig: {thinkingBudget: 0}`
+        // speculatively. It caused every chunk to fail because Gemini 3.1 Pro
+        // Preview did not accept the field. Removed. If thinking-mode control
+        // is needed later, verify the exact field name against the current
+        // API docs before re-adding.
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -302,8 +303,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             generationConfig: {
               maxOutputTokens: 16000,
               temperature: 0.2,
-              topP: 0.9,
-              thinkingConfig: { thinkingBudget: 0 }
+              topP: 0.9
             }
           })
         });
