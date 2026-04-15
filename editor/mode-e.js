@@ -63,8 +63,16 @@
       designContext,
       structureContext,
       '',
-      'OUTPUT: Return ONLY the raw HTML. No markdown, no code fences, no explanation.',
-      'Start directly with <div class="rb-section"'
+      'CRITICAL OUTPUT CONSTRAINT (absolute — any violation makes your response unusable):',
+      '- Your response MUST contain ONLY raw HTML markup starting with `<div class="rb-section"`.',
+      '- NO reasoning, thinking, commentary, "Let me consider", "Wait, let me", or any prose.',
+      '- NO markdown code fences: no ```html, no ```xml, no triple backticks.',
+      '- NO echoing of these rules back to me.',
+      '- If you would have included SVG icons but they risk breaking the output, OMIT the icons.',
+      '- The FIRST character of your response MUST be "<".',
+      '- If you cannot follow these constraints, return the empty string instead of broken output.',
+      '',
+      'Start the HTML now:'
     ].join('\n');
   }
 
@@ -158,7 +166,19 @@
       designContext,
       sectionContext,
       '',
-      'OUTPUT: Return ONLY the raw HTML for this single section. No markdown fences, no preamble, no explanations. Start directly with the opening tag of the root element.'
+      'CRITICAL OUTPUT CONSTRAINT (absolute — any violation makes your response unusable):',
+      '- Your response MUST contain ONLY raw HTML markup. Nothing else.',
+      '- NO reasoning, thinking, commentary, "Let me consider", "Wait, let me", "Looking at", or any prose.',
+      '- NO markdown code fences: no ```html, no ```xml, no ```markdown, no triple backticks of any kind.',
+      '- NO echoing of these rules back to me. NO quoting of the prompt.',
+      '- NO explanations before or after the HTML.',
+      '- If you feel uncertain, produce your best-guess HTML silently. Do NOT explain your uncertainty.',
+      '- If you would have included SVG icons but they risk breaking the output, OMIT the icons. A missing icon is always better than malformed markup.',
+      '- The FIRST character of your response MUST be "<".',
+      '- The LAST character of your response MUST be ">".',
+      '- If you cannot follow these constraints, return the empty string instead of broken output.',
+      '',
+      'Start the HTML now:'
     ].join('\n');
   }
 
@@ -243,25 +263,50 @@
   }
 
   // Send a section screenshot + context to Gemini Vision (chunked mode)
-  function chunkToHTML(screenshotDataUrl, designMD, section, idx, total) {
+  // Low-level LLM call for a single chunk (no validation, used by the
+  // retry wrapper below).
+  function chunkToHTMLRaw(screenshotDataUrl, prompt) {
     return new Promise(function(resolve, reject) {
       chrome.runtime.sendMessage(
         {
           action: 'modeERebuild',
           imageDataUrl: screenshotDataUrl,
-          prompt: buildChunkPrompt(designMD, section, idx, total)
+          prompt: prompt
         },
         function(response) {
-          if (response && response.html) {
-            resolve(response.html);
-          } else if (response && response.error) {
-            reject(new Error(response.error));
-          } else {
-            reject(new Error('No response from AI'));
-          }
+          if (response && response.html) resolve(response.html);
+          else if (response && response.error) reject(new Error(response.error));
+          else reject(new Error('No response from AI'));
         }
       );
     });
+  }
+
+  // Chunk-to-HTML with output validation + automatic retry on validator
+  // failure. When the first attempt trips the validator, the retry uses an
+  // even stricter prompt suffix that tells the LLM exactly what went wrong.
+  async function chunkToHTML(screenshotDataUrl, designMD, section, idx, total) {
+    var basePrompt = buildChunkPrompt(designMD, section, idx, total);
+    var raw = await chunkToHTMLRaw(screenshotDataUrl, basePrompt);
+    var cleaned = cleanHTML(raw);
+    var check = validateLLMOutput(cleaned, {expectedKind: 'html'});
+
+    if (!check.valid && check.severity === 'fatal') {
+      console.warn('[Mode E] chunk ' + idx + ' validator failed (' + check.reason + '), retrying with stricter prompt');
+      var strictPrompt = basePrompt
+        + '\n\nRETRY INSTRUCTION: Your previous response was REJECTED because ' + check.reason + '.'
+        + '\nThis time, output ONLY the raw HTML. Start with `<`. End with `>`.'
+        + '\nDo NOT include markdown code fences, reasoning, explanations, or any prose.'
+        + '\nIf the previous failure was caused by SVG icons, OMIT the icons entirely — a missing icon is better than broken markup.';
+      raw = await chunkToHTMLRaw(screenshotDataUrl, strictPrompt);
+      cleaned = cleanHTML(raw);
+      var recheck = validateLLMOutput(cleaned, {expectedKind: 'html'});
+      if (!recheck.valid && recheck.severity === 'fatal') {
+        console.error('[Mode E] chunk ' + idx + ' retry also failed: ' + recheck.reason);
+        throw new Error('LLM output validation failed twice: ' + recheck.reason);
+      }
+    }
+    return cleaned;
   }
 
   // Capture a single section screenshot.
@@ -344,21 +389,150 @@
     });
   }
 
-  // Clean AI output — strip markdown fences if present
+  // Clean AI output — strip markdown fences if present.
+  // Also attempts to extract HTML from reasoning-leaked responses by finding
+  // the first `<` and last `>` if the content between them parses as HTML.
   function cleanHTML(raw) {
-    var html = raw.trim();
-    // Remove ```html ... ``` wrappers
-    html = html.replace(/^```(?:html)?\s*/i, '').replace(/\s*```$/i, '');
-    // Remove any leading/trailing whitespace
+    var html = (raw || '').trim();
+    // Remove ```html ... ``` wrappers at extremes (the common case)
+    html = html.replace(/^```(?:html|xml)?\s*/i, '').replace(/\s*```$/i, '');
     html = html.trim();
-    return html;
+
+    // If the result still has internal code fences, try to extract HTML
+    // between the first `<` and last `>`. This rescues outputs that started
+    // with reasoning prose but eventually produced HTML.
+    if (/```/.test(html)) {
+      var firstLt = html.indexOf('<');
+      var lastGt = html.lastIndexOf('>');
+      if (firstLt !== -1 && lastGt > firstLt) {
+        var extracted = html.slice(firstLt, lastGt + 1);
+        // Only use the extracted version if it itself has no fences
+        if (!/```/.test(extracted)) html = extracted;
+      }
+    }
+
+    return html.trim();
   }
 
   function cleanMarkdown(raw) {
-    var md = raw.trim();
+    var md = (raw || '').trim();
     // Strip ```markdown or ```md or ``` wrappers if the model added them
     md = md.replace(/^```(?:markdown|md)?\s*/i, '').replace(/\s*```$/i, '');
     return md.trim();
+  }
+
+  // ─── Output validator ─────────────────────────────────────────────────
+  // Detects failure modes where the LLM returned reasoning/markdown instead
+  // of clean HTML. These patterns were observed in production on gistr.so
+  // (2026-04-15): code fences inside the body, self-quoted prompt rules,
+  // SVG path data leaking as text, markdown headers, etc.
+  //
+  // Returns {valid: bool, reason: string, severity: 'fatal'|'warn'}.
+  // 'fatal' → retry the LLM call
+  // 'warn'  → use the output but log for telemetry
+  function validateLLMOutput(raw, opts) {
+    opts = opts || {};
+    var expectedKind = opts.expectedKind || 'html'; // 'html' or 'markdown'
+    var text = (raw || '').trim();
+
+    if (text.length === 0) {
+      return {valid: false, reason: 'empty response', severity: 'fatal'};
+    }
+
+    // Pattern 1: internal code fences (after cleanup, these should be gone).
+    // If there are still ``` markers in the middle, the output has prose +
+    // code blocks which means the LLM was reasoning.
+    var fenceCount = (text.match(/```/g) || []).length;
+    if (expectedKind === 'html' && fenceCount >= 2) {
+      return {valid: false, reason: 'internal code fences present (' + fenceCount + ')', severity: 'fatal'};
+    }
+    if (expectedKind === 'markdown' && fenceCount >= 4) {
+      // Markdown can legitimately have 2 fences for a code block; 4+ means nested
+      return {valid: false, reason: 'excessive code fences (' + fenceCount + ')', severity: 'warn'};
+    }
+
+    // Pattern 2: reasoning phrases (the LLM thinking out loud).
+    // These appeared in the gistr.so bug: "Wait, let me reconsider", etc.
+    var reasoningPhrases = [
+      /\bwait,?\s+(let me|the|let's)/i,
+      /\blet me (think|reconsider|check|verify|analyze)/i,
+      /\bactually,?\s+(i|the|let's|looking)/i,
+      /\bhmm,?/i,
+      /\bso for (row|column|section) \d/i,
+      /\bi (notice|see|think|believe|need to)/i,
+      /\bthe user (wants|said|asked|indicated)/i,
+      /\blooking at (the|this) (screenshot|image|design)/i
+    ];
+    for (var i = 0; i < reasoningPhrases.length; i++) {
+      if (reasoningPhrases[i].test(text)) {
+        return {
+          valid: false,
+          reason: 'reasoning phrase detected: ' + reasoningPhrases[i].toString().slice(0, 60),
+          severity: 'fatal'
+        };
+      }
+    }
+
+    // Pattern 3: LLM echoing our own prompt rules back
+    // ("FOLLOW THE SCREENSHOT!", "DOES NOT have", etc).
+    var echoedRules = [
+      /FOLLOW THE SCREENSHOT[!.]?/i,
+      /DOES NOT have/i,
+      /EXACTLY mode/i,
+      /CONFLICT RESOLUTION/i,
+      /PRESERVATION RULES/i,
+      /conflict resolution reminder/i
+    ];
+    for (var j = 0; j < echoedRules.length; j++) {
+      if (echoedRules[j].test(text)) {
+        return {
+          valid: false,
+          reason: 'LLM echoed prompt rule: ' + echoedRules[j].toString().slice(0, 60),
+          severity: 'fatal'
+        };
+      }
+    }
+
+    // Pattern 4: SVG path data leaking as text node content.
+    // The gistr.so bug: `M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z">`
+    // These fragments render as visible text when the SVG tag is malformed.
+    var pathLeakRe = /[Mm]\d+[\s,-]+\d+(?:[\s,-]+[AaCcHhVvLlSsTtQqZz\d.-]+){4,}/;
+    if (pathLeakRe.test(text)) {
+      return {valid: false, reason: 'SVG path data leaking as text', severity: 'fatal'};
+    }
+
+    // Pattern 5 (HTML only): must contain at least one tag
+    if (expectedKind === 'html' && !/<\w+[\s>]/.test(text)) {
+      return {valid: false, reason: 'no HTML tags found', severity: 'fatal'};
+    }
+
+    // Pattern 6 (HTML only): must start with `<` after cleanup
+    if (expectedKind === 'html' && text.charAt(0) !== '<') {
+      return {valid: false, reason: 'does not start with `<`', severity: 'fatal'};
+    }
+
+    // Pattern 7 (HTML only): basic tag balance sanity. Count `<` vs matched closing `>`.
+    if (expectedKind === 'html') {
+      var openCount = (text.match(/<[^\/!][^>]*[^\/]>/g) || []).length; // opening tags
+      var closeCount = (text.match(/<\/[^>]+>/g) || []).length;         // closing tags
+      var selfClose = (text.match(/<[^>]+\/>/g) || []).length;          // self-closing
+      // Allow some tolerance: opening count should be within 2x of closing + self-closing
+      if (openCount > 0 && closeCount + selfClose < openCount * 0.5) {
+        return {valid: false, reason: 'tag imbalance (open=' + openCount + ' close=' + closeCount + ' self=' + selfClose + ')', severity: 'warn'};
+      }
+    }
+
+    // Pattern 8 (markdown only): DESIGN.md must have at least the Overview section
+    if (expectedKind === 'markdown') {
+      if (!/^# Design System/m.test(text)) {
+        return {valid: false, reason: 'missing `# Design System` heading', severity: 'fatal'};
+      }
+      if (!/## Overview/m.test(text)) {
+        return {valid: false, reason: 'missing `## Overview` section', severity: 'fatal'};
+      }
+    }
+
+    return {valid: true, reason: 'ok', severity: 'ok'};
   }
 
   // ─── Vision-based DESIGN.md generator ────────────────────────────────
@@ -485,36 +659,57 @@
       '',
       'NOW ANALYZE THE ATTACHED SCREENSHOT AND PRODUCE THE DESIGN.MD:',
       '',
-      'Return ONLY the markdown document. No explanations, no preamble, no code fences wrapping the whole output. Start directly with `# Design System`.'
+      'CRITICAL OUTPUT CONSTRAINT (absolute — any violation makes your response unusable):',
+      '- Your response MUST contain ONLY the markdown document starting with `# Design System`.',
+      '- NO reasoning, thinking, "Let me analyze", "Looking at this", or any prose before the document.',
+      '- NO wrapping code fences (no ```markdown, no ```md, no triple backticks surrounding the whole response).',
+      '- NO explanations after the document.',
+      '- The FIRST 15 characters of your response MUST be exactly "# Design System".',
+      '- Do NOT include the reference example in your output. Produce a NEW DESIGN.md for the ATTACHED screenshot.',
+      '',
+      'Start the markdown now:'
     ].join('\n');
   }
 
   // Generate a DESIGN.md from a screenshot alone (1 LLM call).
   // imageDataUrl: base64 data URL (PNG or JPG).
   // Returns: Promise<string> — the generated markdown.
-  function generateDesignMDFromImage(imageDataUrl) {
-    return new Promise(function(resolve, reject) {
-      if (!imageDataUrl || typeof imageDataUrl !== 'string' || imageDataUrl.indexOf('data:') !== 0) {
-        reject(new Error('generateDesignMDFromImage: imageDataUrl must be a base64 data URL'));
-        return;
-      }
-      chrome.runtime.sendMessage(
-        {
-          action: 'modeERebuild',
-          imageDataUrl: imageDataUrl,
-          prompt: buildDesignMDVisionPrompt()
-        },
-        function(response) {
-          if (response && response.html) {
-            resolve(cleanMarkdown(response.html));
-          } else if (response && response.error) {
-            reject(new Error(response.error));
-          } else {
-            reject(new Error('No response from vision API'));
+  async function generateDesignMDFromImage(imageDataUrl) {
+    if (!imageDataUrl || typeof imageDataUrl !== 'string' || imageDataUrl.indexOf('data:') !== 0) {
+      throw new Error('generateDesignMDFromImage: imageDataUrl must be a base64 data URL');
+    }
+
+    function callOnce(prompt) {
+      return new Promise(function(resolve, reject) {
+        chrome.runtime.sendMessage(
+          {action: 'modeERebuild', imageDataUrl: imageDataUrl, prompt: prompt},
+          function(response) {
+            if (response && response.html) resolve(response.html);
+            else if (response && response.error) reject(new Error(response.error));
+            else reject(new Error('No response from vision API'));
           }
-        }
-      );
-    });
+        );
+      });
+    }
+
+    var basePrompt = buildDesignMDVisionPrompt();
+    var raw = await callOnce(basePrompt);
+    var cleaned = cleanMarkdown(raw);
+    var check = validateLLMOutput(cleaned, {expectedKind: 'markdown'});
+
+    if (!check.valid && check.severity === 'fatal') {
+      console.warn('[Mode E] DESIGN.md validator failed (' + check.reason + '), retrying');
+      var strictPrompt = basePrompt
+        + '\n\nRETRY INSTRUCTION: Your previous response was REJECTED because ' + check.reason + '.'
+        + '\nThis time, output ONLY the markdown document. Start with `# Design System`. Do NOT include reasoning, explanations, or wrapping code fences.';
+      raw = await callOnce(strictPrompt);
+      cleaned = cleanMarkdown(raw);
+      var recheck = validateLLMOutput(cleaned, {expectedKind: 'markdown'});
+      if (!recheck.valid && recheck.severity === 'fatal') {
+        throw new Error('DESIGN.md validation failed twice: ' + recheck.reason);
+      }
+    }
+    return cleaned;
   }
 
   // Full pipeline from an uploaded image: generate DESIGN.md → reconstruct HTML.
@@ -557,8 +752,7 @@
     };
     var html;
     try {
-      var raw = await chunkToHTML(imageDataUrl, designMD, syntheticSection, 0, 1);
-      html = cleanHTML(raw);
+      html = await chunkToHTML(imageDataUrl, designMD, syntheticSection, 0, 1);
     } catch(e) {
       log({step: 'error', message: 'Reconstruction failed: ' + e.message, current: 2, total: 4});
       return {designMD: designMD, html: null, error: e.message};
@@ -768,15 +962,15 @@
     var results = await runWithQueue(captures, 2, 500, async function(cap, idx) {
       if (!cap.dataUrl) return {error: new Error('no screenshot'), section: cap.section, idx: idx};
       try {
+        // chunkToHTML now validates and retries internally; returns cleaned HTML
         var html = await chunkToHTML(cap.dataUrl, designMD, cap.section, idx, captures.length);
-        var cleaned = cleanHTML(html);
         completed++;
         log({
           step: 'rebuild',
           message: 'Reconstructing with AI (' + completed + '/' + captures.length + ')...',
           current: 4, total: 8
         });
-        return {section: cap.section, html: cleaned, idx: idx};
+        return {section: cap.section, html: html, idx: idx};
       } catch(err) {
         var msg = err && err.message ? err.message : String(err);
         console.error('[Mode E] chunk ' + idx + ' failed:', msg);

@@ -281,6 +281,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const model = settings.model || 'gemini-3.1-pro-preview';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
+        // generationConfig tuned for deterministic code output:
+        // - maxOutputTokens bumped to 16000 to prevent mid-SVG truncation
+        // - temperature lowered to reduce creative drift and "reasoning out loud"
+        // - topP lowered for same reason
+        // - thinkingConfig.thinkingBudget=0 attempts to disable chain-of-thought
+        //   on Gemini 3.1 Pro Preview. If the model rejects this field, the API
+        //   returns an error that callers will surface — but as of the 3.1 Pro
+        //   spec this is a documented parameter.
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -291,7 +299,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 { inline_data: { mime_type: mediaType, data: base64Data } }
               ]
             }],
-            generationConfig: { maxOutputTokens: 8000 }
+            generationConfig: {
+              maxOutputTokens: 16000,
+              temperature: 0.2,
+              topP: 0.9,
+              thinkingConfig: { thinkingBudget: 0 }
+            }
           })
         });
 
