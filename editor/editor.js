@@ -579,7 +579,18 @@
           icon.style.animation = 'rb-ed-spin 1s linear infinite';
         }
       }
+      // Auto-dismiss success/error after a few seconds so the toast doesn't
+      // linger forever. Only final states auto-dismiss; running state persists.
+      if (status === 'success' || status === 'error') {
+        setTimeout(function() {
+          if (toast && toast.parentNode) toast.remove();
+        }, status === 'success' ? 5000 : 10000);
+      }
     }
+  }
+
+  function dismissAllToasts() {
+    root.querySelectorAll('.rb-ed-toast').forEach(function(t) { t.remove(); });
   }
 
   function showRestorePrompt(data) {
@@ -773,6 +784,9 @@
   // applySemantic removed — Mode E now uses the full rebuild pipeline (mode-e.js)
 
   function cleanupMode() {
+    // Dismiss any lingering toasts (e.g. Mode E progress) when switching modes
+    dismissAllToasts();
+    rebuildInProgress = false;
     // Clean Mode E rebuild
     if (window.__rbModeE) window.__rbModeE.restore();
     semanticGroups.forEach(function(g) { g.remove(); });
