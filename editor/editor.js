@@ -3704,9 +3704,11 @@
         else document.body.appendChild(u.rebuiltWrapper);
         window.scrollTo(0, u.newScrollY || 0);
       } else {
-        // Undo of Mode E: remove rebuilt wrapper, re-insert originals
+        // Undo of Mode E: remove rebuilt wrapper + Tailwind CDN, re-insert originals
         u.newScrollY = window.scrollY;
         if (u.rebuiltWrapper && u.rebuiltWrapper.parentElement) u.rebuiltWrapper.remove();
+        var twCdn = document.getElementById('rb-tailwind-cdn');
+        if (twCdn) twCdn.remove();
         var editorEls2 = getEditorElsInBody();
         var before2 = editorEls2[0] || null;
         u.originalChildren.forEach(function(child) {

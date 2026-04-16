@@ -820,6 +820,16 @@
       }
     });
 
+    // Load Tailwind Play CDN so Tailwind classes in chunked output resolve.
+    // Without this, classes like text-5xl, py-24, font-semibold do nothing.
+    var tailwindId = 'rb-tailwind-cdn';
+    if (!document.getElementById(tailwindId)) {
+      var tw = document.createElement('script');
+      tw.id = tailwindId;
+      tw.src = 'https://cdn.tailwindcss.com/3.4.17';
+      document.head.appendChild(tw);
+    }
+
     // Remove original content but keep editor elements
     originalChildren.forEach(function(child) {
       if (child.parentElement) child.parentElement.removeChild(child);
@@ -855,9 +865,11 @@
   // Restore original page
   function restoreOriginalPage() {
     if (window.__rbOriginalPage) {
-      // Remove the rebuilt page
+      // Remove the rebuilt page and Tailwind CDN
       var rebuilt = document.getElementById('rb-rebuilt-page');
       if (rebuilt) rebuilt.remove();
+      var twCdn = document.getElementById('rb-tailwind-cdn');
+      if (twCdn) twCdn.remove();
       // Re-insert original children before editor elements
       var editorEls = [];
       Array.from(document.body.children).forEach(function(child) {
