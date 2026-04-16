@@ -1129,9 +1129,11 @@
   }
 
   // Expose to global scope
-  // run() goes through the chunked path by default; runViewport() is the legacy fallback
+  // run() uses the viewport path (fast, inline styles, no CDN dependency).
+  // Chunked path is available via runChunked() but not default — section
+  // detection + Tailwind CDN dependency need more work before it's reliable.
   window.__rbModeE = {
-    run: runModeEChunked,
+    run: runModeE,
     runChunked: runModeEChunked,
     runViewport: runModeE,
     runFromImage: runModeEFromImage,
