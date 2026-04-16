@@ -248,10 +248,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === 'captureScreenshot') {
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      if (!tabs[0]) return;
+    (async () => {
+      // Use the sender's tab instead of the active tab so captures stay
+      // correct even if the user switches tabs during a Mode E run.
+      const tab = sender.tab;
+      if (!tab) return;
       try {
-        const dataUrl = await chrome.tabs.captureVisibleTab(tabs[0].windowId, { format: 'png', quality: 100 });
+        // Focus the sender tab briefly to ensure captureVisibleTab captures
+        // the right content (the API only captures what's on screen).
+        await chrome.tabs.update(tab.id, { active: true });
+        // Small delay for the tab to render after focus
+        await new Promise(r => setTimeout(r, 150));
+        const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png', quality: 100 });
         if (message.returnData) {
           sendResponse({dataUrl: dataUrl});
         } else {
@@ -262,7 +270,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
         }
       } catch (e) { console.error('Screenshot failed:', e); }
-    });
+    })();
     return true; // keep channel open for async sendResponse
   }
 
