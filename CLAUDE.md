@@ -55,6 +55,7 @@ editor/mode-e.js        # Mode E: screenshot → Gemini Vision → HTML rebuild
 editor/detect.js        # Detecção de web builder (8 builders)
 editor/freeze.js        # Congela animações (GSAP, Lenis, Webflow IX)
 editor/rebuild.js       # Rebuild engine v4 (tag elements + disable interactivity)
+editor/s2h.js           # S2H: Screenshot-to-HTML (2-pass vision pipeline, independente do Mode E)
 editor/normalize.js     # Curate engine
 overlay/semantic.js     # AI semantic mapping (legado, substituído por Mode E)
 overlay/extractor.js    # Extração de tokens: cores, fonts, radii, shadows, HTML limpo
@@ -162,6 +163,37 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 6. ⬜ **History UI** + **Projects UI** (persist.js já tem a API, falta UI)
 7. ⬜ **Smart stitcher** — eliminar declarações CSS duplicadas entre chunks
 
+### S2H: Screenshot-to-HTML (novo pipeline, independente do Mode E)
+**O que aprendemos:** O Aura.build produz reconstruções de alta fidelidade a partir de screenshots SOZINHOS (sem DOM). Testamos com o site heartwork — Aura produziu resultado quase pixel-perfect; nosso Mode E errou cores, layout, e conteúdo completamente. O problema NÃO é falta de DOM — é qualidade do prompt e arquitetura do pipeline.
+
+**Implementado (editor/s2h.js, ~280 linhas):**
+- ✅ Pipeline 2-pass: Visual Analysis → Reconstruction
+- ✅ Pass 1 (Visual Brief): layout obrigatório, OCR de texto, cores hex de pixels, fonts como características
+- ✅ Pass 2 (HTML): screenshot + brief → HTML com `<style>` block + classes semânticas
+- ✅ Screenshot enviado em AMBOS os passes (referência visual primária)
+- ✅ Anti-patterns explícitos no prompt (não defaultar dark, não centrar tudo, não simplificar layout)
+- ✅ Validadores para brief e HTML com retry
+- ✅ `window.__rbS2H.run(imageDataUrl, onProgress)` + `replacePage(html)`
+- ✅ Registrado no manifest.json e background.js (injeção entre mode-e.js e rebuild.js)
+
+**Diferenças-chave vs Mode E:**
+| Aspecto | Mode E | S2H |
+|---|---|---|
+| Passes | 1 (DESIGN.md → HTML) ou 2 (DESIGN.md + reconstruct) | 2 (Visual Brief + reconstruct) |
+| Layout | Implícito (modelo decide) | Explícito (grid proportions obrigatórias) |
+| Texto | Inferido pelo modelo | OCR transcription com hierarchy markers |
+| Cores | Tailwind annotations | Hex de pixels, sem arredondamento |
+| Fonts | Nomes adivinhados | Características ("geometric sans-serif") |
+| Output CSS | Inline styles | `<style>` block com classes |
+| Screenshot | Só no pass 2 | Ambos passes |
+
+**Pendente:**
+1. ⬜ Testar com screenshot heartwork
+2. ⬜ Wiring no editor UI
+3. ⬜ Image region cropping (extrair fotos do screenshot como placeholders)
+4. ⬜ Comparar qualidade S2H vs Mode E viewport
+5. ⬜ Considerar merge do Visual Brief prompt de volta no Mode E
+
 ### Mode B: Rebuild (DOM Mirroring) — baseado no Reforge
 **O que aprendemos:** O Reforge usa DOM Mirroring com stylesheets originais — extrai CSS rules via `document.styleSheets` (não `getComputedStyle`). Isso preserva media queries, hover states, keyframes, cascade. Resultado: 95% de fidelidade visual.
 
@@ -191,7 +223,7 @@ O rebuild.js v5 (DOM mirroring com stylesheet extraction) causava crash silencio
 O `toggleEditor` handler no background.js deve usar `return true` + `sendResponse()` para manter o service worker acordado durante a injeção async. O panel.js faz `window.__rbEditorActive = false` antes de enviar para limpar flags stuck.
 
 ### Injeção de scripts — ordem importa
-A ordem de injeção no background.js é: detect.js → freeze.js → extractor.js → persist.js → mode-e.js → rebuild.js → editor.js. O rebuild.js v5 era o último antes do editor.js e quebrava a inicialização.
+A ordem de injeção no background.js é: detect.js → freeze.js → extractor.js → persist.js → mode-e.js → s2h.js → rebuild.js → editor.js. O rebuild.js v5 era o último antes do editor.js e quebrava a inicialização.
 
 ### captureVisibleTab captura a aba ativa, não a aba do sender
 O `chrome.tabs.captureVisibleTab` fotografa a aba que está na tela. Se o usuário troca de aba durante a captura do Mode E, captura o site errado. Fix (3cd987b): background.js agora usa `sender.tab` e foca a aba antes de capturar.
@@ -262,7 +294,7 @@ Ferramenta de **inspiração e aprendizado** — designer edita para criar algo 
 
 ## Regras de desenvolvimento
 - Incrementar versão a cada release significativo
-- Injeção: detect.js → freeze.js → extractor.js → mode-e.js → rebuild.js → editor.js
+- Injeção: detect.js → freeze.js → extractor.js → persist.js → mode-e.js → s2h.js → rebuild.js → editor.js
 - CSS scoped via IDs `rb-editor-*` e classes `rb-*`
 - `isEditorEl(el)` reconhece `rb-editor*` E `rb-ed-*`
 - **TODOS os botões do editor: `mousedown` + `capture:true` + `stopImmediatePropagation`**

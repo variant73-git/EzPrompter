@@ -160,6 +160,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/extractor.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/persist.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/s2h.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/rebuild.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/editor.js'] });
         sendResponse({ok: true});
