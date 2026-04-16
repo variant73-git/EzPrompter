@@ -94,6 +94,14 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 25. ✅ Drag-to-adjust on line-height/letter-spacing icons
 26. ✅ Frosted glass mini widgets
 27. ✅ CSS isolation — font-family !important to prevent site CSS bleed
+28. ✅ Undo/Redo — unified applyUndoEntry(forward) com 9 tipos de operação, Cmd+Z/Cmd+Shift+Z/Cmd+Y
+29. ✅ Text edit undo — contentEditable nativo durante edição, __textEdit entry no exit
+30. ✅ Clipboard — Cut/Copy/Paste com navigator.clipboard + fallback interno
+31. ✅ Find — overlay de busca com cycling por selectEl
+32. ✅ Logo dropdown menu — Preferences/Save/Edit/View/Text/Help/Account (placeholders) + Saved versions history/Export/Undo/Redo/Cut/Copy/Paste/Find (funcionais)
+33. ✅ Saved versions history — painel com snapshots do persist.js, restore com confirm()
+34. ✅ Mode E persistent toast — showToast/updateToast, auto-dismiss 5s (sucesso) / 10s (erro), cleanup ao trocar de modo
+35. ✅ Mode E 90s timeout — chunkToHTMLRaw com setTimeout wrapper
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.
@@ -118,11 +126,12 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
   - CSS Custom Properties com cross-ref Tailwind
   - Assets com background-image inventory categorizado
   - Source Implementation Cues (10+ prompt-ready MUST-preserve directives)
-- ✅ **Component chunking** (mode-e.js `runModeEChunked`):
+- ✅ **Component chunking** (mode-e.js `runModeEChunked`) — **NÃO é o default, disponível via runChunked()**:
   - `extractSections()` no extractor.js — detecção semântica + dedup nested + sticky/footer identification + per-section cleanHTML
   - Pipeline chunked com captura por section, sticky-header dedup, queue paralelo (concurrency=2, 500ms stagger)
   - Stitcher monta HTML responsivo por ordem visual
-  - Fallback automático para viewport-mode quando sections detection falha
+  - ⚠️ **Não está pronto:** extractSections() detecta poucos sections, requer Tailwind CDN, 10x mais lento que viewport
+  - Default revertido para viewport pipeline (inline styles) em e1c6968
 - ✅ **Image upload path** (mode-e.js `runModeEFromImage`):
   - `generateDesignMDFromImage()` — produz DESIGN.md a partir de screenshot via vision call
   - Few-shot com exemplo sintético de ~3KB embedded no prompt
@@ -182,7 +191,19 @@ O rebuild.js v5 (DOM mirroring com stylesheet extraction) causava crash silencio
 O `toggleEditor` handler no background.js deve usar `return true` + `sendResponse()` para manter o service worker acordado durante a injeção async. O panel.js faz `window.__rbEditorActive = false` antes de enviar para limpar flags stuck.
 
 ### Injeção de scripts — ordem importa
-A ordem de injeção no background.js é: detect.js → freeze.js → extractor.js → mode-e.js → rebuild.js → editor.js. O rebuild.js v5 era o último antes do editor.js e quebrava a inicialização.
+A ordem de injeção no background.js é: detect.js → freeze.js → extractor.js → persist.js → mode-e.js → rebuild.js → editor.js. O rebuild.js v5 era o último antes do editor.js e quebrava a inicialização.
+
+### captureVisibleTab captura a aba ativa, não a aba do sender
+O `chrome.tabs.captureVisibleTab` fotografa a aba que está na tela. Se o usuário troca de aba durante a captura do Mode E, captura o site errado. Fix (3cd987b): background.js agora usa `sender.tab` e foca a aba antes de capturar.
+
+### Chunked pipeline requer Tailwind CDN
+O prompt chunked pede classes Tailwind (text-5xl, py-24 etc) mas sem o runtime carregado, todas as classes são ignoradas. `replacePageContent()` agora injeta `cdn.tailwindcss.com/3.4.17` quando usado pelo chunked path. O viewport path usa inline styles e não precisa disso.
+
+### Prompt hardening degrada qualidade
+Temperature baixa (0.2), topP, thinkingConfig, blocos "CRITICAL OUTPUT CONSTRAINT" e retry agressivo ("REJECTED because X") fazem o Gemini produzir output pior. Usar defaults (só maxOutputTokens: 16000) e retry suave ("Note: please..."). Revertido em 1c27f12.
+
+### FAB (Live Remix) removido
+O botão flutuante "Live Remix" (buildFab/pauseEditor/resumeEditor) causava bugs: display restore deixava ele visível após Mode E. Removido completamente em 38b4bca. Não reimplementar.
 
 ## Abordagens Técnicas de Clonagem
 
