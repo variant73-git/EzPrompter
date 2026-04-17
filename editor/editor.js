@@ -3478,12 +3478,37 @@
     imgRowOuter.appendChild(imgMinusBtn);
     addRow(fillSec, 'Image', imgRowOuter);
 
-    // ---- TEXT COLORS (moved from Typography) ----
-    var colorEntries = [];
+    // ---- TEXT COLORS (grouped by CSS class, with link/unlink) ----
+    // Helper: find the CSS class that defines `color` on an element
+    function findColorClass(node) {
+      var classes = node.className && typeof node.className === 'string' ? node.className.split(/\s+/) : [];
+      var sheets = document.styleSheets;
+      for (var s = 0; s < sheets.length; s++) {
+        try { var rules = sheets[s].cssRules || sheets[s].rules; if (!rules) continue; } catch(e) { continue; }
+        for (var r = 0; r < rules.length; r++) {
+          var rule = rules[r];
+          if (!rule.selectorText || !rule.style || !rule.style.color) continue;
+          for (var c = 0; c < classes.length; c++) {
+            if (classes[c] && rule.selectorText.indexOf('.' + classes[c]) !== -1) {
+              return classes[c];
+            }
+          }
+        }
+      }
+      // Fallback: first meaningful class
+      for (var i = 0; i < classes.length; i++) {
+        if (classes[i] && classes[i].length > 1 && classes[i].indexOf('rb-') !== 0) return classes[i];
+      }
+      return null;
+    }
+
+    // Group colors by class name (linked by default)
+    var colorEntries = []; // {hex, className, targets, isSelf}
     var selfHex = rgbHex(cs.color);
-    if (selfHex) colorEntries.push({hex: selfHex, targets: [el], isSelf: true});
+    var selfClass = findColorClass(el);
+    if (selfHex) colorEntries.push({hex: selfHex, className: selfClass, targets: [el], isSelf: true});
     if (el.children.length > 0) {
-      var colorMap = {};
+      var colorClassMap = {}; // key = className||hex
       el.querySelectorAll('*').forEach(function(child) {
         if (child.closest('svg')) return;
         var hasText = false;
@@ -3499,14 +3524,20 @@
         if (hex === selfHex) {
           colorEntries[0].targets.push(child);
         } else {
-          if (!colorMap[hex]) colorMap[hex] = [];
-          colorMap[hex].push(child);
+          var cls = findColorClass(child);
+          var key = cls || hex;
+          if (!colorClassMap[key]) colorClassMap[key] = {hex: hex, className: cls, targets: []};
+          colorClassMap[key].targets.push(child);
         }
       });
-      Object.keys(colorMap).forEach(function(hex) {
-        colorEntries.push({hex: hex, targets: colorMap[hex], isSelf: false});
+      Object.keys(colorClassMap).forEach(function(key) {
+        colorEntries.push(colorClassMap[key]);
       });
     }
+
+    var LINK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>';
+    var UNLINK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18.84 12.25l1.72-1.71a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M5.16 11.75l-1.72 1.71a5 5 0 007.07 7.07l1.72-1.71"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+
     if (colorEntries.length > 0) {
       var colorsStack = mk('div');
       colorsStack.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
@@ -3516,26 +3547,67 @@
         var colorOuter = mk('div', 'rb-fill-row-outer');
         if (idx >= maxVisibleColors) { colorOuter.style.display = 'none'; hiddenColors.push(colorOuter); }
         var colorRow = mk('div', 'rb-insp-color-row rb-insp-field-bg');
-        colorRow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 6px;cursor:pointer;flex:1;min-width:0;';
+        colorRow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 6px;cursor:pointer;flex:1;min-width:0;border-radius:4px;overflow:hidden;';
         var sw = mk('div', 'rb-insp-swatch');
         sw.style.background = entry.hex;
         sw.title = entry.hex;
         var hexTxt = mk('span', 'rb-insp-val');
         hexTxt.textContent = entry.hex;
-        hexTxt.style.cssText = 'flex:1;background:none;';
+        hexTxt.style.cssText = 'flex:1;background:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+        // Link/unlink chain icon — default unlinked (changes apply to this element only)
+        var allClassTargets = entry.targets.slice();
+        entry.targets = [entry.targets[0]];
+        var linked = false;
+        var linkBtn = mk('button', 'rb-fill-link-btn');
+        linkBtn.innerHTML = UNLINK_SVG;
+        linkBtn.classList.add('rb-fill-link-off');
+        linkBtn.title = 'Apply to global class';
+        if (!entry.className && allClassTargets.length <= 1) { linkBtn.style.display = 'none'; }
+
         var cDiv = mk('div', 'rb-insp-field-divider');
         cDiv.style.cssText = 'width:1px;align-self:stretch;flex-shrink:0;';
         var cAlpha = mk('span', 'rb-insp-val');
         cAlpha.textContent = '100%';
         cAlpha.style.cssText = 'width:36px;text-align:right;flex:none;background:none;';
-        // Click → open full 4-tab popup with background-clip:text support
+
+        // Link/unlink handler
+        (function(ent, linkBtn2, hexTxt2) {
+          linkBtn2.addEventListener('mousedown', function(e) {
+            e.stopImmediatePropagation();
+            linked = !linked;
+            if (linked) {
+              linkBtn2.innerHTML = LINK_SVG;
+              linkBtn2.title = 'Linked to .' + ent.className;
+              linkBtn2.classList.remove('rb-fill-link-off');
+              linkBtn2.classList.add('rb-fill-link-on');
+              hexTxt2.title = '.' + ent.className;
+              if (ent.className) {
+                ent.targets = [];
+                el.querySelectorAll('.' + ent.className).forEach(function(t) { ent.targets.push(t); });
+                if (el.classList.contains(ent.className)) ent.targets.unshift(el);
+              } else {
+                ent.targets = allClassTargets.slice();
+              }
+            } else {
+              linkBtn2.innerHTML = UNLINK_SVG;
+              linkBtn2.title = 'Apply to global class';
+              linkBtn2.classList.add('rb-fill-link-off');
+              linkBtn2.classList.remove('rb-fill-link-on');
+              hexTxt2.title = '';
+              ent.targets = [allClassTargets[0]];
+            }
+          }, {capture: true, signal: sig});
+        })(entry, linkBtn, hexTxt);
+
+        // Click → open full 4-tab popup
         (function(ent, sw2, hexTxt2, cAlpha2) {
           colorRow.addEventListener('mousedown', function(e) {
+            if (e.target.closest('.rb-fill-link-btn')) return;
             e.stopImmediatePropagation();
             if (window.__rbFillPopup) {
               window.__rbFillPopup.open(sw2, inspector, root, el, 'color', sig, {
                 apply: function(targetEl, targetProp, cssVal) {
-                  // Solid color — clear any background-clip:text
                   ent.targets.forEach(function(t) {
                     t.style.removeProperty('-webkit-background-clip');
                     t.style.removeProperty('background-clip');
@@ -3610,6 +3682,7 @@
         })(entry, sw, hexTxt, cAlpha);
         colorRow.appendChild(sw);
         colorRow.appendChild(hexTxt);
+        colorRow.appendChild(linkBtn);
         colorRow.appendChild(cDiv);
         colorRow.appendChild(cAlpha);
         // Eye button
@@ -3809,7 +3882,7 @@
     // If it's a cascading property and element has children, apply to all descendants
     if (CASCADE_PROPS.has(prop) && el.children.length > 0) {
       el.querySelectorAll('*').forEach(function(child) {
-        if (child.nodeType === 1) {
+        if (child.nodeType === 1 && !child.closest('#rb-editor-root') && !child.closest('#rb-editor-inspector') && !child.closest('#rb-ed-banner')) {
           child.style.setProperty(cssProp(prop), value, 'important');
         }
       });

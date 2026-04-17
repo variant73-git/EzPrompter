@@ -118,6 +118,11 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 47. ✅ Effects via ::before — pseudo-element com opacity independente, não afeta conteúdo nested
 48. ✅ Frosted glass popups — backdrop-filter:blur(40px) no modo undocked
 49. ✅ Image como elemento — upload cria `<img>` real, não background-image
+50. ✅ Color Library — "Custom swatches" (localStorage) + "From this website" (stylesheet extraction), cursor conta-gotas
+51. ✅ Add swatch button (+) — salva cor atual na Library, ao lado do campo de opacity
+52. ✅ Link/unlink chain icon — default desconectado (single element), click para conectar à classe CSS
+53. ✅ applyStyle exclui editor UI — cascade de color/font não vaza para #rb-editor-root
+54. ✅ Popup viewport clamping — clampPopupToViewport() garante 8px gap do bottom do browser
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.
@@ -325,3 +330,6 @@ Ferramenta de **inspiração e aprendizado** — designer edita para criar algo 
 - `chrome.scripting.insertCSS` cria stylesheets na user-origin — `!important` delas bate inline `!important`. Animações do site devem ser congeladas via JS, não CSS
 - Effects usam `::before` com `z-index:-1` para não cobrir conteúdo. Opacity do efeito é controlada no pseudo-element via `<style>` tag per-element
 - Popup deve ler `cs.color` ou `cs.backgroundColor` conforme o `prop` — ler sempre `backgroundColor` causa alpha=0 quando o popup é aberto para texto
+- `applyStyle` cascade DEVE excluir `#rb-editor-root`, `#rb-editor-inspector`, `#rb-ed-banner` — sem isso, mudar cor de texto afeta a UI do editor
+- Popups devem chamar `clampPopupToViewport(popup)` após `appendChild` — garante 8px gap do bottom do viewport
+- Custom swatches persistidos em `localStorage` key `rb-custom-swatches` (array de hex)

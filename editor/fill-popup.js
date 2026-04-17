@@ -292,6 +292,137 @@
   // Inject keyframes immediately so effects work even before popup opens
   injectKeyframes();
 
+  // ── Extract site colors from stylesheets ──
+  function extractSiteColors() {
+    var colors = {};
+    try {
+      var sheets = document.styleSheets;
+      for (var s = 0; s < sheets.length; s++) {
+        try { var rules = sheets[s].cssRules || sheets[s].rules; if (!rules) continue; } catch(e) { continue; }
+        for (var r = 0; r < rules.length; r++) {
+          var rule = rules[r];
+          if (!rule.style) continue;
+          ['color', 'backgroundColor', 'borderColor'].forEach(function(prop) {
+            var val = rule.style[prop];
+            if (!val || val === 'inherit' || val === 'initial' || val === 'transparent' || val === 'currentColor') return;
+            var hex = null;
+            // Parse hex
+            if (/^#[0-9a-fA-F]{3,8}$/.test(val)) { hex = val; }
+            // Parse rgb/rgba
+            var m = val.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
+            if (m) hex = rgbToHex(parseInt(m[1]), parseInt(m[2]), parseInt(m[3]));
+            if (hex && hex !== '#000000' && hex !== '#ffffff' && hex !== '#FFFFFF') {
+              colors[hex.toLowerCase()] = hex;
+            }
+          });
+        }
+      }
+    } catch(e) {}
+    return Object.values(colors).slice(0, 24); // Cap at 24
+  }
+
+  // ── Custom swatches (localStorage) ──
+  var CUSTOM_KEY = 'rb-custom-swatches';
+  function getCustomSwatches() {
+    try { return JSON.parse(localStorage.getItem(CUSTOM_KEY)) || []; } catch(e) { return []; }
+  }
+  function saveCustomSwatch(hex) {
+    var swatches = getCustomSwatches();
+    hex = hex.toLowerCase();
+    if (swatches.indexOf(hex) !== -1) return swatches;
+    swatches.unshift(hex);
+    if (swatches.length > 24) swatches = swatches.slice(0, 24);
+    localStorage.setItem(CUSTOM_KEY, JSON.stringify(swatches));
+    return swatches;
+  }
+
+  // ── Build Library section (shared between Color tab and ColorOnly popup) ──
+  function buildLibrarySection(container, onPickColor) {
+    var divider = mk('div');
+    divider.style.cssText = 'height:1px;background:rgba(255,255,255,0.06);margin:10px 0 8px;';
+    container.appendChild(divider);
+
+    var libLabel = mk('span');
+    libLabel.textContent = 'Library';
+    libLabel.style.cssText = 'font:600 11px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.6);display:block;margin-bottom:8px;';
+    container.appendChild(libLabel);
+
+    // Custom swatches section
+    var customLabel = mk('span');
+    customLabel.textContent = 'Custom swatches';
+    customLabel.style.cssText = 'font:400 10px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.3);display:block;margin-bottom:6px;';
+    container.appendChild(customLabel);
+
+    var customGrid = mk('div', 'rb-fill-lib-grid');
+    container.appendChild(customGrid);
+
+    function renderCustom() {
+      customGrid.innerHTML = '';
+      var swatches = getCustomSwatches();
+      if (swatches.length === 0) {
+        var empty = mk('span');
+        empty.textContent = 'No custom colors yet';
+        empty.style.cssText = 'font:400 10px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.2);padding:4px 0;';
+        customGrid.appendChild(empty);
+        return;
+      }
+      swatches.forEach(function(hex) {
+        var sw = mk('div', 'rb-fill-lib-swatch');
+        sw.style.background = hex;
+        sw.title = hex;
+        sw.addEventListener('mousedown', function(e) {
+          e.stopImmediatePropagation();
+          onPickColor(hex);
+        }, { capture: true });
+        customGrid.appendChild(sw);
+      });
+    }
+    renderCustom();
+
+    // Site colors section
+    var siteDivider = mk('div');
+    siteDivider.style.cssText = 'height:1px;background:rgba(255,255,255,0.04);margin:8px 0 6px;';
+    container.appendChild(siteDivider);
+
+    var siteLabel = mk('span');
+    siteLabel.textContent = 'From this website';
+    siteLabel.style.cssText = 'font:400 10px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.3);display:block;margin-bottom:6px;';
+    container.appendChild(siteLabel);
+
+    var siteGrid = mk('div', 'rb-fill-lib-grid');
+    var siteColors = extractSiteColors();
+    if (siteColors.length === 0) {
+      var noColors = mk('span');
+      noColors.textContent = 'No colors detected';
+      noColors.style.cssText = 'font:400 10px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.2);padding:4px 0;';
+      siteGrid.appendChild(noColors);
+    } else {
+      siteColors.forEach(function(hex) {
+        var sw = mk('div', 'rb-fill-lib-swatch');
+        sw.style.background = hex;
+        sw.title = hex;
+        sw.addEventListener('mousedown', function(e) {
+          e.stopImmediatePropagation();
+          onPickColor(hex);
+        }, { capture: true });
+        siteGrid.appendChild(sw);
+      });
+    }
+    container.appendChild(siteGrid);
+
+    return { refreshCustom: renderCustom };
+  }
+
+  // ── Shared: reposition popup so it stays within viewport with 8px gap ──
+  function clampPopupToViewport(popup) {
+    var rect = popup.getBoundingClientRect();
+    var gap = 8;
+    if (rect.bottom > window.innerHeight - gap) {
+      var newTop = Math.max(gap, window.innerHeight - rect.height - gap);
+      popup.style.top = newTop + 'px';
+    }
+  }
+
   // ── Shared: close any existing fill/image popup ──
   function closeExisting(cls) {
     var existing = document.querySelector('.' + cls);
@@ -308,7 +439,7 @@
     var popup = mk('div', 'rb-insp-adv-popup rb-fill-popup');
     var inspRect = inspector.getBoundingClientRect();
     var anchorRect = anchorEl.getBoundingClientRect();
-    var popupTop = Math.min(anchorRect.top, window.innerHeight - 460);
+    var popupTop = Math.max(8, Math.min(anchorRect.top, window.innerHeight - 460));
     popup.style.cssText = 'position:fixed;top:' + popupTop + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;width:260px;';
 
     // Current state — read from the correct property (color or backgroundColor)
@@ -433,7 +564,33 @@
       });
       alphaInp.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); alphaInp.blur(); } });
       ctrlRow.appendChild(alphaInp);
+
+      // + button to save current color as custom swatch
+      var addSwatchBtn = mk('button', 'rb-fill-add-swatch');
+      addSwatchBtn.textContent = '+';
+      addSwatchBtn.title = 'Add to custom swatches';
+      ctrlRow.appendChild(addSwatchBtn);
+
       panel.appendChild(ctrlRow);
+
+      // Library section
+      var libRef = buildLibrarySection(panel, function(hex) {
+        currentHex = hex;
+        currentAlpha = 100;
+        pickerCtrl.setFromHex(hex, 100);
+        valInp.value = displayForFormat(hex, 100, colorFormat);
+        alphaInp.value = '100%';
+        var rgb = hexToRgb(hex);
+        var cssVal = 'rgb(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ')';
+        if (callbacks.apply) callbacks.apply(el, prop, cssVal);
+        if (anchorEl) anchorEl.style.background = cssVal;
+      });
+
+      addSwatchBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        saveCustomSwatch(currentHex);
+        libRef.refreshCustom();
+      }, { capture: true });
 
       // Re-apply color when switching back to this tab
       tabActivate[0] = function() {
@@ -726,6 +883,7 @@
     })();
 
     root.appendChild(popup);
+    clampPopupToViewport(popup);
 
     // Auto-close
     var closeOutside = function(ev) {
@@ -807,6 +965,7 @@
     thumbArea.appendChild(fileInp);
     popup.appendChild(thumbArea);
     root.appendChild(popup);
+    clampPopupToViewport(popup);
 
     // Auto-close
     var closeOutside = function(ev) {
@@ -827,7 +986,7 @@
     var popup = mk('div', 'rb-insp-adv-popup rb-fill-popup rb-fill-color-popup');
     var inspRect = inspector.getBoundingClientRect();
     var anchorRect = anchorEl.getBoundingClientRect();
-    var popupTop = Math.min(anchorRect.top, window.innerHeight - 340);
+    var popupTop = Math.max(8, Math.min(anchorRect.top, window.innerHeight - 460));
     popup.style.cssText = 'position:fixed;top:' + popupTop + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;width:260px;';
 
     // Header
@@ -895,9 +1054,33 @@
     });
     alphaInp.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); alphaInp.blur(); } });
     ctrlRow.appendChild(alphaInp);
+
+    // + button
+    var addSwatchBtn = mk('button', 'rb-fill-add-swatch');
+    addSwatchBtn.textContent = '+';
+    addSwatchBtn.title = 'Add to custom swatches';
+    ctrlRow.appendChild(addSwatchBtn);
+
     popup.appendChild(ctrlRow);
 
+    // Library
+    var libRef = buildLibrarySection(popup, function(pickedHex) {
+      hex = pickedHex; alpha = 100;
+      pickerCtrl.setFromHex(pickedHex, 100);
+      valInp.value = displayForFormat(pickedHex, 100, colorFormat);
+      alphaInp.value = '100%';
+      if (anchorEl) anchorEl.style.background = pickedHex;
+      if (onApply) onApply(pickedHex, 100);
+    });
+
+    addSwatchBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      saveCustomSwatch(hex);
+      libRef.refreshCustom();
+    }, { capture: true });
+
     root.appendChild(popup);
+    clampPopupToViewport(popup);
 
     var closeOutside = function(ev) {
       if (popup && !popup.contains(ev.target) && !anchorEl.contains(ev.target)) {
