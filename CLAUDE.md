@@ -56,6 +56,7 @@ editor/detect.js        # Detecção de web builder (8 builders)
 editor/freeze.js        # Congela animações (GSAP, Lenis, Webflow IX)
 editor/rebuild.js       # Rebuild engine v4 (tag elements + disable interactivity)
 editor/s2h.js           # S2H: Screenshot-to-HTML (2-pass vision pipeline, independente do Mode E)
+editor/fill-popup.js    # Fill popup: Color (canvas picker) / Gradient / Image / Effects + Image-only popup + Color-only popup
 editor/normalize.js     # Curate engine
 overlay/semantic.js     # AI semantic mapping (legado, substituído por Mode E)
 overlay/extractor.js    # Extração de tokens: cores, fonts, radii, shadows, HTML limpo
@@ -103,6 +104,14 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 33. ✅ Saved versions history — painel com snapshots do persist.js, restore com confirm()
 34. ✅ Mode E persistent toast — showToast/updateToast, auto-dismiss 5s (sucesso) / 10s (erro), cleanup ao trocar de modo
 35. ✅ Mode E 90s timeout — chunkToHTMLRaw com setTimeout wrapper
+36. ✅ Fill popup (fill-popup.js) — 3 popups: Background (Color/Gradient/Image/Effects), Image-only, Color-only
+37. ✅ Canvas color picker — HSB box + hue slider + alpha slider, zero dependência externa (iro.js removido por CSP)
+38. ✅ Gradient editor — Linear/Radial, stops editáveis (pos/cor/alpha), reverse, add/remove
+39. ✅ Effects gallery — 12 efeitos CSS animados em grid 2x2 scrollável (Aurora, Sunset, Pulse, Ocean, etc.)
+40. ✅ Format dropdown — HEX/RGB/HSL/HSB/CSS com divider + chevron
+41. ✅ Per-row eye + minus — cada campo (Background, Image, Colors) tem toggle visibility + remove
+42. ✅ Tab switching preserves state — Color re-aplica cor ao voltar, Gradient só aplica quando ativado
+43. ✅ Uniform field height — todos os campos do inspector têm 25px
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.
@@ -294,7 +303,7 @@ Ferramenta de **inspiração e aprendizado** — designer edita para criar algo 
 
 ## Regras de desenvolvimento
 - Incrementar versão a cada release significativo
-- Injeção: detect.js → freeze.js → extractor.js → persist.js → mode-e.js → s2h.js → rebuild.js → editor.js
+- Injeção: detect.js → freeze.js → extractor.js → persist.js → mode-e.js → s2h.js → rebuild.js → fill-popup.js → editor.js
 - CSS scoped via IDs `rb-editor-*` e classes `rb-*`
 - `isEditorEl(el)` reconhece `rb-editor*` E `rb-ed-*`
 - **TODOS os botões do editor: `mousedown` + `capture:true` + `stopImmediatePropagation`**
@@ -304,3 +313,6 @@ Ferramenta de **inspiração e aprendizado** — designer edita para criar algo 
 - Checkpoint stash: `git stash push -m "checkpoint-NNN"`
 - Modelo Gemini atual: `gemini-3.1-pro-preview` (definido em popup/popup.js e background.js). Modelos 2.x são marcados como outdated no background.js
 - rebuild.js v5 crasha o editor — usar v4 até re-implementar com cuidado
+- **Todos os campos do inspector devem ter 25px de altura** — sem exceção
+- Fill popup: iro.js não funciona em sites com CSP restritivo — usar canvas picker nativo
+- Fill popup: `background` shorthand sobrepõe `background-color` — limpar shorthand ao re-aplicar cor sólida

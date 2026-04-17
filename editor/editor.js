@@ -2573,7 +2573,6 @@
       applyStyle(el, prop, cinp.value);
     }, {signal: sig});
     swatch.appendChild(cinp);
-    // Hex text — click to select for manual editing
     txt.style.cssText = 'cursor:pointer;flex:1;background:none;padding:0;';
     txt.addEventListener('click', function() {
       txt.contentEditable = 'true';
@@ -2596,7 +2595,6 @@
     txt.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') { e.preventDefault(); txt.blur(); }
     });
-    // Opacity/alpha control
     var alphaMatch = value.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
     var curAlpha = alphaMatch && alphaMatch[4] !== undefined ? Math.round(parseFloat(alphaMatch[4]) * 100) : 100;
     var divider = mk('div', 'rb-insp-field-divider');
@@ -2615,7 +2613,6 @@
       txt.textContent = hv;
       applyStyle(el, prop, rgba);
     }, {signal: sig});
-
     wrap.appendChild(swatch);
     wrap.appendChild(txt);
     wrap.appendChild(divider);
@@ -3126,59 +3123,77 @@
       var maxVisible = 4;
       var hiddenColors = [];
       colorEntries.forEach(function(entry, idx) {
+        var colorOuter = mk('div', 'rb-fill-row-outer');
+        if (idx >= maxVisible) { colorOuter.style.display = 'none'; hiddenColors.push(colorOuter); }
         var colorRow = mk('div', 'rb-insp-field-wrap');
-        colorRow.style.cssText = 'display:flex;align-items:stretch;gap:6px;padding:2px 6px;';
-        if (idx >= maxVisible) { colorRow.style.display = 'none'; hiddenColors.push(colorRow); }
+        colorRow.style.cssText = 'display:flex;align-items:stretch;gap:6px;padding:0 6px;cursor:pointer;flex:1;min-width:0;';
         var sw = mk('div', 'rb-insp-swatch');
         sw.style.background = entry.hex;
         sw.title = entry.hex;
-        sw.style.position = 'relative';
-        var cinp = mk('input');
-        cinp.type = 'color';
-        cinp.value = entry.hex;
-        cinp.addEventListener('input', function() {
-          sw.style.background = cinp.value;
-          sw.title = cinp.value;
-          hexTxt.textContent = cinp.value;
-          entry.targets.forEach(function(t) { applyStyle(t, 'color', cinp.value); });
-        }, {signal: sig});
-        sw.appendChild(cinp);
         var hexTxt = mk('span', 'rb-insp-val');
         hexTxt.textContent = entry.hex;
-        hexTxt.style.cssText = 'flex:1;cursor:pointer;background:none;';
-        hexTxt.addEventListener('click', function() {
-          hexTxt.contentEditable = 'true'; hexTxt.focus();
-          var range = document.createRange(); range.selectNodeContents(hexTxt);
-          var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-        });
-        hexTxt.addEventListener('blur', function() {
-          hexTxt.contentEditable = 'false';
-          var nv = hexTxt.textContent.trim();
-          if (/^#[0-9a-fA-F]{3,8}$/.test(nv)) { sw.style.background = nv; cinp.value = nv; entry.targets.forEach(function(t) { applyStyle(t, 'color', nv); }); }
-        });
-        hexTxt.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); hexTxt.blur(); } });
+        hexTxt.style.cssText = 'flex:1;background:none;';
         var cDiv = mk('div');
         cDiv.style.cssText = 'width:1px;align-self:stretch;background:rgba(255,255,255,0.1);flex-shrink:0;';
-        var cAlpha = mk('input', 'rb-insp-inp');
-        cAlpha.value = '100%';
+        var cAlpha = mk('span', 'rb-insp-val');
+        cAlpha.textContent = '100%';
         cAlpha.style.cssText = 'width:42px;text-align:right;flex:none;background:none;';
-        (function(ent, sw2, cinp2, cAlpha2) {
-          cAlpha2.addEventListener('change', function() {
-            var pct = parseInt(cAlpha2.value) || 100;
-            pct = Math.max(0, Math.min(100, pct));
-            cAlpha2.value = pct + '%';
-            var hv = cinp2.value;
-            var r = parseInt(hv.slice(1,3),16), g = parseInt(hv.slice(3,5),16), b = parseInt(hv.slice(5,7),16);
-            var rgba = 'rgba(' + r + ',' + g + ',' + b + ',' + (pct/100) + ')';
-            sw2.style.background = rgba;
-            ent.targets.forEach(function(t) { applyStyle(t, 'color', rgba); });
-          }, {signal: sig});
-        })(entry, sw, cinp, cAlpha);
+        // Click swatch/row → open color-only popup
+        (function(ent, sw2, hexTxt2, cAlpha2) {
+          colorRow.addEventListener('mousedown', function(e) {
+            e.stopImmediatePropagation();
+            if (window.__rbFillPopup) {
+              window.__rbFillPopup.openColorOnly(sw2, inspector, root, ent.hex, 100, function(newHex, newAlpha) {
+                sw2.style.background = newAlpha < 100
+                  ? 'rgba(' + parseInt(newHex.slice(1,3),16) + ',' + parseInt(newHex.slice(3,5),16) + ',' + parseInt(newHex.slice(5,7),16) + ',' + (newAlpha/100) + ')'
+                  : newHex;
+                sw2.title = newHex;
+                hexTxt2.textContent = newHex;
+                cAlpha2.textContent = newAlpha + '%';
+                var r = parseInt(newHex.slice(1,3),16), g = parseInt(newHex.slice(3,5),16), b = parseInt(newHex.slice(5,7),16);
+                var cssVal = newAlpha < 100 ? 'rgba(' + r + ',' + g + ',' + b + ',' + (newAlpha/100) + ')' : newHex;
+                ent.targets.forEach(function(t) { applyStyle(t, 'color', cssVal); });
+              });
+            }
+          }, {capture: true, signal: sig});
+        })(entry, sw, hexTxt, cAlpha);
         colorRow.appendChild(sw);
         colorRow.appendChild(hexTxt);
         colorRow.appendChild(cDiv);
         colorRow.appendChild(cAlpha);
-        colorsStack.appendChild(colorRow);
+        // Eye button
+        var cEye = mk('button', 'rb-fill-row-icon');
+        cEye.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+        cEye.title = 'Toggle visibility';
+        var cHidden = false;
+        (function(ent2, eye2) {
+          eye2.addEventListener('mousedown', function(e) {
+            e.stopImmediatePropagation();
+            cHidden = !cHidden;
+            ent2.targets.forEach(function(t) {
+              t.style.setProperty('color', cHidden ? 'transparent' : ent2.hex, 'important');
+            });
+            eye2.innerHTML = cHidden
+              ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+            eye2.classList.toggle('rb-insp-eye-off', cHidden);
+          }, {capture: true, signal: sig});
+        })(entry, cEye);
+        // Minus button
+        var cMinus = mk('button', 'rb-fill-row-icon');
+        cMinus.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+        cMinus.title = 'Remove color';
+        (function(ent3) {
+          cMinus.addEventListener('mousedown', function(e) {
+            e.stopImmediatePropagation();
+            ent3.targets.forEach(function(t) { t.style.removeProperty('color'); });
+            updateInspector(el);
+          }, {capture: true, signal: sig});
+        })(entry);
+        colorOuter.appendChild(colorRow);
+        colorOuter.appendChild(cEye);
+        colorOuter.appendChild(cMinus);
+        colorsStack.appendChild(colorOuter);
       });
       // "Show more" pill button
       if (hiddenColors.length > 0) {
@@ -3223,30 +3238,124 @@
       }, {capture: true, signal: sig});
       fillHd.querySelector('div').appendChild(addFillBtn);
     }
-    if (hasBg) {
-      var eyeFill = mk('button', 'rb-insp-eye-btn');
-      eyeFill.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-      eyeFill.title = 'Toggle visibility';
-      var fillHidden = false;
-      var fillOrigBg = cs.backgroundColor;
-      eyeFill.addEventListener('mousedown', function(e) {
-        e.stopImmediatePropagation();
-        fillHidden = !fillHidden;
-        if (fillHidden) {
-          el.style.setProperty('background-color', 'transparent', 'important');
-          eyeFill.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
-          eyeFill.classList.add('rb-insp-eye-off');
-        } else {
-          el.style.setProperty('background-color', fillOrigBg, 'important');
-          eyeFill.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-          eyeFill.classList.remove('rb-insp-eye-off');
-        }
-      }, {capture: true, signal: sig});
-      fillHd.querySelector('div').appendChild(eyeFill);
-    }
-    addColor(fillSec, 'Background color', cs.backgroundColor, el, 'backgroundColor');
+    // ---- BACKGROUND COLOR ROW (with fill popup) ----
+    var bgRowOuter = mk('div', 'rb-fill-row-outer');
+    var bgWrap = mk('div', 'rb-insp-color-row rb-insp-field-bg');
+    bgWrap.style.cssText = 'display:flex;align-items:center;gap:6px;border-radius:4px;padding:0 6px;cursor:pointer;flex:1;min-width:0;';
+    var bgSwatch = mk('div', 'rb-insp-swatch');
+    var bgHex = rgbHex(cs.backgroundColor);
+    var bgDisplayVal = bgHex || 'transparent';
+    bgSwatch.style.background = isTransparent(cs.backgroundColor) ? 'linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%),linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%)' : cs.backgroundColor;
+    if (isTransparent(cs.backgroundColor)) { bgSwatch.style.backgroundSize = '8px 8px'; bgSwatch.style.backgroundPosition = '0 0, 4px 4px'; }
+    var bgTxt = mk('span', 'rb-insp-val');
+    bgTxt.textContent = bgDisplayVal;
+    bgTxt.style.cssText = 'flex:1;background:none;padding:0;';
+    var bgAlphaMatch = cs.backgroundColor.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+    var bgCurAlpha = bgAlphaMatch && bgAlphaMatch[4] !== undefined ? Math.round(parseFloat(bgAlphaMatch[4]) * 100) : 100;
+    var bgDivider = mk('div', 'rb-insp-field-divider');
+    bgDivider.style.cssText = 'width:1px;align-self:stretch;flex-shrink:0;';
+    var bgAlphaLabel = mk('span', 'rb-insp-val');
+    bgAlphaLabel.textContent = bgCurAlpha + '%';
+    bgAlphaLabel.style.cssText = 'width:36px;text-align:right;flex:none;background:none;';
 
-    // ---- IMAGE (field matching color row structure) ----
+    // Minus button to remove background
+    var bgMinusBtn = mk('button', 'rb-fill-row-icon');
+    bgMinusBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+    bgMinusBtn.title = 'Remove background';
+    bgMinusBtn.style.display = hasBg ? '' : 'none';
+    bgMinusBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      applyStyle(el, 'backgroundColor', 'transparent');
+      el.style.removeProperty('background');
+      el.style.removeProperty('background-image');
+      el.style.removeProperty('background-size');
+      el.style.removeProperty('background-position');
+      el.style.removeProperty('animation');
+      updateInspector(el);
+    }, {capture: true, signal: sig});
+
+    bgWrap.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      if (window.__rbFillPopup) {
+        window.__rbFillPopup.open(bgSwatch, inspector, root, el, 'backgroundColor', sig, {
+          apply: function(targetEl, targetProp, cssVal) {
+            applyStyle(targetEl, targetProp, cssVal);
+            var newHex = rgbHex(cssVal);
+            bgTxt.textContent = newHex || cssVal;
+            var am = cssVal.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+            bgAlphaLabel.textContent = (am && am[4] !== undefined ? Math.round(parseFloat(am[4]) * 100) : 100) + '%';
+            bgMinusBtn.style.display = '';
+          },
+          applyGradient: function(targetEl, gradCSS) {
+            pushUndo({el: targetEl, prop: 'background', old: targetEl.style.background});
+            targetEl.style.setProperty('background', gradCSS, 'important');
+            bgTxt.textContent = 'gradient';
+            bgAlphaLabel.textContent = '';
+            bgMinusBtn.style.display = '';
+          },
+          applyEffect: function(targetEl, fx) {
+            pushUndo({el: targetEl, prop: 'background', old: targetEl.style.background});
+            var cssProps = fx.css.split(';').filter(function(s) { return s.trim(); });
+            cssProps.forEach(function(rule) {
+              var parts = rule.split(':');
+              if (parts.length >= 2) {
+                var p = parts[0].trim();
+                var v = parts.slice(1).join(':').trim();
+                targetEl.style.setProperty(p, v, 'important');
+              }
+            });
+            bgSwatch.style.cssText = fx.css + 'width:16px;height:16px;border-radius:8px;flex-shrink:0;';
+            bgTxt.textContent = fx.name.toLowerCase();
+            bgAlphaLabel.textContent = '';
+            bgMinusBtn.style.display = '';
+          },
+          applyBgImage: function(targetEl, dataUrl) {
+            pushUndo({el: targetEl, prop: 'backgroundImage', old: targetEl.style.backgroundImage});
+            targetEl.style.backgroundImage = 'url(' + dataUrl + ')';
+            targetEl.style.backgroundSize = 'cover';
+            targetEl.style.backgroundPosition = 'center';
+          }
+        });
+      }
+    }, {capture: true, signal: sig});
+
+    bgWrap.appendChild(bgSwatch);
+    bgWrap.appendChild(bgTxt);
+    bgWrap.appendChild(bgDivider);
+    bgWrap.appendChild(bgAlphaLabel);
+
+    // Eye button (hide/show) — outside the field
+    var bgEyeBtn = mk('button', 'rb-fill-row-icon');
+    bgEyeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    bgEyeBtn.title = 'Toggle visibility';
+    var bgHidden = false;
+    var bgOrigBg = cs.backgroundColor;
+    bgEyeBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      bgHidden = !bgHidden;
+      if (bgHidden) {
+        el.style.setProperty('background-color', 'transparent', 'important');
+        el.style.setProperty('background', 'none', 'important');
+        bgEyeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+        bgEyeBtn.classList.add('rb-insp-eye-off');
+      } else {
+        el.style.setProperty('background-color', bgOrigBg, 'important');
+        el.style.removeProperty('background');
+        bgEyeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+        bgEyeBtn.classList.remove('rb-insp-eye-off');
+      }
+    }, {capture: true, signal: sig});
+    bgEyeBtn.style.display = hasBg ? '' : 'none';
+
+    // Minus button — outside the field
+    bgMinusBtn.style.display = hasBg ? '' : 'none';
+
+    bgRowOuter.appendChild(bgWrap);
+    bgRowOuter.appendChild(bgEyeBtn);
+    bgRowOuter.appendChild(bgMinusBtn);
+    addRow(fillSec, 'Background', bgRowOuter);
+
+    // ---- IMAGE ROW (only real images, not gradients/effects) ----
     var visualEl = null;
     if (el.tagName === 'IMG') visualEl = el;
     else if (el.tagName === 'SVG' || (el.tagName && el.tagName.toLowerCase() === 'svg')) visualEl = el;
@@ -3257,13 +3366,14 @@
       else if (childSvg) visualEl = childSvg;
     }
     var currentBgImg = cs.backgroundImage;
-    var hasBgImg = currentBgImg && currentBgImg !== 'none';
+    // Only count real image URLs, not CSS gradients
+    var hasBgImg = currentBgImg && currentBgImg !== 'none' && currentBgImg.indexOf('url(') !== -1;
     var hasImage = visualEl || hasBgImg;
 
+    var imgRowOuter = mk('div', 'rb-fill-row-outer');
     var imgFieldWrap = mk('div', 'rb-insp-color-row rb-insp-field-bg');
-    imgFieldWrap.style.cssText = 'display:flex;align-items:center;gap:6px;border-radius:4px;padding:4px 6px;';
+    imgFieldWrap.style.cssText = 'display:flex;align-items:center;gap:6px;border-radius:4px;padding:0 6px;cursor:pointer;flex:1;min-width:0;';
 
-    // Swatch-sized thumbnail (16x16 to match color swatch)
     var imgSwatch = mk('div', 'rb-insp-swatch');
     if (hasImage) {
       imgSwatch.style.cssText += 'overflow:hidden;position:relative;';
@@ -3282,14 +3392,12 @@
         imgSwatch.style.backgroundPosition = 'center';
       }
     } else {
-      // Empty: checkerboard like transparent color
       imgSwatch.style.background = 'linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%),linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%)';
       imgSwatch.style.backgroundSize = '8px 8px';
       imgSwatch.style.backgroundPosition = '0 0, 4px 4px';
     }
     imgFieldWrap.appendChild(imgSwatch);
 
-    // Text label
     var imgLabel = mk('span', 'rb-insp-val');
     imgLabel.style.cssText = 'flex:1;background:none;padding:0;';
     if (hasImage) {
@@ -3297,126 +3405,85 @@
         var vTag2 = visualEl.tagName.toUpperCase();
         imgLabel.textContent = vTag2 === 'IMG' ? 'image' : 'SVG';
       } else {
-        imgLabel.textContent = 'background';
+        imgLabel.textContent = 'image';
       }
-      imgLabel.style.cursor = 'pointer';
     } else {
       imgLabel.textContent = 'none';
       imgLabel.style.color = 'rgba(239,238,235,0.3)';
     }
     imgFieldWrap.appendChild(imgLabel);
 
-    // If has image: click field to open image panel
-    if (hasImage) {
-      var imgPanelBtn = imgFieldWrap;
-      imgPanelBtn.style.cursor = 'pointer';
-      imgPanelBtn.addEventListener('mousedown', function(e) {
-        e.stopImmediatePropagation();
-        var existing = document.querySelector('.rb-insp-img-popup');
-        if (existing) { existing.remove(); return; }
-        var popup = mk('div', 'rb-insp-adv-popup rb-insp-img-popup');
-        var inspRect = inspector.getBoundingClientRect();
-        var fieldRect = imgFieldWrap.getBoundingClientRect();
-        var popupTop = Math.min(fieldRect.top, window.innerHeight - 260);
-        popup.style.cssText = 'position:fixed;top:' + popupTop + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;min-width:200px;';
-
-        // Header
-        var popHd = mk('div');
-        popHd.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.06);';
-        var popTitle = mk('span', 'rb-insp-sec-title');
-        popTitle.textContent = 'Image';
-        popTitle.style.cssText = 'text-transform:none;letter-spacing:0;';
-        var closeBtn = mk('button', 'rb-ed-minmax-btn');
-        closeBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-        closeBtn.addEventListener('mousedown', function(ev) { ev.stopImmediatePropagation(); popup.remove(); }, {capture: true, signal: sig});
-        popHd.appendChild(popTitle);
-        popHd.appendChild(closeBtn);
-        popup.appendChild(popHd);
-
-        // Large thumbnail
-        var lgThumb = mk('div');
-        lgThumb.style.cssText = 'width:100%;height:120px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.1);margin-bottom:10px;display:flex;align-items:center;justify-content:center;background:#222;';
-        if (visualEl) {
-          var vt = visualEl.tagName.toUpperCase();
-          if (vt === 'IMG') {
-            var lgImg = mk('img');
-            lgImg.src = visualEl.src;
-            lgImg.style.cssText = 'width:100%;height:100%;object-fit:cover;';
-            lgThumb.appendChild(lgImg);
-          } else {
-            try {
-              var svClone = visualEl.cloneNode(true);
-              svClone.setAttribute('width', '60');
-              svClone.setAttribute('height', '60');
-              svClone.style.cssText = 'width:60px;height:60px;';
-              svClone.removeAttribute('class');
-              lgThumb.appendChild(svClone);
-            } catch(err) {}
-          }
-        } else {
-          lgThumb.style.backgroundImage = currentBgImg;
-          lgThumb.style.backgroundSize = 'cover';
-          lgThumb.style.backgroundPosition = 'center';
-        }
-        popup.appendChild(lgThumb);
-
-        // Action buttons row
-        var actRow = mk('div');
-        actRow.style.cssText = 'display:flex;gap:4px;';
-
-        // Replace
-        var replBtn = mk('button', 'rb-insp-align-btn');
-        replBtn.style.cssText = 'flex:1;height:28px;gap:4px;';
-        replBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span style="font:400 10px \'Instrument Sans\',sans-serif">Replace</span>';
-        var replInp = mk('input'); replInp.type = 'file'; replInp.accept = 'image/*'; replInp.style.display = 'none';
-        replBtn.addEventListener('mousedown', function(ev) { ev.stopImmediatePropagation(); replInp.click(); }, {capture: true});
-        replInp.addEventListener('change', function(ev) {
-          var f = ev.target.files[0]; if (!f) return;
-          var rd = new FileReader();
-          rd.onload = function() {
+    // Click to open image popup
+    imgFieldWrap.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      if (window.__rbFillPopup) {
+        window.__rbFillPopup.openImage(imgSwatch, inspector, root, el, sig, {
+          applyImage: function(targetEl, dataUrl) {
             if (visualEl && visualEl.tagName === 'IMG') {
               pushUndo({el: visualEl, prop: 'src', old: visualEl.src});
-              visualEl.src = rd.result;
+              visualEl.src = dataUrl;
             } else {
-              pushUndo({el: el, prop: 'backgroundImage', old: el.style.backgroundImage});
-              el.style.backgroundImage = 'url(' + rd.result + ')';
-              el.style.backgroundSize = 'cover';
-              el.style.backgroundPosition = 'center';
+              pushUndo({el: targetEl, prop: 'backgroundImage', old: targetEl.style.backgroundImage});
+              targetEl.style.backgroundImage = 'url(' + dataUrl + ')';
+              targetEl.style.backgroundSize = 'cover';
+              targetEl.style.backgroundPosition = 'center';
             }
-            popup.remove();
-            updateInspector(el);
-          };
-          rd.readAsDataURL(f);
-        });
-        actRow.appendChild(replInp);
-        actRow.appendChild(replBtn);
-
-        // Download
-        var dlBtn = mk('button', 'rb-insp-align-btn');
-        dlBtn.style.cssText = 'flex:1;height:28px;gap:4px;';
-        dlBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span style="font:400 10px \'Instrument Sans\',sans-serif">Download</span>';
-        dlBtn.addEventListener('mousedown', function(ev) {
-          ev.stopImmediatePropagation();
-          var dlUrl = '';
-          if (visualEl && visualEl.tagName === 'IMG') dlUrl = visualEl.src;
-          else if (hasBgImg) { var m = currentBgImg.match(/url\(["']?([^"')]+)["']?\)/); if (m) dlUrl = m[1]; }
-          if (dlUrl) { var a = document.createElement('a'); a.href = dlUrl; a.download = 'image'; a.click(); }
-        }, {capture: true});
-        actRow.appendChild(dlBtn);
-
-        popup.appendChild(actRow);
-        root.appendChild(popup);
-
-        var closeOutside = function(ev) {
-          if (popup && !popup.contains(ev.target) && !imgFieldWrap.contains(ev.target)) {
-            if (popup.parentElement) popup.remove();
-            document.removeEventListener('mousedown', closeOutside, true);
+            imgSwatch.style.backgroundImage = 'url(' + dataUrl + ')';
+            imgSwatch.style.backgroundSize = 'cover';
+            imgSwatch.style.backgroundPosition = 'center';
+            imgLabel.textContent = 'image';
+            imgLabel.style.color = '';
+            imgMinusBtn.style.display = '';
           }
-        };
-        setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 50);
-      }, {capture: true, signal: sig});
-    }
-    addRow(fillSec, 'Image', imgFieldWrap);
+        });
+      }
+    }, {capture: true, signal: sig});
+
+    // Eye button — outside the field
+    var imgEyeBtn = mk('button', 'rb-fill-row-icon');
+    imgEyeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    imgEyeBtn.title = 'Toggle visibility';
+    var imgHidden = false;
+    imgEyeBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      imgHidden = !imgHidden;
+      if (imgHidden) {
+        if (visualEl) visualEl.style.setProperty('visibility', 'hidden', 'important');
+        else el.style.setProperty('background-image', 'none', 'important');
+        imgEyeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+        imgEyeBtn.classList.add('rb-insp-eye-off');
+      } else {
+        if (visualEl) visualEl.style.removeProperty('visibility');
+        else el.style.removeProperty('background-image');
+        imgEyeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+        imgEyeBtn.classList.remove('rb-insp-eye-off');
+      }
+    }, {capture: true, signal: sig});
+    imgEyeBtn.style.display = hasImage ? '' : 'none';
+
+    // Minus button — outside the field
+    var imgMinusBtn = mk('button', 'rb-fill-row-icon');
+    imgMinusBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+    imgMinusBtn.title = 'Remove image';
+    imgMinusBtn.style.display = hasImage ? '' : 'none';
+    imgMinusBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      if (visualEl && visualEl.tagName === 'IMG') {
+        pushUndo({el: visualEl, prop: 'src', old: visualEl.src});
+        visualEl.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      } else {
+        pushUndo({el: el, prop: 'backgroundImage', old: el.style.backgroundImage});
+        el.style.removeProperty('background-image');
+        el.style.removeProperty('background-size');
+        el.style.removeProperty('background-position');
+      }
+      updateInspector(el);
+    }, {capture: true, signal: sig});
+
+    imgRowOuter.appendChild(imgFieldWrap);
+    imgRowOuter.appendChild(imgEyeBtn);
+    imgRowOuter.appendChild(imgMinusBtn);
+    addRow(fillSec, 'Image', imgRowOuter);
 
     // ---- STROKE ----
     var hasStroke = cs.borderStyle !== 'none' && (parseFloat(cs.borderWidth) || 0) > 0;

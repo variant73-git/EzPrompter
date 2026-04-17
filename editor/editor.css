@@ -565,7 +565,7 @@ select.rb-insp-inp:hover { background-color:rgba(255,255,255,0.08); }
 option { background:#1A1A1A; color:#EFEEEB; }
 
 /* ===== 9. COLOR SWATCH ===== */
-.rb-insp-color-row { display:flex; align-items:stretch; gap:6px; }
+.rb-insp-color-row { display:flex; align-items:stretch; gap:6px; height:25px; }
 .rb-insp-swatch {
   width:16px; height:16px; border-radius:8px;
   border:1px solid rgba(255,255,255,0.1);
@@ -631,7 +631,7 @@ option { background:#1A1A1A; color:#EFEEEB; }
 .rb-insp-font-sel {
   width:100%; padding:5px 6px; background:rgba(255,255,255,0.05);
   border:none; border-radius:4px; color:#EFEEEB;
-  font:400 12px 'Instrument Sans',sans-serif;
+  font:400 12px 'Instrument Sans',sans-serif; height:25px;
   -webkit-appearance:none; cursor:pointer; outline:none;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath d='M1 3l3 3 3-3' stroke='%23999' fill='none' stroke-width='1'/%3E%3C/svg%3E"), linear-gradient(to right, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.1) 100%);
   background-repeat:no-repeat, no-repeat;
@@ -859,7 +859,7 @@ option { background:#1A1A1A; color:#EFEEEB; }
 /* ===== STEPPER BUTTONS (inside field) ===== */
 .rb-insp-field-wrap {
   display:flex; align-items:stretch; background:rgba(255,255,255,0.05);
-  border-radius:4px; overflow:hidden;
+  border-radius:4px; overflow:hidden; height:25px;
 }
 .rb-insp-field-wrap .rb-insp-field-icon,
 .rb-insp-field-icon {
@@ -882,8 +882,8 @@ option { background:#1A1A1A; color:#EFEEEB; }
 .rb-insp-step:hover { color:#EFEEEB; background:rgba(255,255,255,0.05); }
 
 /* Generic field background + divider */
-.rb-insp-field-bg { background:rgba(255,255,255,0.05); }
-.rb-insp-field-divider { background:rgba(255,255,255,0.1); }
+.rb-insp-field-bg { background:rgba(255,255,255,0.05); height:25px; }
+.rb-insp-field-divider { background:rgba(255,255,255,0.1); align-self:stretch; }
 
 /* Font size dropdown arrow */
 .rb-insp-fs-arrow { background:none; border-left:1px solid rgba(255,255,255,0.1); color:rgba(239,238,235,0.4); }
@@ -1408,3 +1408,238 @@ body.rb-ed-light .rb-ed-theme-btn { color:rgba(51,51,51,0.5); }
 body.rb-ed-light .rb-ed-theme-btn:hover { color:#333; }
 .rb-ed-theme-btn svg { transition:transform 300ms ease; }
 .rb-ed-theme-btn:active svg { transform:rotate(30deg); }
+
+/* ══════════════ FILL POPUP ══════════════ */
+
+.rb-fill-popup { width:260px; }
+
+/* Header */
+.rb-fill-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding-bottom:8px; margin-bottom:0;
+  border-bottom:1px solid rgba(255,255,255,0.06);
+}
+
+/* Tabs */
+.rb-fill-tabs {
+  display:flex; gap:0; margin:8px 0 10px;
+  border-bottom:1px solid rgba(255,255,255,0.06);
+}
+.rb-fill-tab {
+  flex:1; background:none; border:none; cursor:pointer;
+  font:500 11px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.35); padding:7px 0 9px;
+  border-bottom:2px solid transparent; transition:color 150ms;
+  -webkit-appearance:none; text-align:center;
+}
+.rb-fill-tab:hover { color:rgba(239,238,235,0.7); }
+.rb-fill-tab-active { color:#EFEEEB; border-bottom-color:#7c3aed; }
+
+/* Panel */
+.rb-fill-panel { min-height:40px; }
+
+/* ── Color tab (canvas picker) ── */
+.rb-fill-box-wrap {
+  position:relative; width:232px; height:160px; margin:0 auto 10px;
+  border-radius:8px; overflow:hidden; cursor:crosshair;
+}
+.rb-fill-box-canvas { display:block; width:100%; height:100%; border-radius:8px; }
+.rb-fill-box-handle {
+  position:absolute; width:12px; height:12px; border-radius:50%;
+  border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,0.3), inset 0 0 0 1px rgba(0,0,0,0.3);
+  transform:translate(-50%,-50%); pointer-events:none;
+}
+.rb-fill-slider-wrap {
+  position:relative; width:232px; height:14px; margin:8px auto 0;
+  border-radius:7px; cursor:pointer;
+}
+.rb-fill-slider-canvas { display:block; width:100%; height:100%; border-radius:7px; }
+.rb-fill-slider-handle {
+  position:absolute; top:50%; width:14px; height:14px; border-radius:50%;
+  border:2px solid #fff; box-shadow:0 1px 3px rgba(0,0,0,0.4);
+  transform:translate(-50%,-50%); pointer-events:none; background:transparent;
+}
+
+.rb-fill-ctrl-row {
+  display:flex; align-items:center; gap:6px; margin-top:10px;
+}
+.rb-fill-fmt-select {
+  background:rgba(255,255,255,0.06); border:none; border-radius:4px;
+  color:#EFEEEB; font:500 11px/1 'Instrument Sans',sans-serif;
+  padding:6px 8px 6px 8px; cursor:pointer; -webkit-appearance:none;
+  outline:none; min-width:50px;
+  background-image:
+    linear-gradient(to bottom, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.1) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath d='M1 3l3 3 3-3' stroke='%23999' fill='none' stroke-width='1'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-size:1px 60%, 8px 8px;
+  background-position:right 18px center, right 5px center;
+  padding-right:26px;
+}
+.rb-fill-fmt-select option { background:#1A1A1A; color:#EFEEEB; }
+.rb-fill-val-inp {
+  flex:1; background:rgba(255,255,255,0.06); border:none; border-radius:4px;
+  color:#EFEEEB; font:400 11px/1 'Instrument Sans',sans-serif;
+  padding:6px 8px; outline:none; min-width:0;
+}
+.rb-fill-alpha-inp {
+  width:44px; background:rgba(255,255,255,0.06); border:none; border-radius:4px;
+  color:#EFEEEB; font:400 11px/1 'Instrument Sans',sans-serif;
+  padding:6px 8px; text-align:right; outline:none; flex-shrink:0;
+}
+
+/* ── Outer row: field + eye + minus ── */
+.rb-fill-row-outer {
+  display:flex; align-items:center; gap:4px;
+}
+.rb-fill-row-icon {
+  background:none; border:none; cursor:pointer; padding:0;
+  width:18px; height:18px; flex-shrink:0;
+  color:rgba(239,238,235,0.25); transition:color 150ms;
+  display:flex; align-items:center; justify-content:center;
+  -webkit-appearance:none; border-radius:4px;
+}
+.rb-fill-row-icon:hover { color:rgba(239,238,235,0.6); }
+.rb-fill-row-icon.rb-insp-eye-off { color:rgba(239,238,235,0.15); }
+
+/* ── Gradient tab ── */
+.rb-fill-grad-type-row {
+  display:flex; align-items:center; gap:6px; margin-bottom:10px;
+}
+.rb-fill-icon-btn {
+  background:none; border:none; cursor:pointer; color:rgba(239,238,235,0.4);
+  display:flex; align-items:center; justify-content:center;
+  width:24px; height:24px; border-radius:4px; transition:color 150ms;
+  -webkit-appearance:none; font-size:12px; padding:0;
+}
+.rb-fill-icon-btn:hover { color:#EFEEEB; background:rgba(255,255,255,0.06); }
+
+.rb-fill-grad-preview {
+  width:100%; height:32px; border-radius:8px;
+  border:1px solid rgba(255,255,255,0.08); margin-bottom:10px;
+  position:relative; overflow:visible;
+}
+.rb-fill-grad-handle {
+  position:absolute; top:-4px; width:12px; height:12px;
+  border-radius:50%; border:2px solid rgba(255,255,255,0.8);
+  transform:translateX(-50%); cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.4);
+  transition:box-shadow 150ms;
+}
+.rb-fill-grad-handle-sel {
+  border-color:#7c3aed; box-shadow:0 0 0 2px rgba(124,58,237,0.4);
+}
+
+.rb-fill-grad-stops-hd {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:6px;
+}
+.rb-fill-grad-stops { display:flex; flex-direction:column; gap:4px; }
+
+.rb-fill-grad-stop-row {
+  display:flex; align-items:center; gap:4px;
+  padding:4px 6px; border-radius:6px;
+  background:rgba(255,255,255,0.03); transition:background 150ms;
+}
+.rb-fill-grad-stop-sel { background:rgba(124,58,237,0.12); }
+
+.rb-fill-stop-pos {
+  width:42px; background:rgba(255,255,255,0.06); border:none; border-radius:4px;
+  color:#EFEEEB; font:400 11px/1 'Instrument Sans',sans-serif;
+  padding:5px 6px; text-align:center; outline:none;
+}
+.rb-fill-stop-swatch {
+  width:20px; height:20px; border-radius:4px;
+  border:1px solid rgba(255,255,255,0.1); flex-shrink:0;
+  cursor:pointer;
+}
+.rb-fill-stop-hex {
+  flex:1; background:none; border:none;
+  color:#EFEEEB; font:400 11px/1 'Instrument Sans',sans-serif;
+  padding:5px 4px; outline:none; min-width:0;
+}
+.rb-fill-stop-alpha {
+  width:30px; background:none; border:none;
+  color:#EFEEEB; font:400 11px/1 'Instrument Sans',sans-serif;
+  padding:5px 2px; text-align:right; outline:none;
+}
+.rb-fill-stop-remove {
+  font-size:14px; width:20px; height:20px; flex-shrink:0;
+  color:rgba(239,238,235,0.25);
+}
+.rb-fill-stop-remove:hover { color:#ef4444; }
+
+/* ── Image tab ── */
+.rb-fill-img-area {
+  width:100%; aspect-ratio:1; border-radius:10px;
+  background:linear-gradient(45deg,rgba(255,255,255,0.06) 25%,transparent 25%,transparent 75%,rgba(255,255,255,0.06) 75%),
+             linear-gradient(45deg,rgba(255,255,255,0.06) 25%,transparent 25%,transparent 75%,rgba(255,255,255,0.06) 75%);
+  background-size:16px 16px; background-position:0 0, 8px 8px;
+  display:flex; align-items:center; justify-content:center;
+  position:relative; overflow:hidden;
+  border:1px solid rgba(255,255,255,0.06);
+}
+.rb-fill-img-area.rb-fill-img-has { background-size:cover; }
+
+.rb-fill-img-upload-btn {
+  background:#7c3aed; color:#fff; border:none; border-radius:20px;
+  font:500 12px/1 'Instrument Sans',sans-serif;
+  padding:10px 20px; cursor:pointer; transition:background 150ms;
+  -webkit-appearance:none; z-index:1;
+}
+.rb-fill-img-upload-btn:hover { background:#6d28d9; }
+
+/* ── Effects tab ── */
+.rb-fill-fx-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:6px;
+  max-height:240px; overflow-y:auto; padding-right:2px;
+}
+.rb-fill-fx-grid::-webkit-scrollbar { width:3px; }
+.rb-fill-fx-grid::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:3px; }
+
+.rb-fill-fx-card {
+  border-radius:8px; overflow:hidden; cursor:pointer;
+  border:2px solid transparent; transition:border-color 150ms;
+}
+.rb-fill-fx-card:hover { border-color:rgba(255,255,255,0.15); }
+.rb-fill-fx-selected { border-color:#7c3aed !important; }
+
+.rb-fill-fx-thumb {
+  width:100%; height:64px; border-radius:6px 6px 0 0;
+}
+.rb-fill-fx-label {
+  display:block; text-align:center; padding:4px 0;
+  font:400 10px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.5); background:rgba(255,255,255,0.03);
+}
+
+/* ══════════ FILL POPUP — LIGHT MODE ══════════ */
+body.rb-ed-light .rb-fill-header { border-bottom-color:rgba(0,0,0,0.06); }
+body.rb-ed-light .rb-fill-tabs { border-bottom-color:rgba(0,0,0,0.06); }
+body.rb-ed-light .rb-fill-tab { color:rgba(51,51,51,0.35); }
+body.rb-ed-light .rb-fill-tab:hover { color:rgba(51,51,51,0.7); }
+body.rb-ed-light .rb-fill-tab-active { color:#333; border-bottom-color:#7c3aed; }
+body.rb-ed-light .rb-fill-fmt-select {
+  background-color:rgba(0,0,0,0.05); color:#333;
+  background-image:
+    linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.1) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath d='M1 3l3 3 3-3' stroke='%23555' fill='none' stroke-width='1'/%3E%3C/svg%3E");
+}
+body.rb-ed-light .rb-fill-fmt-select option { background:#E8E8E8; color:#333; }
+body.rb-ed-light .rb-fill-val-inp { background:rgba(0,0,0,0.05); color:#333; }
+body.rb-ed-light .rb-fill-alpha-inp { background:rgba(0,0,0,0.05); color:#333; }
+body.rb-ed-light .rb-fill-icon-btn { color:rgba(51,51,51,0.4); }
+body.rb-ed-light .rb-fill-icon-btn:hover { color:#333; background:rgba(0,0,0,0.05); }
+body.rb-ed-light .rb-fill-grad-preview { border-color:rgba(0,0,0,0.1); }
+body.rb-ed-light .rb-fill-grad-stop-row { background:rgba(0,0,0,0.03); }
+body.rb-ed-light .rb-fill-grad-stop-sel { background:rgba(124,58,237,0.08); }
+body.rb-ed-light .rb-fill-stop-pos { background:rgba(0,0,0,0.05); color:#333; }
+body.rb-ed-light .rb-fill-stop-hex { color:#333; }
+body.rb-ed-light .rb-fill-stop-alpha { color:#333; }
+body.rb-ed-light .rb-fill-stop-remove { color:rgba(51,51,51,0.25); }
+body.rb-ed-light .rb-fill-img-area { border-color:rgba(0,0,0,0.08); background:linear-gradient(45deg,rgba(0,0,0,0.04) 25%,transparent 25%,transparent 75%,rgba(0,0,0,0.04) 75%),linear-gradient(45deg,rgba(0,0,0,0.04) 25%,transparent 25%,transparent 75%,rgba(0,0,0,0.04) 75%); background-size:16px 16px; background-position:0 0, 8px 8px; }
+body.rb-ed-light .rb-fill-fx-card:hover { border-color:rgba(0,0,0,0.15); }
+body.rb-ed-light .rb-fill-fx-label { color:rgba(51,51,51,0.5); background:rgba(0,0,0,0.03); }
+body.rb-ed-light .rb-fill-fx-grid::-webkit-scrollbar-thumb { background:rgba(0,0,0,0.1); }
+body.rb-ed-light .rb-fill-row-icon { color:rgba(51,51,51,0.25); }
+body.rb-ed-light .rb-fill-row-icon:hover { color:rgba(51,51,51,0.6); }
+body.rb-ed-light .rb-fill-row-icon.rb-insp-eye-off { color:rgba(51,51,51,0.15); }
