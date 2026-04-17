@@ -112,6 +112,12 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 41. ✅ Per-row eye + minus — cada campo (Background, Image, Colors) tem toggle visibility + remove
 42. ✅ Tab switching preserves state — Color re-aplica cor ao voltar, Gradient só aplica quando ativado
 43. ✅ Uniform field height — todos os campos do inspector têm 25px
+44. ✅ Text colors centralizadas em Fill — movidas de Typography, widget completo com 4 abas
+45. ✅ background-clip:text — gradientes, imagens e efeitos animados dentro do texto
+46. ✅ Gradient handles draggáveis — arrastar stops na preview bar, click para adicionar
+47. ✅ Effects via ::before — pseudo-element com opacity independente, não afeta conteúdo nested
+48. ✅ Frosted glass popups — backdrop-filter:blur(40px) no modo undocked
+49. ✅ Image como elemento — upload cria `<img>` real, não background-image
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.
@@ -316,3 +322,6 @@ Ferramenta de **inspiração e aprendizado** — designer edita para criar algo 
 - **Todos os campos do inspector devem ter 25px de altura** — sem exceção
 - Fill popup: iro.js não funciona em sites com CSP restritivo — usar canvas picker nativo
 - Fill popup: `background` shorthand sobrepõe `background-color` — limpar shorthand ao re-aplicar cor sólida
+- `chrome.scripting.insertCSS` cria stylesheets na user-origin — `!important` delas bate inline `!important`. Animações do site devem ser congeladas via JS, não CSS
+- Effects usam `::before` com `z-index:-1` para não cobrir conteúdo. Opacity do efeito é controlada no pseudo-element via `<style>` tag per-element
+- Popup deve ler `cs.color` ou `cs.backgroundColor` conforme o `prop` — ler sempre `backgroundColor` causa alpha=0 quando o popup é aberto para texto

@@ -13,6 +13,20 @@
     }
   } catch(detectErr) {}
 
+  // Freeze site animations via JS (not CSS, because insertCSS user-origin !important
+  // cannot be overridden by inline !important for .rb-fx-active elements)
+  (function freezeSiteAnimations() {
+    document.querySelectorAll('*').forEach(function(node) {
+      if (node.nodeType !== 1) return;
+      if (node.closest('#rb-editor-root') || node.closest('#rb-editor-inspector') || node.closest('#rb-ed-banner')) return;
+      var cs = window.getComputedStyle(node);
+      if (cs.animationName && cs.animationName !== 'none') {
+        node.style.setProperty('animation-play-state', 'paused');
+        node.setAttribute('data-rb-frozen-anim', '1');
+      }
+    });
+  })();
+
   var selectedEl = null, lastHoverEl = null, isDragging = false;
   var selectionDepth = 0;
   var selectionAncestor = null;
@@ -3088,142 +3102,19 @@
 
     // Case and Decoration moved to Typography settings popup (⋯ icon)
 
-    // Text colors — unified list: own color + distinct child colors
-    var colorEntries = []; // {hex, targets: [elements], isSelf: bool}
-    var selfHex = rgbHex(cs.color);
-    if (selfHex) colorEntries.push({hex: selfHex, targets: [el], isSelf: true});
-    if (el.children.length > 0) {
-      var colorMap = {};
-      el.querySelectorAll('*').forEach(function(child) {
-        if (child.closest('svg')) return;
-        var hasText = false;
-        for (var cn = 0; cn < child.childNodes.length; cn++) {
-          if (child.childNodes[cn].nodeType === 3 && child.childNodes[cn].textContent.trim().length > 0) { hasText = true; break; }
-        }
-        if (!hasText) return;
-        var cr = child.getBoundingClientRect();
-        if (cr.width < 1 || cr.height < 1) return;
-        var cc = getCS(child).color;
-        var hex = rgbHex(cc);
-        if (!hex) return;
-        if (hex === selfHex) {
-          colorEntries[0].targets.push(child);
-        } else {
-          if (!colorMap[hex]) colorMap[hex] = [];
-          colorMap[hex].push(child);
-        }
-      });
-      Object.keys(colorMap).forEach(function(hex) {
-        colorEntries.push({hex: hex, targets: colorMap[hex], isSelf: false});
-      });
-    }
-    if (colorEntries.length > 0) {
-      var colorsStack = mk('div');
-      colorsStack.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
-      var maxVisible = 4;
-      var hiddenColors = [];
-      colorEntries.forEach(function(entry, idx) {
-        var colorOuter = mk('div', 'rb-fill-row-outer');
-        if (idx >= maxVisible) { colorOuter.style.display = 'none'; hiddenColors.push(colorOuter); }
-        var colorRow = mk('div', 'rb-insp-field-wrap');
-        colorRow.style.cssText = 'display:flex;align-items:stretch;gap:6px;padding:0 6px;cursor:pointer;flex:1;min-width:0;';
-        var sw = mk('div', 'rb-insp-swatch');
-        sw.style.background = entry.hex;
-        sw.title = entry.hex;
-        var hexTxt = mk('span', 'rb-insp-val');
-        hexTxt.textContent = entry.hex;
-        hexTxt.style.cssText = 'flex:1;background:none;';
-        var cDiv = mk('div');
-        cDiv.style.cssText = 'width:1px;align-self:stretch;background:rgba(255,255,255,0.1);flex-shrink:0;';
-        var cAlpha = mk('span', 'rb-insp-val');
-        cAlpha.textContent = '100%';
-        cAlpha.style.cssText = 'width:42px;text-align:right;flex:none;background:none;';
-        // Click swatch/row → open color-only popup
-        (function(ent, sw2, hexTxt2, cAlpha2) {
-          colorRow.addEventListener('mousedown', function(e) {
-            e.stopImmediatePropagation();
-            if (window.__rbFillPopup) {
-              window.__rbFillPopup.openColorOnly(sw2, inspector, root, ent.hex, 100, function(newHex, newAlpha) {
-                sw2.style.background = newAlpha < 100
-                  ? 'rgba(' + parseInt(newHex.slice(1,3),16) + ',' + parseInt(newHex.slice(3,5),16) + ',' + parseInt(newHex.slice(5,7),16) + ',' + (newAlpha/100) + ')'
-                  : newHex;
-                sw2.title = newHex;
-                hexTxt2.textContent = newHex;
-                cAlpha2.textContent = newAlpha + '%';
-                var r = parseInt(newHex.slice(1,3),16), g = parseInt(newHex.slice(3,5),16), b = parseInt(newHex.slice(5,7),16);
-                var cssVal = newAlpha < 100 ? 'rgba(' + r + ',' + g + ',' + b + ',' + (newAlpha/100) + ')' : newHex;
-                ent.targets.forEach(function(t) { applyStyle(t, 'color', cssVal); });
-              });
-            }
-          }, {capture: true, signal: sig});
-        })(entry, sw, hexTxt, cAlpha);
-        colorRow.appendChild(sw);
-        colorRow.appendChild(hexTxt);
-        colorRow.appendChild(cDiv);
-        colorRow.appendChild(cAlpha);
-        // Eye button
-        var cEye = mk('button', 'rb-fill-row-icon');
-        cEye.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-        cEye.title = 'Toggle visibility';
-        var cHidden = false;
-        (function(ent2, eye2) {
-          eye2.addEventListener('mousedown', function(e) {
-            e.stopImmediatePropagation();
-            cHidden = !cHidden;
-            ent2.targets.forEach(function(t) {
-              t.style.setProperty('color', cHidden ? 'transparent' : ent2.hex, 'important');
-            });
-            eye2.innerHTML = cHidden
-              ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
-              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-            eye2.classList.toggle('rb-insp-eye-off', cHidden);
-          }, {capture: true, signal: sig});
-        })(entry, cEye);
-        // Minus button
-        var cMinus = mk('button', 'rb-fill-row-icon');
-        cMinus.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
-        cMinus.title = 'Remove color';
-        (function(ent3) {
-          cMinus.addEventListener('mousedown', function(e) {
-            e.stopImmediatePropagation();
-            ent3.targets.forEach(function(t) { t.style.removeProperty('color'); });
-            updateInspector(el);
-          }, {capture: true, signal: sig});
-        })(entry);
-        colorOuter.appendChild(colorRow);
-        colorOuter.appendChild(cEye);
-        colorOuter.appendChild(cMinus);
-        colorsStack.appendChild(colorOuter);
-      });
-      // "Show more" pill button
-      if (hiddenColors.length > 0) {
-        var morePill = mk('button');
-        morePill.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:3px;width:100%;padding:4px 0;background:rgba(255,255,255,0.04);border:none;border-radius:12px;cursor:pointer;-webkit-appearance:none;';
-        morePill.innerHTML = '<span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span><span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span><span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span>';
-        morePill.title = hiddenColors.length + ' more colors';
-        var colorsExpanded = false;
-        morePill.addEventListener('mousedown', function(e) {
-          e.stopImmediatePropagation();
-          colorsExpanded = !colorsExpanded;
-          hiddenColors.forEach(function(r) { r.style.display = colorsExpanded ? '' : 'none'; });
-          if (colorsExpanded) {
-            morePill.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(239,238,235,0.4)" stroke-width="2" stroke-linecap="round"><path d="M18 15l-6-6-6 6"/></svg>';
-            morePill.title = 'Show less';
-          } else {
-            morePill.innerHTML = '<span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span><span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span><span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span>';
-            morePill.title = hiddenColors.length + ' more colors';
-          }
-        }, {capture: true});
-        colorsStack.appendChild(morePill);
-      }
-      addRow(typSec, 'Colors', colorsStack);
-    }
+    // Text colors detection — moved to Fill section below
 
     // ---- FILL ----
     var hasBg = cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent';
     var _fillBgImg = cs.backgroundImage;
-    var _fillHasImg = (_fillBgImg && _fillBgImg !== 'none') || el.tagName === 'IMG' || el.tagName === 'SVG' || (el.tagName && el.tagName.toLowerCase() === 'svg') || el.querySelector(':scope > img') || el.querySelector(':scope > svg');
-    var hasFill = hasBg || _fillHasImg;
+    var _hasBgImg = _fillBgImg && _fillBgImg !== 'none';
+    var _hasAnimation = cs.animationName && cs.animationName !== 'none';
+    var _hasFxBefore = el.classList.contains('rb-fx-active');
+    var hasBgAny = hasBg || _hasBgImg || _hasAnimation || _hasFxBefore;
+    var _fillHasVisualEl = el.tagName === 'IMG' || el.tagName === 'SVG' || (el.tagName && el.tagName.toLowerCase() === 'svg') || el.querySelector(':scope > img') || el.querySelector(':scope > svg');
+    // Check if element or children have text (for text color rows)
+    var _hasTextColor = !!rgbHex(cs.color);
+    var hasFill = hasBgAny || _fillHasVisualEl || _hasTextColor;
     var fillSec = addSection('Fill', !hasFill);
     var fillHd = fillSec.parentElement.querySelector('.rb-insp-sec-hd');
     if (!hasFill) {
@@ -3244,25 +3135,83 @@
     bgWrap.style.cssText = 'display:flex;align-items:center;gap:6px;border-radius:4px;padding:0 6px;cursor:pointer;flex:1;min-width:0;';
     var bgSwatch = mk('div', 'rb-insp-swatch');
     var bgHex = rgbHex(cs.backgroundColor);
-    var bgDisplayVal = bgHex || 'transparent';
-    bgSwatch.style.background = isTransparent(cs.backgroundColor) ? 'linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%),linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%)' : cs.backgroundColor;
-    if (isTransparent(cs.backgroundColor)) { bgSwatch.style.backgroundSize = '8px 8px'; bgSwatch.style.backgroundPosition = '0 0, 4px 4px'; }
+    var bgDisplayVal, bgAlphaVal;
+    var _hasCssGradient = _hasBgImg && _fillBgImg.indexOf('gradient') !== -1;
+    // Detect what kind of background is active
+    if (_hasFxBefore || _hasAnimation) {
+      // Effect active via ::before — show effect name and opacity
+      bgSwatch.style.cssText += 'overflow:hidden;';
+      if (_hasBgImg) bgSwatch.style.backgroundImage = _fillBgImg;
+      if (hasBg) bgSwatch.style.backgroundColor = cs.backgroundColor;
+      bgSwatch.style.backgroundSize = 'cover';
+      // Read current opacity from the per-element style tag
+      var _fxOpacity = 100;
+      var _fxStyleTag = el.id ? document.getElementById(el.id + '-rb-fx') : null;
+      if (_fxStyleTag) {
+        var opMatch = _fxStyleTag.textContent.match(/opacity\s*:\s*([\d.]+)/);
+        if (opMatch) _fxOpacity = Math.round(parseFloat(opMatch[1]) * 100);
+      }
+      bgDisplayVal = 'effect';
+      bgAlphaVal = _fxOpacity + '%';
+    } else if (_hasCssGradient) {
+      bgSwatch.style.background = _fillBgImg;
+      bgDisplayVal = 'gradient';
+      bgAlphaVal = '100%';
+    } else if (hasBg) {
+      bgSwatch.style.background = cs.backgroundColor;
+      bgDisplayVal = bgHex || 'transparent';
+      var bgAlphaMatch = cs.backgroundColor.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+      bgAlphaVal = (bgAlphaMatch && bgAlphaMatch[4] !== undefined ? Math.round(parseFloat(bgAlphaMatch[4]) * 100) : 100) + '%';
+    } else {
+      bgSwatch.style.background = 'linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%),linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%)';
+      bgSwatch.style.backgroundSize = '8px 8px'; bgSwatch.style.backgroundPosition = '0 0, 4px 4px';
+      bgDisplayVal = 'transparent';
+      bgAlphaVal = '';
+    }
     var bgTxt = mk('span', 'rb-insp-val');
     bgTxt.textContent = bgDisplayVal;
     bgTxt.style.cssText = 'flex:1;background:none;padding:0;';
-    var bgAlphaMatch = cs.backgroundColor.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
-    var bgCurAlpha = bgAlphaMatch && bgAlphaMatch[4] !== undefined ? Math.round(parseFloat(bgAlphaMatch[4]) * 100) : 100;
     var bgDivider = mk('div', 'rb-insp-field-divider');
     bgDivider.style.cssText = 'width:1px;align-self:stretch;flex-shrink:0;';
-    var bgAlphaLabel = mk('span', 'rb-insp-val');
-    bgAlphaLabel.textContent = bgCurAlpha + '%';
-    bgAlphaLabel.style.cssText = 'width:36px;text-align:right;flex:none;background:none;';
+    if (!bgAlphaVal) bgDivider.style.display = 'none';
+    var bgAlphaLabel = mk('input', 'rb-insp-inp');
+    bgAlphaLabel.value = bgAlphaVal;
+    bgAlphaLabel.style.cssText = 'width:42px;text-align:right;flex:none;background:none;';
+    if (!bgAlphaVal) bgAlphaLabel.style.display = 'none';
+    function showBgAlpha(val) {
+      bgAlphaLabel.value = val;
+      bgDivider.style.display = val ? '' : 'none';
+      bgAlphaLabel.style.display = val ? '' : 'none';
+    }
+    bgAlphaLabel.addEventListener('change', function() {
+      var pct = parseInt(bgAlphaLabel.value) || 100;
+      pct = Math.max(0, Math.min(100, pct));
+      bgAlphaLabel.value = pct + '%';
+      // If effect active (::before), update opacity in the per-element style tag
+      if (el.classList.contains('rb-fx-active') && el.id) {
+        var fxTag = document.getElementById(el.id + '-rb-fx');
+        if (fxTag) {
+          fxTag.textContent = fxTag.textContent.replace(/opacity\s*:\s*[\d.]+/, 'opacity:' + (pct / 100));
+        }
+      } else {
+        // Solid color — adjust rgba alpha
+        var curBgColor = getCS(el).backgroundColor;
+        var m = curBgColor.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
+        if (m) {
+          var rgba = 'rgba(' + m[1] + ',' + m[2] + ',' + m[3] + ',' + (pct / 100) + ')';
+          el.style.setProperty('background-color', rgba, 'important');
+          bgSwatch.style.background = rgba;
+        }
+      }
+    }, {signal: sig});
+    bgAlphaLabel.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); bgAlphaLabel.blur(); } });
+    bgAlphaLabel.addEventListener('mousedown', function(e) { e.stopPropagation(); });
 
     // Minus button to remove background
     var bgMinusBtn = mk('button', 'rb-fill-row-icon');
     bgMinusBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
     bgMinusBtn.title = 'Remove background';
-    bgMinusBtn.style.display = hasBg ? '' : 'none';
+    bgMinusBtn.style.display = hasBgAny ? '' : 'none';
     bgMinusBtn.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
       applyStyle(el, 'backgroundColor', 'transparent');
@@ -3271,6 +3220,12 @@
       el.style.removeProperty('background-size');
       el.style.removeProperty('background-position');
       el.style.removeProperty('animation');
+      el.style.removeProperty('animation-play-state');
+      // Clean up ::before effect
+      el.classList.remove('rb-fx-active');
+      el.removeAttribute('data-rb-fx-css');
+      el.removeAttribute('data-rb-fx-name');
+      if (el.id) { var fxTag = document.getElementById(el.id + '-rb-fx'); if (fxTag) fxTag.remove(); }
       updateInspector(el);
     }, {capture: true, signal: sig});
 
@@ -3283,37 +3238,59 @@
             var newHex = rgbHex(cssVal);
             bgTxt.textContent = newHex || cssVal;
             var am = cssVal.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
-            bgAlphaLabel.textContent = (am && am[4] !== undefined ? Math.round(parseFloat(am[4]) * 100) : 100) + '%';
+            showBgAlpha((am && am[4] !== undefined ? Math.round(parseFloat(am[4]) * 100) : 100) + '%');
             bgMinusBtn.style.display = '';
+            bgEyeBtn.style.display = '';
           },
           applyGradient: function(targetEl, gradCSS) {
             pushUndo({el: targetEl, prop: 'background', old: targetEl.style.background});
             targetEl.style.setProperty('background', gradCSS, 'important');
             bgTxt.textContent = 'gradient';
-            bgAlphaLabel.textContent = '';
+            showBgAlpha('100%');
             bgMinusBtn.style.display = '';
+            bgEyeBtn.style.display = '';
           },
           applyEffect: function(targetEl, fx) {
-            pushUndo({el: targetEl, prop: 'background', old: targetEl.style.background});
-            var cssProps = fx.css.split(';').filter(function(s) { return s.trim(); });
-            cssProps.forEach(function(rule) {
-              var parts = rule.split(':');
-              if (parts.length >= 2) {
-                var p = parts[0].trim();
-                var v = parts.slice(1).join(':').trim();
-                targetEl.style.setProperty(p, v, 'important');
-              }
-            });
+            pushUndo({el: targetEl, prop: '__rb-fx', old: targetEl.getAttribute('data-rb-fx-css') || ''});
+            targetEl.classList.add('rb-fx-active');
+            // Ensure element has an ID for the ::before selector
+            if (!targetEl.id) targetEl.id = 'rb-fx-el-' + Date.now();
+            // Store effect CSS for later reference
+            targetEl.setAttribute('data-rb-fx-css', fx.css);
+            targetEl.setAttribute('data-rb-fx-name', fx.name);
+            // Make element a positioning context for ::before
+            var curPos = getCS(targetEl).position;
+            if (curPos === 'static') targetEl.style.setProperty('position', 'relative', 'important');
+            // Inject per-element <style> for ::before
+            var fxTagId = targetEl.id + '-rb-fx';
+            var existingTag = document.getElementById(fxTagId);
+            if (existingTag) existingTag.remove();
+            var fxTag = document.createElement('style');
+            fxTag.id = fxTagId;
+            fxTag.textContent = '#' + targetEl.id + '::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;border-radius:inherit;' + fx.css + 'opacity:1;}';
+            document.head.appendChild(fxTag);
+            // Clear any direct background from the element (effect is now on ::before)
+            targetEl.style.removeProperty('background');
+            targetEl.style.removeProperty('background-image');
+            targetEl.style.removeProperty('background-color');
+            targetEl.style.removeProperty('animation');
             bgSwatch.style.cssText = fx.css + 'width:16px;height:16px;border-radius:8px;flex-shrink:0;';
             bgTxt.textContent = fx.name.toLowerCase();
-            bgAlphaLabel.textContent = '';
+            showBgAlpha('100%');
             bgMinusBtn.style.display = '';
+            bgEyeBtn.style.display = '';
           },
           applyBgImage: function(targetEl, dataUrl) {
             pushUndo({el: targetEl, prop: 'backgroundImage', old: targetEl.style.backgroundImage});
             targetEl.style.backgroundImage = 'url(' + dataUrl + ')';
             targetEl.style.backgroundSize = 'cover';
             targetEl.style.backgroundPosition = 'center';
+            bgSwatch.style.backgroundImage = 'url(' + dataUrl + ')';
+            bgSwatch.style.backgroundSize = 'cover';
+            bgTxt.textContent = 'image';
+            showBgAlpha('100%');
+            bgMinusBtn.style.display = '';
+            bgEyeBtn.style.display = '';
           }
         });
       }
@@ -3329,33 +3306,55 @@
     bgEyeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
     bgEyeBtn.title = 'Toggle visibility';
     var bgHidden = false;
-    var bgOrigBg = cs.backgroundColor;
+    var bgOrigStyles = {};
+    var bgFxTagBackup = null;
     bgEyeBtn.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
       bgHidden = !bgHidden;
       if (bgHidden) {
-        el.style.setProperty('background-color', 'transparent', 'important');
+        bgOrigStyles = { bg: el.style.background, bgColor: el.style.backgroundColor, bgImage: el.style.backgroundImage, animation: el.style.animation, hasFxClass: el.classList.contains('rb-fx-active') };
+        // Hide ::before effect by removing its style tag
+        if (el.id) {
+          var fxTag = document.getElementById(el.id + '-rb-fx');
+          if (fxTag) { bgFxTagBackup = fxTag.textContent; fxTag.remove(); }
+        }
         el.style.setProperty('background', 'none', 'important');
+        el.style.setProperty('background-color', 'transparent', 'important');
+        el.style.setProperty('animation', 'none', 'important');
         bgEyeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
         bgEyeBtn.classList.add('rb-insp-eye-off');
       } else {
-        el.style.setProperty('background-color', bgOrigBg, 'important');
-        el.style.removeProperty('background');
+        if (bgOrigStyles.bg) el.style.setProperty('background', bgOrigStyles.bg, 'important');
+        else el.style.removeProperty('background');
+        if (bgOrigStyles.bgColor) el.style.setProperty('background-color', bgOrigStyles.bgColor, 'important');
+        else el.style.removeProperty('background-color');
+        if (bgOrigStyles.bgImage) el.style.setProperty('background-image', bgOrigStyles.bgImage, 'important');
+        else el.style.removeProperty('background-image');
+        if (bgOrigStyles.animation) el.style.setProperty('animation', bgOrigStyles.animation, 'important');
+        else el.style.removeProperty('animation');
+        // Restore ::before effect
+        if (bgOrigStyles.hasFxClass && bgFxTagBackup && el.id) {
+          var restoredTag = document.createElement('style');
+          restoredTag.id = el.id + '-rb-fx';
+          restoredTag.textContent = bgFxTagBackup;
+          document.head.appendChild(restoredTag);
+          bgFxTagBackup = null;
+        }
         bgEyeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
         bgEyeBtn.classList.remove('rb-insp-eye-off');
       }
     }, {capture: true, signal: sig});
-    bgEyeBtn.style.display = hasBg ? '' : 'none';
+    bgEyeBtn.style.display = hasBgAny ? '' : 'none';
 
     // Minus button — outside the field
-    bgMinusBtn.style.display = hasBg ? '' : 'none';
+    bgMinusBtn.style.display = hasBgAny ? '' : 'none';
 
     bgRowOuter.appendChild(bgWrap);
     bgRowOuter.appendChild(bgEyeBtn);
     bgRowOuter.appendChild(bgMinusBtn);
     addRow(fillSec, 'Background', bgRowOuter);
 
-    // ---- IMAGE ROW (only real images, not gradients/effects) ----
+    // ---- IMAGE ROW (only actual <img>/<svg> elements, not CSS backgrounds) ----
     var visualEl = null;
     if (el.tagName === 'IMG') visualEl = el;
     else if (el.tagName === 'SVG' || (el.tagName && el.tagName.toLowerCase() === 'svg')) visualEl = el;
@@ -3365,10 +3364,7 @@
       if (childImg) visualEl = childImg;
       else if (childSvg) visualEl = childSvg;
     }
-    var currentBgImg = cs.backgroundImage;
-    // Only count real image URLs, not CSS gradients
-    var hasBgImg = currentBgImg && currentBgImg !== 'none' && currentBgImg.indexOf('url(') !== -1;
-    var hasImage = visualEl || hasBgImg;
+    var hasImage = !!visualEl;
 
     var imgRowOuter = mk('div', 'rb-fill-row-outer');
     var imgFieldWrap = mk('div', 'rb-insp-color-row rb-insp-field-bg');
@@ -3377,19 +3373,13 @@
     var imgSwatch = mk('div', 'rb-insp-swatch');
     if (hasImage) {
       imgSwatch.style.cssText += 'overflow:hidden;position:relative;';
-      if (visualEl) {
-        var vTag = visualEl.tagName.toUpperCase();
-        if (vTag === 'IMG') {
-          imgSwatch.style.backgroundImage = 'url(' + visualEl.src + ')';
-          imgSwatch.style.backgroundSize = 'cover';
-          imgSwatch.style.backgroundPosition = 'center';
-        } else {
-          imgSwatch.style.background = '#222';
-        }
-      } else {
-        imgSwatch.style.backgroundImage = currentBgImg;
+      var vTag = visualEl.tagName.toUpperCase();
+      if (vTag === 'IMG') {
+        imgSwatch.style.backgroundImage = 'url(' + visualEl.src + ')';
         imgSwatch.style.backgroundSize = 'cover';
         imgSwatch.style.backgroundPosition = 'center';
+      } else {
+        imgSwatch.style.background = '#222';
       }
     } else {
       imgSwatch.style.background = 'linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%),linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%)';
@@ -3401,12 +3391,8 @@
     var imgLabel = mk('span', 'rb-insp-val');
     imgLabel.style.cssText = 'flex:1;background:none;padding:0;';
     if (hasImage) {
-      if (visualEl) {
-        var vTag2 = visualEl.tagName.toUpperCase();
-        imgLabel.textContent = vTag2 === 'IMG' ? 'image' : 'SVG';
-      } else {
-        imgLabel.textContent = 'image';
-      }
+      var vTag2 = visualEl.tagName.toUpperCase();
+      imgLabel.textContent = vTag2 === 'IMG' ? 'image' : 'SVG';
     } else {
       imgLabel.textContent = 'none';
       imgLabel.style.color = 'rgba(239,238,235,0.3)';
@@ -3420,13 +3406,17 @@
         window.__rbFillPopup.openImage(imgSwatch, inspector, root, el, sig, {
           applyImage: function(targetEl, dataUrl) {
             if (visualEl && visualEl.tagName === 'IMG') {
+              // Replace existing img src
               pushUndo({el: visualEl, prop: 'src', old: visualEl.src});
               visualEl.src = dataUrl;
             } else {
-              pushUndo({el: targetEl, prop: 'backgroundImage', old: targetEl.style.backgroundImage});
-              targetEl.style.backgroundImage = 'url(' + dataUrl + ')';
-              targetEl.style.backgroundSize = 'cover';
-              targetEl.style.backgroundPosition = 'center';
+              // Insert a new <img> inside the div
+              var newImg = document.createElement('img');
+              newImg.src = dataUrl;
+              newImg.style.cssText = 'width:100%;height:auto;display:block;';
+              pushUndo({el: targetEl, prop: '__insertedImg', old: null});
+              targetEl.appendChild(newImg);
+              visualEl = newImg;
             }
             imgSwatch.style.backgroundImage = 'url(' + dataUrl + ')';
             imgSwatch.style.backgroundSize = 'cover';
@@ -3434,6 +3424,7 @@
             imgLabel.textContent = 'image';
             imgLabel.style.color = '';
             imgMinusBtn.style.display = '';
+            imgEyeBtn.style.display = '';
           }
         });
       }
@@ -3470,12 +3461,14 @@
       e.stopImmediatePropagation();
       if (visualEl && visualEl.tagName === 'IMG') {
         pushUndo({el: visualEl, prop: 'src', old: visualEl.src});
-        visualEl.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-      } else {
-        pushUndo({el: el, prop: 'backgroundImage', old: el.style.backgroundImage});
-        el.style.removeProperty('background-image');
-        el.style.removeProperty('background-size');
-        el.style.removeProperty('background-position');
+        // Remove the img element if it was inserted by us, otherwise clear src
+        if (visualEl.parentElement === el) {
+          visualEl.remove();
+        } else {
+          visualEl.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        }
+      } else if (visualEl && visualEl.tagName === 'SVG') {
+        visualEl.style.setProperty('display', 'none', 'important');
       }
       updateInspector(el);
     }, {capture: true, signal: sig});
@@ -3484,6 +3477,202 @@
     imgRowOuter.appendChild(imgEyeBtn);
     imgRowOuter.appendChild(imgMinusBtn);
     addRow(fillSec, 'Image', imgRowOuter);
+
+    // ---- TEXT COLORS (moved from Typography) ----
+    var colorEntries = [];
+    var selfHex = rgbHex(cs.color);
+    if (selfHex) colorEntries.push({hex: selfHex, targets: [el], isSelf: true});
+    if (el.children.length > 0) {
+      var colorMap = {};
+      el.querySelectorAll('*').forEach(function(child) {
+        if (child.closest('svg')) return;
+        var hasText = false;
+        for (var cn = 0; cn < child.childNodes.length; cn++) {
+          if (child.childNodes[cn].nodeType === 3 && child.childNodes[cn].textContent.trim().length > 0) { hasText = true; break; }
+        }
+        if (!hasText) return;
+        var cr = child.getBoundingClientRect();
+        if (cr.width < 1 || cr.height < 1) return;
+        var cc = getCS(child).color;
+        var hex = rgbHex(cc);
+        if (!hex) return;
+        if (hex === selfHex) {
+          colorEntries[0].targets.push(child);
+        } else {
+          if (!colorMap[hex]) colorMap[hex] = [];
+          colorMap[hex].push(child);
+        }
+      });
+      Object.keys(colorMap).forEach(function(hex) {
+        colorEntries.push({hex: hex, targets: colorMap[hex], isSelf: false});
+      });
+    }
+    if (colorEntries.length > 0) {
+      var colorsStack = mk('div');
+      colorsStack.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
+      var maxVisibleColors = 4;
+      var hiddenColors = [];
+      colorEntries.forEach(function(entry, idx) {
+        var colorOuter = mk('div', 'rb-fill-row-outer');
+        if (idx >= maxVisibleColors) { colorOuter.style.display = 'none'; hiddenColors.push(colorOuter); }
+        var colorRow = mk('div', 'rb-insp-color-row rb-insp-field-bg');
+        colorRow.style.cssText = 'display:flex;align-items:center;gap:6px;padding:0 6px;cursor:pointer;flex:1;min-width:0;';
+        var sw = mk('div', 'rb-insp-swatch');
+        sw.style.background = entry.hex;
+        sw.title = entry.hex;
+        var hexTxt = mk('span', 'rb-insp-val');
+        hexTxt.textContent = entry.hex;
+        hexTxt.style.cssText = 'flex:1;background:none;';
+        var cDiv = mk('div', 'rb-insp-field-divider');
+        cDiv.style.cssText = 'width:1px;align-self:stretch;flex-shrink:0;';
+        var cAlpha = mk('span', 'rb-insp-val');
+        cAlpha.textContent = '100%';
+        cAlpha.style.cssText = 'width:36px;text-align:right;flex:none;background:none;';
+        // Click → open full 4-tab popup with background-clip:text support
+        (function(ent, sw2, hexTxt2, cAlpha2) {
+          colorRow.addEventListener('mousedown', function(e) {
+            e.stopImmediatePropagation();
+            if (window.__rbFillPopup) {
+              window.__rbFillPopup.open(sw2, inspector, root, el, 'color', sig, {
+                apply: function(targetEl, targetProp, cssVal) {
+                  // Solid color — clear any background-clip:text
+                  ent.targets.forEach(function(t) {
+                    t.style.removeProperty('-webkit-background-clip');
+                    t.style.removeProperty('background-clip');
+                    t.style.removeProperty('-webkit-text-fill-color');
+                    t.style.removeProperty('background-image');
+                    t.style.removeProperty('background');
+                    t.style.removeProperty('animation');
+                    applyStyle(t, 'color', cssVal);
+                  });
+                  var newHex = rgbHex(cssVal);
+                  sw2.style.background = cssVal;
+                  hexTxt2.textContent = newHex || cssVal;
+                  var am = cssVal.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+                  cAlpha2.textContent = (am && am[4] !== undefined ? Math.round(parseFloat(am[4]) * 100) : 100) + '%';
+                },
+                applyGradient: function(targetEl, gradCSS) {
+                  ent.targets.forEach(function(t) {
+                    pushUndo({el: t, prop: 'background', old: t.style.background});
+                    t.style.setProperty('background', gradCSS, 'important');
+                    t.style.setProperty('-webkit-background-clip', 'text', 'important');
+                    t.style.setProperty('background-clip', 'text', 'important');
+                    t.style.setProperty('-webkit-text-fill-color', 'transparent', 'important');
+                    t.style.setProperty('color', 'transparent', 'important');
+                  });
+                  sw2.style.background = gradCSS;
+                  hexTxt2.textContent = 'gradient';
+                  cAlpha2.textContent = '';
+                },
+                applyEffect: function(targetEl, fx) {
+                  ent.targets.forEach(function(t) {
+                    pushUndo({el: t, prop: 'background', old: t.style.background});
+                    t.classList.add('rb-fx-active');
+                    t.removeAttribute('data-rb-frozen-anim');
+                    var cssProps = fx.css.split(';').filter(function(s) { return s.trim(); });
+                    cssProps.forEach(function(rule) {
+                      var parts = rule.split(':');
+                      if (parts.length >= 2) {
+                        var p = parts[0].trim();
+                        var v = parts.slice(1).join(':').trim();
+                        t.style.setProperty(p, v, 'important');
+                      }
+                    });
+                    t.style.setProperty('animation-play-state', 'running', 'important');
+                    t.style.setProperty('-webkit-background-clip', 'text', 'important');
+                    t.style.setProperty('background-clip', 'text', 'important');
+                    t.style.setProperty('-webkit-text-fill-color', 'transparent', 'important');
+                    t.style.setProperty('color', 'transparent', 'important');
+                  });
+                  sw2.style.cssText = fx.css + 'width:16px;height:16px;border-radius:8px;flex-shrink:0;';
+                  hexTxt2.textContent = fx.name.toLowerCase();
+                  cAlpha2.textContent = '';
+                },
+                applyBgImage: function(targetEl, dataUrl) {
+                  ent.targets.forEach(function(t) {
+                    pushUndo({el: t, prop: 'backgroundImage', old: t.style.backgroundImage});
+                    t.style.setProperty('background-image', 'url(' + dataUrl + ')', 'important');
+                    t.style.setProperty('background-size', 'cover', 'important');
+                    t.style.setProperty('background-position', 'center', 'important');
+                    t.style.setProperty('-webkit-background-clip', 'text', 'important');
+                    t.style.setProperty('background-clip', 'text', 'important');
+                    t.style.setProperty('-webkit-text-fill-color', 'transparent', 'important');
+                    t.style.setProperty('color', 'transparent', 'important');
+                  });
+                  sw2.style.backgroundImage = 'url(' + dataUrl + ')';
+                  sw2.style.backgroundSize = 'cover';
+                  hexTxt2.textContent = 'image';
+                  cAlpha2.textContent = '';
+                }
+              });
+            }
+          }, {capture: true, signal: sig});
+        })(entry, sw, hexTxt, cAlpha);
+        colorRow.appendChild(sw);
+        colorRow.appendChild(hexTxt);
+        colorRow.appendChild(cDiv);
+        colorRow.appendChild(cAlpha);
+        // Eye button
+        var cEye = mk('button', 'rb-fill-row-icon');
+        cEye.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+        cEye.title = 'Toggle visibility';
+        (function(ent2, eye2) {
+          var cHidden = false;
+          eye2.addEventListener('mousedown', function(e) {
+            e.stopImmediatePropagation();
+            cHidden = !cHidden;
+            ent2.targets.forEach(function(t) {
+              t.style.setProperty('color', cHidden ? 'transparent' : ent2.hex, 'important');
+            });
+            eye2.innerHTML = cHidden
+              ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+            eye2.classList.toggle('rb-insp-eye-off', cHidden);
+          }, {capture: true, signal: sig});
+        })(entry, cEye);
+        // Minus button
+        var cMinus = mk('button', 'rb-fill-row-icon');
+        cMinus.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+        cMinus.title = 'Remove color';
+        (function(ent3) {
+          cMinus.addEventListener('mousedown', function(e) {
+            e.stopImmediatePropagation();
+            ent3.targets.forEach(function(t) {
+              t.style.removeProperty('color');
+              t.style.removeProperty('-webkit-background-clip');
+              t.style.removeProperty('background-clip');
+              t.style.removeProperty('-webkit-text-fill-color');
+              t.style.removeProperty('background-image');
+              t.style.removeProperty('background');
+              t.style.removeProperty('animation');
+            });
+            updateInspector(el);
+          }, {capture: true, signal: sig});
+        })(entry);
+        colorOuter.appendChild(colorRow);
+        colorOuter.appendChild(cEye);
+        colorOuter.appendChild(cMinus);
+        colorsStack.appendChild(colorOuter);
+      });
+      if (hiddenColors.length > 0) {
+        var morePill = mk('button');
+        morePill.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:3px;width:100%;padding:4px 0;background:rgba(255,255,255,0.04);border:none;border-radius:12px;cursor:pointer;-webkit-appearance:none;';
+        morePill.innerHTML = '<span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span><span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span><span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span>';
+        morePill.title = hiddenColors.length + ' more colors';
+        var colorsExpanded = false;
+        morePill.addEventListener('mousedown', function(e) {
+          e.stopImmediatePropagation();
+          colorsExpanded = !colorsExpanded;
+          hiddenColors.forEach(function(r) { r.style.display = colorsExpanded ? '' : 'none'; });
+          morePill.innerHTML = colorsExpanded
+            ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(239,238,235,0.4)" stroke-width="2" stroke-linecap="round"><path d="M18 15l-6-6-6 6"/></svg>'
+            : '<span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span><span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span><span style="width:4px;height:4px;border-radius:50%;background:rgba(239,238,235,0.3);"></span>';
+          morePill.title = colorsExpanded ? 'Show less' : hiddenColors.length + ' more colors';
+        }, {capture: true});
+        colorsStack.appendChild(morePill);
+      }
+      addRow(fillSec, 'Text color', colorsStack);
+    }
 
     // ---- STROKE ----
     var hasStroke = cs.borderStyle !== 'none' && (parseFloat(cs.borderWidth) || 0) > 0;

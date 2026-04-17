@@ -281,13 +281,16 @@
 
   var keyframesInjected = false;
   function injectKeyframes() {
-    if (keyframesInjected) return;
-    keyframesInjected = true;
+    // Always check if the style tag exists (it may have been removed)
+    if (document.getElementById('rb-fill-fx-keyframes')) return;
     var style = document.createElement('style');
     style.id = 'rb-fill-fx-keyframes';
     style.textContent = EFFECTS.filter(function(e) { return e.keyframes; }).map(function(e) { return e.keyframes; }).join('\n');
     document.head.appendChild(style);
   }
+
+  // Inject keyframes immediately so effects work even before popup opens
+  injectKeyframes();
 
   // ── Shared: close any existing fill/image popup ──
   function closeExisting(cls) {
@@ -308,15 +311,20 @@
     var popupTop = Math.min(anchorRect.top, window.innerHeight - 460);
     popup.style.cssText = 'position:fixed;top:' + popupTop + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;width:260px;';
 
-    // Current state
+    // Current state — read from the correct property (color or backgroundColor)
     var cs = window.getComputedStyle(el);
-    var currentBg = cs.backgroundColor || '';
+    var currentColorVal = (prop === 'color' ? cs.color : cs.backgroundColor) || '';
     var currentHex = '#000000';
     var currentAlpha = 100;
-    var rgbaM = currentBg.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+    var rgbaM = currentColorVal.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
     if (rgbaM) {
-      currentHex = rgbToHex(parseInt(rgbaM[1]), parseInt(rgbaM[2]), parseInt(rgbaM[3]));
-      if (rgbaM[4] !== undefined) currentAlpha = Math.round(parseFloat(rgbaM[4]) * 100);
+      var _r = parseInt(rgbaM[1]), _g = parseInt(rgbaM[2]), _b = parseInt(rgbaM[3]);
+      var _a = rgbaM[4] !== undefined ? parseFloat(rgbaM[4]) : 1;
+      // Treat fully transparent as "no color" — default to black at 100%
+      if (_a > 0) {
+        currentHex = rgbToHex(_r, _g, _b);
+        currentAlpha = Math.round(_a * 100);
+      }
     }
     var colorFormat = 'HEX';
 
@@ -573,6 +581,69 @@
         return gradientType === 'radial' ? 'radial-gradient(circle, ' + stopsStr + ')' : 'linear-gradient(135deg, ' + stopsStr + ')';
       }
 
+      function renderHandles() {
+        // Remove existing handles
+        preview.querySelectorAll('.rb-fill-grad-handle').forEach(function(h) { h.remove(); });
+        stops.forEach(function(stop, i) {
+          var handle = mk('div', 'rb-fill-grad-handle' + (i === selectedStop ? ' rb-fill-grad-handle-sel' : ''));
+          handle.style.left = stop.pos + '%';
+          handle.style.background = stop.color;
+          // Drag handle
+          (function(idx) {
+            handle.addEventListener('mousedown', function(e) {
+              e.preventDefault(); e.stopImmediatePropagation();
+              selectedStop = idx;
+              renderStops();
+              var rect = preview.getBoundingClientRect();
+              function move(ev) {
+                var x = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+                stops[idx].pos = Math.round(x * 100);
+                handle.style.left = stops[idx].pos + '%';
+                updateGradient();
+              }
+              function up() {
+                document.removeEventListener('mousemove', move, true);
+                document.removeEventListener('mouseup', up, true);
+                stops.sort(function(a, b) { return a.pos - b.pos; });
+                renderStops(); renderHandles(); updateGradient();
+              }
+              document.addEventListener('mousemove', move, true);
+              document.addEventListener('mouseup', up, true);
+            }, { capture: true });
+          })(i);
+          preview.appendChild(handle);
+        });
+      }
+
+      // Click on preview bar to add a new stop
+      preview.addEventListener('mousedown', function(e) {
+        if (e.target !== preview) return;
+        e.stopImmediatePropagation();
+        var rect = preview.getBoundingClientRect();
+        var pos = Math.round(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * 100);
+        // Interpolate color between surrounding stops
+        var sorted = stops.slice().sort(function(a, b) { return a.pos - b.pos; });
+        var newColor = '#888888';
+        for (var si = 0; si < sorted.length - 1; si++) {
+          if (pos >= sorted[si].pos && pos <= sorted[si + 1].pos) {
+            // Simple midpoint color
+            var c1 = hexToRgb(sorted[si].color), c2 = hexToRgb(sorted[si + 1].color);
+            var t = (sorted[si + 1].pos - sorted[si].pos) > 0 ? (pos - sorted[si].pos) / (sorted[si + 1].pos - sorted[si].pos) : 0.5;
+            newColor = rgbToHex(
+              Math.round(c1.r + (c2.r - c1.r) * t),
+              Math.round(c1.g + (c2.g - c1.g) * t),
+              Math.round(c1.b + (c2.b - c1.b) * t)
+            );
+            break;
+          }
+        }
+        stops.push({ pos: pos, color: newColor, alpha: 100 });
+        stops.sort(function(a, b) { return a.pos - b.pos; });
+        selectedStop = stops.findIndex(function(s) { return s.pos === pos; });
+        gradientApplied = true;
+        renderStops(); renderHandles(); updateGradient();
+      }, { capture: true });
+
       function updateGradient() {
         var gradCSS = buildGradientCSS();
         preview.style.background = gradCSS;
@@ -588,7 +659,7 @@
         updateGradient();
       };
 
-      renderStops(); updateGradient();
+      renderStops(); renderHandles(); updateGradient();
     })();
 
     // ────────── TAB 2: IMAGE ──────────

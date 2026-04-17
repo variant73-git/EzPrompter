@@ -17,12 +17,14 @@ body.rb-ed-active { margin-right:var(--rb-insp-width, 260px) !important; margin-
 body.rb-ed-active.rb-ed-floating { margin-right:0 !important; margin-left:0 !important; }
 body.rb-ed-active a { pointer-events:none !important; }
 
-/* Kill transitions and animations on the site (not our UI) */
+/* Kill transitions on the site (not our UI) */
 body.rb-ed-active *:not(#rb-editor-root *):not(#rb-editor-inspector *):not(#rb-ed-banner *) {
   transition: none !important;
-  animation: none !important;
-  animation-play-state: paused !important;
 }
+/* Freeze site animations via JS (see editor.js freezeSiteAnimations).
+   NOT done via CSS because chrome.scripting.insertCSS creates user-origin
+   styles whose !important beats inline !important, making it impossible
+   to re-enable animation on user-applied effects. */
 
 /* Custom cursor */
 body.rb-ed-active, body.rb-ed-active *:not(#rb-editor-root *):not(input):not(textarea):not(select) {
@@ -524,6 +526,14 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
   background:#1A1A1A; border-radius:16px; padding:14px;
   box-shadow:0 16px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
   pointer-events:auto; z-index:2147483644; min-width:180px;
+}
+/* Frosted glass popups when inspector is undocked/floating */
+#rb-editor-inspector.rb-insp-floating ~ .rb-insp-adv-popup,
+body.rb-ed-floating .rb-insp-adv-popup {
+  background:rgba(23,23,23,0.85);
+  backdrop-filter:blur(40px); -webkit-backdrop-filter:blur(40px);
+  border:1px solid rgba(255,255,255,0.12);
+  box-shadow:0 16px 48px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.06);
 }
 
 /* ===== 8. FIELDS ===== */
@@ -1301,6 +1311,12 @@ body.rb-ed-light .rb-ed-export-dd button:hover { background:rgba(0,0,0,0.05); co
 
 /* Advanced popup */
 body.rb-ed-light .rb-insp-adv-popup { background:#E8E8E8; box-shadow:0 16px 48px rgba(0,0,0,0.12), 0 0 0 1px rgba(255,255,255,0.8); }
+body.rb-ed-light.rb-ed-floating .rb-insp-adv-popup {
+  background:rgba(232,232,232,0.88);
+  backdrop-filter:blur(40px); -webkit-backdrop-filter:blur(40px);
+  border:1px solid rgba(255,255,255,1);
+  box-shadow:0 16px 48px rgba(0,0,0,0.08), 0 0 0 1px rgba(255,255,255,0.8);
+}
 
 /* Mini widgets */
 body.rb-ed-light .rb-mini-widget { background:rgba(232,232,232,0.88); border-color:rgba(255,255,255,1); box-shadow:0 8px 24px rgba(0,0,0,0.1); }
@@ -1517,17 +1533,20 @@ body.rb-ed-light .rb-ed-theme-btn:hover { color:#333; }
 .rb-fill-grad-preview {
   width:100%; height:32px; border-radius:8px;
   border:1px solid rgba(255,255,255,0.08); margin-bottom:10px;
-  position:relative; overflow:visible;
+  position:relative; overflow:visible; cursor:crosshair;
 }
 .rb-fill-grad-handle {
-  position:absolute; top:-4px; width:12px; height:12px;
-  border-radius:50%; border:2px solid rgba(255,255,255,0.8);
-  transform:translateX(-50%); cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.4);
-  transition:box-shadow 150ms;
+  position:absolute; top:50%; width:14px; height:14px;
+  border-radius:50%; border:2px solid rgba(255,255,255,0.9);
+  transform:translate(-50%,-50%); cursor:grab; box-shadow:0 1px 4px rgba(0,0,0,0.5);
+  transition:box-shadow 150ms, border-color 150ms; z-index:1;
 }
+.rb-fill-grad-handle:active { cursor:grabbing; }
+.rb-fill-grad-handle:hover { border-color:#fff; box-shadow:0 1px 6px rgba(0,0,0,0.6); }
 .rb-fill-grad-handle-sel {
   border-color:#7c3aed; box-shadow:0 0 0 2px rgba(124,58,237,0.4);
 }
+.rb-fill-grad-handle-sel:hover { border-color:#9f67ff; }
 
 .rb-fill-grad-stops-hd {
   display:flex; align-items:center; justify-content:space-between;
