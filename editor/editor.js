@@ -97,6 +97,7 @@
   root.id = 'rb-editor-root';
   document.body.appendChild(root);
   document.body.classList.add('rb-ed-active');
+  document.documentElement.classList.add('rb-ed-docked');
   document.documentElement.style.setProperty('--rb-insp-width', '260px');
   document.documentElement.style.setProperty('--rb-layers-width', '240px');
 
@@ -246,6 +247,23 @@
     // Check innerText (includes text from all descendants)
     var txt = (el.innerText || el.textContent || '').trim();
     return txt.length > 0;
+  }
+
+  // Hybrid: known text tags OR any element with direct text nodes
+  function isDirectText(el) {
+    if (!el) return false;
+    var nonText = ['IMG','VIDEO','IFRAME','CANVAS','SVG','INPUT','SELECT','TEXTAREA'];
+    if (nonText.indexOf(el.tagName) !== -1) return false;
+    // Known text tags — always yes if they have any text content
+    var textTags = ['H1','H2','H3','H4','H5','H6','P','SPAN','A','BUTTON','LABEL','LI','BLOCKQUOTE','FIGCAPTION','CODE','PRE','EM','STRONG','B','I','U','SMALL','MARK','TD','TH','DT','DD','CITE'];
+    if (textTags.indexOf(el.tagName) !== -1) {
+      return (el.innerText || el.textContent || '').trim().length > 0;
+    }
+    // Other elements — only if they have direct text child nodes
+    for (var i = 0; i < el.childNodes.length; i++) {
+      if (el.childNodes[i].nodeType === 3 && el.childNodes[i].textContent.trim().length > 0) return true;
+    }
+    return false;
   }
 
   function px(v) { return parseFloat(v) || 0; }
@@ -651,6 +669,7 @@
       '<button class="rb-ed-mode" data-mode="C">C: Hybrid</button>' +
       '<button class="rb-ed-mode" data-mode="D">D: Canvas</button>' +
       '<button class="rb-ed-mode" data-mode="E">E: AI</button>' +
+      '<button class="rb-ed-mode" data-mode="S">S: S2H</button>' +
       '<button class="rb-ed-mode" data-mode="F">F: Curated</button>' +
     '</div>';
     var x = mk('button');
@@ -679,6 +698,7 @@
     else if (mode === 'C') activateModeC();
     else if (mode === 'D') activateModeD();
     else if (mode === 'E') activateModeE();
+    else if (mode === 'S') activateModeS();
     else if (mode === 'F') activateModeF();
   }
 
@@ -795,7 +815,62 @@
     });
   }
 
-  // applySemantic removed — Mode E now uses the full rebuild pipeline (mode-e.js)
+  // ============ MODE S: S2H (Screenshot-to-HTML, 2-pass) ============
+
+  function activateModeS() {
+    if (!window.__rbS2H) {
+      inspBody.innerHTML = '';
+      var err = mk('div', 'rb-insp-empty');
+      err.textContent = 'S2H not loaded. Reload the page and try again.';
+      err.style.color = '#f87171';
+      inspBody.appendChild(err);
+      return;
+    }
+
+    inspBody.innerHTML = '';
+    var progressEl = mk('div', 'rb-insp-empty');
+    progressEl.textContent = 'Capturing screenshot...';
+    inspBody.appendChild(progressEl);
+
+    // Restore button
+    var restoreBtn = mk('button', 'rb-insp-inp');
+    restoreBtn.textContent = 'Restore original page';
+    restoreBtn.style.cssText = 'cursor:pointer;text-align:center;margin-top:8px;width:100%;display:none;';
+    restoreBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      // S2H stores originals in replacePage — reload to restore
+      location.reload();
+    }, {capture: true, signal: sig});
+    inspBody.appendChild(restoreBtn);
+
+    var s2hToast = showToast('S2H: starting full page capture…', 'running');
+
+    rebuildInProgress = true;
+    window.__rbS2H.runFullPage(function(progress) {
+      if (progress.step === 'error') {
+        progressEl.style.color = '#f87171';
+        progressEl.textContent = progress.message;
+        updateToast(s2hToast, 'S2H failed — ' + progress.message, 'error');
+      } else {
+        progressEl.textContent = progress.message;
+        updateToast(s2hToast, 'S2H: ' + progress.message, 'running');
+      }
+    }).then(function(result) {
+      rebuildInProgress = false;
+      if (result && result.html) {
+        progressEl.style.color = '#22c55e';
+        progressEl.textContent = 'Complete — ' + result.successCount + '/' + result.viewportCount + ' viewports (' + result.html.length + ' chars)';
+        restoreBtn.style.display = '';
+        updateToast(s2hToast, 'S2H complete — ' + result.successCount + ' viewports', 'success');
+        window.__rbS2H.replacePage(result.html);
+      }
+    }).catch(function(err) {
+      rebuildInProgress = false;
+      progressEl.style.color = '#f87171';
+      progressEl.textContent = 'S2H error: ' + (err.message || err);
+      updateToast(s2hToast, 'S2H failed', 'error');
+    });
+  }
 
   function cleanupMode() {
     // Dismiss any lingering toasts (e.g. Mode E progress) when switching modes
@@ -1711,63 +1786,127 @@
     return card;
   }
 
+  var SMART_EDIT_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+
   function populateAssets() {
     var ab = document.getElementById('rb-ed-assets-body');
     if (!ab) return;
     ab.innerHTML = '';
 
-    // Collect all images > 80x80
-    var imgs = [];
+    // Collect <img> elements
+    var imgElements = [];
     document.querySelectorAll('img').forEach(function(img) {
+      if (isEditorEl(img)) return;
       var w = img.naturalWidth || img.width || 0;
       var h = img.naturalHeight || img.height || 0;
       var src = img.currentSrc || img.src || '';
-      if (!src || src.indexOf('data:image/svg') === 0 || src.indexOf('data:image/gif') === 0) return;
-      if (w < 80 || h < 80) return;
-      if (imgs.some(function(c) { return c.src === src; })) return;
-      imgs.push({src: src, w: w, h: h, alt: img.alt || ''});
+      if (!src) return;
+      if (imgElements.some(function(c) { return c.src === src; })) return;
+      imgElements.push({src: src, w: w, h: h, alt: img.alt || '', type: 'image'});
     });
 
-    // Also background images
+    // Collect inline SVGs (separate section)
+    var svgIcons = [];
+    document.querySelectorAll('svg').forEach(function(svg) {
+      if (isEditorEl(svg)) return;
+      var r = svg.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) return;
+      try {
+        var clone = svg.cloneNode(true);
+        // Ensure the SVG has xmlns for standalone rendering
+        if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        var serialized = new XMLSerializer().serializeToString(clone);
+        var dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(serialized)));
+        if (svgIcons.some(function(c) { return c.src === dataUrl; })) return;
+        svgIcons.push({src: dataUrl, w: r.width, h: r.height, alt: '', type: 'image', el: svg});
+      } catch(e) {}
+    });
+
+    // Collect background images (separate)
+    var bgImages = [];
     document.querySelectorAll('section,div,article,header,footer').forEach(function(el) {
       if (isEditorEl(el)) return;
       var bg = getCS(el).backgroundImage;
       if (bg && bg !== 'none') {
         var match = bg.match(/url\(["']?(https?:\/\/[^"')]+)["']?\)/);
-        if (match && !imgs.some(function(c) { return c.src === match[1]; })) {
-          imgs.push({src: match[1], w: 200, h: 200, alt: ''});
+        if (match && !bgImages.some(function(c) { return c.src === match[1]; }) && !imgElements.some(function(c) { return c.src === match[1]; })) {
+          bgImages.push({src: match[1], w: 200, h: 200, alt: '', type: 'background', el: el});
         }
       }
     });
 
-    imgs.sort(function(a, b) { return (b.w * b.h) - (a.w * a.h); });
+    imgElements.sort(function(a, b) { return (b.w * b.h) - (a.w * a.h); });
 
-    var countEl = mk('div');
-    countEl.style.cssText = 'padding:8px 14px;font:500 11px "Instrument Sans",sans-serif;color:' + (isLight() ? 'rgba(51,51,51,0.5)' : 'rgba(239,238,235,0.5)') + ';';
-    countEl.textContent = imgs.length + ' image' + (imgs.length !== 1 ? 's' : '') + ' found';
-    ab.appendChild(countEl);
+    var mutedColor = isLight() ? 'rgba(51,51,51,0.5)' : 'rgba(239,238,235,0.5)';
+    var dimColor = isLight() ? 'rgba(51,51,51,0.3)' : 'rgba(239,238,235,0.3)';
 
-    var grid = mk('div');
-    grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:3px;padding:0 8px 8px;';
-    imgs.slice(0, 30).forEach(function(img) {
-      var item = mk('div');
-      item.style.cssText = 'aspect-ratio:1;overflow:hidden;border-radius:4px;cursor:pointer;position:relative;';
-      var imgEl = mk('img');
-      imgEl.src = img.src;
-      imgEl.alt = img.alt;
-      imgEl.style.cssText = 'width:100%;height:100%;object-fit:cover;';
-      imgEl.loading = 'lazy';
-      item.appendChild(imgEl);
+    function buildAssetGrid(items, label) {
+      // Section label
+      var secLabel = mk('div');
+      secLabel.style.cssText = 'padding:8px 14px 4px;font:500 11px "Instrument Sans",sans-serif;color:' + mutedColor + ';';
+      secLabel.textContent = label + ' (' + items.length + ')';
+      ab.appendChild(secLabel);
 
-      // Click to select the image on the page
-      item.addEventListener('mousedown', function(e) {
-        e.stopImmediatePropagation();
-        var pageImg = document.querySelector('img[src="' + img.src + '"]');
-        if (pageImg && isValid(pageImg)) selectEl(pageImg);
-      }, {capture: true});
-      grid.appendChild(item);
-    });
-    ab.appendChild(grid);
+      if (items.length === 0) {
+        var empty = mk('div');
+        empty.style.cssText = 'padding:2px 14px 8px;font:400 11px "Instrument Sans",sans-serif;color:' + dimColor + ';';
+        empty.textContent = 'None found';
+        ab.appendChild(empty);
+        return;
+      }
+
+      var grid = mk('div');
+      grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:3px;padding:0 8px 8px;';
+      items.slice(0, 18).forEach(function(img) {
+        var item = mk('div');
+        item.style.cssText = 'aspect-ratio:1;overflow:hidden;border-radius:4px;cursor:pointer;position:relative;';
+        var imgEl = mk('img');
+        imgEl.src = img.src;
+        imgEl.alt = img.alt;
+        imgEl.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+        imgEl.loading = 'lazy';
+        item.appendChild(imgEl);
+
+        // Hover overlay with smart edit icon
+        var overlay = mk('div', 'rb-asset-overlay');
+        overlay.innerHTML = SMART_EDIT_ICON;
+        item.appendChild(overlay);
+
+        // Click: scroll to image, flash highlight, show action bar
+        item.addEventListener('mousedown', function(e) {
+          e.stopImmediatePropagation();
+          if (img.type === 'image') {
+            var pageImg = document.querySelector('img[src="' + img.src.replace(/"/g, '\\"') + '"]');
+            if (pageImg && isValid(pageImg)) {
+              selectEl(pageImg);
+              showImgMenu(pageImg);
+            }
+          } else if (img.el) {
+            selectEl(img.el);
+          }
+        }, {capture: true});
+
+        grid.appendChild(item);
+      });
+      ab.appendChild(grid);
+    }
+
+    // Divider-separated sections
+    buildAssetGrid(imgElements, 'Images');
+
+    if (svgIcons.length > 0) {
+      var divider1 = mk('div');
+      divider1.style.cssText = 'height:1px;background:' + (isLight() ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)') + ';margin:4px 14px;';
+      ab.appendChild(divider1);
+      buildAssetGrid(svgIcons, 'Icons');
+    }
+
+    if (bgImages.length > 0) {
+      var divider2 = mk('div');
+      divider2.style.cssText = 'height:1px;background:' + (isLight() ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)') + ';margin:4px 14px;';
+      ab.appendChild(divider2);
+      buildAssetGrid(bgImages, 'Backgrounds');
+    }
   }
 
   function populateSections() {
@@ -2092,7 +2231,10 @@
       inspector.style.display = '';
       // Only remove floating if panels are docked (not floating mode)
       var isFloating = layersPanel.classList.contains('rb-layers-floating');
-      if (!isFloating) document.body.classList.remove('rb-ed-floating');
+      if (!isFloating) {
+        document.body.classList.remove('rb-ed-floating');
+        document.documentElement.classList.add('rb-ed-docked');
+      }
       if (miniWidgetL) { miniWidgetL.remove(); miniWidgetL = null; }
       if (miniWidgetR) { miniWidgetR.remove(); miniWidgetR = null; }
     }
@@ -2103,6 +2245,7 @@
       layersPanel.style.display = 'none';
       inspector.style.display = 'none';
       document.body.classList.add('rb-ed-floating');
+      document.documentElement.classList.remove('rb-ed-docked');
 
       // Left widget: handle + logo + minimize/undock icons
       if (miniWidgetL) miniWidgetL.remove();
@@ -2149,6 +2292,9 @@
       layersPanel.classList.toggle('rb-layers-floating', !floating);
       inspector.classList.toggle('rb-insp-floating', !floating);
       document.body.classList.toggle('rb-ed-floating', !floating);
+      document.documentElement.classList.toggle('rb-ed-docked', floating);
+      // Force reflow so site elements recalculate width after margin change
+      void document.body.offsetHeight;
       panelUndockBtn.title = floating ? 'Undock panels' : 'Dock panels';
     }, {signal: sig, capture: true});
 
@@ -2201,29 +2347,7 @@
       projectName.readOnly = true;
       projectName.style.cursor = 'default';
     });
-    var projectChev = mk('div', 'rb-ed-project-chev');
-    projectChev.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
-    projectChev.addEventListener('mousedown', function(e) {
-      e.stopImmediatePropagation();
-      var existing = document.querySelector('.rb-ed-dropdown.rb-project-dd');
-      if (existing) { existing.remove(); return; }
-      var dd = mk('div', 'rb-ed-dropdown rb-project-dd');
-      var rect = projectField.getBoundingClientRect();
-      dd.style.cssText = 'position:fixed;top:' + (rect.bottom + 4) + 'px;left:' + rect.left + 'px;';
-      var histBtn = mk('button', 'rb-ed-dropdown-item'); histBtn.textContent = 'Show version history';
-      dd.appendChild(histBtn);
-      var expBtn = mk('button', 'rb-ed-dropdown-item'); expBtn.textContent = 'Export';
-      dd.appendChild(expBtn);
-      dd.appendChild(mk('div', 'rb-ed-dropdown-divider'));
-      var renameBtn = mk('button', 'rb-ed-dropdown-item'); renameBtn.textContent = 'Rename';
-      renameBtn.addEventListener('click', function() { dd.remove(); projectName.click(); });
-      dd.appendChild(renameBtn);
-      root.appendChild(dd);
-      var close = function(ev) { if (!dd.contains(ev.target) && !projectChev.contains(ev.target)) { dd.remove(); document.removeEventListener('mousedown', close, true); }};
-      setTimeout(function() { document.addEventListener('mousedown', close, true); }, 50);
-    }, {capture: true, signal: sig});
     projectField.appendChild(projectName);
-    projectField.appendChild(projectChev);
     layersHd.appendChild(projectField);
 
     layersPanel.appendChild(layersHd);
@@ -3134,6 +3258,7 @@
     var bgWrap = mk('div', 'rb-insp-color-row rb-insp-field-bg');
     bgWrap.style.cssText = 'display:flex;align-items:center;gap:6px;border-radius:4px;padding:0 6px;cursor:pointer;flex:1;min-width:0;';
     var bgSwatch = mk('div', 'rb-insp-swatch');
+    // Type indicator icon (background)
     var bgHex = rgbHex(cs.backgroundColor);
     var bgDisplayVal, bgAlphaVal;
     var _hasCssGradient = _hasBgImg && _fillBgImg.indexOf('gradient') !== -1;
@@ -4784,40 +4909,72 @@
 
   // ============ IMAGE MENU ============
 
-  function showImgMenu(img, x, y) {
+  function showImgMenu(img) {
     removeImgMenu();
-    var m = mk('div', 'rb-ed-img-menu');
-    m.style.left = x + 'px';
-    m.style.top = y + 'px';
 
-    var dlBtn = mk('button');
-    dlBtn.innerHTML = DL + ' Download';
-    dlBtn.addEventListener('click', function() {
+    // Flash highlight
+    img.style.outline = '2px solid #3b82f6';
+    img.style.outlineOffset = '2px';
+    setTimeout(function() {
+      img.style.outline = '';
+      img.style.outlineOffset = '';
+    }, 800);
+
+    // Check if image is already visible in viewport
+    var rect = img.getBoundingClientRect();
+    var inView = rect.top >= 0 && rect.bottom <= window.innerHeight;
+
+    function positionAndShow() {
+      var r = img.getBoundingClientRect();
+      var m = mk('div', 'rb-ed-img-menu');
+      m.style.top = Math.max(4, r.top - 40) + 'px';
+      m.style.left = (r.left + r.width / 2) + 'px';
+      m.style.transform = 'translateX(-50%)';
+      buildBarContent(m, img);
+      root.appendChild(m);
+      // Auto-close on outside click (guarded by generation to prevent stale listeners)
+      var gen = _imgMenuGeneration;
+      var closeOutside = function(ev) {
+        if (gen !== _imgMenuGeneration) { document.removeEventListener('mousedown', closeOutside, true); return; }
+        if (m && !m.contains(ev.target)) {
+          removeImgMenu();
+          document.removeEventListener('mousedown', closeOutside, true);
+        }
+      };
+      setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 150);
+    }
+
+    if (!inView) {
+      img.scrollIntoView({behavior: 'smooth', block: 'center'});
+      // Wait for scroll to settle, then position
+      setTimeout(positionAndShow, 400);
+    } else {
+      positionAndShow();
+    }
+  }
+
+  function buildBarContent(m, img) {
+
+    // Copy
+    var copyBtn = mk('button', 'rb-img-bar-btn');
+    copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg><span>Copy</span>';
+    copyBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
       fetch(img.src).then(function(r) { return r.blob(); }).then(function(blob) {
-        var url = URL.createObjectURL(blob);
-        var a = mk('a');
-        a.href = url;
-        a.download = 'image.png';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }).catch(function() {
-        // Fallback: open in new tab for cross-origin images
-        window.open(img.src, '_blank');
-      });
+        if (navigator.clipboard && navigator.clipboard.write) {
+          navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+        }
+      }).catch(function() {});
       removeImgMenu();
-    });
+    }, {capture: true});
 
-    var repBtn = mk('button');
-    repBtn.innerHTML = UL + ' Replace';
+    // Replace
+    var repBtn = mk('button', 'rb-img-bar-btn');
+    repBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span>Replace</span>';
     var finp = mk('input');
-    finp.type = 'file';
-    finp.accept = 'image/*';
-    finp.style.display = 'none';
-    finp.addEventListener('change', function(e) {
-      var f = e.target.files[0];
-      if (!f) return;
+    finp.type = 'file'; finp.accept = 'image/*'; finp.style.display = 'none';
+    finp.addEventListener('change', function(ev) {
+      var f = ev.target.files[0]; if (!f) return;
       var reader = new FileReader();
       reader.onload = function() {
         pushUndo({el: img, prop: '__src', old: img.src});
@@ -4826,16 +4983,230 @@
       };
       reader.readAsDataURL(f);
     });
-    repBtn.addEventListener('click', function() { finp.click(); });
+    repBtn.addEventListener('mousedown', function(e) { e.stopImmediatePropagation(); finp.click(); }, {capture: true});
 
-    m.appendChild(dlBtn);
+    // Download
+    var dlBtn = mk('button', 'rb-img-bar-btn');
+    dlBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>Download</span>';
+    dlBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      fetch(img.src).then(function(r) { return r.blob(); }).then(function(blob) {
+        var url = URL.createObjectURL(blob);
+        var a = mk('a'); a.href = url; a.download = 'image.png';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }).catch(function() { window.open(img.src, '_blank'); });
+      removeImgMenu();
+    }, {capture: true});
+
+    // Divider
+    var divider = mk('div', 'rb-img-bar-divider');
+
+    // Smart Edit (white bg + sparkle icon)
+    var smartBtn = mk('button', 'rb-img-bar-btn rb-img-bar-smart');
+    smartBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 110 135"><path fill="#2b2b2b" d="M53,68.7c0,.8-.6,1.4-1.3,1.5-1,.1-2.7.5-3.2,1.1-.6.6-1,2.3-1.1,3.2,0,.8-.7,1.3-1.5,1.3s-1.4-.6-1.5-1.3c-.1-1-.5-2.7-1.1-3.2-.6-.6-2.3-1-3.2-1.1-.8,0-1.3-.7-1.3-1.5s.6-1.4,1.3-1.5c1-.1,2.7-.5,3.2-1.1.6-.6,1-2.3,1.1-3.2,0-.8.7-1.3,1.5-1.3s1.4.6,1.5,1.3c.1,1,.5,2.7,1.1,3.2.6.6,2.3,1,3.2,1.1.8,0,1.3.7,1.3,1.5ZM70.3,55.7c-1.5-.2-5.8-1-7.5-2.7-1.7-1.7-2.5-6-2.7-7.5,0-.8-.7-1.3-1.5-1.3s-1.4.6-1.5,1.3c-.2,1.5-1,5.8-2.7,7.5-1.7,1.7-6,2.5-7.5,2.7-.8,0-1.3.7-1.3,1.5s.6,1.4,1.3,1.5c1.5.2,5.8,1,7.5,2.7,1.7,1.7,2.5,6,2.7,7.5,0,.8.7,1.3,1.5,1.3s1.4-.6,1.5-1.3c.2-1.5,1-5.8,2.7-7.5,1.7-1.7,6-2.5,7.5-2.7.8,0,1.3-.7,1.3-1.5s-.6-1.4-1.3-1.5Z"/></svg><span>Smart Edit</span>';
+    smartBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      chrome.runtime.sendMessage({action: 'smartRemix', imageUrl: img.src});
+      removeImgMenu();
+    }, {capture: true});
+
+    m.appendChild(copyBtn);
     m.appendChild(repBtn);
+    m.appendChild(dlBtn);
+    m.appendChild(divider);
+    m.appendChild(smartBtn);
     m.appendChild(finp);
-    root.appendChild(m);
+    appendDockClose(m);
+    prependDockHandle(m);
   }
 
+  var _imgMenuGeneration = 0;
   function removeImgMenu() {
+    _imgMenuGeneration++;
     var m = root.querySelector('.rb-ed-img-menu');
+    if (m) m.remove();
+  }
+
+  // Shared: prepend drag handle to any minidock
+  function prependDockHandle(m) {
+    var handle = mk('div', 'rb-dock-handle');
+    handle.innerHTML = '<div class="rb-mini-dots"><span></span><span></span><span></span><span></span></div><div class="rb-mini-dots"><span></span><span></span><span></span><span></span></div>';
+    m.insertBefore(handle, m.firstChild);
+    // Make draggable
+    handle.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      var sx = e.clientX, sy = e.clientY;
+      // Use getBoundingClientRect to get the actual rendered position (includes transform)
+      var rect = m.getBoundingClientRect();
+      var sl = rect.left, st = rect.top;
+      // Remove transform immediately so offsetLeft matches visual position
+      m.style.left = sl + 'px';
+      m.style.top = st + 'px';
+      m.style.transform = 'none';
+      m.style.right = 'auto';
+      function onMove(me) {
+        m.style.left = (sl + me.clientX - sx) + 'px';
+        m.style.top = (st + me.clientY - sy) + 'px';
+      }
+      function onUp() { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }, {capture: true});
+  }
+
+  // Shared: append close divider + X to any minidock
+  function appendDockClose(m) {
+    var closeDivider = mk('div', 'rb-img-bar-divider');
+    var closeBtn = mk('button', 'rb-img-bar-btn');
+    closeBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    closeBtn.title = 'Close';
+    closeBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      m.remove();
+    }, {capture: true});
+    m.appendChild(closeDivider);
+    m.appendChild(closeBtn);
+  }
+
+  // ============ TEXT MINIDOCK ============
+
+  function showTextDock(el) {
+    removeTextDock();
+    var cs = getCS(el);
+
+    // Save original styles for restore
+    var origStyles = {
+      fontSize: el.style.fontSize,
+      fontWeight: el.style.fontWeight,
+      fontFamily: el.style.fontFamily,
+      letterSpacing: el.style.letterSpacing,
+      lineHeight: el.style.lineHeight
+    };
+
+    var rect = el.getBoundingClientRect();
+    var m = mk('div', 'rb-ed-img-menu rb-ed-text-dock');
+    m.style.top = Math.max(4, rect.top - 40) + 'px';
+    m.style.left = (rect.left + rect.width / 2) + 'px';
+    m.style.transform = 'translateX(-50%)';
+
+    // Drag-to-adjust helper
+    function makeDragValue(btn, initVal, prop, unit, step, min, max, formatFn) {
+      btn.classList.add('rb-dock-drag');
+      var valSpan = btn.querySelector('span');
+      var curVal = initVal;
+
+      btn.addEventListener('mousedown', function(e) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        var sx = e.clientX, sy = e.clientY;
+        var startVal = curVal;
+
+        function onMove(ev) {
+          var dx = ev.clientX - sx;
+          var dy = -(ev.clientY - sy);
+          var delta = (Math.abs(dx) > Math.abs(dy) ? dx : dy) * step;
+          curVal = Math.max(min, Math.min(max, Math.round((startVal + delta) * 10) / 10));
+          valSpan.textContent = formatFn ? formatFn(curVal) : curVal;
+          applyStyle(el, prop, curVal + unit);
+        }
+        function onUp() {
+          document.removeEventListener('mousemove', onMove, true);
+          document.removeEventListener('mouseup', onUp, true);
+        }
+        document.addEventListener('mousemove', onMove, true);
+        document.addEventListener('mouseup', onUp, true);
+      }, {capture: true});
+    }
+
+    // Font family
+    var fontBtn = mk('button', 'rb-img-bar-btn');
+    var fontName = (cs.fontFamily || 'sans-serif').split(',')[0].replace(/['"]/g, '').trim();
+    if (fontName.length > 14) fontName = fontName.substring(0, 12) + '\u2026';
+    fontBtn.innerHTML = '<span>' + fontName + '</span>';
+    fontBtn.title = cs.fontFamily;
+    fontBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      var fontField = inspector.querySelector('.rb-insp-font-sel');
+      if (fontField) { fontField.focus(); fontField.click(); }
+    }, {capture: true});
+
+    // Size (drag to adjust)
+    var sizeVal = Math.round(parseFloat(cs.fontSize)) || 16;
+    var sizeBtn = mk('button', 'rb-img-bar-btn');
+    sizeBtn.innerHTML = '<span>' + sizeVal + '</span>';
+    sizeBtn.title = 'Font size — drag to adjust';
+    makeDragValue(sizeBtn, sizeVal, 'fontSize', 'px', 1, 1, 400);
+
+    // Weight (drag to adjust, steps of 100)
+    var weightVal = parseInt(cs.fontWeight) || 400;
+    var weightBtn = mk('button', 'rb-img-bar-btn');
+    weightBtn.innerHTML = '<span>' + weightVal + '</span>';
+    weightBtn.title = 'Font weight — drag to adjust';
+    makeDragValue(weightBtn, weightVal, 'fontWeight', '', 100, 100, 900, function(v) {
+      return Math.round(v / 100) * 100;
+    });
+
+    // Letter spacing (drag to adjust, fine step)
+    var lsRaw = cs.letterSpacing === 'normal' ? 0 : parseFloat(cs.letterSpacing) || 0;
+    var lsBtn = mk('button', 'rb-img-bar-btn');
+    lsBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7V17"/><path d="M16 7V17"/><path d="M3 12h18"/></svg><span>' + (Math.round(lsRaw * 10) / 10) + '</span>';
+    lsBtn.title = 'Letter spacing — drag to adjust';
+    makeDragValue(lsBtn, lsRaw, 'letterSpacing', 'px', 0.1, -10, 50);
+
+    // Line height (drag to adjust)
+    var lhRaw = cs.lineHeight === 'normal' ? parseFloat(cs.fontSize) * 1.2 : parseFloat(cs.lineHeight) || 20;
+    var lhBtn = mk('button', 'rb-img-bar-btn');
+    lhBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 10H7"/><path d="M21 6H7"/><path d="M21 14H7"/><path d="M21 18H7"/><path d="M3 4v16"/></svg><span>' + Math.round(lhRaw) + '</span>';
+    lhBtn.title = 'Line height — drag to adjust';
+    makeDragValue(lhBtn, lhRaw, 'lineHeight', 'px', 1, 1, 200);
+
+    m.appendChild(fontBtn);
+    var d1 = mk('div', 'rb-img-bar-divider');
+    m.appendChild(d1);
+    m.appendChild(sizeBtn);
+    m.appendChild(weightBtn);
+    var d2 = mk('div', 'rb-img-bar-divider');
+    m.appendChild(d2);
+    m.appendChild(lsBtn);
+    m.appendChild(lhBtn);
+
+    // Restore original
+    var d3 = mk('div', 'rb-img-bar-divider');
+    m.appendChild(d3);
+    var restoreBtn = mk('button', 'rb-img-bar-btn');
+    restoreBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-8.36L1 10"/></svg><span>Restore</span>';
+    restoreBtn.title = 'Restore original text styles';
+    restoreBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      ['fontSize','fontWeight','fontFamily','letterSpacing','lineHeight'].forEach(function(p) {
+        if (origStyles[p]) el.style[p] = origStyles[p];
+        else el.style.removeProperty(p.replace(/([A-Z])/g, '-$1').toLowerCase());
+      });
+      updateInspector(el);
+      showTextDock(el);
+    }, {capture: true});
+    m.appendChild(restoreBtn);
+
+    appendDockClose(m);
+    prependDockHandle(m);
+    root.appendChild(m);
+
+    // Auto-close
+    var gen = _textDockGen;
+    var closeOutside = function(ev) {
+      if (gen !== _textDockGen) { document.removeEventListener('mousedown', closeOutside, true); return; }
+      if (m && !m.contains(ev.target)) {
+        removeTextDock();
+        document.removeEventListener('mousedown', closeOutside, true);
+      }
+    };
+    setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 150);
+  }
+
+  var _textDockGen = 0;
+  function removeTextDock() {
+    _textDockGen++;
+    var m = root.querySelector('.rb-ed-text-dock');
     if (m) m.remove();
   }
 
@@ -5230,6 +5601,7 @@
 
       e.preventDefault();
       removeImgMenu();
+      removeTextDock();
 
       if (!isRepeatClick) {
         // NEW AREA: reset depth, resolve outermost container
@@ -5238,7 +5610,8 @@
         selectionDepth = 0;
         selectionAncestor = el;
 
-        if (el.tagName === 'IMG') showImgMenu(el, e.clientX, e.clientY);
+        if (el.tagName === 'IMG' || el.tagName === 'VIDEO') showImgMenu(el);
+        else if (isDirectText(el) || isDirectText(rawEl)) showTextDock(isDirectText(el) ? el : rawEl);
         selectEl(el);
 
         if (el.contentEditable !== 'true') {
@@ -5262,14 +5635,16 @@
           selectionDepth++;
           selectEl(deeper);
 
-          if (deeper.tagName === 'IMG') showImgMenu(deeper, e.clientX, e.clientY);
+          if (deeper.tagName === 'IMG' || deeper.tagName === 'VIDEO') showImgMenu(deeper);
           if (deeper.contentEditable !== 'true') {
             dragStart = {x: e.clientX, y: e.clientY};
             dragThreshold = false;
           }
         } else {
-          // Can't drill deeper — if text, enter edit mode
-          if (isText(selectedEl) && selectedEl.contentEditable !== 'true') {
+          // Can't drill deeper
+          if (selectedEl && (selectedEl.tagName === 'IMG' || selectedEl.tagName === 'VIDEO')) {
+            showImgMenu(selectedEl);
+          } else if (isText(selectedEl) && selectedEl.contentEditable !== 'true') {
             enterTextEdit(selectedEl);
             dragStart = null;
             dragThreshold = false;
@@ -5468,42 +5843,61 @@
     window.addEventListener('scroll', tScroll, {signal: sig, capture: true});
     window.addEventListener('resize', tScroll, {signal: sig});
 
-    // Unlock CSS constraints that prevent resize
+    // Unlock CSS constraints that prevent resize — use !important to beat stylesheets
     function unlockResize(el, dir) {
       var cs = getCS(el);
       var unlocked = [];
 
-      // Remove max-width/max-height constraints
+      // Remove max-width/max-height constraints (with !important to beat stylesheets)
       if (cs.maxWidth !== 'none' && cs.maxWidth !== '0px') {
         unlocked.push({prop: 'maxWidth', old: el.style.maxWidth});
-        el.style.maxWidth = 'none';
+        el.style.setProperty('max-width', 'none', 'important');
       }
       if (cs.maxHeight !== 'none' && cs.maxHeight !== '0px') {
         unlocked.push({prop: 'maxHeight', old: el.style.maxHeight});
-        el.style.maxHeight = 'none';
+        el.style.setProperty('max-height', 'none', 'important');
       }
       // Remove min-width/min-height that prevent shrinking
       if (dir.indexOf('w') !== -1 || dir.indexOf('e') !== -1) {
         if (cs.minWidth && cs.minWidth !== '0px') {
           unlocked.push({prop: 'minWidth', old: el.style.minWidth});
-          el.style.minWidth = '0';
+          el.style.setProperty('min-width', '0', 'important');
         }
       }
-      // Convert percentage width to px for precise control
-      if (cs.width && cs.width.indexOf('%') !== -1) {
-        var rect = el.getBoundingClientRect();
+      if (dir.indexOf('n') !== -1 || dir.indexOf('s') !== -1) {
+        if (cs.minHeight && cs.minHeight !== '0px') {
+          unlocked.push({prop: 'minHeight', old: el.style.minHeight});
+          el.style.setProperty('min-height', '0', 'important');
+        }
+      }
+      // Convert percentage/auto width to px for precise control
+      var rect = el.getBoundingClientRect();
+      if (cs.width === 'auto' || cs.width.indexOf('%') !== -1) {
         unlocked.push({prop: 'width', old: el.style.width});
-        el.style.width = rect.width + 'px';
+        el.style.setProperty('width', rect.width + 'px', 'important');
+      }
+      if (cs.height === 'auto' || cs.height.indexOf('%') !== -1) {
+        unlocked.push({prop: 'height', old: el.style.height});
+        el.style.setProperty('height', rect.height + 'px', 'important');
+      }
+      // Unlock flex constraints
+      if (cs.flexShrink !== '0' || cs.flexGrow !== '0' || cs.flexBasis !== 'auto') {
+        unlocked.push({prop: 'flex', old: el.style.flex});
+        el.style.setProperty('flex', 'none', 'important');
       }
       // Handle margin:auto (prevents left expansion)
       if (dir.indexOf('w') !== -1) {
         if (cs.marginLeft === cs.marginRight && parseFloat(cs.marginLeft) > 0) {
-          // margin: 0 auto — unlock by setting explicit margin-left
           unlocked.push({prop: 'marginLeft', old: el.style.marginLeft});
           unlocked.push({prop: 'marginRight', old: el.style.marginRight});
-          el.style.marginLeft = cs.marginLeft;
-          el.style.marginRight = cs.marginRight;
+          el.style.setProperty('margin-left', cs.marginLeft, 'important');
+          el.style.setProperty('margin-right', cs.marginRight, 'important');
         }
+      }
+      // Unlock box-sizing for consistent resize
+      if (cs.boxSizing !== 'border-box') {
+        unlocked.push({prop: 'boxSizing', old: el.style.boxSizing});
+        el.style.setProperty('box-sizing', 'border-box', 'important');
       }
       // Check parent overflow
       var parent = el.parentElement;
@@ -5541,8 +5935,8 @@
           if (dir.indexOf('s') !== -1) h += dy;
           if (dir.indexOf('n') !== -1) h -= dy;
 
-          selectedEl.style.width = Math.max(20, w) + 'px';
-          selectedEl.style.height = Math.max(20, h) + 'px';
+          selectedEl.style.setProperty('width', Math.max(20, w) + 'px', 'important');
+          selectedEl.style.setProperty('height', Math.max(20, h) + 'px', 'important');
 
           updateSelBox(selectedEl);
           updateSpacingGuides(selectedEl);
@@ -5601,8 +5995,8 @@
     window.__rbEditorActive = false;
     ac.abort();
     root.remove();
-    document.body.classList.remove('rb-ed-active', 'rb-ed-dragging');
-    document.documentElement.classList.remove('rb-scroll-locked');
+    document.body.classList.remove('rb-ed-active', 'rb-ed-dragging', 'rb-ed-floating');
+    document.documentElement.classList.remove('rb-scroll-locked', 'rb-ed-docked');
     document.body.style.paddingTop = '';
 
     // Clean up rebuild engine

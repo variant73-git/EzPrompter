@@ -123,6 +123,13 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 52. ✅ Link/unlink chain icon — default desconectado (single element), click para conectar à classe CSS
 53. ✅ applyStyle exclui editor UI — cascade de color/font não vaza para #rb-editor-root
 54. ✅ Popup viewport clamping — clampPopupToViewport() garante 8px gap do bottom do browser
+55. ✅ Image minidock — action bar horizontal (Copy, Replace, Download, Smart Edit, Close) com flash highlight e scroll-to-image
+56. ✅ Text minidock — Font, Size (drag), Weight (drag), Letter spacing (drag), Line height (drag), Restore, Close
+57. ✅ Minidock frosted glass — mesmo visual dos widgets minimizados com drag handle
+58. ✅ Assets tab 3 seções — Images, Icons (SVG inline serializado), Backgrounds com dividers
+59. ✅ Video minidock — `<video>` usa o mesmo minidock de imagem
+60. ✅ S2H multi-viewport — scroll-capture full page + per-viewport analysis + HTML stitching
+61. ✅ Mode S: S2H — novo modo dedicado ao pipeline screenshot-to-HTML com 2-pass vision
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.

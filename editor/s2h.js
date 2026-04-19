@@ -45,6 +45,12 @@
       '  - Its internal layout: single column? 2-column grid? What proportions? (e.g., "60/40 split, text left, image right")',
       '  - Approximate height relative to viewport (e.g., "~100vh", "~300px")',
       '  - Alignment: left-aligned? centered? asymmetric?',
+      '- FOR THE NAVIGATION BAR, describe with precision:',
+      '  - Horizontal arrangement: logo position, links position, CTA position (e.g., "logo left, links center, CTA right")',
+      '  - How elements are spaced: flexbox with space-between? fixed gaps? centered group?',
+      '  - Max-width constraint: is the nav full-width or constrained to a max-width container?',
+      '  - Vertical alignment: centered? baseline-aligned?',
+      '  - Any visual separators (borders, background change)',
       '',
       '## Colors',
       'List every distinct color visible in the screenshot:',
@@ -54,16 +60,22 @@
       '- Identify the DOMINANT background color (the one covering the most area)',
       '',
       '## Typography',
-      'Describe the typographic system:',
+      'Describe the typographic system with HIGH PRECISION:',
       '- Do NOT guess font family names unless you are highly confident. Instead describe characteristics: "geometric sans-serif", "humanist sans", "condensed grotesque", "transitional serif", etc.',
       '- If you can confidently identify a font (e.g., Inter, Helvetica, Georgia), name it.',
+      '- PAY SPECIAL ATTENTION TO HEADINGS (H1, H2):',
+      '  - Measure the H1 font size PRECISELY relative to viewport width (e.g., "~72px at 1440px viewport" or "~5vw")',
+      '  - Note if the heading uses a DIFFERENT font family than body text (serif vs sans-serif is common)',
+      '  - Note exact weight — many hero headings use light/thin (300) or regular (400), NOT bold',
+      '  - Note line-height (tight like 1.0-1.1, or loose like 1.3-1.5)',
+      '  - Note letter-spacing (negative tracking is common in large headings)',
       '- List each distinct text style you see:',
       '  - Role (main heading, subheading, nav link, body, button label, badge, etc.)',
-      '  - Approximate size in px',
+      '  - Approximate size in px (BE PRECISE for headings — measure against viewport)',
       '  - Weight (light/regular/medium/semibold/bold/black)',
       '  - Case (uppercase/lowercase/sentence case)',
       '  - Color (hex)',
-      '  - Any notable properties (letter-spacing, italic, underline)',
+      '  - Any notable properties (letter-spacing, italic, underline, line-height)',
       '',
       '## Content Transcription',
       'Transcribe ALL visible text in the screenshot, in reading order (top to bottom, left to right):',
@@ -125,16 +137,23 @@
       '   - Use CSS Grid or Flexbox as appropriate for each section.',
       '   - Match spacing (padding, margins, gaps) visually — estimate px values by comparing to element sizes.',
       '   - Full-width sections with content constrained by max-width where appropriate.',
+      '   - NAVIGATION: match the exact horizontal arrangement from the brief. If "logo left, links center, CTA right", use display:flex with justify-content:space-between or a 3-column layout. Do NOT collapse all items to one side.',
       '',
       '2. COLOR FIDELITY:',
       '   - Use the hex values from the Visual Brief.',
       '   - If the screenshot shows a color not in the brief, sample it yourself from the image.',
       '   - Background colors, text colors, and accent colors must match exactly.',
       '',
-      '3. TYPOGRAPHY:',
+      '3. TYPOGRAPHY (CRITICAL — this is where most reconstructions fail):',
       '   - Use the font characteristics from the Visual Brief.',
       '   - If a specific font family was identified, use it (import from Google Fonts if available).',
       '   - If only characteristics were given ("geometric sans-serif"), choose the closest Google Font match.',
+      '   - HEADINGS (H1, H2) MUST match the screenshot proportions exactly:',
+      '     - Size: if the brief says "~72px", use 72px. Do NOT scale down.',
+      '     - Weight: if the brief says "regular (400)", use font-weight:400. Do NOT default to bold.',
+      '     - Line-height: match tightly. Large headings often use line-height:1.0 to 1.1.',
+      '     - Letter-spacing: large headings often use negative tracking (e.g., -0.02em).',
+      '     - If the heading uses a DIFFERENT font than body (e.g., serif heading + sans body), import BOTH.',
       '   - Match sizes, weights, letter-spacing, and text-transform exactly.',
       '',
       '4. TEXT CONTENT:',
@@ -384,12 +403,152 @@
     return wrapper;
   }
 
+  // ─── Multi-viewport full-page pipeline ──────────────────────────────
+
+  var MAX_VIEWPORTS = 8;
+
+  function captureViewport() {
+    return new Promise(function(resolve) {
+      chrome.runtime.sendMessage(
+        { action: 'captureScreenshot', format: 'png', returnData: true },
+        function(response) { resolve(response && response.dataUrl ? response.dataUrl : null); }
+      );
+    });
+  }
+
+  function scrollToAndWait(y) {
+    return new Promise(function(resolve) {
+      window.scrollTo(0, y);
+      setTimeout(resolve, 300);
+    });
+  }
+
+  async function runFullPage(onProgress) {
+    var log = onProgress || function() {};
+    var viewportH = window.innerHeight;
+    var pageH = document.documentElement.scrollHeight;
+    var totalViewports = Math.min(Math.ceil(pageH / viewportH), MAX_VIEWPORTS);
+    var originalScroll = window.scrollY;
+
+    log({ step: 'capture', message: 'Capturing ' + totalViewports + ' viewports...', current: 0, total: totalViewports * 3 });
+
+    // Hide editor UI during capture
+    var editorEls = document.querySelectorAll('[id^="rb-editor"], [id^="rb-ed-"]');
+    editorEls.forEach(function(el) { el.style.setProperty('display', 'none', 'important'); });
+
+    // Capture all viewports
+    var screenshots = [];
+    for (var i = 0; i < totalViewports; i++) {
+      var y = i * viewportH;
+      await scrollToAndWait(y);
+      var dataUrl = await captureViewport();
+      if (dataUrl) {
+        screenshots.push({ index: i, y: y, dataUrl: dataUrl });
+        log({ step: 'capture', message: 'Captured viewport ' + (i + 1) + '/' + totalViewports, current: i + 1, total: totalViewports * 3 });
+      }
+    }
+
+    // Restore scroll and editor UI
+    window.scrollTo(0, originalScroll);
+    editorEls.forEach(function(el) { el.style.removeProperty('display'); });
+
+    if (screenshots.length === 0) {
+      log({ step: 'error', message: 'No screenshots captured' });
+      return null;
+    }
+
+    // Process each viewport: Pass 1 (analysis) + Pass 2 (reconstruction)
+    var htmlChunks = [];
+    var analysisPrompt = buildAnalysisPrompt();
+
+    for (var v = 0; v < screenshots.length; v++) {
+      var shot = screenshots[v];
+      var vpLabel = 'Viewport ' + (v + 1) + '/' + screenshots.length;
+
+      // Pass 1: Analysis
+      log({ step: 'analysis', message: vpLabel + ' — Pass 1: Analyzing...', current: totalViewports + v * 2 + 1, total: totalViewports * 3 });
+      var brief;
+      try {
+        var rawBrief = await callVision(shot.dataUrl, analysisPrompt);
+        brief = cleanMarkdown(rawBrief);
+        var briefCheck = validateBrief(brief);
+        if (!briefCheck.valid && briefCheck.severity === 'fatal') {
+          console.warn('[S2H] Brief validation failed for viewport ' + (v+1) + ': ' + briefCheck.reason);
+          brief = rawBrief; // Use unvalidated
+        }
+      } catch (e) {
+        log({ step: 'error', message: vpLabel + ' — Analysis failed: ' + e.message });
+        continue; // Skip this viewport
+      }
+
+      // Pass 2: Reconstruction
+      log({ step: 'reconstruct', message: vpLabel + ' — Pass 2: Reconstructing...', current: totalViewports + v * 2 + 2, total: totalViewports * 3 });
+      var sectionPrompt = buildReconstructionPrompt(brief);
+      // Add viewport context
+      sectionPrompt += '\n\nCONTEXT: This is viewport ' + (v + 1) + ' of ' + screenshots.length + ' (scrolling top to bottom). ';
+      if (v === 0) sectionPrompt += 'This is the TOP of the page — it likely contains the navigation bar and hero section.';
+      else if (v === screenshots.length - 1) sectionPrompt += 'This is the BOTTOM of the page — it likely contains footer content.';
+      else sectionPrompt += 'This is a MIDDLE section of the page.';
+
+      try {
+        var rawHTML = await callVision(shot.dataUrl, sectionPrompt);
+        var html = cleanHTML(rawHTML);
+        if (html.length > 50) {
+          htmlChunks.push({ index: v, html: html });
+        }
+      } catch (e) {
+        log({ step: 'error', message: vpLabel + ' — Reconstruction failed: ' + e.message });
+        continue;
+      }
+    }
+
+    if (htmlChunks.length === 0) {
+      log({ step: 'error', message: 'All viewports failed' });
+      return null;
+    }
+
+    // Stitch: extract styles + merge body content
+    var allStyles = [];
+    var allBody = [];
+    htmlChunks.forEach(function(chunk) {
+      // Extract <style> blocks
+      var styleMatch;
+      var styleRe = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+      while ((styleMatch = styleRe.exec(chunk.html)) !== null) {
+        allStyles.push(styleMatch[1]);
+      }
+      // Extract body content (everything after last </style>)
+      var bodyContent = chunk.html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').trim();
+      // Remove duplicate Google Fonts links (keep only first occurrence)
+      if (chunk.index > 0) {
+        bodyContent = bodyContent.replace(/<link[^>]*fonts\.googleapis[^>]*>/gi, '');
+      }
+      if (bodyContent) allBody.push('<!-- viewport ' + (chunk.index + 1) + ' -->\n' + bodyContent);
+    });
+
+    // Extract Google Fonts links from first chunk
+    var fontsLinks = '';
+    var fontMatch = htmlChunks[0].html.match(/<link[^>]*fonts\.googleapis[^>]*>/gi);
+    if (fontMatch) fontsLinks = fontMatch.join('\n') + '\n';
+
+    var stitchedHTML = fontsLinks + '<style>\n' + allStyles.join('\n\n') + '\n</style>\n\n' + allBody.join('\n\n');
+
+    log({ step: 'done', message: 'Full page reconstructed (' + htmlChunks.length + '/' + screenshots.length + ' viewports)', current: totalViewports * 3, total: totalViewports * 3 });
+
+    return {
+      brief: null,
+      html: stitchedHTML,
+      viewportCount: screenshots.length,
+      successCount: htmlChunks.length
+    };
+  }
+
   // ─── Expose ─────────────────────────────────────────────────────────
 
   window.__rbS2H = {
     run: runS2H,
+    runFullPage: runFullPage,
     replacePage: replacePageWithS2H,
-    // Expose prompts for testing/debugging
     _buildAnalysisPrompt: buildAnalysisPrompt,
     _buildReconstructionPrompt: buildReconstructionPrompt
   };

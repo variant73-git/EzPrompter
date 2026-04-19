@@ -13,8 +13,10 @@
 }
 
 /* ===== 2. BODY STATE ===== */
-body.rb-ed-active { margin-right:var(--rb-insp-width, 260px) !important; margin-left:var(--rb-layers-width, 240px) !important; padding-top:0 !important; overflow-x:hidden !important; max-width:100% !important; }
-body.rb-ed-active.rb-ed-floating { margin-right:0 !important; margin-left:0 !important; overflow-x:visible !important; }
+html.rb-ed-docked { overflow-x:hidden !important; }
+body.rb-ed-active { margin-right:var(--rb-insp-width, 260px) !important; margin-left:var(--rb-layers-width, 240px) !important; padding-top:0 !important; overflow-x:hidden !important; }
+body.rb-ed-active:not(.rb-ed-floating) > *:not(#rb-editor-root):not(#rb-editor-inspector):not(#rb-editor-layers) { max-width:100% !important; }
+body.rb-ed-active.rb-ed-floating { margin-right:0 !important; margin-left:0 !important; overflow-x:auto !important; }
 body.rb-ed-active a { pointer-events:none !important; }
 
 /* Kill transitions on the site (not our UI) */
@@ -787,19 +789,48 @@ option { background:#1A1A1A; color:#EFEEEB; }
   background:rgba(147,197,253,0.03) !important;
 }
 
-/* ===== 22. IMAGE MENU ===== */
+/* ===== 22. MINIDOCK (shared by image + text action bars) ===== */
 .rb-ed-img-menu {
-  position:fixed; background:#1A1A1A; border-radius:10px; padding:4px;
-  box-shadow:0 8px 24px rgba(0,0,0,0.5); z-index:2147483645;
-  pointer-events:auto; animation:rb-ed-fade 100ms ease-out;
+  position:fixed; z-index:2147483646;
+  background:rgba(23,23,23,0.85);
+  backdrop-filter:blur(40px); -webkit-backdrop-filter:blur(40px);
+  border:1px solid rgba(255,255,255,0.12);
+  border-radius:10px;
+  padding:0; display:flex; align-items:stretch; gap:0; white-space:nowrap;
+  overflow:hidden; pointer-events:auto;
+  box-shadow:0 8px 24px rgba(0,0,0,0.4);
+  animation:rb-ed-fade 100ms ease-out;
 }
-.rb-ed-img-menu button {
-  display:flex; align-items:center; gap:6px; width:100%;
-  padding:7px 10px; background:none; border:none; border-radius:6px;
-  font:400 11px 'Instrument Sans',sans-serif; color:rgba(239,238,235,0.7); cursor:pointer;
+/* Drag handle inside minidock */
+.rb-dock-handle {
+  display:flex; align-items:center; gap:2px; cursor:grab;
+  padding:0 8px; border-right:1px solid rgba(255,255,255,0.08);
 }
-.rb-ed-img-menu button:hover { background:rgba(255,255,255,0.06); color:#EFEEEB; }
-.rb-ed-img-menu button svg { width:14px; height:14px; }
+.rb-dock-handle:active { cursor:grabbing; }
+.rb-dock-handle .rb-mini-dots { display:flex; flex-direction:column; gap:3px; }
+.rb-dock-handle .rb-mini-dots span {
+  width:3px; height:3px; border-radius:50%;
+  background:rgba(239,238,235,0.3);
+}
+.rb-img-bar-btn {
+  display:flex; align-items:center; gap:5px; padding:10px 12px;
+  background:none; border:none; border-radius:0;
+  font:500 11px/1 'Instrument Sans',sans-serif; color:rgba(239,238,235,0.7);
+  cursor:pointer; -webkit-appearance:none; transition:all 100ms;
+}
+.rb-img-bar-btn:hover { background:rgba(255,255,255,0.08); color:#EFEEEB; }
+.rb-img-bar-btn span { pointer-events:none; }
+.rb-img-bar-divider {
+  width:1px; align-self:stretch; background:rgba(255,255,255,0.1); flex-shrink:0;
+}
+/* Smart Edit as a button */
+.rb-img-bar-btn.rb-img-bar-smart {
+  background:#fff; color:#000 !important; border-radius:6px; margin:5px 5px 5px 4px;
+  padding:6px 12px;
+}
+.rb-img-bar-btn.rb-img-bar-smart:hover { background:rgba(255,255,255,0.85); color:#000 !important; }
+/* Drag-to-adjust cursor */
+.rb-img-bar-btn.rb-dock-drag { cursor:ew-resize; }
 
 /* ===== 23. FTUE TOOLTIP ===== */
 .rb-ed-ftue {
@@ -1342,10 +1373,18 @@ body.rb-ed-light .rb-insp-empty { color:rgba(51,51,51,0.35); }
 /* Spacing widget */
 body.rb-ed-light .rb-spacing-widget { background:#E8E8E8; }
 
-/* Image menu */
-body.rb-ed-light .rb-ed-img-menu { background:#E8E8E8; box-shadow:0 8px 24px rgba(0,0,0,0.12); }
-body.rb-ed-light .rb-ed-img-menu button { color:rgba(51,51,51,0.7); }
-body.rb-ed-light .rb-ed-img-menu button:hover { background:rgba(0,0,0,0.05); color:#333; }
+/* Minidock — light mode */
+body.rb-ed-light .rb-ed-img-menu {
+  background:rgba(232,232,232,0.88); border-color:rgba(255,255,255,1);
+  box-shadow:0 8px 24px rgba(0,0,0,0.1);
+}
+body.rb-ed-light .rb-dock-handle { border-right-color:rgba(0,0,0,0.08); }
+body.rb-ed-light .rb-dock-handle .rb-mini-dots span { background:rgba(51,51,51,0.2); }
+body.rb-ed-light .rb-img-bar-btn { color:rgba(51,51,51,0.7); }
+body.rb-ed-light .rb-img-bar-btn:hover { background:rgba(0,0,0,0.05); color:#333; }
+body.rb-ed-light .rb-img-bar-divider { background:rgba(0,0,0,0.1); }
+body.rb-ed-light .rb-img-bar-smart { background:#333; color:#fff; }
+body.rb-ed-light .rb-img-bar-smart:hover { background:#555; }
 
 /* FTUE tooltip */
 body.rb-ed-light .rb-ed-ftue { background:#E8E8E8; color:#333; box-shadow:0 4px 12px rgba(0,0,0,0.1); }
@@ -1543,6 +1582,23 @@ body.rb-ed-light .rb-ed-theme-btn:hover { color:#333; }
   -webkit-appearance:none; transition:color 150ms, border-color 150ms;
 }
 .rb-fill-add-swatch:hover { color:#EFEEEB; border-color:rgba(255,255,255,0.3); }
+
+/* ── Asset overlay (smart edit icon on hover) ── */
+.rb-asset-overlay {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  background:rgba(0,0,0,0.5); opacity:0; transition:opacity 150ms;
+  color:rgba(255,255,255,0.7); pointer-events:none; border-radius:4px;
+}
+div:hover > .rb-asset-overlay { opacity:1; pointer-events:auto; cursor:pointer; }
+.rb-asset-overlay:hover { color:#fff; }
+
+/* ── Color type indicator (T for text, square for background) ── */
+.rb-fill-type-icon {
+  display:flex; align-items:center; justify-content:center;
+  color:rgba(239,238,235,0.25); flex-shrink:0; width:20px;
+}
+.rb-fill-type-icon svg { width:20px; height:20px; }
+body.rb-ed-light .rb-fill-type-icon { color:rgba(51,51,51,0.25); }
 
 /* ── Link/unlink button (text color class binding) ── */
 .rb-fill-link-btn {
