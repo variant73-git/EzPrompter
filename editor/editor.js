@@ -4757,27 +4757,147 @@
     ml: -1, mr: 1, pl: 1, pr: -1,
     gap: 1
   };
+  // Mirror map for Alt-drag (opposite side)
+  var guideMirror = {
+    mt: 'mb', mb: 'mt', ml: 'mr', mr: 'ml',
+    pt: 'pb', pb: 'pt', pl: 'pr', pr: 'pl'
+  };
+  var marginSides = ['mt','mr','mb','ml'];
+  var paddingSides = ['pt','pr','pb','pl'];
+  function guideGroup(key) {
+    if (marginSides.indexOf(key) >= 0) return marginSides;
+    if (paddingSides.indexOf(key) >= 0) return paddingSides;
+    return null;
+  }
+
+  // State: which guide the keyboard nudges (set on hover or drag start)
+  var activeGuideKey = null;
+  // Toggled by 'G' key — hides guides entirely when false
+  var guidesVisible = true;
+
+  function setActiveGuide(key) {
+    if (activeGuideKey && spacingGuides[activeGuideKey]) {
+      spacingGuides[activeGuideKey].classList.remove('rb-spacing-active');
+    }
+    activeGuideKey = key;
+    if (key && spacingGuides[key]) spacingGuides[key].classList.add('rb-spacing-active');
+  }
+
+  function guideTargetEl(key) {
+    if (!selectedEl) return null;
+    return key === 'gap' ? selectedEl.parentElement : selectedEl;
+  }
+
+  function renderWidgetLabel(widget, value, startValue) {
+    var valSpan = widget.querySelector('.rb-spacing-val');
+    if (!valSpan) return;
+    if (startValue != null && value !== startValue) {
+      var d = value - startValue;
+      valSpan.innerHTML = value + ' <span class="rb-spacing-delta">' + (d >= 0 ? '+' : '') + d + '</span>';
+    } else {
+      valSpan.textContent = String(value);
+    }
+  }
 
   Object.keys(spacingGuides).forEach(function(key) {
     var widget = mk('div', 'rb-spacing-widget');
     widget.innerHTML = '<span class="rb-spacing-icon">\u2194</span><span class="rb-spacing-val">0</span>';
+    widget.setAttribute('data-rb-guide', key);
     spacingGuides[key].appendChild(widget);
     spacingGuides[key].style.display = 'none';
     spacingGuides[key].style.pointerEvents = 'auto';
     spacingGuides[key].style.cursor = (guideAxis[key] === 'x') ? 'ew-resize' : 'ns-resize';
+    spacingGuides[key].setAttribute('data-rb-guide', key);
     root.appendChild(spacingGuides[key]);
 
-    // Drag to resize spacing
+    // Hover tracking for keyboard nudge
+    spacingGuides[key].addEventListener('mouseenter', function() { setActiveGuide(key); });
+    spacingGuides[key].addEventListener('mouseleave', function() {
+      if (!spacingGuides[key].classList.contains('rb-spacing-dragging')) setActiveGuide(null);
+    });
+
+    // Dbl-click on the label → inline numeric input (supports 20, 20px, 1rem, 2em, 50%, +5, -3)
+    widget.addEventListener('dblclick', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var prop = guideProps[key];
+      var targetEl = guideTargetEl(key);
+      if (!targetEl) return;
+      var cs = getCS(targetEl);
+      var curPx = parseFloat(cs[prop]) || 0;
+      var iconSpan = widget.querySelector('.rb-spacing-icon');
+      var iconChar = iconSpan ? iconSpan.textContent : '\u2194';
+
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.value = String(Math.round(curPx));
+      input.className = 'rb-spacing-inline-input';
+      widget.innerHTML = '';
+      widget.appendChild(input);
+      widget.classList.add('rb-spacing-editing');
+      setTimeout(function() { input.focus(); input.select(); }, 0);
+
+      var committed = false;
+      function restoreLabel(label) {
+        widget.classList.remove('rb-spacing-editing');
+        widget.innerHTML = '<span class="rb-spacing-icon">' + iconChar + '</span><span class="rb-spacing-val">' + label + '</span>';
+      }
+      function parseInput(v) {
+        v = v.trim();
+        if (/^[+-]\s*[0-9.]+$/.test(v)) {
+          var delta = parseFloat(v);
+          return isNaN(delta) ? null : Math.max(0, curPx + delta);
+        }
+        var m = v.match(/^([0-9.]+)\s*(px|rem|em|%)?$/i);
+        if (!m) return null;
+        var num = parseFloat(m[1]);
+        if (isNaN(num)) return null;
+        var unit = (m[2] || 'px').toLowerCase();
+        if (unit === 'px') return num;
+        if (unit === 'rem') return num * (parseFloat(getCS(document.documentElement).fontSize) || 16);
+        if (unit === 'em')  return num * (parseFloat(cs.fontSize) || 16);
+        if (unit === '%') {
+          var parent = targetEl.parentElement;
+          var pw = parent ? parent.getBoundingClientRect().width : 0;
+          return num / 100 * pw;
+        }
+        return null;
+      }
+      function commit() {
+        if (committed) return;
+        committed = true;
+        var newVal = parseInput(input.value);
+        if (newVal != null) {
+          newVal = Math.max(0, Math.round(newVal));
+          targetEl.style[prop] = newVal + 'px';
+          pushUndo({ el: targetEl, prop: prop, old: curPx + 'px' });
+          restoreLabel(String(newVal));
+          updateSpacingGuides(selectedEl);
+          updateSelBox(selectedEl);
+        } else {
+          restoreLabel(String(Math.round(curPx)));
+        }
+      }
+      input.addEventListener('keydown', function(ev) {
+        ev.stopPropagation();
+        if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+        else if (ev.key === 'Escape') { committed = true; restoreLabel(String(Math.round(curPx))); }
+      });
+      input.addEventListener('blur', commit);
+      input.addEventListener('mousedown', function(ev) { ev.stopPropagation(); });
+    });
+
+    // Drag to resize spacing (with Alt/Shift/Cmd modifiers)
     var dragStartPos = null;
     var dragStartValue = 0;
-
     spacingGuides[key].addEventListener('mousedown', function(e) {
       if (!selectedEl) return;
+      if (e.target && e.target.classList && e.target.classList.contains('rb-spacing-inline-input')) return;
       e.preventDefault();
       e.stopPropagation();
 
       var prop = guideProps[key];
-      var targetEl = (key === 'gap') ? selectedEl.parentElement : selectedEl;
+      var targetEl = guideTargetEl(key);
       if (!targetEl) return;
 
       var cs = getCS(targetEl);
@@ -4786,34 +4906,115 @@
 
       var axis = guideAxis[key];
       if (axis === 'auto') {
-        // For gap, detect direction from parent flex
         var parentCs = getCS(targetEl);
         axis = (parentCs.flexDirection === 'row' || parentCs.flexDirection === 'row-reverse') ? 'x' : 'y';
       }
       var dir = guideDir[key];
+      var group = guideGroup(key);
+      var mirror = guideMirror[key];
+
+      // Snapshot starting values for every side we might touch (group or mirror)
+      var initial = {};
+      initial[key] = dragStartValue;
+      if (group) group.forEach(function(k) { if (initial[k] == null) initial[k] = parseFloat(cs[guideProps[k]]) || 0; });
+      if (mirror) initial[mirror] = parseFloat(cs[guideProps[mirror]]) || 0;
+
+      setActiveGuide(key);
+      spacingGuides[key].classList.add('rb-spacing-dragging');
+      document.body.classList.add('rb-ed-dragging-guide');
 
       function onMove(ev) {
         var delta = (axis === 'x')
           ? (ev.clientX - dragStartPos.x) * dir
           : (ev.clientY - dragStartPos.y) * dir;
         var newVal = Math.max(0, Math.round(dragStartValue + delta));
-        // Snap to 1px
-        targetEl.style[prop] = newVal + 'px';
-        // Update the widget value
-        var valSpan = spacingGuides[key].querySelector('.rb-spacing-val');
-        if (valSpan) valSpan.textContent = newVal;
-        // Update guides positions
+        if (ev.metaKey || ev.ctrlKey) newVal = Math.round(newVal / 8) * 8; // snap to 8px grid
+
+        if (ev.shiftKey && group) {
+          group.forEach(function(k) { targetEl.style[guideProps[k]] = newVal + 'px'; });
+        } else if (ev.altKey && mirror) {
+          targetEl.style[prop] = newVal + 'px';
+          targetEl.style[guideProps[mirror]] = newVal + 'px';
+        } else {
+          targetEl.style[prop] = newVal + 'px';
+        }
+
+        renderWidgetLabel(widget, newVal, dragStartValue);
         updateSpacingGuides(selectedEl);
         updateSelBox(selectedEl);
       }
+      function onUp(ev) {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        spacingGuides[key].classList.remove('rb-spacing-dragging');
+        document.body.classList.remove('rb-ed-dragging-guide');
 
+        // Record undo entries for every prop that actually changed
+        var modShift = ev && ev.shiftKey && group;
+        var modAlt = ev && ev.altKey && mirror;
+        if (modShift) {
+          group.forEach(function(k) { pushUndo({ el: targetEl, prop: guideProps[k], old: initial[k] + 'px' }); });
+        } else if (modAlt) {
+          pushUndo({ el: targetEl, prop: prop, old: dragStartValue + 'px' });
+          pushUndo({ el: targetEl, prop: guideProps[mirror], old: initial[mirror] + 'px' });
+        } else {
+          pushUndo({ el: targetEl, prop: prop, old: dragStartValue + 'px' });
+        }
+        // Clear delta preview from label
+        updateSpacingGuides(selectedEl);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+
+  // Corner handles: drag the outer-margin corner to change two sides at once (NW, NE, SE, SW)
+  var cornerGuides = {
+    nw: mk('div', 'rb-spacing-corner rb-spacing-corner-nw'),
+    ne: mk('div', 'rb-spacing-corner rb-spacing-corner-ne'),
+    se: mk('div', 'rb-spacing-corner rb-spacing-corner-se'),
+    sw: mk('div', 'rb-spacing-corner rb-spacing-corner-sw')
+  };
+  // Each corner edits two margins; signs convert screen delta → value delta.
+  var cornerConfig = {
+    nw: { props: ['marginTop', 'marginLeft'],     signY: -1, signX: -1 },
+    ne: { props: ['marginTop', 'marginRight'],    signY: -1, signX:  1 },
+    se: { props: ['marginBottom', 'marginRight'], signY:  1, signX:  1 },
+    sw: { props: ['marginBottom', 'marginLeft'],  signY:  1, signX: -1 }
+  };
+  Object.keys(cornerGuides).forEach(function(ckey) {
+    var handle = cornerGuides[ckey];
+    handle.style.display = 'none';
+    root.appendChild(handle);
+    handle.addEventListener('mousedown', function(e) {
+      if (!selectedEl) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var cfg = cornerConfig[ckey];
+      var cs = getCS(selectedEl);
+      var startY = parseFloat(cs[cfg.props[0]]) || 0;
+      var startX = parseFloat(cs[cfg.props[1]]) || 0;
+      var startPos = { x: e.clientX, y: e.clientY };
+      document.body.classList.add('rb-ed-dragging-guide');
+      function onMove(ev) {
+        var newY = Math.max(0, Math.round(startY + (ev.clientY - startPos.y) * cfg.signY));
+        var newX = Math.max(0, Math.round(startX + (ev.clientX - startPos.x) * cfg.signX));
+        if (ev.metaKey || ev.ctrlKey) {
+          newY = Math.round(newY / 8) * 8;
+          newX = Math.round(newX / 8) * 8;
+        }
+        selectedEl.style[cfg.props[0]] = newY + 'px';
+        selectedEl.style[cfg.props[1]] = newX + 'px';
+        updateSpacingGuides(selectedEl);
+        updateSelBox(selectedEl);
+      }
       function onUp() {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
-        // Push undo
-        pushUndo({ el: targetEl, prop: prop, old: dragStartValue + 'px' });
+        document.body.classList.remove('rb-ed-dragging-guide');
+        pushUndo({ el: selectedEl, prop: cfg.props[0], old: startY + 'px' });
+        pushUndo({ el: selectedEl, prop: cfg.props[1], old: startX + 'px' });
       }
-
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
@@ -4832,15 +5033,28 @@
       width: w + 'px',
       height: h + 'px'
     });
-    var valSpan = guide.querySelector('.rb-spacing-val');
-    if (valSpan) valSpan.textContent = Math.round(value);
+    if (!guide.classList.contains('rb-spacing-dragging') && !guide.classList.contains('rb-spacing-editing-label')) {
+      var valSpan = guide.querySelector('.rb-spacing-val');
+      if (valSpan && !guide.querySelector('.rb-spacing-inline-input')) valSpan.textContent = Math.round(value);
+    }
     var iconSpan = guide.querySelector('.rb-spacing-icon');
     if (iconSpan && icon) iconSpan.textContent = icon;
   }
 
+  function positionCorner(corner, x, y, show) {
+    if (!show) { corner.style.display = 'none'; return; }
+    Object.assign(corner.style, {
+      display: 'block',
+      position: 'fixed',
+      left: x + 'px',
+      top: y + 'px'
+    });
+  }
+
   function updateSpacingGuides(el) {
-    if (!el) {
+    if (!el || !guidesVisible) {
       Object.keys(spacingGuides).forEach(function(k) { spacingGuides[k].style.display = 'none'; });
+      Object.keys(cornerGuides).forEach(function(k) { cornerGuides[k].style.display = 'none'; });
       return;
     }
 
@@ -4881,6 +5095,12 @@
     } else {
       spacingGuides.gap.style.display = 'none';
     }
+
+    // Corner handles — show only when both adjacent margins ≥ 2px (so the handle is outside the element)
+    positionCorner(cornerGuides.nw, r.left - ml,  r.top - mt,   ml >= 2 && mt >= 2);
+    positionCorner(cornerGuides.ne, r.right + mr, r.top - mt,   mr >= 2 && mt >= 2);
+    positionCorner(cornerGuides.se, r.right + mr, r.bottom + mb, mr >= 2 && mb >= 2);
+    positionCorner(cornerGuides.sw, r.left - ml,  r.bottom + mb, ml >= 2 && mb >= 2);
   }
 
   function showSpacingGuides(el) {
@@ -4888,6 +5108,7 @@
   }
 
   function hideSpacingGuides() {
+    setActiveGuide(null);
     updateSpacingGuides(null);
   }
 
@@ -5004,7 +5225,7 @@
 
     // Smart Edit (white bg + sparkle icon)
     var smartBtn = mk('button', 'rb-img-bar-btn rb-img-bar-smart');
-    smartBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 110 135"><path fill="#2b2b2b" d="M53,68.7c0,.8-.6,1.4-1.3,1.5-1,.1-2.7.5-3.2,1.1-.6.6-1,2.3-1.1,3.2,0,.8-.7,1.3-1.5,1.3s-1.4-.6-1.5-1.3c-.1-1-.5-2.7-1.1-3.2-.6-.6-2.3-1-3.2-1.1-.8,0-1.3-.7-1.3-1.5s.6-1.4,1.3-1.5c1-.1,2.7-.5,3.2-1.1.6-.6,1-2.3,1.1-3.2,0-.8.7-1.3,1.5-1.3s1.4.6,1.5,1.3c.1,1,.5,2.7,1.1,3.2.6.6,2.3,1,3.2,1.1.8,0,1.3.7,1.3,1.5ZM70.3,55.7c-1.5-.2-5.8-1-7.5-2.7-1.7-1.7-2.5-6-2.7-7.5,0-.8-.7-1.3-1.5-1.3s-1.4.6-1.5,1.3c-.2,1.5-1,5.8-2.7,7.5-1.7,1.7-6,2.5-7.5,2.7-.8,0-1.3.7-1.3,1.5s.6,1.4,1.3,1.5c1.5.2,5.8,1,7.5,2.7,1.7,1.7,2.5,6,2.7,7.5,0,.8.7,1.3,1.5,1.3s1.4-.6,1.5-1.3c.2-1.5,1-5.8,2.7-7.5,1.7-1.7,6-2.5,7.5-2.7.8,0,1.3-.7,1.3-1.5s-.6-1.4-1.3-1.5Z"/></svg><span>Smart Edit</span>';
+    smartBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 37 40"><path fill="#2b2b2b" d="M16,29.7c0,.8-.6,1.4-1.3,1.5-1,0-2.7.5-3.2,1.1-.6.6-1,2.3-1.1,3.2,0,.8-.7,1.3-1.5,1.3s-1.4-.6-1.5-1.3c0-1-.5-2.7-1.1-3.2-.6-.6-2.3-1-3.2-1.1-.8,0-1.3-.7-1.3-1.5s.6-1.4,1.3-1.5c1,0,2.7-.5,3.2-1.1.6-.6,1-2.3,1.1-3.2,0-.8.7-1.3,1.5-1.3s1.4.6,1.5,1.3c0,1,.5,2.7,1.1,3.2.6.6,2.3,1,3.2,1.1.8,0,1.3.7,1.3,1.5ZM33.3,16.7c-1.5-.2-5.8-1-7.5-2.7-1.7-1.7-2.5-6-2.7-7.5,0-.8-.7-1.3-1.5-1.3s-1.4.6-1.5,1.3c-.2,1.5-1,5.8-2.7,7.5s-6,2.5-7.5,2.7c-.8,0-1.3.7-1.3,1.5s.6,1.4,1.3,1.5c1.5.2,5.8,1,7.5,2.7s2.5,6,2.7,7.5c0,.8.7,1.3,1.5,1.3s1.4-.6,1.5-1.3c.2-1.5,1-5.8,2.7-7.5,1.7-1.7,6-2.5,7.5-2.7.8,0,1.3-.7,1.3-1.5s-.6-1.4-1.3-1.5Z"/></svg><span>Smart Edit</span>';
     smartBtn.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
       chrome.runtime.sendMessage({action: 'smartRemix', imageUrl: img.src});
@@ -5755,6 +5976,42 @@
           layersPanel.style.display = layersPanel.style.display === 'none' ? '' : 'none';
         }
         return;
+      }
+      // ---- Spacing guides: 'G' toggle + arrow-key nudge on the hovered guide ----
+      var _tgt = e.target;
+      var _inEditable = _tgt && (_tgt.tagName === 'INPUT' || _tgt.tagName === 'TEXTAREA' || _tgt.isContentEditable);
+      if (!_inEditable && !isTextEditing && (e.key === 'g' || e.key === 'G') && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        guidesVisible = !guidesVisible;
+        if (selectedEl) updateSpacingGuides(selectedEl);
+        return;
+      }
+      if (!_inEditable && activeGuideKey && selectedEl && guidesVisible &&
+          (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        var _targ = guideTargetEl(activeGuideKey);
+        if (_targ) {
+          var _prop = guideProps[activeGuideKey];
+          var _cs = getCS(_targ);
+          var _cur = parseFloat(_cs[_prop]) || 0;
+          var _axis = guideAxis[activeGuideKey];
+          if (_axis === 'auto') {
+            _axis = (_cs.flexDirection === 'row' || _cs.flexDirection === 'row-reverse') ? 'x' : 'y';
+          }
+          var _dir = guideDir[activeGuideKey];
+          var _screen = 0;
+          if (_axis === 'y') _screen = (e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0);
+          else              _screen = (e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0);
+          if (_screen !== 0) {
+            e.preventDefault();
+            var _step = e.shiftKey ? 10 : ((e.metaKey || e.ctrlKey) ? 8 : 1);
+            var _new = Math.max(0, _cur + _screen * _dir * _step);
+            _targ.style[_prop] = _new + 'px';
+            pushUndo({ el: _targ, prop: _prop, old: _cur + 'px' });
+            updateSpacingGuides(selectedEl);
+            updateSelBox(selectedEl);
+            return;
+          }
+        }
       }
       if (e.key === 'Escape') {
         if (isTextEditing) {

@@ -40,6 +40,8 @@ O Repix é o único tool que **edita sites visualmente no browser** com controle
 
 ## Branches
 - `feat/normalize-engine` — branch principal (editor + layers + Mode E + detect/freeze)
+- `feat/sidebar-panel` — checkpoint 028 (minidocks, Mode S, Assets 3 seções)
+- `feat/guides-ux-experiment` — checkpoint 029 (Framer fix + Guides UX: keyboard modifiers, arrow nudge, G toggle, inline input, delta preview, corner handles)
 - `claude/ai-image-description-extension-Tp3jY` — main branch
 
 ## Versão atual
@@ -130,6 +132,14 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 59. ✅ Video minidock — `<video>` usa o mesmo minidock de imagem
 60. ✅ S2H multi-viewport — scroll-capture full page + per-viewport analysis + HTML stitching
 61. ✅ Mode S: S2H — novo modo dedicado ao pipeline screenshot-to-HTML com 2-pass vision
+62. ✅ Framer canvas-fixed fix — `html.rb-ed-docked { --framer-canvas-fixed-position:absolute }` contém navs fixas de sites Framer (ex: toolfolio.io)
+63. ✅ Guides: modifiers — Alt (mirror lado oposto), Shift (uniform 4 lados), Cmd/Ctrl (snap 8px)
+64. ✅ Guides: arrow-key nudge — mouse-hover marca guide como active, setas ajustam ±1px (Shift ±10, Cmd ±8)
+65. ✅ Guides: G toggle — liga/desliga todas as guides com tecla G
+66. ✅ Guides: inline input — dblclick no label abre input (aceita 20, 20px, 1rem, 2em, 50%, +5, -3)
+67. ✅ Guides: delta preview — durante drag o label mostra `24 +12` com delta em rosa claro
+68. ✅ Guides: visual refresh — box-shadow no widget, anel inset na guide ativa/hover, ring mais forte no dragging
+69. ✅ Guides: corner handles — 4 quadradinhos 10x10 nos cantos da margin (NW/NE/SE/SW), drag altera 2 lados ao mesmo tempo, visíveis quando ambas margens ≥ 2px
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.
