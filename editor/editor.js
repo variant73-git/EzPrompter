@@ -5096,11 +5096,13 @@
       spacingGuides.gap.style.display = 'none';
     }
 
-    // Corner handles — show only when both adjacent margins ≥ 2px (so the handle is outside the element)
-    positionCorner(cornerGuides.nw, r.left - ml,  r.top - mt,   ml >= 2 && mt >= 2);
-    positionCorner(cornerGuides.ne, r.right + mr, r.top - mt,   mr >= 2 && mt >= 2);
-    positionCorner(cornerGuides.se, r.right + mr, r.bottom + mb, mr >= 2 && mb >= 2);
-    positionCorner(cornerGuides.sw, r.left - ml,  r.bottom + mb, ml >= 2 && mb >= 2);
+    // Corner handles — show when AT LEAST ONE of the two adjacent margins ≥ 2px.
+    // With AND, a side with mb=0 would hide SW/SE even if ml/mr were large; OR keeps
+    // the corner available so the user can grow the zero side from 0.
+    positionCorner(cornerGuides.nw, r.left - ml,  r.top - mt,   ml >= 2 || mt >= 2);
+    positionCorner(cornerGuides.ne, r.right + mr, r.top - mt,   mr >= 2 || mt >= 2);
+    positionCorner(cornerGuides.se, r.right + mr, r.bottom + mb, mr >= 2 || mb >= 2);
+    positionCorner(cornerGuides.sw, r.left - ml,  r.bottom + mb, ml >= 2 || mb >= 2);
   }
 
   function showSpacingGuides(el) {
