@@ -42,6 +42,7 @@ O Repix é o único tool que **edita sites visualmente no browser** com controle
 - `feat/normalize-engine` — branch principal (editor + layers + Mode E + detect/freeze)
 - `feat/sidebar-panel` — checkpoint 028 (minidocks, Mode S, Assets 3 seções)
 - `feat/guides-ux-experiment` — checkpoint 029 (Framer fix + Guides UX: keyboard modifiers, arrow nudge, G toggle, inline input, delta preview, corner handles)
+- `feat/smart-text-cascade` — checkpoint 030 (smart text cascade, range-scoped typography, inspector polish, resize compensation, hover-first click, guide pass-through)
 - `claude/ai-image-description-extension-Tp3jY` — main branch
 
 ## Versão atual
@@ -140,6 +141,20 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 67. ✅ Guides: delta preview — durante drag o label mostra `24 +12` com delta em rosa claro
 68. ✅ Guides: visual refresh — box-shadow no widget, anel inset na guide ativa/hover, ring mais forte no dragging
 69. ✅ Guides: corner handles — 4 quadradinhos 10x10 nos cantos da margin (NW/NE/SE/SW), drag altera 2 lados ao mesmo tempo, visíveis quando ambas margens ≥ 2px
+70. ✅ Smart text cascade — `isTextWrapper` detecta split-text/nested text; applyStyle cascateia pra leaves; Typography/minidock consolidam reads (mostra "Mixed" se divergem); cores per-leaf quando wrapper tem cores distintas
+71. ✅ Font field multi-font — wrapper com várias famílias exibe "Clearface, Geist" no campo; Enter guard evita aplicar o comma-display como font stack
+72. ✅ Range-scoped typography — `__pendingTextRange` via selectionchange; applyPropToRange wrapa a seleção em span; reusa span existente em edições consecutivas; cobre 9 props (color, font*, line/letter-spacing, text-decoration/transform)
+73. ✅ Typography advanced popup: Style row — toggles Bold (font-weight 400↔700) e Italic (font-style normal↔italic)
+74. ✅ Font combobox search-as-you-type — input com filtro live, dropdown filtrado; chevron toggle full list; Esc reverte, Enter commit só se mudou
+75. ✅ Inspector value guards — todos inputs numéricos têm defaultValue; empty/NaN restaura (impossível limpar valores); letras X/Y/W/H/T/R/B/L non-selectable (pointer-events:none)
+76. ✅ Inspector X/Y wired — campos aplicam `left`/`top` corretamente; letras em span separado (antes estavam inline no value)
+77. ✅ Inspector values left-aligned — X/Y/W/H alinhados à esquerda como os demais inputs
+78. ✅ Compact "Selection colors" row — quando >4 cores distintas, label + 4 swatches + "+N" pill; altura 25px; expand toca linha extra abaixo
+79. ✅ Keyboard guard no inspector — INPUT/TEXTAREA/SELECT filtra os atalhos globais (Backspace/Delete/Cmd+X/C/V/Z) deixando behavior nativo nos campos
+80. ✅ Resize W/N compensation — handle esquerdo/topo move a borda no sentido do mouse (compensa via margin-left/top ou left/top baseado em position); lazy unlockResize (threshold 2px); click puro é no-op
+81. ✅ Position override via ID selector — auto-class fallback usa `#el.id` em vez de class (React/Framer stripam className); verificação em 2×rAF + 150ms + 600ms; dedup via WeakMap
+82. ✅ Hover-first click resolution — click usa `lastHoverEl` quando está dentro do rect hoverado; hover e click resolvem sempre o mesmo elemento; user seleciona o que viu
+83. ✅ Guides pass-through — pink guides não comem clicks; mousedown com drag threshold 3px; click sem drag esconde guides/corners e seleciona o elemento visualmente abaixo
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.

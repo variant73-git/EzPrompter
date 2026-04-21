@@ -278,6 +278,136 @@
     return jsProp.replace(/([A-Z])/g, '-$1').toLowerCase();
   }
 
+  // ---- Text-wrapper detection & cascade helpers ----
+  // Rationale: sites using split-text animations (GSAP SplitText, Framer, etc.)
+  // delegate text to nested wrappers with their own inline styles. Selecting the
+  // parent and editing shows stale values and needs to cascade writes to leaves.
+  function hasDirectText(el) {
+    if (!el || !el.childNodes) return false;
+    for (var i = 0; i < el.childNodes.length; i++) {
+      var n = el.childNodes[i];
+      if (n.nodeType === 3 && n.textContent && n.textContent.trim()) return true;
+    }
+    return false;
+  }
+  function isEditorEl(el) {
+    return !!(el && el.closest && (el.closest('#rb-editor-root') || el.closest('#rb-editor-inspector') || el.closest('#rb-ed-banner') || el.closest('#rb-editor-layers')));
+  }
+  function getTextLeaves(el) {
+    if (!el || el.nodeType !== 1) return [];
+    if (hasDirectText(el)) return [el];
+    var leaves = [];
+    var kids = el.querySelectorAll('*');
+    for (var i = 0; i < kids.length; i++) {
+      var k = kids[i];
+      if (isEditorEl(k)) continue;
+      if (hasDirectText(k)) leaves.push(k);
+    }
+    return leaves;
+  }
+  function isTextWrapper(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (hasDirectText(el)) return false;
+    var leaves = getTextLeaves(el);
+    return leaves.length > 0;
+  }
+  // Reads a typography prop consolidating across leaves. Returns either the
+  // single value (string) or { mixed: true, first: <value> } when leaves differ.
+  function readTextStyle(el, prop) {
+    var leaves = getTextLeaves(el);
+    if (!leaves.length) return getCS(el)[prop];
+    var first = getCS(leaves[0])[prop];
+    for (var i = 1; i < leaves.length; i++) {
+      if (getCS(leaves[i])[prop] !== first) return { mixed: true, first: first };
+    }
+    return first;
+  }
+  // Read element with the authoritative values. For wrappers, returns the first
+  // text leaf so code that reads `cs.fontSize` works correctly.
+  function getReadEl(el) {
+    if (!el) return el;
+    if (hasDirectText(el)) return el;
+    var leaves = getTextLeaves(el);
+    return leaves.length ? leaves[0] : el;
+  }
+  // Auto-class override pool: used when inline !important loses to a stronger
+  // stylesheet rule. Rare — most inline !important wins.
+  var _rbOverrideSheet = null;
+  var _rbOverrideCounter = 0;
+  function getOverrideSheet() {
+    if (_rbOverrideSheet) return _rbOverrideSheet;
+    var s = document.createElement('style');
+    s.id = 'rb-override-sheet';
+    document.head.appendChild(s);
+    _rbOverrideSheet = s.sheet;
+    return _rbOverrideSheet;
+  }
+  // Track the last override value per (element, prop) so we don't keep appending
+  // duplicate rules on every rAF tick during rapid edits.
+  var _rbOverrideLast = new WeakMap();
+  function applyOverrideClass(leaf, prop, value) {
+    var reg = _rbOverrideLast.get(leaf);
+    if (!reg) { reg = {}; _rbOverrideLast.set(leaf, reg); }
+    if (reg[prop] === value) return;
+    reg[prop] = value;
+    // ID selector: React/Framer reassigns className on re-render (stripping our
+    // runtime-added classes) but rarely controls id, so an ID rule persists.
+    if (!leaf.id) leaf.id = 'rb-ovid-' + (++_rbOverrideCounter);
+    try {
+      var esc = (window.CSS && CSS.escape) ? CSS.escape(leaf.id) : leaf.id;
+      getOverrideSheet().insertRule('#' + esc + '{ ' + cssProp(prop) + ': ' + value + ' !important; }', 0);
+    } catch (e) {}
+  }
+
+  // ---- Per-range typography (apply style to the current text selection) ----
+  // When the user double-clicks text to enter edit mode and selects a word/phrase,
+  // typography writes should hit only that slice, not the whole element. We track
+  // the last non-collapsed selection inside the editable so applyStyle can route
+  // to it. Cleared on exit from text edit.
+  var __pendingTextRange = null; // { range: Range, editableRoot: HTMLElement }
+  var TEXT_RANGE_PROPS = new Set(['color','fontFamily','fontSize','fontWeight',
+    'fontStyle','lineHeight','letterSpacing','textDecoration','textTransform']);
+
+  function applyPropToRange(editableRoot, range, prop, value) {
+    if (!editableRoot || !range || !document.body.contains(editableRoot)) return false;
+    try {
+      var oldHTML = editableRoot.innerHTML;
+      // If the range already exactly wraps a single <span>, modify that span in
+      // place instead of nesting a new one. This is the common case after the
+      // first apply: the user tweaks the same slice and expects iteration, not
+      // accumulating nested spans.
+      var target = null;
+      var ca = range.commonAncestorContainer;
+      if (ca && ca.nodeType === 1 && ca.tagName === 'SPAN' &&
+          ca !== editableRoot &&
+          range.startContainer === ca && range.endContainer === ca &&
+          range.startOffset === 0 && range.endOffset === ca.childNodes.length) {
+        target = ca;
+      }
+      if (target) {
+        target.style.setProperty(cssProp(prop), value, 'important');
+      } else {
+        var span = document.createElement('span');
+        span.style.setProperty(cssProp(prop), value, 'important');
+        try {
+          range.surroundContents(span);
+        } catch (e) {
+          var frag = range.extractContents();
+          span.appendChild(frag);
+          range.insertNode(span);
+        }
+        target = span;
+      }
+      pushUndo({ prop: '__textEdit', el: editableRoot, old: oldHTML });
+      var newRange = document.createRange();
+      newRange.selectNodeContents(target);
+      var sel = window.getSelection();
+      if (sel) { sel.removeAllRanges(); sel.addRange(newRange); }
+      __pendingTextRange = { range: newRange.cloneRange(), editableRoot: editableRoot };
+      return true;
+    } catch (e) { return false; }
+  }
+
   function isTransparent(s) {
     if (!s || s === 'transparent' || s === 'rgba(0, 0, 0, 0)') return true;
     var m = s.match(/[\d.]+/g);
@@ -2629,7 +2759,14 @@
       var inp = mk('input', 'rb-insp-inp');
       inp.type = 'text';
       inp.value = value;
-      inp.addEventListener('change', function() { applyStyle(el, prop, applyVal(inp.value)); }, {signal: sig});
+      inp.defaultValue = String(value);
+      inp.addEventListener('change', function() {
+        // Reject empty/NaN — inspector values are never blank. Restore last good.
+        var v = inp.value.trim();
+        if (v === '' || isNaN(parseFloat(v))) { inp.value = inp.defaultValue; return; }
+        inp.defaultValue = v;
+        applyStyle(el, prop, applyVal(inp.value));
+      }, {signal: sig});
 
       // Icon (set via data-icon attribute by caller, or default)
       var iconSvg = FIELD_ICONS[prop] || '';
@@ -2765,6 +2902,14 @@
     inspBody.innerHTML = '';
     inspector.classList.remove('rb-insp-ghost');
     var cs = getCS(el);
+    // Text-wrapper aware style read: for elements that wrap nested text (split-text
+    // patterns), typography reads should reflect the actual rendered text on the
+    // leaves, not the wrapper's inherited values.
+    var csT = getCS(getReadEl(el));
+    function isTextMixed(prop) {
+      var v = readTextStyle(el, prop);
+      return v && typeof v === 'object' && v.mixed;
+    }
     var r = getBox(el);
 
     // Breadcrumb
@@ -2866,34 +3011,46 @@
 
     // X/Y position
     var posRow = mk('div', 'rb-insp-pos-row');
-    var xInp = mk('input', 'rb-insp-inp');
-    xInp.value = 'X  ' + Math.round(r.left);
-    xInp.style.width = '48%';
-    var yInp = mk('input', 'rb-insp-inp');
-    yInp.value = 'Y  ' + Math.round(r.top);
-    yInp.style.width = '48%';
-    posRow.appendChild(xInp);
-    posRow.appendChild(yInp);
+    // Labeled numeric field (letter is a non-selectable sibling span so users
+    // can't ever clear it, unlike the pre-refactor inputs that had the letter
+    // INSIDE the value string). Empty/invalid inputs revert to the field's
+    // original numeric value instead of wiping the CSS property.
+    function labeledNumField(letter, numVal, onCommit) {
+      var f = mk('div', 'rb-insp-field-bg');
+      f.style.cssText = 'display:flex;align-items:center;border-radius:4px;overflow:hidden;flex:1;';
+      var lbl = mk('span', 'rb-insp-field-letter');
+      lbl.textContent = letter;
+      var inp = mk('input', 'rb-insp-inp');
+      var initial = String(Math.round(numVal));
+      inp.value = initial;
+      inp.defaultValue = initial;
+      inp.style.cssText = 'flex:1;background:none;border:none;padding:5px 2px;text-align:left;min-width:0;';
+      inp.addEventListener('change', function() {
+        var v = inp.value.trim();
+        var n = parseInt(v.replace(/[^0-9-]/g, ''), 10);
+        if (v === '' || isNaN(n)) {
+          inp.value = inp.defaultValue;
+          return;
+        }
+        inp.defaultValue = String(n);
+        inp.value = String(n);
+        onCommit(n);
+      });
+      f.appendChild(lbl);
+      f.appendChild(inp);
+      return f;
+    }
+
+    posRow.appendChild(labeledNumField('X', r.left, function(v) { applyStyle(el, 'left', v + 'px'); }));
+    posRow.appendChild(labeledNumField('Y', r.top,  function(v) { applyStyle(el, 'top',  v + 'px'); }));
     posRow.style.cssText = 'display:flex;gap:6px;';
     addRow(posSec, 'Position', posRow);
 
     // Dimensions W x H (part of Container)
     var dimRow = mk('div');
     dimRow.style.cssText = 'display:flex;gap:6px;';
-    var wInp = mk('input', 'rb-insp-inp');
-    wInp.value = 'W  ' + Math.round(r.width);
-    wInp.style.width = '48%';
-    wInp.addEventListener('change', function() {
-      applyStyle(el, 'width', parseInt(wInp.value.replace(/\D/g,'')) + 'px');
-    });
-    var hInp = mk('input', 'rb-insp-inp');
-    hInp.value = 'H  ' + Math.round(r.height);
-    hInp.style.width = '48%';
-    hInp.addEventListener('change', function() {
-      applyStyle(el, 'height', parseInt(hInp.value.replace(/\D/g,'')) + 'px');
-    });
-    dimRow.appendChild(wInp);
-    dimRow.appendChild(hInp);
+    dimRow.appendChild(labeledNumField('W', r.width,  function(v) { applyStyle(el, 'width',  v + 'px'); }));
+    dimRow.appendChild(labeledNumField('H', r.height, function(v) { applyStyle(el, 'height', v + 'px'); }));
     addRow(posSec, 'Dimensions', dimRow);
 
     // Spacing (T/R/B/L) as visual box
@@ -2910,10 +3067,17 @@
       var letter = mk('span', 'rb-insp-field-letter');
       letter.textContent = s.label;
       var inp = mk('input', 'rb-insp-inp');
-      inp.value = parseInt(cs[s.prop]) || 0;
+      var initial = String(parseInt(cs[s.prop]) || 0);
+      inp.value = initial;
+      inp.defaultValue = initial;
       inp.style.cssText = 'width:32px;text-align:center;background:none;border:none;padding:5px 2px;';
       inp.addEventListener('change', function() {
-        applyStyle(el, s.prop, inp.value + 'px');
+        var v = inp.value.trim();
+        var n = parseInt(v.replace(/[^0-9-]/g, ''), 10);
+        if (v === '' || isNaN(n)) { inp.value = inp.defaultValue; return; }
+        inp.defaultValue = String(n);
+        inp.value = String(n);
+        applyStyle(el, s.prop, n + 'px');
       });
       field.appendChild(letter);
       field.appendChild(inp);
@@ -2953,7 +3117,7 @@
         ];
         casesP.forEach(function(c) {
           var b = mk('button', 'rb-insp-align-btn'); b.innerHTML = c.svg; b.title = c.title;
-          if (cs.textTransform === c.val) b.classList.add('active');
+          if (csT.textTransform === c.val) b.classList.add('active');
           b.addEventListener('click', function() {
             applyStyle(el, 'textTransform', c.val);
             caseRowP.querySelectorAll('.rb-insp-align-btn').forEach(function(x) { x.classList.remove('active'); });
@@ -2972,7 +3136,7 @@
         ];
         decsP.forEach(function(d) {
           var b = mk('button', 'rb-insp-align-btn'); b.innerHTML = d.svg; b.title = d.title;
-          if (cs.textDecorationLine === d.val || cs.textDecoration.indexOf(d.val) !== -1) b.classList.add('active');
+          if (csT.textDecorationLine === d.val || csT.textDecoration.indexOf(d.val) !== -1) b.classList.add('active');
           b.addEventListener('click', function() {
             applyStyle(el, 'textDecoration', d.val);
             decRowP.querySelectorAll('.rb-insp-align-btn').forEach(function(x) { x.classList.remove('active'); });
@@ -2981,59 +3145,145 @@
           decRowP.appendChild(b);
         });
         addRow(popup, 'Decoration', decRowP);
+
+        // Style (bold / italic toggles)
+        var styleRowP = mk('div', 'rb-insp-align-row');
+        var curWeight = parseInt(csT.fontWeight) || 400;
+        var curStyle = csT.fontStyle || 'normal';
+        var boldBtn = mk('button', 'rb-insp-align-btn');
+        boldBtn.innerHTML = '<svg '+IC18t+'><text x="3" y="15" font-size="14" font-weight="800" fill="currentColor" stroke="none" font-family="sans-serif">B</text></svg>';
+        boldBtn.title = 'Bold';
+        if (curWeight >= 700) boldBtn.classList.add('active');
+        boldBtn.addEventListener('click', function() {
+          var next = boldBtn.classList.contains('active') ? '400' : '700';
+          applyStyle(el, 'fontWeight', next);
+          boldBtn.classList.toggle('active');
+        });
+        var italicBtn = mk('button', 'rb-insp-align-btn');
+        italicBtn.innerHTML = '<svg '+IC18t+'><text x="4" y="15" font-size="14" font-style="italic" font-family="serif" fill="currentColor" stroke="none">I</text></svg>';
+        italicBtn.title = 'Italic';
+        if (curStyle === 'italic' || curStyle === 'oblique') italicBtn.classList.add('active');
+        italicBtn.addEventListener('click', function() {
+          var next = italicBtn.classList.contains('active') ? 'normal' : 'italic';
+          applyStyle(el, 'fontStyle', next);
+          italicBtn.classList.toggle('active');
+        });
+        styleRowP.appendChild(boldBtn);
+        styleRowP.appendChild(italicBtn);
+        addRow(popup, 'Style', styleRowP);
       });
     });
-    // Font family — current + web safe + local fonts
-    var curFont = cs.fontFamily.split(',')[0].replace(/['"]/g, '').trim();
-    var fontSel = mk('select', 'rb-insp-font-sel');
-    var curOpt = mk('option'); curOpt.value = curFont; curOpt.textContent = curFont; curOpt.selected = true;
-    fontSel.appendChild(curOpt);
+    // Font family — search-as-you-type combobox. Typing filters the list; the
+    // chevron toggles the full list. Input can't be cleared (blur restores).
+    // For text wrappers with nested leaves, display EVERY distinct font used so
+    // designers see what's inside at a glance (e.g., "Clearface, Geist").
+    function firstFontToken(raw) {
+      return String(raw || '').split(',')[0].replace(/['"]/g, '').trim();
+    }
+    var curFonts = [];
+    if (isTextWrapper(el)) {
+      getTextLeaves(el).forEach(function(leaf) {
+        var f = firstFontToken(getCS(leaf).fontFamily);
+        if (f && curFonts.indexOf(f) < 0) curFonts.push(f);
+      });
+    }
+    if (!curFonts.length) curFonts.push(firstFontToken(csT.fontFamily));
+    var curFont = curFonts.join(', ');
     var webSafe = ['Arial','Helvetica','Verdana','Georgia','Times New Roman','Courier New','system-ui','Roboto','Inter'];
-    webSafe.forEach(function(f) {
-      if (f === curFont) return;
-      var o = mk('option'); o.value = f; o.textContent = f;
-      fontSel.appendChild(o);
-    });
-    getLocalFonts(function(locals) {
-      if (locals.length === 0) return;
-      var group = mk('optgroup');
-      group.label = 'Local Fonts (' + locals.length + ')';
-      locals.forEach(function(f) {
-        if (f === curFont || webSafe.indexOf(f) !== -1) return;
-        var o = mk('option'); o.value = f; o.textContent = f;
-        group.appendChild(o);
-      });
-      fontSel.appendChild(group);
-    });
-    fontSel.addEventListener('change', function() { applyStyle(el, 'fontFamily', fontSel.value); });
+    var allFonts = webSafe.slice();
+    curFonts.forEach(function(f) { if (f && allFonts.indexOf(f) < 0) allFonts.unshift(f); });
+
     var fontWrap = mk('div', 'rb-insp-field-wrap');
-    fontWrap.style.cssText = 'display:flex;align-items:center;border-radius:4px;';
+    fontWrap.style.cssText = 'display:flex;align-items:center;border-radius:4px;position:relative;';
     var fontIcon = mk('span', 'rb-insp-field-icon');
     fontIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 36.23 42.5" fill="#fff"><polygon points="25.58 14.61 10.21 14.61 10.21 17.22 10.22 17.22 10.22 19.84 12.83 19.84 12.83 17.22 16.59 17.22 16.59 28.77 14.52 28.77 14.52 31.38 21.28 31.38 21.28 28.77 19.2 28.77 19.2 17.22 23 17.22 23 19.84 25.61 19.84 25.61 14.61 25.58 14.61"/><path d="M34.31,9.33l-7.41-7.41c-1.24-1.24-2.89-1.93-4.65-1.93H5.72C2.57,0,0,2.57,0,5.72v31.06c0,3.15,2.57,5.72,5.72,5.72h24.79c3.15,0,5.72-2.57,5.72-5.72V13.98c0-1.73-.7-3.42-1.93-4.65ZM33.06,13.98v22.79c0,1.43-1.12,2.54-2.54,2.54H5.72c-1.43,0-2.54-1.12-2.54-2.54V5.72c0-1.43,1.12-2.54,2.54-2.54h16.53c.91,0,1.76.35,2.4,1l7.41,7.41c.64.64,1,1.5,1,2.4Z"/></svg>';
     fontWrap.appendChild(fontIcon);
-    fontSel.style.cssText += 'background:none;border:none;border-radius:0;flex:1;padding-right:4px;';
-    fontWrap.appendChild(fontSel);
-    var fontDivider = mk('div');
-    fontDivider.className = 'rb-insp-field-divider';
+
+    var fontInput = mk('input', 'rb-insp-inp rb-insp-font-sel');
+    fontInput.type = 'text';
+    fontInput.value = curFont;
+    fontInput.defaultValue = curFont;
+    fontInput.style.cssText = 'flex:1;background:none;border:none;padding:5px 4px;min-width:0;';
+    fontWrap.appendChild(fontInput);
+
+    var fontDivider = mk('div', 'rb-insp-field-divider');
     fontDivider.style.cssText = 'width:1px;align-self:stretch;flex-shrink:0;';
     fontWrap.appendChild(fontDivider);
-    var fontChev = mk('div');
-    fontChev.className = 'rb-insp-field-chev';
+    var fontChev = mk('div', 'rb-insp-field-chev');
     fontChev.style.cssText = 'display:flex;align-items:center;justify-content:center;width:22px;flex-shrink:0;cursor:pointer;';
     fontChev.innerHTML = '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>';
-    // Click-forwarder: chevron is visual, but we need it to actually open the
-    // <select>. HTMLSelectElement.showPicker() is the modern API; fall back to
-    // a programmatic click on the select element if showPicker isn't available.
-    fontChev.addEventListener('mousedown', function(e) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      if (typeof fontSel.showPicker === 'function') {
-        try { fontSel.showPicker(); return; } catch(err) {}
-      }
-      fontSel.focus();
-      fontSel.click();
-    }, {capture: true, signal: sig});
     fontWrap.appendChild(fontChev);
+
+    var fontDrop = mk('div', 'rb-insp-font-drop');
+    fontDrop.style.cssText = 'position:absolute;left:0;right:0;top:100%;margin-top:2px;background:#1A1A1A;border:1px solid rgba(255,255,255,0.08);border-radius:4px;max-height:240px;overflow-y:auto;display:none;z-index:2147483647;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+    fontWrap.appendChild(fontDrop);
+
+    function renderFontDrop(filter) {
+      fontDrop.innerHTML = '';
+      var f = (filter || '').toLowerCase().trim();
+      var items = f ? allFonts.filter(function(n) { return n.toLowerCase().indexOf(f) >= 0; }) : allFonts.slice();
+      if (!items.length) {
+        var empty = mk('div');
+        empty.textContent = 'No fonts match';
+        empty.style.cssText = 'padding:6px 10px;color:rgba(239,238,235,0.4);font-size:11px;';
+        fontDrop.appendChild(empty);
+        return;
+      }
+      items.forEach(function(name) {
+        var opt = mk('div', 'rb-insp-font-opt');
+        opt.textContent = name;
+        opt.style.cssText = 'padding:6px 10px;font-size:11px;cursor:pointer;color:#EFEEEB;font-family:"' + name + '",sans-serif;';
+        opt.addEventListener('mouseenter', function() { opt.style.background = 'rgba(255,255,255,0.06)'; });
+        opt.addEventListener('mouseleave', function() { opt.style.background = ''; });
+        opt.addEventListener('mousedown', function(e) {
+          e.preventDefault(); e.stopImmediatePropagation();
+          fontInput.value = name;
+          fontInput.defaultValue = name;
+          applyStyle(el, 'fontFamily', name);
+          hideFontDrop();
+          fontInput.blur();
+        }, {capture: true});
+        fontDrop.appendChild(opt);
+      });
+    }
+    function showFontDrop() { renderFontDrop(fontInput.value); fontDrop.style.display = 'block'; }
+    function hideFontDrop() { fontDrop.style.display = 'none'; }
+
+    fontInput.addEventListener('focus', function() { showFontDrop(); });
+    fontInput.addEventListener('input', function() {
+      if (fontDrop.style.display !== 'block') showFontDrop();
+      else renderFontDrop(fontInput.value);
+    });
+    fontInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') { fontInput.value = fontInput.defaultValue; hideFontDrop(); fontInput.blur(); }
+      else if (e.key === 'Enter') {
+        var v = fontInput.value.trim();
+        if (v && v !== fontInput.defaultValue) {
+          fontInput.defaultValue = v; applyStyle(el, 'fontFamily', v);
+        } else if (!v) {
+          fontInput.value = fontInput.defaultValue;
+        }
+        hideFontDrop();
+        fontInput.blur();
+      }
+    });
+    fontInput.addEventListener('blur', function() {
+      setTimeout(hideFontDrop, 150);  // allow click on option
+      if (!fontInput.value.trim()) fontInput.value = fontInput.defaultValue;
+    });
+    fontChev.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (fontDrop.style.display === 'block') { hideFontDrop(); fontInput.blur(); }
+      else { fontInput.focus(); renderFontDrop(''); }  // chevron shows full list
+    }, {capture: true});
+
+    // Async-load local fonts into the list once available
+    getLocalFonts(function(locals) {
+      if (!locals || !locals.length) return;
+      locals.forEach(function(f) { if (allFonts.indexOf(f) < 0) allFonts.push(f); });
+      if (fontDrop.style.display === 'block') renderFontDrop(fontInput.value);
+    });
+
     addRow(typSec, 'Font', fontWrap);
 
     // Weight + Size row
@@ -3047,7 +3297,7 @@
     var weightSel = mk('select', 'rb-insp-inp');
     ['100','200','300','400','500','600','700','800','900'].forEach(function(w) {
       var o = mk('option'); o.value = w; o.textContent = w;
-      if (w === cs.fontWeight) o.selected = true;
+      if (w === csT.fontWeight) o.selected = true;
       weightSel.appendChild(o);
     });
     weightSel.addEventListener('change', function() { applyStyle(el, 'fontWeight', weightSel.value); });
@@ -3057,7 +3307,7 @@
     sizeWrap.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:3px;';
     var sizeLbl = mk('span', 'rb-insp-lbl'); sizeLbl.textContent = 'Size';
     sizeWrap.appendChild(sizeLbl);
-    addInput(sizeWrap, '', cs.fontSize, el, 'fontSize');
+    addInput(sizeWrap, '', csT.fontSize, el, 'fontSize');
 
     wsRow.appendChild(weightWrap);
     wsRow.appendChild(sizeWrap);
@@ -3079,7 +3329,7 @@
     lhIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 39.24 34.36" fill="#fff"><path d="M37.56,31.36c.93,0,1.68.67,1.68,1.5s-.75,1.5-1.68,1.5H1.68c-.93,0-1.68-.67-1.68-1.5s.75-1.5,1.68-1.5h35.87Z"/><path fill-rule="evenodd" d="M16.38,7.47c1.14-3.02,5.41-3.02,6.55,0l7.12,18.97c.29.78-.1,1.64-.88,1.93-.78.29-1.64-.1-1.93-.88l-1.89-5.03h-11.41l-1.89,5.03c-.29.78-1.15,1.17-1.93.88-.78-.29-1.17-1.15-.88-1.93l7.13-18.97ZM20.12,8.53c-.16-.43-.77-.43-.94,0l-4.11,10.94h9.16l-4.11-10.94Z"/><path d="M37.56,0c.93,0,1.68.67,1.68,1.5s-.75,1.5-1.68,1.5H1.68c-.93,0-1.68-.67-1.68-1.5S.75,0,1.68,0h35.87Z"/></svg>';
     lhIcon.className = 'rb-insp-field-icon';
     var lhInp = mk('input', 'rb-insp-inp');
-    lhInp.value = cs.lineHeight === 'normal' ? 'auto' : (Math.round(parseFloat(cs.lineHeight) / parseFloat(cs.fontSize) * 100) + '%');
+    lhInp.value = csT.lineHeight === 'normal' ? 'auto' : (Math.round(parseFloat(csT.lineHeight) / parseFloat(csT.fontSize) * 100) + '%');
     lhInp.style.cssText = 'flex:1;background:none;border:none;padding:5px 0;';
     lhInp.addEventListener('change', function() {
       var v = lhInp.value.trim();
@@ -3121,14 +3371,14 @@
     lsIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 39 35" fill="#fff"><path d="M3,33.5c0,.83-.67,1.5-1.5,1.5s-1.5-.67-1.5-1.5V1.5C0,.67.67,0,1.5,0s1.5.67,1.5,1.5v32Z"/><path fill-rule="evenodd" d="M16.23,8c1.14-3.02,5.41-3.02,6.55,0l7.12,18.97c.29.78-.1,1.64-.88,1.93-.78.29-1.64-.1-1.93-.88l-1.89-5.03h-11.41l-1.89,5.03c-.29.78-1.15,1.17-1.93.88-.78-.29-1.17-1.15-.88-1.93l7.13-18.97ZM19.97,9.06c-.16-.43-.77-.43-.94,0l-4.11,10.94h9.16l-4.11-10.94Z"/><path d="M39,33.5c0,.83-.67,1.5-1.5,1.5s-1.5-.67-1.5-1.5V1.5c0-.83.67-1.5,1.5-1.5s1.5.67,1.5,1.5v32Z"/></svg>';
     lsIcon.className = 'rb-insp-field-icon';
     var lsInp = mk('input', 'rb-insp-inp');
-    var lsRaw = parseFloat(cs.letterSpacing) || 0;
-    lsInp.value = (cs.letterSpacing === 'normal') ? '0%' : (Math.round(lsRaw / parseFloat(cs.fontSize) * 100) + '%');
+    var lsRaw = parseFloat(csT.letterSpacing) || 0;
+    lsInp.value = (csT.letterSpacing === 'normal') ? '0%' : (Math.round(lsRaw / parseFloat(csT.fontSize) * 100) + '%');
     lsInp.style.cssText = 'flex:1;background:none;border:none;padding:5px 0;';
     lsInp.addEventListener('change', function() {
       var v = lsInp.value.trim();
       if (v.indexOf('%') !== -1) {
         var pct = parseFloat(v) || 0;
-        v = (pct / 100 * parseFloat(cs.fontSize)) + 'px';
+        v = (pct / 100 * parseFloat(csT.fontSize)) + 'px';
       }
       applyStyle(el, 'letterSpacing', v);
     });
@@ -3137,7 +3387,7 @@
       e.preventDefault(); e.stopImmediatePropagation();
       var startX = e.clientX;
       var startVal = parseFloat(lsInp.value) || 0;
-      var fSize = parseFloat(cs.fontSize) || 16;
+      var fSize = parseFloat(csT.fontSize) || 16;
       var onMove = function(me) {
         var delta = Math.round((me.clientX - startX) / 2);
         var nv = startVal + delta;
@@ -3171,7 +3421,7 @@
       var btn = mk('button', 'rb-insp-align-btn');
       btn.innerHTML = a.svg;
       btn.title = 'Align ' + a.val;
-      if (cs.textAlign === a.val) btn.classList.add('active');
+      if (csT.textAlign === a.val) btn.classList.add('active');
       btn.addEventListener('click', function() {
         applyStyle(el, 'textAlign', a.val);
         taRow.querySelectorAll('.rb-insp-align-btn.rb-ta-h').forEach(function(b) { b.classList.remove('active'); });
@@ -3237,7 +3487,7 @@
     var hasBgAny = hasBg || _hasBgImg || _hasAnimation || _hasFxBefore;
     var _fillHasVisualEl = el.tagName === 'IMG' || el.tagName === 'SVG' || (el.tagName && el.tagName.toLowerCase() === 'svg') || el.querySelector(':scope > img') || el.querySelector(':scope > svg');
     // Check if element or children have text (for text color rows)
-    var _hasTextColor = !!rgbHex(cs.color);
+    var _hasTextColor = !!rgbHex(csT.color);
     var hasFill = hasBgAny || _fillHasVisualEl || _hasTextColor;
     var fillSec = addSection('Fill', !hasFill);
     var fillHd = fillSec.parentElement.querySelector('.rb-insp-sec-hd');
@@ -3628,36 +3878,64 @@
     }
 
     // Group colors by class name (linked by default)
-    var colorEntries = []; // {hex, className, targets, isSelf}
-    var selfHex = rgbHex(cs.color);
+    var colorEntries = []; // {hex, className, targets, isSelf, isMixed}
+    var selfHex = rgbHex(csT.color);
     var selfClass = findColorClass(el);
-    if (selfHex) colorEntries.push({hex: selfHex, className: selfClass, targets: [el], isSelf: true});
-    if (el.children.length > 0) {
-      var colorClassMap = {}; // key = className||hex
-      el.querySelectorAll('*').forEach(function(child) {
-        if (child.closest('svg')) return;
-        var hasText = false;
-        for (var cn = 0; cn < child.childNodes.length; cn++) {
-          if (child.childNodes[cn].nodeType === 3 && child.childNodes[cn].textContent.trim().length > 0) { hasText = true; break; }
-        }
-        if (!hasText) return;
-        var cr = child.getBoundingClientRect();
-        if (cr.width < 1 || cr.height < 1) return;
-        var cc = getCS(child).color;
-        var hex = rgbHex(cc);
-        if (!hex) return;
-        if (hex === selfHex) {
-          colorEntries[0].targets.push(child);
-        } else {
-          var cls = findColorClass(child);
-          var key = cls || hex;
-          if (!colorClassMap[key]) colorClassMap[key] = {hex: hex, className: cls, targets: []};
-          colorClassMap[key].targets.push(child);
-        }
+    var elIsTextWrapper = isTextWrapper(el);
+
+    if (elIsTextWrapper) {
+      // Text wrapper: each leaf is its own editable color. Don't include wrapper
+      // in targets (applyStyle on wrapper would cascade and clobber other leaves).
+      // Each entry targets only leaves that currently share that color.
+      var leafMap = {};
+      getTextLeaves(el).forEach(function(leaf) {
+        var lc = getCS(leaf).color;
+        var lh = rgbHex(lc);
+        if (!lh) return;
+        var cls = findColorClass(leaf);
+        var key = cls || lh;
+        if (!leafMap[key]) leafMap[key] = { hex: lh, className: cls, targets: [] };
+        leafMap[key].targets.push(leaf);
       });
-      Object.keys(colorClassMap).forEach(function(key) {
-        colorEntries.push(colorClassMap[key]);
+      var leafKeys = Object.keys(leafMap);
+      var hasMultiple = leafKeys.length >= 2;
+      leafKeys.forEach(function(key, idx) {
+        var entry = leafMap[key];
+        if (idx === 0) entry.isSelf = true;
+        // chain is disabled whenever leaves have varying colors (class-wide rule
+        // can't represent the mixed state without unifying them)
+        if (hasMultiple) entry.chainDisabled = true;
+        colorEntries.push(entry);
       });
+    } else {
+      if (selfHex) colorEntries.push({hex: selfHex, className: selfClass, targets: [el], isSelf: true});
+      if (el.children.length > 0) {
+        var colorClassMap = {}; // key = className||hex
+        el.querySelectorAll('*').forEach(function(child) {
+          if (child.closest('svg')) return;
+          var hasText = false;
+          for (var cn = 0; cn < child.childNodes.length; cn++) {
+            if (child.childNodes[cn].nodeType === 3 && child.childNodes[cn].textContent.trim().length > 0) { hasText = true; break; }
+          }
+          if (!hasText) return;
+          var cr = child.getBoundingClientRect();
+          if (cr.width < 1 || cr.height < 1) return;
+          var cc = getCS(child).color;
+          var hex = rgbHex(cc);
+          if (!hex) return;
+          if (hex === selfHex) {
+            colorEntries[0].targets.push(child);
+          } else {
+            var cls = findColorClass(child);
+            var key = cls || hex;
+            if (!colorClassMap[key]) colorClassMap[key] = {hex: hex, className: cls, targets: []};
+            colorClassMap[key].targets.push(child);
+          }
+        });
+        Object.keys(colorClassMap).forEach(function(key) {
+          colorEntries.push(colorClassMap[key]);
+        });
+      }
     }
 
     var LINK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>';
@@ -3666,6 +3944,151 @@
     if (colorEntries.length > 0) {
       var colorsStack = mk('div');
       colorsStack.style.cssText = 'display:flex;flex-direction:column;gap:3px;';
+
+      // Shared popup-opener so compact-row swatches and individual-row clicks
+      // route through the same fill popup wiring.
+      function openTextFillPopup(ent, swEl, hexTxtEl, alphaEl) {
+        if (!window.__rbFillPopup) return;
+        window.__rbFillPopup.open(swEl, inspector, root, el, 'color', sig, {
+          apply: function(targetEl, targetProp, cssVal) {
+            if (__pendingTextRange && isTextEditing) {
+              applyStyle(el, 'color', cssVal);
+            } else {
+              ent.targets.forEach(function(t) {
+                t.style.removeProperty('-webkit-background-clip');
+                t.style.removeProperty('background-clip');
+                t.style.removeProperty('-webkit-text-fill-color');
+                t.style.removeProperty('background-image');
+                t.style.removeProperty('background');
+                t.style.removeProperty('animation');
+                applyStyle(t, 'color', cssVal);
+              });
+            }
+            var newHex = rgbHex(cssVal);
+            if (swEl) swEl.style.background = cssVal;
+            if (hexTxtEl) hexTxtEl.textContent = newHex || cssVal;
+            if (alphaEl) {
+              var am = cssVal.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+              alphaEl.textContent = (am && am[4] !== undefined ? Math.round(parseFloat(am[4]) * 100) : 100) + '%';
+            }
+          },
+          applyGradient: function(targetEl, gradCSS) {
+            ent.targets.forEach(function(t) {
+              pushUndo({el: t, prop: 'background', old: t.style.background});
+              t.style.setProperty('background', gradCSS, 'important');
+              t.style.setProperty('-webkit-background-clip', 'text', 'important');
+              t.style.setProperty('background-clip', 'text', 'important');
+              t.style.setProperty('-webkit-text-fill-color', 'transparent', 'important');
+              t.style.setProperty('color', 'transparent', 'important');
+            });
+            if (swEl) swEl.style.background = gradCSS;
+            if (hexTxtEl) hexTxtEl.textContent = 'gradient';
+            if (alphaEl) alphaEl.textContent = '';
+          },
+          applyEffect: function(targetEl, fx) {
+            ent.targets.forEach(function(t) {
+              pushUndo({el: t, prop: 'background', old: t.style.background});
+              t.classList.add('rb-fx-active');
+              t.removeAttribute('data-rb-frozen-anim');
+              var cssProps = fx.css.split(';').filter(function(s) { return s.trim(); });
+              cssProps.forEach(function(rule) {
+                var parts = rule.split(':');
+                if (parts.length >= 2) {
+                  var p = parts[0].trim();
+                  var v = parts.slice(1).join(':').trim();
+                  t.style.setProperty(p, v, 'important');
+                }
+              });
+              t.style.setProperty('animation-play-state', 'running', 'important');
+              t.style.setProperty('-webkit-background-clip', 'text', 'important');
+              t.style.setProperty('background-clip', 'text', 'important');
+              t.style.setProperty('-webkit-text-fill-color', 'transparent', 'important');
+              t.style.setProperty('color', 'transparent', 'important');
+            });
+            if (swEl) swEl.style.cssText = fx.css + 'width:14px;height:14px;border-radius:3px;flex-shrink:0;';
+            if (hexTxtEl) hexTxtEl.textContent = fx.name.toLowerCase();
+            if (alphaEl) alphaEl.textContent = '';
+          },
+          applyBgImage: function(targetEl, dataUrl) {
+            ent.targets.forEach(function(t) {
+              pushUndo({el: t, prop: 'backgroundImage', old: t.style.backgroundImage});
+              t.style.setProperty('background-image', 'url(' + dataUrl + ')', 'important');
+              t.style.setProperty('background-size', 'cover', 'important');
+              t.style.setProperty('background-position', 'center', 'important');
+              t.style.setProperty('-webkit-background-clip', 'text', 'important');
+              t.style.setProperty('background-clip', 'text', 'important');
+              t.style.setProperty('-webkit-text-fill-color', 'transparent', 'important');
+              t.style.setProperty('color', 'transparent', 'important');
+            });
+            if (swEl) {
+              swEl.style.backgroundImage = 'url(' + dataUrl + ')';
+              swEl.style.backgroundSize = 'cover';
+            }
+            if (hexTxtEl) hexTxtEl.textContent = 'image';
+            if (alphaEl) alphaEl.textContent = '';
+          }
+        });
+      }
+
+      // Compact "Selection colors" pill when more than 4 distinct text colors.
+      // Each swatch opens the picker for its entry; "+N" pill toggles showing
+      // the rest of the swatches wrapped below.
+      if (colorEntries.length > 4) {
+        // Compact row matches the font field height (25px). Expand spills extra
+        // swatches into a separate row below so the compact row height stays fixed.
+        var compact = mk('div', 'rb-insp-field-bg rb-insp-color-compact');
+        compact.style.cssText = 'display:flex;align-items:center;gap:8px;padding:0 8px;border-radius:4px;height:25px;';
+        var compactLbl = mk('span');
+        compactLbl.textContent = 'Selection colors';
+        compactLbl.style.cssText = 'flex:1;font:500 12px/1.3 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.75);min-width:100px;white-space:nowrap;';
+        compact.appendChild(compactLbl);
+        var swatchGroup = mk('div');
+        swatchGroup.style.cssText = 'display:flex;gap:4px;align-items:center;flex-shrink:0;';
+        function makeCompactSwatch(entry) {
+          var sw = mk('div', 'rb-insp-swatch rb-insp-color-compact-swatch');
+          sw.style.cssText = 'width:14px;height:14px;border-radius:3px;background:' + entry.hex + ';cursor:pointer;flex-shrink:0;border:1px solid rgba(255,255,255,0.1);';
+          sw.title = entry.hex;
+          sw.addEventListener('mousedown', function(ev) {
+            ev.stopImmediatePropagation();
+            openTextFillPopup(entry, sw, null, null);
+          }, {capture: true, signal: sig});
+          return sw;
+        }
+        var compactShown = 4;
+        for (var ci = 0; ci < compactShown && ci < colorEntries.length; ci++) {
+          swatchGroup.appendChild(makeCompactSwatch(colorEntries[ci]));
+        }
+        compact.appendChild(swatchGroup);
+        var morePill = mk('button');
+        morePill.textContent = '+' + (colorEntries.length - compactShown);
+        morePill.title = 'Show all colors';
+        morePill.style.cssText = 'background:rgba(255,255,255,0.06);border:none;color:rgba(239,238,235,0.7);font:500 11px/1 "Instrument Sans",sans-serif;padding:3px 7px;border-radius:3px;cursor:pointer;-webkit-appearance:none;flex-shrink:0;';
+        // Extra swatches live in a second row so the compact row keeps 25px height
+        var extraRow = mk('div');
+        extraRow.style.cssText = 'display:none;gap:4px;flex-wrap:wrap;padding:4px 8px 0;';
+        var expandedCompact = false;
+        morePill.addEventListener('mousedown', function(ev) {
+          ev.stopImmediatePropagation();
+          expandedCompact = !expandedCompact;
+          if (expandedCompact) {
+            extraRow.innerHTML = '';
+            for (var ei = compactShown; ei < colorEntries.length; ei++) {
+              extraRow.appendChild(makeCompactSwatch(colorEntries[ei]));
+            }
+            extraRow.style.display = 'flex';
+            morePill.textContent = 'less';
+          } else {
+            extraRow.style.display = 'none';
+            extraRow.innerHTML = '';
+            morePill.textContent = '+' + (colorEntries.length - compactShown);
+          }
+        }, {capture: true, signal: sig});
+        compact.appendChild(morePill);
+        colorsStack.appendChild(compact);
+        colorsStack.appendChild(extraRow);
+        addRow(fillSec, 'Text color', colorsStack);
+      } else {
+
       var maxVisibleColors = 4;
       var hiddenColors = [];
       colorEntries.forEach(function(entry, idx) {
@@ -3681,14 +4104,24 @@
         hexTxt.style.cssText = 'flex:1;background:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
 
         // Link/unlink chain icon — default unlinked (changes apply to this element only)
+        // chainDisabled: the text wrapper has multiple distinct colors across its
+        // leaves; linking would unify them via class-wide write which breaks the
+        // per-line color variance the designer set.
         var allClassTargets = entry.targets.slice();
-        entry.targets = [entry.targets[0]];
+        // Text-wrapper entries: keep ALL the leaves with this color so applying
+        // reaches every line sharing the color. Normal entries: first target only
+        // (chain expands to all when the user clicks Link).
+        entry.targets = elIsTextWrapper ? allClassTargets : [entry.targets[0]];
         var linked = false;
         var linkBtn = mk('button', 'rb-fill-link-btn');
         linkBtn.innerHTML = UNLINK_SVG;
         linkBtn.classList.add('rb-fill-link-off');
         linkBtn.title = 'Apply to global class';
-        if (!entry.className && allClassTargets.length <= 1) { linkBtn.style.display = 'none'; }
+        if (entry.chainDisabled) {
+          linkBtn.classList.add('rb-fill-link-disabled');
+          linkBtn.title = "Can't set global with mixed colors";
+        }
+        if (!entry.chainDisabled && !entry.className && allClassTargets.length <= 1) { linkBtn.style.display = 'none'; }
 
         var cDiv = mk('div', 'rb-insp-field-divider');
         cDiv.style.cssText = 'width:1px;align-self:stretch;flex-shrink:0;';
@@ -3700,6 +4133,7 @@
         (function(ent, linkBtn2, hexTxt2) {
           linkBtn2.addEventListener('mousedown', function(e) {
             e.stopImmediatePropagation();
+            if (ent.chainDisabled) return;  // disabled when leaves have varying colors
             linked = !linked;
             if (linked) {
               linkBtn2.innerHTML = LINK_SVG;
@@ -3733,15 +4167,21 @@
             if (window.__rbFillPopup) {
               window.__rbFillPopup.open(sw2, inspector, root, el, 'color', sig, {
                 apply: function(targetEl, targetProp, cssVal) {
-                  ent.targets.forEach(function(t) {
-                    t.style.removeProperty('-webkit-background-clip');
-                    t.style.removeProperty('background-clip');
-                    t.style.removeProperty('-webkit-text-fill-color');
-                    t.style.removeProperty('background-image');
-                    t.style.removeProperty('background');
-                    t.style.removeProperty('animation');
-                    applyStyle(t, 'color', cssVal);
-                  });
+                  // applyStyle routes through __pendingTextRange automatically
+                  // when a word is selected in edit mode.
+                  if (__pendingTextRange && isTextEditing) {
+                    applyStyle(el, 'color', cssVal);
+                  } else {
+                    ent.targets.forEach(function(t) {
+                      t.style.removeProperty('-webkit-background-clip');
+                      t.style.removeProperty('background-clip');
+                      t.style.removeProperty('-webkit-text-fill-color');
+                      t.style.removeProperty('background-image');
+                      t.style.removeProperty('background');
+                      t.style.removeProperty('animation');
+                      applyStyle(t, 'color', cssVal);
+                    });
+                  }
                   var newHex = rgbHex(cssVal);
                   sw2.style.background = cssVal;
                   hexTxt2.textContent = newHex || cssVal;
@@ -3870,6 +4310,7 @@
         colorsStack.appendChild(morePill);
       }
       addRow(fillSec, 'Text color', colorsStack);
+      }  // close else branch (colorEntries.length <= 4)
     }
 
     // ---- STROKE ----
@@ -3992,26 +4433,79 @@
 
   // ============ APPLY STYLE ============
 
-  // Properties that should cascade to children when applied to a container
+  // Properties that should cascade to descendants when applied to a non-text-wrapper.
+  // For elements detected as text-wrappers (split-text), these plus padding/background
+  // cascade to leaves so edits always reach the actual rendered text.
   var CASCADE_PROPS = new Set(['color','fontFamily','fontSize','fontWeight','fontStyle',
     'lineHeight','letterSpacing','textAlign','textTransform','textDecoration']);
+  // Layout props we never cascade to text leaves — each leaf inherits flow size
+  // from the wrapper; forcing width/position per leaf would break the line layout.
+  var NEVER_CASCADE_TO_LEAVES = new Set(['width','height','minWidth','minHeight','maxWidth',
+    'maxHeight','display','position','top','left','right','bottom','zIndex','flex',
+    'flexDirection','flexWrap','justifyContent','alignItems','gap','gridTemplateColumns',
+    'gridTemplateRows','float','clear']);
 
   function applyStyle(el, prop, value) {
-    var old = el.style[prop] || getCS(el)[prop];
-    pushUndo({el: el, prop: prop, old: old});
+    // Range-scoped typography: if the user selected a word/phrase while in text
+    // edit mode, route typography writes to that range only (wrap in a <span>).
+    // Falls through to the element-level apply if the range is stale or invalid.
+    if (TEXT_RANGE_PROPS.has(prop) && __pendingTextRange && isTextEditing) {
+      var er = __pendingTextRange.editableRoot;
+      if (er && document.body.contains(er) && (er === selectedEl || er.contains(selectedEl))) {
+        if (applyPropToRange(er, __pendingTextRange.range, prop, value)) {
+          requestAnimationFrame(function() {
+            if (selectedEl) updateSelBox(selectedEl);
+          });
+          return;
+        }
+      }
+    }
+    var cssName = cssProp(prop);
+    var wrapped = isTextWrapper(el);
 
-    // Apply to element
-    el.style[prop] = value;
-    el.style.setProperty(cssProp(prop), value, 'important');
-
-    // If it's a cascading property and element has children, apply to all descendants
-    if (CASCADE_PROPS.has(prop) && el.children.length > 0) {
+    // Collect every element we'll mutate so we can snapshot cssText (for undo)
+    // BEFORE applying changes. A single __cascade undo entry restores all at once.
+    var mutateList = [el];
+    if (wrapped && !NEVER_CASCADE_TO_LEAVES.has(prop)) {
+      getTextLeaves(el).forEach(function(leaf) {
+        if (leaf !== el && mutateList.indexOf(leaf) < 0) mutateList.push(leaf);
+      });
+    } else if (CASCADE_PROPS.has(prop) && el.children.length > 0) {
       el.querySelectorAll('*').forEach(function(child) {
-        if (child.nodeType === 1 && !child.closest('#rb-editor-root') && !child.closest('#rb-editor-inspector') && !child.closest('#rb-ed-banner')) {
-          child.style.setProperty(cssProp(prop), value, 'important');
+        if (child.nodeType === 1 && !isEditorEl(child)) mutateList.push(child);
+      });
+    }
+    var affected = mutateList.map(function(m) {
+      return { el: m, oldCss: m.getAttribute('style') || '' };
+    });
+
+    // Apply — order matters: camelCase assignment first, then setProperty with
+    // !important. Reversing these loses the !important priority because the
+    // camelCase assignment internally calls setProperty(...,'') with empty priority.
+    el.style[prop] = value;
+    el.style.setProperty(cssName, value, 'important');
+    if (wrapped && !NEVER_CASCADE_TO_LEAVES.has(prop)) {
+      var leaves = getTextLeaves(el);
+      leaves.forEach(function(leaf) {
+        if (leaf === el) return;
+        leaf.style.setProperty(cssName, value, 'important');
+      });
+      requestAnimationFrame(function() {
+        leaves.forEach(function(leaf) {
+          if (leaf === el) return;
+          var cur = getCS(leaf)[prop];
+          if (cur !== value && cur !== el.style[prop]) applyOverrideClass(leaf, prop, value);
+        });
+      });
+    } else if (CASCADE_PROPS.has(prop) && el.children.length > 0) {
+      el.querySelectorAll('*').forEach(function(child) {
+        if (child.nodeType === 1 && !isEditorEl(child)) {
+          child.style.setProperty(cssName, value, 'important');
         }
       });
     }
+
+    pushUndo({ prop: '__cascade', affected: affected });
 
     // Auto-resize for typography changes
     var typoProps = ['fontSize','fontFamily','fontWeight','lineHeight','letterSpacing'];
@@ -4019,9 +4513,27 @@
       el.style.width = '';
       el.style.height = '';
     }
+    // Post-write verification: when the site's framework (Framer/React, Webflow IX,
+    // GSAP) re-applies inline styles on the next tick, our !important inline loses.
+    // We check at multiple ticks because a single rAF may run BEFORE React's next
+    // render. On any mismatch, inject an ID-selector override rule that wins by
+    // specificity and persists across className rewrites.
+    function _verifyApply() {
+      if (!document.body.contains(el)) return;
+      var cur = getCS(el)[prop];
+      // If computed value doesn't match what we wrote, something (React re-render,
+      // CSS !important with higher specificity, etc.) is overriding us. Fall back
+      // to an ID-selector rule in our stylesheet with !important — wins over
+      // className-level rules regardless of inline mutations.
+      if (cur !== value) applyOverrideClass(el, prop, value);
+    }
     requestAnimationFrame(function() {
+      _verifyApply();
       if (selectedEl === el) updateSelBox(el);
+      requestAnimationFrame(_verifyApply);
     });
+    setTimeout(_verifyApply, 150);
+    setTimeout(_verifyApply, 600);
   }
 
   // ============ UNDO / REDO ============
@@ -4103,7 +4615,8 @@
         u.el.style.height = u.newH || '';
         if (u.newML !== undefined) u.el.style.marginLeft = u.newML;
         if (u.newMT !== undefined) u.el.style.marginTop = u.newMT;
-        // Re-apply unlocked props if we saved their new values too
+        if (u.newLeft !== undefined) u.el.style.left = u.newLeft;
+        if (u.newTop !== undefined) u.el.style.top = u.newTop;
         if (u.unlockedNew) {
           u.unlockedNew.forEach(function(item) {
             if (item.prop === '__parentOverflow') item.el.style.overflow = item.val || '';
@@ -4111,12 +4624,12 @@
           });
         }
       } else {
-        // Capture current (post-resize) dimensions for redo
         u.newW = u.el.style.width;
         u.newH = u.el.style.height;
         u.newML = u.el.style.marginLeft;
         u.newMT = u.el.style.marginTop;
-        // Also capture current values of unlocked props
+        u.newLeft = u.el.style.left;
+        u.newTop = u.el.style.top;
         if (u.unlocked) {
           u.unlockedNew = u.unlocked.map(function(item) {
             if (item.prop === '__parentOverflow') {
@@ -4129,6 +4642,10 @@
         u.el.style.height = u.oldH;
         u.el.style.marginLeft = u.oldML;
         u.el.style.marginTop = u.oldMT || '';
+        if (u.usesCoords) {
+          u.el.style.left = u.oldLeft || '';
+          u.el.style.top  = u.oldTop  || '';
+        }
         u.el.style.transform = '';
         if (u.unlocked) {
           u.unlocked.forEach(function(item) {
@@ -4145,6 +4662,16 @@
       var currentHTML = u.el.innerHTML;
       u.el.innerHTML = forward ? u.newHTML : u.old;
       if (!forward) u.newHTML = currentHTML;
+    } else if (u.prop === '__cascade') {
+      // Style cascade: restore (or re-apply) cssText on every affected element.
+      // Captures current cssText on each pass so forward/reverse are symmetric.
+      u.affected.forEach(function(a) {
+        var cur = a.el.getAttribute('style') || '';
+        var target = forward ? (a.newCss || '') : (a.oldCss || '');
+        if (target) a.el.setAttribute('style', target);
+        else a.el.removeAttribute('style');
+        if (!forward) a.newCss = cur;
+      });
     } else if (u.prop === '__modeERun') {
       if (forward) {
         // Redo of Mode E: put the rebuilt wrapper back
@@ -4656,6 +5183,7 @@
     textEditTarget = null;
     textEditOriginalHTML = null;
     isTextEditing = false;
+    __pendingTextRange = null;
   }
 
   function deselectEl() {
@@ -4893,7 +5421,9 @@
     spacingGuides[key].addEventListener('mousedown', function(e) {
       if (!selectedEl) return;
       if (e.target && e.target.classList && e.target.classList.contains('rb-spacing-inline-input')) return;
-      e.preventDefault();
+      // NOTE: do NOT preventDefault/stopPropagation here yet — if the user only
+      // clicks (no drag), we pass the click through to the underlying element so
+      // they can switch selection even when guides cover the surrounding area.
       e.stopPropagation();
 
       var prop = guideProps[key];
@@ -4913,22 +5443,28 @@
       var group = guideGroup(key);
       var mirror = guideMirror[key];
 
-      // Snapshot starting values for every side we might touch (group or mirror)
       var initial = {};
       initial[key] = dragStartValue;
       if (group) group.forEach(function(k) { if (initial[k] == null) initial[k] = parseFloat(cs[guideProps[k]]) || 0; });
       if (mirror) initial[mirror] = parseFloat(cs[guideProps[mirror]]) || 0;
 
-      setActiveGuide(key);
-      spacingGuides[key].classList.add('rb-spacing-dragging');
-      document.body.classList.add('rb-ed-dragging-guide');
+      var dragged = false;
+      var DRAG_THRESHOLD = 3;  // px before we commit to drag mode
 
       function onMove(ev) {
+        if (!dragged) {
+          if (Math.abs(ev.clientX - dragStartPos.x) < DRAG_THRESHOLD &&
+              Math.abs(ev.clientY - dragStartPos.y) < DRAG_THRESHOLD) return;
+          dragged = true;
+          setActiveGuide(key);
+          spacingGuides[key].classList.add('rb-spacing-dragging');
+          document.body.classList.add('rb-ed-dragging-guide');
+        }
         var delta = (axis === 'x')
           ? (ev.clientX - dragStartPos.x) * dir
           : (ev.clientY - dragStartPos.y) * dir;
         var newVal = Math.max(0, Math.round(dragStartValue + delta));
-        if (ev.metaKey || ev.ctrlKey) newVal = Math.round(newVal / 8) * 8; // snap to 8px grid
+        if (ev.metaKey || ev.ctrlKey) newVal = Math.round(newVal / 8) * 8;
 
         if (ev.shiftKey && group) {
           group.forEach(function(k) { targetEl.style[guideProps[k]] = newVal + 'px'; });
@@ -4949,7 +5485,29 @@
         spacingGuides[key].classList.remove('rb-spacing-dragging');
         document.body.classList.remove('rb-ed-dragging-guide');
 
-        // Record undo entries for every prop that actually changed
+        if (!dragged) {
+          // Click without drag → pass through: select whatever site element is
+          // visually under the cursor. Hide all guides + corners for the hit
+          // test so elementFromPoint doesn't return a guide again.
+          var allGuides = Object.keys(spacingGuides).map(function(k) { return spacingGuides[k]; });
+          var allCorners = Object.keys(cornerGuides).map(function(k) { return cornerGuides[k]; });
+          var prev = [];
+          allGuides.concat(allCorners).forEach(function(g) {
+            prev.push({el: g, val: g.style.pointerEvents});
+            g.style.pointerEvents = 'none';
+          });
+          var below = document.elementFromPoint(ev.clientX, ev.clientY);
+          prev.forEach(function(p) { p.el.style.pointerEvents = p.val; });
+          if (below && !isEditorEl(below) && isValid(below)) {
+            var resolved = resolveContainer(below);
+            if (resolved && isValid(resolved) && resolved !== selectedEl) {
+              if (isTextEditing) exitTextEdit();
+              selectEl(resolved);
+            }
+          }
+          return;
+        }
+
         var modShift = ev && ev.shiftKey && group;
         var modAlt = ev && ev.altKey && mirror;
         if (modShift) {
@@ -4960,7 +5518,6 @@
         } else {
           pushUndo({ el: targetEl, prop: prop, old: dragStartValue + 'px' });
         }
-        // Clear delta preview from label
         updateSpacingGuides(selectedEl);
       }
       document.addEventListener('mousemove', onMove);
@@ -5296,16 +5853,23 @@
 
   function showTextDock(el) {
     removeTextDock();
-    var cs = getCS(el);
+    // For text wrappers (split-text parents with no direct text), read values
+    // from the first text leaf so drag starts from the visible size, not the
+    // wrapper's inherited value. Writes still go to `el` and cascade via applyStyle.
+    var readEl = getReadEl(el);
+    var cs = getCS(readEl);
+    function isMixed(prop) {
+      var v = readTextStyle(el, prop);
+      return v && typeof v === 'object' && v.mixed;
+    }
 
-    // Save original styles for restore
-    var origStyles = {
-      fontSize: el.style.fontSize,
-      fontWeight: el.style.fontWeight,
-      fontFamily: el.style.fontFamily,
-      letterSpacing: el.style.letterSpacing,
-      lineHeight: el.style.lineHeight
-    };
+    // Snapshot style attribute of wrapper + every leaf so Restore reverts
+    // everything the dock session touched (including cascades).
+    var origCss = [{ el: el, css: el.getAttribute('style') || '' }];
+    getTextLeaves(el).forEach(function(leaf) {
+      if (leaf === el) return;
+      origCss.push({ el: leaf, css: leaf.getAttribute('style') || '' });
+    });
 
     var rect = el.getBoundingClientRect();
     var m = mk('div', 'rb-ed-img-menu rb-ed-text-dock');
@@ -5345,8 +5909,10 @@
     var fontBtn = mk('button', 'rb-img-bar-btn');
     var fontName = (cs.fontFamily || 'sans-serif').split(',')[0].replace(/['"]/g, '').trim();
     if (fontName.length > 14) fontName = fontName.substring(0, 12) + '\u2026';
-    fontBtn.innerHTML = '<span>' + fontName + '</span>';
-    fontBtn.title = cs.fontFamily;
+    var fontMixed = isMixed('fontFamily');
+    fontBtn.innerHTML = '<span>' + (fontMixed ? 'Mixed' : fontName) + '</span>';
+    if (fontMixed) fontBtn.classList.add('rb-dock-mixed');
+    fontBtn.title = fontMixed ? 'Mixed fonts across lines' : cs.fontFamily;
     fontBtn.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
       var fontField = inspector.querySelector('.rb-insp-font-sel');
@@ -5355,32 +5921,40 @@
 
     // Size (drag to adjust)
     var sizeVal = Math.round(parseFloat(cs.fontSize)) || 16;
+    var sizeMixed = isMixed('fontSize');
     var sizeBtn = mk('button', 'rb-img-bar-btn');
-    sizeBtn.innerHTML = '<span>' + sizeVal + '</span>';
-    sizeBtn.title = 'Font size — drag to adjust';
+    sizeBtn.innerHTML = '<span>' + (sizeMixed ? 'Mixed' : sizeVal) + '</span>';
+    if (sizeMixed) sizeBtn.classList.add('rb-dock-mixed');
+    sizeBtn.title = sizeMixed ? 'Mixed sizes across lines — drag to homogenize' : 'Font size — drag to adjust';
     makeDragValue(sizeBtn, sizeVal, 'fontSize', 'px', 1, 1, 400);
 
     // Weight (drag to adjust, steps of 100)
     var weightVal = parseInt(cs.fontWeight) || 400;
+    var weightMixed = isMixed('fontWeight');
     var weightBtn = mk('button', 'rb-img-bar-btn');
-    weightBtn.innerHTML = '<span>' + weightVal + '</span>';
-    weightBtn.title = 'Font weight — drag to adjust';
+    weightBtn.innerHTML = '<span>' + (weightMixed ? 'Mixed' : weightVal) + '</span>';
+    if (weightMixed) weightBtn.classList.add('rb-dock-mixed');
+    weightBtn.title = weightMixed ? 'Mixed weights across lines — drag to homogenize' : 'Font weight — drag to adjust';
     makeDragValue(weightBtn, weightVal, 'fontWeight', '', 100, 100, 900, function(v) {
       return Math.round(v / 100) * 100;
     });
 
     // Letter spacing (drag to adjust, fine step)
     var lsRaw = cs.letterSpacing === 'normal' ? 0 : parseFloat(cs.letterSpacing) || 0;
+    var lsMixed = isMixed('letterSpacing');
     var lsBtn = mk('button', 'rb-img-bar-btn');
-    lsBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7V17"/><path d="M16 7V17"/><path d="M3 12h18"/></svg><span>' + (Math.round(lsRaw * 10) / 10) + '</span>';
-    lsBtn.title = 'Letter spacing — drag to adjust';
+    lsBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 7V17"/><path d="M16 7V17"/><path d="M3 12h18"/></svg><span>' + (lsMixed ? 'Mixed' : (Math.round(lsRaw * 10) / 10)) + '</span>';
+    if (lsMixed) lsBtn.classList.add('rb-dock-mixed');
+    lsBtn.title = lsMixed ? 'Mixed letter-spacing — drag to homogenize' : 'Letter spacing — drag to adjust';
     makeDragValue(lsBtn, lsRaw, 'letterSpacing', 'px', 0.1, -10, 50);
 
     // Line height (drag to adjust)
     var lhRaw = cs.lineHeight === 'normal' ? parseFloat(cs.fontSize) * 1.2 : parseFloat(cs.lineHeight) || 20;
+    var lhMixed = isMixed('lineHeight');
     var lhBtn = mk('button', 'rb-img-bar-btn');
-    lhBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 10H7"/><path d="M21 6H7"/><path d="M21 14H7"/><path d="M21 18H7"/><path d="M3 4v16"/></svg><span>' + Math.round(lhRaw) + '</span>';
-    lhBtn.title = 'Line height — drag to adjust';
+    lhBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 10H7"/><path d="M21 6H7"/><path d="M21 14H7"/><path d="M21 18H7"/><path d="M3 4v16"/></svg><span>' + (lhMixed ? 'Mixed' : Math.round(lhRaw)) + '</span>';
+    if (lhMixed) lhBtn.classList.add('rb-dock-mixed');
+    lhBtn.title = lhMixed ? 'Mixed line-height — drag to homogenize' : 'Line height — drag to adjust';
     makeDragValue(lhBtn, lhRaw, 'lineHeight', 'px', 1, 1, 200);
 
     m.appendChild(fontBtn);
@@ -5401,10 +5975,16 @@
     restoreBtn.title = 'Restore original text styles';
     restoreBtn.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
-      ['fontSize','fontWeight','fontFamily','letterSpacing','lineHeight'].forEach(function(p) {
-        if (origStyles[p]) el.style[p] = origStyles[p];
-        else el.style.removeProperty(p.replace(/([A-Z])/g, '-$1').toLowerCase());
+      // Snapshot current style for undo, then revert each affected element
+      // to the cssText captured when the dock first opened.
+      var affected = origCss.map(function(o) {
+        return { el: o.el, oldCss: o.el.getAttribute('style') || '' };
       });
+      origCss.forEach(function(o) {
+        if (o.css) o.el.setAttribute('style', o.css);
+        else o.el.removeAttribute('style');
+      });
+      pushUndo({ prop: '__cascade', affected: affected });
       updateInspector(el);
       showTextDock(el);
     }, {capture: true});
@@ -5651,6 +6231,20 @@
   // ============ LISTEN ============
 
   function listen() {
+    // Capture non-collapsed selections inside the editable element so subsequent
+    // typography writes can target only the selected text (per-word color, size…).
+    // Don't clear on collapsed — clicking an inspector field collapses the selection
+    // but we want to keep the previous range available for the pending write.
+    document.addEventListener('selectionchange', function() {
+      if (!isTextEditing || !selectedEl) return;
+      var sel = window.getSelection();
+      if (!sel || !sel.rangeCount) return;
+      var r = sel.getRangeAt(0);
+      if (r.collapsed) return;
+      if (!selectedEl.contains(r.commonAncestorContainer)) return;
+      __pendingTextRange = { range: r.cloneRange(), editableRoot: selectedEl };
+    }, {signal: sig});
+
     // Resolve element to container: inline text elements bubble up to parent div
     // Pure inline text elements that bubble up to container
     var INLINE_TAGS = new Set(['SPAN','STRONG','EM','B','I','U','SMALL','CODE','MARK','SUB','SUP','ABBR','CITE','Q','S','DEL','INS','KBD','VAR','SAMP','TIME','DATA','BDI','BDO','RUBY','RT','RP','WBR']);
@@ -5801,8 +6395,23 @@
       var link = e.target.closest('a');
       if (link && !isEditorEl(link)) { e.preventDefault(); }
 
+      // Hover-first target resolution: whatever the user SAW highlighted under
+      // their cursor is what they expect to select. If the click falls within
+      // the hovered element's bounding rect, prefer it over the raw hit-test
+      // result (which can return a deeper nested element in whitespace gaps).
+      var hoverTarget = null;
+      if (lastHoverEl && document.body.contains(lastHoverEl)) {
+        var hr = lastHoverEl.getBoundingClientRect();
+        if (e.clientX >= hr.left && e.clientX <= hr.right &&
+            e.clientY >= hr.top  && e.clientY <= hr.bottom) {
+          hoverTarget = lastHoverEl;
+        }
+      }
+
       var now = Date.now();
-      var isRepeatClick = (selectedEl) && (now - lastClickTime < 500) && selectedEl.contains(rawEl);
+      var repeatRef = hoverTarget || rawEl;
+      var isRepeatClick = (selectedEl) && (now - lastClickTime < 500) &&
+                          (selectedEl === repeatRef || selectedEl.contains(repeatRef));
       lastClickTime = now;
       lastClickEl = rawEl;
 
@@ -5827,14 +6436,16 @@
       removeTextDock();
 
       if (!isRepeatClick) {
-        // NEW AREA: reset depth, resolve outermost container
-        var el = resolveContainer(rawEl);
+        // NEW AREA: prefer the hovered target when available (so hover and
+        // click always agree); fall back to container resolution otherwise.
+        var el = hoverTarget || resolveContainer(rawEl);
         if (!isValid(el)) return;
         selectionDepth = 0;
         selectionAncestor = el;
 
         if (el.tagName === 'IMG' || el.tagName === 'VIDEO') showImgMenu(el);
-        else if (isDirectText(el) || isDirectText(rawEl)) showTextDock(isDirectText(el) ? el : rawEl);
+        else if (isDirectText(el) || isTextWrapper(el)) showTextDock(el);
+        else if (isDirectText(rawEl)) showTextDock(rawEl);
         selectEl(el);
 
         if (el.contentEditable !== 'true') {
@@ -6015,6 +6626,16 @@
           }
         }
       }
+      // ---- Input-field guard ---------------------------------------------
+      // When the user is typing into any form control inside the editor UI
+      // (inspector, minidock, popup), the global shortcuts below must NOT fire.
+      // Without this, pressing Backspace/Delete/Cmd+X/etc. inside an inspector
+      // input destroys the selected site element. Escape is still allowed (blur).
+      var _keyTgt = e.target;
+      var _keyTag = _keyTgt && _keyTgt.tagName;
+      var _inInspectorForm = (_keyTag === 'INPUT' || _keyTag === 'TEXTAREA' || _keyTag === 'SELECT');
+      if (_inInspectorForm && e.key !== 'Escape') return;
+
       if (e.key === 'Escape') {
         if (isTextEditing) {
           selectedEl.contentEditable = 'false';
@@ -6080,6 +6701,12 @@
         openFind();
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Guard: keys typed INTO an inspector/minidock input or any other editor
+        // form control must not delete the site element. Only delete when the
+        // event target is the body/document (no active form field).
+        var _del_t = e.target;
+        var _tag = _del_t && _del_t.tagName;
+        if (_tag === 'INPUT' || _tag === 'TEXTAREA' || _tag === 'SELECT' || (_del_t && _del_t.isContentEditable)) return;
         if (selectedEl && selectedEl.contentEditable !== 'true') {
           e.preventDefault();
           var parent = selectedEl.parentElement;
@@ -6139,19 +6766,19 @@
         unlocked.push({prop: 'height', old: el.style.height});
         el.style.setProperty('height', rect.height + 'px', 'important');
       }
-      // Unlock flex constraints
-      if (cs.flexShrink !== '0' || cs.flexGrow !== '0' || cs.flexBasis !== 'auto') {
-        unlocked.push({prop: 'flex', old: el.style.flex});
-        el.style.setProperty('flex', 'none', 'important');
+      // Unlock flex-grow only (if parent is flex and this child would fight our
+      // explicit width/height). Full `flex: none` was too aggressive — it also
+      // disables the element's auto-basis fallback, which caused containers to
+      // collapse to content-width on mousedown alone.
+      var parentEl = el.parentElement;
+      var parentIsFlex = false;
+      if (parentEl) {
+        var pcs0 = getCS(parentEl);
+        parentIsFlex = pcs0.display === 'flex' || pcs0.display === 'inline-flex';
       }
-      // Handle margin:auto (prevents left expansion)
-      if (dir.indexOf('w') !== -1) {
-        if (cs.marginLeft === cs.marginRight && parseFloat(cs.marginLeft) > 0) {
-          unlocked.push({prop: 'marginLeft', old: el.style.marginLeft});
-          unlocked.push({prop: 'marginRight', old: el.style.marginRight});
-          el.style.setProperty('margin-left', cs.marginLeft, 'important');
-          el.style.setProperty('margin-right', cs.marginRight, 'important');
-        }
+      if (parentIsFlex && (parseFloat(cs.flexGrow) || 0) > 0) {
+        unlocked.push({prop: 'flexGrow', old: el.style.flexGrow});
+        el.style.setProperty('flex-grow', '0', 'important');
       }
       // Unlock box-sizing for consistent resize
       if (cs.boxSizing !== 'border-box') {
@@ -6180,22 +6807,55 @@
         var startR = selectedEl.getBoundingClientRect();
         var sx = e.clientX, sy = e.clientY;
         var origW = startR.width, origH = startR.height;
-        var origML = parseFloat(getCS(selectedEl).marginLeft) || 0;
-        var origMT = parseFloat(getCS(selectedEl).marginTop) || 0;
-        var unlocked = unlockResize(selectedEl, dir);
+        var cs0 = getCS(selectedEl);
+        var origML = parseFloat(cs0.marginLeft) || 0;
+        var origMT = parseFloat(cs0.marginTop) || 0;
+        var origLeft = parseFloat(cs0.left) || 0;
+        var origTop = parseFloat(cs0.top) || 0;
+        var posKind = cs0.position;
+        var usesCoords = (posKind === 'absolute' || posKind === 'fixed' || posKind === 'sticky' || posKind === 'relative');
+        // Lazy unlock: only runs on first real movement. A pure click without
+        // drag MUST be a no-op — unlockResize mutates flex/margin/width and
+        // would shift the element on sites like Shopify's .container.
+        var unlocked = null;
+        var DRAG_THRESHOLD = 2;  // px
 
         function onM(ev) {
           var dx = ev.clientX - sx, dy = ev.clientY - sy;
+          if (!unlocked) {
+            if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+            unlocked = unlockResize(selectedEl, dir);
+          }
           var w = origW, h = origH;
-
-          // Simple directional resize
           if (dir.indexOf('e') !== -1) w += dx;
           if (dir.indexOf('w') !== -1) w -= dx;
           if (dir.indexOf('s') !== -1) h += dy;
           if (dir.indexOf('n') !== -1) h -= dy;
+          var newW = Math.max(20, w);
+          var newH = Math.max(20, h);
+          // Actual deltas after clamping — used to compensate the leading edge
+          // so the W/N side visually tracks the mouse instead of the opposite
+          // edge being the only one that moves.
+          var realDw = origW - newW;  // how much width actually shrunk (W drag)
+          var realDh = origH - newH;  // how much height actually shrunk (N drag)
 
-          selectedEl.style.setProperty('width', Math.max(20, w) + 'px', 'important');
-          selectedEl.style.setProperty('height', Math.max(20, h) + 'px', 'important');
+          selectedEl.style.setProperty('width',  newW + 'px', 'important');
+          selectedEl.style.setProperty('height', newH + 'px', 'important');
+
+          if (dir.indexOf('w') !== -1) {
+            if (usesCoords) {
+              selectedEl.style.setProperty('left', (origLeft + realDw) + 'px', 'important');
+            } else {
+              selectedEl.style.setProperty('margin-left', (origML + realDw) + 'px', 'important');
+            }
+          }
+          if (dir.indexOf('n') !== -1) {
+            if (usesCoords) {
+              selectedEl.style.setProperty('top', (origTop + realDh) + 'px', 'important');
+            } else {
+              selectedEl.style.setProperty('margin-top', (origMT + realDh) + 'px', 'important');
+            }
+          }
 
           updateSelBox(selectedEl);
           updateSpacingGuides(selectedEl);
@@ -6204,11 +6864,15 @@
         function onU() {
           document.removeEventListener('mousemove', onM);
           document.removeEventListener('mouseup', onU);
-          // Save undo with all unlocked props
+          // Pure click with no drag → we never unlocked, nothing changed,
+          // nothing to undo.
+          if (!unlocked) return;
           pushUndo({
             el: selectedEl, prop: '__resize',
             oldW: origW + 'px', oldH: origH + 'px',
             oldML: origML + 'px', oldMT: origMT + 'px',
+            oldLeft: origLeft + 'px', oldTop: origTop + 'px',
+            usesCoords: usesCoords,
             unlocked: unlocked
           });
         }

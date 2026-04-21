@@ -597,6 +597,24 @@ option { background:#1A1A1A; color:#EFEEEB; }
 .rb-insp-swatch input[type=color]::-moz-color-swatch { border:none !important; border-radius:10px; }
 .rb-insp-swatch input[type=color]:focus { outline:none !important; box-shadow:none !important; }
 
+/* Mixed-color swatch (text wrapper with varying leaf colors) */
+.rb-insp-swatch-mixed {
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.35) 25%, transparent 25%) 0 0/6px 6px,
+    linear-gradient(225deg, rgba(255,255,255,0.35) 25%, transparent 25%) 0 0/6px 6px,
+    #666;
+}
+/* Disabled chain icon when color state is mixed */
+.rb-fill-link-disabled {
+  opacity:0.35 !important;
+  cursor:not-allowed !important;
+  pointer-events:auto; /* keep hover tooltip */
+}
+
+/* Text minidock "Mixed" badge */
+.rb-dock-mixed span { color:rgba(239,238,235,0.55); font-style:italic; }
+body.rb-ed-light .rb-dock-mixed span { color:rgba(51,51,51,0.55); }
+
 /* ===== 10. BOX MODEL ===== */
 .rb-insp-boxmodel {
   width:100%; border:1px dashed rgba(239,238,235,0.1); border-radius:4px;
@@ -806,7 +824,9 @@ option { background:#1A1A1A; color:#EFEEEB; }
   border: 1.5px solid rgba(255, 0, 221, 0.85);
   border-radius: 2px;
   pointer-events: auto;
-  z-index: 2147483643;
+  /* Below the layers/inspector panels (z:2147483643) so corners positioned on
+     edges of full-width elements don't bleed through the docked panels. */
+  z-index: 2147483641;
   transition: transform 80ms, box-shadow 120ms;
 }
 .rb-spacing-corner:hover {
@@ -985,6 +1005,7 @@ body.rb-ed-dragging-guide, body.rb-ed-dragging-guide * { cursor: inherit !import
 .rb-insp-field-letter {
   font:500 9px/1 'Instrument Sans',sans-serif; color:rgba(239,238,235,0.3);
   margin-left:5px; padding-right:2px; display:flex; align-items:center; flex-shrink:0;
+  -webkit-user-select:none; user-select:none; pointer-events:none; cursor:default;
 }
 
 /* ===== SCROLL LOCK (universal — works on any site) ===== */
