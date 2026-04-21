@@ -439,6 +439,207 @@
     _rbSticky.delete(el);
   }
 
+  // ---- Link helpers ----
+  // Strict link detection: only report a link when the SELECTED element is
+  // unambiguously the link owner — either it's an <a> itself, or its parent
+  // is an <a> that wraps this element exclusively (our wrap pattern, or a
+  // site's atomic link like an icon/button). Walking further up would mark
+  // any descendant of a large clickable hero as "linked" and hide the "+",
+  // which surprised the user.
+  function getElementLink(el) {
+    if (!el || el.nodeType !== 1) return null;
+    if (el.tagName === 'A' && el.hasAttribute('href')) return el;
+    var p = el.parentElement;
+    if (p && p.tagName === 'A' && p.hasAttribute('href') &&
+        p.children.length === 1 && p.firstElementChild === el) {
+      return p;
+    }
+    return null;
+  }
+
+  // Wrap `el` in a new <a href>. Returns the anchor. Pushes an undo entry of
+  // type '__linkWrap' so undo unwraps it cleanly.
+  function wrapInLink(el, href) {
+    var a = document.createElement('a');
+    a.setAttribute('href', href);
+    a.setAttribute('data-rb-link', '1');
+    var parent = el.parentNode;
+    if (!parent) return null;
+    parent.insertBefore(a, el);
+    a.appendChild(el);
+    pushUndo({ prop: '__linkWrap', anchor: a, child: el });
+    return a;
+  }
+
+  function unwrapLink(a) {
+    var parent = a.parentNode;
+    if (!parent) return;
+    var firstChild = a.firstChild;
+    while (a.firstChild) parent.insertBefore(a.firstChild, a);
+    parent.removeChild(a);
+    pushUndo({ prop: '__linkUnwrap', anchor: a, parent: parent, nextSibling: firstChild ? firstChild.nextSibling : null, children: Array.prototype.slice.call(a.childNodes) });
+  }
+
+  // Popup to edit a link (href + target + clear). Anchored near `anchorBtn`.
+  // onChange(href | null) — null signals "remove link". Returns popup node.
+  function openLinkEditor(anchorBtn, currentHref, onChange) {
+    var existing = document.querySelector('.rb-link-editor');
+    if (existing) existing.remove();
+    var pop = document.createElement('div');
+    pop.className = 'rb-link-editor rb-ed-img-menu';
+    pop.style.cssText = 'position:fixed;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:280px;z-index:2147483647;';
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:4px;';
+    var inp = document.createElement('input');
+    inp.type = 'url';
+    inp.placeholder = 'https://...';
+    inp.value = currentHref || '';
+    inp.style.cssText = 'flex:1;height:25px;padding:0 8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:4px;color:inherit;font:inherit;font-size:11px;outline:none;';
+    var saveBtn = document.createElement('button');
+    saveBtn.className = 'rb-img-bar-btn';
+    saveBtn.textContent = 'Save';
+    saveBtn.style.cssText = 'padding:0 10px;height:25px;';
+    row.appendChild(inp);
+    row.appendChild(saveBtn);
+    pop.appendChild(row);
+    if (currentHref) {
+      var clrBtn = document.createElement('button');
+      clrBtn.className = 'rb-img-bar-btn';
+      clrBtn.textContent = 'Remove link';
+      clrBtn.style.cssText = 'height:22px;font-size:10px;opacity:0.75;';
+      clrBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        onChange(null);
+        pop.remove();
+      }, {capture: true});
+      pop.appendChild(clrBtn);
+    }
+    document.body.appendChild(pop);
+    var r = anchorBtn.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8, r.left)) + 'px';
+    pop.style.top = Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 6) + 'px';
+    setTimeout(function() { inp.focus(); inp.select(); }, 0);
+    function commit() {
+      var v = inp.value.trim();
+      if (!v) { pop.remove(); return; }
+      if (!/^[a-z]+:\/\//i.test(v) && !v.startsWith('mailto:') && !v.startsWith('tel:') && !v.startsWith('#') && !v.startsWith('/')) {
+        v = 'https://' + v;
+      }
+      onChange(v);
+      pop.remove();
+    }
+    saveBtn.addEventListener('mousedown', function(e) { e.stopImmediatePropagation(); commit(); }, {capture: true});
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { pop.remove(); }
+    });
+    function outside(ev) {
+      if (!pop.contains(ev.target) && ev.target !== anchorBtn && !anchorBtn.contains(ev.target)) {
+        pop.remove();
+        document.removeEventListener('mousedown', outside, true);
+      }
+    }
+    setTimeout(function() { document.addEventListener('mousedown', outside, true); }, 150);
+    return pop;
+  }
+
+  // ---- Font picker (popup with search + scroll list; used by inspector & minidock) ----
+  var WEB_SAFE_FONTS = ['Arial','Helvetica','Verdana','Georgia','Times New Roman','Courier New','system-ui','Roboto','Inter'];
+  // Shared font icon — document with "T" inside. Same one used in the inspector's
+  // Font field so the minidock font button matches visually. currentColor so it
+  // inherits button text color (handles light/dark mode automatically).
+  var FONT_ICON_SVG = '<svg width="12" height="12" viewBox="0 0 36.23 42.5" fill="currentColor"><polygon points="25.58 14.61 10.21 14.61 10.21 17.22 10.22 17.22 10.22 19.84 12.83 19.84 12.83 17.22 16.59 17.22 16.59 28.77 14.52 28.77 14.52 31.38 21.28 31.38 21.28 28.77 19.2 28.77 19.2 17.22 23 17.22 23 19.84 25.61 19.84 25.61 14.61 25.58 14.61"/><path d="M34.31,9.33l-7.41-7.41c-1.24-1.24-2.89-1.93-4.65-1.93H5.72C2.57,0,0,2.57,0,5.72v31.06c0,3.15,2.57,5.72,5.72,5.72h24.79c3.15,0,5.72-2.57,5.72-5.72V13.98c0-1.73-.7-3.42-1.93-4.65ZM33.06,13.98v22.79c0,1.43-1.12,2.54-2.54,2.54H5.72c-1.43,0-2.54-1.12-2.54-2.54V5.72c0-1.43,1.12-2.54,2.54-2.54h16.53c.91,0,1.76.35,2.4,1l7.41,7.41c.64.64,1,1.5,1,2.4Z"/></svg>';
+  function openFontPicker(anchorBtn, currentFont, onPick) {
+    var existing = document.querySelector('.rb-font-picker');
+    if (existing) existing.remove();
+    // Reuse rb-ed-img-menu for frosted-glass + light-mode theming (CSS already
+    // provides both). Class rb-font-picker adds sizing and inner layout.
+    var pop = document.createElement('div');
+    pop.className = 'rb-font-picker rb-ed-img-menu';
+    var srch = document.createElement('input');
+    srch.type = 'text';
+    srch.placeholder = 'Search fonts';
+    srch.value = currentFont || '';
+    srch.className = 'rb-font-picker-search';
+    var list = document.createElement('div');
+    list.className = 'rb-font-picker-list';
+    pop.appendChild(srch);
+    pop.appendChild(list);
+    document.body.appendChild(pop);
+    var r = anchorBtn.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(window.innerWidth - 228, r.left)) + 'px';
+    pop.style.top = Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 6) + 'px';
+
+    // Centralized close: always blur the internal input first (otherwise the
+    // global keydown guard sees `document.activeElement` as INPUT and swallows
+    // shortcuts like Cmd+Z right after the picker closes), remove the DOM, and
+    // detach the outside listener so zombies don't pile up on repeated picks.
+    var outsideBound = null;
+    function close() {
+      try { srch.blur(); } catch (_) {}
+      if (pop.parentNode) pop.remove();
+      if (outsideBound) {
+        document.removeEventListener('mousedown', outsideBound, true);
+        outsideBound = null;
+      }
+    }
+
+    var fonts = WEB_SAFE_FONTS.slice();
+    if (currentFont && fonts.indexOf(currentFont) < 0) fonts.unshift(currentFont);
+    function render(filter) {
+      list.innerHTML = '';
+      var f = (filter || '').toLowerCase().trim();
+      var items = f ? fonts.filter(function(n) { return n.toLowerCase().indexOf(f) >= 0; }) : fonts.slice();
+      if (!items.length) {
+        var e = document.createElement('div');
+        e.textContent = 'No fonts match';
+        e.className = 'rb-font-picker-empty';
+        list.appendChild(e);
+        return;
+      }
+      items.forEach(function(name) {
+        var opt = document.createElement('div');
+        opt.textContent = name;
+        opt.className = 'rb-font-picker-opt';
+        opt.style.fontFamily = '"' + name + '",sans-serif';
+        opt.addEventListener('mousedown', function(e) {
+          e.preventDefault(); e.stopImmediatePropagation();
+          onPick(name);
+          close();
+        }, {capture: true});
+        list.appendChild(opt);
+      });
+    }
+    render('');
+    srch.addEventListener('input', function() { render(srch.value); });
+    srch.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') close();
+      else if (e.key === 'Enter') {
+        var v = srch.value.trim();
+        if (v) { onPick(v); close(); }
+      }
+    });
+    setTimeout(function() { srch.focus(); srch.select(); }, 0);
+    if (typeof getLocalFonts === 'function') {
+      try {
+        getLocalFonts(function(locals) {
+          if (!locals || !locals.length) return;
+          locals.forEach(function(ln) { if (fonts.indexOf(ln) < 0) fonts.push(ln); });
+          render(srch.value);
+        });
+      } catch (_) {}
+    }
+    outsideBound = function(ev) {
+      if (!pop.contains(ev.target) && ev.target !== anchorBtn && !anchorBtn.contains(ev.target)) {
+        close();
+      }
+    };
+    setTimeout(function() {
+      if (outsideBound) document.addEventListener('mousedown', outsideBound, true);
+    }, 150);
+    return pop;
+  }
+
   // ---- Per-range typography (apply style to the current text selection) ----
   // When the user double-clicks text to enter edit mode and selects a word/phrase,
   // typography writes should hit only that slice, not the whole element. We track
@@ -871,31 +1072,83 @@
   // ============ BANNER ============
 
   function buildBanner() {
+    // Mode catalog — central list so adding a new mode requires touching one place.
+    // label = what shows in the dropdown, short = compact chip shown on the trigger.
+    // Defined INSIDE the function because buildBanner() is called early (line 183)
+    // before any top-level `var` initializations below would have executed yet
+    // (function hoisting vs var hoisting asymmetry).
+    var MODE_LIST = [
+      { id: 'A', label: 'CSS Live',  short: 'A' },
+      { id: 'B', label: 'Rebuild',   short: 'B' },
+      { id: 'C', label: 'Hybrid',    short: 'C' },
+      { id: 'D', label: 'Canvas',    short: 'D' },
+      { id: 'E', label: 'AI',        short: 'E' },
+      { id: 'S', label: 'S2H',       short: 'S' },
+      { id: 'F', label: 'Curated',   short: 'F' }
+    ];
+
     var b = mk('div');
     b.id = 'rb-ed-banner';
-    b.innerHTML = '<div class="rb-ed-modes">' +
-      '<button class="rb-ed-mode active" data-mode="A">A: CSS Live</button>' +
-      '<button class="rb-ed-mode" data-mode="B">B: Rebuild</button>' +
-      '<button class="rb-ed-mode" data-mode="C">C: Hybrid</button>' +
-      '<button class="rb-ed-mode" data-mode="D">D: Canvas</button>' +
-      '<button class="rb-ed-mode" data-mode="E">E: AI</button>' +
-      '<button class="rb-ed-mode" data-mode="S">S: S2H</button>' +
-      '<button class="rb-ed-mode" data-mode="F">F: Curated</button>' +
-    '</div>';
+
+    // Trigger button shows the active mode; clicking toggles the dropdown.
+    var trigger = mk('button', 'rb-ed-mode-trigger');
+    trigger.id = 'rb-ed-mode-trigger';
+    trigger.innerHTML = '<span class="rb-ed-mode-chip">A</span>' +
+      '<span class="rb-ed-mode-label">CSS Live</span>' +
+      '<svg class="rb-ed-mode-chev" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>';
+    b.appendChild(trigger);
+
+    // Dropdown list — hidden by default, appears above the trigger when open.
+    var drop = mk('div', 'rb-ed-mode-drop');
+    drop.id = 'rb-ed-mode-drop';
+    MODE_LIST.forEach(function(m) {
+      var item = mk('button', 'rb-ed-mode-item');
+      item.dataset.mode = m.id;
+      item.innerHTML = '<span class="rb-ed-mode-chip">' + m.short + '</span>' +
+        '<span class="rb-ed-mode-label">' + m.label + '</span>';
+      if (m.id === 'A') item.classList.add('active');
+      drop.appendChild(item);
+    });
+    b.appendChild(drop);
+
     var x = mk('button');
     x.id = 'rb-ed-banner-close';
     x.innerHTML = CLOSE;
     x.addEventListener('mousedown', function(e) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); deactivate(); }, {signal: sig, capture: true});
     b.appendChild(x);
     root.appendChild(b);
-    b.querySelectorAll('.rb-ed-mode').forEach(function(btn) {
-      btn.addEventListener('mousedown', function(e) {
+
+    function openDrop() { drop.classList.add('open'); trigger.classList.add('open'); }
+    function closeDrop() { drop.classList.remove('open'); trigger.classList.remove('open'); }
+
+    trigger.addEventListener('mousedown', function(e) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      if (drop.classList.contains('open')) closeDrop(); else openDrop();
+    }, {signal: sig, capture: true});
+
+    drop.querySelectorAll('.rb-ed-mode-item').forEach(function(item) {
+      item.addEventListener('mousedown', function(e) {
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-        switchMode(btn.dataset.mode);
-        b.querySelectorAll('.rb-ed-mode').forEach(function(m) { m.classList.remove('active'); });
-        btn.classList.add('active');
+        var mode = item.dataset.mode;
+        var entry = MODE_LIST.find(function(m) { return m.id === mode; });
+        switchMode(mode);
+        drop.querySelectorAll('.rb-ed-mode-item').forEach(function(el) { el.classList.remove('active'); });
+        item.classList.add('active');
+        if (entry) {
+          trigger.querySelector('.rb-ed-mode-chip').textContent = entry.short;
+          trigger.querySelector('.rb-ed-mode-label').textContent = entry.label;
+        }
+        closeDrop();
       }, {signal: sig, capture: true});
     });
+
+    // Click-outside closes the dropdown. Uses document capture so we catch
+    // the click before any site-level handler stops propagation.
+    document.addEventListener('mousedown', function(e) {
+      if (!drop.classList.contains('open')) return;
+      if (b.contains(e.target)) return;
+      closeDrop();
+    }, {signal: sig, capture: true});
   }
 
   // ============ MODE SWITCHING ============
@@ -2662,10 +2915,12 @@
       try { var f = getCS(scanEl).fontFamily.split(',')[0].replace(/['"]/g, '').trim(); if (f) fontsUsed.add(f); } catch(e) {}
     });
     var allFonts = [...fontsUsed].join(', ');
+    // Font combobox was a <select> pre-f6d7f42; now it's an <input> with a
+    // dropdown, so there's no `.options` array — write into `.value` directly.
     var fontSel = inspBody.querySelector('.rb-insp-font-sel');
-    if (fontSel && fontSel.options.length > 0) {
-      fontSel.options[0].textContent = allFonts;
-      fontSel.options[0].value = allFonts;
+    if (fontSel) {
+      fontSel.value = allFonts;
+      fontSel.defaultValue = allFonts;
       fontSel.title = allFonts;
     }
 
@@ -2800,9 +3055,12 @@
         if (/^\d+$/.test(v)) v = v + 'px';
         applyStyle(el, prop, v);
       }, {signal: sig});
-      // Hidden select triggered by arrow button
-      var sel = mk('select');
-      sel.style.cssText = 'position:absolute;right:0;top:0;width:22px;height:100%;opacity:0;cursor:pointer;';
+      // Hidden select triggered by arrow button. The class gives it the same
+      // font-size as the other inspector inputs, so the browser renders the
+      // <option>s at 12px to match the weight dropdown (native <select> uses
+      // the element's own font for its popup).
+      var sel = mk('select', 'rb-insp-inp');
+      sel.style.cssText = 'position:absolute;right:0;top:0;width:22px;height:100%;opacity:0;cursor:pointer;padding:0;background:none;';
       FONT_SIZES.forEach(function(s) {
         var o = mk('option'); o.value = s + 'px'; o.textContent = s;
         if (s === currentPx) o.selected = true;
@@ -2979,6 +3237,10 @@
 
   function updateInspector(el) {
     var scrollPos = inspector ? inspector.scrollTop : 0;
+    // Font dropdown is appended to <body> (to escape inspector's overflow
+    // clip) — rebuild orphans it, so clean up any previous instance first.
+    var staleDrop = document.body.querySelector(':scope > .rb-insp-font-drop');
+    if (staleDrop) staleDrop.remove();
     inspBody.innerHTML = '';
     inspector.classList.remove('rb-insp-ghost');
     var cs = getCS(el);
@@ -3026,6 +3288,106 @@
     var oldBc = inspector.querySelector('.rb-ed-breadcrumb');
     if (oldBc) oldBc.remove();
     inspector.insertBefore(breadcrumb, inspBody);
+
+    // ---- LINK ----
+    // Matches the Fill/Stroke/Effects empty-state pattern: collapsed section with
+    // a "+" when no link, expanded section with an editable URL field + "−" when
+    // there is one. "+" click expands the section inline (no popup) and focuses
+    // an input. DOM changes go through pushUndo so Cmd+Z rolls them back.
+    var existingLink = getElementLink(el);
+    var hasLink = !!existingLink;
+    var linkSec = addSection('Link', !hasLink);
+    var linkHd = linkSec.parentElement.querySelector('.rb-insp-sec-hd');
+    function normalizeHref(v) {
+      v = String(v || '').trim();
+      if (!v) return '';
+      if (/^[a-z]+:\/\//i.test(v) || v.startsWith('mailto:') || v.startsWith('tel:') ||
+          v.startsWith('#') || v.startsWith('/')) return v;
+      return 'https://' + v;
+    }
+    function buildLinkInputRow(initialVal, autoFocus) {
+      var row = mk('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:4px;';
+      var field = mk('div', 'rb-insp-field-wrap');
+      var icon = mk('span', 'rb-insp-field-icon');
+      icon.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 13a5 5 0 007.07 0l3-3a5 5 0 00-7.07-7.07L11 5"/><path d="M14 11a5 5 0 00-7.07 0l-3 3a5 5 0 007.07 7.07L13 19"/></svg>';
+      var inp = mk('input', 'rb-insp-inp');
+      inp.type = 'url';
+      inp.placeholder = 'https://…';
+      inp.value = initialVal || '';
+      inp.defaultValue = initialVal || '';
+      field.appendChild(icon);
+      field.appendChild(inp);
+      row.appendChild(field);
+      var committed = false;
+      function commit(revert) {
+        if (committed) return; committed = true;
+        var v = normalizeHref(inp.value);
+        var orig = normalizeHref(initialVal);
+        if (revert || v === orig) { updateInspector(el); return; }
+        if (!v) {
+          // cleared → remove link if existed
+          var a = getElementLink(el);
+          if (a) unwrapLink(a);
+        } else {
+          var cur = getElementLink(el);
+          if (cur) {
+            var old = cur.getAttribute('href');
+            if (old !== v) {
+              cur.setAttribute('href', v);
+              pushUndo({ prop: '__hrefChange', anchor: cur, oldHref: old, newHref: v });
+            }
+          } else {
+            wrapInLink(el, v);
+          }
+        }
+        updateInspector(el);
+      }
+      inp.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); commit(false); }
+        else if (e.key === 'Escape') { e.preventDefault(); commit(true); }
+      });
+      inp.addEventListener('blur', function() { commit(false); });
+      inp.addEventListener('mousedown', function(e) { e.stopImmediatePropagation(); });
+      if (autoFocus) setTimeout(function() { inp.focus(); inp.select(); }, 0);
+      return row;
+    }
+    if (!hasLink) {
+      linkSec.parentElement.classList.add('rb-insp-sec-empty');
+      var addLinkBtn = mk('button', 'rb-insp-add-btn');
+      addLinkBtn.textContent = '+';
+      addLinkBtn.title = 'Add link';
+      addLinkBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        // Expand the section in-place and focus an empty input (no popup).
+        var sec = linkSec.parentElement;
+        sec.classList.remove('rb-insp-sec-empty');
+        sec.classList.remove('collapsed');
+        addLinkBtn.remove();
+        var cancelBtn = mk('button', 'rb-insp-add-btn');
+        cancelBtn.innerHTML = '−';
+        cancelBtn.title = 'Cancel';
+        cancelBtn.addEventListener('mousedown', function(e2) {
+          e2.stopImmediatePropagation();
+          updateInspector(el);
+        }, {capture: true, signal: sig});
+        linkHd.querySelector('div').appendChild(cancelBtn);
+        linkSec.appendChild(buildLinkInputRow('', true));
+      }, {capture: true, signal: sig});
+      linkHd.querySelector('div').appendChild(addLinkBtn);
+    } else {
+      var rmLinkBtn = mk('button', 'rb-insp-add-btn');
+      rmLinkBtn.innerHTML = '−';
+      rmLinkBtn.title = 'Remove link';
+      rmLinkBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        var a = getElementLink(el);
+        if (a) unwrapLink(a);
+        updateInspector(el);
+      }, {capture: true, signal: sig});
+      linkHd.querySelector('div').appendChild(rmLinkBtn);
+      linkSec.appendChild(buildLinkInputRow(existingLink.getAttribute('href') || '', false));
+    }
 
     // ---- CONTAINER ----
     var posSec = addSection('Container', false, function(btn) {
@@ -3320,9 +3682,20 @@
     fontChev.innerHTML = '<svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>';
     fontWrap.appendChild(fontChev);
 
+    // Dropdown is position:FIXED and appended to document.body, NOT to fontWrap.
+    // The inspector panel (#rb-editor-inspector) has overflow:hidden and its body
+    // (#rb-ed-insp-body) has overflow-y:auto — an absolute-positioned dropdown
+    // inside was getting clipped, making it appear "not to open". Fixed + body
+    // append escapes both clippers; we just re-position on every show.
     var fontDrop = mk('div', 'rb-insp-font-drop');
-    fontDrop.style.cssText = 'position:absolute;left:0;right:0;top:100%;margin-top:2px;background:#1A1A1A;border:1px solid rgba(255,255,255,0.08);border-radius:4px;max-height:240px;overflow-y:auto;display:none;z-index:2147483647;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
-    fontWrap.appendChild(fontDrop);
+    fontDrop.style.cssText = 'position:fixed;width:220px;background:#1A1A1A;border:1px solid rgba(255,255,255,0.08);border-radius:4px;max-height:240px;overflow-y:auto;display:none;z-index:2147483647;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+    document.body.appendChild(fontDrop);
+    function positionFontDrop() {
+      var r = fontWrap.getBoundingClientRect();
+      fontDrop.style.left = r.left + 'px';
+      fontDrop.style.top  = (r.bottom + 2) + 'px';
+      fontDrop.style.width = r.width + 'px';
+    }
 
     function renderFontDrop(filter) {
       fontDrop.innerHTML = '';
@@ -3352,7 +3725,7 @@
         fontDrop.appendChild(opt);
       });
     }
-    function showFontDrop() { renderFontDrop(fontInput.value); fontDrop.style.display = 'block'; }
+    function showFontDrop() { renderFontDrop(fontInput.value); positionFontDrop(); fontDrop.style.display = 'block'; }
     function hideFontDrop() { fontDrop.style.display = 'none'; }
 
     fontInput.addEventListener('focus', function() { showFontDrop(); });
@@ -4144,9 +4517,9 @@
         // swatches into a separate row below so the compact row height stays fixed.
         var compact = mk('div', 'rb-insp-field-bg rb-insp-color-compact');
         compact.style.cssText = 'display:flex;align-items:center;gap:8px;padding:0 8px;border-radius:4px;height:25px;';
-        var compactLbl = mk('span');
+        var compactLbl = mk('span', 'rb-insp-selection-lbl');
         compactLbl.textContent = 'Selection colors';
-        compactLbl.style.cssText = 'flex:1;font:500 12px/1.3 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.75);min-width:100px;white-space:nowrap;';
+        compactLbl.style.cssText = 'flex:1;font:500 12px/1.3 "Instrument Sans",sans-serif;min-width:100px;white-space:nowrap;';
         compact.appendChild(compactLbl);
         var swatchGroup = mk('div');
         swatchGroup.style.cssText = 'display:flex;gap:4px;align-items:center;flex-shrink:0;';
@@ -4165,10 +4538,10 @@
           swatchGroup.appendChild(makeCompactSwatch(colorEntries[ci]));
         }
         compact.appendChild(swatchGroup);
-        var morePill = mk('button');
+        var morePill = mk('button', 'rb-insp-more-pill');
         morePill.textContent = '+' + (colorEntries.length - compactShown);
         morePill.title = 'Show all colors';
-        morePill.style.cssText = 'background:rgba(255,255,255,0.06);border:none;color:rgba(239,238,235,0.7);font:500 11px/1 "Instrument Sans",sans-serif;padding:3px 7px;border-radius:3px;cursor:pointer;-webkit-appearance:none;flex-shrink:0;';
+        morePill.style.cssText = 'border:none;font:500 11px/1 "Instrument Sans",sans-serif;padding:3px 7px;border-radius:3px;cursor:pointer;-webkit-appearance:none;flex-shrink:0;';
         // Extra swatches live in a second row so the compact row keeps 25px height
         var extraRow = mk('div');
         extraRow.style.cssText = 'display:none;gap:4px;flex-wrap:wrap;padding:4px 8px 0;';
@@ -4693,6 +5066,32 @@
         if (u.next) u.parent.insertBefore(u.el, u.next);
         else u.parent.appendChild(u.el);
       }
+    } else if (u.prop === '__linkWrap') {
+      if (forward) {
+        var p = u.child.parentElement;
+        if (p) { p.insertBefore(u.anchor, u.child); u.anchor.appendChild(u.child); }
+      } else {
+        var ap = u.anchor.parentElement;
+        if (ap) { ap.insertBefore(u.child, u.anchor); u.anchor.remove(); }
+      }
+    } else if (u.prop === '__linkUnwrap') {
+      if (forward) {
+        var ap2 = u.anchor.parentElement;
+        if (ap2) {
+          u.children.forEach(function(c) { ap2.insertBefore(c, u.anchor); });
+          u.anchor.remove();
+        }
+      } else {
+        if (u.parent) {
+          if (u.nextSibling && u.nextSibling.parentNode === u.parent) u.parent.insertBefore(u.anchor, u.nextSibling);
+          else u.parent.appendChild(u.anchor);
+          u.children.forEach(function(c) { u.anchor.appendChild(c); });
+        }
+      }
+    } else if (u.prop === '__hrefChange') {
+      var target = forward ? u.newHref : u.oldHref;
+      if (target == null) u.anchor.removeAttribute('href');
+      else u.anchor.setAttribute('href', target);
     } else if (u.prop === '__coordswap') {
       if (forward) {
         u.el.style.top = u.newElTop || '';
@@ -5766,13 +6165,16 @@
       spacingGuides.gap.style.display = 'none';
     }
 
-    // Corner handles — show when AT LEAST ONE of the two adjacent margins ≥ 2px.
-    // With AND, a side with mb=0 would hide SW/SE even if ml/mr were large; OR keeps
-    // the corner available so the user can grow the zero side from 0.
-    positionCorner(cornerGuides.nw, r.left - ml,  r.top - mt,   ml >= 2 || mt >= 2);
-    positionCorner(cornerGuides.ne, r.right + mr, r.top - mt,   mr >= 2 || mt >= 2);
-    positionCorner(cornerGuides.se, r.right + mr, r.bottom + mb, mr >= 2 || mb >= 2);
-    positionCorner(cornerGuides.sw, r.left - ml,  r.bottom + mb, ml >= 2 || mb >= 2);
+    // Corner handles — show all 4 whenever ANY margin is ≥ 2px. Previous rule
+    // (both-adjacent, then either-adjacent) hid SW/SE on elements with only
+    // vertical margins (common: h1 with 0 ml/mr but real mt/mb), surprising
+    // users who expected 4 handles. Showing all 4 also lets the user drag a
+    // zero-margin side up from 0 via the corner.
+    var anyMargin = ml >= 2 || mt >= 2 || mr >= 2 || mb >= 2;
+    positionCorner(cornerGuides.nw, r.left - ml,  r.top - mt,    anyMargin);
+    positionCorner(cornerGuides.ne, r.right + mr, r.top - mt,    anyMargin);
+    positionCorner(cornerGuides.se, r.right + mr, r.bottom + mb, anyMargin);
+    positionCorner(cornerGuides.sw, r.left - ml,  r.bottom + mb, anyMargin);
   }
 
   function showSpacingGuides(el) {
@@ -5908,6 +6310,11 @@
     m.appendChild(repBtn);
     m.appendChild(dlBtn);
     m.appendChild(divider);
+    m.appendChild(makeDockLinkBtn(img, function() {
+      if (selectedEl === img) updateInspector(img);
+    }));
+    var linkDivider = mk('div', 'rb-img-bar-divider');
+    m.appendChild(linkDivider);
     m.appendChild(smartBtn);
     m.appendChild(finp);
     appendDockClose(m);
@@ -5946,6 +6353,48 @@
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     }, {capture: true});
+  }
+
+  // Shared: link button for any minidock. Active (filled chain) when element
+  // has a link, outline when not. Click opens the same popup editor used by
+  // the Link section in the inspector.
+  function makeDockLinkBtn(el, onAfterChange) {
+    var btn = mk('button', 'rb-img-bar-btn');
+    // SVG uses stroke:currentColor so it inherits the button color — blue when
+    // `rb-dock-link-active` class is set, theme-default otherwise.
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 13a5 5 0 007.07 0l3-3a5 5 0 00-7.07-7.07L11 5"/><path d="M14 11a5 5 0 00-7.07 0l-3 3a5 5 0 007.07 7.07L13 19"/></svg>';
+    function render() {
+      var link = getElementLink(el);
+      var hasLink = !!link;
+      btn.title = hasLink ? ('Link: ' + (link.getAttribute('href') || '')) : 'Add link';
+      btn.classList.toggle('rb-dock-link-active', hasLink);
+    }
+    render();
+    btn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      var cur = getElementLink(el);
+      var curHref = cur ? (cur.getAttribute('href') || '') : '';
+      openLinkEditor(btn, curHref, function(urlOrNull) {
+        if (urlOrNull == null) {
+          var a = getElementLink(el);
+          if (a) unwrapLink(a);
+        } else {
+          var a2 = getElementLink(el);
+          if (a2) {
+            var old = a2.getAttribute('href');
+            if (old !== urlOrNull) {
+              a2.setAttribute('href', urlOrNull);
+              pushUndo({ prop: '__hrefChange', anchor: a2, oldHref: old, newHref: urlOrNull });
+            }
+          } else {
+            wrapInLink(el, urlOrNull);
+          }
+        }
+        render();
+        if (typeof onAfterChange === 'function') onAfterChange();
+      });
+    }, {capture: true});
+    return btn;
   }
 
   // Shared: append close divider + X to any minidock
@@ -5990,53 +6439,126 @@
     m.style.left = (rect.left + rect.width / 2) + 'px';
     m.style.transform = 'translateX(-50%)';
 
-    // Drag-to-adjust helper
+    // Drag-to-adjust (horizontal = x, vertical = inverted y). If no drag occurs
+    // (movement < 3px by mouseup), enter edit mode: replace the span with an
+    // <input>, focus+select. Enter/blur commit; Escape reverts. This gives the
+    // user both affordances on the same button without a modifier.
     function makeDragValue(btn, initVal, prop, unit, step, min, max, formatFn) {
       btn.classList.add('rb-dock-drag');
       var valSpan = btn.querySelector('span');
       var curVal = initVal;
+      btn._editing = false;
+
+      function format(v) { return formatFn ? formatFn(v) : v; }
+
+      function enterEditMode() {
+        if (btn._editing) return;
+        btn._editing = true;
+        var origText = valSpan.textContent;
+        var inp = document.createElement('input');
+        inp.type = 'text';
+        inp.value = String(curVal);
+        inp.style.cssText = 'width:3.5em;background:rgba(255,255,255,0.06);border:none;color:inherit;font:inherit;text-align:center;padding:1px 2px;outline:none;border-radius:2px;';
+        valSpan.textContent = '';
+        valSpan.appendChild(inp);
+        setTimeout(function() { inp.focus(); inp.select(); }, 0);
+        var committed = false;
+        function commit() {
+          if (committed) return; committed = true;
+          btn._editing = false;
+          var n = parseFloat(inp.value);
+          if (!isNaN(n)) {
+            curVal = Math.max(min, Math.min(max, n));
+            applyStyle(el, prop, curVal + unit);
+            valSpan.textContent = format(curVal);
+          } else {
+            valSpan.textContent = origText;
+          }
+        }
+        inp.addEventListener('blur', commit);
+        inp.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
+          else if (e.key === 'Escape') {
+            e.preventDefault();
+            committed = true;
+            btn._editing = false;
+            valSpan.textContent = origText;
+            inp.blur();
+          }
+        });
+        inp.addEventListener('mousedown', function(e) { e.stopImmediatePropagation(); });
+      }
 
       btn.addEventListener('mousedown', function(e) {
+        if (btn._editing) return;
         e.preventDefault(); e.stopImmediatePropagation();
         var sx = e.clientX, sy = e.clientY;
         var startVal = curVal;
+        var dragged = false;
 
         function onMove(ev) {
           var dx = ev.clientX - sx;
           var dy = -(ev.clientY - sy);
+          if (!dragged && Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+          dragged = true;
           var delta = (Math.abs(dx) > Math.abs(dy) ? dx : dy) * step;
           curVal = Math.max(min, Math.min(max, Math.round((startVal + delta) * 10) / 10));
-          valSpan.textContent = formatFn ? formatFn(curVal) : curVal;
+          valSpan.textContent = format(curVal);
           applyStyle(el, prop, curVal + unit);
         }
         function onUp() {
           document.removeEventListener('mousemove', onMove, true);
           document.removeEventListener('mouseup', onUp, true);
+          if (!dragged) enterEditMode();
         }
         document.addEventListener('mousemove', onMove, true);
         document.addEventListener('mouseup', onUp, true);
       }, {capture: true});
     }
 
-    // Font family
+    // Prop icons — always visible on every minidock button, same pattern as
+    // letter-spacing + line-height. Makes the dock instantly scannable and keeps
+    // a consistent shape regardless of Mixed/not-mixed state.
+    var ICON_SIZE   = '<svg class="rb-dock-mix-svg" width="14" height="12" viewBox="0 0 14 12" fill="currentColor"><text x="0" y="10" font-size="6">A</text><text x="5" y="10" font-size="11">A</text></svg>';
+    var ICON_WEIGHT = '<svg class="rb-dock-mix-svg" width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><text x="0" y="10" font-size="10" font-weight="300">B</text><text x="8" y="10" font-size="10" font-weight="900">B</text></svg>';
+
+    // Font family — always shows the shared FONT_ICON_SVG (same as inspector Font field)
     var fontBtn = mk('button', 'rb-img-bar-btn');
     var fontName = (cs.fontFamily || 'sans-serif').split(',')[0].replace(/['"]/g, '').trim();
     if (fontName.length > 14) fontName = fontName.substring(0, 12) + '\u2026';
     var fontMixed = isMixed('fontFamily');
-    fontBtn.innerHTML = '<span>' + (fontMixed ? 'Mixed' : fontName) + '</span>';
+    fontBtn.innerHTML = '<span class="rb-dock-mix-svg">' + FONT_ICON_SVG + '</span><span>' + (fontMixed ? 'Mixed' : fontName) + '</span>';
     if (fontMixed) fontBtn.classList.add('rb-dock-mixed');
     fontBtn.title = fontMixed ? 'Mixed fonts across lines' : cs.fontFamily;
     fontBtn.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
-      var fontField = inspector.querySelector('.rb-insp-font-sel');
-      if (fontField) { fontField.focus(); fontField.click(); }
+      var currentFont = (cs.fontFamily || '').split(',')[0].replace(/['"]/g, '').trim();
+      openFontPicker(fontBtn, currentFont, function(picked) {
+        applyStyle(el, 'fontFamily', picked);
+        var disp = picked.length > 14 ? picked.substring(0, 12) + '\u2026' : picked;
+        // The fontBtn has two spans: [0] wraps the SVG icon, [1] holds the
+        // label. querySelector('span') would hit [0] and wipe the icon — use
+        // :last-child to target the label specifically.
+        var lblSpan = fontBtn.querySelector('span:last-child');
+        if (lblSpan) lblSpan.textContent = disp;
+        fontBtn.title = picked;
+        fontBtn.classList.remove('rb-dock-mixed');
+        // Sync ONLY the inspector's font field value (don't rebuild the whole
+        // inspector — that's destructive and was breaking post-pick focus on
+        // the dropdown + swallowing Cmd+Z). defaultValue also gets updated so
+        // the blur-revert logic doesn't reset to the pre-pick font.
+        if (selectedEl === el && inspector) {
+          var fs = inspector.querySelector('.rb-insp-font-sel');
+          if (fs) { fs.value = picked; fs.defaultValue = picked; }
+        }
+      });
     }, {capture: true});
 
     // Size (drag to adjust)
     var sizeVal = Math.round(parseFloat(cs.fontSize)) || 16;
     var sizeMixed = isMixed('fontSize');
     var sizeBtn = mk('button', 'rb-img-bar-btn');
-    sizeBtn.innerHTML = '<span>' + (sizeMixed ? 'Mixed' : sizeVal) + '</span>';
+    sizeBtn.innerHTML = ICON_SIZE + '<span>' + (sizeMixed ? 'Mixed' : sizeVal) + '</span>';
     if (sizeMixed) sizeBtn.classList.add('rb-dock-mixed');
     sizeBtn.title = sizeMixed ? 'Mixed sizes across lines — drag to homogenize' : 'Font size — drag to adjust';
     makeDragValue(sizeBtn, sizeVal, 'fontSize', 'px', 1, 1, 400);
@@ -6045,7 +6567,7 @@
     var weightVal = parseInt(cs.fontWeight) || 400;
     var weightMixed = isMixed('fontWeight');
     var weightBtn = mk('button', 'rb-img-bar-btn');
-    weightBtn.innerHTML = '<span>' + (weightMixed ? 'Mixed' : weightVal) + '</span>';
+    weightBtn.innerHTML = ICON_WEIGHT + '<span>' + (weightMixed ? 'Mixed' : weightVal) + '</span>';
     if (weightMixed) weightBtn.classList.add('rb-dock-mixed');
     weightBtn.title = weightMixed ? 'Mixed weights across lines — drag to homogenize' : 'Font weight — drag to adjust';
     makeDragValue(weightBtn, weightVal, 'fontWeight', '', 100, 100, 900, function(v) {
@@ -6079,6 +6601,11 @@
     m.appendChild(d2);
     m.appendChild(lsBtn);
     m.appendChild(lhBtn);
+
+    // Link (shared helper; also used in image minidock)
+    var dLink = mk('div', 'rb-img-bar-divider');
+    m.appendChild(dLink);
+    m.appendChild(makeDockLinkBtn(el, function() { updateInspector(el); }));
 
     // Restore original
     var d3 = mk('div', 'rb-img-bar-divider');
@@ -6501,6 +7028,17 @@
     var lastClickTime = 0;
 
     document.addEventListener('mousedown', function(e) {
+      // Any mousedown outside the guide's own inline-edit input must commit +
+      // close it. Previous attempts scoped this to "different widget" which
+      // still left the user stuck when clicking inspector fields, site content,
+      // or even the widget chrome outside the input. Simplest rule: if the
+      // click is not the input itself, blur. The input's blur handler runs
+      // commit() synchronously so the next click's handlers (focus, selection,
+      // etc.) see a clean state.
+      var activeGuideInput = root.querySelector('.rb-spacing-inline-input');
+      if (activeGuideInput && e.target !== activeGuideInput) {
+        activeGuideInput.blur();
+      }
       if (isEditorEl(e.target)) return;
       var rawEl = document.elementFromPoint(e.clientX, e.clientY);
       if (!rawEl || !isValid(rawEl)) return;
@@ -7021,6 +7559,9 @@
     if (staleFab) staleFab.remove();
     var hk = document.getElementById('rb-hover-kill');
     if (hk) hk.remove();
+    // Font dropdown is appended to <body> (not root) to escape inspector overflow
+    // clipping, so it needs explicit cleanup on teardown.
+    document.querySelectorAll('body > .rb-insp-font-drop, body > .rb-font-picker, body > .rb-link-editor').forEach(function(el) { el.remove(); });
     document.documentElement.style.removeProperty('--rb-insp-width');
     document.documentElement.style.removeProperty('--rb-layers-width');
 

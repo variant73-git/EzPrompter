@@ -42,11 +42,11 @@ O Repix é o único tool que **edita sites visualmente no browser** com controle
 - `feat/normalize-engine` — branch principal (editor + layers + Mode E + detect/freeze)
 - `feat/sidebar-panel` — checkpoint 028 (minidocks, Mode S, Assets 3 seções)
 - `feat/guides-ux-experiment` — checkpoint 029 (Framer fix + Guides UX: keyboard modifiers, arrow nudge, G toggle, inline input, delta preview, corner handles)
-- `feat/smart-text-cascade` — checkpoint 031 (smart text cascade, range-scoped typography, inspector polish, resize compensation, hover-first click, guide pass-through, **framework override sticky writes**, **X/Y auto-promote static→relative**)
+- `feat/smart-text-cascade` — checkpoint 032 (cumulativo com 030+031): smart text cascade, framework override sticky writes, X/Y static→relative, **Link inspector section**, **minidock link icon + font picker + click-to-type**, **compact mode widget (bottom-left dropdown)**, **guide editing blur fix**, font dropdown fixed-positioned, 8 light-mode fixes
 - `claude/ai-image-description-extension-Tp3jY` — main branch
 
 ## Versão atual
-`2.1.1`
+`2.2.0`
 
 ## Estrutura do projeto
 ```
@@ -157,6 +157,15 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 83. ✅ Guides pass-through — pink guides não comem clicks; mousedown com drag threshold 3px; click sem drag esconde guides/corners e seleciona o elemento visualmente abaixo
 84. ✅ Framework override (sticky inline writes) — MutationObserver observa `style`+`class` do elemento; quando React/Framer/Hydrogen sobrescreve inline, reescrevemos com !important. Cumulativo ao ID rule (ID vence className rewrite; sticky vence inline rewrite). Disable-on-fail após 5 rewrites em 2s. Anti-loop via `_rbStickyWriting` flag + dedup por computed === sticky value. Undo do `__cascade` chama `stopStickyForEl` antes de restaurar cssText
 85. ✅ X/Y auto-promote position — se elemento é `static`, primeiro write em X/Y promove pra `relative`. `readPosXY` lê do contexto correto: `cs.left/top` (relative), `offsetLeft/Top` (abs/fix/sticky), 0 (static). Substitui leitura errada de `r.left/top` (viewport coords)
+86. ✅ Link section no inspector — aparece acima de Container, padrão empty/populated do Stroke. `+` expande section in-place com input focado (sem popup); Enter wrappa em `<a>`. Detecção estrita: só reconhece link quando elemento É `<a>` ou único filho de `<a>`. Novos undo types `__linkWrap`/`__linkUnwrap`/`__hrefChange`
+87. ✅ Link icon no minidock (text + image) — helper `makeDockLinkBtn`. Ícone azul quando tem link, outline quando não. Click abre `openLinkEditor` popup compartilhado
+88. ✅ Font picker compartilhado (`openFontPicker`) — usado por inspector e minidock. Popup reusa `rb-ed-img-menu` (frosted glass + light mode automático). Constante `FONT_ICON_SVG` idêntica em ambos os lugares
+89. ✅ Click-to-type nos valores do minidock — drag mantido com threshold 3px; click sem drag converte span em `<input>` focado. Enter commita, Escape reverte, blur commita
+90. ✅ Ícones permanentes no text minidock — font/size/weight sempre mostram ícone SVG prefixado (antes só quando Mixed). Consistência com ls/lh que já tinham ícones
+91. ✅ Widget de modos compacto — trigger pequeno (chip + label + chevron) no bottom-left, dropdown pra cima. Centralizado em `MODE_LIST` (adicionar modo novo = 1 linha). Substitui banner horizontal do bottom-center
+92. ✅ Corner handles — 4 handles quando QUALQUER margin ≥ 2px (antes só com both-adjacent ≥ 2px). Cobre h1 com margin-block default browser
+93. ✅ Font dropdown do inspector escapa do overflow — agora `position:fixed` anexado a `<body>` + reposicionado via `getBoundingClientRect`. Antes era clipped pelo `overflow:hidden` do inspector. Cleanup de orphan em updateInspector + deactivate
+94. ✅ Guide editing não trava mais clicks — global mousedown capture força blur do input do guide se target não for o próprio input. Antes comparava widgets, deixava brechas (corners, inspector, site)
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.
@@ -268,6 +277,15 @@ Sites com framework reativo reescrevem `style=""` e `className` no próximo rend
 Limite: full remount (nó novo) perde WeakMap — precisa rastreamento por seletor, não implementado.
 
 Em undo do `__cascade`, chamar `stopStickyForEl` antes de restaurar cssText pra evitar que o sticky stompe o undo.
+
+### Padrão: dropdowns dentro do inspector devem ser `position:fixed` + body
+O `#rb-editor-inspector` tem `overflow:hidden` e o `#rb-ed-insp-body` tem `overflow-y:auto`. Qualquer dropdown `position:absolute` dentro é clipado. Apend direto em `document.body` com `position:fixed` e recalcular `left/top` via `getBoundingClientRect(anchor)` em cada show. Cleanup obrigatório em `updateInspector` (rebuild orpha) e `deactivate`.
+
+### Padrão: guide inline-edit input deve blurar em qualquer click fora
+O `.rb-spacing-inline-input` criado por dblclick no label de guide é focusable. Enquanto focado, o guard global de shortcuts (`_inInspectorForm` em editor.js) bloqueia Cmd+Z etc. E o `e.preventDefault()` global de mousedown impede focus transfer natural. Solução: no mousedown capture do editor, se `e.target !== activeGuideInput`, chamar `.blur()` explicitamente. Comparar widgets deixa brechas (corners, site, inspector).
+
+### Padrão crítico: refactor `<select>` → `<input>` tem pontos cegos
+O commit f6d7f42 trocou o font combobox do inspector de `<select>` pra `<input>`. Mas `showGlobalCSS` (chamada ao desselecionar) ainda lia `fontSel.options[0]`. Em `<input>` isso é `undefined.length` → TypeError que abortava `switchMode` inteiro. Ao fazer refactors desse tipo, `grep` TODAS as referências `.options`, `.selectedIndex`, `.multiple` antes de commitar.
 
 ### Padrão: position X/Y em elementos static
 Elementos com `position: static` ignoram `left`/`top`. Antes de escrever, chamar `ensurePositionable(el)` que promove pra `relative`. Para leitura no inspector, usar `readPosXY(el)`: `cs.left/top` (relative) ou `offsetLeft/Top` (abs/fix/sticky) — nunca `r.left` (viewport).

@@ -47,21 +47,73 @@ body.rb-ed-dragging, body.rb-ed-dragging * { cursor:grabbing !important; }
   text-transform: none !important;
   letter-spacing: normal !important;
 }
-/* Mode bar — floating at bottom center */
+/* Mode widget — compact trigger with dropdown, bottom-left corner. */
 #rb-ed-banner {
-  position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
-  height:36px; padding:0 4px;
+  position:fixed; bottom:16px; left:16px;
+  height:32px; padding:0 4px;
   background:#1A1A1A;
-  border-radius:20px;
-  box-shadow:0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06);
+  border-radius:18px;
+  box-shadow:0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06);
   display:flex; align-items:center; gap:2px;
-  font:500 10px/1 'Instrument Sans',sans-serif; color:rgba(239,238,235,0.5);
+  font:500 11px/1 'Instrument Sans',sans-serif; color:#EFEEEB;
   z-index:2147483645; pointer-events:auto;
 }
+.rb-ed-mode-trigger {
+  display:flex; align-items:center; gap:6px;
+  height:28px; padding:0 8px 0 4px;
+  background:none; border:none; border-radius:14px;
+  color:inherit; cursor:pointer; -webkit-appearance:none;
+  transition:background 120ms;
+}
+.rb-ed-mode-trigger:hover,
+.rb-ed-mode-trigger.open { background:rgba(255,255,255,0.06); }
+.rb-ed-mode-chip {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:22px; height:22px;
+  background:rgba(255,255,255,0.08);
+  border-radius:50%;
+  font:600 11px/1 'Instrument Sans',sans-serif;
+  color:#EFEEEB;
+}
+.rb-ed-mode-trigger.open .rb-ed-mode-chip { background:rgba(255,255,255,0.14); }
+.rb-ed-mode-label {
+  font:500 11px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.85);
+}
+.rb-ed-mode-chev {
+  color:rgba(239,238,235,0.5);
+  transition:transform 150ms;
+}
+.rb-ed-mode-trigger.open .rb-ed-mode-chev { transform:rotate(180deg); }
+
+/* Dropdown — positioned ABOVE the trigger so it opens upward. */
+.rb-ed-mode-drop {
+  position:absolute; bottom:calc(100% + 6px); left:0;
+  min-width:160px;
+  background:#1A1A1A;
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:10px;
+  box-shadow:0 12px 32px rgba(0,0,0,0.5);
+  padding:4px;
+  display:none; flex-direction:column; gap:1px;
+  animation:rb-ed-fade 120ms ease-out;
+}
+.rb-ed-mode-drop.open { display:flex; }
+.rb-ed-mode-item {
+  display:flex; align-items:center; gap:8px;
+  padding:6px 8px; height:28px;
+  background:none; border:none; border-radius:6px;
+  color:rgba(239,238,235,0.85); cursor:pointer; -webkit-appearance:none;
+  text-align:left;
+}
+.rb-ed-mode-item:hover { background:rgba(255,255,255,0.06); }
+.rb-ed-mode-item.active { background:rgba(147,197,253,0.12); }
+.rb-ed-mode-item.active .rb-ed-mode-chip { background:rgba(147,197,253,0.28); color:#fff; }
+
 #rb-ed-banner-close {
   background:none; border:none; color:rgba(239,238,235,0.4); cursor:pointer;
-  width:28px; height:28px; display:flex; align-items:center; justify-content:center;
-  padding:0; -webkit-appearance:none; border-radius:50%;
+  width:26px; height:26px; display:flex; align-items:center; justify-content:center;
+  padding:0; -webkit-appearance:none; border-radius:50%; flex-shrink:0;
 }
 #rb-ed-banner-close:hover { color:#EFEEEB; background:rgba(255,255,255,0.06); }
 
@@ -1104,25 +1156,6 @@ html.rb-scroll-locked body {
 }
 .rb-ed-restore-no:hover { color: #EFEEEB; }
 
-/* ===== MODE SWITCHER ===== */
-.rb-ed-modes {
-  display: flex;
-  gap: 2px;
-}
-.rb-ed-mode {
-  background: none;
-  border: none;
-  color: rgba(239,238,235,0.3);
-  font: 500 10px 'Instrument Sans', sans-serif;
-  padding: 4px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 150ms;
-  -webkit-appearance: none;
-}
-.rb-ed-mode:hover { color: rgba(239,238,235,0.6); }
-.rb-ed-mode.active { background: rgba(239,238,235,0.1); color: #EFEEEB; }
-
 body.rb-ed-canvas-mode { overflow: hidden !important; }
 
 .rb-ed-layout-btn {
@@ -1474,9 +1507,21 @@ body.rb-ed-light .rb-ed-restore-no { color:rgba(51,51,51,0.4); }
 body.rb-ed-light .rb-ed-restore-no:hover { color:#333; }
 
 /* Mode switcher */
-body.rb-ed-light .rb-ed-mode { color:rgba(51,51,51,0.3); }
-body.rb-ed-light .rb-ed-mode:hover { color:rgba(51,51,51,0.6); }
-body.rb-ed-light .rb-ed-mode.active { background:rgba(51,51,51,0.1); color:#333; }
+body.rb-ed-light .rb-ed-mode-trigger { color:#333; }
+body.rb-ed-light .rb-ed-mode-trigger:hover,
+body.rb-ed-light .rb-ed-mode-trigger.open { background:rgba(0,0,0,0.06); }
+body.rb-ed-light .rb-ed-mode-chip { background:rgba(0,0,0,0.08); color:#333; }
+body.rb-ed-light .rb-ed-mode-trigger.open .rb-ed-mode-chip { background:rgba(0,0,0,0.14); }
+body.rb-ed-light .rb-ed-mode-label { color:rgba(51,51,51,0.85); }
+body.rb-ed-light .rb-ed-mode-chev { color:rgba(51,51,51,0.5); }
+body.rb-ed-light .rb-ed-mode-drop {
+  background:#F5F5F5; border-color:rgba(0,0,0,0.08);
+  box-shadow:0 12px 32px rgba(0,0,0,0.12);
+}
+body.rb-ed-light .rb-ed-mode-item { color:rgba(51,51,51,0.85); }
+body.rb-ed-light .rb-ed-mode-item:hover { background:rgba(0,0,0,0.06); }
+body.rb-ed-light .rb-ed-mode-item.active { background:rgba(37,99,235,0.1); }
+body.rb-ed-light .rb-ed-mode-item.active .rb-ed-mode-chip { background:rgba(37,99,235,0.22); color:#fff; }
 body.rb-ed-light .rb-ed-layout-btn { background:rgba(0,0,0,0.05); color:rgba(51,51,51,0.5); }
 body.rb-ed-light .rb-ed-layout-btn:hover { color:#333; }
 body.rb-ed-light .rb-ed-layout-btn.active { background:#333; color:#fff; }
@@ -1840,3 +1885,72 @@ body.rb-ed-light .rb-fill-link-btn.rb-fill-link-off:hover { color:#333; }
 body.rb-ed-light .rb-fill-row-icon { color:rgba(51,51,51,0.25); }
 body.rb-ed-light .rb-fill-row-icon:hover { color:rgba(51,51,51,0.6); }
 body.rb-ed-light .rb-fill-row-icon.rb-insp-eye-off { color:rgba(51,51,51,0.15); }
+
+/* ===== SELECTION COLORS LABEL (Fill compact pill) ===== */
+.rb-insp-selection-lbl { color:rgba(239,238,235,0.75); }
+body.rb-ed-light .rb-insp-selection-lbl { color:rgba(51,51,51,0.75); }
+.rb-insp-more-pill { background:rgba(255,255,255,0.06); color:rgba(239,238,235,0.7); }
+.rb-insp-more-pill:hover { background:rgba(255,255,255,0.12); color:#EFEEEB; }
+body.rb-ed-light .rb-insp-more-pill { background:rgba(0,0,0,0.06); color:rgba(51,51,51,0.75); }
+body.rb-ed-light .rb-insp-more-pill:hover { background:rgba(0,0,0,0.12); color:#333; }
+
+/* ===== EMPTY SECTION — center title + add-btn vertically ===== */
+/* Collapsed sections that only show "+"" should feel compact; the default
+   padding-bottom was leaving a 20px dead zone below the header. */
+.rb-insp-sec.rb-insp-sec-empty { padding-top:7px; padding-bottom:7px; }
+.rb-insp-sec.rb-insp-sec-empty .rb-insp-sec-hd { padding:0; }
+
+/* ===== LINK EDITOR POPUP (opened from minidock link icon) ===== */
+/* The input inherits color from the popup — without an explicit color here the
+   input falls back to the browser default (near-black), which is unreadable on
+   the dark frosted glass background. */
+.rb-link-editor { color:#EFEEEB; }
+.rb-link-editor input { color:#EFEEEB; }
+.rb-link-editor input::placeholder { color:rgba(239,238,235,0.35); }
+body.rb-ed-light .rb-link-editor,
+body.rb-ed-light .rb-link-editor input { color:#333; }
+body.rb-ed-light .rb-link-editor input::placeholder { color:rgba(51,51,51,0.35); }
+
+/* ===== FONT PICKER POPUP ===== */
+.rb-font-picker {
+  width:220px; max-height:260px; overflow:hidden;
+  display:flex; flex-direction:column;
+  padding:0; white-space:normal;
+}
+.rb-font-picker-search {
+  height:26px; padding:0 10px;
+  background:rgba(255,255,255,0.04);
+  border:none; border-bottom:1px solid rgba(255,255,255,0.08);
+  color:#EFEEEB; font:400 11px/1 'Instrument Sans',sans-serif; outline:none;
+}
+.rb-font-picker-list { flex:1; overflow-y:auto; }
+.rb-font-picker-list::-webkit-scrollbar { width:3px; }
+.rb-font-picker-list::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
+.rb-font-picker-empty {
+  padding:8px 12px; font:400 11px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.4);
+}
+.rb-font-picker-opt {
+  padding:6px 12px; font-size:12px; line-height:1.3;
+  color:#EFEEEB; cursor:pointer;
+}
+.rb-font-picker-opt:hover { background:rgba(255,255,255,0.08); }
+/* Light mode */
+body.rb-ed-light .rb-font-picker-search {
+  background:rgba(0,0,0,0.04);
+  border-bottom-color:rgba(0,0,0,0.08);
+  color:#333;
+}
+body.rb-ed-light .rb-font-picker-opt { color:#333; }
+body.rb-ed-light .rb-font-picker-opt:hover { background:rgba(0,0,0,0.06); }
+body.rb-ed-light .rb-font-picker-empty { color:rgba(51,51,51,0.4); }
+body.rb-ed-light .rb-font-picker-list::-webkit-scrollbar-thumb { background:rgba(0,0,0,0.15); }
+
+/* ===== MINIDOCK MIXED INDICATOR ICONS ===== */
+.rb-dock-mix-svg { flex-shrink:0; margin-right:4px; pointer-events:none; }
+
+/* ===== MINIDOCK LINK ICON ACTIVE ===== */
+.rb-img-bar-btn.rb-dock-link-active { color:#93C5FD; }
+.rb-img-bar-btn.rb-dock-link-active:hover { color:#93C5FD; background:rgba(147,197,253,0.12); }
+body.rb-ed-light .rb-img-bar-btn.rb-dock-link-active { color:#2563eb; }
+body.rb-ed-light .rb-img-bar-btn.rb-dock-link-active:hover { color:#2563eb; background:rgba(37,99,235,0.08); }
