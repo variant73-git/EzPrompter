@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RepixBridge",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Design without borders — bridge web references to design tools and AI image models",
   "permissions": [
     "contextMenus",
@@ -46,7 +46,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["editor/editor.css", "editor/editor.js", "editor/rebuild.js", "editor/detect.js", "editor/freeze.js", "editor/mode-e.js", "editor/s2h.js", "editor/persist.js", "editor/fill-popup.js", "overlay/extractor.js", "editor/test-minimal.js"],
+      "resources": ["editor/editor.css", "editor/editor.js", "editor/rebuild.js", "editor/detect.js", "editor/freeze.js", "editor/mode-e.js", "editor/mode-b.js", "editor/mode-e2.js", "editor/s2h.js", "editor/persist.js", "editor/fill-popup.js", "overlay/extractor.js", "editor/test-minimal.js"],
       "matches": ["<all_urls>"]
     }
   ]

@@ -46,7 +46,7 @@ O Repix é o único tool que **edita sites visualmente no browser** com controle
 - `claude/ai-image-description-extension-Tp3jY` — main branch
 
 ## Versão atual
-`2.2.0`
+`2.3.0`
 
 ## Estrutura do projeto
 ```
@@ -58,6 +58,8 @@ editor/mode-e.js        # Mode E: screenshot → Gemini Vision → HTML rebuild
 editor/detect.js        # Detecção de web builder (8 builders)
 editor/freeze.js        # Congela animações (GSAP, Lenis, Webflow IX)
 editor/rebuild.js       # Rebuild engine v4 (tag elements + disable interactivity)
+editor/mode-b.js        # Mode B: DOM Mirror (standalone, stylesheet extraction + body clone)
+editor/mode-e2.js       # Mode E2: Fast HTML-to-Code (same.new-inspired multi-call Flash pipeline)
 editor/s2h.js           # S2H: Screenshot-to-HTML (2-pass vision pipeline, independente do Mode E)
 editor/fill-popup.js    # Fill popup: Color (canvas picker) / Gradient / Image / Effects + Image-only popup + Color-only popup
 editor/normalize.js     # Curate engine
@@ -225,6 +227,32 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 5. ⬜ **Asset localization** — baixar imagens/fonts para data URLs
 6. ⬜ **History UI** + **Projects UI** (persist.js já tem a API, falta UI)
 7. ⬜ **Smart stitcher** — eliminar declarações CSS duplicadas entre chunks
+
+### Mode B: DOM Mirror (reimplementado como editor/mode-b.js standalone, 2.3.0)
+
+**Estratégia:** clone do body + extract de `document.styleSheets.cssRules` → snapshot com cascade/media/@keyframes/@font-face preservados. Mesma abordagem do Reforge + ClonewebX.
+
+**Implementado:**
+- `extractAllCSS()` itera stylesheets, try/catch em cross-origin (skip silencioso), absolutiza `url(...)` relativas.
+- `cloneBody()` clona children non-editor, absolutiza src/href/srcset/poster + `url()` em inline styles.
+- `disableInteractivity()` anulou navigation + submits.
+- `__modeBRun` undo entry no stack.
+- Isolation: IIFE sem `"use strict"`, try/catch defensivo. Arquivo separado pra que bug aqui não crash editor.js (lição do v5 anterior que vivia em rebuild.js).
+
+**Target:** ~1s wall time, ~99% fidelidade visual, estático (congela state). Bom pra editar o que existe.
+
+### Mode E2: Fast HTML-to-Code (editor/mode-e2.js, 2.3.0)
+
+**Estratégia:** inspirada no transcript do same.new. HTML-to-code multi-call pequena sobre cleanHTML.
+
+**Pipeline (3 etapas):**
+1. **Analyze** — 1 call Flash com cleanHTML (extractor) + DESIGN.md tokens → JSON estrito `{overall_tone, colors, fonts, sections[]}`.
+2. **Generate** — per-section call Flash em paralelo (concurrency 3). Prompt minimal focado. Textos/imagens extraídos verbatim.
+3. **Stitch** — concat + Tailwind CDN + replace page. Reusa `__modeERun` undo shape.
+
+**Endpoint:** `modeE2Call` em background.js, text-only, `gemini-2.5-flash` default, maxOutputTokens 8000, temperature 0.4.
+
+**Target:** 20-40s wall time, $0.05-0.10/clone, ~85-90% fidelidade. 10-20× mais barato que Mode E.
 
 ### S2H: Screenshot-to-HTML (novo pipeline, independente do Mode E)
 **O que aprendemos:** O Aura.build produz reconstruções de alta fidelidade a partir de screenshots SOZINHOS (sem DOM). Testamos com o site heartwork — Aura produziu resultado quase pixel-perfect; nosso Mode E errou cores, layout, e conteúdo completamente. O problema NÃO é falta de DOM — é qualidade do prompt e arquitetura do pipeline.

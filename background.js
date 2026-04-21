@@ -160,6 +160,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/extractor.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/persist.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-b.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e2.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/s2h.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/rebuild.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/fill-popup.js'] });
@@ -325,6 +327,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const data = await response.json();
         const html = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
         sendResponse({html: html});
+      } catch(e) {
+        sendResponse({error: e.message});
+      }
+    })();
+    return true;
+  }
+
+  // Mode E2: text-only Gemini call, defaults to Flash for speed/cost. No image.
+  // Used by the multi-call pipeline (analyze + per-section generate).
+  if (message.action === 'modeE2Call') {
+    (async () => {
+      try {
+        const settings = await chrome.storage.sync.get(['apiKey', 'modelE2']);
+        const apiKey = settings.apiKey;
+        if (!apiKey) { sendResponse({error: 'No API key configured.'}); return; }
+
+        // Flash by default — E2 optimizes for latency + cost. User can override
+        // via settings.modelE2 if they want to test Pro on the same pipeline.
+        const model = message.model || settings.modelE2 || 'gemini-2.5-flash';
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: message.prompt }] }],
+            generationConfig: {
+              maxOutputTokens: 8000,
+              temperature: 0.4
+            }
+          })
+        });
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          sendResponse({error: `E2 API error: ${err.error?.message || response.status}`});
+          return;
+        }
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        sendResponse({text: text});
       } catch(e) {
         sendResponse({error: e.message});
       }

@@ -1078,13 +1078,14 @@
     // before any top-level `var` initializations below would have executed yet
     // (function hoisting vs var hoisting asymmetry).
     var MODE_LIST = [
-      { id: 'A', label: 'CSS Live',  short: 'A' },
-      { id: 'B', label: 'Rebuild',   short: 'B' },
-      { id: 'C', label: 'Hybrid',    short: 'C' },
-      { id: 'D', label: 'Canvas',    short: 'D' },
-      { id: 'E', label: 'AI',        short: 'E' },
-      { id: 'S', label: 'S2H',       short: 'S' },
-      { id: 'F', label: 'Curated',   short: 'F' }
+      { id: 'A',  label: 'CSS Live',  short: 'A'  },
+      { id: 'B',  label: 'Mirror',    short: 'B'  },
+      { id: 'C',  label: 'Hybrid',    short: 'C'  },
+      { id: 'D',  label: 'Canvas',    short: 'D'  },
+      { id: 'E',  label: 'AI Vision', short: 'E'  },
+      { id: 'E2', label: 'AI Fast',   short: 'E2' },
+      { id: 'S',  label: 'S2H',       short: 'S'  },
+      { id: 'F',  label: 'Curated',   short: 'F'  }
     ];
 
     var b = mk('div');
@@ -1161,6 +1162,7 @@
     else if (mode === 'C') activateModeC();
     else if (mode === 'D') activateModeD();
     else if (mode === 'E') activateModeE();
+    else if (mode === 'E2') activateModeE2();
     else if (mode === 'S') activateModeS();
     else if (mode === 'F') activateModeF();
   }
@@ -1278,6 +1280,41 @@
     });
   }
 
+  // ============ MODE E2: Fast HTML-to-Code (same.new-style multi-call) ============
+
+  function activateModeE2() {
+    if (!window.__rbModeE2) {
+      inspBody.innerHTML = '';
+      var err = mk('div', 'rb-insp-empty');
+      err.textContent = 'Mode E2 not loaded. Reload the page and try again.';
+      err.style.color = '#f87171';
+      inspBody.appendChild(err);
+      return;
+    }
+    window.__rbPushUndo = pushUndo;
+    inspBody.innerHTML = '';
+    var progressEl = mk('div', 'rb-insp-empty');
+    progressEl.textContent = 'Starting fast rebuild…';
+    inspBody.appendChild(progressEl);
+
+    var toast = showToast('Mode E2: starting…', 'running');
+    var t0 = Date.now();
+    window.__rbModeE2.run(function(p) {
+      var msg = p.message + (p.total ? ' (' + p.current + '/' + p.total + ')' : '');
+      progressEl.textContent = msg;
+      updateToast(toast, 'Mode E2: ' + msg, 'running');
+    }).then(function(stats) {
+      var secs = ((Date.now() - t0) / 1000).toFixed(1);
+      progressEl.textContent = 'Done: ' + stats.sectionCount + ' sections, ' + stats.sizeKB + 'KB, ' + secs + 's';
+      progressEl.style.color = '#22c55e';
+      updateToast(toast, 'Mode E2 complete — ' + secs + 's, ' + stats.sectionCount + ' sections', 'success');
+    }).catch(function(e) {
+      progressEl.textContent = 'Failed: ' + (e.message || e);
+      progressEl.style.color = '#f87171';
+      updateToast(toast, 'Mode E2 failed — ' + (e.message || e), 'error');
+    });
+  }
+
   // ============ MODE S: S2H (Screenshot-to-HTML, 2-pass) ============
 
   function activateModeS() {
@@ -1341,6 +1378,8 @@
     rebuildInProgress = false;
     // Clean Mode E rebuild
     if (window.__rbModeE) window.__rbModeE.restore();
+    // Clean Mode B mirror
+    if (window.__rbModeB) { try { window.__rbModeB.restore(); } catch (e) {} }
     semanticGroups.forEach(function(g) { g.remove(); });
     semanticGroups = [];
     // Clean Mode F normalized DOM
@@ -1360,7 +1399,43 @@
   }
 
   function activateModeB() {
-    if (window.__rbRebuild) window.__rbRebuild.rebuild();
+    inspBody.innerHTML = '';
+    var status = mk('div', 'rb-insp-empty');
+    status.textContent = 'Mirroring page…';
+    inspBody.appendChild(status);
+
+    if (!window.__rbModeB) {
+      status.textContent = 'Mode B not loaded. Reload and try again.';
+      status.style.color = '#f87171';
+      return;
+    }
+
+    // Expose pushUndo so mode-b.js can register an undo entry without reaching
+    // into the editor's closure. Same bridge used by mode-e.js (__rbPushUndo).
+    window.__rbPushUndo = pushUndo;
+
+    // Deselect + clear guides BEFORE cloning so editor state doesn't leak into
+    // the mirror.
+    deselectEl();
+
+    // Defer to next frame so the inspector status paints before the (brief but
+    // blocking) clone + stylesheet extraction runs.
+    requestAnimationFrame(function() {
+      var result;
+      try { result = window.__rbModeB.run(); } catch (e) {
+        status.textContent = 'Mirror failed: ' + (e && e.message || e);
+        status.style.color = '#f87171';
+        return;
+      }
+      if (!result) {
+        status.textContent = 'Mirror returned no output.';
+        status.style.color = '#f87171';
+        return;
+      }
+      status.textContent = 'Mirror ready: ' + result.mirrorNodes + ' nodes, ' +
+        result.sheetsCount + ' stylesheets, ' + Math.round(result.cssSize / 1024) + 'KB CSS.';
+      status.style.color = '#22c55e';
+    });
   }
 
   function activateModeC() {
@@ -5184,6 +5259,29 @@
         else a.el.removeAttribute('style');
         if (!forward) a.newCss = cur;
       });
+    } else if (u.prop === '__modeBRun') {
+      // Mirror of __modeERun but without the Tailwind CDN bit — Mode B uses
+      // the original stylesheets extracted inline, no CDN dependency.
+      if (forward) {
+        var ebEls = getEditorElsInBody();
+        var beforeB = ebEls[0] || null;
+        u.originalChildren.forEach(function(child) {
+          if (child.parentElement === document.body) child.remove();
+        });
+        if (beforeB) document.body.insertBefore(u.wrapper, beforeB);
+        else document.body.appendChild(u.wrapper);
+        window.scrollTo(0, u.newScrollY || 0);
+      } else {
+        u.newScrollY = window.scrollY;
+        if (u.wrapper && u.wrapper.parentElement) u.wrapper.remove();
+        var ebEls2 = getEditorElsInBody();
+        var beforeB2 = ebEls2[0] || null;
+        u.originalChildren.forEach(function(child) {
+          if (beforeB2) document.body.insertBefore(child, beforeB2);
+          else document.body.appendChild(child);
+        });
+        window.scrollTo(0, u.scrollY || 0);
+      }
     } else if (u.prop === '__modeERun') {
       if (forward) {
         // Redo of Mode E: put the rebuilt wrapper back
