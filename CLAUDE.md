@@ -42,11 +42,11 @@ O Repix é o único tool que **edita sites visualmente no browser** com controle
 - `feat/normalize-engine` — branch principal (editor + layers + Mode E + detect/freeze)
 - `feat/sidebar-panel` — checkpoint 028 (minidocks, Mode S, Assets 3 seções)
 - `feat/guides-ux-experiment` — checkpoint 029 (Framer fix + Guides UX: keyboard modifiers, arrow nudge, G toggle, inline input, delta preview, corner handles)
-- `feat/smart-text-cascade` — checkpoint 030 (smart text cascade, range-scoped typography, inspector polish, resize compensation, hover-first click, guide pass-through)
+- `feat/smart-text-cascade` — checkpoint 031 (smart text cascade, range-scoped typography, inspector polish, resize compensation, hover-first click, guide pass-through, **framework override sticky writes**, **X/Y auto-promote static→relative**)
 - `claude/ai-image-description-extension-Tp3jY` — main branch
 
 ## Versão atual
-`2.1.0`
+`2.1.1`
 
 ## Estrutura do projeto
 ```
@@ -155,6 +155,8 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 81. ✅ Position override via ID selector — auto-class fallback usa `#el.id` em vez de class (React/Framer stripam className); verificação em 2×rAF + 150ms + 600ms; dedup via WeakMap
 82. ✅ Hover-first click resolution — click usa `lastHoverEl` quando está dentro do rect hoverado; hover e click resolvem sempre o mesmo elemento; user seleciona o que viu
 83. ✅ Guides pass-through — pink guides não comem clicks; mousedown com drag threshold 3px; click sem drag esconde guides/corners e seleciona o elemento visualmente abaixo
+84. ✅ Framework override (sticky inline writes) — MutationObserver observa `style`+`class` do elemento; quando React/Framer/Hydrogen sobrescreve inline, reescrevemos com !important. Cumulativo ao ID rule (ID vence className rewrite; sticky vence inline rewrite). Disable-on-fail após 5 rewrites em 2s. Anti-loop via `_rbStickyWriting` flag + dedup por computed === sticky value. Undo do `__cascade` chama `stopStickyForEl` antes de restaurar cssText
+85. ✅ X/Y auto-promote position — se elemento é `static`, primeiro write em X/Y promove pra `relative`. `readPosXY` lê do contexto correto: `cs.left/top` (relative), `offsetLeft/Top` (abs/fix/sticky), 0 (static). Substitui leitura errada de `r.left/top` (viewport coords)
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.
@@ -256,6 +258,19 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 **Caminho:** Re-implementar v5 como arquivo separado (não dentro do rebuild.js) para evitar conflitos de escopo com o editor. Causa provável do crash: conflito de escopo com `"use strict"` ou shadowing de variáveis.
 
 ## Bugs conhecidos e padrões descobertos
+
+### Padrão crítico: framework override (React/Framer/Hydrogen)
+Sites com framework reativo reescrevem `style=""` e `className` no próximo render, sobrescrevendo nossos writes. Defesas cumulativas em `applyStyle._verifyApply`:
+1. **Inline !important** (primeiro write) — vence especificidade normal
+2. **ID rule !important** (`applyOverrideClass`) — vence quando framework rewrite `className` (o `id` raramente muda)
+3. **Sticky MutationObserver** (`startSticky`) — vence quando framework reescreve `style` attr. Observa `style`+`class`, reescreve inline se computed diverge do valor registrado. Dedup por `getCS === rec.value` (nossos próprios writes são no-op). Disable após 5 fails em 2s pra não entrar em guerra infinita.
+
+Limite: full remount (nó novo) perde WeakMap — precisa rastreamento por seletor, não implementado.
+
+Em undo do `__cascade`, chamar `stopStickyForEl` antes de restaurar cssText pra evitar que o sticky stompe o undo.
+
+### Padrão: position X/Y em elementos static
+Elementos com `position: static` ignoram `left`/`top`. Antes de escrever, chamar `ensurePositionable(el)` que promove pra `relative`. Para leitura no inspector, usar `readPosXY(el)`: `cs.left/top` (relative) ou `offsetLeft/Top` (abs/fix/sticky) — nunca `r.left` (viewport).
 
 ### Padrão crítico: botões do editor
 **TODOS os botões do editor UI devem usar `mousedown` com `capture:true` + `stopImmediatePropagation()`.**

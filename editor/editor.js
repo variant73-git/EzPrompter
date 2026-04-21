@@ -359,6 +359,86 @@
     } catch (e) {}
   }
 
+  // ---- Sticky inline writes for framework-driven re-renders ----
+  // ID-rule (above) wins over class-level rules, but loses to inline `style="..."`
+  // re-written by the framework (Framer/React/Hydrogen). We observe the element's
+  // style/class attributes and re-apply our inline !important whenever the framework
+  // stomps. After MAX_FAILS rewrites inside WINDOW_MS we disconnect — if the site
+  // is actively fighting us, it's cheaper to let the ID rule try alone than to burn
+  // CPU in a tug-of-war.
+  var _rbSticky = new WeakMap(); // el -> { observer, props: Map<prop, rec>, disabled }
+  var _rbStickyWriting = false;
+  var STICKY_MAX_FAILS = 5;
+  var STICKY_WINDOW_MS = 2000;
+
+  function ensureStickyEntry(el) {
+    var entry = _rbSticky.get(el);
+    if (entry) return entry;
+    entry = { observer: null, props: new Map(), disabled: false };
+    var observer = new MutationObserver(function() {
+      if (_rbStickyWriting || entry.disabled) return;
+      if (!document.body.contains(el)) {
+        try { observer.disconnect(); } catch (_) {}
+        entry.disabled = true;
+        return;
+      }
+      var now = Date.now();
+      var anyActive = false;
+      entry.props.forEach(function(rec, prop) {
+        if (rec.fails >= STICKY_MAX_FAILS) return;
+        var cur = getCS(el)[prop];
+        if (cur === rec.value) { anyActive = true; return; }
+        if (now - rec.windowStart > STICKY_WINDOW_MS) {
+          rec.fails = 0;
+          rec.windowStart = now;
+        }
+        rec.fails++;
+        if (rec.fails >= STICKY_MAX_FAILS) return;
+        _rbStickyWriting = true;
+        try {
+          el.style.setProperty(cssProp(prop), rec.value, 'important');
+        } catch (_) {}
+        _rbStickyWriting = false;
+        anyActive = true;
+      });
+      if (!anyActive && entry.props.size > 0) {
+        try { observer.disconnect(); } catch (_) {}
+        entry.disabled = true;
+      }
+    });
+    entry.observer = observer;
+    try {
+      observer.observe(el, { attributes: true, attributeFilter: ['style', 'class'] });
+    } catch (_) {}
+    _rbSticky.set(el, entry);
+    return entry;
+  }
+
+  function startSticky(el, prop, value) {
+    var entry = ensureStickyEntry(el);
+    if (entry.disabled) {
+      entry.disabled = false;
+      try {
+        entry.observer.observe(el, { attributes: true, attributeFilter: ['style', 'class'] });
+      } catch (_) {}
+    }
+    var rec = entry.props.get(prop);
+    if (!rec) {
+      entry.props.set(prop, { value: value, fails: 0, windowStart: Date.now() });
+    } else {
+      rec.value = value;
+      rec.fails = 0;
+      rec.windowStart = Date.now();
+    }
+  }
+
+  function stopStickyForEl(el) {
+    var entry = _rbSticky.get(el);
+    if (!entry) return;
+    if (entry.observer) { try { entry.observer.disconnect(); } catch (_) {} }
+    _rbSticky.delete(el);
+  }
+
   // ---- Per-range typography (apply style to the current text selection) ----
   // When the user double-clicks text to enter edit mode and selects a word/phrase,
   // typography writes should hit only that slice, not the whole element. We track
@@ -3041,8 +3121,34 @@
       return f;
     }
 
-    posRow.appendChild(labeledNumField('X', r.left, function(v) { applyStyle(el, 'left', v + 'px'); }));
-    posRow.appendChild(labeledNumField('Y', r.top,  function(v) { applyStyle(el, 'top',  v + 'px'); }));
+    // X/Y are in the element's own positioning context, not viewport:
+    //  - static  → show 0,0; first write promotes to position:relative so left/top
+    //              stop being no-ops (common case: h1 inside a hero section).
+    //  - relative→ read cs.left/top (current offset from flow position).
+    //  - abs/fix → use offsetLeft/offsetTop (distance from offsetParent).
+    function ensurePositionable(e) {
+      var p = getCS(e).position;
+      if (!p || p === 'static') applyStyle(e, 'position', 'relative');
+    }
+    function readPosXY(e) {
+      var p = getCS(e).position;
+      if (p === 'relative') {
+        return { x: parseFloat(getCS(e).left) || 0, y: parseFloat(getCS(e).top) || 0 };
+      }
+      if (p === 'absolute' || p === 'fixed' || p === 'sticky') {
+        return { x: e.offsetLeft || 0, y: e.offsetTop || 0 };
+      }
+      return { x: 0, y: 0 };
+    }
+    var posXY = readPosXY(el);
+    posRow.appendChild(labeledNumField('X', posXY.x, function(v) {
+      ensurePositionable(el);
+      applyStyle(el, 'left', v + 'px');
+    }));
+    posRow.appendChild(labeledNumField('Y', posXY.y, function(v) {
+      ensurePositionable(el);
+      applyStyle(el, 'top',  v + 'px');
+    }));
     posRow.style.cssText = 'display:flex;gap:6px;';
     addRow(posSec, 'Position', posRow);
 
@@ -4524,8 +4630,12 @@
       // If computed value doesn't match what we wrote, something (React re-render,
       // CSS !important with higher specificity, etc.) is overriding us. Fall back
       // to an ID-selector rule in our stylesheet with !important — wins over
-      // className-level rules regardless of inline mutations.
-      if (cur !== value) applyOverrideClass(el, prop, value);
+      // className-level rules regardless of inline mutations. Also arm a sticky
+      // MutationObserver so inline rewrites by the framework get re-applied.
+      if (cur !== value) {
+        applyOverrideClass(el, prop, value);
+        startSticky(el, prop, value);
+      }
     }
     requestAnimationFrame(function() {
       _verifyApply();
@@ -4665,7 +4775,10 @@
     } else if (u.prop === '__cascade') {
       // Style cascade: restore (or re-apply) cssText on every affected element.
       // Captures current cssText on each pass so forward/reverse are symmetric.
+      // Stop sticky observers first — otherwise they'd stomp the restored cssText
+      // back to the sticky value, defeating the undo.
       u.affected.forEach(function(a) {
+        stopStickyForEl(a.el);
         var cur = a.el.getAttribute('style') || '';
         var target = forward ? (a.newCss || '') : (a.oldCss || '');
         if (target) a.el.setAttribute('style', target);
