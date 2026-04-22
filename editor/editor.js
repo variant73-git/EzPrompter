@@ -1032,6 +1032,68 @@
     }
   }
 
+  // Loader timer — attaches a live elapsed counter ("12s", then "1:24")
+  // next to one or more loader targets (inspector progress el, toast, etc.).
+  // Updates are written to a dedicated `<span class="rb-loader-timer">` sibling
+  // so the caller can keep rewriting the main message text without stomping
+  // the timer. Returns a stop() handle to call on success/error.
+  function fmtElapsed(ms) {
+    var s = Math.floor(ms / 1000);
+    if (s < 60) return s + 's';
+    var m = Math.floor(s / 60), r = s % 60;
+    return m + ':' + (r < 10 ? '0' : '') + r;
+  }
+  // Wraps each target's content into [msg-span][timer-span] so callers update
+  // messages via setMessage() without stomping the live timer. Returns also
+  // stop()/remove() for lifecycle control.
+  function startLoaderTimer(targets) {
+    var t0 = Date.now();
+    var entries = [];
+    (targets || []).forEach(function(el) {
+      if (!el) return;
+      var msgSpan = el.querySelector && el.querySelector('.rb-loader-msg');
+      var timerSpan = el.querySelector && el.querySelector('.rb-loader-timer');
+      if (!msgSpan) {
+        // Migrate the current textContent into an msg span.
+        var existing = el.textContent || '';
+        el.textContent = '';
+        msgSpan = document.createElement('span');
+        msgSpan.className = 'rb-loader-msg';
+        msgSpan.textContent = existing;
+        el.appendChild(msgSpan);
+      }
+      if (!timerSpan) {
+        timerSpan = document.createElement('span');
+        timerSpan.className = 'rb-loader-timer';
+        timerSpan.style.cssText = 'margin-left:6px;opacity:0.6;font-variant-numeric:tabular-nums;';
+        timerSpan.textContent = '0s';
+        el.appendChild(timerSpan);
+      }
+      entries.push({ el: el, msg: msgSpan, timer: timerSpan });
+    });
+    function tick() {
+      var t = fmtElapsed(Date.now() - t0);
+      entries.forEach(function(e) { if (e.timer && e.timer.isConnected) e.timer.textContent = t; });
+    }
+    tick();
+    var iv = setInterval(tick, 1000);
+    return {
+      setMessage: function(msg) {
+        entries.forEach(function(e) { if (e.msg && e.msg.isConnected) e.msg.textContent = msg; });
+      },
+      stop: function() {
+        clearInterval(iv);
+        tick();
+      },
+      remove: function() {
+        clearInterval(iv);
+        entries.forEach(function(e) {
+          if (e.timer && e.timer.parentNode) e.timer.remove();
+        });
+      }
+    };
+  }
+
   function dismissAllToasts() {
     root.querySelectorAll('.rb-ed-toast').forEach(function(t) { t.remove(); });
   }
@@ -1261,21 +1323,25 @@
     // from the inspector panel. Stays until dismissed or updated to
     // success/error.
     var modeEToast = showToast('Mode E: starting…', 'running');
+    var modeEToastMsg = modeEToast.querySelector('span:nth-child(2)');
+    var loader = startLoaderTimer([progressEl, modeEToastMsg]);
+
     window.__rbModeE.run(function(progress) {
       if (progress.step === 'error') {
         rebuildInProgress = false;
+        loader.stop();
         progressEl.style.color = '#f87171';
-        progressEl.textContent = progress.message;
+        loader.setMessage(progress.message);
         updateToast(modeEToast, 'Mode E failed — ' + progress.message, 'error');
       } else if (progress.step === 'done') {
         rebuildInProgress = false;
+        loader.stop();
         progressEl.style.color = '#22c55e';
-        progressEl.textContent = progress.message;
+        loader.setMessage(progress.message);
         restoreBtn.style.display = '';
         updateToast(modeEToast, 'Mode E complete — ' + progress.message, 'success');
       } else {
-        progressEl.textContent = progress.message;
-        updateToast(modeEToast, 'Mode E: ' + progress.message, 'running');
+        loader.setMessage(progress.message);
       }
     });
   }
@@ -1298,18 +1364,22 @@
     inspBody.appendChild(progressEl);
 
     var toast = showToast('Mode E2: starting…', 'running');
+    var toastMsg = toast.querySelector('span:nth-child(2)');
+    var loader = startLoaderTimer([progressEl, toastMsg]);
+
     var t0 = Date.now();
     window.__rbModeE2.run(function(p) {
       var msg = p.message + (p.total ? ' (' + p.current + '/' + p.total + ')' : '');
-      progressEl.textContent = msg;
-      updateToast(toast, 'Mode E2: ' + msg, 'running');
+      loader.setMessage(msg);
     }).then(function(stats) {
+      loader.stop();
       var secs = ((Date.now() - t0) / 1000).toFixed(1);
-      progressEl.textContent = 'Done: ' + stats.sectionCount + ' sections, ' + stats.sizeKB + 'KB, ' + secs + 's';
+      loader.setMessage('Done: ' + stats.sectionCount + ' sections, ' + stats.sizeKB + 'KB');
       progressEl.style.color = '#22c55e';
       updateToast(toast, 'Mode E2 complete — ' + secs + 's, ' + stats.sectionCount + ' sections', 'success');
     }).catch(function(e) {
-      progressEl.textContent = 'Failed: ' + (e.message || e);
+      loader.stop();
+      loader.setMessage('Failed: ' + (e.message || e));
       progressEl.style.color = '#f87171';
       updateToast(toast, 'Mode E2 failed — ' + (e.message || e), 'error');
     });
@@ -1410,30 +1480,29 @@
       return;
     }
 
-    // Expose pushUndo so mode-b.js can register an undo entry without reaching
-    // into the editor's closure. Same bridge used by mode-e.js (__rbPushUndo).
     window.__rbPushUndo = pushUndo;
-
-    // Deselect + clear guides BEFORE cloning so editor state doesn't leak into
-    // the mirror.
     deselectEl();
+
+    var loader = startLoaderTimer([status]);
 
     // Defer to next frame so the inspector status paints before the (brief but
     // blocking) clone + stylesheet extraction runs.
     requestAnimationFrame(function() {
       var result;
       try { result = window.__rbModeB.run(); } catch (e) {
-        status.textContent = 'Mirror failed: ' + (e && e.message || e);
+        loader.stop();
+        loader.setMessage('Mirror failed: ' + (e && e.message || e));
         status.style.color = '#f87171';
         return;
       }
+      loader.stop();
       if (!result) {
-        status.textContent = 'Mirror returned no output.';
+        loader.setMessage('Mirror returned no output.');
         status.style.color = '#f87171';
         return;
       }
-      status.textContent = 'Mirror ready: ' + result.mirrorNodes + ' nodes, ' +
-        result.sheetsCount + ' stylesheets, ' + Math.round(result.cssSize / 1024) + 'KB CSS.';
+      loader.setMessage('Mirror ready: ' + result.mirrorNodes + ' nodes, ' +
+        result.sheetsCount + ' stylesheets, ' + Math.round(result.cssSize / 1024) + 'KB CSS.');
       status.style.color = '#22c55e';
     });
   }
