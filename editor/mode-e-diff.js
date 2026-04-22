@@ -78,6 +78,15 @@
     ].join('\n');
   }
 
+  function coerceBbox(b) {
+    function n(v) {
+      var x = parseFloat(v);
+      return (x >= 0 && x <= 1) ? x : 0;
+    }
+    if (!b || typeof b !== 'object') return {x:0, y:0, w:0, h:0};
+    return { x: n(b.x), y: n(b.y), w: n(b.w), h: n(b.h) };
+  }
+
   /**
    * Compare an original screenshot to an output screenshot.
    * @param {string} originalDataUrl - "data:image/...;base64,..."
@@ -107,7 +116,7 @@
         return {
           region: String(item.region || 'unknown'),
           severity: ['high','medium','low'].indexOf(item.severity) >= 0 ? item.severity : 'low',
-          bbox: (item.bbox && typeof item.bbox === 'object') ? item.bbox : {x:0,y:0,w:0,h:0},
+          bbox: coerceBbox(item.bbox),
           issue: String(item.issue || '')
         };
       })
