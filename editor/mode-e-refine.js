@@ -54,10 +54,20 @@
   function buildRegenPrompt(currentHtml, issues, designMD) {
     var issuesList = issues
       .filter(function(i) { return i.severity === 'high' || i.severity === 'medium'; })
-      .map(function(i) { return '- [' + i.severity + '] ' + i.region + ': ' + i.issue; })
+      .map(function(i) { return '- [' + i.severity + '] ' + i.region + ': ' + (i.issue || 'visual mismatch'); })
       .join('\n');
 
     var tokens = designMD && designMD.length > 6000 ? designMD.substring(0, 6000) : (designMD || '');
+    // Cap currentHtml to keep the regen prompt under Gemini's effective
+    // context limit (screenshot + prompt + html). 60KB leaves room for the
+    // image tokens + tokens cap and avoids silent mid-document truncation
+    // on the output side. The cap is generous (most Mode E outputs are
+    // ~15-40KB); if it triggers, the model receives a truncation marker
+    // so it can still produce coherent output for the uncapped portion.
+    var html = currentHtml;
+    if (html && html.length > 60000) {
+      html = html.substring(0, 60000) + '\n<!-- ...truncated; refine the portion above only -->';
+    }
 
     return [
       'You previously generated this HTML as a clone of a website. The attached image is the ORIGINAL site.',
@@ -77,7 +87,7 @@
       tokens,
       '',
       '==== CURRENT HTML (to refine) ====',
-      currentHtml
+      html
     ].join('\n');
   }
 
@@ -161,6 +171,15 @@
     var newHtml = stripHtmlFence(newHtmlRaw);
     if (!newHtml || newHtml.length < 100) {
       log({step: 'refine-skip', message: 'Regen returned empty/too short — keeping current', current: 4, total: 4});
+      return {html: null, issues: issues, changed: false};
+    }
+
+    // No-op guard: if regen echoed back an identical (or near-identical) doc,
+    // treat as unchanged instead of wasting an undo slot re-injecting the same
+    // content. Exact equality first, then trimmed equality for whitespace-only
+    // differences.
+    if (newHtml === opts.currentHtml || newHtml.trim() === opts.currentHtml.trim()) {
+      log({step: 'refine-skip', message: 'Regen returned identical HTML — keeping current', current: 4, total: 4});
       return {html: null, issues: issues, changed: false};
     }
 
