@@ -375,6 +375,56 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Mode E refinement: multi-image vision diff call.
+  // Accepts 1+ image dataUrls, defaults to Flash for cost.
+  // Used by the diff step and any future multi-image refinement.
+  if (message.action === 'modeERefineCall') {
+    (async () => {
+      try {
+        const settings = await chrome.storage.sync.get(['apiKey', 'modelE2']);
+        const apiKey = settings.apiKey;
+        if (!apiKey) { sendResponse({error: 'No API key configured.'}); return; }
+
+        const imageDataUrls = message.imageDataUrls || [];
+        if (!Array.isArray(imageDataUrls) || imageDataUrls.length === 0) {
+          sendResponse({error: 'modeERefineCall requires imageDataUrls array'}); return;
+        }
+
+        const parts = [{ text: message.prompt || '' }];
+        for (const url of imageDataUrls) {
+          const m = (url || '').match(/^data:(.+?);base64,(.+)$/);
+          if (!m) { sendResponse({error: 'Invalid image data in imageDataUrls'}); return; }
+          parts.push({ inline_data: { mime_type: m[1], data: m[2] } });
+        }
+
+        const model = message.model || settings.modelE2 || 'gemini-2.5-flash';
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts }],
+            generationConfig: { maxOutputTokens: message.maxOutputTokens || 8000 }
+          })
+        });
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          sendResponse({error: `Gemini API error: ${err.error?.message || response.status}`});
+          return;
+        }
+
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        sendResponse({text});
+      } catch (e) {
+        sendResponse({error: e.message});
+      }
+    })();
+    return true;
+  }
+
   if (message.action === 'generateImage') {
     const { prompt, imageProvider } = message;
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
