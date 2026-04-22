@@ -1158,6 +1158,12 @@
       return runModeE(onProgress);
     }
 
+    // Snapshot DESIGN.MD from the ORIGINAL site before runModeE swaps the DOM.
+    // Reading it after inject would read the AI clone's computed styles, which
+    // could reinforce hallucinations in the regen prompt.
+    var designMD = '';
+    try { if (window.__rbExtractor && window.__rbExtractor.generateDesignMD) designMD = window.__rbExtractor.generateDesignMD() || ''; } catch (e) {}
+
     // Run main Mode E.
     var rebuilt = await runModeE(log);
     if (!rebuilt) return null;
@@ -1169,12 +1175,6 @@
       log({step: 'refine-skip', message: 'No current HTML to refine', current: 8, total: 8});
       return rebuilt;
     }
-
-    // Grab DESIGN.MD fresh from the extractor (the live site has been swapped,
-    // but extractor reads computed styles — pre-cache before inject would be
-    // better; MVP reads what's available).
-    var designMD = '';
-    try { if (window.__rbExtractor && window.__rbExtractor.generateDesignMD) designMD = window.__rbExtractor.generateDesignMD() || ''; } catch (e) {}
 
     // Run refinement.
     var result;
