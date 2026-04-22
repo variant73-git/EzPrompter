@@ -367,15 +367,64 @@ O botão flutuante "Live Remix" (buildFab/pauseEditor/resumeEditor) causava bugs
 ### Fontes de pesquisa (abril 2026)
 Múltiplas fontes validaram a abordagem Vision-to-Code + component chunking: Khoj, Tavily, Scira, Kragent, Morphic. O same.new (YC W24, $3M ARR) é a referência principal para component chunking.
 
-### Aura.build — engenharia reversa feita (abril 2026)
+### Aura.build — engenharia reversa feita (abril 2026 + teardown profundo 2026-04-22)
 - Usa 3 fontes com hierarquia: **screenshot** (visual primário) > **captured page structure** (estrutura DOM) > **DESIGN.md** (tipografia + assets, secundário)
 - DESIGN.md é **Markdown semântico** (~15KB): Overview, Colors (brand/semantic/neutrals), Typography (families + weights + usage + hierarchy), Elevation (borders vs shadows), Components (inventário), Do's/Don'ts, Assets (URLs categorizados)
 - O "Overview" do DESIGN.md dá ao LLM o **tom** do site antes dos detalhes — crucial para qualidade
 - Assets categorizados: Image, Font, Background, Other — com URLs reais para `@font-face`
-- Usa **Gemini 3.1** para geração
+- **NÃO é single-model Gemini.** Orquestração multi-modelo (confirmado no bundle Vite 13.6MB):
+  - HTML principal: **GPT-5.4** (`gpt-5.4-2026-03-05`, não Gemini)
+  - HTML → componentes React: **Claude Sonnet 4.5**
+  - Extração de paleta: **Gemini 3 Flash** com 3-tier fallback (ss+css+html → ss+css → ss-only → CSS regex)
+  - Image description / DESIGN.md synth: GPT-5.4 via `describe-image`
+  - Picker default no UI: Gemini 3.1 Pro (mas backend default é GPT-5.4)
+  - 15+ modelos expostos (Opus 4.7, Sonnet 4.5, GPT-5.4, Gemini 3.1 Pro/Flash/Flash-Lite)
+- **Two-mode import:** EXACTLY (preserva texto/marcas) vs Different (reescreve texto/marcas mantendo estrutura). Prompt runtime-composto.
+- **Screenshot pipeline em serviço dedicado Fly.io** (`aura-screenshot-service.fly.dev`). Retry ladder 4-tier: `[1360×1024 q70, 1280×960 q64, 1120×900 q58, 920×760 q52]`, budget 2min total.
+- **Screenshot validity gate** (`validate-url-import-screenshot`): classifica captura como `acceptable|blank|blocked|verification|error_page|uncertain` ANTES de mandar pro gerador — bloqueia Cloudflare/login/region-block.
+- **Phase-6 quality-fix loop** em `html-to-component`: envia files gerados de volta pro modelo quando `errorsFound:true`. Lint/fix server-side. **NÃO compara com original** (gap explorável pra nós).
+- **Chunking é POST-generation**, não pre: `generate-html` produz HTML monolítico → `generate-components` (Sonnet 4.5) decompõe em componentes React depois.
+- 19 edge functions Supabase mapeadas (import-react-url, generate-html, generate-components, html-to-component, iterate-react-component, convert-to-figma, etc.)
+- Pricing: 5 tiers (`free|pro|max|ultra|elite`), métrica é "premium prompts" não tokens
 - Resultado: alta fidelidade em sites complexos (testado em sanity.io)
-- Referência salva: `.firecrawl/aura-sanity-design.md`
-- **Implicação para RepixBridge:** nosso extractor.js deve gerar output no formato DESIGN.md (markdown semântico, não JSON)
+- Referências salvas: `research/2026-04-22-aura-build-magic.md`, `.firecrawl/aura-sanity-design.md` (legado)
+- **Implicação para RepixBridge:** nosso extractor.js deve gerar output no formato DESIGN.md (markdown semântico, não JSON). Oportunidade maior = **diff-refinement loop vs original** (nenhum competidor faz) — plano detalhado em `research/2026-04-22-diff-refinement-plan.md`.
+
+### same.new — engenharia reversa feita (abril 2026, via leak x1xhlol)
+- **NÃO é CV segmentation + component chunking.** É agente coding genérico.
+- **Stack leak** (35KB Prompt + 22KB Tools): https://github.com/x1xhlol/system-prompts-and-models-of-ai-tools/tree/main/Same.dev
+- **Modelo:** GPT-4.1 (verbatim linha 1: "You are AI coding assistant and agent manager, powered by gpt-4.1")
+- Roda em Docker Ubuntu 22.04 sandbox em `/home/project`
+- Tool surface (15): `startup | task_agent | bash | ls | glob | grep | read_file | delete_file | edit_file (smart_apply) | string_replace | run_linter | versioning | suggestions | deploy | web_search | web_scrape`
+- **`web_scrape` signature:** `{url, theme:light|dark, viewport:mobile|tablet|desktop, include_screenshot:bool}` — toda a superfície de clonagem
+- **Chunking é CONVERSACIONAL**, não algorítmico: prompt diz "You can break down the UI into 'sections' and 'pages' in your explanation" + "If the page is long, ask and confirm with user which pages and sections to clone"
+- **Refinement loop** via `versioning` tool: screenshot do próprio dev-server + lint errors → itera. **Não compara com original** (hard-cap: "DO NOT loop more than 3 times")
+- **Animations explicitamente puntadas:** "web_scrape doesn't capture animations, do your best to recreate"
+- **Stack default travado:** Next.js + shadcn/ui + Tailwind + Biome + Bun → Netlify. `startup` enum: `html-ts-css|react-vite|react-vite-tailwind|react-vite-shadcn|nextjs-shadcn|vue-vite|vue-vite-tailwind|shipany`
+- Default shadcn theme: `zinc`. Prompt instrui verbatim: "NEVER stay with default shadcn/ui components. Always customize BEFORE building" + lista 40+ component files pra editar
+- Asset CDN: `same-assets.com` rehospeda screenshots scrapados
+- **`smart_apply:true`** no `edit_file` sugere apply-model secundário (padrão Cursor/v0)
+- Pricing: Free 500K tokens → Ultra $100/20M tokens. 600K+ builders (YC W24, Aiden Bai + Nisarg Patel)
+- **O "tech talk transcript" que inspirou Mode E2 provavelmente não existe como artefato público** — inferência agregada do leak + folklore
+- Referência salva: `research/2026-04-22-same-new-magic.md` + leak em `/tmp/same-prompt.txt` + `/tmp/same-tools.json`
+- **Implicação para RepixBridge:** kill chunking-as-moat. Build diff-vs-original refinement loop. Adopt same-assets.com pattern. Copy customize-shadcn-first instruction.
+
+### CloneWebX — engenharia reversa feita (abril 2026)
+- **Sem AI na hot path.** É transpiler DOM → 3 schemas de clipboard proprietários:
+  - Webflow: `{"type":"@webflow/XscpData","payload":{"nodes":[...]}}`
+  - Elementor: `{"type":"elementor","siteurl":"…","elements":[{elType,settings,elements:[]}]}`
+  - Bricks: Structure JSON via `navigator.clipboard` (HTTPS required)
+  - Também Gutenberg (block serialization), Breakdance, Divi 5
+- Formatos são **públicos e estáveis** (Sygnal docs, Elementor GitHub discussions)
+- Único AI: "AI Reduction DOM Size" (v1.0.13) — provavelmente equivale ao nosso `isUselessWrapper` + visual weight
+- Arquitetura: Chrome ext fina (auth + scan) → backend `clonewebx.softlite.io` → retorna payload de clipboard → user cola no builder
+- Server-side asset upload (v1.0.15, Apr 2024) mirroriza imagens no CDN do Softlite
+- Animations **não exportadas** (Litemove vende separado, bundled em tiers altos)
+- Sem JS/SPA dynamic — snapshot puro do DOM no momento do scan
+- 50K users, 4.1★, time Hà Tĩnh Vietnam (publisher address)
+- Pricing: Free (Gutenberg+Webflow, 10/mo) / $10/mo (30 sites) / $120/yr / $300 lifetime
+- Referência salva: `research/2026-04-22-clonewebx-magic.md`
+- **Implicação para RepixBridge:** adapter path é trivial (~1 arquivo de schema mapping + `clipboard.write()` por builder). Documentar agora, implementar quando houver demanda validada como Pro feature.
 
 ### Técnica recomendada: DOM + Screenshot Hybrid
 Enviar AMBOS para o LLM: screenshot (fidelidade visual) + cleanHTML (textos, hierarquia, semântica). O extractor.js já produz cleanHTML e design tokens — falta integrar no prompt do Mode E. Essa é a próxima melhoria de maior impacto.
