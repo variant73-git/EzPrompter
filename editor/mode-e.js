@@ -1128,12 +1128,82 @@
     return rebuilt;
   }
 
+  // Orchestrated entry: runModeE + one refinement pass.
+  // Keeps the original screenshot + generated HTML, pipes them into
+  // __rbModeERefine.runRefine. If refinement returns new HTML, swap page
+  // content via replacePageContent([newHtml]).
+  async function runModeEWithRefine(onProgress) {
+    var log = onProgress || function() {};
+
+    if (!window.__rbModeERefine || !window.__rbModeEDiff) {
+      log({step: 'refine-unavailable', message: 'Refinement modules missing — falling back to plain Mode E', current: 0, total: 1});
+      return runModeE(onProgress);
+    }
+
+    // Capture the original screenshot BEFORE runModeE injects the clone.
+    // (runModeE takes its own screenshots internally but does not expose them;
+    // grabbing one here is cheap and keeps the contract simple.)
+    log({step: 'refine-pre', message: 'Capturing original…', current: 0, total: 8});
+    var originalScreenshot = null;
+    try {
+      originalScreenshot = await new Promise(function(resolve, reject) {
+        chrome.runtime.sendMessage({action: 'captureScreenshot', returnData: true}, function(r) {
+          if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+          if (r && r.dataUrl) resolve(r.dataUrl);
+          else reject(new Error('captureScreenshot returned no data'));
+        });
+      });
+    } catch (e) {
+      log({step: 'refine-skip', message: 'Could not capture original (' + e.message + ') — running plain Mode E', current: 0, total: 1});
+      return runModeE(onProgress);
+    }
+
+    // Run main Mode E.
+    var rebuilt = await runModeE(log);
+    if (!rebuilt) return null;
+
+    // Extract the current injected HTML (wrapper.innerHTML).
+    var currentHtml = '';
+    try { currentHtml = rebuilt.innerHTML || ''; } catch (e) {}
+    if (!currentHtml) {
+      log({step: 'refine-skip', message: 'No current HTML to refine', current: 8, total: 8});
+      return rebuilt;
+    }
+
+    // Grab DESIGN.MD fresh from the extractor (the live site has been swapped,
+    // but extractor reads computed styles — pre-cache before inject would be
+    // better; MVP reads what's available).
+    var designMD = '';
+    try { if (window.__rbExtractor && window.__rbExtractor.generateDesignMD) designMD = window.__rbExtractor.generateDesignMD() || ''; } catch (e) {}
+
+    // Run refinement.
+    var result;
+    try {
+      result = await window.__rbModeERefine.runRefine({
+        originalScreenshot: originalScreenshot,
+        currentHtml: currentHtml,
+        designMD: designMD,
+        onProgress: log
+      });
+    } catch (e) {
+      log({step: 'refine-skip', message: 'Refinement threw (' + e.message + ') — keeping Mode E output', current: 8, total: 8});
+      return rebuilt;
+    }
+
+    if (!result || !result.changed || !result.html) return rebuilt;
+
+    // Swap the page with refined HTML. replacePageContent expects an array.
+    log({step: 'refine-inject', message: 'Injecting refined HTML…', current: 8, total: 8});
+    return replacePageContent([result.html]);
+  }
+
   // Expose to global scope
   // run() uses the viewport path (fast, inline styles, no CDN dependency).
   // Chunked path is available via runChunked() but not default — section
   // detection + Tailwind CDN dependency need more work before it's reliable.
   window.__rbModeE = {
     run: runModeE,
+    runWithRefine: runModeEWithRefine,
     runChunked: runModeEChunked,
     runViewport: runModeE,
     runFromImage: runModeEFromImage,
