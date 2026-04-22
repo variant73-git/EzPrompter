@@ -1318,6 +1318,19 @@
     }, {capture: true, signal: sig});
     inspBody.appendChild(restoreBtn);
 
+    // Dev hook: `window.__rbRunModeERefined()` triggers the generation +
+    // one refinement pass. Surfaced on window so it's callable from DevTools
+    // without shipping UI in M1.
+    window.__rbRunModeERefined = function() {
+      if (!window.__rbModeE || !window.__rbModeE.runWithRefine) {
+        console.error('[Repix] __rbModeE.runWithRefine unavailable');
+        return;
+      }
+      return window.__rbModeE.runWithRefine(function(p) {
+        console.log('[Repix refine]', p.step, p.message, p.current + '/' + p.total);
+      });
+    };
+
     rebuildInProgress = true;
     // Persistent toast that stays visible even if the user walks away
     // from the inspector panel. Stays until dismissed or updated to
