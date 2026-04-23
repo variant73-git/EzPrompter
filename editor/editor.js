@@ -1145,6 +1145,7 @@
       { id: 'C',  label: 'Hybrid',    short: 'C'  },
       { id: 'D',  label: 'Canvas',    short: 'D'  },
       { id: 'E',  label: 'AI Vision', short: 'E'  },
+      { id: 'ER', label: 'AI Refined',short: 'E+' },
       { id: 'E2', label: 'AI Fast',   short: 'E2' },
       { id: 'S',  label: 'S2H',       short: 'S'  },
       { id: 'F',  label: 'Curated',   short: 'F'  }
@@ -1224,6 +1225,7 @@
     else if (mode === 'C') activateModeC();
     else if (mode === 'D') activateModeD();
     else if (mode === 'E') activateModeE();
+    else if (mode === 'ER') activateModeERefined();
     else if (mode === 'E2') activateModeE2();
     else if (mode === 'S') activateModeS();
     else if (mode === 'F') activateModeF();
@@ -1353,6 +1355,67 @@
         loader.setMessage(progress.message);
         restoreBtn.style.display = '';
         updateToast(modeEToast, 'Mode E complete — ' + progress.message, 'success');
+      } else {
+        loader.setMessage(progress.message);
+      }
+    });
+  }
+
+  // Mode E+: same generation flow as Mode E, then an extra refinement pass
+  // (diff output vs original → regen divergent parts). Uses
+  // window.__rbModeE.runWithRefine from editor/mode-e-refine.js.
+  function activateModeERefined() {
+    if (!window.__rbModeE || !window.__rbModeE.runWithRefine) {
+      inspBody.innerHTML = '';
+      var err = mk('div', 'rb-insp-empty');
+      err.textContent = 'Mode E+ (Refined) not loaded. Reload the page and try again.';
+      err.style.color = '#f87171';
+      inspBody.appendChild(err);
+      return;
+    }
+
+    inspBody.innerHTML = '';
+    var progressEl = mk('div', 'rb-insp-empty');
+    progressEl.textContent = 'Starting AI rebuild + refinement...';
+    inspBody.appendChild(progressEl);
+
+    var restoreBtn = mk('button', 'rb-insp-inp');
+    restoreBtn.textContent = 'Restore original page';
+    restoreBtn.style.cssText = 'cursor:pointer;text-align:center;margin-top:8px;width:100%;display:none;';
+    restoreBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      window.__rbModeE.restore();
+      switchMode('A');
+    }, {capture: true, signal: sig});
+    inspBody.appendChild(restoreBtn);
+
+    rebuildInProgress = true;
+    var modeEToast = showToast('Mode E+: starting…', 'running');
+    var modeEToastMsg = modeEToast.querySelector('span:nth-child(2)');
+    var loader = startLoaderTimer([progressEl, modeEToastMsg]);
+
+    window.__rbModeE.runWithRefine(function(progress) {
+      if (progress.step === 'error') {
+        rebuildInProgress = false;
+        loader.stop();
+        progressEl.style.color = '#f87171';
+        loader.setMessage(progress.message);
+        updateToast(modeEToast, 'Mode E+ failed — ' + progress.message, 'error');
+      } else if (progress.step === 'done' || progress.step === 'refine-done' || progress.step === 'refine-clean' || progress.step === 'refine-inject') {
+        // Don't mark complete on intermediate 'done' (Mode E finished) — wait
+        // for final refine step. 'refine-clean' or 'refine-inject' or an explicit
+        // completion from the orchestrator signals actually done.
+        if (progress.step === 'refine-clean' || progress.step === 'refine-inject' || progress.step === 'refine-done') {
+          rebuildInProgress = false;
+          loader.stop();
+          progressEl.style.color = '#22c55e';
+          loader.setMessage(progress.message);
+          restoreBtn.style.display = '';
+          updateToast(modeEToast, 'Mode E+ complete — ' + progress.message, 'success');
+        } else {
+          // 'done' means Mode E portion finished; refinement is about to start
+          loader.setMessage(progress.message);
+        }
       } else {
         loader.setMessage(progress.message);
       }
