@@ -486,7 +486,192 @@
       .replace(/\s{2,}/g, ' ')
       .replace(/>\s+</g, '><')
       .trim()
-      .slice(0, 30000);
+      .slice(0, 60000);
+  };
+
+  // ─── Asset-aware clean HTML ────────────────────────────────────────────────
+  // Same shape as extractCleanHTML, but replaces every <img> and large <svg>
+  // with a tag-preserving placeholder (`<img data-rb-asset="N" alt="...">`,
+  // `<svg data-rb-asset="N"></svg>`) and returns a parallel manifest with the
+  // ABSOLUTE source URL (or the original svg outerHTML). The Mode E prompt
+  // tells the LLM to keep these placeholders exactly; mode-e.js then does the
+  // post-process swap so the rebuilt page reuses real assets instead of having
+  // the LLM regenerate them.
+  //
+  // Dedup: identical img URLs share one manifest entry. Cap at 80 assets so
+  // sites with hundreds of images don't blow the prompt.
+  RB.buildAssetManifest = function() {
+    var MAX_ASSETS = 80;
+    var SVG_INLINE_KEEP_BELOW = 200; // tiny icons stay inline (LLM is fine with them)
+    var assets = [];
+    var byUrl = new Map();
+    var bySvg = new Map();
+    var nextId = 1;
+    var pageBase = location.href;
+
+    function abs(url) {
+      if (!url) return '';
+      try { return new URL(url, pageBase).href; } catch (e) { return url; }
+    }
+
+    var clone = document.documentElement.cloneNode(true);
+
+    // CSS background-image scan — must run BEFORE the non-visual strip so
+    // that live and clone element lists stay in sync (parallel index walk).
+    // For every element whose computed `background-image` is a `url(...)`
+    // declaration, we tag the matching clone element with data-rb-asset-bg
+    // and register the URL in the manifest. The LLM then preserves the
+    // attribute; restoreAssets() applies the real URL post-gen. Needed
+    // because CSS backgrounds declared in external stylesheets are invisible
+    // to the LLM via HTML alone, so it tries to hand-code gradients that
+    // are really images (e.g. the grid-paper bg on gistr.so).
+    var liveAll = document.querySelectorAll('*');
+    var cloneAll = clone.querySelectorAll('*');
+    // 3000 is the empirical ceiling where the synchronous getComputedStyle
+    // pass stays under ~1s on enterprise-grade DOMs (Shopify, Salesforce).
+    // Higher caps were freezing the main thread long enough that users
+    // perceived the widget as hung. Most bg-images that matter visually
+    // are attached to elements in the first few thousand DOM nodes anyway.
+    var MAX_BG_SCAN = 3000;
+    var scanLimit = Math.min(liveAll.length, cloneAll.length, MAX_BG_SCAN);
+    for (var i = 0; i < scanLimit; i++) {
+      var liveEl = liveAll[i];
+      if (!(liveEl instanceof Element)) continue;
+      var cs;
+      try { cs = window.getComputedStyle(liveEl); } catch (e) { continue; }
+      var bgImg = cs && cs.backgroundImage;
+      if (!bgImg || bgImg === 'none' || bgImg.indexOf('url(') < 0) continue;
+      var m = bgImg.match(/url\((['"]?)([^'")]+)\1\)/);
+      if (!m) continue;
+      var bgUrl = abs(m[2]);
+      if (!bgUrl) continue;
+      var bgKey = 'bg:' + bgUrl;
+      var bgId;
+      if (byUrl.has(bgKey)) {
+        bgId = byUrl.get(bgKey);
+      } else {
+        if (assets.length >= MAX_ASSETS) continue;
+        bgId = nextId++;
+        byUrl.set(bgKey, bgId);
+        assets.push({ id: bgId, type: 'bg', src: bgUrl });
+      }
+      cloneAll[i].setAttribute('data-rb-asset-bg', String(bgId));
+    }
+
+    clone.querySelectorAll(
+      'script,style,link[rel="stylesheet"],noscript,canvas,iframe,video,audio'
+    ).forEach(function(el) { el.remove(); });
+
+    // Attributes to DROP on placeholders — everything else (including class
+    // and style) stays so the LLM sees the original layout context. Stripping
+    // class/style caused severe asset displacement in v1 of the placeholder
+    // approach (LLM had no idea whether an <img> was a logo, hero, avatar, etc).
+    var DROP_ATTRS = {
+      src: 1, srcset: 1, sizes: 1, loading: 1, decoding: 1,
+      crossorigin: 1, referrerpolicy: 1, fetchpriority: 1
+    };
+
+    // Pass 1: <img>
+    clone.querySelectorAll('img').forEach(function(img) {
+      var rawSrc = img.getAttribute('src') || '';
+      if (!rawSrc) return;
+      var src = abs(rawSrc);
+      var id;
+      if (byUrl.has(src)) {
+        id = byUrl.get(src);
+      } else {
+        if (assets.length >= MAX_ASSETS) return; // skip placeholder; LLM regens
+        id = nextId++;
+        byUrl.set(src, id);
+        assets.push({
+          id: id,
+          type: 'img',
+          src: src,
+          srcset: img.getAttribute('srcset') || '',
+          alt: img.getAttribute('alt') || '',
+          width: img.getAttribute('width') || img.naturalWidth || 0,
+          height: img.getAttribute('height') || img.naturalHeight || 0
+        });
+      }
+      [].slice.call(img.attributes).forEach(function(attr) {
+        if (DROP_ATTRS[attr.name.toLowerCase()]) img.removeAttribute(attr.name);
+      });
+      img.setAttribute('data-rb-asset', String(id));
+    });
+
+    // Pass 2: large <svg> (small icons stay inline so the LLM sees the shape).
+    // class/style/viewBox/width/height are kept — same reason as <img>: the
+    // LLM needs layout context. Only inner children are blanked (the big
+    // outerHTML — paths/gradients/etc — is stored in the manifest for restore).
+    clone.querySelectorAll('svg').forEach(function(svg) {
+      var outerHTML = svg.outerHTML;
+      if (outerHTML.length < SVG_INLINE_KEEP_BELOW) return;
+      var id;
+      if (bySvg.has(outerHTML)) {
+        id = bySvg.get(outerHTML);
+      } else {
+        if (assets.length >= MAX_ASSETS) return;
+        id = nextId++;
+        bySvg.set(outerHTML, id);
+        assets.push({ id: id, type: 'svg', outerHTML: outerHTML });
+      }
+      svg.setAttribute('data-rb-asset', String(id));
+      svg.innerHTML = '';
+    });
+
+    // Strip handlers + non-marker data-* (same hygiene as extractCleanHTML).
+    // Both data-rb-asset (img/svg) and data-rb-asset-bg (background-image)
+    // are preserved — those are the placeholder markers we need for restore.
+    clone.querySelectorAll('*').forEach(function(el) {
+      [].slice.call(el.attributes).forEach(function(attr) {
+        if (attr.name.startsWith('on')) {
+          el.removeAttribute(attr.name);
+        } else if (attr.name.startsWith('data-') && attr.name !== 'data-rb-asset' && attr.name !== 'data-rb-asset-bg') {
+          el.removeAttribute(attr.name);
+        }
+      });
+    });
+
+    var body = clone.querySelector('body');
+    if (!body) return { cleanHTML: '', assets: assets, manifestText: '' };
+
+    var cleanHTML = trimDepth(body, 6).innerHTML
+      .replace(/\s{2,}/g, ' ')
+      .replace(/>\s+</g, '><')
+      .trim()
+      .slice(0, 60000);
+
+    var manifestText = '';
+    if (assets.length > 0) {
+      var lines = [
+        'ASSET MANIFEST — these are the REAL assets present on the page.',
+        'Inside CAPTURED PAGE STRUCTURE you will see placeholder markers:',
+        '  <img data-rb-asset="N" ...>      — image slot',
+        '  <svg data-rb-asset="N"></svg>    — vector/icon slot',
+        '  <... data-rb-asset-bg="N" ...>   — element whose CSS background is a real image',
+        'Output them with the SAME tag and the SAME marker attribute+value —',
+        'do NOT change the attribute, do NOT replace the placeholder with a',
+        'different element, do NOT remove or rename the marker. You MAY add',
+        'class/style for layout/sizing. Do NOT invent additional <img>/<svg>',
+        'elements or additional data-rb-asset-bg markers; the only assets that',
+        'exist are the ones listed below.',
+        ''
+      ];
+      assets.forEach(function(a) {
+        if (a.type === 'img') {
+          var dim = (a.width && a.height) ? ' ' + a.width + 'x' + a.height : '';
+          var altPart = a.alt ? '  alt="' + a.alt.replace(/"/g, "'").slice(0, 80) + '"' : '';
+          lines.push('- data-rb-asset="' + a.id + '" (img)' + dim + ': ' + a.src + altPart);
+        } else if (a.type === 'svg') {
+          lines.push('- data-rb-asset="' + a.id + '" (svg, inline vector ' + a.outerHTML.length + 'B)');
+        } else if (a.type === 'bg') {
+          lines.push('- data-rb-asset-bg="' + a.id + '" (background-image): ' + a.src);
+        }
+      });
+      manifestText = lines.join('\n');
+    }
+
+    return { cleanHTML: cleanHTML, assets: assets, manifestText: manifestText };
   };
 
   function trimDepth(el, maxDepth, current) {

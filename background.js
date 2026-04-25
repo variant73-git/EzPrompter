@@ -160,6 +160,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/extractor.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/persist.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e-classic.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e-diff.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e-refine.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-b.js'] });
@@ -256,16 +257,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'captureScreenshot') {
     (async () => {
       // Use the sender's tab instead of the active tab so captures stay
-      // correct even if the user switches tabs during a Mode E run.
+      // correct even if the user switches tabs during a Mode E run. Hardening
+      // added after a real incident where Mode E+ on gistr.so imported
+      // content from a Shopify tab the user had open in another tab — the
+      // previous 150ms wait wasn't enough for Chrome's compositor to finish
+      // switching the visible tab back to the sender, so captureVisibleTab
+      // grabbed the prior frame.
       const tab = sender.tab;
       if (!tab) return;
-      try {
-        // Focus the sender tab briefly to ensure captureVisibleTab captures
-        // the right content (the API only captures what's on screen).
+
+      async function doCapture() {
+        // Force the window itself to focus first — without this, if the user
+        // is on another Chrome window, captureVisibleTab can return stale or
+        // wrong content even with correct windowId.
+        try { await chrome.windows.update(tab.windowId, { focused: true }); } catch (_) {}
         await chrome.tabs.update(tab.id, { active: true });
-        // Small delay for the tab to render after focus
-        await new Promise(r => setTimeout(r, 150));
-        const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png', quality: 100 });
+        // 500ms (up from 150ms) gives Chrome time to composite the newly-
+        // activated tab before we snapshot it.
+        await new Promise(r => setTimeout(r, 500));
+        return chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png', quality: 100 });
+      }
+
+      try {
+        let dataUrl = await doCapture();
+
+        // Sanity check: a legitimate screenshot of any web page is at least
+        // tens of KB. Sub-5KB almost certainly means we captured a blank /
+        // loading / wrong tab. Retry once.
+        if (!dataUrl || dataUrl.length < 5000) {
+          console.warn('[Repix capture] suspicious dataUrl (' + (dataUrl ? dataUrl.length : 0) + ' bytes) — retrying once');
+          await new Promise(r => setTimeout(r, 500));
+          dataUrl = await doCapture();
+        }
+
         if (message.returnData) {
           sendResponse({dataUrl: dataUrl});
         } else {
@@ -275,59 +299,113 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             saveAs: true
           });
         }
-      } catch (e) { console.error('Screenshot failed:', e); }
+      } catch (e) {
+        console.error('Screenshot failed:', e);
+        sendResponse({error: e.message});
+      }
     })();
     return true; // keep channel open for async sendResponse
   }
 
-  // Mode E: Screenshot → Gemini Vision → HTML rebuild
+  // Mode E: Screenshot → Vision LLM → HTML rebuild.
+  // Routes to Anthropic (Claude Sonnet/Opus) or Gemini based on model name.
+  // - claude-* / opus-* → Anthropic Messages API (uses anthropicKey)
+  // - gemini-* (default) → Gemini generativelanguage API (uses geminiKey,
+  //   falling back to legacy `apiKey` for backward compat)
   if (message.action === 'modeERebuild') {
     (async () => {
       try {
-        const settings = await chrome.storage.sync.get(['apiKey', 'model']);
-        const apiKey = settings.apiKey;
-        if (!apiKey) { sendResponse({error: 'No API key configured. Open the extension popup and go to Settings to add your API key.'}); return; }
+        const settings = await chrome.storage.sync.get(['apiKey', 'geminiKey', 'anthropicKey', 'model']);
+
+        const model = message.model || settings.model || 'gemini-3.1-pro-preview';
+        const isAnthropic = /^(claude|opus)/i.test(model);
 
         const match = message.imageDataUrl.match(/^data:(.+?);base64,(.+)$/);
         if (!match) { sendResponse({error: 'Invalid image data'}); return; }
         const [, mediaType, base64Data] = match;
 
-        const model = settings.model || 'gemini-3.1-pro-preview';
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-        // generationConfig: only raise maxOutputTokens (prevents mid-SVG
-        // truncation). temperature and topP left at model defaults.
-        //
-        // HISTORY: an earlier version dropped temperature to 0.2 and topP
-        // to 0.9 to reduce "reasoning out loud" after the gistr.so bug.
-        // The result was a significant quality regression — the model
-        // became lazy/conservative on normal cases. Defaults restored.
-        // Validator + prompt hardening are kept as the defense against
-        // reasoning leak, but with softer prompts (see mode-e.js).
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        // Build provider-specific request.
+        let url, headers, body, parseHtml, providerLabel;
+        if (isAnthropic) {
+          const anthropicKey = settings.anthropicKey || settings.apiKey;
+          if (!anthropicKey) {
+            sendResponse({error: 'No Anthropic API key configured for ' + model + '. Open the extension popup → Settings and paste your sk-ant-... key.'});
+            return;
+          }
+          url = 'https://api.anthropic.com/v1/messages';
+          headers = {
+            'Content-Type': 'application/json',
+            'x-api-key': anthropicKey,
+            'anthropic-version': '2023-06-01',
+            // Required to call the API directly from a browser/extension context.
+            'anthropic-dangerous-direct-browser-access': 'true'
+          };
+          body = JSON.stringify({
+            model: model,
+            max_tokens: 16000,
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64Data } },
+                { type: 'text', text: message.prompt }
+              ]
+            }]
+          });
+          parseHtml = (data) => {
+            const block = (data.content || []).find(b => b.type === 'text');
+            return (block && block.text) || '';
+          };
+          providerLabel = 'Anthropic';
+        } else {
+          const geminiKey = settings.geminiKey || settings.apiKey;
+          if (!geminiKey) {
+            sendResponse({error: 'No Gemini API key configured. Open the extension popup → Settings and paste your AIza... key.'});
+            return;
+          }
+          url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+          headers = { 'Content-Type': 'application/json' };
+          body = JSON.stringify({
             contents: [{
               parts: [
                 { text: message.prompt },
                 { inline_data: { mime_type: mediaType, data: base64Data } }
               ]
             }],
-            generationConfig: {
-              maxOutputTokens: 16000
-            }
-          })
-        });
+            generationConfig: { maxOutputTokens: 16000 }
+          });
+          parseHtml = (data) => data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          providerLabel = 'Gemini';
+        }
+
+        // Rate-limit-aware fetch with exponential backoff (2s → 4s → 8s).
+        // Both Gemini (429/503) and Anthropic (429/529) use these codes; we
+        // treat 429/503/529 as retriable.
+        let response;
+        let attempt = 0;
+        const maxAttempts = 3;
+        let delay = 2000;
+        while (attempt < maxAttempts) {
+          response = await fetch(url, { method: 'POST', headers: headers, body: body });
+          const s = response.status;
+          const retriable = s === 429 || s === 503 || s === 529;
+          if (response.ok || !retriable || attempt === maxAttempts - 1) break;
+          console.warn(`[Repix modeERebuild ${providerLabel}] ${s} on attempt ${attempt + 1}/${maxAttempts} — backing off ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+          delay *= 2;
+          attempt++;
+        }
 
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
-          sendResponse({error: `Gemini API error: ${err.error?.message || response.status}`});
+          const errMsg = err.error?.message || err.message || response.status;
+          const statusHint = (response.status === 429) ? ' (rate limited after retries)' :
+                             (response.status === 503 || response.status === 529) ? ' (service overloaded after retries)' : '';
+          sendResponse({error: `${providerLabel} API error: ${errMsg}${statusHint}`});
           return;
         }
 
         const data = await response.json();
-        const html = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const html = parseHtml(data);
         sendResponse({html: html});
       } catch(e) {
         sendResponse({error: e.message});
@@ -402,18 +480,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const model = message.model || settings.modelE2 || 'gemini-2.5-flash';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts }],
-            generationConfig: { maxOutputTokens: message.maxOutputTokens || 8000 }
-          })
+        const body = JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: { maxOutputTokens: message.maxOutputTokens || 8000 }
         });
+
+        // Same rate-limit-aware retry as modeERebuild. Refine and diff calls
+        // share the same Gemini quota pool, so bursts from parallel section
+        // regens can trip 429s just as easily as the viewport path.
+        let response;
+        let attempt = 0;
+        const maxAttempts = 3;
+        let delay = 2000;
+        while (attempt < maxAttempts) {
+          response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: body
+          });
+          const retriable = response.status === 429 || response.status === 503;
+          if (response.ok || !retriable || attempt === maxAttempts - 1) break;
+          console.warn(`[Repix modeERefineCall] ${response.status} on attempt ${attempt + 1}/${maxAttempts} — backing off ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+          delay *= 2;
+          attempt++;
+        }
 
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
-          sendResponse({error: `Gemini API error: ${err.error?.message || response.status}`});
+          const statusHint = response.status === 429 ? ' (rate limited after retries)' :
+                             response.status === 503 ? ' (service overloaded after retries)' : '';
+          sendResponse({error: `Gemini API error: ${err.error?.message || response.status}${statusHint}`});
           return;
         }
 

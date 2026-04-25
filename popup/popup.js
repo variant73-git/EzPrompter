@@ -13,7 +13,13 @@ const SYNC_DEFAULTS = {
   onboardingDone: false,
   activeMode: 'dark',
   apiProvider: 'gemini',
-  apiKey: '',
+  apiKey: '', // legacy single-key field, kept for backward-compat / migration
+  // Per-provider keys (so user can have multiple configured and switch
+  // models without re-entering keys). Mode E routes by model-name family
+  // in background.js (claude-* → anthropicKey, gemini-* → geminiKey).
+  geminiKey: '',
+  anthropicKey: '',
+  composerKey: '', // reserved — no public API for Cursor Composer 2 yet
   model: 'gemini-3.1-pro-preview',
   designTool: 'figma',
   ollamaUrl: 'http://localhost:11434',
@@ -190,6 +196,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingsForm = document.getElementById('settingsForm');
   const providerSelect = document.getElementById('apiProvider');
   const apiKeyInput = document.getElementById('apiKey');
+  const geminiKeyInput = document.getElementById('geminiKey');
+  const anthropicKeyInput = document.getElementById('anthropicKey');
+  const composerKeyInput = document.getElementById('composerKey');
   const modelInput = document.getElementById('model');
   const designToolSelect = document.getElementById('designTool');
   const ollamaUrlInput = document.getElementById('ollamaUrl');
@@ -197,6 +206,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const languageSelect = document.getElementById('language');
   const toggleKeyBtn = document.getElementById('toggleKey');
   const status = document.getElementById('status');
+
+  // Per-provider key show/hide toggles.
+  document.querySelectorAll('.rb-key-toggle[data-key-target]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var input = document.getElementById(btn.getAttribute('data-key-target'));
+      if (!input) return;
+      if (input.type === 'password') { input.type = 'text'; btn.textContent = 'Hide'; }
+      else { input.type = 'password'; btn.textContent = 'Show'; }
+    });
+  });
 
   function updateProviderUI(provider) {
     const isOllama = provider === 'ollama';
@@ -214,6 +233,21 @@ document.addEventListener('DOMContentLoaded', () => {
       if (designToolSelect) designToolSelect.value = settings.designTool || 'figma';
       if (ollamaUrlInput) ollamaUrlInput.value = settings.ollamaUrl || 'http://localhost:11434';
       if (languageSelect) languageSelect.value = settings.language;
+
+      // Migrate legacy `apiKey` into per-provider slots based on prefix the
+      // FIRST time we load. After that, per-provider keys are the source of
+      // truth and the legacy field stays hidden.
+      let geminiKey = settings.geminiKey || '';
+      let anthropicKey = settings.anthropicKey || '';
+      const composerKey = settings.composerKey || '';
+      if (settings.apiKey) {
+        if (!geminiKey && settings.apiKey.startsWith('AIza')) geminiKey = settings.apiKey;
+        if (!anthropicKey && settings.apiKey.startsWith('sk-ant-')) anthropicKey = settings.apiKey;
+      }
+      if (geminiKeyInput) geminiKeyInput.value = geminiKey;
+      if (anthropicKeyInput) anthropicKeyInput.value = anthropicKey;
+      if (composerKeyInput) composerKeyInput.value = composerKey;
+
       updateProviderUI(settings.apiProvider);
     });
     checkAuth();
@@ -244,10 +278,27 @@ document.addEventListener('DOMContentLoaded', () => {
   if (settingsForm) {
     settingsForm.addEventListener('submit', (e) => {
       e.preventDefault();
+      const provider = providerSelect ? providerSelect.value : 'gemini';
+      const geminiKey = geminiKeyInput ? geminiKeyInput.value.trim() : '';
+      const anthropicKey = anthropicKeyInput ? anthropicKeyInput.value.trim() : '';
+      const composerKey = composerKeyInput ? composerKeyInput.value.trim() : '';
+
+      // Keep legacy `apiKey` in sync with the active provider's key so any
+      // older code path that still reads `apiKey` keeps working without us
+      // having to rewrite every consumer. Backend handlers prefer the
+      // per-provider key when present, but fall back to apiKey otherwise.
+      let activeKey = '';
+      if (provider === 'anthropic') activeKey = anthropicKey;
+      else if (provider === 'gemini') activeKey = geminiKey;
+      else activeKey = apiKeyInput ? apiKeyInput.value.trim() : '';
+
       const settings = {
-        apiProvider: providerSelect ? providerSelect.value : 'gemini',
-        apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
-        model: modelInput ? modelInput.value.trim() || MODEL_DEFAULTS[providerSelect ? providerSelect.value : 'gemini'] : '',
+        apiProvider: provider,
+        apiKey: activeKey,
+        geminiKey: geminiKey,
+        anthropicKey: anthropicKey,
+        composerKey: composerKey,
+        model: modelInput ? modelInput.value.trim() || MODEL_DEFAULTS[provider] : '',
         designTool: designToolSelect ? designToolSelect.value : 'figma',
         ollamaUrl: ollamaUrlInput ? ollamaUrlInput.value.trim() || 'http://localhost:11434' : 'http://localhost:11434',
         language: languageSelect ? languageSelect.value : 'en'

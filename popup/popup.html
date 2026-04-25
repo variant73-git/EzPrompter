@@ -189,13 +189,41 @@
           </select>
         </div>
 
-        <div class="rb-field">
-          <label for="apiKey">API Key</label>
+        <div class="rb-field" id="legacyApiKeyField" hidden>
+          <label for="apiKey">API Key (legacy)</label>
           <div class="rb-field-row">
             <input type="password" id="apiKey" placeholder="AIza... / sk-... / sk-ant-...">
             <button type="button" class="rb-key-toggle" id="toggleKey">Show</button>
           </div>
         </div>
+
+        <fieldset class="rb-field-group" style="border:1px solid var(--rb-border, rgba(255,255,255,0.12)); border-radius:10px; padding:12px; margin:8px 0;">
+          <legend style="padding:0 6px; font-size:11px; opacity:0.7;">API Keys (per provider)</legend>
+
+          <div class="rb-field">
+            <label for="geminiKey">Gemini API key</label>
+            <div class="rb-field-row">
+              <input type="password" id="geminiKey" placeholder="AIza...">
+              <button type="button" class="rb-key-toggle" data-key-target="geminiKey">Show</button>
+            </div>
+          </div>
+
+          <div class="rb-field">
+            <label for="anthropicKey">Anthropic API key (Claude Sonnet/Opus)</label>
+            <div class="rb-field-row">
+              <input type="password" id="anthropicKey" placeholder="sk-ant-...">
+              <button type="button" class="rb-key-toggle" data-key-target="anthropicKey">Show</button>
+            </div>
+          </div>
+
+          <div class="rb-field" style="opacity:0.55;">
+            <label for="composerKey">Cursor Composer 2 (coming soon — no public API yet)</label>
+            <div class="rb-field-row">
+              <input type="password" id="composerKey" placeholder="reserved for future" disabled>
+              <button type="button" class="rb-key-toggle" data-key-target="composerKey" disabled>Show</button>
+            </div>
+          </div>
+        </fieldset>
 
         <div class="rb-field">
           <label for="model">Model</label>

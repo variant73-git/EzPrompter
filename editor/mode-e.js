@@ -5,18 +5,87 @@
 (function() {
   'use strict';
 
+  // ─── Cancel + wallclock watchdog ───────────────────────────────────────
+  // A cancel controller lets the user abort a runaway Mode E / E+ run. The
+  // watchdog is a wallclock-based timeout (setInterval + Date.now()) that
+  // survives Chrome's intensive-throttling of backgrounded tabs, which was
+  // masking a stuck diff call for 80 minutes in the field.
+  var _abortCtrl = null;
+  function beginRun() {
+    _abortCtrl = { aborted: false, listeners: [] };
+  }
+  function endRun() {
+    if (_abortCtrl) _abortCtrl.listeners.length = 0;
+    _abortCtrl = null;
+  }
+  function isAborted() { return !!(_abortCtrl && _abortCtrl.aborted); }
+  function checkAbort() {
+    if (isAborted()) throw new Error('Cancelled by user');
+  }
+  function cancelRun() {
+    if (!_abortCtrl) return;
+    _abortCtrl.aborted = true;
+    var listeners = _abortCtrl.listeners.slice();
+    listeners.forEach(function(fn) { try { fn(); } catch(e) {} });
+  }
+  // Race a promise against (a) cancellation and (b) a wallclock timeout.
+  // The wallclock uses setInterval + Date.now() so it fires correctly even
+  // when the tab is backgrounded and setTimeout has been intensively throttled.
+  function withAbortAndTimeout(promise, timeoutMs, label) {
+    return new Promise(function(resolve, reject) {
+      var settled = false;
+      var start = Date.now();
+      var iv = setInterval(function() {
+        if (settled) return;
+        if (isAborted()) {
+          settled = true;
+          clearInterval(iv);
+          reject(new Error('Cancelled by user'));
+          return;
+        }
+        if (Date.now() - start >= timeoutMs) {
+          settled = true;
+          clearInterval(iv);
+          reject(new Error((label || 'LLM call') + ' timed out after ' + Math.round((Date.now() - start) / 1000) + 's'));
+        }
+      }, 1000);
+      if (_abortCtrl) _abortCtrl.listeners.push(function() {
+        if (settled) return;
+        settled = true;
+        clearInterval(iv);
+        reject(new Error('Cancelled by user'));
+      });
+      promise.then(
+        function(v) { if (!settled) { settled = true; clearInterval(iv); resolve(v); } },
+        function(e) { if (!settled) { settled = true; clearInterval(iv); reject(e); } }
+      );
+    });
+  }
+
   // Build the rebuild prompt for VIEWPORT mode (legacy fallback when
   // extractSections() returns no chunks — e.g., weird single-page sites).
   // Mirrors the chunked prompt structure (Aura "EXACTLY mode" style) but
   // reconstructs an entire viewport at once instead of a single section.
-  function buildPrompt(designMD, cleanHTML) {
+  function buildPrompt(designMD, cleanHTML, manifestText) {
     var designContext = designMD
       ? '\n\n--- DESIGN.MD (secondary typography and asset inventory reference) ---\n' + designMD.slice(0, 14000)
       : '';
 
     var structureContext = cleanHTML
-      ? '\n\n--- CAPTURED PAGE STRUCTURE (structural source of truth) ---\n' + cleanHTML.slice(0, 12000)
+      ? '\n\n--- CAPTURED PAGE STRUCTURE (structural source of truth) ---\n' + cleanHTML.slice(0, 50000)
       : '';
+
+    var manifestContext = manifestText
+      ? '\n\n--- ' + manifestText + '\n'
+      : '';
+
+    var assetRule = manifestText
+      ? '- ASSETS: The page\'s images, large SVGs, and CSS background images have been extracted as placeholders in CAPTURED PAGE STRUCTURE — look for <img data-rb-asset="N">, <svg data-rb-asset="N">, and [data-rb-asset-bg="N"] markers. WHEN a visual element in the screenshot has a corresponding placeholder, emit the placeholder verbatim (same tag, same data-rb-asset value, no children). You may add class/style for sizing/layout but DO NOT change the marker attribute. Small UI icons (hamburger, chevron, arrow, X, plus, search, etc.) typically have NO placeholder by design — for those, inline <svg> with paths is fine. Do NOT recreate logos, photographs, illustrations, or large decorative SVGs as inline markup — those ALWAYS have placeholders, find and use them. Do NOT invent new placeholder markers outside the manifest.'
+      : '- IMAGES: Use actual image URLs from DESIGN.MD Assets section. Match by context (logo, hero, photo, avatar). Never generate SVG or HTML approximations of images.';
+
+    var logoRule = manifestText
+      ? '- LOGOS AND BRAND MARKS: Logos and brand marks are in the ASSET MANIFEST as placeholders — find the matching placeholder and emit it. If a logo somehow lacks a placeholder, prefer plain text wordmark over hand-crafted SVG <path> reconstruction.'
+      : '- LOGOS AND BRAND MARKS: NEVER recreate logos as HTML, CSS, SVG, or text. Always use <img src="REAL_URL"> with the URL marked as "logo" in DESIGN.MD Assets.';
 
     return [
       'Recreate the attached webpage EXACTLY like the screenshot as an HTML implementation.',
@@ -51,8 +120,8 @@
       '- FONT SIZES: Match sizes carefully. Use px values that match the screenshot.',
       '- SPACING: Match all padding, margins, and gaps precisely in px.',
       '- BACKGROUNDS: If a section has a solid color or gradient background, reproduce it exactly with CSS. For photo/image backgrounds, use the actual image URL from DESIGN.MD Assets if available.',
-      '- LOGOS AND BRAND MARKS: NEVER recreate logos as HTML, CSS, SVG, or text. Always use <img src="REAL_URL"> with the URL marked as "logo" in DESIGN.MD Assets.',
-      '- IMAGES: Use actual image URLs from DESIGN.MD Assets section. Match by context (logo, hero, photo, avatar). Never generate SVG or HTML approximations of images.',
+      logoRule,
+      assetRule,
       '- The section should be full-width (width:100%) with content centered via max-width + margin:0 auto.',
       '- Avoid long inline SVG markup unless absolutely necessary.',
       '- Do NOT include <html>, <head>, <body> tags.',
@@ -61,6 +130,7 @@
       '',
       'Conflict resolution reminder (this rule is repeated because the LLM tends to drift): if anything in DESIGN.md disagrees with the screenshot on visual properties — colors, surfaces, layout, composition — the screenshot wins.',
       designContext,
+      manifestContext,
       structureContext,
       '',
       'OUTPUT: Return ONLY the raw HTML. No markdown, no code fences, no explanation. Start directly with <div class="rb-section"'
@@ -161,9 +231,13 @@
     ].join('\n');
   }
 
-  // Capture visible viewport as base64 PNG
+  // Capture visible viewport as base64 PNG. Wrapped in the wallclock watchdog
+  // so a stuck service worker / frozen captureVisibleTab call can't hang the
+  // whole capture loop (observed on shopify.com/br where the widget locked
+  // up mid-scroll with no way out).
+  var VIEWPORT_CAPTURE_TIMEOUT_MS = 30000; // 30s per single capture
   function captureViewport() {
-    return new Promise(function(resolve) {
+    var p = new Promise(function(resolve) {
       chrome.runtime.sendMessage(
         {action: 'captureScreenshot', format: 'png', returnData: true},
         function(response) {
@@ -171,19 +245,181 @@
         }
       );
     });
+    if (window.__rbModeE && window.__rbModeE._guardCall) {
+      return window.__rbModeE._guardCall(p, VIEWPORT_CAPTURE_TIMEOUT_MS, 'Viewport capture');
+    }
+    return p;
   }
 
-  // Scroll to a position and wait for render
+  // Scroll to a position and wait for render.
+  // 500ms is the empirical sweet spot: enough for most lazy-loaded content
+  // and scroll-triggered animations to settle, short enough that the capture
+  // loop doesn't spend 5-7s just on scroll settle when doing 7 viewports.
   function scrollToAndWait(y) {
     return new Promise(function(resolve) {
       window.scrollTo(0, y);
-      setTimeout(resolve, 800); // longer wait for lazy-loaded content + animations to settle
+      setTimeout(resolve, 500);
     });
   }
 
   // Capture the entire page as an array of viewport screenshots
+  // Cached after the most recent runModeE call so the refinement orchestrator
+  // can restore assets in regenerated section HTML without having to re-scan
+  // the DOM (which has since been replaced with the clone).
+  var _lastAssetManifest = [];
+
   var MAX_VIEWPORTS = 8; // Safety limit — prevents excessive API calls on very long pages
-  async function captureFullPage() {
+
+  // ─── Capture guard ─────────────────────────────────────────────────────
+  // Shows a prominent banner during capture phases AND tracks tab visibility.
+  // If the user switches away from the tab mid-capture, chrome.tabs.captureVisibleTab
+  // will silently grab whatever's visible in the window — causing content from
+  // OTHER tabs to leak into the rebuild (we lived this bug on shopify.com/br
+  // when content from a separate Shopify tab got mixed into a gistr.so rebuild).
+  // The guard prevents that contamination by aborting hard when the tab loses
+  // visibility, with a clear error message instead of silent garbage.
+  function installCaptureGuard() {
+    var state = { wasHidden: document.hidden };
+
+    // Banner overlay — high z-index, non-interactive, dismissed on cleanup.
+    var banner = document.createElement('div');
+    banner.id = 'rb-capture-guard-banner';
+    banner.style.cssText = [
+      'all: initial',
+      'position: fixed',
+      'top: 16px',
+      'left: 50%',
+      'transform: translateX(-50%)',
+      'z-index: 2147483647',
+      'background: rgba(245, 158, 11, 0.96)',
+      'color: #1a1a1a',
+      'padding: 10px 18px',
+      'border-radius: 10px',
+      'font: 600 13px "Instrument Sans", system-ui, -apple-system, sans-serif',
+      'box-shadow: 0 6px 20px rgba(0,0,0,0.25)',
+      'pointer-events: none',
+      'display: flex',
+      'align-items: center',
+      'gap: 10px',
+      'white-space: nowrap'
+    ].join(';');
+    banner.innerHTML = '<span style="font-size:16px">📸</span><span>Capturing screenshots — keep this tab in the foreground (~10s)</span>';
+    try { (document.body || document.documentElement).appendChild(banner); } catch (_) {}
+
+    function onVisibility() {
+      if (document.hidden) state.wasHidden = true;
+    }
+    document.addEventListener('visibilitychange', onVisibility);
+
+    state.assertVisible = function() {
+      if (state.wasHidden) {
+        throw new Error('Capture aborted: tab lost focus mid-capture. Keep this tab in the foreground for the first ~10 seconds of any rebuild — switching tabs causes the screenshot API to grab content from the wrong tab.');
+      }
+    };
+
+    state.cleanup = function() {
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (banner && banner.parentNode) banner.remove();
+    };
+
+    return state;
+  }
+
+
+  // Detect elements that are visually fixed to the viewport (stick-to-top navs,
+  // floating CTAs, cookie banners, chat widgets, etc). These get duplicated
+  // in every viewport screenshot because they scroll with the user, which
+  // confuses the LLM: it emits one copy per section output, and the assembled
+  // page has a ghost nav at every scroll offset.
+  // Capture each floater's outerHTML with URLs absolutized, scripts stripped,
+  // and event handlers removed. The output is injected verbatim into the
+  // final rebuilt page BEFORE the LLM-generated sections — the LLM never sees
+  // floaters in the first place (they're hidden from every viewport capture),
+  // so the nav/cta/cookie-banner arrives 1:1 instead of being re-invented.
+  // The "Lean" mode is the primary consumer; this function is a no-op returning
+  // '' when there are no floaters.
+  function captureFloatersAsStaticHtml() {
+    var floaters = findFloatingElements();
+    if (floaters.length === 0) return '';
+    var pageBase = location.href;
+    function abs(url) {
+      if (!url) return url;
+      try { return new URL(url, pageBase).href; } catch(e) { return url; }
+    }
+    var out = [];
+    floaters.forEach(function(el) {
+      var clone = el.cloneNode(true);
+      // Absolutize URLs so the snapshot survives when the rebuilt page is
+      // hosted on a different origin (export, share, etc).
+      clone.querySelectorAll('[src]').forEach(function(n) {
+        var s = n.getAttribute('src'); if (s) n.setAttribute('src', abs(s));
+      });
+      clone.querySelectorAll('[href]').forEach(function(n) {
+        var s = n.getAttribute('href'); if (s) n.setAttribute('href', abs(s));
+      });
+      // Strip embedded scripts + on* handlers — the floater is a display-only
+      // fragment in the rebuilt page, no live behavior expected.
+      clone.querySelectorAll('script').forEach(function(n) { n.remove(); });
+      var walker = [clone].concat([].slice.call(clone.querySelectorAll('*')));
+      walker.forEach(function(n) {
+        if (!n.attributes) return;
+        [].slice.call(n.attributes).forEach(function(a) {
+          if (a.name.toLowerCase().indexOf('on') === 0) n.removeAttribute(a.name);
+        });
+      });
+      // Ensure the floater keeps its fixed/sticky position in the rebuilt
+      // page by forcing the computed position into inline style (the original
+      // CSS selectors may not match our rebuilt class names).
+      try {
+        var cs = window.getComputedStyle(el);
+        if (cs) {
+          var existingStyle = clone.getAttribute('style') || '';
+          var posDecl = 'position:' + cs.position + ';' +
+            'top:' + cs.top + ';' + 'left:' + cs.left + ';' +
+            'right:' + cs.right + ';' + 'bottom:' + cs.bottom + ';' +
+            'z-index:' + cs.zIndex + ';';
+          clone.setAttribute('style', (existingStyle ? existingStyle + ';' : '') + posDecl);
+        }
+      } catch (e) {}
+      out.push(clone.outerHTML);
+    });
+    return out.join('\n');
+  }
+
+  function findFloatingElements() {
+    var out = [];
+    // Cap the walk: complex sites (Shopify, enterprise SaaS) can have 20k+
+    // body descendants, and a synchronous getComputedStyle pass over that
+    // many nodes was freezing the main thread for 3-8 seconds — making the
+    // widget look hung even though we were still in setup. Most legitimate
+    // fixed/sticky elements (nav, cookie banner, chat widget, CTAs) are in
+    // the first few thousand DOM nodes.
+    var MAX_SCAN = 3000;
+    var all = document.querySelectorAll('body *');
+    var limit = Math.min(all.length, MAX_SCAN);
+    for (var i = 0; i < limit; i++) {
+      var el = all[i];
+      if (el.id && (el.id.indexOf('rb-editor') === 0 || el.id.indexOf('rb-ed-') === 0)) continue;
+      var cs;
+      try { cs = window.getComputedStyle(el); } catch (e) { continue; }
+      if (!cs) continue;
+      var pos = cs.position;
+      if (pos !== 'fixed' && pos !== 'sticky') continue;
+      var r = el.getBoundingClientRect();
+      if (r.width < 20 || r.height < 20) continue;
+      out.push(el);
+    }
+    return out;
+  }
+
+  async function captureFullPage(onProgress, captureOpts) {
+    var log = onProgress || function() {};
+    captureOpts = captureOpts || {};
+    // When true, floaters are hidden in EVERY viewport (not just 2+). The
+    // Lean path uses this — it captures floaters separately as static HTML
+    // snapshots and injects them at stitch time, so the LLM never needs to
+    // regenerate them.
+    var hideFloatersAlways = !!captureOpts.hideFloatersAlways;
     var viewportH = window.innerHeight;
     var pageH = document.documentElement.scrollHeight;
     var screenshots = [];
@@ -193,52 +429,84 @@
     var editorEls = document.querySelectorAll('[id^="rb-editor"], [id^="rb-ed-"]');
     editorEls.forEach(function(el) { el.style.setProperty('display', 'none', 'important'); });
 
+    // Identify floaters BEFORE scroll — some elements only become sticky after
+    // scroll, but we care about those that ARE fixed/sticky in the initial
+    // state (the ones the LLM will think exist at every Y position).
+    var floaters = findFloatingElements();
+
     var totalViewports = Math.min(Math.ceil(pageH / viewportH), MAX_VIEWPORTS);
 
-    for (var i = 0; i < totalViewports; i++) {
-      var y = i * viewportH;
-      await scrollToAndWait(y);
-      try {
-        var dataUrl = await captureViewport();
-        if (dataUrl) {
-          screenshots.push({
-            y: y,
-            height: Math.min(viewportH, pageH - y),
-            dataUrl: dataUrl
-          });
+    var guard = installCaptureGuard();
+    try {
+      // Initial check — if the tab was already hidden when we started, abort
+      // immediately instead of capturing 8 viewports of the wrong tab.
+      guard.assertVisible();
+      for (var i = 0; i < totalViewports; i++) {
+        // Re-check before EVERY viewport — between scroll + capture is exactly
+        // when a tab switch causes contamination.
+        guard.assertVisible();
+        var y = i * viewportH;
+        await scrollToAndWait(y);
+        log({step: 'capture', message: 'Capturing viewport ' + (i + 1) + '/' + totalViewports + '…', current: 3, total: 6});
+        var shouldHide = hideFloatersAlways || (i > 0);
+        if (shouldHide) {
+          floaters.forEach(function(el) { el.style.setProperty('visibility', 'hidden', 'important'); });
         }
-      } catch(e) {
-        console.error('[Mode E] Capture failed at y=' + y, e);
+        try {
+          var dataUrl = await captureViewport();
+          if (dataUrl) {
+            screenshots.push({
+              y: y,
+              height: Math.min(viewportH, pageH - y),
+              dataUrl: dataUrl
+            });
+          } else {
+            log({step: 'capture', message: 'Viewport ' + (i + 1) + ' returned empty — continuing', current: 3, total: 6});
+          }
+        } catch(e) {
+          console.error('[Mode E] Capture failed at y=' + y, e);
+          log({step: 'capture', message: 'Viewport ' + (i + 1) + ' timed out — continuing with ' + screenshots.length, current: 3, total: 6});
+        } finally {
+          if (shouldHide) {
+            floaters.forEach(function(el) { el.style.removeProperty('visibility'); });
+          }
+        }
       }
+    } finally {
+      guard.cleanup();
+      // Guarantee editor UI + scroll restore even if the loop throws — without
+      // this a crash mid-capture leaves the editor invisible.
+      window.scrollTo(0, originalScroll);
+      editorEls.forEach(function(el) { el.style.removeProperty('display'); });
     }
-
-    // Restore scroll and editor UI
-    window.scrollTo(0, originalScroll);
-    editorEls.forEach(function(el) { el.style.removeProperty('display'); });
 
     return screenshots;
   }
 
-  // Send a screenshot to Gemini Vision and get HTML back (viewport mode, legacy)
-  function screenshotToHTML(screenshotDataUrl, designMD, cleanHTML) {
-    return new Promise(function(resolve, reject) {
+  // Send a screenshot to Gemini Vision and get HTML back (viewport mode, legacy).
+  // Wrapped in withAbortAndTimeout so the user can cancel and a stuck service
+  // worker / long-tail Gemini call can't hang the pipeline forever.
+  // `opts.model` lets callers force a specific model (Mode E Lean uses this
+  // to route the viewport path to Flash instead of Pro).
+  var VIEWPORT_CALL_TIMEOUT_MS = 180000; // 3 min per viewport
+  function screenshotToHTML(screenshotDataUrl, designMD, cleanHTML, manifestText, opts) {
+    opts = opts || {};
+    var p = new Promise(function(resolve, reject) {
       chrome.runtime.sendMessage(
         {
           action: 'modeERebuild',
           imageDataUrl: screenshotDataUrl,
-          prompt: buildPrompt(designMD, cleanHTML)
+          prompt: buildPrompt(designMD, cleanHTML, manifestText),
+          model: opts.model || null
         },
         function(response) {
-          if (response && response.html) {
-            resolve(response.html);
-          } else if (response && response.error) {
-            reject(new Error(response.error));
-          } else {
-            reject(new Error('No response from AI'));
-          }
+          if (response && response.html) resolve(response.html);
+          else if (response && response.error) reject(new Error(response.error));
+          else reject(new Error('No response from AI'));
         }
       );
     });
+    return withAbortAndTimeout(p, VIEWPORT_CALL_TIMEOUT_MS, 'Viewport Gemini call');
   }
 
   // Send a section screenshot + context to Gemini Vision (chunked mode)
@@ -403,6 +671,148 @@
     }
 
     return html.trim();
+  }
+
+  // Swap each <img data-rb-asset="N"> / <svg data-rb-asset="N"> placeholder
+  // with the corresponding original asset from the manifest. Any class/style
+  // the LLM applied to the placeholder is carried over (so layout sticks).
+  // Idempotent and safe when the LLM dropped placeholders entirely.
+  function restoreAssets(html, assets) {
+    if (!html || !assets || !assets.length) return html;
+    var byId = {};
+    for (var k = 0; k < assets.length; k++) byId[String(assets[k].id)] = assets[k];
+
+    var wrap = document.createElement('div');
+    wrap.innerHTML = html;
+
+    var placeholders = wrap.querySelectorAll('[data-rb-asset]');
+    var bgPlaceholders = wrap.querySelectorAll('[data-rb-asset-bg]');
+    var dropped = 0, restored = 0;
+
+    // Background-image restore: merge a background-image: url(...) declaration
+    // into the element's existing inline style. Runs first so LLM-applied
+    // style= for things like padding/size is preserved alongside the bg URL.
+    for (var b = 0; b < bgPlaceholders.length; b++) {
+      var bgEl = bgPlaceholders[b];
+      var bgIdStr = bgEl.getAttribute('data-rb-asset-bg');
+      var bgAsset = byId[bgIdStr];
+      if (!bgAsset || bgAsset.type !== 'bg') {
+        bgEl.removeAttribute('data-rb-asset-bg');
+        dropped++;
+        continue;
+      }
+      var existingBgStyle = bgEl.getAttribute('style') || '';
+      var bgDecl = "background-image: url('" + bgAsset.src.replace(/'/g, "%27") + "');";
+      bgEl.setAttribute('style', (existingBgStyle ? existingBgStyle + ';' : '') + bgDecl);
+      bgEl.removeAttribute('data-rb-asset-bg');
+      restored++;
+    }
+
+    for (var i = 0; i < placeholders.length; i++) {
+      var el = placeholders[i];
+      var id = el.getAttribute('data-rb-asset');
+      var a = byId[id];
+      if (!a) { el.removeAttribute('data-rb-asset'); dropped++; continue; }
+
+      if (a.type === 'img') {
+        // Tag-preserving replace: keep the LLM's class/style/width/height
+        // (it sized the slot for layout); set src/srcset/alt from the manifest.
+        // If the LLM put the marker on the wrong tag (e.g. <div data-rb-asset>),
+        // swap it for a real <img> so the asset actually renders.
+        var target = el;
+        if (el.tagName !== 'IMG') {
+          target = document.createElement('img');
+          var carryClass = el.getAttribute('class');
+          var carryStyle = el.getAttribute('style');
+          if (carryClass) target.setAttribute('class', carryClass);
+          if (carryStyle) target.setAttribute('style', carryStyle);
+          if (el.parentNode) el.parentNode.replaceChild(target, el);
+        }
+        target.setAttribute('src', a.src);
+        if (a.srcset) target.setAttribute('srcset', a.srcset);
+        if (a.alt && !target.getAttribute('alt')) target.setAttribute('alt', a.alt);
+        target.removeAttribute('data-rb-asset');
+        restored++;
+      } else if (a.type === 'svg') {
+        // Re-parse the original SVG outerHTML and merge the LLM's class/style
+        // into it (the LLM may have positioned the slot via class/style).
+        var holder = document.createElement('div');
+        holder.innerHTML = a.outerHTML;
+        var orig = holder.firstElementChild;
+        if (!orig) { el.removeAttribute('data-rb-asset'); continue; }
+        var llmClass = el.getAttribute('class');
+        var llmStyle = el.getAttribute('style');
+        if (llmClass) {
+          var existingCls = orig.getAttribute('class') || '';
+          orig.setAttribute('class', (existingCls ? existingCls + ' ' : '') + llmClass);
+        }
+        if (llmStyle) {
+          var existingStyle = orig.getAttribute('style') || '';
+          orig.setAttribute('style', (existingStyle ? existingStyle + ';' : '') + llmStyle);
+        }
+        if (el.parentNode) el.parentNode.replaceChild(orig, el);
+        restored++;
+      }
+    }
+
+    // Light diagnostic — useful to see in DevTools whether the LLM honored
+    // the manifest. No throw: rebuild always proceeds with whatever was
+    // restored (the LLM may have legitimately dropped some placeholders if
+    // the screenshot didn't include them).
+    if (assets.length > 0) {
+      var totalMarkers = placeholders.length + bgPlaceholders.length;
+      console.log('[Mode E] Asset restore: ' + restored + '/' + totalMarkers +
+        ' placeholders matched, ' + dropped + ' unknown id, ' +
+        (assets.length - restored) + ' assets unused.');
+    }
+
+    return wrap.innerHTML;
+  }
+
+  // Structural validator for per-section regen output. The refine step asks
+  // the LLM to rewrite one section of the clone; LLMs drift and sometimes
+  // drop critical semantic tags (e.g. the page <header> vanishes because the
+  // regen output focused on the hero copy and silently omitted the nav bar).
+  // This function compares the ORIGINAL section HTML against the REGEN HTML
+  // and rejects the update when:
+  //   (a) a critical structural tag (header/nav/footer/main/h1) that existed
+  //       in the original is missing from the regen
+  //   (b) the new HTML is drastically smaller than the original (heuristic:
+  //       < 30% element count on sections with 20+ elements)
+  // Rejected updates fall back to keeping the original section — slower
+  // refinement progress, but no visible regression.
+  function validateSectionStructure(originalHtml, newHtml) {
+    if (!newHtml || newHtml.length < 50) {
+      return { ok: false, reason: 'regen HTML too small (' + (newHtml || '').length + ' bytes)' };
+    }
+    var tmpOrig = document.createElement('div');
+    var tmpNew = document.createElement('div');
+    try {
+      tmpOrig.innerHTML = originalHtml || '';
+      tmpNew.innerHTML = newHtml;
+    } catch (e) {
+      return { ok: false, reason: 'parse failed: ' + e.message };
+    }
+
+    var critical = ['header', 'nav', 'footer', 'main', 'h1'];
+    for (var i = 0; i < critical.length; i++) {
+      var tag = critical[i];
+      var origHas = !!tmpOrig.querySelector(tag);
+      var newHas = !!tmpNew.querySelector(tag);
+      if (origHas && !newHas) {
+        return { ok: false, reason: 'lost <' + tag + '> tag in regen' };
+      }
+    }
+
+    var origCount = tmpOrig.querySelectorAll('*').length;
+    var newCount = tmpNew.querySelectorAll('*').length;
+    if (origCount >= 20 && newCount < origCount * 0.3) {
+      return {
+        ok: false,
+        reason: 'element count collapsed (' + origCount + ' → ' + newCount + ')'
+      };
+    }
+    return { ok: true };
   }
 
   function cleanMarkdown(raw) {
@@ -1073,46 +1483,131 @@
       log({step: 'freeze', message: 'No animations to freeze', current: 1, total: 6});
     }
 
-    // Step 3: Extract DESIGN.MD + page structure BEFORE capture (from the live site)
+    // Step 3: Extract DESIGN.MD + page structure + asset manifest BEFORE capture
+    // (the manifest replaces every <img>/large <svg> with a tag-preserving
+    // placeholder; we restore the originals post-gen so the LLM never has to
+    // regenerate real assets — see restoreAssets() below).
     var designMD = '';
     var pageStructure = '';
+    var assetManifestText = '';
+    var assetManifest = [];
     if (window.__rbExtractor) {
       try { designMD = window.__rbExtractor.generateDesignMD() || ''; } catch(e) {}
-      try { pageStructure = window.__rbExtractor.extractCleanHTML() || ''; } catch(e) {}
+      try {
+        if (window.__rbExtractor.buildAssetManifest) {
+          var bundle = window.__rbExtractor.buildAssetManifest();
+          pageStructure = (bundle && bundle.cleanHTML) || '';
+          assetManifestText = (bundle && bundle.manifestText) || '';
+          assetManifest = (bundle && bundle.assets) || [];
+          // Cache so runModeEWithRefine's per-section regen can restore assets
+          // in the regenerated HTML without re-scanning the DOM (which would
+          // see the clone, not the original).
+          _lastAssetManifest = assetManifest;
+        } else {
+          pageStructure = window.__rbExtractor.extractCleanHTML() || '';
+        }
+      } catch(e) {
+        // Last-resort fallback so a broken extractor never blocks rebuild.
+        try { pageStructure = window.__rbExtractor.extractCleanHTML() || ''; } catch(_) {}
+      }
       var lineCount = designMD.split('\n').length;
-      log({step: 'tokens', message: 'Generated DESIGN.MD (' + lineCount + ' lines) + structure (' + Math.round(pageStructure.length / 1024) + 'KB)', current: 2, total: 6});
+      log({
+        step: 'tokens',
+        message: 'Generated DESIGN.MD (' + lineCount + ' lines) + structure (' + Math.round(pageStructure.length / 1024) + 'KB) + ' + assetManifest.length + ' assets',
+        current: 2,
+        total: 6
+      });
     }
 
     // Step 4: Capture page
     log({step: 'capture', message: 'Capturing page (' + MAX_VIEWPORTS + ' viewports max)...', current: 3, total: 6});
-    var screenshots = await captureFullPage();
+    var screenshots = await captureFullPage(log);
     log({step: 'capture', message: 'Captured ' + screenshots.length + ' viewports', current: 3, total: 6});
 
-    // Step 5: Send each screenshot + tokens to Gemini Vision
-    log({step: 'rebuild', message: 'Rebuilding with AI (0/' + screenshots.length + ')...', current: 4, total: 6});
-    var sectionsHTML = [];
-    for (var i = 0; i < screenshots.length; i++) {
+    // Step 5: Send each screenshot + tokens to Gemini Vision IN PARALLEL.
+    // The viewport calls are independent — each one reconstructs one vertical
+    // slice. Concurrency=3 is the safer default: paid tier (60 RPM) handles it
+    // easily, and empirically 5 was triggering occasional 429 backoffs that
+    // serialized the whole wave. 3 with 200ms stagger buys stability without
+    // much wallclock cost (4 waves instead of 1 for 8 viewports, but each
+    // wave still dominates at ~max-call-latency).
+    var VIEWPORT_CONCURRENCY = 3;
+    var VIEWPORT_STAGGER_MS = 200;
+    var completed = 0;
+    log({step: 'rebuild', message: 'Rebuilding with AI (0/' + screenshots.length + ', concurrency=' + VIEWPORT_CONCURRENCY + ')...', current: 4, total: 6});
+
+    var viewportResults = await runWithQueue(screenshots, VIEWPORT_CONCURRENCY, VIEWPORT_STAGGER_MS, async function(shot, idx) {
       try {
-        var html = await screenshotToHTML(screenshots[i].dataUrl, designMD, pageStructure);
+        var html = await screenshotToHTML(shot.dataUrl, designMD, pageStructure, assetManifestText);
         var cleaned = cleanHTML(html);
         if (cleaned.length > 10) {
-          sectionsHTML.push(cleaned);
+          cleaned = restoreAssets(cleaned, assetManifest);
+        } else {
+          cleaned = '';
         }
+        completed++;
         log({
           step: 'rebuild',
-          message: 'Rebuilding with AI (' + (i + 1) + '/' + screenshots.length + ')...',
+          message: 'Rebuilding with AI (' + completed + '/' + screenshots.length + ')...',
           current: 4,
           total: 6
         });
-      } catch(err) {
-        console.error('[Mode E] Rebuild failed for viewport ' + i + ':', err);
-        var errMsg = err.message || '';
-        if (errMsg.indexOf('No API key') !== -1 || errMsg.indexOf('unregistered callers') !== -1) {
-          log({step: 'error', message: 'API key not configured. Open the Repix extension popup → Settings to add your key.', current: 6, total: 6});
-          return null;
-        }
-        log({step: 'error', message: 'Failed viewport ' + i + ': ' + errMsg, current: 4, total: 6});
+        return { idx: idx, html: cleaned, error: null };
+      } catch (err) {
+        completed++;
+        log({
+          step: 'rebuild',
+          message: 'Rebuilding with AI (' + completed + '/' + screenshots.length + ', some failed)...',
+          current: 4,
+          total: 6
+        });
+        return { idx: idx, html: '', error: err };
       }
+    });
+
+    // Propagate cancellation up the stack so wrapTopLevel emits a clean
+    // "Cancelled by user" step instead of falling through to "No sections
+    // rebuilt" with a misleading API-key message.
+    var cancelled = viewportResults.some(function(r) {
+      if (!r || !r.error) return false;
+      return ((r.error.message || '') + '').indexOf('Cancelled') !== -1;
+    });
+    if (cancelled) throw new Error('Cancelled by user');
+
+    // Fail-fast for auth errors (no point surfacing per-viewport spam).
+    var authErr = viewportResults.find(function(r) {
+      if (!r || !r.error) return false;
+      var m = (r.error.message || '') + '';
+      return m.indexOf('No API key') !== -1 || m.indexOf('unregistered callers') !== -1;
+    });
+    if (authErr) {
+      log({step: 'error', message: 'API key not configured. Open the Repix extension popup → Settings to add your key.', current: 6, total: 6});
+      return null;
+    }
+
+    // Preserve viewport order so the page stitches top-to-bottom correctly.
+    var sectionsHTML = [];
+    var failedCount = 0;
+    viewportResults
+      .slice()
+      .sort(function(a, b) { return (a && b) ? a.idx - b.idx : 0; })
+      .forEach(function(r) {
+        if (!r) return;
+        if (r.error) {
+          failedCount++;
+          console.error('[Mode E] Rebuild failed for viewport ' + r.idx + ':', r.error);
+          return;
+        }
+        if (r.html) sectionsHTML.push(r.html);
+      });
+
+    if (failedCount > 0) {
+      log({
+        step: 'rebuild',
+        message: failedCount + ' of ' + screenshots.length + ' viewports failed — continuing with ' + sectionsHTML.length,
+        current: 4,
+        total: 6
+      });
     }
 
     if (sectionsHTML.length === 0) {
@@ -1128,6 +1623,152 @@
     return rebuilt;
   }
 
+  // ─── Mode E Lean ──────────────────────────────────────────────────────────
+  // Aggressive speed variant of Mode E. Trades per-call quality (Flash instead
+  // of Pro) and some prompt context (drops DESIGN.MD) for ~4x faster viewport
+  // calls. Adds the "floater-as-static-clone" pattern: fixed/sticky elements
+  // are captured verbatim from the original DOM and injected post-stitch,
+  // giving 100% fidelity on navigation/CTAs while cutting the LLM's workload.
+  //
+  // Rough budget versus plain Mode E on a 5-viewport site:
+  //   Plain E:  5 × Pro @ ~45s parallel concurrency=5 = ~50-70s  (was 5min sequential)
+  //   Lean:     5 × Flash @ ~12s parallel concurrency=5 + floater copy = ~20-35s
+  async function runModeELean(onProgress) {
+    var log = onProgress || function() {};
+    var LEAN_MODEL = 'gemini-2.5-flash';
+
+    var builderInfo = window.__rbDetectBuilder ? window.__rbDetectBuilder() : {builder: 'generic'};
+    log({step: 'detect', message: 'Detected: ' + builderInfo.builder + ' (Lean/Flash)', current: 0, total: 5});
+
+    if (builderInfo.builder !== 'generic' && window.__rbFreeze) {
+      window.__rbFreeze(builderInfo);
+      log({step: 'freeze', message: 'Freezing animations...', current: 1, total: 6});
+      await new Promise(function(r) { setTimeout(r, 2000); });
+      log({step: 'freeze', message: 'Animations frozen', current: 1, total: 6});
+    } else {
+      log({step: 'freeze', message: 'No animations to freeze', current: 1, total: 6});
+    }
+
+    // Page structure + asset manifest (DESIGN.MD intentionally skipped — inline
+    // styles already carry font/color info, and the prompt size drop cuts
+    // Flash latency meaningfully).
+    var pageStructure = '';
+    var assetManifestText = '';
+    var assetManifest = [];
+    if (window.__rbExtractor) {
+      try {
+        if (window.__rbExtractor.buildAssetManifest) {
+          var bundle = window.__rbExtractor.buildAssetManifest();
+          pageStructure = (bundle && bundle.cleanHTML) || '';
+          assetManifestText = (bundle && bundle.manifestText) || '';
+          assetManifest = (bundle && bundle.assets) || [];
+          _lastAssetManifest = assetManifest;
+        } else {
+          pageStructure = window.__rbExtractor.extractCleanHTML() || '';
+        }
+      } catch (e) {
+        try { pageStructure = window.__rbExtractor.extractCleanHTML() || ''; } catch (_) {}
+      }
+      log({
+        step: 'tokens',
+        message: 'Structure (' + Math.round(pageStructure.length / 1024) + 'KB) + ' + assetManifest.length + ' assets (DESIGN.MD skipped)',
+        current: 2,
+        total: 6
+      });
+    }
+
+    // Snapshot floaters BEFORE capture. These are injected raw post-stitch.
+    var floatersHTML = captureFloatersAsStaticHtml();
+    if (floatersHTML) {
+      log({step: 'floaters', message: 'Snapshotted ' + (floatersHTML.match(/^/gm) || []).length + ' floater element(s) as static clones', current: 2, total: 6});
+    }
+
+    // Capture with ALL floaters hidden so the LLM never sees them.
+    log({step: 'capture', message: 'Capturing page (Flash pipeline, ' + MAX_VIEWPORTS + ' viewports max)...', current: 3, total: 6});
+    var screenshots = await captureFullPage(log, { hideFloatersAlways: true });
+    log({step: 'capture', message: 'Captured ' + screenshots.length + ' viewports (floaters hidden)', current: 3, total: 6});
+
+    // Fire viewport LLM calls in parallel. Flash is faster per call AND cheaper,
+    // so we can keep concurrency=5 (same as Pro path) without worrying about
+    // input token throttling on the typical prompt size.
+    var VIEWPORT_CONCURRENCY = 5;
+    var VIEWPORT_STAGGER_MS = 100;
+    var completed = 0;
+    log({step: 'rebuild', message: 'Rebuilding with Flash (0/' + screenshots.length + ', concurrency=' + VIEWPORT_CONCURRENCY + ')...', current: 4, total: 6});
+
+    var viewportResults = await runWithQueue(screenshots, VIEWPORT_CONCURRENCY, VIEWPORT_STAGGER_MS, async function(shot, idx) {
+      try {
+        // DESIGN.MD passed as '' — prompt skips the design section entirely.
+        var html = await screenshotToHTML(shot.dataUrl, '', pageStructure, assetManifestText, { model: LEAN_MODEL });
+        var cleaned = cleanHTML(html);
+        if (cleaned.length > 10) cleaned = restoreAssets(cleaned, assetManifest);
+        else cleaned = '';
+        completed++;
+        log({
+          step: 'rebuild',
+          message: 'Rebuilding with Flash (' + completed + '/' + screenshots.length + ')...',
+          current: 4,
+          total: 6
+        });
+        return { idx: idx, html: cleaned, error: null };
+      } catch (err) {
+        completed++;
+        log({
+          step: 'rebuild',
+          message: 'Rebuilding with Flash (' + completed + '/' + screenshots.length + ', some failed)...',
+          current: 4,
+          total: 6
+        });
+        return { idx: idx, html: '', error: err };
+      }
+    });
+
+    var cancelled = viewportResults.some(function(r) {
+      if (!r || !r.error) return false;
+      return ((r.error.message || '') + '').indexOf('Cancelled') !== -1;
+    });
+    if (cancelled) throw new Error('Cancelled by user');
+
+    var authErr = viewportResults.find(function(r) {
+      if (!r || !r.error) return false;
+      var m = (r.error.message || '') + '';
+      return m.indexOf('No API key') !== -1 || m.indexOf('unregistered callers') !== -1;
+    });
+    if (authErr) {
+      log({step: 'error', message: 'API key not configured. Open the Repix extension popup → Settings to add your key.', current: 6, total: 6});
+      return null;
+    }
+
+    var sectionsHTML = [];
+    var failedCount = 0;
+    viewportResults
+      .slice()
+      .sort(function(a, b) { return (a && b) ? a.idx - b.idx : 0; })
+      .forEach(function(r) {
+        if (!r) return;
+        if (r.error) {
+          failedCount++;
+          console.error('[Mode E Lean] Rebuild failed for viewport ' + r.idx + ':', r.error);
+          return;
+        }
+        if (r.html) sectionsHTML.push(r.html);
+      });
+
+    if (sectionsHTML.length === 0) {
+      log({step: 'error', message: 'No sections rebuilt. Check your API key or try plain Mode E.', current: 6, total: 6});
+      return null;
+    }
+
+    // Prepend floaters as the FIRST section. replacePageContent wraps the
+    // input in the editor's rebuild wrapper, so floaters inside that wrapper
+    // with `position: fixed` + z-index will sit above the rebuilt sections.
+    log({step: 'replace', message: 'Stitching with ' + (floatersHTML ? 'floaters + ' : '') + sectionsHTML.length + ' sections...', current: 5, total: 6});
+    var finalSections = floatersHTML ? [floatersHTML].concat(sectionsHTML) : sectionsHTML;
+    var rebuilt = replacePageContent(finalSections);
+    log({step: 'done', message: 'Lean rebuild complete — ' + sectionsHTML.length + ' sections' + (failedCount ? ' (' + failedCount + ' failed)' : '') + (floatersHTML ? ' + floaters' : ''), current: 6, total: 6});
+    return rebuilt;
+  }
+
   // Orchestrated entry: runModeE + one refinement pass.
   // Keeps the original screenshot + generated HTML, pipes them into
   // __rbModeERefine.runRefine. If refinement returns new HTML, swap page
@@ -1136,7 +1777,7 @@
     var log = onProgress || function() {};
 
     if (!window.__rbModeERefine || !window.__rbModeEDiff) {
-      log({step: 'refine-unavailable', message: 'Refinement modules missing — falling back to plain Mode E', current: 0, total: 1});
+      log({step: 'refine-fallback', message: 'Refinement modules missing — falling back to plain Mode E', current: 0, total: 1});
       return runModeE(onProgress);
     }
 
@@ -1145,17 +1786,23 @@
     // grabbing one here is cheap and keeps the contract simple.)
     log({step: 'refine-pre', message: 'Capturing original…', current: 0, total: 8});
     var originalScreenshot = null;
+    var originalGuard = installCaptureGuard();
     try {
-      originalScreenshot = await new Promise(function(resolve, reject) {
+      originalGuard.assertVisible();
+      var capP = new Promise(function(resolve, reject) {
         chrome.runtime.sendMessage({action: 'captureScreenshot', returnData: true}, function(r) {
           if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
           if (r && r.dataUrl) resolve(r.dataUrl);
           else reject(new Error('captureScreenshot returned no data'));
         });
       });
+      originalScreenshot = await withAbortAndTimeout(capP, 30000, 'Original capture');
+      originalGuard.assertVisible();
     } catch (e) {
-      log({step: 'refine-skip', message: 'Could not capture original (' + e.message + ') — running plain Mode E', current: 0, total: 1});
+      log({step: 'refine-fallback', message: 'Could not capture original (' + e.message + ') — running plain Mode E', current: 0, total: 1});
       return runModeE(onProgress);
+    } finally {
+      originalGuard.cleanup();
     }
 
     // Snapshot DESIGN.MD from the ORIGINAL site before runModeE swaps the DOM.
@@ -1176,6 +1823,26 @@
       return rebuilt;
     }
 
+    // Collect per-section bounds so refine can target only affected sections
+    // (per-section regen is much faster than full-page regen and runs in
+    // parallel across affected sections).
+    var sectionList = [];
+    try {
+      var secEls = rebuilt.children || [];
+      for (var si = 0; si < secEls.length; si++) {
+        var sEl = secEls[si];
+        if (!(sEl instanceof Element)) continue;
+        var r = sEl.getBoundingClientRect();
+        sectionList.push({
+          idx: si,
+          el: sEl,
+          html: sEl.outerHTML,
+          topY: r.top + window.scrollY,
+          height: r.height
+        });
+      }
+    } catch (e) { sectionList = []; }
+
     // Run refinement.
     var result;
     try {
@@ -1183,6 +1850,7 @@
         originalScreenshot: originalScreenshot,
         currentHtml: currentHtml,
         designMD: designMD,
+        sections: sectionList,
         onProgress: log
       });
     } catch (e) {
@@ -1190,11 +1858,92 @@
       return rebuilt;
     }
 
-    if (!result || !result.changed || !result.html) return rebuilt;
+    if (!result || !result.changed) return rebuilt;
 
-    // Swap the page with refined HTML. replacePageContent expects an array.
-    log({step: 'refine-inject', message: 'Injecting refined HTML…', current: 8, total: 8});
-    return replacePageContent([result.html]);
+    // Per-section update path: swap outerHTML for each regenerated section
+    // and run restoreAssets on the new HTML so placeholders become real URLs.
+    // Every update passes through validateSectionStructure — if the regen
+    // dropped a critical structural tag (<header>, <nav>, <footer>, <main>,
+    // <h1>) that existed in the original section, we reject the update and
+    // keep the original. Observed in the field: regen stripping the page
+    // header when the section in question contained it.
+    if (result.sectionUpdates && result.sectionUpdates.length > 0) {
+      log({step: 'refine-inject', message: 'Applying ' + result.sectionUpdates.length + ' section update(s)…', current: 8, total: 8});
+      var applied = 0, rejected = 0;
+      result.sectionUpdates.forEach(function(u) {
+        var section = sectionList[u.idx];
+        if (!section || !section.el || !section.el.parentNode) return;
+        var cleaned = cleanHTML(u.html);
+        cleaned = restoreAssets(cleaned, _lastAssetManifest || []);
+
+        var validation = validateSectionStructure(section.html, cleaned);
+        if (!validation.ok) {
+          console.warn('[Mode E refine] Rejected section ' + u.idx + ': ' + validation.reason + ' — keeping original');
+          rejected++;
+          return;
+        }
+
+        var tmp = document.createElement('div');
+        tmp.innerHTML = cleaned;
+        var newEl = tmp.firstElementChild;
+        if (newEl) {
+          section.el.parentNode.replaceChild(newEl, section.el);
+          applied++;
+        }
+      });
+      if (rejected > 0) {
+        log({step: 'refine-inject', message: 'Applied ' + applied + ' section(s), rejected ' + rejected + ' (structural regression)', current: 8, total: 8});
+      }
+      return rebuilt;
+    }
+
+    // Full-page update path (legacy fallback when sections weren't used).
+    if (result.html) {
+      log({step: 'refine-inject', message: 'Injecting refined HTML…', current: 8, total: 8});
+      return replacePageContent([result.html]);
+    }
+
+    return rebuilt;
+  }
+
+  // Wrap the exposed entry points so they own an abort controller for the
+  // duration of the run. Nested calls (e.g. runWithRefine → runModeE) share
+  // the outer controller — nested wraps are no-ops.
+  function wrapTopLevel(fn) {
+    return async function(onProgress) {
+      var owned = false;
+      if (!_abortCtrl) { beginRun(); owned = true; }
+      // Wrap the caller's onProgress so we can see EVERY event the pipeline
+      // emits in DevTools. Hard to diagnose a "widget stuck silent" bug
+      // without observing whether the callback fires at all.
+      var wrappedProgress = function(p) {
+        try {
+          console.log('[Mode E progress]', p && p.step, '-', p && p.message, '(', p && p.current, '/', p && p.total, ')');
+        } catch (_) {}
+        if (typeof onProgress === 'function') onProgress(p);
+      };
+      try {
+        console.log('[Mode E] pipeline START:', fn && fn.name);
+        var result = await fn(wrappedProgress);
+        console.log('[Mode E] pipeline END:', fn && fn.name, '→', result ? 'result' : 'null');
+        return result;
+      } catch (e) {
+        // CRITICAL: any uncaught error must surface as step:'error' so the
+        // activator's loader stops. Without this, non-Cancel throws were
+        // being rethrown and becoming unhandled rejections — the widget
+        // stayed "running" with spinner forever.
+        var msg = (e && e.message) || String(e || 'Unknown error');
+        console.error('[Mode E] pipeline THREW:', e);
+        if (msg.indexOf('Cancelled') >= 0) {
+          wrappedProgress({ step: 'error', message: 'Cancelled by user', current: 0, total: 0 });
+        } else {
+          wrappedProgress({ step: 'error', message: 'Pipeline error — ' + msg, current: 0, total: 0 });
+        }
+        return null;
+      } finally {
+        if (owned) endRun();
+      }
+    };
   }
 
   // Expose to global scope
@@ -1202,13 +1951,28 @@
   // Chunked path is available via runChunked() but not default — section
   // detection + Tailwind CDN dependency need more work before it's reliable.
   window.__rbModeE = {
-    run: runModeE,
-    runWithRefine: runModeEWithRefine,
+    run: wrapTopLevel(runModeE),
+    runWithRefine: wrapTopLevel(runModeEWithRefine),
+    runLean: wrapTopLevel(runModeELean),
     runChunked: runModeEChunked,
-    runViewport: runModeE,
+    runViewport: wrapTopLevel(runModeE),
     runFromImage: runModeEFromImage,
     generateDesignMDFromImage: generateDesignMDFromImage,
     restore: restoreOriginalPage,
-    captureFullPage: captureFullPage
+    captureFullPage: captureFullPage,
+    // Cancel the active run. Safe to call anytime; a no-op if nothing is
+    // in flight. Propagates through withAbortAndTimeout (below) so in-flight
+    // LLM calls reject immediately, the pipeline surfaces a step:'error'
+    // 'Cancelled by user' to the activator, and the loader stops.
+    cancel: cancelRun,
+    isActive: function() { return !!_abortCtrl; },
+    // Shared helper for satellite modules (mode-e-diff, mode-e-refine) that
+    // need to inherit the same cancel signal + wallclock timeout behavior.
+    _guardCall: withAbortAndTimeout,
+    _runWithQueue: runWithQueue,
+    // Capture guard — banner + visibility detection + hard abort on tab switch.
+    // Exposed so satellite modules (refine, classic) can wrap their captures
+    // with the same protection.
+    _captureGuard: installCaptureGuard
   };
 })();

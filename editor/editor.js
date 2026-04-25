@@ -978,6 +978,8 @@
       icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>';
     } else if (status === 'error') {
       icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+    } else if (status === 'warning') {
+      icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.41 0z"/><path d="M12 17h.01"/></svg>';
     } else {
       // Running spinner
       icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EFEEEB" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
@@ -987,6 +989,27 @@
     var text = mk('span');
     text.style.cssText = 'flex:1;line-height:1.4;word-break:break-word;';
     text.textContent = message;
+
+    // Copy-to-clipboard button. Shown for warning/error so the user can
+    // actually capture the reason before dismissing (we wasted an 80-minute
+    // session once because the final toast auto-dismissed before the user
+    // could read the failure text).
+    var copyBtn = mk('button');
+    copyBtn.className = 'rb-ed-toast-copy';
+    copyBtn.title = 'Copy message';
+    copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+    copyBtn.style.cssText = 'background:none;border:none;color:rgba(239,238,235,0.5);cursor:pointer;padding:4px;display:none;align-items:center;flex-shrink:0;';
+    copyBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var msg = text.textContent || '';
+      try {
+        navigator.clipboard.writeText(msg);
+        var prev = copyBtn.innerHTML;
+        copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        setTimeout(function() { copyBtn.innerHTML = prev; }, 1200);
+      } catch (_) {}
+    });
+    if (status === 'warning' || status === 'error') copyBtn.style.display = 'flex';
 
     var close = mk('button');
     close.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -998,6 +1021,7 @@
 
     toast.appendChild(icon);
     toast.appendChild(text);
+    toast.appendChild(copyBtn);
     toast.appendChild(close);
     root.appendChild(toast);
     return toast;
@@ -1006,7 +1030,13 @@
   function updateToast(toast, message, status) {
     if (!toast || !toast.parentNode) return;
     var text = toast.querySelector('span:nth-child(2)');
-    if (text) text.textContent = message;
+    // Defensive: only overwrite text if we actually have a message. Callers
+    // passing empty/undefined used to wipe the toast to blank, leaving a
+    // widget with just an icon and no context — actively worse than showing
+    // stale text.
+    if (text && message != null && message !== '') {
+      text.textContent = message;
+    }
     // If status changed, rebuild icon
     if (status) {
       toast.className = 'rb-ed-toast rb-ed-toast-' + status;
@@ -1017,17 +1047,23 @@
           icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>';
         } else if (status === 'error') {
           icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+        } else if (status === 'warning') {
+          icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.41 0z"/><path d="M12 17h.01"/></svg>';
         } else {
           icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EFEEEB" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
           icon.style.animation = 'rb-ed-spin 1s linear infinite';
         }
       }
-      // Auto-dismiss success/error after a few seconds so the toast doesn't
-      // linger forever. Only final states auto-dismiss; running state persists.
-      if (status === 'success' || status === 'error') {
+      // Show/hide copy button when status transitions into a final state.
+      var copyBtn = toast.querySelector('.rb-ed-toast-copy');
+      if (copyBtn) copyBtn.style.display = (status === 'warning' || status === 'error') ? 'flex' : 'none';
+      // Auto-dismiss ONLY success. Warning/error persist so the user can read
+      // (and copy) the failure reason — auto-dismissing a fatal message before
+      // the user can see it wastes real time and trust.
+      if (status === 'success') {
         setTimeout(function() {
           if (toast && toast.parentNode) toast.remove();
-        }, status === 'success' ? 5000 : 10000);
+        }, 5000);
       }
     }
   }
@@ -1046,8 +1082,10 @@
   // Wraps each target's content into [msg-span][timer-span] so callers update
   // messages via setMessage() without stomping the live timer. Returns also
   // stop()/remove() for lifecycle control.
-  function startLoaderTimer(targets) {
+  function startLoaderTimer(targets, opts) {
+    opts = opts || {};
     var t0 = Date.now();
+    var lastUpdateAt = t0;
     var entries = [];
     (targets || []).forEach(function(el) {
       if (!el) return;
@@ -1071,14 +1109,38 @@
       }
       entries.push({ el: el, msg: msgSpan, timer: timerSpan });
     });
+    var stuckCb = opts.onStuck || null;
+    // Watchdog: if no setMessage within STUCK_TIMEOUT_MS, fire onStuck and
+    // mark the message visually so the widget never pretends to be making
+    // progress when it isn't. Saves the user from waiting 5 minutes thinking
+    // something is happening when the pipeline silently died.
+    var STUCK_TIMEOUT_MS = 45000;
+    var stuckFired = false;
     function tick() {
-      var t = fmtElapsed(Date.now() - t0);
+      var now = Date.now();
+      var t = fmtElapsed(now - t0);
       entries.forEach(function(e) { if (e.timer && e.timer.isConnected) e.timer.textContent = t; });
+      if (!stuckFired && (now - lastUpdateAt) > STUCK_TIMEOUT_MS) {
+        stuckFired = true;
+        entries.forEach(function(e) {
+          if (e.msg && e.msg.isConnected && !e.msg.textContent) {
+            e.msg.textContent = 'No progress — pipeline may have stalled';
+          }
+        });
+        if (typeof stuckCb === 'function') {
+          try { stuckCb(); } catch (_) {}
+        }
+      }
     }
     tick();
     var iv = setInterval(tick, 1000);
     return {
       setMessage: function(msg) {
+        lastUpdateAt = Date.now();
+        stuckFired = false;
+        // Defensive: never wipe the message with empty/undefined — keeps
+        // whatever the last real status was visible instead of going blank.
+        if (msg == null || msg === '') return;
         entries.forEach(function(e) { if (e.msg && e.msg.isConnected) e.msg.textContent = msg; });
       },
       stop: function() {
@@ -1145,7 +1207,9 @@
       { id: 'C',  label: 'Hybrid',    short: 'C'  },
       { id: 'D',  label: 'Canvas',    short: 'D'  },
       { id: 'E',  label: 'AI Vision', short: 'E'  },
+      { id: 'E0', label: 'Vision (033 baseline)', short: 'E0' },
       { id: 'ER', label: 'AI Refined',short: 'E+' },
+      { id: 'EL', label: 'AI Lean',   short: 'EL' },
       { id: 'E2', label: 'AI Fast',   short: 'E2' },
       { id: 'S',  label: 'S2H',       short: 'S'  },
       { id: 'F',  label: 'Curated',   short: 'F'  }
@@ -1225,7 +1289,9 @@
     else if (mode === 'C') activateModeC();
     else if (mode === 'D') activateModeD();
     else if (mode === 'E') activateModeE();
+    else if (mode === 'E0') activateModeEClassic();
     else if (mode === 'ER') activateModeERefined();
+    else if (mode === 'EL') activateModeELean();
     else if (mode === 'E2') activateModeE2();
     else if (mode === 'S') activateModeS();
     else if (mode === 'F') activateModeF();
@@ -1309,6 +1375,16 @@
     progressEl.textContent = 'Starting AI rebuild...';
     inspBody.appendChild(progressEl);
 
+    // Cancel button (shown during rebuild, hidden when done)
+    var cancelBtn = mk('button', 'rb-insp-inp');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'cursor:pointer;text-align:center;margin-top:8px;width:100%;color:#f87171;border-color:rgba(248,113,113,0.3);';
+    cancelBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      if (window.__rbModeE && window.__rbModeE.cancel) window.__rbModeE.cancel();
+    }, {capture: true, signal: sig});
+    inspBody.appendChild(cancelBtn);
+
     // Restore button (shown after rebuild completes)
     var restoreBtn = mk('button', 'rb-insp-inp');
     restoreBtn.textContent = 'Restore original page';
@@ -1345,12 +1421,14 @@
       if (progress.step === 'error') {
         rebuildInProgress = false;
         loader.stop();
+        cancelBtn.style.display = 'none';
         progressEl.style.color = '#f87171';
         loader.setMessage(progress.message);
         updateToast(modeEToast, 'Mode E failed — ' + progress.message, 'error');
       } else if (progress.step === 'done') {
         rebuildInProgress = false;
         loader.stop();
+        cancelBtn.style.display = 'none';
         progressEl.style.color = '#22c55e';
         loader.setMessage(progress.message);
         restoreBtn.style.display = '';
@@ -1379,6 +1457,15 @@
     progressEl.textContent = 'Starting AI rebuild + refinement...';
     inspBody.appendChild(progressEl);
 
+    var cancelBtn = mk('button', 'rb-insp-inp');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'cursor:pointer;text-align:center;margin-top:8px;width:100%;color:#f87171;border-color:rgba(248,113,113,0.3);';
+    cancelBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      if (window.__rbModeE && window.__rbModeE.cancel) window.__rbModeE.cancel();
+    }, {capture: true, signal: sig});
+    inspBody.appendChild(cancelBtn);
+
     var restoreBtn = mk('button', 'rb-insp-inp');
     restoreBtn.textContent = 'Restore original page';
     restoreBtn.style.cssText = 'cursor:pointer;text-align:center;margin-top:8px;width:100%;display:none;';
@@ -1394,28 +1481,189 @@
     var modeEToastMsg = modeEToast.querySelector('span:nth-child(2)');
     var loader = startLoaderTimer([progressEl, modeEToastMsg]);
 
+    // Track whether the orchestrator has bailed to plain Mode E (no refinement).
+    // In fallback mode, the inner runModeE's `done` step is the terminal signal.
+    // In normal mode, the terminal signal is one of refine-clean / refine-done /
+    // refine-inject / refine-skip (after the rebuild has already swapped the DOM).
+    var inFallback = false;
+    var finalized = false;
+    function finalize(progress) {
+      if (finalized) return;
+      finalized = true;
+      rebuildInProgress = false;
+      loader.stop();
+      cancelBtn.style.display = 'none';
+      // refine-skip = base rebuild OK but refinement didn't land (regen failed,
+      // diff failed, empty/identical output). Mark amber so the user sees this
+      // wasn't a clean success without conflating it with the Mode E error state.
+      var isPartial = progress.step === 'refine-skip';
+      progressEl.style.color = isPartial ? '#f59e0b' : '#22c55e';
+      loader.setMessage(progress.message);
+      restoreBtn.style.display = '';
+      var prefix = isPartial ? 'Mode E+ partial — ' : 'Mode E+ complete — ';
+      var toastStatus = isPartial ? 'warning' : 'success';
+      updateToast(modeEToast, prefix + progress.message, toastStatus);
+    }
+
     window.__rbModeE.runWithRefine(function(progress) {
+      if (progress.step === 'error') {
+        if (finalized) return;
+        finalized = true;
+        rebuildInProgress = false;
+        loader.stop();
+        cancelBtn.style.display = 'none';
+        progressEl.style.color = '#f87171';
+        loader.setMessage(progress.message);
+        updateToast(modeEToast, 'Mode E+ failed — ' + progress.message, 'error');
+        return;
+      }
+
+      if (progress.step === 'refine-fallback') {
+        inFallback = true;
+        loader.setMessage(progress.message);
+        return;
+      }
+
+      // Terminal: any post-rebuild refine step (clean/done/inject/skip), OR
+      // the inner runModeE's `done` when we already bailed to fallback.
+      var isTerminalRefine = (
+        progress.step === 'refine-clean' ||
+        progress.step === 'refine-done'  ||
+        progress.step === 'refine-inject' ||
+        progress.step === 'refine-skip'
+      );
+      if (isTerminalRefine || (progress.step === 'done' && inFallback)) {
+        finalize(progress);
+        return;
+      }
+
+      // Intermediate (including the non-fallback `done` that precedes refinement).
+      loader.setMessage(progress.message);
+    });
+  }
+
+  // ============ MODE E0: Vision (033 baseline) ============
+  // A/B reference. Mirror of the runModeE pipeline as it shipped at
+  // checkpoint 033 (commit 2d23d3d). No abort/watchdog/manifest/floater —
+  // pure 033 logic. Lets the user compare today's Mode E head-to-head with
+  // what was the "best stable version" before the refine loop and the
+  // 2026-04-24 additions.
+  function activateModeEClassic() {
+    if (!window.__rbModeEClassic || !window.__rbModeEClassic.run) {
+      inspBody.innerHTML = '';
+      var err = mk('div', 'rb-insp-empty');
+      err.textContent = 'Mode E Classic (033) not loaded. Reload the page and try again.';
+      err.style.color = '#f87171';
+      inspBody.appendChild(err);
+      return;
+    }
+    window.__rbPushUndo = pushUndo;
+
+    inspBody.innerHTML = '';
+    var progressEl = mk('div', 'rb-insp-empty');
+    progressEl.textContent = 'Starting Vision (033 baseline)...';
+    inspBody.appendChild(progressEl);
+
+    var restoreBtn = mk('button', 'rb-insp-inp');
+    restoreBtn.textContent = 'Restore original page';
+    restoreBtn.style.cssText = 'cursor:pointer;text-align:center;margin-top:8px;width:100%;display:none;';
+    restoreBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      window.__rbModeEClassic.restore();
+      switchMode('A');
+    }, {capture: true, signal: sig});
+    inspBody.appendChild(restoreBtn);
+
+    rebuildInProgress = true;
+    var modeEToast = showToast('Mode E0 (033): starting…', 'running');
+    var modeEToastMsg = modeEToast.querySelector('span:nth-child(2)');
+    var loader = startLoaderTimer([progressEl, modeEToastMsg]);
+
+    window.__rbModeEClassic.run(function(progress) {
       if (progress.step === 'error') {
         rebuildInProgress = false;
         loader.stop();
         progressEl.style.color = '#f87171';
         loader.setMessage(progress.message);
-        updateToast(modeEToast, 'Mode E+ failed — ' + progress.message, 'error');
-      } else if (progress.step === 'done' || progress.step === 'refine-done' || progress.step === 'refine-clean' || progress.step === 'refine-inject') {
-        // Don't mark complete on intermediate 'done' (Mode E finished) — wait
-        // for final refine step. 'refine-clean' or 'refine-inject' or an explicit
-        // completion from the orchestrator signals actually done.
-        if (progress.step === 'refine-clean' || progress.step === 'refine-inject' || progress.step === 'refine-done') {
-          rebuildInProgress = false;
-          loader.stop();
-          progressEl.style.color = '#22c55e';
-          loader.setMessage(progress.message);
-          restoreBtn.style.display = '';
-          updateToast(modeEToast, 'Mode E+ complete — ' + progress.message, 'success');
-        } else {
-          // 'done' means Mode E portion finished; refinement is about to start
-          loader.setMessage(progress.message);
-        }
+        updateToast(modeEToast, 'Mode E0 failed — ' + progress.message, 'error');
+      } else if (progress.step === 'done') {
+        rebuildInProgress = false;
+        loader.stop();
+        progressEl.style.color = '#22c55e';
+        loader.setMessage(progress.message);
+        restoreBtn.style.display = '';
+        updateToast(modeEToast, 'Mode E0 (033) complete — ' + progress.message, 'success');
+      } else {
+        loader.setMessage(progress.message);
+      }
+    });
+  }
+
+  // ============ MODE E LEAN: Flash + floater-as-static-clone + no DESIGN.MD ============
+  // Aggressive speed variant of Mode E. Target ~20-40s on a 5-viewport site.
+  function activateModeELean() {
+    if (!window.__rbModeE || !window.__rbModeE.runLean) {
+      inspBody.innerHTML = '';
+      var err = mk('div', 'rb-insp-empty');
+      err.textContent = 'Mode E Lean not loaded. Reload the page and try again.';
+      err.style.color = '#f87171';
+      inspBody.appendChild(err);
+      return;
+    }
+
+    inspBody.innerHTML = '';
+    var progressEl = mk('div', 'rb-insp-empty');
+    progressEl.textContent = 'Starting Lean AI rebuild (Flash)...';
+    inspBody.appendChild(progressEl);
+
+    var cancelBtn = mk('button', 'rb-insp-inp');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'cursor:pointer;text-align:center;margin-top:8px;width:100%;color:#f87171;border-color:rgba(248,113,113,0.3);';
+    cancelBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      if (window.__rbModeE && window.__rbModeE.cancel) window.__rbModeE.cancel();
+    }, {capture: true, signal: sig});
+    inspBody.appendChild(cancelBtn);
+
+    var restoreBtn = mk('button', 'rb-insp-inp');
+    restoreBtn.textContent = 'Restore original page';
+    restoreBtn.style.cssText = 'cursor:pointer;text-align:center;margin-top:8px;width:100%;display:none;';
+    restoreBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      window.__rbModeE.restore();
+      switchMode('A');
+    }, {capture: true, signal: sig});
+    inspBody.appendChild(restoreBtn);
+
+    rebuildInProgress = true;
+    var modeEToast = showToast('Mode E Lean: starting…', 'running');
+    var modeEToastMsg = modeEToast.querySelector('span:nth-child(2)');
+    // Diagnostic — tells us if the toast text span was actually found.
+    // Without this, a silent querySelector miss would leave the loader
+    // writing into nothing, explaining the "spinner + no text" symptom.
+    console.log('[Mode EL activator] toast:', !!modeEToast, 'toastMsgSpan:', !!modeEToastMsg, 'progressEl:', !!progressEl);
+    if (!modeEToastMsg) {
+      console.warn('[Mode EL activator] WARNING: querySelector("span:nth-child(2)") missed the toast text span — loader will have no target to update');
+    }
+    var loader = startLoaderTimer([progressEl, modeEToastMsg]);
+
+    window.__rbModeE.runLean(function(progress) {
+      console.log('[Mode EL activator] received:', progress.step, '-', progress.message);
+      if (progress.step === 'error') {
+        rebuildInProgress = false;
+        loader.stop();
+        cancelBtn.style.display = 'none';
+        progressEl.style.color = '#f87171';
+        loader.setMessage(progress.message);
+        updateToast(modeEToast, 'Mode E Lean failed — ' + progress.message, 'error');
+      } else if (progress.step === 'done') {
+        rebuildInProgress = false;
+        loader.stop();
+        cancelBtn.style.display = 'none';
+        progressEl.style.color = '#22c55e';
+        loader.setMessage(progress.message);
+        restoreBtn.style.display = '';
+        updateToast(modeEToast, 'Mode E Lean complete — ' + progress.message, 'success');
       } else {
         loader.setMessage(progress.message);
       }
