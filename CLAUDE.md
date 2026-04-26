@@ -43,32 +43,36 @@ O Repix é o único tool que **edita sites visualmente no browser** com controle
 - `feat/sidebar-panel` — checkpoint 028 (minidocks, Mode S, Assets 3 seções)
 - `feat/guides-ux-experiment` — checkpoint 029 (Framer fix + Guides UX: keyboard modifiers, arrow nudge, G toggle, inline input, delta preview, corner handles)
 - `feat/smart-text-cascade` — checkpoint 032 (cumulativo com 030+031): smart text cascade, framework override sticky writes, X/Y static→relative, **Link inspector section**, **minidock link icon + font picker + click-to-type**, **compact mode widget (bottom-left dropdown)**, **guide editing blur fix**, font dropdown fixed-positioned, 8 light-mode fixes
+- `feat/mode-e-refinement` — checkpoints 033/034/035: Mode B+E2 (033), refinement loop M1 visível como E+ (034), Mode E hardening + Lean + Classic 033 + per-section refine + asset manifest + Anthropic routing + per-provider keys (035)
 - `claude/ai-image-description-extension-Tp3jY` — main branch
 
 ## Versão atual
-`2.3.0`
+`2.4.0`
 
 ## Estrutura do projeto
 ```
-manifest.json           # Manifest V3 (Chrome/Opera)
-background.js           # Service worker: injeção, APIs IA, captureVisibleTab
-editor/editor.js        # EDITOR PRINCIPAL: ~3800 linhas
-editor/editor.css       # Estilos (seleção, layers, inspector, guides)
-editor/mode-e.js        # Mode E: screenshot → Gemini Vision → HTML rebuild
-editor/detect.js        # Detecção de web builder (8 builders)
-editor/freeze.js        # Congela animações (GSAP, Lenis, Webflow IX)
-editor/rebuild.js       # Rebuild engine v4 (tag elements + disable interactivity)
-editor/mode-b.js        # Mode B: DOM Mirror (standalone, stylesheet extraction + body clone)
-editor/mode-e2.js       # Mode E2: Fast HTML-to-Code (same.new-inspired multi-call Flash pipeline)
-editor/s2h.js           # S2H: Screenshot-to-HTML (2-pass vision pipeline, independente do Mode E)
-editor/fill-popup.js    # Fill popup: Color (canvas picker) / Gradient / Image / Effects + Image-only popup + Color-only popup
-editor/normalize.js     # Curate engine
-overlay/semantic.js     # AI semantic mapping (legado, substituído por Mode E)
-overlay/extractor.js    # Extração de tokens: cores, fonts, radii, shadows, HTML limpo
-panel/panel.js          # Widget flutuante (onboarding, HTML→Design, Smart Remix)
-panel/panel.css         # Estilos do widget
-figma-plugin/           # Plugin Figma companion
-web/                    # Portal Next.js (auth + Stripe + relay API)
+manifest.json                # Manifest V3 (Chrome/Opera)
+background.js                # Service worker: injeção, APIs IA (Gemini + Anthropic via model-name regex), captureVisibleTab
+editor/editor.js             # EDITOR PRINCIPAL
+editor/editor.css            # Estilos (seleção, layers, inspector, guides)
+editor/mode-e.js             # Mode E (parallel viewport) + Lean (Flash + floaters) + cancel/watchdog + asset restore + section bounds
+editor/mode-e-classic.js     # Mode E0: pipeline 033 frozen, A/B reference
+editor/mode-e-diff.js        # Mode E refine: visual diff vision call + JSON salvage scanner pra outputs truncados
+editor/mode-e-refine.js      # Mode E refine: per-section regen (paralelo) + structural validator
+editor/detect.js             # Detecção de web builder (8 builders)
+editor/freeze.js             # Congela animações (GSAP, Lenis, Webflow IX)
+editor/rebuild.js            # Rebuild engine v4 (tag elements + disable interactivity)
+editor/mode-b.js             # Mode B: DOM Mirror (standalone, stylesheet extraction + body clone)
+editor/mode-e2.js            # Mode E2: Fast HTML-to-Code (same.new-inspired multi-call Flash pipeline)
+editor/s2h.js                # S2H: Screenshot-to-HTML (2-pass vision pipeline, independente do Mode E)
+editor/fill-popup.js         # Fill popup: Color (canvas picker) / Gradient / Image / Effects
+editor/normalize.js          # Curate engine
+overlay/semantic.js          # AI semantic mapping (legado, substituído por Mode E)
+overlay/extractor.js         # Tokens, cleanHTML, generateDesignMD + buildAssetManifest (placeholders pra img/svg/bg-image)
+panel/panel.js               # Widget flutuante (onboarding, HTML→Design, Smart Remix)
+panel/panel.css              # Estilos do widget
+figma-plugin/                # Plugin Figma companion
+web/                         # Portal Next.js (auth + Stripe + relay API)
 ```
 
 ## Editor Visual — Estado Atual
@@ -223,10 +227,72 @@ web/                    # Portal Next.js (auth + Stripe + relay API)
 1. ✅ DOM + Screenshot hybrid
 2. ✅ Component chunking
 3. ✅ Image upload path (vision-based DESIGN.md)
-4. ⬜ **Refinement loop** — comparar output com original, re-gerar chunks divergentes
-5. ⬜ **Asset localization** — baixar imagens/fonts para data URLs
-6. ⬜ **History UI** + **Projects UI** (persist.js já tem a API, falta UI)
-7. ⬜ **Smart stitcher** — eliminar declarações CSS duplicadas entre chunks
+4. ✅ **Refinement loop M1** — full-page diff-vs-original + 1-pass regen (E+ visível)
+5. ✅ **Refinement loop M2** — per-section regen paralelo + structural validator (035)
+6. ✅ **Asset manifest** — placeholders no prompt + restore pós-gen (035, evita LLM regenerar logos/imagens)
+7. ⬜ **Asset localization** — baixar imagens/fonts para data URLs (offline-friendly)
+8. ⬜ **History UI** + **Projects UI** (persist.js já tem a API, falta UI)
+9. ⬜ **UI do diff report** — issues retornadas mas não visualizadas (overlay com bbox)
+10. ⬜ **Smart stitcher** — eliminar declarações CSS duplicadas entre chunks
+
+### Mode E hardening (035)
+Trabalho de estabilidade sobre o pipeline existente — não muda a fidelidade, mas tira o pipeline da categoria "às vezes trava silenciosamente" e o coloca em "robusto":
+
+**Cancel + wallclock watchdog:**
+- `_abortCtrl` + `cancelRun()` + `withAbortAndTimeout(p, ms, label)` em mode-e.js
+- Watchdog usa `setInterval(..., 1000)` + `Date.now()` em vez de setTimeout — sobrevive ao Chrome intensive-throttling de tabs em background (que mascarou um diff call stuck por 80 minutos)
+- `wrapTopLevel(fn)` envolve run/runWithRefine/runLean/runViewport: owns o controller, captura erros não-handleados e converte em `step:'error'` (antes virava unhandled rejection silenciosa, loader girava pra sempre)
+- Cancel button visível em todos os Mode E activators
+- Exposto pra satellites: `__rbModeE._guardCall`, `_runWithQueue`, `_captureGuard`
+
+**Capture guard (cross-tab contamination fix):**
+- `installCaptureGuard()` injeta banner amarelo durante captura + listener `visibilitychange` que aborta hard se tab perde visibility (corrige incidente em que conteúdo de outra aba Shopify vazou pro rebuild de gistr.so)
+- background.js: `chrome.windows.update({focused:true})` ANTES de `tabs.update`, espera 500ms (era 150ms), sanity check de tamanho dataUrl (<5KB → retry 1x)
+
+**Asset manifest (extractor.js + restoreAssets):**
+- `RB.buildAssetManifest()` clona DOM e substitui:
+  - `<img>` → `<img data-rb-asset="N" alt="...">` (mantém class/style/width/height pra contexto)
+  - `<svg>` grandes (>200B) → `<svg data-rb-asset="N"></svg>` (innerHTML zerado)
+  - CSS `background-image: url(...)` → atributo `data-rb-asset-bg="N"` no nó (scan limitado a 3000 nós pra não freezar main thread)
+- Cap em 80 assets, dedup por URL/outerHTML, URLs absolutizadas
+- Manifest text injetado no prompt + regra "emita placeholder verbatim"
+- `restoreAssets(html, assets)` em mode-e.js faz swap pós-geração preservando class/style do LLM
+- Reduz drasticamente "logo regenerado como SVG hand-crafted"
+
+**Per-section refine (mode-e-refine.js + mode-e.js):**
+- `runModeEWithRefine` coleta `sectionList` com bbox + html pós-rebuild
+- `runRefine({...sections})` mapeia issues por bbox.y → section index, regen paralelo concurrency=3 com prompt menor (`buildSectionRegenPrompt`, cap 20KB, sem DESIGN.MD)
+- `validateSectionStructure(orig, new)` rejeita updates que perderam tags críticas (header/nav/footer/main/h1) ou colapsaram element count <30%
+- Fallback pra full-page legacy quando caller não passa sections (image-upload entry)
+
+**Diff parser tolerante (mode-e-diff.js):**
+- `salvageJsonArray(raw)` — scanner string-aware que extrai cada `{...}` top-level e tenta parsear individual. LLM truncar mid-item antes perdia tudo; agora salva os itens válidos.
+- Distingue legit clean `[]` de "salvage achou 0 itens em raw não-vazio"
+- Prompt mais terso: max 6 itens (era 8), `issue` cap 80 chars, `maxOutputTokens` 8000 (era 4000)
+
+**Rate-limit retry (background.js):**
+- `modeERebuild` e `modeERefineCall` ganharam loop 3-attempts com exp backoff 2s/4s/8s
+- 429/503/529 considerados retriable
+- Mensagem de erro final inclui hint `(rate limited after retries)` / `(service overloaded after retries)`
+
+**Anthropic provider routing (background.js):**
+- `modeERebuild` roteia por regex `^(claude|opus)/i` no nome do modelo
+- Anthropic Messages API com `anthropic-dangerous-direct-browser-access: true`
+- Per-provider keys no popup: `geminiKey`, `anthropicKey`, `composerKey` (reservado, disabled — sem API pública pro Cursor Composer 2)
+- Migração legada: `apiKey` distribuído por prefix na primeira load (`AIza` → gemini, `sk-ant-` → anthropic). Legacy field hidden.
+
+### Mode E Lean (EL, 035)
+Variante de velocidade. Target: ~20-40s no site de 5 viewports vs ~50-70s do plain Mode E. Visível como **"EL: AI Lean"** no dropdown.
+- Modelo: `gemini-2.5-flash` (em vez de Pro)
+- DESIGN.MD intencionalmente OMITIDO (info já em inline styles do cleanHTML)
+- Concurrency=5, stagger=100ms
+- **Floater-as-static-clone:** captura `position: fixed|sticky` ≥20×20px do DOM com URLs absolutizadas + scripts strippados + style inline com pos/top/left/right/bottom/z-index. Captura roda com floaters HIDDEN em toda viewport — LLM nunca os vê. Pós-stitch, floaters são injetados como PRIMEIRA section.
+- `findFloatingElements()` cap em 3000 nós (sites enterprise tinham 20k+ → getComputedStyle freezing)
+
+### Mode E0 Classic (033 baseline, 035)
+A/B reference. Pipeline 033 frozen em `editor/mode-e-classic.js` (16KB, namespace isolado), exposto via `window.__rbModeEClassic.run/.restore()`. Visível como **"E0: Vision (033 baseline)"**. Sem manifest, sem floaters, sem watchdog, sem viewport parallelism — pra comparar head-to-head com hoje. Reusa background.js hardenizado.
+
+### Mode B: DOM Mirror (reimplementado como editor/mode-b.js standalone, 2.3.0)
 
 ### Mode B: DOM Mirror (reimplementado como editor/mode-b.js standalone, 2.3.0)
 
@@ -464,7 +530,8 @@ Ferramenta de **inspiração e aprendizado** — designer edita para criar algo 
 - Funções compartilhadas entre escopos: escopo externo da IIFE (NÃO dentro de `listen()`)
 - Variáveis compartilhadas (ex: `layerHoverLock`, `isUselessWrapper`): escopo externo
 - Checkpoint stash: `git stash push -m "checkpoint-NNN"`
-- Modelo Gemini atual: `gemini-3.1-pro-preview` (definido em popup/popup.js e background.js). Modelos 2.x são marcados como outdated no background.js
+- Modelo Gemini atual: `gemini-3.1-pro-preview` (definido em panel/panel.js MODEL_DEFAULTS e background.js). Modelos 2.x são marcados como outdated no background.js
+- Settings UI vive em `panel/panel.js` — clicar no ícone da extension dispara `chrome.action.onClicked` que injeta o widget na página. NÃO há `default_popup` no manifest. `popup/` foi órfão por meses até ser removido em 2.4.5
 - rebuild.js v5 crasha o editor — usar v4 até re-implementar com cuidado
 - **Todos os campos do inspector devem ter 25px de altura** — sem exceção
 - Fill popup: iro.js não funciona em sites com CSP restritivo — usar canvas picker nativo
