@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RepixBridge",
-  "version": "2.4.3",
+  "version": "2.4.4",
   "description": "Design without borders — bridge web references to design tools and AI image models",
   "permissions": [
     "contextMenus",

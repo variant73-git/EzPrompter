@@ -146,17 +146,60 @@
                 <option value="anthropic">Anthropic (Claude)</option>
               </select>
             </div>
-            <div class="rb-field" id="rb-apiKeyField">
-              <label>API Key</label>
+            <div class="rb-field" id="rb-legacyApiKeyField" hidden>
+              <label>API Key (legacy)</label>
               <div class="rb-field-row">
                 <input type="password" id="rb-apiKey" placeholder="AIza... / sk-... / sk-ant-...">
                 <button type="button" class="rb-key-toggle" id="rb-toggleKey">Show</button>
               </div>
             </div>
+            <fieldset class="rb-field-group" id="rb-apiKeyField" style="border:1px solid var(--rb-border, rgba(255,255,255,0.12));border-radius:10px;padding:12px;margin:8px 0;">
+              <legend style="padding:0 6px;font-size:11px;opacity:0.7">API Keys (per provider)</legend>
+              <div class="rb-field">
+                <label>Gemini API key</label>
+                <div class="rb-field-row">
+                  <input type="password" id="rb-geminiKey" placeholder="AIza...">
+                  <button type="button" class="rb-key-toggle" data-key-target="rb-geminiKey">Show</button>
+                </div>
+              </div>
+              <div class="rb-field">
+                <label>Anthropic API key (Claude Sonnet/Opus)</label>
+                <div class="rb-field-row">
+                  <input type="password" id="rb-anthropicKey" placeholder="sk-ant-...">
+                  <button type="button" class="rb-key-toggle" data-key-target="rb-anthropicKey">Show</button>
+                </div>
+              </div>
+              <div class="rb-field" style="opacity:0.55">
+                <label>Cursor Composer 2 (coming soon — no public API yet)</label>
+                <div class="rb-field-row">
+                  <input type="password" id="rb-composerKey" placeholder="reserved for future" disabled>
+                  <button type="button" class="rb-key-toggle" data-key-target="rb-composerKey" disabled>Show</button>
+                </div>
+              </div>
+            </fieldset>
             <div class="rb-field">
               <label>Model</label>
-              <input type="text" id="rb-model" placeholder="gemini-1.5-flash">
+              <select id="rb-model">
+                <optgroup label="Google Gemini">
+                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (latest)</option>
+                  <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                  <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+                  <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                  <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                  <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                </optgroup>
+                <optgroup label="Anthropic">
+                  <option value="claude-opus-4-7">Claude Opus 4.7</option>
+                  <option value="claude-opus-4-6">Claude Opus 4.6</option>
+                  <option value="claude-opus-4-5">Claude Opus 4.5</option>
+                  <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+                  <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
+                  <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+                </optgroup>
+              </select>
             </div>
+            <div class="rb-key-hint" id="rb-keyModelHint" hidden></div>
             <div class="rb-field" id="rb-ollamaField" style="display:none">
               <label>Ollama URL</label>
               <input type="text" id="rb-ollamaUrl" placeholder="http://localhost:11434">
@@ -240,7 +283,7 @@
   // --- State ---
   let currentStep = 0;
   let currentMode = 'dark';
-  const MODEL_DEFAULTS = { gemini: 'gemini-1.5-flash', ollama: 'moondream', openai: 'gpt-4o', anthropic: 'claude-sonnet-4-6' };
+  const MODEL_DEFAULTS = { gemini: 'gemini-3.1-pro-preview', ollama: 'moondream', openai: 'gpt-4o', anthropic: 'claude-sonnet-4-6' };
   const AI_URLS = {
     ChatGPT: 'https://chatgpt.com/', Gemini: 'https://gemini.google.com/app',
     Leonardo: 'https://leonardo.ai/ai-art-generator', Ideogram: 'https://ideogram.ai/',
@@ -437,11 +480,100 @@
   // Global helper to show wizard from anywhere
   function goToWizard() { showWizard(); }
 
-  $('#rb-toggleKey').addEventListener('click', () => {
+  // Legacy single-key field toggle (still here for migration display, hidden by default).
+  $('#rb-toggleKey')?.addEventListener('click', () => {
     const inp = $('#rb-apiKey');
+    if (!inp) return;
     inp.type = inp.type === 'password' ? 'text' : 'password';
     $('#rb-toggleKey').textContent = inp.type === 'password' ? 'Show' : 'Hide';
   });
+
+  // Per-provider key show/hide toggles.
+  panel.querySelectorAll('.rb-key-toggle[data-key-target]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const inp = panel.querySelector('#' + btn.getAttribute('data-key-target'));
+      if (!inp) return;
+      if (inp.type === 'password') { inp.type = 'text'; btn.textContent = 'Hide'; }
+      else { inp.type = 'password'; btn.textContent = 'Show'; }
+    });
+  });
+
+  // ─── Panel toast (replaces 2s text flash) ─────────────────────────────────
+  // Floats at the top of the widget itself (not the page) so it can't escape
+  // into the host site. Auto-dismisses for success, persists for error so the
+  // user can copy the failure message before clearing.
+  function getPanelToastHost() {
+    let host = panel.querySelector('#rb-panel-toast-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'rb-panel-toast-host';
+      host.className = 'rb-panel-toast-host';
+      panel.appendChild(host);
+    }
+    return host;
+  }
+  function showPanelToast(message, kind) {
+    const host = getPanelToastHost();
+    const toast = document.createElement('div');
+    toast.className = 'rb-panel-toast rb-panel-toast-' + (kind === 'error' ? 'error' : 'success');
+    const iconWrap = document.createElement('span');
+    iconWrap.className = 'rb-panel-toast-icon';
+    iconWrap.innerHTML = kind === 'error'
+      ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+      : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    const text = document.createElement('span');
+    text.className = 'rb-panel-toast-text';
+    text.textContent = message;
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'rb-panel-toast-close';
+    close.setAttribute('aria-label', 'Dismiss');
+    close.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    close.addEventListener('click', () => { if (toast.parentNode) toast.remove(); });
+    toast.appendChild(iconWrap);
+    toast.appendChild(text);
+    toast.appendChild(close);
+    host.appendChild(toast);
+    if (kind !== 'error') {
+      setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5000);
+    }
+    return toast;
+  }
+
+  // Cross-check between selected model and configured per-provider keys.
+  // background.js modeERebuild routes by model NAME, not by the apiProvider
+  // select — so a saved Anthropic key is silently ignored if the model is
+  // Gemini. This hint surfaces that mismatch BEFORE the user runs Mode E.
+  function updateKeyModelHint() {
+    const hint = $('#rb-keyModelHint');
+    if (!hint) return;
+    const modelEl = $('#rb-model');
+    const model = modelEl ? (modelEl.value || '').trim() : '';
+    const hasGemini = !!($('#rb-geminiKey') && $('#rb-geminiKey').value.trim());
+    const hasAnthropic = !!($('#rb-anthropicKey') && $('#rb-anthropicKey').value.trim());
+    const isClaude = /^(claude|opus)/i.test(model);
+    const isGemini = /^gemini/i.test(model);
+    let message = '';
+    let kind = 'amber';
+    if (isClaude && !hasAnthropic) {
+      message = 'Model "' + model + '" needs an Anthropic key — paste your sk-ant-... above before saving.';
+      kind = 'error';
+    } else if (isGemini && !hasGemini) {
+      message = 'Model "' + model + '" needs a Gemini key — paste your AIza... above before saving.';
+      kind = 'error';
+    } else if (isGemini && hasAnthropic && hasGemini) {
+      message = 'Anthropic key is saved but the active model is Gemini — the Anthropic key won\'t be used. Switch model to claude-* / opus-* to actually call Anthropic.';
+    } else if (isClaude && hasGemini && hasAnthropic) {
+      message = 'Gemini key is saved but the active model is Claude/Opus — the Gemini key won\'t be used until you switch the model.';
+    }
+    if (message) {
+      hint.textContent = message;
+      hint.classList.toggle('rb-key-hint-error', kind === 'error');
+      hint.hidden = false;
+    } else {
+      hint.hidden = true;
+    }
+  }
 
   $('#rb-apiProvider').addEventListener('change', () => {
     const p = $('#rb-apiProvider').value;
@@ -450,14 +582,39 @@
     $('#rb-apiKeyField').style.display = isOllama ? 'none' : '';
     const cur = $('#rb-model').value;
     if (!cur || Object.values(MODEL_DEFAULTS).includes(cur)) $('#rb-model').value = MODEL_DEFAULTS[p];
+    updateKeyModelHint();
   });
+
+  // Re-evaluate the hint on model change OR either key change so it tracks
+  // the user's actual edits (not just on save).
+  $('#rb-model').addEventListener('change', updateKeyModelHint);
+  $('#rb-geminiKey').addEventListener('input', updateKeyModelHint);
+  $('#rb-anthropicKey').addEventListener('input', updateKeyModelHint);
 
   $('#rb-settingsForm').addEventListener('submit', (e) => {
     e.preventDefault();
+    const provider = $('#rb-apiProvider').value;
+    const geminiKey = $('#rb-geminiKey').value.trim();
+    const anthropicKey = $('#rb-anthropicKey').value.trim();
+    const composerKey = $('#rb-composerKey').value.trim();
+    const legacyKey = ($('#rb-apiKey')?.value || '').trim();
+
+    // Mirror the popup's behavior: keep legacy `apiKey` in sync with the
+    // active provider's key so any older code path that still reads `apiKey`
+    // keeps working without per-call rewrites. Backend handlers prefer the
+    // per-provider key when present, but fall back to apiKey otherwise.
+    let activeKey = '';
+    if (provider === 'anthropic') activeKey = anthropicKey;
+    else if (provider === 'gemini') activeKey = geminiKey;
+    else activeKey = legacyKey;
+
     chrome.storage.sync.set({
-      apiProvider: $('#rb-apiProvider').value,
-      apiKey: $('#rb-apiKey').value.trim(),
-      model: $('#rb-model').value.trim() || MODEL_DEFAULTS[$('#rb-apiProvider').value],
+      apiProvider: provider,
+      apiKey: activeKey,
+      geminiKey: geminiKey,
+      anthropicKey: anthropicKey,
+      composerKey: composerKey,
+      model: $('#rb-model').value.trim() || MODEL_DEFAULTS[provider],
       designTool: $('#rb-designTool').value,
       ollamaUrl: $('#rb-ollamaUrl').value.trim() || 'http://localhost:11434',
       language: $('#rb-language').value,
@@ -465,20 +622,51 @@
       replicateApiKey: $('#rb-replicateKey').value.trim(),
       authToken: ($('#rb-authToken')?.value || '').trim()
     }, () => {
-      $('#rb-status').textContent = 'Settings saved!';
-      setTimeout(() => { $('#rb-status').textContent = ''; }, 2000);
+      if (chrome.runtime.lastError) {
+        showPanelToast('Save failed — ' + chrome.runtime.lastError.message, 'error');
+        return;
+      }
+      const savedBits = [];
+      if (anthropicKey) savedBits.push('Anthropic key');
+      if (geminiKey) savedBits.push('Gemini key');
+      savedBits.push('provider: ' + provider);
+      if ($('#rb-model').value) savedBits.push('model: ' + $('#rb-model').value);
+      showPanelToast('Settings saved — ' + savedBits.join(', '), 'success');
     });
   });
 
   function loadSettings() {
     chrome.storage.sync.get({
-      apiProvider: 'gemini', apiKey: '', model: 'gemini-1.5-flash',
+      apiProvider: 'gemini', apiKey: '', geminiKey: '', anthropicKey: '', composerKey: '',
+      model: 'gemini-3.1-pro-preview',
       designTool: 'figma', ollamaUrl: 'http://localhost:11434', language: 'en',
       stabilityApiKey: '', replicateApiKey: '', authToken: ''
     }, (s) => {
       $('#rb-apiProvider').value = s.apiProvider;
       $('#rb-apiKey').value = s.apiKey;
-      $('#rb-model').value = s.model;
+
+      // Migrate legacy `apiKey` into per-provider slots by prefix on first
+      // load. After that, per-provider keys are the source of truth.
+      let geminiKey = s.geminiKey || '';
+      let anthropicKey = s.anthropicKey || '';
+      const composerKey = s.composerKey || '';
+      if (s.apiKey) {
+        if (!geminiKey && s.apiKey.startsWith('AIza')) geminiKey = s.apiKey;
+        if (!anthropicKey && s.apiKey.startsWith('sk-ant-')) anthropicKey = s.apiKey;
+      }
+      $('#rb-geminiKey').value = geminiKey;
+      $('#rb-anthropicKey').value = anthropicKey;
+      $('#rb-composerKey').value = composerKey;
+
+      // The model field is now a <select>; setting .value picks the matching
+      // option if present, or falls back silently to no selection if the
+      // saved model isn't in the option list (rare, but possible after model
+      // pruning). Default to the active provider's MODEL_DEFAULTS in that
+      // case so the dropdown isn't blank.
+      const modelSel = $('#rb-model');
+      modelSel.value = s.model;
+      if (!modelSel.value) modelSel.value = MODEL_DEFAULTS[s.apiProvider] || MODEL_DEFAULTS.gemini;
+
       $('#rb-designTool').value = s.designTool;
       $('#rb-ollamaUrl').value = s.ollamaUrl;
       $('#rb-language').value = s.language;
@@ -488,6 +676,7 @@
       if (authField) authField.value = s.authToken;
       $('#rb-ollamaField').style.display = s.apiProvider === 'ollama' ? '' : 'none';
       $('#rb-apiKeyField').style.display = s.apiProvider === 'ollama' ? 'none' : '';
+      updateKeyModelHint();
     });
   }
 
