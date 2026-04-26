@@ -326,7 +326,15 @@ body {
   color: var(--rb-bg);
   border-color: var(--rb-accent);
 }
-.rb-btn-primary:hover { opacity: 0.85; }
+.rb-btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+}
+.rb-btn-primary:active { transform: translateY(0) scale(0.97); }
+.rb-btn-primary:focus-visible {
+  outline: 2px solid var(--rb-fg);
+  outline-offset: 2px;
+}
 .rb-btn-outline:hover {
   background: var(--rb-accent);
   color: var(--rb-bg);
