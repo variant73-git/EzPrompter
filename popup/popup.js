@@ -274,6 +274,45 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // Cross-check between the selected model and the per-provider keys actually
+  // present. The pipeline (background.js modeERebuild) routes by model NAME,
+  // not by the apiProvider select — so a saved Anthropic key is silently
+  // ignored if the model is Gemini. This hint makes that case visible
+  // BEFORE the user runs Mode E and wonders why their Anthropic key didn't
+  // get used.
+  const keyModelHint = document.getElementById('keyModelHint');
+  function updateKeyModelHint() {
+    if (!keyModelHint) return;
+    const model = (modelInput && modelInput.value) ? modelInput.value.trim() : '';
+    const hasGemini = !!(geminiKeyInput && geminiKeyInput.value.trim());
+    const hasAnthropic = !!(anthropicKeyInput && anthropicKeyInput.value.trim());
+    const isClaude = /^(claude|opus)/i.test(model);
+    const isGemini = /^gemini/i.test(model);
+
+    let message = '';
+    let kind = 'amber';
+
+    if (isClaude && !hasAnthropic) {
+      message = 'Model "' + model + '" needs an Anthropic key — paste your sk-ant-... above before saving.';
+      kind = 'error';
+    } else if (isGemini && !hasGemini) {
+      message = 'Model "' + model + '" needs a Gemini key — paste your AIza... above before saving.';
+      kind = 'error';
+    } else if (isGemini && hasAnthropic && hasGemini) {
+      message = 'Anthropic key is saved but the active model is Gemini — the Anthropic key won\'t be used. Switch the model to claude-* / opus-* to actually call Anthropic.';
+    } else if (isClaude && hasGemini && hasAnthropic) {
+      message = 'Gemini key is saved but the active model is Claude/Opus — the Gemini key won\'t be used until you switch the model.';
+    }
+
+    if (message) {
+      keyModelHint.textContent = message;
+      keyModelHint.classList.toggle('rb-key-hint-error', kind === 'error');
+      keyModelHint.hidden = false;
+    } else {
+      keyModelHint.hidden = true;
+    }
+  }
+
   function loadSettings() {
     chrome.storage.sync.get(SYNC_DEFAULTS, (settings) => {
       if (providerSelect) providerSelect.value = settings.apiProvider;
@@ -298,9 +337,16 @@ document.addEventListener('DOMContentLoaded', () => {
       if (composerKeyInput) composerKeyInput.value = composerKey;
 
       updateProviderUI(settings.apiProvider);
+      updateKeyModelHint();
     });
     checkAuth();
   }
+
+  // Re-evaluate the hint whenever the model select OR either key field changes
+  // — covers the typical flow (paste key, then change model) and the reverse.
+  if (modelInput) modelInput.addEventListener('change', updateKeyModelHint);
+  if (geminiKeyInput) geminiKeyInput.addEventListener('input', updateKeyModelHint);
+  if (anthropicKeyInput) anthropicKeyInput.addEventListener('input', updateKeyModelHint);
 
   if (toggleKeyBtn && apiKeyInput) {
     toggleKeyBtn.addEventListener('click', () => {

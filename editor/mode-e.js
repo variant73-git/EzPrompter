@@ -491,6 +491,9 @@
   var VIEWPORT_CALL_TIMEOUT_MS = 180000; // 3 min per viewport
   function screenshotToHTML(screenshotDataUrl, designMD, cleanHTML, manifestText, opts) {
     opts = opts || {};
+    // Returns the FULL response object so the caller can aggregate provider /
+    // model / tokens / cost across viewports. Previously this resolved to the
+    // bare html string — pipeline lost all per-call metrics.
     var p = new Promise(function(resolve, reject) {
       chrome.runtime.sendMessage(
         {
@@ -500,7 +503,7 @@
           model: opts.model || null
         },
         function(response) {
-          if (response && response.html) resolve(response.html);
+          if (response && response.html) resolve(response);
           else if (response && response.error) reject(new Error(response.error));
           else reject(new Error('No response from AI'));
         }
@@ -613,6 +616,57 @@
     } catch(e) {
       return null;
     }
+  }
+
+  // ─── Run cost / token / wall-time accumulator ────────────────────────────
+  // Per-pipeline totals so the final toast can summarize "what just ran".
+  // Shared between Mode E, E+, EL — anything that fans out viewport calls
+  // and wants a consolidated tally.
+  function makeRunTotals() {
+    return {
+      tokensIn: 0,
+      tokensOut: 0,
+      costUSD: 0,
+      costUnknown: false, // true if any call lacked pricing data
+      model: '',
+      provider: '',
+      startMs: Date.now()
+    };
+  }
+  function accumulateCall(totals, resp) {
+    if (!resp) return;
+    if (resp.usage) {
+      totals.tokensIn += resp.usage.in || 0;
+      totals.tokensOut += resp.usage.out || 0;
+    }
+    if (resp.costUSD == null) totals.costUnknown = true;
+    else totals.costUSD += resp.costUSD;
+    if (resp.model) totals.model = resp.model;
+    if (resp.provider) totals.provider = resp.provider;
+  }
+  function fmtTokens(n) {
+    if (n < 1000) return String(n);
+    if (n < 1000000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return (n / 1000000).toFixed(2).replace(/\.?0+$/, '') + 'M';
+  }
+  function fmtCostShort(usd) {
+    if (usd < 0.01) return '$' + usd.toFixed(4);
+    if (usd < 1)    return '$' + usd.toFixed(3);
+    return '$' + usd.toFixed(2);
+  }
+  function fmtElapsedShort(ms) {
+    var s = Math.round(ms / 1000);
+    var m = Math.floor(s / 60);
+    var rs = s % 60;
+    return m + ':' + (rs < 10 ? '0' : '') + rs;
+  }
+  function formatRunSummary(totals) {
+    var elapsed = fmtElapsedShort(Date.now() - totals.startMs);
+    var modelLabel = totals.model || 'unknown model';
+    var costLabel = totals.costUnknown ? '$?' : fmtCostShort(totals.costUSD);
+    return modelLabel + ', ' + elapsed + ', ' +
+           fmtTokens(totals.tokensIn) + ' in / ' +
+           fmtTokens(totals.tokensOut) + ' out, ' + costLabel;
   }
 
   // Queue-based parallel runner that respects rate limits. Processes up to
@@ -1534,12 +1588,14 @@
     var VIEWPORT_CONCURRENCY = 3;
     var VIEWPORT_STAGGER_MS = 200;
     var completed = 0;
+    var totals = makeRunTotals();
     log({step: 'rebuild', message: 'Rebuilding with AI (0/' + screenshots.length + ', concurrency=' + VIEWPORT_CONCURRENCY + ')...', current: 4, total: 6});
 
     var viewportResults = await runWithQueue(screenshots, VIEWPORT_CONCURRENCY, VIEWPORT_STAGGER_MS, async function(shot, idx) {
       try {
-        var html = await screenshotToHTML(shot.dataUrl, designMD, pageStructure, assetManifestText);
-        var cleaned = cleanHTML(html);
+        var resp = await screenshotToHTML(shot.dataUrl, designMD, pageStructure, assetManifestText);
+        accumulateCall(totals, resp);
+        var cleaned = cleanHTML(resp.html);
         if (cleaned.length > 10) {
           cleaned = restoreAssets(cleaned, assetManifest);
         } else {
@@ -1618,7 +1674,11 @@
     // Step 6: Replace page content
     log({step: 'replace', message: 'Replacing page content...', current: 5, total: 6});
     var rebuilt = replacePageContent(sectionsHTML);
-    log({step: 'done', message: 'Rebuild complete! ' + sectionsHTML.length + ' sections.', current: 6, total: 6});
+    var summary = formatRunSummary(totals);
+    console.log('[Mode E] Run summary: ' + summary +
+      ' (' + sectionsHTML.length + ' sections' +
+      (failedCount ? ', ' + failedCount + ' failed' : '') + ')');
+    log({step: 'done', message: 'Rebuild complete! ' + sectionsHTML.length + ' sections — ' + summary, current: 6, total: 6});
 
     return rebuilt;
   }
@@ -1694,13 +1754,15 @@
     var VIEWPORT_CONCURRENCY = 5;
     var VIEWPORT_STAGGER_MS = 100;
     var completed = 0;
+    var totals = makeRunTotals();
     log({step: 'rebuild', message: 'Rebuilding with Flash (0/' + screenshots.length + ', concurrency=' + VIEWPORT_CONCURRENCY + ')...', current: 4, total: 6});
 
     var viewportResults = await runWithQueue(screenshots, VIEWPORT_CONCURRENCY, VIEWPORT_STAGGER_MS, async function(shot, idx) {
       try {
         // DESIGN.MD passed as '' — prompt skips the design section entirely.
-        var html = await screenshotToHTML(shot.dataUrl, '', pageStructure, assetManifestText, { model: LEAN_MODEL });
-        var cleaned = cleanHTML(html);
+        var resp = await screenshotToHTML(shot.dataUrl, '', pageStructure, assetManifestText, { model: LEAN_MODEL });
+        accumulateCall(totals, resp);
+        var cleaned = cleanHTML(resp.html);
         if (cleaned.length > 10) cleaned = restoreAssets(cleaned, assetManifest);
         else cleaned = '';
         completed++;
@@ -1765,7 +1827,12 @@
     log({step: 'replace', message: 'Stitching with ' + (floatersHTML ? 'floaters + ' : '') + sectionsHTML.length + ' sections...', current: 5, total: 6});
     var finalSections = floatersHTML ? [floatersHTML].concat(sectionsHTML) : sectionsHTML;
     var rebuilt = replacePageContent(finalSections);
-    log({step: 'done', message: 'Lean rebuild complete — ' + sectionsHTML.length + ' sections' + (failedCount ? ' (' + failedCount + ' failed)' : '') + (floatersHTML ? ' + floaters' : ''), current: 6, total: 6});
+    var summary = formatRunSummary(totals);
+    console.log('[Mode E Lean] Run summary: ' + summary +
+      ' (' + sectionsHTML.length + ' sections' +
+      (failedCount ? ', ' + failedCount + ' failed' : '') +
+      (floatersHTML ? ', + floaters' : '') + ')');
+    log({step: 'done', message: 'Lean rebuild complete — ' + sectionsHTML.length + ' sections' + (failedCount ? ' (' + failedCount + ' failed)' : '') + (floatersHTML ? ' + floaters' : '') + ' — ' + summary, current: 6, total: 6});
     return rebuilt;
   }
 

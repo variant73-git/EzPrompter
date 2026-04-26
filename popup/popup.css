@@ -408,6 +408,26 @@ body {
   color: #22c55e;
 }
 
+/* Amber/red hint chip surfaced above Save when the selected model and the
+ * configured API keys don't line up — e.g. user pasted an Anthropic key but
+ * left the model on Gemini, so the Anthropic key won't actually be used. */
+.rb-key-hint {
+  margin: 8px 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+}
+.rb-key-hint[hidden] { display: none; }
+.rb-key-hint-error {
+  background: rgba(248, 113, 113, 0.15);
+  border-color: rgba(248, 113, 113, 0.35);
+  color: #f87171;
+}
+
 /* --- Popup toast (persistent, dismissable) --- */
 .rb-popup-toast-host {
   position: fixed;

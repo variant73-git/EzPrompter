@@ -2,6 +2,43 @@
 
 importScripts('overlay/semantic.js');
 
+// ─── Model pricing (USD per 1M tokens, [input, output]) ─────────────────────
+// Approximations from research/2026-04-25-pricing-synthesis.md. The synthesis
+// fell back to 4.5-generation floors for Sonnet 4.6 / Opus 4.7 since 4.6/4.7
+// public docs weren't fully indexed at extraction time. Used here for ESTIMATED
+// per-call cost — not for billing; refresh before any pricing-decision lock.
+//
+// Note: I corrected the agent's Opus number ($5/$25) to the standard published
+// Opus tier ($15/$75) which is consistent across recent generations.
+const MODEL_PRICING = {
+  'gemini-3.1-pro-preview':    [2.00,  12.00],
+  'gemini-2.5-pro':            [2.00,  12.00],
+  'gemini-2.5-flash':          [0.30,  2.50],
+  'gemini-2.5-flash-lite':     [0.10,  0.40],
+  'gemini-2.0-flash':          [0.10,  0.40],
+  'gemini-1.5-pro':            [1.25,  5.00],
+  'gemini-1.5-flash':          [0.075, 0.30],
+  'claude-sonnet-4-6':         [3.00,  15.00],
+  'claude-sonnet-4-5':         [3.00,  15.00],
+  'claude-opus-4-7':           [15.00, 75.00],
+  'claude-opus-4-6':           [15.00, 75.00],
+  'claude-opus-4-5':           [15.00, 75.00],
+  'claude-haiku-4-5-20251001': [1.00,  5.00]
+};
+function computeCost(model, tokensIn, tokensOut) {
+  const rate = MODEL_PRICING[model];
+  if (!rate) return null; // unknown model — caller logs N/A
+  const inUSD = (tokensIn || 0) * rate[0] / 1_000_000;
+  const outUSD = (tokensOut || 0) * rate[1] / 1_000_000;
+  return inUSD + outUSD;
+}
+function fmtCost(usd) {
+  if (usd == null) return 'N/A';
+  if (usd < 0.001) return '$' + usd.toFixed(5);
+  if (usd < 1)     return '$' + usd.toFixed(4);
+  return '$' + usd.toFixed(3);
+}
+
 // Migrate old model names on every startup (not just onInstalled)
 chrome.storage.sync.get(['model'], (settings) => {
   var old = settings.model || '';
@@ -380,6 +417,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // Rate-limit-aware fetch with exponential backoff (2s → 4s → 8s).
         // Both Gemini (429/503) and Anthropic (429/529) use these codes; we
         // treat 429/503/529 as retriable.
+        const wallStart = Date.now();
         let response;
         let attempt = 0;
         const maxAttempts = 3;
@@ -406,7 +444,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         const data = await response.json();
         const html = parseHtml(data);
-        sendResponse({html: html});
+        const wallMs = Date.now() - wallStart;
+
+        // Provider-specific token usage extraction. Capture even on partial
+        // success so the pipeline can aggregate cost from each call. Note:
+        // Gemini's `usageMetadata` includes image input as part of
+        // `promptTokenCount`, so the figure already reflects screenshot cost.
+        let tokensIn = 0, tokensOut = 0;
+        if (isAnthropic) {
+          const u = (data && data.usage) || {};
+          tokensIn = u.input_tokens || 0;
+          tokensOut = u.output_tokens || 0;
+        } else {
+          const u = (data && data.usageMetadata) || {};
+          tokensIn = u.promptTokenCount || 0;
+          tokensOut = u.candidatesTokenCount || 0;
+        }
+        const costUSD = computeCost(model, tokensIn, tokensOut);
+
+        // Single structured log line per call — easy to grep, easy to total
+        // when reading a benchmark transcript by hand.
+        console.log(`[Repix modeERebuild] provider=${providerLabel} model=${model} tokensIn=${tokensIn} tokensOut=${tokensOut} costUSD=${fmtCost(costUSD)} wallMs=${wallMs}`);
+
+        sendResponse({
+          html: html,
+          provider: providerLabel,
+          model: model,
+          usage: { in: tokensIn, out: tokensOut },
+          costUSD: costUSD,
+          wallMs: wallMs
+        });
       } catch(e) {
         sendResponse({error: e.message});
       }
@@ -488,6 +555,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // Same rate-limit-aware retry as modeERebuild. Refine and diff calls
         // share the same Gemini quota pool, so bursts from parallel section
         // regens can trip 429s just as easily as the viewport path.
+        const wallStart = Date.now();
         let response;
         let attempt = 0;
         const maxAttempts = 3;
@@ -516,7 +584,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         const data = await response.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        sendResponse({text});
+        const wallMs = Date.now() - wallStart;
+        const u = (data && data.usageMetadata) || {};
+        const tokensIn = u.promptTokenCount || 0;
+        const tokensOut = u.candidatesTokenCount || 0;
+        const costUSD = computeCost(model, tokensIn, tokensOut);
+        console.log(`[Repix modeERefineCall] provider=Gemini model=${model} tokensIn=${tokensIn} tokensOut=${tokensOut} costUSD=${fmtCost(costUSD)} wallMs=${wallMs}`);
+
+        sendResponse({
+          text: text,
+          provider: 'Gemini',
+          model: model,
+          usage: { in: tokensIn, out: tokensOut },
+          costUSD: costUSD,
+          wallMs: wallMs
+        });
       } catch (e) {
         sendResponse({error: e.message});
       }
