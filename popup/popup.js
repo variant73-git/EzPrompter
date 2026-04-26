@@ -191,6 +191,55 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // ─── Popup toast (persistent feedback) ─────────────────────
+  // Replaces the previous 2-second text flash on `#status`, which was easy
+  // to miss because it lived below the fold of the Settings view and had no
+  // visual weight. The toast is fixed at the top, has color-coded chrome,
+  // a dismiss button, and only auto-closes on success (errors stay until
+  // the user actively clears them).
+  function getToastHost() {
+    let host = document.getElementById('rb-popup-toast-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'rb-popup-toast-host';
+      host.className = 'rb-popup-toast-host';
+      document.body.appendChild(host);
+    }
+    return host;
+  }
+  function showPopupToast(message, kind) {
+    const host = getToastHost();
+    const toast = document.createElement('div');
+    toast.className = 'rb-popup-toast rb-popup-toast-' + (kind === 'error' ? 'error' : 'success');
+
+    const iconWrap = document.createElement('span');
+    iconWrap.className = 'rb-popup-toast-icon';
+    iconWrap.innerHTML = kind === 'error'
+      ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+      : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+    const text = document.createElement('span');
+    text.className = 'rb-popup-toast-text';
+    text.textContent = message;
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'rb-popup-toast-close';
+    close.setAttribute('aria-label', 'Dismiss');
+    close.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    close.addEventListener('click', () => { if (toast.parentNode) toast.remove(); });
+
+    toast.appendChild(iconWrap);
+    toast.appendChild(text);
+    toast.appendChild(close);
+    host.appendChild(toast);
+
+    if (kind !== 'error') {
+      setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5000);
+    }
+    return toast;
+  }
+
   // ─── Settings Form ─────────────────────────────────────────
 
   const settingsForm = document.getElementById('settingsForm');
@@ -304,10 +353,20 @@ document.addEventListener('DOMContentLoaded', () => {
         language: languageSelect ? languageSelect.value : 'en'
       };
       chrome.storage.sync.set(settings, () => {
-        if (status) {
-          status.textContent = 'Settings saved!';
-          setTimeout(() => { status.textContent = ''; }, 2000);
+        if (chrome.runtime.lastError) {
+          showPopupToast('Save failed — ' + chrome.runtime.lastError.message, 'error');
+          return;
         }
+        // Build a confirmation that names what was actually saved so the user
+        // can tell at a glance whether their Anthropic / Gemini key landed
+        // (the previous 2s text-flash was easy to miss and didn't say WHICH
+        // key was stored).
+        const savedBits = [];
+        if (anthropicKey) savedBits.push('Anthropic key');
+        if (geminiKey) savedBits.push('Gemini key');
+        savedBits.push('provider: ' + provider);
+        if (settings.model) savedBits.push('model: ' + settings.model);
+        showPopupToast('Settings saved — ' + savedBits.join(', '), 'success');
       });
     });
   }
