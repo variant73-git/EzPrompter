@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "RepixBridge",
-  "version": "2.4.6",
-  "description": "Design without borders — bridge web references to design tools and AI image models",
+  "name": "Uncraft",
+  "version": "2.5.0",
+  "description": "Uncraft — design tool for the web. Edit any site visually with AI rebuild + design-tool ergonomics, in your browser.",
   "permissions": [
     "contextMenus",
     "storage",

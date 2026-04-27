@@ -1,7 +1,9 @@
-# RepixBridge — Contexto do Projeto
+# Uncraft — Contexto do Projeto
+
+> **Renomeado em 2026-04-27** — antes era "RepixBridge". A pasta foi movida pra `~/Desktop/IA/Uncraft/`. Namespace de código (`__rb*`, `rb-*` classes) preservado intencionalmente — rename interno seria muito invasivo sem benefício funcional.
 
 ## O que é
-**RepixBridge** é uma extensão Chrome que funciona como um **design tool para a web** — o designer edita qualquer site visualmente, sem sair do browser. Slogan: "Design without borders".
+**Uncraft** é uma extensão Chrome que funciona como um **design tool para a web** — o designer edita qualquer site visualmente, sem sair do browser. Slogan: "Design without borders".
 
 Três frentes:
 1. **Page Editor** — editor Figma-like: layers panel, inspector, spacing guides, edição visual in-place
@@ -9,7 +11,7 @@ Três frentes:
 3. **Image Remix** — reverse-engineer do prompt de qualquer imagem + geração inline via IA
 
 ## Posicionamento Estratégico
-O Repix é o único tool que **edita sites visualmente no browser** com controles de design tool (layers, inspector, spacing). Nenhum competidor faz isso:
+Uncraft é o único tool que **edita sites visualmente no browser** com controles de design tool (layers, inspector, spacing). Nenhum competidor faz isso:
 - html.to.design leva pro Figma (sai do browser)
 - same.new gera código React (output é código, não design)
 - ClonewebX exporta para builders (sai do browser)

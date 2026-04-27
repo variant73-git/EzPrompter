@@ -35,7 +35,7 @@
       <header class="rb-header">
         <div class="rb-logo">
           <div class="rb-logo-name">
-            <span class="rb-logo-repix"><i>Repix</i></span><span class="rb-logo-bridge">Bridge</span>
+            <span class="rb-logo-repix"><i>Un</i></span><span class="rb-logo-bridge">craft</span>
           </div>
           <div class="rb-logo-slogan">Design without borders</div>
         </div>
