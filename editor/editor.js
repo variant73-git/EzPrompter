@@ -1429,10 +1429,15 @@
         rebuildInProgress = false;
         loader.stop();
         cancelBtn.style.display = 'none';
-        progressEl.style.color = '#22c55e';
+        // Honest signaling: pipeline emits "Rebuild PARTIAL — X/Y sections
+        // (N failed)" when any viewport bailed (rate limit, timeout, etc).
+        // Color amber + flag the toast so the user can't mistake an
+        // incomplete rebuild for a clean success.
+        var partial = /\bPARTIAL\b|\bfailed\b/i.test(progress.message);
+        progressEl.style.color = partial ? '#f59e0b' : '#22c55e';
         loader.setMessage(progress.message);
         restoreBtn.style.display = '';
-        updateToast(modeEToast, 'Mode E complete — ' + progress.message, 'success');
+        updateToast(modeEToast, (partial ? 'Mode E PARTIAL — ' : 'Mode E complete — ') + progress.message, partial ? 'warning' : 'success');
       } else {
         loader.setMessage(progress.message);
       }
@@ -1660,10 +1665,11 @@
         rebuildInProgress = false;
         loader.stop();
         cancelBtn.style.display = 'none';
-        progressEl.style.color = '#22c55e';
+        var partial = /\bPARTIAL\b|\bfailed\b/i.test(progress.message);
+        progressEl.style.color = partial ? '#f59e0b' : '#22c55e';
         loader.setMessage(progress.message);
         restoreBtn.style.display = '';
-        updateToast(modeEToast, 'Mode E Lean complete — ' + progress.message, 'success');
+        updateToast(modeEToast, (partial ? 'Mode E Lean PARTIAL — ' : 'Mode E Lean complete — ') + progress.message, partial ? 'warning' : 'success');
       } else {
         loader.setMessage(progress.message);
       }

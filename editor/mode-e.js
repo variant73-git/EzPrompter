@@ -1585,11 +1585,32 @@
     // serialized the whole wave. 3 with 200ms stagger buys stability without
     // much wallclock cost (4 waves instead of 1 for 8 viewports, but each
     // wave still dominates at ~max-call-latency).
-    var VIEWPORT_CONCURRENCY = 3;
-    var VIEWPORT_STAGGER_MS = 200;
+    // Anthropic tier-default rate limit is 30,000 INPUT tokens/min, and our
+    // per-viewport prompt sits at ~19K tokens (DESIGN.md + cleanHTML + image).
+    // Two parallel calls already exceed the window, so concurrency=3 silently
+    // burns 3-4 of 7 viewports on rate-limit errors. Detected in field on
+    // both Sonnet 4.6 and Opus 4.7 runs (the latter cost $1.71 for 3/7).
+    //
+    // For Anthropic models we run sequentially with 35s between completions,
+    // which keeps total rolling-window input ≤30K and lets every viewport
+    // land. Wall time cost: ~5 min for 7 viewports vs ~1 min parallel, but
+    // 100% completion vs 40-60% completion is the right trade.
+    //
+    // Gemini paid tier (60 RPM) keeps the original concurrency=3 / 200ms.
+    var activeModel = '';
+    try {
+      var s = await new Promise(function(resolve) { chrome.storage.sync.get(['model'], resolve); });
+      activeModel = s.model || '';
+    } catch (_) {}
+    var isAnthropic = /^(claude|opus)/i.test(activeModel);
+    var VIEWPORT_CONCURRENCY = isAnthropic ? 1 : 3;
+    var VIEWPORT_STAGGER_MS = isAnthropic ? 35000 : 200;
+    if (isAnthropic) {
+      console.log('[Mode E] Anthropic detected (' + activeModel + ') — sequential @ 35s/call to respect 30K input tokens/min rate limit. Expect ~5 min for 7 viewports.');
+    }
     var completed = 0;
     var totals = makeRunTotals();
-    log({step: 'rebuild', message: 'Rebuilding with AI (0/' + screenshots.length + ', concurrency=' + VIEWPORT_CONCURRENCY + ')...', current: 4, total: 6});
+    log({step: 'rebuild', message: 'Rebuilding with AI (0/' + screenshots.length + (isAnthropic ? ', sequential for Anthropic' : ', concurrency=' + VIEWPORT_CONCURRENCY) + ')...', current: 4, total: 6});
 
     var viewportResults = await runWithQueue(screenshots, VIEWPORT_CONCURRENCY, VIEWPORT_STAGGER_MS, async function(shot, idx) {
       try {
@@ -1678,7 +1699,14 @@
     console.log('[Mode E] Run summary: ' + summary +
       ' (' + sectionsHTML.length + ' sections' +
       (failedCount ? ', ' + failedCount + ' failed' : '') + ')');
-    log({step: 'done', message: 'Rebuild complete! ' + sectionsHTML.length + ' sections — ' + summary, current: 6, total: 6});
+    // Honest signaling: if any viewport failed (rate-limit, timeout, etc),
+    // mark the run as PARTIAL so the editor toast/loader can color it amber
+    // instead of green. Burned several Anthropic runs where the toast said
+    // "Rebuild complete! 4 sections" but 3 sections were silently missing.
+    var doneMessage = failedCount
+      ? 'Rebuild PARTIAL — ' + sectionsHTML.length + '/' + screenshots.length + ' sections (' + failedCount + ' failed) — ' + summary
+      : 'Rebuild complete! ' + sectionsHTML.length + ' sections — ' + summary;
+    log({step: 'done', message: doneMessage, current: 6, total: 6});
 
     return rebuilt;
   }
@@ -1832,7 +1860,10 @@
       ' (' + sectionsHTML.length + ' sections' +
       (failedCount ? ', ' + failedCount + ' failed' : '') +
       (floatersHTML ? ', + floaters' : '') + ')');
-    log({step: 'done', message: 'Lean rebuild complete — ' + sectionsHTML.length + ' sections' + (failedCount ? ' (' + failedCount + ' failed)' : '') + (floatersHTML ? ' + floaters' : '') + ' — ' + summary, current: 6, total: 6});
+    var leanDoneMessage = failedCount
+      ? 'Lean rebuild PARTIAL — ' + sectionsHTML.length + '/' + screenshots.length + ' sections (' + failedCount + ' failed)' + (floatersHTML ? ' + floaters' : '') + ' — ' + summary
+      : 'Lean rebuild complete — ' + sectionsHTML.length + ' sections' + (floatersHTML ? ' + floaters' : '') + ' — ' + summary;
+    log({step: 'done', message: leanDoneMessage, current: 6, total: 6});
     return rebuilt;
   }
 
