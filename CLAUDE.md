@@ -34,9 +34,10 @@ O Repix é o único tool que **edita sites visualmente no browser** com controle
 ### Tamanho do mercado
 - **Total: ~$9-14M ARR** dentro de um mercado de design tools de $14.9B
 
-### Pricing recomendado
-- **Free**: Mode A (CSS Live editing), 3 rebuilds/mês cortesia
-- **Pro ($12/mês)**: Mode E (IA rebuild ilimitado), web builder detection, export .fig
+### Pricing — em lock (após benchmark 2026-04-27)
+Motor Mode E travado em **Gemini 3.1 Pro** ($0.525/clone medido em 2.4.6 com tokens reais). Cheap-tier (Flash/Haiku) saiu do quadro — qualidade visual inadequada. Free tier não pode ter rebuilds cortesia em Pro 3.1 (matemática negativa) → free vira **Mode A only**.
+
+Pricing model concreto pendente — opções na seção "Pricing model em discussão" abaixo. Decisão entre flat $X/mês unlimited vs flat com cap vs tier ladder.
 
 ## Branches
 - `feat/normalize-engine` — branch principal (editor + layers + Mode E + detect/freeze)
@@ -503,13 +504,10 @@ MCP só suporta HTTP (incompatível com Claude Code stdio). Skill instalada.
 ## Modelo de Negócio
 
 ### Pricing
-| Tier | Preço | Features |
-|---|---|---|
-| Free | $0 | Mode A (CSS Live), 3 rebuilds/mês |
-| Pro | $12/mês | Mode E ilimitado, web builder detection, export .fig |
+Em lock após benchmark 2026-04-27. Motor Mode E = Gemini 3.1 Pro ($0.525/clone medido). Free não tem rebuilds cortesia — `Free` = Mode A only. Tier estrutura pendente — ver memória `project_llm_lock_2026-04-27.md`.
 
 ### Decisão: cobrar pela IA, não BYOK
-Experiência seamless, margem ~80%, zero config para o usuário.
+Experiência seamless, margem alvo 60-70% sobre custo do Pro 3.1, zero config para o usuário.
 
 ## Legal & Ética
 Ferramenta de **inspiração e aprendizado** — designer edita para criar algo novo ("papel vegetal").
