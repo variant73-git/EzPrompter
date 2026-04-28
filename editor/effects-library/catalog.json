@@ -1,0 +1,982 @@
+{
+  "$schema": "./catalog.schema.json",
+  "version": "0.2.0",
+  "createdAt": "2026-04-28",
+  "description": "Hand-curated effects library shared by Uncraft, Restyle, and Canvas. Six categories (fill, reveal, surface, background, interaction, layout) covering ~90% of beautiful-site primitives. Curated from Aceternity UI, Magic UI, ReactBits, motion-primitives, codrops, Framer Motion examples.",
+  "categories": {
+    "fill": "Animated gradients and patterns for backgrounds and text-fill",
+    "reveal": "Entrance animations triggered on scroll or load",
+    "surface": "Material treatments (glass, gradient borders, frosted overlays)",
+    "background": "Section-level decorative canvas/SVG backgrounds",
+    "interaction": "Pointer/hover/cursor-driven micro-interactions",
+    "layout": "Scroll-driven layout primitives (sticky, marquee, parallax)"
+  },
+  "effects": [
+    {
+      "id": "aurora",
+      "name": "Aurora",
+      "category": "fill",
+      "description": "Two-color gradient that drifts horizontally. Soft, dreamy backdrop.",
+      "params": {
+        "duration": {
+          "default": "4s",
+          "type": "duration"
+        },
+        "easing": {
+          "default": "ease",
+          "type": "easing"
+        }
+      },
+      "code": {
+        "css": "background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);background-size:200% 200%;animation:rb-fx-aurora 4s ease infinite;",
+        "keyframes": "@keyframes rb-fx-aurora{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}"
+      },
+      "source": "Uncraft/editor/fill-popup.js (original curation)",
+      "appliesTo": [
+        "surface",
+        "text"
+      ]
+    },
+    {
+      "id": "sunset",
+      "name": "Sunset",
+      "category": "fill",
+      "description": "Four-color warm gradient flowing through orange/red/blue/teal. Higher saturation than Aurora.",
+      "params": {
+        "duration": {
+          "default": "6s",
+          "type": "duration"
+        },
+        "easing": {
+          "default": "ease",
+          "type": "easing"
+        }
+      },
+      "code": {
+        "css": "background:linear-gradient(-45deg,#ee7752,#e73c7e,#23a6d5,#23d5ab);background-size:400% 400%;animation:rb-fx-sunset 6s ease infinite;",
+        "keyframes": "@keyframes rb-fx-sunset{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}"
+      },
+      "source": "Uncraft/editor/fill-popup.js",
+      "appliesTo": [
+        "surface",
+        "text"
+      ]
+    },
+    {
+      "id": "pulse",
+      "name": "Pulse",
+      "category": "fill",
+      "description": "Radial gradient that breathes — purple glow expanding/contracting.",
+      "params": {
+        "duration": {
+          "default": "3s",
+          "type": "duration"
+        },
+        "easing": {
+          "default": "ease-in-out",
+          "type": "easing"
+        }
+      },
+      "code": {
+        "css": "background:radial-gradient(circle,#7c3aed,#1e1b4b);animation:rb-fx-pulse 3s ease-in-out infinite;",
+        "keyframes": "@keyframes rb-fx-pulse{0%,100%{background-size:100% 100%}50%{background-size:150% 150%}}"
+      },
+      "source": "Uncraft/editor/fill-popup.js",
+      "appliesTo": [
+        "surface"
+      ]
+    },
+    {
+      "id": "ocean",
+      "name": "Ocean",
+      "category": "fill",
+      "description": "Vertical gradient flowing top-to-bottom. Deep blue palette suggests water.",
+      "params": {
+        "duration": {
+          "default": "5s",
+          "type": "duration"
+        },
+        "easing": {
+          "default": "ease",
+          "type": "easing"
+        }
+      },
+      "code": {
+        "css": "background:linear-gradient(180deg,#0077b6,#023e8a,#03045e);background-size:100% 300%;animation:rb-fx-ocean 5s ease infinite;",
+        "keyframes": "@keyframes rb-fx-ocean{0%{background-position:0% 0%}50%{background-position:0% 100%}100%{background-position:0% 0%}}"
+      },
+      "source": "Uncraft/editor/fill-popup.js",
+      "appliesTo": [
+        "surface"
+      ]
+    },
+    {
+      "id": "neon-grid",
+      "name": "Neon Grid",
+      "category": "fill",
+      "description": "Cyberpunk grid pattern (40px cells) sliding diagonally on dark base.",
+      "params": {
+        "duration": {
+          "default": "2s",
+          "type": "duration"
+        },
+        "cellSize": {
+          "default": "40px",
+          "type": "length"
+        }
+      },
+      "code": {
+        "css": "background-color:#0a0a0a;background-image:linear-gradient(rgba(124,58,237,0.15) 1px,transparent 1px),linear-gradient(90deg,rgba(124,58,237,0.15) 1px,transparent 1px);background-size:40px 40px;animation:rb-fx-neongrid 2s linear infinite;",
+        "keyframes": "@keyframes rb-fx-neongrid{0%{background-position:0 0}100%{background-position:40px 40px}}"
+      },
+      "source": "Uncraft/editor/fill-popup.js",
+      "appliesTo": [
+        "surface"
+      ]
+    },
+    {
+      "id": "starfield",
+      "name": "Starfield",
+      "category": "fill",
+      "description": "Sparse white/grey dots on navy, scrolling. Reads as space/cosmos backdrop.",
+      "params": {
+        "duration": {
+          "default": "4s",
+          "type": "duration"
+        }
+      },
+      "code": {
+        "css": "background:#0a0a2e;background-image:radial-gradient(2px 2px at 20px 30px,#eee,transparent),radial-gradient(2px 2px at 40px 70px,#fff,transparent),radial-gradient(1px 1px at 90px 40px,#ddd,transparent),radial-gradient(1px 1px at 130px 80px,#fff,transparent),radial-gradient(2px 2px at 160px 30px,#eee,transparent);background-size:200px 100px;animation:rb-fx-stars 4s linear infinite;",
+        "keyframes": "@keyframes rb-fx-stars{0%{background-position:0 0}100%{background-position:200px 100px}}"
+      },
+      "source": "Uncraft/editor/fill-popup.js",
+      "appliesTo": [
+        "surface"
+      ]
+    },
+    {
+      "id": "mesh",
+      "name": "Mesh",
+      "category": "fill",
+      "description": "Multi-radial gradient (purple/cyan/orange) on pink base. Modern Stripe-like mesh aesthetic. Static (no animation).",
+      "params": {},
+      "code": {
+        "css": "background-color:#ff99ee;background-image:radial-gradient(at 80% 20%,#a855f7 0px,transparent 50%),radial-gradient(at 0% 50%,#06b6d4 0px,transparent 50%),radial-gradient(at 80% 80%,#f97316 0px,transparent 50%);",
+        "keyframes": ""
+      },
+      "source": "Uncraft/editor/fill-popup.js",
+      "appliesTo": [
+        "surface",
+        "text"
+      ],
+      "tags": [
+        "static"
+      ]
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "category": "fill",
+      "description": "Diagonal blue/navy stripes sliding. Reads as construction-tape or barbershop pattern.",
+      "params": {
+        "duration": {
+          "default": "1s",
+          "type": "duration"
+        }
+      },
+      "code": {
+        "css": "background:repeating-linear-gradient(45deg,#606dbc,#606dbc 10px,#465298 10px,#465298 20px);animation:rb-fx-stripe 1s linear infinite;",
+        "keyframes": "@keyframes rb-fx-stripe{0%{background-position:0 0}100%{background-position:28px 0}}"
+      },
+      "source": "Uncraft/editor/fill-popup.js",
+      "appliesTo": [
+        "surface"
+      ]
+    },
+    {
+      "id": "spotlight",
+      "name": "Spotlight",
+      "category": "fill",
+      "description": "Radial purple glow that drifts across a dark surface. Subtle ambient light.",
+      "params": {
+        "duration": {
+          "default": "4s",
+          "type": "duration"
+        },
+        "easing": {
+          "default": "ease-in-out",
+          "type": "easing"
+        }
+      },
+      "code": {
+        "css": "background:#0a0a0a;background-image:radial-gradient(circle at 50% 50%,rgba(124,58,237,0.25),transparent 60%);animation:rb-fx-spot 4s ease-in-out infinite alternate;",
+        "keyframes": "@keyframes rb-fx-spot{0%{background-position:30% 30%}100%{background-position:70% 70%}}"
+      },
+      "source": "Uncraft/editor/fill-popup.js",
+      "appliesTo": [
+        "surface"
+      ]
+    },
+    {
+      "id": "noise",
+      "name": "Noise",
+      "category": "fill",
+      "description": "Static SVG turbulence overlay on navy base. Adds organic texture/grain. Static.",
+      "params": {},
+      "code": {
+        "css": "background-color:#1a1a2e;background-image:url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.3'/%3E%3C/svg%3E\");",
+        "keyframes": ""
+      },
+      "source": "Uncraft/editor/fill-popup.js",
+      "appliesTo": [
+        "surface",
+        "overlay"
+      ],
+      "tags": [
+        "static"
+      ]
+    },
+    {
+      "id": "candy",
+      "name": "Candy",
+      "category": "fill",
+      "description": "Pink/red/blue gradient flow. Soft, playful palette.",
+      "params": {
+        "duration": {
+          "default": "3s",
+          "type": "duration"
+        },
+        "easing": {
+          "default": "ease",
+          "type": "easing"
+        }
+      },
+      "code": {
+        "css": "background:linear-gradient(135deg,#f093fb 0%,#f5576c 50%,#4facfe 100%);background-size:200% 200%;animation:rb-fx-candy 3s ease infinite;",
+        "keyframes": "@keyframes rb-fx-candy{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}"
+      },
+      "source": "Uncraft/editor/fill-popup.js",
+      "appliesTo": [
+        "surface",
+        "text"
+      ]
+    },
+    {
+      "id": "matrix",
+      "name": "Matrix",
+      "category": "fill",
+      "description": "Green scanline pattern on black. Steps animation gives stuttering CRT feel.",
+      "params": {
+        "duration": {
+          "default": "0.5s",
+          "type": "duration"
+        },
+        "steps": {
+          "default": 10,
+          "type": "integer"
+        }
+      },
+      "code": {
+        "css": "background-color:#000;background-image:linear-gradient(0deg,rgba(0,255,0,0.05) 1px,transparent 1px);background-size:100% 4px;animation:rb-fx-matrix 0.5s steps(10) infinite;",
+        "keyframes": "@keyframes rb-fx-matrix{0%{background-position:0 0}100%{background-position:0 40px}}"
+      },
+      "source": "Uncraft/editor/fill-popup.js",
+      "appliesTo": [
+        "surface"
+      ]
+    },
+    {
+      "id": "blur-text-word",
+      "name": "Blur Text Word",
+      "category": "reveal",
+      "description": "Word-by-word blur reveal on viewport entry. Text starts blurred and translated, settles into place per-word with stagger. Signature motionsites/Aceternity-style entrance for hero headlines.",
+      "params": {
+        "stagger": {
+          "default": 100,
+          "type": "ms",
+          "description": "Delay between consecutive words"
+        },
+        "duration": {
+          "default": 700,
+          "type": "ms",
+          "description": "Per-word transition duration"
+        },
+        "blurAmount": {
+          "default": 10,
+          "type": "px",
+          "description": "Initial blur radius"
+        }
+      },
+      "code": {
+        "js": "const elements=document.querySelectorAll(\"[data-fx=\\\"blur-text-word\\\"]\");elements.forEach(el=>{const text=el.textContent.trim();el.innerHTML=\"\";const words=text.split(/\\\\s+/);words.forEach((w,i)=>{const span=document.createElement(\"span\");span.textContent=w;span.style.cssText=\"display:inline-block;margin-right:0.28em;opacity:0;filter:blur(10px);transform:translateY(20px);transition:opacity 700ms ease-out,filter 700ms ease-out,transform 700ms ease-out;\";span.dataset.delay=i*100;el.appendChild(span)});const obs=new IntersectionObserver(entries=>{entries.forEach(entry=>{if(entry.isIntersecting){entry.target.querySelectorAll(\"span\").forEach(s=>{setTimeout(()=>{s.style.opacity=\"1\";s.style.filter=\"blur(0)\";s.style.transform=\"translateY(0)\"},Number(s.dataset.delay))});obs.unobserve(entry.target)}})},{threshold:0.3});obs.observe(el)});"
+      },
+      "source": "motionsites.ai BlurText (curated, vanilla-rewritten from Framer Motion original)",
+      "appliesTo": [
+        "hero-headline",
+        "h1",
+        "h2"
+      ]
+    },
+    {
+      "id": "fade-up-stagger",
+      "name": "Fade Up Stagger",
+      "category": "reveal",
+      "description": "Group of children fade up with index-based delay on viewport entry. Standard editorial reveal pattern.",
+      "params": {
+        "delays": {
+          "default": [
+            0,
+            150,
+            300,
+            450
+          ],
+          "type": "ms[]",
+          "description": "Per-child delays"
+        },
+        "duration": {
+          "default": 800,
+          "type": "ms"
+        },
+        "offset": {
+          "default": 20,
+          "type": "px",
+          "description": "Initial translateY"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"fade-up-stagger\"]>*{opacity:0;transform:translateY(20px);transition:opacity 800ms ease-out,transform 800ms ease-out}[data-fx=\"fade-up-stagger\"].in>*{opacity:1;transform:translateY(0)}",
+        "js": "const groups=document.querySelectorAll(\"[data-fx=\\\"fade-up-stagger\\\"]\");groups.forEach(g=>{Array.from(g.children).forEach((c,i)=>c.style.transitionDelay=`${i*150}ms`);const obs=new IntersectionObserver(entries=>{entries.forEach(entry=>{if(entry.isIntersecting){entry.target.classList.add(\"in\");obs.unobserve(entry.target)}})},{threshold:0.3});obs.observe(g)});"
+      },
+      "source": "Framer Motion stagger pattern (curated, vanilla)",
+      "appliesTo": [
+        "section",
+        "grid",
+        "list"
+      ]
+    },
+    {
+      "id": "scale-in-on-view",
+      "name": "Scale In On View",
+      "category": "reveal",
+      "description": "Element scales from 0.8 to 1 with opacity fade-in when entering viewport. Soft, gentle entrance.",
+      "params": {
+        "duration": {
+          "default": 900,
+          "type": "ms"
+        },
+        "fromScale": {
+          "default": 0.8,
+          "type": "number"
+        },
+        "easing": {
+          "default": "cubic-bezier(0.2, 0.8, 0.2, 1)",
+          "type": "easing"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"scale-in\"]{opacity:0;transform:scale(0.8);transition:opacity 900ms cubic-bezier(0.2,0.8,0.2,1),transform 900ms cubic-bezier(0.2,0.8,0.2,1)}[data-fx=\"scale-in\"].in{opacity:1;transform:scale(1)}",
+        "js": "const obs=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){entry.target.classList.add(\"in\");obs.unobserve(entry.target)}}),{threshold:0.3});document.querySelectorAll(\"[data-fx=\\\"scale-in\\\"]\").forEach(el=>obs.observe(el));"
+      },
+      "source": "Generic Framer Motion scale-in pattern",
+      "appliesTo": [
+        "card",
+        "image",
+        "media-block"
+      ]
+    },
+    {
+      "id": "slide-from-side",
+      "name": "Slide From Side",
+      "category": "reveal",
+      "description": "Element slides in from left or right with opacity fade. Direction controlled by data-fx-dir attribute.",
+      "params": {
+        "duration": {
+          "default": 900,
+          "type": "ms"
+        },
+        "offset": {
+          "default": 40,
+          "type": "px",
+          "description": "Initial translateX magnitude"
+        },
+        "direction": {
+          "default": "left",
+          "type": "enum",
+          "values": [
+            "left",
+            "right"
+          ]
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"slide-side\"][data-fx-dir=\"left\"]{transform:translateX(-40px)}[data-fx=\"slide-side\"][data-fx-dir=\"right\"]{transform:translateX(40px)}[data-fx=\"slide-side\"]{opacity:0;transition:opacity 900ms ease-out,transform 900ms ease-out}[data-fx=\"slide-side\"].in{opacity:1;transform:translateX(0)}",
+        "js": "const obs=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){entry.target.classList.add(\"in\");obs.unobserve(entry.target)}}),{threshold:0.3});document.querySelectorAll(\"[data-fx=\\\"slide-side\\\"]\").forEach(el=>obs.observe(el));"
+      },
+      "source": "Generic editorial slide-in pattern",
+      "appliesTo": [
+        "asymmetric-section",
+        "feature-block"
+      ]
+    },
+    {
+      "id": "scramble-letters",
+      "name": "Scramble Letters",
+      "category": "reveal",
+      "description": "Text appears as random characters scrambling toward the final string. Cipher-cracker effect popular in tech aesthetics.",
+      "params": {
+        "duration": {
+          "default": 1200,
+          "type": "ms"
+        },
+        "charset": {
+          "default": "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%",
+          "type": "string"
+        }
+      },
+      "code": {
+        "js": "function scramble(el){const final=el.textContent;const chars=\"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%\";const len=final.length;const dur=1200;const start=performance.now();function frame(now){const p=Math.min((now-start)/dur,1);const lock=Math.floor(p*len);let out=\"\";for(let i=0;i<len;i++){out+=i<lock?final[i]:chars[Math.floor(Math.random()*chars.length)]}el.textContent=out;if(p<1)requestAnimationFrame(frame)}requestAnimationFrame(frame)}const obs=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){scramble(entry.target);obs.unobserve(entry.target)}}),{threshold:0.5});document.querySelectorAll(\"[data-fx=\\\"scramble\\\"]\").forEach(el=>obs.observe(el));"
+      },
+      "source": "codrops scramble effect (curated)",
+      "appliesTo": [
+        "hero-eyebrow",
+        "label",
+        "stat-number-text"
+      ]
+    },
+    {
+      "id": "liquid-glass",
+      "name": "Liquid Glass",
+      "category": "surface",
+      "description": "Subtle frosted backdrop with thin gradient hairline border. For chips, badges, secondary navigation. Reads as material layer, not card.",
+      "params": {
+        "blur": {
+          "default": 4,
+          "type": "px"
+        },
+        "borderOpacity": {
+          "default": 0.45,
+          "type": "number"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"liquid-glass\"]{position:relative;background:rgba(255,255,255,0.01);background-blend-mode:luminosity;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border:none;box-shadow:inset 0 1px 1px rgba(255,255,255,0.1);overflow:hidden}[data-fx=\"liquid-glass\"]::before{content:\"\";position:absolute;inset:0;border-radius:inherit;padding:1.4px;background:linear-gradient(180deg,rgba(255,255,255,0.45) 0%,rgba(255,255,255,0.15) 20%,rgba(255,255,255,0) 40%,rgba(255,255,255,0) 60%,rgba(255,255,255,0.15) 80%,rgba(255,255,255,0.45) 100%);-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}"
+      },
+      "source": "motionsites.ai liquid-glass utility (curated, exact CSS)",
+      "appliesTo": [
+        "badge",
+        "chip",
+        "secondary-nav",
+        "tag"
+      ]
+    },
+    {
+      "id": "liquid-glass-strong",
+      "name": "Liquid Glass Strong",
+      "category": "surface",
+      "description": "Heavier frosted backdrop with stronger gradient frame. For primary CTAs, prominent cards, hero badges. Same family as liquid-glass but more pronounced.",
+      "params": {
+        "blur": {
+          "default": 50,
+          "type": "px"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"liquid-glass-strong\"]{position:relative;background:rgba(255,255,255,0.01);background-blend-mode:luminosity;backdrop-filter:blur(50px);-webkit-backdrop-filter:blur(50px);border:none;box-shadow:4px 4px 4px rgba(0,0,0,0.05),inset 0 1px 1px rgba(255,255,255,0.15);overflow:hidden}[data-fx=\"liquid-glass-strong\"]::before{content:\"\";position:absolute;inset:0;border-radius:inherit;padding:1.4px;background:linear-gradient(180deg,rgba(255,255,255,0.5) 0%,rgba(255,255,255,0.2) 20%,rgba(255,255,255,0) 40%,rgba(255,255,255,0) 60%,rgba(255,255,255,0.2) 80%,rgba(255,255,255,0.5) 100%);-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}"
+      },
+      "source": "motionsites.ai liquid-glass-strong utility",
+      "appliesTo": [
+        "primary-cta",
+        "hero-badge",
+        "elevated-card"
+      ]
+    },
+    {
+      "id": "gradient-border-shell",
+      "name": "Gradient Border Shell",
+      "category": "surface",
+      "description": "Wraps a card in a 1.4px gradient sheath. Outer shell holds the gradient; inner content surface sits flush. Premium edge treatment, no flat stroke.",
+      "params": {
+        "shellPadding": {
+          "default": 1.4,
+          "type": "px"
+        },
+        "gradient": {
+          "default": "linear-gradient(135deg,rgba(255,255,255,0.4),rgba(255,255,255,0.05))",
+          "type": "css-gradient"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"gradient-border-shell\"]{position:relative;padding:1.4px;background:linear-gradient(135deg,rgba(255,255,255,0.4),rgba(255,255,255,0.05));border-radius:inherit}[data-fx=\"gradient-border-shell\"]>*{background:var(--surface,#fff);border-radius:calc(var(--radius,16px) - 1.4px)}"
+      },
+      "source": "Aura.build elevated-card recipe (curated from neuform Financial Insights template)",
+      "appliesTo": [
+        "hero-card",
+        "feature-card",
+        "pricing-card"
+      ]
+    },
+    {
+      "id": "frosted-overlay",
+      "name": "Frosted Overlay",
+      "category": "surface",
+      "description": "Semi-transparent frosted layer atop content (or sticky nav). Dimmer than liquid-glass, suitable for sticky overlays.",
+      "params": {
+        "blur": {
+          "default": 12,
+          "type": "px"
+        },
+        "tint": {
+          "default": "rgba(255,255,255,0.6)",
+          "type": "color"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"frosted-overlay\"]{background:rgba(255,255,255,0.6);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%)}"
+      },
+      "source": "Apple-style frosted nav (generic)",
+      "appliesTo": [
+        "sticky-nav",
+        "modal-overlay",
+        "drawer-backdrop"
+      ]
+    },
+    {
+      "id": "inner-glow",
+      "name": "Inner Glow",
+      "category": "surface",
+      "description": "Inset box-shadow ring creating a soft halo effect inside the element. For active/focus states or highlighted surfaces.",
+      "params": {
+        "color": {
+          "default": "rgba(255,255,255,0.2)",
+          "type": "color"
+        },
+        "spread": {
+          "default": 24,
+          "type": "px"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"inner-glow\"]{box-shadow:inset 0 0 24px rgba(255,255,255,0.2),inset 0 1px 0 rgba(255,255,255,0.3)}"
+      },
+      "source": "Generic active-state glow",
+      "appliesTo": [
+        "active-card",
+        "focused-input",
+        "selected-item"
+      ]
+    },
+    {
+      "id": "dot-matrix-canvas",
+      "name": "Dot Matrix Canvas",
+      "category": "background",
+      "description": "Slow-breathing grid of small dots rendered on a canvas. Subtle technical/atmospheric backdrop. Pointer-reactive drift optional.",
+      "params": {
+        "density": {
+          "default": 0.3,
+          "type": "number",
+          "description": "Dots per 10px squared"
+        },
+        "breathe": {
+          "default": 4000,
+          "type": "ms",
+          "description": "Pulse cycle duration"
+        },
+        "color": {
+          "default": "rgba(255,255,255,0.3)",
+          "type": "color"
+        }
+      },
+      "code": {
+        "js": "const canvases=document.querySelectorAll(\"canvas[data-fx=\\\"dot-matrix\\\"]\");canvases.forEach(canvas=>{const ctx=canvas.getContext(\"2d\");const fit=()=>{canvas.width=canvas.clientWidth;canvas.height=canvas.clientHeight};fit();window.addEventListener(\"resize\",fit);const color=canvas.dataset.color||\"rgba(255,255,255,0.3)\";const spacing=20;let t=0;function frame(){t+=0.016;ctx.clearRect(0,0,canvas.width,canvas.height);const pulse=0.5+0.5*Math.sin(t*Math.PI*2/4);for(let x=spacing/2;x<canvas.width;x+=spacing){for(let y=spacing/2;y<canvas.height;y+=spacing){const dist=Math.hypot(x-canvas.width/2,y-canvas.height/2);const fade=Math.max(0,1-dist/(canvas.width/1.5));ctx.fillStyle=color;ctx.globalAlpha=pulse*fade*0.6;ctx.beginPath();ctx.arc(x,y,1.5,0,Math.PI*2);ctx.fill()}}requestAnimationFrame(frame)}requestAnimationFrame(frame)});"
+      },
+      "source": "Aura.build / neuform WebGL recipe (curated as 2D canvas equivalent)",
+      "appliesTo": [
+        "section-hero-bg",
+        "section-cta-bg"
+      ]
+    },
+    {
+      "id": "gradient-mesh-animated",
+      "name": "Gradient Mesh Animated",
+      "category": "background",
+      "description": "Multi-radial gradient with positions slowly shifting via CSS @keyframes. Dreamy, modern Stripe-style mesh.",
+      "params": {
+        "duration": {
+          "default": "20s",
+          "type": "duration"
+        },
+        "colors": {
+          "default": [
+            "#a855f7",
+            "#06b6d4",
+            "#f97316"
+          ],
+          "type": "color[]"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"gradient-mesh\"]{background-color:#1a1a2e;background-image:radial-gradient(at 80% 20%,#a855f7 0px,transparent 50%),radial-gradient(at 0% 50%,#06b6d4 0px,transparent 50%),radial-gradient(at 80% 80%,#f97316 0px,transparent 50%);background-size:200% 200%;animation:rb-fx-mesh-anim 20s ease infinite}@keyframes rb-fx-mesh-anim{0%,100%{background-position:0% 0%,0% 50%,80% 80%}50%{background-position:80% 50%,40% 0%,30% 90%}}"
+      },
+      "source": "codrops + Stripe.com mesh aesthetic (curated)",
+      "appliesTo": [
+        "section-hero-bg"
+      ]
+    },
+    {
+      "id": "particles",
+      "name": "Particles",
+      "category": "background",
+      "description": "Field of small floating particles drifting upward, rendered on canvas. Suggests motion, dust, atmosphere.",
+      "params": {
+        "count": {
+          "default": 60,
+          "type": "integer"
+        },
+        "speed": {
+          "default": 0.5,
+          "type": "px/frame"
+        },
+        "color": {
+          "default": "rgba(255,255,255,0.4)",
+          "type": "color"
+        }
+      },
+      "code": {
+        "js": "const canvases=document.querySelectorAll(\"canvas[data-fx=\\\"particles\\\"]\");canvases.forEach(canvas=>{const ctx=canvas.getContext(\"2d\");const fit=()=>{canvas.width=canvas.clientWidth;canvas.height=canvas.clientHeight};fit();window.addEventListener(\"resize\",fit);const color=canvas.dataset.color||\"rgba(255,255,255,0.4)\";const N=60;const parts=Array.from({length:N},()=>({x:Math.random()*canvas.width,y:Math.random()*canvas.height,r:0.5+Math.random()*1.5,vy:0.3+Math.random()*0.8,vx:(Math.random()-0.5)*0.2,a:0.3+Math.random()*0.5}));function frame(){ctx.clearRect(0,0,canvas.width,canvas.height);parts.forEach(p=>{p.y-=p.vy;p.x+=p.vx;if(p.y<-5)p.y=canvas.height+5;if(p.x<-5)p.x=canvas.width+5;if(p.x>canvas.width+5)p.x=-5;ctx.fillStyle=color;ctx.globalAlpha=p.a;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill()});requestAnimationFrame(frame)}requestAnimationFrame(frame)});"
+      },
+      "source": "Generic canvas particles (curated, lightweight rewrite)",
+      "appliesTo": [
+        "section-hero-bg",
+        "footer-bg"
+      ]
+    },
+    {
+      "id": "video-loop-fade",
+      "name": "Video Loop Fade",
+      "category": "background",
+      "description": "Background video that crossfades into itself near the end and on load. Avoids abrupt loop cuts. rAF-driven, no CSS transition.",
+      "params": {
+        "fadeMs": {
+          "default": 500,
+          "type": "ms",
+          "description": "Crossfade duration"
+        },
+        "fadeOutLead": {
+          "default": 0.55,
+          "type": "seconds",
+          "description": "Trigger fade-out N seconds before end"
+        }
+      },
+      "code": {
+        "js": "document.querySelectorAll(\"video[data-fx=\\\"video-loop-fade\\\"]\").forEach(v=>{const FADE=500,LEAD=0.55;v.style.opacity=\"0\";v.removeAttribute(\"loop\");let raf=null,fadingOut=false;function fadeTo(target,dur){if(raf)cancelAnimationFrame(raf);const start=performance.now(),from=parseFloat(v.style.opacity)||0;function step(now){const p=Math.min((now-start)/dur,1);v.style.opacity=String(from+(target-from)*p);if(p<1)raf=requestAnimationFrame(step)}raf=requestAnimationFrame(step)}v.addEventListener(\"loadeddata\",()=>{v.style.opacity=\"0\";v.play();fadeTo(1,FADE)});v.addEventListener(\"timeupdate\",()=>{if(!fadingOut&&v.duration-v.currentTime<=LEAD&&v.duration-v.currentTime>0){fadingOut=true;fadeTo(0,FADE)}});v.addEventListener(\"ended\",()=>{v.style.opacity=\"0\";setTimeout(()=>{v.currentTime=0;v.play();fadingOut=false;fadeTo(1,FADE)},100)})});"
+      },
+      "source": "motionsites.ai FadingVideo component (curated, exact behavior)",
+      "appliesTo": [
+        "section-hero-bg"
+      ]
+    },
+    {
+      "id": "aurora-canvas",
+      "name": "Aurora Canvas",
+      "category": "background",
+      "description": "Flowing aurora-like waves of color rendered on canvas with low-frequency sine motion. Different from the CSS Aurora — full-canvas wide motion, suitable for hero backgrounds.",
+      "params": {
+        "colors": {
+          "default": [
+            "#4f46e5",
+            "#7c3aed",
+            "#ec4899"
+          ],
+          "type": "color[]"
+        },
+        "speed": {
+          "default": 0.0008,
+          "type": "rate"
+        }
+      },
+      "code": {
+        "js": "document.querySelectorAll(\"canvas[data-fx=\\\"aurora-canvas\\\"]\").forEach(canvas=>{const ctx=canvas.getContext(\"2d\");const fit=()=>{canvas.width=canvas.clientWidth;canvas.height=canvas.clientHeight};fit();window.addEventListener(\"resize\",fit);const colors=[\"#4f46e5\",\"#7c3aed\",\"#ec4899\"];let t=0;function frame(){t+=0.0008;ctx.clearRect(0,0,canvas.width,canvas.height);colors.forEach((c,i)=>{const cx=canvas.width*(0.3+0.4*Math.sin(t*1000*(i+1)*0.5));const cy=canvas.height*(0.4+0.3*Math.cos(t*1000*(i+1)*0.7));const grad=ctx.createRadialGradient(cx,cy,0,cx,cy,canvas.width*0.6);grad.addColorStop(0,c+\"66\");grad.addColorStop(1,c+\"00\");ctx.fillStyle=grad;ctx.fillRect(0,0,canvas.width,canvas.height)});requestAnimationFrame(frame)}requestAnimationFrame(frame)});"
+      },
+      "source": "Aceternity UI Aurora pattern (curated, vanilla canvas rewrite)",
+      "appliesTo": [
+        "section-hero-bg",
+        "splash-overlay"
+      ]
+    },
+    {
+      "id": "magnetic-cursor",
+      "name": "Magnetic Cursor",
+      "category": "interaction",
+      "description": "Element subtly attracts toward the cursor when within proximity. CTAs that feel alive without being aggressive.",
+      "params": {
+        "strength": {
+          "default": 0.3,
+          "type": "number",
+          "description": "Translate ratio (0-1)"
+        },
+        "proximity": {
+          "default": 100,
+          "type": "px",
+          "description": "Activation radius"
+        }
+      },
+      "code": {
+        "js": "document.querySelectorAll(\"[data-fx=\\\"magnetic\\\"]\").forEach(el=>{const STR=0.3,PROX=100;el.style.transition=\"transform 200ms ease-out\";document.addEventListener(\"mousemove\",e=>{const r=el.getBoundingClientRect();const cx=r.left+r.width/2,cy=r.top+r.height/2;const dx=e.clientX-cx,dy=e.clientY-cy;const d=Math.hypot(dx,dy);if(d<PROX){el.style.transform=`translate(${dx*STR}px,${dy*STR}px)`}else{el.style.transform=\"translate(0,0)\"}})});"
+      },
+      "source": "Codrops magnetic button (curated)",
+      "appliesTo": [
+        "primary-cta",
+        "icon-button"
+      ]
+    },
+    {
+      "id": "hover-tilt",
+      "name": "Hover Tilt",
+      "category": "interaction",
+      "description": "3D perspective tilt following cursor over the element. Subtle, no excessive rotation. For cards and feature blocks.",
+      "params": {
+        "maxRotate": {
+          "default": 8,
+          "type": "degrees"
+        },
+        "perspective": {
+          "default": 1000,
+          "type": "px"
+        }
+      },
+      "code": {
+        "js": "document.querySelectorAll(\"[data-fx=\\\"hover-tilt\\\"]\").forEach(el=>{const MAX=8;el.style.transformStyle=\"preserve-3d\";el.style.transition=\"transform 200ms ease-out\";el.addEventListener(\"mousemove\",e=>{const r=el.getBoundingClientRect();const px=(e.clientX-r.left)/r.width-0.5;const py=(e.clientY-r.top)/r.height-0.5;el.style.transform=`perspective(1000px) rotateY(${px*MAX}deg) rotateX(${-py*MAX}deg)`});el.addEventListener(\"mouseleave\",()=>{el.style.transform=\"perspective(1000px) rotateY(0) rotateX(0)\"})});"
+      },
+      "source": "vanilla-tilt.js pattern (curated, simplified)",
+      "appliesTo": [
+        "card",
+        "feature-block",
+        "image-frame"
+      ]
+    },
+    {
+      "id": "count-up-on-view",
+      "name": "Count Up On View",
+      "category": "interaction",
+      "description": "Number counter animates from 0 to a target value when the element enters viewport. Configurable easing and duration.",
+      "params": {
+        "duration": {
+          "default": 2400,
+          "type": "ms"
+        },
+        "easing": {
+          "default": "easeOutExpo",
+          "type": "easing",
+          "values": [
+            "linear",
+            "easeOutExpo",
+            "easeOutQuart"
+          ]
+        }
+      },
+      "code": {
+        "js": "const ease={linear:t=>t,easeOutExpo:t=>t===1?1:1-Math.pow(2,-10*t),easeOutQuart:t=>1-Math.pow(1-t,4)};const obs=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){const el=entry.target;const target=parseFloat(el.dataset.target);const dur=Number(el.dataset.duration||2400);const fn=ease[el.dataset.easing||\"easeOutExpo\"];const start=performance.now();function step(now){const p=Math.min((now-start)/dur,1);const v=fn(p)*target;el.textContent=target%1===0?Math.floor(v).toLocaleString():v.toFixed(1);if(p<1)requestAnimationFrame(step)}requestAnimationFrame(step);obs.unobserve(el)}}),{threshold:0.5});document.querySelectorAll(\"[data-fx=\\\"count-up\\\"]\").forEach(el=>obs.observe(el));"
+      },
+      "source": "Generic count-up pattern (Cambrian.com observed; widely used)",
+      "appliesTo": [
+        "stat-number",
+        "hero-metric"
+      ]
+    },
+    {
+      "id": "cursor-spotlight",
+      "name": "Cursor Spotlight",
+      "category": "interaction",
+      "description": "Radial gradient follows the cursor across a section, creating a spotlight effect. Reveals content on hover-area.",
+      "params": {
+        "radius": {
+          "default": 300,
+          "type": "px"
+        },
+        "color": {
+          "default": "rgba(255,255,255,0.15)",
+          "type": "color"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"cursor-spotlight\"]{position:relative;overflow:hidden}[data-fx=\"cursor-spotlight\"]::before{content:\"\";position:absolute;inset:0;background:radial-gradient(circle 300px at var(--mx,50%) var(--my,50%),rgba(255,255,255,0.15),transparent 70%);pointer-events:none;transition:opacity 200ms;opacity:0}[data-fx=\"cursor-spotlight\"]:hover::before{opacity:1}",
+        "js": "document.querySelectorAll(\"[data-fx=\\\"cursor-spotlight\\\"]\").forEach(el=>{el.addEventListener(\"mousemove\",e=>{const r=el.getBoundingClientRect();el.style.setProperty(\"--mx\",(e.clientX-r.left)+\"px\");el.style.setProperty(\"--my\",(e.clientY-r.top)+\"px\")})});"
+      },
+      "source": "Aceternity UI Spotlight (curated)",
+      "appliesTo": [
+        "section-hero",
+        "section-features",
+        "feature-card-row"
+      ]
+    },
+    {
+      "id": "button-shine",
+      "name": "Button Shine",
+      "category": "interaction",
+      "description": "Glossy highlight sweeps across button on hover. Subtle premium-feel detail without being garish.",
+      "params": {
+        "duration": {
+          "default": 700,
+          "type": "ms"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"button-shine\"]{position:relative;overflow:hidden}[data-fx=\"button-shine\"]::after{content:\"\";position:absolute;inset:0;background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,0.3) 50%,transparent 60%);transform:translateX(-100%);transition:transform 700ms ease-out;pointer-events:none}[data-fx=\"button-shine\"]:hover::after{transform:translateX(100%)}"
+      },
+      "source": "Generic premium-button shine pattern",
+      "appliesTo": [
+        "primary-cta",
+        "secondary-cta",
+        "tag"
+      ]
+    },
+    {
+      "id": "sticky-pinned-section",
+      "name": "Sticky Pinned Section",
+      "category": "layout",
+      "description": "Section sticks at top of viewport while scrolling, releasing once content has finished. Pure CSS position:sticky.",
+      "params": {
+        "top": {
+          "default": "0px",
+          "type": "css-length"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"sticky-pinned\"]{position:sticky;top:0;z-index:10}"
+      },
+      "source": "Native CSS position:sticky (no JS)",
+      "appliesTo": [
+        "nav",
+        "section-header",
+        "in-page-toc"
+      ]
+    },
+    {
+      "id": "marquee-loop-x",
+      "name": "Marquee Loop X",
+      "category": "layout",
+      "description": "Horizontal infinite scroll of duplicated content. CSS-only, no JS. For logos, testimonials, tag rows.",
+      "params": {
+        "duration": {
+          "default": "30s",
+          "type": "duration"
+        },
+        "direction": {
+          "default": "left",
+          "type": "enum",
+          "values": [
+            "left",
+            "right"
+          ]
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"marquee-x\"]{overflow:hidden;display:flex;mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent);-webkit-mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent)}[data-fx=\"marquee-x\"]>.marquee-track{display:flex;flex-shrink:0;animation:rb-fx-marquee-x 30s linear infinite}@keyframes rb-fx-marquee-x{from{transform:translateX(0)}to{transform:translateX(-50%)}}",
+        "js": "document.querySelectorAll(\"[data-fx=\\\"marquee-x\\\"]\").forEach(c=>{const track=c.querySelector(\".marquee-track\")||c;if(!track.dataset.dup){track.innerHTML+=track.innerHTML;track.dataset.dup=\"1\"}});"
+      },
+      "source": "codrops marquee pattern (curated)",
+      "appliesTo": [
+        "partner-logos",
+        "testimonial-strip",
+        "tag-row"
+      ]
+    },
+    {
+      "id": "parallax-image",
+      "name": "Parallax Image",
+      "category": "layout",
+      "description": "Image translates upward slower than scroll, creating depth. Uses scroll listener with rAF batching.",
+      "params": {
+        "speed": {
+          "default": 0.3,
+          "type": "number",
+          "description": "Multiplier (0-1, lower = more parallax)"
+        }
+      },
+      "code": {
+        "js": "const els=document.querySelectorAll(\"[data-fx=\\\"parallax\\\"]\");let raf=null;function update(){els.forEach(el=>{const r=el.getBoundingClientRect();const center=r.top+r.height/2-window.innerHeight/2;el.style.transform=`translateY(${center*-0.3}px)`});raf=null}window.addEventListener(\"scroll\",()=>{if(!raf)raf=requestAnimationFrame(update)},{passive:true});update();"
+      },
+      "source": "Generic parallax pattern (curated, simplified)",
+      "appliesTo": [
+        "hero-bg-image",
+        "section-bg-image"
+      ]
+    },
+    {
+      "id": "scroll-pinned-headline",
+      "name": "Scroll Pinned Headline",
+      "category": "layout",
+      "description": "Headline stays vertically pinned in viewport while related content scrolls past. Implementation: position:sticky with min-height parent.",
+      "params": {
+        "top": {
+          "default": "20vh",
+          "type": "css-length"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"pinned-headline-wrap\"]{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:start}[data-fx=\"pinned-headline-wrap\"]>[data-fx-pin]{position:sticky;top:20vh}@media(max-width:768px){[data-fx=\"pinned-headline-wrap\"]{grid-template-columns:1fr}[data-fx=\"pinned-headline-wrap\"]>[data-fx-pin]{position:static}}"
+      },
+      "source": "Apple-style scroll-pinned section (curated as pure CSS)",
+      "appliesTo": [
+        "section-headline-with-list",
+        "feature-deep-dive"
+      ]
+    },
+    {
+      "id": "split-grid-reveal",
+      "name": "Split Grid Reveal",
+      "category": "layout",
+      "description": "Grid items reveal in alternating left/right pattern as section enters viewport. Adds rhythm to feature lists.",
+      "params": {
+        "stagger": {
+          "default": 200,
+          "type": "ms"
+        },
+        "offset": {
+          "default": 60,
+          "type": "px"
+        }
+      },
+      "code": {
+        "css": "[data-fx=\"split-grid\"]>*:nth-child(odd){opacity:0;transform:translateX(-60px);transition:opacity 900ms ease-out,transform 900ms ease-out}[data-fx=\"split-grid\"]>*:nth-child(even){opacity:0;transform:translateX(60px);transition:opacity 900ms ease-out,transform 900ms ease-out}[data-fx=\"split-grid\"].in>*{opacity:1;transform:translateX(0)}",
+        "js": "const obs=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){const g=entry.target;Array.from(g.children).forEach((c,i)=>c.style.transitionDelay=`${i*200}ms`);g.classList.add(\"in\");obs.unobserve(g)}}),{threshold:0.2});document.querySelectorAll(\"[data-fx=\\\"split-grid\\\"]\").forEach(g=>obs.observe(g));"
+      },
+      "source": "Editorial split-reveal pattern",
+      "appliesTo": [
+        "alternating-feature-grid"
+      ]
+    },
+    {
+      "id": "rotating-headlines",
+      "name": "Rotating Headlines",
+      "category": "interaction",
+      "description": "Cycles through a sequence of headline strings on a timer with opacity crossfade. Used by sites with multiple value-props in the hero (Cambrian, Stripe-style).",
+      "params": {
+        "cycleMs": {
+          "default": 4000,
+          "type": "ms",
+          "description": "Time per headline before transition"
+        },
+        "transitionMs": {
+          "default": 600,
+          "type": "ms",
+          "description": "Crossfade duration"
+        },
+        "sequence": {
+          "default": [],
+          "type": "string[]",
+          "description": "Headlines to cycle (set as data-headlines JSON or via JS)"
+        }
+      },
+      "code": {
+        "js": "document.querySelectorAll(\"[data-fx=\\\"rotating-headlines\\\"]\").forEach(el=>{let seq;try{seq=JSON.parse(el.dataset.headlines||\"[]\")}catch{seq=[]}if(!seq.length)return;let i=0;el.style.transition=\"opacity \"+(el.dataset.transitionMs||600)+\"ms ease\";el.textContent=seq[0];const cycleMs=Number(el.dataset.cycleMs||4000);setInterval(()=>{el.style.opacity=\"0\";setTimeout(()=>{i=(i+1)%seq.length;el.textContent=seq[i];el.style.opacity=\"1\"},Number(el.dataset.transitionMs||600))},cycleMs)});"
+      },
+      "source": "Cambrian Innovation hero (curated, generalized)",
+      "appliesTo": [
+        "hero-headline",
+        "hero-subhead"
+      ]
+    }
+  ],
+  "updatedAt": "2026-04-28"
+}
