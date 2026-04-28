@@ -1,0 +1,9 @@
+# macOS
+.DS_Store
+
+# Local dev assets
+dev/
+
+# Local Claude Code state
+.claude/settings.local.json
+.claude/worktrees/
