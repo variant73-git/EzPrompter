@@ -3092,7 +3092,9 @@
         {label: 'Text', disabled: true},
         {divider: true},
         {label: 'Help', disabled: true},
-        {label: 'Account', disabled: true}
+        {label: 'Account', disabled: true},
+        {divider: true},
+        {label: 'Exit Editor', action: function() { deactivate(); }}
       ];
 
       items.forEach(function(item) {
@@ -3331,6 +3333,20 @@
     assetsBody.id = 'rb-ed-assets-body';
     assetsBody.style.display = 'none';
     layersPanel.appendChild(assetsBody);
+
+    // Footer with Exit button — saves and restores normal browsing
+    var exitFooter = mk('div');
+    exitFooter.id = 'rb-ed-layers-footer';
+    var exitBtn = mk('button', 'rb-ed-layers-exit');
+    exitBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg><span>Exit Editor</span>';
+    exitBtn.title = 'Save and exit — return to normal browsing';
+    exitBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      deactivate();
+    }, {capture: true, signal: sig});
+    exitFooter.appendChild(exitBtn);
+    layersPanel.appendChild(exitFooter);
 
     function switchLeftTab(active) {
       layersBody.style.display = active === 'layers' ? '' : 'none';
