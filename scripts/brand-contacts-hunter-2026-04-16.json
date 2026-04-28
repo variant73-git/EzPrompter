@@ -1,0 +1,692 @@
+[
+  {
+    "brand": "Lagunitas",
+    "parent": "Heineken Group",
+    "domain": "lagunitas.com",
+    "email": "matt.borsellino@lagunitas.com",
+    "name": "Matt Borsellino",
+    "position": "Director of Operations",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Lagunitas",
+    "parent": "Heineken Group",
+    "domain": "lagunitas.com",
+    "email": "paula.moraes@lagunitas.com",
+    "name": "Paula Moraes",
+    "position": "Chief Revenue Officer",
+    "confidence": 93,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Lagunitas",
+    "parent": "Heineken Group",
+    "domain": "lagunitas.com",
+    "email": "terry.birdsong@lagunitas.com",
+    "name": "Terry Birdsong",
+    "position": "Director of Hospitality",
+    "confidence": 93,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Lagunitas",
+    "parent": "Heineken Group",
+    "domain": "lagunitas.com",
+    "email": "sam.thompson@lagunitas.com",
+    "name": "Sam Thompson",
+    "position": "Director of Brewing",
+    "confidence": 92,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Lagunitas",
+    "parent": "Heineken Group",
+    "domain": "lagunitas.com",
+    "email": "molly.hagen@lagunitas.com",
+    "name": "Molly Hagen",
+    "position": "Brand Director",
+    "confidence": 91,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Lagunitas",
+    "parent": "Heineken Group",
+    "domain": "lagunitas.com",
+    "email": "jenny.davis@lagunitas.com",
+    "name": "Jenny Davis",
+    "position": "Director of Communications",
+    "confidence": 91,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Lagunitas",
+    "parent": "Heineken Group",
+    "domain": "lagunitas.com",
+    "email": "ben.widseth@lagunitas.com",
+    "name": "Ben Widseth",
+    "position": "Vice President of Innovation",
+    "confidence": 83,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Lagunitas",
+    "parent": "Heineken Group",
+    "domain": "lagunitas.com",
+    "email": "william.ramskin@lagunitas.com",
+    "name": "William Ramskin",
+    "position": "Chief Operating Officer",
+    "confidence": 81,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Budweiser/Brahma/Skol/Spaten/Stella/Corona/Devassa/Bohemia/Original/Fusion/Guaraná/H2OH!/Bud Zero",
+    "parent": "Ambev",
+    "domain": "ambev.com.br",
+    "email": "charles.kielmanowicz@ambev.com.br",
+    "name": "Charles Kielmanowicz",
+    "position": "Regional Director",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Budweiser/Brahma/Skol/Spaten/Stella/Corona/Devassa/Bohemia/Original/Fusion/Guaraná/H2OH!/Bud Zero",
+    "parent": "Ambev",
+    "domain": "ambev.com.br",
+    "email": "daniela.leal@ambev.com.br",
+    "name": "Daniela Leal",
+    "position": "Brand Integration Manager",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Budweiser/Brahma/Skol/Spaten/Stella/Corona/Devassa/Bohemia/Original/Fusion/Guaraná/H2OH!/Bud Zero",
+    "parent": "Ambev",
+    "domain": "ambev.com.br",
+    "email": "joao.calice@ambev.com.br",
+    "name": "João Calice",
+    "position": "Director of Product Management",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Budweiser/Brahma/Skol/Spaten/Stella/Corona/Devassa/Bohemia/Original/Fusion/Guaraná/H2OH!/Bud Zero",
+    "parent": "Ambev",
+    "domain": "ambev.com.br",
+    "email": "paola.avila@ambev.com.br",
+    "name": "Paola Avila",
+    "position": "Procurement Director",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Budweiser/Brahma/Skol/Spaten/Stella/Corona/Devassa/Bohemia/Original/Fusion/Guaraná/H2OH!/Bud Zero",
+    "parent": "Ambev",
+    "domain": "ambev.com.br",
+    "email": "thales.leite@ambev.com.br",
+    "name": "Thales Leite",
+    "position": "Commercial Director",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Budweiser/Brahma/Skol/Spaten/Stella/Corona/Devassa/Bohemia/Original/Fusion/Guaraná/H2OH!/Bud Zero",
+    "parent": "Ambev",
+    "domain": "ambev.com.br",
+    "email": "paula.guz@ambev.com.br",
+    "name": "Paula Guz",
+    "position": "Director of Commercial and Growth",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Budweiser/Brahma/Skol/Spaten/Stella/Corona/Devassa/Bohemia/Original/Fusion/Guaraná/H2OH!/Bud Zero",
+    "parent": "Ambev",
+    "domain": "ambev.com.br",
+    "email": "ricardo.anselmo@ambev.com.br",
+    "name": "Ricardo Anselmo",
+    "position": "Commercial Director",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Budweiser/Brahma/Skol/Spaten/Stella/Corona/Devassa/Bohemia/Original/Fusion/Guaraná/H2OH!/Bud Zero",
+    "parent": "Ambev",
+    "domain": "ambev.com.br",
+    "email": "vania.moraes@ambev.com.br",
+    "name": "Vânia Moraes",
+    "position": "HR Director",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Budweiser/Brahma/Skol/Spaten/Stella/Corona/Devassa/Bohemia/Original/Fusion/Guaraná/H2OH!/Bud Zero",
+    "parent": "Ambev",
+    "domain": "ambev.com.br",
+    "email": "tiago.pereira@ambev.com.br",
+    "name": "Tiago Pereira",
+    "position": "Director of Corporate Affairs",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Budweiser/Brahma/Skol/Spaten/Stella/Corona/Devassa/Bohemia/Original/Fusion/Guaraná/H2OH!/Bud Zero",
+    "parent": "Ambev",
+    "domain": "ambev.com.br",
+    "email": "taissa.licatti@ambev.com.br",
+    "name": "Taissa Licatti",
+    "position": "Director of Internal Controls and Risk Management",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Petra/TNT Energy",
+    "parent": "Grupo Petrópolis",
+    "domain": "grupopetropolis.com.br",
+    "email": "dsantelices@grupopetropolis.com.br",
+    "name": "Bryan Tabla",
+    "position": "Head of Communication and Media",
+    "confidence": 99,
+    "pattern": "{f}{last}"
+  },
+  {
+    "brand": "Petra/TNT Energy",
+    "parent": "Grupo Petrópolis",
+    "domain": "grupopetropolis.com.br",
+    "email": "gfaria@grupopetropolis.com.br",
+    "name": "Giulia Faria",
+    "position": "Co-CEO",
+    "confidence": 98,
+    "pattern": "{f}{last}"
+  },
+  {
+    "brand": "Petra/TNT Energy",
+    "parent": "Grupo Petrópolis",
+    "domain": "grupopetropolis.com.br",
+    "email": "jsinti@grupopetropolis.com.br",
+    "name": "Jose Sinti",
+    "position": "Director of Sponsorship",
+    "confidence": 82,
+    "pattern": "{f}{last}"
+  },
+  {
+    "brand": "Red Bull",
+    "parent": "Red Bull GmbH",
+    "domain": "redbull.com",
+    "email": "dave.szych@redbull.com",
+    "name": "Dave Szych",
+    "position": "Vice President, Partnerships",
+    "confidence": 93,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Red Bull",
+    "parent": "Red Bull GmbH",
+    "domain": "redbull.com",
+    "email": "kirsten.veil-schmidt@redbull.com",
+    "name": "Kirsten Schmidt",
+    "position": "Director of Communications",
+    "confidence": 87,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Red Bull",
+    "parent": "Red Bull GmbH",
+    "domain": "redbull.com",
+    "email": "mateja.jeras@redbull.com",
+    "name": "Mateja Jeras",
+    "position": "Brand Manager",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Monster Energy/Reign",
+    "parent": "Monster Beverage",
+    "domain": "monsterenergy.com",
+    "email": "eva.lilja@monsterenergy.com",
+    "name": "Eva Lilja",
+    "position": "Senior Vice President, Global Regulatory Affairs",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Monster Energy/Reign",
+    "parent": "Monster Beverage",
+    "domain": "monsterenergy.com",
+    "email": "joerg.wipfler@monsterenergy.com",
+    "name": "Jörg Wipfler",
+    "position": "Vice President",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Monster Energy/Reign",
+    "parent": "Monster Beverage",
+    "domain": "monsterenergy.com",
+    "email": "richard.frost@monsterenergy.com",
+    "name": "Richard Frost",
+    "position": "Vice President of Innovation",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Monster Energy/Reign",
+    "parent": "Monster Beverage",
+    "domain": "monsterenergy.com",
+    "email": "guy.carling@monsterenergy.com",
+    "name": "Guy Carling",
+    "position": "EMEA President",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Monster Energy/Reign",
+    "parent": "Monster Beverage",
+    "domain": "monsterenergy.com",
+    "email": "mark.brown@monsterenergy.com",
+    "name": "Mark Brown",
+    "position": "Vice President",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Monster Energy/Reign",
+    "parent": "Monster Beverage",
+    "domain": "monsterenergy.com",
+    "email": "wesley.tranchina@monsterenergy.com",
+    "name": "Wesley Tranchina",
+    "position": "Vice President",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Monster Energy/Reign",
+    "parent": "Monster Beverage",
+    "domain": "monsterenergy.com",
+    "email": "aleks.kesapyan@monsterenergy.com",
+    "name": "Aleks Keşapyan",
+    "position": "Vice President",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Monster Energy/Reign",
+    "parent": "Monster Beverage",
+    "domain": "monsterenergy.com",
+    "email": "matt.wheat@monsterenergy.com",
+    "name": "Matt Wheat",
+    "position": "Vice President",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Monster Energy/Reign",
+    "parent": "Monster Beverage",
+    "domain": "monsterenergy.com",
+    "email": "michael.lipani@monsterenergy.com",
+    "name": "Michael Lipani",
+    "position": "Senior Vice President",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Monster Energy/Reign",
+    "parent": "Monster Beverage",
+    "domain": "monsterenergy.com",
+    "email": "mitsuhiro.matsumoto@monsterenergy.com",
+    "name": "Mitsuhiro Matsumoto",
+    "position": "Regional Vice President",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Itaú",
+    "parent": "Itaú Unibanco",
+    "domain": "itau.com.br",
+    "email": "isabelly.machado@itau.com.br",
+    "name": "Isabelly Machado",
+    "position": "Product Owner",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Itaú",
+    "parent": "Itaú Unibanco",
+    "domain": "itau.com.br",
+    "email": "vilma.cose@itau.com.br",
+    "name": "Vilma Cose",
+    "position": "Product Owner",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Itaú",
+    "parent": "Itaú Unibanco",
+    "domain": "itau.com.br",
+    "email": "isabelle.heilbronner@itau.com.br",
+    "name": "Isabelle Heilbronner",
+    "position": "Partner",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Bradesco",
+    "parent": "Bradesco",
+    "domain": "bradesco.com.br",
+    "email": "guilherme.piedade@bradesco.com.br",
+    "name": "Guilherme Piedade",
+    "position": "Manager",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Bradesco",
+    "parent": "Bradesco",
+    "domain": "bradesco.com.br",
+    "email": "thais.marques@bradesco.com.br",
+    "name": "Thais Marques",
+    "position": "Manager",
+    "confidence": 93,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Bradesco",
+    "parent": "Bradesco",
+    "domain": "bradesco.com.br",
+    "email": "debora.teixeira@bradesco.com.br",
+    "name": "Débora Teixeira",
+    "position": "Relationship Manager",
+    "confidence": 93,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Santander",
+    "parent": "Santander Brasil",
+    "domain": "santander.com.br",
+    "email": "gustavo.wagner@santander.com.br",
+    "name": "Gustavo Wagner",
+    "position": "Vice President of Foreign Exchange",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Santander",
+    "parent": "Santander Brasil",
+    "domain": "santander.com.br",
+    "email": "bruno.prosperi@santander.com.br",
+    "name": "Bruno Prosperi",
+    "position": "Regional Director",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Nubank",
+    "parent": "Nu Holdings",
+    "domain": "nubank.com.br",
+    "email": "fausto.ibarra@nubank.com.br",
+    "name": "Fausto Ibarra",
+    "position": "Vice President, General Manager",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Nubank",
+    "parent": "Nu Holdings",
+    "domain": "nubank.com.br",
+    "email": "ryan.martin@nubank.com.br",
+    "name": "Ryan Martin",
+    "position": "Director of Fraud Prevention",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Nubank",
+    "parent": "Nu Holdings",
+    "domain": "nubank.com.br",
+    "email": "carlos.cunha@nubank.com.br",
+    "name": "Cadu Cunha",
+    "position": "Head of Product",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Nubank",
+    "parent": "Nu Holdings",
+    "domain": "nubank.com.br",
+    "email": "guilherme.souto@nubank.com.br",
+    "name": "Guilherme Souto",
+    "position": "Head of Market Intelligence",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Nubank",
+    "parent": "Nu Holdings",
+    "domain": "nubank.com.br",
+    "email": "roberta.geyer@nubank.com.br",
+    "name": "Roberta Geyer",
+    "position": "Senior Director of Lending",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Nubank",
+    "parent": "Nu Holdings",
+    "domain": "nubank.com.br",
+    "email": "andre.tavares@nubank.com.br",
+    "name": "Andre Tavares",
+    "position": "Director of Product",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Nubank",
+    "parent": "Nu Holdings",
+    "domain": "nubank.com.br",
+    "email": "daniel.kutner@nubank.com.br",
+    "name": "Daniel Kutner",
+    "position": "Head of Corporate Development",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Nubank",
+    "parent": "Nu Holdings",
+    "domain": "nubank.com.br",
+    "email": "david.buckler@nubank.com.br",
+    "name": "David Buckler",
+    "position": "Director of Product Management",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Nubank",
+    "parent": "Nu Holdings",
+    "domain": "nubank.com.br",
+    "email": "claudio.queiroz@nubank.com.br",
+    "name": "Claudio Queiroz",
+    "position": "Global Head of SOX",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Nubank",
+    "parent": "Nu Holdings",
+    "domain": "nubank.com.br",
+    "email": "viviane.silva@nubank.com.br",
+    "name": "Viviane Silva",
+    "position": "Director of Product Management",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "BTG Pactual",
+    "parent": "BTG Pactual",
+    "domain": "btgpactual.com",
+    "email": "joao.almeida@btgpactual.com",
+    "name": "Joao Almeida",
+    "position": "Director of Asset Servicing",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "BTG Pactual",
+    "parent": "BTG Pactual",
+    "domain": "btgpactual.com",
+    "email": "pedro.soares@btgpactual.com",
+    "name": "Pedro Soares",
+    "position": "Director of Energy and Commodities",
+    "confidence": 93,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "BTG Pactual",
+    "parent": "BTG Pactual",
+    "domain": "btgpactual.com",
+    "email": "matheus.moura@btgpactual.com",
+    "name": "Matheus Moura",
+    "position": "Associate Director",
+    "confidence": 91,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Banco do Brasil",
+    "parent": "Banco do Brasil",
+    "domain": "bb.com.br",
+    "email": "marciopinto@bb.com.br",
+    "name": "Marcio Pinto",
+    "position": "Director of Offshore Products",
+    "confidence": 94,
+    "pattern": "{first}{last}"
+  },
+  {
+    "brand": "Banco do Brasil",
+    "parent": "Banco do Brasil",
+    "domain": "bb.com.br",
+    "email": "ivanfeitosa@bb.com.br",
+    "name": "Ivan Feitosa",
+    "position": "Head of Corporate Banking",
+    "confidence": 94,
+    "pattern": "{first}{last}"
+  },
+  {
+    "brand": "Banco do Brasil",
+    "parent": "Banco do Brasil",
+    "domain": "bb.com.br",
+    "email": "valerialana@bb.com.br",
+    "name": "Valeria Lana",
+    "position": "Head of Private Banking",
+    "confidence": 94,
+    "pattern": "{first}{last}"
+  },
+  {
+    "brand": "Banco do Brasil",
+    "parent": "Banco do Brasil",
+    "domain": "bb.com.br",
+    "email": "paulosantos@bb.com.br",
+    "name": "Paulo Santos",
+    "position": "Department Head",
+    "confidence": 94,
+    "pattern": "{first}{last}"
+  },
+  {
+    "brand": "Banco do Brasil",
+    "parent": "Banco do Brasil",
+    "domain": "bb.com.br",
+    "email": "francielipellin@bb.com.br",
+    "name": "Francieli Pellin",
+    "position": "Head of Private Banking",
+    "confidence": 93,
+    "pattern": "{first}{last}"
+  },
+  {
+    "brand": "Caixa",
+    "parent": "CEF",
+    "domain": "caixa.gov.br",
+    "email": "rodrigo.g.pereira@caixa.gov.br",
+    "name": "Rodrigo Pereira",
+    "position": "Consultant",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Caixa",
+    "parent": "CEF",
+    "domain": "caixa.gov.br",
+    "email": "josivan.josino@caixa.gov.br",
+    "name": "Josivan Josino",
+    "position": "Administrative Manager",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Caixa",
+    "parent": "CEF",
+    "domain": "caixa.gov.br",
+    "email": "valdemir.martins@caixa.gov.br",
+    "name": "Valdemir Martins",
+    "position": "Administrative Manager",
+    "confidence": 99,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Banco Inter",
+    "parent": "Inter & Co",
+    "domain": "inter.co",
+    "email": "privacidade@inter.co",
+    "name": "",
+    "position": "",
+    "confidence": 79,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "C6 Bank",
+    "parent": "C6 Bank",
+    "domain": "c6bank.com.br",
+    "email": "comunicacao@c6bank.com.br",
+    "name": "",
+    "position": "",
+    "confidence": 99,
+    "pattern": "{last}{first}"
+  },
+  {
+    "brand": "Vivo",
+    "parent": "Telefônica Brasil",
+    "domain": "vivo.com.br",
+    "email": "marcela.prada@vivo.com.br",
+    "name": "Marcela Prada",
+    "position": "Chief Economist",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Claro",
+    "parent": "América Móvil",
+    "domain": "claro.com.br",
+    "email": "walther.krause@claro.com.br",
+    "name": "Walther Krause",
+    "position": "Chief Risk Officer",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Claro",
+    "parent": "América Móvil",
+    "domain": "claro.com.br",
+    "email": "mauricio.santos@claro.com.br",
+    "name": "Mauricio Santos",
+    "position": "CEO",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  },
+  {
+    "brand": "Claro",
+    "parent": "América Móvil",
+    "domain": "claro.com.br",
+    "email": "ivan.mata@claro.com.br",
+    "name": "Ivan Mata",
+    "position": "Chief Procurement Officer",
+    "confidence": 94,
+    "pattern": "{first}.{last}"
+  }
+]
