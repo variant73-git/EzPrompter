@@ -357,8 +357,9 @@ html, body { overscroll-behavior: none; }
 
 .cnode-topbar .kind-pill {
   padding: calc(2px / var(--canvas-scale, 1)) calc(8px / var(--canvas-scale, 1));
-  border-radius: calc(4px / var(--canvas-scale, 1));
-  background: rgba(124, 58, 237, 0.25);
+  border-radius: calc(999px / var(--canvas-scale, 1));
+  background: transparent;
+  border: 1px solid rgba(167, 139, 250, 0.5);
   color: #c4b5fd;
   text-transform: uppercase;
   font-size: calc(10px / var(--canvas-scale, 1));
@@ -429,14 +430,20 @@ html, body { overscroll-behavior: none; }
 }
 
 .cnode-topbar .btn-delete {
-  font-size: calc(16px / var(--canvas-scale, 1));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(5px / var(--canvas-scale, 1)) calc(7px / var(--canvas-scale, 1));
   line-height: 1;
-  padding: calc(2px / var(--canvas-scale, 1)) calc(8px / var(--canvas-scale, 1));
 }
-
+.cnode-topbar .btn-delete svg {
+  width: calc(14px / var(--canvas-scale, 1));
+  height: calc(14px / var(--canvas-scale, 1));
+}
 .cnode-topbar .btn-delete:hover {
   background: rgba(248, 113, 113, 0.2);
   color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.4);
 }
 
 .cnode-body {
@@ -624,6 +631,79 @@ html, body { overscroll-behavior: none; }
   font-family: -apple-system, sans-serif;
   text-anchor: middle;
   pointer-events: none;
+}
+
+.empty-drop-menu {
+  position: fixed;
+  background: rgba(20, 20, 42, 0.97);
+  backdrop-filter: blur(20px);
+  border: 1px solid #2a2a4a;
+  border-radius: 10px;
+  padding: 6px;
+  z-index: 400;
+  width: 260px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.empty-drop-menu .edm-title {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  padding: 8px 10px 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.empty-drop-menu button {
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: #e2e8f0;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.empty-drop-menu button:hover {
+  background: rgba(124, 58, 237, 0.18);
+  color: #fff;
+}
+
+.empty-drop-menu button.edm-cancel {
+  color: #64748b;
+  text-align: center;
+  font-size: 0.78rem;
+  padding: 8px;
+  margin-top: 2px;
+  border-top: 1px solid #2a2a4a;
+  border-radius: 0;
+}
+
+.empty-drop-menu button.edm-primary {
+  background: #7c3aed;
+  color: #fff;
+  text-align: center;
+}
+
+.empty-drop-menu button.edm-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.empty-drop-menu input {
+  background: #0f0f23;
+  border: 1px solid #2a2a4a;
+  color: #fff;
+  padding: 8px 10px;
+  border-radius: 6px;
+  outline: none;
+  font-size: 0.85rem;
+  width: 100%;
+  margin: 0 0 6px;
 }
 
 .edge-popup {

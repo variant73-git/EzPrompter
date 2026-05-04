@@ -1,20 +1,28 @@
 'use client';
 
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useCallback, useEffect, useState } from 'react';
 import { injectEditor, detachEditor } from '../lib/inject-editor.js';
 
-const DRAG_THRESHOLD = 4;  // px before deciding click vs drag
+const DRAG_THRESHOLD = 4;
+
+const TrashIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6M14 11v6" />
+    <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+  </svg>
+);
 
 export default function CanvasNode({
-  node, selected, onSelect, onMove, onDelete, onStartEdge, onMouseUpAsEdgeTarget, draftActive
+  node, selected, editing = false, onEditingChange,
+  onSelect, onMove, onDelete, onStartEdge, draftActive
 }) {
   const iframeRef = useRef(null);
-  const [editing, setEditing] = useState(false);
   const [editorBusy, setEditorBusy] = useState(false);
 
-  // Drag-to-move (from topbar). Threshold lets a pure click select without moving.
   const onTopbarMouseDown = useCallback((e) => {
-    if (e.target?.closest?.('button')) return;  // buttons handle themselves
+    if (e.target?.closest?.('button')) return;
     e.stopPropagation();
     e.preventDefault();
     onSelect();
@@ -34,7 +42,6 @@ export default function CanvasNode({
     window.addEventListener('mouseup', up);
   }, [node.pos_x, node.pos_y, onMove, onSelect]);
 
-  // Drag-from-body to create an edge. Threshold filters incidental clicks.
   const onBodyMouseDown = useCallback((e) => {
     if (editing) return;
     if (e.target?.closest?.('.cnode-topbar')) return;
@@ -58,7 +65,6 @@ export default function CanvasNode({
     window.addEventListener('mouseup', up);
   }, [editing, onStartEdge, onSelect]);
 
-  // Auto-resize iframe to its captured page's full content height.
   const onIframeLoad = useCallback(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
@@ -66,12 +72,10 @@ export default function CanvasNode({
       const doc = iframe.contentDocument;
       if (!doc) return;
       const h = Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight || 0, 800);
-      // Cap to avoid runaway tall captures.
       iframe.style.height = Math.min(h, 12000) + 'px';
     } catch (e) { /* cross-origin */ }
   }, []);
 
-  // Inject / detach editor on edit toggle.
   useEffect(() => {
     if (!editing) return;
     let cancelled = false;
@@ -96,7 +100,7 @@ export default function CanvasNode({
     <div
       className={`cnode${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}`}
       style={{ left: node.pos_x, top: node.pos_y, width: node.width }}
-      onMouseUp={onMouseUpAsEdgeTarget}
+      data-node-id={node.id}
     >
       <div className="cnode-topbar" onMouseDown={onTopbarMouseDown}>
         <div className="topbar-left">
@@ -112,7 +116,7 @@ export default function CanvasNode({
             <button
               className={editing ? 'btn-edit active' : 'btn-edit'}
               onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); setEditing((v) => !v); }}
+              onClick={(e) => { e.stopPropagation(); onEditingChange?.(!editing); }}
               title={editing ? 'Exit edit mode' : 'Open editor (layers + inspector + guides)'}
             >
               {editing ? (editorBusy ? '…' : 'Done') : 'Edit'}
@@ -124,7 +128,7 @@ export default function CanvasNode({
             onClick={(e) => { e.stopPropagation(); if (confirm('Delete this node?')) onDelete(); }}
             title="Delete node"
           >
-            ×
+            <TrashIcon />
           </button>
         </div>
       </div>
