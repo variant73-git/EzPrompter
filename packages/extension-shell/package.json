@@ -1,0 +1,12 @@
+{
+  "name": "@uncraft/extension-shell",
+  "version": "2.5.0",
+  "description": "Uncraft Chrome extension shell — wraps editor-core with ChromeTransport.",
+  "private": true,
+  "scripts": {
+    "build": "bash ../../scripts/build-extension.sh"
+  },
+  "dependencies": {
+    "@uncraft/editor-core": "*"
+  }
+}

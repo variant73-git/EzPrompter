@@ -1,0 +1,8 @@
+{
+  "name": "@uncraft/editor-core",
+  "version": "0.1.0",
+  "description": "Uncraft editor core — layers, inspector, guides, modes. Consumed by extension-shell and web-shell via UncraftTransport.",
+  "private": true,
+  "main": "src/editor.js",
+  "files": ["src"]
+}

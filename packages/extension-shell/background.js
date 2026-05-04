@@ -1,6 +1,6 @@
 // Repix - Background Service Worker
 
-importScripts('overlay/semantic.js');
+importScripts('editor/semantic.js');
 
 // ─── Model pricing (USD per 1M tokens, [input, output]) ─────────────────────
 // Approximations from research/2026-04-25-pricing-synthesis.md. The synthesis
@@ -194,7 +194,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await chrome.scripting.insertCSS({ target: { tabId }, files: ['editor/editor.css'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/detect.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/freeze.js'] });
-        await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/extractor.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/extractor.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/persist.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e.js'] });
         await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/mode-e-classic.js'] });
@@ -225,7 +225,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const cacheKey = 'rb-semantic-' + new URL(tab.url).hostname + new URL(tab.url).pathname;
 
         // Extract page structure (always — needed for hash comparison)
-        await chrome.scripting.executeScript({ target: { tabId }, files: ['overlay/extractor.js'] });
+        await chrome.scripting.executeScript({ target: { tabId }, files: ['editor/extractor.js'] });
         const [extractResult] = await chrome.scripting.executeScript({
           target: { tabId },
           func: () => window.__rbExtractor?.extract?.()

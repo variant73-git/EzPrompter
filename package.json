@@ -1,0 +1,16 @@
+{
+  "name": "uncraft-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Uncraft monorepo — design tool for the web. Chrome extension + Web canvas SaaS sharing a single editor-core.",
+  "workspaces": [
+    "packages/editor-core",
+    "packages/extension-shell",
+    "packages/web-shell"
+  ],
+  "scripts": {
+    "build:ext": "bash scripts/build-extension.sh",
+    "dev:web": "npm run dev --workspace=packages/web-shell",
+    "build:web": "npm run build --workspace=packages/web-shell"
+  }
+}

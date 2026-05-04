@@ -1,0 +1,3 @@
+# build output: editor/ is synced from packages/editor-core/src/ via scripts/build-extension.sh
+# Run `bun run build:ext` (or `npm run build:ext`) to populate before loading the extension in Chrome.
+editor/
