@@ -154,19 +154,59 @@ export default function CanvasClient({ board, initialNodes, initialEdges }) {
     window.location.href = '/';
   }
 
-  // Esc clears selection / cancels draft edge.
+  function fitToContent(animationTime = 350) {
+    const t = transformRef.current;
+    if (!t || nodes.length === 0) return;
+    // Compute bounding box across all nodes (in world coords).
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of nodes) {
+      minX = Math.min(minX, n.pos_x);
+      minY = Math.min(minY, n.pos_y);
+      maxX = Math.max(maxX, n.pos_x + n.width);
+      maxY = Math.max(maxY, n.pos_y + n.height);
+    }
+    const PADDING = 80;
+    const bboxW = (maxX - minX) + PADDING * 2;
+    const bboxH = (maxY - minY) + PADDING * 2;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight - 48; // header offset
+    const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    // setTransform expects positionX/Y of the TransformComponent content.
+    const posX = vw / 2 - centerX * scale;
+    const posY = (vh / 2 + 48) - centerY * scale;
+    t.setTransform(posX, posY, scale, animationTime);
+  }
+
+  // Auto-fit when initial nodes are present (e.g. revisiting a board).
+  useEffect(() => {
+    if (initialNodes && initialNodes.length > 0) {
+      const t = setTimeout(() => fitToContent(0), 50);
+      return () => clearTimeout(t);
+    }
+  }, []); // intentional: only on first mount
+
+  // Keyboard shortcuts: Esc clears selection. F fits all nodes. 0 resets to 1:1 center.
   useEffect(() => {
     function onKey(e) {
+      const tag = e.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.key === 'Escape') {
         setSelectedNodeId(null);
         setSelectedEdgeId(null);
         setPopupPos(null);
         setDraftEdge(null);
+      } else if (e.key === 'f' || e.key === 'F') {
+        fitToContent();
+      } else if (e.key === '0') {
+        const t = transformRef.current;
+        if (t) t.setTransform(window.innerWidth / 2 - WORLD_WIDTH / 2, window.innerHeight / 2 - WORLD_HEIGHT / 2, 1, 250);
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [nodes]);
 
   return (
     <div className="canvas-shell" onMouseMove={moveDraftEdge}>
@@ -181,7 +221,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges }) {
           onBlur={(e) => persistBoardName(e.target.value)}
           spellCheck={false}
         />
-        <span style={{ color: '#475569', fontSize: '0.75rem' }}>{nodes.length} nodes · {edges.length} edges</span>
+        <button
+          onClick={() => fitToContent()}
+          disabled={nodes.length === 0}
+          title="Fit all nodes to viewport (F)"
+          style={{ color: nodes.length ? '#a78bfa' : '#475569', fontSize: '0.75rem', cursor: nodes.length ? 'pointer' : 'default' }}
+        >
+          {nodes.length} nodes · {edges.length} edges {nodes.length > 0 && '⤢'}
+        </button>
         <button onClick={logout}>Sign out</button>
       </header>
 
