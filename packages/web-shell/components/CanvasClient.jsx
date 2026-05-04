@@ -179,6 +179,25 @@ export default function CanvasClient({ board, initialNodes, initialEdges }) {
     t.setTransform(posX, posY, scale, animationTime);
   }
 
+  // Block browser-level zoom (Cmd/Ctrl + wheel, trackpad pinch sends ctrlKey)
+  // so it doesn't compete with the canvas's own pan/zoom.
+  useEffect(() => {
+    function onWheelCapture(e) {
+      if (e.ctrlKey || e.metaKey) e.preventDefault();
+    }
+    function onKeyZoom(e) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '_')) {
+        e.preventDefault();
+      }
+    }
+    document.addEventListener('wheel', onWheelCapture, { passive: false, capture: true });
+    document.addEventListener('keydown', onKeyZoom);
+    return () => {
+      document.removeEventListener('wheel', onWheelCapture, { capture: true });
+      document.removeEventListener('keydown', onKeyZoom);
+    };
+  }, []);
+
   // Auto-fit when initial nodes are present (e.g. revisiting a board).
   useEffect(() => {
     if (initialNodes && initialNodes.length > 0) {

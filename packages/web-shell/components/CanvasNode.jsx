@@ -3,56 +3,83 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { injectEditor, detachEditor } from '../lib/inject-editor.js';
 
+const DRAG_THRESHOLD = 4;  // px before deciding click vs drag
+
 export default function CanvasNode({
   node, selected, onSelect, onMove, onDelete, onStartEdge, onMouseUpAsEdgeTarget, draftActive
 }) {
-  const dragState = useRef(null);
   const iframeRef = useRef(null);
-  const [hover, setHover] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editorBusy, setEditorBusy] = useState(false);
 
-  const onHandleMouseDown = useCallback((e) => {
+  // Drag-to-move (from topbar). Threshold lets a pure click select without moving.
+  const onTopbarMouseDown = useCallback((e) => {
+    if (e.target?.closest?.('button')) return;  // buttons handle themselves
     e.stopPropagation();
-    e.preventDefault();   // prevent text selection / native drag while we own the gesture
+    e.preventDefault();
     onSelect();
-    if (e.shiftKey) {
-      onStartEdge(e);
-      return;
-    }
-    dragState.current = {
-      startX: e.clientX, startY: e.clientY,
-      origX: node.pos_x, origY: node.pos_y
-    };
+    const start = { x: e.clientX, y: e.clientY, ox: node.pos_x, oy: node.pos_y, moved: false };
     function move(ev) {
-      if (!dragState.current) return;
-      const dx = ev.clientX - dragState.current.startX;
-      const dy = ev.clientY - dragState.current.startY;
-      onMove(dragState.current.origX + dx, dragState.current.origY + dy);
+      const dx = ev.clientX - start.x;
+      const dy = ev.clientY - start.y;
+      if (!start.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      start.moved = true;
+      onMove(start.ox + dx, start.oy + dy);
     }
     function up() {
-      dragState.current = null;
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
     }
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
-  }, [node.pos_x, node.pos_y, onMove, onSelect, onStartEdge]);
+  }, [node.pos_x, node.pos_y, onMove, onSelect]);
 
-  // Detach editor when iframe content changes (snapshot updated by edge apply etc).
+  // Drag-from-body to create an edge. Threshold filters incidental clicks.
+  const onBodyMouseDown = useCallback((e) => {
+    if (editing) return;
+    if (e.target?.closest?.('.cnode-topbar')) return;
+    e.stopPropagation();
+    e.preventDefault();
+    onSelect();
+    const start = { x: e.clientX, y: e.clientY, started: false };
+    function move(ev) {
+      if (start.started) return;
+      const dx = ev.clientX - start.x;
+      const dy = ev.clientY - start.y;
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      start.started = true;
+      onStartEdge(ev);
+    }
+    function up() {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    }
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }, [editing, onStartEdge, onSelect]);
+
+  // Auto-resize iframe to its captured page's full content height.
+  const onIframeLoad = useCallback(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    try {
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+      const h = Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight || 0, 800);
+      // Cap to avoid runaway tall captures.
+      iframe.style.height = Math.min(h, 12000) + 'px';
+    } catch (e) { /* cross-origin */ }
+  }, []);
+
+  // Inject / detach editor on edit toggle.
   useEffect(() => {
     if (!editing) return;
     let cancelled = false;
     setEditorBusy(true);
-    // Wait one tick so iframe.contentDocument exists for the new srcDoc.
     const t = setTimeout(async () => {
-      try {
-        await injectEditor(iframeRef.current);
-      } catch (e) {
-        console.warn('editor injection failed', e);
-      } finally {
-        if (!cancelled) setEditorBusy(false);
-      }
+      try { await injectEditor(iframeRef.current); }
+      catch (e) { console.warn('editor injection failed', e); }
+      finally { if (!cancelled) setEditorBusy(false); }
     }, 250);
     return () => {
       cancelled = true;
@@ -63,52 +90,43 @@ export default function CanvasNode({
 
   const html = node.current_html;
   const kindLabel = node.kind === 'site' ? 'site' : node.kind === 'template' ? 'template' : node.kind === 'designmd' ? 'design.md' : 'chunk';
+  const title = node.origin_url || node.meta?.name || node.template_slug || 'untitled';
 
   return (
     <div
       className={`cnode${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}`}
-      style={{
-        left: node.pos_x, top: node.pos_y,
-        width: node.width, height: node.height
-      }}
+      style={{ left: node.pos_x, top: node.pos_y, width: node.width }}
       onMouseUp={onMouseUpAsEdgeTarget}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
     >
-      <div className="cnode-handle" onMouseDown={onHandleMouseDown}>
-        <span className="kind-pill">{kindLabel}</span>
-        <span className="label" title={node.origin_url || node.meta?.name || node.id}>
-          {node.origin_url || node.meta?.name || node.template_slug || 'untitled'}
-        </span>
-        {html && (
+      <div className="cnode-topbar" onMouseDown={onTopbarMouseDown}>
+        <div className="topbar-left">
+          <span className="kind-pill">{kindLabel}</span>
+          <span className="title" title={title}>{title}</span>
+        </div>
+        <div className="topbar-grip" aria-hidden>
+          <span /><span /><span /><span /><span /><span />
+          <span /><span /><span /><span /><span /><span />
+        </div>
+        <div className="topbar-right">
+          {html && (
+            <button
+              className={editing ? 'btn-edit active' : 'btn-edit'}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); setEditing((v) => !v); }}
+              title={editing ? 'Exit edit mode' : 'Open editor (layers + inspector + guides)'}
+            >
+              {editing ? (editorBusy ? '…' : 'Done') : 'Edit'}
+            </button>
+          )}
           <button
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); setEditing((v) => !v); }}
-            title={editing ? 'Exit edit mode' : 'Open editor (layers + inspector + guides)'}
-            style={editing
-              ? { background: '#7c3aed', color: '#fff', borderColor: '#7c3aed' }
-              : { background: 'rgba(124, 58, 237, 0.18)', color: '#c4b5fd', borderColor: 'rgba(124, 58, 237, 0.4)' }}
-          >
-            {editing ? (editorBusy ? 'Loading…' : 'Exit edit') : 'Edit'}
-          </button>
-        )}
-        {!editing && (
-          <button
-            onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); onStartEdge(e); }}
-            title="Drag to another node to create an edge"
-          >
-            Connect →
-          </button>
-        )}
-        {!editing && (
-          <button
+            className="btn-delete"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); if (confirm('Delete this node?')) onDelete(); }}
-            title="Delete"
+            title="Delete node"
           >
-            Delete
+            ×
           </button>
-        )}
+        </div>
       </div>
       {node._loading || !html ? (
         <div className="cnode-loading">
@@ -116,14 +134,23 @@ export default function CanvasNode({
           <span>{node.kind === 'site' ? 'Capturing…' : 'Loading…'}</span>
         </div>
       ) : (
-        <iframe
-          ref={iframeRef}
-          className="cnode-iframe"
-          title={node.origin_url || node.id}
-          srcDoc={html}
-          sandbox="allow-same-origin allow-scripts"
-          style={{ pointerEvents: draftActive ? 'none' : 'auto' }}
-        />
+        <div className="cnode-body" onMouseDown={onBodyMouseDown}>
+          <iframe
+            ref={iframeRef}
+            className="cnode-iframe"
+            title={title}
+            srcDoc={html}
+            sandbox="allow-same-origin allow-scripts"
+            onLoad={onIframeLoad}
+            style={{
+              pointerEvents: editing ? 'auto' : 'none',
+              height: 800
+            }}
+          />
+          {!editing && (
+            <div className="cnode-edge-hint">click + drag → connect to another node</div>
+          )}
+        </div>
       )}
     </div>
   );

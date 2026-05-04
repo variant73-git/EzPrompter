@@ -29,13 +29,16 @@ export default function EdgeLayer({ nodes, edges, draftEdge, selectedEdgeId, onS
       width={WORLD_WIDTH} height={WORLD_HEIGHT}
       style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none' }}
     >
-      {edges.map((e) => {
+      {edges.map((e, idx) => {
         const a = byId.get(e.source_node_id);
         const b = byId.get(e.target_node_id);
         if (!a || !b) return null;
         const ca = nodeCenter(a);
         const cb = nodeCenter(b);
-        const mid = { x: (ca.x + cb.x) / 2, y: (ca.y + cb.y) / 2 };
+        // Stagger overlapping labels so multiple edges between same nodes don't fully overlap.
+        const stagger = (idx % 3 - 1) * 28;
+        const mid = { x: (ca.x + cb.x) / 2, y: (ca.y + cb.y) / 2 + stagger };
+        const labelText = `${e.kind}${e.status === 'applied' ? ' ✓' : e.status === 'failed' ? ' ✗' : ''}`;
         return (
           <g key={e.id}>
             <path
@@ -43,8 +46,8 @@ export default function EdgeLayer({ nodes, edges, draftEdge, selectedEdgeId, onS
               className={`edge-line${selectedEdgeId === e.id ? ' selected' : ''} ${e.status || ''}`.trim()}
               onMouseDown={(evt) => { evt.stopPropagation(); onSelectEdge(e, evt); }}
             />
-            <text x={mid.x} y={mid.y - 6} className="edge-label" pointerEvents="none">
-              {e.kind}{e.status === 'applied' ? ' ✓' : e.status === 'failed' ? ' ✗' : ''}
+            <text x={mid.x} y={mid.y + 4} className="edge-label" pointerEvents="none">
+              {labelText}
             </text>
           </g>
         );
