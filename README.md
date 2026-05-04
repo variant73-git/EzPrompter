@@ -1,65 +1,84 @@
-# EzPrompter - AI Image Prompt Describer
+# Uncraft
 
-Browser extension for Chrome and Opera that uses AI to reverse-engineer the prompt of any image, saving the image along with a `.md` prompt file and `.json` metadata file.
+> Design without borders.
 
-## Features
+Visual design tool for the web. Edit any site directly in the browser with layers, inspector, guides, and AI rebuild. Two products:
 
-- **Right-click any image** to analyze it with AI
-- **Reverse-engineer prompts** - describes what prompt could recreate the image
-- **Saves 3 files** per image:
-  - The image itself (original format)
-  - `.md` file with the generated prompt and metadata
-  - `.json` file with full metadata
-- **Multiple AI providers**: OpenAI (GPT-4o) and Anthropic (Claude)
-- **Multi-language**: English, Portuguese (BR), Spanish
-- **Dark theme UI** with overlay results
+- **Chrome extension** — inject the editor into any tab. Edit live sites with CSS Live or rebuild via AI (Mode E).
+- **Web canvas** — node-graph SaaS at `uncraft.app/canvas`. Add multiple sites/templates/design.mds as nodes, connect with declarative edges (transplant, token-swap, reskin), edit each node with the same editor.
 
-## Installation
+Both products consume **`packages/editor-core/`**, the shared editor library. There is one source of truth for layers/inspector/guides/modes; changes ship to both products through a single workspace.
 
-1. Clone this repository or download the ZIP
-2. Open your browser:
-   - **Chrome**: Navigate to `chrome://extensions/`
-   - **Opera**: Navigate to `opera://extensions/`
-3. Enable **Developer mode** (toggle in the top-right)
-4. Click **Load unpacked** and select the `EzPrompter` folder
-5. Click the extension icon to configure your API key
-
-## Configuration
-
-Click the EzPrompter icon in your toolbar:
-
-| Setting | Description |
-|---------|-------------|
-| **AI Provider** | OpenAI or Anthropic |
-| **API Key** | Your API key for the selected provider |
-| **Model** | AI model to use (auto-fills based on provider) |
-| **Language** | Language for prompt descriptions |
-| **Download Folder** | Subfolder inside your Downloads directory |
-
-## Usage
-
-1. Right-click on any image on a webpage
-2. Select **"EzPrompter: Descrever prompt desta imagem"**
-3. Wait for the AI to analyze the image
-4. The prompt appears in an overlay - click **Copy Prompt** to copy
-5. Three files are automatically saved to your Downloads/EzPrompter folder
-
-## Output Files
-
-For each analyzed image, three files are created:
+## Repository layout
 
 ```
-EzPrompter/
-  2026-03-25T14-30-00_imagename.png    # Original image
-  2026-03-25T14-30-00_imagename.md     # Prompt + metadata in Markdown
-  2026-03-25T14-30-00_imagename.json   # Full metadata in JSON
+Uncraft/
+├── packages/
+│   ├── editor-core/       canonical editor sources (~14 JS files, editor.css, transport interface)
+│   ├── extension-shell/   Chrome extension — manifest + background + content + panel + ChromeTransport
+│   └── web-shell/         Next.js canvas product — pages, API routes, HttpTransport, snapshot/demarcelize libs
+├── scripts/
+│   └── build-editor.sh    syncs editor-core → both shells (idempotent)
+├── docs/superpowers/specs/2026-05-03-canvas-design.md   design spec
+└── package.json           workspaces + dev/build scripts
 ```
 
-## Requirements
+## Setup (one-time)
 
-- Chrome 88+ or Opera 74+ (Manifest V3 support)
-- API key from OpenAI or Anthropic
+```bash
+bun install
+bun run build:editor       # syncs editor-core into both shells
+```
 
-## License
+## Run the Chrome extension
 
-MIT
+```bash
+bun run build:editor       # populates packages/extension-shell/editor/
+```
+
+Then in Chrome → `chrome://extensions` → "Load unpacked" → select `packages/extension-shell/`.
+
+The extension is feature-complete (layers, inspector, guides, fill popup, Mode A live CSS, Mode B/E/E2/EL/S2H AI pipelines, persistence, undo/redo). See `CLAUDE.md` for the full feature inventory.
+
+## Run the web canvas (dev)
+
+Required env (in `packages/web-shell/.env.local`):
+
+```
+DATABASE_URL=postgresql://USER:PASS@host.tld/dbname    # Neon
+JWT_SECRET=long-random-string                          # session signing
+ANTHROPIC_API_KEY=sk-ant-...                           # for /api/demarcelize/*
+GEMINI_API_KEY=AI...                                   # alternative LLM
+BROWSERBASE_API_KEY=bb_...                             # optional, for production capture; local falls back to playwright-core's bundled chromium
+
+# legacy / optional (Stripe + Upstash for billing — out of scope for v1)
+STRIPE_SECRET_KEY=...
+UPSTASH_REDIS_REST_URL=...
+UPSTASH_REDIS_REST_TOKEN=...
+```
+
+```bash
+# first run only — install local Chromium for capture
+bunx --cwd packages/web-shell playwright install chromium
+
+bun run dev:web            # http://localhost:3030
+```
+
+Open `/`, create an account, redirected to `/canvas` (boards list), click "+ New board", land in `/canvas/[boardId]`. The bottom dock is the **superwidget**: Add URL captures a snapshot, Upload .md adds a markdown reference. Drag node handles to reposition. Shift-drag from a handle (or click ↗) to draw an edge to another node. Click an edge to set kind (transplant / token-swap / reskin) and apply.
+
+Click "✎ Edit" on any node's handle to inject the editor (layers panel + inspector + guides) inside that node's iframe.
+
+## Build the web canvas
+
+```bash
+bun run build:web          # next build under packages/web-shell
+bun run start:web          # next start
+```
+
+## Design spec
+
+See [`docs/superpowers/specs/2026-05-03-canvas-design.md`](docs/superpowers/specs/2026-05-03-canvas-design.md) for the locked architectural decisions, schema, and phased plan.
+
+## Backup
+
+The pre-monorepo extension snapshot is at `~/Desktop/IA/Uncraft-2.4.0-backup-2026-05-03/` and at git tag `backup-pre-monorepo-2026-05-03`.
