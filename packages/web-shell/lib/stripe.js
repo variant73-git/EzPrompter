@@ -1,6 +1,17 @@
 import Stripe from 'stripe';
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+let _stripe = null;
+function getStripe() {
+  if (_stripe) return _stripe;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error('STRIPE_SECRET_KEY env var missing.');
+  _stripe = new Stripe(key);
+  return _stripe;
+}
+
+export const stripe = new Proxy(function () {}, {
+  get(_t, prop) { return getStripe()[prop]; }
+});
 
 export const PLANS = {
   free: { captures: 5, name: 'Free' },
@@ -8,7 +19,7 @@ export const PLANS = {
 };
 
 export async function createCheckoutSession(userId, email) {
-  const session = await stripe.checkout.sessions.create({
+  return getStripe().checkout.sessions.create({
     mode: 'subscription',
     payment_method_types: ['card'],
     customer_email: email,
@@ -17,7 +28,7 @@ export async function createCheckoutSession(userId, email) {
         price_data: {
           currency: 'usd',
           product_data: {
-            name: 'Repix Pro',
+            name: 'Uncraft Pro',
             description: 'Unlimited captures per month',
           },
           unit_amount: 700,
@@ -27,9 +38,7 @@ export async function createCheckoutSession(userId, email) {
       },
     ],
     metadata: { userId: String(userId) },
-    success_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+    success_url: `${process.env.NEXT_PUBLIC_APP_URL}/canvas?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/canvas`,
   });
-
-  return session;
 }

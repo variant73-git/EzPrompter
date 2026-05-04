@@ -7,3 +7,34 @@ dev/
 # Local Claude Code state
 .claude/settings.local.json
 .claude/worktrees/
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# Build output
+.next/
+out/
+build/
+dist/
+
+# Lockfiles other than the workspace root bun.lock
+**/package-lock.json
+**/yarn.lock
+
+# Env files
+.env
+.env*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test/coverage
+coverage/
+*.tsbuildinfo
+
+# Vercel
+.vercel/
