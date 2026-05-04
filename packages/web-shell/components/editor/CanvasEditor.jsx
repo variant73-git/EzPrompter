@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import EditorOverlay from './EditorOverlay.jsx';
 import EditorLayers from './EditorLayers.jsx';
 import EditorInspector from './EditorInspector.jsx';
@@ -86,7 +87,12 @@ export default function CanvasEditor({ iframe, node, onExit, onSnapshotSaved }) 
     }
   }
 
-  return (
+  if (typeof document === 'undefined') return null;
+
+  // Portal the entire editor chrome to <body> so position:fixed actually means
+  // viewport-relative — TransformComponent applies CSS transform to its
+  // children, which breaks position:fixed for nested elements (CSS spec quirk).
+  return createPortal(
     <>
       <EditorOverlay iframe={iframe} selectedEl={selectedEl} hoverEl={hoverEl} />
       <EditorLayers
@@ -109,6 +115,7 @@ export default function CanvasEditor({ iframe, node, onExit, onSnapshotSaved }) 
           {dirty ? 'Discard & exit' : 'Exit edit'}
         </button>
       </div>
-    </>
+    </>,
+    document.body
   );
 }
