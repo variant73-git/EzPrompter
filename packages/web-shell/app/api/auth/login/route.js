@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { sql } from '../../../../lib/db.js';
-import { verifyPassword, createToken } from '../../../../lib/auth.js';
+import { verifyPassword, createToken, sessionCookieHeader } from '../../../../lib/auth.js';
 
 export async function POST(request) {
   try {
@@ -36,10 +36,12 @@ export async function POST(request) {
 
     const token = createToken(user);
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       token,
-      user: { email: user.email, name: user.name, plan: user.plan },
+      user: { id: user.id, email: user.email, name: user.name, plan: user.plan },
     });
+    res.headers.set('set-cookie', sessionCookieHeader(token));
+    return res;
   } catch (err) {
     console.error('Login error:', err);
     return NextResponse.json(

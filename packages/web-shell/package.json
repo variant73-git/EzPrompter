@@ -20,6 +20,7 @@
     "react-zoom-pan-pinch": "^3.6.0",
     "@anthropic-ai/sdk": "latest",
     "@google/genai": "latest",
-    "playwright-core": "^1.50.0"
+    "playwright-core": "^1.50.0",
+    "linkedom": "^0.18.0"
   }
 }
