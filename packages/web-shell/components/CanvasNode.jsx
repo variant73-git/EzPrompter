@@ -1,12 +1,16 @@
 'use client';
 
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
+import { injectEditor, detachEditor } from '../lib/inject-editor.js';
 
 export default function CanvasNode({
   node, selected, onSelect, onMove, onDelete, onStartEdge, onMouseUpAsEdgeTarget, draftActive
 }) {
   const dragState = useRef(null);
+  const iframeRef = useRef(null);
   const [hover, setHover] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editorBusy, setEditorBusy] = useState(false);
 
   const onHandleMouseDown = useCallback((e) => {
     e.stopPropagation();
@@ -34,12 +38,30 @@ export default function CanvasNode({
     window.addEventListener('mouseup', up);
   }, [node.pos_x, node.pos_y, onMove, onSelect, onStartEdge]);
 
+  // Detach editor when iframe content changes (snapshot updated by edge apply etc).
+  useEffect(() => {
+    if (!editing) return;
+    let cancelled = false;
+    setEditorBusy(true);
+    // Wait one tick so iframe.contentDocument exists for the new srcDoc.
+    const t = setTimeout(async () => {
+      try {
+        await injectEditor(iframeRef.current);
+      } catch (e) {
+        console.warn('editor injection failed', e);
+      } finally {
+        if (!cancelled) setEditorBusy(false);
+      }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); detachEditor(iframeRef.current); };
+  }, [editing, node.current_snapshot_id]);
+
   const html = node.current_html;
   const kindLabel = node.kind === 'site' ? 'site' : node.kind === 'template' ? 'template' : node.kind === 'designmd' ? 'design.md' : 'chunk';
 
   return (
     <div
-      className={`cnode${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}`}
+      className={`cnode${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}`}
       style={{
         left: node.pos_x, top: node.pos_y,
         width: node.width, height: node.height
@@ -53,12 +75,21 @@ export default function CanvasNode({
         <span className="label" title={node.origin_url || node.meta?.name || node.id}>
           {node.origin_url || node.meta?.name || node.template_slug || 'untitled'}
         </span>
-        {hover && (
+        {(hover || editing) && html && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setEditing((v) => !v); }}
+            title={editing ? 'Exit edit mode' : 'Open editor (layers + inspector + guides)'}
+            style={editing ? { background: 'rgba(124,58,237,0.3)', color: '#fff' } : {}}
+          >
+            {editing ? (editorBusy ? '…' : '✕ Edit') : '✎ Edit'}
+          </button>
+        )}
+        {hover && !editing && (
           <button onClick={(e) => { e.stopPropagation(); onStartEdge(e); }} title="Drag to create edge (or shift-drag handle)">
             ↗
           </button>
         )}
-        {hover && (
+        {hover && !editing && (
           <button onClick={(e) => { e.stopPropagation(); if (confirm('Delete this node?')) onDelete(); }} title="Delete">
             ✕
           </button>
@@ -71,10 +102,11 @@ export default function CanvasNode({
         </div>
       ) : (
         <iframe
+          ref={iframeRef}
           className="cnode-iframe"
           title={node.origin_url || node.id}
           srcDoc={html}
-          sandbox="allow-same-origin"
+          sandbox="allow-same-origin allow-scripts"
           style={{ pointerEvents: draftActive ? 'none' : 'auto' }}
         />
       )}

@@ -9,8 +9,10 @@
     "packages/web-shell"
   ],
   "scripts": {
-    "build:ext": "bash scripts/build-extension.sh",
-    "dev:web": "npm run dev --workspace=packages/web-shell",
-    "build:web": "npm run build --workspace=packages/web-shell"
+    "build:editor": "bash scripts/build-editor.sh",
+    "build:ext": "bash scripts/build-editor.sh",
+    "dev:web": "npm run build:editor && cd packages/web-shell && next dev --port 3030",
+    "build:web": "npm run build:editor && cd packages/web-shell && next build",
+    "start:web": "cd packages/web-shell && next start --port 3030"
   }
 }
