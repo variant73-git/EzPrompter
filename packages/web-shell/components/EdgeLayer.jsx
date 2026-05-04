@@ -49,9 +49,23 @@ export default function EdgeLayer({ nodes, edges, draftEdge, selectedEdgeId, onS
           </g>
         );
       })}
-      {draftPath && (
-        <path d={draftPath} stroke="#a78bfa" strokeWidth="1.5" strokeDasharray="4 4" fill="none" opacity="0.7" />
-      )}
+    </svg>
+  );
+}
+
+// Separate top-layer SVG so the draft edge renders ABOVE node iframes (which
+// otherwise would visually cover the dashed line during drag).
+export function DraftEdgeLayer({ nodes, draftEdge }) {
+  if (!draftEdge) return null;
+  const src = nodes.find((n) => n.id === draftEdge.sourceNodeId);
+  if (!src) return null;
+  const path = edgePath(nodeCenter(src), { x: draftEdge.x2, y: draftEdge.y2 });
+  return (
+    <svg
+      width={WORLD_WIDTH} height={WORLD_HEIGHT}
+      style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none', zIndex: 50 }}
+    >
+      <path d={path} stroke="#a78bfa" strokeWidth="2" strokeDasharray="6 6" fill="none" opacity="0.9" />
     </svg>
   );
 }

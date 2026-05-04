@@ -26,13 +26,16 @@ export async function initDB() {
   if (initialized) return;
   const schemaPath = path.join(process.cwd(), 'schema.sql');
   const schema = await fs.readFile(schemaPath, 'utf8');
-  const statements = schema
-    .split(/;\s*\n/)
+  // Strip line comments before splitting so they don't gate later statements.
+  const stripped = schema.replace(/^\s*--.*$/gm, '');
+  const statements = stripped
+    .split(/;\s*(?:\n|$)/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 0 && !s.startsWith('--'));
+    .filter((s) => s.length > 0);
   const client = getSql();
   for (const stmt of statements) {
-    await client.unsafe(stmt);
+    // neon's tagged-template client also accepts plain string queries.
+    await client(stmt);
   }
   initialized = true;
 }

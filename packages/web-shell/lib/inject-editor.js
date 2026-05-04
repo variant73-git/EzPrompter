@@ -32,6 +32,12 @@ const SCRIPTS = [
 
 const BASE_PATH = '/editor-core';
 
+function absUrl(p) {
+  // Resolve against the parent window's origin so the captured page's
+  // <base href> doesn't redirect editor-core asset loads.
+  return `${window.location.origin}${p}`;
+}
+
 function loadScript(doc, src) {
   return new Promise((resolve, reject) => {
     const s = doc.createElement('script');
@@ -99,19 +105,25 @@ function shimChrome(iframeWin) {
 }
 
 export async function injectEditor(iframe) {
-  if (!iframe?.contentDocument) throw new Error('iframe not ready');
-  const doc = iframe.contentDocument;
-  const win = iframe.contentWindow;
+  if (!iframe) throw new Error('iframe not ready');
+  let doc, win;
+  try { doc = iframe.contentDocument; win = iframe.contentWindow; }
+  catch (e) { throw new Error('iframe is cross-origin, cannot inject editor'); }
+  if (!doc || !win) throw new Error('iframe not ready');
 
-  if (win.__uncraftEditorInjected) return;
-  win.__uncraftEditorInjected = true;
+  try {
+    if (win.__uncraftEditorInjected) return;
+    win.__uncraftEditorInjected = true;
+  } catch (e) {
+    throw new Error('iframe became cross-origin, cannot inject editor');
+  }
 
   shimChrome(win);
 
-  loadStylesheet(doc, `${BASE_PATH}/editor.css`);
+  loadStylesheet(doc, absUrl(`${BASE_PATH}/editor.css`));
   for (const file of SCRIPTS) {
     try {
-      await loadScript(doc, `${BASE_PATH}/${file}`);
+      await loadScript(doc, absUrl(`${BASE_PATH}/${file}`));
     } catch (e) {
       console.warn('inject-editor:', e.message);
     }
@@ -119,8 +131,10 @@ export async function injectEditor(iframe) {
 }
 
 export function detachEditor(iframe) {
-  const win = iframe?.contentWindow;
+  if (!iframe) return;
+  let win = null;
+  try { win = iframe.contentWindow; } catch (e) { return; }
   if (!win) return;
   try { win.__rbDeactivate && win.__rbDeactivate(); } catch (e) { /* swallow */ }
-  win.__uncraftEditorInjected = false;
+  try { win.__uncraftEditorInjected = false; } catch (e) { /* cross-origin frame, nothing to clean */ }
 }

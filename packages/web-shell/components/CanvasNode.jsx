@@ -14,6 +14,7 @@ export default function CanvasNode({
 
   const onHandleMouseDown = useCallback((e) => {
     e.stopPropagation();
+    e.preventDefault();   // prevent text selection / native drag while we own the gesture
     onSelect();
     if (e.shiftKey) {
       onStartEdge(e);
@@ -53,7 +54,11 @@ export default function CanvasNode({
         if (!cancelled) setEditorBusy(false);
       }
     }, 250);
-    return () => { cancelled = true; clearTimeout(t); detachEditor(iframeRef.current); };
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+      try { detachEditor(iframeRef.current); } catch (e) { /* swallow */ }
+    };
   }, [editing, node.current_snapshot_id]);
 
   const html = node.current_html;
@@ -75,23 +80,33 @@ export default function CanvasNode({
         <span className="label" title={node.origin_url || node.meta?.name || node.id}>
           {node.origin_url || node.meta?.name || node.template_slug || 'untitled'}
         </span>
-        {(hover || editing) && html && (
+        {html && (
           <button
+            onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); setEditing((v) => !v); }}
             title={editing ? 'Exit edit mode' : 'Open editor (layers + inspector + guides)'}
-            style={editing ? { background: 'rgba(124,58,237,0.3)', color: '#fff' } : {}}
+            style={editing
+              ? { background: '#7c3aed', color: '#fff', borderColor: '#7c3aed' }
+              : { background: 'rgba(124, 58, 237, 0.18)', color: '#c4b5fd', borderColor: 'rgba(124, 58, 237, 0.4)' }}
           >
-            {editing ? (editorBusy ? '…' : '✕ Edit') : '✎ Edit'}
+            {editing ? (editorBusy ? 'Loading…' : 'Exit edit') : 'Edit'}
           </button>
         )}
-        {hover && !editing && (
-          <button onClick={(e) => { e.stopPropagation(); onStartEdge(e); }} title="Drag to create edge (or shift-drag handle)">
-            ↗
+        {!editing && (
+          <button
+            onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); onStartEdge(e); }}
+            title="Drag to another node to create an edge"
+          >
+            Connect →
           </button>
         )}
-        {hover && !editing && (
-          <button onClick={(e) => { e.stopPropagation(); if (confirm('Delete this node?')) onDelete(); }} title="Delete">
-            ✕
+        {!editing && (
+          <button
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); if (confirm('Delete this node?')) onDelete(); }}
+            title="Delete"
+          >
+            Delete
           </button>
         )}
       </div>

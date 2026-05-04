@@ -4,7 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
 import CanvasNode from './CanvasNode.jsx';
-import EdgeLayer from './EdgeLayer.jsx';
+import EdgeLayer, { DraftEdgeLayer } from './EdgeLayer.jsx';
 import EdgePopup from './EdgePopup.jsx';
 import Superwidget from './Superwidget.jsx';
 
@@ -193,19 +193,19 @@ export default function CanvasClient({ board, initialNodes, initialEdges }) {
         initialPositionX={-WORLD_WIDTH * 0.25}
         initialPositionY={-WORLD_HEIGHT * 0.25}
         limitToBounds={false}
-        wheel={{ step: 0.08 }}
+        wheel={{ step: 0.08, excluded: ['cnode-iframe', 'cnode-handle', 'edge-popup', 'superwidget', 'canvas-header'] }}
         panning={{ excluded: ['cnode-iframe', 'cnode-handle', 'edge-line', 'edge-popup', 'superwidget', 'canvas-header'] }}
         doubleClick={{ disabled: true }}
         onPanningStart={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setPopupPos(null); }}
+        onTransformed={(_ref, state) => {
+          // Expose current scale so node chrome (handle/buttons/edges) can stay
+          // viewport-readable via inverse-scale in CSS.
+          document.documentElement.style.setProperty('--canvas-scale', String(state.scale || 1));
+        }}
       >
         <TransformComponent wrapperStyle={{ width: '100vw', height: '100vh' }} contentStyle={{ width: WORLD_WIDTH, height: WORLD_HEIGHT }}>
           <EdgeLayer
             nodes={nodes} edges={edges}
-            draftEdge={draftEdge && {
-              sourceNodeId: draftEdge.sourceNodeId,
-              x2: clientToWorld(transformRef, draftEdge.mouseX, draftEdge.mouseY).x,
-              y2: clientToWorld(transformRef, draftEdge.mouseX, draftEdge.mouseY).y
-            }}
             selectedEdgeId={selectedEdgeId}
             onSelectEdge={(edge, evt) => {
               setSelectedEdgeId(edge.id);
@@ -228,6 +228,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges }) {
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
             />
           ))}
+          <DraftEdgeLayer
+            nodes={nodes}
+            draftEdge={draftEdge && {
+              sourceNodeId: draftEdge.sourceNodeId,
+              x2: clientToWorld(transformRef, draftEdge.mouseX, draftEdge.mouseY).x,
+              y2: clientToWorld(transformRef, draftEdge.mouseX, draftEdge.mouseY).y
+            }}
+          />
         </TransformComponent>
       </TransformWrapper>
 
