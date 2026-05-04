@@ -36,7 +36,7 @@ export default function HomePage() {
       }
 
       localStorage.setItem('token', data.token);
-      window.location.href = '/dashboard';
+      window.location.href = '/canvas';
     } catch (err) {
       setError('Network error. Please try again.');
       setLoading(false);
@@ -46,8 +46,8 @@ export default function HomePage() {
   return (
     <div className="container" style={{ paddingTop: '4rem' }}>
       <div className="text-center" style={{ marginBottom: '2rem' }}>
-        <h1>Repix</h1>
-        <p className="tagline">Remix everything.</p>
+        <h1>Uncraft</h1>
+        <p className="tagline">Design without borders.</p>
       </div>
 
       <div className="card">

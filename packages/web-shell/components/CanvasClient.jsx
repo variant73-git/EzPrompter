@@ -1,0 +1,273 @@
+'use client';
+
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
+import { api } from '../lib/canvas-api.js';
+import CanvasNode from './CanvasNode.jsx';
+import EdgeLayer from './EdgeLayer.jsx';
+import EdgePopup from './EdgePopup.jsx';
+import Superwidget from './Superwidget.jsx';
+
+const WORLD_WIDTH = 8000;
+const WORLD_HEIGHT = 6000;
+
+export default function CanvasClient({ board, initialNodes, initialEdges }) {
+  const [nodes, setNodes] = useState(initialNodes || []);
+  const [edges, setEdges] = useState(initialEdges || []);
+  const [boardName, setBoardName] = useState(board.name || 'Untitled');
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState(null);
+  const [draftEdge, setDraftEdge] = useState(null);  // {sourceNodeId, mouseX, mouseY}
+  const [popupPos, setPopupPos] = useState(null);
+  const transformRef = useRef(null);
+
+  const updateNodeLocal = useCallback((id, patch) => {
+    setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch } : n)));
+  }, []);
+
+  const dragNodeServer = useRef(new Map());
+  function persistNodePosition(id, posX, posY) {
+    clearTimeout(dragNodeServer.current.get(id));
+    const t = setTimeout(() => api.updateNode(id, { posX, posY }).catch(console.warn), 250);
+    dragNodeServer.current.set(id, t);
+  }
+
+  async function handleAddUrl(url) {
+    const id = `temp-${Date.now()}`;
+    const placeholderNode = {
+      id, kind: 'site', origin_url: url,
+      pos_x: 200, pos_y: 200, width: 1280, height: 800,
+      is_main: nodes.length === 0,
+      current_html: null, _loading: true
+    };
+    setNodes((prev) => [...prev, placeholderNode]);
+
+    try {
+      const cap = await api.captureUrl(url);
+      const created = await api.createNode({
+        boardId: board.id, kind: 'site', originUrl: url,
+        posX: 200, posY: 200, width: 1280, height: 800,
+        isMain: nodes.length === 0,
+        html: cap.html
+      });
+      setNodes((prev) => prev.map((n) => (n.id === id ? {
+        ...created.node,
+        current_html: cap.html,
+        current_screenshot: cap.screenshotDataUrl,
+        _loading: false
+      } : n)));
+    } catch (e) {
+      console.error(e);
+      setNodes((prev) => prev.filter((n) => n.id !== id));
+      alert(`Capture failed: ${e.message}`);
+    }
+  }
+
+  async function handleUploadMd(file) {
+    const text = await file.text();
+    try {
+      const created = await api.createNode({
+        boardId: board.id, kind: 'designmd',
+        posX: 200, posY: 200, width: 540, height: 720,
+        meta: { name: file.name },
+        html: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:ui-monospace,monospace;padding:24px;line-height:1.6;color:#1f2937;background:#fafafa;white-space:pre-wrap;word-wrap:break-word;}</style></head><body>${escapeHtml(text)}</body></html>`,
+        designMd: text
+      });
+      setNodes((prev) => [...prev, { ...created.node, current_html: created.node.current_html || '', current_design_md: text }]);
+    } catch (e) {
+      alert(`Upload failed: ${e.message}`);
+    }
+  }
+
+  async function handleDeleteNode(id) {
+    setNodes((prev) => prev.filter((n) => n.id !== id));
+    setEdges((prev) => prev.filter((e) => e.source_node_id !== id && e.target_node_id !== id));
+    if (id.startsWith?.('temp-')) return;
+    await api.deleteNode(id).catch(console.warn);
+  }
+
+  function startEdgeFromNode(nodeId, mouseEvent) {
+    setDraftEdge({ sourceNodeId: nodeId, mouseX: mouseEvent.clientX, mouseY: mouseEvent.clientY });
+  }
+
+  function moveDraftEdge(e) {
+    if (draftEdge) setDraftEdge({ ...draftEdge, mouseX: e.clientX, mouseY: e.clientY });
+  }
+
+  async function dropDraftEdge(e, hoverNodeId) {
+    if (!draftEdge) return;
+    const target = hoverNodeId;
+    const src = draftEdge.sourceNodeId;
+    setDraftEdge(null);
+    if (!target || target === src) return;
+    try {
+      const { edge } = await api.createEdge({
+        boardId: board.id, sourceNodeId: src, targetNodeId: target,
+        kind: 'transplant', payload: { sourceSelector: 'body', targetSelector: 'body' }
+      });
+      setEdges((prev) => [...prev, edge]);
+      setSelectedEdgeId(edge.id);
+      setPopupPos({ x: e.clientX, y: e.clientY });
+    } catch (err) {
+      alert(`Edge create failed: ${err.message}`);
+    }
+  }
+
+  async function handleApplyEdge(edge) {
+    try {
+      const { snapshotId, targetNodeId } = await api.applyEdge(edge.id);
+      // Refetch board for latest target node HTML
+      const fresh = await api.getBoard(board.id);
+      setNodes(fresh.nodes);
+      setEdges(fresh.edges);
+      setSelectedEdgeId(null);
+      setPopupPos(null);
+    } catch (e) {
+      alert(`Apply failed: ${e.message}`);
+    }
+  }
+
+  async function handleUpdateEdge(edge, payload) {
+    try {
+      await api.updateEdge(edge.id, { payload });
+      setEdges((prev) => prev.map((x) => (x.id === edge.id ? { ...x, payload } : x)));
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function handleDeleteEdge(edge) {
+    setEdges((prev) => prev.filter((x) => x.id !== edge.id));
+    setSelectedEdgeId(null);
+    setPopupPos(null);
+    await api.deleteEdge(edge.id).catch(console.warn);
+  }
+
+  async function persistBoardName(name) {
+    if (name === board.name) return;
+    await api.renameBoard(board.id, name).catch(console.warn);
+  }
+
+  function logout() {
+    api.logout().catch(() => {});
+    localStorage.removeItem('token');
+    window.location.href = '/';
+  }
+
+  // Esc clears selection / cancels draft edge.
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === 'Escape') {
+        setSelectedNodeId(null);
+        setSelectedEdgeId(null);
+        setPopupPos(null);
+        setDraftEdge(null);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  return (
+    <div className="canvas-shell" onMouseMove={moveDraftEdge}>
+      <div className="canvas-bg" />
+
+      <header className="canvas-header">
+        <a href="/canvas">← Boards</a>
+        <input
+          className="canvas-board-name"
+          value={boardName}
+          onChange={(e) => setBoardName(e.target.value)}
+          onBlur={(e) => persistBoardName(e.target.value)}
+          spellCheck={false}
+        />
+        <span style={{ color: '#475569', fontSize: '0.75rem' }}>{nodes.length} nodes · {edges.length} edges</span>
+        <button onClick={logout}>Sign out</button>
+      </header>
+
+      <TransformWrapper
+        ref={transformRef}
+        minScale={0.1}
+        maxScale={2.5}
+        initialScale={0.6}
+        initialPositionX={-WORLD_WIDTH * 0.25}
+        initialPositionY={-WORLD_HEIGHT * 0.25}
+        limitToBounds={false}
+        wheel={{ step: 0.08 }}
+        panning={{ excluded: ['cnode-iframe', 'cnode-handle', 'edge-line', 'edge-popup', 'superwidget', 'canvas-header'] }}
+        doubleClick={{ disabled: true }}
+        onPanningStart={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setPopupPos(null); }}
+      >
+        <TransformComponent wrapperStyle={{ width: '100vw', height: '100vh' }} contentStyle={{ width: WORLD_WIDTH, height: WORLD_HEIGHT }}>
+          <EdgeLayer
+            nodes={nodes} edges={edges}
+            draftEdge={draftEdge && {
+              sourceNodeId: draftEdge.sourceNodeId,
+              x2: clientToWorld(transformRef, draftEdge.mouseX, draftEdge.mouseY).x,
+              y2: clientToWorld(transformRef, draftEdge.mouseX, draftEdge.mouseY).y
+            }}
+            selectedEdgeId={selectedEdgeId}
+            onSelectEdge={(edge, evt) => {
+              setSelectedEdgeId(edge.id);
+              setPopupPos({ x: evt.clientX, y: evt.clientY });
+              setSelectedNodeId(null);
+            }}
+          />
+          {nodes.map((n) => (
+            <CanvasNode
+              key={n.id} node={n}
+              selected={selectedNodeId === n.id}
+              onSelect={() => { setSelectedNodeId(n.id); setSelectedEdgeId(null); setPopupPos(null); }}
+              onMove={(posX, posY) => {
+                updateNodeLocal(n.id, { pos_x: posX, pos_y: posY });
+                if (!String(n.id).startsWith('temp-')) persistNodePosition(n.id, posX, posY);
+              }}
+              onDelete={() => handleDeleteNode(n.id)}
+              onStartEdge={(e) => startEdgeFromNode(n.id, e)}
+              onMouseUpAsEdgeTarget={(e) => dropDraftEdge(e, n.id)}
+              draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
+            />
+          ))}
+        </TransformComponent>
+      </TransformWrapper>
+
+      {nodes.length === 0 && (
+        <div className="canvas-empty">
+          Empty canvas. Add a URL or upload a design.md from the dock below to start.
+        </div>
+      )}
+
+      {selectedEdgeId && popupPos && (
+        <EdgePopup
+          edge={edges.find((e) => e.id === selectedEdgeId)}
+          nodes={nodes}
+          position={popupPos}
+          onUpdate={handleUpdateEdge}
+          onApply={handleApplyEdge}
+          onDelete={handleDeleteEdge}
+          onClose={() => { setSelectedEdgeId(null); setPopupPos(null); }}
+        />
+      )}
+
+      <Superwidget
+        onAddUrl={handleAddUrl}
+        onUploadMd={handleUploadMd}
+        nodeCount={nodes.length}
+      />
+    </div>
+  );
+}
+
+function clientToWorld(transformRef, clientX, clientY) {
+  const state = transformRef.current?.instance?.transformState;
+  if (!state) return { x: clientX, y: clientY };
+  const { positionX, positionY, scale } = state;
+  return {
+    x: (clientX - positionX) / scale,
+    y: (clientY - positionY) / scale
+  };
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}

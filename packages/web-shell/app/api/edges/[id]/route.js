@@ -20,9 +20,11 @@ export async function PATCH(request, { params }) {
   if (!edge) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   const body = await request.json().catch(() => ({}));
+  const VALID_KINDS = new Set(['transplant', 'token-swap', 'reskin']);
   const payload = body.payload ?? edge.payload;
   const status = body.status ?? edge.status;
-  await sql`UPDATE edges SET payload = ${payload}::jsonb, status = ${status} WHERE id = ${id}`;
+  const kind = (body.kind && VALID_KINDS.has(body.kind)) ? body.kind : edge.kind;
+  await sql`UPDATE edges SET payload = ${payload}::jsonb, status = ${status}, kind = ${kind} WHERE id = ${id}`;
   return NextResponse.json({ ok: true });
 }
 

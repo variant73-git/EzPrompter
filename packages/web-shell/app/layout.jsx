@@ -1,8 +1,8 @@
 import './globals.css';
 
 export const metadata = {
-  title: 'Repix',
-  description: 'Remix everything.',
+  title: 'Uncraft',
+  description: 'Design without borders.',
 };
 
 export const viewport = {
