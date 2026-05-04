@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useCallback, useEffect, useState } from 'react';
-import { injectEditor, detachEditor } from '../lib/inject-editor.js';
+import CanvasEditor from './editor/CanvasEditor.jsx';
 
 const DRAG_THRESHOLD = 4;
 
@@ -76,21 +76,10 @@ export default function CanvasNode({
     } catch (e) { /* cross-origin */ }
   }, []);
 
+  // Editor mounts via <CanvasEditor> below; no JS injection into iframe.
   useEffect(() => {
-    if (!editing) return;
-    let cancelled = false;
-    setEditorBusy(true);
-    const t = setTimeout(async () => {
-      try { await injectEditor(iframeRef.current); }
-      catch (e) { console.warn('editor injection failed', e); }
-      finally { if (!cancelled) setEditorBusy(false); }
-    }, 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-      try { detachEditor(iframeRef.current); } catch (e) { /* swallow */ }
-    };
-  }, [editing, node.current_snapshot_id]);
+    if (!editing) setEditorBusy(false);
+  }, [editing]);
 
   const html = node.current_html;
   const kindLabel = node.kind === 'site' ? 'site' : node.kind === 'template' ? 'template' : node.kind === 'designmd' ? 'design.md' : 'chunk';
@@ -155,6 +144,14 @@ export default function CanvasNode({
             <div className="cnode-edge-hint">click + drag → connect to another node</div>
           )}
         </div>
+      )}
+      {editing && iframeRef.current && (
+        <CanvasEditor
+          iframe={iframeRef.current}
+          node={node}
+          onExit={() => onEditingChange?.(false)}
+          onSnapshotSaved={() => { /* optional: refresh state */ }}
+        />
       )}
     </div>
   );

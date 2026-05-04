@@ -25,6 +25,7 @@ export const api = {
   applyEdge: (id) => fetch(`/api/edges/${id}/apply`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
 
   captureUrl: (url, nodeId = null) => fetch('/api/snapshot/capture', { ...COMMON, method: 'POST', body: JSON.stringify({ url, nodeId }) }).then(jsonOrThrow),
+  saveNodeEdit: (nodeId, html) => fetch(`/api/nodes/${nodeId}/save-edit`, { ...COMMON, method: 'POST', body: JSON.stringify({ html }) }).then(jsonOrThrow),
 
   logout: () => fetch('/api/auth/logout', { ...COMMON, method: 'POST' }).then(jsonOrThrow)
 };
