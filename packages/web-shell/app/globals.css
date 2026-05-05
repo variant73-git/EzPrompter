@@ -373,7 +373,10 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   height: calc(36px / var(--canvas-scale, 1));
   background: rgba(20, 20, 42, 0.95);
   backdrop-filter: blur(12px);
-  border-radius: calc(8px / var(--canvas-scale, 1)) calc(8px / var(--canvas-scale, 1)) 0 0;
+  /* Match the node body's bottom-radius so the corner shape (and therefore
+     the side-edge tangent at the joint) is identical. Bottom corners stay
+     sharp so the topbar→body seam is a single flat horizontal line. */
+  border-radius: calc(10px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1)) 0 0;
   display: flex;
   align-items: center;
   padding: 0 calc(10px / var(--canvas-scale, 1));
@@ -381,8 +384,13 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   cursor: move;
   user-select: none;
   color: #cbd5e1;
-  border: 1px solid rgba(20, 184, 166, 0.25);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  /* No 1px border — the body has none, and a 1-side-only border was
+     creating a 1px brightness step where the topbar's bottom edge met the
+     body's top edge. */
+  border: none;
+  /* No downward drop-shadow — it darkened the body's top 4px, reading as
+     a visible seam. The selected/main outlines provide enough depth. */
+  box-shadow: none;
 }
 
 .cnode-topbar .topbar-left {
