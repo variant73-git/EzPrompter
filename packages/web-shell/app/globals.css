@@ -16,7 +16,7 @@ body {
 }
 
 a {
-  color: #a78bfa;
+  color: #2dd4bf;
   text-decoration: none;
 }
 
@@ -52,7 +52,7 @@ h2 {
 }
 
 .tagline {
-  color: #a78bfa;
+  color: #2dd4bf;
   font-size: 1.1rem;
   margin-bottom: 2rem;
 }
@@ -80,13 +80,13 @@ input[type='text'] {
 }
 
 input:focus {
-  border-color: #7c3aed;
+  border-color: #14b8a6;
 }
 
 .btn {
   display: inline-block;
   padding: 0.75rem 1.5rem;
-  background: #7c3aed;
+  background: #14b8a6;
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -99,7 +99,7 @@ input:focus {
 }
 
 .btn:hover {
-  background: #6d28d9;
+  background: #0d9488;
 }
 
 .btn:disabled {
@@ -109,12 +109,12 @@ input:focus {
 
 .btn-outline {
   background: transparent;
-  border: 1px solid #7c3aed;
-  color: #a78bfa;
+  border: 1px solid #14b8a6;
+  color: #2dd4bf;
 }
 
 .btn-outline:hover {
-  background: rgba(124, 58, 237, 0.1);
+  background: rgba(20, 184, 166, 0.1);
 }
 
 .btn-danger {
@@ -147,7 +147,7 @@ input:focus {
 .toggle-link button {
   background: none;
   border: none;
-  color: #a78bfa;
+  color: #2dd4bf;
   cursor: pointer;
   font-size: 0.875rem;
   text-decoration: underline;
@@ -163,9 +163,9 @@ input:focus {
 }
 
 .badge-pro {
-  background: rgba(124, 58, 237, 0.2);
-  color: #a78bfa;
-  border: 1px solid #7c3aed;
+  background: rgba(20, 184, 166, 0.2);
+  color: #2dd4bf;
+  border: 1px solid #14b8a6;
 }
 
 .badge-free {
@@ -239,7 +239,8 @@ input:focus {
 .canvas-shell {
   position: fixed;
   inset: 0;
-  background: #0a0a14;
+  /* Off-black: a touch warmer than pure #000 but no blue tint. */
+  background: #0a0a0a;
   overflow: hidden;
 }
 
@@ -247,7 +248,7 @@ input:focus {
   position: absolute;
   inset: 0;
   background-image:
-    radial-gradient(circle at 1px 1px, rgba(124, 58, 237, 0.1) 1px, transparent 0);
+    radial-gradient(circle at 1px 1px, rgba(20, 184, 166, 0.08) 1px, transparent 0);
   background-size: 32px 32px;
   pointer-events: none;
 }
@@ -540,7 +541,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   width: 22px;
   height: 22px;
   border: 2px solid #2a2a4a;
-  border-top-color: #7c3aed;
+  border-top-color: #14b8a6;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -583,9 +584,9 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   align-items: center;
   gap: 0.4rem;
   padding: 0.4rem 0.75rem;
-  background: rgba(124, 58, 237, 0.12);
-  border: 1px solid rgba(124, 58, 237, 0.3);
-  color: #c4b5fd;
+  background: rgba(20, 184, 166, 0.12);
+  border: 1px solid rgba(20, 184, 166, 0.3);
+  color: #5eead4;
   border-radius: 8px;
   cursor: pointer;
   font-size: 0.8rem;
@@ -593,7 +594,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .superwidget-tool:hover {
-  background: rgba(124, 58, 237, 0.2);
+  background: rgba(20, 184, 166, 0.2);
 }
 
 .superwidget-input-row {
@@ -617,7 +618,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 
 .superwidget-input-row button {
   padding: 0.5rem 1rem;
-  background: #7c3aed;
+  background: #14b8a6;
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -645,7 +646,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 
 .edge-line {
   fill: none;
-  stroke: #7c3aed;
+  stroke: #14b8a6;
   stroke-width: calc(2 / var(--canvas-scale, 1));
   opacity: 0.7;
   pointer-events: stroke;
@@ -658,7 +659,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 .edge-line.failed { stroke: #f87171; }
 
 .edge-label {
-  fill: #c4b5fd;
+  fill: #5eead4;
   stroke: #0a0a14;
   stroke-width: calc(4px / var(--canvas-scale, 1));
   paint-order: stroke fill;
@@ -677,7 +678,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   background: rgba(20, 20, 42, 0.85);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(124, 58, 237, 0.25);
+  border: 1px solid rgba(20, 184, 166, 0.25);
   border-radius: 12px;
   z-index: 320;
   color: #e2e8f0;
@@ -694,7 +695,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(124, 58, 237, 0.2);
+  border-bottom: 1px solid rgba(20, 184, 166, 0.2);
   cursor: grab;
   user-select: none;
 }
@@ -704,7 +705,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #a78bfa;
+  color: #2dd4bf;
 }
 
 .editor-panel .panel-refresh {
@@ -756,8 +757,8 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   color: #cbd5e1;
 }
 
-.layer-row:hover { background: rgba(124, 58, 237, 0.1); }
-.layer-row.selected { background: rgba(124, 58, 237, 0.3); color: #fff; }
+.layer-row:hover { background: rgba(20, 184, 166, 0.1); }
+.layer-row.selected { background: rgba(20, 184, 166, 0.3); color: #fff; }
 
 .layer-toggle {
   background: transparent;
@@ -788,7 +789,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 
 .ins-tag {
   font-family: ui-monospace, monospace;
-  color: #c4b5fd;
+  color: #5eead4;
   font-size: 0.85rem;
   font-weight: 600;
 }
@@ -807,8 +808,8 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .ins-class-chip {
-  background: rgba(124, 58, 237, 0.18);
-  color: #c4b5fd;
+  background: rgba(20, 184, 166, 0.18);
+  color: #5eead4;
   padding: 2px 6px;
   border-radius: 4px;
   font-family: ui-monospace, monospace;
@@ -850,7 +851,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 
 .ins-field input:focus,
 .ins-field select:focus {
-  border-color: #7c3aed;
+  border-color: #14b8a6;
 }
 
 .ins-color-row {
@@ -881,7 +882,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   transform: translateX(-50%);
   background: rgba(20, 20, 42, 0.85);
   backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(124, 58, 237, 0.25);
+  border: 1px solid rgba(20, 184, 166, 0.25);
   border-radius: 999px;
   padding: 6px 10px;
   display: flex;
@@ -899,9 +900,9 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .editor-btn {
-  background: rgba(124, 58, 237, 0.2);
-  border: 1px solid rgba(124, 58, 237, 0.4);
-  color: #c4b5fd;
+  background: rgba(20, 184, 166, 0.2);
+  border: 1px solid rgba(20, 184, 166, 0.4);
+  color: #5eead4;
   padding: 5px 14px;
   border-radius: 999px;
   font-size: 0.78rem;
@@ -911,7 +912,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .editor-btn:hover:not(:disabled) {
-  background: rgba(124, 58, 237, 0.35);
+  background: rgba(20, 184, 166, 0.35);
   color: #fff;
 }
 
@@ -935,13 +936,14 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   border-radius: 14px;
 }
 .cnode.editing .cnode-body {
-  border-radius: 8px;
-  outline: 2px solid #7c3aed;
-  outline-offset: 0;
+  border-radius: 0 0 8px 8px;
   overflow: hidden;
 }
+/* Editing topbar stays flush — same flush rule as the resting state.
+   The legacy `margin-bottom:12px` detached the topbar, breaking the
+   continuous teal frame that this state is supposed to draw. */
 .cnode.editing .cnode-topbar {
-  margin-bottom: calc(12px / var(--canvas-scale, 1));
+  margin-bottom: 0;
 }
 
 .empty-drop-menu {
@@ -980,7 +982,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .empty-drop-menu button:hover {
-  background: rgba(124, 58, 237, 0.18);
+  background: rgba(20, 184, 166, 0.18);
   color: #fff;
 }
 
@@ -995,7 +997,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .empty-drop-menu button.edm-primary {
-  background: #7c3aed;
+  background: #14b8a6;
   color: #fff;
   text-align: center;
 }
@@ -1050,6 +1052,6 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 
 .edge-popup .row { display: flex; gap: 0.4rem; margin-top: 0.75rem; }
 .edge-popup .row button { flex: 1; padding: 0.5rem; border-radius: 6px; border: none; font-size: 0.8rem; cursor: pointer; font-family: inherit; }
-.edge-popup .row .apply { background: #7c3aed; color: #fff; }
+.edge-popup .row .apply { background: #14b8a6; color: #fff; }
 .edge-popup .row .delete { background: rgba(248, 113, 113, 0.15); color: #fca5a5; }
 
