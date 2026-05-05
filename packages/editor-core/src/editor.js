@@ -2,6 +2,17 @@
   if (window.__rbEditorActive) { deactivate(); return; }
   window.__rbEditorActive = true;
 
+  // Host = where panels/popups/keyboard listeners live (editor UI).
+  // Target = where the edited content lives (the site).
+  // mountEditor sets window.__rbHost / window.__rbTarget on the host window
+  // before injecting editor.js. When omitted (standalone runs), both fall
+  // back to document/window so the extension behaves exactly as before.
+  // Resolved up-front because the site-freeze loop below uses targetDoc.
+  var hostDoc = (window.__rbHost && window.__rbHost.doc) || document;
+  var hostWin = (window.__rbHost && window.__rbHost.win) || window;
+  var targetDoc = (window.__rbTarget && window.__rbTarget.doc) || hostDoc;
+  var targetWin = (window.__rbTarget && window.__rbTarget.win) || hostWin;
+
   var ac = new AbortController(), sig = ac.signal;
 
   // Detect web builder and freeze animations
@@ -67,16 +78,6 @@
   var currentDepth = 0;
   var currentParent = null;
   var groupTree = null;
-
-  // Host = where panels/popups/keyboard listeners live (editor UI).
-  // Target = where the edited content lives (the site).
-  // mountEditor sets window.__rbHost / window.__rbTarget on the host window
-  // before injecting editor.js. When omitted (standalone runs), both fall
-  // back to document/window so the extension behaves exactly as before.
-  var hostDoc = (window.__rbHost && window.__rbHost.doc) || document;
-  var hostWin = (window.__rbHost && window.__rbHost.win) || window;
-  var targetDoc = (window.__rbTarget && window.__rbTarget.doc) || hostDoc;
-  var targetWin = (window.__rbTarget && window.__rbTarget.win) || hostWin;
 
   // Skip tags
   var SKIP = new Set(['HTML','BODY','HEAD','SCRIPT','STYLE','META','LINK','BR','HR','NOSCRIPT','TITLE','BASE']);
