@@ -652,6 +652,30 @@ body.rb-ed-floating .rb-insp-adv-popup {
   color:#EFEEEB; background:rgba(255,255,255,0.05);
   padding:5px 6px; border:none; border-radius:4px;
   outline:none; width:100%; box-sizing:border-box;
+  margin:0; height:auto;
+}
+/* Canvas mode: the host page's globals.css ships rules like
+   `input[type='text'] { font-size:1rem; padding:.75rem 1rem; margin-bottom:1rem }`
+   which would otherwise win against `.rb-insp-inp` (same specificity,
+   later-loaded). Bump our specificity with a #rb-editor-inspector prefix
+   and !important on the size-affecting properties so the inspector renders
+   identically in both shells. */
+#rb-editor-inspector input.rb-insp-inp,
+#rb-editor-inspector input.rb-insp-font-sel,
+#rb-editor-inspector input[type='text'],
+#rb-editor-inspector input[type='number'] {
+  font-size:12px !important;
+  line-height:1.3 !important;
+  padding:5px 6px !important;
+  margin:0 !important;
+  height:25px !important;
+  border-radius:4px !important;
+  width:100% !important;
+  box-sizing:border-box !important;
+}
+#rb-editor-inspector .rb-insp-field-wrap input.rb-insp-inp {
+  height:auto !important;
+  padding:5px 4px !important;
 }
 .rb-insp-inp:hover { background-color:rgba(255,255,255,0.08); }
 .rb-insp-inp:focus { background-color:rgba(255,255,255,0.10); }

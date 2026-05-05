@@ -3242,7 +3242,7 @@
     var logoLeft = mk('div');
     logoLeft.style.cssText = 'display:flex;align-items:center;gap:4px;';
     var logoEl = mk('span', 'rb-ed-logo');
-    logoEl.innerHTML = '<i>Repix</i>';
+    logoEl.innerHTML = '<i>Uncraft</i>';
     var logoChev = mk('button', 'rb-ed-project-chev');
     logoChev.style.cssText = 'border:none;background:none;';
     logoChev.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
@@ -3380,7 +3380,7 @@
       miniWidgetL = mk('div');
       miniWidgetL.className = 'rb-mini-widget';
       miniWidgetL.style.cssText = 'left:12px;top:12px;';
-      miniWidgetL.innerHTML = DRAG_HANDLE + '<span class="rb-ed-logo" style="font-size:12px"><i>Repix</i></span>';
+      miniWidgetL.innerHTML = DRAG_HANDLE + '<span class="rb-ed-logo" style="font-size:12px"><i>Uncraft</i></span>';
       var restoreBtnL = mk('button', 'rb-ed-minmax-btn');
       restoreBtnL.innerHTML = '<span class="rb-ed-icon-maximize"></span>';
       restoreBtnL.addEventListener('mousedown', function(we) { we.stopImmediatePropagation(); restorePanels(); }, {capture: true});
@@ -3582,6 +3582,17 @@
     root.appendChild(layersPanel);
 
     populateLayers();
+
+    // Canvas mode default: undocked / floating panels. The host body in
+    // canvas isn't the edited site, so the docked layout (which carves
+    // 240px+260px out of body width) just compresses canvas chrome. The
+    // user prefers floating panels here. Toggle button stays interactive.
+    if (hostDoc !== targetDoc) {
+      layersPanel.classList.add('rb-layers-floating');
+      inspector.classList.add('rb-insp-floating');
+      hostDoc.body.classList.add('rb-ed-floating');
+      hostDoc.documentElement.classList.remove('rb-ed-docked');
+    }
   }
 
   function showGlobalCSS() {
@@ -6931,7 +6942,7 @@
     var inView = rect.top >= 0 && rect.bottom <= targetWin.innerHeight;
 
     function positionAndShow() {
-      var r = img.getBoundingClientRect();
+      var r = getOverlayBox(img);
       var m = mk('div', 'rb-ed-img-menu');
       m.style.top = Math.max(4, r.top - 40) + 'px';
       m.style.left = (r.left + r.width / 2) + 'px';
@@ -7144,7 +7155,7 @@
       origCss.push({ el: leaf, css: leaf.getAttribute('style') || '' });
     });
 
-    var rect = el.getBoundingClientRect();
+    var rect = getOverlayBox(el);
     var m = mk('div', 'rb-ed-img-menu rb-ed-text-dock');
     m.style.top = Math.max(4, rect.top - 40) + 'px';
     m.style.left = (rect.left + rect.width / 2) + 'px';
