@@ -71,7 +71,10 @@ function injectCss(href) {
   link.rel = 'stylesheet';
   link.href = href;
   link.dataset.uncraftEditor = href;
-  link.id = 'rb-editor-styles';
+  // Use a dedicated id — the editor's `rb-editor-styles` slot is reserved
+  // for the saved-state recovery <style> that initAutoSave() legitimately
+  // wipes on every boot. Sharing the id made our stylesheet vanish.
+  link.id = 'rb-editor-stylesheet';
   document.head.appendChild(link);
 }
 
@@ -116,17 +119,16 @@ export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnap
   const transportRef = useRef(null);
 
   useEffect(() => {
+    console.log('[CanvasEditorCore] mount, iframe=', iframe, 'contentDoc=', iframe?.contentDocument);
     if (!iframe?.contentDocument || !iframe?.contentWindow) {
+      console.warn('[CanvasEditorCore] iframe not ready');
       setError('iframe not ready');
       setStatus('error');
       return;
     }
 
-    // StrictMode safety: a pending teardown from a prior cleanup is the
-    // signal that React is doing a strict-mode remount. Cancel it and
-    // reuse the already-mounted editor. Naively tearing down on every
-    // cleanup yanks the panels the moment they appear.
     if (window.__uncraftEditorTeardownTimer) {
+      console.log('[CanvasEditorCore] StrictMode remount — cancelling pending teardown');
       clearTimeout(window.__uncraftEditorTeardownTimer);
       window.__uncraftEditorTeardownTimer = null;
       setStatus('active');
@@ -143,6 +145,7 @@ export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnap
     window.__rbTarget = { doc: targetDoc, win: targetWin };
     window.__uncraftTransport = transport;
     window.__uncraftMountOptions = { boardId, nodeId: node.id, kind: node.kind };
+    console.log('[CanvasEditorCore] globals set, injecting scripts');
 
     // CSS first so the editor renders correctly the moment editor.js builds
     // its panels.
@@ -154,8 +157,12 @@ export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnap
         for (const f of SCRIPT_FILES) {
           if (aborted) return;
           await injectScript('/editor-core/' + f);
+          console.log('[CanvasEditorCore] loaded', f);
         }
-        if (!aborted) setStatus('active');
+        if (!aborted) {
+          console.log('[CanvasEditorCore] all scripts loaded — __rbEditorActive=', window.__rbEditorActive, 'rb-editor-root=', document.getElementById('rb-editor-root'));
+          setStatus('active');
+        }
       } catch (e) {
         console.error('[CanvasEditorCore] bootstrap failed:', e);
         if (!aborted) {
@@ -166,6 +173,7 @@ export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnap
     })();
 
     return () => {
+      console.log('[CanvasEditorCore] cleanup');
       aborted = true;
       scheduleTeardown();
     };
