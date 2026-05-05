@@ -11,8 +11,8 @@
   "scripts": {
     "build:editor": "bash scripts/build-editor.sh",
     "build:ext": "bash scripts/build-editor.sh",
-    "dev:web": "npm run build:editor && cd packages/web-shell && next dev --port 3030",
-    "build:web": "npm run build:editor && cd packages/web-shell && next build",
-    "start:web": "cd packages/web-shell && next start --port 3030"
+    "dev:web": "npm run build:editor && npm run dev --workspace=@uncraft/web-shell",
+    "build:web": "npm run build:editor && npm run build --workspace=@uncraft/web-shell",
+    "start:web": "npm run start --workspace=@uncraft/web-shell"
   }
 }

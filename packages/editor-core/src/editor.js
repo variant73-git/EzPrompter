@@ -7903,8 +7903,6 @@
         var ifr = targetWin.frameElement;
         var inIframe = ifr && ifr.contains(e.target);
         var inEditorUi = isEditorEl(e.target);
-        // eslint-disable-next-line no-console
-        if (selectedEl) console.log('[uncraft] host mousedown:', { target: e.target, inIframe: inIframe, inEditorUi: inEditorUi });
         if (inEditorUi) return;
         if (inIframe) return; // click into iframe — target handler owns it
         if (!selectedEl && !isTextEditing && !dragStart) return;

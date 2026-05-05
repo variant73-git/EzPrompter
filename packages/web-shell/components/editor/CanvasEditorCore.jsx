@@ -78,12 +78,23 @@ function injectCss(href) {
   document.head.appendChild(link);
 }
 
+// Module-scope boot state. Survives StrictMode mount→cleanup→mount cycles
+// so the script-loader runs ONCE per (boardId, nodeId) regardless of how
+// many times the React effect fires. The closure-scoped aborted flag in
+// the original implementation got flipped by every cleanup — including
+// StrictMode's synthetic one — leaving the loader stuck mid-flight while
+// the re-mount short-circuited assuming bootstrap had finished.
+let bootPromise = null;
+let bootKey = null;          // `${boardId}:${nodeId}` — invalidates on key change
+let bootAborted = false;     // only flipped by teardownEditor (real exit)
+
 // Tear down the editor from the host page. Idempotent — safe to call when
-// nothing is mounted. Lives at module scope so the StrictMode re-mount path
-// can return it as a cleanup without dragging effect-scope closures along
-// (which would put `cancelled` in the temporal dead zone on the early-return
-// branch).
+// nothing is mounted.
 function teardownEditor() {
+  bootAborted = true;
+  bootPromise = null;
+  bootKey = null;
+
   try {
     if (typeof window.__rbDeactivate === 'function') window.__rbDeactivate();
   } catch (_) {}
@@ -113,68 +124,86 @@ function scheduleTeardown() {
   window.__uncraftEditorTeardownTimer = setTimeout(teardownEditor, 50);
 }
 
+// Bootstrap the editor at module scope. Called from useEffect; idempotent
+// for the same (boardId, nodeId). Returns a promise that resolves when all
+// 14 scripts have loaded. StrictMode re-mount finds the existing pending
+// promise and attaches to it instead of restarting.
+function bootEditor({ targetDoc, targetWin, transport, boardId, nodeId, kind }) {
+  const key = `${boardId}:${nodeId}`;
+
+  if (bootPromise && bootKey === key) {
+    return bootPromise;
+  }
+
+  // Different node/board than the one currently booted — tear down first.
+  // (Rare: typically each node mounts a fresh component.)
+  if (bootPromise) teardownEditor();
+
+  bootKey = key;
+  bootAborted = false;
+
+  // Globals editor.js IIFE looks up at boot.
+  window.__rbHost = { doc: document, win: window };
+  window.__rbTarget = { doc: targetDoc, win: targetWin };
+  window.__uncraftTransport = transport;
+  window.__uncraftMountOptions = { boardId, nodeId, kind };
+
+  // CSS first so the editor renders correctly the moment editor.js builds
+  // its panels.
+  injectCss('/editor-core/editor.css');
+
+  bootPromise = (async () => {
+    for (const f of SCRIPT_FILES) {
+      if (bootAborted) throw new Error('boot aborted');
+      await injectScript('/editor-core/' + f);
+    }
+  })();
+
+  return bootPromise;
+}
+
 export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnapshotSaved }) {
   const [status, setStatus] = useState('booting'); // booting | active | error | exiting
   const [error, setError] = useState(null);
   const transportRef = useRef(null);
 
   useEffect(() => {
-    console.log('[CanvasEditorCore] mount, iframe=', iframe, 'contentDoc=', iframe?.contentDocument);
     if (!iframe?.contentDocument || !iframe?.contentWindow) {
-      console.warn('[CanvasEditorCore] iframe not ready');
       setError('iframe not ready');
       setStatus('error');
       return;
     }
 
+    // Cancel any pending teardown — we're (re)mounting, so the editor
+    // should keep running. If this is a StrictMode re-mount, the original
+    // mount scheduled a teardown 50ms ago that we're aborting here.
     if (window.__uncraftEditorTeardownTimer) {
-      console.log('[CanvasEditorCore] StrictMode remount — cancelling pending teardown');
       clearTimeout(window.__uncraftEditorTeardownTimer);
       window.__uncraftEditorTeardownTimer = null;
-      setStatus('active');
-      return scheduleTeardown;
     }
 
-    const targetDoc = iframe.contentDocument;
-    const targetWin = iframe.contentWindow;
     const transport = createHttpTransport({ boardId, nodeId: node.id });
     transportRef.current = transport;
 
-    // Globals editor.js IIFE looks up at boot.
-    window.__rbHost = { doc: document, win: window };
-    window.__rbTarget = { doc: targetDoc, win: targetWin };
-    window.__uncraftTransport = transport;
-    window.__uncraftMountOptions = { boardId, nodeId: node.id, kind: node.kind };
-    console.log('[CanvasEditorCore] globals set, injecting scripts');
-
-    // CSS first so the editor renders correctly the moment editor.js builds
-    // its panels.
-    injectCss('/editor-core/editor.css');
-
-    let aborted = false;
-    (async () => {
-      try {
-        for (const f of SCRIPT_FILES) {
-          if (aborted) return;
-          await injectScript('/editor-core/' + f);
-          console.log('[CanvasEditorCore] loaded', f);
-        }
-        if (!aborted) {
-          console.log('[CanvasEditorCore] all scripts loaded — __rbEditorActive=', window.__rbEditorActive, 'rb-editor-root=', document.getElementById('rb-editor-root'));
-          setStatus('active');
-        }
-      } catch (e) {
-        console.error('[CanvasEditorCore] bootstrap failed:', e);
-        if (!aborted) {
+    let cancelled = false;
+    bootEditor({
+      targetDoc: iframe.contentDocument,
+      targetWin: iframe.contentWindow,
+      transport,
+      boardId,
+      nodeId: node.id,
+      kind: node.kind
+    })
+      .then(() => { if (!cancelled) setStatus('active'); })
+      .catch((e) => {
+        if (!cancelled) {
           setError(e.message || 'bootstrap failed');
           setStatus('error');
         }
-      }
-    })();
+      });
 
     return () => {
-      console.log('[CanvasEditorCore] cleanup');
-      aborted = true;
+      cancelled = true;
       scheduleTeardown();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
