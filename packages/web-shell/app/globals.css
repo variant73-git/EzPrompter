@@ -247,9 +247,12 @@ input:focus {
 .canvas-shell .canvas-bg {
   position: absolute;
   inset: 0;
+  /* Neutral white dots, easier to read than teal at low alpha. Dot size
+     bumped to 1.4px so each one survives sub-pixel rasterization at low
+     canvas zoom levels. */
   background-image:
-    radial-gradient(circle at 1px 1px, rgba(20, 184, 166, 0.08) 1px, transparent 0);
-  background-size: 32px 32px;
+    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.18) 1.4px, transparent 0);
+  background-size: 28px 28px;
   pointer-events: none;
 }
 
@@ -321,62 +324,41 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
    the topbar; bottom corners on the body. */
 .cnode {
   position: absolute;
-  border-radius: 0 0 10px 10px;
+  border-radius: calc(10px / var(--canvas-scale, 1));
   background: #fff;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   transition: box-shadow 0.15s;
-  /* No fixed height — content (iframe) determines, sized by JS on load. */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-/* Selected: continuous teal frame around topbar + body. */
+/* Selected: full 4-side teal ring on the unified node container. */
 .cnode.selected {
   box-shadow:
-    calc(-2px / var(--canvas-scale, 1)) 0 0 #14b8a6,
-    calc( 2px / var(--canvas-scale, 1)) 0 0 #14b8a6,
-    0 calc( 2px / var(--canvas-scale, 1)) 0 #14b8a6,
+    0 0 0 calc(2px / var(--canvas-scale, 1)) #14b8a6,
     0 8px 32px rgba(20, 184, 166, 0.3);
-}
-
-.cnode.selected .cnode-topbar {
-  box-shadow:
-    calc(-2px / var(--canvas-scale, 1)) 0 0 #14b8a6,
-    calc( 2px / var(--canvas-scale, 1)) 0 0 #14b8a6,
-    0 calc(-2px / var(--canvas-scale, 1)) 0 #14b8a6;
-  border-color: transparent;
 }
 
 /* Soft "main" glow uses a lighter teal so it's distinct from selected. */
 .cnode.is-main {
   box-shadow:
-    calc(-2px / var(--canvas-scale, 1)) 0 0 #2dd4bf,
-    calc( 2px / var(--canvas-scale, 1)) 0 0 #2dd4bf,
-    0 calc( 2px / var(--canvas-scale, 1)) 0 #2dd4bf,
+    0 0 0 calc(2px / var(--canvas-scale, 1)) #2dd4bf,
     0 0 24px rgba(45, 212, 191, 0.3),
-    0 8px 32px rgba(0,0,0,0.4);
-}
-.cnode.is-main .cnode-topbar {
-  box-shadow:
-    calc(-2px / var(--canvas-scale, 1)) 0 0 #2dd4bf,
-    calc( 2px / var(--canvas-scale, 1)) 0 0 #2dd4bf,
-    0 calc(-2px / var(--canvas-scale, 1)) 0 #2dd4bf;
-  border-color: transparent;
+    0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
-/* Topbar floats ABOVE the node body — flush, no margin gap. Sharp bottom
-   corners so it merges with the body's flat top. */
+/* Topbar is now a flex child of cnode (no longer absolute / bottom:100%).
+   The cnode's overflow:hidden + border-radius clips the topbar to the
+   rounded outer shape so the seam between topbar and body is just a
+   color change inside one continuous frame. */
 .cnode-topbar {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  right: 0;
-  margin-bottom: 0;
+  position: relative;
+  flex: 0 0 calc(36px / var(--canvas-scale, 1));
   height: calc(36px / var(--canvas-scale, 1));
   background: rgba(20, 20, 42, 0.95);
   backdrop-filter: blur(12px);
-  /* Match the node body's bottom-radius so the corner shape (and therefore
-     the side-edge tangent at the joint) is identical. Bottom corners stay
-     sharp so the topbar→body seam is a single flat horizontal line. */
-  border-radius: calc(10px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1)) 0 0;
+  border-radius: 0;
   display: flex;
   align-items: center;
   padding: 0 calc(10px / var(--canvas-scale, 1));
@@ -384,12 +366,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   cursor: move;
   user-select: none;
   color: #cbd5e1;
-  /* No 1px border — the body has none, and a 1-side-only border was
-     creating a 1px brightness step where the topbar's bottom edge met the
-     body's top edge. */
   border: none;
-  /* No downward drop-shadow — it darkened the body's top 4px, reading as
-     a visible seam. The selected/main outlines provide enough depth. */
   box-shadow: none;
 }
 
@@ -494,13 +471,17 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 
 .cnode-body {
   position: relative;
-  border-radius: 0 0 10px 10px;
+  /* Flat corners — the parent .cnode is the rounded shape now and clips
+     us via overflow:hidden. */
+  border-radius: 0;
   overflow: hidden;
+  flex: 1 1 auto;
 }
 
 .cnode.editing .cnode-body {
-  outline: 2px solid #14b8a6;
-  outline-offset: 0;
+  /* Editing-state outline removed — the .cnode.selected ring already
+     wraps the whole node (topbar + body) once they share a parent. */
+  outline: none;
 }
 
 .cnode-iframe {
@@ -935,21 +916,15 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   color: #cbd5e1;
 }
 
-/* When a node is being edited, give it a visible "container" treatment so the
- * iframe reads as an "ilhado" artboard with breathing room from the panels. */
-.cnode.editing {
-  padding: 10px;
-  background: rgba(20, 20, 42, 0.6);
-  backdrop-filter: blur(8px);
-  border-radius: 14px;
-}
+/* Editing keeps the same flush layout as the resting state — topbar +
+   body share a single rounded shape. No extra padding (used to inset
+   the iframe creating two-frame visual). The selected ring already
+   indicates editing-state visually, and the editor's own panels are
+   the chrome the user reads. */
 .cnode.editing .cnode-body {
-  border-radius: 0 0 8px 8px;
+  border-radius: 0;
   overflow: hidden;
 }
-/* Editing topbar stays flush — same flush rule as the resting state.
-   The legacy `margin-bottom:12px` detached the topbar, breaking the
-   continuous teal frame that this state is supposed to draw. */
 .cnode.editing .cnode-topbar {
   margin-bottom: 0;
 }

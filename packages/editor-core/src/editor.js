@@ -7883,12 +7883,15 @@
       // drag is cleaned up via endDragSafe. We listen on mousedown (capture)
       // so we run BEFORE the canvas's pan handler steals the gesture.
       hostDoc.addEventListener('mousedown', function(e) {
-        if (isEditorEl(e.target)) return;
         var ifr = targetWin.frameElement;
-        if (ifr && ifr.contains(e.target)) return; // click into iframe — target handler owns it
+        var inIframe = ifr && ifr.contains(e.target);
+        var inEditorUi = isEditorEl(e.target);
+        // eslint-disable-next-line no-console
+        if (selectedEl) console.log('[uncraft] host mousedown:', { target: e.target, inIframe: inIframe, inEditorUi: inEditorUi });
+        if (inEditorUi) return;
+        if (inIframe) return; // click into iframe — target handler owns it
         if (!selectedEl && !isTextEditing && !dragStart) return;
         if (isTextEditing) {
-          // Commit current contentEditable contents and exit edit mode.
           if (selectedEl) {
             try { selectedEl.contentEditable = 'false'; selectedEl.removeAttribute('data-rb-editing'); } catch(_){}
           }
