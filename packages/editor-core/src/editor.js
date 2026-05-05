@@ -3200,7 +3200,8 @@
     var resizeH = mk('div');
     resizeH.id = 'rb-insp-resize';
     resizeH.addEventListener('mousedown', function(e) {
-      if (isFloating) return;
+      // Resize handle is dock-only; floating inspector has its own drag chrome.
+      if (inspector.classList.contains('rb-insp-floating')) return;
       e.preventDefault();
       var startX = e.clientX;
       var startW = inspector.offsetWidth;
