@@ -238,6 +238,47 @@
     return {top: r.top, left: r.left, width: r.width, height: r.height, bottom: r.bottom, right: r.right};
   }
 
+  // Map a TARGET element's bounding rect into HOST viewport coords. Used for
+  // every overlay (selection box, hover, spacing guides, drop indicator)
+  // because the overlay container lives in HOST while the element being
+  // outlined lives in TARGET (an iframe in canvas mode). When host === target
+  // (extension mode) this is a passthrough.
+  function getOverlayBox(el) {
+    var r = el.getBoundingClientRect();
+    if (hostDoc === targetDoc) {
+      return {top: r.top, left: r.left, width: r.width, height: r.height, bottom: r.bottom, right: r.right};
+    }
+    var ifr = targetWin.frameElement;
+    if (!ifr) return {top: r.top, left: r.left, width: r.width, height: r.height, bottom: r.bottom, right: r.right};
+    var ir = ifr.getBoundingClientRect();
+    var contentW = targetWin.innerWidth || ir.width;
+    var scale = ir.width / (contentW || 1);
+    return {
+      top: ir.top + r.top * scale,
+      left: ir.left + r.left * scale,
+      width: r.width * scale,
+      height: r.height * scale,
+      bottom: ir.top + r.bottom * scale,
+      right: ir.left + r.right * scale,
+      _scale: scale,
+      _ifrTop: ir.top,
+      _ifrLeft: ir.left
+    };
+  }
+  // For mapping spacing-guide and gap-aware positions where we need to
+  // arithmetic-combine target-px values WITH the iframe offset/scale. The
+  // overlay code computes things like `r.left - ml` (target px). To draw
+  // that correctly in HOST we need ml in scaled px and the iframe origin.
+  function targetToHost(tx, ty) {
+    if (hostDoc === targetDoc) return {x: tx, y: ty, scale: 1};
+    var ifr = targetWin.frameElement;
+    if (!ifr) return {x: tx, y: ty, scale: 1};
+    var ir = ifr.getBoundingClientRect();
+    var contentW = targetWin.innerWidth || ir.width;
+    var scale = ir.width / (contentW || 1);
+    return {x: ir.left + tx * scale, y: ir.top + ty * scale, scale: scale};
+  }
+
   function isEditorEl(el) {
     if (!el) return true;
     var n = el;
@@ -6389,7 +6430,7 @@
 
   function updateSelBox(el) {
     if (!el) { selBox.style.display = 'none'; return; }
-    var r = getBox(el);
+    var r = getOverlayBox(el);
     Object.assign(selBox.style, {
       display: 'block', top: r.top + 'px', left: r.left + 'px',
       width: r.width + 'px', height: r.height + 'px'
@@ -6405,7 +6446,7 @@
 
   function updateHoverBox(el) {
     if (!el) { hoverBox.style.display = 'none'; return; }
-    var r = getBox(el);
+    var r = getOverlayBox(el);
     Object.assign(hoverBox.style, {
       display: 'block', top: r.top + 'px', left: r.left + 'px',
       width: r.width + 'px', height: r.height + 'px'
@@ -6423,7 +6464,7 @@
   function updateParentBox(el) {
     var p = el.parentElement;
     if (!p || SKIP.has(p.tagName)) { parentBox.style.display = 'none'; return; }
-    var r = getBox(p);
+    var r = getOverlayBox(p);
     Object.assign(parentBox.style, {
       display: 'block', top: r.top + 'px', left: r.left + 'px',
       width: r.width + 'px', height: r.height + 'px'
@@ -6792,34 +6833,34 @@
       return;
     }
 
-    var r = el.getBoundingClientRect();
+    // Use HOST-mapped rect so guides land on the rendered iframe content,
+    // not the host viewport. _scale (host px per target px) factors the
+    // margin/padding values which getCS returns in target px.
+    var r = getOverlayBox(el);
+    var s = r._scale != null ? r._scale : 1;
     var cs = getCS(el);
-    var mt = px(cs.marginTop);
-    var mr = px(cs.marginRight);
-    var mb = px(cs.marginBottom);
-    var ml = px(cs.marginLeft);
-    var pt = px(cs.paddingTop);
-    var pr = px(cs.paddingRight);
-    var pb = px(cs.paddingBottom);
-    var pl = px(cs.paddingLeft);
+    var lMt = px(cs.marginTop), lMr = px(cs.marginRight), lMb = px(cs.marginBottom), lMl = px(cs.marginLeft);
+    var lPt = px(cs.paddingTop), lPr = px(cs.paddingRight), lPb = px(cs.paddingBottom), lPl = px(cs.paddingLeft);
+    var mt = lMt * s, mr = lMr * s, mb = lMb * s, ml = lMl * s;
+    var pt = lPt * s, pr = lPr * s, pb = lPb * s, pl = lPl * s;
 
-    // Position margin guides (OUTSIDE the element)
-    positionGuide(spacingGuides.mt, r.left - ml, r.top - mt, r.width + ml + mr, mt, mt);
-    positionGuide(spacingGuides.mr, r.right, r.top, mr, r.height, mr);
-    positionGuide(spacingGuides.mb, r.left - ml, r.bottom, r.width + ml + mr, mb, mb);
-    positionGuide(spacingGuides.ml, r.left - ml, r.top, ml, r.height, ml);
+    // Position margin guides (OUTSIDE the element). Labels show target px.
+    positionGuide(spacingGuides.mt, r.left - ml, r.top - mt, r.width + ml + mr, mt, lMt);
+    positionGuide(spacingGuides.mr, r.right, r.top, mr, r.height, lMr);
+    positionGuide(spacingGuides.mb, r.left - ml, r.bottom, r.width + ml + mr, mb, lMb);
+    positionGuide(spacingGuides.ml, r.left - ml, r.top, ml, r.height, lMl);
 
     // Position padding guides (INSIDE the element)
-    positionGuide(spacingGuides.pt, r.left, r.top, r.width, pt, pt);
-    positionGuide(spacingGuides.pr, r.right - pr, r.top, pr, r.height, pr);
-    positionGuide(spacingGuides.pb, r.left, r.bottom - pb, r.width, pb, pb);
-    positionGuide(spacingGuides.pl, r.left, r.top, pl, r.height, pl);
+    positionGuide(spacingGuides.pt, r.left, r.top, r.width, pt, lPt);
+    positionGuide(spacingGuides.pr, r.right - pr, r.top, pr, r.height, lPr);
+    positionGuide(spacingGuides.pb, r.left, r.bottom - pb, r.width, pb, lPb);
+    positionGuide(spacingGuides.pl, r.left, r.top, pl, r.height, lPl);
 
     // Gap guide
     var parentCs = el.parentElement ? getCS(el.parentElement) : null;
     var gapVal = parentCs ? (px(parentCs.gap) || 0) : 0;
     if (gapVal > 0 && el.nextElementSibling) {
-      var nextR = el.nextElementSibling.getBoundingClientRect();
+      var nextR = getOverlayBox(el.nextElementSibling);
       var isHoriz = parentCs.flexDirection === 'row' || parentCs.flexDirection === 'row-reverse';
       if (isHoriz) {
         positionGuide(spacingGuides.gap, r.right, r.top, nextR.left - r.right, r.height, gapVal, '\u2194');
@@ -6830,12 +6871,8 @@
       spacingGuides.gap.style.display = 'none';
     }
 
-    // Corner handles — show all 4 whenever ANY margin is ≥ 2px. Previous rule
-    // (both-adjacent, then either-adjacent) hid SW/SE on elements with only
-    // vertical margins (common: h1 with 0 ml/mr but real mt/mb), surprising
-    // users who expected 4 handles. Showing all 4 also lets the user drag a
-    // zero-margin side up from 0 via the corner.
-    var anyMargin = ml >= 2 || mt >= 2 || mr >= 2 || mb >= 2;
+    // Corner handles — show all 4 whenever ANY target-px margin is ≥ 2.
+    var anyMargin = lMl >= 2 || lMt >= 2 || lMr >= 2 || lMb >= 2;
     positionCorner(cornerGuides.nw, r.left - ml,  r.top - mt,    anyMargin);
     positionCorner(cornerGuides.ne, r.right + mr, r.top - mt,    anyMargin);
     positionCorner(cornerGuides.se, r.right + mr, r.bottom + mb, anyMargin);
@@ -7941,11 +7978,44 @@
         updateSpacingGuides(selectedEl);
       }
     }, 16);
-    // Scroll/resize fire on the TARGET — that's the surface whose layout
-    // changes shift the selected element's bounding box. In extension mode
-    // (host === target) this is just `window`.
+    // Scroll/resize fire on TARGET (site scroll changes element rects) AND
+    // on HOST (canvas pan/zoom changes the iframe's host-viewport rect, so
+    // overlays drawn relative to host need to re-sync). In extension mode
+    // host === target so we'd register the same listener twice — guard with
+    // an identity check.
     targetWin.addEventListener('scroll', tScroll, {signal: sig, capture: true});
     targetWin.addEventListener('resize', tScroll, {signal: sig});
+    if (hostWin !== targetWin) {
+      hostWin.addEventListener('scroll', tScroll, {signal: sig, capture: true});
+      hostWin.addEventListener('resize', tScroll, {signal: sig});
+      // Canvas pan/zoom mutates a transform on a wrapper element — neither
+      // scroll nor resize fires for that. Watch the iframe's bounding rect
+      // via ResizeObserver as a fallback.
+      try {
+        var ifr = targetWin.frameElement;
+        if (ifr && typeof hostWin.ResizeObserver === 'function') {
+          var ro = new hostWin.ResizeObserver(tScroll);
+          ro.observe(ifr);
+          sig.addEventListener('abort', function() { try { ro.disconnect(); } catch(_){} });
+        }
+        // rAF poll covers transform changes that ResizeObserver can't see
+        // (translate-only pan keeps width/height unchanged).
+        var lastIfRect = ifr ? ifr.getBoundingClientRect() : null;
+        var rafId = null;
+        function rafTick() {
+          rafId = null;
+          if (!ifr) return;
+          var nr = ifr.getBoundingClientRect();
+          if (!lastIfRect || nr.left !== lastIfRect.left || nr.top !== lastIfRect.top || nr.width !== lastIfRect.width || nr.height !== lastIfRect.height) {
+            lastIfRect = nr;
+            tScroll();
+          }
+          rafId = hostWin.requestAnimationFrame(rafTick);
+        }
+        rafId = hostWin.requestAnimationFrame(rafTick);
+        sig.addEventListener('abort', function() { if (rafId) hostWin.cancelAnimationFrame(rafId); });
+      } catch (e) { /* swallow — best-effort sync */ }
+    }
 
     // Unlock CSS constraints that prevent resize — use !important to beat stylesheets
     function unlockResize(el, dir) {
