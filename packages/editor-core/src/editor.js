@@ -7877,6 +7877,23 @@
     if (hostDoc !== targetDoc) {
       hostDoc.addEventListener('mouseup', endDragSafe, {signal: sig});
 
+      // Mouse-leave the iframe → clear the hover overlay. Without this the
+      // hoverBox stays pinned to the last element under the cursor inside
+      // the iframe even after the user has moved out into canvas chrome,
+      // which reads as a stuck highlight. Re-entering the iframe lets the
+      // normal mousemove handler take over again.
+      var ifrEl = targetWin.frameElement;
+      if (ifrEl) {
+        ifrEl.addEventListener('mouseleave', function() {
+          if (lastHoverEl) {
+            try { lastHoverEl.classList.remove('rb-ed-text-hint'); } catch(_){}
+            lastHoverEl = null;
+          }
+          hoverBox.style.display = 'none';
+          try { highlightLayerRow(null); } catch(_){}
+        }, {signal: sig});
+      }
+
       // Click outside the node iframe (and outside any editor UI) deselects.
       // In-progress edits commit-as-is: text edit exits leaving the typed
       // value, an armed-but-not-started drag is cancelled, and a running
