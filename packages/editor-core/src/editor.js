@@ -7793,28 +7793,46 @@
       }
     }, {signal: sig});
 
-    targetDoc.addEventListener('mouseup', function() {
+    function endDragSafe() {
       if (isDragging && selectedEl) {
         if (currentMode === 'D') {
           // Mode D: commit the free move, save undo
-          var newTop = selectedEl.style.top;
-          var newLeft = selectedEl.style.left;
           pushUndo({
             el: selectedEl, prop: '__freemove',
             oldTop: dragOrigTop + 'px', oldLeft: dragOrigLeft + 'px'
           });
           updateSelBox(selectedEl);
         } else {
-          // Modes A/B/C: commit the swap
+          // Modes A/B/C: commit the swap (or hide indicator if no target)
           commitDrop(selectedEl);
           targetDoc.documentElement.classList.remove('rb-scroll-locked');
         }
         isDragging = false;
         hostDoc.body.classList.remove('rb-ed-dragging');
+      } else if (dragStart) {
+        // Drag was armed but never crossed threshold (or pointer escaped the
+        // target before mousemove fired) — make sure scroll-lock + ghost +
+        // selBox visibility are restored even though no drag actually ran.
+        targetDoc.documentElement.classList.remove('rb-scroll-locked');
+        removeDragGhost(selectedEl);
+        if (selectedEl) {
+          selBox.style.display = 'block';
+          updateSelBox(selectedEl);
+        }
+        hostDoc.body.classList.remove('rb-ed-dragging');
       }
       dragStart = null;
       dragThreshold = false;
-    }, {signal: sig});
+    }
+    targetDoc.addEventListener('mouseup', endDragSafe, {signal: sig});
+    // In canvas mode the user may release the mouse outside the iframe — the
+    // target listener never fires and the editor would be stuck in a half-
+    // dragged state (rb-scroll-locked, ghost present, selBox hidden). A host-
+    // level fallback catches this. In extension mode host === target so the
+    // listener registers twice on the same EventTarget; identity-guard.
+    if (hostDoc !== targetDoc) {
+      hostDoc.addEventListener('mouseup', endDragSafe, {signal: sig});
+    }
 
     // Block right-click when an element is selected — TARGET fires on the
     // site, but the toast lives in HOST (the editor root).
