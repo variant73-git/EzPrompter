@@ -393,7 +393,7 @@
     entry = { observer: null, props: new Map(), disabled: false };
     var observer = new MutationObserver(function() {
       if (_rbStickyWriting || entry.disabled) return;
-      if (!document.body.contains(el)) {
+      if (!targetDoc.body.contains(el)) {
         try { observer.disconnect(); } catch (_) {}
         entry.disabled = true;
         return;
@@ -476,7 +476,8 @@
   // Wrap `el` in a new <a href>. Returns the anchor. Pushes an undo entry of
   // type '__linkWrap' so undo unwraps it cleanly.
   function wrapInLink(el, href) {
-    var a = document.createElement('a');
+    // Anchor wraps a site element — must live in the target document.
+    var a = (el.ownerDocument || targetDoc).createElement('a');
     a.setAttribute('href', href);
     a.setAttribute('data-rb-link', '1');
     var parent = el.parentNode;
@@ -499,19 +500,20 @@
   // Popup to edit a link (href + target + clear). Anchored near `anchorBtn`.
   // onChange(href | null) — null signals "remove link". Returns popup node.
   function openLinkEditor(anchorBtn, currentHref, onChange) {
-    var existing = document.querySelector('.rb-link-editor');
+    // Popup lives in HOST (panels surface).
+    var existing = hostDoc.querySelector('.rb-link-editor');
     if (existing) existing.remove();
-    var pop = document.createElement('div');
+    var pop = hostDoc.createElement('div');
     pop.className = 'rb-link-editor rb-ed-img-menu';
     pop.style.cssText = 'position:fixed;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:280px;z-index:2147483647;';
-    var row = document.createElement('div');
+    var row = hostDoc.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:4px;';
-    var inp = document.createElement('input');
+    var inp = hostDoc.createElement('input');
     inp.type = 'url';
     inp.placeholder = 'https://...';
     inp.value = currentHref || '';
     inp.style.cssText = 'flex:1;height:25px;padding:0 8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:4px;color:inherit;font:inherit;font-size:11px;outline:none;';
-    var saveBtn = document.createElement('button');
+    var saveBtn = hostDoc.createElement('button');
     saveBtn.className = 'rb-img-bar-btn';
     saveBtn.textContent = 'Save';
     saveBtn.style.cssText = 'padding:0 10px;height:25px;';
@@ -519,7 +521,7 @@
     row.appendChild(saveBtn);
     pop.appendChild(row);
     if (currentHref) {
-      var clrBtn = document.createElement('button');
+      var clrBtn = hostDoc.createElement('button');
       clrBtn.className = 'rb-img-bar-btn';
       clrBtn.textContent = 'Remove link';
       clrBtn.style.cssText = 'height:22px;font-size:10px;opacity:0.75;';
@@ -530,10 +532,10 @@
       }, {capture: true});
       pop.appendChild(clrBtn);
     }
-    document.body.appendChild(pop);
+    hostDoc.body.appendChild(pop);
     var r = anchorBtn.getBoundingClientRect();
-    pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8, r.left)) + 'px';
-    pop.style.top = Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 6) + 'px';
+    pop.style.left = Math.max(8, Math.min(hostWin.innerWidth - pop.offsetWidth - 8, r.left)) + 'px';
+    pop.style.top = Math.min(hostWin.innerHeight - pop.offsetHeight - 8, r.bottom + 6) + 'px';
     setTimeout(function() { inp.focus(); inp.select(); }, 0);
     function commit() {
       var v = inp.value.trim();
@@ -552,10 +554,10 @@
     function outside(ev) {
       if (!pop.contains(ev.target) && ev.target !== anchorBtn && !anchorBtn.contains(ev.target)) {
         pop.remove();
-        document.removeEventListener('mousedown', outside, true);
+        hostDoc.removeEventListener('mousedown', outside, true);
       }
     }
-    setTimeout(function() { document.addEventListener('mousedown', outside, true); }, 150);
+    setTimeout(function() { hostDoc.addEventListener('mousedown', outside, true); }, 150);
     return pop;
   }
 
@@ -566,25 +568,25 @@
   // inherits button text color (handles light/dark mode automatically).
   var FONT_ICON_SVG = '<svg width="12" height="12" viewBox="0 0 36.23 42.5" fill="currentColor"><polygon points="25.58 14.61 10.21 14.61 10.21 17.22 10.22 17.22 10.22 19.84 12.83 19.84 12.83 17.22 16.59 17.22 16.59 28.77 14.52 28.77 14.52 31.38 21.28 31.38 21.28 28.77 19.2 28.77 19.2 17.22 23 17.22 23 19.84 25.61 19.84 25.61 14.61 25.58 14.61"/><path d="M34.31,9.33l-7.41-7.41c-1.24-1.24-2.89-1.93-4.65-1.93H5.72C2.57,0,0,2.57,0,5.72v31.06c0,3.15,2.57,5.72,5.72,5.72h24.79c3.15,0,5.72-2.57,5.72-5.72V13.98c0-1.73-.7-3.42-1.93-4.65ZM33.06,13.98v22.79c0,1.43-1.12,2.54-2.54,2.54H5.72c-1.43,0-2.54-1.12-2.54-2.54V5.72c0-1.43,1.12-2.54,2.54-2.54h16.53c.91,0,1.76.35,2.4,1l7.41,7.41c.64.64,1,1.5,1,2.4Z"/></svg>';
   function openFontPicker(anchorBtn, currentFont, onPick) {
-    var existing = document.querySelector('.rb-font-picker');
+    var existing = hostDoc.querySelector('.rb-font-picker');
     if (existing) existing.remove();
     // Reuse rb-ed-img-menu for frosted-glass + light-mode theming (CSS already
     // provides both). Class rb-font-picker adds sizing and inner layout.
-    var pop = document.createElement('div');
+    var pop = hostDoc.createElement('div');
     pop.className = 'rb-font-picker rb-ed-img-menu';
-    var srch = document.createElement('input');
+    var srch = hostDoc.createElement('input');
     srch.type = 'text';
     srch.placeholder = 'Search fonts';
     srch.value = currentFont || '';
     srch.className = 'rb-font-picker-search';
-    var list = document.createElement('div');
+    var list = hostDoc.createElement('div');
     list.className = 'rb-font-picker-list';
     pop.appendChild(srch);
     pop.appendChild(list);
-    document.body.appendChild(pop);
+    hostDoc.body.appendChild(pop);
     var r = anchorBtn.getBoundingClientRect();
-    pop.style.left = Math.max(8, Math.min(window.innerWidth - 228, r.left)) + 'px';
-    pop.style.top = Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 6) + 'px';
+    pop.style.left = Math.max(8, Math.min(hostWin.innerWidth - 228, r.left)) + 'px';
+    pop.style.top = Math.min(hostWin.innerHeight - pop.offsetHeight - 8, r.bottom + 6) + 'px';
 
     // Centralized close: always blur the internal input first (otherwise the
     // global keydown guard sees `document.activeElement` as INPUT and swallows
@@ -595,7 +597,7 @@
       try { srch.blur(); } catch (_) {}
       if (pop.parentNode) pop.remove();
       if (outsideBound) {
-        document.removeEventListener('mousedown', outsideBound, true);
+        hostDoc.removeEventListener('mousedown', outsideBound, true);
         outsideBound = null;
       }
     }
@@ -607,14 +609,14 @@
       var f = (filter || '').toLowerCase().trim();
       var items = f ? fonts.filter(function(n) { return n.toLowerCase().indexOf(f) >= 0; }) : fonts.slice();
       if (!items.length) {
-        var e = document.createElement('div');
+        var e = hostDoc.createElement('div');
         e.textContent = 'No fonts match';
         e.className = 'rb-font-picker-empty';
         list.appendChild(e);
         return;
       }
       items.forEach(function(name) {
-        var opt = document.createElement('div');
+        var opt = hostDoc.createElement('div');
         opt.textContent = name;
         opt.className = 'rb-font-picker-opt';
         opt.style.fontFamily = '"' + name + '",sans-serif';
@@ -651,7 +653,7 @@
       }
     };
     setTimeout(function() {
-      if (outsideBound) document.addEventListener('mousedown', outsideBound, true);
+      if (outsideBound) hostDoc.addEventListener('mousedown', outsideBound, true);
     }, 150);
     return pop;
   }
@@ -666,7 +668,7 @@
     'fontStyle','lineHeight','letterSpacing','textDecoration','textTransform']);
 
   function applyPropToRange(editableRoot, range, prop, value) {
-    if (!editableRoot || !range || !document.body.contains(editableRoot)) return false;
+    if (!editableRoot || !range || !targetDoc.body.contains(editableRoot)) return false;
     try {
       var oldHTML = editableRoot.innerHTML;
       // If the range already exactly wraps a single <span>, modify that span in
@@ -684,7 +686,7 @@
       if (target) {
         target.style.setProperty(cssProp(prop), value, 'important');
       } else {
-        var span = document.createElement('span');
+        var span = targetDoc.createElement('span');
         span.style.setProperty(cssProp(prop), value, 'important');
         try {
           range.surroundContents(span);
@@ -696,9 +698,9 @@
         target = span;
       }
       pushUndo({ prop: '__textEdit', el: editableRoot, old: oldHTML });
-      var newRange = document.createRange();
+      var newRange = targetDoc.createRange();
       newRange.selectNodeContents(target);
-      var sel = window.getSelection();
+      var sel = targetWin.getSelection();
       if (sel) { sel.removeAllRanges(); sel.addRange(newRange); }
       __pendingTextRange = { range: newRange.cloneRange(), editableRoot: editableRoot };
       return true;
@@ -739,7 +741,7 @@
   var LANDMARK_SCORE = {HEADER:10,NAV:9,MAIN:10,FOOTER:10,SECTION:8,ARTICLE:8,ASIDE:6,FORM:7,TABLE:7};
 
   function buildGroupTree() {
-    try { return getGroups(document.body, 0); } catch(e) { return []; }
+    try { return getGroups(targetDoc.body, 0); } catch(e) { return []; }
   }
 
   function getGroups(parent, depth) {
@@ -760,7 +762,7 @@
     var scored = children.map(function(el) {
       var r = el.getBoundingClientRect();
       var area = r.width * r.height;
-      var viewportArea = window.innerWidth * window.innerHeight;
+      var viewportArea = targetWin.innerWidth * targetWin.innerHeight;
       var sizeScore = Math.min(area / viewportArea * 10, 10);
       var semanticScore = LANDMARK_SCORE[el.tagName] || 0;
       var childCount = el.children.length;
@@ -818,21 +820,21 @@
     if (currentDepth === 0) { currentParent = null; }
     else {
       currentParent = currentParent ? currentParent.parentElement : null;
-      if (currentParent === document.body) { currentParent = null; currentDepth = 0; }
+      if (currentParent === targetDoc.body) { currentParent = null; currentDepth = 0; }
     }
     deselectEl();
     updateDepthIndicator();
   }
 
   function updateDepthIndicator() {
-    var banner = document.getElementById('rb-ed-banner');
+    var banner = hostDoc.getElementById('rb-ed-banner');
     if (!banner) return;
     var txt = currentDepth === 0
       ? 'Click any element to edit'
       : 'Depth ' + currentDepth + ' \u2014 double-click to go deeper \u00B7 Esc to go up';
     var first = banner.childNodes[0];
     if (first && first.nodeType === 3) { first.textContent = txt; }
-    else { banner.insertBefore(document.createTextNode(txt), banner.firstChild); }
+    else { banner.insertBefore(hostDoc.createTextNode(txt), banner.firstChild); }
   }
 
   // ============ FLASH GROUPS (visual feedback on entry) ============
@@ -865,16 +867,23 @@
   // ============ AUTO-SAVE ============
 
   var autoSaveInterval = null;
-  var saveKey = 'rb-autosave-' + window.location.hostname + window.location.pathname;
+  // Autosave key namespaces per SITE URL. In canvas mode the iframe may be
+  // cross-origin and reading targetWin.location throws — fall back to host.
+  var saveKey;
+  try {
+    saveKey = 'rb-autosave-' + targetWin.location.hostname + targetWin.location.pathname;
+  } catch (e) {
+    saveKey = 'rb-autosave-' + hostWin.location.hostname + hostWin.location.pathname;
+  }
 
   function initAutoSave() {
     // Clean up ALL stale editor artifacts from previous sessions
-    var staleStyles = document.getElementById('rb-editor-styles');
+    var staleStyles = hostDoc.getElementById('rb-editor-styles');
     if (staleStyles) staleStyles.remove();
 
     // Remove stale inline styles from previous editor sessions
     // Our editor uses style.setProperty(prop, val, 'important') — check for that
-    document.querySelectorAll('*').forEach(function(el) {
+    targetDoc.querySelectorAll('*').forEach(function(el) {
       if (el.style.length === 0) return;
       if (isEditorEl(el)) return;
       var toRemove = [];
@@ -901,11 +910,11 @@
   function saveState() {
     try {
       // Collect all inline style overrides and editor-injected styles
-      var edStyles = document.getElementById('rb-editor-styles');
+      var edStyles = hostDoc.getElementById('rb-editor-styles');
       var overrides = edStyles ? edStyles.textContent : '';
       // Collect individual inline style changes
       var inlineChanges = [];
-      document.querySelectorAll('[data-rb-node]').forEach(function(el) {
+      targetDoc.querySelectorAll('[data-rb-node]').forEach(function(el) {
         if (el.style.cssText) {
           inlineChanges.push({
             node: el.getAttribute('data-rb-node'),
@@ -913,8 +922,10 @@
           });
         }
       });
+      var url = '';
+      try { url = targetWin.location.href; } catch (e) { try { url = hostWin.location.href; } catch (_) {} }
       var state = {
-        url: window.location.href,
+        url: url,
         timestamp: Date.now(),
         overrides: overrides,
         inlineChanges: inlineChanges
@@ -929,7 +940,7 @@
       if (window.__rbPersist && window.__rbActiveProjectId) {
         try {
           // Serialize the current edited state as the snapshot "html"
-          var rebuiltEl = document.getElementById('rb-rebuilt-page');
+          var rebuiltEl = targetDoc.getElementById('rb-rebuilt-page');
           var snapshotHtml = rebuiltEl ? rebuiltEl.outerHTML : JSON.stringify(state);
           window.__rbPersist.saveSnapshot(
             window.__rbActiveProjectId,
@@ -1111,13 +1122,13 @@
         // Migrate the current textContent into an msg span.
         var existing = el.textContent || '';
         el.textContent = '';
-        msgSpan = document.createElement('span');
+        msgSpan = hostDoc.createElement('span');
         msgSpan.className = 'rb-loader-msg';
         msgSpan.textContent = existing;
         el.appendChild(msgSpan);
       }
       if (!timerSpan) {
-        timerSpan = document.createElement('span');
+        timerSpan = hostDoc.createElement('span');
         timerSpan.className = 'rb-loader-timer';
         timerSpan.style.cssText = 'margin-left:6px;opacity:0.6;font-variant-numeric:tabular-nums;';
         timerSpan.textContent = '0s';
@@ -1188,16 +1199,16 @@
     prompt.querySelector('.rb-ed-restore-yes').addEventListener('click', function() {
       // Apply saved overrides
       if (data.overrides) {
-        var s = document.getElementById('rb-editor-styles') || (function() {
+        var s = hostDoc.getElementById('rb-editor-styles') || (function() {
           var s = mk('style'); s.id = 'rb-editor-styles';
-          document.head.appendChild(s); return s;
+          hostDoc.head.appendChild(s); return s;
         })();
         s.textContent = data.overrides;
       }
       // Apply inline changes
       if (data.inlineChanges) {
         data.inlineChanges.forEach(function(change) {
-          var el = document.querySelector('[data-rb-node="' + change.node + '"]');
+          var el = targetDoc.querySelector('[data-rb-node="' + change.node + '"]');
           if (el) el.style.cssText = change.css;
         });
       }
@@ -1288,7 +1299,7 @@
 
     // Click-outside closes the dropdown. Uses document capture so we catch
     // the click before any site-level handler stops propagation.
-    document.addEventListener('mousedown', function(e) {
+    hostDoc.addEventListener('mousedown', function(e) {
       if (!drop.classList.contains('open')) return;
       if (b.contains(e.target)) return;
       closeDrop();
@@ -1801,16 +1812,16 @@
     // Clean Mode F normalized DOM
     if (window.__rbNormalize) window.__rbNormalize.deactivate();
     // Clean Mode D canvas
-    var canvas = document.getElementById('rb-ed-canvas');
+    var canvas = hostDoc.getElementById('rb-ed-canvas');
     if (canvas) canvas.remove();
-    var wrapper = document.getElementById('rb-ed-canvas-wrapper');
+    var wrapper = hostDoc.getElementById('rb-ed-canvas-wrapper');
     if (wrapper) wrapper.remove();
-    document.querySelectorAll('[data-rb-hidden]').forEach(function(el) {
+    targetDoc.querySelectorAll('[data-rb-hidden]').forEach(function(el) {
       el.style.display = '';
       el.removeAttribute('data-rb-hidden');
     });
-    document.body.classList.remove('rb-ed-canvas-mode');
-    var layoutBtn = document.querySelector('.rb-ed-layout-btn');
+    hostDoc.body.classList.remove('rb-ed-canvas-mode');
+    var layoutBtn = hostDoc.querySelector('.rb-ed-layout-btn');
     if (layoutBtn) layoutBtn.remove();
   }
 
@@ -1857,7 +1868,7 @@
     var layoutBtn = mk('button', 'rb-ed-layout-btn');
     layoutBtn.textContent = 'Layout Mode';
     layoutBtn.addEventListener('click', function() {
-      if (document.getElementById('rb-ed-canvas')) {
+      if (hostDoc.getElementById('rb-ed-canvas')) {
         cleanupMode();
         layoutBtn.textContent = 'Layout Mode';
         layoutBtn.classList.remove('active');
@@ -1867,14 +1878,15 @@
         layoutBtn.classList.add('active');
       }
     }, {signal: sig});
-    var header = document.getElementById('rb-ed-insp-header');
+    var header = hostDoc.getElementById('rb-ed-insp-header');
     if (header) header.appendChild(layoutBtn);
   }
 
   function activateModeD() {
-    document.body.classList.add('rb-ed-canvas-mode');
-    var vw = window.innerWidth;
-    var vh = Math.max(document.documentElement.scrollHeight, window.innerHeight);
+    hostDoc.body.classList.add('rb-ed-canvas-mode');
+    // Mode D bakes the SITE into a canvas, so dimensions come from target.
+    var vw = targetWin.innerWidth;
+    var vh = Math.max(targetDoc.documentElement.scrollHeight, targetWin.innerHeight);
 
     var wrapper = mk('div');
     wrapper.id = 'rb-ed-canvas-wrapper';
@@ -1884,7 +1896,7 @@
     canvas.id = 'rb-ed-canvas';
     canvas.style.cssText = 'position:relative;width:'+vw+'px;min-height:'+vh+'px;background:#fff;transform-origin:0 0;margin:40px auto;box-shadow:0 4px 40px rgba(0,0,0,0.3);';
 
-    Array.from(document.body.children).forEach(function(child) {
+    Array.from(targetDoc.body.children).forEach(function(child) {
       if (child.id === 'rb-editor-root' || child.id === 'rb-ed-canvas-wrapper') return;
       if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE' || child.tagName === 'LINK') return;
       var clone = child.cloneNode(true);
@@ -1896,8 +1908,8 @@
 
     flattenToAbsolute(canvas);
     wrapper.appendChild(canvas);
-    // Append to body, NOT root — so canvas elements pass isEditorEl check
-    document.body.appendChild(wrapper);
+    // Append to host body, NOT root — so canvas elements pass isEditorEl check.
+    hostDoc.body.appendChild(wrapper);
 
     // Zoom
     var zoomLevel = 1;
@@ -1911,12 +1923,12 @@
 
     // Pan
     var isPanning = false, panStart = null;
-    document.addEventListener('keydown', function(e) {
+    hostDoc.addEventListener('keydown', function(e) {
       if (e.code === 'Space' && !isPanning && currentMode === 'D') {
         isPanning = true; wrapper.style.cursor = 'grab'; e.preventDefault();
       }
     }, {signal: sig});
-    document.addEventListener('keyup', function(e) {
+    hostDoc.addEventListener('keyup', function(e) {
       if (e.code === 'Space') { isPanning = false; wrapper.style.cursor = ''; }
     }, {signal: sig});
     wrapper.addEventListener('mousedown', function(e) {
@@ -1930,7 +1942,7 @@
 
   function bakeStyles(orig, clone) {
     if (orig.nodeType !== 1 || clone.nodeType !== 1) return;
-    var cs = getComputedStyle(orig);
+    var cs = getCS(orig);
     var props = ['display','position','top','right','bottom','left','width','height',
       'margin','padding','border','borderRadius','backgroundColor','color','opacity',
       'fontSize','fontFamily','fontWeight','fontStyle','lineHeight','letterSpacing',
@@ -1991,7 +2003,7 @@
       item.el.style.width = item.width + 'px';
       item.el.style.height = item.height + 'px';
       item.el.style.margin = '0';
-      item.el.style.padding = getComputedStyle(item.el).padding; // preserve padding
+      item.el.style.padding = getCS(item.el).padding; // preserve padding
       // Move to canvas root
       canvas.appendChild(item.el);
     });
@@ -2043,7 +2055,7 @@
     // Its own visual contribution (background, border, shadow)
     if (tag === 'DIV' || tag === 'SPAN' || tag === 'SECTION' || tag === 'ARTICLE' || tag === 'MAIN' || tag === 'HEADER' || tag === 'FOOTER' || tag === 'NAV' || tag === 'ASIDE') {
       var cs;
-      try { cs = getComputedStyle(el); } catch(e) {}
+      try { cs = getCS(el); } catch(e) {}
       if (cs) {
         if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') {
           _weightCache.set(el, 0);
@@ -2080,7 +2092,7 @@
     // Only divs and spans can be inert — semantic tags are always visible
     if (tag !== 'DIV' && tag !== 'SPAN') return false;
     var cs;
-    try { cs = getComputedStyle(el); } catch(e) { return false; }
+    try { cs = getCS(el); } catch(e) { return false; }
     if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return true;
     // Background color
     var bg = cs.backgroundColor;
@@ -2202,11 +2214,11 @@
 
       // 6. Site wrapper detection — div containing all page sections
       var siteWrapper = findSiteWrapper();
-      if (el === siteWrapper && el !== document.body) return 'Page';
+      if (el === siteWrapper && el !== targetDoc.body) return 'Page';
 
       // 7. Position & role heuristics
       var cs;
-      try { cs = getComputedStyle(el); } catch(e) {}
+      try { cs = getCS(el); } catch(e) {}
       if (cs) {
         var r = el.getBoundingClientRect();
         // Fixed/sticky at top = Sticky Bar
@@ -2246,20 +2258,20 @@
   }
 
   function isFloatingWidget(el) {
-    var s; try { s = getComputedStyle(el); } catch(e) { return false; }
+    var s; try { s = getCS(el); } catch(e) { return false; }
     if (s.position !== 'fixed' && s.position !== 'sticky') return false;
     var r = el.getBoundingClientRect();
     if (r.width < 200 && r.height < 200) return true;
-    if (r.bottom > window.innerHeight - 20 && (r.left < 100 || r.right > window.innerWidth - 100) && r.width < 400) return true;
+    if (r.bottom > targetWin.innerHeight - 20 && (r.left < 100 || r.right > targetWin.innerWidth - 100) && r.width < 400) return true;
     return false;
   }
 
   function isHoverMenu(el) {
-    var s; try { s = getComputedStyle(el); } catch(e) { return false; }
+    var s; try { s = getCS(el); } catch(e) { return false; }
     if (s.opacity === '0' || s.visibility === 'hidden' || s.pointerEvents === 'none') return true;
     if (s.transform && s.transform !== 'none') {
       var r = el.getBoundingClientRect();
-      if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) return true;
+      if (r.bottom < 0 || r.top > targetWin.innerHeight || r.right < 0 || r.left > targetWin.innerWidth) return true;
     }
     var cls = (el.className || '').toString().toLowerCase();
     if (cls.match(/dropdown|menu-overlay|submenu|popup|popover|tooltip|flyout|drawer|nav-content|nav-overlay|w-nav-overlay|mobile.?menu|hamburger.?menu|off.?canvas/)) {
@@ -2295,7 +2307,7 @@
 
     // Filter out invisible iframes (analytics, tracking pixels)
     if (tag === 'iframe') {
-      var ics; try { ics = getComputedStyle(el); } catch(e) {}
+      var ics; try { ics = getCS(el); } catch(e) {}
       if (ics && (ics.display === 'none' || ics.visibility === 'hidden' || r.width < 10 || r.height < 10)) return null;
     }
 
@@ -2465,7 +2477,7 @@
       e.preventDefault();
       e.stopPropagation();
       // Remove any existing color picker
-      var old = document.getElementById('rb-layer-colorpicker');
+      var old = hostDoc.getElementById('rb-layer-colorpicker');
       if (old) old.remove();
       var picker = mk('div');
       picker.id = 'rb-layer-colorpicker';
@@ -2513,9 +2525,9 @@
       var closePicker = function(ev) {
         if (picker.contains(ev.target)) return;
         if (picker.parentElement) picker.remove();
-        document.removeEventListener('mousedown', closePicker, true);
+        hostDoc.removeEventListener('mousedown', closePicker, true);
       };
-      setTimeout(function() { document.addEventListener('mousedown', closePicker, true); }, 50);
+      setTimeout(function() { hostDoc.addEventListener('mousedown', closePicker, true); }, 50);
     });
 
     row._rbEl = el;
@@ -2563,7 +2575,7 @@
     // Walk up from el to find the nearest ancestor that has a row in the panel
     var walk = el;
     var maxUp = 15;
-    while (walk && walk !== document.body && maxUp-- > 0) {
+    while (walk && walk !== targetDoc.body && maxUp-- > 0) {
       if (rowMap.has(walk)) {
         var matchRow = rowMap.get(walk);
         matchRow.classList.add('rb-layer-hover');
@@ -2577,14 +2589,14 @@
   function populateLayers() {
     if (!layersBody) return;
     layersBody.innerHTML = '';
-    renderLayerChildren(document.body, layersBody, 0);
+    renderLayerChildren(targetDoc.body, layersBody, 0);
   }
 
   // ---- SECTIONS TAB ----
   // Find the "site wrapper" — the element whose direct children are the page's stacked sections.
   // Pattern: the deepest single-branch ancestor from body that contains multiple visible full-width children.
   function findSiteWrapper() {
-    var el = document.body;
+    var el = targetDoc.body;
     var maxDrill = 10;
     while (maxDrill-- > 0) {
       var visKids = [];
@@ -2592,7 +2604,7 @@
         var ch = el.children[i];
         if (SKIP.has(ch.tagName) || isEditorEl(ch)) continue;
         var r = ch.getBoundingClientRect();
-        if (r.width > window.innerWidth * 0.5 && r.height > 15) visKids.push(ch);
+        if (r.width > targetWin.innerWidth * 0.5 && r.height > 15) visKids.push(ch);
       }
       // If this element has 3+ wide children, it's the wrapper
       if (visKids.length >= 3) return el;
@@ -2655,7 +2667,7 @@
       miniWrap.appendChild(clone);
     } catch(e) {
       // Fallback: colored rectangle
-      var cs; try { cs = getComputedStyle(el); } catch(e2) {}
+      var cs; try { cs = getCS(el); } catch(e2) {}
       var bgCol = cs && cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' ? cs.backgroundColor : '#222';
       miniWrap.style.background = bgCol;
     }
@@ -2679,7 +2691,7 @@
       card.classList.remove('rb-section-dragging');
       window.__rbDragSection = null;
       // Remove all drop indicators
-      var indicators = document.querySelectorAll('.rb-section-drop-indicator');
+      var indicators = hostDoc.querySelectorAll('.rb-section-drop-indicator');
       indicators.forEach(function(ind) { ind.remove(); });
     });
     card.addEventListener('dragover', function(e) {
@@ -2742,13 +2754,13 @@
   var SMART_EDIT_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
 
   function populateAssets() {
-    var ab = document.getElementById('rb-ed-assets-body');
+    var ab = hostDoc.getElementById('rb-ed-assets-body');
     if (!ab) return;
     ab.innerHTML = '';
 
     // Collect <img> elements
     var imgElements = [];
-    document.querySelectorAll('img').forEach(function(img) {
+    targetDoc.querySelectorAll('img').forEach(function(img) {
       if (isEditorEl(img)) return;
       var w = img.naturalWidth || img.width || 0;
       var h = img.naturalHeight || img.height || 0;
@@ -2760,7 +2772,7 @@
 
     // Collect inline SVGs (separate section)
     var svgIcons = [];
-    document.querySelectorAll('svg').forEach(function(svg) {
+    targetDoc.querySelectorAll('svg').forEach(function(svg) {
       if (isEditorEl(svg)) return;
       var r = svg.getBoundingClientRect();
       if (r.width < 2 || r.height < 2) return;
@@ -2777,7 +2789,7 @@
 
     // Collect background images (separate)
     var bgImages = [];
-    document.querySelectorAll('section,div,article,header,footer').forEach(function(el) {
+    targetDoc.querySelectorAll('section,div,article,header,footer').forEach(function(el) {
       if (isEditorEl(el)) return;
       var bg = getCS(el).backgroundImage;
       if (bg && bg !== 'none') {
@@ -2829,7 +2841,7 @@
         item.addEventListener('mousedown', function(e) {
           e.stopImmediatePropagation();
           if (img.type === 'image') {
-            var pageImg = document.querySelector('img[src="' + img.src.replace(/"/g, '\\"') + '"]');
+            var pageImg = targetDoc.querySelector('img[src="' + img.src.replace(/"/g, '\\"') + '"]');
             if (pageImg && isValid(pageImg)) {
               selectEl(pageImg);
               showImgMenu(pageImg);
@@ -2863,7 +2875,7 @@
   }
 
   function populateSections() {
-    var sb = document.getElementById('rb-ed-sections-body');
+    var sb = hostDoc.getElementById('rb-ed-sections-body');
     if (!sb) return;
     sb.innerHTML = '';
     var sections = getSections();
@@ -2885,7 +2897,7 @@
     // Build ancestor chain from body to el
     var chain = [];
     var walk = el;
-    while (walk && walk !== document.body) {
+    while (walk && walk !== targetDoc.body) {
       chain.unshift(walk);
       walk = walk.parentElement;
     }
@@ -2951,11 +2963,11 @@
     userChev.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
     userChev.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
-      var existing = document.querySelector('.rb-ed-dropdown.rb-user-dd');
+      var existing = hostDoc.querySelector('.rb-ed-dropdown.rb-user-dd');
       if (existing) { existing.remove(); return; }
       var dd = mk('div', 'rb-ed-dropdown rb-user-dd');
       var rect = userAvatar.getBoundingClientRect();
-      dd.style.cssText = 'position:fixed;top:' + (rect.bottom + 8) + 'px;right:' + (window.innerWidth - rect.right) + 'px;min-width:220px;';
+      dd.style.cssText = 'position:fixed;top:' + (rect.bottom + 8) + 'px;right:' + (hostWin.innerWidth - rect.right) + 'px;min-width:220px;';
 
       // Name + Free tag + Upgrade button row
       var nameRow = mk('div');
@@ -2981,8 +2993,8 @@
       dd.appendChild(billingBtn);
 
       root.appendChild(dd);
-      var close = function(ev) { if (!dd.contains(ev.target) && !userChev.contains(ev.target) && !userAvatar.contains(ev.target)) { dd.remove(); document.removeEventListener('mousedown', close, true); }};
-      setTimeout(function() { document.addEventListener('mousedown', close, true); }, 50);
+      var close = function(ev) { if (!dd.contains(ev.target) && !userChev.contains(ev.target) && !userAvatar.contains(ev.target)) { dd.remove(); hostDoc.removeEventListener('mousedown', close, true); }};
+      setTimeout(function() { hostDoc.addEventListener('mousedown', close, true); }, 50);
     }, {capture: true, signal: sig});
     userAvatar.addEventListener('mousedown', function(e) { userChev.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true})); }, {capture: true, signal: sig});
     userWrap.appendChild(userAvatar);
@@ -3016,7 +3028,7 @@
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       expDD.hidden = !expDD.hidden;
     }, {signal: sig, capture: true});
-    document.addEventListener('click', function() { expDD.hidden = true; }, {signal: sig});
+    hostDoc.addEventListener('click', function() { expDD.hidden = true; }, {signal: sig});
 
     exportWrap.appendChild(expBtn);
     exportWrap.appendChild(expDD);
@@ -3036,14 +3048,14 @@
         var newW = startW + (startX - me.clientX);
         newW = Math.max(240, Math.min(400, newW));
         inspector.style.width = newW + 'px';
-        document.documentElement.style.setProperty('--rb-insp-width', newW + 'px');
+        hostDoc.documentElement.style.setProperty('--rb-insp-width', newW + 'px');
       };
       var onUp = function() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
+        hostDoc.removeEventListener('mousemove', onMove);
+        hostDoc.removeEventListener('mouseup', onUp);
       };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      hostDoc.addEventListener('mousemove', onMove);
+      hostDoc.addEventListener('mouseup', onUp);
     });
     inspector.appendChild(resizeH);
 
@@ -3075,7 +3087,7 @@
     logoChev.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
     logoChev.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
-      var existing = document.querySelector('.rb-ed-dropdown.rb-logo-dd');
+      var existing = hostDoc.querySelector('.rb-ed-dropdown.rb-logo-dd');
       if (existing) { existing.remove(); return; }
       var dd = mk('div', 'rb-ed-dropdown rb-logo-dd');
       var rect = logoChev.getBoundingClientRect();
@@ -3092,7 +3104,7 @@
         {label: 'Save', disabled: true},
         {label: 'Saved versions history', action: function() { openSavedVersionsHistory(); }},
         {label: 'Export', action: function() {
-          var expBtn = document.querySelector('.rb-ed-export-btn');
+          var expBtn = hostDoc.querySelector('.rb-ed-export-btn');
           if (expBtn) expBtn.click();
         }},
         {divider: true},
@@ -3145,8 +3157,8 @@
       });
 
       root.appendChild(dd);
-      var close = function(ev) { if (!dd.contains(ev.target) && !logoChev.contains(ev.target)) { dd.remove(); document.removeEventListener('mousedown', close, true); }};
-      setTimeout(function() { document.addEventListener('mousedown', close, true); }, 50);
+      var close = function(ev) { if (!dd.contains(ev.target) && !logoChev.contains(ev.target)) { dd.remove(); hostDoc.removeEventListener('mousedown', close, true); }};
+      setTimeout(function() { hostDoc.addEventListener('mousedown', close, true); }, 50);
     }, {capture: true, signal: sig});
     logoLeft.appendChild(logoEl);
     logoLeft.appendChild(logoChev);
@@ -3174,9 +3186,9 @@
           widget.style.top = (startT + me.clientY - startY) + 'px';
           widget.style.right = 'auto';
         };
-        var onUp = function() { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
+        var onUp = function() { hostDoc.removeEventListener('mousemove', onMove); hostDoc.removeEventListener('mouseup', onUp); };
+        hostDoc.addEventListener('mousemove', onMove);
+        hostDoc.addEventListener('mouseup', onUp);
       }, {capture: true});
     }
 
@@ -3187,8 +3199,8 @@
       // Only remove floating if panels are docked (not floating mode)
       var isFloating = layersPanel.classList.contains('rb-layers-floating');
       if (!isFloating) {
-        document.body.classList.remove('rb-ed-floating');
-        document.documentElement.classList.add('rb-ed-docked');
+        hostDoc.body.classList.remove('rb-ed-floating');
+        hostDoc.documentElement.classList.add('rb-ed-docked');
       }
       if (miniWidgetL) { miniWidgetL.remove(); miniWidgetL = null; }
       if (miniWidgetR) { miniWidgetR.remove(); miniWidgetR = null; }
@@ -3199,8 +3211,8 @@
       panelsMinimized = true;
       layersPanel.style.display = 'none';
       inspector.style.display = 'none';
-      document.body.classList.add('rb-ed-floating');
-      document.documentElement.classList.remove('rb-ed-docked');
+      hostDoc.body.classList.add('rb-ed-floating');
+      hostDoc.documentElement.classList.remove('rb-ed-docked');
 
       // Left widget: handle + logo + minimize/undock icons
       if (miniWidgetL) miniWidgetL.remove();
@@ -3246,10 +3258,10 @@
       var floating = layersPanel.classList.contains('rb-layers-floating');
       layersPanel.classList.toggle('rb-layers-floating', !floating);
       inspector.classList.toggle('rb-insp-floating', !floating);
-      document.body.classList.toggle('rb-ed-floating', !floating);
-      document.documentElement.classList.toggle('rb-ed-docked', floating);
-      // Force reflow so site elements recalculate width after margin change
-      void document.body.offsetHeight;
+      hostDoc.body.classList.toggle('rb-ed-floating', !floating);
+      hostDoc.documentElement.classList.toggle('rb-ed-docked', floating);
+      // Force reflow so site elements recalculate width after margin change.
+      void targetDoc.body.offsetHeight;
       panelUndockBtn.title = floating ? 'Undock panels' : 'Dock panels';
     }, {signal: sig, capture: true});
 
@@ -3260,7 +3272,7 @@
     themeBtn.title = 'Toggle light/dark mode';
 
     function applyTheme(light) {
-      document.body.classList.toggle('rb-ed-light', light);
+      hostDoc.body.classList.toggle('rb-ed-light', light);
       themeBtn.innerHTML = light ? MOON_SVG : SUN_SVG;
       themeBtn.title = light ? 'Switch to dark mode' : 'Switch to light mode';
       // Update inline styles that depend on theme
@@ -3290,7 +3302,7 @@
     // Project name field (below logo)
     var projectField = mk('div', 'rb-ed-project-field');
     var projectName = mk('input', 'rb-ed-project-name');
-    projectName.value = (document.title || 'Untitled').slice(0, 40);
+    projectName.value = (targetDoc.title || 'Untitled').slice(0, 40);
     projectName.readOnly = true;
     projectName.style.cursor = 'default';
     projectName.addEventListener('click', function() {
@@ -3394,15 +3406,16 @@
       var startH = layersPanel.offsetHeight;
       var onMove = function(me) {
         var newH = startH + (me.clientY - startY);
-        newH = Math.max(120, Math.min(window.innerHeight - 60, newH));
+        // Layers panel lives in HOST so it clamps against host viewport.
+        newH = Math.max(120, Math.min(hostWin.innerHeight - 60, newH));
         layersPanel.style.height = newH + 'px';
       };
       var onUp = function() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
+        hostDoc.removeEventListener('mousemove', onMove);
+        hostDoc.removeEventListener('mouseup', onUp);
       };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      hostDoc.addEventListener('mousemove', onMove);
+      hostDoc.addEventListener('mouseup', onUp);
     });
 
     root.appendChild(layersPanel);
@@ -3411,12 +3424,12 @@
   }
 
   function showGlobalCSS() {
-    updateInspector(document.body);
+    updateInspector(targetDoc.body);
     inspector.classList.add('rb-insp-ghost');
 
     // Override font to show all site fonts
     var fontsUsed = new Set();
-    document.querySelectorAll('h1,h2,h3,p,a,span,div,li,button').forEach(function(scanEl) {
+    targetDoc.querySelectorAll('h1,h2,h3,p,a,span,div,li,button').forEach(function(scanEl) {
       if (fontsUsed.size > 8) return;
       try { var f = getCS(scanEl).fontFamily.split(',')[0].replace(/['"]/g, '').trim(); if (f) fontsUsed.add(f); } catch(e) {}
     });
@@ -3439,12 +3452,12 @@
 
   // Reusable settings popup (anchored to panel left edge, 3px gap)
   function openSettingsPopup(title, anchorBtn, buildContent) {
-    var existing = document.querySelector('.rb-insp-adv-popup');
+    var existing = hostDoc.querySelector('.rb-insp-adv-popup');
     if (existing) { existing.remove(); return null; }
     var popup = mk('div', 'rb-insp-adv-popup');
     var inspRect = inspector.getBoundingClientRect();
     var btnRect = anchorBtn.getBoundingClientRect();
-    popup.style.cssText = 'position:fixed;top:' + btnRect.top + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;';
+    popup.style.cssText = 'position:fixed;top:' + btnRect.top + 'px;right:' + (hostWin.innerWidth - inspRect.left + 3) + 'px;';
     // Header: title + close button
     var popHd = mk('div');
     popHd.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.06);';
@@ -3463,10 +3476,10 @@
     var closeOutside = function(ev) {
       if (popup && !popup.contains(ev.target) && !anchorBtn.contains(ev.target)) {
         if (popup.parentElement) popup.remove();
-        document.removeEventListener('mousedown', closeOutside, true);
+        hostDoc.removeEventListener('mousedown', closeOutside, true);
       }
     };
-    setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 50);
+    setTimeout(function() { hostDoc.addEventListener('mousedown', closeOutside, true); }, 50);
     return popup;
   }
 
@@ -3490,7 +3503,7 @@
       }, {capture: true, signal: sig});
       hdRight.appendChild(moreBtn);
     }
-    var chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    var chev = hostDoc.createElementNS('http://www.w3.org/2000/svg', 'svg');
     chev.setAttribute('class', 'rb-insp-sec-chev');
     chev.setAttribute('viewBox', '0 0 24 24');
     chev.setAttribute('fill', 'none');
@@ -3696,9 +3709,11 @@
     txt.addEventListener('click', function() {
       txt.contentEditable = 'true';
       txt.focus();
-      var range = document.createRange();
+      // txt lives in HOST (inspector swatch label), so the selection is on
+      // the host window. In extension mode hostWin === window.
+      var range = hostDoc.createRange();
       range.selectNodeContents(txt);
-      var sel = window.getSelection();
+      var sel = hostWin.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
     });
@@ -3745,7 +3760,7 @@
     var scrollPos = inspector ? inspector.scrollTop : 0;
     // Font dropdown is appended to <body> (to escape inspector's overflow
     // clip) — rebuild orphans it, so clean up any previous instance first.
-    var staleDrop = document.body.querySelector(':scope > .rb-insp-font-drop');
+    var staleDrop = hostDoc.body.querySelector(':scope > .rb-insp-font-drop');
     if (staleDrop) staleDrop.remove();
     inspBody.innerHTML = '';
     inspector.classList.remove('rb-insp-ghost');
@@ -3764,7 +3779,7 @@
     var breadcrumb = mk('div', 'rb-ed-breadcrumb');
     var chain = [];
     var bcWalk = el;
-    while (bcWalk && bcWalk !== document.body && chain.length < 6) {
+    while (bcWalk && bcWalk !== targetDoc.body && chain.length < 6) {
       chain.unshift(bcWalk);
       bcWalk = bcWalk.parentElement;
     }
@@ -4195,7 +4210,7 @@
     // append escapes both clippers; we just re-position on every show.
     var fontDrop = mk('div', 'rb-insp-font-drop');
     fontDrop.style.cssText = 'position:fixed;width:220px;background:#1A1A1A;border:1px solid rgba(255,255,255,0.08);border-radius:4px;max-height:240px;overflow-y:auto;display:none;z-index:2147483647;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
-    document.body.appendChild(fontDrop);
+    hostDoc.body.appendChild(fontDrop);
     function positionFontDrop() {
       var r = fontWrap.getBoundingClientRect();
       fontDrop.style.left = r.left + 'px';
@@ -4333,11 +4348,11 @@
         applyStyle(el, 'lineHeight', String(nv / 100));
       };
       var onUp = function() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
+        hostDoc.removeEventListener('mousemove', onMove);
+        hostDoc.removeEventListener('mouseup', onUp);
       };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      hostDoc.addEventListener('mousemove', onMove);
+      hostDoc.addEventListener('mouseup', onUp);
     }, {capture: true, signal: sig});
     lhField.appendChild(lhIcon);
     lhField.appendChild(lhInp);
@@ -4380,11 +4395,11 @@
         applyStyle(el, 'letterSpacing', (nv / 100 * fSize) + 'px');
       };
       var onUp = function() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
+        hostDoc.removeEventListener('mousemove', onMove);
+        hostDoc.removeEventListener('mouseup', onUp);
       };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      hostDoc.addEventListener('mousemove', onMove);
+      hostDoc.addEventListener('mouseup', onUp);
     }, {capture: true, signal: sig});
     lsField.appendChild(lsIcon);
     lsField.appendChild(lsInp);
@@ -4506,7 +4521,7 @@
       bgSwatch.style.backgroundSize = 'cover';
       // Read current opacity from the per-element style tag
       var _fxOpacity = 100;
-      var _fxStyleTag = el.id ? document.getElementById(el.id + '-rb-fx') : null;
+      var _fxStyleTag = el.id ? targetDoc.getElementById(el.id + '-rb-fx') : null;
       if (_fxStyleTag) {
         var opMatch = _fxStyleTag.textContent.match(/opacity\s*:\s*([\d.]+)/);
         if (opMatch) _fxOpacity = Math.round(parseFloat(opMatch[1]) * 100);
@@ -4549,7 +4564,7 @@
       bgAlphaLabel.value = pct + '%';
       // If effect active (::before), update opacity in the per-element style tag
       if (el.classList.contains('rb-fx-active') && el.id) {
-        var fxTag = document.getElementById(el.id + '-rb-fx');
+        var fxTag = targetDoc.getElementById(el.id + '-rb-fx');
         if (fxTag) {
           fxTag.textContent = fxTag.textContent.replace(/opacity\s*:\s*[\d.]+/, 'opacity:' + (pct / 100));
         }
@@ -4585,7 +4600,7 @@
       el.classList.remove('rb-fx-active');
       el.removeAttribute('data-rb-fx-css');
       el.removeAttribute('data-rb-fx-name');
-      if (el.id) { var fxTag = document.getElementById(el.id + '-rb-fx'); if (fxTag) fxTag.remove(); }
+      if (el.id) { var fxTag = targetDoc.getElementById(el.id + '-rb-fx'); if (fxTag) fxTag.remove(); }
       updateInspector(el);
     }, {capture: true, signal: sig});
 
@@ -4621,14 +4636,15 @@
             // Make element a positioning context for ::before
             var curPos = getCS(targetEl).position;
             if (curPos === 'static') targetEl.style.setProperty('position', 'relative', 'important');
-            // Inject per-element <style> for ::before
+            // Inject per-element <style> for ::before — must live in TARGET
+            // head so the rule resolves against the target's element tree.
             var fxTagId = targetEl.id + '-rb-fx';
-            var existingTag = document.getElementById(fxTagId);
+            var existingTag = targetDoc.getElementById(fxTagId);
             if (existingTag) existingTag.remove();
-            var fxTag = document.createElement('style');
+            var fxTag = targetDoc.createElement('style');
             fxTag.id = fxTagId;
             fxTag.textContent = '#' + targetEl.id + '::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;border-radius:inherit;' + fx.css + 'opacity:1;}';
-            document.head.appendChild(fxTag);
+            targetDoc.head.appendChild(fxTag);
             // Clear any direct background from the element (effect is now on ::before)
             targetEl.style.removeProperty('background');
             targetEl.style.removeProperty('background-image');
@@ -4673,9 +4689,9 @@
       bgHidden = !bgHidden;
       if (bgHidden) {
         bgOrigStyles = { bg: el.style.background, bgColor: el.style.backgroundColor, bgImage: el.style.backgroundImage, animation: el.style.animation, hasFxClass: el.classList.contains('rb-fx-active') };
-        // Hide ::before effect by removing its style tag
+        // Hide ::before effect by removing its style tag (target head).
         if (el.id) {
-          var fxTag = document.getElementById(el.id + '-rb-fx');
+          var fxTag = targetDoc.getElementById(el.id + '-rb-fx');
           if (fxTag) { bgFxTagBackup = fxTag.textContent; fxTag.remove(); }
         }
         el.style.setProperty('background', 'none', 'important');
@@ -4692,12 +4708,12 @@
         else el.style.removeProperty('background-image');
         if (bgOrigStyles.animation) el.style.setProperty('animation', bgOrigStyles.animation, 'important');
         else el.style.removeProperty('animation');
-        // Restore ::before effect
+        // Restore ::before effect (target head, same as fx injection above).
         if (bgOrigStyles.hasFxClass && bgFxTagBackup && el.id) {
-          var restoredTag = document.createElement('style');
+          var restoredTag = targetDoc.createElement('style');
           restoredTag.id = el.id + '-rb-fx';
           restoredTag.textContent = bgFxTagBackup;
-          document.head.appendChild(restoredTag);
+          targetDoc.head.appendChild(restoredTag);
           bgFxTagBackup = null;
         }
         bgEyeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -4770,8 +4786,8 @@
               pushUndo({el: visualEl, prop: 'src', old: visualEl.src});
               visualEl.src = dataUrl;
             } else {
-              // Insert a new <img> inside the div
-              var newImg = document.createElement('img');
+              // Insert a new <img> inside the div — site element, target doc.
+              var newImg = (targetEl.ownerDocument || targetDoc).createElement('img');
               newImg.src = dataUrl;
               newImg.style.cssText = 'width:100%;height:auto;display:block;';
               pushUndo({el: targetEl, prop: '__insertedImg', old: null});
@@ -4842,7 +4858,7 @@
     // Helper: find the CSS class that defines `color` on an element
     function findColorClass(node) {
       var classes = node.className && typeof node.className === 'string' ? node.className.split(/\s+/) : [];
-      var sheets = document.styleSheets;
+      var sheets = targetDoc.styleSheets;
       for (var s = 0; s < sheets.length; s++) {
         try { var rules = sheets[s].cssRules || sheets[s].rules; if (!rules) continue; } catch(e) { continue; }
         for (var r = 0; r < rules.length; r++) {
@@ -5436,7 +5452,7 @@
     // Falls through to the element-level apply if the range is stale or invalid.
     if (TEXT_RANGE_PROPS.has(prop) && __pendingTextRange && isTextEditing) {
       var er = __pendingTextRange.editableRoot;
-      if (er && document.body.contains(er) && (er === selectedEl || er.contains(selectedEl))) {
+      if (er && targetDoc.body.contains(er) && (er === selectedEl || er.contains(selectedEl))) {
         if (applyPropToRange(er, __pendingTextRange.range, prop, value)) {
           requestAnimationFrame(function() {
             if (selectedEl) updateSelBox(selectedEl);
@@ -5504,7 +5520,7 @@
     // render. On any mismatch, inject an ID-selector override rule that wins by
     // specificity and persists across className rewrites.
     function _verifyApply() {
-      if (!document.body.contains(el)) return;
+      if (!targetDoc.body.contains(el)) return;
       var cur = getCS(el)[prop];
       // If computed value doesn't match what we wrote, something (React re-render,
       // CSS !important with higher specificity, etc.) is overriding us. Fall back
@@ -5697,21 +5713,21 @@
         var ebEls = getEditorElsInBody();
         var beforeB = ebEls[0] || null;
         u.originalChildren.forEach(function(child) {
-          if (child.parentElement === document.body) child.remove();
+          if (child.parentElement === targetDoc.body) child.remove();
         });
-        if (beforeB) document.body.insertBefore(u.wrapper, beforeB);
-        else document.body.appendChild(u.wrapper);
-        window.scrollTo(0, u.newScrollY || 0);
+        if (beforeB) targetDoc.body.insertBefore(u.wrapper, beforeB);
+        else targetDoc.body.appendChild(u.wrapper);
+        targetWin.scrollTo(0, u.newScrollY || 0);
       } else {
-        u.newScrollY = window.scrollY;
+        u.newScrollY = targetWin.scrollY;
         if (u.wrapper && u.wrapper.parentElement) u.wrapper.remove();
         var ebEls2 = getEditorElsInBody();
         var beforeB2 = ebEls2[0] || null;
         u.originalChildren.forEach(function(child) {
-          if (beforeB2) document.body.insertBefore(child, beforeB2);
-          else document.body.appendChild(child);
+          if (beforeB2) targetDoc.body.insertBefore(child, beforeB2);
+          else targetDoc.body.appendChild(child);
         });
-        window.scrollTo(0, u.scrollY || 0);
+        targetWin.scrollTo(0, u.scrollY || 0);
       }
     } else if (u.prop === '__modeERun') {
       if (forward) {
@@ -5720,24 +5736,24 @@
         var before = editorEls[0] || null;
         // Remove current (the originals we restored on undo)
         u.originalChildren.forEach(function(child) {
-          if (child.parentElement === document.body) child.remove();
+          if (child.parentElement === targetDoc.body) child.remove();
         });
-        if (before) document.body.insertBefore(u.rebuiltWrapper, before);
-        else document.body.appendChild(u.rebuiltWrapper);
-        window.scrollTo(0, u.newScrollY || 0);
+        if (before) targetDoc.body.insertBefore(u.rebuiltWrapper, before);
+        else targetDoc.body.appendChild(u.rebuiltWrapper);
+        targetWin.scrollTo(0, u.newScrollY || 0);
       } else {
         // Undo of Mode E: remove rebuilt wrapper + Tailwind CDN, re-insert originals
-        u.newScrollY = window.scrollY;
+        u.newScrollY = targetWin.scrollY;
         if (u.rebuiltWrapper && u.rebuiltWrapper.parentElement) u.rebuiltWrapper.remove();
-        var twCdn = document.getElementById('rb-tailwind-cdn');
+        var twCdn = targetDoc.getElementById('rb-tailwind-cdn');
         if (twCdn) twCdn.remove();
         var editorEls2 = getEditorElsInBody();
         var before2 = editorEls2[0] || null;
         u.originalChildren.forEach(function(child) {
-          if (before2) document.body.insertBefore(child, before2);
-          else document.body.appendChild(child);
+          if (before2) targetDoc.body.insertBefore(child, before2);
+          else targetDoc.body.appendChild(child);
         });
-        window.scrollTo(0, u.scrollY || 0);
+        targetWin.scrollTo(0, u.scrollY || 0);
       }
     } else {
       // Generic style prop change
@@ -5748,8 +5764,12 @@
   }
 
   function getEditorElsInBody() {
+    // Looks at TARGET body — Mode E rebuilds target. In extension mode
+    // (host === target) this also catches editor scaffold so undo
+    // preserves panels; in canvas mode the target body has no scaffold
+    // so the list is naturally empty (no false positives).
     var out = [];
-    Array.from(document.body.children).forEach(function(child) {
+    Array.from(targetDoc.body.children).forEach(function(child) {
       if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
         out.push(child);
       }
@@ -5824,11 +5844,11 @@
       } catch(e) { /* permission denied, use internal fallback */ }
     }
     if (!html) return false;
-    var target = selectedEl || document.body.firstElementChild;
+    var target = selectedEl || targetDoc.body.firstElementChild;
     if (!target || isEditorEl(target)) return false;
 
-    // Parse into a DOM fragment
-    var tmp = document.createElement('div');
+    // Parse into a DOM fragment in TARGET so adopted nodes inherit target context.
+    var tmp = targetDoc.createElement('div');
     tmp.innerHTML = html;
     var newEl = tmp.firstElementChild;
     if (!newEl) return false;
@@ -5879,7 +5899,7 @@
       findIndex = 0;
       if (q.length < 2) { counter.textContent = ''; return; }
       // Walk visible text-containing elements
-      var all = document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,a,button,li,td,th,label,div');
+      var all = targetDoc.querySelectorAll('h1,h2,h3,h4,h5,h6,p,span,a,button,li,td,th,label,div');
       all.forEach(function(el) {
         if (isEditorEl(el)) return;
         var r = el.getBoundingClientRect();
@@ -6027,29 +6047,33 @@
         restoreBtn.addEventListener('mouseleave', function() { restoreBtn.style.background = 'rgba(255,255,255,0.08)'; });
         restoreBtn.addEventListener('click', async function() {
           if (!confirm('Restore this version? Current unsaved changes will be lost.')) return;
-          // Apply the snapshot HTML to the current rebuilt page or body
-          var container = document.getElementById('rb-rebuilt-page');
+          // Apply the snapshot HTML to the current rebuilt page or body.
+          // The rebuilt page lives in TARGET; editor scaffolding lives in HOST.
+          var container = targetDoc.getElementById('rb-rebuilt-page');
           if (container) {
             container.outerHTML = snap.html;
           } else {
             // No rebuilt page — this is a Mode A edit context. Restore
             // means replacing the body content with the snapshot HTML
-            // (user confirmed). Keep editor elements intact.
+            // (user confirmed). When host === target (extension), keep
+            // editor scaffolding intact; otherwise just replace target body.
             var editorEls = [];
-            Array.from(document.body.children).forEach(function(child) {
-              if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
-                editorEls.push(child);
-              }
-            });
-            Array.from(document.body.children).forEach(function(child) {
+            if (hostDoc === targetDoc) {
+              Array.from(targetDoc.body.children).forEach(function(child) {
+                if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
+                  editorEls.push(child);
+                }
+              });
+            }
+            Array.from(targetDoc.body.children).forEach(function(child) {
               if (editorEls.indexOf(child) === -1) child.remove();
             });
-            var frag = document.createElement('div');
+            var frag = targetDoc.createElement('div');
             frag.innerHTML = snap.html;
             var insertBefore = editorEls[0] || null;
             Array.from(frag.children).forEach(function(child) {
-              if (insertBefore) document.body.insertBefore(child, insertBefore);
-              else document.body.appendChild(child);
+              if (insertBefore) targetDoc.body.insertBefore(child, insertBefore);
+              else targetDoc.body.appendChild(child);
             });
           }
           // Reset in-memory undo/redo since the state we came from no longer exists
@@ -6073,10 +6097,10 @@
       if (savedVersionsPanel && !savedVersionsPanel.contains(ev.target)) {
         savedVersionsPanel.remove();
         savedVersionsPanel = null;
-        document.removeEventListener('mousedown', closeOutside, true);
+        hostDoc.removeEventListener('mousedown', closeOutside, true);
       }
     };
-    setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 100);
+    setTimeout(function() { hostDoc.addEventListener('mousedown', closeOutside, true); }, 100);
   }
 
   // ============ LAZY DECOUPLE (bake inline styles on select) ============
@@ -6199,9 +6223,9 @@
     // No scroll lock — causes too many issues on custom scroll sites
     el.focus();
     try {
-      var range = document.createRange();
+      var range = targetDoc.createRange();
       range.selectNodeContents(el);
-      var sel = window.getSelection();
+      var sel = targetWin.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
     } catch(err) {}
@@ -6233,7 +6257,7 @@
       selectedEl.removeAttribute('data-rb-editing');
       selectedEl.classList.remove('rb-ed-movable');
     }
-    var sel = window.getSelection();
+    var sel = targetWin.getSelection();
     if (sel) sel.removeAllRanges();
     selectedEl = null;
     selectionDepth = 0;
@@ -6242,7 +6266,7 @@
     isTextEditing = false;
     selBox.style.display = 'none';
     parentBox.style.display = 'none';
-    var lock = document.getElementById('rb-ed-lock');
+    var lock = hostDoc.getElementById('rb-ed-lock');
     if (lock) lock.remove();
     hideSpacingGuides();
     showGlobalCSS();
@@ -6397,7 +6421,7 @@
       var iconSpan = widget.querySelector('.rb-spacing-icon');
       var iconChar = iconSpan ? iconSpan.textContent : '\u2194';
 
-      var input = document.createElement('input');
+      var input = hostDoc.createElement('input');
       input.type = 'text';
       input.value = String(Math.round(curPx));
       input.className = 'rb-spacing-inline-input';
@@ -6423,7 +6447,7 @@
         if (isNaN(num)) return null;
         var unit = (m[2] || 'px').toLowerCase();
         if (unit === 'px') return num;
-        if (unit === 'rem') return num * (parseFloat(getCS(document.documentElement).fontSize) || 16);
+        if (unit === 'rem') return num * (parseFloat(getCS(targetDoc.documentElement).fontSize) || 16);
         if (unit === 'em')  return num * (parseFloat(cs.fontSize) || 16);
         if (unit === '%') {
           var parent = targetEl.parentElement;
@@ -6499,7 +6523,7 @@
           dragged = true;
           setActiveGuide(key);
           spacingGuides[key].classList.add('rb-spacing-dragging');
-          document.body.classList.add('rb-ed-dragging-guide');
+          hostDoc.body.classList.add('rb-ed-dragging-guide');
         }
         var delta = (axis === 'x')
           ? (ev.clientX - dragStartPos.x) * dir
@@ -6521,10 +6545,10 @@
         updateSelBox(selectedEl);
       }
       function onUp(ev) {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
+        hostDoc.removeEventListener('mousemove', onMove);
+        hostDoc.removeEventListener('mouseup', onUp);
         spacingGuides[key].classList.remove('rb-spacing-dragging');
-        document.body.classList.remove('rb-ed-dragging-guide');
+        hostDoc.body.classList.remove('rb-ed-dragging-guide');
 
         if (!dragged) {
           // Click without drag → pass through: select whatever site element is
@@ -6537,7 +6561,7 @@
             prev.push({el: g, val: g.style.pointerEvents});
             g.style.pointerEvents = 'none';
           });
-          var below = document.elementFromPoint(ev.clientX, ev.clientY);
+          var below = targetDoc.elementFromPoint(ev.clientX, ev.clientY);
           prev.forEach(function(p) { p.el.style.pointerEvents = p.val; });
           if (below && !isEditorEl(below) && isValid(below)) {
             var resolved = resolveContainer(below);
@@ -6561,8 +6585,8 @@
         }
         updateSpacingGuides(selectedEl);
       }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      hostDoc.addEventListener('mousemove', onMove);
+      hostDoc.addEventListener('mouseup', onUp);
     });
   });
 
@@ -6593,7 +6617,7 @@
       var startY = parseFloat(cs[cfg.props[0]]) || 0;
       var startX = parseFloat(cs[cfg.props[1]]) || 0;
       var startPos = { x: e.clientX, y: e.clientY };
-      document.body.classList.add('rb-ed-dragging-guide');
+      hostDoc.body.classList.add('rb-ed-dragging-guide');
       function onMove(ev) {
         var newY = Math.max(0, Math.round(startY + (ev.clientY - startPos.y) * cfg.signY));
         var newX = Math.max(0, Math.round(startX + (ev.clientX - startPos.x) * cfg.signX));
@@ -6607,14 +6631,14 @@
         updateSelBox(selectedEl);
       }
       function onUp() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        document.body.classList.remove('rb-ed-dragging-guide');
+        hostDoc.removeEventListener('mousemove', onMove);
+        hostDoc.removeEventListener('mouseup', onUp);
+        hostDoc.body.classList.remove('rb-ed-dragging-guide');
         pushUndo({ el: selectedEl, prop: cfg.props[0], old: startY + 'px' });
         pushUndo({ el: selectedEl, prop: cfg.props[1], old: startX + 'px' });
       }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      hostDoc.addEventListener('mousemove', onMove);
+      hostDoc.addEventListener('mouseup', onUp);
     });
   });
 
@@ -6718,14 +6742,15 @@
   // ============ SVG EXPORT ============
 
   function downloadSVG() {
-    var w = window.innerWidth, h = window.innerHeight;
+    // Export the TARGET (the site we're editing), at TARGET's viewport size.
+    var w = targetWin.innerWidth, h = targetWin.innerHeight;
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '">' +
       '<foreignObject width="100%" height="100%">' +
       '<html xmlns="http://www.w3.org/1999/xhtml">' +
-      document.documentElement.outerHTML +
+      targetDoc.documentElement.outerHTML +
       '</html></foreignObject></svg>';
     var blob = new Blob([svg], {type: 'image/svg+xml'});
-    var a = document.createElement('a');
+    var a = hostDoc.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = 'repix-export.svg';
     a.click();
@@ -6744,9 +6769,9 @@
       img.style.outlineOffset = '';
     }, 800);
 
-    // Check if image is already visible in viewport
+    // Check if image is already visible in TARGET viewport.
     var rect = img.getBoundingClientRect();
-    var inView = rect.top >= 0 && rect.bottom <= window.innerHeight;
+    var inView = rect.top >= 0 && rect.bottom <= targetWin.innerHeight;
 
     function positionAndShow() {
       var r = img.getBoundingClientRect();
@@ -6759,13 +6784,13 @@
       // Auto-close on outside click (guarded by generation to prevent stale listeners)
       var gen = _imgMenuGeneration;
       var closeOutside = function(ev) {
-        if (gen !== _imgMenuGeneration) { document.removeEventListener('mousedown', closeOutside, true); return; }
+        if (gen !== _imgMenuGeneration) { hostDoc.removeEventListener('mousedown', closeOutside, true); return; }
         if (m && !m.contains(ev.target)) {
           removeImgMenu();
-          document.removeEventListener('mousedown', closeOutside, true);
+          hostDoc.removeEventListener('mousedown', closeOutside, true);
         }
       };
-      setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 150);
+      setTimeout(function() { hostDoc.addEventListener('mousedown', closeOutside, true); }, 150);
     }
 
     if (!inView) {
@@ -6817,7 +6842,7 @@
       fetch(img.src).then(function(r) { return r.blob(); }).then(function(blob) {
         var url = URL.createObjectURL(blob);
         var a = mk('a'); a.href = url; a.download = 'image.png';
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        hostDoc.body.appendChild(a); a.click(); hostDoc.body.removeChild(a);
         URL.revokeObjectURL(url);
       }).catch(function() { window.open(img.src, '_blank'); });
       removeImgMenu();
@@ -6878,9 +6903,9 @@
         m.style.left = (sl + me.clientX - sx) + 'px';
         m.style.top = (st + me.clientY - sy) + 'px';
       }
-      function onUp() { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      function onUp() { hostDoc.removeEventListener('mousemove', onMove); hostDoc.removeEventListener('mouseup', onUp); }
+      hostDoc.addEventListener('mousemove', onMove);
+      hostDoc.addEventListener('mouseup', onUp);
     }, {capture: true});
   }
 
@@ -6984,7 +7009,7 @@
         if (btn._editing) return;
         btn._editing = true;
         var origText = valSpan.textContent;
-        var inp = document.createElement('input');
+        var inp = hostDoc.createElement('input');
         inp.type = 'text';
         inp.value = String(curVal);
         inp.style.cssText = 'width:3.5em;background:rgba(255,255,255,0.06);border:none;color:inherit;font:inherit;text-align:center;padding:1px 2px;outline:none;border-radius:2px;';
@@ -7036,12 +7061,12 @@
           applyStyle(el, prop, curVal + unit);
         }
         function onUp() {
-          document.removeEventListener('mousemove', onMove, true);
-          document.removeEventListener('mouseup', onUp, true);
+          hostDoc.removeEventListener('mousemove', onMove, true);
+          hostDoc.removeEventListener('mouseup', onUp, true);
           if (!dragged) enterEditMode();
         }
-        document.addEventListener('mousemove', onMove, true);
-        document.addEventListener('mouseup', onUp, true);
+        hostDoc.addEventListener('mousemove', onMove, true);
+        hostDoc.addEventListener('mouseup', onUp, true);
       }, {capture: true});
     }
 
@@ -7166,13 +7191,13 @@
     // Auto-close
     var gen = _textDockGen;
     var closeOutside = function(ev) {
-      if (gen !== _textDockGen) { document.removeEventListener('mousedown', closeOutside, true); return; }
+      if (gen !== _textDockGen) { hostDoc.removeEventListener('mousedown', closeOutside, true); return; }
       if (m && !m.contains(ev.target)) {
         removeTextDock();
-        document.removeEventListener('mousedown', closeOutside, true);
+        hostDoc.removeEventListener('mousedown', closeOutside, true);
       }
     };
-    setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 150);
+    setTimeout(function() { hostDoc.addEventListener('mousedown', closeOutside, true); }, 150);
   }
 
   var _textDockGen = 0;
@@ -7226,7 +7251,7 @@
       root.appendChild(dropIndicator);
     }
     var r = targetEl.getBoundingClientRect();
-    var parentStyle = getComputedStyle(targetEl.parentElement);
+    var parentStyle = getCS(targetEl.parentElement);
     var isVertical = parentStyle.flexDirection === 'column' ||
                      parentStyle.display === 'block' ||
                      parentStyle.display === '' ||
@@ -7260,7 +7285,7 @@
     var children = parent.children;
     if (!children.length) return false;
     for (var i = 0; i < Math.min(children.length, 3); i++) {
-      var pos = getComputedStyle(children[i]).position;
+      var pos = getCS(children[i]).position;
       if (pos === 'absolute' || pos === 'fixed') return true;
     }
     return false;
@@ -7296,7 +7321,7 @@
       if (dist < closestDist) {
         closestDist = dist;
         closest = sib;
-        var parentStyle = getComputedStyle(parent);
+        var parentStyle = getCS(parent);
         var isHorizontal = parentStyle.flexDirection === 'row' ||
                           parentStyle.flexDirection === 'row-reverse' ||
                           (parentStyle.display.includes('flex') && parentStyle.flexDirection !== 'column');
@@ -7426,7 +7451,7 @@
     // isUselessWrapper is defined in outer scope (used by both layers panel and resolveContainer)
 
     function drillIntoChild(parentEl, x, y) {
-      var stack = document.elementsFromPoint(x, y);
+      var stack = targetDoc.elementsFromPoint(x, y);
       var directChild = null;
       for (var i = 0; i < stack.length; i++) {
         var el = stack[i];
@@ -7833,13 +7858,13 @@
           selectedEl.classList.add('rb-ed-movable');
           exitTextEdit();
           isTextEditing = false;
-          var s = window.getSelection(); if (s) s.removeAllRanges();
+          var s = targetWin.getSelection(); if (s) s.removeAllRanges();
           updateSelBox(selectedEl);
           return;
         }
         if (selectedEl && selectionDepth > 0) {
           var parent = selectedEl.parentElement;
-          if (parent && parent !== document.body && isValid(parent)) {
+          if (parent && parent !== targetDoc.body && isValid(parent)) {
             selectionDepth--;
             selectEl(parent);
           }
@@ -8055,8 +8080,8 @@
         }
 
         function onU() {
-          document.removeEventListener('mousemove', onM);
-          document.removeEventListener('mouseup', onU);
+          hostDoc.removeEventListener('mousemove', onM);
+          hostDoc.removeEventListener('mouseup', onU);
           // Pure click with no drag → we never unlocked, nothing changed,
           // nothing to undo.
           if (!unlocked) return;
@@ -8070,8 +8095,8 @@
           });
         }
 
-        document.addEventListener('mousemove', onM);
-        document.addEventListener('mouseup', onU);
+        hostDoc.addEventListener('mousemove', onM);
+        hostDoc.addEventListener('mouseup', onU);
       }, {signal: sig});
     });
 
