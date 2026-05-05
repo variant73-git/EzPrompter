@@ -1005,6 +1005,7 @@ body.rb-ed-dragging-guide, body.rb-ed-dragging-guide * { cursor: inherit !import
   cursor:pointer; -webkit-appearance:none; transition:all 100ms;
 }
 .rb-img-bar-btn:hover { background:rgba(255,255,255,0.08); color:#EFEEEB; }
+.rb-img-bar-btn:disabled { opacity:0.35; cursor:default; pointer-events:none; }
 .rb-img-bar-btn span { pointer-events:none; }
 .rb-img-bar-divider {
   width:1px; align-self:stretch; background:rgba(255,255,255,0.1); flex-shrink:0;

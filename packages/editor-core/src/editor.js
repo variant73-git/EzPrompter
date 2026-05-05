@@ -7329,14 +7329,39 @@
     m.appendChild(dLink);
     m.appendChild(makeDockLinkBtn(el, function() { updateInspector(el); }));
 
-    // Restore original
+    // Restore original — disabled until at least one tracked element's
+    // style attribute drifts from the snapshot taken when the dock opened.
     var d3 = mk('div', 'rb-img-bar-divider');
     m.appendChild(d3);
     var restoreBtn = mk('button', 'rb-img-bar-btn');
     restoreBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 105.64-8.36L1 10"/></svg><span>Restore</span>';
     restoreBtn.title = 'Restore original text styles';
+    restoreBtn.disabled = true;
+    function hasDockChanges() {
+      for (var i = 0; i < origCss.length; i++) {
+        var o = origCss[i];
+        if ((o.el.getAttribute('style') || '') !== o.css) return true;
+      }
+      return false;
+    }
+    function refreshRestoreBtn() {
+      var dirty = hasDockChanges();
+      restoreBtn.disabled = !dirty;
+    }
+    // Watch every snapshotted leaf for style/class flips. When the user
+    // tweaks size/font/color via inspector or minidock the inline style
+    // changes — this fires and re-evaluates the disabled state. Cleaned up
+    // via the editor's AbortController on deactivate.
+    try {
+      var dockMo = new MutationObserver(refreshRestoreBtn);
+      origCss.forEach(function(o) {
+        try { dockMo.observe(o.el, { attributes: true, attributeFilter: ['style','class'] }); } catch(_){}
+      });
+      sig.addEventListener('abort', function() { try { dockMo.disconnect(); } catch(_){} });
+    } catch (e) {}
     restoreBtn.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
+      if (restoreBtn.disabled) return;
       // Snapshot current style for undo, then revert each affected element
       // to the cssText captured when the dock first opened.
       var affected = origCss.map(function(o) {
@@ -7851,6 +7876,28 @@
     // listener registers twice on the same EventTarget; identity-guard.
     if (hostDoc !== targetDoc) {
       hostDoc.addEventListener('mouseup', endDragSafe, {signal: sig});
+
+      // Click outside the node iframe (and outside any editor UI) deselects.
+      // In-progress edits commit-as-is: text edit exits leaving the typed
+      // value, an armed-but-not-started drag is cancelled, and a running
+      // drag is cleaned up via endDragSafe. We listen on mousedown (capture)
+      // so we run BEFORE the canvas's pan handler steals the gesture.
+      hostDoc.addEventListener('mousedown', function(e) {
+        if (isEditorEl(e.target)) return;
+        var ifr = targetWin.frameElement;
+        if (ifr && ifr.contains(e.target)) return; // click into iframe — target handler owns it
+        if (!selectedEl && !isTextEditing && !dragStart) return;
+        if (isTextEditing) {
+          // Commit current contentEditable contents and exit edit mode.
+          if (selectedEl) {
+            try { selectedEl.contentEditable = 'false'; selectedEl.removeAttribute('data-rb-editing'); } catch(_){}
+          }
+          exitTextEdit();
+          isTextEditing = false;
+        }
+        endDragSafe();
+        deselectEl();
+      }, {signal: sig, capture: true});
     }
 
     // Block right-click when an element is selected — TARGET fires on the

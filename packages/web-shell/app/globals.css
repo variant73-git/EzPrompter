@@ -308,34 +308,71 @@ input:focus {
 html, body { overscroll-behavior: none; }
 .canvas-shell { touch-action: none; }
 
+/* Hide the canvas header while the editor is active so the editor's own
+   panels + minidock are the only chrome on screen. The body class is set
+   by editor.js (rb-ed-active.rb-ed-canvas) when it boots in canvas mode. */
+body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
+
+/* Node frame — topbar sits FLUSH on top of the body so the selected/main
+   outline reads as a single continuous frame around both. Achieved with
+   per-side box-shadows on topbar (top/left/right) and node (bottom/left/
+   right) so the touching edge has no extra line. Top corners rounded on
+   the topbar; bottom corners on the body. */
 .cnode {
   position: absolute;
-  border-radius: 10px;
+  border-radius: 0 0 10px 10px;
   background: #fff;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   transition: box-shadow 0.15s;
   /* No fixed height — content (iframe) determines, sized by JS on load. */
 }
 
+/* Selected: continuous teal frame around topbar + body. */
 .cnode.selected {
-  box-shadow: 0 0 0 calc(2px / var(--canvas-scale, 1)) #7c3aed, 0 8px 32px rgba(124, 58, 237, 0.3);
+  box-shadow:
+    calc(-2px / var(--canvas-scale, 1)) 0 0 #14b8a6,
+    calc( 2px / var(--canvas-scale, 1)) 0 0 #14b8a6,
+    0 calc( 2px / var(--canvas-scale, 1)) 0 #14b8a6,
+    0 8px 32px rgba(20, 184, 166, 0.3);
 }
 
+.cnode.selected .cnode-topbar {
+  box-shadow:
+    calc(-2px / var(--canvas-scale, 1)) 0 0 #14b8a6,
+    calc( 2px / var(--canvas-scale, 1)) 0 0 #14b8a6,
+    0 calc(-2px / var(--canvas-scale, 1)) 0 #14b8a6;
+  border-color: transparent;
+}
+
+/* Soft "main" glow uses a lighter teal so it's distinct from selected. */
 .cnode.is-main {
-  box-shadow: 0 0 0 calc(2px / var(--canvas-scale, 1)) #a78bfa, 0 0 24px rgba(167, 139, 250, 0.3), 0 8px 32px rgba(0,0,0,0.4);
+  box-shadow:
+    calc(-2px / var(--canvas-scale, 1)) 0 0 #2dd4bf,
+    calc( 2px / var(--canvas-scale, 1)) 0 0 #2dd4bf,
+    0 calc( 2px / var(--canvas-scale, 1)) 0 #2dd4bf,
+    0 0 24px rgba(45, 212, 191, 0.3),
+    0 8px 32px rgba(0,0,0,0.4);
+}
+.cnode.is-main .cnode-topbar {
+  box-shadow:
+    calc(-2px / var(--canvas-scale, 1)) 0 0 #2dd4bf,
+    calc( 2px / var(--canvas-scale, 1)) 0 0 #2dd4bf,
+    0 calc(-2px / var(--canvas-scale, 1)) 0 #2dd4bf;
+  border-color: transparent;
 }
 
-/* Topbar floats ABOVE the node, so it doesn't take height from the iframe. */
+/* Topbar floats ABOVE the node body — flush, no margin gap. Sharp bottom
+   corners so it merges with the body's flat top. */
 .cnode-topbar {
   position: absolute;
   bottom: 100%;
   left: 0;
   right: 0;
-  margin-bottom: calc(8px / var(--canvas-scale, 1));
+  margin-bottom: 0;
   height: calc(36px / var(--canvas-scale, 1));
   background: rgba(20, 20, 42, 0.95);
   backdrop-filter: blur(12px);
-  border-radius: calc(8px / var(--canvas-scale, 1));
+  border-radius: calc(8px / var(--canvas-scale, 1)) calc(8px / var(--canvas-scale, 1)) 0 0;
   display: flex;
   align-items: center;
   padding: 0 calc(10px / var(--canvas-scale, 1));
@@ -343,7 +380,7 @@ html, body { overscroll-behavior: none; }
   cursor: move;
   user-select: none;
   color: #cbd5e1;
-  border: 1px solid rgba(124, 58, 237, 0.25);
+  border: 1px solid rgba(20, 184, 166, 0.25);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
@@ -359,8 +396,8 @@ html, body { overscroll-behavior: none; }
   padding: calc(2px / var(--canvas-scale, 1)) calc(8px / var(--canvas-scale, 1));
   border-radius: calc(999px / var(--canvas-scale, 1));
   background: transparent;
-  border: 1px solid rgba(167, 139, 250, 0.5);
-  color: #c4b5fd;
+  border: 1px solid rgba(45, 212, 191, 0.5);
+  color: #5eead4;
   text-transform: uppercase;
   font-size: calc(10px / var(--canvas-scale, 1));
   font-weight: 600;
@@ -413,19 +450,19 @@ html, body { overscroll-behavior: none; }
 }
 
 .cnode-topbar .btn-edit {
-  background: rgba(124, 58, 237, 0.18);
-  border-color: rgba(124, 58, 237, 0.4);
-  color: #c4b5fd;
+  background: rgba(20, 184, 166, 0.18);
+  border-color: rgba(20, 184, 166, 0.4);
+  color: #5eead4;
 }
 
 .cnode-topbar .btn-edit:hover {
-  background: rgba(124, 58, 237, 0.3);
+  background: rgba(20, 184, 166, 0.3);
   color: #fff;
 }
 
 .cnode-topbar .btn-edit.active {
-  background: #7c3aed;
-  border-color: #7c3aed;
+  background: #14b8a6;
+  border-color: #14b8a6;
   color: #fff;
 }
 
@@ -448,12 +485,12 @@ html, body { overscroll-behavior: none; }
 
 .cnode-body {
   position: relative;
-  border-radius: 10px;
+  border-radius: 0 0 10px 10px;
   overflow: hidden;
 }
 
 .cnode.editing .cnode-body {
-  outline: 2px solid #7c3aed;
+  outline: 2px solid #14b8a6;
   outline-offset: 0;
 }
 
