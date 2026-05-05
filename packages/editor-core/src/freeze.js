@@ -1,8 +1,19 @@
 // RepixBridge — Animation Freeze
-// Kills animations and forces all elements to their final visual state
+// Kills animations and forces all elements to their final visual state.
+// All side effects target the SITE (TARGET); the public hooks
+// (window.__rbFreeze / window.__rbUnfreeze) live on the script's window
+// (HOST) so editor.js can call them directly.
 
 (function() {
   'use strict';
+
+  // Resolve target (site) from globals set by mountEditor.
+  function _target() {
+    return (window.__rbTarget && window.__rbTarget.doc) || document;
+  }
+  function _targetWin() {
+    return (window.__rbTarget && window.__rbTarget.win) || window;
+  }
 
   // CSS that forces all elements to final state
   var FREEZE_CSS = [
@@ -26,9 +37,12 @@
 
   // Webflow-specific freeze
   function freezeWebflow(features) {
+    var tWin = _targetWin();
+    var tDoc = _target();
     // 1. Kill GSAP timeline
-    if (features.gsap && window.gsap) {
+    if (features.gsap && tWin.gsap) {
       try {
+        var gsap = tWin.gsap;
         gsap.globalTimeline.pause();
         // Kill all tweens and timelines
         gsap.killTweensOf('*');
@@ -40,8 +54,8 @@
             st.kill();
           });
         }
-        if (window.ScrollTrigger) {
-          ScrollTrigger.getAll().forEach(function(st) {
+        if (tWin.ScrollTrigger) {
+          tWin.ScrollTrigger.getAll().forEach(function(st) {
             st.scroll(st.end);
             st.kill();
           });
@@ -52,25 +66,25 @@
     // 2. Kill Lenis smooth scroll
     if (features.lenis) {
       try {
-        if (window.__lenis) window.__lenis.destroy();
-        if (window.lenis) window.lenis.destroy();
+        if (tWin.__lenis) tWin.__lenis.destroy();
+        if (tWin.lenis) tWin.lenis.destroy();
         // Some sites store it differently
-        document.querySelectorAll('[data-lenis-prevent]').forEach(function(el) {
+        tDoc.querySelectorAll('[data-lenis-prevent]').forEach(function(el) {
           el.removeAttribute('data-lenis-prevent');
         });
       } catch(e) { console.warn('[RB Freeze] Lenis kill error:', e); }
     }
 
     // 3. Kill Webflow Interactions IX2/IX3
-    if (window.Webflow) {
+    if (tWin.Webflow) {
       try {
-        var ix2 = Webflow.require('ix2');
+        var ix2 = tWin.Webflow.require('ix2');
         if (ix2 && ix2.destroy) ix2.destroy();
       } catch(e) {}
     }
 
     // 4. Force GSAP split text elements to final state
-    document.querySelectorAll('[class*="gsap_split"]').forEach(function(el) {
+    tDoc.querySelectorAll('[class*="gsap_split"]').forEach(function(el) {
       el.style.setProperty('transform', 'none', 'important');
       el.style.setProperty('opacity', '1', 'important');
       // Remove clip masks
@@ -85,11 +99,13 @@
 
   // Framer-specific freeze (placeholder for future)
   function freezeFramer() {
+    var tWin = _targetWin();
+    var tDoc = _target();
     // Kill Framer Motion
-    if (window.__framer_importedModules) {
+    if (tWin.__framer_importedModules) {
       try {
         // Framer stores motion values in CSS custom properties
-        document.querySelectorAll('[style*="--framer-"]').forEach(function(el) {
+        tDoc.querySelectorAll('[style*="--framer-"]').forEach(function(el) {
           el.style.setProperty('opacity', '1', 'important');
         });
       } catch(e) {}
@@ -104,8 +120,10 @@
 
   // Force all elements that were hidden by animations to their final visible state
   function forceRevealAll() {
+    var tDoc = _target();
+    var tWin = _targetWin();
     // Elements with inline opacity: 0
-    document.querySelectorAll('*').forEach(function(el) {
+    tDoc.querySelectorAll('*').forEach(function(el) {
       if (el.id && el.id.indexOf('rb-') === 0) return; // skip our own elements
       var s = el.style;
       // Force opacity
@@ -129,7 +147,7 @@
       }
       // Force visibility
       if (s.visibility === 'hidden') {
-        var cs = getComputedStyle(el);
+        var cs = tWin.getComputedStyle(el);
         // Only force visible if the element has content (not intentionally hidden UI)
         if (el.innerText && el.innerText.trim().length > 0) {
           s.setProperty('visibility', 'visible', 'important');
@@ -147,11 +165,12 @@
 
   // Main freeze entry point
   window.__rbFreeze = function(builderInfo) {
-    // 1. Inject freeze CSS
-    var style = document.createElement('style');
+    var tDoc = _target();
+    // 1. Inject freeze CSS into TARGET head
+    var style = tDoc.createElement('style');
     style.id = 'rb-freeze-css';
     style.textContent = FREEZE_CSS;
-    document.head.appendChild(style);
+    tDoc.head.appendChild(style);
 
     // 2. Apply builder-specific freeze
     var builder = builderInfo ? builderInfo.builder : 'generic';
@@ -167,7 +186,7 @@
 
   // Unfreeze — restore original state (for when user exits editor)
   window.__rbUnfreeze = function() {
-    var style = document.getElementById('rb-freeze-css');
+    var style = _target().getElementById('rb-freeze-css');
     if (style) style.remove();
     // Note: inline style changes from forceRevealAll are NOT reverted
     // A full page reload would be needed for perfect restoration

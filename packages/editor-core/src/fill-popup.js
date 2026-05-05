@@ -4,9 +4,24 @@
   'use strict';
   if (window.__rbFillPopup) return;
 
+  // Host = where the popup lives. Target = the edited content. Resolved
+  // from globals set by mountEditor; defaults preserve standalone behaviour.
+  function _host() {
+    return (window.__rbHost && window.__rbHost.doc) || document;
+  }
+  function _hostWin() {
+    return (window.__rbHost && window.__rbHost.win) || window;
+  }
+  function _target() {
+    return (window.__rbTarget && window.__rbTarget.doc) || _host();
+  }
+  function _targetWin() {
+    return (window.__rbTarget && window.__rbTarget.win) || _hostWin();
+  }
+
   // ── Helpers ──
   function mk(tag, cls) {
-    var e = document.createElement(tag);
+    var e = _host().createElement(tag);
     if (cls) e.className = cls;
     return e;
   }
@@ -93,7 +108,7 @@
 
     // Saturation/Brightness box
     var boxWrap = mk('div', 'rb-fill-box-wrap');
-    var boxCanvas = document.createElement('canvas');
+    var boxCanvas = _host().createElement('canvas');
     boxCanvas.className = 'rb-fill-box-canvas';
     boxCanvas.width = 232; boxCanvas.height = 160;
     boxWrap.appendChild(boxCanvas);
@@ -103,7 +118,7 @@
 
     // Hue slider
     var hueWrap = mk('div', 'rb-fill-slider-wrap');
-    var hueCanvas = document.createElement('canvas');
+    var hueCanvas = _host().createElement('canvas');
     hueCanvas.className = 'rb-fill-slider-canvas';
     hueCanvas.width = 232; hueCanvas.height = 14;
     hueWrap.appendChild(hueCanvas);
@@ -113,7 +128,7 @@
 
     // Alpha slider
     var alphaWrap = mk('div', 'rb-fill-slider-wrap');
-    var alphaCanvas = document.createElement('canvas');
+    var alphaCanvas = _host().createElement('canvas');
     alphaCanvas.className = 'rb-fill-slider-canvas';
     alphaCanvas.width = 232; alphaCanvas.height = 14;
     alphaWrap.appendChild(alphaCanvas);
@@ -209,9 +224,9 @@
         drawBox(); drawAlpha(); emitChange();
       }
       move(e);
-      function up() { document.removeEventListener('mousemove', move, true); document.removeEventListener('mouseup', up, true); }
-      document.addEventListener('mousemove', move, true);
-      document.addEventListener('mouseup', up, true);
+      function up() { _host().removeEventListener('mousemove', move, true); _host().removeEventListener('mouseup', up, true); }
+      _host().addEventListener('mousemove', move, true);
+      _host().addEventListener('mouseup', up, true);
     }
     boxCanvas.addEventListener('mousedown', boxDown, { capture: true });
 
@@ -225,9 +240,9 @@
         drawBox(); drawHue(); drawAlpha(); emitChange();
       }
       move(e);
-      function up() { document.removeEventListener('mousemove', move, true); document.removeEventListener('mouseup', up, true); }
-      document.addEventListener('mousemove', move, true);
-      document.addEventListener('mouseup', up, true);
+      function up() { _host().removeEventListener('mousemove', move, true); _host().removeEventListener('mouseup', up, true); }
+      _host().addEventListener('mousemove', move, true);
+      _host().addEventListener('mouseup', up, true);
     }
     hueCanvas.addEventListener('mousedown', hueDown, { capture: true });
 
@@ -241,9 +256,9 @@
         drawAlpha(); emitChange();
       }
       move(e);
-      function up() { document.removeEventListener('mousemove', move, true); document.removeEventListener('mouseup', up, true); }
-      document.addEventListener('mousemove', move, true);
-      document.addEventListener('mouseup', up, true);
+      function up() { _host().removeEventListener('mousemove', move, true); _host().removeEventListener('mouseup', up, true); }
+      _host().addEventListener('mousemove', move, true);
+      _host().addEventListener('mouseup', up, true);
     }
     alphaCanvas.addEventListener('mousedown', alphaDown, { capture: true });
 
@@ -282,11 +297,11 @@
   var keyframesInjected = false;
   function injectKeyframes() {
     // Always check if the style tag exists (it may have been removed)
-    if (document.getElementById('rb-fill-fx-keyframes')) return;
-    var style = document.createElement('style');
+    if (_host().getElementById('rb-fill-fx-keyframes')) return;
+    var style = _host().createElement('style');
     style.id = 'rb-fill-fx-keyframes';
     style.textContent = EFFECTS.filter(function(e) { return e.keyframes; }).map(function(e) { return e.keyframes; }).join('\n');
-    document.head.appendChild(style);
+    _host().head.appendChild(style);
   }
 
   // Inject keyframes immediately so effects work even before popup opens
@@ -296,7 +311,7 @@
   function extractSiteColors() {
     var colors = {};
     try {
-      var sheets = document.styleSheets;
+      var sheets = _target().styleSheets;
       for (var s = 0; s < sheets.length; s++) {
         try { var rules = sheets[s].cssRules || sheets[s].rules; if (!rules) continue; } catch(e) { continue; }
         for (var r = 0; r < rules.length; r++) {
@@ -417,15 +432,15 @@
   function clampPopupToViewport(popup) {
     var rect = popup.getBoundingClientRect();
     var gap = 8;
-    if (rect.bottom > window.innerHeight - gap) {
-      var newTop = Math.max(gap, window.innerHeight - rect.height - gap);
+    if (rect.bottom > _hostWin().innerHeight - gap) {
+      var newTop = Math.max(gap, _hostWin().innerHeight - rect.height - gap);
       popup.style.top = newTop + 'px';
     }
   }
 
   // ── Shared: close any existing fill/image popup ──
   function closeExisting(cls) {
-    var existing = document.querySelector('.' + cls);
+    var existing = _host().querySelector('.' + cls);
     if (existing) { existing.remove(); return true; }
     return false;
   }
@@ -439,11 +454,11 @@
     var popup = mk('div', 'rb-insp-adv-popup rb-fill-popup');
     var inspRect = inspector.getBoundingClientRect();
     var anchorRect = anchorEl.getBoundingClientRect();
-    var popupTop = Math.max(8, Math.min(anchorRect.top, window.innerHeight - 460));
-    popup.style.cssText = 'position:fixed;top:' + popupTop + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;width:260px;';
+    var popupTop = Math.max(8, Math.min(anchorRect.top, _hostWin().innerHeight - 460));
+    popup.style.cssText = 'position:fixed;top:' + popupTop + 'px;right:' + (_hostWin().innerWidth - inspRect.left + 3) + 'px;width:260px;';
 
     // Current state — read from the correct property (color or backgroundColor)
-    var cs = window.getComputedStyle(el);
+    var cs = _targetWin().getComputedStyle(el);
     var currentColorVal = (prop === 'color' ? cs.color : cs.backgroundColor) || '';
     var currentHex = '#000000';
     var currentAlpha = 100;
@@ -759,13 +774,13 @@
                 updateGradient();
               }
               function up() {
-                document.removeEventListener('mousemove', move, true);
-                document.removeEventListener('mouseup', up, true);
+                _host().removeEventListener('mousemove', move, true);
+                _host().removeEventListener('mouseup', up, true);
                 stops.sort(function(a, b) { return a.pos - b.pos; });
                 renderStops(); renderHandles(); updateGradient();
               }
-              document.addEventListener('mousemove', move, true);
-              document.addEventListener('mouseup', up, true);
+              _host().addEventListener('mousemove', move, true);
+              _host().addEventListener('mouseup', up, true);
             }, { capture: true });
           })(i);
           preview.appendChild(handle);
@@ -823,7 +838,7 @@
     (function() {
       var panel = tabPanels[2];
       var thumbArea = mk('div', 'rb-fill-img-area');
-      var cs2 = window.getComputedStyle(el);
+      var cs2 = _targetWin().getComputedStyle(el);
       var existingBgImg = cs2.backgroundImage;
       var hasRealBgImg = existingBgImg && existingBgImg !== 'none' && existingBgImg.indexOf('url(') !== -1;
       if (hasRealBgImg) {
@@ -889,10 +904,10 @@
     var closeOutside = function(ev) {
       if (popup && !popup.contains(ev.target) && !anchorEl.contains(ev.target)) {
         if (popup.parentElement) popup.remove();
-        document.removeEventListener('mousedown', closeOutside, true);
+        _host().removeEventListener('mousedown', closeOutside, true);
       }
     };
-    setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 50);
+    setTimeout(function() { _host().addEventListener('mousedown', closeOutside, true); }, 50);
   }
 
   // ══════════════════════════════════════════════════════════
@@ -904,8 +919,8 @@
     var popup = mk('div', 'rb-insp-adv-popup rb-fill-popup rb-fill-img-popup');
     var inspRect = inspector.getBoundingClientRect();
     var anchorRect = anchorEl.getBoundingClientRect();
-    var popupTop = Math.min(anchorRect.top, window.innerHeight - 320);
-    popup.style.cssText = 'position:fixed;top:' + popupTop + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;width:260px;';
+    var popupTop = Math.min(anchorRect.top, _hostWin().innerHeight - 320);
+    popup.style.cssText = 'position:fixed;top:' + popupTop + 'px;right:' + (_hostWin().innerWidth - inspRect.left + 3) + 'px;width:260px;';
 
     // Header
     var header = mk('div', 'rb-fill-header');
@@ -921,7 +936,7 @@
 
     // Thumbnail area
     var thumbArea = mk('div', 'rb-fill-img-area');
-    var cs = window.getComputedStyle(el);
+    var cs = _targetWin().getComputedStyle(el);
 
     // Show existing image (real URL images only, not gradients)
     var existingBgImg = cs.backgroundImage;
@@ -971,10 +986,10 @@
     var closeOutside = function(ev) {
       if (popup && !popup.contains(ev.target) && !anchorEl.contains(ev.target)) {
         if (popup.parentElement) popup.remove();
-        document.removeEventListener('mousedown', closeOutside, true);
+        _host().removeEventListener('mousedown', closeOutside, true);
       }
     };
-    setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 50);
+    setTimeout(function() { _host().addEventListener('mousedown', closeOutside, true); }, 50);
   }
 
   // ══════════════════════════════════════════════════════════
@@ -986,8 +1001,8 @@
     var popup = mk('div', 'rb-insp-adv-popup rb-fill-popup rb-fill-color-popup');
     var inspRect = inspector.getBoundingClientRect();
     var anchorRect = anchorEl.getBoundingClientRect();
-    var popupTop = Math.max(8, Math.min(anchorRect.top, window.innerHeight - 460));
-    popup.style.cssText = 'position:fixed;top:' + popupTop + 'px;right:' + (window.innerWidth - inspRect.left + 3) + 'px;width:260px;';
+    var popupTop = Math.max(8, Math.min(anchorRect.top, _hostWin().innerHeight - 460));
+    popup.style.cssText = 'position:fixed;top:' + popupTop + 'px;right:' + (_hostWin().innerWidth - inspRect.left + 3) + 'px;width:260px;';
 
     // Header
     var header = mk('div', 'rb-fill-header');
@@ -1085,10 +1100,10 @@
     var closeOutside = function(ev) {
       if (popup && !popup.contains(ev.target) && !anchorEl.contains(ev.target)) {
         if (popup.parentElement) popup.remove();
-        document.removeEventListener('mousedown', closeOutside, true);
+        _host().removeEventListener('mousedown', closeOutside, true);
       }
     };
-    setTimeout(function() { document.addEventListener('mousedown', closeOutside, true); }, 50);
+    setTimeout(function() { _host().addEventListener('mousedown', closeOutside, true); }, 50);
   }
 
   // ── Public API ──
