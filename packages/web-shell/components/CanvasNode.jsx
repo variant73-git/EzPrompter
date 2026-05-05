@@ -76,7 +76,7 @@ export default function CanvasNode({
     } catch (e) { /* cross-origin */ }
   }, []);
 
-  // Editor mounts via <CanvasEditor> below; no JS injection into iframe.
+  // Editor mounts via <CanvasEditorCore> below — host=parent, target=iframe.
   useEffect(() => {
     if (!editing) setEditorBusy(false);
   }, [editing]);
