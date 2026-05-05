@@ -8119,6 +8119,11 @@
 
   // ============ DEACTIVATE ============
 
+  // Expose deactivate() so the host (mountEditor / CanvasEditorCore) can
+  // tear the editor down when its component unmounts. Stored on the host
+  // window so the canvas's parent doc reaches the right closure.
+  hostWin.__rbDeactivate = function() { deactivate(); };
+
   function deactivate() {
     saveState();
     if (autoSaveInterval) clearInterval(autoSaveInterval);

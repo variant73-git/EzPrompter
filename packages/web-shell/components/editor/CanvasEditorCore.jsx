@@ -75,6 +75,41 @@ function injectCss(href) {
   document.head.appendChild(link);
 }
 
+// Tear down the editor from the host page. Idempotent — safe to call when
+// nothing is mounted. Lives at module scope so the StrictMode re-mount path
+// can return it as a cleanup without dragging effect-scope closures along
+// (which would put `cancelled` in the temporal dead zone on the early-return
+// branch).
+function teardownEditor() {
+  try {
+    if (typeof window.__rbDeactivate === 'function') window.__rbDeactivate();
+  } catch (_) {}
+
+  document.head.querySelectorAll('[data-uncraft-editor]').forEach((el) => el.remove());
+
+  delete window.__rbHost;
+  delete window.__rbTarget;
+  delete window.__uncraftTransport;
+  delete window.__uncraftMountOptions;
+  // Clear the IIFE registration globals so the next mount re-runs them.
+  // Without this, scripts early-return on `if (window.__rbX) return;`.
+  const guards = [
+    '__rbExtractor', '__rbDetectBuilder', '__rbFreeze', '__rbUnfreeze',
+    '__rbRebuild', '__rbPersist', '__rbModeE', '__rbModeEClassic',
+    '__rbModeERefine', '__rbModeEDiff', '__rbModeB', '__rbModeE2',
+    '__rbS2H', '__rbFillPopup', '__rbNormalize', '__rbEditorActive',
+    '__rbDeactivate', '__rbPushUndo'
+  ];
+  for (const k of guards) delete window[k];
+  window.__uncraftEditorTeardownTimer = null;
+}
+
+function scheduleTeardown() {
+  // Defer 50ms so a StrictMode mount→cleanup→mount cycle can cancel us.
+  if (window.__uncraftEditorTeardownTimer) clearTimeout(window.__uncraftEditorTeardownTimer);
+  window.__uncraftEditorTeardownTimer = setTimeout(teardownEditor, 50);
+}
+
 export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnapshotSaved }) {
   const [status, setStatus] = useState('booting'); // booting | active | error | exiting
   const [error, setError] = useState(null);
@@ -87,21 +122,17 @@ export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnap
       return;
     }
 
-    // StrictMode safety: in React dev mode the effect runs mount→cleanup→
-    // mount synchronously. Naively tearing down on every cleanup yanks the
-    // panels out the moment they appear. Defer the teardown via setTimeout;
-    // if a re-mount fires before it runs, cancel the timeout and keep the
-    // existing editor in place. The pattern is standard for non-React side
-    // effects (subscriptions, animations, manual DOM injection).
+    // StrictMode safety: a pending teardown from a prior cleanup is the
+    // signal that React is doing a strict-mode remount. Cancel it and
+    // reuse the already-mounted editor. Naively tearing down on every
+    // cleanup yanks the panels the moment they appear.
     if (window.__uncraftEditorTeardownTimer) {
       clearTimeout(window.__uncraftEditorTeardownTimer);
       window.__uncraftEditorTeardownTimer = null;
-      // Already mounted — nothing more to do.
       setStatus('active');
-      return () => scheduleTeardown();
+      return scheduleTeardown;
     }
 
-    let cancelled = false;
     const targetDoc = iframe.contentDocument;
     const targetWin = iframe.contentWindow;
     const transport = createHttpTransport({ boardId, nodeId: node.id });
@@ -117,66 +148,27 @@ export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnap
     // its panels.
     injectCss('/editor-core/editor.css');
 
+    let aborted = false;
     (async () => {
       try {
         for (const f of SCRIPT_FILES) {
-          if (cancelled) return;
+          if (aborted) return;
           await injectScript('/editor-core/' + f);
         }
-        if (!cancelled) setStatus('active');
+        if (!aborted) setStatus('active');
       } catch (e) {
         console.error('[CanvasEditorCore] bootstrap failed:', e);
-        if (!cancelled) {
+        if (!aborted) {
           setError(e.message || 'bootstrap failed');
           setStatus('error');
         }
       }
     })();
 
-    function actuallyTearDown() {
-      // Editor.js installs window.__rbDeactivate which tears down panels,
-      // listeners, and editor scaffolding. Best-effort — swallow any throw.
-      try {
-        if (typeof window.__rbDeactivate === 'function') window.__rbDeactivate();
-      } catch (_) {}
-
-      // Remove injected <link> + <script> tags so the next mount starts fresh.
-      document.head.querySelectorAll('[data-uncraft-editor]').forEach((el) => el.remove());
-
-      delete window.__rbHost;
-      delete window.__rbTarget;
-      delete window.__uncraftTransport;
-      delete window.__uncraftMountOptions;
-      // Force the IIFEs to re-register on the next mount. These guards must
-      // be cleared in tandem with the script-tag removal above.
-      delete window.__rbExtractor;
-      delete window.__rbDetectBuilder;
-      delete window.__rbFreeze;
-      delete window.__rbUnfreeze;
-      delete window.__rbRebuild;
-      delete window.__rbPersist;
-      delete window.__rbModeE;
-      delete window.__rbModeEClassic;
-      delete window.__rbModeERefine;
-      delete window.__rbModeEDiff;
-      delete window.__rbModeB;
-      delete window.__rbModeE2;
-      delete window.__rbS2H;
-      delete window.__rbFillPopup;
-      delete window.__rbNormalize;
-      delete window.__rbEditorActive;
-      delete window.__rbDeactivate;
-      delete window.__rbPushUndo;
-      window.__uncraftEditorTeardownTimer = null;
-      transportRef.current = null;
-    }
-
-    function scheduleTeardown() {
-      cancelled = true;
-      window.__uncraftEditorTeardownTimer = setTimeout(actuallyTearDown, 50);
-    }
-
-    return scheduleTeardown;
+    return () => {
+      aborted = true;
+      scheduleTeardown();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iframe, node.id, boardId]);
 
