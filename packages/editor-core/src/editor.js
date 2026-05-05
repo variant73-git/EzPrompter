@@ -16,15 +16,17 @@
   // Freeze site animations via JS (not CSS, because insertCSS user-origin !important
   // cannot be overridden by inline !important for .rb-fx-active elements)
   (function freezeSiteAnimations() {
-    document.querySelectorAll('*').forEach(function(node) {
-      if (node.nodeType !== 1) return;
-      if (node.closest('#rb-editor-root') || node.closest('#rb-editor-inspector') || node.closest('#rb-ed-banner')) return;
-      var cs = window.getComputedStyle(node);
+    var nodes = targetDoc.querySelectorAll('*');
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (node.nodeType !== 1) continue;
+      if (node.closest('#rb-editor-root') || node.closest('#rb-editor-inspector') || node.closest('#rb-ed-banner')) continue;
+      var cs = targetWin.getComputedStyle(node);
       if (cs.animationName && cs.animationName !== 'none') {
         node.style.setProperty('animation-play-state', 'paused');
         node.setAttribute('data-rb-frozen-anim', '1');
       }
-    });
+    }
   })();
 
   var selectedEl = null, lastHoverEl = null, isDragging = false;
@@ -66,8 +68,15 @@
   var currentParent = null;
   var groupTree = null;
 
-  // Target document is always the page document (no iframe in v4)
-  var targetDoc = document;
+  // Host = where panels/popups/keyboard listeners live (editor UI).
+  // Target = where the edited content lives (the site).
+  // mountEditor sets window.__rbHost / window.__rbTarget on the host window
+  // before injecting editor.js. When omitted (standalone runs), both fall
+  // back to document/window so the extension behaves exactly as before.
+  var hostDoc = (window.__rbHost && window.__rbHost.doc) || document;
+  var hostWin = (window.__rbHost && window.__rbHost.win) || window;
+  var targetDoc = (window.__rbTarget && window.__rbTarget.doc) || hostDoc;
+  var targetWin = (window.__rbTarget && window.__rbTarget.win) || hostWin;
 
   // Skip tags
   var SKIP = new Set(['HTML','BODY','HEAD','SCRIPT','STYLE','META','LINK','BR','HR','NOSCRIPT','TITLE','BASE']);
@@ -79,30 +88,32 @@
   var DL = '<svg '+IC+'><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
   var UL = '<svg '+IC+'><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
 
-  // Ensure editor CSS is loaded
-  if (!document.getElementById('rb-editor-styles')) {
+  // Ensure editor CSS is loaded — lives in HOST (panels live there).
+  if (!hostDoc.getElementById('rb-editor-styles')) {
     var cssUrl = '';
     try { cssUrl = chrome.runtime.getURL('editor/editor.css'); } catch(e) {}
+    // Web-shell case: chrome.runtime is undefined; the host appends the link
+    // tag itself before mounting and we no-op here.
     if (cssUrl) {
-      var cssLink = document.createElement('link');
+      var cssLink = hostDoc.createElement('link');
       cssLink.id = 'rb-editor-styles';
       cssLink.rel = 'stylesheet';
       cssLink.href = cssUrl;
-      document.head.appendChild(cssLink);
+      hostDoc.head.appendChild(cssLink);
     }
   }
 
-  // DOM root
-  var root = document.createElement('div');
+  // DOM root — panels & overlays live in HOST.
+  var root = hostDoc.createElement('div');
   root.id = 'rb-editor-root';
-  document.body.appendChild(root);
-  document.body.classList.add('rb-ed-active');
-  document.documentElement.classList.add('rb-ed-docked');
-  document.documentElement.style.setProperty('--rb-insp-width', '260px');
-  document.documentElement.style.setProperty('--rb-layers-width', '240px');
+  hostDoc.body.appendChild(root);
+  hostDoc.body.classList.add('rb-ed-active');
+  hostDoc.documentElement.classList.add('rb-ed-docked');
+  hostDoc.documentElement.style.setProperty('--rb-insp-width', '260px');
+  hostDoc.documentElement.style.setProperty('--rb-layers-width', '240px');
 
   // Font isolation: inline <style> injected LAST to beat any site CSS
-  var rbFontStyle = document.createElement('style');
+  var rbFontStyle = hostDoc.createElement('style');
   rbFontStyle.textContent = '#rb-editor-root, #rb-editor-root *, #rb-editor-root *::before, #rb-editor-root *::after { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif !important; }';
   root.appendChild(rbFontStyle);
 
@@ -147,12 +158,14 @@
   parentBox.style.display = 'none';
   root.appendChild(parentBox);
 
-  // Freeze site to idle state — disable all hover/focus/active CSS rules
-  var hoverKill = document.createElement('style');
+  // Freeze site to idle state — disable all hover/focus/active CSS rules.
+  // Reads stylesheets from TARGET (the site) and the kill rule must live in
+  // TARGET head so it applies in target's CSS context.
+  var hoverKill = targetDoc.createElement('style');
   hoverKill.id = 'rb-hover-kill';
   var killRules = '';
   try {
-    Array.from(document.styleSheets).forEach(function(sheet) {
+    Array.from(targetDoc.styleSheets).forEach(function(sheet) {
       try {
         // Skip our own editor stylesheet
         if (sheet.ownerNode && sheet.ownerNode.id === 'rb-editor-styles') return;
@@ -177,7 +190,7 @@
     });
   } catch(e) {}
   hoverKill.textContent = killRules;
-  document.head.appendChild(hoverKill);
+  targetDoc.head.appendChild(hoverKill);
 
   // Build UI components
   buildBanner();
@@ -211,12 +224,13 @@
   // ============ HELPERS ============
 
   function mk(tag, cls) {
-    var e = document.createElement(tag);
+    // mk() is used exclusively for editor UI (panels, overlays, popups) — host.
+    var e = hostDoc.createElement(tag);
     if (cls) e.className = cls;
     return e;
   }
 
-  function isLight() { return document.body.classList.contains('rb-ed-light'); }
+  function isLight() { return hostDoc.body.classList.contains('rb-ed-light'); }
 
   function getBox(el) {
     var r = el.getBoundingClientRect();
@@ -336,9 +350,11 @@
   var _rbOverrideCounter = 0;
   function getOverrideSheet() {
     if (_rbOverrideSheet) return _rbOverrideSheet;
-    var s = document.createElement('style');
+    // ID-rule override must live in TARGET head — its rules need to apply
+    // in the site's CSS context, not the editor host's.
+    var s = targetDoc.createElement('style');
     s.id = 'rb-override-sheet';
-    document.head.appendChild(s);
+    targetDoc.head.appendChild(s);
     _rbOverrideSheet = s.sheet;
     return _rbOverrideSheet;
   }
@@ -1988,7 +2004,7 @@
     e.preventDefault();
     e.returnValue = '';
   }
-  window.addEventListener('beforeunload', onBeforeUnload);
+  hostWin.addEventListener('beforeunload', onBeforeUnload);
 
   // ============ LAYERS + INSPECTOR ============
 
@@ -7388,9 +7404,11 @@
     // typography writes can target only the selected text (per-word color, size…).
     // Don't clear on collapsed — clicking an inspector field collapses the selection
     // but we want to keep the previous range available for the pending write.
-    document.addEventListener('selectionchange', function() {
+    // selectionchange fires inside the TARGET — that's where contentEditable
+    // text edits happen.
+    targetDoc.addEventListener('selectionchange', function() {
       if (!isTextEditing || !selectedEl) return;
-      var sel = window.getSelection();
+      var sel = targetWin.getSelection();
       if (!sel || !sel.rangeCount) return;
       var r = sel.getRangeAt(0);
       if (r.collapsed) return;
@@ -7514,11 +7532,12 @@
       return current || el;
     }
 
-    // Hover — selects containers, not inline text
+    // Hover — selects containers, not inline text. Listens on TARGET so
+    // mouse moves inside an iframed site reach us in the canvas case.
     var tMove = throttle(function(e) {
       if (isDragging) return;
       if (layerHoverLock) return;
-      var rawEl = document.elementFromPoint(e.clientX, e.clientY);
+      var rawEl = targetDoc.elementFromPoint(e.clientX, e.clientY);
       if (!rawEl || !isValid(rawEl)) {
         if (lastHoverEl) { lastHoverEl.classList.remove('rb-ed-text-hint'); lastHoverEl = null; }
         hoverBox.style.display = 'none';
@@ -7534,13 +7553,14 @@
       // Highlight matching layer row in panel
       highlightLayerRow(el);
     }, 16);
-    document.addEventListener('mousemove', tMove, {signal: sig, capture: true});
+    targetDoc.addEventListener('mousemove', tMove, {signal: sig, capture: true});
 
-    // Click — 1 click selects, 2nd click on same element enters text edit
+    // Click — 1 click selects, 2nd click on same element enters text edit.
+    // Mousedown on TARGET picks up clicks inside the iframed site.
     var lastClickEl = null;
     var lastClickTime = 0;
 
-    document.addEventListener('mousedown', function(e) {
+    targetDoc.addEventListener('mousedown', function(e) {
       // Any mousedown outside the guide's own inline-edit input must commit +
       // close it. Previous attempts scoped this to "different widget" which
       // still left the user stuck when clicking inspector fields, site content,
@@ -7553,7 +7573,7 @@
         activeGuideInput.blur();
       }
       if (isEditorEl(e.target)) return;
-      var rawEl = document.elementFromPoint(e.clientX, e.clientY);
+      var rawEl = targetDoc.elementFromPoint(e.clientX, e.clientY);
       if (!rawEl || !isValid(rawEl)) return;
 
       var link = e.target.closest('a');
@@ -7564,7 +7584,7 @@
       // the hovered element's bounding rect, prefer it over the raw hit-test
       // result (which can return a deeper nested element in whitespace gaps).
       var hoverTarget = null;
-      if (lastHoverEl && document.body.contains(lastHoverEl)) {
+      if (lastHoverEl && targetDoc.body.contains(lastHoverEl)) {
         var hr = lastHoverEl.getBoundingClientRect();
         if (e.clientX >= hr.left && e.clientX <= hr.right &&
             e.clientY >= hr.top  && e.clientY <= hr.bottom) {
@@ -7588,7 +7608,7 @@
           selectedEl.classList.add('rb-ed-movable');
           exitTextEdit();
           isTextEditing = false;
-          var s = window.getSelection(); if (s) s.removeAllRanges();
+          var s = targetWin.getSelection(); if (s) s.removeAllRanges();
           var newEl = resolveContainer(rawEl);
           if (newEl && isValid(newEl)) { selectEl(newEl); } else { deselectEl(); }
         }
@@ -7651,8 +7671,9 @@
       }
     }, {signal: sig, capture: true});
 
-    // Block page clicks — but let overlay modals and editor UI through
-    document.addEventListener('click', function(e) {
+    // Block page clicks — but let overlay modals and editor UI through.
+    // Listens on TARGET so site clicks (e.g., navigation links) get blocked.
+    targetDoc.addEventListener('click', function(e) {
       if (isEditorEl(e.target)) return;
       // Let legacy overlay modal clicks through (close button, tabs, etc)
       if (e.target.closest('#repix-overlay') || e.target.closest('.ezp-modal')) return;
@@ -7670,7 +7691,11 @@
     // Store original position for Mode D free move
     var dragOrigTop = 0, dragOrigLeft = 0;
 
-    document.addEventListener('mousemove', function(e) {
+    // Drag tracks the mouse over the TARGET (the site we're moving elements
+    // within). dragOrigTop/Left and dragStart use viewport coords from the
+    // event's own surface, so they're consistent in both extension and
+    // canvas-iframe cases.
+    targetDoc.addEventListener('mousemove', function(e) {
       if (!dragStart || !selectedEl) return;
       var dx = e.clientX - dragStart.x;
       var dy = e.clientY - dragStart.y;
@@ -7679,7 +7704,7 @@
         if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
           dragThreshold = true;
           isDragging = true;
-          document.body.classList.add('rb-ed-dragging');
+          hostDoc.body.classList.add('rb-ed-dragging');
 
           if (currentMode === 'D') {
             // Mode D: free move — no ghost, just move the element directly
@@ -7688,7 +7713,7 @@
             selBox.style.display = 'none';
           } else {
             // Modes A/B/C: ghost + drop indicator
-            document.documentElement.classList.add('rb-scroll-locked');
+            targetDoc.documentElement.classList.add('rb-scroll-locked');
             createDragGhost(selectedEl);
             selBox.style.display = 'none';
           }
@@ -7706,7 +7731,7 @@
       }
     }, {signal: sig});
 
-    document.addEventListener('mouseup', function() {
+    targetDoc.addEventListener('mouseup', function() {
       if (isDragging && selectedEl) {
         if (currentMode === 'D') {
           // Mode D: commit the free move, save undo
@@ -7720,21 +7745,22 @@
         } else {
           // Modes A/B/C: commit the swap
           commitDrop(selectedEl);
-          document.documentElement.classList.remove('rb-scroll-locked');
+          targetDoc.documentElement.classList.remove('rb-scroll-locked');
         }
         isDragging = false;
-        document.body.classList.remove('rb-ed-dragging');
+        hostDoc.body.classList.remove('rb-ed-dragging');
       }
       dragStart = null;
       dragThreshold = false;
     }, {signal: sig});
 
-    // Block right-click when element is selected
-    document.addEventListener('contextmenu', function(e) {
+    // Block right-click when an element is selected — TARGET fires on the
+    // site, but the toast lives in HOST (the editor root).
+    targetDoc.addEventListener('contextmenu', function(e) {
       if (selectedEl && !isEditorEl(e.target)) {
         e.preventDefault();
         // Show feedback
-        var existing = document.getElementById('rb-ed-lock');
+        var existing = hostDoc.getElementById('rb-ed-lock');
         if (!existing) {
           var tip = mk('div', 'rb-ed-lock');
           tip.id = 'rb-ed-lock';
@@ -7745,8 +7771,8 @@
       }
     }, {signal: sig, capture: true});
 
-    // Keyboard
-    document.addEventListener('keydown', function(e) {
+    // Keyboard — global shortcuts live on HOST (panels + form fields are there).
+    hostDoc.addEventListener('keydown', function(e) {
       if (e.altKey && (e.key === 'l' || e.key === 'L')) {
         e.preventDefault();
         if (layersPanel) {
@@ -7890,8 +7916,11 @@
         updateSpacingGuides(selectedEl);
       }
     }, 16);
-    window.addEventListener('scroll', tScroll, {signal: sig, capture: true});
-    window.addEventListener('resize', tScroll, {signal: sig});
+    // Scroll/resize fire on the TARGET — that's the surface whose layout
+    // changes shift the selected element's bounding box. In extension mode
+    // (host === target) this is just `window`.
+    targetWin.addEventListener('scroll', tScroll, {signal: sig, capture: true});
+    targetWin.addEventListener('resize', tScroll, {signal: sig});
 
     // Unlock CSS constraints that prevent resize — use !important to beat stylesheets
     function unlockResize(el, dir) {
@@ -8065,49 +8094,58 @@
   function deactivate() {
     saveState();
     if (autoSaveInterval) clearInterval(autoSaveInterval);
-    window.removeEventListener('beforeunload', onBeforeUnload);
+    hostWin.removeEventListener('beforeunload', onBeforeUnload);
     // Clean up any stale FAB from older builds (defensive — the FAB feature
     // was removed but a leftover DOM node could persist on a page reload)
-    var staleFab = document.getElementById('rb-ed-fab');
+    var staleFab = hostDoc.getElementById('rb-ed-fab');
     if (staleFab) staleFab.remove();
-    var hk = document.getElementById('rb-hover-kill');
+    var hk = targetDoc.getElementById('rb-hover-kill');
     if (hk) hk.remove();
-    // Font dropdown is appended to <body> (not root) to escape inspector overflow
-    // clipping, so it needs explicit cleanup on teardown.
-    document.querySelectorAll('body > .rb-insp-font-drop, body > .rb-font-picker, body > .rb-link-editor').forEach(function(el) { el.remove(); });
-    document.documentElement.style.removeProperty('--rb-insp-width');
-    document.documentElement.style.removeProperty('--rb-layers-width');
+    // Override sheet lives in target head — clean it up too.
+    var ovs = targetDoc.getElementById('rb-override-sheet');
+    if (ovs) ovs.remove();
+    // Font dropdown / popups are appended to host body (not root) to escape
+    // inspector overflow clipping, so they need explicit cleanup on teardown.
+    hostDoc.querySelectorAll('body > .rb-insp-font-drop, body > .rb-font-picker, body > .rb-link-editor').forEach(function(el) { el.remove(); });
+    hostDoc.documentElement.style.removeProperty('--rb-insp-width');
+    hostDoc.documentElement.style.removeProperty('--rb-layers-width');
 
     if (layersPanel && layersPanel.parentElement) {
       layersPanel.parentElement.removeChild(layersPanel);
     }
 
-    window.__rbEditorActive = false;
+    hostWin.__rbEditorActive = false;
     ac.abort();
     root.remove();
-    document.body.classList.remove('rb-ed-active', 'rb-ed-dragging', 'rb-ed-floating');
-    document.documentElement.classList.remove('rb-scroll-locked', 'rb-ed-docked');
-    document.body.style.paddingTop = '';
+    hostDoc.body.classList.remove('rb-ed-active', 'rb-ed-dragging', 'rb-ed-floating');
+    hostDoc.documentElement.classList.remove('rb-scroll-locked', 'rb-ed-docked');
+    hostDoc.body.style.paddingTop = '';
 
     // Clean up rebuild engine
     if (window.__rbRebuild) {
       window.__rbRebuild.destroy();
     }
 
-    document.querySelectorAll('[data-rb-editing]').forEach(function(el) {
+    targetDoc.querySelectorAll('[data-rb-editing]').forEach(function(el) {
       el.contentEditable = 'false';
       el.removeAttribute('data-rb-editing');
     });
-    document.querySelectorAll('.rb-ed-movable,.rb-ed-text-hint').forEach(function(el) {
+    targetDoc.querySelectorAll('.rb-ed-movable,.rb-ed-text-hint').forEach(function(el) {
       el.classList.remove('rb-ed-movable', 'rb-ed-text-hint');
     });
 
-    var edStyles = document.getElementById('rb-editor-styles');
+    var edStyles = hostDoc.getElementById('rb-editor-styles');
     if (edStyles) edStyles.remove();
 
-    chrome.runtime.sendMessage({action: 'reopenPanel'}, function() {
-      if (chrome.runtime.lastError) { /* ignore */ }
-    });
+    // Extension-only courtesy: ask background to re-open the popup widget.
+    // Web-shell has no chrome.runtime — guard the call.
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({action: 'reopenPanel'}, function() {
+          if (chrome.runtime.lastError) { /* ignore */ }
+        });
+      }
+    } catch (e) {}
   }
 
 })();
