@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useCallback, useEffect, useState } from 'react';
-import CanvasEditor from './editor/CanvasEditor.jsx';
+import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
 
 const DRAG_THRESHOLD = 4;
 
@@ -146,9 +146,10 @@ export default function CanvasNode({
         </div>
       )}
       {editing && iframeRef.current && (
-        <CanvasEditor
+        <CanvasEditorCore
           iframe={iframeRef.current}
           node={node}
+          boardId={node.board_id}
           onExit={() => onEditingChange?.(false)}
           onSnapshotSaved={() => { /* optional: refresh state */ }}
         />
