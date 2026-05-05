@@ -19,6 +19,17 @@ body.rb-ed-active:not(.rb-ed-floating) > *:not(#rb-editor-root):not(#rb-editor-i
 body.rb-ed-active.rb-ed-floating { margin-right:0 !important; margin-left:0 !important; overflow-x:auto !important; }
 body.rb-ed-active a { pointer-events:none !important; }
 
+/* Canvas mode: host body IS the canvas page, not the site being edited.
+   The site lives inside an iframe and gets its own editor styles inside.
+   Skip the body-level shifts that body.rb-ed-active applies — the panels
+   float over the canvas chrome instead of pushing it. The link / cursor
+   blockers also don't apply at the host level (they target site links
+   and the host has its own UI links). */
+body.rb-ed-active.rb-ed-canvas { margin-left: 0 !important; margin-right: 0 !important; overflow-x: visible !important; }
+body.rb-ed-active.rb-ed-canvas a { pointer-events: auto !important; }
+body.rb-ed-active.rb-ed-canvas, body.rb-ed-active.rb-ed-canvas *:not(#rb-editor-root *):not(input):not(textarea):not(select) { cursor: auto !important; }
+body.rb-ed-active.rb-ed-canvas *:not(#rb-editor-root *):not(#rb-editor-inspector *):not(#rb-ed-banner *) { transition: revert !important; }
+
 /* Kill transitions on the site (not our UI) */
 body.rb-ed-active *:not(#rb-editor-root *):not(#rb-editor-inspector *):not(#rb-ed-banner *) {
   transition: none !important;

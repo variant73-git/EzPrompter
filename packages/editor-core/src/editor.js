@@ -109,6 +109,13 @@
   root.id = 'rb-editor-root';
   hostDoc.body.appendChild(root);
   hostDoc.body.classList.add('rb-ed-active');
+  // In canvas mode, the host body is the canvas page itself — we don't
+  // want the margin/overflow rules that body.rb-ed-active applies (those
+  // squeeze the SITE in extension mode where body === target). Mark with
+  // rb-ed-canvas so editor.css can scope around it.
+  if (hostDoc !== targetDoc) {
+    hostDoc.body.classList.add('rb-ed-canvas');
+  }
   hostDoc.documentElement.classList.add('rb-ed-docked');
   hostDoc.documentElement.style.setProperty('--rb-insp-width', '260px');
   hostDoc.documentElement.style.setProperty('--rb-layers-width', '240px');
@@ -8237,7 +8244,7 @@
     hostWin.__rbEditorActive = false;
     ac.abort();
     root.remove();
-    hostDoc.body.classList.remove('rb-ed-active', 'rb-ed-dragging', 'rb-ed-floating');
+    hostDoc.body.classList.remove('rb-ed-active', 'rb-ed-dragging', 'rb-ed-floating', 'rb-ed-canvas');
     hostDoc.documentElement.classList.remove('rb-scroll-locked', 'rb-ed-docked');
     hostDoc.body.style.paddingTop = '';
 
