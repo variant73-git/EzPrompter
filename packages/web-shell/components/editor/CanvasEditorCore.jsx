@@ -87,6 +87,20 @@ export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnap
       return;
     }
 
+    // StrictMode safety: in React dev mode the effect runs mount→cleanup→
+    // mount synchronously. Naively tearing down on every cleanup yanks the
+    // panels out the moment they appear. Defer the teardown via setTimeout;
+    // if a re-mount fires before it runs, cancel the timeout and keep the
+    // existing editor in place. The pattern is standard for non-React side
+    // effects (subscriptions, animations, manual DOM injection).
+    if (window.__uncraftEditorTeardownTimer) {
+      clearTimeout(window.__uncraftEditorTeardownTimer);
+      window.__uncraftEditorTeardownTimer = null;
+      // Already mounted — nothing more to do.
+      setStatus('active');
+      return () => scheduleTeardown();
+    }
+
     let cancelled = false;
     const targetDoc = iframe.contentDocument;
     const targetWin = iframe.contentWindow;
@@ -119,8 +133,7 @@ export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnap
       }
     })();
 
-    return () => {
-      cancelled = true;
+    function actuallyTearDown() {
       // Editor.js installs window.__rbDeactivate which tears down panels,
       // listeners, and editor scaffolding. Best-effort — swallow any throw.
       try {
@@ -128,8 +141,6 @@ export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnap
       } catch (_) {}
 
       // Remove injected <link> + <script> tags so the next mount starts fresh.
-      // Without this, the IIFE early-returns on `if (window.__rbX) return;`
-      // because the closure already exists.
       document.head.querySelectorAll('[data-uncraft-editor]').forEach((el) => el.remove());
 
       delete window.__rbHost;
@@ -156,8 +167,16 @@ export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnap
       delete window.__rbEditorActive;
       delete window.__rbDeactivate;
       delete window.__rbPushUndo;
+      window.__uncraftEditorTeardownTimer = null;
       transportRef.current = null;
-    };
+    }
+
+    function scheduleTeardown() {
+      cancelled = true;
+      window.__uncraftEditorTeardownTimer = setTimeout(actuallyTearDown, 50);
+    }
+
+    return scheduleTeardown;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iframe, node.id, boardId]);
 
