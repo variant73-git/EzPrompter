@@ -227,6 +227,119 @@ CREATE INDEX idx_edges_board ON edges(board_id);
 4. **iframe srcDoc with cross-origin assets.** Captured HTML may reference images/fonts from origin domains with CORS limits. Server should rewrite asset URLs to absolute or proxy through our origin.
 5. **Drag-out from cross-origin iframe.** Browser blocks DataTransfer access across origins. Workaround: postMessage protocol between iframe (editor-core) and parent canvas — extension-shell already uses similar pattern for popup ↔ background.
 
+## Phase 3 — Editor.js host/target refactor (handoff for new session)
+
+**Why:** Web canvas v1 (Phase 2) shipped a small React placeholder editor
+(CanvasEditor + EditorOverlay + EditorLayers + EditorInspector under
+`packages/web-shell/components/editor/`). User confirmed the architecture
+(panels portaled to document.body, viewport-pinned, frosted glass), but
+needs **1:1 feature parity with the extension's editor.js** — that's not
+realistic to rewrite in React (~1MB of mature code). Right approach: port
+editor.js to support two documents (host = where panels live, target =
+where edited content lives) so the SAME code drives both products.
+
+**Contract (mountEditor signature evolves):**
+
+```js
+mountEditor({
+  hostDoc,        // where to create panels + listen for keyboard. Defaults to document.
+  hostWin,        // window for hostDoc. Defaults to window.
+  targetDoc,      // where the edited content lives. Defaults to hostDoc.
+  targetWin,      // window for targetDoc. Defaults to hostWin. Used for getComputedStyle.
+  transport,      // existing UncraftTransport
+  options
+});
+```
+
+Extension call site: `mountEditor({ transport: ChromeTransport })` —
+omits doc/win, defaults make host === target === document. Behaviour
+unchanged. Web canvas call site:
+`mountEditor({ hostDoc: parent.document, hostWin: parent.window,
+targetDoc: iframe.contentDocument, targetWin: iframe.contentWindow,
+transport: HttpTransport })`.
+
+**Files to touch (canonical sources in packages/editor-core/src/):**
+
+| File | Refactor needed |
+|---|---|
+| `editor.js` (~1MB main file) | Replace `document.*`, `window.*` references. Selection/hover/computed-style → target. Panel creation, keyboard listeners → host. |
+| `mountEditor.js` | Accept new options, stash in `__rb*` globals editor.js can read. |
+| `fill-popup.js` | Color picker canvas, popup positioning → host. Element style writes → target. |
+| `persist.js` | LocalStorage namespacing if both products run on same origin. |
+| `freeze.js` | Animation freeze applies to target. |
+| `extractor.js` | Reads target DOM for clean HTML / DESIGN.md. |
+| `mode-*.js` | Each mode (E, B, S2H, etc.) creates UI in host, manipulates target. |
+| `rebuild.js` | Replaces target's body. |
+| `detect.js` | Detects builder of target page. |
+
+**Refactor pattern (apply consistently):**
+
+- Replace `document.X` → either `__rbHost.doc.X` (UI) or `__rbTarget.doc.X` (content). Set `window.__rbHost = { doc, win }` and `window.__rbTarget = { doc, win }` in mountEditor before injecting.
+- Replace `getComputedStyle(...)` → `__rbTarget.win.getComputedStyle(...)`.
+- Replace `window.addEventListener('keydown', ...)` → `__rbHost.win.addEventListener('keydown', ...)`.
+- Replace `document.addEventListener('click', ...)` for selection → `__rbTarget.doc.addEventListener('click', ...)`.
+- Replace `document.addEventListener('keydown', ...)` for shortcuts → `__rbHost.doc.addEventListener('keydown', ...)`.
+- For coordinate math (overlay position, drag tracking): if target ≠ host, screen coords need to compose `iframe.getBoundingClientRect() + el.getBoundingClientRect() * effectiveScale`. EditorOverlay.jsx already does this — port pattern.
+
+**Critical defenses to preserve (from CLAUDE.md / memory — verify each survives the refactor):**
+
+1. **Sticky writes** (MutationObserver-based defense against React/Framer rewriting our inline styles). The observer attaches to TARGET nodes. Make sure observer is created via `__rbTarget.doc`'s MutationObserver constructor (or just `new MutationObserver(...)` is global; ensure observed node is in target).
+2. **ID rule fallback** (`#id` selector with `!important` when className is volatile). The `<style>` tag with the rule lives in TARGET head (so the rule applies in target's CSS context). Currently it's `document.head.appendChild(styleEl)` — change to `__rbTarget.doc.head`.
+3. **Smart text cascade** for split-text wrappers — pure DOM walk on target, no doc references beyond the cascade root. Should survive untouched.
+4. **Framework override anti-loop** (5-rewrites-in-2s disable). Pure logic, no doc refs. Survives.
+5. **Position promotion** (`ensurePositionable` writes `position:relative` when static). Touches target. Already uses element ref, no doc lookup.
+6. **applyStyle excludes editor UI** (`#rb-editor-root`, `#rb-editor-inspector`, `#rb-ed-banner`). When host ≠ target, the editor UI lives in host; cascade through target won't accidentally find these. But: defensive — keep the exclusion in case host === target.
+7. **Popup viewport clamping** (`clampPopupToViewport`). Reads `window.innerWidth/Height`. Should use `__rbHost.win` since popups live in host.
+8. **Custom swatches localStorage** (`rb-custom-swatches` key). Use host's localStorage so canvas user's swatches persist per-canvas, not per-iframe-snapshot.
+9. **Frosted glass / dark mode CSS isolation** (`font-family !important` in editor.css). CSS injected to host head. Should use `__rbHost.doc.head`.
+10. **Mode E pipeline** (currently chrome.runtime.sendMessage). Already routed via `transport.callLLM` (Phase 1.2 scaffolding). Keep that path; just make sure target doc is what gets captured/rebuilt.
+
+**Smoke tests after refactor — must all pass:**
+
+A. **Extension still works (host === target case).**
+   - Load `packages/extension-shell/` in Chrome (after `bun run build:editor`).
+   - Activate editor on a real site.
+   - Verify: layers panel renders, click element selects it, inspector edits propagate, sticky writes survive React rewrite (test on a Framer site like toolfolio.io), Mode A undo/redo, Mode B/E2/EL all activate without throwing, fill popup color picker works.
+
+B. **Web canvas works (host ≠ target case).**
+   - `bun run dev:web` → http://localhost:3030
+   - Add URL → enter Edit on the node.
+   - Verify: layers panel appears in PARENT document (not in iframe), click element in iframe selects it, inspector edits the iframe element, fill popup mounts to parent body, color changes propagate to iframe element.
+   - Save → reload → changes persist.
+
+C. **Build + parse:**
+   - `bunx next build` (in packages/web-shell) — clean.
+   - All editor-core JS files parse with `node -c`.
+
+**Rollback strategy:**
+
+Each commit during the refactor must keep the extension working. After
+each chunk, smoke-test (A) before moving on. If broken: `git revert HEAD`
+and rethink that chunk. Backup branch protection: tag
+`backup-pre-host-target-refactor-2026-05-DD` before starting; if the
+refactor goes sideways, `git reset --hard <tag>`.
+
+**Suggested commit cadence (small, reversible):**
+
+1. `refactor(editor-core): mountEditor accepts hostDoc/hostWin/targetDoc/targetWin (defaults to document/window)`
+2. `refactor(editor-core): editor.js — replace document refs with __rbHost/__rbTarget (panels, listeners)`
+3. `refactor(editor-core): replace getComputedStyle and getBoundingClientRect math for target awareness`
+4. `refactor(editor-core): fill-popup.js + persist.js + freeze.js — host/target awareness`
+5. `refactor(editor-core): mode-*.js — host/target awareness`
+6. `feat(web-shell): replace placeholder React editor with mountEditor() pointing at iframe`
+7. `chore(web-shell): delete components/editor/{CanvasEditor,EditorLayers,EditorInspector,EditorOverlay}.jsx (superseded)`
+
+**State at handoff (HEAD of feat/canvas):**
+
+- 11 commits on feat/canvas (from `backup-pre-monorepo-2026-05-03` baseline).
+- Extension at `packages/extension-shell/` works after `bun run build:editor`.
+- Web canvas at http://localhost:3030 (when dev server running). Functional flows: signup, board create, Add URL → node, drag → empty drop menu (URL/HTML/MD), edge create + apply (transplant works without LLM; reskin needs Anthropic key), placeholder editor on Edit (to be replaced).
+- Backup at `~/Desktop/IA/Uncraft-2.4.0-backup-2026-05-03/` + git tag `backup-pre-monorepo-2026-05-03`.
+
+**For the next session — exact prompt to give Claude:**
+
+> Read `docs/superpowers/specs/2026-05-03-canvas-design.md` (especially Phase 3) and `CLAUDE.md`. Then execute the editor.js host/target refactor as specified. Smoke-test the extension after each chunk; do not move on if it breaks. Commit small. Do not modify the React placeholder editor in `packages/web-shell/components/editor/` until the editor-core refactor is done — that's the last step.
+
 ## Self-Review Notes
 
 - Schema marks `is_main` as soft convention but doesn't enforce uniqueness — intentional, allows zero or many "main" badges per board.
