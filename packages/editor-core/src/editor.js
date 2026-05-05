@@ -2120,6 +2120,117 @@
     return isVisuallyInert(el);
   }
 
+  // ---- Container resolution (used by selection + guide-drag click pass-through) ----
+  // Lifted to IIFE outer scope so the guide-drag handler (defined above
+  // listen()) can call resolveContainer without TDZ-ing the function.
+  // Pure inline text elements that bubble up to container.
+  var INLINE_TAGS = new Set(['SPAN','STRONG','EM','B','I','U','SMALL','CODE','MARK','SUB','SUP','ABBR','CITE','Q','S','DEL','INS','KBD','VAR','SAMP','TIME','DATA','BDI','BDO','RUBY','RT','RP','WBR']);
+  // A and LABEL omitted — modern sites style them as buttons/cards/CTAs.
+  // Visual elements that should NEVER resolve to parent.
+  var VISUAL_TAGS = new Set(['IMG','VIDEO','IFRAME','CANVAS','SVG','BUTTON','INPUT','TEXTAREA','SELECT','A']);
+
+  function drillIntoChild(parentEl, x, y) {
+    var stack = targetDoc.elementsFromPoint(x, y);
+    var directChild = null;
+    for (var i = 0; i < stack.length; i++) {
+      var el = stack[i];
+      if (el === parentEl || isEditorEl(el)) continue;
+      if (!parentEl.contains(el)) continue;
+      // Walk up to find the direct child of parentEl
+      var walk = el;
+      var maxWalk = 20;
+      while (walk && walk.parentElement !== parentEl && maxWalk-- > 0) {
+        walk = walk.parentElement;
+      }
+      if (walk && walk.parentElement === parentEl && isValid(walk) && !isEditorEl(walk)) {
+        directChild = walk;
+        break;
+      }
+    }
+    if (directChild && INLINE_TAGS.has(directChild.tagName)) {
+      return null;
+    }
+    return directChild;
+  }
+
+  function resolveContainer(el) {
+    // SVG internals → find nearest meaningful visual parent
+    var isSvgChild = false;
+    try { isSvgChild = el.closest && el.closest('svg'); } catch(e) {}
+    var elTag = el.tagName ? el.tagName.toUpperCase() : '';
+    var isSvgNs = el.namespaceURI && el.namespaceURI.indexOf('svg') !== -1;
+    if (isSvgChild || isSvgNs || elTag === 'SVG' || elTag === 'PATH' || elTag === 'G' || elTag === 'USE' || elTag === 'CIRCLE' || elTag === 'RECT' || elTag === 'LINE' || elTag === 'POLYGON' || elTag === 'POLYLINE' || elTag === 'ELLIPSE') {
+      var svgEl = (elTag === 'SVG') ? el : null;
+      if (!svgEl) { try { svgEl = el.closest('svg'); } catch(e) {} }
+      // Fallback: walk up manually to find the <svg>
+      if (!svgEl) {
+        var up = el.parentElement;
+        var maxSvgUp = 8;
+        while (up && maxSvgUp-- > 0) {
+          if (up.tagName && up.tagName.toUpperCase() === 'SVG') { svgEl = up; break; }
+          up = up.parentElement;
+        }
+      }
+      if (svgEl) {
+        // Walk up from SVG to find the first meaningful container
+        var parent = svgEl.parentElement;
+        var maxUp = 5;
+        while (parent && maxUp-- > 0) {
+          if (isEditorEl(parent)) break;
+          var ptag = parent.tagName.toUpperCase();
+          if (ptag === 'A' || ptag === 'BUTTON') return parent;
+          if (parent.children.length > 1) return parent;
+          if (parent.getAttribute('role') || parent.getAttribute('aria-label')) return parent;
+          var cls = (parent.className || '').toString().toLowerCase();
+          if (cls.match(/logo|brand|navbar-brand|site-name/)) return parent;
+          parent = parent.parentElement;
+        }
+        return svgEl;
+      }
+    }
+
+    // Visual elements are always directly selectable
+    if (VISUAL_TAGS.has(el.tagName)) return el;
+
+    // Mode E: find semantic block
+    if (currentMode === 'E') {
+      var sem = el;
+      var maxSem = 10;
+      while (sem && maxSem-- > 0) {
+        if (sem.hasAttribute && sem.hasAttribute('data-rb-semantic')) return sem;
+        sem = sem.parentElement;
+      }
+    }
+
+    // Mode F: only select elements marked as editable
+    if (currentMode === 'F') {
+      var cur = el;
+      var maxF = 10;
+      while (cur && maxF-- > 0) {
+        if (cur.hasAttribute && cur.hasAttribute('data-rb-editable')) return cur;
+        cur = cur.parentElement;
+      }
+      return null;
+    }
+
+    // Inline text tags bubble up to container
+    var current = el;
+    var maxUp2 = 5;
+    while (current && maxUp2-- > 0) {
+      if (!INLINE_TAGS.has(current.tagName) && current.tagName !== 'BR') break;
+      current = current.parentElement;
+    }
+    if (!current) return el;
+
+    // Skip useless wrappers
+    var maxSkip = 3;
+    while (current && maxSkip-- > 0 && isUselessWrapper(current)) {
+      current = current.parentElement;
+    }
+
+    return current || el;
+  }
+
   // Contextual label for an element — tries to infer its role
   function elLabel(el) {
     var tag = el.tagName.toLowerCase();
@@ -7442,121 +7553,9 @@
       __pendingTextRange = { range: r.cloneRange(), editableRoot: selectedEl };
     }, {signal: sig});
 
-    // Resolve element to container: inline text elements bubble up to parent div
-    // Pure inline text elements that bubble up to container
-    var INLINE_TAGS = new Set(['SPAN','STRONG','EM','B','I','U','SMALL','CODE','MARK','SUB','SUP','ABBR','CITE','Q','S','DEL','INS','KBD','VAR','SAMP','TIME','DATA','BDI','BDO','RUBY','RT','RP','WBR']);
-    // Note: A and LABEL removed — in modern sites they're often styled as buttons/cards/CTAs
-    // Visual elements that should NEVER resolve to parent
-    var VISUAL_TAGS = new Set(['IMG','VIDEO','IFRAME','CANVAS','SVG','BUTTON','INPUT','TEXTAREA','SELECT','A']);
-
-    // isUselessWrapper is defined in outer scope (used by both layers panel and resolveContainer)
-
-    function drillIntoChild(parentEl, x, y) {
-      var stack = targetDoc.elementsFromPoint(x, y);
-      var directChild = null;
-      for (var i = 0; i < stack.length; i++) {
-        var el = stack[i];
-        if (el === parentEl || isEditorEl(el)) continue;
-        if (!parentEl.contains(el)) continue;
-        // Walk up to find the direct child of parentEl
-        var walk = el;
-        var maxWalk = 20;
-        while (walk && walk.parentElement !== parentEl && maxWalk-- > 0) {
-          walk = walk.parentElement;
-        }
-        if (walk && walk.parentElement === parentEl && isValid(walk) && !isEditorEl(walk)) {
-          directChild = walk;
-          break;
-        }
-      }
-      if (directChild && INLINE_TAGS.has(directChild.tagName)) {
-        return null;
-      }
-      return directChild;
-    }
-
-    function resolveContainer(el) {
-      // SVG internals → find nearest meaningful visual parent
-      var isSvgChild = false;
-      try { isSvgChild = el.closest && el.closest('svg'); } catch(e) {}
-      var elTag = el.tagName ? el.tagName.toUpperCase() : '';
-      var isSvgNs = el.namespaceURI && el.namespaceURI.indexOf('svg') !== -1;
-      if (isSvgChild || isSvgNs || elTag === 'SVG' || elTag === 'PATH' || elTag === 'G' || elTag === 'USE' || elTag === 'CIRCLE' || elTag === 'RECT' || elTag === 'LINE' || elTag === 'POLYGON' || elTag === 'POLYLINE' || elTag === 'ELLIPSE') {
-        var svgEl = (elTag === 'SVG') ? el : null;
-        if (!svgEl) { try { svgEl = el.closest('svg'); } catch(e) {} }
-        // Fallback: walk up manually to find the <svg>
-        if (!svgEl) {
-          var up = el.parentElement;
-          var maxSvgUp = 8;
-          while (up && maxSvgUp-- > 0) {
-            if (up.tagName && up.tagName.toUpperCase() === 'SVG') { svgEl = up; break; }
-            up = up.parentElement;
-          }
-        }
-        if (svgEl) {
-          // Walk up from SVG to find the first meaningful container (link, button, logo div)
-          var parent = svgEl.parentElement;
-          var maxUp = 5;
-          while (parent && maxUp-- > 0) {
-            if (isEditorEl(parent)) break;
-            var ptag = parent.tagName.toUpperCase();
-            // Links and buttons are always meaningful
-            if (ptag === 'A' || ptag === 'BUTTON') return parent;
-            // Container with text next to SVG (logo pattern: icon + text)
-            if (parent.children.length > 1) return parent;
-            // Has a role or aria-label (logo containers often do)
-            if (parent.getAttribute('role') || parent.getAttribute('aria-label')) return parent;
-            // Has a meaningful class name hinting at logo/brand
-            var cls = (parent.className || '').toString().toLowerCase();
-            if (cls.match(/logo|brand|navbar-brand|site-name/)) return parent;
-            parent = parent.parentElement;
-          }
-          // If nothing meaningful found, return the SVG itself
-          return svgEl;
-        }
-      }
-
-      // Visual elements are always directly selectable
-      if (VISUAL_TAGS.has(el.tagName)) return el;
-
-      // In Mode E, try to find the semantic block
-      if (currentMode === 'E') {
-        var sem = el;
-        var maxSem = 10;
-        while (sem && maxSem-- > 0) {
-          if (sem.hasAttribute && sem.hasAttribute('data-rb-semantic')) return sem;
-          sem = sem.parentElement;
-        }
-      }
-
-      // In Mode F, only select elements marked as editable
-      if (currentMode === 'F') {
-        var cur = el;
-        var maxF = 10;
-        while (cur && maxF-- > 0) {
-          if (cur.hasAttribute && cur.hasAttribute('data-rb-editable')) return cur;
-          cur = cur.parentElement;
-        }
-        return null;
-      }
-
-      // Inline text tags bubble up to container
-      var current = el;
-      var maxUp = 5;
-      while (current && maxUp-- > 0) {
-        if (!INLINE_TAGS.has(current.tagName) && current.tagName !== 'BR') break;
-        current = current.parentElement;
-      }
-      if (!current) return el;
-
-      // Skip useless wrappers — go up to find a meaningful container
-      var maxSkip = 3;
-      while (current && maxSkip-- > 0 && isUselessWrapper(current)) {
-        current = current.parentElement;
-      }
-
-      return current || el;
-    }
+    // INLINE_TAGS / VISUAL_TAGS / drillIntoChild / resolveContainer hoisted
+    // to IIFE outer scope (above) — they're called from guide-drag handlers
+    // outside listen(), so they can't be closed over here.
 
     // Hover — selects containers, not inline text. Listens on TARGET so
     // mouse moves inside an iframed site reach us in the canvas case.
