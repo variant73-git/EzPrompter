@@ -8101,18 +8101,20 @@
       }, {signal: sig});
     });
 
-    // Editor attention (from background.js)
-    chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
-      if (msg.action === 'editorAttention') {
-        // If editor was deactivated, don't respond — let background inject panel
-        if (!window.__rbEditorActive) return;
-        inspector.classList.remove('rb-ed-attention');
-        void inspector.offsetWidth;
-        inspector.classList.add('rb-ed-attention');
-        sendResponse({active: true});
-        return true;
-      }
-    });
+    // Editor attention (from background.js) — extension only.
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
+        if (msg.action === 'editorAttention') {
+          // If editor was deactivated, don't respond — let background inject panel
+          if (!window.__rbEditorActive) return;
+          inspector.classList.remove('rb-ed-attention');
+          void inspector.offsetWidth;
+          inspector.classList.add('rb-ed-attention');
+          sendResponse({active: true});
+          return true;
+        }
+      });
+    }
   }
 
   // ============ DEACTIVATE ============
