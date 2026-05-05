@@ -27,6 +27,15 @@
 (function() {
   'use strict';
 
+  // Mode E Classic operates on TARGET (the site). Public API on the
+  // script's window so editor.js can invoke it directly.
+  function _target() {
+    return (window.__rbTarget && window.__rbTarget.doc) || document;
+  }
+  function _targetWin() {
+    return (window.__rbTarget && window.__rbTarget.win) || window;
+  }
+
   if (window.__rbModeEClassic) return;
 
   // ─── Prompt (verbatim from 033) ────────────────────────────────────────
@@ -102,19 +111,19 @@
 
   function scrollToAndWait(y) {
     return new Promise(function(resolve) {
-      window.scrollTo(0, y);
+      _targetWin().scrollTo(0, y);
       setTimeout(resolve, 800);
     });
   }
 
   var MAX_VIEWPORTS = 8;
   async function captureFullPage() {
-    var viewportH = window.innerHeight;
-    var pageH = document.documentElement.scrollHeight;
+    var viewportH = _targetWin().innerHeight;
+    var pageH = _target().documentElement.scrollHeight;
     var screenshots = [];
-    var originalScroll = window.scrollY;
+    var originalScroll = _targetWin().scrollY;
 
-    var editorEls = document.querySelectorAll('[id^="rb-editor"], [id^="rb-ed-"]');
+    var editorEls = _target().querySelectorAll('[id^="rb-editor"], [id^="rb-ed-"]');
     editorEls.forEach(function(el) { el.style.setProperty('display', 'none', 'important'); });
 
     var totalViewports = Math.min(Math.ceil(pageH / viewportH), MAX_VIEWPORTS);
@@ -148,7 +157,7 @@
       }
     } finally {
       guard.cleanup();
-      window.scrollTo(0, originalScroll);
+      _targetWin().scrollTo(0, originalScroll);
       editorEls.forEach(function(el) { el.style.removeProperty('display'); });
     }
 
@@ -194,27 +203,27 @@
   // current Mode E (which uses `rb-rebuilt-page` + `__rbOriginalPage`).
   function replacePageContent(sectionsHTML) {
     var editorEls = [];
-    Array.from(document.body.children).forEach(function(child) {
+    Array.from(_target().body.children).forEach(function(child) {
       if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
         editorEls.push(child);
       }
     });
 
     var originalChildren = [];
-    Array.from(document.body.children).forEach(function(child) {
+    Array.from(_target().body.children).forEach(function(child) {
       if (editorEls.indexOf(child) === -1) {
         originalChildren.push(child);
       }
     });
     window.__rbOriginalPageClassic = {
       children: originalChildren,
-      scrollY: window.scrollY
+      scrollY: _targetWin().scrollY
     };
 
     var savedOriginalChildren = originalChildren.slice();
-    var savedScrollY = window.scrollY;
+    var savedScrollY = _targetWin().scrollY;
 
-    var wrapper = document.createElement('div');
+    var wrapper = _target().createElement('div');
     wrapper.id = 'rb-rebuilt-page-classic';
     wrapper.style.cssText = [
       'max-width: 100%;',
@@ -225,12 +234,12 @@
     ].join('');
 
     sectionsHTML.forEach(function(html) {
-      var section = document.createElement('div');
+      var section = _target().createElement('div');
       section.innerHTML = html;
       if (section.children.length === 1) {
         wrapper.appendChild(section.children[0]);
       } else {
-        var wrap = document.createElement('div');
+        var wrap = _target().createElement('div');
         wrap.className = 'rb-section';
         wrap.innerHTML = html;
         wrapper.appendChild(wrap);
@@ -242,13 +251,13 @@
     });
 
     if (editorEls.length > 0) {
-      document.body.insertBefore(wrapper, editorEls[0]);
+      _target().body.insertBefore(wrapper, editorEls[0]);
     } else {
-      document.body.appendChild(wrapper);
+      _target().body.appendChild(wrapper);
     }
 
-    document.body.style.margin = '0';
-    document.body.style.padding = '0';
+    _target().body.style.margin = '0';
+    _target().body.style.padding = '0';
 
     // Reuse the existing __modeERun undo handler — it just restores children
     // and removes the wrapper, so it works for any rebuild origin. We pass
@@ -269,20 +278,20 @@
 
   function restoreOriginalPage() {
     if (window.__rbOriginalPageClassic) {
-      var rebuilt = document.getElementById('rb-rebuilt-page-classic');
+      var rebuilt = _target().getElementById('rb-rebuilt-page-classic');
       if (rebuilt) rebuilt.remove();
       var editorEls = [];
-      Array.from(document.body.children).forEach(function(child) {
+      Array.from(_target().body.children).forEach(function(child) {
         if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
           editorEls.push(child);
         }
       });
       var insertBefore = editorEls.length > 0 ? editorEls[0] : null;
       window.__rbOriginalPageClassic.children.forEach(function(child) {
-        if (insertBefore) document.body.insertBefore(child, insertBefore);
-        else document.body.appendChild(child);
+        if (insertBefore) _target().body.insertBefore(child, insertBefore);
+        else _target().body.appendChild(child);
       });
-      window.scrollTo(0, window.__rbOriginalPageClassic.scrollY);
+      _targetWin().scrollTo(0, window.__rbOriginalPageClassic.scrollY);
       window.__rbOriginalPageClassic = null;
     }
   }

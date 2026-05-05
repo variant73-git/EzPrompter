@@ -8,6 +8,9 @@
 (function() {
   'use strict';
 
+  function _target() { return (window.__rbTarget && window.__rbTarget.doc) || document; }
+  function _targetWin() { return (window.__rbTarget && window.__rbTarget.win) || window; }
+
   if (window.__rbNormalize) return;
 
   var MIN_SIZE = 20;
@@ -31,7 +34,7 @@
     if (!el || el.nodeType !== 1) return false;
     var r = el.getBoundingClientRect();
     if (r.width < MIN_SIZE || r.height < MIN_SIZE) return false;
-    var cs = getComputedStyle(el);
+    var cs = _targetWin().getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') return false;
     if (cs.opacity === '0') return false;
     return true;
@@ -61,7 +64,7 @@
     if (hasDirectText(el)) return true;
 
     // Check for background image/color that makes it visible
-    var cs = getComputedStyle(el);
+    var cs = _targetWin().getComputedStyle(el);
     if (cs.backgroundImage && cs.backgroundImage !== 'none') return true;
     if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') {
       // Has a real background color — it's visual
@@ -97,10 +100,10 @@
 
   function detectSections() {
     var sections = [];
-    var vw = window.innerWidth;
+    var vw = _targetWin().innerWidth;
 
     // Look for semantic tags first
-    var semanticSections = document.querySelectorAll('header,nav,main,section,article,aside,footer');
+    var semanticSections = _target().querySelectorAll('header,nav,main,section,article,aside,footer');
     semanticSections.forEach(function(el) {
       if (!isVisible(el) || isEditorEl(el)) return;
       var r = el.getBoundingClientRect();
@@ -111,7 +114,7 @@
 
     // If no semantic tags found, use direct body children
     if (sections.length === 0) {
-      Array.from(document.body.children).forEach(function(el) {
+      Array.from(_target().body.children).forEach(function(el) {
         if (SKIP.has(el.tagName) || !isVisible(el) || isEditorEl(el)) return;
         var r = el.getBoundingClientRect();
         if (r.width < vw * 0.5) return;
@@ -201,10 +204,10 @@
 
   function normalize() {
     // Clean previous marks
-    document.querySelectorAll('[data-rb-editable]').forEach(function(el) {
+    _target().querySelectorAll('[data-rb-editable]').forEach(function(el) {
       el.removeAttribute('data-rb-editable');
     });
-    document.querySelectorAll('[data-rb-section]').forEach(function(el) {
+    _target().querySelectorAll('[data-rb-section]').forEach(function(el) {
       el.removeAttribute('data-rb-section');
     });
 
@@ -241,10 +244,10 @@
 
   function deactivate() {
     // Remove all marks
-    document.querySelectorAll('[data-rb-editable]').forEach(function(el) {
+    _target().querySelectorAll('[data-rb-editable]').forEach(function(el) {
       el.removeAttribute('data-rb-editable');
     });
-    document.querySelectorAll('[data-rb-section]').forEach(function(el) {
+    _target().querySelectorAll('[data-rb-section]').forEach(function(el) {
       el.removeAttribute('data-rb-section');
     });
     sections = [];

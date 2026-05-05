@@ -2,7 +2,7 @@
  * Repix Mode B — DOM Mirror engine.
  *
  * Strategy: clone the rendered body + extract all accessible stylesheets (via
- * document.styleSheets.cssRules), producing a frozen snapshot with preserved
+ * _target().styleSheets.cssRules), producing a frozen snapshot with preserved
  * cascade, @media queries, @keyframes, and @font-face. Links are neutralized
  * so the mirrored page doesn't navigate. Cross-origin stylesheets throw on
  * cssRules access — we try/catch and skip them (nothing we can do client-side).
@@ -23,6 +23,15 @@
 (function() {
   if (window.__rbModeB) return;
 
+  // Mode B operates on TARGET (the site). Public API stays on the
+  // script's window so editor.js can invoke it directly.
+  function _target() {
+    return (window.__rbTarget && window.__rbTarget.doc) || document;
+  }
+  function _targetWin() {
+    return (window.__rbTarget && window.__rbTarget.win) || window;
+  }
+
   var _rbState = null; // { originalChildren, scrollY, wrapper }
 
   function isEditorEl(el) {
@@ -34,7 +43,7 @@
   function absUrl(url, base) {
     if (!url) return url;
     if (url.indexOf('data:') === 0 || url.indexOf('blob:') === 0) return url;
-    try { return new URL(url, base || document.baseURI).href; } catch (e) { return url; }
+    try { return new URL(url, base || _target().baseURI).href; } catch (e) { return url; }
   }
 
   // Rewrite url(...) inside CSS text so relative paths resolve against the
@@ -52,12 +61,12 @@
     } catch (e) { return cssText; }
   }
 
-  // Walk document.styleSheets and collect cssText. Cross-origin sheets throw
+  // Walk _target().styleSheets and collect cssText. Cross-origin sheets throw
   // on .cssRules — caught and skipped. Our own editor stylesheets are skipped
   // explicitly so they don't bleed into the mirror.
   function extractAllCSS() {
     var chunks = [];
-    var sheets = document.styleSheets;
+    var sheets = _target().styleSheets;
     for (var i = 0; i < sheets.length; i++) {
       var sheet = sheets[i];
       try {
@@ -68,7 +77,7 @@
                                  node.id === 'rb-hover-kill')) continue;
         var rules = sheet.cssRules || sheet.rules;
         if (!rules || !rules.length) continue;
-        var base = sheet.href || document.baseURI;
+        var base = sheet.href || _target().baseURI;
         for (var j = 0; j < rules.length; j++) {
           var rule = rules[j];
           var txt = rule.cssText;
@@ -85,9 +94,9 @@
   // Also absolutizes src/href on img/a/source/video inside the clone so assets
   // keep loading from their original URLs after we strip the live JS context.
   function cloneBody() {
-    var wrap = document.createElement('div');
+    var wrap = _target().createElement('div');
     wrap.id = 'rb-mode-b-body';
-    var children = document.body.children;
+    var children = _target().body.children;
     for (var i = 0; i < children.length; i++) {
       var child = children[i];
       if (isEditorEl(child)) continue;
@@ -104,7 +113,7 @@
 
   function absolutizeAssetAttrs(root) {
     if (!root || !root.querySelectorAll) return;
-    var base = document.baseURI;
+    var base = _target().baseURI;
     try {
       root.querySelectorAll('img[src]').forEach(function(img) {
         var s = img.getAttribute('src');
@@ -166,7 +175,7 @@
 
   function getEditorElsInBody() {
     var out = [];
-    var kids = document.body.children;
+    var kids = _target().body.children;
     for (var i = 0; i < kids.length; i++) {
       if (isEditorEl(kids[i])) out.push(kids[i]);
     }
@@ -175,7 +184,7 @@
 
   function run() {
     if (_rbState) restore();
-    var scrollY = window.scrollY;
+    var scrollY = _targetWin().scrollY;
 
     var css = '';
     try { css = extractAllCSS(); } catch (e) { css = ''; }
@@ -183,14 +192,14 @@
     var mirror;
     try { mirror = cloneBody(); } catch (e) { return null; }
 
-    var wrapper = document.createElement('div');
+    var wrapper = _target().createElement('div');
     wrapper.id = 'rb-mode-b-clone';
     wrapper.setAttribute('data-rb-mode-b', '1');
 
     // Scoped stylesheet: inline all extracted CSS. Placed inside the wrapper
-    // so the browser resolves URLs relative to document.baseURI (same as
+    // so the browser resolves URLs relative to _target().baseURI (same as
     // the original page).
-    var styleTag = document.createElement('style');
+    var styleTag = _target().createElement('style');
     styleTag.id = 'rb-mode-b-style';
     styleTag.textContent = css;
     wrapper.appendChild(styleTag);
@@ -201,19 +210,19 @@
     // Detach the original non-editor children into a holding array so restore
     // can put them back verbatim.
     var saved = [];
-    var kids = Array.prototype.slice.call(document.body.children);
+    var kids = Array.prototype.slice.call(_target().body.children);
     kids.forEach(function(child) {
       if (isEditorEl(child)) return;
       saved.push(child);
-      document.body.removeChild(child);
+      _target().body.removeChild(child);
     });
 
     // Insert wrapper before editor panels if any exist.
     var editorEls = getEditorElsInBody();
     if (editorEls.length > 0) {
-      document.body.insertBefore(wrapper, editorEls[0]);
+      _target().body.insertBefore(wrapper, editorEls[0]);
     } else {
-      document.body.appendChild(wrapper);
+      _target().body.appendChild(wrapper);
     }
 
     _rbState = { originalChildren: saved, scrollY: scrollY, wrapper: wrapper };
@@ -231,13 +240,13 @@
       }
     } catch (e) {}
 
-    window.scrollTo(0, 0);
-    return { sheetsCount: document.styleSheets.length, cssSize: css.length, mirrorNodes: mirror.querySelectorAll('*').length };
+    _targetWin().scrollTo(0, 0);
+    return { sheetsCount: _target().styleSheets.length, cssSize: css.length, mirrorNodes: mirror.querySelectorAll('*').length };
   }
 
   function restore() {
     if (!_rbState) {
-      var orphan = document.getElementById('rb-mode-b-clone');
+      var orphan = _target().getElementById('rb-mode-b-clone');
       if (orphan) orphan.remove();
       return;
     }
@@ -247,10 +256,10 @@
     var editorEls = getEditorElsInBody();
     var before = editorEls[0] || null;
     _rbState.originalChildren.forEach(function(child) {
-      if (before) document.body.insertBefore(child, before);
-      else document.body.appendChild(child);
+      if (before) _target().body.insertBefore(child, before);
+      else _target().body.appendChild(child);
     });
-    window.scrollTo(0, _rbState.scrollY || 0);
+    _targetWin().scrollTo(0, _rbState.scrollY || 0);
     _rbState = null;
   }
 

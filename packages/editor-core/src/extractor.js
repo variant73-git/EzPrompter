@@ -7,6 +7,15 @@
 
   const RB = window.__rbExtractor = {};
 
+  // The extractor reads from the SITE (TARGET). Public API stays on the
+  // script's window so editor.js / mode-e.js can use it directly.
+  function _target() {
+    return (window.__rbTarget && window.__rbTarget.doc) || document;
+  }
+  function _targetWin() {
+    return (window.__rbTarget && window.__rbTarget.win) || window;
+  }
+
   // ─── Color utilities ───────────────────────────────────────────────────────
 
   function rgbToHex(rgb) {
@@ -89,7 +98,7 @@
     if (isNaN(px)) return null;
     // Viewport-relative for huge display sizes
     if (px > 140) {
-      var vw = Math.round(px / window.innerWidth * 100);
+      var vw = Math.round(px / _targetWin().innerWidth * 100);
       return 'text-[' + vw + 'vw]';
     }
     // Find nearest named scale
@@ -254,8 +263,8 @@
     };
 
     // Sticky / fixed navigation elements
-    document.querySelectorAll('header, nav, [role="banner"], [role="navigation"], .header, .navbar').forEach(function(el) {
-      var s = getComputedStyle(el);
+    _target().querySelectorAll('header, nav, [role="banner"], [role="navigation"], .header, .navbar').forEach(function(el) {
+      var s = _targetWin().getComputedStyle(el);
       if (s.position !== 'sticky' && s.position !== 'fixed') return;
       var r = el.getBoundingClientRect();
       if (r.width < 100 || r.height < 20) return;
@@ -278,11 +287,11 @@
     });
 
     // Narrow fixed sidebars (like the litebox 12px right rail)
-    document.querySelectorAll('aside, [class*="sidebar"], nav').forEach(function(el) {
-      var s = getComputedStyle(el);
+    _target().querySelectorAll('aside, [class*="sidebar"], nav').forEach(function(el) {
+      var s = _targetWin().getComputedStyle(el);
       if (s.position !== 'fixed' && s.position !== 'sticky') return;
       var r = el.getBoundingClientRect();
-      if (r.width > 120 || r.height < window.innerHeight * 0.4) return;
+      if (r.width > 120 || r.height < _targetWin().innerHeight * 0.4) return;
       out.sidebars.push({
         side: r.left < 80 ? 'left' : 'right',
         width: Math.round(r.width),
@@ -293,8 +302,8 @@
 
     // Graph-paper backgrounds (linear-gradient with transparent + background-size)
     var seenGrids = new Set();
-    document.querySelectorAll('body, section, main, div, header').forEach(function(el) {
-      var s = getComputedStyle(el);
+    _target().querySelectorAll('body, section, main, div, header').forEach(function(el) {
+      var s = _targetWin().getComputedStyle(el);
       var bi = s.backgroundImage;
       if (!bi || bi === 'none') return;
       if (bi.indexOf('linear-gradient') === -1) return;
@@ -313,8 +322,8 @@
 
     // Dominant section paddings
     var padCounts = {};
-    document.querySelectorAll('section, main > div, [class*="section"]').forEach(function(el) {
-      var s = getComputedStyle(el);
+    _target().querySelectorAll('section, main > div, [class*="section"]').forEach(function(el) {
+      var s = _targetWin().getComputedStyle(el);
       var r = el.getBoundingClientRect();
       if (r.width < 400 || r.height < 100) return;
       var pt = parseFloat(s.paddingTop) || 0;
@@ -346,7 +355,7 @@
     var hoverSeen = new Set();
 
     try {
-      var sheets = document.styleSheets;
+      var sheets = _target().styleSheets;
       for (var i = 0; i < sheets.length; i++) {
         try {
           var rules = sheets[i].cssRules || sheets[i].rules;
@@ -409,8 +418,8 @@
 
     // Computed transitions on interactive elements
     var transitionSet = new Set();
-    document.querySelectorAll('a, button, [role="button"], [class*="btn"]').forEach(function(el) {
-      var s = getComputedStyle(el);
+    _target().querySelectorAll('a, button, [role="button"], [class*="btn"]').forEach(function(el) {
+      var s = _targetWin().getComputedStyle(el);
       var t = s.transition;
       if (!t || t === 'all 0s ease 0s' || t === 'none 0s ease 0s') return;
       transitionSet.add(t.slice(0, 80));
@@ -428,12 +437,12 @@
     const radii = new Set();
     const shadows = new Set();
 
-    const elements = document.querySelectorAll(
+    const elements = _target().querySelectorAll(
       'h1,h2,h3,h4,p,a,button,nav,header,section,footer,main,[class*="hero"],[class*="btn"]'
     );
 
     elements.forEach(el => {
-      const s = getComputedStyle(el);
+      const s = _targetWin().getComputedStyle(el);
       [s.color, s.backgroundColor, s.borderColor].forEach(c => {
         const hex = rgbToHex(c);
         if (hex) colorFreq[hex] = (colorFreq[hex] || 0) + 1;
@@ -461,7 +470,7 @@
   // ─── Clean HTML ────────────────────────────────────────────────────────────
 
   RB.extractCleanHTML = function() {
-    const clone = document.documentElement.cloneNode(true);
+    const clone = _target().documentElement.cloneNode(true);
     clone.querySelectorAll(
       'script,style,link[rel="stylesheet"],noscript,canvas,iframe,video,audio'
     ).forEach(el => el.remove());
@@ -514,7 +523,7 @@
       try { return new URL(url, pageBase).href; } catch (e) { return url; }
     }
 
-    var clone = document.documentElement.cloneNode(true);
+    var clone = _target().documentElement.cloneNode(true);
 
     // CSS background-image scan — must run BEFORE the non-visual strip so
     // that live and clone element lists stay in sync (parallel index walk).
@@ -525,7 +534,7 @@
     // because CSS backgrounds declared in external stylesheets are invisible
     // to the LLM via HTML alone, so it tries to hand-code gradients that
     // are really images (e.g. the grid-paper bg on gistr.so).
-    var liveAll = document.querySelectorAll('*');
+    var liveAll = _target().querySelectorAll('*');
     var cloneAll = clone.querySelectorAll('*');
     // 3000 is the empirical ceiling where the synchronous getComputedStyle
     // pass stays under ~1s on enterprise-grade DOMs (Shopify, Salesforce).
@@ -538,7 +547,7 @@
       var liveEl = liveAll[i];
       if (!(liveEl instanceof Element)) continue;
       var cs;
-      try { cs = window.getComputedStyle(liveEl); } catch (e) { continue; }
+      try { cs = _targetWin().getComputedStyle(liveEl); } catch (e) { continue; }
       var bgImg = cs && cs.backgroundImage;
       if (!bgImg || bgImg === 'none' || bgImg.indexOf('url(') < 0) continue;
       var m = bgImg.match(/url\((['"]?)([^'")]+)\1\)/);
@@ -687,7 +696,7 @@
   // ─── Section bounds ────────────────────────────────────────────────────────
 
   RB.extractSectionBounds = function() {
-    const candidates = document.querySelectorAll(
+    const candidates = _target().querySelectorAll(
       'header, nav, main, section, footer, [class*="hero"], [class*="banner"], ' +
       '[class*="features"], [class*="pricing"], [class*="testimonial"], [class*="cta"]'
     );
@@ -704,8 +713,8 @@
           tag: el.tagName.toLowerCase(),
           className: el.className.toString().slice(0, 80),
           bounds: {
-            x: Math.round(r.left + window.scrollX),
-            y: Math.round(r.top + window.scrollY),
+            x: Math.round(r.left + _targetWin().scrollX),
+            y: Math.round(r.top + _targetWin().scrollY),
             w: Math.round(r.width),
             h: Math.round(r.height)
           }
@@ -789,13 +798,13 @@
 
     candidateSel.forEach(function(sel) {
       try {
-        document.querySelectorAll(sel).forEach(function(el) {
+        _target().querySelectorAll(sel).forEach(function(el) {
           if (seen.has(el)) return;
           if (isEditorLikeNode(el)) return;
           var r = el.getBoundingClientRect();
           if (r.width < minW || r.height < minH) return;
           // Skip absolutely hidden
-          var s = getComputedStyle(el);
+          var s = _targetWin().getComputedStyle(el);
           if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return;
           seen.add(el);
           raw.push({el: el, rect: r, style: s});
@@ -819,17 +828,17 @@
 
     // If nothing was kept (weird DOM), fall back to direct children of body/main
     if (kept.length === 0) {
-      var host = document.querySelector('main') || document.body;
+      var host = _target().querySelector('main') || document.body;
       [].slice.call(host.children).forEach(function(el) {
         var r = el.getBoundingClientRect();
         if (r.width < minW || r.height < minH) return;
-        kept.push({el: el, rect: r, style: getComputedStyle(el)});
+        kept.push({el: el, rect: r, style: _targetWin().getComputedStyle(el)});
       });
     }
 
     // Sort by vertical position (scroll-adjusted)
     kept.sort(function(a, b) {
-      return (a.rect.top + window.scrollY) - (b.rect.top + window.scrollY);
+      return (a.rect.top + _targetWin().scrollY) - (b.rect.top + _targetWin().scrollY);
     });
 
     // Detect the sticky header: the first sticky/fixed element at top
@@ -839,7 +848,7 @@
     for (var k = 0; k < kept.length; k++) {
       var ent = kept[k];
       var pos = ent.style.position;
-      var y = ent.rect.top + window.scrollY;
+      var y = ent.rect.top + _targetWin().scrollY;
       if ((pos === 'sticky' || pos === 'fixed') && y < 100) {
         stickyHeader = ent;
         break;
@@ -854,8 +863,8 @@
     if (!footer && kept.length > 0) {
       // Heuristic: last section is footer only if it's in the bottom 20% of the page
       var last = kept[kept.length - 1];
-      var pageH = document.documentElement.scrollHeight;
-      if ((last.rect.top + window.scrollY) > pageH * 0.8) footer = last;
+      var pageH = _target().documentElement.scrollHeight;
+      if ((last.rect.top + _targetWin().scrollY) > pageH * 0.8) footer = last;
     }
 
     // Build the result objects
@@ -868,8 +877,8 @@
         className: (ent.el.className && typeof ent.el.className === 'string')
           ? ent.el.className.toString().slice(0, 120) : '',
         bounds: {
-          x: Math.round(r.left + window.scrollX),
-          y: Math.round(r.top + window.scrollY),
+          x: Math.round(r.left + _targetWin().scrollX),
+          y: Math.round(r.top + _targetWin().scrollY),
           w: Math.round(r.width),
           h: Math.round(r.height)
         },
@@ -886,9 +895,9 @@
       stickyHeader: stickyHeader ? makeSection(stickyHeader, -1) : null,
       footer: footer ? makeSection(footer, -2) : null,
       sections: sections,
-      pageHeight: Math.round(document.documentElement.scrollHeight),
-      viewportHeight: window.innerHeight,
-      viewportWidth: window.innerWidth
+      pageHeight: Math.round(_target().documentElement.scrollHeight),
+      viewportHeight: _targetWin().innerHeight,
+      viewportWidth: _targetWin().innerWidth
     };
   };
 
@@ -962,7 +971,7 @@
     };
 
     // Parse stylesheets
-    var sheets = document.styleSheets;
+    var sheets = _target().styleSheets;
     for (var i = 0; i < sheets.length; i++) {
       var rules;
       try {
@@ -1034,7 +1043,7 @@
     }
 
     // srcset assets
-    document.querySelectorAll('img[srcset], source[srcset]').forEach(function(el) {
+    _target().querySelectorAll('img[srcset], source[srcset]').forEach(function(el) {
       var ss = el.getAttribute('srcset');
       if (!ss) return;
       // Skip our editor images
@@ -1050,10 +1059,10 @@
     });
 
     // Fluid typography detection: scan headings for clamp() or vw units
-    document.querySelectorAll('h1,h2,h3,h4').forEach(function(el) {
+    _target().querySelectorAll('h1,h2,h3,h4').forEach(function(el) {
       var r = el.getBoundingClientRect();
       if (r.width < 10) return;
-      var s = getComputedStyle(el);
+      var s = _targetWin().getComputedStyle(el);
       // Computed styles resolve clamp() to px, so we must look at the
       // inline style or the matched CSS rule. As a proxy: if the computed
       // font-size is unusually large (>120px) it's likely fluid.
@@ -1072,7 +1081,7 @@
     // deterministically — we set a flag if the document uses React/emotion
     // signatures as a weak proxy.
     try {
-      var html = document.documentElement.outerHTML.slice(0, 20000);
+      var html = _target().documentElement.outerHTML.slice(0, 20000);
       if (/data-emotion|styled-components|css-\w{5}/.test(html)) {
         out.hasCssInJsMatchMedia = true;
       }
@@ -1091,8 +1100,8 @@
     // ── Overview ──
     md.push('# Design System\n');
     md.push('## Overview');
-    var bodyCs = getComputedStyle(document.body);
-    var docCs = getComputedStyle(document.documentElement);
+    var bodyCs = _targetWin().getComputedStyle(_target().body);
+    var docCs = _targetWin().getComputedStyle(_target().documentElement);
     var bodyBg = rgbToHex(bodyCs.backgroundColor) || rgbToHex(docCs.backgroundColor) || '#ffffff';
     var bodyColor = rgbToHex(bodyCs.color) || '#000000';
     var theme = isLight(bodyBg) ? 'light' : 'dark';
@@ -1105,8 +1114,8 @@
     md.push('- **Theme**: ' + theme + ' mode (background: `' + bodyBg + '`, text: `' + bodyColor + '`)');
     md.push('- **Primary font**: ' + bodyFont);
     md.push('- **URL**: ' + location.href);
-    md.push('- **Title**: ' + (document.title || '').slice(0, 60));
-    md.push('- **Viewport**: ' + window.innerWidth + ' x ' + window.innerHeight);
+    md.push('- **Title**: ' + (_target().title || '').slice(0, 60));
+    md.push('- **Viewport**: ' + _targetWin().innerWidth + ' x ' + _targetWin().innerHeight);
     md.push('');
 
     // Pre-compute structural + interaction data (used across multiple sections)
@@ -1159,11 +1168,11 @@
       colorUsage[hex].total++;
     }
 
-    var allEls = document.querySelectorAll(
+    var allEls = _target().querySelectorAll(
       'h1,h2,h3,h4,h5,h6,p,a,span,button,nav,header,section,footer,main,div,li,input,textarea,aside,article'
     );
     allEls.forEach(function(el) {
-      var s = getComputedStyle(el);
+      var s = _targetWin().getComputedStyle(el);
       var r = el.getBoundingClientRect();
       if (r.width < 1 || r.height < 1) return;
 
@@ -1264,8 +1273,8 @@
     // ── Typography ──
     md.push('## Typography\n');
     var fontMap = {}; // fontFamily → {weights: Set, usedIn: [], sizes: Set, lineHeights: Set, letterSpacings: Set}
-    document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,a,span,button,li,label,input,td,th,blockquote,figcaption').forEach(function(el) {
-      var s = getComputedStyle(el);
+    _target().querySelectorAll('h1,h2,h3,h4,h5,h6,p,a,span,button,li,label,input,td,th,blockquote,figcaption').forEach(function(el) {
+      var s = _targetWin().getComputedStyle(el);
       var r = el.getBoundingClientRect();
       if (r.width < 1 || r.height < 1) return;
       var ff = s.fontFamily.split(',')[0].replace(/['"]/g, '').trim();
@@ -1335,9 +1344,9 @@
     // Heading hierarchy with full Tailwind annotations
     md.push('### Hierarchy');
     ['h1','h2','h3','h4'].forEach(function(tag) {
-      var el = document.querySelector(tag);
+      var el = _target().querySelector(tag);
       if (!el) return;
-      var s = getComputedStyle(el);
+      var s = _targetWin().getComputedStyle(el);
       var parts = [];
       var fsTw = fontSizeToTw(s.fontSize);
       var fwTw = fontWeightToTw(s.fontWeight);
@@ -1360,8 +1369,8 @@
     var hasShadows = false;
     var hasBorders = false;
     var borderWidths = new Set();
-    document.querySelectorAll('div,section,header,footer,nav,article,aside,main').forEach(function(el) {
-      var s = getComputedStyle(el);
+    _target().querySelectorAll('div,section,header,footer,nav,article,aside,main').forEach(function(el) {
+      var s = _targetWin().getComputedStyle(el);
       var r = el.getBoundingClientRect();
       if (r.width < 100 || r.height < 30) return;
       if (s.boxShadow && s.boxShadow !== 'none') hasShadows = true;
@@ -1383,8 +1392,8 @@
 
     // Background patterns detection
     var bgPatterns = new Set();
-    document.querySelectorAll('*').forEach(function(el) {
-      var s = getComputedStyle(el);
+    _target().querySelectorAll('*').forEach(function(el) {
+      var s = _targetWin().getComputedStyle(el);
       var bgImg = s.backgroundImage;
       if (bgImg && bgImg !== 'none') {
         if (bgImg.indexOf('url(') !== -1 && bgImg.indexOf('data:') === -1) {
@@ -1420,7 +1429,7 @@
 
     // Build a Tailwind class string summary for one element
     function elementToTwSummary(el) {
-      var s = getComputedStyle(el);
+      var s = _targetWin().getComputedStyle(el);
       var parts = [];
 
       // Background
@@ -1485,7 +1494,7 @@
 
     // Group elements by visual signature (so we describe component TYPES not every instance)
     function signatureOf(el) {
-      var s = getComputedStyle(el);
+      var s = _targetWin().getComputedStyle(el);
       var br = parseFloat(s.borderRadius) || 0;
       var bw = parseFloat(s.borderWidth) || 0;
       var bg = rgbToHex(s.backgroundColor) || 'none';
@@ -1494,7 +1503,7 @@
     }
 
     // ── Buttons ──
-    var buttons = document.querySelectorAll('button, a[class*="btn"], a[class*="button"], [role="button"]');
+    var buttons = _target().querySelectorAll('button, a[class*="btn"], a[class*="button"], [role="button"]');
     var btnBySig = {};
     buttons.forEach(function(btn) {
       var r = btn.getBoundingClientRect();
@@ -1512,7 +1521,7 @@
         var innerIconContainer = '';
         var kids = v.example.querySelectorAll(':scope > *');
         for (var k = 0; k < kids.length; k++) {
-          var ks = getComputedStyle(kids[k]);
+          var ks = _targetWin().getComputedStyle(kids[k]);
           var kr = kids[k].getBoundingClientRect();
           if (kr.width > 0 && kr.width === kr.height && (parseFloat(ks.borderRadius) || 0) >= kr.width / 2) {
             var kbg = rgbToHex(ks.backgroundColor);
@@ -1527,8 +1536,8 @@
 
     // ── Pills / Tags ──
     var pillEls = [];
-    document.querySelectorAll('span, div, a').forEach(function(el) {
-      var s = getComputedStyle(el);
+    _target().querySelectorAll('span, div, a').forEach(function(el) {
+      var s = _targetWin().getComputedStyle(el);
       var r = el.getBoundingClientRect();
       if (r.width < 30 || r.width > 240 || r.height > 50 || r.height < 18) return;
       var br = parseFloat(s.borderRadius) || 0;
@@ -1571,9 +1580,9 @@
     // Legacy animation presence detection (kept for Do's/Don'ts logic)
     var hasMarquee = interactions.hasMarquee;
     var hasAnimations = interactions.keyframes.length > 0;
-    document.querySelectorAll('*').forEach(function(el) {
+    _target().querySelectorAll('*').forEach(function(el) {
       if (hasMarquee && hasAnimations) return;
-      var s = getComputedStyle(el);
+      var s = _targetWin().getComputedStyle(el);
       if (s.animation && s.animation !== 'none') {
         hasAnimations = true;
         if (s.animation.indexOf('marquee') !== -1 || s.animation.indexOf('scroll') !== -1) hasMarquee = true;
@@ -1590,7 +1599,7 @@
     var hasRotatedShapes = false;
     var hasTallPills = false;
 
-    document.querySelectorAll('div, span, i, b').forEach(function(el) {
+    _target().querySelectorAll('div, span, i, b').forEach(function(el) {
       var r = el.getBoundingClientRect();
       if (r.width < 16 || r.height < 16 || r.width > 600 || r.height > 600) return;
       // Skip elements with meaningful text
@@ -1599,7 +1608,7 @@
       // Skip elements with children that have their own layout
       if (el.children.length > 2) return;
 
-      var s = getComputedStyle(el);
+      var s = _targetWin().getComputedStyle(el);
       var bg = rgbToHex(s.backgroundColor);
       if (!bg) return; // must have a solid fill
 
@@ -1739,7 +1748,7 @@
     // ── CSS Custom Properties ──
     var cssVars = [];
     try {
-      var sheets = document.styleSheets;
+      var sheets = _target().styleSheets;
       for (var i = 0; i < sheets.length && cssVars.length < 20; i++) {
         try {
           var rules = sheets[i].cssRules || sheets[i].rules;
@@ -1863,7 +1872,7 @@
     // Fonts
     var fontUrls = new Set();
     try {
-      var sheets = document.styleSheets;
+      var sheets = _target().styleSheets;
       for (var i = 0; i < sheets.length; i++) {
         try {
           var rules = sheets[i].cssRules || sheets[i].rules;
@@ -1885,7 +1894,7 @@
 
     // Images with context (where they appear, what they likely are)
     var imgEntries = [];
-    document.querySelectorAll('img[src]').forEach(function(img) {
+    _target().querySelectorAll('img[src]').forEach(function(img) {
       var src = img.src;
       if (!src || src.indexOf('data:') !== -1) return;
       var r = img.getBoundingClientRect();
@@ -1929,8 +1938,8 @@
     // CSS-drawn shapes; this one is for raster/vector ASSETS placed via background).
     var bgAssets = [];
     var bgSeen = new Set();
-    document.querySelectorAll('*').forEach(function(el) {
-      var s = getComputedStyle(el);
+    _target().querySelectorAll('*').forEach(function(el) {
+      var s = _targetWin().getComputedStyle(el);
       var bi = s.backgroundImage;
       if (!bi || bi === 'none') return;
       if (bi.indexOf('url(') === -1 || bi.indexOf('data:') !== -1) return;
@@ -2036,9 +2045,9 @@
     // Large fluid typography (common in modern brutalist layouts)
     var hasLargeVwType = false;
     ['h1', 'h2'].forEach(function(tag) {
-      var el = document.querySelector(tag);
+      var el = _target().querySelector(tag);
       if (!el) return;
-      var fs = parseFloat(getComputedStyle(el).fontSize);
+      var fs = parseFloat(_targetWin().getComputedStyle(el).fontSize);
       if (fs > 120) hasLargeVwType = true;
     });
     if (hasLargeVwType) {
@@ -2152,8 +2161,8 @@
       responsive: RB.extractResponsiveBehavior(),
       designMD: RB.generateDesignMD(),
       pageUrl: location.href,
-      pageTitle: document.title,
-      viewport: { w: window.innerWidth, h: window.innerHeight }
+      pageTitle: _target().title,
+      viewport: { w: _targetWin().innerWidth, h: _targetWin().innerHeight }
     };
   };
 

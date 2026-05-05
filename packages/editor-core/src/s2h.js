@@ -10,6 +10,14 @@
 (function() {
   'use strict';
 
+  // S2H replaces the TARGET body with reconstructed HTML.
+  function _target() {
+    return (window.__rbTarget && window.__rbTarget.doc) || document;
+  }
+  function _targetWin() {
+    return (window.__rbTarget && window.__rbTarget.win) || window;
+  }
+
   // ─── PASS 1: Visual Analysis Prompt ─────────────────────────────────
   // The analysis prompt extracts structured data from the screenshot.
   // Key differences from Mode E's designMD prompt:
@@ -345,7 +353,7 @@
   function replacePageWithS2H(html) {
     // Collect editor elements to preserve
     var editorEls = [];
-    Array.from(document.body.children).forEach(function(child) {
+    Array.from(_target().body.children).forEach(function(child) {
       if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
         editorEls.push(child);
       }
@@ -353,18 +361,18 @@
 
     // Save original content for undo
     var originalChildren = [];
-    Array.from(document.body.children).forEach(function(child) {
+    Array.from(_target().body.children).forEach(function(child) {
       if (editorEls.indexOf(child) === -1) {
         originalChildren.push(child);
       }
     });
     window.__rbOriginalPage = {
       children: originalChildren,
-      scrollY: window.scrollY
+      scrollY: _targetWin().scrollY
     };
 
     // Build wrapper
-    var wrapper = document.createElement('div');
+    var wrapper = _target().createElement('div');
     wrapper.id = 'rb-rebuilt-page';
     wrapper.style.cssText = 'max-width:100%;margin:0 auto;min-height:100vh;';
     wrapper.innerHTML = html;
@@ -376,25 +384,25 @@
 
     // Insert before editor elements
     if (editorEls.length > 0) {
-      document.body.insertBefore(wrapper, editorEls[0]);
+      _target().body.insertBefore(wrapper, editorEls[0]);
     } else {
-      document.body.appendChild(wrapper);
+      _target().body.appendChild(wrapper);
     }
 
-    document.body.style.margin = '0';
-    document.body.style.padding = '0';
+    _target().body.style.margin = '0';
+    _target().body.style.padding = '0';
 
     // Push undo entry if editor is active
     if (typeof window.__rbPushUndo === 'function') {
       try {
         var saved = originalChildren.slice();
-        var scrollY = window.scrollY;
+        var scrollY = _targetWin().scrollY;
         window.__rbPushUndo({
           type: '__modeERun',
           apply: function() {
             if (wrapper.parentElement) wrapper.parentElement.removeChild(wrapper);
-            saved.forEach(function(c) { document.body.appendChild(c); });
-            window.scrollTo(0, scrollY);
+            saved.forEach(function(c) { _target().body.appendChild(c); });
+            _targetWin().scrollTo(0, scrollY);
           }
         });
       } catch (e) { console.warn('[S2H] undo push failed:', e); }
@@ -418,22 +426,22 @@
 
   function scrollToAndWait(y) {
     return new Promise(function(resolve) {
-      window.scrollTo(0, y);
+      _targetWin().scrollTo(0, y);
       setTimeout(resolve, 300);
     });
   }
 
   async function runFullPage(onProgress) {
     var log = onProgress || function() {};
-    var viewportH = window.innerHeight;
-    var pageH = document.documentElement.scrollHeight;
+    var viewportH = _targetWin().innerHeight;
+    var pageH = _target().documentElement.scrollHeight;
     var totalViewports = Math.min(Math.ceil(pageH / viewportH), MAX_VIEWPORTS);
-    var originalScroll = window.scrollY;
+    var originalScroll = _targetWin().scrollY;
 
     log({ step: 'capture', message: 'Capturing ' + totalViewports + ' viewports...', current: 0, total: totalViewports * 3 });
 
     // Hide editor UI during capture
-    var editorEls = document.querySelectorAll('[id^="rb-editor"], [id^="rb-ed-"]');
+    var editorEls = _target().querySelectorAll('[id^="rb-editor"], [id^="rb-ed-"]');
     editorEls.forEach(function(el) { el.style.setProperty('display', 'none', 'important'); });
 
     // Capture all viewports
@@ -449,7 +457,7 @@
     }
 
     // Restore scroll and editor UI
-    window.scrollTo(0, originalScroll);
+    _targetWin().scrollTo(0, originalScroll);
     editorEls.forEach(function(el) { el.style.removeProperty('display'); });
 
     if (screenshots.length === 0) {

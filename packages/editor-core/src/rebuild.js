@@ -1,11 +1,18 @@
 /**
  * Repix Rebuild Engine v4
- * No iframe. Edits the live page DOM directly.
- * Disables interactivity (links, JS handlers) and enables editing mode.
- * Lazy decouple on select handles edit independence.
+ * No iframe. Edits the live TARGET DOM directly. Disables interactivity
+ * (links, JS handlers) and enables editing mode.
+ *
+ * All side effects target the SITE document. The public hook
+ * `window.__rbRebuild` lives on the script's window (host) so editor.js
+ * can invoke it directly.
  */
 (function () {
   "use strict";
+
+  function _target() {
+    return (window.__rbTarget && window.__rbTarget.doc) || document;
+  }
 
   var nodeCounter = 0;
   var nodeMap = {};
@@ -41,21 +48,22 @@
   // ── Disable page interactivity ─────────────────────────────────────
 
   function disableInteractivity() {
+    var doc = _target();
     // Disable all links
-    var links = document.querySelectorAll("a[href]");
+    var links = doc.querySelectorAll("a[href]");
     for (var i = 0; i < links.length; i++) {
       disabledLinks.push({ el: links[i], href: links[i].getAttribute("href") });
       links[i].addEventListener("click", preventDefault, true);
     }
 
     // Disable form submissions
-    var forms = document.querySelectorAll("form");
+    var forms = doc.querySelectorAll("form");
     for (var f = 0; f < forms.length; f++) {
       forms[f].addEventListener("submit", preventDefault, true);
     }
 
     // Disable buttons (non-editor)
-    var buttons = document.querySelectorAll("button:not([data-rb-editor])");
+    var buttons = doc.querySelectorAll("button:not([data-rb-editor])");
     for (var b = 0; b < buttons.length; b++) {
       buttons[b].addEventListener("click", preventDefault, true);
     }
@@ -67,15 +75,16 @@
   }
 
   function restoreInteractivity() {
-    var links = document.querySelectorAll("a[href]");
+    var doc = _target();
+    var links = doc.querySelectorAll("a[href]");
     for (var i = 0; i < links.length; i++) {
       links[i].removeEventListener("click", preventDefault, true);
     }
-    var forms = document.querySelectorAll("form");
+    var forms = doc.querySelectorAll("form");
     for (var f = 0; f < forms.length; f++) {
       forms[f].removeEventListener("submit", preventDefault, true);
     }
-    var buttons = document.querySelectorAll("button:not([data-rb-editor])");
+    var buttons = doc.querySelectorAll("button:not([data-rb-editor])");
     for (var b = 0; b < buttons.length; b++) {
       buttons[b].removeEventListener("click", preventDefault, true);
     }
@@ -88,15 +97,16 @@
     nodeCounter = 0;
     nodeMap = {};
 
-    // Tag all elements
-    tagElements(document.body);
+    var doc = _target();
+    // Tag all elements in TARGET
+    tagElements(doc.body);
 
     // Disable page interactivity
     disableInteractivity();
 
-    // Pass the actual page document to the editor
+    // Pass the actual target document to the editor
     if (typeof callback === "function") {
-      callback(document);
+      callback(doc);
     }
   }
 
@@ -109,8 +119,9 @@
     // Restore interactivity
     restoreInteractivity();
 
-    // Remove data-rb-node tags
-    var tagged = document.querySelectorAll("[data-rb-node]");
+    // Remove data-rb-node tags from TARGET
+    var doc = _target();
+    var tagged = doc.querySelectorAll("[data-rb-node]");
     for (var t = 0; t < tagged.length; t++) {
       tagged[t].removeAttribute("data-rb-node");
     }

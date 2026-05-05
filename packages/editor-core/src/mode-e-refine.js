@@ -13,6 +13,7 @@
  */
 (function() {
   if (window.__rbModeERefine) return;
+  function _targetWin() { return (window.__rbTarget && window.__rbTarget.win) || window; }
 
   // Regen is a Gemini Pro vision call with a screenshot + big HTML prompt.
   // 120s was tight in practice (hit by users on medium pages). 240s is a
@@ -228,7 +229,7 @@
     // latency win when only the visible top viewport has issues (which is
     // the common case, since refine only captures the visible viewport).
     if (opts.sections && opts.sections.length > 0) {
-      var viewportH = window.innerHeight || 800;
+      var viewportH = _targetWin().innerHeight || 800;
       var bucket = {};
       toFix.forEach(function(issue) {
         var absY = (issue.bbox && typeof issue.bbox.y === 'number' ? issue.bbox.y : 0) * viewportH;

@@ -24,6 +24,14 @@
 (function() {
   if (window.__rbModeE2) return;
 
+  // Mode E2 operates on TARGET (the site).
+  function _target() {
+    return (window.__rbTarget && window.__rbTarget.doc) || document;
+  }
+  function _targetWin() {
+    return (window.__rbTarget && window.__rbTarget.win) || window;
+  }
+
   var CALL_TIMEOUT_MS = 60000;
   var MAX_PARALLEL = 3;
 
@@ -183,41 +191,41 @@
 
   function replaceWithClone(sectionHTMLs) {
     var editorEls = [];
-    Array.from(document.body.children).forEach(function(child) {
+    Array.from(_target().body.children).forEach(function(child) {
       if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
         editorEls.push(child);
       }
     });
     var originalChildren = [];
-    Array.from(document.body.children).forEach(function(child) {
+    Array.from(_target().body.children).forEach(function(child) {
       if (editorEls.indexOf(child) === -1) originalChildren.push(child);
     });
-    var scrollY = window.scrollY;
+    var scrollY = _targetWin().scrollY;
 
-    var wrapper = document.createElement('div');
+    var wrapper = _target().createElement('div');
     wrapper.id = 'rb-e2-clone';
     wrapper.style.cssText = 'max-width:100%;margin:0 auto;min-height:100vh;font-family:system-ui,-apple-system,sans-serif;';
     sectionHTMLs.forEach(function(html) {
-      var holder = document.createElement('div');
+      var holder = _target().createElement('div');
       holder.innerHTML = html;
       while (holder.firstChild) wrapper.appendChild(holder.firstChild);
     });
 
     // Tailwind CDN so utility classes resolve.
     var twId = 'rb-tailwind-cdn';
-    if (!document.getElementById(twId)) {
-      var tw = document.createElement('script');
+    if (!_target().getElementById(twId)) {
+      var tw = _target().createElement('script');
       tw.id = twId;
       tw.src = 'https://cdn.tailwindcss.com/3.4.17';
-      document.head.appendChild(tw);
+      _target().head.appendChild(tw);
     }
 
     originalChildren.forEach(function(child) { if (child.parentElement) child.parentElement.removeChild(child); });
-    if (editorEls.length > 0) document.body.insertBefore(wrapper, editorEls[0]);
-    else document.body.appendChild(wrapper);
+    if (editorEls.length > 0) _target().body.insertBefore(wrapper, editorEls[0]);
+    else _target().body.appendChild(wrapper);
 
-    document.body.style.margin = '0';
-    document.body.style.padding = '0';
+    _target().body.style.margin = '0';
+    _target().body.style.padding = '0';
 
     // Push undo (same __modeERun shape so existing handler in editor.js revives it).
     if (typeof window.__rbPushUndo === 'function') {
@@ -237,21 +245,21 @@
 
   function restoreOriginalPage() {
     if (!window.__rbOriginalPage) return;
-    var wrapper = document.getElementById('rb-e2-clone');
+    var wrapper = _target().getElementById('rb-e2-clone');
     if (wrapper) wrapper.remove();
-    var tw = document.getElementById('rb-tailwind-cdn');
+    var tw = _target().getElementById('rb-tailwind-cdn');
     if (tw) tw.remove();
 
     var editorEls = [];
-    Array.from(document.body.children).forEach(function(child) {
+    Array.from(_target().body.children).forEach(function(child) {
       if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) editorEls.push(child);
     });
     var before = editorEls[0] || null;
     window.__rbOriginalPage.children.forEach(function(child) {
-      if (before) document.body.insertBefore(child, before);
-      else document.body.appendChild(child);
+      if (before) _target().body.insertBefore(child, before);
+      else _target().body.appendChild(child);
     });
-    window.scrollTo(0, window.__rbOriginalPage.scrollY || 0);
+    _targetWin().scrollTo(0, window.__rbOriginalPage.scrollY || 0);
     window.__rbOriginalPage = null;
   }
 

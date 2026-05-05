@@ -5,6 +5,22 @@
 (function() {
   'use strict';
 
+  // Mode E captures + rebuilds the SITE (TARGET). UI primitives (banner
+  // updates, host head queries) live in HOST. Public API stays on the
+  // script's window so editor.js can invoke it directly.
+  function _host() {
+    return (window.__rbHost && window.__rbHost.doc) || document;
+  }
+  function _hostWin() {
+    return (window.__rbHost && window.__rbHost.win) || window;
+  }
+  function _target() {
+    return (window.__rbTarget && window.__rbTarget.doc) || _host();
+  }
+  function _targetWin() {
+    return (window.__rbTarget && window.__rbTarget.win) || _hostWin();
+  }
+
   // ─── Cancel + wallclock watchdog ───────────────────────────────────────
   // A cancel controller lets the user abort a runaway Mode E / E+ run. The
   // watchdog is a wallclock-based timeout (setInterval + Date.now()) that
@@ -257,7 +273,7 @@
   // loop doesn't spend 5-7s just on scroll settle when doing 7 viewports.
   function scrollToAndWait(y) {
     return new Promise(function(resolve) {
-      window.scrollTo(0, y);
+      _targetWin().scrollTo(0, y);
       setTimeout(resolve, 500);
     });
   }
@@ -279,10 +295,12 @@
   // The guard prevents that contamination by aborting hard when the tab loses
   // visibility, with a clear error message instead of silent garbage.
   function installCaptureGuard() {
-    var state = { wasHidden: document.hidden };
+    // Visibility events fire on the HOST tab (the one the user looks at).
+    // In extension mode host === target so behaviour is unchanged.
+    var state = { wasHidden: _host().hidden };
 
-    // Banner overlay — high z-index, non-interactive, dismissed on cleanup.
-    var banner = document.createElement('div');
+    // Banner overlay — host UI, high z-index, non-interactive.
+    var banner = _host().createElement('div');
     banner.id = 'rb-capture-guard-banner';
     banner.style.cssText = [
       'all: initial',
@@ -304,12 +322,12 @@
       'white-space: nowrap'
     ].join(';');
     banner.innerHTML = '<span style="font-size:16px">📸</span><span>Capturing screenshots — keep this tab in the foreground (~10s)</span>';
-    try { (document.body || document.documentElement).appendChild(banner); } catch (_) {}
+    try { (_host().body || _host().documentElement).appendChild(banner); } catch (_) {}
 
     function onVisibility() {
-      if (document.hidden) state.wasHidden = true;
+      if (_host().hidden) state.wasHidden = true;
     }
-    document.addEventListener('visibilitychange', onVisibility);
+    _host().addEventListener('visibilitychange', onVisibility);
 
     state.assertVisible = function() {
       if (state.wasHidden) {
@@ -318,7 +336,7 @@
     };
 
     state.cleanup = function() {
-      document.removeEventListener('visibilitychange', onVisibility);
+      _host().removeEventListener('visibilitychange', onVisibility);
       if (banner && banner.parentNode) banner.remove();
     };
 
@@ -371,7 +389,7 @@
       // page by forcing the computed position into inline style (the original
       // CSS selectors may not match our rebuilt class names).
       try {
-        var cs = window.getComputedStyle(el);
+        var cs = _targetWin().getComputedStyle(el);
         if (cs) {
           var existingStyle = clone.getAttribute('style') || '';
           var posDecl = 'position:' + cs.position + ';' +
@@ -395,13 +413,13 @@
     // fixed/sticky elements (nav, cookie banner, chat widget, CTAs) are in
     // the first few thousand DOM nodes.
     var MAX_SCAN = 3000;
-    var all = document.querySelectorAll('body *');
+    var all = _target().querySelectorAll('body *');
     var limit = Math.min(all.length, MAX_SCAN);
     for (var i = 0; i < limit; i++) {
       var el = all[i];
       if (el.id && (el.id.indexOf('rb-editor') === 0 || el.id.indexOf('rb-ed-') === 0)) continue;
       var cs;
-      try { cs = window.getComputedStyle(el); } catch (e) { continue; }
+      try { cs = _targetWin().getComputedStyle(el); } catch (e) { continue; }
       if (!cs) continue;
       var pos = cs.position;
       if (pos !== 'fixed' && pos !== 'sticky') continue;
@@ -420,13 +438,13 @@
     // snapshots and injects them at stitch time, so the LLM never needs to
     // regenerate them.
     var hideFloatersAlways = !!captureOpts.hideFloatersAlways;
-    var viewportH = window.innerHeight;
-    var pageH = document.documentElement.scrollHeight;
+    var viewportH = _targetWin().innerHeight;
+    var pageH = _target().documentElement.scrollHeight;
     var screenshots = [];
-    var originalScroll = window.scrollY;
+    var originalScroll = _targetWin().scrollY;
 
     // Hide ALL editor UI during capture
-    var editorEls = document.querySelectorAll('[id^="rb-editor"], [id^="rb-ed-"]');
+    var editorEls = _target().querySelectorAll('[id^="rb-editor"], [id^="rb-ed-"]');
     editorEls.forEach(function(el) { el.style.setProperty('display', 'none', 'important'); });
 
     // Identify floaters BEFORE scroll — some elements only become sticky after
@@ -476,7 +494,7 @@
       guard.cleanup();
       // Guarantee editor UI + scroll restore even if the loop throws — without
       // this a crash mid-capture leaves the editor invisible.
-      window.scrollTo(0, originalScroll);
+      _targetWin().scrollTo(0, originalScroll);
       editorEls.forEach(function(el) { el.style.removeProperty('display'); });
     }
 
@@ -584,7 +602,7 @@
     var hiding = !section.isSticky && stickyHeaderEl;
 
     // Scroll so the section's top is at (or near) the viewport top
-    window.scrollTo(0, targetY);
+    _targetWin().scrollTo(0, targetY);
     await new Promise(function(r) { setTimeout(r, 600); });
 
     // Temporarily hide the sticky header to prevent overlap on this chunk
@@ -612,7 +630,7 @@
   function resolveSectionElement(section) {
     if (!section || !section.selector) return null;
     try {
-      return document.querySelector(section.selector);
+      return _target().querySelector(section.selector);
     } catch(e) {
       return null;
     }
@@ -736,7 +754,7 @@
     var byId = {};
     for (var k = 0; k < assets.length; k++) byId[String(assets[k].id)] = assets[k];
 
-    var wrap = document.createElement('div');
+    var wrap = _target().createElement('div');
     wrap.innerHTML = html;
 
     var placeholders = wrap.querySelectorAll('[data-rb-asset]');
@@ -775,7 +793,7 @@
         // swap it for a real <img> so the asset actually renders.
         var target = el;
         if (el.tagName !== 'IMG') {
-          target = document.createElement('img');
+          target = _target().createElement('img');
           var carryClass = el.getAttribute('class');
           var carryStyle = el.getAttribute('style');
           if (carryClass) target.setAttribute('class', carryClass);
@@ -790,7 +808,7 @@
       } else if (a.type === 'svg') {
         // Re-parse the original SVG outerHTML and merge the LLM's class/style
         // into it (the LLM may have positioned the slot via class/style).
-        var holder = document.createElement('div');
+        var holder = _target().createElement('div');
         holder.innerHTML = a.outerHTML;
         var orig = holder.firstElementChild;
         if (!orig) { el.removeAttribute('data-rb-asset'); continue; }
@@ -839,8 +857,8 @@
     if (!newHtml || newHtml.length < 50) {
       return { ok: false, reason: 'regen HTML too small (' + (newHtml || '').length + ' bytes)' };
     }
-    var tmpOrig = document.createElement('div');
-    var tmpNew = document.createElement('div');
+    var tmpOrig = _target().createElement('div');
+    var tmpNew = _target().createElement('div');
     try {
       tmpOrig.innerHTML = originalHtml || '';
       tmpNew.innerHTML = newHtml;
@@ -1237,7 +1255,7 @@
   function replacePageContent(sectionsHTML) {
     // Collect editor elements to preserve
     var editorEls = [];
-    Array.from(document.body.children).forEach(function(child) {
+    Array.from(_target().body.children).forEach(function(child) {
       if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
         editorEls.push(child);
       }
@@ -1245,23 +1263,23 @@
 
     // Save original non-editor content for undo
     var originalChildren = [];
-    Array.from(document.body.children).forEach(function(child) {
+    Array.from(_target().body.children).forEach(function(child) {
       if (editorEls.indexOf(child) === -1) {
         originalChildren.push(child);
       }
     });
     window.__rbOriginalPage = {
       children: originalChildren,
-      scrollY: window.scrollY
+      scrollY: _targetWin().scrollY
     };
 
     // Reference kept so the undo entry below can restore it (we push the
     // entry after the wrapper is actually inserted in the DOM).
     var savedOriginalChildren = originalChildren.slice();
-    var savedScrollY = window.scrollY;
+    var savedScrollY = _targetWin().scrollY;
 
     // Build the rebuilt page
-    var wrapper = document.createElement('div');
+    var wrapper = _target().createElement('div');
     wrapper.id = 'rb-rebuilt-page';
     wrapper.style.cssText = [
       'max-width: 100%;',
@@ -1272,12 +1290,12 @@
     ].join('');
 
     sectionsHTML.forEach(function(html) {
-      var section = document.createElement('div');
+      var section = _target().createElement('div');
       section.innerHTML = html;
       if (section.children.length === 1) {
         wrapper.appendChild(section.children[0]);
       } else {
-        var wrap = document.createElement('div');
+        var wrap = _target().createElement('div');
         wrap.className = 'rb-section';
         wrap.innerHTML = html;
         wrapper.appendChild(wrap);
@@ -1287,11 +1305,11 @@
     // Load Tailwind Play CDN so Tailwind classes in chunked output resolve.
     // Without this, classes like text-5xl, py-24, font-semibold do nothing.
     var tailwindId = 'rb-tailwind-cdn';
-    if (!document.getElementById(tailwindId)) {
-      var tw = document.createElement('script');
+    if (!_target().getElementById(tailwindId)) {
+      var tw = _target().createElement('script');
       tw.id = tailwindId;
       tw.src = 'https://cdn.tailwindcss.com/3.4.17';
-      document.head.appendChild(tw);
+      _target().head.appendChild(tw);
     }
 
     // Remove original content but keep editor elements
@@ -1301,13 +1319,13 @@
 
     // Insert rebuilt page before editor elements
     if (editorEls.length > 0) {
-      document.body.insertBefore(wrapper, editorEls[0]);
+      _target().body.insertBefore(wrapper, editorEls[0]);
     } else {
-      document.body.appendChild(wrapper);
+      _target().body.appendChild(wrapper);
     }
 
-    document.body.style.margin = '0';
-    document.body.style.padding = '0';
+    _target().body.style.margin = '0';
+    _target().body.style.padding = '0';
 
     // Push a __modeERun entry to the editor's undoStack so Cmd+Z can
     // revert the entire page replacement. This is the critical fix for
@@ -1330,13 +1348,13 @@
   function restoreOriginalPage() {
     if (window.__rbOriginalPage) {
       // Remove the rebuilt page and Tailwind CDN
-      var rebuilt = document.getElementById('rb-rebuilt-page');
+      var rebuilt = _target().getElementById('rb-rebuilt-page');
       if (rebuilt) rebuilt.remove();
-      var twCdn = document.getElementById('rb-tailwind-cdn');
+      var twCdn = _target().getElementById('rb-tailwind-cdn');
       if (twCdn) twCdn.remove();
       // Re-insert original children before editor elements
       var editorEls = [];
-      Array.from(document.body.children).forEach(function(child) {
+      Array.from(_target().body.children).forEach(function(child) {
         if (child.id && (child.id.indexOf('rb-editor') === 0 || child.id.indexOf('rb-ed-') === 0)) {
           editorEls.push(child);
         }
@@ -1344,12 +1362,12 @@
       var insertBefore = editorEls.length > 0 ? editorEls[0] : null;
       window.__rbOriginalPage.children.forEach(function(child) {
         if (insertBefore) {
-          document.body.insertBefore(child, insertBefore);
+          _target().body.insertBefore(child, insertBefore);
         } else {
-          document.body.appendChild(child);
+          _target().body.appendChild(child);
         }
       });
-      window.scrollTo(0, window.__rbOriginalPage.scrollY);
+      _targetWin().scrollTo(0, window.__rbOriginalPage.scrollY);
       window.__rbOriginalPage = null;
     }
   }
@@ -1399,10 +1417,10 @@
 
     // Step 3: Capture screenshot per section
     log({step: 'capture', message: 'Capturing ' + sections.length + ' sections...', current: 3, total: 8});
-    var originalScroll = window.scrollY;
+    var originalScroll = _targetWin().scrollY;
 
     // Hide ALL editor UI during capture (not just the sticky header)
-    var editorEls = document.querySelectorAll('[id^="rb-editor"], [id^="rb-ed-"]');
+    var editorEls = _target().querySelectorAll('[id^="rb-editor"], [id^="rb-ed-"]');
     editorEls.forEach(function(el) { el.style.setProperty('display', 'none', 'important'); });
 
     // Resolve the sticky header element once
@@ -1429,7 +1447,7 @@
         });
       }
     } finally {
-      window.scrollTo(0, originalScroll);
+      _targetWin().scrollTo(0, originalScroll);
       editorEls.forEach(function(el) { el.style.removeProperty('display'); });
     }
 
@@ -1493,7 +1511,7 @@
         var thumb = captures.length > 0 && captures[0].dataUrl ? captures[0].dataUrl : '';
         var created = await window.__rbPersist.createProject({
           url: location.href,
-          title: (document.title || '').slice(0, 80),
+          title: (_target().title || '').slice(0, 80),
           designMD: designMD,
           stitchedHTML: stitchedHTML,
           sourceScreenshot: thumb,
@@ -1935,7 +1953,7 @@
           idx: si,
           el: sEl,
           html: sEl.outerHTML,
-          topY: r.top + window.scrollY,
+          topY: r.top + _targetWin().scrollY,
           height: r.height
         });
       }
@@ -1981,7 +1999,7 @@
           return;
         }
 
-        var tmp = document.createElement('div');
+        var tmp = _target().createElement('div');
         tmp.innerHTML = cleaned;
         var newEl = tmp.firstElementChild;
         if (newEl) {
