@@ -2,6 +2,7 @@
 
 import { useRef, useCallback, useEffect, useState } from 'react';
 import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
+import { nodeOrigin } from '../lib/node-origin.js';
 
 const DRAG_THRESHOLD = 4;
 
@@ -14,10 +15,25 @@ const TrashIcon = () => (
   </svg>
 );
 
+const PlusIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 5v14"/><path d="M5 12h14"/>
+  </svg>
+);
+
+const ResetIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3 12a9 9 0 1 0 3-6.7"/>
+    <path d="M3 4v5h5"/>
+  </svg>
+);
+
 export default function CanvasNode({
   node, selected, editing = false, onEditingChange,
-  onSelect, onMove, onDelete, onStartEdge, draftActive
+  onSelect, onMove, onDelete, onReset, onStartEdge, draftActive
 }) {
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const iframeRef = useRef(null);
   const [editorBusy, setEditorBusy] = useState(false);
 
@@ -45,6 +61,7 @@ export default function CanvasNode({
   const onBodyMouseDown = useCallback((e) => {
     if (editing) return;
     if (e.target?.closest?.('.cnode-topbar')) return;
+    if (e.target?.closest?.('.cnode-port-right')) return;
     e.stopPropagation();
     e.preventDefault();
     onSelect();
@@ -63,6 +80,14 @@ export default function CanvasNode({
     }
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
+  }, [editing, onStartEdge, onSelect]);
+
+  const onPortMouseDown = useCallback((e) => {
+    if (editing) return;
+    e.stopPropagation();
+    e.preventDefault();
+    onSelect();
+    onStartEdge(e);
   }, [editing, onStartEdge, onSelect]);
 
   const onIframeLoad = useCallback(() => {
@@ -87,7 +112,7 @@ export default function CanvasNode({
 
   return (
     <div
-      className={`cnode${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}`}
+      className={`cnode origin-${nodeOrigin(node)}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}`}
       style={{ left: node.pos_x, top: node.pos_y, width: node.width }}
       data-node-id={node.id}
     >
@@ -109,6 +134,17 @@ export default function CanvasNode({
               title={editing ? 'Exit edit mode' : 'Open editor (layers + inspector + guides)'}
             >
               {editing ? (editorBusy ? '…' : 'Done') : 'Edit'}
+            </button>
+          )}
+          {html && (
+            <button
+              className="btn-reset"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); setShowResetConfirm(true); }}
+              title="Reset site to original capture"
+              aria-label="Reset site to original"
+            >
+              <ResetIcon />
             </button>
           )}
           <button
@@ -140,10 +176,27 @@ export default function CanvasNode({
               height: 800
             }}
           />
-          {!editing && (
-            <div className="cnode-edge-hint">click + drag → connect to another node</div>
-          )}
         </div>
+      )}
+      {!editing && html && (
+        <>
+          <span
+            className="cnode-port-left"
+            title="Drop a connection here"
+            aria-label="Connection input"
+          >
+            <PlusIcon />
+          </span>
+          <button
+            type="button"
+            className="cnode-port-right"
+            onMouseDown={onPortMouseDown}
+            title="Drag to connect"
+            aria-label="Drag to connect"
+          >
+            <PlusIcon />
+          </button>
+        </>
       )}
       {editing && iframeRef.current && (
         <CanvasEditorCore
@@ -154,6 +207,71 @@ export default function CanvasNode({
           onSnapshotSaved={() => { /* optional: refresh state */ }}
         />
       )}
+
+      {showResetConfirm && (
+        <ResetConfirm
+          name={title}
+          editing={editing}
+          busy={resetting}
+          onCancel={() => !resetting && setShowResetConfirm(false)}
+          onConfirm={async () => {
+            if (!onReset) { setShowResetConfirm(false); return; }
+            setResetting(true);
+            try {
+              // Resetting swaps the iframe srcDoc → contentDocument is
+              // replaced. The editor caches targetDoc at boot, so we must
+              // exit edit mode FIRST so the editor tears down its
+              // listeners cleanly. Wait a tick for unmount + the
+              // 50ms-deferred teardown to complete before swapping.
+              if (editing) {
+                onEditingChange?.(false);
+                await new Promise((r) => setTimeout(r, 120));
+              }
+              await onReset();
+              setShowResetConfirm(false);
+            } finally {
+              setResetting(false);
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ResetConfirm({ name, editing, busy, onCancel, onConfirm }) {
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === 'Escape' && !busy) onCancel();
+      if (e.key === 'Enter' && !busy) onConfirm();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [busy, onCancel, onConfirm]);
+
+  return (
+    <div className="reset-confirm-overlay" onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className="reset-confirm-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="reset-confirm-title"
+      >
+        <h3 id="reset-confirm-title" className="reset-confirm-title">Reset to original?</h3>
+        <p className="reset-confirm-body">
+          This discards all edits to <strong>{name || 'this site'}</strong> and
+          restores the first capture. This action cannot be undone.
+          {editing ? <><br/><span style={{opacity:0.7}}>Edit mode will close first.</span></> : null}
+        </p>
+        <div className="reset-confirm-actions">
+          <button type="button" className="btn-outline reset-confirm-btn" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button type="button" className="btn-danger reset-confirm-btn" onClick={onConfirm} disabled={busy}>
+            {busy ? 'Resetting…' : 'Reset site'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -365,6 +365,19 @@ A/B reference. Pipeline 033 frozen em `editor/mode-e-classic.js` (16KB, namespac
 
 ## Bugs conhecidos e padrões descobertos
 
+### Padrão crítico: drag handlers em canvas mode precisam dos dois docs
+**Problema**: Em canvas mode (`hostDoc !== targetDoc`), eventos mousemove/mouseup que originam DENTRO do iframe (target) NÃO bubble pro host doc. Drag handlers que escutam só `hostDoc.addEventListener('mousemove'/'mouseup')` ficam presos quando o cursor entra na área do iframe — mouseup nunca chega → drag em estado ghost-pressed → onMove dispara em loop conforme o cursor se move.
+
+**Pior ainda**: `ev.clientX/Y` em eventos do iframe é em coords do **iframe viewport** (largura natural, ex 1280), enquanto `dragStartPos` capturado no mousedown do host está em coords do **host viewport**. Comparar os dois dá deltas absurdos.
+
+**Solução** (editor.js):
+- `bindDragOnBothDocs(move, up)` / `unbindDragOnBothDocs(move, up)` helpers no escopo da IIFE. Registram em host + target quando docs são distintos. Em modo extensão (host === target) só registra uma vez.
+- `eventToHostXY(ev)` — detecta `ev.view === targetWin` e converte iframe-coords → host-coords usando `iframe.getBoundingClientRect() + scale`. Aplicado em TODA leitura de `ev.clientX/Y` em handlers de drag.
+- Scale-aware delta: em zoom < 1 do canvas, host-px delta deve ser dividido pelo `_scale` antes de virar valor CSS (margins/sizes vivem em coords target).
+- Stash de elemento alvo (`var resizeEl = selectedEl`) no mousedown — closure-captured `selectedEl` pode virar null mid-drag (deselect lateral) → null deref storm em CADA mousemove (87× por gesture observado, polui mousemove pipeline e mata outros handlers downstream).
+
+**Aplicado em**: spacing-guide drag, corner-guide drag, selection-resize handles. ~6 outros handlers ainda só em host — migrar quando bug surgir.
+
 ### Padrão crítico: framework override (React/Framer/Hydrogen)
 Sites com framework reativo reescrevem `style=""` e `className` no próximo render, sobrescrevendo nossos writes. Defesas cumulativas em `applyStyle._verifyApply`:
 1. **Inline !important** (primeiro write) — vence especificidade normal
@@ -515,10 +528,40 @@ Experiência seamless, margem alvo 60-70% sobre custo do Pro 3.1, zero config pa
 Ferramenta de **inspiração e aprendizado** — designer edita para criar algo novo ("papel vegetal").
 
 ## Branding
-- **Nome:** RepixBridge
-- **Logo:** "*Repix*" em Instrument Serif Italic + "Bridge" em Instrument Sans 500
+- **Nome:** Uncraft (renomeado de RepixBridge em 2026-04-27; logo wordmark "Un" Medium + "craft" Light/0.62 opacity)
 - **Slogan:** "Design without borders"
-- **Tipografia:** Instrument Serif (display) + Instrument Sans (body/UI)
+- **Tipografia (extensão):** Instrument Serif (display) + Instrument Sans (body/UI) — preservada por inertia visual
+- **Tipografia (web-shell):** **Aeonik** local (Light/Regular/Medium/Bold em `packages/web-shell/public/fonts/aeonik/*.otf`). `@font-face` em `globals.css`. Body usa `'Aeonik', system fallback`.
+
+## Web-shell — design system + arquitetura
+- **CSS design tokens** em `packages/web-shell/app/globals.css` (`:root`):
+  - `--bg-base: #0a0a0a`, `--bg-frosted: rgba(10,10,10,0.72)`
+  - `--border-frosted: rgba(255,255,255,0.08)`, `--border-frosted-strong: rgba(255,255,255,0.12)`
+  - `--text-primary: #f5f5f5`, `--text-secondary/muted/faint` em alphas
+  - `--shadow-frost: 0 16px 60px rgba(0,0,0,0.55)`
+  - `--radius-pill: 999px`, `--radius-sm: 12px`, `--radius-md: 18px`, `--radius-lg: 22px`
+- **Família frosted-glass**: prompt-dock, canvas-header, node topbar, minidock, menus (empty-drop / canvas-context), boards-sidebar, signin-card, user-menu, reset-confirm-card. TODOS usam `rgba(10-26,10-26,10-26,0.5-0.78)` + `backdrop-filter: blur(28px) saturate(140%)` + 1px frosted hairline border.
+- **Components**:
+  - `BoardsList` — sidebar 240px (Uncraft mark, "Projects" nav, UserPill bottom) + main grid
+  - `UserPill` — circular initial avatar + dropdown frosted (Account/Billing/Preferences/Sign out). Compartilhado: vai pro inspector header do editor depois.
+  - `PromptDock` — substituiu Superwidget. 4 toggle pills: Add URL (sky), Brainstorming (purple, brain icon), Pin/Feedback (amber). "+" file button aceita image/.md/.html.
+  - `CanvasContextMenu` — right-click no canvas: Add URL/HTML/.md/Screenshot. Screenshot é stub.
+  - `ResetConfirm` — modal com Esc/Enter, fecha edit mode primeiro com 120ms de grace antes de swap srcDoc.
+- **Color-coded edges/borders** via `lib/node-origin.js`: URL=`#38bdf8`, HTML=`#f97316`, MD=`#34d399`, Screenshot=`#a78bfa`. Aplicado em `.cnode.origin-*` border + `<path stroke={originColor(src)} />` em EdgeLayer.
+- **Node ports**: `cnode-port-right` (button, drag para conectar via onStartEdge) + `cnode-port-left` (span, pointer-events:none, recebe drop via `closest('.cnode')`). `.cnode { overflow: visible }` pra ports protruir; topbar/body fazem rounding individual.
+
+## OAuth (estado)
+- **`.env.local`** tem `GOOGLE_OAUTH_CLIENT_ID` + `GITHUB_OAUTH_CLIENT_ID` provisórios (substituir com URL real depois). `*_CLIENT_SECRET` são placeholders (`PASTE_*_HERE`).
+- **Routes** em `app/api/auth/oauth/{google,github}/{start,callback}/route.js`:
+  - `start/` — checa secret. Se ausente/placeholder, redirect home com `?oauth_error=...`. Senão, monta provider URL + state cookie + redirect.
+  - `callback/` — STUBS. Validam code/state, redirect home com "callback not wired yet". Token exchange + user create/link + JWT cookie é a próxima implementação.
+- Login UI lê `?oauth_error=...` e mostra inline (URL é cleaned via replaceState).
+- **Schema migration pendente**: provavelmente colunas `oauth_provider` + `oauth_sub` em `users` pra link OAuth identity.
+
+## Reset feature
+- `POST /api/nodes/[id]/reset` — busca primeiro snapshot do node, aponta `current_snapshot_id` pra ele. Retorna `{html, design_md, screenshot_url}`.
+- Botão de reset visível no `cnode-topbar` durante e fora da edição. Modal de confirmação obrigatório.
+- Durante edição: fecha editor primeiro (`onEditingChange(false)` + 120ms wait) antes de swap srcDoc — evita o `targetDoc` cached do editor virar stale ao replace do iframe content.
 
 ## Regras de desenvolvimento
 - Incrementar versão a cada release significativo

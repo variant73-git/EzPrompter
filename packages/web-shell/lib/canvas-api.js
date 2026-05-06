@@ -17,6 +17,7 @@ export const api = {
 
   createNode: (body) => fetch('/api/nodes', { ...COMMON, method: 'POST', body: JSON.stringify(body) }).then(jsonOrThrow),
   updateNode: (id, body) => fetch(`/api/nodes/${id}`, { ...COMMON, method: 'PATCH', body: JSON.stringify(body) }).then(jsonOrThrow),
+  resetNode: (id) => fetch(`/api/nodes/${id}/reset`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
   deleteNode: (id) => fetch(`/api/nodes/${id}`, { ...COMMON, method: 'DELETE' }).then(jsonOrThrow),
 
   createEdge: (body) => fetch('/api/edges', { ...COMMON, method: 'POST', body: JSON.stringify(body) }).then(jsonOrThrow),

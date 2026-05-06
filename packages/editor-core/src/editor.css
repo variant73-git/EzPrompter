@@ -886,7 +886,12 @@ body.rb-ed-light .rb-dock-mixed span { color:rgba(51,51,51,0.55); }
   position: absolute;
   top: 50%;
   left: 50%;
-  transform: translate(-50%, -50%);
+  /* Scale the label with canvas zoom so it stays proportional to the
+     iframe content. --rb-guide-scale is set by editor.js on every
+     spacing-guide update (1 in extension mode, < 1 when canvas zoom
+     reduces the rendered iframe). */
+  transform: translate(-50%, -50%) scale(var(--rb-guide-scale, 1));
+  transform-origin: center;
   background: #1A1A1A;
   color: #FF00DD;
   font: 500 10px 'Instrument Sans', sans-serif;
@@ -978,13 +983,13 @@ body.rb-ed-dragging-guide, body.rb-ed-dragging-guide * { cursor: inherit !import
 /* ===== 22. MINIDOCK (shared by image + text action bars) ===== */
 .rb-ed-img-menu {
   position:fixed; z-index:2147483646;
-  background:rgba(23,23,23,0.85);
-  backdrop-filter:blur(40px); -webkit-backdrop-filter:blur(40px);
-  border:1px solid rgba(255,255,255,0.12);
+  background:rgba(10,10,10,0.72);
+  backdrop-filter:blur(28px) saturate(140%); -webkit-backdrop-filter:blur(28px) saturate(140%);
+  border:1px solid rgba(255,255,255,0.10);
   border-radius:10px;
   padding:0; display:flex; align-items:stretch; gap:0; white-space:nowrap;
   overflow:hidden; pointer-events:auto;
-  box-shadow:0 8px 24px rgba(0,0,0,0.4);
+  box-shadow:0 16px 40px rgba(0,0,0,0.55);
   animation:rb-ed-fade 100ms ease-out;
 }
 /* Drag handle inside minidock */

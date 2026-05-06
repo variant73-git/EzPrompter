@@ -6,7 +6,36 @@ import { api } from '../lib/canvas-api.js';
 import CanvasNode from './CanvasNode.jsx';
 import EdgeLayer, { DraftEdgeLayer } from './EdgeLayer.jsx';
 import EdgePopup from './EdgePopup.jsx';
-import Superwidget from './Superwidget.jsx';
+import PromptDock from './PromptDock.jsx';
+
+// Inline SVGs for the canvas + context menus. Phosphor-style strokes,
+// 1.6px weight, currentColor — matches the rest of the editor chrome.
+const MenuIcon = {
+  Url: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>
+      <path d="M12 3a13 13 0 0 1 4 9 13 13 0 0 1-4 9 13 13 0 0 1-4-9 13 13 0 0 1 4-9z"/>
+    </svg>
+  ),
+  Html: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+      <path d="M14 3v5h5"/><path d="m9 14-1.5 2L9 18"/><path d="m13.5 14 1.5 2-1.5 2"/>
+    </svg>
+  ),
+  Md: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+      <path d="M14 3v5h5"/><path d="M8 13h2l1.5 2L13 13h2"/><path d="M8 17h7"/>
+    </svg>
+  ),
+  Image: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="5" width="18" height="14" rx="2"/>
+      <circle cx="9" cy="10.5" r="1.5"/><path d="m21 16-5-5L5 19"/>
+    </svg>
+  )
+};
 
 const WORLD_WIDTH = 8000;
 const WORLD_HEIGHT = 6000;
@@ -20,6 +49,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges }) {
   const [draftEdge, setDraftEdge] = useState(null);  // {sourceNodeId, mouseX, mouseY}
   const [popupPos, setPopupPos] = useState(null);
   const [emptyDropMenu, setEmptyDropMenu] = useState(null);  // {sourceNodeId, x, y, worldX, worldY}
+  const [contextMenu, setContextMenu] = useState(null);  // {x, y, worldX, worldY} — right-click on empty canvas
   const [editingNodeId, setEditingNodeId] = useState(null);
   const transformRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -148,6 +178,19 @@ export default function CanvasClient({ board, initialNodes, initialEdges }) {
     setEdges((prev) => prev.filter((e) => e.source_node_id !== id && e.target_node_id !== id));
     if (id.startsWith?.('temp-')) return;
     await api.deleteNode(id).catch(console.warn);
+  }
+
+  async function handleResetNode(id) {
+    if (String(id).startsWith('temp-')) return;
+    try {
+      const { html } = await api.resetNode(id);
+      // Force a fresh srcDoc by toggling _resetTick so React remounts the iframe.
+      setNodes((prev) => prev.map((n) =>
+        n.id === id ? { ...n, current_html: html, _resetTick: (n._resetTick || 0) + 1 } : n
+      ));
+    } catch (e) {
+      alert(`Reset failed: ${e.message}`);
+    }
   }
 
   function startEdgeFromNode(nodeId, mouseEvent) {
@@ -328,11 +371,28 @@ export default function CanvasClient({ board, initialNodes, initialEdges }) {
   }, [nodes]);
 
   return (
-    <div className="canvas-shell" onMouseMove={moveDraftEdge} onMouseUp={handleGlobalMouseUp}>
+    <div
+      className="canvas-shell"
+      onMouseMove={moveDraftEdge}
+      onMouseUp={handleGlobalMouseUp}
+      onContextMenu={(e) => {
+        // Ignore right-clicks landed on a node, the prompt dock, edge popups,
+        // header, or the existing empty-drop menu. The browser's default
+        // context menu is suppressed only for the bare canvas.
+        const t = e.target;
+        if (!t || typeof t.closest !== 'function') return;
+        if (t.closest('.cnode, .prompt-dock, .empty-drop-menu, .canvas-context-menu, .edge-popup, .canvas-header')) return;
+        e.preventDefault();
+        const w = clientToWorld(transformRef, e.clientX, e.clientY);
+        setContextMenu({ x: e.clientX, y: e.clientY, worldX: w.x, worldY: w.y });
+      }}
+    >
       <div className="canvas-bg" />
 
       <header className="canvas-header">
-        <a href="/canvas">← Boards</a>
+        <a href="/canvas" className="uncraft-mark" title="Boards">
+          <span className="un">Un</span><span className="craft">craft</span>
+        </a>
         <input
           className="canvas-board-name"
           value={boardName}
@@ -344,9 +404,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges }) {
           onClick={() => fitToContent()}
           disabled={nodes.length === 0}
           title="Fit all nodes to viewport (F)"
-          style={{ color: nodes.length ? '#a78bfa' : '#475569', fontSize: '0.75rem', cursor: nodes.length ? 'pointer' : 'default' }}
         >
-          {nodes.length} nodes · {edges.length} edges {nodes.length > 0 && '⤢'}
+          {nodes.length} nodes · {edges.length} edges
         </button>
         <button onClick={logout}>Sign out</button>
       </header>
@@ -391,6 +450,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges }) {
                 if (!String(n.id).startsWith('temp-')) persistNodePosition(n.id, posX, posY);
               }}
               onDelete={() => handleDeleteNode(n.id)}
+              onReset={() => handleResetNode(n.id)}
               onStartEdge={(e) => startEdgeFromNode(n.id, e)}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
             />
@@ -449,13 +509,100 @@ export default function CanvasClient({ board, initialNodes, initialEdges }) {
         />
       )}
 
+      {contextMenu && (
+        <CanvasContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          onPickUrl={async (url) => {
+            const m = contextMenu;
+            setContextMenu(null);
+            await handleAddUrl(url, { worldX: m.worldX, worldY: m.worldY });
+          }}
+          onPickHtml={async () => {
+            const m = contextMenu;
+            const file = await pickFile('.html,.htm,text/html');
+            setContextMenu(null);
+            if (file) await handleUploadHtml(file, { worldX: m.worldX, worldY: m.worldY });
+          }}
+          onPickMd={async () => {
+            const m = contextMenu;
+            const file = await pickFile('.md,.markdown,text/markdown,text/plain');
+            setContextMenu(null);
+            if (file) await handleUploadMd(file, { worldX: m.worldX, worldY: m.worldY });
+          }}
+          onPickScreenshot={async () => {
+            const file = await pickFile('image/*');
+            setContextMenu(null);
+            if (file) alert('Coming next: screenshot → image node.\nPicked: ' + file.name);
+          }}
+        />
+      )}
+
       <input ref={fileInputRef} type="file" onChange={onFileInputChange} style={{ display: 'none' }} />
 
-      <Superwidget
+      <PromptDock
         onAddUrl={handleAddUrl}
         onUploadMd={handleUploadMd}
+        onUploadHtml={handleUploadHtml}
         nodeCount={nodes.length}
       />
+    </div>
+  );
+}
+
+function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onPickScreenshot }) {
+  const [mode, setMode] = useState('choices');
+  const [url, setUrl] = useState('');
+  const left = Math.min(x + 8, window.innerWidth - 280);
+  const top = Math.min(y + 8, window.innerHeight - 240);
+
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    function onDown(e) {
+      if (!e.target?.closest?.('.canvas-context-menu')) onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      className="empty-drop-menu canvas-context-menu"
+      style={{ left, top }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {mode === 'choices' ? (
+        <>
+          <div className="edm-title">Add to canvas</div>
+          <button onClick={() => setMode('url')}><MenuIcon.Url /><span>Add URL</span></button>
+          <button onClick={onPickHtml}><MenuIcon.Html /><span>Add HTML</span></button>
+          <button onClick={onPickMd}><MenuIcon.Md /><span>Add .md file</span></button>
+          <button onClick={onPickScreenshot}><MenuIcon.Image /><span>Add Screenshot</span></button>
+          <button className="edm-cancel" onClick={onClose}>Cancel (Esc)</button>
+        </>
+      ) : (
+        <>
+          <div className="edm-title">URL of website</div>
+          <input
+            autoFocus type="url" placeholder="https://example.com"
+            value={url} onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && url) onPickUrl(url);
+              if (e.key === 'Escape') onClose();
+            }}
+          />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => setMode('choices')} className="edm-cancel">← Back</button>
+            <button onClick={() => onPickUrl(url)} disabled={!/^https?:\/\//i.test(url)} className="edm-primary">Capture →</button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -465,14 +612,28 @@ function EmptyDropMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd }) {
   const [url, setUrl] = useState('');
   const left = Math.min(x + 8, window.innerWidth - 280);
   const top = Math.min(y + 8, window.innerHeight - 200);
+
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    function onDown(e) {
+      if (!e.target?.closest?.('.empty-drop-menu')) onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [onClose]);
+
   return (
     <div className="empty-drop-menu" style={{ left, top }} onMouseDown={(e) => e.stopPropagation()}>
       {mode === 'choices' ? (
         <>
           <div className="edm-title">Connect to…</div>
-          <button onClick={() => setMode('url')}>🌐&nbsp; URL of a website</button>
-          <button onClick={onPickHtml}>📄&nbsp; Upload an HTML file</button>
-          <button onClick={onPickMd}>📝&nbsp; Upload a design.md</button>
+          <button onClick={() => setMode('url')}><MenuIcon.Url /><span>URL of a website</span></button>
+          <button onClick={onPickHtml}><MenuIcon.Html /><span>Upload an HTML file</span></button>
+          <button onClick={onPickMd}><MenuIcon.Md /><span>Upload a design.md</span></button>
           <button className="edm-cancel" onClick={onClose}>Cancel (Esc)</button>
         </>
       ) : (

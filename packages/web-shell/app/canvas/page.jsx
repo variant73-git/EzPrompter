@@ -19,5 +19,5 @@ export default async function CanvasIndex() {
      WHERE user_id = ${user.id}
      ORDER BY updated_at DESC
   `;
-  return <BoardsList boards={boards} userName={user.name || user.email} />;
+  return <BoardsList boards={boards} userName={user.name} userEmail={user.email} />;
 }

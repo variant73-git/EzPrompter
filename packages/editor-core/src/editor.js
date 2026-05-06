@@ -200,6 +200,25 @@
   hoverKill.textContent = killRules;
   targetDoc.head.appendChild(hoverKill);
 
+  // In canvas mode the iframe is its own document, so editor.css (loaded
+  // into the host) doesn't reach it. Mirror the rb-ed-active class onto
+  // the target body and inject the cursor styles there so the custom
+  // arrow + text-hint cursor work over the iframe content. Extension mode
+  // (host === target) is a no-op since both writes hit the same body.
+  targetDoc.body.classList.add('rb-ed-active');
+  if (hostDoc !== targetDoc) {
+    var cursorStyle = targetDoc.createElement('style');
+    cursorStyle.id = 'rb-cursor-style';
+    cursorStyle.textContent =
+      "body.rb-ed-active, body.rb-ed-active *:not(input):not(textarea):not(select) {" +
+        "cursor: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='28' viewBox='-2 -2 42 42'%3E%3Cdefs%3E%3Cfilter id='s'%3E%3CfeDropShadow dx='1' dy='2' stdDeviation='1.5' flood-opacity='0.4'/%3E%3C/filter%3E%3C/defs%3E%3Cpath filter='url(%23s)' d='M34.25,17.94l-13.58,2.72-2.72,13.58c-.22,1.1-1.29,1.81-2.39,1.59-.67-.13-1.23-.6-1.49-1.23L2.15,4.78c-.42-1.04.09-2.22,1.13-2.64.48-.19,1.02-.19,1.51,0l29.82,11.93c1.04.42,1.55,1.6,1.13,2.64-.25.64-.81,1.1-1.48,1.24Z' fill='%23fff' stroke='%23000' stroke-width='1.5'/%3E%3C/svg%3E\") 2 1, default !important;" +
+      "}" +
+      "body.rb-ed-active .rb-ed-text-hint {" +
+        "cursor: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='-2 -2 48 48'%3E%3Cdefs%3E%3Cfilter id='s'%3E%3CfeDropShadow dx='1' dy='2' stdDeviation='1.5' flood-opacity='0.4'/%3E%3C/filter%3E%3C/defs%3E%3Cpath filter='url(%23s)' d='M34.25,17.94l-13.58,2.72-2.72,13.58c-.22,1.1-1.29,1.81-2.39,1.59-.67-.13-1.23-.6-1.49-1.23L2.15,4.78c-.42-1.04.09-2.22,1.13-2.64.48-.19,1.02-.19,1.51,0l29.82,11.93c1.04.42,1.55,1.6,1.13,2.64-.25.64-.81,1.1-1.48,1.24Z' fill='%23fff' stroke='%23000' stroke-width='1.5'/%3E%3Cg transform='translate(14,26) scale(0.45)' fill='%23fff' stroke='%23000' stroke-width='1'%3E%3Cpolygon points='24.5 1 1 1 1 4.99 1.01 4.99 1.01 9 5 9 5 4.99 10.75 4.99 10.75 22.65 7.58 22.65 7.58 26.64 17.91 26.64 17.91 22.65 14.74 22.65 14.74 4.99 20.54 4.99 20.54 9 24.53 9 24.53 1 24.5 1'/%3E%3C/g%3E%3C/svg%3E\") 2 1, text !important;" +
+      "}";
+    targetDoc.head.appendChild(cursorStyle);
+  }
+
   // Build UI components
   buildBanner();
   buildInspector();
@@ -5928,7 +5947,15 @@
         targetWin.scrollTo(0, u.scrollY || 0);
       }
     } else {
-      // Generic style prop change
+      // Generic style prop change. Defensive: an undo entry can land here
+      // with a stale or null `el` (e.g., element was removed between
+      // pushUndo and apply, or the entry was pushed mid-bug from a stuck
+      // drag handler). Skip with a warning instead of crashing the editor.
+      if (!u.el || !u.el.style) {
+        // eslint-disable-next-line no-console
+        console.warn('[uncraft] skipping undo entry with missing el', u);
+        return;
+      }
       var currentVal = u.el.style[u.prop];
       u.el.style[u.prop] = forward ? (u.newVal || '') : (u.old || '');
       if (!forward) u.newVal = currentVal;
@@ -5952,9 +5979,16 @@
   function undo() {
     if (!undoStack.length) return;
     var u = undoStack.pop();
-    // Capture current state into the entry so redo can reverse
-    applyUndoEntry(u, false);
-    pushRedo(u);
+    // A single bad entry (e.g., el referencing a node that was removed
+    // from the DOM, or an entry pushed mid-bug) shouldn't kill the
+    // editor — log + continue so the user can keep working.
+    try {
+      applyUndoEntry(u, false);
+      pushRedo(u);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[uncraft] undo entry failed, dropping it:', err, u);
+    }
     if (selectedEl) {
       updateSelBox(selectedEl);
       updateInspector(selectedEl);
@@ -5964,9 +5998,14 @@
   function redo() {
     if (!redoStack.length) return;
     var u = redoStack.pop();
-    applyUndoEntry(u, true);
-    undoStack.push(u);
-    if (undoStack.length > UNDO_STACK_MAX) undoStack.shift();
+    try {
+      applyUndoEntry(u, true);
+      undoStack.push(u);
+      if (undoStack.length > UNDO_STACK_MAX) undoStack.shift();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[uncraft] redo entry failed, dropping it:', err, u);
+    }
     if (selectedEl) {
       updateSelBox(selectedEl);
       updateInspector(selectedEl);
@@ -6492,6 +6531,49 @@
 
   // ============ SPACING GUIDES ============
 
+  // Cross-doc drag listener helpers. In canvas mode (host !== target)
+  // mouse events that originate inside the iframe DON'T bubble out into
+  // the host document, so any drag handler that listens on hostDoc only
+  // gets stuck the moment the cursor enters iframe content (mouseup
+  // never lands → ghost-pressed state). Listening on BOTH docs covers
+  // both viewport halves. In extension mode host === target so the
+  // second pair is skipped (would otherwise double-fire).
+  function bindDragOnBothDocs(move, up) {
+    hostDoc.addEventListener('mousemove', move);
+    hostDoc.addEventListener('mouseup', up);
+    if (hostDoc !== targetDoc) {
+      targetDoc.addEventListener('mousemove', move);
+      targetDoc.addEventListener('mouseup', up);
+    }
+  }
+  function unbindDragOnBothDocs(move, up) {
+    hostDoc.removeEventListener('mousemove', move);
+    hostDoc.removeEventListener('mouseup', up);
+    if (hostDoc !== targetDoc) {
+      targetDoc.removeEventListener('mousemove', move);
+      targetDoc.removeEventListener('mouseup', up);
+    }
+  }
+  // Normalise an event's clientX/clientY to HOST viewport coords. Events
+  // dispatched by the iframe (targetDoc) carry clientX/Y in IFRAME viewport
+  // coords — comparing those against host-captured drag-start coords does
+  // garbage math and the drag value jumps around or never matches the
+  // mouseup threshold. This converts iframe coords back to host coords
+  // using the same scale getOverlayBox uses.
+  function eventToHostXY(ev) {
+    if (hostDoc === targetDoc) return {x: ev.clientX, y: ev.clientY};
+    var ifr = targetWin && targetWin.frameElement;
+    if (!ifr) return {x: ev.clientX, y: ev.clientY};
+    // ev.view is the window the event was dispatched in.
+    if (ev.view === targetWin) {
+      var ir = ifr.getBoundingClientRect();
+      var contentW = targetWin.innerWidth || ir.width;
+      var scale = ir.width / (contentW || 1);
+      return {x: ir.left + ev.clientX * scale, y: ir.top + ev.clientY * scale};
+    }
+    return {x: ev.clientX, y: ev.clientY};
+  }
+
   var spacingGuides = {
     mt: mk('div', 'rb-spacing-guide rb-spacing-margin'),
     mr: mk('div', 'rb-spacing-guide rb-spacing-margin'),
@@ -6652,7 +6734,10 @@
       input.addEventListener('mousedown', function(ev) { ev.stopPropagation(); });
     });
 
-    // Drag to resize spacing (with Alt/Shift/Cmd modifiers)
+    // Drag to resize spacing (with Alt/Shift/Cmd modifiers). The
+    // bindDragOnBothDocs / unbindDragOnBothDocs helpers live at IIFE
+    // outer scope (above the spacing/corner registration) so both the
+    // edge-band drag and the corner-handle drag can share them.
     var dragStartPos = null;
     var dragStartValue = 0;
     spacingGuides[key].addEventListener('mousedown', function(e) {
@@ -6669,7 +6754,7 @@
 
       var cs = getCS(targetEl);
       dragStartValue = parseFloat(cs[prop]) || 0;
-      dragStartPos = { x: e.clientX, y: e.clientY };
+      dragStartPos = eventToHostXY(e);
 
       var axis = guideAxis[key];
       if (axis === 'auto') {
@@ -6689,17 +6774,25 @@
       var DRAG_THRESHOLD = 3;  // px before we commit to drag mode
 
       function onMove(ev) {
+        var hp = eventToHostXY(ev);
         if (!dragged) {
-          if (Math.abs(ev.clientX - dragStartPos.x) < DRAG_THRESHOLD &&
-              Math.abs(ev.clientY - dragStartPos.y) < DRAG_THRESHOLD) return;
+          if (Math.abs(hp.x - dragStartPos.x) < DRAG_THRESHOLD &&
+              Math.abs(hp.y - dragStartPos.y) < DRAG_THRESHOLD) return;
           dragged = true;
           setActiveGuide(key);
           spacingGuides[key].classList.add('rb-spacing-dragging');
           hostDoc.body.classList.add('rb-ed-dragging-guide');
         }
         var delta = (axis === 'x')
-          ? (ev.clientX - dragStartPos.x) * dir
-          : (ev.clientY - dragStartPos.y) * dir;
+          ? (hp.x - dragStartPos.x) * dir
+          : (hp.y - dragStartPos.y) * dir;
+        // Convert host-px delta back to target-px so the value matches the
+        // CSS units we're writing (margin/padding live in target coords).
+        var s = (function() {
+          var box = getOverlayBox(targetEl);
+          return (box && box._scale) ? box._scale : 1;
+        })();
+        if (s && s !== 1) delta = delta / s;
         var newVal = Math.max(0, Math.round(dragStartValue + delta));
         if (ev.metaKey || ev.ctrlKey) newVal = Math.round(newVal / 8) * 8;
 
@@ -6717,8 +6810,7 @@
         updateSelBox(selectedEl);
       }
       function onUp(ev) {
-        hostDoc.removeEventListener('mousemove', onMove);
-        hostDoc.removeEventListener('mouseup', onUp);
+        unbindDragOnBothDocs(onMove, onUp);
         spacingGuides[key].classList.remove('rb-spacing-dragging');
         hostDoc.body.classList.remove('rb-ed-dragging-guide');
 
@@ -6733,7 +6825,12 @@
             prev.push({el: g, val: g.style.pointerEvents});
             g.style.pointerEvents = 'none';
           });
-          var below = targetDoc.elementFromPoint(ev.clientX, ev.clientY);
+          // elementFromPoint expects viewport coords of THAT doc — use the
+          // raw ev.client coords if the event came from targetDoc, else
+          // convert host coords back to target. Simpler: just use the
+          // event's own coords with its own document.
+          var hitDoc = (ev.view === targetWin) ? targetDoc : (hostDoc === targetDoc ? hostDoc : null);
+          var below = hitDoc ? hitDoc.elementFromPoint(ev.clientX, ev.clientY) : null;
           prev.forEach(function(p) { p.el.style.pointerEvents = p.val; });
           if (below && !isEditorEl(below) && isValid(below)) {
             var resolved = resolveContainer(below);
@@ -6757,8 +6854,7 @@
         }
         updateSpacingGuides(selectedEl);
       }
-      hostDoc.addEventListener('mousemove', onMove);
-      hostDoc.addEventListener('mouseup', onUp);
+      bindDragOnBothDocs(onMove, onUp);
     });
   });
 
@@ -6788,11 +6884,20 @@
       var cs = getCS(selectedEl);
       var startY = parseFloat(cs[cfg.props[0]]) || 0;
       var startX = parseFloat(cs[cfg.props[1]]) || 0;
-      var startPos = { x: e.clientX, y: e.clientY };
+      var startPos = eventToHostXY(e);
       hostDoc.body.classList.add('rb-ed-dragging-guide');
       function onMove(ev) {
-        var newY = Math.max(0, Math.round(startY + (ev.clientY - startPos.y) * cfg.signY));
-        var newX = Math.max(0, Math.round(startX + (ev.clientX - startPos.x) * cfg.signX));
+        var hp = eventToHostXY(ev);
+        // Convert host-px delta to target-px (same reason as spacing-guide).
+        var s = (function() {
+          var box = getOverlayBox(selectedEl);
+          return (box && box._scale) ? box._scale : 1;
+        })();
+        var dy = (hp.y - startPos.y) * cfg.signY;
+        var dx = (hp.x - startPos.x) * cfg.signX;
+        if (s && s !== 1) { dy = dy / s; dx = dx / s; }
+        var newY = Math.max(0, Math.round(startY + dy));
+        var newX = Math.max(0, Math.round(startX + dx));
         if (ev.metaKey || ev.ctrlKey) {
           newY = Math.round(newY / 8) * 8;
           newX = Math.round(newX / 8) * 8;
@@ -6803,14 +6908,14 @@
         updateSelBox(selectedEl);
       }
       function onUp() {
-        hostDoc.removeEventListener('mousemove', onMove);
-        hostDoc.removeEventListener('mouseup', onUp);
+        unbindDragOnBothDocs(onMove, onUp);
         hostDoc.body.classList.remove('rb-ed-dragging-guide');
-        pushUndo({ el: selectedEl, prop: cfg.props[0], old: startY + 'px' });
-        pushUndo({ el: selectedEl, prop: cfg.props[1], old: startX + 'px' });
+        if (selectedEl) {
+          pushUndo({ el: selectedEl, prop: cfg.props[0], old: startY + 'px' });
+          pushUndo({ el: selectedEl, prop: cfg.props[1], old: startX + 'px' });
+        }
       }
-      hostDoc.addEventListener('mousemove', onMove);
-      hostDoc.addEventListener('mouseup', onUp);
+      bindDragOnBothDocs(onMove, onUp);
     });
   });
 
@@ -6857,6 +6962,10 @@
     // margin/padding values which getCS returns in target px.
     var r = getOverlayBox(el);
     var s = r._scale != null ? r._scale : 1;
+    // Expose scale to CSS so the guide widgets (labels) shrink with canvas
+    // zoom. Without this, at zoom < 1 the guide bands are correctly sized
+    // but their labels stay at 1:1, swamping the guide visually.
+    hostDoc.documentElement.style.setProperty('--rb-guide-scale', s.toFixed(4));
     var cs = getCS(el);
     var lMt = px(cs.marginTop), lMr = px(cs.marginRight), lMb = px(cs.marginBottom), lMl = px(cs.marginLeft);
     var lPt = px(cs.paddingTop), lPr = px(cs.paddingRight), lPb = px(cs.paddingBottom), lPl = px(cs.paddingLeft);
@@ -8210,11 +8319,26 @@
         var unlocked = null;
         var DRAG_THRESHOLD = 2;  // px
 
+        // Stash the live element at drag start. The closure-captured
+        // `selectedEl` may be nulled mid-drag (deselect from another path,
+        // host click-outside, etc.) — using a stable local ref prevents a
+        // null-deref storm on every mousemove (was firing 80+× per gesture
+        // and choking everything else).
+        var resizeEl = selectedEl;
         function onM(ev) {
-          var dx = ev.clientX - sx, dy = ev.clientY - sy;
+          if (!resizeEl) return;
+          var hp = eventToHostXY(ev);
+          var dx = hp.x - sx, dy = hp.y - sy;
+          // Convert host-px delta to target-px so the size we write matches
+          // the iframe's natural coordinate system at canvas zooms < 1.
+          var rscale = (function() {
+            var box = getOverlayBox(resizeEl);
+            return (box && box._scale) ? box._scale : 1;
+          })();
+          if (rscale && rscale !== 1) { dx = dx / rscale; dy = dy / rscale; }
           if (!unlocked) {
             if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
-            unlocked = unlockResize(selectedEl, dir);
+            unlocked = unlockResize(resizeEl, dir);
           }
           var w = origW, h = origH;
           if (dir.indexOf('e') !== -1) w += dx;
@@ -8223,42 +8347,36 @@
           if (dir.indexOf('n') !== -1) h -= dy;
           var newW = Math.max(20, w);
           var newH = Math.max(20, h);
-          // Actual deltas after clamping — used to compensate the leading edge
-          // so the W/N side visually tracks the mouse instead of the opposite
-          // edge being the only one that moves.
-          var realDw = origW - newW;  // how much width actually shrunk (W drag)
-          var realDh = origH - newH;  // how much height actually shrunk (N drag)
+          var realDw = origW - newW;
+          var realDh = origH - newH;
 
-          selectedEl.style.setProperty('width',  newW + 'px', 'important');
-          selectedEl.style.setProperty('height', newH + 'px', 'important');
+          resizeEl.style.setProperty('width',  newW + 'px', 'important');
+          resizeEl.style.setProperty('height', newH + 'px', 'important');
 
           if (dir.indexOf('w') !== -1) {
             if (usesCoords) {
-              selectedEl.style.setProperty('left', (origLeft + realDw) + 'px', 'important');
+              resizeEl.style.setProperty('left', (origLeft + realDw) + 'px', 'important');
             } else {
-              selectedEl.style.setProperty('margin-left', (origML + realDw) + 'px', 'important');
+              resizeEl.style.setProperty('margin-left', (origML + realDw) + 'px', 'important');
             }
           }
           if (dir.indexOf('n') !== -1) {
             if (usesCoords) {
-              selectedEl.style.setProperty('top', (origTop + realDh) + 'px', 'important');
+              resizeEl.style.setProperty('top', (origTop + realDh) + 'px', 'important');
             } else {
-              selectedEl.style.setProperty('margin-top', (origMT + realDh) + 'px', 'important');
+              resizeEl.style.setProperty('margin-top', (origMT + realDh) + 'px', 'important');
             }
           }
 
-          updateSelBox(selectedEl);
-          updateSpacingGuides(selectedEl);
+          updateSelBox(resizeEl);
+          updateSpacingGuides(resizeEl);
         }
 
         function onU() {
-          hostDoc.removeEventListener('mousemove', onM);
-          hostDoc.removeEventListener('mouseup', onU);
-          // Pure click with no drag → we never unlocked, nothing changed,
-          // nothing to undo.
-          if (!unlocked) return;
+          unbindDragOnBothDocs(onM, onU);
+          if (!unlocked || !resizeEl) return;
           pushUndo({
-            el: selectedEl, prop: '__resize',
+            el: resizeEl, prop: '__resize',
             oldW: origW + 'px', oldH: origH + 'px',
             oldML: origML + 'px', oldMT: origMT + 'px',
             oldLeft: origLeft + 'px', oldTop: origTop + 'px',
@@ -8267,8 +8385,7 @@
           });
         }
 
-        hostDoc.addEventListener('mousemove', onM);
-        hostDoc.addEventListener('mouseup', onU);
+        bindDragOnBothDocs(onM, onU);
       }, {signal: sig});
     });
 
@@ -8308,6 +8425,12 @@
     // Override sheet lives in target head — clean it up too.
     var ovs = targetDoc.getElementById('rb-override-sheet');
     if (ovs) ovs.remove();
+    // Canvas-mode cursor style + rb-ed-active marker on target body.
+    var cs = targetDoc.getElementById('rb-cursor-style');
+    if (cs) cs.remove();
+    if (hostDoc !== targetDoc && targetDoc.body) {
+      targetDoc.body.classList.remove('rb-ed-active');
+    }
     // Font dropdown / popups are appended to host body (not root) to escape
     // inspector overflow clipping, so they need explicit cleanup on teardown.
     hostDoc.querySelectorAll('body > .rb-insp-font-drop, body > .rb-font-picker, body > .rb-link-editor').forEach(function(el) { el.remove(); });
