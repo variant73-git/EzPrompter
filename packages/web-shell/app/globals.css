@@ -31,6 +31,7 @@
 :root {
   --bg-base: #0a0a0a;
   --bg-frosted: rgba(10, 10, 10, 0.72);
+  --bg-frosted-solid: #0f0f0f;
   --border-frosted: rgba(255, 255, 255, 0.08);
   --border-frosted-strong: rgba(255, 255, 255, 0.12);
   --text-primary: #f5f5f5;
@@ -38,10 +39,34 @@
   --text-muted: rgba(245, 245, 245, 0.42);
   --text-faint: rgba(245, 245, 245, 0.28);
   --shadow-frost: 0 16px 60px rgba(0, 0, 0, 0.55);
+  --canvas-dot: rgba(255, 255, 255, 0.18);
+  --hover-bg: rgba(255, 255, 255, 0.06);
+  --hover-bg-strong: rgba(255, 255, 255, 0.10);
   --radius-pill: 999px;
   --radius-sm: 12px;
   --radius-md: 18px;
   --radius-lg: 22px;
+}
+
+/* Light theme — toggled by the canvas theme button (and by the editor's
+   sun/moon when present). All canvas chrome reads from these variables
+   so the swap is one-line per element. Editor-core has its own
+   body.rb-ed-light overrides for its panels — sharing the same class
+   keeps both surfaces in sync. */
+body.rb-ed-light {
+  --bg-base: #F4F2EE;
+  --bg-frosted: rgba(255, 255, 255, 0.78);
+  --bg-frosted-solid: #ECEAE5;
+  --border-frosted: rgba(0, 0, 0, 0.10);
+  --border-frosted-strong: rgba(0, 0, 0, 0.16);
+  --text-primary: #1f1f1f;
+  --text-secondary: rgba(31, 31, 31, 0.66);
+  --text-muted: rgba(31, 31, 31, 0.46);
+  --text-faint: rgba(31, 31, 31, 0.30);
+  --shadow-frost: 0 16px 48px rgba(0, 0, 0, 0.10);
+  --canvas-dot: rgba(0, 0, 0, 0.16);
+  --hover-bg: rgba(0, 0, 0, 0.05);
+  --hover-bg-strong: rgba(0, 0, 0, 0.08);
 }
 
 *,
@@ -217,9 +242,9 @@ input:focus {
 }
 
 .badge-pro {
-  background: rgba(20, 184, 166, 0.2);
-  color: #2dd4bf;
-  border: 1px solid #14b8a6;
+  background: rgba(0, 149, 255, 0.2);
+  color: #38bdf8;
+  border: 1px solid #0095FF;
 }
 
 .badge-free {
@@ -293,87 +318,172 @@ input:focus {
 .canvas-shell {
   position: fixed;
   inset: 0;
-  /* Off-black: a touch warmer than pure #000 but no blue tint. */
-  background: #0a0a0a;
+  background: var(--bg-base);
   overflow: hidden;
+  transition: background 200ms ease;
 }
 
 .canvas-shell .canvas-bg {
   position: absolute;
   inset: 0;
-  /* Neutral white dots, easier to read than teal at low alpha. Dot size
-     bumped to 1.4px so each one survives sub-pixel rasterization at low
-     canvas zoom levels. */
+  /* Dot color follows the theme — picks up the right contrast against
+     the canvas bg in either dark or light mode. */
   background-image:
-    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.18) 1.4px, transparent 0);
+    radial-gradient(circle at 1px 1px, var(--canvas-dot) 1.4px, transparent 0);
   background-size: 28px 28px;
   pointer-events: none;
 }
 
-.canvas-header {
-  position: fixed;
-  top: 12px;
-  left: 12px;
-  right: 12px;
-  height: 52px;
+/* Two compact frosted floaters replace the long single header. Left
+   holds the brand mark + project name (separator between them); right
+   holds the node/edge count + user avatar dropdown (separator between
+   them). They sit at the same y as the prompt-dock chrome family. */
+.canvas-toolbar-left,
+.canvas-toolbar-right {
   display: flex;
   align-items: center;
-  padding: 0 14px;
+  gap: 4px;
+  height: 44px;
+  /* Padding equals inner-button border-radius so the hover bg corner
+     curves match the widget's inner corner curves (widget-radius − padding
+     = inner-button-radius). */
+  padding: 4px;
   background: var(--bg-frosted);
   backdrop-filter: blur(28px) saturate(140%);
   -webkit-backdrop-filter: blur(28px) saturate(140%);
   border: 1px solid var(--border-frosted);
-  border-radius: var(--radius-md);
-  z-index: 100;
-  gap: 8px;
-  font-size: 0.88rem;
+  border-radius: 12px;
+  font-size: 0.85rem;
   box-shadow: var(--shadow-frost);
+  font-family: 'Aeonik', system-ui, sans-serif;
+}
+.canvas-toolbar-left {
+  /* Now nested inside .canvas-toolbars-left wrapper which owns the
+     fixed positioning. */
 }
 
-.canvas-header a,
-.canvas-header button {
+.canvas-toolbars-left {
+  position: fixed;
+  top: 18px;
+  left: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 100;
+}
+
+.canvas-theme-floater {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: var(--bg-frosted);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  border: 1px solid var(--border-frosted);
+  border-radius: 12px;
+  box-shadow: var(--shadow-frost);
   color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.canvas-theme-floater:hover { color: var(--text-primary); background: var(--bg-frosted); border-color: var(--border-frosted-strong); }
+.canvas-theme-floater svg { transition: transform 200ms ease; }
+.canvas-theme-floater:hover svg { transform: rotate(15deg); }
+
+/* Right-side wrapper holds the zoom widget AND the counts/avatar widget
+   side-by-side, so the zoom widget can never end up behind the editor
+   inspector — they shift together. */
+.canvas-toolbars-right {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 100;
+  transition: right 180ms ease;
+}
+body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right {
+  right: calc(var(--rb-insp-width, 260px) + 12px);
+}
+body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18px; }
+
+.canvas-toolbar-sep {
+  width: 1px;
+  height: 22px;
+  background: var(--border-frosted-strong);
+  flex-shrink: 0;
+}
+
+.canvas-toolbar-left .uncraft-mark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  padding: 0 6px;
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
   text-decoration: none;
+}
+.canvas-toolbar-left .uncraft-mark .un { font-weight: 500; }
+.canvas-toolbar-left .uncraft-mark .craft { font-weight: 300; opacity: 0.62; }
+
+.canvas-counts {
+  color: var(--text-secondary);
   background: transparent;
   border: 1px solid transparent;
-  padding: 7px 12px;
-  border-radius: var(--radius-pill);
-  font-size: 0.85rem;
-  font-family: inherit;
-  font-weight: 500;
+  height: 36px;
+  padding: 0 12px;
+  /* 8px = widget radius (12) − widget padding (4); makes the hover bg
+     curve along the toolbar's inner radius perfectly. */
+  border-radius: 8px;
+  font: 500 0.82rem 'Aeonik', system-ui, sans-serif;
   cursor: pointer;
   letter-spacing: -0.005em;
   transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
 }
+.canvas-counts:hover { color: var(--text-primary); background: var(--hover-bg); }
+.canvas-counts:disabled { opacity: 0.45; cursor: default; }
+.canvas-counts:disabled:hover { background: transparent; color: var(--text-secondary); }
 
-.canvas-header a:hover,
-.canvas-header button:hover {
-  color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.canvas-header button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.canvas-header button:disabled:hover {
+.canvas-theme-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
   background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
   color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
 }
+.canvas-theme-btn:hover { color: var(--text-primary); background: var(--hover-bg); }
+.canvas-theme-btn svg { transition: transform 200ms ease; }
+.canvas-theme-btn:hover svg { transform: rotate(15deg); }
 
 .canvas-board-name {
-  flex: 1;
   color: var(--text-primary);
   font-weight: 500;
   background: transparent;
   border: 1px solid transparent;
   padding: 6px 10px;
-  border-radius: 10px;
+  border-radius: 8px;
   outline: none;
   margin-bottom: 0;
-  width: 200px;
-  font-size: 0.92rem;
+  /* Size grows with the typed value via the size attribute (set in JSX
+     based on string length). field-sizing covers Chromium 123+ for free
+     resizing on browsers that support it. */
+  field-sizing: content;
+  min-width: 90px;
+  max-width: 380px;
+  font-size: 0.88rem;
   font-family: inherit;
 }
 
@@ -382,18 +492,6 @@ input:focus {
   border-color: var(--border-frosted);
   background: rgba(255, 255, 255, 0.04);
 }
-
-.canvas-header .uncraft-mark {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 1px;
-  padding: 0 8px;
-  font-size: 1.05rem;
-  letter-spacing: -0.02em;
-  color: var(--text-primary);
-}
-.canvas-header .uncraft-mark .un { font-weight: 500; }
-.canvas-header .uncraft-mark .craft { font-weight: 300; opacity: 0.62; }
 
 /* ─── Sign-in screen ────────────────────────────────────────────────────── */
 
@@ -924,6 +1022,38 @@ input:focus {
   margin-right: 4px;
 }
 
+/* Compact variant — used in the canvas top-right toolbar. Mirrors the
+   small avatar + chevron of the editor inspector header (26px circle on
+   a frosted ring). The dropdown opens DOWNWARD instead of upward. */
+.user-pill.compact {
+  width: auto;
+  gap: 4px;
+  height: 36px;
+  padding: 0 6px 0 4px;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 8px;
+}
+.user-pill.compact:hover,
+.user-pill.compact.open { background: var(--hover-bg); border-color: var(--border-frosted); }
+.user-pill.compact .user-pill-avatar {
+  width: 26px;
+  height: 26px;
+  font-size: 0.78rem;
+  background: #7E828A;
+  color: #fff;
+  box-shadow: 0 0 0 2px var(--bg-frosted-solid), 0 0 0 4px var(--border-frosted-strong);
+}
+.user-pill.compact .user-pill-chevron { margin-right: 2px; }
+.user-pill.compact + .user-menu,
+.user-pill-wrap:has(.user-pill.compact) .user-menu {
+  bottom: auto;
+  top: calc(100% + 8px);
+  left: auto;
+  right: 0;
+  min-width: 200px;
+}
+
 /* Dropdown opens UPWARD from the pill (sidebar bottom).
    Same frosted family as the canvas context menu. */
 .user-menu {
@@ -966,6 +1096,80 @@ input:focus {
   text-decoration: none;
 }
 
+/* Header block at the top of the dropdown — name + plan tag, then a
+   smaller "Manage Account" link, then (free only) an Upgrade CTA. */
+.user-menu-header {
+  padding: 12px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.user-menu-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.user-menu-name {
+  font-family: inherit;
+  font-size: 0.92rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.user-menu-plan-tag {
+  font-family: inherit;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  /* Default — same look as plan-free, overridden below for paid tiers. */
+  background: var(--hover-bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-frosted);
+}
+.user-menu-plan-tag.plan-free { background: var(--hover-bg); color: var(--text-secondary); }
+.user-menu-plan-tag.plan-pro,
+.user-menu-plan-tag.plan-team,
+.user-menu-plan-tag.plan-business {
+  background: linear-gradient(135deg, #0095FF, #38bdf8);
+  color: #fff;
+  border-color: transparent;
+}
+.user-menu-manage {
+  font-family: inherit;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.12s;
+  align-self: flex-start;
+  padding: 0;
+  margin-top: 2px;
+}
+.user-menu-manage:hover { color: var(--text-primary); text-decoration: underline; }
+.user-menu-upgrade {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+  padding: 7px 12px;
+  background: linear-gradient(135deg, #0095FF, #38bdf8);
+  color: #fff;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: filter 0.12s, transform 0.12s;
+}
+.user-menu-upgrade:hover { filter: brightness(1.08); transform: translateY(-1px); }
+
 .user-menu-divider {
   height: 1px;
   margin: 4px 4px;
@@ -994,9 +1198,15 @@ input:focus {
   color: #cbd5e1;
 }
 
-.cnode-topbar .btn-reset:hover {
+.cnode-topbar .btn-reset:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.08);
   color: #fff;
+}
+
+.cnode-topbar .btn-reset:disabled {
+  color: rgba(203, 213, 225, 0.32);
+  cursor: not-allowed;
+  background: transparent;
 }
 
 .cnode-topbar .btn-reset svg {
@@ -1006,50 +1216,47 @@ input:focus {
 
 /* ─── Reset confirmation modal ──────────────────────────────────────────── */
 
+/* Anchored popover (NOT a viewport-fixed modal). Sits just below the
+   node's topbar, right-aligned with the reset button. Scales with
+   --canvas-scale so it reads consistently across zoom levels. */
 .reset-confirm-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 500;
+  position: absolute;
+  top: calc(36px / var(--canvas-scale, 1));
+  right: 0;
+  margin-top: calc(6px / var(--canvas-scale, 1));
+  z-index: 50;
   animation: rb-fade-in 140ms ease-out;
 }
 
 @keyframes rb-fade-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .reset-confirm-card {
-  width: min(420px, calc(100vw - 32px));
-  background: rgba(20, 20, 20, 0.85);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
-  border: 1px solid var(--border-frosted);
-  border-radius: var(--radius-lg);
-  padding: 1.5rem;
-  box-shadow: var(--shadow-frost), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  width: calc(280px / var(--canvas-scale, 1));
+  background: #0f0f0f;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: calc(10px / var(--canvas-scale, 1));
+  padding: calc(14px / var(--canvas-scale, 1));
+  box-shadow: 0 calc(12px / var(--canvas-scale, 1)) calc(32px / var(--canvas-scale, 1)) rgba(0, 0, 0, 0.45);
   font-family: 'Aeonik', inherit;
 }
 
 .reset-confirm-title {
-  font-size: 1.15rem;
+  font-size: calc(13px / var(--canvas-scale, 1));
   font-weight: 500;
   letter-spacing: -0.015em;
   color: var(--text-primary);
-  margin: 0 0 0.5rem;
+  margin: 0 0 calc(6px / var(--canvas-scale, 1));
 }
 
 .reset-confirm-body {
-  font-size: 0.9rem;
+  font-size: calc(12px / var(--canvas-scale, 1));
   color: var(--text-secondary);
-  line-height: 1.5;
+  line-height: 1.45;
   font-weight: 300;
-  margin-bottom: 1.25rem;
+  margin: 0 0 calc(12px / var(--canvas-scale, 1));
 }
 
 .reset-confirm-body strong {
@@ -1059,14 +1266,15 @@ input:focus {
 
 .reset-confirm-actions {
   display: flex;
-  gap: 8px;
+  gap: calc(6px / var(--canvas-scale, 1));
   justify-content: flex-end;
 }
 
 .reset-confirm-btn {
   width: auto;
-  padding: 0.65rem 1.25rem;
-  font-size: 0.88rem;
+  padding: calc(6px / var(--canvas-scale, 1)) calc(12px / var(--canvas-scale, 1));
+  font-size: calc(12px / var(--canvas-scale, 1));
+  border-radius: calc(6px / var(--canvas-scale, 1));
 }
 
 /* Block browser-level pinch/keyboard zoom on the canvas page. The TransformWrapper
@@ -1074,10 +1282,9 @@ input:focus {
 html, body { overscroll-behavior: none; }
 .canvas-shell { touch-action: none; }
 
-/* Hide the canvas header while the editor is active so the editor's own
-   panels + minidock are the only chrome on screen. The body class is set
-   by editor.js (rb-ed-active.rb-ed-canvas) when it boots in canvas mode. */
-body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
+/* The old single canvas-header was hidden during edit. The two-floater
+   layout (canvas-toolbar-left/-right) stays visible — it adapts to the
+   inspector via the right-shift rule above so it never overlaps. */
 
 /* Node frame — topbar sits FLUSH on top of the body so the selected/main
    outline reads as a single continuous frame around both. Achieved with
@@ -1112,16 +1319,16 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 .cnode.selected {
   border-color: transparent;
   box-shadow:
-    0 0 0 calc(2px / var(--canvas-scale, 1)) #14b8a6,
-    0 8px 32px rgba(20, 184, 166, 0.3);
+    0 0 0 calc(2px / var(--canvas-scale, 1)) #0095FF,
+    0 8px 32px rgba(0, 149, 255, 0.3);
 }
 
 /* Soft "main" glow uses a lighter teal so it's distinct from selected. */
 .cnode.is-main {
   border-color: transparent;
   box-shadow:
-    0 0 0 calc(2px / var(--canvas-scale, 1)) #2dd4bf,
-    0 0 24px rgba(45, 212, 191, 0.3),
+    0 0 0 calc(2px / var(--canvas-scale, 1)) #38bdf8,
+    0 0 24px rgba(56, 189, 248, 0.3),
     0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
@@ -1131,9 +1338,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   position: relative;
   flex: 0 0 calc(36px / var(--canvas-scale, 1));
   height: calc(36px / var(--canvas-scale, 1));
-  background: rgba(26, 26, 26, 0.78);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  background: #0f0f0f;
   border-radius: calc(10px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1)) 0 0;
   display: flex;
   align-items: center;
@@ -1155,15 +1360,23 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .cnode-topbar .kind-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px / var(--canvas-scale, 1));
   padding: calc(2px / var(--canvas-scale, 1)) calc(8px / var(--canvas-scale, 1));
   border-radius: calc(999px / var(--canvas-scale, 1));
   background: transparent;
-  border: 1px solid rgba(45, 212, 191, 0.5);
-  color: #5eead4;
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  color: #38bdf8;
   text-transform: uppercase;
   font-size: calc(10px / var(--canvas-scale, 1));
   font-weight: 600;
   letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+.cnode-topbar .kind-pill svg {
+  width: calc(11px / var(--canvas-scale, 1));
+  height: calc(11px / var(--canvas-scale, 1));
   flex-shrink: 0;
 }
 
@@ -1175,13 +1388,86 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   min-width: 0;
 }
 
-/* 2 rows × 6 dots horizontal — center grip handle visual. */
+/* Viewport switcher — sits ABOVE the node topbar (outside the frame),
+   centered horizontally. Only renders while the node is selected. Sized
+   in canvas-coords (divided by --canvas-scale) so it stays the same
+   on-screen size at any zoom. */
+.cnode-viewport-switcher {
+  position: absolute;
+  /* Extra breathing room so the guide's "Add feedback" tab (which sticks
+     out the top of the topbar's spacing guide) doesn't crowd the
+     switcher when both are visible. */
+  bottom: calc(100% + (32px / var(--canvas-scale, 1)));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: calc(2px / var(--canvas-scale, 1));
+  padding: calc(4px / var(--canvas-scale, 1));
+  background: #0f0f0f;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: calc(8px / var(--canvas-scale, 1));
+  box-shadow: 0 calc(8px / var(--canvas-scale, 1)) calc(20px / var(--canvas-scale, 1)) rgba(0, 0, 0, 0.4);
+  z-index: 30;
+  pointer-events: auto;
+}
+
+.cnode-vp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(28px / var(--canvas-scale, 1));
+  height: calc(24px / var(--canvas-scale, 1));
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: calc(5px / var(--canvas-scale, 1));
+  color: rgba(203, 213, 225, 0.65);
+  cursor: pointer;
+  transition: color 120ms, background 120ms;
+}
+
+.cnode-vp-btn svg {
+  width: calc(14px / var(--canvas-scale, 1));
+  height: calc(14px / var(--canvas-scale, 1));
+}
+
+.cnode-vp-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.cnode-vp-btn.active {
+  color: #38bdf8;
+  background: rgba(0, 149, 255, 0.15);
+}
+
+.cnode-viewport-switcher.disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.cnode-viewport-switcher.disabled .cnode-vp-btn {
+  cursor: not-allowed;
+}
+.cnode-viewport-switcher.disabled .cnode-vp-btn:hover {
+  color: rgba(203, 213, 225, 0.5);
+  background: transparent;
+}
+.cnode-viewport-switcher.disabled .cnode-vp-btn.active {
+  color: rgba(56, 189, 248, 0.6);
+  background: rgba(0, 149, 255, 0.08);
+}
+
+/* 2 rows × 6 dots horizontal — absolutely centered over the entire topbar
+   regardless of how wide topbar-left/-right grow. */
 .cnode-topbar .topbar-grip {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   grid-auto-rows: calc(3px / var(--canvas-scale, 1));
   gap: calc(2px / var(--canvas-scale, 1));
-  flex-shrink: 0;
   pointer-events: none;
 }
 .cnode-topbar .topbar-grip span {
@@ -1212,19 +1498,28 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .cnode-topbar .btn-edit {
-  background: rgba(20, 184, 166, 0.18);
-  border-color: rgba(20, 184, 166, 0.4);
-  color: #5eead4;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px / var(--canvas-scale, 1));
+  background: rgba(245, 245, 245, 0.10);
+  border-color: rgba(245, 245, 245, 0.22);
+  color: #f5f5f5;
+}
+.cnode-topbar .btn-edit svg {
+  width: calc(13px / var(--canvas-scale, 1));
+  height: calc(13px / var(--canvas-scale, 1));
+  flex-shrink: 0;
 }
 
 .cnode-topbar .btn-edit:hover {
-  background: rgba(20, 184, 166, 0.3);
-  color: #fff;
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #0f0f0f;
 }
 
 .cnode-topbar .btn-edit.active {
-  background: #14b8a6;
-  border-color: #14b8a6;
+  background: #0095FF;
+  border-color: #0095FF;
   color: #fff;
 }
 
@@ -1240,9 +1535,267 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   height: calc(14px / var(--canvas-scale, 1));
 }
 .cnode-topbar .btn-delete:hover {
-  background: rgba(248, 113, 113, 0.2);
-  color: #fca5a5;
-  border-color: rgba(248, 113, 113, 0.4);
+  background: #F67293;
+  color: #fff;
+  border-color: #F67293;
+}
+
+/* ══════════════ ZOOM CONTROLS (top-right floater) ══════════════ */
+/* When the editor is active in canvas mode, the inspector header hosts
+   its own zoom pill — the canvas-side widget would be redundant + stack
+   on top of the editor inspector. Hide it. */
+body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: none; }
+
+/* Sibling widget inside .canvas-toolbars-right — same height + radius
+   as the counts/avatar widget so they read as a coherent toolbar pair.
+   Padding matches inner button radius so hover bg corners curve along
+   the widget's inner radius (12 − 4 = 8). */
+.zoom-controls {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 44px;
+  padding: 4px;
+  background: var(--bg-frosted);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  border: 1px solid var(--border-frosted);
+  border-radius: 12px;
+  box-shadow: var(--shadow-frost);
+  font-family: 'Aeonik', system-ui, sans-serif;
+}
+
+.zoom-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-primary);
+  font: 500 12px/1 'Aeonik', system-ui, sans-serif;
+  cursor: pointer;
+  transition: background 120ms;
+}
+.zoom-pill:hover { background: var(--hover-bg); }
+.zoom-pill-pct { min-width: 36px; text-align: center; }
+
+.zoom-pill-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border-frosted-strong);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.zoom-fit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.zoom-fit-btn:hover { background: var(--hover-bg); color: var(--text-primary); }
+
+.zoom-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  padding: 6px;
+  background: var(--bg-frosted-solid);
+  border: 1px solid var(--border-frosted-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-frost);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-family: 'Aeonik', system-ui, sans-serif;
+  animation: rb-fade-in 120ms ease-out;
+}
+.zoom-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 34px;
+  padding: 0 12px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-primary);
+  font: 400 13px/1 'Aeonik', system-ui, sans-serif;
+  cursor: pointer;
+  text-align: left;
+  transition: background 100ms;
+}
+.zoom-menu-item:hover { background: var(--hover-bg); }
+.zoom-menu-item.active { background: var(--hover-bg); color: #0095FF; }
+.zoom-menu-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 22px;
+  padding: 0 8px;
+  font: 500 12px/1 ui-monospace, 'SF Mono', Menlo, monospace;
+  color: var(--text-secondary);
+  background: var(--hover-bg);
+  border: 1px solid var(--border-frosted);
+  border-radius: 5px;
+}
+.zoom-menu-sep {
+  height: 1px;
+  background: var(--border-frosted);
+  margin: 4px 0;
+}
+
+/* ═══════════════ LIGHT-MODE OVERRIDES ═══════════════
+   Variables flip in :root → body.rb-ed-light (top of file). The rules
+   below cover the leftover hardcoded offblack/white-alpha colors that
+   couldn't be reached via vars without churning every selector. */
+
+body.rb-ed-light .canvas-shell .canvas-bg {
+  background-image: radial-gradient(circle at 1px 1px, var(--canvas-dot) 1.4px, transparent 0);
+}
+
+/* Node frame — offblack topbar + reset-confirm + viewport switcher all
+   reuse the same dark surface in dark mode. Flip them to the light
+   solid frosted color so the canvas reads as one coherent palette. */
+body.rb-ed-light .cnode-topbar { background: var(--bg-frosted-solid); color: #333; }
+body.rb-ed-light .cnode-topbar .topbar-grip span { background: rgba(0, 0, 0, 0.35); }
+body.rb-ed-light .cnode-topbar .title { color: rgba(31, 31, 31, 0.7); }
+body.rb-ed-light .cnode { border-color: rgba(0, 0, 0, 0.10); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10); }
+body.rb-ed-light .cnode-topbar button { color: #4a4a4a; }
+body.rb-ed-light .cnode-topbar .btn-edit { background: rgba(31, 31, 31, 0.06); border-color: rgba(31, 31, 31, 0.16); color: #1f1f1f; }
+body.rb-ed-light .cnode-topbar .btn-edit:hover { background: #1f1f1f; border-color: #1f1f1f; color: #fafafa; }
+body.rb-ed-light .cnode-topbar .btn-edit.active { background: #0095FF; border-color: #0095FF; color: #fff; }
+body.rb-ed-light .cnode-topbar .btn-delete:hover { background: #F67293; color: #fff; border-color: #F67293; }
+
+/* Reset button — in dark mode it inherits a faint slate icon on offblack
+   topbar. In light mode the topbar flips to #ECEAE5 and the same faint
+   slate disappears against it; explicit override → light grey surface
+   matching the right-click dropdown, black icon, black hover. */
+body.rb-ed-light .cnode-topbar .btn-reset {
+  background: var(--bg-frosted-solid);
+  color: #1f1f1f;
+  border-color: var(--border-frosted);
+}
+body.rb-ed-light .cnode-topbar .btn-reset:hover:not(:disabled) {
+  background: #1f1f1f;
+  color: #fff;
+  border-color: #1f1f1f;
+}
+body.rb-ed-light .cnode-topbar .btn-reset:disabled {
+  background: var(--bg-frosted-solid);
+  color: rgba(31, 31, 31, 0.30);
+}
+
+body.rb-ed-light .reset-confirm-card { background: var(--bg-frosted-solid); border-color: var(--border-frosted); color: var(--text-primary); }
+
+body.rb-ed-light .cnode-viewport-switcher { background: var(--bg-frosted-solid); border-color: var(--border-frosted); }
+body.rb-ed-light .cnode-vp-btn { color: rgba(31, 31, 31, 0.65); }
+body.rb-ed-light .cnode-vp-btn:hover { color: #1f1f1f; background: var(--hover-bg); }
+body.rb-ed-light .cnode-vp-btn.active { color: #007ad6; background: rgba(0, 149, 255, 0.14); }
+
+/* Connector ports + dot */
+body.rb-ed-light .cnode-port-right,
+body.rb-ed-light .cnode-port-left {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.18);
+  color: rgba(31, 31, 31, 0.85);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+}
+body.rb-ed-light .cnode-port-dot { background: rgba(31, 31, 31, 0.85); }
+body.rb-ed-light .cnode-port-right:hover .cnode-port-dot { background: #fff; }
+
+/* Prompt dock and family — frosted-solid in light mode picks up the
+   warm off-white. Border + text via vars already. */
+body.rb-ed-light .prompt-dock,
+body.rb-ed-light .empty-drop-menu,
+body.rb-ed-light .canvas-context-menu,
+body.rb-ed-light .edge-popup,
+body.rb-ed-light .user-menu {
+  background: var(--bg-frosted-solid);
+  color: var(--text-primary);
+  border-color: var(--border-frosted);
+}
+body.rb-ed-light .user-menu-item { color: var(--text-primary); }
+body.rb-ed-light .user-menu-item:hover { background: var(--hover-bg); }
+
+/* Prompt dock — every text/icon colour was hardcoded white-alpha so
+   nothing reads on the light surface. Re-bind to text vars + dark
+   hover-bg. */
+body.rb-ed-light .prompt-dock-textarea { color: var(--text-primary); }
+body.rb-ed-light .prompt-dock-textarea::placeholder { color: var(--text-muted); }
+body.rb-ed-light .prompt-dock-textarea::-webkit-scrollbar-thumb { background-color: rgba(0, 0, 0, 0.18); }
+body.rb-ed-light .prompt-dock-icon-btn { color: var(--text-secondary); }
+body.rb-ed-light .prompt-dock-icon-btn:hover { background: var(--hover-bg); color: var(--text-primary); }
+body.rb-ed-light .prompt-dock-pill { color: var(--text-secondary); }
+body.rb-ed-light .prompt-dock-pill:hover { background: var(--hover-bg); color: var(--text-primary); }
+body.rb-ed-light .prompt-dock-send {
+  background: var(--hover-bg);
+  color: var(--text-muted);
+}
+body.rb-ed-light .prompt-dock-send.active { background: #1f1f1f; color: #fafafa; }
+body.rb-ed-light .prompt-dock-send.active:hover { background: #000; }
+body.rb-ed-light .prompt-dock-chip { background: var(--hover-bg); color: var(--text-primary); }
+body.rb-ed-light .prompt-dock-chip-x { color: var(--text-muted); }
+body.rb-ed-light .prompt-dock-chip-x:hover { color: var(--text-primary); background: var(--hover-bg-strong); }
+
+/* EmptyDropMenu / CanvasContextMenu — same family, same fix. */
+body.rb-ed-light .empty-drop-menu .edm-title { color: var(--text-muted); }
+body.rb-ed-light .empty-drop-menu button { color: var(--text-primary); }
+body.rb-ed-light .empty-drop-menu button:hover { background: var(--hover-bg); color: var(--text-primary); }
+body.rb-ed-light .empty-drop-menu button.edm-cancel { color: var(--text-muted); }
+body.rb-ed-light .empty-drop-menu button.edm-cancel:hover { color: var(--text-primary); background: var(--hover-bg); }
+body.rb-ed-light .empty-drop-menu button.edm-primary { background: #1f1f1f; color: #fafafa; }
+body.rb-ed-light .empty-drop-menu button.edm-primary:hover { background: #000; }
+body.rb-ed-light .empty-drop-menu input {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: var(--border-frosted);
+  color: var(--text-primary);
+}
+
+/* Below ~0.5 zoom the topbar pills + buttons get cramped against the
+   centered grip. Instead of hiding them, collapse text labels: the
+   "site" pill becomes its globe icon only, and the Edit/Done button
+   becomes its icon only. Title + reset/delete (which don't have icons
+   that read at low zoom) still hide. The class is toggled in
+   onTransformed; .cnode.narrow covers the same case at width<520. */
+html.canvas-zoom-low .cnode-topbar .title,
+.cnode.narrow .cnode-topbar .title { display: none; }
+
+html.canvas-zoom-low .cnode-topbar .btn-reset,
+html.canvas-zoom-low .cnode-topbar .btn-delete,
+.cnode.narrow .cnode-topbar .btn-reset,
+.cnode.narrow .cnode-topbar .btn-delete { display: none; }
+
+html.canvas-zoom-low .cnode-topbar .kind-pill-lbl,
+html.canvas-zoom-low .cnode-topbar .btn-edit-lbl,
+.cnode.narrow .cnode-topbar .kind-pill-lbl,
+.cnode.narrow .cnode-topbar .btn-edit-lbl { display: none; }
+
+/* Tighten paddings when only the icon shows so the pill/button stay
+   square-ish instead of stretched-wide. */
+html.canvas-zoom-low .cnode-topbar .kind-pill,
+.cnode.narrow .cnode-topbar .kind-pill {
+  padding: calc(4px / var(--canvas-scale, 1));
+  gap: 0;
+}
+html.canvas-zoom-low .cnode-topbar .btn-edit,
+.cnode.narrow .cnode-topbar .btn-edit {
+  padding: calc(5px / var(--canvas-scale, 1)) calc(7px / var(--canvas-scale, 1));
+  gap: 0;
 }
 
 .cnode-body {
@@ -1296,8 +1849,8 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .cnode-port-right:hover {
-  background: #14b8a6;
-  border-color: #14b8a6;
+  background: #0095FF;
+  border-color: #0095FF;
   color: #fff;
   transform: translateY(-50%) scale(1.15);
 }
@@ -1306,6 +1859,34 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 .cnode-port-left svg {
   width: calc(14px / var(--canvas-scale, 1));
   height: calc(14px / var(--canvas-scale, 1));
+}
+
+.cnode-port-right.disabled,
+.cnode-port-left.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.cnode-port-right.disabled:hover {
+  background: rgba(26, 26, 26, 0.78);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(241, 245, 249, 0.85);
+  transform: translateY(-50%);
+}
+.cnode-port-right.disabled:hover .cnode-port-dot {
+  background: rgba(241, 245, 249, 0.55);
+}
+
+/* Solid dot inside the port circle (replaces the old + icon). */
+.cnode-port-dot {
+  width: calc(8px / var(--canvas-scale, 1));
+  height: calc(8px / var(--canvas-scale, 1));
+  border-radius: 50%;
+  background: rgba(241, 245, 249, 0.9);
+  pointer-events: none;
+  transition: background 0.15s, transform 0.15s;
+}
+.cnode-port-right:hover .cnode-port-dot {
+  background: #fff;
 }
 
 .cnode.editing .cnode-body {
@@ -1360,7 +1941,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   width: 22px;
   height: 22px;
   border: 2px solid #2a2a4a;
-  border-top-color: #14b8a6;
+  border-top-color: #0095FF;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -1612,7 +2193,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 
 .edge-line {
   fill: none;
-  stroke: #14b8a6;
+  stroke: #0095FF;
   stroke-width: calc(2 / var(--canvas-scale, 1));
   opacity: 0.7;
   pointer-events: stroke;
@@ -1624,8 +2205,17 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 .edge-line.applied { stroke: #10b981; }
 .edge-line.failed { stroke: #f87171; }
 
+/* Draft edge — actively dragging from a port. Thicker + fully opaque so
+   it reads from the connector to the cursor at any zoom. */
+.draft-edge-line {
+  fill: none;
+  stroke-width: calc(4 / var(--canvas-scale, 1));
+  opacity: 1;
+  pointer-events: none;
+}
+
 .edge-label {
-  fill: #5eead4;
+  fill: #38bdf8;
   stroke: #0a0a14;
   stroke-width: calc(4px / var(--canvas-scale, 1));
   paint-order: stroke fill;
@@ -1644,7 +2234,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   background: rgba(20, 20, 42, 0.85);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(20, 184, 166, 0.25);
+  border: 1px solid rgba(0, 149, 255, 0.25);
   border-radius: 12px;
   z-index: 320;
   color: #e2e8f0;
@@ -1661,7 +2251,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(20, 184, 166, 0.2);
+  border-bottom: 1px solid rgba(0, 149, 255, 0.2);
   cursor: grab;
   user-select: none;
 }
@@ -1671,7 +2261,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #2dd4bf;
+  color: #38bdf8;
 }
 
 .editor-panel .panel-refresh {
@@ -1723,8 +2313,8 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   color: #cbd5e1;
 }
 
-.layer-row:hover { background: rgba(20, 184, 166, 0.1); }
-.layer-row.selected { background: rgba(20, 184, 166, 0.3); color: #fff; }
+.layer-row:hover { background: rgba(0, 149, 255, 0.1); }
+.layer-row.selected { background: rgba(0, 149, 255, 0.3); color: #fff; }
 
 .layer-toggle {
   background: transparent;
@@ -1755,7 +2345,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 
 .ins-tag {
   font-family: ui-monospace, monospace;
-  color: #5eead4;
+  color: #38bdf8;
   font-size: 0.85rem;
   font-weight: 600;
 }
@@ -1774,8 +2364,8 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .ins-class-chip {
-  background: rgba(20, 184, 166, 0.18);
-  color: #5eead4;
+  background: rgba(0, 149, 255, 0.18);
+  color: #38bdf8;
   padding: 2px 6px;
   border-radius: 4px;
   font-family: ui-monospace, monospace;
@@ -1817,7 +2407,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 
 .ins-field input:focus,
 .ins-field select:focus {
-  border-color: #14b8a6;
+  border-color: #0095FF;
 }
 
 .ins-color-row {
@@ -1848,7 +2438,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
   transform: translateX(-50%);
   background: rgba(20, 20, 42, 0.85);
   backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(20, 184, 166, 0.25);
+  border: 1px solid rgba(0, 149, 255, 0.25);
   border-radius: 999px;
   padding: 6px 10px;
   display: flex;
@@ -1866,9 +2456,9 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .editor-btn {
-  background: rgba(20, 184, 166, 0.2);
-  border: 1px solid rgba(20, 184, 166, 0.4);
-  color: #5eead4;
+  background: rgba(0, 149, 255, 0.2);
+  border: 1px solid rgba(0, 149, 255, 0.4);
+  color: #38bdf8;
   padding: 5px 14px;
   border-radius: 999px;
   font-size: 0.78rem;
@@ -1878,7 +2468,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 }
 
 .editor-btn:hover:not(:disabled) {
-  background: rgba(20, 184, 166, 0.35);
+  background: rgba(0, 149, 255, 0.35);
   color: #fff;
 }
 
@@ -2046,6 +2636,6 @@ body.rb-ed-active.rb-ed-canvas .canvas-header { display: none !important; }
 
 .edge-popup .row { display: flex; gap: 0.4rem; margin-top: 0.75rem; }
 .edge-popup .row button { flex: 1; padding: 0.5rem; border-radius: 6px; border: none; font-size: 0.8rem; cursor: pointer; font-family: inherit; }
-.edge-popup .row .apply { background: #14b8a6; color: #fff; }
+.edge-popup .row .apply { background: #0095FF; color: #fff; }
 .edge-popup .row .delete { background: rgba(248, 113, 113, 0.15); color: #fca5a5; }
 

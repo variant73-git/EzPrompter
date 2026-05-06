@@ -394,24 +394,21 @@
     }
     renderCustom();
 
-    // Site colors section
-    var siteDivider = mk('div');
-    siteDivider.style.cssText = 'height:1px;background:rgba(255,255,255,0.04);margin:8px 0 6px;';
-    container.appendChild(siteDivider);
-
-    var siteLabel = mk('span');
-    siteLabel.textContent = 'From this website';
-    siteLabel.style.cssText = 'font:400 10px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.3);display:block;margin-bottom:6px;';
-    container.appendChild(siteLabel);
-
-    var siteGrid = mk('div', 'rb-fill-lib-grid');
+    // Site colors section — only render when there's something to show.
+    // An empty "From this website / No colors detected" pair was showing
+    // up as a useless grey strip at the bottom of the popup.
     var siteColors = extractSiteColors();
-    if (siteColors.length === 0) {
-      var noColors = mk('span');
-      noColors.textContent = 'No colors detected';
-      noColors.style.cssText = 'font:400 10px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.2);padding:4px 0;';
-      siteGrid.appendChild(noColors);
-    } else {
+    if (siteColors.length > 0) {
+      var siteDivider = mk('div');
+      siteDivider.style.cssText = 'height:1px;background:rgba(255,255,255,0.04);margin:8px 0 6px;';
+      container.appendChild(siteDivider);
+
+      var siteLabel = mk('span');
+      siteLabel.textContent = 'From this website';
+      siteLabel.style.cssText = 'font:400 10px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.3);display:block;margin-bottom:6px;';
+      container.appendChild(siteLabel);
+
+      var siteGrid = mk('div', 'rb-fill-lib-grid');
       siteColors.forEach(function(hex) {
         var sw = mk('div', 'rb-fill-lib-swatch');
         sw.style.background = hex;
@@ -422,8 +419,8 @@
         }, { capture: true });
         siteGrid.appendChild(sw);
       });
+      container.appendChild(siteGrid);
     }
-    container.appendChild(siteGrid);
 
     return { refreshCustom: renderCustom };
   }

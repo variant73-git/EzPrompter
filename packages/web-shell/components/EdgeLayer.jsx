@@ -1,20 +1,35 @@
 'use client';
 
-import { originColor } from '../lib/node-origin.js';
+// Edge cord color — matches the node's teal accent (.cnode.selected ring +
+// .cnode.is-main glow in globals.css). Single color across all node origins
+// so the cord visually reads as part of the same node frame, not a separate
+// system. Originally per-origin via originColor(node) — replaced after user
+// feedback that the cord should match the border in the case they observed.
+const CORD_COLOR = '#0095FF';
 
 const WORLD_WIDTH = 8000;
 const WORLD_HEIGHT = 6000;
 
 // Port positions match the .cnode-port-right / .cnode-port-left CSS:
 // both ports sit on the node's vertical mid-line, right on the border.
-// Edges anchor here instead of the node center so the line visibly
-// connects port-to-port. node.height is the server-side height; the
-// rendered iframe may grow past it (see CanvasNode onIframeLoad), so
-// expect minor visual drift on tall captures — fix later by measuring.
+// `n.height` is the server-side capture height, which becomes stale when
+// CanvasNode re-measures the iframe scrollHeight on load — so we read
+// the live rendered .cnode height from the DOM. EdgeLayer and the cnode
+// share the same TransformComponent parent, so offsetHeight is already
+// in world (pre-scale) coords.
+function renderedHeight(n) {
+  if (typeof document !== 'undefined') {
+    const el = document.querySelector(`[data-node-id="${n.id}"]`);
+    if (el && el.offsetHeight) return el.offsetHeight;
+  }
+  return n.height;
+}
+
 function nodePort(n, side) {
+  const h = renderedHeight(n);
   return {
     x: n.pos_x + (side === 'right' ? n.width : 0),
-    y: n.pos_y + n.height / 2
+    y: n.pos_y + h / 2
   };
 }
 
@@ -50,7 +65,7 @@ export default function EdgeLayer({ nodes, edges, draftEdge, selectedEdgeId, onS
         const stagger = (idx % 3 - 1) * 28;
         const mid = { x: (ca.x + cb.x) / 2, y: (ca.y + cb.y) / 2 + stagger };
         const labelText = `${e.kind}${e.status === 'applied' ? ' ✓' : e.status === 'failed' ? ' ✗' : ''}`;
-        const stroke = originColor(a);
+        const stroke = CORD_COLOR;
         return (
           <g key={e.id}>
             <path
@@ -81,7 +96,14 @@ export function DraftEdgeLayer({ nodes, draftEdge }) {
       width={WORLD_WIDTH} height={WORLD_HEIGHT}
       style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none', zIndex: 50 }}
     >
-      <path d={path} stroke={originColor(src)} strokeWidth="2" strokeDasharray="6 6" fill="none" opacity="0.9" />
+      <path
+        d={path}
+        stroke={CORD_COLOR}
+        className="draft-edge-line"
+        strokeLinecap="round"
+        strokeDasharray="8 6"
+        fill="none"
+      />
     </svg>
   );
 }

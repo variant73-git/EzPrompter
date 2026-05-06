@@ -26,5 +26,12 @@ export default async function CanvasBoardPage({ params }) {
   `;
   const edges = await sql`SELECT * FROM edges WHERE board_id = ${boardId} ORDER BY created_at ASC`;
 
-  return <CanvasClient board={board} initialNodes={nodes} initialEdges={edges} />;
+  return (
+    <CanvasClient
+      board={board}
+      initialNodes={nodes}
+      initialEdges={edges}
+      user={{ id: user.id, email: user.email, name: user.name || null, plan: user.plan || 'free' }}
+    />
+  );
 }

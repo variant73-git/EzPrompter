@@ -550,6 +550,57 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 }
 .rb-ed-export-btn:hover { background:#007ad6; }
 .rb-ed-export-btn svg { width:12px; height:12px; }
+
+/* Canvas zoom pill — sits in the inspector header between user avatar
+   and the Export button when running inside the canvas shell. The pill
+   reads/writes window.__uncraftZoom that CanvasClient exposes. */
+.rb-ed-zoom-wrap { display:flex; align-items:center; }
+.rb-ed-zoom-pill {
+  display:inline-flex; align-items:center; gap:4px;
+  height:24px; padding:0 8px;
+  background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08);
+  border-radius:6px; color:#EFEEEB;
+  font:500 11px/1 'Instrument Sans',sans-serif; cursor:pointer;
+  transition:background 120ms, border-color 120ms;
+}
+.rb-ed-zoom-pill:hover { background:rgba(255,255,255,0.10); border-color:rgba(255,255,255,0.14); }
+.rb-ed-zoom-pct { min-width:30px; text-align:center; }
+.rb-ed-zoom-chev { display:inline-flex; align-items:center; opacity:0.6; }
+
+.rb-ed-zoom-menu {
+  min-width:180px; padding:6px;
+  background:#1A1A1A; border:1px solid rgba(255,255,255,0.10);
+  border-radius:10px; box-shadow:0 16px 48px rgba(0,0,0,0.5);
+  display:flex; flex-direction:column; gap:1px;
+  z-index:2147483645; font-family:'Instrument Sans',sans-serif;
+}
+.rb-ed-zoom-item {
+  display:flex; align-items:center; justify-content:space-between;
+  height:30px; padding:0 10px;
+  background:transparent; border:none; border-radius:6px;
+  color:#EFEEEB; font:400 12px/1 'Instrument Sans',sans-serif;
+  cursor:pointer; text-align:left;
+  transition:background 100ms;
+}
+.rb-ed-zoom-item:hover { background:rgba(255,255,255,0.06); }
+.rb-ed-zoom-kbd {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:32px; height:20px; padding:0 6px;
+  font:500 11px/1 ui-monospace,'SF Mono',Menlo,monospace;
+  color:rgba(239,238,235,0.7);
+  background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08);
+  border-radius:4px;
+}
+.rb-ed-zoom-sep { height:1px; background:rgba(255,255,255,0.08); margin:4px 0; }
+
+/* Light-mode flip */
+body.rb-ed-light .rb-ed-zoom-pill { background:rgba(0,0,0,0.05); border-color:rgba(0,0,0,0.10); color:#1f1f1f; }
+body.rb-ed-light .rb-ed-zoom-pill:hover { background:rgba(0,0,0,0.08); border-color:rgba(0,0,0,0.16); }
+body.rb-ed-light .rb-ed-zoom-menu { background:#ECEAE5; border-color:rgba(0,0,0,0.10); color:#1f1f1f; box-shadow:0 16px 48px rgba(0,0,0,0.10); }
+body.rb-ed-light .rb-ed-zoom-item { color:#1f1f1f; }
+body.rb-ed-light .rb-ed-zoom-item:hover { background:rgba(0,0,0,0.05); }
+body.rb-ed-light .rb-ed-zoom-kbd { color:rgba(31,31,31,0.7); background:rgba(0,0,0,0.05); border-color:rgba(0,0,0,0.10); }
+body.rb-ed-light .rb-ed-zoom-sep { background:rgba(0,0,0,0.08); }
 .rb-ed-rebuild-btn {
   font:500 8px/1 'Instrument Sans',sans-serif;
   color:#0095FF; background:rgba(0,149,255,0.08);
@@ -822,6 +873,35 @@ body.rb-ed-light .rb-dock-mixed span { color:rgba(51,51,51,0.55); }
   pointer-events:none;
 }
 
+/* Add feedback tab — anchored to the selection box top-right corner,
+   sticking OUT (translated above the top edge). Same visual family as
+   the spacing-guide tab but blue to match the selection ring. */
+.rb-sel-fb-tab {
+  position: absolute;
+  top: 0;
+  right: -1.5px;  /* line up with the selection border edge */
+  transform: translateY(-100%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 12px;
+  background: #1A1A1A;
+  border: 1px solid #0095FF;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  color: #0095FF;
+  font: 500 12px/1 'Instrument Sans', sans-serif;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: default;
+  z-index: 2147483643;
+  box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.3);
+}
+.rb-sel-fb-tab .rb-spacing-fb-lbl { color: #0095FF; }
+.rb-sel-fb-tab .rb-spacing-fb-sep { background: rgba(0, 149, 255, 0.45); margin: 0 2px; }
+.rb-sel-fb-tab .rb-spacing-fb-btn { color: #0095FF; }
+.rb-sel-fb-tab .rb-spacing-fb-btn:hover { background: rgba(0, 149, 255, 0.15); color: #fff; }
+
 /* ===== 16. RESIZE HANDLES ===== */
 .rb-sel-handle {
   position:absolute; width:12px; height:12px;
@@ -933,6 +1013,73 @@ body.rb-ed-light .rb-dock-mixed span { color:rgba(51,51,51,0.55); }
 }
 .rb-spacing-widget.rb-spacing-editing {
   box-shadow: 0 0 0 1px rgba(255, 0, 221, 0.7), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* "Add feedback" tab — anchored to the top-right border of the guide,
+   sticking OUT (translated above the top edge). Hidden by default,
+   revealed when the guide is active (hover / nudge focus / drag).
+   Larger than the value widget so it reads as the primary action. */
+.rb-spacing-fb-tab {
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: translate(0, -100%) scale(var(--rb-guide-scale, 1));
+  transform-origin: bottom right;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 12px;
+  background: #1A1A1A;
+  border: 1px solid rgba(255, 0, 221, 0.55);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  color: #FF00DD;
+  font: 500 12px/1 'Instrument Sans', sans-serif;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: default;
+  z-index: 2147483642;
+  box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.rb-spacing-guide.rb-spacing-active .rb-spacing-fb-tab,
+.rb-spacing-guide.rb-spacing-dragging .rb-spacing-fb-tab { display: inline-flex; }
+
+.rb-spacing-fb-lbl {
+  font: 500 12px 'Instrument Sans', sans-serif;
+  letter-spacing: 0.01em;
+}
+
+.rb-spacing-fb-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 0 2px;
+  background: rgba(255, 0, 221, 0.4);
+}
+
+.rb-spacing-fb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #FF00DD;
+  cursor: pointer;
+  -webkit-appearance: none;
+  transition: background 120ms, color 120ms;
+}
+.rb-spacing-fb-btn:hover {
+  background: rgba(255, 0, 221, 0.15);
+  color: #fff;
+}
+.rb-spacing-fb-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 /* ===== 18b. SPACING CORNER HANDLES ===== */
 .rb-spacing-corner {
@@ -1657,8 +1804,42 @@ body.rb-ed-light .rb-ed-theme-btn:hover { color:#333; }
 
 /* ══════════════ FILL POPUP ══════════════ */
 
-.rb-fill-popup { width:260px; max-height:calc(100vh - 16px); display:flex; flex-direction:column; }
-.rb-fill-popup .rb-fill-panel { overflow-y:auto; max-height:calc(100vh - 100px); }
+/* Override the .rb-insp-adv-popup shorthand `padding:14px` with
+   !important — without it, the shorthand kept setting padding-bottom
+   back to 14px after .rb-fill-popup re-declared padding. The fill popup
+   manages its own bottom rhythm via .rb-fill-panel padding-bottom. */
+.rb-fill-popup {
+  width:260px !important;
+  max-height:calc(100vh - 16px);
+  display:flex; flex-direction:column;
+  padding:14px 14px 0 14px !important;
+}
+.rb-fill-popup .rb-fill-panel { overflow-y:auto; max-height:calc(100vh - 100px); flex:0 0 auto; padding-bottom:14px; }
+.rb-fill-popup .rb-fill-panel[style*="display: none"],
+.rb-fill-popup .rb-fill-panel[style*="display:none"] { display:none !important; }
+/* Last child of any panel never bleeds extra space — kills any "empty
+   grey block" perceived between content and the popup edge. */
+.rb-fill-popup .rb-fill-panel > *:last-child { margin-bottom:0 !important; }
+.rb-fill-popup .rb-fill-lib-grid:empty { display:none !important; }
+.rb-fill-popup .rb-fill-grad-stops:empty { display:none !important; }
+
+/* Hard stops — the user kept reporting a residual grey rectangle at
+   the popup base. Force the popup to fit its content tightly + force
+   light-mode surface in light mode, no exceptions. */
+body.rb-ed-light .rb-insp-adv-popup,
+body.rb-ed-light .rb-fill-popup {
+  background:#ECEAE5 !important;
+  color:#1f1f1f !important;
+  border:1px solid rgba(0,0,0,0.10) !important;
+  box-shadow:0 16px 48px rgba(0,0,0,0.10) !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+body.rb-ed-light .rb-fill-popup .rb-fill-tab { color:rgba(31,31,31,0.45) !important; }
+body.rb-ed-light .rb-fill-popup .rb-fill-tab-active { color:#1f1f1f !important; }
+body.rb-ed-light .rb-fill-popup .rb-fill-tabs { border-bottom-color:rgba(0,0,0,0.08) !important; }
+body.rb-ed-light .rb-fill-popup .rb-fill-header { border-bottom-color:rgba(0,0,0,0.08) !important; }
+body.rb-ed-light .rb-fill-popup .rb-insp-sec-title { color:#1f1f1f !important; }
 
 /* Header */
 .rb-fill-header {
@@ -1683,7 +1864,6 @@ body.rb-ed-light .rb-ed-theme-btn:hover { color:#333; }
 .rb-fill-tab-active { color:#EFEEEB; border-bottom-color:#7c3aed; }
 
 /* Panel */
-.rb-fill-panel { min-height:40px; }
 .rb-fill-panel::-webkit-scrollbar { width:3px; }
 .rb-fill-panel::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:3px; }
 

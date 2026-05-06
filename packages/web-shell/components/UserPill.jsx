@@ -3,11 +3,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// Circular initial-letter avatar with a dropdown menu (Account, Billing,
-// Preferences, Sign out). Reused in the boards sidebar and intended to
-// land in the editor's inspector header next.
+// Circular initial-letter avatar with a dropdown menu. Header shows
+// user name + plan badge; "Manage Account" sits underneath in a smaller
+// type. When plan === 'free', an Upgrade-to-PRO CTA appears just below
+// — the badge swaps automatically once the plan flips to 'pro' (or any
+// non-free string) so we never have to update this component when the
+// user upgrades.
 
-export default function UserPill({ name, email, onSignOut }) {
+export default function UserPill({ name, email, plan = 'free', onSignOut, compact = false }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -32,18 +35,21 @@ export default function UserPill({ name, email, onSignOut }) {
     <div className="user-pill-wrap" ref={ref}>
       <button
         type="button"
-        className={`user-pill ${open ? 'open' : ''}`}
+        className={`user-pill ${compact ? 'compact ' : ''}${open ? 'open' : ''}`}
         onClick={() => setOpen((p) => !p)}
         aria-haspopup="menu"
         aria-expanded={open}
+        title={compact ? (display || 'Account') : undefined}
       >
         <span className="user-pill-avatar">{initial}</span>
-        <span className="user-pill-label">
-          <span className="user-pill-name">{display}</span>
-          <span className="user-pill-sub">Account</span>
-        </span>
+        {!compact && (
+          <span className="user-pill-label">
+            <span className="user-pill-name">{display}</span>
+            <span className="user-pill-sub">Account</span>
+          </span>
+        )}
         <svg className="user-pill-chevron" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-          <path d="m3 7.5 3-3 3 3"/>
+          {compact ? <path d="m3 4.5 3 3 3-3"/> : <path d="m3 7.5 3-3 3 3"/>}
         </svg>
       </button>
 
@@ -57,7 +63,23 @@ export default function UserPill({ name, email, onSignOut }) {
             transition={{ type: 'spring', stiffness: 320, damping: 26 }}
             role="menu"
           >
-            <a className="user-menu-item" href="#account" onClick={() => setOpen(false)}>Account</a>
+            <div className="user-menu-header">
+              <div className="user-menu-name-row">
+                <span className="user-menu-name">{display || 'Account'}</span>
+                <span className={`user-menu-plan-tag plan-${(plan || 'free').toLowerCase()}`}>
+                  {(plan || 'free').toUpperCase()}
+                </span>
+              </div>
+              <a className="user-menu-manage" href="#account" onClick={() => setOpen(false)}>
+                Manage Account
+              </a>
+              {(plan || 'free').toLowerCase() === 'free' && (
+                <a className="user-menu-upgrade" href="#upgrade" onClick={() => setOpen(false)}>
+                  Upgrade to PRO
+                </a>
+              )}
+            </div>
+            <div className="user-menu-divider" />
             <a className="user-menu-item" href="#billing" onClick={() => setOpen(false)}>Billing</a>
             <a className="user-menu-item" href="#preferences" onClick={() => setOpen(false)}>Preferences</a>
             <div className="user-menu-divider" />

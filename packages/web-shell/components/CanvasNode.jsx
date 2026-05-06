@@ -15,12 +15,6 @@ const TrashIcon = () => (
   </svg>
 );
 
-const PlusIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M12 5v14"/><path d="M5 12h14"/>
-  </svg>
-);
-
 const ResetIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M3 12a9 9 0 1 0 3-6.7"/>
@@ -28,9 +22,58 @@ const ResetIcon = () => (
   </svg>
 );
 
+// Globe icon — same shape as the "Add URL" pill in PromptDock so the
+// "site" tag visually echoes the host shell's URL affordance.
+const GlobeIcon = () => (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>
+    <path d="M12 3a13 13 0 0 1 4 9 13 13 0 0 1-4 9 13 13 0 0 1-4-9 13 13 0 0 1 4-9z"/>
+  </svg>
+);
+
+const EditIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 20h9"/>
+    <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+  </svg>
+);
+
+const CheckIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="20 6 9 17 4 12"/>
+  </svg>
+);
+
+const VIEWPORTS = [
+  { id: 'mobile',  label: 'Mobile',  width: 390,  icon: (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>
+    </svg>
+  )},
+  { id: 'tablet',  label: 'Tablet',  width: 768,  icon: (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="3" width="16" height="18" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>
+    </svg>
+  )},
+  { id: 'desktop', label: 'Desktop', width: 1280, icon: (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="4" width="20" height="13" rx="2"/><line x1="9" y1="21" x2="15" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+    </svg>
+  )}
+];
+
+function activeViewportId(width) {
+  let best = null, bestDiff = Infinity;
+  for (const v of VIEWPORTS) {
+    const diff = Math.abs(v.width - width);
+    if (diff < bestDiff && diff <= 24) { best = v.id; bestDiff = diff; }
+  }
+  return best;
+}
+
 export default function CanvasNode({
   node, selected, editing = false, onEditingChange,
-  onSelect, onMove, onDelete, onReset, onStartEdge, draftActive
+  onSelect, onMove, onResize, onDelete, onReset, onStartEdge, draftActive
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -42,11 +85,19 @@ export default function CanvasNode({
     e.stopPropagation();
     e.preventDefault();
     onSelect();
+    // Pos lives in world coords, but mouse moves in screen coords. At
+    // canvas scale 0.5, moving the mouse 1px must shift the node by 2px in
+    // world space, otherwise the node lags behind the cursor.
+    const readScale = () => {
+      const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale'));
+      return v > 0 ? v : 1;
+    };
     const start = { x: e.clientX, y: e.clientY, ox: node.pos_x, oy: node.pos_y, moved: false };
     function move(ev) {
-      const dx = ev.clientX - start.x;
-      const dy = ev.clientY - start.y;
-      if (!start.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      const scale = readScale();
+      const dx = (ev.clientX - start.x) / scale;
+      const dy = (ev.clientY - start.y) / scale;
+      if (!start.moved && Math.hypot(dx, dy) * scale < DRAG_THRESHOLD) return;
       start.moved = true;
       onMove(start.ox + dx, start.oy + dy);
     }
@@ -101,24 +152,129 @@ export default function CanvasNode({
     } catch (e) { /* cross-origin */ }
   }, []);
 
+  const html = node.current_html;
+  const kindLabel = node.kind === 'site' ? 'site' : node.kind === 'template' ? 'template' : node.kind === 'designmd' ? 'design.md' : 'chunk';
+  const title = node.origin_url || node.meta?.name || node.template_slug || 'untitled';
+  const hasEdits = !!(node.current_snapshot_id && node.original_snapshot_id && node.current_snapshot_id !== node.original_snapshot_id);
+  const activeVp = activeViewportId(node.width);
+  // Below ~520px even at 1× zoom the topbar can't fit pill + title +
+  // 3 buttons + grip without overlap. Collapse non-essentials.
+  const narrowTopbar = (node.width || 0) < 520;
+
+  // Forward wheel events from inside the iframe out to the host canvas so
+  // the user can zoom by scrolling over a node. iframes capture wheel
+  // events in their own contentDocument — pointer-events:none on the host
+  // side doesn't help because the inner browser still handles them. We
+  // re-dispatch a synthetic wheel on .cnode-body (which is NOT in the
+  // TransformWrapper's `excluded` list) so react-zoom-pan-pinch picks it
+  // up. Skip this in edit mode so the editor's own scroll/wheel logic
+  // still works inside the iframe.
+  useEffect(() => {
+    if (editing) return;
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    let doc = null;
+    let handler = null;
+    function detach() {
+      try {
+        if (doc && doc._uncraftWheel) {
+          doc.removeEventListener('wheel', doc._uncraftWheel, { capture: true });
+          delete doc._uncraftWheel;
+        }
+      } catch (err) {}
+    }
+    function attach() {
+      try {
+        doc = iframe.contentDocument;
+        if (!doc) return;
+        // Always replace any prior listener — StrictMode + hot-reload can
+        // leave stale handlers bound to a previous parentElement reference.
+        if (doc._uncraftWheel) {
+          try { doc.removeEventListener('wheel', doc._uncraftWheel, { capture: true }); } catch (err) {}
+        }
+        handler = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          // Direct path — call the canvas zoom API CanvasClient exposes.
+          // Survives any synthetic-event quirks with react-zoom-pan-pinch.
+          if (window.__uncraftZoom) {
+            const z = window.__uncraftZoom;
+            const dy = e.deltaY || 0;
+            if (dy === 0) return;
+            // Step proportional to deltaY magnitude so trackpad scroll
+            // feels smooth (small deltas = small zoom changes).
+            const cur = z.getScale();
+            const factor = Math.exp(-dy * 0.0015);
+            z.setScale(Math.max(0.1, Math.min(2.5, cur * factor)));
+            return;
+          }
+          // Fallback for environments without the canvas API — re-dispatch
+          // a synthetic wheel on cnode-body so TransformWrapper picks it up.
+          const r = iframe.getBoundingClientRect();
+          const synth = new WheelEvent('wheel', {
+            bubbles: true, cancelable: true,
+            ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey,
+            deltaX: e.deltaX, deltaY: e.deltaY, deltaZ: e.deltaZ, deltaMode: e.deltaMode,
+            clientX: r.left + e.clientX, clientY: r.top + e.clientY
+          });
+          (iframe.parentElement || iframe).dispatchEvent(synth);
+        };
+        doc._uncraftWheel = handler;
+        doc.addEventListener('wheel', handler, { passive: false, capture: true });
+      } catch (err) { /* cross-origin / not ready */ }
+    }
+    attach();
+    // Re-attach if iframe reloads (e.g., after reset)
+    iframe.addEventListener('load', attach);
+    return () => {
+      iframe.removeEventListener('load', attach);
+      detach();
+    };
+  }, [editing, html]);
+
   // Editor mounts via <CanvasEditorCore> below — host=parent, target=iframe.
   useEffect(() => {
     if (!editing) setEditorBusy(false);
   }, [editing]);
 
-  const html = node.current_html;
-  const kindLabel = node.kind === 'site' ? 'site' : node.kind === 'template' ? 'template' : node.kind === 'designmd' ? 'design.md' : 'chunk';
-  const title = node.origin_url || node.meta?.name || node.template_slug || 'untitled';
-
   return (
     <div
-      className={`cnode origin-${nodeOrigin(node)}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}`}
+      className={`cnode origin-${nodeOrigin(node)}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}`}
       style={{ left: node.pos_x, top: node.pos_y, width: node.width }}
       data-node-id={node.id}
     >
+      {selected && onResize && (
+        <div
+          className={`cnode-viewport-switcher${editing ? ' disabled' : ''}`}
+          onMouseDown={(e) => e.stopPropagation()}
+          title={editing ? 'disabled on edit mode' : undefined}
+        >
+          {VIEWPORTS.map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              className={`cnode-vp-btn${activeVp === v.id ? ' active' : ''}`}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                if (editing) return;
+                e.stopPropagation();
+                onResize(v.width);
+              }}
+              disabled={editing}
+              title={editing ? 'disabled on edit mode' : `${v.label} — ${v.width}px`}
+              aria-label={`Resize to ${v.label} (${v.width}px)`}
+            >
+              {v.icon}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="cnode-topbar" onMouseDown={onTopbarMouseDown}>
         <div className="topbar-left">
-          <span className="kind-pill">{kindLabel}</span>
+          <span className={`kind-pill kind-${kindLabel === 'site' ? 'site' : 'other'}`}>
+            {kindLabel === 'site' && <GlobeIcon />}
+            <span className="kind-pill-lbl">{kindLabel}</span>
+          </span>
           <span className="title" title={title}>{title}</span>
         </div>
         <div className="topbar-grip" aria-hidden>
@@ -133,15 +289,17 @@ export default function CanvasNode({
               onClick={(e) => { e.stopPropagation(); onEditingChange?.(!editing); }}
               title={editing ? 'Exit edit mode' : 'Open editor (layers + inspector + guides)'}
             >
-              {editing ? (editorBusy ? '…' : 'Done') : 'Edit'}
+              {editing ? <CheckIcon /> : <EditIcon />}
+              <span className="btn-edit-lbl">{editing ? (editorBusy ? '…' : 'Done') : 'Edit'}</span>
             </button>
           )}
           {html && (
             <button
               className="btn-reset"
               onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); setShowResetConfirm(true); }}
-              title="Reset site to original capture"
+              onClick={(e) => { if (!hasEdits) return; e.stopPropagation(); setShowResetConfirm(true); }}
+              disabled={!hasEdits}
+              title={hasEdits ? 'Reset site to original capture' : 'No edits to reset'}
               aria-label="Reset site to original"
             >
               <ResetIcon />
@@ -178,23 +336,24 @@ export default function CanvasNode({
           />
         </div>
       )}
-      {!editing && html && (
+      {html && (
         <>
           <span
-            className="cnode-port-left"
-            title="Drop a connection here"
+            className={`cnode-port-left${editing ? ' disabled' : ''}`}
+            title={editing ? 'disabled on edit mode' : 'Drop a connection here'}
             aria-label="Connection input"
           >
-            <PlusIcon />
+            <span className="cnode-port-dot" aria-hidden="true" />
           </span>
           <button
             type="button"
-            className="cnode-port-right"
-            onMouseDown={onPortMouseDown}
-            title="Drag to connect"
+            className={`cnode-port-right${editing ? ' disabled' : ''}`}
+            onMouseDown={editing ? undefined : onPortMouseDown}
+            disabled={editing}
+            title={editing ? 'disabled on edit mode' : 'Drag to connect'}
             aria-label="Drag to connect"
           >
-            <PlusIcon />
+            <span className="cnode-port-dot" aria-hidden="true" />
           </button>
         </>
       )}

@@ -149,13 +149,20 @@ function bootEditor({ targetDoc, targetWin, transport, boardId, nodeId, kind }) 
   window.__uncraftMountOptions = { boardId, nodeId, kind };
 
   // CSS first so the editor renders correctly the moment editor.js builds
-  // its panels.
-  injectCss('/editor-core/editor.css');
+  // its panels. Fresh cache-bust per mount — the editor's source files
+  // get edited mid-session in dev, and a single page-load timestamp would
+  // re-use the stale CSS/JS already in the browser cache. Cost of
+  // re-fetching once per editor mount is negligible.
+  const cacheBust = String(Date.now());
+  // Drop any previously-injected editor stylesheets so the new ?v=...
+  // version actually replaces it (browsers de-dupe by full href).
+  document.head.querySelectorAll('link[data-uncraft-editor]').forEach((el) => el.remove());
+  injectCss('/editor-core/editor.css?v=' + cacheBust);
 
   bootPromise = (async () => {
     for (const f of SCRIPT_FILES) {
       if (bootAborted) throw new Error('boot aborted');
-      await injectScript('/editor-core/' + f);
+      await injectScript('/editor-core/' + f + '?v=' + cacheBust);
     }
   })();
 

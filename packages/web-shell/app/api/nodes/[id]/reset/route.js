@@ -37,6 +37,7 @@ export async function POST(request, { params }) {
 
   return NextResponse.json({
     ok: true,
+    snapshot_id: first.id,
     html: first.html,
     design_md: first.design_md,
     screenshot_url: first.screenshot_url

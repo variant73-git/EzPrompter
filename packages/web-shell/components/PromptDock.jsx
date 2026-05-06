@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
 
 const ICON_PLUS = (
   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -110,13 +111,14 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, nodeCou
     if (!value && !imageFile) return;
 
     if (showAddUrl) {
-      if (!/^https?:\/\//i.test(value)) {
-        alert('Enter a full http(s) URL.');
+      const url = normalizeUrl(value);
+      if (!url) {
+        alert('Enter a domain (example.com) or full URL.');
         return;
       }
       setBusy(true);
       try {
-        await onAddUrl(value);
+        await onAddUrl(url);
         setText('');
         setShowAddUrl(false);
       } finally {
@@ -163,11 +165,11 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, nodeCou
 
   const hasContent = text.trim() !== '' || imageFile !== null;
   const placeholder = showAddUrl
-    ? 'Paste URL…'
+    ? 'example.com or full URL…'
     : showBrain
       ? 'Brainstorm…'
       : showPin
-        ? 'Pin a feedback…'
+        ? 'Pin feedback on the canvas…'
         : nodeCount === 0
           ? 'Add a site URL or design.md to start your canvas…'
           : 'Add another node…';
@@ -301,7 +303,7 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, nodeCou
                   exit={{ width: 0, opacity: 0 }}
                   transition={{ duration: 0.18 }}
                 >
-                  Pin
+                  Feedback Mode
                 </motion.span>
               )}
             </AnimatePresence>

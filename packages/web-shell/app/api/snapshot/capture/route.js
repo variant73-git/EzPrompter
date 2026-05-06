@@ -15,6 +15,49 @@ export async function POST(request) {
     return NextResponse.json({ error: 'valid http(s) url required' }, { status: 400 });
   }
 
+  // Reachability pre-check — fast bail-out so we don't spin Playwright
+  // up against a typo or dead host. HEAD first; some servers reject it
+  // (405/501) so fall back to a tiny ranged GET. 6s budget.
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'HEAD', redirect: 'follow', signal: ctrl.signal,
+        headers: { 'user-agent': 'Mozilla/5.0 UncraftBot/1.0' }
+      });
+      if (!res.ok && [405, 501].includes(res.status)) {
+        res = await fetch(url, {
+          method: 'GET', redirect: 'follow', signal: ctrl.signal,
+          headers: { 'user-agent': 'Mozilla/5.0 UncraftBot/1.0', range: 'bytes=0-256' }
+        });
+      }
+    } finally { clearTimeout(timer); }
+    if (!res || res.status >= 400) {
+      const status = res ? res.status : 0;
+      return NextResponse.json({
+        error: 'site_unreachable',
+        detail: status ? `Server responded with HTTP ${status}.` : 'No response from server.',
+        status
+      }, { status: 400 });
+    }
+  } catch (e) {
+    const code = e?.cause?.code || e?.code || '';
+    const msg = String(e?.message || '');
+    const isDns = code === 'ENOTFOUND' || /ENOTFOUND/.test(msg);
+    const isAbort = e?.name === 'AbortError';
+    return NextResponse.json({
+      error: 'site_unreachable',
+      detail: isDns
+        ? 'Domain not found. Check the spelling.'
+        : isAbort
+          ? 'Site did not respond within 6 seconds.'
+          : 'Could not reach the site.',
+      code
+    }, { status: 400 });
+  }
+
   let cap;
   try {
     cap = await captureSnapshot(url);

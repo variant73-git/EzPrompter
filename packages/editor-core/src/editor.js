@@ -136,6 +136,13 @@
   var selBox = mk('div', 'rb-sel-box');
   var selLabel = mk('div', 'rb-sel-label');
   selBox.appendChild(selLabel);
+  // Feedback tab on the selection — anchored to the box's top-right
+  // corner, sticking OUT (translated above the top edge), same shape as
+  // the one on spacing guides. Visible while a node element is
+  // selected. Markup is hydrated lazily because SPACING_PIN_SVG /
+  // spacingFeedbackTabMarkup are declared further down in the IIFE.
+  var selFeedbackTab = mk('div', 'rb-sel-fb-tab');
+  selBox.appendChild(selFeedbackTab);
   selBox.style.display = 'none';
 
   var handleDirs = ['nw','n','ne','e','se','s','sw','w'];
@@ -2710,6 +2717,7 @@
     });
 
     row._rbEl = el;
+    row._rbEffectiveEl = effectiveEl;
     container.appendChild(row);
 
     if (hasVisibleChildren) {
@@ -3081,45 +3089,77 @@
       walk = walk.parentElement;
     }
 
-    // Walk the layers tree, expanding each ancestor level
+    // Walk the layers tree, expanding each ancestor level. Inert ancestors
+    // are skip-promoted in the tree (no row), so we tolerate misses and keep
+    // descending — descendants may still appear at the same currentContainer.
     var currentContainer = layersBody;
     for (var i = 0; i < chain.length; i++) {
       var target = chain[i];
-      var found = false;
-
-      // Search rows in currentContainer
       var rowContainers = currentContainer.children;
+      var foundRC = null;
+      var foundRow = null;
+
       for (var j = 0; j < rowContainers.length; j++) {
         var rc = rowContainers[j];
-        var row = rc.querySelector('.rb-layer-row');
-        if (!row || row._rbEl !== target) continue;
+        var row = rc.querySelector(':scope > .rb-layer-row');
+        if (!row) continue;
+        if (row._rbEl === target || row._rbEffectiveEl === target) {
+          foundRC = rc;
+          foundRow = row;
+          break;
+        }
+      }
 
-        found = true;
+      if (!foundRow) continue;  // skipped/inert ancestor; keep walking
 
-        if (i === chain.length - 1) {
-          // Target element — highlight
-          row.classList.add('rb-layer-selected');
-          row.scrollIntoView({block: 'nearest', behavior: 'smooth'});
-        } else {
-          // Ancestor — expand it
-          var chev = row.querySelector('.rb-layer-chev');
-          var childContainer = rc.querySelector('.rb-layer-children');
-          if (childContainer) {
-            if (childContainer.children.length === 0) {
-              renderLayerChildren(target, childContainer, i + 1);
-            }
-            childContainer.classList.add('rb-layer-expanded');
-            if (chev) chev.classList.add('rb-layer-open');
-            currentContainer = childContainer;
+      if (i === chain.length - 1) {
+        foundRow.classList.add('rb-layer-selected');
+        foundRow.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+        return;
+      }
+
+      var childContainer = foundRC.querySelector(':scope > .rb-layer-children');
+      if (!childContainer) continue;
+      if (childContainer.children.length === 0) {
+        // Render from the row's effectiveEl so chain-collapsed wrappers emit
+        // the correct children (matching the collapse-button behaviour).
+        var src = foundRow._rbEffectiveEl || target;
+        renderLayerChildren(src, childContainer, i + 1);
+      }
+      childContainer.classList.add('rb-layer-expanded');
+      var collapseBtn = foundRow.querySelector(':scope > .rb-layer-collapse');
+      if (collapseBtn) collapseBtn.classList.remove('rb-collapsed');
+      currentContainer = childContainer;
+    }
+
+    // Final pass: row for `el` may have been rendered during expansion above
+    // but missed by the strict chain walk (e.g. chain ends at an inert
+    // wrapper whose children were promoted). Look up by _rbEl directly.
+    var allRows = layersBody.querySelectorAll('.rb-layer-row');
+    var matchRow = null;
+    for (var k = 0; k < allRows.length; k++) {
+      if (allRows[k]._rbEl === el || allRows[k]._rbEffectiveEl === el) {
+        matchRow = allRows[k];
+        break;
+      }
+    }
+    // Fallback: if `el` itself is filtered (inert/skipped) and has no row,
+    // highlight the nearest ancestor that does.
+    if (!matchRow) {
+      var w = el.parentElement;
+      while (w && w !== targetDoc.body && !matchRow) {
+        for (var m = 0; m < allRows.length; m++) {
+          if (allRows[m]._rbEl === w || allRows[m]._rbEffectiveEl === w) {
+            matchRow = allRows[m];
+            break;
           }
         }
-        break;
+        w = w.parentElement;
       }
-
-      if (!found) {
-        // Row not in tree (possibly filtered as inert) — stop searching
-        break;
-      }
+    }
+    if (matchRow) {
+      matchRow.classList.add('rb-layer-selected');
+      matchRow.scrollIntoView({block: 'nearest', behavior: 'smooth'});
     }
   }
 
@@ -3179,6 +3219,69 @@
     userWrap.appendChild(userAvatar);
     userWrap.appendChild(userChev);
     hd.appendChild(userWrap);
+
+    // Canvas zoom pill — only meaningful when running inside the canvas
+    // shell (host page exposes window.__uncraftZoom). In the extension
+    // context this is hidden via the missing API check.
+    if (hostWin.__uncraftZoom) {
+      var zoomWrap = mk('div', 'rb-ed-zoom-wrap');
+      var zoomPill = mk('button', 'rb-ed-zoom-pill');
+      zoomPill.type = 'button';
+      var zoomPct = mk('span', 'rb-ed-zoom-pct');
+      zoomPct.textContent = Math.round((hostWin.__uncraftZoom.getScale() || 1) * 100) + '%';
+      var zoomChev = mk('span', 'rb-ed-zoom-chev');
+      zoomChev.innerHTML = '<svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 4.5 3 3 3-3"/></svg>';
+      zoomPill.appendChild(zoomPct);
+      zoomPill.appendChild(zoomChev);
+      zoomWrap.appendChild(zoomPill);
+
+      // Live-update the displayed % whenever canvas scale changes via
+      // CSS variable (CanvasClient sets --canvas-scale on every transform).
+      var zoomTickerId = setInterval(function() {
+        if (!hostWin.__uncraftZoom) return;
+        zoomPct.textContent = Math.round(hostWin.__uncraftZoom.getScale() * 100) + '%';
+      }, 250);
+      sig.addEventListener('abort', function() { clearInterval(zoomTickerId); });
+
+      var zoomMenu = null;
+      function closeZoomMenu() {
+        if (zoomMenu) { zoomMenu.remove(); zoomMenu = null; hostDoc.removeEventListener('mousedown', onZoomOutside, true); }
+      }
+      function onZoomOutside(ev) {
+        if (zoomMenu && !zoomMenu.contains(ev.target) && !zoomPill.contains(ev.target)) closeZoomMenu();
+      }
+      function buildZoomItem(label, kbd, onClick) {
+        var it = mk('button', 'rb-ed-zoom-item');
+        it.type = 'button';
+        it.innerHTML = '<span>' + label + '</span>' + (kbd ? '<span class="rb-ed-zoom-kbd">' + kbd + '</span>' : '');
+        it.addEventListener('mousedown', function(e) {
+          e.stopImmediatePropagation();
+          onClick();
+          closeZoomMenu();
+        }, {capture: true});
+        return it;
+      }
+      zoomPill.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        if (zoomMenu) { closeZoomMenu(); return; }
+        zoomMenu = mk('div', 'rb-ed-zoom-menu');
+        [0.5, 0.75, 1, 1.25, 1.5].forEach(function(p) {
+          zoomMenu.appendChild(buildZoomItem(Math.round(p * 100) + '%', '', function() { hostWin.__uncraftZoom.setScale(p); }));
+        });
+        var sep = mk('div', 'rb-ed-zoom-sep');
+        zoomMenu.appendChild(sep);
+        zoomMenu.appendChild(buildZoomItem('Zoom in', '⌘+', function() { hostWin.__uncraftZoom.zoomIn(); }));
+        zoomMenu.appendChild(buildZoomItem('Zoom out', '⌘−', function() { hostWin.__uncraftZoom.zoomOut(); }));
+        zoomMenu.appendChild(buildZoomItem('Fit to View', '⌘0', function() { hostWin.__uncraftZoom.fit(); }));
+        var rect = zoomPill.getBoundingClientRect();
+        zoomMenu.style.cssText = 'position:fixed;top:' + (rect.bottom + 6) + 'px;left:' + Math.max(8, rect.left) + 'px;';
+        hostDoc.body.appendChild(zoomMenu);
+        setTimeout(function() { hostDoc.addEventListener('mousedown', onZoomOutside, true); }, 50);
+      }, {capture: true, signal: sig});
+      sig.addEventListener('abort', closeZoomMenu);
+
+      hd.appendChild(zoomWrap);
+    }
 
     var exportWrap = mk('div');
     exportWrap.style.position = 'relative';
@@ -3472,9 +3575,12 @@
       applyTheme(!isLight());
     }, {capture: true, signal: sig});
 
-    logoActions.appendChild(themeBtn);
-    logoActions.appendChild(panelMinBtn);
-    logoActions.appendChild(panelUndockBtn);
+    // Minimize / undock / theme buttons are no longer surfaced in the
+    // layers panel header — minimize was removed at user request and the
+    // theme toggle moved to the canvas toolbar (web-shell). The button
+    // elements + handlers stay declared above so the rest of the code
+    // (mini-widget restore, floating toggles, applyTheme on boot) keeps
+    // working without churn.
     logoRow.appendChild(logoLeft);
     logoRow.appendChild(logoActions);
     layersHd.appendChild(logoRow);
@@ -4737,16 +4843,12 @@
     var bgTxt = mk('span', 'rb-insp-val');
     bgTxt.textContent = bgDisplayVal;
     bgTxt.style.cssText = 'flex:1;background:none;padding:0;';
-    var bgDivider = mk('div', 'rb-insp-field-divider');
-    bgDivider.style.cssText = 'width:1px;align-self:stretch;flex-shrink:0;';
-    if (!bgAlphaVal) bgDivider.style.display = 'none';
     var bgAlphaLabel = mk('input', 'rb-insp-inp');
     bgAlphaLabel.value = bgAlphaVal;
     bgAlphaLabel.style.cssText = 'width:42px;text-align:right;flex:none;background:none;';
     if (!bgAlphaVal) bgAlphaLabel.style.display = 'none';
     function showBgAlpha(val) {
       bgAlphaLabel.value = val;
-      bgDivider.style.display = val ? '' : 'none';
       bgAlphaLabel.style.display = val ? '' : 'none';
     }
     bgAlphaLabel.addEventListener('change', function() {
@@ -4865,7 +4967,6 @@
 
     bgWrap.appendChild(bgSwatch);
     bgWrap.appendChild(bgTxt);
-    bgWrap.appendChild(bgDivider);
     bgWrap.appendChild(bgAlphaLabel);
 
     // Eye button (hide/show) — outside the field
@@ -5229,7 +5330,7 @@
         // Compact row matches the font field height (25px). Expand spills extra
         // swatches into a separate row below so the compact row height stays fixed.
         var compact = mk('div', 'rb-insp-field-bg rb-insp-color-compact');
-        compact.style.cssText = 'display:flex;align-items:center;gap:8px;padding:0 8px;border-radius:4px;height:25px;';
+        compact.style.cssText = 'display:flex;align-items:center;gap:8px;padding:0 8px;border-radius:4px;height:25px;cursor:pointer;';
         var compactLbl = mk('span', 'rb-insp-selection-lbl');
         compactLbl.textContent = 'Selection colors';
         compactLbl.style.cssText = 'flex:1;font:500 12px/1.3 "Instrument Sans",sans-serif;min-width:100px;white-space:nowrap;';
@@ -5259,8 +5360,7 @@
         var extraRow = mk('div');
         extraRow.style.cssText = 'display:none;gap:4px;flex-wrap:wrap;padding:4px 8px 0;';
         var expandedCompact = false;
-        morePill.addEventListener('mousedown', function(ev) {
-          ev.stopImmediatePropagation();
+        function toggleCompactColors() {
           expandedCompact = !expandedCompact;
           if (expandedCompact) {
             extraRow.innerHTML = '';
@@ -5274,7 +5374,18 @@
             extraRow.innerHTML = '';
             morePill.textContent = '+' + (colorEntries.length - compactShown);
           }
+        }
+        morePill.addEventListener('mousedown', function(ev) {
+          ev.stopImmediatePropagation();
+          toggleCompactColors();
         }, {capture: true, signal: sig});
+        // Clicking anywhere on the compact row (label / empty space) also
+        // toggles. Swatches + morePill stopImmediatePropagation in their own
+        // capture-phase handlers so this only fires on row chrome.
+        compact.addEventListener('mousedown', function(ev) {
+          ev.stopImmediatePropagation();
+          toggleCompactColors();
+        }, {signal: sig});
         compact.appendChild(morePill);
         colorsStack.appendChild(compact);
         colorsStack.appendChild(extraRow);
@@ -6646,11 +6757,59 @@
     }
   }
 
+  // Pin icon — same shape used by the host shell's PromptDock so the
+  // feedback affordance reads as "the same thing" inside the editor and
+  // out on the canvas.
+  var SPACING_PIN_SVG = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="17" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>';
+
+  function spacingWidgetMarkup(iconChar, valStr) {
+    return (
+      '<span class="rb-spacing-icon">' + iconChar + '</span>' +
+      '<span class="rb-spacing-val">' + valStr + '</span>'
+    );
+  }
+
+  function spacingFeedbackTabMarkup() {
+    return (
+      '<span class="rb-spacing-fb-lbl">Add feedback</span>' +
+      '<span class="rb-spacing-fb-sep" aria-hidden="true"></span>' +
+      '<button type="button" class="rb-spacing-fb-btn" title="Pin feedback to this guide" aria-label="Add feedback">' +
+        SPACING_PIN_SVG +
+      '</button>'
+    );
+  }
+
+  // Hydrate the selection-box feedback tab (created earlier, before
+  // SPACING_PIN_SVG existed). Wire click + drag-suppression.
+  selFeedbackTab.innerHTML = spacingFeedbackTabMarkup();
+  selFeedbackTab.addEventListener('mousedown', function(e) {
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
+  selFeedbackTab.addEventListener('click', function(e) {
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      hostWin.dispatchEvent(new CustomEvent('uncraft:feedback', {
+        detail: { source: 'selection', selector: selectedEl ? (selectedEl.id || selectedEl.tagName) : null }
+      }));
+    } catch (err) {}
+  });
+
   Object.keys(spacingGuides).forEach(function(key) {
     var widget = mk('div', 'rb-spacing-widget');
-    widget.innerHTML = '<span class="rb-spacing-icon">\u2194</span><span class="rb-spacing-val">0</span>';
+    widget.innerHTML = spacingWidgetMarkup('\u2194', '0');
     widget.setAttribute('data-rb-guide', key);
     spacingGuides[key].appendChild(widget);
+
+    // Feedback tab \u2014 anchored to the top-right border of the guide,
+    // sticking OUT (translated above the top edge). Visible only when
+    // the guide is active. Independent from the value widget so it
+    // survives innerHTML rebuilds during inline edit.
+    var fbTab = mk('div', 'rb-spacing-fb-tab');
+    fbTab.innerHTML = spacingFeedbackTabMarkup();
+    spacingGuides[key].appendChild(fbTab);
+
     spacingGuides[key].style.display = 'none';
     spacingGuides[key].style.pointerEvents = 'auto';
     spacingGuides[key].style.cursor = (guideAxis[key] === 'x') ? 'ew-resize' : 'ns-resize';
@@ -6661,6 +6820,19 @@
     spacingGuides[key].addEventListener('mouseenter', function() { setActiveGuide(key); });
     spacingGuides[key].addEventListener('mouseleave', function() {
       if (!spacingGuides[key].classList.contains('rb-spacing-dragging')) setActiveGuide(null);
+    });
+
+    // Feedback tab \u2014 stop drag/resize from triggering when clicking the tab.
+    fbTab.addEventListener('mousedown', function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }, true);
+    fbTab.addEventListener('click', function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      // Hand-off to host shell \u2014 fires through transport when wired.
+      // Stub matching the WIP feedback flow in PromptDock.
+      try { hostWin.dispatchEvent(new CustomEvent('uncraft:feedback', { detail: { source: 'guide', guideKey: key } })); } catch (err) {}
     });
 
     // Dbl-click on the label → inline numeric input (supports 20, 20px, 1rem, 2em, 50%, +5, -3)
@@ -6687,7 +6859,7 @@
       var committed = false;
       function restoreLabel(label) {
         widget.classList.remove('rb-spacing-editing');
-        widget.innerHTML = '<span class="rb-spacing-icon">' + iconChar + '</span><span class="rb-spacing-val">' + label + '</span>';
+        widget.innerHTML = spacingWidgetMarkup(iconChar, label);
       }
       function parseInput(v) {
         v = v.trim();

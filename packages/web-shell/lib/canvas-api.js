@@ -4,7 +4,7 @@ const COMMON = { credentials: 'include', headers: { 'content-type': 'application
 
 async function jsonOrThrow(r) {
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j?.error || j?.detail || `${r.status} ${r.statusText}`);
+  if (!r.ok) throw new Error(j?.detail || j?.error || `${r.status} ${r.statusText}`);
   return j;
 }
 
