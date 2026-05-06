@@ -8,6 +8,8 @@ export function nodeOrigin(node) {
   if (!node) return 'unknown';
   if (node.kind === 'designmd') return 'md';
   if (node.kind === 'image') return 'screenshot';
+  if (node.kind === 'prompt') return 'prompt';
+  if (node.kind === 'skill') return 'skill';
   if (node.kind === 'site' && node.origin_url) return 'url';
   if (node.kind === 'site') return 'html';
   return 'unknown';
@@ -20,6 +22,8 @@ export const ORIGIN_COLORS = {
   html:       '#f97316',  // orange
   md:         '#34d399',  // emerald
   screenshot: '#a78bfa',  // violet
+  prompt:     '#facc15',  // yellow
+  skill:      '#f472b6',  // pink
   unknown:    '#94a3b8'   // slate fallback
 };
 

@@ -44,20 +44,161 @@ const ICON_X = (
   </svg>
 );
 
-const ACCEPT_TYPES = 'image/*,.md,.markdown,.html,text/markdown,text/html';
+const ICON_CHEVRON = (
+  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="m6 9 6 6 6-6"/>
+  </svg>
+);
+
+const ICON_CHECK = (
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M20 6 9 17l-5-5"/>
+  </svg>
+);
+
+// Add-menu icons (match the canvas context menu visual language).
+const MENU_ICON = {
+  Html: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+      <path d="M14 3v5h5"/><path d="m9 14-1.5 2L9 18"/><path d="m13.5 14 1.5 2-1.5 2"/>
+    </svg>
+  ),
+  Md: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+      <path d="M14 3v5h5"/><path d="M8 13h2l1.5 2L13 13h2"/><path d="M8 17h7"/>
+    </svg>
+  ),
+  Image: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="5" width="18" height="14" rx="2"/>
+      <circle cx="9" cy="10.5" r="1.5"/><path d="m21 16-5-5L5 19"/>
+    </svg>
+  ),
+  Prompt: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      <path d="M8 10h8M8 13h5"/>
+    </svg>
+  ),
+  Skill: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m12 3 2.5 5 5.5.8-4 3.9.95 5.5L12 15.6 7.05 18.2 8 12.7 4 8.8 9.5 8z"/>
+    </svg>
+  ),
+  Files: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M16 21H6a2 2 0 0 1-2-2V7"/>
+      <path d="M9 17h9a2 2 0 0 0 2-2V6l-4-4H10a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2z"/>
+    </svg>
+  )
+};
+
+// --- Model picker -----------------------------------------------------------
+
+const PROVIDER_ICON = {
+  google: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden>
+      <path fill="#EA4335" d="M12 10v3.8h5.4c-.24 1.4-1.7 4.1-5.4 4.1-3.25 0-5.9-2.7-5.9-6s2.65-6 5.9-6c1.85 0 3.1.78 3.8 1.46l2.6-2.5C16.74 3.3 14.6 2.4 12 2.4 6.7 2.4 2.4 6.7 2.4 12s4.3 9.6 9.6 9.6c5.55 0 9.2-3.9 9.2-9.4 0-.63-.07-1.1-.16-1.6z"/>
+      <path fill="#FBBC05" d="M3.7 7.4 6.6 9.5C7.4 7.6 9.5 6.2 12 6.2c1.85 0 3.1.78 3.8 1.46l2.6-2.5C16.74 3.3 14.6 2.4 12 2.4 8.4 2.4 5.3 4.4 3.7 7.4z"/>
+      <path fill="#34A853" d="M12 21.6c2.5 0 4.6-.8 6.1-2.2l-2.9-2.4c-.8.55-1.85.9-3.2.9-2.5 0-4.6-1.65-5.35-3.9l-2.9 2.25c1.55 3.1 4.7 5.35 8.25 5.35z"/>
+      <path fill="#4285F4" d="M21.2 12.2c0-.63-.07-1.1-.16-1.6H12V14h5.2c-.22.95-.85 2-1.9 2.85l2.9 2.4c1.7-1.6 2.95-3.95 2.95-7.05z"/>
+    </svg>
+  ),
+  kimi: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden>
+      <rect x="2" y="2" width="20" height="20" rx="6" fill="#1f1f1f" stroke="rgba(255,255,255,0.15)"/>
+      <path fill="#a78bfa" d="M9 6.4h1.7v4.2L14.5 6.4h2.05l-3.6 4.05L17 17.6h-2l-2.95-5.05-1.35 1.5v3.55H9z"/>
+    </svg>
+  ),
+  openai: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden fill="currentColor">
+      <path d="M22.28 9.82a5.94 5.94 0 0 0-.51-4.91 6 6 0 0 0-6.47-2.88 6 6 0 0 0-4.53-2 6 6 0 0 0-5.7 4.13 5.94 5.94 0 0 0-3.97 2.88 6 6 0 0 0 .74 7.05 5.94 5.94 0 0 0 .51 4.92 6 6 0 0 0 6.47 2.87 6 6 0 0 0 4.53 2 6 6 0 0 0 5.7-4.13 5.94 5.94 0 0 0 3.97-2.88 6 6 0 0 0-.74-7.05zm-9 12.6a4.43 4.43 0 0 1-2.85-1l.14-.08 4.74-2.74a.78.78 0 0 0 .39-.68v-6.69l2 1.16v5.55a4.45 4.45 0 0 1-4.42 4.48zm-9.55-4.07a4.46 4.46 0 0 1-.53-3l.14.08 4.74 2.74a.77.77 0 0 0 .78 0l5.78-3.34v2.31a.07.07 0 0 1 0 .06L9.85 20a4.45 4.45 0 0 1-6.07-1.62zM2.55 9a4.43 4.43 0 0 1 2.32-2L4.86 7v5.48a.78.78 0 0 0 .39.68l5.78 3.34-2 1.16-4.78-2.79A4.45 4.45 0 0 1 2.55 9zm16.5 3.85L13.27 9.5l2-1.15 4.78 2.78a4.45 4.45 0 0 1-.69 8 4.45 4.45 0 0 1-2.31 1V14.6a.79.79 0 0 0-.4-.66zm2-3 -.14-.09-4.74-2.76a.77.77 0 0 0-.78 0L9.6 10.34V8a.07.07 0 0 1 0-.06l4.74-2.74a4.45 4.45 0 0 1 6.61 4.61zM8.51 13.71l-2-1.16V7a4.45 4.45 0 0 1 7.31-3.42l-.14.08-4.74 2.74a.78.78 0 0 0-.39.68zm1.09-2.34 2.59-1.49 2.59 1.49v3l-2.59 1.49-2.59-1.49z"/>
+    </svg>
+  ),
+  anthropic: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden fill="currentColor">
+      <path d="M14.27 4h3.42L24 20h-3.42zM6.31 4h3.6L16.3 20h-3.5l-1.3-3.4H4.6L3.3 20H0zm-1 9.27h4.92l-2.46-6.4z"/>
+    </svg>
+  ),
+  deepseek: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden>
+      <path fill="#3b82f6" d="M12 3.5c-1.55 1.7-2.6 3.55-3.05 5.55-1.95-.4-3.7-1.2-5.4-2.5C4.5 9.5 6.4 11.7 9 13c-.45 1.95-1.5 3.7-2.95 5.45 2.05-1.4 3.95-3.1 5.95-3.55 2 .45 3.9 2.15 5.95 3.55-1.45-1.75-2.5-3.5-2.95-5.45 2.6-1.3 4.5-3.5 5.45-6.45-1.7 1.3-3.45 2.1-5.4 2.5-.45-2-1.5-3.85-3.05-5.55z"/>
+    </svg>
+  )
+};
+
+const MODEL_OPTIONS = [
+  { group: 'BEST FOR WEB PAGES', items: [
+    { id: 'gemini-3-flash',    name: 'Gemini 3 Flash',  provider: 'google' },
+    { id: 'gemini-3.1-pro',    name: 'Gemini 3.1 Pro',  provider: 'google' },
+    { id: 'kimi-k2.6',         name: 'Kimi K2.6',       provider: 'kimi' }
+  ]},
+  { group: 'BEST FOR UI DESIGN', items: [
+    { id: 'gpt-5.4',           name: 'GPT-5.4',         provider: 'openai' },
+    { id: 'gpt-5.4-mini',      name: 'GPT-5.4 Mini',    provider: 'openai' },
+    { id: 'gpt-5.5',           name: 'GPT-5.5',         provider: 'openai' }
+  ]},
+  { group: null, items: [
+    { id: 'claude-4.5-haiku',  name: 'Claude 4.5 Haiku',  provider: 'anthropic' },
+    { id: 'claude-4.5-sonnet', name: 'Claude 4.5 Sonnet', provider: 'anthropic' },
+    { id: 'claude-4.5-opus',   name: 'Claude 4.5 Opus',   provider: 'anthropic' },
+    { id: 'claude-4.6-opus',   name: 'Claude 4.6 Opus',   provider: 'anthropic' },
+    { id: 'deepseek-v4-pro',   name: 'DeepSeek V4 Pro',   provider: 'deepseek' },
+    { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'deepseek' },
+    { id: 'gpt-5-mini',        name: 'GPT-5 Mini',        provider: 'openai' }
+  ]}
+];
+
+const ALL_MODELS = MODEL_OPTIONS.flatMap((g) => g.items);
+const DEFAULT_MODEL_ID = 'gpt-5.5';
+const MODEL_STORAGE_KEY = 'uncraft-model';
+
+function findModel(id) {
+  return ALL_MODELS.find((m) => m.id === id) || ALL_MODELS.find((m) => m.id === DEFAULT_MODEL_ID);
+}
+
+// --- File picker accept maps ------------------------------------------------
+
+const ACCEPT_HTML = '.html,.htm,text/html';
+const ACCEPT_MD = '.md,.markdown,text/markdown,text/plain';
+const ACCEPT_IMAGE = 'image/*';
+const ACCEPT_ANY = 'image/*,.md,.markdown,.html,text/markdown,text/html';
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
 const TEXTAREA_MAX_HEIGHT = 240;
 
-export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, nodeCount }) {
+export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, nodeCount }) {
   const [text, setText] = useState('');
   const [imageFile, setImageFile] = useState(null);   // attached image (preview only)
   const [imagePreview, setImagePreview] = useState(null);
   const [showAddUrl, setShowAddUrl] = useState(false);
   const [showBrain, setShowBrain] = useState(false);
   const [showPin, setShowPin] = useState(false);
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [showModelMenu, setShowModelMenu] = useState(false);
+  const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
+  const multiFileRef = useRef(null);
   const taRef = useRef(null);
+  const addBtnRef = useRef(null);
+  const modelBtnRef = useRef(null);
+
+  // Hydrate persisted model on mount.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const saved = localStorage.getItem(MODEL_STORAGE_KEY);
+      if (saved && findModel(saved)?.id === saved) setModelId(saved);
+    } catch (e) {}
+  }, []);
+
+  // Persist model selection.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem(MODEL_STORAGE_KEY, modelId); } catch (e) {}
+  }, [modelId]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -66,6 +207,28 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, nodeCou
     ta.style.height = 'auto';
     ta.style.height = Math.min(ta.scrollHeight, TEXTAREA_MAX_HEIGHT) + 'px';
   }, [text]);
+
+  // Close popovers on outside click / Esc.
+  useEffect(() => {
+    if (!showAddMenu && !showModelMenu) return;
+    function onDown(e) {
+      const t = e.target;
+      if (t?.closest?.('.prompt-dock-popover')) return;
+      if (showAddMenu && t?.closest?.('.prompt-dock-add-btn')) return;
+      if (showModelMenu && t?.closest?.('.prompt-dock-model-btn')) return;
+      setShowAddMenu(false);
+      setShowModelMenu(false);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') { setShowAddMenu(false); setShowModelMenu(false); }
+    }
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [showAddMenu, showModelMenu]);
 
   function fileKind(file) {
     const name = (file.name || '').toLowerCase();
@@ -106,6 +269,53 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, nodeCou
     setImagePreview(null);
   }
 
+  // Open the hidden single-file picker with a specific accept list.
+  function openPicker(accept) {
+    const el = fileRef.current;
+    if (!el) return;
+    el.accept = accept || ACCEPT_ANY;
+    el.click();
+  }
+
+  function openMultiPicker() {
+    const el = multiFileRef.current;
+    if (!el) return;
+    el.click();
+  }
+
+  function focusComposer() {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.focus();
+  }
+
+  function pickAddItem(kind) {
+    setShowAddMenu(false);
+    if (kind === 'html') return openPicker(ACCEPT_HTML);
+    if (kind === 'md') return openPicker(ACCEPT_MD);
+    if (kind === 'screenshot') return openPicker(ACCEPT_IMAGE);
+    if (kind === 'multiple') return openMultiPicker();
+    if (kind === 'prompt') {
+      setShowAddUrl(false); setShowBrain(false); setShowPin(false);
+      if (onAddPrompt) {
+        onAddPrompt();
+      } else {
+        focusComposer();
+      }
+      return;
+    }
+    if (kind === 'skill') {
+      if (onAddSkill) onAddSkill();
+      else alert('Coming next: skill node.');
+      return;
+    }
+  }
+
+  function pickModel(id) {
+    setModelId(id);
+    setShowModelMenu(false);
+  }
+
   async function submit() {
     const value = text.trim();
     if (!value && !imageFile) return;
@@ -129,7 +339,7 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, nodeCou
 
     // Free-text path (chat / feedback) — wired later. For now, log + clear.
     // eslint-disable-next-line no-console
-    console.log('[prompt-dock] submit (no chat handler yet):', { text: value, imageFile });
+    console.log('[prompt-dock] submit (no chat handler yet):', { text: value, imageFile, modelId });
     setText('');
     clearImage();
   }
@@ -174,6 +384,9 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, nodeCou
           ? 'Add a site URL or design.md to start your canvas…'
           : 'Add another node…';
 
+  const currentModel = findModel(modelId);
+  const ProviderIcon = PROVIDER_ICON[currentModel.provider];
+
   return (
     <div
       className="prompt-dock"
@@ -214,10 +427,13 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, nodeCou
       <div className="prompt-dock-actions">
         <div className="prompt-dock-actions-left">
           <button
+            ref={addBtnRef}
             type="button"
-            className="prompt-dock-icon-btn"
-            onClick={() => fileRef.current?.click()}
-            title="Add file (image, .md, .html)"
+            className={`prompt-dock-icon-btn prompt-dock-add-btn ${showAddMenu ? 'open' : ''}`}
+            onClick={() => { setShowAddMenu((p) => !p); setShowModelMenu(false); }}
+            title="Add to canvas"
+            aria-haspopup="menu"
+            aria-expanded={showAddMenu}
             disabled={busy}
           >
             {ICON_PLUS}
@@ -308,6 +524,23 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, nodeCou
               )}
             </AnimatePresence>
           </button>
+
+          <button
+            ref={modelBtnRef}
+            type="button"
+            className={`prompt-dock-pill prompt-dock-model-btn ${showModelMenu ? 'open' : ''}`}
+            onClick={() => { setShowModelMenu((p) => !p); setShowAddMenu(false); }}
+            title={`Model: ${currentModel.name}`}
+            aria-haspopup="menu"
+            aria-expanded={showModelMenu}
+            disabled={busy}
+          >
+            <span className="prompt-dock-pill-icon prompt-dock-model-icon">
+              <ProviderIcon />
+            </span>
+            <span className="prompt-dock-model-name">{currentModel.name}</span>
+            <span className="prompt-dock-model-chev">{ICON_CHEVRON}</span>
+          </button>
         </div>
 
         <motion.button
@@ -324,14 +557,91 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, nodeCou
         </motion.button>
       </div>
 
+      <AnimatePresence>
+        {showAddMenu && (
+          <motion.div
+            key="add-menu"
+            className="prompt-dock-popover prompt-dock-add-menu"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.14 }}
+            role="menu"
+          >
+            <div className="prompt-dock-popover-title">Add to canvas</div>
+            <button onClick={() => pickAddItem('html')}><MENU_ICON.Html /><span>Add .html</span></button>
+            <button onClick={() => pickAddItem('md')}><MENU_ICON.Md /><span>Add .md</span></button>
+            <button onClick={() => pickAddItem('screenshot')}><MENU_ICON.Image /><span>Add screenshot</span></button>
+            <button onClick={() => pickAddItem('prompt')}><MENU_ICON.Prompt /><span>Add prompt</span></button>
+            <button onClick={() => pickAddItem('skill')}><MENU_ICON.Skill /><span>Add skill</span></button>
+            <button onClick={() => pickAddItem('multiple')}><MENU_ICON.Files /><span>Add multiple files</span></button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showModelMenu && (
+          <motion.div
+            key="model-menu"
+            className="prompt-dock-popover prompt-dock-model-menu"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.14 }}
+            role="menu"
+          >
+            {MODEL_OPTIONS.map((group, gi) => (
+              <div key={gi} className="prompt-dock-model-group">
+                {group.group && (
+                  <div className="prompt-dock-popover-title prompt-dock-model-grouptitle">
+                    {group.group}
+                  </div>
+                )}
+                {group.items.map((m) => {
+                  const Icon = PROVIDER_ICON[m.provider];
+                  const selected = m.id === modelId;
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => pickModel(m.id)}
+                      className={selected ? 'selected' : ''}
+                      role="menuitemradio"
+                      aria-checked={selected}
+                    >
+                      <span className="prompt-dock-model-icon"><Icon /></span>
+                      <span className="prompt-dock-model-row-name">{m.name}</span>
+                      {selected && <span className="prompt-dock-model-check">{ICON_CHECK}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <input
         ref={fileRef}
         type="file"
-        accept={ACCEPT_TYPES}
         style={{ display: 'none' }}
         onChange={(e) => {
           const f = e.target.files?.[0];
           if (f) handlePickedFile(f);
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={multiFileRef}
+        type="file"
+        multiple
+        accept={ACCEPT_ANY}
+        style={{ display: 'none' }}
+        onChange={async (e) => {
+          const files = Array.from(e.target.files || []);
+          for (const f of files) {
+            // eslint-disable-next-line no-await-in-loop
+            await handlePickedFile(f);
+          }
           e.target.value = '';
         }}
       />

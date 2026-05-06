@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { nodeOrigin, originColor } from '../lib/node-origin.js';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
 import CanvasNode from './CanvasNode.jsx';
@@ -8,7 +9,8 @@ import EdgeLayer, { DraftEdgeLayer } from './EdgeLayer.jsx';
 import ZoomControls from './ZoomControls.jsx';
 import UserPill from './UserPill.jsx';
 import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
-import EdgePopup from './EdgePopup.jsx';
+// EdgePopup removed — the per-edge config widget was the legacy "manual mode".
+// Edges are now selected by click and deleted with the keyboard.
 import PromptDock from './PromptDock.jsx';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
@@ -82,6 +84,30 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       document.body.classList.add('rb-ed-light');
     }
   }, []);
+
+  // Dedup duplicate edges on mount. Each (source, target) pair should
+  // have at most one edge — earlier UX permitted creating many. The
+  // first one in iteration order wins; the rest are deleted on the
+  // server and removed from local state. Idempotent: with no dups this
+  // is a no-op.
+  const dedupRanRef = useRef(false);
+  useEffect(() => {
+    if (dedupRanRef.current) return;
+    if (!edges.length) return;
+    dedupRanRef.current = true;
+    const seen = new Set();
+    const dups = [];
+    for (const e of edges) {
+      const key = `${e.source_node_id}::${e.target_node_id}`;
+      if (seen.has(key)) dups.push(e.id);
+      else seen.add(key);
+    }
+    if (dups.length === 0) return;
+    setEdges((prev) => prev.filter((e) => !dups.includes(e.id)));
+    for (const id of dups) {
+      api.deleteEdge(id).catch(console.warn);
+    }
+  }, [edges]);
   useEffect(() => {
     if (typeof document === 'undefined') return;
     document.body.classList.toggle('rb-ed-light', lightMode);
@@ -144,7 +170,43 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   }
 
   function nextNodePosition(opts = {}) {
-    if (opts.worldX != null && opts.worldY != null) return { posX: opts.worldX, posY: opts.worldY };
+    const newW = opts.width || 1280;
+    const newH = opts.height || 800;
+    const GAP = 80;
+
+    // Find a non-overlapping (x, y) starting from a desired anchor. Walks
+    // right first (raster), drops a row when no x fits, eventually returns
+    // the desired anchor verbatim if 2k iterations didn't find space (unrealistic).
+    function settle(desiredX, desiredY) {
+      function overlaps(testX, testY) {
+        return nodes.some((n) => {
+          if (n._loading && !n.width) return false;
+          const nx = n.pos_x, ny = n.pos_y;
+          const nw = n.width || 1280, nh = n.height || 800;
+          return !(testX + newW + GAP <= nx ||
+                   nx + nw + GAP <= testX ||
+                   testY + newH + GAP <= ny ||
+                   ny + nh + GAP <= testY);
+        });
+      }
+      let x = desiredX, y = desiredY;
+      const STEP_X = 240;
+      const STEP_Y = 240;
+      for (let i = 0; i < 2000; i++) {
+        if (!overlaps(x, y)) return { x, y };
+        x += STEP_X;
+        if (x - desiredX > 6000) { x = desiredX; y += STEP_Y; }
+      }
+      return { x: desiredX, y: desiredY };
+    }
+
+    // Caller-supplied world coords (right-click context, edge drop) — honour
+    // the anchor but slide off any collision.
+    if (opts.worldX != null && opts.worldY != null) {
+      const s = settle(opts.worldX, opts.worldY);
+      return { posX: s.x, posY: s.y };
+    }
+
     // For new URL nodes, sit immediately to the LEFT of the leftmost
     // existing URL node (if any) so the canvas reads as a left-growing
     // column of captures. Falls back to a cascade when there's none.
@@ -152,16 +214,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const urlNodes = nodes.filter((n) => n.kind === 'site' && n.origin_url);
       if (urlNodes.length > 0) {
         const leftmost = urlNodes.reduce((acc, n) => (n.pos_x < acc.pos_x ? n : acc), urlNodes[0]);
-        const GAP = 80;
-        const newWidth = opts.width || 1280;
-        return {
-          posX: leftmost.pos_x - newWidth - GAP,
-          posY: leftmost.pos_y
-        };
+        const desiredX = leftmost.pos_x - newW - GAP;
+        const desiredY = leftmost.pos_y;
+        const s = settle(desiredX, desiredY);
+        return { posX: s.x, posY: s.y };
       }
     }
     const offset = nodes.length * 40;
-    return { posX: 200 + offset, posY: 200 + offset };
+    const s = settle(200 + offset, 200 + offset);
+    return { posX: s.x, posY: s.y };
   }
 
   async function autoLinkNewNode(sourceNodeId, newNodeId) {
@@ -233,18 +294,64 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
   async function handleUploadMd(file, opts = {}) {
     const text = await file.text();
-    const { posX, posY } = nextNodePosition(opts);
+    // Square node — the new MdPreviewBody renders a typography sample,
+    // colour palette + lorem-ipsum stack inside a 1:1 frame.
+    const width = 600, height = 600;
+    const { posX, posY } = nextNodePosition({ ...opts, width, height });
     try {
       const created = await api.createNode({
         boardId: board.id, kind: 'designmd',
-        posX, posY, width: 540, height: 720,
+        posX, posY, width, height,
         meta: { name: file.name },
-        html: `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:ui-monospace,monospace;padding:24px;line-height:1.6;color:#1f2937;background:#fafafa;white-space:pre-wrap;word-wrap:break-word;}</style></head><body>${escapeHtml(text)}</body></html>`,
         designMd: text
       });
-      setNodes((prev) => [...prev, { ...created.node, current_html: created.node.current_html || '', current_design_md: text }]);
+      setNodes((prev) => [...prev, { ...created.node, current_design_md: text }]);
       if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
     } catch (e) { alert(`Upload failed: ${e.message}`); }
+  }
+
+  async function handleAddPrompt(opts = {}) {
+    // 3:1 text-field node. Width chosen so it stays comfortable at 1× zoom.
+    const width = 600, height = 200;
+    const { posX, posY } = nextNodePosition({ ...opts, width, height });
+    try {
+      const created = await api.createNode({
+        boardId: board.id, kind: 'prompt',
+        posX, posY, width, height,
+        meta: { name: 'prompt', prompt: '' }
+      });
+      setNodes((prev) => [...prev, { ...created.node }]);
+      if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      setSelectedNodeId(created.node.id);
+    } catch (e) { alert(`Could not add prompt: ${e.message}`); }
+  }
+
+  async function handleAddSkill(opts = {}) {
+    // Skill is a small, square card with a file glyph + name. Default
+    // dimensions read as a "tile" rather than a document.
+    const width = 240, height = 280;
+    const { posX, posY } = nextNodePosition({ ...opts, width, height });
+    try {
+      const created = await api.createNode({
+        boardId: board.id, kind: 'skill',
+        posX, posY, width, height,
+        meta: { name: 'skill' }
+      });
+      setNodes((prev) => [...prev, { ...created.node }]);
+      if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+    } catch (e) { alert(`Could not add skill: ${e.message}`); }
+  }
+
+  async function handlePromptTextChange(id, value) {
+    setNodes((prev) => prev.map((n) =>
+      n.id === id ? { ...n, meta: { ...(n.meta || {}), prompt: value } } : n
+    ));
+    if (String(id).startsWith('temp-')) return;
+    try {
+      const node = nodes.find((n) => n.id === id);
+      const meta = { ...(node?.meta || {}), prompt: value };
+      await api.updateNode(id, { meta });
+    } catch (e) { console.warn('prompt persist failed', e); }
   }
 
   function pickFile(accept) {
@@ -288,23 +395,154 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
   }
 
-  function startEdgeFromNode(nodeId, mouseEvent) {
-    setDraftEdge({ sourceNodeId: nodeId, mouseX: mouseEvent.clientX, mouseY: mouseEvent.clientY });
+  // Synchronous ref mirror of draftEdge — closure-captured state goes
+  // stale between mousedown (which calls setDraftEdge) and the next
+  // re-render. The first batch of mousemove events would otherwise read
+  // `draftEdge === null` and early-return, leaving the cord invisible
+  // until enough mouse movement happened for React to flush a render.
+  // Updating the ref alongside setDraftEdge gives every handler the
+  // latest value immediately.
+  const draftEdgeRef = useRef(null);
+  function setDraftEdgeSync(value) {
+    draftEdgeRef.current = value;
+    setDraftEdge(value);
+  }
+
+  function startEdgeFromNode(nodeId, mouseEvent, side = 'right') {
+    setDraftEdgeSync({
+      sourceNodeId: nodeId, sourceSide: side,
+      mouseX: mouseEvent.clientX, mouseY: mouseEvent.clientY,
+      // No `rerouteEdgeId` → this is a NEW connection from a port. Set
+      // on the drag-to-disconnect path so handleGlobalMouseUp knows to
+      // skip the empty-drop menu and just leave the edge deleted.
+      rerouteEdgeId: null
+    });
+  }
+
+  // Click-vs-drag race for incoming-slot circles. Click → select edge.
+  // Drag past 5px → reroute (delete + start fresh draft). Same UX as the
+  // cord click handler in EdgeLayer, but bound to the receiver dot so
+  // the user can grab the cord by its endpoint to disconnect.
+  function onSlotMouseDown(edgeId, mouseEvent) {
+    mouseEvent.stopPropagation();
+    const startX = mouseEvent.clientX, startY = mouseEvent.clientY;
+    let started = false;
+    function move(ev) {
+      if (started) return;
+      if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 5) {
+        started = true;
+        cleanup();
+        const edge = edges.find((x) => x.id === edgeId);
+        if (edge) startEdgeReroute(edge, ev);
+      }
+    }
+    function up() {
+      if (!started) {
+        setSelectedEdgeId(edgeId);
+        setSelectedNodeId(null);
+      }
+      cleanup();
+    }
+    function cleanup() {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    }
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
+  // Drag-to-disconnect: pressing on an existing edge starts a draft cord
+  // anchored to the source's right port, with the existing edge already
+  // removed from the local list (the API delete fires here too). Drop on
+  // another node → re-target. Drop on empty → stay disconnected.
+  function startEdgeReroute(edge, mouseEvent) {
+    // Locally remove the edge so the re-routing draft cord is the only
+    // thing visible. Server delete fires async — if the user drops on a
+    // new target, we'll create a fresh edge for that pair.
+    setEdges((prev) => prev.filter((x) => x.id !== edge.id));
+    api.deleteEdge(edge.id).catch(console.warn);
+    setDraftEdgeSync({
+      sourceNodeId: edge.source_node_id,
+      sourceSide: 'right',
+      mouseX: mouseEvent.clientX, mouseY: mouseEvent.clientY,
+      rerouteEdgeId: edge.id
+    });
+  }
+
+  // Magnetic snap: in moveDraftEdge we look at every other node's left
+  // port stack and pick the nearest slot within SNAP_RADIUS_SCREEN px of
+  // the cursor. The draft cord endpoint snaps to that slot's world coord
+  // so the user gets clear visual confirmation that a drop will land.
+  const SNAP_RADIUS_SCREEN = 56;
+  const SLOT_SIZE = 24, SLOT_GAP = 8;
+  function findSnapTarget(clientX, clientY, sourceNodeId) {
+    if (!sourceNodeId) return null;
+    const w = clientToWorld(transformRef, clientX, clientY);
+    const scale = transformRef.current?.instance?.transformState?.scale || 1;
+    const radiusWorld = SNAP_RADIUS_SCREEN / scale;
+    // CSS sizes the circles in 1/scale world units (constant on screen).
+    // Slot Y math has to do the same or the snap target lands between
+    // circles instead of on them.
+    const slotSize = SLOT_SIZE / scale;
+    const slotGap = SLOT_GAP / scale;
+    let best = null, bestDist = Infinity;
+    for (const n of nodes) {
+      if (n.id === sourceNodeId) continue;
+      const el = typeof document !== 'undefined'
+        ? document.querySelector(`[data-node-id="${n.id}"]`)
+        : null;
+      const h = (el && el.offsetHeight) || n.height || 800;
+      const incoming = incomingByTarget.get(n.id) || [];
+      const slotCount = incoming.length === 0 ? 1 : incoming.length;
+      const midY = n.pos_y + h / 2;
+      const totalH = slotCount * slotSize + Math.max(0, slotCount - 1) * slotGap;
+      const stackTop = midY - totalH / 2;
+      for (let i = 0; i < slotCount; i++) {
+        const slotY = stackTop + i * (slotSize + slotGap) + slotSize / 2;
+        const dx = n.pos_x - w.x;
+        const dy = slotY - w.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < radiusWorld && dist < bestDist) {
+          best = { nodeId: n.id, slotIndex: i, slotCount, x: n.pos_x, y: slotY };
+          bestDist = dist;
+        }
+      }
+    }
+    return best;
   }
 
   function moveDraftEdge(e) {
-    if (draftEdge) setDraftEdge({ ...draftEdge, mouseX: e.clientX, mouseY: e.clientY });
+    const draft = draftEdgeRef.current;
+    if (!draft) return;
+    const snap = findSnapTarget(e.clientX, e.clientY, draft.sourceNodeId);
+    setDraftEdgeSync({ ...draft, mouseX: e.clientX, mouseY: e.clientY, snapTo: snap });
   }
 
   async function handleGlobalMouseUp(e) {
-    if (!draftEdge) return;
-    const src = draftEdge.sourceNodeId;
-    // Resolve target via DOM walk: was the mouseup over a .cnode?
-    const cnode = e.target?.closest?.('.cnode');
-    const targetId = cnode?.dataset?.nodeId || null;
-    setDraftEdge(null);
+    const draft = draftEdgeRef.current;
+    if (!draft) return;
+    const src = draft.sourceNodeId;
+    const isReroute = !!draft.rerouteEdgeId;
+    // Snap target wins over closest('.cnode') so the magnetic affordance
+    // is honoured even if the user's mouseup landed a few px off-target.
+    let targetId = draft.snapTo?.nodeId || null;
+    if (!targetId) {
+      const cnode = e.target?.closest?.('.cnode');
+      targetId = cnode?.dataset?.nodeId || null;
+    }
+    setDraftEdgeSync(null);
 
     if (targetId && targetId !== src) {
+      // Dedup: if an edge already exists from this source to this target,
+      // don't stack another circle on the receiver — just select the
+      // existing edge so the user can act on it.
+      const existing = edges.find(
+        (x) => x.source_node_id === src && x.target_node_id === targetId
+      );
+      if (existing) {
+        setSelectedEdgeId(existing.id);
+        return;
+      }
       try {
         const { edge } = await api.createEdge({
           boardId: board.id, sourceNodeId: src, targetNodeId: targetId,
@@ -312,13 +550,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         });
         setEdges((prev) => [...prev, edge]);
         setSelectedEdgeId(edge.id);
-        setPopupPos({ x: e.clientX, y: e.clientY });
       } catch (err) { alert(`Edge create failed: ${err.message}`); }
       return;
     }
 
     if (!targetId) {
-      // Empty drop → show creation menu near cursor.
+      // Re-route → drop on empty just means "stay disconnected". The edge
+      // was already removed in startEdgeReroute; do nothing else.
+      if (isReroute) return;
+      // Fresh port drag → empty drop opens the creation menu.
       const w = clientToWorld(transformRef, e.clientX, e.clientY);
       setEmptyDropMenu({ sourceNodeId: src, x: e.clientX, y: e.clientY, worldX: w.x, worldY: w.y });
     }
@@ -449,18 +689,42 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   }, []); // intentional: only on first mount
 
   // Keyboard shortcuts: Esc clears selection. F fits all nodes. 0 resets to 1:1 center.
+  // Delete/Backspace removes the selected node (or selected edge).
   useEffect(() => {
     function onKey(e) {
       const tag = e.target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.target?.isContentEditable) return;
       if (e.key === 'Escape') {
         // Cancel an in-flight edge drag in isolation — keep the source
         // node selected so the viewport switcher / chrome stays put.
-        // Only clear broader selection state on a second Esc.
-        if (draftEdge) { setDraftEdge(null); return; }
+        if (draftEdge) { setDraftEdgeSync(null); return; }
+        // Open menus take priority — first ESC closes the menu only, the
+        // node selection (and its viewport switcher) stays put. Second
+        // ESC then clears selection.
+        if (emptyDropMenu || contextMenu) {
+          if (emptyDropMenu) setEmptyDropMenu(null);
+          if (contextMenu) setContextMenu(null);
+          return;
+        }
         setSelectedNodeId(null);
         setSelectedEdgeId(null);
         setPopupPos(null);
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Don't bother if we're inside the editor — its own Backspace logic
+        // owns those keys.
+        if (editingNodeId) return;
+        if (selectedNodeId) {
+          e.preventDefault();
+          handleDeleteNode(selectedNodeId);
+          setSelectedNodeId(null);
+        } else if (selectedEdgeId) {
+          const edge = edges.find((x) => x.id === selectedEdgeId);
+          if (edge) {
+            e.preventDefault();
+            handleDeleteEdge(edge);
+          }
+        }
       } else if (e.key === 'f' || e.key === 'F') {
         fitToContent();
       } else if (e.key === '0') {
@@ -470,7 +734,28 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [nodes, draftEdge]);
+  }, [nodes, edges, draftEdge, selectedNodeId, selectedEdgeId, editingNodeId, emptyDropMenu, contextMenu]);
+
+  // Group edges by target — each target node renders one input port circle
+  // per incoming edge. Order is creation order (the array order from the
+  // server / setEdges appends). The list lives here so EdgeLayer and
+  // CanvasNode resolve the same slot index for any given edge.
+  const incomingByTarget = useMemo(() => {
+    const byNodeId = new Map(nodes.map((n) => [n.id, n]));
+    const m = new Map();
+    for (const e of edges) {
+      const src = byNodeId.get(e.source_node_id);
+      const list = m.get(e.target_node_id) || [];
+      list.push({
+        edgeId: e.id,
+        sourceNodeId: e.source_node_id,
+        sourceOrigin: src ? nodeOrigin(src) : 'unknown',
+        sourceColor: src ? originColor(src) : '#94a3b8'
+      });
+      m.set(e.target_node_id, list);
+    }
+    return m;
+  }, [edges, nodes]);
 
   return (
     <div
@@ -569,16 +854,19 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         <TransformComponent wrapperStyle={{ width: '100vw', height: '100vh' }} contentStyle={{ width: WORLD_WIDTH, height: WORLD_HEIGHT }}>
           <EdgeLayer
             nodes={nodes} edges={edges}
+            incomingByTarget={incomingByTarget}
+            scale={canvasScale}
             selectedEdgeId={selectedEdgeId}
-            onSelectEdge={(edge, evt) => {
+            onSelectEdge={(edge) => {
               setSelectedEdgeId(edge.id);
-              setPopupPos({ x: evt.clientX, y: evt.clientY });
               setSelectedNodeId(null);
             }}
+            onEdgeDragStart={(edge, evt) => startEdgeReroute(edge, evt)}
           />
           {nodes.map((n) => (
             <CanvasNode
               key={n.id} node={n}
+              incomingEdges={incomingByTarget.get(n.id) || []}
               selected={selectedNodeId === n.id}
               editing={editingNodeId === n.id}
               onEditingChange={(willEdit) => handleEditingToggle(n.id, willEdit)}
@@ -595,16 +883,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }}
               onDelete={() => handleDeleteNode(n.id)}
               onReset={() => handleResetNode(n.id)}
-              onStartEdge={(e) => startEdgeFromNode(n.id, e)}
+              onStartEdge={(e, side) => startEdgeFromNode(n.id, e, side)}
+              onSlotMouseDown={onSlotMouseDown}
+              onPromptTextChange={(value) => handlePromptTextChange(n.id, value)}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
             />
           ))}
           <DraftEdgeLayer
             nodes={nodes}
+            scale={canvasScale}
             draftEdge={draftEdge && {
               sourceNodeId: draftEdge.sourceNodeId,
+              sourceSide: draftEdge.sourceSide || 'right',
               x2: clientToWorld(transformRef, draftEdge.mouseX, draftEdge.mouseY).x,
-              y2: clientToWorld(transformRef, draftEdge.mouseX, draftEdge.mouseY).y
+              y2: clientToWorld(transformRef, draftEdge.mouseX, draftEdge.mouseY).y,
+              snapTo: draftEdge.snapTo || null
             }}
           />
         </TransformComponent>
@@ -616,17 +909,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         </div>
       )}
 
-      {selectedEdgeId && popupPos && (
-        <EdgePopup
-          edge={edges.find((e) => e.id === selectedEdgeId)}
-          nodes={nodes}
-          position={popupPos}
-          onUpdate={handleUpdateEdge}
-          onApply={handleApplyEdge}
-          onDelete={handleDeleteEdge}
-          onClose={() => { setSelectedEdgeId(null); setPopupPos(null); }}
-        />
-      )}
+      {/* Legacy EdgePopup ('Edge configuration' panel with kind/source/target
+          dropdowns) removed — the new model is: cord direction = semantic
+          operation. No manual configuration. To remove an edge, click it
+          and press Delete/Backspace. */}
 
       {emptyDropMenu && (
         <EmptyDropMenu
@@ -697,6 +983,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         onAddUrl={handleAddUrl}
         onUploadMd={handleUploadMd}
         onUploadHtml={handleUploadHtml}
+        onAddPrompt={() => handleAddPrompt()}
+        onAddSkill={() => handleAddSkill()}
         nodeCount={nodes.length}
       />
     </div>

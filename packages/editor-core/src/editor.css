@@ -44,9 +44,13 @@ body.rb-ed-active, body.rb-ed-active *:not(#rb-editor-root *):not(input):not(tex
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='28' viewBox='-2 -2 42 42'%3E%3Cdefs%3E%3Cfilter id='s'%3E%3CfeDropShadow dx='1' dy='2' stdDeviation='1.5' flood-opacity='0.4'/%3E%3C/filter%3E%3C/defs%3E%3Cpath filter='url(%23s)' d='M34.25,17.94l-13.58,2.72-2.72,13.58c-.22,1.1-1.29,1.81-2.39,1.59-.67-.13-1.23-.6-1.49-1.23L2.15,4.78c-.42-1.04.09-2.22,1.13-2.64.48-.19,1.02-.19,1.51,0l29.82,11.93c1.04.42,1.55,1.6,1.13,2.64-.25.64-.81,1.1-1.48,1.24Z' fill='%23fff' stroke='%23000' stroke-width='1.5'/%3E%3C/svg%3E") 2 1, default !important;
 }
 
-/* Text cursor — cursor + T icon */
+/* Text cursor — arrow + larger T glyph parked off the lower-right diagonal
+   so it never overlaps the arrow body. T is ~55% bigger than before
+   (scale 0.7 vs 0.45) and translated to (32, 28), placing it past the
+   arrow's bottom-right edge. ViewBox + outer width/height extended to
+   accommodate the new bounding box. */
 body.rb-ed-active .rb-ed-text-hint {
-  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='-2 -2 48 48'%3E%3Cdefs%3E%3Cfilter id='s'%3E%3CfeDropShadow dx='1' dy='2' stdDeviation='1.5' flood-opacity='0.4'/%3E%3C/filter%3E%3C/defs%3E%3Cpath filter='url(%23s)' d='M34.25,17.94l-13.58,2.72-2.72,13.58c-.22,1.1-1.29,1.81-2.39,1.59-.67-.13-1.23-.6-1.49-1.23L2.15,4.78c-.42-1.04.09-2.22,1.13-2.64.48-.19,1.02-.19,1.51,0l29.82,11.93c1.04.42,1.55,1.6,1.13,2.64-.25.64-.81,1.1-1.48,1.24Z' fill='%23fff' stroke='%23000' stroke-width='1.5'/%3E%3Cg transform='translate(14,26) scale(0.45)' fill='%23fff' stroke='%23000' stroke-width='1'%3E%3Cpolygon points='24.5 1 1 1 1 4.99 1.01 4.99 1.01 9 5 9 5 4.99 10.75 4.99 10.75 22.65 7.58 22.65 7.58 26.64 17.91 26.64 17.91 22.65 14.74 22.65 14.74 4.99 20.54 4.99 20.54 9 24.53 9 24.53 1 24.5 1'/%3E%3C/g%3E%3C/svg%3E") 2 1, text !important;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='38' viewBox='-2 -2 56 52'%3E%3Cdefs%3E%3Cfilter id='s'%3E%3CfeDropShadow dx='1' dy='2' stdDeviation='1.5' flood-opacity='0.4'/%3E%3C/filter%3E%3C/defs%3E%3Cpath filter='url(%23s)' d='M34.25,17.94l-13.58,2.72-2.72,13.58c-.22,1.1-1.29,1.81-2.39,1.59-.67-.13-1.23-.6-1.49-1.23L2.15,4.78c-.42-1.04.09-2.22,1.13-2.64.48-.19,1.02-.19,1.51,0l29.82,11.93c1.04.42,1.55,1.6,1.13,2.64-.25.64-.81,1.1-1.48,1.24Z' fill='%23fff' stroke='%23000' stroke-width='1.5'/%3E%3Cg transform='translate(32,28) scale(0.7)' fill='%23fff' stroke='%23000' stroke-width='1'%3E%3Cpolygon points='24.5 1 1 1 1 4.99 1.01 4.99 1.01 9 5 9 5 4.99 10.75 4.99 10.75 22.65 7.58 22.65 7.58 26.64 17.91 26.64 17.91 22.65 14.74 22.65 14.74 4.99 20.54 4.99 20.54 9 24.53 9 24.53 1 24.5 1'/%3E%3C/g%3E%3C/svg%3E") 2 1, text !important;
 }
 
 /* Drag states */
@@ -1932,6 +1936,27 @@ body.rb-ed-light .rb-fill-popup .rb-insp-sec-title { color:#1f1f1f !important; }
 .rb-fill-row-icon.rb-insp-eye-off { color:rgba(239,238,235,0.15); }
 
 /* ── Color library swatches ── */
+.rb-fill-lib-section { display:block; }
+.rb-fill-lib-section[style*="display: none"],
+.rb-fill-lib-section[style*="display:none"] { display:none !important; }
+.rb-fill-lib-sub { display:block; }
+.rb-fill-lib-sub[style*="display: none"],
+.rb-fill-lib-sub[style*="display:none"] { display:none !important; }
+.rb-fill-lib-divider {
+  height:1px; background:rgba(255,255,255,0.06); margin:10px 0 8px;
+}
+.rb-fill-lib-divider--site { background:rgba(255,255,255,0.04); margin:8px 0 6px; }
+.rb-fill-lib-title {
+  display:block; margin-bottom:8px;
+  font:600 11px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.6);
+}
+.rb-fill-lib-sublabel {
+  display:block; margin-bottom:6px;
+  font:400 10px/1 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.45);
+}
+.rb-fill-lib-sub + .rb-fill-lib-sub { margin-top:8px; }
 .rb-fill-lib-grid {
   display:flex; flex-wrap:wrap; gap:4px;
 }
@@ -2127,6 +2152,10 @@ body.rb-ed-light .rb-fill-fx-label { color:rgba(51,51,51,0.5); background:rgba(0
 body.rb-ed-light .rb-fill-fx-grid::-webkit-scrollbar-thumb { background:rgba(0,0,0,0.1); }
 body.rb-ed-light .rb-fill-lib-swatch { border-color:rgba(0,0,0,0.1); }
 body.rb-ed-light .rb-fill-lib-swatch:hover { box-shadow:0 0 0 2px rgba(0,0,0,0.2); }
+body.rb-ed-light .rb-fill-lib-divider { background:rgba(0,0,0,0.08); }
+body.rb-ed-light .rb-fill-lib-divider--site { background:rgba(0,0,0,0.06); }
+body.rb-ed-light .rb-fill-lib-title { color:rgba(31,31,31,0.75); }
+body.rb-ed-light .rb-fill-lib-sublabel { color:rgba(31,31,31,0.5); }
 body.rb-ed-light .rb-fill-add-swatch { border-color:rgba(0,0,0,0.1); color:rgba(51,51,51,0.4); }
 body.rb-ed-light .rb-fill-add-swatch:hover { color:#333; border-color:rgba(0,0,0,0.25); }
 body.rb-ed-light .rb-fill-link-btn { color:rgba(51,51,51,0.4); }

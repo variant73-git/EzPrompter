@@ -3,6 +3,9 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
 import { nodeOrigin } from '../lib/node-origin.js';
+import MdPreviewBody from './node-bodies/MdPreviewBody.jsx';
+import PromptBody from './node-bodies/PromptBody.jsx';
+import SkillBody from './node-bodies/SkillBody.jsx';
 
 const DRAG_THRESHOLD = 4;
 
@@ -30,6 +33,47 @@ const GlobeIcon = () => (
     <path d="M12 3a13 13 0 0 1 4 9 13 13 0 0 1-4 9 13 13 0 0 1-4-9 13 13 0 0 1 4-9z"/>
   </svg>
 );
+
+// Per-origin glyph used by the anchored zoom-out title. Each is sized at
+// 11px so it sits flush with the wordmark inside `.cnode-anchor-title`.
+const HtmlIcon = () => (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+    <path d="M14 3v5h5"/><path d="m9 14-1.5 2L9 18"/><path d="m13.5 14 1.5 2-1.5 2"/>
+  </svg>
+);
+const MdIcon = () => (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+    <path d="M14 3v5h5"/><path d="M8 13h2l1.5 2L13 13h2"/><path d="M8 17h7"/>
+  </svg>
+);
+const ScreenshotIcon = () => (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="5" width="18" height="14" rx="2"/>
+    <circle cx="9" cy="10.5" r="1.5"/><path d="m21 16-5-5L5 19"/>
+  </svg>
+);
+const PromptIcon = () => (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+    <path d="M8 10h8M8 13h5"/>
+  </svg>
+);
+const SkillIcon = () => (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m12 3 2.5 5 5.5.8-4 3.9.95 5.5L12 15.6 7.05 18.2 8 12.7 4 8.8 9.5 8z"/>
+  </svg>
+);
+
+const ORIGIN_ICON = {
+  url: GlobeIcon,
+  html: HtmlIcon,
+  md: MdIcon,
+  screenshot: ScreenshotIcon,
+  prompt: PromptIcon,
+  skill: SkillIcon
+};
 
 const EditIcon = () => (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -73,7 +117,8 @@ function activeViewportId(width) {
 
 export default function CanvasNode({
   node, selected, editing = false, onEditingChange,
-  onSelect, onMove, onResize, onDelete, onReset, onStartEdge, draftActive
+  onSelect, onMove, onResize, onDelete, onReset, onStartEdge, onSlotMouseDown, onPromptTextChange,
+  incomingEdges = [], draftActive
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -133,12 +178,14 @@ export default function CanvasNode({
     window.addEventListener('mouseup', up);
   }, [editing, onStartEdge, onSelect]);
 
-  const onPortMouseDown = useCallback((e) => {
+  const onPortMouseDown = useCallback((e, side = 'right') => {
     if (editing) return;
     e.stopPropagation();
     e.preventDefault();
     onSelect();
-    onStartEdge(e);
+    // Side tells the canvas WHICH port spawned the cord. The draft path
+    // anchors to that port instead of always assuming right.
+    onStartEdge(e, side);
   }, [editing, onStartEdge, onSelect]);
 
   const onIframeLoad = useCallback(() => {
@@ -153,13 +200,27 @@ export default function CanvasNode({
   }, []);
 
   const html = node.current_html;
-  const kindLabel = node.kind === 'site' ? 'site' : node.kind === 'template' ? 'template' : node.kind === 'designmd' ? 'design.md' : 'chunk';
+  const kindLabel =
+    node.kind === 'site' ? 'site' :
+    node.kind === 'template' ? 'template' :
+    node.kind === 'designmd' ? 'design.md' :
+    node.kind === 'prompt' ? 'prompt' :
+    node.kind === 'skill' ? 'skill' :
+    'chunk';
   const title = node.origin_url || node.meta?.name || node.template_slug || 'untitled';
   const hasEdits = !!(node.current_snapshot_id && node.original_snapshot_id && node.current_snapshot_id !== node.original_snapshot_id);
   const activeVp = activeViewportId(node.width);
   // Below ~520px even at 1× zoom the topbar can't fit pill + title +
   // 3 buttons + grip without overlap. Collapse non-essentials.
   const narrowTopbar = (node.width || 0) < 520;
+
+  // Body switches on kind — site/template/chunk render the iframe path
+  // (existing). designmd/prompt/skill render bespoke bodies and don't
+  // need the iframe at all.
+  const renderIframeBody = node.kind === 'site' || node.kind === 'template' || node.kind === 'chunk';
+  const renderMdBody = node.kind === 'designmd';
+  const renderPromptBody = node.kind === 'prompt';
+  const renderSkillBody = node.kind === 'skill';
 
   // Forward wheel events from inside the iframe out to the host canvas so
   // the user can zoom by scrolling over a node. iframes capture wheel
@@ -237,13 +298,23 @@ export default function CanvasNode({
     if (!editing) setEditorBusy(false);
   }, [editing]);
 
+  const origin = nodeOrigin(node);
+  const KindIcon = ORIGIN_ICON[origin] || null;
+
   return (
     <div
-      className={`cnode origin-${nodeOrigin(node)}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}`}
+      className={`cnode origin-${origin}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}`}
       style={{ left: node.pos_x, top: node.pos_y, width: node.width }}
       data-node-id={node.id}
     >
-      {selected && onResize && (
+      {/* Anchored title — only visible when the canvas is zoomed-out enough
+          that the topbar collapses (`body.canvas-zoom-low`). Sits above the
+          node at top-left so the user can still tell what each node is. */}
+      <div className="cnode-anchor-title" aria-hidden={!selected}>
+        {KindIcon && <KindIcon />}
+        <span className="cnode-anchor-title-text">{title}</span>
+      </div>
+      {selected && onResize && node.kind === 'site' && (
         <div
           className={`cnode-viewport-switcher${editing ? ' disabled' : ''}`}
           onMouseDown={(e) => e.stopPropagation()}
@@ -272,7 +343,7 @@ export default function CanvasNode({
       <div className="cnode-topbar" onMouseDown={onTopbarMouseDown}>
         <div className="topbar-left">
           <span className={`kind-pill kind-${kindLabel === 'site' ? 'site' : 'other'}`}>
-            {kindLabel === 'site' && <GlobeIcon />}
+            {KindIcon && <KindIcon />}
             <span className="kind-pill-lbl">{kindLabel}</span>
           </span>
           <span className="title" title={title}>{title}</span>
@@ -282,7 +353,7 @@ export default function CanvasNode({
           <span /><span /><span /><span /><span /><span />
         </div>
         <div className="topbar-right">
-          {html && (
+          {renderIframeBody && html && (
             <button
               className={editing ? 'btn-edit active' : 'btn-edit'}
               onMouseDown={(e) => e.stopPropagation()}
@@ -293,7 +364,7 @@ export default function CanvasNode({
               <span className="btn-edit-lbl">{editing ? (editorBusy ? '…' : 'Done') : 'Edit'}</span>
             </button>
           )}
-          {html && (
+          {renderIframeBody && html && (
             <button
               className="btn-reset"
               onMouseDown={(e) => e.stopPropagation()}
@@ -315,48 +386,96 @@ export default function CanvasNode({
           </button>
         </div>
       </div>
-      {node._loading || !html ? (
+      {node._loading ? (
         <div className="cnode-loading">
           <div className="cnode-spinner" />
           <span>{node.kind === 'site' ? 'Capturing…' : 'Loading…'}</span>
         </div>
-      ) : (
-        <div className="cnode-body" onMouseDown={onBodyMouseDown}>
-          <iframe
-            ref={iframeRef}
-            className="cnode-iframe"
-            title={title}
-            srcDoc={html}
-            sandbox="allow-same-origin allow-scripts"
-            onLoad={onIframeLoad}
-            style={{
-              pointerEvents: editing ? 'auto' : 'none',
-              height: 800
-            }}
+      ) : renderIframeBody ? (
+        html ? (
+          <div className="cnode-body" onMouseDown={onBodyMouseDown}>
+            <iframe
+              ref={iframeRef}
+              className="cnode-iframe"
+              title={title}
+              srcDoc={html}
+              sandbox="allow-same-origin allow-scripts"
+              onLoad={onIframeLoad}
+              style={{
+                pointerEvents: editing ? 'auto' : 'none',
+                height: 800
+              }}
+            />
+          </div>
+        ) : (
+          <div className="cnode-loading">
+            <div className="cnode-spinner" />
+            <span>Loading…</span>
+          </div>
+        )
+      ) : renderMdBody ? (
+        <div className="cnode-body cnode-body-md" onMouseDown={onBodyMouseDown}>
+          <MdPreviewBody node={node} />
+        </div>
+      ) : renderPromptBody ? (
+        <div className="cnode-body cnode-body-prompt" onMouseDown={onBodyMouseDown}>
+          <PromptBody
+            node={node}
+            onChange={(value) => onPromptTextChange?.(value)}
           />
         </div>
-      )}
-      {html && (
-        <>
-          <span
-            className={`cnode-port-left${editing ? ' disabled' : ''}`}
-            title={editing ? 'disabled on edit mode' : 'Drop a connection here'}
-            aria-label="Connection input"
-          >
-            <span className="cnode-port-dot" aria-hidden="true" />
-          </span>
-          <button
-            type="button"
-            className={`cnode-port-right${editing ? ' disabled' : ''}`}
-            onMouseDown={editing ? undefined : onPortMouseDown}
-            disabled={editing}
-            title={editing ? 'disabled on edit mode' : 'Drag to connect'}
-            aria-label="Drag to connect"
-          >
-            <span className="cnode-port-dot" aria-hidden="true" />
-          </button>
-        </>
-      )}
+      ) : renderSkillBody ? (
+        <div className="cnode-body cnode-body-skill" onMouseDown={onBodyMouseDown}>
+          <SkillBody node={node} />
+        </div>
+      ) : null}
+      <>
+        {/* Left side = receiver. Stack of circles, one per incoming edge.
+            Empty default = single white circle. Each connected circle takes
+            the colour of its emitter. New connections append a new circle
+            below the existing stack. */}
+        <div
+          className={`cnode-port-stack cnode-port-stack-left${editing ? ' disabled' : ''}`}
+          aria-hidden={editing}
+        >
+          {(incomingEdges.length === 0 ? [null] : incomingEdges).map((inc, i) => {
+            const isPlaceholder = inc === null;
+            return (
+              <button
+                key={isPlaceholder ? '__default' : inc.edgeId}
+                type="button"
+                className={`cnode-port-left${editing ? ' disabled' : ''}${isPlaceholder ? ' is-empty' : ''}`}
+                style={isPlaceholder ? undefined : { '--cnode-port-fill': inc.sourceColor }}
+                onMouseDown={editing ? undefined : (e) => {
+                  // Empty placeholder → start a NEW outgoing draft from
+                  // this node. Populated slot → click selects the edge,
+                  // drag past threshold reroutes (drop on empty = disconnect).
+                  if (isPlaceholder) {
+                    onPortMouseDown(e, 'left');
+                  } else if (onSlotMouseDown) {
+                    onSlotMouseDown(inc.edgeId, e);
+                  }
+                }}
+                disabled={editing}
+                title={editing ? 'disabled on edit mode' : (isPlaceholder ? 'Drop a connection here' : 'Click to select, drag to disconnect')}
+                aria-label={isPlaceholder ? 'Receive a connection' : 'Connection slot — click to select, drag to disconnect'}
+              >
+                <span className="cnode-port-dot" aria-hidden="true" />
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          className={`cnode-port-right${editing ? ' disabled' : ''}`}
+          onMouseDown={editing ? undefined : (e) => onPortMouseDown(e, 'right')}
+          disabled={editing}
+          title={editing ? 'disabled on edit mode' : 'Drag to connect'}
+          aria-label="Drag to connect (right)"
+        >
+          <span className="cnode-port-dot" aria-hidden="true" />
+        </button>
+      </>
       {editing && iframeRef.current && (
         <CanvasEditorCore
           iframe={iframeRef.current}

@@ -353,74 +353,80 @@
 
   // ── Build Library section (shared between Color tab and ColorOnly popup) ──
   function buildLibrarySection(container, onPickColor) {
-    var divider = mk('div');
-    divider.style.cssText = 'height:1px;background:rgba(255,255,255,0.06);margin:10px 0 8px;';
-    container.appendChild(divider);
+    // Wrap everything in a section element so we can hide the whole block
+    // when there's nothing to show — empty placeholders + dividers were
+    // rendering as a stray grey rectangle at the popup base.
+    var section = mk('div', 'rb-fill-lib-section');
+    container.appendChild(section);
 
-    var libLabel = mk('span');
+    var divider = mk('div', 'rb-fill-lib-divider');
+    section.appendChild(divider);
+
+    var libLabel = mk('span', 'rb-fill-lib-title');
     libLabel.textContent = 'Library';
-    libLabel.style.cssText = 'font:600 11px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.6);display:block;margin-bottom:8px;';
-    container.appendChild(libLabel);
+    section.appendChild(libLabel);
 
-    // Custom swatches section
-    var customLabel = mk('span');
+    // Custom swatches subsection — labels + grid.
+    var customWrap = mk('div', 'rb-fill-lib-sub');
+    section.appendChild(customWrap);
+
+    var customLabel = mk('span', 'rb-fill-lib-sublabel');
     customLabel.textContent = 'Custom swatches';
-    customLabel.style.cssText = 'font:400 10px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.3);display:block;margin-bottom:6px;';
-    container.appendChild(customLabel);
+    customWrap.appendChild(customLabel);
 
     var customGrid = mk('div', 'rb-fill-lib-grid');
-    container.appendChild(customGrid);
+    customWrap.appendChild(customGrid);
+
+    // Site colors subsection — built once, shown conditionally on render.
+    var siteWrap = mk('div', 'rb-fill-lib-sub');
+    section.appendChild(siteWrap);
+
+    var siteDivider = mk('div', 'rb-fill-lib-divider rb-fill-lib-divider--site');
+    siteWrap.appendChild(siteDivider);
+
+    var siteLabel = mk('span', 'rb-fill-lib-sublabel');
+    siteLabel.textContent = 'From this website';
+    siteWrap.appendChild(siteLabel);
+
+    var siteGrid = mk('div', 'rb-fill-lib-grid');
+    siteWrap.appendChild(siteGrid);
+
+    function bindSwatch(hex) {
+      var sw = mk('div', 'rb-fill-lib-swatch');
+      sw.style.background = hex;
+      sw.title = hex;
+      sw.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        onPickColor(hex);
+      }, { capture: true });
+      return sw;
+    }
 
     function renderCustom() {
       customGrid.innerHTML = '';
       var swatches = getCustomSwatches();
-      if (swatches.length === 0) {
-        var empty = mk('span');
-        empty.textContent = 'No custom colors yet';
-        empty.style.cssText = 'font:400 10px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.2);padding:4px 0;';
-        customGrid.appendChild(empty);
-        return;
-      }
-      swatches.forEach(function(hex) {
-        var sw = mk('div', 'rb-fill-lib-swatch');
-        sw.style.background = hex;
-        sw.title = hex;
-        sw.addEventListener('mousedown', function(e) {
-          e.stopImmediatePropagation();
-          onPickColor(hex);
-        }, { capture: true });
-        customGrid.appendChild(sw);
-      });
+      swatches.forEach(function(hex) { customGrid.appendChild(bindSwatch(hex)); });
+      customWrap.style.display = swatches.length > 0 ? '' : 'none';
+      refreshSection();
     }
+
+    function renderSite() {
+      siteGrid.innerHTML = '';
+      var siteColors = extractSiteColors();
+      siteColors.forEach(function(hex) { siteGrid.appendChild(bindSwatch(hex)); });
+      siteWrap.style.display = siteColors.length > 0 ? '' : 'none';
+      refreshSection();
+    }
+
+    function refreshSection() {
+      var anyContent =
+        customWrap.style.display !== 'none' ||
+        siteWrap.style.display !== 'none';
+      section.style.display = anyContent ? '' : 'none';
+    }
+
     renderCustom();
-
-    // Site colors section — only render when there's something to show.
-    // An empty "From this website / No colors detected" pair was showing
-    // up as a useless grey strip at the bottom of the popup.
-    var siteColors = extractSiteColors();
-    if (siteColors.length > 0) {
-      var siteDivider = mk('div');
-      siteDivider.style.cssText = 'height:1px;background:rgba(255,255,255,0.04);margin:8px 0 6px;';
-      container.appendChild(siteDivider);
-
-      var siteLabel = mk('span');
-      siteLabel.textContent = 'From this website';
-      siteLabel.style.cssText = 'font:400 10px/1 "Instrument Sans",sans-serif;color:rgba(239,238,235,0.3);display:block;margin-bottom:6px;';
-      container.appendChild(siteLabel);
-
-      var siteGrid = mk('div', 'rb-fill-lib-grid');
-      siteColors.forEach(function(hex) {
-        var sw = mk('div', 'rb-fill-lib-swatch');
-        sw.style.background = hex;
-        sw.title = hex;
-        sw.addEventListener('mousedown', function(e) {
-          e.stopImmediatePropagation();
-          onPickColor(hex);
-        }, { capture: true });
-        siteGrid.appendChild(sw);
-      });
-      container.appendChild(siteGrid);
-    }
+    renderSite();
 
     return { refreshCustom: renderCustom };
   }
