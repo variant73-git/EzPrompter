@@ -20,11 +20,11 @@ const CategoryIcon = {
   ),
   md: () => (
     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 22a10 10 0 1 1 0-20c5.5 0 10 4 10 9 0 3-2.5 5.5-5.5 5.5h-2a1.7 1.7 0 0 0 0 3.4c.7 0 1.5.4 1.5 1.3 0 .9-.7 1.6-1.5 1.6-.8.1-1.7.2-2.5.2z"/>
-      <circle cx="6.5" cy="12" r="1.2" fill="currentColor" stroke="none"/>
-      <circle cx="9.5" cy="7"  r="1.2" fill="currentColor" stroke="none"/>
-      <circle cx="14"  cy="7"  r="1.2" fill="currentColor" stroke="none"/>
-      <circle cx="17"  cy="11.5" r="1.2" fill="currentColor" stroke="none"/>
+      <path d="M12 2C6.48 2 2 6.48 2 12c0 5.52 4.48 10 10 10 1.66 0 3-1.34 3-3 0-.78-.29-1.49-.78-2.04-.17-.19-.32-.41-.32-.66 0-.55.45-1 1-1H17c2.76 0 5-2.24 5-5 0-4.98-4.48-9-10-9z"/>
+      <circle cx="6.5"  cy="11.5" r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="9.5"  cy="7.5"  r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="14.5" cy="7.5"  r="1.4" fill="currentColor" stroke="none"/>
+      <circle cx="17.5" cy="11.5" r="1.4" fill="currentColor" stroke="none"/>
     </svg>
   ),
   screenshot: () => (

@@ -32,11 +32,11 @@ const MenuIcon = {
   ),
   Md: () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 22a10 10 0 1 1 0-20c5.5 0 10 4 10 9 0 3-2.5 5.5-5.5 5.5h-2a1.7 1.7 0 0 0 0 3.4c.7 0 1.5.4 1.5 1.3 0 .9-.7 1.6-1.5 1.6-.8.1-1.7.2-2.5.2z"/>
-      <circle cx="6.5" cy="12" r="1.2" fill="currentColor" stroke="none"/>
-      <circle cx="9.5" cy="7"  r="1.2" fill="currentColor" stroke="none"/>
-      <circle cx="14"  cy="7"  r="1.2" fill="currentColor" stroke="none"/>
-      <circle cx="17"  cy="11.5" r="1.2" fill="currentColor" stroke="none"/>
+      <path d="M12 2C6.48 2 2 6.48 2 12c0 5.52 4.48 10 10 10 1.66 0 3-1.34 3-3 0-.78-.29-1.49-.78-2.04-.17-.19-.32-.41-.32-.66 0-.55.45-1 1-1H17c2.76 0 5-2.24 5-5 0-4.98-4.48-9-10-9z"/>
+      <circle cx="6.5"  cy="11.5" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="9.5"  cy="7.5"  r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="14.5" cy="7.5"  r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="17.5" cy="11.5" r="1.5" fill="currentColor" stroke="none"/>
     </svg>
   ),
   Image: () => (
@@ -829,6 +829,22 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     return () => window.removeEventListener('keydown', onKey);
   }, [nodes, edges, draftEdge, selectedNodeId, selectedEdgeId, editingNodeId, emptyDropMenu, contextMenu]);
 
+  // Force-blur the project name input when the user clicks anywhere
+  // outside the toolbar. react-zoom-pan-pinch calls preventDefault on
+  // panning mousedowns, which blocks the browser's natural focus shift
+  // — without this the cursor kept blinking inside the input even
+  // after the user clicked on the canvas.
+  useEffect(() => {
+    function onDown(e) {
+      const active = document.activeElement;
+      if (!active || active.classList?.contains('canvas-board-name') !== true) return;
+      if (e.target?.closest?.('.canvas-toolbar-left')) return;
+      active.blur();
+    }
+    window.addEventListener('mousedown', onDown, true);
+    return () => window.removeEventListener('mousedown', onDown, true);
+  }, []);
+
   // Group edges by target — each target node renders one input port circle
   // per incoming edge. Order is creation order (the array order from the
   // server / setEdges appends). The list lives here so EdgeLayer and
@@ -880,6 +896,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             value={boardName}
             onChange={(e) => setBoardName(e.target.value)}
             onBlur={(e) => persistBoardName(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter / Esc commit + leave the field (browser default
+              // doesn't blur on Enter, so do it explicitly).
+              if (e.key === 'Enter' || e.key === 'Escape') {
+                e.preventDefault();
+                e.currentTarget.blur();
+              }
+            }}
             spellCheck={false}
             size={Math.max(8, (boardName || '').length + 1)}
           />

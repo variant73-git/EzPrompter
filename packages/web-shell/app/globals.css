@@ -327,6 +327,48 @@ input:focus {
   background: var(--bg-base);
   overflow: hidden;
   transition: background 200ms ease;
+  /* Empty canvas → grab hand. While the user is mid-pan, browsers
+     match :active and we flip to grabbing. Chrome elements (toolbars,
+     dock, minimap, nodes, ports) override this back to their own
+     cursors via more-specific rules. */
+  cursor: grab;
+}
+.canvas-shell:active { cursor: grabbing; }
+
+/* In canvas + edit mode, editor.css line 30 forces `cursor: auto
+   !important` on every host-doc element so the editor's own cursor
+   inside the iframe takes over. That blanket rule kills our grab
+   cursor even when the mouse is OUTSIDE the node. Re-assert grab on
+   the actual hover-target — the react-zoom-pan-pinch transform
+   layers, which sit between canvas-shell and the nodes and own all
+   the empty canvas hit-testing. .canvas-bg has pointer-events:none
+   so its cursor is irrelevant. */
+body.rb-ed-active.rb-ed-canvas .canvas-shell,
+body.rb-ed-active.rb-ed-canvas .react-transform-wrapper,
+body.rb-ed-active.rb-ed-canvas .react-transform-component {
+  cursor: grab !important;
+}
+body.rb-ed-active.rb-ed-canvas .canvas-shell:active,
+body.rb-ed-active.rb-ed-canvas .react-transform-wrapper:active,
+body.rb-ed-active.rb-ed-canvas .react-transform-component:active {
+  cursor: grabbing !important;
+}
+
+/* Chrome regions revert the canvas grab cursor — they have their own
+   button/text/move cursors set elsewhere. */
+.canvas-toolbars-left,
+.canvas-toolbars-right,
+.canvas-toolbar-left,
+.canvas-toolbar-right,
+.canvas-theme-floater,
+.canvas-minimap,
+.zoom-controls,
+.prompt-dock,
+.user-menu,
+.empty-drop-menu,
+.canvas-context-menu,
+.cnode {
+  cursor: auto;
 }
 
 .canvas-shell .canvas-bg {
@@ -419,8 +461,14 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
 
 .canvas-toolbar-sep {
   width: 1px;
+  /* Extend through the parent's 4px padding so the separator runs the
+     FULL widget height (44px) flush with the top + bottom edges. */
   align-self: stretch;
-  background: var(--border-frosted-strong);
+  margin: -4px 0;
+  /* Same colour as the widget's own border outline so the divider
+     reads as part of the same hairline family — no contrast jump
+     between outer rim and internal separator. */
+  background: var(--border-frosted);
   flex-shrink: 0;
 }
 
@@ -1848,9 +1896,12 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
 
 .zoom-pill-divider {
   width: 1px;
-  height: 22px;
-  background: var(--border-frosted-strong);
-  margin: 0 4px;
+  /* Stretch through the widget's 4px padding so it spans the full
+     44px height — same treatment as .canvas-toolbar-sep. Colour
+     matches the widget border for hairline parity. */
+  align-self: stretch;
+  margin: -4px 4px;
+  background: var(--border-frosted);
   flex-shrink: 0;
 }
 
@@ -2143,6 +2194,10 @@ html.canvas-zoom-low .cnode-topbar .btn-edit,
   overflow: hidden;
   flex: 1 1 auto;
   background: #fff;
+  /* Same custom arrow cursor the editor uses inside the iframe — gives
+     a consistent "you're working with a node" affordance even when the
+     editor isn't active. Matches editor-core/src/editor.css :44. */
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='28' viewBox='-2 -2 42 42'%3E%3Cdefs%3E%3Cfilter id='s'%3E%3CfeDropShadow dx='1' dy='2' stdDeviation='1.5' flood-opacity='0.4'/%3E%3C/filter%3E%3C/defs%3E%3Cpath filter='url(%23s)' d='M34.25,17.94l-13.58,2.72-2.72,13.58c-.22,1.1-1.29,1.81-2.39,1.59-.67-.13-1.23-.6-1.49-1.23L2.15,4.78c-.42-1.04.09-2.22,1.13-2.64.48-.19,1.02-.19,1.51,0l29.82,11.93c1.04.42,1.55,1.6,1.13,2.64-.25.64-.81,1.1-1.48,1.24Z' fill='%23fff' stroke='%23000' stroke-width='1.5'/%3E%3C/svg%3E") 2 1, default;
 }
 
 /* Connector ports: half-circles protruding from the node frame.
@@ -2411,7 +2466,10 @@ html.canvas-zoom-very-low .cnode-port-dot {
   width: calc(13px / var(--canvas-scale, 1));
   height: calc(13px / var(--canvas-scale, 1));
   flex-shrink: 0;
-  opacity: 0.75;
+  /* Inherit the node's origin colour via the same custom property
+     used by the ports + selection ring. Full opacity at this size
+     so the saturated colour reads cleanly against the frosted bg. */
+  color: var(--cnode-port-fill, currentColor);
 }
 .cnode-anchor-title-text {
   overflow: hidden;
