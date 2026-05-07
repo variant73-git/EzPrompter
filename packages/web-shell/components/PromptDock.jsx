@@ -129,21 +129,11 @@ const PROVIDER_ICON = {
 };
 
 const MODEL_OPTIONS = [
-  { group: 'BEST FOR WEB PAGES', items: [
-    { id: 'gemini-3-flash',    name: 'Gemini 3 Flash',  provider: 'google' },
-    { id: 'gemini-3.1-pro',    name: 'Gemini 3.1 Pro',  provider: 'google' },
-    { id: 'kimi-k2.6',         name: 'Kimi K2.6',       provider: 'kimi' }
-  ]},
-  { group: 'BEST FOR UI DESIGN', items: [
-    { id: 'gpt-5.4',           name: 'GPT-5.4',         provider: 'openai' },
-    { id: 'gpt-5-mini',        name: 'GPT-5 Mini',      provider: 'openai' },
-    { id: 'gpt-5.5',           name: 'GPT-5.5',         provider: 'openai' }
-  ]},
-  { group: 'BUDGET MODELS', items: [
-    { id: 'claude-4.5-haiku',  name: 'Claude 4.5 Haiku',  provider: 'anthropic' },
-    { id: 'claude-4.5-sonnet', name: 'Claude 4.5 Sonnet', provider: 'anthropic' },
-    { id: 'claude-4.5-opus',   name: 'Claude 4.5 Opus',   provider: 'anthropic' },
-    { id: 'claude-4.6-opus',   name: 'Claude 4.6 Opus',   provider: 'anthropic' }
+  { group: null, items: [
+    { id: 'gemini-3.1-pro',  name: 'Gemini 3.1 Pro',  provider: 'google' },
+    { id: 'gpt-5.5',         name: 'GPT-5.5',         provider: 'openai' },
+    { id: 'claude-4.6-opus', name: 'Claude 4.6 Opus', provider: 'anthropic' },
+    { id: 'kimi-k2.6',       name: 'Kimi K2.6',       provider: 'kimi' }
   ]}
 ];
 
@@ -588,53 +578,59 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {/* Anchor the menu to the model button via getBoundingClientRect.
-            The dock has `transform: translateX(-50%)`, which traps any
-            descendant `position: fixed` element (containing block becomes
-            the dock instead of the viewport). Portal to <body> so the
-            menu escapes the dock's stacking context. */}
-        {showModelMenu && typeof document !== 'undefined' && createPortal(
-          <motion.div
-            key="model-menu"
-            className="prompt-dock-popover prompt-dock-model-menu"
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 6 }}
-            transition={{ duration: 0.14 }}
-            role="menu"
-            style={getModelMenuStyle(modelBtnRef)}
-          >
-            {MODEL_OPTIONS.map((group, gi) => (
-              <div key={gi} className="prompt-dock-model-group">
-                {group.group && (
-                  <div className="prompt-dock-popover-title prompt-dock-model-grouptitle">
-                    {group.group}
-                  </div>
-                )}
-                {group.items.map((m) => {
-                  const Icon = PROVIDER_ICON[m.provider];
-                  const selected = m.id === modelId;
-                  return (
-                    <button
-                      key={m.id}
-                      onClick={() => pickModel(m.id)}
-                      className={selected ? 'selected' : ''}
-                      role="menuitemradio"
-                      aria-checked={selected}
-                    >
-                      <span className="prompt-dock-model-icon"><Icon /></span>
-                      <span className="prompt-dock-model-row-name">{m.name}</span>
-                      {selected && <span className="prompt-dock-model-check">{ICON_CHECK}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-          </motion.div>,
-          document.body
-        )}
-      </AnimatePresence>
+      {/* Anchor the menu to the model button via getBoundingClientRect.
+          The dock has `transform: translateX(-50%)`, which traps any
+          descendant `position: fixed` element (containing block becomes
+          the dock instead of the viewport). Portal to <body> so the
+          menu escapes the dock's stacking context. AnimatePresence MUST
+          live inside the portal — wrapping createPortal directly leaves
+          AnimatePresence with a portal element as its child instead of
+          the motion.div, which breaks the mount lifecycle and leaves
+          the menu stuck at initial opacity:0. */}
+      {typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {showModelMenu && (
+            <motion.div
+              key="model-menu"
+              className="prompt-dock-popover prompt-dock-model-menu"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+              transition={{ duration: 0.14 }}
+              role="menu"
+              style={getModelMenuStyle(modelBtnRef)}
+            >
+              {MODEL_OPTIONS.map((group, gi) => (
+                <div key={gi} className="prompt-dock-model-group">
+                  {group.group && (
+                    <div className="prompt-dock-popover-title prompt-dock-model-grouptitle">
+                      {group.group}
+                    </div>
+                  )}
+                  {group.items.map((m) => {
+                    const Icon = PROVIDER_ICON[m.provider];
+                    const selected = m.id === modelId;
+                    return (
+                      <button
+                        key={m.id}
+                        onClick={() => pickModel(m.id)}
+                        className={selected ? 'selected' : ''}
+                        role="menuitemradio"
+                        aria-checked={selected}
+                      >
+                        <span className="prompt-dock-model-icon"><Icon /></span>
+                        <span className="prompt-dock-model-row-name">{m.name}</span>
+                        {selected && <span className="prompt-dock-model-check">{ICON_CHECK}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       <input
         ref={fileRef}
