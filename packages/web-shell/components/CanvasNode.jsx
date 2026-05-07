@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
 import { nodeOrigin } from '../lib/node-origin.js';
 import MdPreviewBody from './node-bodies/MdPreviewBody.jsx';
@@ -44,8 +45,11 @@ const HtmlIcon = () => (
 );
 const MdIcon = () => (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
-    <path d="M14 3v5h5"/><path d="M8 13h2l1.5 2L13 13h2"/><path d="M8 17h7"/>
+    <path d="M12 22a10 10 0 1 1 0-20c5.5 0 10 4 10 9 0 3-2.5 5.5-5.5 5.5h-2a1.7 1.7 0 0 0 0 3.4c.7 0 1.5.4 1.5 1.3 0 .9-.7 1.6-1.5 1.6-.8.1-1.7.2-2.5.2z"/>
+    <circle cx="6.5" cy="12" r="1.1" fill="currentColor" stroke="none"/>
+    <circle cx="9.5" cy="7"  r="1.1" fill="currentColor" stroke="none"/>
+    <circle cx="14"  cy="7"  r="1.1" fill="currentColor" stroke="none"/>
+    <circle cx="17"  cy="11.5" r="1.1" fill="currentColor" stroke="none"/>
   </svg>
 );
 const ScreenshotIcon = () => (
@@ -88,6 +92,30 @@ const CheckIcon = () => (
   </svg>
 );
 
+const DownloadIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <polyline points="7 10 12 15 17 10"/>
+    <line x1="12" y1="15" x2="12" y2="3"/>
+  </svg>
+);
+
+const DuplicateIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="9" y="9" width="11" height="11" rx="2"/>
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+  </svg>
+);
+
+const MoreIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="9.5"/>
+    <circle cx="7"  cy="12" r="0.7" fill="currentColor"/>
+    <circle cx="12" cy="12" r="0.7" fill="currentColor"/>
+    <circle cx="17" cy="12" r="0.7" fill="currentColor"/>
+  </svg>
+);
+
 const VIEWPORTS = [
   { id: 'mobile',  label: 'Mobile',  width: 390,  icon: (
     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -117,13 +145,30 @@ function activeViewportId(width) {
 
 export default function CanvasNode({
   node, selected, editing = false, onEditingChange,
-  onSelect, onMove, onResize, onDelete, onReset, onStartEdge, onSlotMouseDown, onPromptTextChange,
+  onSelect, onMove, onResize, onDelete, onReset, onDuplicate, onDownload,
+  onStartEdge, onSlotMouseDown, onPromptTextChange,
   incomingEdges = [], draftActive
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [menuPos, setMenuPos] = useState(null); // {x, y} for topbar context menu
   const iframeRef = useRef(null);
   const [editorBusy, setEditorBusy] = useState(false);
+
+  // Close the topbar context menu on Esc / click outside.
+  useEffect(() => {
+    if (!menuPos) return;
+    function onDown(e) {
+      if (!e.target?.closest?.('.cnode-topbar-menu')) setMenuPos(null);
+    }
+    function onKey(e) { if (e.key === 'Escape') setMenuPos(null); }
+    window.addEventListener('mousedown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menuPos]);
 
   const onTopbarMouseDown = useCallback((e) => {
     if (e.target?.closest?.('button')) return;
@@ -340,7 +385,15 @@ export default function CanvasNode({
           ))}
         </div>
       )}
-      <div className="cnode-topbar" onMouseDown={onTopbarMouseDown}>
+      <div
+        className="cnode-topbar"
+        onMouseDown={onTopbarMouseDown}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setMenuPos({ x: e.clientX, y: e.clientY });
+        }}
+      >
         <div className="topbar-left">
           <span className={`kind-pill kind-${kindLabel === 'site' ? 'site' : 'other'}`}>
             {KindIcon && <KindIcon />}
@@ -353,6 +406,29 @@ export default function CanvasNode({
           <span /><span /><span /><span /><span /><span />
         </div>
         <div className="topbar-right">
+          {/* "More" button — hidden by default, shown via CSS in
+              collapsed-topbar mode (zoom-low / narrow node). Opens the
+              same dropdown as right-click on the topbar. */}
+          <button
+            className="btn-more"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              const r = e.currentTarget.getBoundingClientRect();
+              // Open to the RIGHT of the button (small gap), top
+              // edges aligned. Clamping inside TopbarContextMenu
+              // handles the screen-edge case (menu falls back to
+              // overflow-friendly position automatically).
+              setMenuPos({
+                x: r.right + 6,
+                y: r.top
+              });
+            }}
+            title="Actions"
+            aria-label="Open node actions menu"
+          >
+            <MoreIcon />
+          </button>
           {renderIframeBody && html && (
             <button
               className={editing ? 'btn-edit active' : 'btn-edit'}
@@ -364,6 +440,24 @@ export default function CanvasNode({
               <span className="btn-edit-lbl">{editing ? (editorBusy ? '…' : 'Done') : 'Edit'}</span>
             </button>
           )}
+          <button
+            className="btn-duplicate"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onDuplicate?.(); }}
+            title="Duplicate node"
+            aria-label="Duplicate node"
+          >
+            <DuplicateIcon />
+          </button>
+          <button
+            className="btn-download"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onDownload?.(); }}
+            title={node.kind === 'designmd' ? 'Download as .md' : 'Download as .html'}
+            aria-label="Download node content"
+          >
+            <DownloadIcon />
+          </button>
           {renderIframeBody && html && (
             <button
               className="btn-reset"
@@ -393,7 +487,15 @@ export default function CanvasNode({
         </div>
       ) : renderIframeBody ? (
         html ? (
-          <div className="cnode-body" onMouseDown={onBodyMouseDown}>
+          <div
+            className="cnode-body"
+            onMouseDown={onBodyMouseDown}
+            onDoubleClick={(e) => {
+              if (editing) return;
+              e.stopPropagation();
+              onEditingChange?.(true);
+            }}
+          >
             <iframe
               ref={iframeRef}
               className="cnode-iframe"
@@ -445,7 +547,10 @@ export default function CanvasNode({
                 key={isPlaceholder ? '__default' : inc.edgeId}
                 type="button"
                 className={`cnode-port-left${editing ? ' disabled' : ''}${isPlaceholder ? ' is-empty' : ''}`}
-                style={isPlaceholder ? undefined : { '--cnode-port-fill': inc.sourceColor }}
+                // Outline (border) inherits the receiver's --cnode-port-fill
+                // (the node's own origin colour). Inner dot picks up the
+                // source's colour via --port-source-colour set inline.
+                style={isPlaceholder ? undefined : { '--port-source-colour': inc.sourceColor }}
                 onMouseDown={editing ? undefined : (e) => {
                   // Empty placeholder → start a NEW outgoing draft from
                   // this node. Populated slot → click selects the edge,
@@ -513,6 +618,74 @@ export default function CanvasNode({
           }}
         />
       )}
+
+      {/* Portal to document.body so the menu's `position: fixed`
+          actually anchors to the viewport. CanvasNode lives inside
+          TransformWrapper which applies `transform: scale(N)` — any
+          fixed-positioned descendant gets reinterpreted as absolute
+          relative to that transformed ancestor and is wrongly scaled +
+          mispositioned. The portal escapes the transform. */}
+      {menuPos && typeof document !== 'undefined' && createPortal(
+        <TopbarContextMenu
+          x={menuPos.x}
+          y={menuPos.y}
+          canEdit={renderIframeBody && !!html}
+          canReset={renderIframeBody && !!html && hasEdits}
+          editing={editing}
+          onEdit={() => { setMenuPos(null); onEditingChange?.(!editing); }}
+          onDuplicate={() => { setMenuPos(null); onDuplicate?.(); }}
+          onDownload={() => { setMenuPos(null); onDownload?.(); }}
+          onReset={() => { setMenuPos(null); setShowResetConfirm(true); }}
+          onDelete={() => { setMenuPos(null); if (confirm('Delete this node?')) onDelete(); }}
+          onClose={() => setMenuPos(null)}
+        />,
+        document.body
+      )}
+    </div>
+  );
+}
+
+function TopbarContextMenu({ x, y, canEdit, canReset, editing, onEdit, onDuplicate, onDownload, onReset, onDelete, onClose }) {
+  // Clamp to viewport so the menu stays fully visible. Width matches
+  // .empty-drop-menu (260px) so this reads as the same family of menu.
+  const W = 260, H_EST = 240;
+  const left = Math.min(x, (typeof window !== 'undefined' ? window.innerWidth : 1280) - W - 8);
+  const top = Math.min(y, (typeof window !== 'undefined' ? window.innerHeight : 800) - H_EST - 8);
+  // Reuse the .empty-drop-menu class so the topbar menu inherits the
+  // same padding, radius, item shape, and hover behaviour as the
+  // canvas right-click menu. .cnode-topbar-menu adds the danger
+  // (Delete) variant.
+  return (
+    <div
+      className="empty-drop-menu cnode-topbar-menu"
+      style={{ left, top }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {canEdit && (
+        <button onClick={onEdit}>
+          {editing ? <CheckIcon /> : <EditIcon />}
+          <span>{editing ? 'Done' : 'Edit'}</span>
+        </button>
+      )}
+      <button onClick={onDuplicate}>
+        <DuplicateIcon />
+        <span>Duplicate</span>
+      </button>
+      <button onClick={onDownload}>
+        <DownloadIcon />
+        <span>Download</span>
+      </button>
+      {canReset && (
+        <button onClick={onReset}>
+          <ResetIcon />
+          <span>Restore original</span>
+        </button>
+      )}
+      <button className="cnode-topbar-menu-danger" onClick={onDelete}>
+        <TrashIcon />
+        <span>Delete</span>
+      </button>
     </div>
   );
 }

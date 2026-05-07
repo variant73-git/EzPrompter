@@ -12,6 +12,8 @@ import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
 // EdgePopup removed — the per-edge config widget was the legacy "manual mode".
 // Edges are now selected by click and deleted with the keyboard.
 import PromptDock from './PromptDock.jsx';
+import CategoryCounts from './CategoryCounts.jsx';
+import Minimap from './Minimap.jsx';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -30,8 +32,11 @@ const MenuIcon = {
   ),
   Md: () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
-      <path d="M14 3v5h5"/><path d="M8 13h2l1.5 2L13 13h2"/><path d="M8 17h7"/>
+      <path d="M12 22a10 10 0 1 1 0-20c5.5 0 10 4 10 9 0 3-2.5 5.5-5.5 5.5h-2a1.7 1.7 0 0 0 0 3.4c.7 0 1.5.4 1.5 1.3 0 .9-.7 1.6-1.5 1.6-.8.1-1.7.2-2.5.2z"/>
+      <circle cx="6.5" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="9.5" cy="7"  r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="14"  cy="7"  r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="17"  cy="11.5" r="1.2" fill="currentColor" stroke="none"/>
     </svg>
   ),
   Image: () => (
@@ -49,6 +54,11 @@ const MenuIcon = {
   Code: () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="m9 8-5 4 5 4"/><path d="m15 8 5 4-5 4"/><path d="m13 4-2 16"/>
+    </svg>
+  ),
+  Skill: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m12 3 2.5 5 5.5.8-4 3.9.95 5.5L12 15.6 7.05 18.2 8 12.7 4 8.8 9.5 8z"/>
     </svg>
   )
 };
@@ -395,6 +405,61 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
   }
 
+  async function handleDuplicateNode(id) {
+    const n = nodes.find((x) => x.id === id);
+    if (!n) return;
+    // Anti-overlap: nextNodePosition slides the duplicate off any
+    // collision (defaults at +offset of the original).
+    const { posX, posY } = nextNodePosition({
+      worldX: n.pos_x + 80,
+      worldY: n.pos_y + 80,
+      width: n.width,
+      height: n.height || 800
+    });
+    try {
+      const created = await api.createNode({
+        boardId: board.id,
+        kind: n.kind,
+        originUrl: n.origin_url,
+        templateSlug: n.template_slug,
+        posX, posY,
+        width: n.width,
+        height: n.height || 800,
+        meta: n.meta || {},
+        html: n.current_html,
+        designMd: n.current_design_md
+      });
+      setNodes((prev) => [...prev, {
+        ...created.node,
+        current_html: n.current_html,
+        current_design_md: n.current_design_md
+      }]);
+      setSelectedNodeId(created.node.id);
+    } catch (err) {
+      alert(`Duplicate failed: ${err.message}`);
+    }
+  }
+
+  function handleDownloadNode(id) {
+    const n = nodes.find((x) => x.id === id);
+    if (!n) return;
+    const isMd = n.kind === 'designmd';
+    const content = isMd ? (n.current_design_md || '') : (n.current_html || '');
+    if (!content) { alert('Nothing to download yet.'); return; }
+    const ext = isMd ? 'md' : 'html';
+    const mime = isMd ? 'text/markdown' : 'text/html';
+    const fname = (n.meta?.name || (n.origin_url ? new URL(n.origin_url).hostname : n.kind) || 'uncraft') + '.' + ext;
+    const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fname.replace(/[^a-zA-Z0-9._-]+/g, '_');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+  }
+
   // Synchronous ref mirror of draftEdge — closure-captured state goes
   // stale between mousedown (which calls setDraftEdge) and the next
   // re-render. The first batch of mousemove events would otherwise read
@@ -661,6 +726,34 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     t.setTransform(posX, posY, scale, animationTime);
   }
 
+  // Frame a set of nodes (a connection chain) at the maximum zoom that
+  // still fits all of them inside the viewport with comfortable padding.
+  // Used by the chain dropdown items in the toolbar-right widget.
+  function zoomToConnection(nodeIds, animationTime = 350) {
+    const t = transformRef.current;
+    if (!t || !nodeIds?.length) return;
+    const involved = nodes.filter((n) => nodeIds.includes(n.id));
+    if (involved.length === 0) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of involved) {
+      minX = Math.min(minX, n.pos_x);
+      minY = Math.min(minY, n.pos_y);
+      maxX = Math.max(maxX, n.pos_x + n.width);
+      maxY = Math.max(maxY, n.pos_y + (n.height || 800));
+    }
+    const PADDING = 120;
+    const bboxW = (maxX - minX) + PADDING * 2;
+    const bboxH = (maxY - minY) + PADDING * 2;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight - 48;
+    const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const posX = vw / 2 - centerX * scale;
+    const posY = (vh / 2 + 48) - centerY * scale;
+    t.setTransform(posX, posY, scale, animationTime);
+  }
+
   // Block browser-level zoom (Cmd/Ctrl + wheel, trackpad pinch sends ctrlKey)
   // so it doesn't compete with the canvas's own pan/zoom.
   useEffect(() => {
@@ -814,19 +907,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       <div className="canvas-toolbars-right">
         <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} />
         <div className="canvas-toolbar-right">
-          <button
-            type="button"
-            className="canvas-counts"
-            onClick={() => fitToContent()}
-            disabled={nodes.length === 0}
-            title="Fit all nodes to viewport (F)"
-          >
-            {nodes.length} nodes · {edges.length} edges
-          </button>
+          <CategoryCounts
+            nodes={nodes}
+            edges={edges}
+            onZoomToConnection={(ids) => zoomToConnection(ids)}
+          />
           <span className="canvas-toolbar-sep" aria-hidden="true" />
           <UserPill compact name={user?.name} email={user?.email} plan={user?.plan} onSignOut={logout} />
         </div>
       </div>
+      <Minimap nodes={nodes} transformRef={transformRef} />
 
       <TransformWrapper
         ref={transformRef}
@@ -848,6 +938,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // Below ~0.5 the topbar items overlap the centered grip; collapse
           // chrome so only the grip stays visible.
           document.documentElement.classList.toggle('canvas-zoom-low', scale < 0.5);
+          // Below ~0.2 the ports start to dominate the tiny node frames —
+          // shrink them 30% so the colour-coded squares stay readable.
+          document.documentElement.classList.toggle('canvas-zoom-very-low', scale < 0.2);
           setCanvasScale(scale);
         }}
       >
@@ -883,6 +976,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }}
               onDelete={() => handleDeleteNode(n.id)}
               onReset={() => handleResetNode(n.id)}
+              onDuplicate={() => handleDuplicateNode(n.id)}
+              onDownload={() => handleDownloadNode(n.id)}
               onStartEdge={(e, side) => startEdgeFromNode(n.id, e, side)}
               onSlotMouseDown={onSlotMouseDown}
               onPromptTextChange={(value) => handlePromptTextChange(n.id, value)}
@@ -919,11 +1014,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           x={emptyDropMenu.x}
           y={emptyDropMenu.y}
           onClose={() => setEmptyDropMenu(null)}
-          onPickUrl={async (url) => {
-            const m = emptyDropMenu;
-            setEmptyDropMenu(null);
-            await handleAddUrl(url, { worldX: m.worldX, worldY: m.worldY, linkFromNodeId: m.sourceNodeId });
-          }}
           onPickHtml={async () => {
             const m = emptyDropMenu;
             const file = await pickFile('.html,.htm,text/html');
@@ -935,6 +1025,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             const file = await pickFile('.md,.markdown,text/markdown,text/plain');
             setEmptyDropMenu(null);
             if (file) await handleUploadMd(file, { worldX: m.worldX, worldY: m.worldY, linkFromNodeId: m.sourceNodeId });
+          }}
+          onPickSkill={async () => {
+            const m = emptyDropMenu;
+            setEmptyDropMenu(null);
+            await handleAddSkill({ worldX: m.worldX, worldY: m.worldY, linkFromNodeId: m.sourceNodeId });
           }}
         />
       )}
@@ -1052,55 +1147,43 @@ function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onP
   );
 }
 
-function EmptyDropMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd }) {
-  const [mode, setMode] = useState('choices');  // 'choices' | 'url'
-  const [url, setUrl] = useState('');
+// Drop-on-empty after dragging a cord from a node's right port. The menu
+// asks the user what KIND of node to extract the source's content into.
+// New types currently spawn empty placeholders + auto-link to the source;
+// the actual extraction (URL → design.md tokens, etc) lands when the
+// edge resolver is implemented (see HANDOFF_TECHNICAL §6).
+function EmptyDropMenu({ x, y, onClose, onPickHtml, onPickMd, onPickSkill }) {
   const left = Math.min(x + 8, window.innerWidth - 280);
   const top = Math.min(y + 8, window.innerHeight - 200);
 
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose(); }
     function onDown(e) {
-      if (!e.target?.closest?.('.empty-drop-menu')) onClose();
+      if (e.target?.closest?.('.empty-drop-menu')) return;
+      // Capture phase + stopPropagation: close the menu BEFORE the event
+      // can reach react-zoom-pan-pinch's onPanningStart, which would
+      // clear `selectedNodeId` and make the viewport switcher disappear.
+      // Earlier symptom was: first click outside lost the switcher
+      // instead of closing the menu (panning ate the event); a second
+      // click was needed to dismiss the menu.
+      e.stopPropagation();
+      onClose();
     }
     window.addEventListener('keydown', onKey);
-    window.addEventListener('mousedown', onDown);
+    window.addEventListener('mousedown', onDown, true);
     return () => {
       window.removeEventListener('keydown', onKey);
-      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('mousedown', onDown, true);
     };
   }, [onClose]);
 
   return (
     <div className="empty-drop-menu" style={{ left, top }} onMouseDown={(e) => e.stopPropagation()}>
-      {mode === 'choices' ? (
-        <>
-          <div className="edm-title">Connect to…</div>
-          <button onClick={() => setMode('url')}><MenuIcon.Url /><span>URL of a website</span></button>
-          <button onClick={onPickHtml}><MenuIcon.Html /><span>Upload an HTML file</span></button>
-          <button onClick={onPickMd}><MenuIcon.Md /><span>Upload a design.md</span></button>
-          <button className="edm-cancel" onClick={onClose}>Cancel (Esc)</button>
-        </>
-      ) : (
-        <>
-          <div className="edm-title">URL of website</div>
-          <input
-            autoFocus type="text" placeholder="example.com or full URL"
-            value={url} onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                const norm = normalizeUrl(url);
-                if (norm) onPickUrl(norm);
-              }
-              if (e.key === 'Escape') onClose();
-            }}
-          />
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={() => setMode('choices')} className="edm-cancel">← Back</button>
-            <button onClick={() => { const norm = normalizeUrl(url); if (norm) onPickUrl(norm); }} disabled={!looksLikeUrl(url)} className="edm-primary">Capture →</button>
-          </div>
-        </>
-      )}
+      <div className="edm-title">Extract to…</div>
+      <button onClick={onPickMd}><MenuIcon.Md /><span>design.md</span></button>
+      <button onClick={onPickSkill}><MenuIcon.Skill /><span>skill</span></button>
+      <button onClick={onPickHtml}><MenuIcon.Html /><span>.html</span></button>
+      <button className="edm-cancel" onClick={onClose}>Cancel (Esc)</button>
     </div>
   );
 }

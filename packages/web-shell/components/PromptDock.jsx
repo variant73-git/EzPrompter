@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
 
@@ -66,8 +67,11 @@ const MENU_ICON = {
   ),
   Md: () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
-      <path d="M14 3v5h5"/><path d="M8 13h2l1.5 2L13 13h2"/><path d="M8 17h7"/>
+      <path d="M12 22a10 10 0 1 1 0-20c5.5 0 10 4 10 9 0 3-2.5 5.5-5.5 5.5h-2a1.7 1.7 0 0 0 0 3.4c.7 0 1.5.4 1.5 1.3 0 .9-.7 1.6-1.5 1.6-.8.1-1.7.2-2.5.2z"/>
+      <circle cx="6.5" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="9.5" cy="7"  r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="14"  cy="7"  r="1.2" fill="currentColor" stroke="none"/>
+      <circle cx="17"  cy="11.5" r="1.2" fill="currentColor" stroke="none"/>
     </svg>
   ),
   Image: () => (
@@ -121,11 +125,6 @@ const PROVIDER_ICON = {
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden fill="currentColor">
       <path d="M14.27 4h3.42L24 20h-3.42zM6.31 4h3.6L16.3 20h-3.5l-1.3-3.4H4.6L3.3 20H0zm-1 9.27h4.92l-2.46-6.4z"/>
     </svg>
-  ),
-  deepseek: () => (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden>
-      <path fill="#3b82f6" d="M12 3.5c-1.55 1.7-2.6 3.55-3.05 5.55-1.95-.4-3.7-1.2-5.4-2.5C4.5 9.5 6.4 11.7 9 13c-.45 1.95-1.5 3.7-2.95 5.45 2.05-1.4 3.95-3.1 5.95-3.55 2 .45 3.9 2.15 5.95 3.55-1.45-1.75-2.5-3.5-2.95-5.45 2.6-1.3 4.5-3.5 5.45-6.45-1.7 1.3-3.45 2.1-5.4 2.5-.45-2-1.5-3.85-3.05-5.55z"/>
-    </svg>
   )
 };
 
@@ -137,17 +136,14 @@ const MODEL_OPTIONS = [
   ]},
   { group: 'BEST FOR UI DESIGN', items: [
     { id: 'gpt-5.4',           name: 'GPT-5.4',         provider: 'openai' },
-    { id: 'gpt-5.4-mini',      name: 'GPT-5.4 Mini',    provider: 'openai' },
+    { id: 'gpt-5-mini',        name: 'GPT-5 Mini',      provider: 'openai' },
     { id: 'gpt-5.5',           name: 'GPT-5.5',         provider: 'openai' }
   ]},
-  { group: null, items: [
+  { group: 'BUDGET MODELS', items: [
     { id: 'claude-4.5-haiku',  name: 'Claude 4.5 Haiku',  provider: 'anthropic' },
     { id: 'claude-4.5-sonnet', name: 'Claude 4.5 Sonnet', provider: 'anthropic' },
     { id: 'claude-4.5-opus',   name: 'Claude 4.5 Opus',   provider: 'anthropic' },
-    { id: 'claude-4.6-opus',   name: 'Claude 4.6 Opus',   provider: 'anthropic' },
-    { id: 'deepseek-v4-pro',   name: 'DeepSeek V4 Pro',   provider: 'deepseek' },
-    { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'deepseek' },
-    { id: 'gpt-5-mini',        name: 'GPT-5 Mini',        provider: 'openai' }
+    { id: 'claude-4.6-opus',   name: 'Claude 4.6 Opus',   provider: 'anthropic' }
   ]}
 ];
 
@@ -157,6 +153,19 @@ const MODEL_STORAGE_KEY = 'uncraft-model';
 
 function findModel(id) {
   return ALL_MODELS.find((m) => m.id === id) || ALL_MODELS.find((m) => m.id === DEFAULT_MODEL_ID);
+}
+
+// Compute fixed-position style for the model menu — anchored to the
+// model button's left edge, sitting 8px above its top edge. Width-clamped
+// so the menu never spills off the right viewport edge.
+function getModelMenuStyle(buttonRef) {
+  if (typeof window === 'undefined') return {};
+  const r = buttonRef?.current?.getBoundingClientRect();
+  if (!r) return { position: 'fixed', left: 8, bottom: 80, right: 'auto', zIndex: 1000 };
+  const MENU_W = 260;
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - MENU_W - 8));
+  const bottom = window.innerHeight - r.top + 8;
+  return { position: 'fixed', left, bottom, right: 'auto', zIndex: 1000 };
 }
 
 // --- File picker accept maps ------------------------------------------------
@@ -580,7 +589,12 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
       </AnimatePresence>
 
       <AnimatePresence>
-        {showModelMenu && (
+        {/* Anchor the menu to the model button via getBoundingClientRect.
+            The dock has `transform: translateX(-50%)`, which traps any
+            descendant `position: fixed` element (containing block becomes
+            the dock instead of the viewport). Portal to <body> so the
+            menu escapes the dock's stacking context. */}
+        {showModelMenu && typeof document !== 'undefined' && createPortal(
           <motion.div
             key="model-menu"
             className="prompt-dock-popover prompt-dock-model-menu"
@@ -589,6 +603,7 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
             exit={{ opacity: 0, y: 6 }}
             transition={{ duration: 0.14 }}
             role="menu"
+            style={getModelMenuStyle(modelBtnRef)}
           >
             {MODEL_OPTIONS.map((group, gi) => (
               <div key={gi} className="prompt-dock-model-group">
@@ -616,7 +631,8 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
                 })}
               </div>
             ))}
-          </motion.div>
+          </motion.div>,
+          document.body
         )}
       </AnimatePresence>
 
@@ -648,3 +664,4 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
     </div>
   );
 }
+
