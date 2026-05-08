@@ -199,8 +199,20 @@ input:focus {
 }
 
 .btn-danger:hover {
-  background: rgba(248, 113, 113, 0.08);
-  border-color: rgba(248, 113, 113, 0.55);
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+}
+
+.btn-primary {
+  background: #0095FF;
+  border-color: #0095FF;
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: #0086e6;
+  border-color: #0086e6;
 }
 
 .error {
@@ -1500,7 +1512,7 @@ body.rb-ed-light .minimap-node-stroke {
 .reset-confirm-actions {
   display: flex;
   gap: calc(6px / var(--canvas-scale, 1));
-  justify-content: flex-end;
+  justify-content: center;
 }
 
 .reset-confirm-btn {
@@ -1509,6 +1521,48 @@ body.rb-ed-light .minimap-node-stroke {
   font-size: calc(12px / var(--canvas-scale, 1));
   border-radius: calc(6px / var(--canvas-scale, 1));
 }
+
+/* Cancel-edit prompt — minimal variant of the reset-confirm card. The
+   body copy is gone, so the title sits next to a close (X) button and
+   the action buttons line up below. Width is tighter than the reset
+   confirm (no body paragraph to fit). The TITLE alone gets right
+   padding to clear the absolute-positioned close button — the card
+   keeps symmetric padding so the action buttons read as centred. */
+.cancel-edit-card {
+  position: relative;
+  width: calc(220px / var(--canvas-scale, 1));
+}
+.cancel-edit-card .reset-confirm-title {
+  padding-right: calc(28px / var(--canvas-scale, 1));
+  margin-bottom: calc(10px / var(--canvas-scale, 1));
+}
+.cancel-edit-close {
+  position: absolute;
+  top: calc(8px / var(--canvas-scale, 1));
+  right: calc(8px / var(--canvas-scale, 1));
+  width: calc(22px / var(--canvas-scale, 1));
+  height: calc(22px / var(--canvas-scale, 1));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: calc(4px / var(--canvas-scale, 1));
+  color: rgba(241, 245, 249, 0.55);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.cancel-edit-close svg {
+  width: calc(13px / var(--canvas-scale, 1));
+  height: calc(13px / var(--canvas-scale, 1));
+}
+.cancel-edit-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+.cancel-edit-close:disabled { opacity: 0.4; cursor: not-allowed; }
+body.rb-ed-light .cancel-edit-close { color: rgba(31, 31, 31, 0.55); }
+body.rb-ed-light .cancel-edit-close:hover { background: rgba(0, 0, 0, 0.08); color: #1f1f1f; }
 
 /* Block browser-level pinch/keyboard zoom on the canvas page. The TransformWrapper
  * owns its own wheel zoom; we prevent the browser from also zooming. */
@@ -1593,8 +1647,15 @@ html, body { overscroll-behavior: none; }
   display: flex;
   align-items: center;
   gap: calc(8px / var(--canvas-scale, 1));
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
+  /* Cap the left group at JUST under the topbar's geometric centre so a
+     long title never reaches the (always-centred) grip. The cap is
+     "50% of the padded topbar − half grip width − safety margin", written
+     in scale-aware terms so the gap stays the same on screen at any
+     canvas zoom. */
+  max-width: calc(50% - calc(20px / var(--canvas-scale, 1)));
 }
 
 .cnode-topbar .kind-pill {
@@ -1698,11 +1759,18 @@ html, body { overscroll-behavior: none; }
   background: rgba(0, 149, 255, 0.08);
 }
 
-/* 2 rows × 6 dots horizontal — absolutely centered over the entire topbar
-   regardless of how wide topbar-left/-right grow. */
+/* 2 rows × 6 dots horizontal — absolutely centred over the topbar at
+   normal zoom levels. Below 20% canvas zoom the right-side buttons
+   (size = native / scale) inflate enough to overlap the geometric
+   centre, so the grip slides progressively LEFT proportional to how
+   far the zoom drops below 0.2. The factor `min(1, scale / 0.2)`
+   stays at 1 (grip at 50%) for scale ≥ 0.2 and shrinks linearly
+   below — at scale 0.1 grip is at 25%, at scale 0.05 it's at 12.5%.
+   Title in topbar-left truncates with ellipsis (capped via
+   max-width) so it never reaches the grip. */
 .cnode-topbar .topbar-grip {
   position: absolute;
-  left: 50%;
+  left: calc(50% * min(1, var(--canvas-scale, 1) / 0.2));
   top: 50%;
   transform: translate(-50%, -50%);
   display: grid;
@@ -1721,8 +1789,15 @@ html, body { overscroll-behavior: none; }
 .cnode-topbar .topbar-right {
   display: flex;
   align-items: center;
-  gap: calc(6px / var(--canvas-scale, 1));
-  flex-shrink: 0;
+  /* Tight gap — same scale as the topbar's top/bottom breathing so the
+     buttons don't get visually shoved into the grip at low zoom. */
+  gap: calc(3px / var(--canvas-scale, 1));
+  flex: 0 0 auto;
+  /* Anchor to the right edge regardless of how the flex spacer math
+     resolves. topbar-left has flex:1 with a max-width cap, so it could
+     stop short of the right group; margin-left:auto guarantees the
+     buttons stay flush right. */
+  margin-left: auto;
 }
 
 .cnode-topbar button {
@@ -1764,6 +1839,32 @@ html, body { overscroll-behavior: none; }
   color: #fff;
 }
 
+/* Cancel button — only rendered in edit mode, sits next to Done. Same
+   shape language as btn-edit (pill with icon + label) but neutral/danger
+   tone so it reads as the discard-path option without screaming red. */
+.cnode-topbar .btn-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px / var(--canvas-scale, 1));
+  background: transparent;
+  border-color: rgba(245, 245, 245, 0.22);
+  color: rgba(241, 245, 249, 0.78);
+}
+.cnode-topbar .btn-cancel svg {
+  width: calc(13px / var(--canvas-scale, 1));
+  height: calc(13px / var(--canvas-scale, 1));
+  flex-shrink: 0;
+}
+.cnode-topbar .btn-cancel:hover {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #0f0f0f;
+}
+.cnode-topbar .btn-cancel:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .cnode-topbar .btn-delete {
   display: inline-flex;
   align-items: center;
@@ -1781,9 +1882,82 @@ html, body { overscroll-behavior: none; }
   border-color: #F67293;
 }
 
-/* New action buttons — duplicate, download, more (3-dot). Same shape
-   language as btn-reset / btn-delete: square-ish icon button, no
-   background until hover, subtle origin-neutral hover tint. */
+/* Duplicate, Download, Reset, Delete now ONLY live inside the topbar
+   right-click / "More" dropdown. Hide them from the inline topbar at
+   every zoom — the More button is the single entry point for those
+   actions. We keep the .btn-duplicate / .btn-download style block below
+   in case the buttons are reused elsewhere. */
+.cnode-topbar .btn-duplicate,
+.cnode-topbar .btn-download,
+.cnode-topbar .btn-reset,
+.cnode-topbar .btn-delete { display: none; }
+
+/* Vertical separator between primary actions (Cancel/Done/Edit) and
+   secondary chrome (More). Spans the topbar's full vertical extent so
+   the visual cut is unmistakable. Tight horizontal margin so the More
+   button stays close to the right edge of the topbar at every zoom. */
+.cnode-topbar .topbar-sep {
+  align-self: stretch;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.10);
+  margin: 0 calc(1px / var(--canvas-scale, 1));
+  pointer-events: none;
+}
+body.rb-ed-light .cnode-topbar .topbar-sep { background: rgba(0, 0, 0, 0.10); }
+
+/* Expand/Collapse floater — bottom-right corner of the body. Same
+   frosted-glass language as the connector ports / minidock so it reads
+   as part of the node chrome rather than site UI. Idle state is dim;
+   hover lifts it. Stays above the dash-bottom resize strip via
+   z-index. */
+.cnode-expand-float {
+  position: absolute;
+  bottom: calc(16px / var(--canvas-scale, 1));
+  right: calc(16px / var(--canvas-scale, 1));
+  width: calc(28px / var(--canvas-scale, 1));
+  height: calc(28px / var(--canvas-scale, 1));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: rgba(15, 15, 15, 0.78);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: calc(8px / var(--canvas-scale, 1));
+  color: rgba(241, 245, 249, 0.78);
+  cursor: pointer;
+  z-index: 5;
+  opacity: 0.55;
+  transition: opacity 120ms, background 120ms, color 120ms, border-color 120ms, transform 120ms;
+  box-shadow: 0 calc(4px / var(--canvas-scale, 1)) calc(12px / var(--canvas-scale, 1)) rgba(0, 0, 0, 0.35);
+}
+.cnode-expand-float svg {
+  width: calc(13px / var(--canvas-scale, 1));
+  height: calc(13px / var(--canvas-scale, 1));
+}
+.cnode:hover .cnode-expand-float,
+.cnode.selected .cnode-expand-float { opacity: 1; }
+.cnode-expand-float:hover {
+  opacity: 1;
+  background: rgba(20, 20, 20, 0.92);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  transform: translateY(calc(-1px / var(--canvas-scale, 1)));
+}
+body.rb-ed-light .cnode-expand-float {
+  background: rgba(255, 255, 255, 0.86);
+  border-color: rgba(0, 0, 0, 0.10);
+  color: rgba(31, 31, 31, 0.72);
+}
+body.rb-ed-light .cnode-expand-float:hover {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(0, 0, 0, 0.18);
+  color: #1f1f1f;
+}
+
+/* Legacy block kept for downstream callers (PromptBody, etc.) that
+   reuse these classes outside the cnode topbar. */
 .cnode-topbar .btn-duplicate,
 .cnode-topbar .btn-download,
 .cnode-topbar .btn-more {
@@ -1800,10 +1974,20 @@ html, body { overscroll-behavior: none; }
   line-height: 1;
 }
 .cnode-topbar .btn-duplicate svg,
-.cnode-topbar .btn-download svg,
-.cnode-topbar .btn-more svg {
+.cnode-topbar .btn-download svg {
   width: calc(14px / var(--canvas-scale, 1));
   height: calc(14px / var(--canvas-scale, 1));
+}
+/* More button — bigger glyph than the other icon buttons (it carries
+   the entire secondary-action menu) but tight square padding so the
+   horizontal breathing matches the vertical and the chip doesn't push
+   the Edit button toward the centre at low zoom. */
+.cnode-topbar .btn-more {
+  padding: calc(3px / var(--canvas-scale, 1));
+}
+.cnode-topbar .btn-more svg {
+  width: calc(18px / var(--canvas-scale, 1));
+  height: calc(18px / var(--canvas-scale, 1));
 }
 .cnode-topbar .btn-duplicate:hover,
 .cnode-topbar .btn-download:hover,
@@ -1811,17 +1995,11 @@ html, body { overscroll-behavior: none; }
   background: rgba(255, 255, 255, 0.08);
   color: #fff;
 }
-/* btn-more hides by default; revealed only in collapsed-topbar mode
-   via the `html.canvas-zoom-low` / `.cnode.narrow` rules below.
-   Positioned absolutely in the topbar's top-right corner with the
-   same scale-aware margin as the topbar's vertical centring (6px),
-   so the gap to the right edge mirrors the gap to the top edge. */
-.cnode-topbar .btn-more {
-  display: none;
-  position: absolute;
-  top: calc(6px / var(--canvas-scale, 1));
-  right: calc(6px / var(--canvas-scale, 1));
-}
+/* btn-more is now ALWAYS visible — it's the single entry point for the
+   secondary actions (Duplicate, Download, Restore, Delete) at every
+   zoom level. Inline-flex inside topbar-right (no absolute positioning)
+   so it sits next to btn-expand on the right edge of the topbar. */
+.cnode-topbar .btn-more { display: inline-flex; }
 
 body.rb-ed-light .cnode-topbar .btn-duplicate,
 body.rb-ed-light .cnode-topbar .btn-download,
@@ -2151,21 +2329,13 @@ html.canvas-zoom-low .cnode-topbar .title,
 /* Collapsed topbar — every action button collapses to a single
    "more" icon (3-dots-in-circle) that opens the same dropdown menu as
    right-click. Edit, duplicate, download, reset, delete all hide. */
-html.canvas-zoom-low .cnode-topbar .btn-edit,
-html.canvas-zoom-low .cnode-topbar .btn-duplicate,
-html.canvas-zoom-low .cnode-topbar .btn-download,
-html.canvas-zoom-low .cnode-topbar .btn-reset,
-html.canvas-zoom-low .cnode-topbar .btn-delete,
-.cnode.narrow .cnode-topbar .btn-edit,
-.cnode.narrow .cnode-topbar .btn-duplicate,
-.cnode.narrow .cnode-topbar .btn-download,
-.cnode.narrow .cnode-topbar .btn-reset,
-.cnode.narrow .cnode-topbar .btn-delete { display: none; }
+/* Edit button stays visible at every zoom — at low zoom it collapses to
+   icon-only via the `.btn-edit-lbl { display:none }` rule below. The
+   button is the primary entry point for editing, so it never fully
+   disappears. */
 
-html.canvas-zoom-low .cnode-topbar .btn-more,
-.cnode.narrow .cnode-topbar .btn-more {
-  display: inline-flex;
-}
+/* btn-more handled globally now (always visible) — no zoom-specific
+   override needed here. */
 
 html.canvas-zoom-low .cnode-topbar .kind-pill-lbl,
 .cnode.narrow .cnode-topbar .kind-pill-lbl { display: none; }
@@ -2178,21 +2348,38 @@ html.canvas-zoom-low .cnode-topbar .kind-pill,
 .cnode.narrow .cnode-topbar .kind-pill {
   display: none;
 }
+/* At zoom-low or narrow widths, the Edit/Done and Cancel buttons drop
+   their text labels and shrink padding so they read as compact icon
+   chips. The buttons themselves stay visible. */
 html.canvas-zoom-low .cnode-topbar .btn-edit,
-.cnode.narrow .cnode-topbar .btn-edit {
+html.canvas-zoom-low .cnode-topbar .btn-cancel,
+.cnode.narrow .cnode-topbar .btn-edit,
+.cnode.narrow .cnode-topbar .btn-cancel {
   padding: calc(5px / var(--canvas-scale, 1)) calc(7px / var(--canvas-scale, 1));
   gap: 0;
 }
+html.canvas-zoom-low .cnode-topbar .btn-edit .btn-edit-lbl,
+html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
+.cnode.narrow .cnode-topbar .btn-edit .btn-edit-lbl,
+.cnode.narrow .cnode-topbar .btn-cancel .btn-edit-lbl { display: none; }
+/* Drag grip stays visible in edit mode at every zoom — moving the node
+   while editing is a legitimate action and the grip is the affordance
+   for it. (Note: btn-more is also kept visible at zoom-low; the rules
+   below for the always-on More dropdown handle that.) */
 
 .cnode-body {
   position: relative;
   /* Body owns its own bottom-rounded corners now that .cnode is overflow:
      visible (so the right-side connector port can stick out). Topbar owns
      the top-rounded corners. Together they reproduce the unified rounded
-     shape without a clipping parent. */
+     shape without a clipping parent.
+
+     Height is now driven by the inline `style.height = node.height` on
+     the JSX side — the body is a fixed viewport into a (potentially much
+     taller) iframe, so we drop `flex:1 1 auto` and clip overflow. */
   border-radius: 0 0 calc(10px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1));
   overflow: hidden;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   background: #fff;
   /* Same custom arrow cursor the editor uses inside the iframe — gives
      a consistent "you're working with a node" affordance even when the
@@ -2379,6 +2566,55 @@ html.canvas-zoom-very-low .cnode-port-dot {
   background: #fff;
   display: block;
 }
+
+/* Dash resize handles — thin centred bars on the bottom edge (height
+   resize) and right edge (width resize) of the body. The hit area is
+   wider than the visual bar so the user doesn't have to aim. The bar
+   itself is rendered via the ::after pseudo-element so the button
+   element can carry pointer events without showing a button frame.
+   Always-visible at low alpha; richer on hover. */
+.cnode-resize-dash {
+  position: absolute;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cnode-resize-dash::after {
+  content: '';
+  display: block;
+  background: rgba(120, 130, 140, 0.55);
+  border-radius: 999px;
+  transition: background 120ms, transform 120ms;
+}
+.cnode-resize-dash:hover::after,
+.cnode-resize-dash:active::after {
+  background: var(--cnode-port-fill, #0095FF);
+  transform: scale(1.05);
+}
+.cnode-resize-dash-bottom {
+  left: 0; right: 0; bottom: 0;
+  height: calc(10px / var(--canvas-scale, 1));
+  cursor: ns-resize;
+}
+.cnode-resize-dash-bottom::after {
+  width: calc(40px / var(--canvas-scale, 1));
+  height: calc(3px / var(--canvas-scale, 1));
+}
+.cnode-resize-dash-right {
+  top: 0; bottom: 0; right: 0;
+  width: calc(10px / var(--canvas-scale, 1));
+  cursor: ew-resize;
+}
+.cnode-resize-dash-right::after {
+  width: calc(3px / var(--canvas-scale, 1));
+  height: calc(40px / var(--canvas-scale, 1));
+}
+body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.45); }
 
 .cnode-edge-hint {
   position: absolute;

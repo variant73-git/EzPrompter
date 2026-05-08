@@ -3225,6 +3225,77 @@
     // context this is hidden via the missing API check.
     if (hostWin.__uncraftZoom) {
       var zoomWrap = mk('div', 'rb-ed-zoom-wrap');
+
+      // Frame-back button — sits to the LEFT of the zoom pill, attached
+      // as part of the same widget. Restores the canvas to the framing
+      // captured the moment the user entered edit mode (CanvasClient
+      // stamps __uncraftZoom._editFrame after zoomToNode). Disabled when
+      // the canvas is already at that frame, so the button signals
+      // "you've drifted from the edit-mode view".
+      var frameBackBtn = mk('button', 'rb-ed-frame-back');
+      frameBackBtn.type = 'button';
+      frameBackBtn.title = 'Frame back to edit-mode view';
+      frameBackBtn.setAttribute('aria-label', 'Frame back to edit-mode view');
+      frameBackBtn.innerHTML =
+        '<svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M2 5V3a1 1 0 0 1 1-1h2"/>' +
+          '<path d="M14 5V3a1 1 0 0 0-1-1h-2"/>' +
+          '<path d="M2 11v2a1 1 0 0 0 1 1h2"/>' +
+          '<path d="M14 11v2a1 1 0 0 1-1 1h-2"/>' +
+          '<circle cx="8" cy="8" r="1.4" fill="currentColor" stroke="none"/>' +
+        '</svg>';
+      // Look up the editing node's id via __uncraftMountOptions — set by
+      // CanvasEditorCore on every mount. With the id we can ask the
+      // canvas API for the node's edit frame on demand instead of
+      // relying on a pre-stamped _editFrame (which is racy and gets
+      // wiped when __uncraftZoom is re-created on canvas-scale ticks).
+      function currentNodeId() {
+        var opt = hostWin.__uncraftMountOptions;
+        return (opt && opt.nodeId) || null;
+      }
+      function isAtEditFrame() {
+        var z = hostWin.__uncraftZoom;
+        if (!z || !z.getNodeFrame || !z.getState) return true;
+        var nid = currentNodeId();
+        if (!nid) return true;
+        var ef = z.getNodeFrame(nid);
+        var cur = z.getState();
+        if (!ef || !cur) return true;
+        // Tolerance generous on purpose — sub-pixel drift from animation
+        // easing or trackpad microscrolls shouldn't keep the button
+        // "active" forever once the user is visually back at the frame.
+        return Math.abs(cur.positionX - ef.positionX) < 6 &&
+               Math.abs(cur.positionY - ef.positionY) < 6 &&
+               Math.abs(cur.scale - ef.scale) < 0.01;
+      }
+      function refreshFrameBackBtn() {
+        var z = hostWin.__uncraftZoom;
+        var hasApi = !!(z && z.frameNode && z.getNodeFrame);
+        var nid = currentNodeId();
+        var at = isAtEditFrame();
+        frameBackBtn.disabled = !hasApi || !nid || at;
+        frameBackBtn.classList.toggle('rb-ed-frame-back-active', hasApi && nid && !at);
+      }
+      function activateFrameBack() {
+        if (frameBackBtn.disabled) return;
+        var z = hostWin.__uncraftZoom;
+        var nid = currentNodeId();
+        if (!z || !z.frameNode || !nid) return;
+        z.frameNode(nid, 280);
+      }
+      frameBackBtn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        activateFrameBack();
+      }, {capture: true, signal: sig});
+      // Belt-and-suspenders: a `click` listener catches the case where a
+      // higher-priority capture-phase handler swallowed the mousedown.
+      frameBackBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        activateFrameBack();
+      }, {signal: sig});
+      zoomWrap.appendChild(frameBackBtn);
+
       var zoomPill = mk('button', 'rb-ed-zoom-pill');
       zoomPill.type = 'button';
       var zoomPct = mk('span', 'rb-ed-zoom-pct');
@@ -3235,12 +3306,18 @@
       zoomPill.appendChild(zoomChev);
       zoomWrap.appendChild(zoomPill);
 
-      // Live-update the displayed % whenever canvas scale changes via
-      // CSS variable (CanvasClient sets --canvas-scale on every transform).
+      // Live-update the displayed % AND the frame-back enabled state. The
+      // canvas can change via wheel/pan events that don't fire React
+      // updates, so we poll on a short interval. 250ms is fast enough to
+      // feel responsive, slow enough to be cheap.
       var zoomTickerId = setInterval(function() {
         if (!hostWin.__uncraftZoom) return;
         zoomPct.textContent = Math.round(hostWin.__uncraftZoom.getScale() * 100) + '%';
+        refreshFrameBackBtn();
       }, 250);
+      // Initial pass so the button starts in the right state without
+      // waiting a tick.
+      refreshFrameBackBtn();
       sig.addEventListener('abort', function() { clearInterval(zoomTickerId); });
 
       var zoomMenu = null;

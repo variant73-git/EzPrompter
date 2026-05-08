@@ -92,6 +92,32 @@ const CheckIcon = () => (
   </svg>
 );
 
+const CloseIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <line x1="18" y1="6" x2="6" y2="18"/>
+    <line x1="6" y1="6" x2="18" y2="18"/>
+  </svg>
+);
+
+// Capture the iframe's current document as a clean HTML string — strips
+// editor-only markers so the saved snapshot doesn't carry stale data-rb-*
+// attributes or rb-ed-* classes from the previous edit session. The next
+// edit re-tags from scratch via rebuild.js so dropping these is safe.
+function captureCleanHtml(iframe) {
+  const doc = iframe?.contentDocument;
+  if (!doc?.documentElement) return null;
+  const clone = doc.documentElement.cloneNode(true);
+  clone.querySelectorAll('[data-rb-node]').forEach((el) => el.removeAttribute('data-rb-node'));
+  clone.querySelectorAll('[data-rb-editing]').forEach((el) => el.removeAttribute('data-rb-editing'));
+  clone.querySelectorAll('.rb-ed-movable, .rb-ed-text-hint').forEach((el) => {
+    el.classList.remove('rb-ed-movable', 'rb-ed-text-hint');
+  });
+  const body = clone.querySelector('body');
+  if (body) body.classList.remove('rb-ed-active');
+  clone.querySelectorAll('#rb-hover-kill, #rb-override-sheet, #rb-cursor-style').forEach((el) => el.remove());
+  return '<!DOCTYPE html>\n' + clone.outerHTML;
+}
+
 const DownloadIcon = () => (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -113,6 +139,24 @@ const MoreIcon = () => (
     <circle cx="7"  cy="12" r="0.7" fill="currentColor"/>
     <circle cx="12" cy="12" r="0.7" fill="currentColor"/>
     <circle cx="17" cy="12" r="0.7" fill="currentColor"/>
+  </svg>
+);
+
+const ExpandIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="15 3 21 3 21 9"/>
+    <polyline points="9 21 3 21 3 15"/>
+    <line x1="21" y1="3" x2="14" y2="10"/>
+    <line x1="3" y1="21" x2="10" y2="14"/>
+  </svg>
+);
+
+const CollapseIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="4 14 10 14 10 20"/>
+    <polyline points="20 10 14 10 14 4"/>
+    <line x1="14" y1="10" x2="21" y2="3"/>
+    <line x1="3" y1="21" x2="10" y2="14"/>
   </svg>
 );
 
@@ -145,15 +189,122 @@ function activeViewportId(width) {
 
 export default function CanvasNode({
   node, selected, editing = false, onEditingChange,
-  onSelect, onMove, onResize, onDelete, onReset, onDuplicate, onDownload,
+  onSelect, onMove, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
+  onDuplicate, onDownload,
   onStartEdge, onSlotMouseDown, onPromptTextChange,
   incomingEdges = [], draftActive
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [menuPos, setMenuPos] = useState(null); // {x, y} for topbar context menu
+  // Cancel-with-unsaved-edits prompt. Shown when user clicks Cancel from
+  // edit mode; offers Save / Discard / Continue editing.
+  const [showCancelPrompt, setShowCancelPrompt] = useState(false);
   const iframeRef = useRef(null);
   const [editorBusy, setEditorBusy] = useState(false);
+  // Captures iframe scrollWidth/scrollHeight on load — used by Expand to
+  // grow the viewport to fit full content without an extra DOM read.
+  const contentSizeRef = useRef({ w: null, h: null });
+  // Pre-expand size memory: lets the toggle restore the user's chosen
+  // viewport height when collapsing. Defaults to current node h on
+  // first toggle so an instant expand→collapse round-trips correctly.
+  const preExpandRef = useRef({ w: null, h: null });
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Save the current iframe state as a snapshot, then exit edit mode.
+  // Used by the Done button and by "Save and exit" inside the cancel
+  // prompt. We capture BEFORE unmounting the editor — the editor's
+  // teardown is async (50ms StrictMode grace), so capturing first gives
+  // us the user's edits while the iframe DOM is still authoritative.
+  async function saveAndExit() {
+    if (!onSaveEdit || !iframeRef.current) {
+      onEditingChange?.(false);
+      return;
+    }
+    setEditorBusy(true);
+    try {
+      const html = captureCleanHtml(iframeRef.current);
+      if (html) await onSaveEdit(html);
+    } catch (e) {
+      console.warn('save-edit failed', e);
+      alert(`Save failed: ${e.message || e}`);
+      setEditorBusy(false);
+      return;
+    }
+    onEditingChange?.(false);
+    // Editor unmounts asynchronously; clear the busy spinner once the
+    // editing flag flips back via the parent prop.
+  }
+
+  // Discard: exit edit mode WITHOUT saving, then ask the parent to bump
+  // _resetTick so the iframe remounts with the unmodified server html.
+  async function discardAndExit() {
+    onEditingChange?.(false);
+    // Wait one tick so the editor unmounts before we yank the iframe — same
+    // 120ms grace ResetConfirm uses to avoid a stale targetDoc reference.
+    await new Promise((r) => setTimeout(r, 120));
+    onDiscardEdit?.();
+  }
+
+  // Expand toggle — fit viewport to full iframe content (scrollWidth ×
+  // scrollHeight) when collapsing, restore to the previously-known size
+  // when uncollapsing. Without contentSize captured we just bail; the
+  // load handler stamps it the moment the iframe lays out.
+  // The `cascade` flag tells the parent to push overlapping neighbours
+  // out of the way (donors→left, receivers→right). We pass it on expand
+  // because the node is GROWING into other nodes' space; on collapse we
+  // skip cascade — shrinking can't create new overlap.
+  function handleExpandToggle() {
+    const cs = contentSizeRef.current;
+    if (!cs?.w || !cs?.h) return;
+    if (!isExpanded) {
+      preExpandRef.current = { w: node.width, h: node.height };
+      onResize?.(cs.w, cs.h, { cascade: true });
+      setIsExpanded(true);
+    } else {
+      const pe = preExpandRef.current;
+      const w = pe?.w || node.width;
+      const h = pe?.h || Math.round((node.width || 1280) * 9 / 16);
+      onResize?.(w, h);
+      setIsExpanded(false);
+    }
+  }
+
+  // Dash-handle resize — vertical drag on the bottom edge adjusts node
+  // height, horizontal drag on the right edge adjusts node width. Both
+  // commit live during drag (parent debounces persistence). Scale-aware
+  // so the displacement matches cursor movement at any canvas zoom.
+  const startDashResize = useCallback((axis) => (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const readScale = () => {
+      const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale'));
+      return v > 0 ? v : 1;
+    };
+    const start = {
+      x: e.clientX, y: e.clientY,
+      w: node.width || 1280,
+      h: node.height || 800
+    };
+    function move(ev) {
+      const scale = readScale();
+      const dx = (ev.clientX - start.x) / scale;
+      const dy = (ev.clientY - start.y) / scale;
+      const nextW = axis === 'x' ? Math.max(280, start.w + dx) : start.w;
+      const nextH = axis === 'y' ? Math.max(120, start.h + dy) : start.h;
+      onResize?.(nextW, nextH);
+    }
+    function up() {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      // Manual resize means the user moved away from the
+      // "expanded" state — drop the toggle so the icon flips back
+      // to Expand.
+      setIsExpanded(false);
+    }
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }, [node.width, node.height, onResize]);
 
   // Close the topbar context menu on Esc / click outside.
   useEffect(() => {
@@ -233,16 +384,28 @@ export default function CanvasNode({
     onStartEdge(e, side);
   }, [editing, onStartEdge, onSelect]);
 
+  // Capture the iframe content's natural size so the Expand button can
+  // grow the viewport to fit the whole site without re-measuring on
+  // click. Also clamps to a sane upper bound — sites that report
+  // 50000px scrollHeight (sticky parallax, infinite-scroll mocks)
+  // would push the canvas off-screen otherwise.
   const onIframeLoad = useCallback(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
     try {
       const doc = iframe.contentDocument;
-      if (!doc) return;
-      const h = Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight || 0, 800);
-      iframe.style.height = Math.min(h, 12000) + 'px';
+      if (!doc?.documentElement) return;
+      const h = Math.min(
+        Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight || 0, 800),
+        12000
+      );
+      const w = Math.min(
+        Math.max(doc.documentElement.scrollWidth, doc.body?.scrollWidth || 0, node.width || 1280),
+        4000
+      );
+      contentSizeRef.current = { w, h };
     } catch (e) { /* cross-origin */ }
-  }, []);
+  }, [node.width]);
 
   const html = node.current_html;
   const kindLabel =
@@ -267,16 +430,17 @@ export default function CanvasNode({
   const renderPromptBody = node.kind === 'prompt';
   const renderSkillBody = node.kind === 'skill';
 
-  // Forward wheel events from inside the iframe out to the host canvas so
-  // the user can zoom by scrolling over a node. iframes capture wheel
-  // events in their own contentDocument — pointer-events:none on the host
-  // side doesn't help because the inner browser still handles them. We
-  // re-dispatch a synthetic wheel on .cnode-body (which is NOT in the
-  // TransformWrapper's `excluded` list) so react-zoom-pan-pinch picks it
-  // up. Skip this in edit mode so the editor's own scroll/wheel logic
-  // still works inside the iframe.
+  // Wheel routing inside the iframe. Three modes:
+  //   • Resting (not editing): wheel → canvas zoom.
+  //   • Editing + Cmd/Ctrl held: wheel → canvas zoom (pinch-to-zoom
+  //     equivalent for keyboard-with-mouse setups).
+  //   • Editing without modifier: wheel → pan the canvas viewport up/
+  //     down/left/right. This mirrors the "scrolling a website" feel —
+  //     the camera moves through the canvas as if the node were a tall
+  //     page. The iframe's own contentDocument does NOT scroll; the
+  //     user gets to more of the site by clicking Expand or dragging
+  //     the dash handles.
   useEffect(() => {
-    if (editing) return;
     const iframe = iframeRef.current;
     if (!iframe) return;
     let doc = null;
@@ -293,44 +457,38 @@ export default function CanvasNode({
       try {
         doc = iframe.contentDocument;
         if (!doc) return;
-        // Always replace any prior listener — StrictMode + hot-reload can
-        // leave stale handlers bound to a previous parentElement reference.
         if (doc._uncraftWheel) {
           try { doc.removeEventListener('wheel', doc._uncraftWheel, { capture: true }); } catch (err) {}
         }
         handler = (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          // Direct path — call the canvas zoom API CanvasClient exposes.
-          // Survives any synthetic-event quirks with react-zoom-pan-pinch.
-          if (window.__uncraftZoom) {
-            const z = window.__uncraftZoom;
-            const dy = e.deltaY || 0;
+          const z = window.__uncraftZoom;
+          if (!z) return;
+          const dy = e.deltaY || 0;
+          const dx = e.deltaX || 0;
+          if (dy === 0 && dx === 0) return;
+          const wantsZoom = (!editing) || (e.metaKey || e.ctrlKey);
+          if (wantsZoom) {
             if (dy === 0) return;
-            // Step proportional to deltaY magnitude so trackpad scroll
-            // feels smooth (small deltas = small zoom changes).
+            e.preventDefault();
+            e.stopPropagation();
             const cur = z.getScale();
             const factor = Math.exp(-dy * 0.0015);
             z.setScale(Math.max(0.1, Math.min(2.5, cur * factor)));
             return;
           }
-          // Fallback for environments without the canvas API — re-dispatch
-          // a synthetic wheel on cnode-body so TransformWrapper picks it up.
-          const r = iframe.getBoundingClientRect();
-          const synth = new WheelEvent('wheel', {
-            bubbles: true, cancelable: true,
-            ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey,
-            deltaX: e.deltaX, deltaY: e.deltaY, deltaZ: e.deltaZ, deltaMode: e.deltaMode,
-            clientX: r.left + e.clientX, clientY: r.top + e.clientY
-          });
-          (iframe.parentElement || iframe).dispatchEvent(synth);
+          // Edit mode, no modifier — pan the canvas. Vertical scroll
+          // walks the camera up/down through the page; horizontal
+          // deltas are damped to 30% (Magic Mouse / trackpad sideways
+          // swipes are noisy).
+          e.preventDefault();
+          e.stopPropagation();
+          z.panBy?.(-dx * 0.3, -dy);
         };
         doc._uncraftWheel = handler;
         doc.addEventListener('wheel', handler, { passive: false, capture: true });
       } catch (err) { /* cross-origin / not ready */ }
     }
     attach();
-    // Re-attach if iframe reloads (e.g., after reset)
     iframe.addEventListener('load', attach);
     return () => {
       iframe.removeEventListener('load', attach);
@@ -399,84 +557,65 @@ export default function CanvasNode({
             {KindIcon && <KindIcon />}
             <span className="kind-pill-lbl">{kindLabel}</span>
           </span>
-          <span className="title" title={title}>{title}</span>
+          {node.kind !== 'prompt' && (
+            <span className="title" title={title}>{title}</span>
+          )}
         </div>
         <div className="topbar-grip" aria-hidden>
           <span /><span /><span /><span /><span /><span />
           <span /><span /><span /><span /><span /><span />
         </div>
         <div className="topbar-right">
-          {/* "More" button — hidden by default, shown via CSS in
-              collapsed-topbar mode (zoom-low / narrow node). Opens the
-              same dropdown as right-click on the topbar. */}
+          {renderIframeBody && html && editing && (
+            <button
+              className="btn-cancel"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (editorBusy) return;
+                setShowCancelPrompt(true);
+              }}
+              title="Cancel — exit edit mode (you'll be asked to save)"
+              aria-label="Cancel edit"
+              disabled={editorBusy}
+            >
+              <CloseIcon />
+              <span className="btn-edit-lbl">Cancel</span>
+            </button>
+          )}
+          {renderIframeBody && html && (
+            <button
+              className={editing ? 'btn-edit active' : 'btn-edit'}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (editorBusy) return;
+                if (editing) saveAndExit();
+                else onEditingChange?.(true);
+              }}
+              title={editing ? 'Save and exit edit mode' : 'Open editor (layers + inspector + guides)'}
+              disabled={editorBusy}
+            >
+              {editing ? <CheckIcon /> : <EditIcon />}
+              <span className="btn-edit-lbl">{editing ? (editorBusy ? 'Saving…' : 'Done') : 'Edit'}</span>
+            </button>
+          )}
+          {/* Vertical separator that fills the topbar's full vertical
+              extent — visually splits the primary action (Edit/Done)
+              from the More dropdown. */}
+          <span className="topbar-sep" aria-hidden="true" />
           <button
             className="btn-more"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               const r = e.currentTarget.getBoundingClientRect();
-              // Open to the RIGHT of the button (small gap), top
-              // edges aligned. Clamping inside TopbarContextMenu
-              // handles the screen-edge case (menu falls back to
-              // overflow-friendly position automatically).
-              setMenuPos({
-                x: r.right + 6,
-                y: r.top
-              });
+              setMenuPos({ x: r.right + 6, y: r.top });
             }}
-            title="Actions"
+            title="More actions"
             aria-label="Open node actions menu"
           >
             <MoreIcon />
-          </button>
-          {renderIframeBody && html && (
-            <button
-              className={editing ? 'btn-edit active' : 'btn-edit'}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onEditingChange?.(!editing); }}
-              title={editing ? 'Exit edit mode' : 'Open editor (layers + inspector + guides)'}
-            >
-              {editing ? <CheckIcon /> : <EditIcon />}
-              <span className="btn-edit-lbl">{editing ? (editorBusy ? '…' : 'Done') : 'Edit'}</span>
-            </button>
-          )}
-          <button
-            className="btn-duplicate"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); onDuplicate?.(); }}
-            title="Duplicate node"
-            aria-label="Duplicate node"
-          >
-            <DuplicateIcon />
-          </button>
-          <button
-            className="btn-download"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); onDownload?.(); }}
-            title={node.kind === 'designmd' ? 'Download as .md' : 'Download as .html'}
-            aria-label="Download node content"
-          >
-            <DownloadIcon />
-          </button>
-          {renderIframeBody && html && (
-            <button
-              className="btn-reset"
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => { if (!hasEdits) return; e.stopPropagation(); setShowResetConfirm(true); }}
-              disabled={!hasEdits}
-              title={hasEdits ? 'Reset site to original capture' : 'No edits to reset'}
-              aria-label="Reset site to original"
-            >
-              <ResetIcon />
-            </button>
-          )}
-          <button
-            className="btn-delete"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); if (confirm('Delete this node?')) onDelete(); }}
-            title="Delete node"
-          >
-            <TrashIcon />
           </button>
         </div>
       </div>
@@ -495,8 +634,10 @@ export default function CanvasNode({
               e.stopPropagation();
               onEditingChange?.(true);
             }}
+            style={{ height: (node.height || 800) + 'px' }}
           >
             <iframe
+              key={node._resetTick || 0}
               ref={iframeRef}
               className="cnode-iframe"
               title={title}
@@ -505,9 +646,43 @@ export default function CanvasNode({
               onLoad={onIframeLoad}
               style={{
                 pointerEvents: editing ? 'auto' : 'none',
-                height: 800
+                height: '100%'
               }}
             />
+            {/* Dash resize handles — bottom drags height, right drags
+                width. Visible as a thin centred bar; the surrounding
+                hit area is wider so the user doesn't have to aim.
+                Only rendered for site/html iframe nodes — md/prompt/
+                skill bodies size themselves to their own content. */}
+            <button
+              type="button"
+              className="cnode-resize-dash cnode-resize-dash-bottom"
+              onMouseDown={startDashResize('y')}
+              title="Drag to resize viewport height"
+              aria-label="Resize node height"
+            />
+            <button
+              type="button"
+              className="cnode-resize-dash cnode-resize-dash-right"
+              onMouseDown={startDashResize('x')}
+              title="Drag to resize viewport width"
+              aria-label="Resize node width"
+            />
+            {/* Expand/Collapse floater — sits at the bottom-right of the
+                viewport. Toggles between hero proportion and full
+                content size. Lives inside .cnode-body so it inherits
+                the body's clip and stays anchored to the bottom-right
+                even when the user resizes via dash handles. */}
+            <button
+              type="button"
+              className="cnode-expand-float"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); handleExpandToggle(); }}
+              title={isExpanded ? 'Collapse to default viewport' : 'Expand viewport to fit full content'}
+              aria-label={isExpanded ? 'Collapse viewport' : 'Expand viewport to full content'}
+            >
+              {isExpanded ? <CollapseIcon /> : <ExpandIcon />}
+            </button>
           </div>
         ) : (
           <div className="cnode-loading">
@@ -588,6 +763,22 @@ export default function CanvasNode({
           boardId={node.board_id}
           onExit={() => onEditingChange?.(false)}
           onSnapshotSaved={() => { /* optional: refresh state */ }}
+        />
+      )}
+
+      {showCancelPrompt && (
+        <CancelEditPrompt
+          name={title}
+          busy={editorBusy}
+          onContinue={() => setShowCancelPrompt(false)}
+          onDiscard={async () => {
+            setShowCancelPrompt(false);
+            await discardAndExit();
+          }}
+          onSave={async () => {
+            setShowCancelPrompt(false);
+            await saveAndExit();
+          }}
         />
       )}
 
@@ -686,6 +877,59 @@ function TopbarContextMenu({ x, y, canEdit, canReset, editing, onEdit, onDuplica
         <TrashIcon />
         <span>Delete</span>
       </button>
+    </div>
+  );
+}
+
+function CancelEditPrompt({ busy, onContinue, onDiscard, onSave }) {
+  const cardRef = useRef(null);
+  // Esc and any click landing outside the card both dismiss the prompt
+  // back to editing — same outcome as the explicit X. Capture-phase so we
+  // run before global click handlers that might select/move nodes.
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape' && !busy) onContinue(); }
+    function onDown(e) {
+      if (busy) return;
+      if (cardRef.current && !cardRef.current.contains(e.target)) onContinue();
+    }
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown, true);
+    };
+  }, [busy, onContinue]);
+
+  return (
+    <div className="reset-confirm-overlay">
+      <div
+        ref={cardRef}
+        className="reset-confirm-card cancel-edit-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cancel-edit-title"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          className="cancel-edit-close"
+          onClick={onContinue}
+          disabled={busy}
+          aria-label="Continue editing"
+          title="Continue editing"
+        >
+          <CloseIcon />
+        </button>
+        <h3 id="cancel-edit-title" className="reset-confirm-title">Save before exiting?</h3>
+        <div className="reset-confirm-actions">
+          <button type="button" className="btn-danger reset-confirm-btn" onClick={onDiscard} disabled={busy}>
+            Discard
+          </button>
+          <button type="button" className="btn-primary reset-confirm-btn" onClick={onSave} disabled={busy}>
+            {busy ? 'Saving…' : 'Save and exit'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

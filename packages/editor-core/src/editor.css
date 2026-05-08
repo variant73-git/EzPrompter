@@ -559,6 +559,30 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
    and the Export button when running inside the canvas shell. The pill
    reads/writes window.__uncraftZoom that CanvasClient exposes. */
 .rb-ed-zoom-wrap { display:flex; align-items:center; }
+/* Frame-back button — visually attached to the LEFT of the zoom pill
+   (no gap, shared border seam, mirrored corners). Disabled state when
+   the canvas is already at the captured edit-frame. The active state
+   gets a subtle accent so the user notices "you've drifted". */
+.rb-ed-frame-back {
+  display:inline-flex; align-items:center; justify-content:center;
+  width:24px; height:24px; padding:0;
+  background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08);
+  border-right:none;
+  border-radius:6px 0 0 6px;
+  color:rgba(239,238,235,0.62);
+  cursor:pointer;
+  transition:background 120ms, color 120ms, border-color 120ms, opacity 120ms;
+}
+.rb-ed-frame-back:hover:not(:disabled) {
+  background:rgba(255,255,255,0.10); border-color:rgba(255,255,255,0.14);
+  color:#EFEEEB;
+}
+.rb-ed-frame-back:disabled {
+  opacity:0.4; cursor:default;
+}
+.rb-ed-frame-back.rb-ed-frame-back-active {
+  color:#0095FF;
+}
 .rb-ed-zoom-pill {
   display:inline-flex; align-items:center; gap:4px;
   height:24px; padding:0 8px;
@@ -567,6 +591,9 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
   font:500 11px/1 'Instrument Sans',sans-serif; cursor:pointer;
   transition:background 120ms, border-color 120ms;
 }
+/* When the frame-back button is present, the pill drops its left round
+   corner so the two pieces read as one widget. */
+.rb-ed-frame-back + .rb-ed-zoom-pill { border-radius:0 6px 6px 0; }
 .rb-ed-zoom-pill:hover { background:rgba(255,255,255,0.10); border-color:rgba(255,255,255,0.14); }
 .rb-ed-zoom-pct { min-width:30px; text-align:center; }
 .rb-ed-zoom-chev { display:inline-flex; align-items:center; opacity:0.6; }
@@ -600,6 +627,13 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 /* Light-mode flip */
 body.rb-ed-light .rb-ed-zoom-pill { background:rgba(0,0,0,0.05); border-color:rgba(0,0,0,0.10); color:#1f1f1f; }
 body.rb-ed-light .rb-ed-zoom-pill:hover { background:rgba(0,0,0,0.08); border-color:rgba(0,0,0,0.16); }
+body.rb-ed-light .rb-ed-frame-back {
+  background:rgba(0,0,0,0.05); border-color:rgba(0,0,0,0.10); color:rgba(31,31,31,0.55);
+}
+body.rb-ed-light .rb-ed-frame-back:hover:not(:disabled) {
+  background:rgba(0,0,0,0.08); border-color:rgba(0,0,0,0.16); color:#1f1f1f;
+}
+body.rb-ed-light .rb-ed-frame-back.rb-ed-frame-back-active { color:#0086e6; }
 body.rb-ed-light .rb-ed-zoom-menu { background:#D4D7DC; border-color:rgba(0,0,0,0.10); color:#1f1f1f; box-shadow:0 16px 48px rgba(0,0,0,0.10); }
 body.rb-ed-light .rb-ed-zoom-item { color:#1f1f1f; }
 body.rb-ed-light .rb-ed-zoom-item:hover { background:rgba(0,0,0,0.05); }
@@ -877,34 +911,51 @@ body.rb-ed-light .rb-dock-mixed span { color:rgba(51,51,51,0.55); }
   pointer-events:none;
 }
 
-/* Add feedback tab — anchored to the selection box top-right corner,
-   sticking OUT (translated above the top edge). Same visual family as
-   the spacing-guide tab but blue to match the selection ring. */
+/* Add feedback pill — anchored to the selection box BOTTOM-right corner,
+   sticking OUT (translated below the bottom edge). Single clickable pill
+   (the entire surface is the click target — the inner icon/button is
+   purely decorative). Same visual family as the spacing-guide tab but
+   blue to match the selection ring. */
 .rb-sel-fb-tab {
   position: absolute;
-  top: 0;
-  right: -1.5px;  /* line up with the selection border edge */
-  transform: translateY(-100%);
+  bottom: -1.5px;       /* line up with the selection border edge */
+  right: -1.5px;
+  transform: translateY(100%);
+  margin-top: 6px;       /* breathing room from the selection ring */
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px 5px 12px;
+  padding: 6px 14px;
   background: #1A1A1A;
   border: 1px solid #0095FF;
-  border-bottom: none;
-  border-radius: 6px 6px 0 0;
+  border-radius: 999px;  /* full pill */
   color: #0095FF;
   font: 500 12px/1 'Instrument Sans', sans-serif;
   white-space: nowrap;
   pointer-events: auto;
-  cursor: default;
+  cursor: pointer;       /* whole tab is clickable */
   z-index: 2147483643;
-  box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: background 120ms, color 120ms;
 }
-.rb-sel-fb-tab .rb-spacing-fb-lbl { color: #0095FF; }
-.rb-sel-fb-tab .rb-spacing-fb-sep { background: rgba(0, 149, 255, 0.45); margin: 0 2px; }
-.rb-sel-fb-tab .rb-spacing-fb-btn { color: #0095FF; }
-.rb-sel-fb-tab .rb-spacing-fb-btn:hover { background: rgba(0, 149, 255, 0.15); color: #fff; }
+.rb-sel-fb-tab:hover {
+  background: #0095FF;
+  color: #fff;
+}
+.rb-sel-fb-tab .rb-spacing-fb-lbl { color: inherit; pointer-events: none; }
+.rb-sel-fb-tab .rb-spacing-fb-sep { background: currentColor; opacity: 0.45; margin: 0 2px; pointer-events: none; }
+/* Inner button is purely visual — pointer-events:none routes the click to
+   the parent pill, ensuring the whole pill behaves as a single button. */
+.rb-sel-fb-tab .rb-spacing-fb-btn {
+  color: inherit;
+  background: transparent;
+  border: none;
+  pointer-events: none;
+  width: auto;
+  height: auto;
+  padding: 0;
+}
+.rb-sel-fb-tab .rb-spacing-fb-btn:hover { background: transparent; color: inherit; }
 
 /* ===== 16. RESIZE HANDLES ===== */
 .rb-sel-handle {

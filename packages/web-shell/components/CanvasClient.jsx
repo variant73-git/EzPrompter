@@ -130,6 +130,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // window.__uncraftZoom on demand.
   useEffect(() => {
     const ZOOM_STEP = 1.2, MIN = 0.1, MAX = 2.5;
+    // Snapshot the previously-stored edit frame so we can restore it
+    // after replacing the __uncraftZoom object (this effect re-runs on
+    // every canvas-scale tick, otherwise the frame would be wiped).
+    const prevEditFrame = window.__uncraftZoom?._editFrame;
     function setAbs(target) {
       const t = transformRef.current;
       if (!t) return;
@@ -158,8 +162,58 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         const cur = window.__uncraftZoom.getScale();
         setAbs(Math.max(MIN, cur / ZOOM_STEP));
       },
+      // Translate the canvas by screen-space deltas. Used by per-node wheel
+      // handlers (CanvasNode) to scroll the canvas when the cursor is inside
+      // an iframe — TransformWrapper otherwise ignores wheel inside the
+      // node iframe (it's in `wheel.excluded`).
+      panBy: (dx, dy) => {
+        const t = transformRef.current;
+        if (!t) return;
+        const inst = t.instance || t;
+        const state = inst?.transformState || t.state || { positionX: 0, positionY: 0, scale: 1 };
+        t.setTransform(state.positionX + dx, state.positionY + dy, state.scale, 0);
+      },
+      // Snapshot the canvas position+scale. Used by the editor to remember
+      // the entry framing so a "frame back" button can restore it.
+      getState: () => {
+        const t = transformRef.current;
+        const inst = t?.instance || t;
+        const s = inst?.transformState || t?.state;
+        if (!s) return { positionX: 0, positionY: 0, scale: 1 };
+        return { positionX: s.positionX || 0, positionY: s.positionY || 0, scale: s.scale || 1 };
+      },
+      setState: (state, animMs = 250) => {
+        if (!state) return;
+        const t = transformRef.current;
+        if (!t?.setTransform) return;
+        t.setTransform(state.positionX || 0, state.positionY || 0, state.scale || 1, animMs);
+      },
+      // Compute the edit-mode frame (width-fit) for a given node ID.
+      // Returns null if the node doesn't exist yet (e.g. between
+      // setEditingNodeId and the iframe mount). Used by the editor's
+      // frame-back button to decide enabled state and where to animate.
+      getNodeFrame: (nodeId) => {
+        const node = nodes.find((n) => n.id === nodeId);
+        return node ? computeEditFrame(node) : null;
+      },
+      // Animate the canvas back to a node's edit-mode frame. The editor's
+      // frame-back button calls this on click — no _editFrame stamping
+      // race, since we look up the node by id at call time.
+      frameNode: (nodeId, animMs = 280) => {
+        const node = nodes.find((n) => n.id === nodeId);
+        if (!node) return;
+        const f = computeEditFrame(node);
+        const t = transformRef.current;
+        if (!t?.setTransform) return;
+        t.setTransform(f.positionX, f.positionY, f.scale, animMs);
+      },
       fit: () => fitToContent()
     };
+    // CRITICAL: this effect re-runs every time `canvasScale` or `nodes`
+    // change (which is constantly — every pan/zoom updates canvasScale).
+    // Without preserving _editFrame across re-runs the frame-back button
+    // observes a fresh object and stays disabled forever.
+    if (prevEditFrame !== undefined) window.__uncraftZoom._editFrame = prevEditFrame;
     return () => { try { delete window.__uncraftZoom; } catch (e) {} };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasScale, nodes]);
@@ -248,7 +302,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
   async function handleAddUrl(url, opts = {}) {
     const id = `temp-${Date.now()}`;
-    const width = 1280, height = 800;
+    // Hero-section proportion (16:9). The body is a fixed viewport into a
+    // potentially much taller iframe; the user expands via dash handles or
+    // the Expand button.
+    const width = 1280, height = Math.round(width * 9 / 16);
     const { posX, posY } = nextNodePosition({ ...opts, placeLeftOfUrlNodes: true, width });
     const placeholderNode = {
       id, kind: 'site', origin_url: url,
@@ -293,7 +350,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     try {
       const created = await api.createNode({
         boardId: board.id, kind: 'site',
-        posX, posY, width: 1280, height: 800,
+        posX, posY, width: 1280, height: Math.round(1280 * 9 / 16),
         meta: { name: file.name, source: 'upload' },
         html
       });
@@ -403,6 +460,102 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     } catch (e) {
       alert(`Reset failed: ${e.message}`);
     }
+  }
+
+  // Persist an in-editor edit as a new snapshot. After this fires, the node's
+  // current_snapshot_id diverges from original_snapshot_id, which is what
+  // unlocks the topbar Reset button (gated on `hasEdits`).
+  async function handleSaveNodeEdit(id, html) {
+    if (!html) return null;
+    if (String(id).startsWith('temp-')) {
+      // Temp nodes only live in local state; just persist the html locally.
+      setNodes((prev) => prev.map((n) => n.id === id ? { ...n, current_html: html } : n));
+      return null;
+    }
+    const { snapshotId } = await api.saveNodeEdit(id, html);
+    setNodes((prev) => prev.map((n) =>
+      n.id === id
+        ? { ...n, current_html: html, current_snapshot_id: snapshotId }
+        : n
+    ));
+    return snapshotId;
+  }
+
+  // Discard pending edits — bump _resetTick so React remounts the iframe
+  // with the unmodified `current_html` (the last server-known state).
+  function handleDiscardNodeEdit(id) {
+    setNodes((prev) => prev.map((n) =>
+      n.id === id
+        ? { ...n, _resetTick: (n._resetTick || 0) + 1 }
+        : n
+    ));
+  }
+
+  // When a node grows (typically via the Expand floater) into space
+  // already occupied by another node, push the overlapped neighbour out
+  // along its edge-relationship direction:
+  //   • donor (an edge points TO the expanding node) → push LEFT
+  //   • receiver (an edge points FROM the expanding node) → push RIGHT
+  //   • neither → use the neighbour's current side relative to centre
+  // The shift is the MINIMUM displacement that clears the bbox plus a
+  // small gap, so neighbours stay in roughly the same place rather than
+  // teleporting flush to the expanding node's edge.
+  function cascadeOverlapShift(expandingId, newW, newH) {
+    const GAP = 64;
+    setNodes((prev) => {
+      const expanding = prev.find((n) => n.id === expandingId);
+      if (!expanding) return prev;
+      const ex = { x: expanding.pos_x, y: expanding.pos_y, w: newW || expanding.width, h: newH || expanding.height || 800 };
+      const incomingFromExpanding = new Set(
+        edges.filter((e) => e.source_node_id === expandingId).map((e) => e.target_node_id)
+      ); // expanding → other (other is receiver)
+      const outgoingToExpanding = new Set(
+        edges.filter((e) => e.target_node_id === expandingId).map((e) => e.source_node_id)
+      ); // other → expanding (other is donor)
+
+      const updates = [];
+      const next = prev.map((n) => {
+        if (n.id === expandingId) return n;
+        const nx = n.pos_x, ny = n.pos_y;
+        const nw = n.width, nh = n.height || 800;
+        // bbox overlap test (with gap as breathing room)
+        const overlapX = nx < ex.x + ex.w && nx + nw > ex.x;
+        const overlapY = ny < ex.y + ex.h && ny + nh > ex.y;
+        if (!(overlapX && overlapY)) return n;
+
+        let role = 'neither';
+        if (outgoingToExpanding.has(n.id)) role = 'donor';
+        else if (incomingFromExpanding.has(n.id)) role = 'receiver';
+        else {
+          const nCenter = nx + nw / 2;
+          const eCenter = ex.x + ex.w / 2;
+          role = nCenter < eCenter ? 'donor' : 'receiver';
+        }
+
+        let newX = nx;
+        if (role === 'donor') {
+          // Push left: new right edge sits at ex.x - GAP
+          newX = ex.x - GAP - nw;
+        } else {
+          // Push right: new left edge sits at ex.x + ex.w + GAP
+          newX = ex.x + ex.w + GAP;
+        }
+        if (newX === nx) return n;
+        if (!String(n.id).startsWith('temp-')) {
+          updates.push({ id: n.id, posX: newX, posY: ny });
+        }
+        return { ...n, pos_x: newX };
+      });
+
+      // Persist after the state commit so the API sees the same numbers
+      // the user sees on screen.
+      if (updates.length > 0) {
+        Promise.allSettled(
+          updates.map((u) => api.updateNode(u.id, { posX: u.posX, posY: u.posY }))
+        ).catch(() => {});
+      }
+      return next;
+    });
   }
 
   async function handleDuplicateNode(id) {
@@ -691,19 +844,71 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     t.setTransform(posX, posY, scale, animationTime);
   }
 
+  // Width-fit framing for a node — used by edit-entry, frame-back, and
+  // fit-to-view while editing. We deliberately ignore node height in the
+  // scale math: in edit mode the user pans vertically via the scroll
+  // wheel, so a tall (expanded) node should not collapse the zoom.
+  function computeEditFrame(node) {
+    const PAD = 40;
+    const TOP_OFFSET = 30;
+    const HEADER = 48;
+    const vw = window.innerWidth;
+    const nodeW = node.width + PAD * 2;
+    const scale = Math.min(vw / nodeW, 1.0);
+    const centerX = node.pos_x + node.width / 2;
+    const positionX = vw / 2 - centerX * scale;
+    const positionY = (HEADER + TOP_OFFSET) - node.pos_y * scale;
+    return { positionX, positionY, scale };
+  }
+
   function handleEditingToggle(nodeId, willEdit) {
     if (willEdit) {
       setEditingNodeId(nodeId);
       const node = nodes.find((n) => n.id === nodeId);
-      if (node) setTimeout(() => zoomToNode(node), 50);
+      if (node) {
+        setTimeout(() => {
+          const f = computeEditFrame(node);
+          if (window.__uncraftZoom) {
+            window.__uncraftZoom._editFrame = f;
+            window.__uncraftZoom.setState?.(f, 350);
+          }
+        }, 50);
+      }
     } else {
       setEditingNodeId(null);
+      // Drop the saved frame so a re-entry into edit mode captures fresh.
+      if (window.__uncraftZoom) window.__uncraftZoom._editFrame = null;
     }
   }
 
   function fitToContent(animationTime = 350) {
     const t = transformRef.current;
     if (!t || nodes.length === 0) return;
+    // While editing, fit-to-view re-frames the editing node using the
+    // same width-fit framing as edit entry. The canvas may have drifted
+    // (the user wheel-panned to inspect a section); this returns them
+    // to "the view I started in". We also refresh _editFrame so the
+    // frame-back button stays in sync.
+    if (editingNodeId) {
+      const node = nodes.find((n) => n.id === editingNodeId);
+      if (node) {
+        const f = computeEditFrame(node);
+        if (window.__uncraftZoom) window.__uncraftZoom._editFrame = f;
+        t.setTransform(f.positionX, f.positionY, f.scale, animationTime);
+        return;
+      }
+    }
+    // If a node is selected, fit-to-view zooms TO that node specifically.
+    // This matches the user mental model that the action operates on
+    // whatever they've focused on — same as Figma's "Zoom to selection".
+    // No selection? Fall through to the all-nodes bbox path.
+    if (selectedNodeId) {
+      const sel = nodes.find((n) => n.id === selectedNodeId);
+      if (sel) {
+        zoomToNode(sel, animationTime);
+        return;
+      }
+    }
     // Compute bounding box across all nodes (in world coords).
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const n of nodes) {
@@ -950,8 +1155,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         initialPositionX={-WORLD_WIDTH * 0.25}
         initialPositionY={-WORLD_HEIGHT * 0.25}
         limitToBounds={false}
-        wheel={{ step: 0.08, excluded: ['cnode-iframe', 'cnode-handle', 'edge-popup', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu'] }}
-        panning={{ excluded: ['cnode', 'cnode-topbar', 'cnode-body', 'cnode-iframe', 'cnode-handle', 'cnode-viewport-switcher', 'cnode-vp-btn', 'cnode-port-right', 'cnode-port-left', 'edge-line', 'edge-popup', 'reset-confirm-card', 'reset-confirm-overlay', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu', 'user-menu'] }}
+        wheel={{ step: 0.08, excluded: ['cnode-iframe', 'cnode-handle', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'edge-popup', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu'] }}
+        panning={{ excluded: ['cnode', 'cnode-topbar', 'cnode-body', 'cnode-iframe', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'cnode-handle', 'cnode-viewport-switcher', 'cnode-vp-btn', 'cnode-port-right', 'cnode-port-left', 'edge-line', 'edge-popup', 'reset-confirm-card', 'reset-confirm-overlay', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu', 'user-menu'] }}
         doubleClick={{ disabled: true }}
         onPanningStart={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setPopupPos(null); }}
         onTransformed={(_ref, state) => {
@@ -992,14 +1197,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 updateNodeLocal(n.id, { pos_x: posX, pos_y: posY });
                 if (!String(n.id).startsWith('temp-')) persistNodePosition(n.id, posX, posY);
               }}
-              onResize={(width) => {
-                updateNodeLocal(n.id, { width });
+              onResize={(width, height, opts) => {
+                const patch = { width };
+                if (typeof height === 'number' && height > 0) patch.height = height;
+                updateNodeLocal(n.id, patch);
                 if (!String(n.id).startsWith('temp-')) {
-                  api.updateNode(n.id, { width }).catch(console.warn);
+                  api.updateNode(n.id, patch).catch(console.warn);
                 }
+                // Cascade flag is set by the Expand floater so that
+                // expanding a node into another node's space pushes the
+                // neighbour out (donors → left, receivers → right). Drag
+                // resize doesn't cascade — that would feel jittery.
+                if (opts?.cascade) cascadeOverlapShift(n.id, width, patch.height ?? n.height);
               }}
               onDelete={() => handleDeleteNode(n.id)}
               onReset={() => handleResetNode(n.id)}
+              onSaveEdit={(html) => handleSaveNodeEdit(n.id, html)}
+              onDiscardEdit={() => handleDiscardNodeEdit(n.id)}
               onDuplicate={() => handleDuplicateNode(n.id)}
               onDownload={() => handleDownloadNode(n.id)}
               onStartEdge={(e, side) => startEdgeFromNode(n.id, e, side)}

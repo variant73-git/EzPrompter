@@ -50,7 +50,7 @@ Pricing model concreto pendente — opções na seção "Pricing model em discus
 - `claude/ai-image-description-extension-Tp3jY` — main branch
 
 ## Versão atual
-`2.4.0`
+`2.4.1`
 
 ## Estrutura do projeto
 ```
@@ -175,6 +175,19 @@ web/                         # Portal Next.js (auth + Stripe + relay API)
 92. ✅ Corner handles — 4 handles quando QUALQUER margin ≥ 2px (antes só com both-adjacent ≥ 2px). Cobre h1 com margin-block default browser
 93. ✅ Font dropdown do inspector escapa do overflow — agora `position:fixed` anexado a `<body>` + reposicionado via `getBoundingClientRect`. Antes era clipped pelo `overflow:hidden` do inspector. Cleanup de orphan em updateInspector + deactivate
 94. ✅ Guide editing não trava mais clicks — global mousedown capture força blur do input do guide se target não for o próprio input. Antes comparava widgets, deixava brechas (corners, inspector, site)
+95. ✅ **Edit mode persistence** — Done captura iframe HTML via `captureCleanHtml` (strip data-rb-*/rb-ed-*) e POST em `/api/nodes/[id]/save-edit`. Cria novo snapshot, atualiza `current_snapshot_id`. Reset button finalmente acende quando há edits.
+96. ✅ **Cancel + popup** — Cancel button ao lado do Done (só em edit). Popup com X close + Discard + Save and exit; click-outside ou Esc = continue. Discard bumpa `_resetTick` pra remontar iframe do server html.
+97. ✅ **Topbar redesign** — Duplicate/Download/Reset/Delete só no More dropdown; topbar inline = `[Cancel?] [Edit/Done] | [More]` com vertical separator. `topbar-right margin-left:auto` ancora à direita. Edit visível em todo zoom (icon-only abaixo de zoom-low).
+98. ✅ **Topbar grip slide below 20% zoom** — `left: calc(50% * min(1, var(--canvas-scale, 1) / 0.2))`. Centrado acima de 20%, desliza progressivamente pra esquerda abaixo, evitando sobreposição com botões inflados (size = native / scale). Title trunca via `max-width: calc(50% - 20px scaled)`.
+99. ✅ **Hero proportion + dash handles** — site/html nodes default 16:9 (`width × 9/16`). `.cnode-body` tem altura fixa = node.height; iframe = 100% body com `overflow:hidden`. Bottom + right dash resize handles (40×3px / 3×40px) draggáveis pra ajustar height/width.
+100. ✅ **Expand floater** — `.cnode-expand-float` no canto inferior direito do body. Toggle entre hero e full content (lê scrollWidth/Height capturado em onIframeLoad). Ao expandir passa `cascade: true` ao onResize.
+101. ✅ **Cascade overlap-shift** — quando node se expande sobre vizinhos: edge incoming-to-expanding → empurra esquerda; outgoing-from-expanding → empurra direita; sem edge → empurra pro lado em que já está. Persiste paralelamente.
+102. ✅ **Frame controls API** — `__uncraftZoom.getNodeFrame(nodeId)` + `frameNode(nodeId, animMs)` + `panBy(dx, dy)` + `getState()` + `setState(state, animMs)`. Frame-back button no zoom widget do editor lookup nodeId via `__uncraftMountOptions.nodeId`, sem stamping racy de `_editFrame`.
+103. ✅ **Edit-frame width-fit** — `computeEditFrame(node)` ignora altura: `Math.min(vw / nodeW, 1.0)`. Edit mode entra com zoom máximo width-fit; user pana vertical com wheel pra ver mais.
+104. ✅ **Fit-to-view selection-aware** — durante edit, fit reframe o editing node; sem edit + selection, fit no selected; sem nada, fit all-nodes bbox.
+105. ✅ **Wheel routing edit-mode** — sem modifier: `panBy(-dx * 0.3, -dy)` (canvas pan; horizontal damped 30% pra Magic Mouse / trackpad). Cmd/Ctrl: zoom canvas. Resting: zoom canvas. Iframe internal scroll desabilitado em edit.
+106. ✅ **Hydration warning suppress** — `suppressHydrationWarning` em `<html>` + `<body>` no app/layout.jsx pra extensões (Demoway / Grammarly / dark-reader) que injetam attrs antes da hidratação.
+107. ✅ **Cancel popup polish** — width 220px (vs 280 do reset), título com padding-right pra X (não desloca card), Discard hover sólido `#ef4444 + #fff`, botões centrados. Add feedback pill movido pra bottom-right da seleção, full pill (`border-radius: 999px`), tab inteiro clicável.
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.
