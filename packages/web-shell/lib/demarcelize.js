@@ -145,15 +145,18 @@ async function callLLM({ model, system, user, maxTokens = 16000, temperature = 0
   if (isAnthropic(model)) {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing');
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const resp = await client.messages.create({
+    // Stream for long-running calls — the SDK refuses non-streaming
+    // requests with max_tokens that could exceed the 10-minute cap.
+    const stream = client.messages.stream({
       model,
       max_tokens: maxTokens,
       temperature,
       system,
       messages: [{ role: 'user', content: user }]
     });
-    const text = resp.content?.map((b) => b.text || '').join('') || '';
-    return { text, tokens: { input: resp.usage?.input_tokens, output: resp.usage?.output_tokens } };
+    const final = await stream.finalMessage();
+    const text = final.content?.map((b) => b.text || '').join('') || '';
+    return { text, tokens: { input: final.usage?.input_tokens, output: final.usage?.output_tokens } };
   }
   if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
     throw new Error('GEMINI_API_KEY missing');

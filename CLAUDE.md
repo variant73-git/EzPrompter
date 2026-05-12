@@ -50,7 +50,7 @@ Pricing model concreto pendente — opções na seção "Pricing model em discus
 - `claude/ai-image-description-extension-Tp3jY` — main branch
 
 ## Versão atual
-`2.4.1`
+`2.4.2`
 
 ## Estrutura do projeto
 ```
@@ -188,6 +188,13 @@ web/                         # Portal Next.js (auth + Stripe + relay API)
 105. ✅ **Wheel routing edit-mode** — sem modifier: `panBy(-dx * 0.3, -dy)` (canvas pan; horizontal damped 30% pra Magic Mouse / trackpad). Cmd/Ctrl: zoom canvas. Resting: zoom canvas. Iframe internal scroll desabilitado em edit.
 106. ✅ **Hydration warning suppress** — `suppressHydrationWarning` em `<html>` + `<body>` no app/layout.jsx pra extensões (Demoway / Grammarly / dark-reader) que injetam attrs antes da hidratação.
 107. ✅ **Cancel popup polish** — width 220px (vs 280 do reset), título com padding-right pra X (não desloca card), Discard hover sólido `#ef4444 + #fff`, botões centrados. Add feedback pill movido pra bottom-right da seleção, full pill (`border-radius: 999px`), tab inteiro clicável.
+108. ✅ **Node-tool run-flow engine** — `lib/run-flow.js` `runCompose({target, sources})` agrupa sources por kind (html/md/prompt/asset/skill) e chama LLM com `COMPOSE_SYSTEM` prompt que adapta operação ao mix. Anthropic OR Gemini via regex no modelo. Asset/screenshot inputs ainda rejeitam (placeholder pra GPT 5.5 vision).
+109. ✅ **`POST /api/nodes/[id]/run`** — carrega target + edges incoming + source snapshots, chama runCompose, salva snapshot novo, marca edges como `applied`. PromptDock arrow é o trigger (click sem text/image = run flow).
+110. ✅ **Per-target run status chip** — `runStatus: Map<nodeId,{step,label}>` em CanvasClient. `runOneTarget(id)` mostra `1/3 Reading inputs…` → `2/3 Generating…` (após 1500ms) → `3/3 Saving…` (após API). Chip frosted-glass com spinner acento `--cnode-port-fill`, ancorado abaixo do node body.
+111. ✅ **Asset / screenshot upload** — kind `asset` adicionado a VALID_KINDS. `handleUploadScreenshot` lê file via FileReader → data URL → meta.dataUrl. Body renderiza `<img>` com `object-fit: contain` em `.cnode-body-asset`. KindLabel: "screenshot / asset". `nodeOrigin('asset')='screenshot'` reusa cor violeta + ícone.
+112. ✅ **Anthropic streaming p/ long calls** — `messages.stream({...}).finalMessage()` em vez de `messages.create()`. SDK recusa non-streaming com max_tokens 32k (10-min cap). Aplicado em run-flow + demarcelize.
+113. ✅ **Capture pre-check WAF tolerance** — UA Chrome 124 realista em vez de "UncraftBot/1.0", + pass-through em 403/406/429/503 (HEAD bot-policy não prediz failure com browser real do Playwright).
+114. ✅ **`predev` script** — `rm -rf .next && lsof -ti:3030 | xargs kill -9` antes de `npm run dev`. Fim do `Cannot read properties of undefined (reading 'call')` recorrente em HMR de arquivos grandes.
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.

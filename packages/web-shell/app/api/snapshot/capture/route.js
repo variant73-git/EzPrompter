@@ -22,19 +22,29 @@ export async function POST(request) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
     let res;
+    // Use a realistic browser UA — Cloudflare / WAFs return 403/406 on
+    // any "bot-shaped" user-agent. Playwright would still load the page
+    // fine (real Chrome), so the pre-check should mirror that posture
+    // rather than bail on bot-policy responses.
+    const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
     try {
       res = await fetch(url, {
         method: 'HEAD', redirect: 'follow', signal: ctrl.signal,
-        headers: { 'user-agent': 'Mozilla/5.0 UncraftBot/1.0' }
+        headers: { 'user-agent': UA }
       });
       if (!res.ok && [405, 501].includes(res.status)) {
         res = await fetch(url, {
           method: 'GET', redirect: 'follow', signal: ctrl.signal,
-          headers: { 'user-agent': 'Mozilla/5.0 UncraftBot/1.0', range: 'bytes=0-256' }
+          headers: { 'user-agent': UA, range: 'bytes=0-256' }
         });
       }
     } finally { clearTimeout(timer); }
-    if (!res || res.status >= 400) {
+    // 403 / 406 / 429 / 503 are commonly emitted by bot-policy walls on
+    // HEAD requests even when the actual page loads in a real browser.
+    // We pass those through and let Playwright try — the page may well
+    // succeed once it executes with a real-browser fingerprint.
+    const passThrough = res && [403, 406, 429, 503].includes(res.status);
+    if (!res || (!passThrough && res.status >= 400)) {
       const status = res ? res.status : 0;
       return NextResponse.json({
         error: 'site_unreachable',

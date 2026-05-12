@@ -7,7 +7,7 @@
 export function nodeOrigin(node) {
   if (!node) return 'unknown';
   if (node.kind === 'designmd') return 'md';
-  if (node.kind === 'image') return 'screenshot';
+  if (node.kind === 'image' || node.kind === 'asset') return 'screenshot';
   if (node.kind === 'prompt') return 'prompt';
   if (node.kind === 'skill') return 'skill';
   if (node.kind === 'site' && node.origin_url) return 'url';

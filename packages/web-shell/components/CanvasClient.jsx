@@ -377,6 +377,33 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     } catch (e) { alert(`Upload failed: ${e.message}`); }
   }
 
+  async function handleUploadScreenshot(file, opts = {}) {
+    // Read file as data URL — small enough images (a few MB) live in the
+    // node meta directly. For larger / production use we'd upload to a
+    // CDN, but for the canvas this keeps the node self-contained.
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(fr.error || new Error('read failed'));
+      fr.readAsDataURL(file);
+    }).catch((e) => { alert(`Could not read image: ${e.message}`); return null; });
+    if (!dataUrl) return;
+
+    // Square frame by default; user can resize via the dash handles.
+    const width = 600, height = 600;
+    const { posX, posY } = nextNodePosition({ ...opts, width, height });
+    try {
+      const created = await api.createNode({
+        boardId: board.id,
+        kind: 'asset',
+        posX, posY, width, height,
+        meta: { name: file.name, dataUrl, mimeType: file.type || 'image/*' }
+      });
+      setNodes((prev) => [...prev, { ...created.node }]);
+      if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+    } catch (e) { alert(`Upload failed: ${e.message}`); }
+  }
+
   async function handleAddPrompt(opts = {}) {
     // 3:1 text-field node. Width chosen so it stays comfortable at 1× zoom.
     const width = 600, height = 200;
@@ -479,6 +506,109 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         : n
     ));
     return snapshotId;
+  }
+
+  // Run flow — walk the graph, find every target with incoming edges,
+  // call /api/nodes/[id]/run on each in parallel. The arrow button on
+  // PromptDock fires this. Each target gets ONE LLM call that
+  // composes all its incoming sources (html / md / prompt) per the
+  // smart-compose preset matrix in lib/run-flow.js.
+  const [runFlowBusy, setRunFlowBusy] = useState(false);
+  const [runFlowError, setRunFlowError] = useState(null);
+  // Per-target running status: id → { step: 1|2|3, label }. Drives a
+  // small status chip below each running node so the user can see the
+  // flow advancing instead of staring at a frozen UI for ~minute-long
+  // LLM calls. Steps are advanced on a timer because the LLM call is
+  // one opaque async block — the labels reflect what the engine is
+  // CONCEPTUALLY doing, not what's literally observable.
+  const [runStatus, setRunStatus] = useState(new Map());
+  function setNodeRunStatus(id, status) {
+    setRunStatus((prev) => {
+      const next = new Map(prev);
+      if (status === null) next.delete(id);
+      else next.set(id, status);
+      return next;
+    });
+  }
+  async function runOneTarget(id) {
+    setNodeRunStatus(id, { step: 1, label: 'Reading inputs…' });
+    const advanceToStep2 = setTimeout(() => {
+      setRunStatus((prev) => {
+        const cur = prev.get(id);
+        if (!cur || cur.step !== 1) return prev;
+        const next = new Map(prev);
+        next.set(id, { step: 2, label: 'Generating…' });
+        return next;
+      });
+    }, 1500);
+    try {
+      const result = await api.runNode(id);
+      clearTimeout(advanceToStep2);
+      setNodeRunStatus(id, { step: 3, label: 'Saving…' });
+      // Hold the saving label briefly so the transition reads as a
+      // resolved step rather than a flash.
+      await new Promise((r) => setTimeout(r, 700));
+      setNodeRunStatus(id, null);
+      return result;
+    } catch (e) {
+      clearTimeout(advanceToStep2);
+      setNodeRunStatus(id, null);
+      throw e;
+    }
+  }
+  async function handleRunFlow() {
+    if (runFlowBusy) return;
+    // Build a set of target ids — anything that has at least one
+    // incoming edge AND already has a snapshot to operate on.
+    const targets = new Set();
+    for (const e of edges) {
+      if (!e.target_node_id) continue;
+      targets.add(e.target_node_id);
+    }
+    const runnable = [...targets].filter((id) => {
+      if (String(id).startsWith('temp-')) return false;
+      const n = nodes.find((x) => x.id === id);
+      return !!n && !!n.current_html;
+    });
+    if (runnable.length === 0) {
+      setRunFlowError('Connect at least one source node into a target with a snapshot, then try again.');
+      setTimeout(() => setRunFlowError(null), 4000);
+      return;
+    }
+    setRunFlowBusy(true);
+    setRunFlowError(null);
+    try {
+      const results = await Promise.allSettled(runnable.map((id) => runOneTarget(id)));
+      const updates = new Map();
+      let firstError = null;
+      results.forEach((r, i) => {
+        const id = runnable[i];
+        if (r.status === 'fulfilled' && r.value?.snapshotId) {
+          updates.set(id, { html: r.value.html, snapshotId: r.value.snapshotId });
+        } else if (r.status === 'rejected') {
+          firstError = firstError || r.reason?.message || String(r.reason);
+          console.warn('run-flow target failed', id, r.reason);
+        }
+      });
+      if (updates.size > 0) {
+        setNodes((prev) => prev.map((n) => {
+          const u = updates.get(n.id);
+          if (!u) return n;
+          return {
+            ...n,
+            current_html: u.html,
+            current_snapshot_id: u.snapshotId,
+            _resetTick: (n._resetTick || 0) + 1
+          };
+        }));
+      }
+      if (firstError) {
+        setRunFlowError(firstError);
+        setTimeout(() => setRunFlowError(null), 6000);
+      }
+    } finally {
+      setRunFlowBusy(false);
+    }
   }
 
   // Discard pending edits — bump _resetTick so React remounts the iframe
@@ -1212,6 +1342,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }}
               onDelete={() => handleDeleteNode(n.id)}
               onReset={() => handleResetNode(n.id)}
+              runStatus={runStatus.get(n.id) || null}
               onSaveEdit={(html) => handleSaveNodeEdit(n.id, html)}
               onDiscardEdit={() => handleDiscardNodeEdit(n.id)}
               onDuplicate={() => handleDuplicateNode(n.id)}
@@ -1295,9 +1426,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             if (file) await handleUploadMd(file, { worldX: m.worldX, worldY: m.worldY });
           }}
           onPickScreenshot={async () => {
+            const m = contextMenu;
             const file = await pickFile('image/*');
             setContextMenu(null);
-            if (file) alert('Coming next: screenshot → image node.\nPicked: ' + file.name);
+            if (file) await handleUploadScreenshot(file, { worldX: m.worldX, worldY: m.worldY });
           }}
           onPickPrompt={() => {
             setContextMenu(null);
@@ -1318,8 +1450,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         onUploadHtml={handleUploadHtml}
         onAddPrompt={() => handleAddPrompt()}
         onAddSkill={() => handleAddSkill()}
+        onRunFlow={handleRunFlow}
+        runFlowBusy={runFlowBusy}
+        runFlowError={runFlowError}
         nodeCount={nodes.length}
       />
+
+      {runFlowError && (
+        <div className="run-flow-toast" role="status" aria-live="polite">
+          {runFlowError}
+        </div>
+      )}
     </div>
   );
 }

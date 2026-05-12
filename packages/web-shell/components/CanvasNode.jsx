@@ -192,7 +192,7 @@ export default function CanvasNode({
   onSelect, onMove, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload,
   onStartEdge, onSlotMouseDown, onPromptTextChange,
-  incomingEdges = [], draftActive
+  incomingEdges = [], draftActive, runStatus = null
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -246,18 +246,46 @@ export default function CanvasNode({
     onDiscardEdit?.();
   }
 
-  // Expand toggle — fit viewport to full iframe content (scrollWidth ×
-  // scrollHeight) when collapsing, restore to the previously-known size
-  // when uncollapsing. Without contentSize captured we just bail; the
-  // load handler stamps it the moment the iframe lays out.
-  // The `cascade` flag tells the parent to push overlapping neighbours
-  // out of the way (donors→left, receivers→right). We pass it on expand
-  // because the node is GROWING into other nodes' space; on collapse we
-  // skip cascade — shrinking can't create new overlap.
+  // Read full content size from the iframe — first try the cached value
+  // that onIframeLoad stamped, fall back to measuring fresh. The load
+  // handler can miss the capture if the iframe rendered before the
+  // useCallback dep changed (StrictMode + hot-reload). This also covers
+  // the case where the user clicks Expand the very first time before
+  // any sizing was recorded.
+  function readContentSize() {
+    let cs = contentSizeRef.current;
+    if (cs?.w && cs?.h) return cs;
+    try {
+      const doc = iframeRef.current?.contentDocument;
+      if (doc?.documentElement) {
+        const w = Math.min(
+          Math.max(doc.documentElement.scrollWidth, doc.body?.scrollWidth || 0, node.width || 1280),
+          4000
+        );
+        const h = Math.min(
+          Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight || 0, 800),
+          12000
+        );
+        if (w > 0 && h > 0) {
+          cs = { w, h };
+          contentSizeRef.current = cs;
+          return cs;
+        }
+      }
+    } catch (e) { /* cross-origin */ }
+    return null;
+  }
+
+  // Expand toggle — grow the body to fit the full iframe content
+  // (scrollWidth × scrollHeight) on first click, restore the
+  // previously-known size on second click. The `cascade: true` flag
+  // tells the parent to push overlapping neighbours out (donors→left,
+  // receivers→right). Collapse never cascades — shrinking can't create
+  // new overlap.
   function handleExpandToggle() {
-    const cs = contentSizeRef.current;
-    if (!cs?.w || !cs?.h) return;
     if (!isExpanded) {
+      const cs = readContentSize();
+      if (!cs) return;
       preExpandRef.current = { w: node.width, h: node.height };
       onResize?.(cs.w, cs.h, { cascade: true });
       setIsExpanded(true);
@@ -414,6 +442,7 @@ export default function CanvasNode({
     node.kind === 'designmd' ? 'design.md' :
     node.kind === 'prompt' ? 'prompt' :
     node.kind === 'skill' ? 'skill' :
+    (node.kind === 'asset' || node.kind === 'image') ? 'screenshot / asset' :
     'chunk';
   const title = node.origin_url || node.meta?.name || node.template_slug || 'untitled';
   const hasEdits = !!(node.current_snapshot_id && node.original_snapshot_id && node.current_snapshot_id !== node.original_snapshot_id);
@@ -429,6 +458,7 @@ export default function CanvasNode({
   const renderMdBody = node.kind === 'designmd';
   const renderPromptBody = node.kind === 'prompt';
   const renderSkillBody = node.kind === 'skill';
+  const renderAssetBody = node.kind === 'asset' || node.kind === 'image';
 
   // Wheel routing inside the iframe. Three modes:
   //   • Resting (not editing): wheel → canvas zoom.
@@ -517,6 +547,20 @@ export default function CanvasNode({
         {KindIcon && <KindIcon />}
         <span className="cnode-anchor-title-text">{title}</span>
       </div>
+
+      {/* Run-flow status chip — appears below the node while a target is
+          being processed. Drives a 3-step animation so the user knows
+          the system is alive during the long LLM call. */}
+      {runStatus && (
+        <div className="cnode-run-status" aria-live="polite">
+          <svg className="cnode-run-spin" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" opacity="0.25"/>
+            <path d="M21 12a9 9 0 0 1-9 9"/>
+          </svg>
+          <span className="cnode-run-step">{runStatus.step}/3</span>
+          <span className="cnode-run-label">{runStatus.label}</span>
+        </div>
+      )}
       {selected && onResize && node.kind === 'site' && (
         <div
           className={`cnode-viewport-switcher${editing ? ' disabled' : ''}`}
@@ -704,6 +748,23 @@ export default function CanvasNode({
       ) : renderSkillBody ? (
         <div className="cnode-body cnode-body-skill" onMouseDown={onBodyMouseDown}>
           <SkillBody node={node} />
+        </div>
+      ) : renderAssetBody ? (
+        <div
+          className="cnode-body cnode-body-asset"
+          onMouseDown={onBodyMouseDown}
+          style={{ height: (node.height || 600) + 'px' }}
+        >
+          {node.meta?.dataUrl ? (
+            <img
+              className="cnode-asset-img"
+              src={node.meta.dataUrl}
+              alt={node.meta?.name || 'asset'}
+              draggable={false}
+            />
+          ) : (
+            <div className="cnode-loading"><span>No image data</span></div>
+          )}
         </div>
       ) : null}
       <>

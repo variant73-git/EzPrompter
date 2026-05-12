@@ -167,7 +167,7 @@ const ACCEPT_ANY = 'image/*,.md,.markdown,.html,text/markdown,text/html';
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
 const TEXTAREA_MAX_HEIGHT = 240;
 
-export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, nodeCount }) {
+export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onRunFlow, runFlowBusy, runFlowError, nodeCount }) {
   const [text, setText] = useState('');
   const [imageFile, setImageFile] = useState(null);   // attached image (preview only)
   const [imagePreview, setImagePreview] = useState(null);
@@ -317,9 +317,9 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
 
   async function submit() {
     const value = text.trim();
-    if (!value && !imageFile) return;
 
     if (showAddUrl) {
+      if (!value) return;
       const url = normalizeUrl(value);
       if (!url) {
         alert('Enter a domain (example.com) or full URL.');
@@ -332,6 +332,16 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
         setShowAddUrl(false);
       } finally {
         setBusy(false);
+      }
+      return;
+    }
+
+    // Bare arrow click (no text, no image, not in URL mode) = "run flow" —
+    // process the canvas graph. The button doubles as a runner trigger
+    // until we wire the conversational chat path.
+    if (!value && !imageFile) {
+      if (onRunFlow) {
+        try { await onRunFlow(); } catch (e) { console.warn('runFlow error', e); }
       }
       return;
     }
@@ -544,15 +554,21 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
 
         <motion.button
           type="button"
-          className={`prompt-dock-send ${hasContent ? 'active' : ''}`}
-          whileHover={hasContent ? { scale: 1.06 } : {}}
-          whileTap={hasContent ? { scale: 0.94 } : {}}
+          className={`prompt-dock-send ${hasContent || (nodeCount > 0) ? 'active' : ''}${runFlowBusy ? ' busy' : ''}`}
+          whileHover={(hasContent || nodeCount > 0) && !runFlowBusy ? { scale: 1.06 } : {}}
+          whileTap={(hasContent || nodeCount > 0) && !runFlowBusy ? { scale: 0.94 } : {}}
           transition={{ type: 'spring', stiffness: 400, damping: 22 }}
-          disabled={busy || !hasContent}
+          disabled={busy || runFlowBusy || (!hasContent && nodeCount === 0)}
           onClick={submit}
-          aria-label="Send"
+          aria-label={hasContent ? 'Send' : 'Run flow'}
+          title={runFlowBusy ? 'Running…' : (hasContent ? 'Send' : 'Run flow (process connected nodes)')}
         >
-          {ICON_ARROW_UP}
+          {runFlowBusy ? (
+            <svg className="prompt-dock-spin" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+              <circle cx="12" cy="12" r="9" opacity="0.25"/>
+              <path d="M21 12a9 9 0 0 1-9 9"/>
+            </svg>
+          ) : ICON_ARROW_UP}
         </motion.button>
       </div>
 

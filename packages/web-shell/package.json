@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "rm -rf .next && (lsof -ti:3030 | xargs kill -9 2>/dev/null || true)",
     "dev": "next dev --port 3030",
+    "dev:keep": "next dev --port 3030",
     "build": "next build",
     "start": "next start --port 3030"
   },
