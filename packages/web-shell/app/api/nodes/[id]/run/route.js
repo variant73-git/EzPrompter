@@ -16,6 +16,8 @@ export async function POST(request, { params }) {
 
   const { id } = await params;
   const sql = await db();
+  const body = await request.json().catch(() => ({}));
+  const { modelId } = body || {};
 
   const [target] = await sql`
     SELECT n.id, n.kind, n.meta, n.board_id,
@@ -49,7 +51,7 @@ export async function POST(request, { params }) {
   }
 
   try {
-    const result = await runCompose({ target, sources });
+    const result = await runCompose({ target, sources, modelId });
     if (!result?.html) return NextResponse.json({ error: 'no_output' }, { status: 502 });
 
     const [snap] = await sql`

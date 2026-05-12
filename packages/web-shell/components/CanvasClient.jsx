@@ -530,7 +530,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       return next;
     });
   }
-  async function runOneTarget(id) {
+  async function runOneTarget(id, opts = {}) {
     setNodeRunStatus(id, { step: 1, label: 'Reading inputs…' });
     const advanceToStep2 = setTimeout(() => {
       setRunStatus((prev) => {
@@ -542,7 +542,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       });
     }, 1500);
     try {
-      const result = await api.runNode(id);
+      const result = await api.runNode(id, opts);
       clearTimeout(advanceToStep2);
       setNodeRunStatus(id, { step: 3, label: 'Saving…' });
       // Hold the saving label briefly so the transition reads as a
@@ -556,7 +556,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       throw e;
     }
   }
-  async function handleRunFlow() {
+  async function handleRunFlow(opts = {}) {
     if (runFlowBusy) return;
     // Build a set of target ids — anything that has at least one
     // incoming edge AND already has a snapshot to operate on.
@@ -578,7 +578,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setRunFlowBusy(true);
     setRunFlowError(null);
     try {
-      const results = await Promise.allSettled(runnable.map((id) => runOneTarget(id)));
+      const results = await Promise.allSettled(runnable.map((id) => runOneTarget(id, opts)));
       const updates = new Map();
       let firstError = null;
       results.forEach((r, i) => {

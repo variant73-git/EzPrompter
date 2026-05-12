@@ -50,7 +50,7 @@ Pricing model concreto pendente — opções na seção "Pricing model em discus
 - `claude/ai-image-description-extension-Tp3jY` — main branch
 
 ## Versão atual
-`2.4.2`
+`2.4.3`
 
 ## Estrutura do projeto
 ```
@@ -195,6 +195,11 @@ web/                         # Portal Next.js (auth + Stripe + relay API)
 112. ✅ **Anthropic streaming p/ long calls** — `messages.stream({...}).finalMessage()` em vez de `messages.create()`. SDK recusa non-streaming com max_tokens 32k (10-min cap). Aplicado em run-flow + demarcelize.
 113. ✅ **Capture pre-check WAF tolerance** — UA Chrome 124 realista em vez de "UncraftBot/1.0", + pass-through em 403/406/429/503 (HEAD bot-policy não prediz failure com browser real do Playwright).
 114. ✅ **`predev` script** — `rm -rf .next && lsof -ti:3030 | xargs kill -9` antes de `npm run dev`. Fim do `Cannot read properties of undefined (reading 'call')` recorrente em HMR de arquivos grandes.
+115. ✅ **OpenAI / GPT 5.5 routing** — `openai@6.37.0` instalado. `lib/run-flow.js` callLLM ganha branch `isOpenAI = /^(gpt|openai|o[1-9])/i` que usa `chat.completions.create({stream:true})` e acumula deltas. `temperature` omitido na branch OpenAI (GPT-5 family + o-series rejeitam custom temp).
+116. ✅ **Vision multimodal** — `assemblePrompt` retorna `{text, images}` extraindo `dataUrl` de `buckets.asset[].meta`. `callLLM` aceita `images:[]`. OpenAI vira content array multimodal `[{type:text}, {type:image_url, image_url:{url}}]`. Data URLs aceitas direto sem CDN.
+117. ✅ **Auto-routing por presença de imagem** — runCompose força `effectiveModel = 'gpt-5.5'` quando `buckets.asset.length > 0` e o picker não é OpenAI. Picker preservado pra flows text-only.
+118. ✅ **Model picker plumbing end-to-end** — `MODEL_ALIAS` mapeia picker IDs (`gpt-5.5`, `claude-4.6-opus`, `gemini-3.1-pro`, `kimi-k2.6`) pra strings SDK-friendly. Fluxo: PromptDock.submit() → onRunFlow({modelId}) → CanvasClient.handleRunFlow(opts) → runOneTarget → api.runNode(id,opts) → POST body → /api/nodes/[id]/run → runCompose({modelId}) → resolveModel → callLLM.
+119. ⚠️ **Anthropic billing** — claude.ai (Pro/Max) e Anthropic API são buckets separados. A subscription do chat NÃO credita a API. User precisa adicionar créditos em console.anthropic.com/settings/billing. Sonnet ~$3 in/$15 out por 1M tokens; run típico = $0.15-0.30.
 
 ### Mode E: Papel Vegetal (Vision-to-Code)
 **O que aprendemos:** Vision-to-Code (screenshot → LLM → HTML) é a abordagem recomendada para longevidade. O same.new usa component chunking: segmenta a página em componentes antes de enviar ao LLM. A técnica DOM + Screenshot hybrid melhora a qualidade: enviar screenshot + cleanHTML juntos. O extractor.js já produz tokens e cleanHTML — falta integrar no prompt.

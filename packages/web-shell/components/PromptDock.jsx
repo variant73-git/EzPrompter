@@ -338,10 +338,12 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
 
     // Bare arrow click (no text, no image, not in URL mode) = "run flow" —
     // process the canvas graph. The button doubles as a runner trigger
-    // until we wire the conversational chat path.
+    // until we wire the conversational chat path. The selected model
+    // from the picker is passed through so the backend can route to
+    // OpenAI / Anthropic / Gemini accordingly.
     if (!value && !imageFile) {
       if (onRunFlow) {
-        try { await onRunFlow(); } catch (e) { console.warn('runFlow error', e); }
+        try { await onRunFlow({ modelId }); } catch (e) { console.warn('runFlow error', e); }
       }
       return;
     }
