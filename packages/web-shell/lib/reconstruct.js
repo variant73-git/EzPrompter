@@ -31,6 +31,7 @@ import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
+import { pinViewportUnits } from './snapshot.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_RASTERS_DIR = join(__dirname, '..', 'public', 'rasters');
@@ -109,7 +110,12 @@ export async function reconstructPage(url, opts = {}) {
     }
 
     onProgress('finalizing');
-    const html = injectAssets(rawHtml, assets);
+    // Pin viewport units to the capture viewport. The vision prompt asks
+    // for fluid layout, but the model still emits `min-height: 100dvh` on
+    // heroes (etc.) — in iframe srcDoc, dvh reads against iframe dims so
+    // any resize stretches the hero. Pinning makes them stable px values.
+    const pinnedHtml = pinViewportUnits(rawHtml, VIEWPORT.width, VIEWPORT.height);
+    const html = injectAssets(pinnedHtml, assets);
 
     // Screenshot for the node thumbnail — top of the page, original viewport.
     await page.evaluate(() => window.scrollTo(0, 0));

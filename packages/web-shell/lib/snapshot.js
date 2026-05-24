@@ -164,7 +164,7 @@ function stripScripts(html) {
 // the hero scales to 15000px — covering everything below. Pinning `vh`
 // to the capture viewport height keeps the hero at its designed 800px
 // regardless of the iframe's actual size.
-function pinViewportUnits(html, captureWidth, captureHeight) {
+export function pinViewportUnits(html, captureWidth, captureHeight) {
   // Variants we substitute: vh, dvh, svh, lvh (height), vw, dvw, svw, lvw (width).
   // Don't touch vmin/vmax — usage there is more nuanced and rarer.
   // Pattern: number (int or decimal, optional sign) followed by unit, with no
