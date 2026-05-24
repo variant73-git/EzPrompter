@@ -460,16 +460,16 @@ export default function CanvasNode({
   const renderSkillBody = node.kind === 'skill';
   const renderAssetBody = node.kind === 'asset' || node.kind === 'image';
 
-  // Wheel routing inside the iframe. Three modes:
-  //   • Resting (not editing): wheel → canvas zoom.
-  //   • Editing + Cmd/Ctrl held: wheel → canvas zoom (pinch-to-zoom
-  //     equivalent for keyboard-with-mouse setups).
-  //   • Editing without modifier: wheel → pan the canvas viewport up/
-  //     down/left/right. This mirrors the "scrolling a website" feel —
-  //     the camera moves through the canvas as if the node were a tall
-  //     page. The iframe's own contentDocument does NOT scroll; the
-  //     user gets to more of the site by clicking Expand or dragging
-  //     the dash handles.
+  // Wheel routing when the mouse is over the iframe (a node body):
+  //   • Cmd/Ctrl held → canvas zoom (intentional override so the user can
+  //     pinch-zoom from anywhere, including over a node).
+  //   • Anything else → let the iframe scroll natively. The captured site's
+  //     own scroll behaviour (Lenis smooth-scroll, sticky sections, scroll-
+  //     triggered animations) drives the view. Same in edit mode — the
+  //     user is reading/editing a page, scroll should walk the page.
+  // Previously this routed wheel to canvas pan (in edit) or canvas zoom
+  // (at rest); both prevented the site from scrolling and trapped the
+  // user in the hero.
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
@@ -491,28 +491,19 @@ export default function CanvasNode({
           try { doc.removeEventListener('wheel', doc._uncraftWheel, { capture: true }); } catch (err) {}
         }
         handler = (e) => {
+          // Cmd/Ctrl → canvas zoom (override). Pure wheel → let iframe
+          // scroll naturally; the browser default + the site's own scroll
+          // handlers do the right thing.
+          if (!(e.metaKey || e.ctrlKey)) return;
           const z = window.__uncraftZoom;
           if (!z) return;
           const dy = e.deltaY || 0;
-          const dx = e.deltaX || 0;
-          if (dy === 0 && dx === 0) return;
-          const wantsZoom = (!editing) || (e.metaKey || e.ctrlKey);
-          if (wantsZoom) {
-            if (dy === 0) return;
-            e.preventDefault();
-            e.stopPropagation();
-            const cur = z.getScale();
-            const factor = Math.exp(-dy * 0.0015);
-            z.setScale(Math.max(0.1, Math.min(2.5, cur * factor)));
-            return;
-          }
-          // Edit mode, no modifier — pan the canvas. Vertical scroll
-          // walks the camera up/down through the page; horizontal
-          // deltas are damped to 30% (Magic Mouse / trackpad sideways
-          // swipes are noisy).
+          if (dy === 0) return;
           e.preventDefault();
           e.stopPropagation();
-          z.panBy?.(-dx * 0.3, -dy);
+          const cur = z.getScale();
+          const factor = Math.exp(-dy * 0.0015);
+          z.setScale(Math.max(0.1, Math.min(2.5, cur * factor)));
         };
         doc._uncraftWheel = handler;
         doc.addEventListener('wheel', handler, { passive: false, capture: true });
@@ -666,7 +657,7 @@ export default function CanvasNode({
       {node._loading ? (
         <div className="cnode-loading">
           <div className="cnode-spinner" />
-          <span>{node.kind === 'site' ? 'Capturing…' : 'Loading…'}</span>
+          <span>{node._loadingLabel || (node.kind === 'site' ? 'Capturing…' : 'Loading…')}</span>
         </div>
       ) : renderIframeBody ? (
         html ? (
@@ -677,6 +668,25 @@ export default function CanvasNode({
               if (editing) return;
               e.stopPropagation();
               onEditingChange?.(true);
+            }}
+            onWheel={(e) => {
+              // In rest mode the iframe has pointer-events:none (so the
+              // user can drag/select the node), which means wheel events
+              // fall through to the canvas and trigger zoom. Forward
+              // unmodified wheel to the iframe document so the site
+              // scrolls normally. Cmd/Ctrl is reserved for canvas zoom
+              // (handled by the canvas-level listener — we no-op here).
+              if (editing) return;          // edit mode: handler on iframe doc takes it
+              if (e.metaKey || e.ctrlKey) return; // let canvas zoom handle it
+              const iframe = iframeRef.current;
+              const doc = iframe?.contentDocument;
+              if (!doc) return;
+              e.preventDefault();
+              e.stopPropagation();
+              // Scroll the iframe's root element. Site's own scroll
+              // listeners (Lenis / IX3) hook into this naturally.
+              const target = doc.scrollingElement || doc.documentElement || doc.body;
+              target.scrollBy({ left: e.deltaX, top: e.deltaY, behavior: 'auto' });
             }}
             style={{ height: (node.height || 800) + 'px' }}
           >

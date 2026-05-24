@@ -4,7 +4,10 @@ import { requireUser } from '../../../../lib/auth.js';
 import { captureSnapshot } from '../../../../lib/snapshot.js';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+// Bumped from 60 to 240 — reconstruction path (lib/reconstruct.js) takes
+// ~150s end-to-end (scroll-stops + thumbnails + GPT-5.5 vision). Add
+// headroom for slower sites / network jitter.
+export const maxDuration = 240;
 
 export async function POST(request) {
   const { user, error } = await requireUser(request);
@@ -68,6 +71,75 @@ export async function POST(request) {
     }, { status: 400 });
   }
 
+  // Streaming path: when the client sends `Accept: text/event-stream`, we
+  // emit progress events as the capture (and potential reconstruction)
+  // progresses through stages. Final event carries the snapshot data.
+  // This lets the canvas node show "Reconstructing…" with stage labels
+  // instead of a generic 60-150s "Capturing…" spinner.
+  const acceptsStream = request.headers.get('accept')?.includes('text/event-stream');
+  if (acceptsStream) {
+    const stream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        const send = (event, data) => {
+          try {
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          } catch (e) {}
+        };
+        try {
+          const cap = await captureSnapshot(url, {
+            onProgress: (step) => send('progress', { step })
+          });
+          let snapshotId = null;
+          if (nodeId) {
+            const sql = await db();
+            const [node] = await sql`
+              SELECT n.id FROM nodes n
+                JOIN boards b ON b.id = n.board_id
+               WHERE n.id = ${nodeId} AND b.user_id = ${user.id}
+            `;
+            if (!node) {
+              send('error', { error: 'node_not_found', detail: 'node not found' });
+              controller.close();
+              return;
+            }
+            const [snap] = await sql`
+              INSERT INTO snapshots (node_id, html, screenshot_url, source)
+              VALUES (${nodeId}, ${cap.html}, ${cap.screenshotDataUrl}, 'capture')
+              RETURNING id, created_at
+            `;
+            await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${nodeId}`;
+            snapshotId = snap.id;
+          }
+          send('done', {
+            ok: true,
+            snapshotId,
+            html: cap.html,
+            screenshotDataUrl: cap.screenshotDataUrl,
+            title: cap.title,
+            baseUrl: cap.baseUrl,
+            stats: cap.stats || null
+          });
+        } catch (e) {
+          console.error('captureSnapshot error', e);
+          send('error', { error: 'capture_failed', detail: String(e?.message || e) });
+        } finally {
+          controller.close();
+        }
+      }
+    });
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no'  // disable nginx-style buffering
+      }
+    });
+  }
+
+  // Legacy JSON path — single blocking response. Kept for backwards
+  // compatibility with any caller that doesn't stream.
   let cap;
   try {
     cap = await captureSnapshot(url);
@@ -76,7 +148,6 @@ export async function POST(request) {
     return NextResponse.json({ error: 'capture_failed', detail: String(e?.message || e) }, { status: 502 });
   }
 
-  // If a nodeId is supplied, persist as snapshot and update node.current_snapshot_id.
   if (nodeId) {
     const sql = await db();
     const [node] = await sql`
@@ -95,7 +166,6 @@ export async function POST(request) {
     return NextResponse.json({ ok: true, snapshotId: snap.id, title: cap.title });
   }
 
-  // Anonymous capture (used when adding a URL before the node exists).
   return NextResponse.json({
     ok: true,
     html: cap.html,

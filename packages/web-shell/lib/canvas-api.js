@@ -26,6 +26,51 @@ export const api = {
   applyEdge: (id) => fetch(`/api/edges/${id}/apply`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
 
   captureUrl: (url, nodeId = null) => fetch('/api/snapshot/capture', { ...COMMON, method: 'POST', body: JSON.stringify({ url, nodeId }) }).then(jsonOrThrow),
+
+  /**
+   * Streaming capture: emits progress events as the snapshot/reconstruction
+   * runs through stages. Final payload identical to captureUrl().
+   * @param {string} url
+   * @param {string|null} nodeId
+   * @param {(step: string) => void} onProgress — called with stage names
+   *   like 'navigating', 'capturing', 'thinking', 'finalizing'.
+   */
+  captureUrlStream: async (url, nodeId = null, onProgress) => {
+    const res = await fetch('/api/snapshot/capture', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify({ url, nodeId })
+    });
+    if (!res.ok || !res.body) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j?.detail || j?.error || `${res.status} ${res.statusText}`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE frames separated by blank line.
+      let idx;
+      while ((idx = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const eventLine = /^event:\s*(\S+)/m.exec(frame);
+        const dataLine = /^data:\s*(.+)$/m.exec(frame);
+        if (!dataLine) continue;
+        let data;
+        try { data = JSON.parse(dataLine[1]); } catch { continue; }
+        const event = eventLine?.[1] || 'message';
+        if (event === 'progress') { try { onProgress?.(data.step); } catch (e) {} }
+        else if (event === 'done') return data;
+        else if (event === 'error') throw new Error(data.detail || data.error || 'capture failed');
+      }
+    }
+    throw new Error('Stream ended without a done event');
+  },
   saveNodeEdit: (nodeId, html) => fetch(`/api/nodes/${nodeId}/save-edit`, { ...COMMON, method: 'POST', body: JSON.stringify({ html }) }).then(jsonOrThrow),
   runNode: (nodeId, opts = {}) => fetch(`/api/nodes/${nodeId}/run`, { ...COMMON, method: 'POST', body: JSON.stringify(opts) }).then(jsonOrThrow),
 

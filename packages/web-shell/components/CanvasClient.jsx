@@ -316,7 +316,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setNodes((prev) => [...prev, placeholderNode]);
 
     try {
-      const cap = await api.captureUrl(url);
+      // Stream progress so the placeholder shows stage labels (especially
+      // useful for the reconstruction path which can take 2-3 minutes).
+      const STAGE_LABEL = {
+        launching:    'Launching browser…',
+        navigating:   'Navigating to site…',
+        capturing:    'Capturing scroll-stops…',
+        thumbnailing: 'Rendering thumbnails…',
+        thinking:     'Reconstructing layout…',
+        finalizing:   'Finalizing…'
+      };
+      const cap = await api.captureUrlStream(url, null, (step) => {
+        setNodes((prev) => prev.map((n) =>
+          n.id === id ? { ...n, _loadingLabel: STAGE_LABEL[step] || step } : n
+        ));
+      });
       const created = await api.createNode({
         boardId: board.id, kind: 'site', originUrl: url,
         posX, posY, width, height,
