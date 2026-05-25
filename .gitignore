@@ -38,3 +38,38 @@ coverage/
 
 # Vercel
 .vercel/
+
+# Local skill installs (npx skills add ...) — symlinks + agent dotfile dirs
+# These are per-user local installs; users get them via the install command,
+# not by checkout. Adding to .gitignore so they don't pollute the repo.
+.agents/
+.adal/
+.augment/
+.codebuddy/
+.commandcode/
+.continue/
+.cortex/
+.crush/
+.factory/
+.goose/
+.iflow/
+.junie/
+.kilocode/
+.kiro/
+.kode/
+.mcpjam/
+.mux/
+.neovate/
+.openhands/
+.pi/
+.pochi/
+.qoder/
+.qwen/
+.roo/
+.trae/
+.vibe/
+.windsurf/
+.zencoder/
+.claude/skills/
+/skills/
+skills-lock.json
