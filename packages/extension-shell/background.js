@@ -171,8 +171,105 @@ function simpleHash(str) {
   return hash.toString(36);
 }
 
+// Helper for the Phase 2 handoff flow — captures a screenshot of the
+// tab the content script ran in, then POSTs {html, screenshotDataUrl,
+// title} either to /api/snapshot/handoff (token-authed, completes a
+// challenge-triggered placeholder) or /api/snapshot/manual (cookie-
+// authed, creates a fresh node on a chosen board).
+//
+// Both endpoints live on the web-shell origin which the caller provides
+// — production = uncraft.app, dev = localhost:3030. The extension's
+// host_permissions cover <all_urls> so credentialed fetch carries the
+// uncraft_sess cookie cleanly across origins.
+async function captureTabScreenshotDataUrl(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab) return null;
+    const png = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+    return png || null;
+  } catch (e) {
+    // captureVisibleTab fails on chrome:// pages, file:// without flag,
+    // or when the user backgrounds the window. Not fatal — server
+    // accepts null screenshots.
+    console.warn('[uncraft.handoff] screenshot capture failed:', e?.message || e);
+    return null;
+  }
+}
+
+async function sendHandoffToWebShell({ handoff, payload, tabId }) {
+  const screenshotDataUrl = await captureTabScreenshotDataUrl(tabId);
+  const url = `${handoff.webShellOrigin}/api/snapshot/handoff`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Uncraft-Handoff-Token': handoff.token
+    },
+    body: JSON.stringify({
+      html: payload.html,
+      title: payload.title,
+      screenshotDataUrl
+    })
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { ok: false, error: json?.error || `${res.status} ${res.statusText}` };
+  }
+  return { ok: true, ...json };
+}
+
+async function sendManualToWebShell({ webShellOrigin, boardId, url, payload, tabId }) {
+  const screenshotDataUrl = await captureTabScreenshotDataUrl(tabId);
+  const endpoint = `${webShellOrigin}/api/snapshot/manual`;
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      boardId,
+      url,
+      html: payload.html,
+      title: payload.title,
+      screenshotDataUrl,
+      width: payload.viewport?.width,
+      height: payload.viewport?.height
+    })
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { ok: false, error: json?.error || `${res.status} ${res.statusText}` };
+  }
+  return { ok: true, ...json };
+}
+
 // Listen for messages from content scripts and panel
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // ─── Phase 2 handoff flows ─────────────────────────────────────────────
+  if (message.action === 'uncraft.handoff.send') {
+    const tabId = sender.tab && sender.tab.id;
+    sendHandoffToWebShell({
+      handoff: message.handoff,
+      payload: message.payload,
+      tabId
+    }).then(sendResponse).catch((e) => {
+      sendResponse({ ok: false, error: String(e?.message || e) });
+    });
+    return true;  // async sendResponse
+  }
+  if (message.action === 'uncraft.manual.send') {
+    const tabId = sender.tab && sender.tab.id;
+    sendManualToWebShell({
+      webShellOrigin: message.webShellOrigin,
+      boardId: message.boardId,
+      url: message.url,
+      payload: message.payload,
+      tabId: message.tabId || tabId
+    }).then(sendResponse).catch((e) => {
+      sendResponse({ ok: false, error: String(e?.message || e) });
+    });
+    return true;
+  }
+
   if (message.action === 'getSettings') {
     getSettings().then(settings => sendResponse(settings));
     return true;
