@@ -35,12 +35,20 @@ export const api = {
    * @param {(step: string) => void} onProgress — called with stage names
    *   like 'navigating', 'capturing', 'thinking', 'finalizing'.
    */
-  captureUrlStream: async (url, nodeId = null, onProgress) => {
+  /**
+   * @param {string} url
+   * @param {string|null} nodeId
+   * @param {(step: string) => void} onProgress
+   * @param {{boardId, posX, posY, width, height, isMain}|null} placement
+   *   When set, server pre-creates a placeholder node on bot-challenge so
+   *   the handoff flow has a persisted target.
+   */
+  captureUrlStream: async (url, nodeId = null, onProgress, placement = null) => {
     const res = await fetch('/api/snapshot/capture', {
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-      body: JSON.stringify({ url, nodeId })
+      body: JSON.stringify({ url, nodeId, placement })
     });
     if (!res.ok || !res.body) {
       const j = await res.json().catch(() => ({}));
@@ -66,6 +74,14 @@ export const api = {
         const event = eventLine?.[1] || 'message';
         if (event === 'progress') { try { onProgress?.(data.step); } catch (e) {} }
         else if (event === 'done') return data;
+        else if (event === 'challenge') {
+          // Bot-protection interstitial. Surface as a typed error the
+          // caller catches and routes to the ChallengeModal handoff flow.
+          // We attach the payload so the modal knows kind, url, signals.
+          const err = new Error(`challenge_required:${data.kind}`);
+          err.challenge = data;
+          throw err;
+        }
         else if (event === 'error') throw new Error(data.detail || data.error || 'capture failed');
       }
     }
@@ -73,6 +89,9 @@ export const api = {
   },
   saveNodeEdit: (nodeId, html) => fetch(`/api/nodes/${nodeId}/save-edit`, { ...COMMON, method: 'POST', body: JSON.stringify({ html }) }).then(jsonOrThrow),
   runNode: (nodeId, opts = {}) => fetch(`/api/nodes/${nodeId}/run`, { ...COMMON, method: 'POST', body: JSON.stringify(opts) }).then(jsonOrThrow),
+  // Used by the handoff polling loop in CanvasClient — returns the node
+  // row + current snapshot (when present) in one round-trip.
+  getNode: (nodeId) => fetch(`/api/nodes/${nodeId}`, { ...COMMON, method: 'GET' }).then(jsonOrThrow),
 
   logout: () => fetch('/api/auth/logout', { ...COMMON, method: 'POST' }).then(jsonOrThrow)
 };

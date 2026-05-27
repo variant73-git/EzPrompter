@@ -460,16 +460,14 @@ export default function CanvasNode({
   const renderSkillBody = node.kind === 'skill';
   const renderAssetBody = node.kind === 'asset' || node.kind === 'image';
 
-  // Wheel routing when the mouse is over the iframe (a node body):
-  //   • Cmd/Ctrl held → canvas zoom (intentional override so the user can
-  //     pinch-zoom from anywhere, including over a node).
-  //   • Anything else → let the iframe scroll natively. The captured site's
-  //     own scroll behaviour (Lenis smooth-scroll, sticky sections, scroll-
-  //     triggered animations) drives the view. Same in edit mode — the
-  //     user is reading/editing a page, scroll should walk the page.
-  // Previously this routed wheel to canvas pan (in edit) or canvas zoom
-  // (at rest); both prevented the site from scrolling and trapped the
-  // user in the hero.
+  // Wheel routing when the mouse is over the iframe (edit-mode only — in
+  // rest mode the iframe has pointer-events:none so wheel hits .cnode-body
+  // in the host doc and the canvas-level capture handler takes it).
+  //   • plain wheel → pan canvas (deltaX/deltaY in screen px). Same Figma
+  //     feel everywhere, including over the captured site.
+  //   • Cmd/Ctrl + wheel → cursor-anchored canvas zoom. Iframe-local
+  //     coords (e.clientX/Y) are translated to host viewport coords via
+  //     the iframe's bounding rect.
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
@@ -491,19 +489,19 @@ export default function CanvasNode({
           try { doc.removeEventListener('wheel', doc._uncraftWheel, { capture: true }); } catch (err) {}
         }
         handler = (e) => {
-          // Cmd/Ctrl → canvas zoom (override). Pure wheel → let iframe
-          // scroll naturally; the browser default + the site's own scroll
-          // handlers do the right thing.
-          if (!(e.metaKey || e.ctrlKey)) return;
           const z = window.__uncraftZoom;
           if (!z) return;
-          const dy = e.deltaY || 0;
-          if (dy === 0) return;
           e.preventDefault();
           e.stopPropagation();
-          const cur = z.getScale();
-          const factor = Math.exp(-dy * 0.0015);
-          z.setScale(Math.max(0.1, Math.min(2.5, cur * factor)));
+          if (e.metaKey || e.ctrlKey) {
+            const rect = iframe.getBoundingClientRect();
+            const s = z.getScale ? z.getScale() : 1;
+            const cx = rect.left + (e.clientX || 0) * s;
+            const cy = rect.top + (e.clientY || 0) * s;
+            z.zoomAtPoint?.(e.deltaY || 0, cx, cy);
+          } else {
+            z.panBy?.(-(e.deltaX || 0), -(e.deltaY || 0));
+          }
         };
         doc._uncraftWheel = handler;
         doc.addEventListener('wheel', handler, { passive: false, capture: true });
@@ -655,8 +653,18 @@ export default function CanvasNode({
         </div>
       </div>
       {node._loading ? (
-        <div className="cnode-loading">
-          <div className="cnode-spinner" />
+        <div className={`cnode-loading${node._challenge ? ' cnode-loading-challenge' : ''}`}>
+          {node._challenge ? (
+            // Shield icon — same family as the ChallengeModal, signals
+            // "this is paused waiting for human verification" rather
+            // than "we're working on it"; spinner would be misleading.
+            <svg className="cnode-loading-icon" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <path d="M9 12l2 2 4-4"/>
+            </svg>
+          ) : (
+            <div className="cnode-spinner" />
+          )}
           <span>{node._loadingLabel || (node.kind === 'site' ? 'Capturing…' : 'Loading…')}</span>
         </div>
       ) : renderIframeBody ? (
@@ -668,25 +676,6 @@ export default function CanvasNode({
               if (editing) return;
               e.stopPropagation();
               onEditingChange?.(true);
-            }}
-            onWheel={(e) => {
-              // In rest mode the iframe has pointer-events:none (so the
-              // user can drag/select the node), which means wheel events
-              // fall through to the canvas and trigger zoom. Forward
-              // unmodified wheel to the iframe document so the site
-              // scrolls normally. Cmd/Ctrl is reserved for canvas zoom
-              // (handled by the canvas-level listener — we no-op here).
-              if (editing) return;          // edit mode: handler on iframe doc takes it
-              if (e.metaKey || e.ctrlKey) return; // let canvas zoom handle it
-              const iframe = iframeRef.current;
-              const doc = iframe?.contentDocument;
-              if (!doc) return;
-              e.preventDefault();
-              e.stopPropagation();
-              // Scroll the iframe's root element. Site's own scroll
-              // listeners (Lenis / IX3) hook into this naturally.
-              const target = doc.scrollingElement || doc.documentElement || doc.body;
-              target.scrollBy({ left: e.deltaX, top: e.deltaY, behavior: 'auto' });
             }}
             style={{ height: (node.height || 800) + 'px' }}
           >

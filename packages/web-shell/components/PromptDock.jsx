@@ -348,6 +348,27 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
       return;
     }
 
+    // URL auto-detect — if the free-text input looks like a URL (bare
+    // domain, full https://, etc.) we treat it as an Add-URL action even
+    // when the dedicated URL toggle wasn't selected. Drops the friction
+    // of "did I remember to click the website chip?" and matches the
+    // PromptDock's role as a single conversational entry point.
+    // Image attached → still falls through to chat (image+url combo
+    // belongs to the conversational path).
+    if (!imageFile && looksLikeUrl(value)) {
+      const url = normalizeUrl(value);
+      if (url) {
+        setBusy(true);
+        try {
+          await onAddUrl(url);
+          setText('');
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
+    }
+
     // Free-text path (chat / feedback) — wired later. For now, log + clear.
     // eslint-disable-next-line no-console
     console.log('[prompt-dock] submit (no chat handler yet):', { text: value, imageFile, modelId });

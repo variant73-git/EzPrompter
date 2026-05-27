@@ -11,6 +11,28 @@ async function ownedNode(sql, userId, nodeId) {
   return row || null;
 }
 
+// Lightweight GET — used by the handoff polling loop in CanvasClient
+// to check whether the extension has shipped the verified DOM back.
+// Returns the node row plus the current snapshot's html when present,
+// so polling can render the result without a second round-trip.
+export async function GET(request, { params }) {
+  const { user, error } = await requireUser(request);
+  if (error) return error;
+  const sql = await db();
+  const { id } = await params;
+  const node = await ownedNode(sql, user.id, id);
+  if (!node) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+  let snapshot = null;
+  if (node.current_snapshot_id) {
+    const [snap] = await sql`
+      SELECT id, html, screenshot_url, source, created_at
+        FROM snapshots WHERE id = ${node.current_snapshot_id}
+    `;
+    if (snap) snapshot = snap;
+  }
+  return NextResponse.json({ node, snapshot });
+}
+
 export async function PATCH(request, { params }) {
   const { user, error } = await requireUser(request);
   if (error) return error;

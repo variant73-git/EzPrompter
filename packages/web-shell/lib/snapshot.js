@@ -59,6 +59,85 @@ const ANIM_FORCE_SHOW_CSS = `
 }
 `;
 
+// Bot-protection interstitial detection. Cloudflare, hCaptcha, reCAPTCHA,
+// Akamai, PerimeterX etc. all serve a small HTML challenge page in front
+// of the real site. Capturing that HTML as if it were the site produces
+// a broken node + an `null.getComputedStyle` crash when the challenge's
+// own scripts run inside our srcDoc iframe (srcDoc inherits parent
+// origin — the scripts find none of the elements they expect on their
+// real domain). Detect it pre-extraction so we can hand off to the user.
+export class ChallengeRequiredError extends Error {
+  constructor(kind, url, signals = []) {
+    super(`challenge_required: ${kind} on ${url}`);
+    this.name = 'ChallengeRequiredError';
+    this.kind = kind;
+    this.url = url;
+    this.signals = signals;
+  }
+}
+
+// Runs in the page context. Returns { kind, signals } if a challenge
+// interstitial is detected; null otherwise. Kept defensive — any throw
+// becomes "no challenge" so detection is fail-open (real sites never
+// get blocked by a detector bug).
+async function detectChallengePage(page) {
+  try {
+    return await page.evaluate(() => {
+      const signals = [];
+      const title = (document.title || '').trim();
+      const titlePatterns = [
+        { rx: /^Just a moment/i, kind: 'cloudflare' },
+        { rx: /^Attention Required/i, kind: 'cloudflare' },
+        { rx: /Checking (your|if the site connection) is secure/i, kind: 'cloudflare' },
+        { rx: /^Access denied/i, kind: 'cloudflare' },
+        { rx: /^Please wait/i, kind: 'generic_challenge' },
+        { rx: /^One moment/i, kind: 'generic_challenge' }
+      ];
+      let kind = null;
+      for (const p of titlePatterns) {
+        if (p.rx.test(title)) { kind = p.kind; signals.push(`title:${title}`); break; }
+      }
+      // Cloudflare Turnstile / Managed Challenge widgets
+      if (document.querySelector('iframe[src*="challenges.cloudflare.com"]')) {
+        kind = kind || 'cloudflare'; signals.push('cf:challenges-iframe');
+      }
+      if (document.querySelector('#challenge-form, #cf-challenge-running, #challenge-running, #cf-please-wait, #challenge-error-text')) {
+        kind = kind || 'cloudflare'; signals.push('cf:challenge-form');
+      }
+      if (document.querySelector('meta[http-equiv="refresh"][content*="challenge"]')) {
+        kind = kind || 'cloudflare'; signals.push('cf:refresh-meta');
+      }
+      // hCaptcha (standalone, not embedded on real pages — embedded
+      // hCaptcha is fine, only flag if hCaptcha is the WHOLE page)
+      const hcaptcha = document.querySelector('iframe[src*="hcaptcha.com"], .h-captcha');
+      if (hcaptcha && document.body.innerText.length < 800) {
+        kind = kind || 'hcaptcha'; signals.push('hcaptcha:standalone');
+      }
+      // reCAPTCHA interstitial (Google "unusual traffic" page)
+      if (/unusual traffic|sorry, but your computer/i.test(document.body.innerText || '')) {
+        kind = kind || 'recaptcha'; signals.push('recaptcha:unusual-traffic');
+      }
+      // Akamai bot manager
+      if (document.querySelector('script[src*="akamaihd.net/aka-bot"]') ||
+          /access denied.*reference/i.test(document.body.innerText || '')) {
+        kind = kind || 'akamai'; signals.push('akamai:bot-manager');
+      }
+      // PerimeterX
+      if (document.querySelector('script[src*="px-cdn"], #px-captcha')) {
+        kind = kind || 'perimeterx'; signals.push('perimeterx');
+      }
+      // Heuristic — challenge pages are tiny. Real sites have >2KB of body
+      // text. Combined with one of the signals above, this is a strong
+      // confirmation; alone it's a soft hint (don't trigger from this).
+      const bodyLen = (document.body?.innerText || '').length;
+      if (kind && bodyLen < 800) signals.push(`body-len:${bodyLen}`);
+      return kind ? { kind, signals } : null;
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
 // Decode the RGB of the first pixel from a PNG buffer. Used to sample
 // the actual rendered colour at a specific viewport location (CSS-based
 // sampling misses background images / videos / canvas overlays).
@@ -291,6 +370,19 @@ export async function captureSnapshot(url, opts = {}) {
     });
     await page.waitForTimeout(RENDER_WAIT_MS);
 
+    // Bot-protection interstitial check. Cloudflare/hCaptcha/Akamai/PerimeterX
+    // serve a tiny challenge page in front of the real site. Capturing that
+    // HTML produces a broken node + a `null.getComputedStyle` overlay error
+    // when the challenge scripts run inside our srcDoc iframe. Bail out
+    // before any extraction so the route can return a structured 409 and
+    // the UI can offer the human-verification handoff flow.
+    const challenge = await detectChallengePage(page);
+    if (challenge) {
+      // eslint-disable-next-line no-console
+      console.log(`[snapshot] challenge detected (kind=${challenge.kind}, signals=${challenge.signals.join(',')}) — bailing for handoff`);
+      throw new ChallengeRequiredError(challenge.kind, url, challenge.signals);
+    }
+
     // Detect JS-driven scroll narrative sites and route to reconstruction.
     // The static capture path produces a broken render for these (only
     // hero shows, sticky sections collapse). reconstructPage does a
@@ -412,13 +504,17 @@ export async function captureSnapshot(url, opts = {}) {
     }
 
     let html = absolutizeUrls(bodyPatched, url);
-    // NOTE: scripts are intentionally KEPT now. Stripping them broke any
-    // site that drove layout from JS (Webflow IX3 sticky-scroll, Framer
-    // scrollytelling, Lenis smooth-scroll, etc.). Iframe sandbox in
-    // CanvasNode is "allow-same-origin allow-scripts" — scripts run within
-    // iframe, can touch parent origin (acceptable single-user trade-off
-    // now; revisit when we go multi-tenant).
-    // html = stripScripts(html);
+    // Strip scripts on the static path. The earlier "keep scripts" stance
+    // was driven by Webflow IX3 / Framer / Lenis sites breaking — but
+    // those now route through detectAnimatedBuilder → reconstructPage
+    // long before reaching here, so by the time we're in the static
+    // branch the page is server-rendered HTML where scripts mostly do
+    // harm: they can't hydrate cross-origin under srcDoc, can't fetch
+    // their original API, and widget-loader scripts (e.g. WordPress
+    // header widgets that do document.write or append-on-load) stack
+    // chrome multiple times. curriculum.com.br/AspClientAdapter/header.js
+    // was the trigger case — header appeared 3x stacked in the iframe.
+    html = stripScripts(html);
     html = pinViewportUnits(html, viewport.width, viewport.height);
     html = ensureBaseTag(html, url);
 

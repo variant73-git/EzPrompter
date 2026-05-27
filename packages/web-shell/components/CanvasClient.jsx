@@ -14,6 +14,7 @@ import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
 import PromptDock from './PromptDock.jsx';
 import CategoryCounts from './CategoryCounts.jsx';
 import Minimap from './Minimap.jsx';
+import ChallengeModal from './ChallengeModal.jsx';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -79,6 +80,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   const [editingNodeId, setEditingNodeId] = useState(null);
   const [canvasScale, setCanvasScale] = useState(0.6);
   const [lightMode, setLightMode] = useState(false);
+  // Bot-protection interstitial state. When captureSnapshot returns 409
+  // challenge_required, we stash {kind, url, signals, placeholderId} here
+  // so <ChallengeModal /> mounts. placeholderId lets the modal's cancel /
+  // open-site handlers clean up the temp node from the canvas.
+  const [challenge, setChallenge] = useState(null);
   const transformRef = useRef(null);
 
   // Light/dark theme — toggling sets `body.rb-ed-light` so the editor
@@ -172,6 +178,24 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         const inst = t.instance || t;
         const state = inst?.transformState || t.state || { positionX: 0, positionY: 0, scale: 1 };
         t.setTransform(state.positionX + dx, state.positionY + dy, state.scale, 0);
+      },
+      // Cursor-anchored zoom: scale around (cx, cy) in host viewport coords
+      // so the world point under the cursor stays fixed. Used by canvas-level
+      // wheel handler and by edit-mode iframe-doc wheel handler (which
+      // translates iframe-local coords to host coords before calling).
+      zoomAtPoint: (deltaY, cx, cy) => {
+        if (!deltaY) return;
+        const t = transformRef.current;
+        if (!t) return;
+        const inst = t.instance || t;
+        const state = inst?.transformState || t.state || { positionX: 0, positionY: 0, scale: 1 };
+        const factor = Math.exp(-deltaY * 0.0015);
+        const newScale = Math.max(MIN, Math.min(MAX, state.scale * factor));
+        if (newScale === state.scale) return;
+        const ratio = newScale / state.scale;
+        const newPosX = cx - (cx - state.positionX) * ratio;
+        const newPosY = cy - (cy - state.positionY) * ratio;
+        t.setTransform(newPosX, newPosY, newScale, 0);
       },
       // Snapshot the canvas position+scale. Used by the editor to remember
       // the entry framing so a "frame back" button can restore it.
@@ -300,6 +324,80 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     } catch (e) { console.warn('auto-link failed', e); }
   }
 
+  // Poll a handoff-pending node for the snapshot the extension will
+  // POST to /api/snapshot/handoff. Stops when the snapshot lands or
+  // after ~10 minutes (token TTL is 5 min; we give the user some
+  // extra slack to actually click the banner). Polling registry on
+  // the ref prevents duplicate intervals if the user retries.
+  const handoffPollersRef = useRef(new Map());
+  function startHandoffPolling(nodeId) {
+    if (!nodeId) return;
+    const existing = handoffPollersRef.current.get(nodeId);
+    if (existing) return; // already polling
+    const startedAt = Date.now();
+    const intervalMs = 3000;
+    const giveUpAfterMs = 10 * 60 * 1000;
+    const tick = async () => {
+      try {
+        const { node, snapshot } = await api.getNode(nodeId);
+        if (snapshot?.html) {
+          // Handoff landed — render it.
+          setNodes((prev) => prev.map((n) =>
+            n.id === nodeId ? {
+              ...n,
+              ...node,
+              current_html: snapshot.html,
+              current_screenshot: snapshot.screenshot_url || null,
+              _loading: false, _loadingLabel: undefined,
+              _challenge: false, _handoffPending: false
+            } : n
+          ));
+          stopHandoffPolling(nodeId);
+          return;
+        }
+      } catch (e) {
+        // 404 → node was deleted; abandon the poller. Other errors
+        // are transient (network blip, dev-server restart) — keep
+        // trying until the timeout.
+        if (/404|not_found/i.test(String(e?.message || ''))) {
+          stopHandoffPolling(nodeId);
+          return;
+        }
+      }
+      if (Date.now() - startedAt > giveUpAfterMs) {
+        stopHandoffPolling(nodeId);
+        // Surface a soft failure in the placeholder so the user knows
+        // the wait timed out — they can delete the node manually.
+        setNodes((prev) => prev.map((n) =>
+          n.id === nodeId ? {
+            ...n, _loadingLabel: 'Verification timed out',
+            _handoffPending: false
+          } : n
+        ));
+      }
+    };
+    const handle = setInterval(tick, intervalMs);
+    handoffPollersRef.current.set(nodeId, handle);
+    // First tick immediately so we don't wait 3s before checking.
+    tick();
+  }
+  function stopHandoffPolling(nodeId) {
+    const h = handoffPollersRef.current.get(nodeId);
+    if (h) {
+      clearInterval(h);
+      handoffPollersRef.current.delete(nodeId);
+    }
+  }
+  // Cleanup on unmount — without this, intervals keep firing during
+  // dev-server HMR and pollute the network tab forever.
+  useEffect(() => {
+    const map = handoffPollersRef.current;
+    return () => {
+      for (const h of map.values()) clearInterval(h);
+      map.clear();
+    };
+  }, []);
+
   async function handleAddUrl(url, opts = {}) {
     const id = `temp-${Date.now()}`;
     // Hero-section proportion (16:9). The body is a fixed viewport into a
@@ -326,11 +424,19 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         thinking:     'Reconstructing layout…',
         finalizing:   'Finalizing…'
       };
+      // Pass placement so the server can pre-create a persistent placeholder
+      // node + mint a handoff token if Cloudflare/captcha challenges the
+      // capture. That node sticks in DB even if the user closes the tab,
+      // and the extension's POST /api/snapshot/handoff fills it in later.
+      const placement = {
+        boardId: board.id, posX, posY, width, height,
+        isMain: nodes.length === 0
+      };
       const cap = await api.captureUrlStream(url, null, (step) => {
         setNodes((prev) => prev.map((n) =>
           n.id === id ? { ...n, _loadingLabel: STAGE_LABEL[step] || step } : n
         ));
-      });
+      }, placement);
       const created = await api.createNode({
         boardId: board.id, kind: 'site', originUrl: url,
         posX, posY, width, height,
@@ -348,6 +454,40 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // Frame the new node at 100% so it's the immediate focus.
       setTimeout(() => zoomToNode(finalNode, 350, 1), 80);
     } catch (e) {
+      // Bot-protection interstitial — captureUrlStream tags the thrown
+      // error with `.challenge` and (when placement was passed) the
+      // server has already pre-created a persistent node + minted a
+      // handoff token. Swap the in-memory temp placeholder for the
+      // real server node and start the polling loop that waits for
+      // the extension to ship the verified DOM back via
+      // POST /api/snapshot/handoff.
+      if (e?.challenge) {
+        const ch = e.challenge;
+        const persistedNode = ch.node;
+        if (persistedNode) {
+          setNodes((prev) => prev.map((n) =>
+            n.id === id ? {
+              ...persistedNode,
+              current_html: null,
+              _loading: true,
+              _loadingLabel: 'Waiting for verification…',
+              _challenge: true,
+              _handoffPending: true
+            } : n
+          ));
+          startHandoffPolling(persistedNode.id);
+          setChallenge({ ...ch, placeholderId: persistedNode.id });
+        } else {
+          // Fallback for the no-placement path (route returned
+          // challenge without pre-creating). UX is the same as before:
+          // placeholder waits, cancel/open-site clears it.
+          setNodes((prev) => prev.map((n) =>
+            n.id === id ? { ...n, _loadingLabel: 'Waiting for verification…', _challenge: true } : n
+          ));
+          setChallenge({ ...ch, placeholderId: id });
+        }
+        return;
+      }
       console.error(e);
       setNodes((prev) => prev.filter((n) => n.id !== id));
       alert(e.message || 'Could not add this URL.');
@@ -997,10 +1137,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const TOP_OFFSET = 30;
     const HEADER = 48;
     const vw = window.innerWidth;
+    // Editor mounts layers panel (left) + inspector panel (right) into this
+    // host doc; reserve their widths so the node frames between them
+    // instead of slipping partially behind. Read live so panel resize /
+    // hide / undock are respected. Defaults match editor.css when the
+    // panels haven't mounted yet (first entry into edit).
+    const layersEl = document.getElementById('rb-editor-layers');
+    const inspEl = document.getElementById('rb-editor-inspector');
+    const leftReserve = layersEl ? layersEl.getBoundingClientRect().width : 240;
+    const rightReserve = inspEl ? inspEl.getBoundingClientRect().width : 260;
+    const usableW = Math.max(320, vw - leftReserve - rightReserve);
     const nodeW = node.width + PAD * 2;
-    const scale = Math.min(vw / nodeW, 1.0);
+    const scale = Math.min(usableW / nodeW, 1.0);
     const centerX = node.pos_x + node.width / 2;
-    const positionX = vw / 2 - centerX * scale;
+    const positionX = (leftReserve + usableW / 2) - centerX * scale;
     const positionY = (HEADER + TOP_OFFSET) - node.pos_y * scale;
     return { positionX, positionY, scale };
   }
@@ -1103,11 +1253,53 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     t.setTransform(posX, posY, scale, animationTime);
   }
 
-  // Block browser-level zoom (Cmd/Ctrl + wheel, trackpad pinch sends ctrlKey)
-  // so it doesn't compete with the canvas's own pan/zoom.
+  // Canvas wheel routing (Figma-style):
+  //   • plain wheel anywhere (canvas, node body, even inside the site iframe
+  //     via the iframe-doc handler in CanvasNode) → pan canvas by screen
+  //     deltas. Two-finger trackpad scroll and mouse wheel both feed this.
+  //   • Cmd/Ctrl + wheel → cursor-anchored zoom in/out.
+  // Native scroll is preserved for widgets that own their own overflow
+  // (textareas, prompt dock, menus, toolbars, sidebar). TransformWrapper's
+  // own wheel handling is disabled (see `wheel.disabled` below) so this is
+  // the single source of truth.
   useEffect(() => {
+    const NATIVE_WHEEL_SELECTOR = [
+      '.cnode-prompt-textarea',
+      '.cnode-prompt-body',
+      '.cnode-body-prompt',
+      '.edge-popup',
+      '.superwidget',
+      '.canvas-toolbar-left',
+      '.canvas-toolbar-right',
+      '.canvas-toolbars-left',
+      '.canvas-toolbars-right',
+      '.canvas-theme-floater',
+      '.zoom-controls',
+      '.zoom-menu',
+      '.user-menu',
+      '.reset-confirm-card',
+      '.reset-confirm-overlay',
+      '.canvas-context-menu',
+      '.empty-drop-menu',
+      '.prompt-dock',
+      '.boards-sidebar',
+      'textarea',
+    ].join(', ');
     function onWheelCapture(e) {
-      if (e.ctrlKey || e.metaKey) e.preventDefault();
+      if (e.target?.closest?.(NATIVE_WHEEL_SELECTOR)) return;
+      e.preventDefault();
+      // Kill TransformWrapper's own wheel listener (attached on the wrapper
+      // in bubble phase). Defensive — wheel.disabled:true should already
+      // short-circuit it, but HMR can leave stale listeners around.
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      const z = window.__uncraftZoom;
+      if (!z) return;
+      if (e.metaKey || e.ctrlKey) {
+        z.zoomAtPoint?.(e.deltaY || 0, e.clientX, e.clientY);
+      } else {
+        z.panBy?.(-(e.deltaX || 0), -(e.deltaY || 0));
+      }
     }
     function onKeyZoom(e) {
       if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '_')) {
@@ -1299,7 +1491,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         initialPositionX={-WORLD_WIDTH * 0.25}
         initialPositionY={-WORLD_HEIGHT * 0.25}
         limitToBounds={false}
-        wheel={{ step: 0.08, excluded: ['cnode-iframe', 'cnode-handle', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'edge-popup', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu'] }}
+        wheel={{ disabled: true }}
         panning={{ excluded: ['cnode', 'cnode-topbar', 'cnode-body', 'cnode-iframe', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'cnode-handle', 'cnode-viewport-switcher', 'cnode-vp-btn', 'cnode-port-right', 'cnode-port-left', 'edge-line', 'edge-popup', 'reset-confirm-card', 'reset-confirm-overlay', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu', 'user-menu'] }}
         doubleClick={{ disabled: true }}
         onPanningStart={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setPopupPos(null); }}
@@ -1474,6 +1666,35 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         <div className="run-flow-toast" role="status" aria-live="polite">
           {runFlowError}
         </div>
+      )}
+
+      {challenge && (
+        <ChallengeModal
+          challenge={challenge}
+          onCancel={() => {
+            // User opted out — drop the placeholder locally AND from
+            // the server (the route pre-created it). DELETE is fire-
+            // and-forget; if it fails the polling-timeout cleanup
+            // catches the orphan eventually.
+            const pid = challenge.placeholderId;
+            if (pid) {
+              stopHandoffPolling(pid);
+              setNodes((prev) => prev.filter((n) => n.id !== pid));
+              if (challenge.node) {
+                fetch(`/api/nodes/${pid}`, { method: 'DELETE', credentials: 'include' })
+                  .catch((err) => console.warn('challenge cancel delete failed', err));
+              }
+            }
+            setChallenge(null);
+          }}
+          onOpenSite={() => {
+            // Keep the placeholder + polling alive — the extension will
+            // POST the verified DOM to /api/snapshot/handoff once the
+            // user solves the challenge in the new tab, and the poll
+            // loop swaps it for the real node.
+            setChallenge(null);
+          }}
+        />
       )}
     </div>
   );

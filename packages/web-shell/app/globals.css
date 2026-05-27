@@ -1459,6 +1459,142 @@ body.rb-ed-light .minimap-node-stroke {
   height: calc(14px / var(--canvas-scale, 1));
 }
 
+/* ─── Challenge (bot-protection) modal ─────────────────────────────────────
+   Shown when a URL capture hits Cloudflare / hCaptcha / Akamai / similar
+   and the server can't pass the human-verification check on the user's
+   behalf. Viewport-fixed (NOT anchored to a node like reset-confirm) —
+   this interrupts the URL-add flow before the node materialises. Frosted
+   family, fits next to the other dialog cards. */
+.challenge-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: rb-fade-in 160ms ease-out;
+  padding: 24px;
+}
+
+.challenge-modal-card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--bg-frosted, rgba(10, 10, 10, 0.78));
+  border: 1px solid var(--border-frosted, rgba(255, 255, 255, 0.10));
+  border-radius: var(--radius-md, 18px);
+  padding: 28px;
+  box-shadow: var(--shadow-frost, 0 16px 60px rgba(0, 0, 0, 0.55));
+  font-family: 'Aeonik', inherit;
+  color: var(--text-primary, #f5f5f5);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+}
+
+.challenge-modal-icon {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(56, 189, 248, 0.10);
+  color: #7dd3fc;
+  margin-bottom: 18px;
+}
+
+.challenge-modal-title {
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  margin: 0 0 10px;
+  color: var(--text-primary, #f5f5f5);
+}
+
+.challenge-modal-body {
+  font-size: 13.5px;
+  line-height: 1.55;
+  font-weight: 300;
+  color: var(--text-secondary, rgba(245, 245, 245, 0.72));
+  margin: 0 0 20px;
+}
+
+.challenge-modal-body strong {
+  color: var(--text-primary, #f5f5f5);
+  font-weight: 500;
+}
+
+.challenge-modal-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  margin-bottom: 22px;
+}
+
+.challenge-modal-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary, rgba(245, 245, 245, 0.72));
+  font-weight: 300;
+}
+
+.challenge-modal-step strong {
+  color: var(--text-primary, #f5f5f5);
+  font-weight: 500;
+}
+
+.challenge-modal-step-num {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary, #f5f5f5);
+}
+
+.challenge-modal-soon {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(250, 204, 21, 0.10);
+  border: 1px solid rgba(250, 204, 21, 0.20);
+  color: #facc15;
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.challenge-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.challenge-modal-btn {
+  width: auto;
+  padding: 9px 16px;
+  font-size: 13px;
+  border-radius: 10px;
+  min-width: 88px;
+}
+
 /* ─── Reset confirmation modal ──────────────────────────────────────────── */
 
 /* Anchored popover (NOT a viewport-fixed modal). Sits just below the
@@ -2658,6 +2794,20 @@ body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.4
   border-top-color: #0095FF;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
+}
+
+/* Challenge-waiting variant of the loading placeholder. Same dimensions
+   as the normal loading state but signals "paused for a human" via the
+   amber accent instead of spinning blue — the modal handles the action,
+   the node just holds the spot. */
+.cnode-loading-challenge {
+  color: #facc15;
+  background: rgba(40, 30, 0, 0.35);
+}
+.cnode-loading-challenge .cnode-loading-icon {
+  color: #facc15;
+  opacity: 0.9;
+  animation: rb-fade-in 200ms ease-out;
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
