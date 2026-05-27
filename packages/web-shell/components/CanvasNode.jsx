@@ -201,6 +201,12 @@ export default function CanvasNode({
   // edit mode; offers Save / Discard / Continue editing.
   const [showCancelPrompt, setShowCancelPrompt] = useState(false);
   const iframeRef = useRef(null);
+  // Wrapper + right-port refs for the cursor-follows-port behaviour
+  // (mousemove over the node slides the emitter ball up/down the right
+  // edge so it sits at the cursor's Y — short reach to drag a cord
+  // toward whatever you're aiming at).
+  const cnodeRef = useRef(null);
+  const portRightRef = useRef(null);
   const [editorBusy, setEditorBusy] = useState(false);
   // Captures iframe scrollWidth/scrollHeight on load — used by Expand to
   // grow the viewport to fit full content without an extra DOM read.
@@ -333,6 +339,54 @@ export default function CanvasNode({
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
   }, [node.width, node.height, onResize]);
+
+  // Cursor-tracks-port — slide the right emitter ball up/down along
+  // the right edge so it sits at the cursor's Y over the node. Cuts
+  // the reach needed to grab a cord (especially on tall expanded nodes).
+  // Disabled in edit mode (port is non-interactive then) and skipped
+  // while the cursor is over the port itself (so the hover scale-up +
+  // click target stay stable when the user reaches for it).
+  // Direct DOM writes (no React state) — mousemove fires 60+ Hz and a
+  // re-render per frame would tank perf.
+  useEffect(() => {
+    const cnode = cnodeRef.current;
+    const port = portRightRef.current;
+    if (!cnode || !port || editing) return;
+    // While a draft cord is being drawn FROM this node, freezing the
+    // port keeps the cord origin stable — moving it mid-drag would
+    // make the line whip around as the user moves the mouse.
+    if (draftActive) return;
+
+    function readScale() {
+      const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale'));
+      return v > 0 ? v : 1;
+    }
+    function onMove(e) {
+      // Hands off while cursor is over the port — let CSS hover take over.
+      if (e.target === port || port.contains(e.target)) return;
+      const rect = cnode.getBoundingClientRect();
+      const scale = readScale();
+      // Screen → node-local CSS coords (.cnode children live in the
+      // pre-scale space; only the canvas wrapper applies the transform).
+      const localY = (e.clientY - rect.top) / scale;
+      // Clamp inside the node body with a small margin so the port can't
+      // slide outside the visible card edges.
+      const margin = 14;
+      const clamped = Math.max(margin, Math.min((node.height || 800) - margin, localY));
+      port.style.top = `${clamped}px`;
+    }
+    function onLeave() {
+      // Clearing the inline `top` restores the CSS default (50%).
+      port.style.top = '';
+    }
+    cnode.addEventListener('mousemove', onMove);
+    cnode.addEventListener('mouseleave', onLeave);
+    return () => {
+      cnode.removeEventListener('mousemove', onMove);
+      cnode.removeEventListener('mouseleave', onLeave);
+      port.style.top = '';
+    };
+  }, [editing, draftActive, node.height]);
 
   // Close the topbar context menu on Esc / click outside.
   useEffect(() => {
@@ -525,6 +579,7 @@ export default function CanvasNode({
 
   return (
     <div
+      ref={cnodeRef}
       className={`cnode origin-${origin}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}`}
       style={{ left: node.pos_x, top: node.pos_y, width: node.width }}
       data-node-id={node.id}
@@ -806,6 +861,7 @@ export default function CanvasNode({
           })}
         </div>
         <button
+          ref={portRightRef}
           type="button"
           className={`cnode-port-right${editing ? ' disabled' : ''}`}
           onMouseDown={editing ? undefined : (e) => onPortMouseDown(e, 'right')}
