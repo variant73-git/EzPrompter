@@ -348,20 +348,29 @@ export default function CanvasNode({
   // click target stay stable when the user reaches for it).
   // Direct DOM writes (no React state) — mousemove fires 60+ Hz and a
   // re-render per frame would tank perf.
+  //
+  // Advisory values (draftActive, node.height) live in a ref synced
+  // every render. Keeps the effect's dep array stable at [editing] so
+  // toggling draft state / resizing the node doesn't detach+reattach
+  // the listener — and so future edits don't trip React's "dep array
+  // size changed" HMR error.
+  const cursorTrackAdvisory = useRef({ draftActive, height: node.height });
+  cursorTrackAdvisory.current = { draftActive, height: node.height };
   useEffect(() => {
     const cnode = cnodeRef.current;
     const port = portRightRef.current;
     if (!cnode || !port || editing) return;
-    // While a draft cord is being drawn FROM this node, freezing the
-    // port keeps the cord origin stable — moving it mid-drag would
-    // make the line whip around as the user moves the mouse.
-    if (draftActive) return;
 
     function readScale() {
       const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale'));
       return v > 0 ? v : 1;
     }
     function onMove(e) {
+      const { draftActive: isDrafting, height } = cursorTrackAdvisory.current;
+      // While a draft cord is being drawn FROM this node, freezing the
+      // port keeps the cord origin stable — moving it mid-drag would
+      // make the line whip around as the user moves the mouse.
+      if (isDrafting) return;
       // Hands off while cursor is over the port — let CSS hover take over.
       if (e.target === port || port.contains(e.target)) return;
       const rect = cnode.getBoundingClientRect();
@@ -372,7 +381,7 @@ export default function CanvasNode({
       // Clamp inside the node body with a small margin so the port can't
       // slide outside the visible card edges.
       const margin = 14;
-      const clamped = Math.max(margin, Math.min((node.height || 800) - margin, localY));
+      const clamped = Math.max(margin, Math.min((height || 800) - margin, localY));
       port.style.top = `${clamped}px`;
     }
     function onLeave() {
@@ -386,7 +395,7 @@ export default function CanvasNode({
       cnode.removeEventListener('mouseleave', onLeave);
       port.style.top = '';
     };
-  }, [editing, draftActive, node.height]);
+  }, [editing]);
 
   // Close the topbar context menu on Esc / click outside.
   useEffect(() => {
@@ -1020,7 +1029,7 @@ function CancelEditPrompt({ busy, onContinue, onDiscard, onSave }) {
     <div className="reset-confirm-overlay">
       <div
         ref={cardRef}
-        className="reset-confirm-card cancel-edit-card"
+        className="popup-card popup-card-anchored cancel-edit-card"
         role="dialog"
         aria-modal="true"
         aria-labelledby="cancel-edit-title"
@@ -1028,7 +1037,7 @@ function CancelEditPrompt({ busy, onContinue, onDiscard, onSave }) {
       >
         <button
           type="button"
-          className="cancel-edit-close"
+          className="popup-close-btn cancel-edit-close"
           onClick={onContinue}
           disabled={busy}
           aria-label="Continue editing"
@@ -1036,12 +1045,14 @@ function CancelEditPrompt({ busy, onContinue, onDiscard, onSave }) {
         >
           <CloseIcon />
         </button>
-        <h3 id="cancel-edit-title" className="reset-confirm-title">Save before exiting?</h3>
-        <div className="reset-confirm-actions">
-          <button type="button" className="btn-danger reset-confirm-btn" onClick={onDiscard} disabled={busy}>
+        <h3 id="cancel-edit-title" className="popup-title">
+          <span className="popup-serif"><i>Save</i></span> before exiting?
+        </h3>
+        <div className="popup-actions popup-actions-center">
+          <button type="button" className="popup-btn popup-btn-danger" onClick={onDiscard} disabled={busy}>
             Discard
           </button>
-          <button type="button" className="btn-primary reset-confirm-btn" onClick={onSave} disabled={busy}>
+          <button type="button" className="popup-btn popup-btn-primary" onClick={onSave} disabled={busy}>
             {busy ? 'Saving…' : 'Save and exit'}
           </button>
         </div>
@@ -1063,22 +1074,24 @@ function ResetConfirm({ name, editing, busy, onCancel, onConfirm }) {
   return (
     <div className="reset-confirm-overlay" onMouseDown={(e) => e.stopPropagation()}>
       <div
-        className="reset-confirm-card"
+        className="popup-card popup-card-anchored"
         role="dialog"
         aria-modal="true"
         aria-labelledby="reset-confirm-title"
       >
-        <h3 id="reset-confirm-title" className="reset-confirm-title">Reset to original?</h3>
-        <p className="reset-confirm-body">
+        <h3 id="reset-confirm-title" className="popup-title">
+          <span className="popup-serif"><i>Reset</i></span> to original?
+        </h3>
+        <p className="popup-text">
           This discards all edits to <strong>{name || 'this site'}</strong> and
           restores the first capture. This action cannot be undone.
           {editing ? <><br/><span style={{opacity:0.7}}>Edit mode will close first.</span></> : null}
         </p>
-        <div className="reset-confirm-actions">
-          <button type="button" className="btn-outline reset-confirm-btn" onClick={onCancel} disabled={busy}>
+        <div className="popup-actions popup-actions-center">
+          <button type="button" className="popup-btn popup-btn-outline" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="button" className="btn-danger reset-confirm-btn" onClick={onConfirm} disabled={busy}>
+          <button type="button" className="popup-btn popup-btn-danger" onClick={onConfirm} disabled={busy}>
             {busy ? 'Resetting…' : 'Reset site'}
           </button>
         </div>

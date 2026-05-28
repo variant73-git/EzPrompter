@@ -8,7 +8,37 @@ const WORLD_HEIGHT = 6000;
 const MAP_W = 180;
 const MAP_H = 135;
 
-export default function Minimap({ nodes, transformRef }) {
+// Icons for the frame-toggle button. `next` icon = what'll happen on
+// the NEXT click (matches the frameMode state in CanvasClient). Phosphor-
+// stroke family, 1.6px weight, currentColor — sits next to the rest of
+// the canvas chrome (ZoomControls, CategoryCounts) tonally.
+const FrameIcon = {
+  // "Frame selected" — outer frame + one inner block with a hairline
+  // crosshair, reads as "target this one".
+  selected: () => (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 8V5a1 1 0 0 1 1-1h3"/>
+      <path d="M16 4h3a1 1 0 0 1 1 1v3"/>
+      <path d="M20 16v3a1 1 0 0 1-1 1h-3"/>
+      <path d="M8 20H5a1 1 0 0 1-1-1v-3"/>
+      <rect x="9" y="9" width="6" height="6" rx="1"/>
+    </svg>
+  ),
+  // "Fit all" — outer frame + 3 inner blocks, reads as "fit everything".
+  all: () => (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 8V5a1 1 0 0 1 1-1h3"/>
+      <path d="M16 4h3a1 1 0 0 1 1 1v3"/>
+      <path d="M20 16v3a1 1 0 0 1-1 1h-3"/>
+      <path d="M8 20H5a1 1 0 0 1-1-1v-3"/>
+      <rect x="7"  y="7"  width="4" height="4" rx="0.8"/>
+      <rect x="13" y="7"  width="4" height="4" rx="0.8"/>
+      <rect x="7"  y="13" width="10" height="4" rx="0.8"/>
+    </svg>
+  )
+};
+
+export default function Minimap({ nodes, transformRef, frameMode = 'all', hasSelection = false, onToggleFrame }) {
   const [tick, setTick] = useState(0);
   const [heights, setHeights] = useState(() => new Map());
   // The minimap's bbox depends on `window.innerWidth/Height`,
@@ -159,6 +189,32 @@ export default function Minimap({ nodes, transformRef }) {
           className="minimap-viewport"
         />
       </svg>
+      {/* Bottom-right frame toggle. Without a selection the button
+          always frames all (icon stays on the "all" variant). With one,
+          clicks alternate between framing the selected node and
+          framing every node — the icon shows what'll happen next. */}
+      {onToggleFrame && (
+        <button
+          type="button"
+          className="minimap-frame-toggle"
+          onMouseDown={(e) => { e.stopPropagation(); }}
+          onClick={(e) => { e.stopPropagation(); onToggleFrame(); }}
+          aria-label={
+            !hasSelection ? 'Fit all nodes to view'
+              : frameMode === 'selected' ? 'Frame the selected node'
+              : 'Fit all nodes to view'
+          }
+          title={
+            !hasSelection ? 'Fit all nodes'
+              : frameMode === 'selected' ? 'Frame selected node'
+              : 'Fit all nodes'
+          }
+        >
+          {(!hasSelection || frameMode === 'all')
+            ? <FrameIcon.all />
+            : <FrameIcon.selected />}
+        </button>
+      )}
     </div>
   );
 }

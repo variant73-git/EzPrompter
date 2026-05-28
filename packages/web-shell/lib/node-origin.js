@@ -10,6 +10,11 @@ export function nodeOrigin(node) {
   if (node.kind === 'image' || node.kind === 'asset') return 'screenshot';
   if (node.kind === 'prompt') return 'prompt';
   if (node.kind === 'skill') return 'skill';
+  // Blank site = composition target (designer assembles content from
+  // incoming connections via brainstorm + asset library). Distinct
+  // identity from a captured URL or an HTML upload — distinct border
+  // colour signals "this is where you compose, not where you imported."
+  if (node.kind === 'site' && node.meta?.source === 'blank') return 'blank';
   if (node.kind === 'site' && node.origin_url) return 'url';
   if (node.kind === 'site') return 'html';
   return 'unknown';
@@ -24,6 +29,7 @@ export const ORIGIN_COLORS = {
   screenshot: '#a78bfa',  // violet
   prompt:     '#facc15',  // yellow
   skill:      '#f472b6',  // pink
+  blank:      '#2dd4bf',  // teal — composition target, distinct from imports
   unknown:    '#94a3b8'   // slate fallback
 };
 

@@ -29,10 +29,9 @@ function hostnameOf(url) {
 /**
  * ChallengeModal — shown when captureSnapshot returns 409 challenge_required.
  *
- * Explains the situation (bot protection blocked the server-side capture)
- * and offers the only thing we can actually do today: open the site in
- * the user's own browser. The Uncraft extension handoff (Phase 2) will
- * close the loop end-to-end; this Phase 1 ships honest UX in the meantime.
+ * Uses the shared .popup-* family (Instrument typography, widget tokens)
+ * so the visual language matches the Uncraft extension widget that
+ * receives the handoff on the page side.
  */
 export default function ChallengeModal({ challenge, onCancel, onOpenSite }) {
   const [opened, setOpened] = useState(false);
@@ -91,69 +90,68 @@ export default function ChallengeModal({ challenge, onCancel, onOpenSite }) {
   }
 
   return (
-    <div className="challenge-modal-overlay" onMouseDown={(e) => e.stopPropagation()}>
+    <div className="popup-overlay" onMouseDown={(e) => e.stopPropagation()}>
       <div
-        className="challenge-modal-card"
+        className="popup-card challenge-modal-card"
         role="dialog"
         aria-modal="true"
         aria-labelledby="challenge-modal-title"
       >
-        <div className="challenge-modal-icon" aria-hidden="true">
-          {/* shield-with-check — speaks "this is a protection thing" */}
+        <div className="popup-icon popup-icon-accent" aria-hidden="true">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
             <path d="M9 12l2 2 4-4"/>
           </svg>
         </div>
 
-        <h3 id="challenge-modal-title" className="challenge-modal-title">
-          Human verification needed
+        <h3 id="challenge-modal-title" className="popup-title">
+          <span className="popup-serif"><i>Human</i></span> verification needed
         </h3>
 
-        <p className="challenge-modal-body">
+        <p className="popup-text">
           <strong>{host}</strong> is protected by {kindName}. The site is
           asking us to prove we're not a bot — something we can't do from
           our servers without your help.
         </p>
 
-        <div className="challenge-modal-steps">
-          <div className="challenge-modal-step">
-            <span className="challenge-modal-step-num">1</span>
+        <div className="popup-meta-list">
+          <div className="popup-meta-row">
+            <span className="popup-meta-num">1</span>
             <span>We'll open <strong>{host}</strong> in a new tab.</span>
           </div>
-          <div className="challenge-modal-step">
-            <span className="challenge-modal-step-num">2</span>
+          <div className="popup-meta-row">
+            <span className="popup-meta-num">2</span>
             <span>You pass the verification (usually 10 seconds).</span>
           </div>
-          <div className="challenge-modal-step">
-            <span className="challenge-modal-step-num">3</span>
+          <div className="popup-meta-row">
+            <span className="popup-meta-num">3</span>
             {extPresent ? (
               <span>
-                Click <strong>Send to Uncraft</strong> on the Uncraft banner
-                that appears in the verified tab. Your canvas updates
-                automatically.
+                Open the <strong>Uncraft widget</strong> on the verified tab
+                and click <strong>Complete capture</strong>. Your canvas
+                updates automatically.
               </span>
             ) : (
               <span>
                 Install the <strong>Uncraft browser extension</strong> to ferry
                 the verified page back automatically.
-                <span className="challenge-modal-soon"> (extension not detected)</span>
+                <span className="popup-soon-tag">extension not detected</span>
               </span>
             )}
           </div>
         </div>
 
-        <div className="challenge-modal-actions">
+        <div className="popup-actions">
           <button
             type="button"
-            className="btn-outline challenge-modal-btn"
+            className="popup-btn popup-btn-outline"
             onClick={onCancel}
           >
             Cancel
           </button>
           <button
             type="button"
-            className="btn-primary challenge-modal-btn"
+            className="popup-btn popup-btn-primary"
             onClick={handleOpen}
             disabled={opened}
             autoFocus

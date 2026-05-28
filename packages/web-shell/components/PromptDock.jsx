@@ -96,6 +96,15 @@ const MENU_ICON = {
       <path d="M16 21H6a2 2 0 0 1-2-2V7"/>
       <path d="M9 17h9a2 2 0 0 0 2-2V6l-4-4H10a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2z"/>
     </svg>
+  ),
+  Blank: () => (
+    // Dashed-corner page — reads as "empty canvas to fill in" rather
+    // than a captured/uploaded document. Border weight matches the
+    // other menu icons for visual parity.
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="3" width="16" height="18" rx="2" strokeDasharray="3 2.5"/>
+      <path d="M9 10h6M9 14h4" opacity="0.55"/>
+    </svg>
   )
 };
 
@@ -167,7 +176,7 @@ const ACCEPT_ANY = 'image/*,.md,.markdown,.html,text/markdown,text/html';
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
 const TEXTAREA_MAX_HEIGHT = 240;
 
-export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onRunFlow, runFlowBusy, runFlowError, nodeCount }) {
+export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowError, nodeCount }) {
   const [text, setText] = useState('');
   const [imageFile, setImageFile] = useState(null);   // attached image (preview only)
   const [imagePreview, setImagePreview] = useState(null);
@@ -306,6 +315,11 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
     if (kind === 'skill') {
       if (onAddSkill) onAddSkill();
       else alert('Coming next: skill node.');
+      return;
+    }
+    if (kind === 'blank') {
+      if (onAddBlankSite) onAddBlankSite();
+      else alert('Blank website not wired in this view.');
       return;
     }
   }
@@ -607,6 +621,7 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
             role="menu"
           >
             <div className="prompt-dock-popover-title">Add to canvas</div>
+            <button onClick={() => pickAddItem('blank')}><MENU_ICON.Blank /><span>Add blank website</span></button>
             <button onClick={() => pickAddItem('html')}><MENU_ICON.Html /><span>Add .html</span></button>
             <button onClick={() => pickAddItem('md')}><MENU_ICON.Md /><span>Add .md</span></button>
             <button onClick={() => pickAddItem('screenshot')}><MENU_ICON.Image /><span>Add screenshot</span></button>

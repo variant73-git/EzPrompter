@@ -15,6 +15,7 @@ import PromptDock from './PromptDock.jsx';
 import CategoryCounts from './CategoryCounts.jsx';
 import Minimap from './Minimap.jsx';
 import ChallengeModal from './ChallengeModal.jsx';
+import { ToastRoot, toast } from './Toast.jsx';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -61,11 +62,76 @@ const MenuIcon = {
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="m12 3 2.5 5 5.5.8-4 3.9.95 5.5L12 15.6 7.05 18.2 8 12.7 4 8.8 9.5 8z"/>
     </svg>
+  ),
+  Blank: () => (
+    // Dashed-corner page reads as "empty canvas to compose into" rather
+    // than a captured/imported document. Mirrors the icon in PromptDock's
+    // "+" menu so the two entry points feel like the same action.
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="3" width="16" height="18" rx="2" strokeDasharray="3 2.5"/>
+      <path d="M9 10h6M9 14h4" opacity="0.55"/>
+    </svg>
   )
 };
 
 const WORLD_WIDTH = 8000;
 const WORLD_HEIGHT = 6000;
+
+// Empty scaffold for the "Add blank website" flow. Renders as a calm
+// near-white page with a dashed-frame hint so the empty state reads as
+// intentional ("compose here") rather than a broken capture. Designed
+// to work inside our srcDoc iframe — no external resources, no scripts,
+// system font fallback (Aeonik isn't loaded inside iframes).
+const BLANK_SITE_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blank website</title>
+<style>
+  :root { color-scheme: light; }
+  html, body { margin: 0; padding: 0; min-height: 100vh; background: #fafafa; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    color: #64748b;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    font-size: 14px; letter-spacing: -0.005em;
+  }
+  .hint {
+    text-align: center; padding: 28px;
+    max-width: 320px;
+  }
+  .hint-icon {
+    width: 56px; height: 56px; margin: 0 auto 18px;
+    border: 1.5px dashed rgba(45, 212, 191, 0.55);
+    border-radius: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: rgba(45, 212, 191, 0.85);
+    background: rgba(45, 212, 191, 0.06);
+  }
+  .hint-title {
+    font-size: 14px; color: #334155; font-weight: 500;
+    margin: 0 0 6px;
+  }
+  .hint-sub {
+    font-size: 12.5px; color: #94a3b8; line-height: 1.5; margin: 0;
+  }
+</style>
+</head>
+<body>
+<div class="hint" role="status">
+  <div class="hint-icon" aria-hidden="true">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2"/>
+      <path d="M9 9h6M9 13h6M9 17h4"/>
+    </svg>
+  </div>
+  <p class="hint-title">Blank website</p>
+  <p class="hint-sub">Connect inputs from other nodes or build from the asset library.</p>
+</div>
+</body>
+</html>`;
 
 export default function CanvasClient({ board, initialNodes, initialEdges, user }) {
   const [nodes, setNodes] = useState(initialNodes || []);
@@ -490,14 +556,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       }
       console.error(e);
       setNodes((prev) => prev.filter((n) => n.id !== id));
-      alert(e.message || 'Could not add this URL.');
+      toast.error(e.message || 'Could not add this URL.');
     }
   }
 
   async function handleUploadHtml(file, opts = {}) {
     const html = await file.text();
     if (!/^<!doctype|<html/i.test(html.trim())) {
-      alert('File does not look like a complete HTML document.');
+      toast.error('File does not look like a complete HTML document.');
       return;
     }
     const { posX, posY } = nextNodePosition(opts);
@@ -510,7 +576,32 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       });
       setNodes((prev) => [...prev, { ...created.node, current_html: html }]);
       if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
-    } catch (e) { alert(`Upload failed: ${e.message}`); }
+    } catch (e) { toast.error(`Upload failed: ${e.message}`); }
+  }
+
+  // Empty composition target — designer assembles content from incoming
+  // edges (brainstorm mode pulls design.md from one source + .html from
+  // another) and the asset library when that lands. The iframe shows a
+  // dashed-frame hint so the empty state reads as intentional rather than
+  // a broken capture. kind='site' + meta.source='blank' triggers the
+  // teal "origin-blank" border via nodeOrigin().
+  async function handleAddBlankSite(opts = {}) {
+    const width = 1280;
+    const height = Math.round(width * 9 / 16);
+    const { posX, posY } = nextNodePosition({ ...opts, width });
+    try {
+      const created = await api.createNode({
+        boardId: board.id, kind: 'site',
+        posX, posY, width, height,
+        isMain: nodes.length === 0,
+        meta: { source: 'blank', name: 'Blank website' },
+        html: BLANK_SITE_HTML
+      });
+      const finalNode = { ...created.node, current_html: BLANK_SITE_HTML };
+      setNodes((prev) => [...prev, finalNode]);
+      if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      setTimeout(() => zoomToNode(finalNode, 350, 1), 80);
+    } catch (e) { toast.error(`Could not add blank website: ${e.message}`); }
   }
 
   async function handleUploadMd(file, opts = {}) {
@@ -528,7 +619,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       });
       setNodes((prev) => [...prev, { ...created.node, current_design_md: text }]);
       if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
-    } catch (e) { alert(`Upload failed: ${e.message}`); }
+    } catch (e) { toast.error(`Upload failed: ${e.message}`); }
   }
 
   async function handleUploadScreenshot(file, opts = {}) {
@@ -540,7 +631,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       fr.onload = () => resolve(fr.result);
       fr.onerror = () => reject(fr.error || new Error('read failed'));
       fr.readAsDataURL(file);
-    }).catch((e) => { alert(`Could not read image: ${e.message}`); return null; });
+    }).catch((e) => { toast.error(`Could not read image: ${e.message}`); return null; });
     if (!dataUrl) return;
 
     // Square frame by default; user can resize via the dash handles.
@@ -555,7 +646,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       });
       setNodes((prev) => [...prev, { ...created.node }]);
       if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
-    } catch (e) { alert(`Upload failed: ${e.message}`); }
+    } catch (e) { toast.error(`Upload failed: ${e.message}`); }
   }
 
   async function handleAddPrompt(opts = {}) {
@@ -571,7 +662,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       setNodes((prev) => [...prev, { ...created.node }]);
       if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
       setSelectedNodeId(created.node.id);
-    } catch (e) { alert(`Could not add prompt: ${e.message}`); }
+    } catch (e) { toast.error(`Could not add prompt: ${e.message}`); }
   }
 
   async function handleAddSkill(opts = {}) {
@@ -587,7 +678,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       });
       setNodes((prev) => [...prev, { ...created.node }]);
       if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
-    } catch (e) { alert(`Could not add skill: ${e.message}`); }
+    } catch (e) { toast.error(`Could not add skill: ${e.message}`); }
   }
 
   async function handlePromptTextChange(id, value) {
@@ -639,7 +730,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           : n
       ));
     } catch (e) {
-      alert(`Reset failed: ${e.message}`);
+      toast.error(`Reset failed: ${e.message}`);
     }
   }
 
@@ -873,7 +964,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       }]);
       setSelectedNodeId(created.node.id);
     } catch (err) {
-      alert(`Duplicate failed: ${err.message}`);
+      toast.error(`Duplicate failed: ${err.message}`);
     }
   }
 
@@ -882,7 +973,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (!n) return;
     const isMd = n.kind === 'designmd';
     const content = isMd ? (n.current_design_md || '') : (n.current_html || '');
-    if (!content) { alert('Nothing to download yet.'); return; }
+    if (!content) { toast.info('Nothing to download yet.'); return; }
     const ext = isMd ? 'md' : 'html';
     const mime = isMd ? 'text/markdown' : 'text/html';
     const fname = (n.meta?.name || (n.origin_url ? new URL(n.origin_url).hostname : n.kind) || 'uncraft') + '.' + ext;
@@ -1052,7 +1143,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         });
         setEdges((prev) => [...prev, edge]);
         setSelectedEdgeId(edge.id);
-      } catch (err) { alert(`Edge create failed: ${err.message}`); }
+      } catch (err) { toast.error(`Edge create failed: ${err.message}`); }
       return;
     }
 
@@ -1076,7 +1167,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       setSelectedEdgeId(null);
       setPopupPos(null);
     } catch (e) {
-      alert(`Apply failed: ${e.message}`);
+      toast.error(`Apply failed: ${e.message}`);
     }
   }
 
@@ -1085,7 +1176,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       await api.updateEdge(edge.id, { payload });
       setEdges((prev) => prev.map((x) => (x.id === edge.id ? { ...x, payload } : x)));
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -1172,6 +1263,65 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       setEditingNodeId(null);
       // Drop the saved frame so a re-entry into edit mode captures fresh.
       if (window.__uncraftZoom) window.__uncraftZoom._editFrame = null;
+    }
+  }
+
+  // Frame ALL nodes into the viewport. Pure version — no
+  // editing/selection branching, used by both fitToContent (smart
+  // default) and the minimap's frame toggle (explicit user intent).
+  function frameAll(animationTime = 350) {
+    const t = transformRef.current;
+    if (!t || nodes.length === 0) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of nodes) {
+      minX = Math.min(minX, n.pos_x);
+      minY = Math.min(minY, n.pos_y);
+      maxX = Math.max(maxX, n.pos_x + n.width);
+      maxY = Math.max(maxY, n.pos_y + n.height);
+    }
+    const PADDING = 80;
+    const bboxW = (maxX - minX) + PADDING * 2;
+    const bboxH = (maxY - minY) + PADDING * 2;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight - 48;
+    const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const posX = vw / 2 - centerX * scale;
+    const posY = (vh / 2 + 48) - centerY * scale;
+    t.setTransform(posX, posY, scale, animationTime);
+  }
+
+  // Frame the selected node. Falls back to frameAll when no selection
+  // exists — keeps the minimap toggle from feeling broken if the user
+  // clicks it with nothing selected.
+  function frameSelected(animationTime = 350) {
+    if (!selectedNodeId) { frameAll(animationTime); return; }
+    const sel = nodes.find((n) => n.id === selectedNodeId);
+    if (sel) zoomToNode(sel, animationTime);
+    else frameAll(animationTime);
+  }
+
+  // Toggle frame mode for the minimap button. State carries what'll
+  // happen on the NEXT click (so the icon matches the action). Without
+  // a selection we lock to 'all' because 'selected' is meaningless.
+  const [frameMode, setFrameMode] = useState('selected');
+  // If the user deselects (selection becomes null), the 'selected' mode
+  // would no-op visually — collapse to 'all' so the icon stays honest.
+  useEffect(() => {
+    if (!selectedNodeId && frameMode === 'selected') setFrameMode('all');
+  }, [selectedNodeId, frameMode]);
+  function toggleFrame() {
+    if (!selectedNodeId) {
+      frameAll();
+      return;
+    }
+    if (frameMode === 'selected') {
+      frameSelected();
+      setFrameMode('all');
+    } else {
+      frameAll();
+      setFrameMode('selected');
     }
   }
 
@@ -1481,7 +1631,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           <UserPill compact name={user?.name} email={user?.email} plan={user?.plan} onSignOut={logout} />
         </div>
       </div>
-      <Minimap nodes={nodes} transformRef={transformRef} />
+      <Minimap
+        nodes={nodes}
+        transformRef={transformRef}
+        frameMode={frameMode}
+        hasSelection={!!selectedNodeId}
+        onToggleFrame={toggleFrame}
+      />
 
       <TransformWrapper
         ref={transformRef}
@@ -1639,11 +1795,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           }}
           onPickPrompt={() => {
             setContextMenu(null);
-            alert('Coming next: prompt → AI-generated node.');
+            toast.info('Coming next: prompt → AI-generated node.');
           }}
           onPickCode={() => {
             setContextMenu(null);
-            alert('Coming next: paste raw code → code node.');
+            toast.info('Coming next: paste raw code → code node.');
+          }}
+          onPickBlankSite={() => {
+            const m = contextMenu;
+            setContextMenu(null);
+            handleAddBlankSite({ worldX: m.worldX, worldY: m.worldY });
           }}
         />
       )}
@@ -1656,6 +1817,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         onUploadHtml={handleUploadHtml}
         onAddPrompt={() => handleAddPrompt()}
         onAddSkill={() => handleAddSkill()}
+        onAddBlankSite={() => handleAddBlankSite()}
         onRunFlow={handleRunFlow}
         runFlowBusy={runFlowBusy}
         runFlowError={runFlowError}
@@ -1667,6 +1829,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           {runFlowError}
         </div>
       )}
+
+      <ToastRoot />
 
       {challenge && (
         <ChallengeModal
@@ -1700,7 +1864,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   );
 }
 
-function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onPickScreenshot, onPickPrompt, onPickCode }) {
+function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onPickScreenshot, onPickPrompt, onPickCode, onPickBlankSite }) {
   const [mode, setMode] = useState('choices');
   const [url, setUrl] = useState('');
   const left = Math.min(x + 8, window.innerWidth - 280);
@@ -1721,39 +1885,48 @@ function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onP
 
   return (
     <div
-      className="empty-drop-menu canvas-context-menu"
+      className="popup-menu canvas-context-menu"
       style={{ left, top }}
       onMouseDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}
     >
       {mode === 'choices' ? (
         <>
-          <div className="edm-title">Add to canvas</div>
-          <button onClick={() => setMode('url')}><MenuIcon.Url /><span>Add URL</span></button>
-          <button onClick={onPickHtml}><MenuIcon.Html /><span>Add HTML</span></button>
-          <button onClick={onPickMd}><MenuIcon.Md /><span>Add .md file</span></button>
-          <button onClick={onPickScreenshot}><MenuIcon.Image /><span>Add Screenshot</span></button>
-          <button onClick={onPickPrompt}><MenuIcon.Prompt /><span>Add Prompt</span></button>
-          <button onClick={onPickCode}><MenuIcon.Code /><span>Add Code</span></button>
-          <button className="edm-cancel" onClick={onClose}>Cancel (Esc)</button>
+          <div className="popup-menu-title">Add to canvas</div>
+          <button className="popup-menu-btn" onClick={() => setMode('url')}><MenuIcon.Url /><span>Add URL</span></button>
+          <button className="popup-menu-btn" onClick={onPickBlankSite}><MenuIcon.Blank /><span>Add blank website</span></button>
+          <button className="popup-menu-btn" onClick={onPickHtml}><MenuIcon.Html /><span>Add HTML</span></button>
+          <button className="popup-menu-btn" onClick={onPickMd}><MenuIcon.Md /><span>Add .md file</span></button>
+          <button className="popup-menu-btn" onClick={onPickScreenshot}><MenuIcon.Image /><span>Add Screenshot</span></button>
+          <button className="popup-menu-btn" onClick={onPickPrompt}><MenuIcon.Prompt /><span>Add Prompt</span></button>
+          <button className="popup-menu-btn" onClick={onPickCode}><MenuIcon.Code /><span>Add Code</span></button>
+          <button className="popup-menu-btn popup-menu-btn-cancel" onClick={onClose}>Cancel (Esc)</button>
         </>
       ) : (
         <>
-          <div className="edm-title">URL of website</div>
-          <input
-            autoFocus type="text" placeholder="example.com or full URL"
-            value={url} onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                const norm = normalizeUrl(url);
-                if (norm) onPickUrl(norm);
-              }
-              if (e.key === 'Escape') onClose();
-            }}
-          />
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={() => setMode('choices')} className="edm-cancel">← Back</button>
-            <button onClick={() => { const norm = normalizeUrl(url); if (norm) onPickUrl(norm); }} disabled={!looksLikeUrl(url)} className="edm-primary">Capture →</button>
+          <div className="popup-menu-title">URL of website</div>
+          <div className="popup-menu-input-row">
+            <input
+              autoFocus type="text" placeholder="example.com or full URL"
+              className="popup-input"
+              value={url} onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const norm = normalizeUrl(url);
+                  if (norm) onPickUrl(norm);
+                }
+                if (e.key === 'Escape') onClose();
+              }}
+            />
+          </div>
+          <div className="popup-menu-input-row" style={{ paddingTop: 0, gap: 8 }}>
+            <button className="popup-btn popup-btn-outline popup-btn-sm" onClick={() => setMode('choices')}>← Back</button>
+            <button
+              className="popup-btn popup-btn-primary popup-btn-sm"
+              onClick={() => { const norm = normalizeUrl(url); if (norm) onPickUrl(norm); }}
+              disabled={!looksLikeUrl(url)}
+              style={{ flex: 1 }}
+            >Capture →</button>
           </div>
         </>
       )}
@@ -1792,12 +1965,12 @@ function EmptyDropMenu({ x, y, onClose, onPickHtml, onPickMd, onPickSkill }) {
   }, [onClose]);
 
   return (
-    <div className="empty-drop-menu" style={{ left, top }} onMouseDown={(e) => e.stopPropagation()}>
-      <div className="edm-title">Extract to…</div>
-      <button onClick={onPickMd}><MenuIcon.Md /><span>design.md</span></button>
-      <button onClick={onPickSkill}><MenuIcon.Skill /><span>skill</span></button>
-      <button onClick={onPickHtml}><MenuIcon.Html /><span>.html</span></button>
-      <button className="edm-cancel" onClick={onClose}>Cancel (Esc)</button>
+    <div className="popup-menu empty-drop-menu" style={{ left, top }} onMouseDown={(e) => e.stopPropagation()}>
+      <div className="popup-menu-title">Extract to…</div>
+      <button className="popup-menu-btn" onClick={onPickMd}><MenuIcon.Md /><span>design.md</span></button>
+      <button className="popup-menu-btn" onClick={onPickSkill}><MenuIcon.Skill /><span>skill</span></button>
+      <button className="popup-menu-btn" onClick={onPickHtml}><MenuIcon.Html /><span>.html</span></button>
+      <button className="popup-menu-btn popup-menu-btn-cancel" onClick={onClose}>Cancel (Esc)</button>
     </div>
   );
 }

@@ -48,6 +48,30 @@
   --radius-sm: 12px;
   --radius-md: 18px;
   --radius-lg: 22px;
+
+  /* ── Popup design tokens — ported from the Uncraft extension widget
+        (panel.css's #repixbridge-panel block). The canvas popups
+        adopt these so the user sees the same visual language when a
+        modal/menu fires on canvas as they do when the widget injects
+        on a page. Solid surfaces (no frosted blur), high contrast,
+        large radii, Instrument typography. Light-theme overrides
+        live in the body.rb-ed-light block far below. */
+  --popup-bg: #000000;
+  --popup-fg: #EFEEEB;
+  --popup-fg-muted: rgba(239, 238, 235, 0.50);
+  --popup-surface: rgba(239, 238, 235, 0.06);
+  --popup-border: rgba(239, 238, 235, 0.12);
+  --popup-accent: #EFEEEB;
+  --popup-shadow: 0 32px 64px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --popup-radius-card: 40px;
+  --popup-radius-mid: 14px;
+  --popup-radius-pill: 999px;
+  /* Instrument falls back to system sans before any user CSS — the
+     `--font-instrument-*` vars are populated by next/font in
+     layout.jsx and end up on <html>. Fallbacks let the popups render
+     during the brief font-load window without a layout shift. */
+  --popup-font-sans: var(--font-instrument-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --popup-font-serif: var(--font-instrument-serif), "Georgia", "Times New Roman", serif;
 }
 
 /* Light theme — toggled by the canvas theme button (and by the editor's
@@ -73,6 +97,15 @@ body.rb-ed-light {
   --canvas-dot: rgba(15, 23, 42, 0.18);
   --hover-bg: rgba(15, 23, 42, 0.06);
   --hover-bg-strong: rgba(15, 23, 42, 0.10);
+
+  /* Popup light-theme overrides — mirrors the widget's .rb-light. */
+  --popup-bg: #EFEEEB;
+  --popup-fg: #000000;
+  --popup-fg-muted: rgba(0, 0, 0, 0.50);
+  --popup-surface: rgba(0, 0, 0, 0.04);
+  --popup-border: rgba(0, 0, 0, 0.10);
+  --popup-accent: #000000;
+  --popup-shadow: 0 32px 64px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.08);
 }
 
 *,
@@ -665,6 +698,51 @@ body.rb-ed-active.rb-ed-canvas .canvas-minimap {
 }
 body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-minimap { right: 18px; }
 .canvas-minimap svg { display: block; }
+
+/* ── Minimap frame toggle ─────────────────────────────────────────────
+   Overlay button bottom-right of the map. Re-enables pointer-events
+   (the minimap card itself is pointer-events:none — it's a display
+   widget, not interactive) so the click actually lands. Dim by
+   default, brightens on hover so it doesn't compete with the map
+   content visually. */
+.minimap-frame-toggle {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  pointer-events: auto;
+  background: rgba(15, 15, 15, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  color: rgba(241, 245, 249, 0.65);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+  opacity: 0.7;
+}
+.minimap-frame-toggle:hover {
+  background: rgba(0, 149, 255, 0.18);
+  border-color: rgba(0, 149, 255, 0.55);
+  color: #f5f5f5;
+  opacity: 1;
+}
+.minimap-frame-toggle:active {
+  transform: scale(0.95);
+}
+body.rb-ed-light .minimap-frame-toggle {
+  background: rgba(255, 255, 255, 0.65);
+  border-color: rgba(15, 15, 15, 0.10);
+  color: rgba(31, 31, 31, 0.60);
+}
+body.rb-ed-light .minimap-frame-toggle:hover {
+  background: rgba(0, 149, 255, 0.12);
+  border-color: rgba(0, 149, 255, 0.45);
+  color: #0a0a0a;
+}
 .minimap-world {
   fill: rgba(255, 255, 255, 0.04);
 }
@@ -1459,6 +1537,376 @@ body.rb-ed-light .minimap-node-stroke {
   height: calc(14px / var(--canvas-scale, 1));
 }
 
+/* ─── Popup family — port of the Uncraft extension widget's design
+   language (panel.css). The canvas-side modals, menus, and confirms
+   below this comment all consume this family so the user experience
+   reads the same whether they're in the widget on a page or a popup
+   on the canvas.
+
+   Conventions:
+     .popup-card                  outer surface (40px radius solid bg)
+     .popup-overlay               full-viewport dim backdrop
+     .popup-icon                  20-44px pictogram badge
+     .popup-title                 display heading (mixes Instrument sans +
+                                  serif italic for visual rhythm)
+     .popup-text                  body copy (Instrument Sans 13/1.45)
+     .popup-meta-list             stepped instruction list
+     .popup-actions               right-aligned action row
+     .popup-btn                   base button (pill, 999px)
+       .popup-btn-primary         fg → bg inversion on hover
+       .popup-btn-outline         transparent → fg inversion on hover
+       .popup-btn-ghost           minimal hover background
+       .popup-btn-danger          red-tinted destructive variant
+       .popup-btn-pill            compact action chip
+       .popup-btn-sm              size modifier (smaller padding)
+       .popup-btn-full            width: 100% modifier
+     .popup-row                   inline flex row (gap 8px)
+     .popup-input                 text input pill
+*/
+.popup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 24px;
+  animation: popup-overlay-in 160ms ease-out;
+}
+body.rb-ed-light .popup-overlay {
+  background: rgba(15, 23, 42, 0.18);
+}
+@keyframes popup-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.popup-card {
+  /* Default-anchored card. Specific modals override position
+     (viewport-centred via .popup-overlay, anchored under a node, etc). */
+  background: var(--popup-bg);
+  color: var(--popup-fg);
+  border-radius: var(--popup-radius-card);
+  padding: 28px;
+  font-family: var(--popup-font-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  box-shadow: var(--popup-shadow);
+  max-width: 440px;
+  width: 100%;
+  animation: popup-card-in 200ms ease-out;
+}
+@keyframes popup-card-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.popup-icon {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--popup-radius-mid);
+  background: var(--popup-surface);
+  color: var(--popup-fg);
+  margin-bottom: 18px;
+}
+.popup-icon-accent {
+  background: rgba(45, 212, 191, 0.10);
+  color: rgba(45, 212, 191, 0.90);
+}
+.popup-icon-danger {
+  background: rgba(248, 113, 113, 0.10);
+  color: #fca5a5;
+}
+body.rb-ed-light .popup-icon-danger {
+  color: #b91c1c;
+}
+
+.popup-title {
+  font-family: var(--popup-font-sans);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  margin: 0 0 10px;
+  color: var(--popup-fg);
+}
+.popup-title .popup-serif {
+  font-family: var(--popup-font-serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 19px;
+}
+
+.popup-text {
+  font-family: var(--popup-font-sans);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--popup-fg-muted);
+  margin: 0 0 16px;
+}
+.popup-text strong {
+  color: var(--popup-fg);
+  font-weight: 500;
+}
+
+.popup-meta-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--popup-surface);
+  border: 1px solid var(--popup-border);
+  border-radius: var(--popup-radius-mid);
+  margin-bottom: 22px;
+}
+.popup-meta-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-family: var(--popup-font-sans);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--popup-fg-muted);
+}
+.popup-meta-row strong { color: var(--popup-fg); font-weight: 500; }
+.popup-meta-num {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--popup-surface);
+  border: 1px solid var(--popup-border);
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--popup-fg);
+}
+.popup-soon-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(250, 204, 21, 0.10);
+  border: 1px solid rgba(250, 204, 21, 0.20);
+  color: #facc15;
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.popup-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
+}
+.popup-actions-center { justify-content: center; }
+.popup-actions-stack { flex-direction: column; align-items: stretch; gap: 8px; }
+
+/* Buttons — pill shape (999px radius) inverted hover, matching widget's
+   .rb-btn family. Border 1px on every variant so they line up visually. */
+.popup-btn {
+  font-family: var(--popup-font-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  padding: 9px 18px;
+  border-radius: var(--popup-radius-pill);
+  border: 1px solid transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease, opacity 140ms ease, transform 80ms ease;
+  background: transparent;
+  color: var(--popup-fg);
+}
+.popup-btn:active { transform: scale(0.97); }
+.popup-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.popup-btn-primary {
+  background: var(--popup-fg);
+  color: var(--popup-bg);
+  border-color: var(--popup-fg);
+}
+.popup-btn-primary:hover:not(:disabled) {
+  background: var(--popup-bg);
+  color: var(--popup-fg);
+}
+.popup-btn-outline {
+  border-color: var(--popup-border);
+  color: var(--popup-fg);
+}
+.popup-btn-outline:hover:not(:disabled) {
+  background: var(--popup-fg);
+  color: var(--popup-bg);
+  border-color: var(--popup-fg);
+}
+.popup-btn-ghost {
+  border-color: transparent;
+  color: var(--popup-fg-muted);
+}
+.popup-btn-ghost:hover:not(:disabled) {
+  background: var(--popup-surface);
+  color: var(--popup-fg);
+}
+.popup-btn-danger {
+  border-color: rgba(248, 113, 113, 0.40);
+  color: #fca5a5;
+}
+.popup-btn-danger:hover:not(:disabled) {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+}
+body.rb-ed-light .popup-btn-danger { color: #b91c1c; border-color: rgba(185, 28, 28, 0.35); }
+body.rb-ed-light .popup-btn-danger:hover:not(:disabled) { background: #ef4444; border-color: #ef4444; color: #fff; }
+.popup-btn-pill {
+  padding: 6px 12px;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+.popup-btn-sm {
+  padding: 6px 14px;
+  font-size: 12px;
+}
+.popup-btn-full {
+  width: 100%;
+}
+
+.popup-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.popup-input {
+  font-family: var(--popup-font-sans);
+  font-size: 13px;
+  color: var(--popup-fg);
+  background: var(--popup-surface);
+  border: 1px solid var(--popup-border);
+  border-radius: var(--popup-radius-pill);
+  padding: 9px 16px;
+  outline: none;
+  transition: border-color 120ms ease;
+  width: 100%;
+}
+.popup-input:focus {
+  border-color: var(--popup-fg);
+}
+.popup-input::placeholder { color: var(--popup-fg-muted); }
+
+.popup-close-btn {
+  background: none;
+  border: none;
+  color: var(--popup-fg);
+  opacity: 0.35;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 150ms ease;
+}
+.popup-close-btn:hover { opacity: 1; }
+
+/* Anchored variant — used by ResetConfirm / CancelEdit which scale with
+   the canvas zoom. Outer scaling is delegated to --canvas-scale; the
+   layout, palette, and typography come from .popup-card above. */
+.popup-card-anchored {
+  position: absolute;
+  width: calc(280px / var(--canvas-scale, 1));
+  padding: calc(18px / var(--canvas-scale, 1)) calc(22px / var(--canvas-scale, 1));
+  border-radius: calc(28px / var(--canvas-scale, 1));
+  font-size: calc(13px / var(--canvas-scale, 1));
+}
+.popup-card-anchored .popup-title { font-size: calc(14px / var(--canvas-scale, 1)); margin-bottom: calc(6px / var(--canvas-scale, 1)); }
+.popup-card-anchored .popup-text { font-size: calc(12px / var(--canvas-scale, 1)); margin-bottom: calc(14px / var(--canvas-scale, 1)); }
+.popup-card-anchored .popup-btn { padding: calc(7px / var(--canvas-scale, 1)) calc(14px / var(--canvas-scale, 1)); font-size: calc(12px / var(--canvas-scale, 1)); }
+.popup-card-anchored .popup-actions { gap: calc(6px / var(--canvas-scale, 1)); }
+
+/* Floating menu variant — used by CanvasContextMenu / EmptyDropMenu.
+   Compact rounded card with one row per option. Hover invokes the
+   surface tint; no inversion (would feel jumpy for a menu). */
+.popup-menu {
+  position: absolute;
+  background: var(--popup-bg);
+  border: 1px solid var(--popup-border);
+  border-radius: var(--popup-radius-mid);
+  padding: 6px;
+  min-width: 220px;
+  max-width: 320px;
+  box-shadow: var(--popup-shadow);
+  font-family: var(--popup-font-sans);
+  animation: popup-card-in 160ms ease-out;
+  z-index: 1500;
+}
+.popup-menu-title {
+  font-family: var(--popup-font-sans);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--popup-fg-muted);
+  padding: 8px 10px 6px;
+}
+.popup-menu-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  color: var(--popup-fg);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background 100ms ease;
+}
+.popup-menu-btn:hover { background: var(--popup-surface); }
+.popup-menu-btn svg { flex-shrink: 0; opacity: 0.7; }
+.popup-menu-btn-cancel { color: var(--popup-fg-muted); }
+.popup-menu-input-row { display: flex; gap: 6px; padding: 8px 6px 4px; }
+
+/* Toast — minimal floating notification replacing alert(). Bottom-right
+   of the canvas, frosted-style consistent with the rest. */
+.popup-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 3000;
+  background: var(--popup-bg);
+  color: var(--popup-fg);
+  font-family: var(--popup-font-sans);
+  font-size: 12.5px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  box-shadow: var(--popup-shadow);
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: popup-toast-in 200ms ease-out;
+}
+.popup-toast-error { border: 1px solid rgba(248, 113, 113, 0.30); color: #fca5a5; }
+body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28, 28, 0.30); }
+@keyframes popup-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ─── Challenge (bot-protection) modal ─────────────────────────────────────
    Shown when a URL capture hits Cloudflare / hCaptcha / Akamai / similar
    and the server can't pass the human-verification check on the user's
@@ -1737,6 +2185,7 @@ html, body { overscroll-behavior: none; }
 .cnode.origin-html   { border-color: rgba(249, 115, 22, 0.55); }   /* orange */
 .cnode.origin-md     { border-color: rgba(52, 211, 153, 0.55); }   /* emerald */
 .cnode.origin-screenshot { border-color: rgba(167, 139, 250, 0.55); } /* violet */
+.cnode.origin-blank  { border-color: rgba(45, 212, 191, 0.55); }   /* teal */
 
 /* "is-main" — soft outer glow marks the board's anchor URL without
    breaking visual parity with other URLs. Defined BEFORE .selected so
@@ -2316,6 +2765,19 @@ body.rb-ed-light .cnode-topbar .kind-pill svg {
   stroke: #0a0a0a;
 }
 body.rb-ed-light .cnode { border-color: rgba(0, 0, 0, 0.10); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10); }
+/* Selected ring in light mode. The `body.rb-ed-light .cnode` rule above
+   sets box-shadow with higher specificity than `.cnode.selected`
+   (0,0,2,1 > 0,0,2,0), which was stripping the color-coded ring on
+   selected nodes — they ended up looking identical to unselected.
+   Re-apply the colour-coded ring at matching specificity. Softer
+   diffuse shadow (0.18 vs 0.4) so it doesn't read as a dark wash on
+   the bright canvas background. */
+body.rb-ed-light .cnode.selected {
+  border-color: transparent;
+  box-shadow:
+    0 0 0 calc(3px / var(--canvas-scale, 1)) var(--cnode-port-fill, #0095FF),
+    0 8px 32px rgba(0, 0, 0, 0.18);
+}
 body.rb-ed-light .cnode-topbar button { color: #4a4a4a; }
 body.rb-ed-light .cnode-topbar .btn-edit { background: rgba(31, 31, 31, 0.06); border-color: rgba(31, 31, 31, 0.16); color: #1f1f1f; }
 body.rb-ed-light .cnode-topbar .btn-edit:hover { background: #1f1f1f; border-color: #1f1f1f; color: #fafafa; }
@@ -2689,6 +3151,7 @@ html.canvas-zoom-very-low .cnode-port-dot {
 .cnode.origin-screenshot { --cnode-port-fill: #a78bfa; --cnode-port-border: rgba(167, 139, 250, 0.55); }
 .cnode.origin-prompt     { --cnode-port-fill: #facc15; --cnode-port-border: rgba(250, 204, 21, 0.55); }
 .cnode.origin-skill      { --cnode-port-fill: #f472b6; --cnode-port-border: rgba(244, 114, 182, 0.55); }
+.cnode.origin-blank      { --cnode-port-fill: #2dd4bf; --cnode-port-border: rgba(45, 212, 191, 0.55); }
 
 .cnode.editing .cnode-body {
   /* Editing-state outline removed — the .cnode.selected ring already
