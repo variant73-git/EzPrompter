@@ -31,8 +31,7 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_popup": "popup/popup.html",
-    "default_title": "Send this tab to Uncraft"
+    "default_title": "Open Uncraft on this page"
   },
   "icons": {
     "16": "icons/icon16.png",
@@ -47,7 +46,18 @@
     },
     {
       "matches": ["<all_urls>"],
-      "js": ["handoff/capture.js", "handoff/handoff.js"],
+      "js": ["handoff/capture.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://localhost:3030/*",
+        "http://127.0.0.1:3030/*",
+        "https://*.uncraft.app/*",
+        "https://uncraft.app/*",
+        "https://*.vercel.app/*"
+      ],
+      "js": ["handoff/handoff.js"],
       "run_at": "document_idle"
     },
     {

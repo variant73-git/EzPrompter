@@ -245,6 +245,24 @@ async function sendManualToWebShell({ webShellOrigin, boardId, url, payload, tab
 // Listen for messages from content scripts and panel
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // ─── Phase 2 handoff flows ─────────────────────────────────────────────
+  // Returns tab metadata to the widget — the widget runs as an injected
+  // script in page context, so it can't call chrome.tabs.* directly.
+  // We use sender.tab when the message came from a content script, but
+  // also accept a fallback path using the active tab query when sender
+  // doesn't carry tab context (panel mounted from a different vector).
+  if (message.action === 'uncraft.activeTab') {
+    const t = sender.tab;
+    if (t) {
+      sendResponse({ ok: true, tab: { url: t.url, title: t.title, favIconUrl: t.favIconUrl } });
+      return false;
+    }
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs && tabs[0];
+      if (!tab) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+      sendResponse({ ok: true, tab: { url: tab.url, title: tab.title, favIconUrl: tab.favIconUrl } });
+    });
+    return true;
+  }
   if (message.action === 'uncraft.handoff.send') {
     const tabId = sender.tab && sender.tab.id;
     sendHandoffToWebShell({

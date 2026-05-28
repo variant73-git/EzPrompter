@@ -19,6 +19,10 @@
   const CLOSE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>';
   const BACK_SVG = '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4L6 9l5 5"/></svg>';
   const ARROW_RIGHT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>';
+  // Paper-plane — used by the "Send to canvas" header button. Matches
+  // the GEAR/CLOSE icon weight (1.5 stroke, 18×18 viewBox) so it sits
+  // visually balanced next to them in rb-header-actions.
+  const SEND_CANVAS_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2L15 22l-4-9-9-4z"/></svg>';
 
   // Monochrome tool logos (simplified SVG)
   const LOGO_FIGMA = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 24c2.2 0 4-1.8 4-4v-4H8c-2.2 0-4 1.8-4 4s1.8 4 4 4zm0-20C5.8 4 4 5.8 4 8s1.8 4 4 4h4V4H8zm0 8c-2.2 0-4 1.8-4 4s1.8 4 4 4h4v-8H8zm8-8h-4v8h4c2.2 0 4-1.8 4-4s-1.8-4-4-4zm0 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg>';
@@ -40,6 +44,14 @@
           <div class="rb-logo-slogan">Design without borders</div>
         </div>
         <div class="rb-header-actions">
+          <!-- Send to canvas is the PRIMARY CTA — labeled pill, fg→bg
+               inversion. The conversion moment: this is where the
+               session becomes a project. Icons stay as secondary
+               affordances next to it. -->
+          <button type="button" class="rb-send-cta" id="rb-sendCanvas" aria-label="Send this page to Uncraft canvas" title="Save your work to a canvas project">
+            <span class="rb-send-cta-icon" aria-hidden="true">${SEND_CANVAS_SVG}</span>
+            <span class="rb-send-cta-label">Send to Canvas</span>
+          </button>
           <button type="button" class="rb-icon-btn" id="rb-cog" aria-label="Settings">${GEAR_SVG}</button>
           <button type="button" class="rb-icon-btn" id="rb-close" aria-label="Close">${CLOSE_SVG}</button>
         </div>
@@ -79,6 +91,29 @@
 
       <!-- Main -->
       <div class="rb-view" id="rb-viewMain">
+        <!-- Handoff callout — appears contextually when an Uncraft canvas
+             flagged THIS URL as needing human verification (Cloudflare/
+             captcha challenge). Sits above the mode toggle so it's the
+             first thing the user sees on a flagged tab. Hidden by default;
+             init code below un-hides it after a chrome.storage match. -->
+        <section class="rb-callout rb-callout-handoff" id="rb-handoffCallout" hidden>
+          <button type="button" class="rb-callout-dismiss" id="rb-handoffDismiss" aria-label="Dismiss">${CLOSE_SVG}</button>
+          <div class="rb-callout-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <path d="M9 12l2 2 4-4"/>
+            </svg>
+          </div>
+          <div class="rb-callout-body">
+            <p class="rb-callout-title"><span class="rb-serif"><i>Uncraft</i></span> is waiting</p>
+            <p class="rb-callout-text">A placeholder on your canvas is waiting for the verified page. Send it now.</p>
+            <button type="button" class="rb-btn rb-btn-primary rb-btn-sm" id="rb-handoffSend">
+              <span class="rb-btn-label">Complete capture</span>
+            </button>
+            <p class="rb-callout-status" id="rb-handoffStatus" hidden></p>
+          </div>
+        </section>
+
         <div class="rb-toggle">
           <button type="button" class="rb-toggle-seg active" data-mode="dark">HTML -> Design</button>
           <button type="button" class="rb-toggle-seg" data-mode="light">Smart Remix</button>
@@ -114,6 +149,45 @@
           <div class="rb-img-grid" id="rb-imgGrid"></div>
           <div id="rb-genCardContainer"></div>
           <div id="rb-promptsList"></div>
+        </div>
+      </div>
+
+      <!-- Send to canvas -->
+      <div class="rb-view" id="rb-viewSendToCanvas">
+        <div class="rb-settings-header">
+          <button type="button" class="rb-back" id="rb-stcBack">${BACK_SVG}</button>
+          <h2 class="rb-settings-title">Send to canvas</h2>
+        </div>
+        <div class="rb-content-scroll rb-stc-scroll">
+          <div class="rb-stc-tab-meta">
+            <div class="rb-stc-tab-favicon" id="rb-stcFavicon" aria-hidden="true"></div>
+            <div class="rb-stc-tab-text">
+              <p class="rb-stc-tab-title" id="rb-stcTitle">Loading…</p>
+              <p class="rb-stc-tab-url" id="rb-stcUrl"></p>
+            </div>
+          </div>
+
+          <div class="rb-stc-section">
+            <label class="rb-stc-label">Send to</label>
+            <div class="rb-stc-board-list" id="rb-stcBoardList">
+              <div class="rb-stc-status">Looking for Uncraft…</div>
+            </div>
+            <div class="rb-stc-new-board" id="rb-stcNewBoardRow" hidden>
+              <input type="text" class="rb-stc-input" id="rb-stcNewBoardName" placeholder="Board name" maxlength="120">
+              <button type="button" class="rb-btn rb-btn-outline rb-btn-sm" id="rb-stcCreateBoard">
+                <span class="rb-btn-label">Create</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="rb-stc-actions">
+            <button type="button" class="rb-btn rb-btn-primary rb-btn-full" id="rb-stcSend" disabled>
+              <span class="rb-btn-label">Send to canvas</span>
+            </button>
+            <p class="rb-stc-status-msg" id="rb-stcStatus" hidden></p>
+            <a id="rb-stcOpenCanvas" class="rb-stc-followlink" hidden target="_blank" rel="noopener">Open canvas →</a>
+            <a id="rb-stcSignin" class="rb-stc-followlink" hidden target="_blank" rel="noopener">Sign in to Uncraft →</a>
+          </div>
         </div>
       </div>
 
@@ -1557,6 +1631,354 @@
   const siteFooter = $('#rb-siteFooter');
   if (siteFooter) siteFooter.addEventListener('click', () => goToWizard());
 
+  // --- Send to canvas (manual capture into a board) ---
+  // Discovers the Uncraft web-shell origin (prod → localhost fallback),
+  // lists the user's boards via /api/boards, lets the user pick one or
+  // create a new one, then POSTs the captured DOM to /api/snapshot/manual.
+  // Mirrors the legacy popup.js flow but lives inside the widget so the
+  // user never leaves their familiar surface.
+  const STC_ORIGIN_STORAGE = 'uncraft.webShellOrigin';
+  const STC_CANDIDATES = [
+    'https://uncraft.app',
+    'http://localhost:3030',
+    'http://127.0.0.1:3030'
+  ];
+  const stcState = {
+    origin: null,         // resolved web-shell origin
+    boards: [],
+    selectedBoardId: null
+  };
+
+  function stcSetStatus(text, isError) {
+    const el = $('#rb-stcStatus');
+    if (!el) return;
+    if (!text) { el.hidden = true; el.textContent = ''; el.classList.remove('rb-stc-status-error'); return; }
+    el.hidden = false; el.textContent = text;
+    el.classList.toggle('rb-stc-status-error', !!isError);
+  }
+  function stcSetBoardListText(text) {
+    const list = $('#rb-stcBoardList');
+    if (!list) return;
+    list.innerHTML = `<div class="rb-stc-status">${text}</div>`;
+  }
+  function isCapturableUrl(u) {
+    return typeof u === 'string' && /^https?:\/\//i.test(u);
+  }
+
+  async function stcDiscoverOrigin() {
+    // Try cached origin first, then candidates. We hit /api/boards as
+    // the probe — 200 means authed, 401 means reachable-but-not-authed,
+    // anything else means try next candidate.
+    return new Promise((resolve) => {
+      chrome.storage.local.get([STC_ORIGIN_STORAGE], async (cache) => {
+        const seed = cache?.[STC_ORIGIN_STORAGE];
+        const tryOrder = seed
+          ? [seed, ...STC_CANDIDATES.filter((o) => o !== seed)]
+          : STC_CANDIDATES;
+        for (const origin of tryOrder) {
+          try {
+            const res = await fetch(`${origin}/api/boards`, { credentials: 'include' });
+            if (res.ok) {
+              const json = await res.json().catch(() => ({}));
+              chrome.storage.local.set({ [STC_ORIGIN_STORAGE]: origin });
+              resolve({ origin, boards: json.boards || [] });
+              return;
+            }
+            if (res.status === 401) {
+              // Reachable but not signed in — prefer this origin so the
+              // sign-in link points at the right host.
+              resolve({ origin, boards: [], unauthorized: true });
+              return;
+            }
+          } catch (e) {
+            // Unreachable — fall through to the next candidate.
+          }
+        }
+        resolve({ origin: null, boards: [] });
+      });
+    });
+  }
+
+  function stcRenderBoards() {
+    const list = $('#rb-stcBoardList');
+    if (!list) return;
+    if (!stcState.boards.length) {
+      list.innerHTML = `<div class="rb-stc-status">No boards yet. Create one below.</div>`;
+      return;
+    }
+    list.innerHTML = '';
+    for (const b of stcState.boards) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'rb-stc-board-row';
+      row.dataset.boardId = b.id;
+      row.innerHTML = `
+        <span class="rb-stc-board-name">${(b.name || 'Untitled').replace(/[<>&"]/g, (c) => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]))}</span>
+        <span class="rb-stc-board-tick" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>`;
+      row.addEventListener('click', () => stcSelectBoard(b.id));
+      list.appendChild(row);
+    }
+  }
+  function stcSelectBoard(id) {
+    stcState.selectedBoardId = id;
+    $$('#rb-stcBoardList .rb-stc-board-row').forEach((el) => {
+      el.classList.toggle('selected', el.dataset.boardId === id);
+    });
+    const send = $('#rb-stcSend');
+    if (send) send.disabled = !id;
+  }
+
+  async function stcLoadTab() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: 'uncraft.activeTab' }, (resp) => {
+        if (chrome.runtime.lastError || !resp?.ok) {
+          // Fallback — use document context. activeTab background helper
+          // is added below as well; this path covers the case where the
+          // widget is opened before the listener is wired during
+          // development.
+          resolve({ url: location.href, title: document.title, favIconUrl: null });
+          return;
+        }
+        resolve(resp.tab);
+      });
+    });
+  }
+
+  async function stcEnterView() {
+    showView('sendToCanvas');
+    stcState.selectedBoardId = null;
+    $('#rb-stcSend').disabled = true;
+    stcSetStatus('');
+    $('#rb-stcOpenCanvas').hidden = true;
+    $('#rb-stcSignin').hidden = true;
+    $('#rb-stcNewBoardRow').hidden = true;
+
+    // Tab meta — title, URL, favicon.
+    const tab = await stcLoadTab();
+    $('#rb-stcTitle').textContent = tab.title || 'Untitled';
+    try {
+      const u = new URL(tab.url);
+      $('#rb-stcUrl').textContent = u.host + u.pathname.replace(/\/+$/, '');
+    } catch { $('#rb-stcUrl').textContent = tab.url || ''; }
+    if (tab.favIconUrl) {
+      $('#rb-stcFavicon').style.backgroundImage = `url("${tab.favIconUrl.replace(/"/g, '%22')}")`;
+    } else {
+      $('#rb-stcFavicon').style.backgroundImage = '';
+    }
+
+    if (!isCapturableUrl(tab.url)) {
+      stcSetStatus("This page can't be captured (browser-internal URL).", true);
+      stcSetBoardListText('Open a regular web page to send it to canvas.');
+      return;
+    }
+
+    stcSetBoardListText('Looking for Uncraft…');
+    const disc = await stcDiscoverOrigin();
+    stcState.origin = disc.origin;
+
+    if (!disc.origin) {
+      stcSetBoardListText('Could not reach Uncraft.');
+      stcSetStatus('Open the Uncraft app once (so we can find it), then come back.', true);
+      return;
+    }
+    if (disc.unauthorized) {
+      stcSetBoardListText('Sign in to Uncraft to load your boards.');
+      $('#rb-stcSignin').href = `${disc.origin}/login`;
+      $('#rb-stcSignin').hidden = false;
+      return;
+    }
+
+    stcState.boards = disc.boards;
+    stcRenderBoards();
+    $('#rb-stcNewBoardRow').hidden = false;
+    // Auto-select the first board so a single click on Send works as
+    // expected. The user can still click another to switch.
+    if (stcState.boards.length) stcSelectBoard(stcState.boards[0].id);
+  }
+
+  async function stcCreateBoard() {
+    if (!stcState.origin) return;
+    const input = $('#rb-stcNewBoardName');
+    const name = (input.value || '').trim();
+    if (!name) { input.focus(); return; }
+    const createBtn = $('#rb-stcCreateBoard');
+    createBtn.disabled = true;
+    createBtn.querySelector('.rb-btn-label').textContent = 'Creating…';
+    try {
+      const res = await fetch(`${stcState.origin}/api/boards`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.board) throw new Error(json?.error || `${res.status}`);
+      // Prepend so the new board lands at the top of the list, where
+      // the auto-select is already aimed.
+      stcState.boards = [json.board, ...stcState.boards];
+      input.value = '';
+      stcRenderBoards();
+      stcSelectBoard(json.board.id);
+    } catch (e) {
+      stcSetStatus(`Could not create board: ${e?.message || e}`, true);
+    } finally {
+      createBtn.disabled = false;
+      createBtn.querySelector('.rb-btn-label').textContent = 'Create';
+    }
+  }
+
+  async function stcSend() {
+    if (!stcState.selectedBoardId || !stcState.origin) return;
+    const send = $('#rb-stcSend');
+    send.disabled = true;
+    send.querySelector('.rb-btn-label').textContent = 'Capturing…';
+    stcSetStatus('');
+    try {
+      if (typeof window.__uncraftCapturePage !== 'function') {
+        throw new Error('Capture helper not present — reload this page first.');
+      }
+      const cap = await window.__uncraftCapturePage();
+      send.querySelector('.rb-btn-label').textContent = 'Sending…';
+      const resp = await chrome.runtime.sendMessage({
+        action: 'uncraft.manual.send',
+        webShellOrigin: stcState.origin,
+        boardId: stcState.selectedBoardId,
+        url: location.href,
+        payload: { html: cap.html, title: cap.title, viewport: cap.viewport }
+      });
+      if (!resp?.ok) throw new Error(resp?.error || 'send failed');
+      send.querySelector('.rb-btn-label').textContent = 'Sent ✓';
+      stcSetStatus('Added to your canvas.');
+      const openLink = $('#rb-stcOpenCanvas');
+      openLink.href = `${stcState.origin}/canvas`;
+      openLink.hidden = false;
+      // Auto-return to main after a moment so the widget doesn't get
+      // stuck on a "done" view.
+      setTimeout(() => showView('main'), 2200);
+    } catch (e) {
+      send.disabled = false;
+      send.querySelector('.rb-btn-label').textContent = 'Retry';
+      stcSetStatus(String(e?.message || e), true);
+    }
+  }
+
+  $('#rb-sendCanvas')?.addEventListener('click', () => stcEnterView());
+  $('#rb-stcBack')?.addEventListener('click', () => showView('main'));
+  $('#rb-stcCreateBoard')?.addEventListener('click', () => stcCreateBoard());
+  $('#rb-stcSend')?.addEventListener('click', () => stcSend());
+  $('#rb-stcNewBoardName')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); stcCreateBoard(); }
+  });
+
+  // --- Handoff callout (Uncraft canvas → page handoff) ---
+  // When the user typed a URL into the canvas's PromptDock and the
+  // capture got challenged by Cloudflare/captcha, the canvas
+  // (a) pre-created a placeholder node on the server, (b) minted an
+  // HMAC handoff token, and (c) registered the token in
+  // chrome.storage.local keyed by URL. The widget reads that registry
+  // here — if the current tab matches an active handoff, we surface
+  // the callout above the mode toggle so the user can ship the
+  // verified DOM back without leaving the widget.
+  const HANDOFF_STORAGE_KEY = 'uncraft.handoffs';
+  function canonicalize(u) {
+    try {
+      const url = new URL(u);
+      const host = url.host.replace(/^www\./i, '');
+      const path = url.pathname.replace(/\/+$/, '') || '/';
+      return {
+        origin: `${url.protocol}//${host}`,
+        path,
+        full: `${url.protocol}//${host}${path}`
+      };
+    } catch { return null; }
+  }
+  function findMatchingHandoff(all, currentUrl) {
+    const now = Date.now();
+    const cur = canonicalize(currentUrl);
+    if (!cur) return null;
+    let exact = null, loose = null, looseTime = 0;
+    for (const entry of Object.values(all || {})) {
+      if (entry?.expiresAt && entry.expiresAt < now) continue;
+      const t = canonicalize(entry.url);
+      if (!t) continue;
+      if (t.full === cur.full) { exact = entry; break; }
+      if (t.origin === cur.origin) {
+        const reg = entry.registeredAt || 0;
+        if (reg > looseTime) { loose = entry; looseTime = reg; }
+      }
+    }
+    return exact || loose;
+  }
+  function setHandoffStatus(text, isError) {
+    const s = $('#rb-handoffStatus');
+    if (!s) return;
+    if (!text) { s.hidden = true; s.textContent = ''; s.classList.remove('rb-callout-status-error'); return; }
+    s.hidden = false; s.textContent = text;
+    s.classList.toggle('rb-callout-status-error', !!isError);
+  }
+  let activeHandoff = null;
+  async function checkHandoff() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get([HANDOFF_STORAGE_KEY], (res) => {
+        const found = findMatchingHandoff(res?.[HANDOFF_STORAGE_KEY], location.href);
+        activeHandoff = found || null;
+        const cal = $('#rb-handoffCallout');
+        if (cal) cal.hidden = !found;
+        resolve(found);
+      });
+    });
+  }
+  async function deleteHandoffEntry(url) {
+    return new Promise((resolve) => {
+      chrome.storage.local.get([HANDOFF_STORAGE_KEY], (res) => {
+        const all = res?.[HANDOFF_STORAGE_KEY] || {};
+        delete all[url];
+        chrome.storage.local.set({ [HANDOFF_STORAGE_KEY]: all }, resolve);
+      });
+    });
+  }
+  const handoffSendBtn = $('#rb-handoffSend');
+  if (handoffSendBtn) handoffSendBtn.addEventListener('click', async () => {
+    if (!activeHandoff) return;
+    handoffSendBtn.disabled = true;
+    handoffSendBtn.querySelector('.rb-btn-label').textContent = 'Capturing…';
+    setHandoffStatus('');
+    try {
+      if (typeof window.__uncraftCapturePage !== 'function') {
+        throw new Error('Capture helper not present — reload the page.');
+      }
+      const cap = await window.__uncraftCapturePage();
+      handoffSendBtn.querySelector('.rb-btn-label').textContent = 'Sending…';
+      const resp = await chrome.runtime.sendMessage({
+        action: 'uncraft.handoff.send',
+        handoff: activeHandoff,
+        payload: { html: cap.html, title: cap.title, viewport: cap.viewport }
+      });
+      if (!resp || !resp.ok) throw new Error(resp?.error || 'send failed');
+      handoffSendBtn.querySelector('.rb-btn-label').textContent = 'Sent ✓';
+      setHandoffStatus('Placeholder filled. Your canvas updates within seconds.');
+      await deleteHandoffEntry(activeHandoff.url);
+      setTimeout(() => {
+        const cal = $('#rb-handoffCallout');
+        if (cal) cal.hidden = true;
+      }, 1800);
+    } catch (e) {
+      handoffSendBtn.disabled = false;
+      handoffSendBtn.querySelector('.rb-btn-label').textContent = 'Retry';
+      setHandoffStatus(String(e?.message || e), true);
+    }
+  });
+  const handoffDismissBtn = $('#rb-handoffDismiss');
+  if (handoffDismissBtn) handoffDismissBtn.addEventListener('click', () => {
+    const cal = $('#rb-handoffCallout');
+    if (cal) cal.hidden = true;
+    // Dismiss is local — we DON'T delete the handoff from storage, so the
+    // user can re-open the widget later and complete it. Token TTL (5 min)
+    // is the natural lifetime.
+  });
+
   // --- Init ---
   chrome.storage.sync.get({ onboardingDone: false, activeMode: 'dark' }, (data) => {
     if (data.onboardingDone) {
@@ -1567,5 +1989,8 @@
     } else {
       showView('onboarding');
     }
+    // Handoff check runs regardless of onboarding state — the callout
+    // is hidden in the onboarding view anyway (it lives inside viewMain).
+    checkHandoff();
   });
 })();
