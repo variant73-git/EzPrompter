@@ -145,6 +145,58 @@
           <p class="rb-site-footer" id="rb-siteFooter">Don't know where to start?<br><span style="text-decoration:underline;cursor:pointer">Use the Quick Setup Wizard</span></p>
         </div>
 
+        <!-- Collect Assets view — replaces #rb-siteAnalysis + Smart Remix
+             stuff when toggle is on light (data-mode="light"). Staging
+             area for items collected from the host page via the
+             hover/click overlay in Collect mode. -->
+        <div class="rb-collect-host" id="rb-contentCollect" style="display:none">
+          <div class="rb-collect-intro">
+            <div class="rb-collect-intro-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3.2"/>
+                <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/>
+              </svg>
+            </div>
+            <div class="rb-collect-intro-text">
+              <p class="rb-collect-intro-title">Collect from this page</p>
+              <p class="rb-collect-intro-sub">Hover any element, click to collect. Cmd-drag for marquee. Right-click for stacked elements.</p>
+            </div>
+          </div>
+          <div class="rb-collect-stage-header">
+            <span class="rb-collect-stage-count" id="rb-collectCount">No items yet</span>
+            <button type="button" class="rb-collect-stage-action" id="rb-collectSelectAll" hidden>Select all</button>
+          </div>
+          <div class="rb-collect-stage" id="rb-collectStage"></div>
+          <div class="rb-collect-toast" id="rb-collectToast" hidden></div>
+          <div class="rb-collect-footer" id="rb-collectFooter" hidden>
+            <!-- Destination picker. Custom dropdown so we can render
+                 visual separators between the three sections
+                 (global library / user projects / new project). A
+                 native <select> with <optgroup> would render labels,
+                 not separators, and would miss the user's intent. -->
+            <div class="rb-collect-dest-wrap">
+              <button type="button" class="rb-collect-dest-pill" id="rb-collectDestPill" aria-haspopup="listbox" aria-expanded="false">
+                <span class="rb-collect-dest-label" id="rb-collectDestLabel">Global library</span>
+                ${CHEVRON_SVG}
+              </button>
+              <div class="rb-collect-dest-menu" id="rb-collectDestMenu" hidden role="listbox"></div>
+            </div>
+            <!-- Inline "new project" name input. Shown only after the
+                 user picks the "New project" option AND is signed in.
+                 If not signed in, picking new project opens the
+                 web-shell signup page in a new tab instead. -->
+            <div class="rb-collect-new-row" id="rb-collectNewRow" hidden>
+              <input type="text" class="rb-collect-new-input" id="rb-collectNewName" placeholder="Project name" maxlength="120">
+              <button type="button" class="rb-btn rb-btn-outline rb-btn-sm" id="rb-collectNewCreate">
+                <span class="rb-btn-label">Create</span>
+              </button>
+            </div>
+            <button type="button" class="rb-btn rb-btn-primary rb-btn-full" id="rb-collectSave">
+              <span class="rb-btn-label">Save selected</span>
+            </button>
+          </div>
+        </div>
+
         <div class="rb-content-scroll" id="rb-contentDark" style="display:none"></div>
         <div class="rb-content-scroll" id="rb-contentLight" style="display:none">
           <div class="rb-img-row-header">
@@ -380,7 +432,18 @@
   const $$ = (sel) => panel.querySelectorAll(sel);
 
   // --- Close ---
-  $('#rb-close').addEventListener('click', () => panel.remove());
+  $('#rb-close').addEventListener('click', () => {
+    // Tear down Collect mode first so its document-level listeners
+    // and overlay don't outlive the widget. panel.remove() drops the
+    // widget DOM but those handlers were attached to document, not to
+    // any node inside the widget.
+    deactivateCollect();
+    for (const id of ['__rb-collect-overlay', '__rb-collect-stack-popup', '__rb-collect-marquee']) {
+      const el = document.getElementById(id);
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+    panel.remove();
+  });
 
   // --- Drag ---
   const header = panel.querySelector('.rb-header');
@@ -434,6 +497,1378 @@
     chrome.storage.sync.set({ onboardingDone: true }); showView('main'); loadContent(); analyzeSite();
   });
 
+  // ─── Collect Assets mode ──────────────────────────────────────────────
+  // Hover any element on the host page → highlight it. Click → capture it
+  // as an asset of the inferred type (image, svg, icon, component, etc).
+  // Captured items pile up in the staging area (#rb-collectStage) so the
+  // user can curate before sending to a library/project.
+  //
+  // The hover/click handlers are wired ONLY while Collect Assets mode is
+  // active (light data-mode). Deactivating tears down handlers and the
+  // overlay so the user can browse the page normally again.
+  //
+  // Future layers: Cmd-drag marquee (DOM-based, not bitmap), right-click
+  // stack popup, Cmd+G grouping, font capture with WOFF download,
+  // backend persistence, canvas-side Assets tab. This module exposes
+  // the hooks they'll plug into.
+
+  const collectState = {
+    active: false,
+    overlay: null,
+    items: [],           // each: { id, type, el, snapshot, meta }
+    selected: new Set()  // ids checked in staging
+  };
+
+  // The widget itself + any of its UI must not be hoverable/highlightable.
+  // Anything inside #repixbridge-panel is widget chrome.
+  function isWidgetEl(el) {
+    return !!(el && (el.id === 'repixbridge-panel' || el.closest('#repixbridge-panel')));
+  }
+
+  // Infer the asset type from an element. Precedence: most specific wins.
+  // Returns one of: image | svg | icon | background-image | video |
+  // component | section | text. (font/color/pattern/region land in v2.)
+  function inferAssetType(el) {
+    if (!el || el.nodeType !== 1) return 'component';
+    const tag = el.tagName;
+    if (tag === 'VIDEO') return 'video';
+    if (tag === 'IMG') {
+      const src = el.getAttribute('src') || '';
+      return /\.svg($|\?)/i.test(src) ? 'svg' : 'image';
+    }
+    if (tag === 'SVG' || tag === 'svg') {
+      const r = el.getBoundingClientRect();
+      return (r.width < 80 && r.height < 80) ? 'icon' : 'svg';
+    }
+    let cs;
+    try { cs = getComputedStyle(el); } catch { cs = null; }
+    if (cs) {
+      const bg = cs.backgroundImage;
+      const hasOwnBg = bg && bg !== 'none' && !bg.startsWith('linear-gradient') && !bg.startsWith('radial-gradient');
+      const significantKids = Array.from(el.children).filter((c) => {
+        const cr = c.getBoundingClientRect();
+        return cr.width > 12 && cr.height > 12;
+      });
+      if (hasOwnBg && significantKids.length === 0) return 'background-image';
+    }
+    // Section vs component: tall elements (>40% viewport) read as "section"
+    // and unlock different downstream treatment (e.g. preserve full layout).
+    const r = el.getBoundingClientRect();
+    if (r.height > window.innerHeight * 0.4 && r.width > window.innerWidth * 0.5) return 'section';
+    // Text leaf — element whose direct content is just text (no nontrivial
+    // children). Hovered text triggers font/typography capture in v2; for
+    // v1 it's saved as a 'text' component so we don't lose it.
+    const hasNonTextKids = Array.from(el.childNodes).some((n) => n.nodeType === 1);
+    if (!hasNonTextKids && (el.textContent || '').trim().length > 0) return 'text';
+    return 'component';
+  }
+
+  // Build the snapshot for a captured element. Stores the outerHTML +
+  // a minimal set of computed styles so the asset can be reconstructed
+  // later without depending on the source page CSS. For image/svg/video
+  // we also pluck the underlying URL so blob hosting (v2) can fetch it.
+  function captureSnapshot(el, type) {
+    const snap = {
+      tag: el.tagName.toLowerCase(),
+      html: el.outerHTML,
+      rect: pickRect(el.getBoundingClientRect()),
+      url: null
+    };
+    try {
+      if (type === 'image' || type === 'svg') snap.url = el.currentSrc || el.src || null;
+      if (type === 'video') snap.url = el.currentSrc || el.src || null;
+      if (type === 'background-image') {
+        const cs = getComputedStyle(el);
+        const m = /url\(["']?([^"')]+)/.exec(cs.backgroundImage || '');
+        snap.url = m ? m[1] : null;
+      }
+    } catch {}
+    return snap;
+  }
+  function pickRect(r) {
+    return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+  }
+
+  // A best-effort name for display in the stage. Falls back through
+  // alt → aria-label → id → class → tagName. Truncated to 40 chars.
+  function deriveName(el, type) {
+    const tryAttrs = ['alt', 'aria-label', 'title', 'data-name'];
+    for (const a of tryAttrs) {
+      const v = el.getAttribute && el.getAttribute(a);
+      if (v && v.trim()) return v.trim().slice(0, 40);
+    }
+    if (el.id) return `#${el.id}`.slice(0, 40);
+    const cls = (el.className && typeof el.className === 'string') ? el.className.trim().split(/\s+/)[0] : '';
+    if (cls) return `.${cls}`.slice(0, 40);
+    return `<${el.tagName.toLowerCase()}>`;
+  }
+
+  // Pretty label for the type pill. Keeps the user vocabulary aligned
+  // with the README/PR description rather than DOM-jargon.
+  const TYPE_LABEL = {
+    image: 'Image',
+    svg: 'SVG',
+    icon: 'Icon',
+    'background-image': 'Background',
+    video: 'Video',
+    component: 'Component',
+    section: 'Section',
+    text: 'Text',
+    font: 'Font',
+    group: 'Group'
+  };
+
+  // Create / position / show the highlight overlay around an element.
+  function ensureOverlay() {
+    if (collectState.overlay) return collectState.overlay;
+    const ov = document.createElement('div');
+    ov.id = '__rb-collect-overlay';
+    ov.setAttribute('data-uncraft-internal', '1');
+    // Neutral overlay — grey/black border so it reads as "selection
+     // affordance" without competing with the blue checkbox accent
+     // in the widget. The only coloured affordance in Collect mode
+     // lives on the per-row checkboxes.
+    Object.assign(ov.style, {
+      position: 'fixed',
+      pointerEvents: 'none',
+      zIndex: '2147483645',
+      border: '2px solid rgba(20, 20, 20, 0.92)',
+      background: 'rgba(255, 255, 255, 0.04)',
+      borderRadius: '4px',
+      transition: 'all 80ms ease-out',
+      boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.45)',
+      display: 'none'
+    });
+    // Floating type tag on the top-left corner of the overlay.
+    const tag = document.createElement('div');
+    tag.id = '__rb-collect-overlay-tag';
+    Object.assign(tag.style, {
+      position: 'absolute',
+      top: '-22px',
+      left: '0',
+      padding: '2px 8px',
+      borderRadius: '999px',
+      background: '#0a0a0a',
+      color: '#EFEEEB',
+      fontFamily: "'Instrument Sans', -apple-system, sans-serif",
+      fontSize: '10.5px',
+      fontWeight: '500',
+      letterSpacing: '0.02em',
+      whiteSpace: 'nowrap',
+      border: '1px solid rgba(255, 255, 255, 0.18)'
+    });
+    ov.appendChild(tag);
+    document.documentElement.appendChild(ov);
+    collectState.overlay = ov;
+    return ov;
+  }
+  function positionOverlay(el, type) {
+    const ov = ensureOverlay();
+    const r = el.getBoundingClientRect();
+    ov.style.display = 'block';
+    ov.style.left = `${r.left}px`;
+    ov.style.top = `${r.top}px`;
+    ov.style.width = `${r.width}px`;
+    ov.style.height = `${r.height}px`;
+    const tag = ov.querySelector('#__rb-collect-overlay-tag');
+    if (tag) tag.textContent = `Click to collect · ${TYPE_LABEL[type] || type}`;
+  }
+  function hideOverlay() {
+    if (collectState.overlay) collectState.overlay.style.display = 'none';
+  }
+
+  // ── Activation / deactivation ─────────────────────────────────────────
+  let _hoverEl = null;
+  function onCollectMove(e) {
+    if (!collectState.active) return;
+    // While stack popup is open the popup drives overlay positioning
+    // via its own row-hover handler. Pause the freehand follow so the
+    // overlay doesn't flicker between target page elements and popup
+    // row hover-preview.
+    if (_stackPopup && _stackPopup.style.display === 'block') return;
+    if (isWidgetEl(e.target)) { hideOverlay(); _hoverEl = null; return; }
+    if (e.target === _hoverEl) return;
+    _hoverEl = e.target;
+    const type = inferAssetType(e.target);
+    positionOverlay(e.target, type);
+  }
+  function onCollectClick(e) {
+    if (!collectState.active) return;
+    // Marquee just finished — swallow the synthetic click that fires
+    // after mouseup so we don't double-capture the element under cursor.
+    if (_marqueeJustCaptured) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // While the stack popup is open, the popup handles its own row
+    // clicks. Any click OUTSIDE the popup is a dismiss — we close it
+    // without capturing whatever's underneath.
+    if (_stackPopup && _stackPopup.style.display === 'block') {
+      if (isInStackPopup(e.target)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      closeStackPopup();
+      return;
+    }
+    if (isWidgetEl(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const el = e.target;
+    const type = inferAssetType(el);
+    collectItem(el, type);
+  }
+  function onCollectLeave() { hideOverlay(); }
+
+  function activateCollect() {
+    if (collectState.active) return;
+    collectState.active = true;
+    document.addEventListener('mousemove', onCollectMove, true);
+    document.addEventListener('click', onCollectClick, true);
+    document.addEventListener('mouseleave', onCollectLeave);
+    document.addEventListener('contextmenu', onCollectContextMenu, true);
+    document.addEventListener('keydown', onCollectKeyDown, true);
+    // Page scroll invalidates popup positioning — close to avoid the
+    // popup floating over the wrong content.
+    document.addEventListener('scroll', closeStackPopup, true);
+    // Marquee — Cmd/Ctrl arms, mousedown starts drag, mouseup captures.
+    document.addEventListener('keydown', onMarqueeKeyDown, true);
+    document.addEventListener('keyup', onMarqueeKeyUp, true);
+    document.addEventListener('mousedown', onMarqueeMouseDown, true);
+    document.addEventListener('mousemove', onMarqueeMouseMove, true);
+    document.addEventListener('mouseup', onMarqueeMouseUp, true);
+    renderCollectStage();
+  }
+  function deactivateCollect() {
+    if (!collectState.active) return;
+    collectState.active = false;
+    document.removeEventListener('mousemove', onCollectMove, true);
+    document.removeEventListener('click', onCollectClick, true);
+    document.removeEventListener('mouseleave', onCollectLeave);
+    document.removeEventListener('contextmenu', onCollectContextMenu, true);
+    document.removeEventListener('keydown', onCollectKeyDown, true);
+    document.removeEventListener('scroll', closeStackPopup, true);
+    document.removeEventListener('keydown', onMarqueeKeyDown, true);
+    document.removeEventListener('keyup', onMarqueeKeyUp, true);
+    document.removeEventListener('mousedown', onMarqueeMouseDown, true);
+    document.removeEventListener('mousemove', onMarqueeMouseMove, true);
+    document.removeEventListener('mouseup', onMarqueeMouseUp, true);
+    closeStackPopup();
+    hideOverlay();
+    marquee.active = false;
+    marquee.armed = false;
+    if (marquee.rectEl) marquee.rectEl.style.display = 'none';
+    setArmedCursor(false);
+    _hoverEl = null;
+  }
+
+  // ── Right-click stack popup ───────────────────────────────────────────
+  // On contextmenu inside a target page (while Collect is active), open
+  // a Photoshop-style popup listing the elements under the cursor
+  // (deepest first) so the user can pick a specific one even when it's
+  // hidden behind larger siblings. Always appends "Whole section" as a
+  // synthetic option when a section-like ancestor exists; prepends
+  // "Background" when the topmost element is decorative (no significant
+  // children, visible own background).
+
+  // Walks up the DOM from `el` looking for the nearest "section-like"
+  // ancestor. Stops at <body> / <html>. A section qualifies when it
+  // either uses one of the semantic section tags OR has a class hint OR
+  // is a large self-contained chunk near the top level. Returns null
+  // when no convincing ancestor exists.
+  const SECTION_TAGS = new Set(['SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'ASIDE', 'MAIN', 'NAV']);
+  const SECTION_CLASS_HINTS = /\b(section|hero|banner|block|row|container|wrapper)\b/i;
+  function findSectionAncestor(el) {
+    let node = el?.parentElement;
+    let candidate = null;
+    while (node && node.tagName !== 'BODY' && node.tagName !== 'HTML') {
+      const r = node.getBoundingClientRect();
+      const isBigEnough = r.width > window.innerWidth * 0.5 && r.height > 220;
+      const isSemantic = SECTION_TAGS.has(node.tagName) ||
+                         (typeof node.className === 'string' && SECTION_CLASS_HINTS.test(node.className));
+      if (isBigEnough && isSemantic) return node;
+      // Fallback: keep largest big-enough ancestor in case no semantic
+      // hit shows up (some sites use opaque div soup but the user still
+      // wants "this whole strip").
+      if (isBigEnough && !candidate) candidate = node;
+      node = node.parentElement;
+    }
+    return candidate;
+  }
+
+  // Heuristic for "this element is mostly background" — has its own
+  // background-color/image, lacks meaningful children, lacks text. Used
+  // to decide whether to prepend a "Background" option in the popup.
+  function isBackgroundLike(el) {
+    if (!el || el.nodeType !== 1) return false;
+    let cs;
+    try { cs = getComputedStyle(el); } catch { return false; }
+    const bg = cs.backgroundImage;
+    const bgColor = cs.backgroundColor;
+    const hasOwnBg = (bg && bg !== 'none') ||
+                     (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent');
+    if (!hasOwnBg) return false;
+    const text = (el.textContent || '').trim();
+    if (text.length > 12) return false;
+    const sigKids = Array.from(el.children).filter((c) => {
+      const r = c.getBoundingClientRect();
+      return r.width > 12 && r.height > 12;
+    });
+    return sigKids.length === 0;
+  }
+
+  let _stackPopup = null;
+  let _stackPopupAnchorEl = null; // hovered row's referenced element
+  function ensureStackPopup() {
+    if (_stackPopup) return _stackPopup;
+    const p = document.createElement('div');
+    p.id = '__rb-collect-stack-popup';
+    p.setAttribute('data-uncraft-internal', '1');
+    Object.assign(p.style, {
+      position: 'fixed',
+      zIndex: '2147483646',
+      minWidth: '260px',
+      maxWidth: '320px',
+      maxHeight: '380px',
+      overflowY: 'auto',
+      background: '#0a0a0a',
+      color: '#EFEEEB',
+      border: '1px solid rgba(255, 255, 255, 0.12)',
+      borderRadius: '14px',
+      boxShadow: '0 24px 60px rgba(0, 0, 0, 0.55)',
+      padding: '4px',
+      fontFamily: "'Instrument Sans', -apple-system, sans-serif",
+      fontSize: '12.5px',
+      display: 'none'
+    });
+    document.documentElement.appendChild(p);
+    _stackPopup = p;
+    p.addEventListener('mousemove', onStackRowHover, true);
+    p.addEventListener('mouseleave', () => { hideOverlay(); _stackPopupAnchorEl = null; });
+    p.addEventListener('click', onStackRowClick, true);
+    return p;
+  }
+
+  function closeStackPopup() {
+    if (_stackPopup) _stackPopup.style.display = 'none';
+    _stackPopupAnchorEl = null;
+    hideOverlay();
+  }
+
+  // Map between row index and DOM element via a WeakMap so we don't have
+  // to serialise refs into DOM data-attributes.
+  const _stackRowRefs = [];
+
+  function buildStackRow(el, forcedType, forcedLabel, isSynthetic) {
+    const type = forcedType || inferAssetType(el);
+    const tag = el.tagName.toLowerCase();
+    const idHint = el.id ? `#${el.id}` : '';
+    const clsHint = (typeof el.className === 'string' && el.className.trim())
+      ? '.' + el.className.trim().split(/\s+/)[0] : '';
+    const label = forcedLabel || `<${tag}>${idHint || clsHint}`;
+    const r = el.getBoundingClientRect();
+    const dim = `${Math.round(r.width)}×${Math.round(r.height)}`;
+    const idx = _stackRowRefs.length;
+    _stackRowRefs.push(el);
+    return `
+      <button type="button" class="__rb-stack-row${isSynthetic ? ' __rb-stack-row-synth' : ''}" data-stack-idx="${idx}" data-type="${type}">
+        <span class="__rb-stack-type">${TYPE_LABEL[type] || type}</span>
+        <span class="__rb-stack-label">${escapeHtml(label)}</span>
+        <span class="__rb-stack-dim">${dim}</span>
+      </button>
+    `;
+  }
+
+  function openStackPopup(x, y) {
+    _stackRowRefs.length = 0;
+    const p = ensureStackPopup();
+
+    // Collect DOM stack at the click point.
+    const at = document.elementsFromPoint(x, y) || [];
+    const stack = at.filter((el) => {
+      if (isWidgetEl(el)) return false;
+      if (el === document.documentElement || el === document.body) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width < 12 || r.height < 12) return false;
+      return true;
+    }).slice(0, 8);
+
+    const rows = [];
+
+    // "Background" synthetic option — only if the topmost real element
+    // reads as background-like (no kids, visible own background, no text).
+    if (stack[0] && isBackgroundLike(stack[0])) {
+      rows.push(buildStackRow(stack[0], 'background-image', 'Background', true));
+      rows.push('<div class="__rb-stack-sep" aria-hidden="true"></div>');
+    }
+
+    // Real DOM stack.
+    if (stack.length === 0) {
+      rows.push('<div class="__rb-stack-empty">No elements at this point</div>');
+    } else {
+      for (const el of stack) rows.push(buildStackRow(el));
+    }
+
+    // "Whole section" synthetic option — appended below the stack when
+    // a section-like ancestor exists AND isn't already in the stack.
+    const section = findSectionAncestor(stack[0] || null);
+    if (section && !stack.includes(section)) {
+      rows.push('<div class="__rb-stack-sep" aria-hidden="true"></div>');
+      rows.push(buildStackRow(section, 'section', 'Whole section', true));
+    }
+
+    p.innerHTML = rows.join('');
+
+    // Position — pin to cursor, then nudge inside viewport if it overflows.
+    p.style.display = 'block';
+    p.style.left = `${x}px`;
+    p.style.top = `${y}px`;
+    const pr = p.getBoundingClientRect();
+    let left = x;
+    let top = y;
+    if (left + pr.width + 8 > window.innerWidth) left = window.innerWidth - pr.width - 8;
+    if (top + pr.height + 8 > window.innerHeight) top = window.innerHeight - pr.height - 8;
+    if (left < 8) left = 8;
+    if (top < 8) top = 8;
+    p.style.left = `${left}px`;
+    p.style.top = `${top}px`;
+  }
+
+  function onStackRowHover(e) {
+    const row = e.target.closest('.__rb-stack-row');
+    if (!row) return;
+    const el = _stackRowRefs[parseInt(row.dataset.stackIdx, 10)];
+    if (!el || el === _stackPopupAnchorEl) return;
+    _stackPopupAnchorEl = el;
+    positionOverlay(el, row.dataset.type || inferAssetType(el));
+  }
+
+  function onStackRowClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const row = e.target.closest('.__rb-stack-row');
+    if (!row) return;
+    const el = _stackRowRefs[parseInt(row.dataset.stackIdx, 10)];
+    if (!el) return;
+    const type = row.dataset.type || inferAssetType(el);
+    collectItem(el, type);
+    closeStackPopup();
+  }
+
+  function onCollectContextMenu(e) {
+    if (!collectState.active) return;
+    if (isWidgetEl(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openStackPopup(e.clientX, e.clientY);
+  }
+
+  function onCollectKeyDown(e) {
+    if (!collectState.active) return;
+    if (e.key === 'Escape' && _stackPopup && _stackPopup.style.display === 'block') {
+      e.preventDefault();
+      closeStackPopup();
+      return;
+    }
+    // Cmd+G / Ctrl+G — promote checked items into a group asset.
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'g' || e.key === 'G')) {
+      e.preventDefault();
+      e.stopPropagation();
+      groupSelected();
+    }
+  }
+
+  // Dismiss-on-click-outside is wrapped into onCollectClick: if the
+  // stack popup is open and the click target isn't inside it, close it
+  // and abort the capture for THIS click (the user is dismissing, not
+  // collecting).
+  function isInStackPopup(target) {
+    return !!(_stackPopup && _stackPopup.contains(target));
+  }
+
+  // ── Cmd-held marquee mode ─────────────────────────────────────────────
+  // Hold Cmd (Meta) / Ctrl on Windows, drag to draw a rectangle. On
+  // mouseup, every page element whose bounding box is FULLY inside the
+  // marquee rect is captured (NOT bitmap — the actual DOM elements,
+  // each independently). The user then has a granular multi-pick that
+  // can be promoted to a group via Cmd+G in a follow-up slice.
+  //
+  // The marquee is DOM-based on purpose: keeps the asset library full
+  // of editable, semantic elements rather than flat pixel snapshots.
+
+  const marquee = {
+    active: false,            // currently dragging
+    armed: false,             // Cmd is held — cursor crosshair, ready to drag
+    startX: 0, startY: 0,
+    rect: null,               // {x,y,w,h}
+    rectEl: null              // overlay rectangle element
+  };
+
+  function ensureMarqueeEl() {
+    if (marquee.rectEl) return marquee.rectEl;
+    const r = document.createElement('div');
+    r.id = '__rb-collect-marquee';
+    r.setAttribute('data-uncraft-internal', '1');
+    Object.assign(r.style, {
+      position: 'fixed',
+      pointerEvents: 'none',
+      zIndex: '2147483645',
+      border: '1.5px dashed rgba(0, 149, 255, 0.95)',
+      background: 'rgba(0, 149, 255, 0.10)',
+      borderRadius: '2px',
+      display: 'none'
+    });
+    document.documentElement.appendChild(r);
+    marquee.rectEl = r;
+    return r;
+  }
+
+  // Show a "Cmd-drag to marquee" hint on the hover overlay tag while
+  // Cmd is held but no drag has started yet. Reuses the existing
+  // overlay tag.
+  function setArmedCursor(on) {
+    if (!collectState.active) return;
+    if (on) {
+      document.documentElement.style.cursor = 'crosshair';
+    } else {
+      document.documentElement.style.cursor = '';
+    }
+  }
+
+  function onMarqueeKeyDown(e) {
+    if (!collectState.active) return;
+    if ((e.metaKey || e.ctrlKey) && !marquee.armed) {
+      marquee.armed = true;
+      setArmedCursor(true);
+      hideOverlay();
+    }
+  }
+  function onMarqueeKeyUp(e) {
+    if (!collectState.active) return;
+    if (!e.metaKey && !e.ctrlKey && marquee.armed && !marquee.active) {
+      marquee.armed = false;
+      setArmedCursor(false);
+    }
+  }
+
+  function onMarqueeMouseDown(e) {
+    if (!collectState.active) return;
+    if (!marquee.armed) return;
+    if (isWidgetEl(e.target)) return;
+    if (isInStackPopup(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    marquee.active = true;
+    marquee.startX = e.clientX;
+    marquee.startY = e.clientY;
+    const r = ensureMarqueeEl();
+    r.style.left = `${e.clientX}px`;
+    r.style.top = `${e.clientY}px`;
+    r.style.width = '0px';
+    r.style.height = '0px';
+    r.style.display = 'block';
+    // Stop the regular hover overlay from chasing the cursor mid-drag.
+    hideOverlay();
+  }
+
+  function onMarqueeMouseMove(e) {
+    if (!collectState.active || !marquee.active) return;
+    const x1 = Math.min(marquee.startX, e.clientX);
+    const y1 = Math.min(marquee.startY, e.clientY);
+    const x2 = Math.max(marquee.startX, e.clientX);
+    const y2 = Math.max(marquee.startY, e.clientY);
+    const r = ensureMarqueeEl();
+    r.style.left = `${x1}px`;
+    r.style.top = `${y1}px`;
+    r.style.width = `${x2 - x1}px`;
+    r.style.height = `${y2 - y1}px`;
+    marquee.rect = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+  }
+
+  function onMarqueeMouseUp(e) {
+    if (!collectState.active || !marquee.active) return;
+    marquee.active = false;
+    const r = marquee.rectEl;
+    if (r) r.style.display = 'none';
+    const rect = marquee.rect;
+    marquee.rect = null;
+    // Drop the armed state — natural break point for the user.
+    marquee.armed = false;
+    setArmedCursor(false);
+    if (!rect || rect.w < 8 || rect.h < 8) return; // accidental click
+    e.preventDefault();
+    e.stopPropagation();
+    // The click event fires AFTER mouseup with the same target — would
+    // otherwise capture a single element on top of the marquee batch.
+    // Suppress it for this gesture cycle.
+    _marqueeJustCaptured = true;
+    setTimeout(() => { _marqueeJustCaptured = false; }, 0);
+    captureMarqueeRect(rect);
+  }
+  let _marqueeJustCaptured = false;
+
+  // Walk the DOM tree finding every element whose bounding box is
+  // fully INSIDE the marquee rect. Skips: our own widget, html/body,
+  // text nodes (handled by their parent), tiny elements (<12×12).
+  // Then trims out elements whose descendants we already collected —
+  // we want leaf-ish picks, not "the wrapper that contains everything".
+  function findElementsInRect(rect) {
+    const found = [];
+    const x2 = rect.x + rect.w;
+    const y2 = rect.y + rect.h;
+    function walk(node) {
+      if (!node || node.nodeType !== 1) return;
+      if (isWidgetEl(node)) return;
+      if (node === document.documentElement || node === document.body) {
+        // never collect HTML/BODY, but DO descend
+      } else {
+        const r = node.getBoundingClientRect();
+        if (r.width >= 12 && r.height >= 12) {
+          if (r.left >= rect.x && r.top >= rect.y && r.right <= x2 && r.bottom <= y2) {
+            found.push(node);
+            return; // don't dig into children of a fully-inside element;
+                    // the user wants the broadest leaf-ish picks, not the
+                    // whole subtree as N records
+          }
+        }
+      }
+      for (const child of node.children) walk(child);
+    }
+    walk(document.body);
+    return found;
+  }
+
+  function captureMarqueeRect(rect) {
+    const els = findElementsInRect(rect);
+    if (els.length === 0) {
+      showCollectToast('Marquee was empty — try a larger area.');
+      return;
+    }
+    for (const el of els) {
+      const type = inferAssetType(el);
+      collectItem(el, type);
+    }
+    showCollectToast(`Marquee → ${els.length} item${els.length === 1 ? '' : 's'} collected.`);
+  }
+
+  // ── Cmd+G grouping ────────────────────────────────────────────────────
+  // Promote the currently-checked items in the stage into a single
+  // group asset. The group's snapshot is the smallest common ancestor
+  // CLONED with non-selected children stripped — so the parent's CSS
+  // (display: flex, gap, padding) survives and the selected items keep
+  // their original spacing between each other without dragging along
+  // unrelated siblings.
+  //
+  // Triggered by Cmd+G (Meta+G) or Ctrl+G on Windows, while Collect mode
+  // is active AND the staging stage has at least 2 selected items.
+  // Groups appear in the stage as an aggregated row (rendering hook in
+  // renderCollectStage extended below).
+
+  function findCommonAncestor(els) {
+    if (els.length === 0) return null;
+    if (els.length === 1) return els[0].parentElement || els[0];
+    // Build ancestor chain for first element, then walk each subsequent
+    // element looking for the deepest shared ancestor.
+    function chain(el) {
+      const out = [];
+      let n = el;
+      while (n) { out.push(n); n = n.parentElement; }
+      return out;
+    }
+    let common = chain(els[0]);
+    for (let i = 1; i < els.length; i++) {
+      const c = new Set(chain(els[i]));
+      common = common.filter((n) => c.has(n));
+      if (!common.length) return null;
+    }
+    return common[0] || null;
+  }
+
+  // Clone the common ancestor, then walk the clone removing any child
+  // subtree that does not contain at least one of the selected elements.
+  // We tag the original DOM elements via WeakSet membership so the
+  // clone walker can detect descendants by matching their original
+  // position. Since cloneNode doesn't carry references, we mark BEFORE
+  // cloning via a temporary data attribute, then strip it after.
+  function buildGroupSnapshot(els) {
+    const ancestor = findCommonAncestor(els);
+    if (!ancestor) return null;
+    const KEEP_ATTR = 'data-uncraft-keep';
+    const TAG_ATTR = 'data-uncraft-keep-root';
+    for (const el of els) el.setAttribute(KEEP_ATTR, '1');
+    ancestor.setAttribute(TAG_ATTR, '1');
+    let html;
+    try {
+      const clone = ancestor.cloneNode(true);
+      pruneClone(clone);
+      // Strip our tags before serialising.
+      clone.querySelectorAll(`[${KEEP_ATTR}]`).forEach((n) => n.removeAttribute(KEEP_ATTR));
+      clone.removeAttribute(TAG_ATTR);
+      html = clone.outerHTML;
+    } finally {
+      for (const el of els) el.removeAttribute(KEEP_ATTR);
+      ancestor.removeAttribute(TAG_ATTR);
+    }
+    const r = ancestor.getBoundingClientRect();
+    return {
+      tag: ancestor.tagName.toLowerCase(),
+      html,
+      rect: pickRect(r),
+      childCount: els.length
+    };
+  }
+
+  // Walk a CLONE recursively. Keep nodes that themselves have data-
+  // uncraft-keep, OR contain a descendant with it. Remove the rest.
+  // Result: clone with only selected leaves + their lineage preserved.
+  function pruneClone(clone) {
+    const KEEP_ATTR = 'data-uncraft-keep';
+    function hasKeptDescendant(n) {
+      if (n.hasAttribute(KEEP_ATTR)) return true;
+      for (const c of n.children) if (hasKeptDescendant(c)) return true;
+      return false;
+    }
+    function prune(n) {
+      const drop = [];
+      for (const c of n.children) {
+        if (!hasKeptDescendant(c)) drop.push(c);
+        else prune(c);
+      }
+      for (const d of drop) n.removeChild(d);
+    }
+    prune(clone);
+  }
+
+  function groupSelected() {
+    if (!collectState.active) return;
+    const selectedItems = collectState.items.filter((it) => collectState.selected.has(it.id) && !it.isGroup);
+    if (selectedItems.length < 2) {
+      showCollectToast('Select 2+ items to group.');
+      return;
+    }
+    // Resolve back to DOM nodes from the snapshots. Since the snapshots
+    // store outerHTML but not references, we re-query elements from
+    // their original rect — we tagged them at capture time? We didn't.
+    // Pragmatic approach: re-find each item's element via its rect +
+    // tag. This is fragile but acceptable for v1 since the page is
+    // expected to be static while the user is collecting.
+    //
+    // Better: store a WeakRef to the original element at capture time.
+    // Let me do that — see collectItem update below.
+    const els = selectedItems.map((it) => it._elRef).filter(Boolean);
+    if (els.length < 2) {
+      showCollectToast('Some items could not be regrouped (page changed?).');
+      return;
+    }
+    const snap = buildGroupSnapshot(els);
+    if (!snap) {
+      showCollectToast('Could not find a common ancestor.');
+      return;
+    }
+    // Remove the individual selected items and add a single group item
+    // that aggregates them. The group keeps references to its children's
+    // ids for display ("3 items grouped") and for ungroup (v2).
+    const groupId = `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const childIds = selectedItems.map((it) => it.id);
+    const group = {
+      id: groupId,
+      type: 'group',
+      isGroup: true,
+      name: `Group of ${childIds.length}`,
+      snapshot: snap,
+      childIds,
+      capturedAt: Date.now(),
+      sourceUrl: location.href
+    };
+    collectState.items = collectState.items.filter((it) => !childIds.includes(it.id));
+    collectState.selected.delete(...childIds);
+    childIds.forEach((id) => collectState.selected.delete(id));
+    collectState.items.push(group);
+    collectState.selected.add(groupId);
+    renderCollectStage();
+    showCollectToast(`Grouped ${childIds.length} items.`);
+  }
+
+  // ── Font extraction + download ────────────────────────────────────────
+  // When a text element is collected, also capture the font it uses.
+  // Strategy:
+  //   1. Read computed font-family + weight + style of the element.
+  //   2. Walk same-origin stylesheets looking for a matching @font-face.
+  //   3. If found, fetch the WOFF/WOFF2 file (credentialed — works for
+  //      same-origin self-hosted fonts) and inline as base64 data URL
+  //      until the backend asset blob hosting (v2) is wired.
+  //   4. Add a separate `font` asset to the stage, deduped by family.
+  //
+  // Cross-origin stylesheets (Google Fonts, Adobe Fonts CDN) throw when
+  // we try to read `cssRules`. For those we record the family name only
+  // and flag the asset so the backend / v2 can resolve via the Google
+  // Fonts API or similar.
+
+  function stripFontFamily(family) {
+    return (family || '').split(',')[0].replace(/['"]/g, '').trim();
+  }
+
+  function findFontFaceForFamily(family) {
+    const target = stripFontFamily(family).toLowerCase();
+    if (!target) return null;
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules;
+      try { rules = sheet.cssRules; } catch { continue; } // cross-origin
+      if (!rules) continue;
+      for (const rule of Array.from(rules)) {
+        if (!(rule instanceof CSSFontFaceRule) && rule.type !== 5 /* FONT_FACE_RULE */) continue;
+        const ff = stripFontFamily(rule.style?.getPropertyValue?.('font-family')).toLowerCase();
+        if (ff !== target) continue;
+        const src = rule.style?.getPropertyValue?.('src') || '';
+        // Prefer WOFF2 → WOFF → TTF → first url
+        const candidates = [];
+        const rx = /url\(["']?([^"')]+)["']?\)(?:\s*format\(["']?([^"')]+)["']?\))?/g;
+        let m;
+        while ((m = rx.exec(src))) candidates.push({ url: m[1], format: (m[2] || '').toLowerCase() });
+        if (!candidates.length) continue;
+        const pref = ['woff2', 'woff', 'truetype', ''];
+        candidates.sort((a, b) => pref.indexOf(a.format) - pref.indexOf(b.format));
+        return {
+          family: stripFontFamily(rule.style.getPropertyValue('font-family')),
+          weight: rule.style.getPropertyValue('font-weight') || '400',
+          style: rule.style.getPropertyValue('font-style') || 'normal',
+          src: candidates[0].url,
+          format: candidates[0].format
+        };
+      }
+    }
+    return null;
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(fr.error);
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  async function downloadFontFile(url) {
+    try {
+      const abs = new URL(url, location.href).href;
+      const res = await fetch(abs, { credentials: 'include' });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      // 1MB cap for inline data URL — anything larger waits for backend
+      // blob hosting. Most WOFF2 files are well under this.
+      if (blob.size > 1024 * 1024) {
+        return { url: abs, size: blob.size, dataUrl: null, oversized: true };
+      }
+      const dataUrl = await blobToDataUrl(blob);
+      return { url: abs, size: blob.size, dataUrl };
+    } catch {
+      return null;
+    }
+  }
+
+  // Capture the font for a text element. Adds a separate font asset to
+  // the stage (deduped by family name). Returns the family name so the
+  // caller can include it in the user-facing toast.
+  async function captureFontForElement(el) {
+    let family;
+    try { family = stripFontFamily(getComputedStyle(el).fontFamily); }
+    catch { return null; }
+    if (!family) return null;
+    const existing = collectState.items.find((it) => it.type === 'font' && stripFontFamily(it.snapshot.family) === family);
+    if (existing) return family; // already in stage; no dup, no re-download
+    const face = findFontFaceForFamily(family);
+    const id = `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const cs = getComputedStyle(el);
+    const item = {
+      id,
+      type: 'font',
+      name: family,
+      snapshot: {
+        family,
+        weight: cs.fontWeight || '400',
+        style: cs.fontStyle || 'normal',
+        size: cs.fontSize || '',
+        face,                  // resolved @font-face or null
+        fontDataUrl: null,     // populated by async download below
+        fontFile: null,        // resolved url (absolute)
+        oversized: false,      // true when file > 1MB (deferred to backend)
+        rect: { x: 0, y: 0, w: 0, h: 0 } // fonts have no visual rect
+      },
+      capturedAt: Date.now(),
+      sourceUrl: location.href
+    };
+    collectState.items.push(item);
+    collectState.selected.add(id);
+    renderCollectStage();
+    if (face?.src) {
+      // Fire-and-forget download. UI shows a "downloading…" hint on the
+      // row until it resolves.
+      item.snapshot.downloading = true;
+      renderCollectStage();
+      downloadFontFile(face.src).then((dl) => {
+        item.snapshot.downloading = false;
+        if (dl) {
+          item.snapshot.fontFile = dl.url;
+          item.snapshot.fontDataUrl = dl.dataUrl;
+          item.snapshot.oversized = !!dl.oversized;
+          showCollectToast(`Downloaded ${family} from this site${dl.oversized ? ' (file too large — will host on save)' : ''}`);
+        } else {
+          showCollectToast(`Captured "${family}" name only — could not download the file`);
+        }
+        renderCollectStage();
+      });
+    } else {
+      // No @font-face match — likely a system font or cross-origin CSS.
+      // Save the name; v2 will resolve via Google Fonts / system metadata.
+      showCollectToast(`Captured "${family}" — system font or external CSS, no file inlined`);
+    }
+    return family;
+  }
+
+  // ── Capture + staging ─────────────────────────────────────────────────
+  function collectItem(el, type) {
+    const id = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const item = {
+      id,
+      type,
+      name: deriveName(el, type),
+      snapshot: captureSnapshot(el, type),
+      capturedAt: Date.now(),
+      sourceUrl: location.href,
+      // Live reference to the source DOM node — used by Cmd+G grouping
+      // to find the common ancestor. Cleared (or stale) when the page
+      // mutates, in which case grouping skips that item.
+      _elRef: el
+    };
+    collectState.items.push(item);
+    collectState.selected.add(id);
+    renderCollectStage();
+    showCollectToast(`Saved as ${TYPE_LABEL[type] || type} → ${item.name}`);
+    // Text + leaf-text components also capture the font used. The font
+    // becomes a separate, deduped asset (one per family on this page).
+    if (type === 'text' || (type === 'component' && isTextLeafLike(el))) {
+      captureFontForElement(el);
+    }
+  }
+
+  // Lightweight check — true when the component has at least some
+  // visible text and not too many nested children. Avoids triggering a
+  // font capture on every <div>.
+  function isTextLeafLike(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const txt = (el.textContent || '').trim();
+    if (txt.length < 4) return false;
+    const sigKids = Array.from(el.children).filter((c) => {
+      const r = c.getBoundingClientRect();
+      return r.width > 12 && r.height > 12;
+    });
+    return sigKids.length <= 2;
+  }
+
+  function showCollectToast(text) {
+    const t = $('#rb-collectToast');
+    if (!t) return;
+    t.textContent = text;
+    t.hidden = false;
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => { t.hidden = true; }, 2400);
+  }
+
+  function renderCollectStage() {
+    const stage = $('#rb-collectStage');
+    const count = $('#rb-collectCount');
+    const selectAll = $('#rb-collectSelectAll');
+    const footer = $('#rb-collectFooter');
+    if (!stage) return;
+    const items = collectState.items;
+    if (count) count.textContent = items.length === 0 ? 'No items yet' : `${items.length} item${items.length === 1 ? '' : 's'} staged`;
+    if (selectAll) selectAll.hidden = items.length < 2;
+    if (footer) footer.hidden = items.length === 0;
+    stage.innerHTML = '';
+    if (items.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'rb-collect-empty';
+      empty.textContent = 'Hover an element on the page and click to collect it.';
+      stage.appendChild(empty);
+      return;
+    }
+    for (const it of items) {
+      const row = document.createElement('div');
+      row.className = 'rb-collect-row' + (it.isGroup ? ' rb-collect-row-group' : '');
+      row.dataset.id = it.id;
+      const checked = collectState.selected.has(it.id);
+      const typeLabel = it.isGroup
+        ? `Group · ${it.childIds.length} item${it.childIds.length === 1 ? '' : 's'}`
+        : (TYPE_LABEL[it.type] || it.type);
+      // Trailing column varies by asset type: dimensions for visual
+      // assets, weight + status for fonts.
+      let trailing;
+      if (it.type === 'font') {
+        const s = it.snapshot;
+        const status = s.downloading ? ' · downloading…'
+                     : s.fontDataUrl ? ' · downloaded'
+                     : s.oversized ? ' · oversized'
+                     : s.face ? ' · pending'
+                     : ' · name only';
+        trailing = `<span class="rb-collect-dim">${escapeHtml((s.weight || '') + status)}</span>`;
+      } else {
+        trailing = `<span class="rb-collect-dim">${it.snapshot.rect.w}×${it.snapshot.rect.h}</span>`;
+      }
+      row.innerHTML = `
+        <button type="button" class="rb-collect-check${checked ? ' checked' : ''}" data-action="toggle" aria-label="Select item">
+          ${checked ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+        </button>
+        <div class="rb-collect-row-body">
+          <span class="rb-collect-type">${escapeHtml(typeLabel)}</span>
+          <span class="rb-collect-name">${escapeHtml(it.name)}</span>
+        </div>
+        ${trailing}
+        <button type="button" class="rb-collect-remove" data-action="remove" aria-label="Remove from stage">×</button>
+      `;
+      stage.appendChild(row);
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[<>&"']/g, (c) => ({ '<':'&lt;', '>':'&gt;', '&':'&amp;', '"':'&quot;', "'":'&#39;' }[c]));
+  }
+
+  // Stage delegated handlers — toggle checkbox + remove item.
+  $('#rb-collectStage')?.addEventListener('click', (e) => {
+    const action = e.target.closest('[data-action]')?.dataset?.action;
+    const row = e.target.closest('.rb-collect-row');
+    if (!row || !action) return;
+    const id = row.dataset.id;
+    if (action === 'toggle') {
+      if (collectState.selected.has(id)) collectState.selected.delete(id);
+      else collectState.selected.add(id);
+      renderCollectStage();
+    } else if (action === 'remove') {
+      collectState.items = collectState.items.filter((it) => it.id !== id);
+      collectState.selected.delete(id);
+      renderCollectStage();
+    }
+  });
+
+  $('#rb-collectSelectAll')?.addEventListener('click', () => {
+    for (const it of collectState.items) collectState.selected.add(it.id);
+    renderCollectStage();
+  });
+
+  // ── Destination picker — Global library / projects / New project ─────
+  // Loads the user's boards from the web-shell on first open. Caches in
+  // collectState so successive opens are instant. Falls back gracefully
+  // when the user isn't signed in (only "Global library" + "New project
+  // (sign in)" are shown).
+  //
+  // Selection shape (stored in collectState.destination):
+  //   { kind: 'library' }                         → global asset library
+  //   { kind: 'project', id: '<uuid>', name }     → existing project
+  //   { kind: 'new' }                             → user picked "New
+  //                                                 project"; the inline
+  //                                                 name input + Create
+  //                                                 button is shown next
+  collectState.destination = { kind: 'library' };
+  collectState.boards = [];
+  collectState.boardsLoaded = false;
+  collectState.boardsUnauthorized = false;
+  collectState.webShellOrigin = null;
+
+  async function ensureBoardsLoaded() {
+    if (collectState.boardsLoaded) return;
+    try {
+      const disc = await stcDiscoverOrigin();
+      collectState.webShellOrigin = disc.origin;
+      collectState.boards = disc.boards || [];
+      collectState.boardsUnauthorized = !!disc.unauthorized;
+    } catch (e) {
+      collectState.boardsUnauthorized = true;
+    } finally {
+      collectState.boardsLoaded = true;
+    }
+  }
+
+  function renderDestMenu() {
+    const menu = $('#rb-collectDestMenu');
+    if (!menu) return;
+    const dest = collectState.destination || { kind: 'library' };
+    const rows = [];
+
+    // Section 1 — Global library (always first)
+    rows.push(`
+      <button type="button" class="rb-collect-dest-opt${dest.kind === 'library' ? ' selected' : ''}" data-kind="library">
+        <span class="rb-collect-dest-opt-label">Global library</span>
+        ${dest.kind === 'library' ? '<span class="rb-collect-dest-opt-tick">✓</span>' : ''}
+      </button>
+    `);
+    rows.push('<div class="rb-collect-dest-sep" aria-hidden="true"></div>');
+
+    // Section 2 — Existing projects (only when signed in + has projects)
+    if (collectState.boards.length > 0) {
+      for (const b of collectState.boards) {
+        const isSel = dest.kind === 'project' && dest.id === b.id;
+        rows.push(`
+          <button type="button" class="rb-collect-dest-opt${isSel ? ' selected' : ''}" data-kind="project" data-id="${b.id}" data-name="${escapeHtml(b.name || 'Untitled')}">
+            <span class="rb-collect-dest-opt-label">${escapeHtml(b.name || 'Untitled')}</span>
+            ${isSel ? '<span class="rb-collect-dest-opt-tick">✓</span>' : ''}
+          </button>
+        `);
+      }
+      rows.push('<div class="rb-collect-dest-sep" aria-hidden="true"></div>');
+    } else if (collectState.boardsLoaded && !collectState.boardsUnauthorized) {
+      rows.push(`<div class="rb-collect-dest-empty">No projects yet</div>`);
+      rows.push('<div class="rb-collect-dest-sep" aria-hidden="true"></div>');
+    } else if (collectState.boardsUnauthorized) {
+      rows.push(`<div class="rb-collect-dest-empty">Sign in to load your projects</div>`);
+      rows.push('<div class="rb-collect-dest-sep" aria-hidden="true"></div>');
+    }
+
+    // Section 3 — New project (always last)
+    rows.push(`
+      <button type="button" class="rb-collect-dest-opt rb-collect-dest-opt-new" data-kind="new">
+        <span class="rb-collect-dest-opt-plus">+</span>
+        <span class="rb-collect-dest-opt-label">New project${collectState.boardsUnauthorized ? ' (sign in)' : ''}</span>
+      </button>
+    `);
+
+    menu.innerHTML = rows.join('');
+  }
+
+  function syncDestLabel() {
+    const label = $('#rb-collectDestLabel');
+    if (!label) return;
+    const dest = collectState.destination || { kind: 'library' };
+    if (dest.kind === 'library') label.textContent = 'Global library';
+    else if (dest.kind === 'project') label.textContent = dest.name || 'Project';
+    else if (dest.kind === 'new') label.textContent = 'New project…';
+  }
+
+  function openDestMenu() {
+    const menu = $('#rb-collectDestMenu');
+    const pill = $('#rb-collectDestPill');
+    if (!menu || !pill) return;
+    renderDestMenu();
+    menu.hidden = false;
+    pill.setAttribute('aria-expanded', 'true');
+  }
+  function closeDestMenu() {
+    const menu = $('#rb-collectDestMenu');
+    const pill = $('#rb-collectDestPill');
+    if (menu) menu.hidden = true;
+    if (pill) pill.setAttribute('aria-expanded', 'false');
+  }
+
+  // Pill click — load boards lazily then open menu.
+  $('#rb-collectDestPill')?.addEventListener('click', async () => {
+    const menu = $('#rb-collectDestMenu');
+    if (menu && !menu.hidden) { closeDestMenu(); return; }
+    if (!collectState.boardsLoaded) {
+      await ensureBoardsLoaded();
+    }
+    openDestMenu();
+  });
+
+  // Menu option click — pick destination, close, and handle the
+  // "New project" branch (sign-in redirect when not authed; otherwise
+  // unhide the inline create row).
+  $('#rb-collectDestMenu')?.addEventListener('click', (e) => {
+    const opt = e.target.closest('.rb-collect-dest-opt');
+    if (!opt) return;
+    const kind = opt.dataset.kind;
+    if (kind === 'library') {
+      collectState.destination = { kind: 'library' };
+      $('#rb-collectNewRow').hidden = true;
+    } else if (kind === 'project') {
+      collectState.destination = { kind: 'project', id: opt.dataset.id, name: opt.dataset.name };
+      $('#rb-collectNewRow').hidden = true;
+    } else if (kind === 'new') {
+      if (collectState.boardsUnauthorized || !collectState.webShellOrigin) {
+        // Not signed in — open the web-shell signup page in a new tab
+        // and back off. The user can pick a destination again once they
+        // return signed in (we re-load boards on next pill open).
+        const origin = collectState.webShellOrigin
+          || 'https://uncraft.app';
+        try { window.open(`${origin}/signup`, '_blank', 'noopener,noreferrer'); } catch {}
+        closeDestMenu();
+        return;
+      }
+      collectState.destination = { kind: 'new' };
+      $('#rb-collectNewRow').hidden = false;
+      setTimeout(() => $('#rb-collectNewName')?.focus(), 30);
+    }
+    syncDestLabel();
+    closeDestMenu();
+  });
+
+  // Click-outside to close
+  document.addEventListener('mousedown', (e) => {
+    const menu = $('#rb-collectDestMenu');
+    if (!menu || menu.hidden) return;
+    if (e.target.closest('.rb-collect-dest-wrap')) return;
+    closeDestMenu();
+  });
+
+  // Inline "Create" — POST /api/boards then auto-select the new board
+  async function createDestProject() {
+    const input = $('#rb-collectNewName');
+    const name = (input.value || '').trim();
+    if (!name) { input?.focus(); return; }
+    const btn = $('#rb-collectNewCreate');
+    btn.disabled = true;
+    btn.querySelector('.rb-btn-label').textContent = 'Creating…';
+    try {
+      if (!collectState.webShellOrigin) await ensureBoardsLoaded();
+      const res = await fetch(`${collectState.webShellOrigin}/api/boards`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.board) throw new Error(json?.error || `${res.status}`);
+      collectState.boards = [json.board, ...collectState.boards];
+      collectState.destination = { kind: 'project', id: json.board.id, name: json.board.name };
+      input.value = '';
+      $('#rb-collectNewRow').hidden = true;
+      syncDestLabel();
+      showCollectToast(`Created project "${json.board.name}"`);
+    } catch (e) {
+      showCollectToast(`Could not create project: ${e?.message || e}`);
+    } finally {
+      btn.disabled = false;
+      btn.querySelector('.rb-btn-label').textContent = 'Create';
+    }
+  }
+  $('#rb-collectNewCreate')?.addEventListener('click', createDestProject);
+  $('#rb-collectNewName')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); createDestProject(); }
+  });
+
+  // Map a staged item into the shape POST /api/assets expects. Splits
+  // out the meta JSONB so the snapshot's transient bookkeeping (DOM
+  // ref, rect, source url) lands there as-is, and surfaces the inline
+  // font data URL into blob_url for fonts.
+  function shapeAssetForApi(it, sourceUrl) {
+    const base = {
+      type: it.type,
+      name: it.name,
+      source_url: sourceUrl,
+      meta: { ...(it.snapshot.meta || {}), rect: it.snapshot.rect, capturedAt: it.capturedAt }
+    };
+    if (it.type === 'font') {
+      const s = it.snapshot;
+      base.blob_url = s.fontDataUrl || null;       // inline data URL for v1
+      base.meta = {
+        ...base.meta,
+        family: s.family,
+        weight: s.weight,
+        style: s.style,
+        size: s.size,
+        face: s.face || null,
+        fontFile: s.fontFile || null,
+        oversized: !!s.oversized
+      };
+    } else if (it.type === 'image' || it.type === 'svg' || it.type === 'video' || it.type === 'background-image') {
+      base.html = it.snapshot.html || null;
+      base.blob_url = it.snapshot.url || null;
+      base.meta = { ...base.meta, originalUrl: it.snapshot.url || null };
+    } else {
+      base.html = it.snapshot.html || null;
+    }
+    return base;
+  }
+
+  function shapeGroupForApi(it, sourceUrl) {
+    return {
+      name: it.name,
+      html: it.snapshot.html,
+      source_url: sourceUrl,
+      meta: { childCount: it.snapshot.childCount, rect: it.snapshot.rect, capturedAt: it.capturedAt }
+    };
+  }
+
+  // Save → POST /api/asset-groups for groups, then POST /api/assets for
+  // standalone items. Both use the discovered web-shell origin from
+  // ensureBoardsLoaded(); we treat origin/auth as a hard prerequisite.
+  async function saveSelectedAssets() {
+    const dest = collectState.destination || { kind: 'library' };
+    if (dest.kind === 'new') {
+      showCollectToast('Pick a project from the dropdown first (or create one).');
+      return;
+    }
+    if (!collectState.boardsLoaded) await ensureBoardsLoaded();
+    if (!collectState.webShellOrigin) {
+      showCollectToast('Could not reach Uncraft. Open the app once, then retry.');
+      return;
+    }
+    if (collectState.boardsUnauthorized) {
+      try { window.open(`${collectState.webShellOrigin}/login`, '_blank', 'noopener,noreferrer'); } catch {}
+      showCollectToast('Sign in to Uncraft, then come back and retry.');
+      return;
+    }
+
+    const selected = collectState.items.filter((it) => collectState.selected.has(it.id));
+    if (!selected.length) return;
+
+    const saveBtn = $('#rb-collectSave');
+    saveBtn.disabled = true;
+    saveBtn.querySelector('.rb-btn-label').textContent = 'Saving…';
+
+    try {
+      const sourceUrl = location.href;
+      const origin = collectState.webShellOrigin;
+      const groups = selected.filter((it) => it.isGroup);
+      const singles = selected.filter((it) => !it.isGroup);
+
+      // Save groups first (so we COULD wire their child items back via
+      // group_id in a follow-up; v1 just saves the group snapshot).
+      for (const g of groups) {
+        const res = await fetch(`${origin}/api/asset-groups`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ destination: dest, group: shapeGroupForApi(g, sourceUrl) })
+        });
+        if (!res.ok) throw new Error(`asset-groups ${res.status}`);
+      }
+
+      // Batch the standalone items.
+      if (singles.length) {
+        const items = singles.map((it) => shapeAssetForApi(it, sourceUrl));
+        const res = await fetch(`${origin}/api/assets`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ destination: dest, items, dedup: dest.kind === 'library' })
+        });
+        if (!res.ok) throw new Error(`assets ${res.status}`);
+      }
+
+      saveBtn.querySelector('.rb-btn-label').textContent = 'Saved ✓';
+      const dest_label =
+        dest.kind === 'library' ? 'Global library' :
+        dest.kind === 'project' ? `"${dest.name}"` :
+        'project';
+      showCollectToast(`Saved ${selected.length} item${selected.length === 1 ? '' : 's'} to ${dest_label} →`);
+      // Remove saved items from stage. Keep destination + boards cache.
+      const savedIds = new Set(selected.map((it) => it.id));
+      collectState.items = collectState.items.filter((it) => !savedIds.has(it.id));
+      for (const id of savedIds) collectState.selected.delete(id);
+      renderCollectStage();
+    } catch (e) {
+      showCollectToast(`Save failed: ${e?.message || e}`);
+    } finally {
+      saveBtn.disabled = false;
+      // Restore label after a beat so the "Saved ✓" reads.
+      setTimeout(() => {
+        const lbl = saveBtn.querySelector('.rb-btn-label');
+        if (lbl) lbl.textContent = 'Save selected';
+      }, 1400);
+    }
+  }
+  $('#rb-collectSave')?.addEventListener('click', saveSelectedAssets);
+
   // --- Mode toggle ---
   function applyMode(mode) {
     currentMode = mode;
@@ -441,10 +1876,18 @@
     panel.classList.remove('rb-expanded');
     $$('.rb-toggle-seg').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
     const siteAnalysis = $('#rb-siteAnalysis');
+    // In Collect Assets mode (light) the site analysis + Smart Remix
+    // content panels are hidden; the Collect host (#rb-contentCollect)
+    // takes their slot. The legacy #rb-contentLight (Smart Remix UI)
+    // stays in the markup but hidden — its features are slated to
+    // migrate to the canvas-side layers Assets tab.
     if (siteAnalysis) siteAnalysis.style.display = mode === 'dark' ? '' : 'none';
     $('#rb-contentDark').style.display = mode === 'dark' ? '' : 'none';
-    $('#rb-contentLight').style.display = mode === 'light' ? '' : 'none';
+    $('#rb-contentLight').style.display = 'none';
+    const collectHost = $('#rb-contentCollect');
+    if (collectHost) collectHost.style.display = mode === 'light' ? '' : 'none';
     chrome.storage.sync.set({ activeMode: mode });
+    if (mode === 'light') activateCollect(); else deactivateCollect();
   }
 
   panel.querySelector('.rb-toggle').addEventListener('click', (e) => {
