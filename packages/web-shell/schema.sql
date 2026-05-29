@@ -69,3 +69,52 @@ CREATE TABLE IF NOT EXISTS edges (
 );
 CREATE INDEX IF NOT EXISTS idx_edges_board ON edges(board_id);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_node_id);
+
+-- Asset groups: composite assets created via Cmd+G in the widget's
+-- Collect Assets mode. Each group has its own snapshot (cloned common
+-- ancestor with non-selected siblings stripped) and references its
+-- member assets via assets.group_id.
+CREATE TABLE IF NOT EXISTS asset_groups (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- NULL = global library; non-NULL pins the group to a single project.
+  project_id UUID REFERENCES boards(id) ON DELETE SET NULL,
+  name TEXT NOT NULL DEFAULT 'Untitled group',
+  html TEXT NOT NULL,
+  css TEXT,
+  thumb_url TEXT,
+  source_url TEXT,
+  meta JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_asset_groups_user ON asset_groups(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_asset_groups_project ON asset_groups(project_id) WHERE project_id IS NOT NULL;
+
+-- Individual assets: images, svgs, icons, fonts, components, sections,
+-- text snippets, background images, etc. project_id NULL = global asset
+-- library (shared across all of the user's projects). group_id NULL =
+-- standalone asset (not part of a group). Both are nullable foreign
+-- keys with ON DELETE SET NULL so deleting a project or group doesn't
+-- cascade through the user's whole library.
+CREATE TABLE IF NOT EXISTS assets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  project_id UUID REFERENCES boards(id) ON DELETE SET NULL,
+  group_id UUID REFERENCES asset_groups(id) ON DELETE SET NULL,
+  type VARCHAR(24) NOT NULL,
+  name TEXT NOT NULL,
+  source_url TEXT,           -- the page the asset was collected from
+  html TEXT,                 -- outerHTML for component/section/text/group children
+  css TEXT,                  -- isolated computed CSS (v2)
+  blob_url TEXT,             -- hosted file URL (image/svg/video/font binary) — v2
+  thumb_url TEXT,            -- preview PNG — v2
+  meta JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_assets_user ON assets(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_assets_project ON assets(project_id) WHERE project_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_assets_group ON assets(group_id) WHERE group_id IS NOT NULL;
+-- Dedup convenience: lookup by (user, source_url, type) for the global
+-- library. Not a unique constraint (the user may collect the same image
+-- twice intentionally; dedup is opt-in at the API layer).
+CREATE INDEX IF NOT EXISTS idx_assets_user_source ON assets(user_id, source_url, type);
