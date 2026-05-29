@@ -492,6 +492,75 @@
 }
 #repixbridge-panel .rb-callout-dismiss:hover { opacity: 1; }
 
+/* --- Unsaved-assets confirmation modal ─────────────────────────────
+   Lives at the top of #repixbridge-panel as a full-card overlay.
+   Frosted dim backdrop + solid card. Uses the widget's own --rb-*
+   tokens + Instrument typography so the dialog reads as part of the
+   widget surface rather than a foreign element. */
+#repixbridge-panel .rb-modal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: inherit;
+  animation: rb-modal-overlay-in 160ms ease-out;
+}
+#repixbridge-panel.rb-light .rb-modal-overlay {
+  background: rgba(0, 0, 0, 0.18);
+}
+@keyframes rb-modal-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+#repixbridge-panel .rb-modal-card {
+  width: calc(100% - 36px);
+  max-width: 320px;
+  background: var(--rb-bg);
+  color: var(--rb-fg);
+  border: 1px solid var(--rb-border);
+  border-radius: 22px;
+  padding: 22px 22px 18px;
+  font-family: inherit;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  animation: rb-modal-card-in 200ms ease-out;
+}
+@keyframes rb-modal-card-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+#repixbridge-panel .rb-modal-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--rb-fg);
+}
+#repixbridge-panel .rb-modal-title .rb-serif {
+  font-family: 'Instrument Serif', serif;
+  font-style: italic;
+  font-weight: 400;
+  font-size: 17px;
+}
+#repixbridge-panel .rb-modal-body {
+  margin: 0 0 16px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--rb-fg-muted);
+}
+#repixbridge-panel .rb-modal-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+#repixbridge-panel .rb-modal-actions .rb-btn {
+  min-width: 70px;
+}
+
 /* --- Collect Assets view ─────────────────────────────────────────────
    Replaces the site analysis + Smart Remix content slots when the
    widget is in light mode (Collect Assets). Hosts the intro, stage
@@ -598,6 +667,14 @@
   transition: background 100ms ease, border-color 100ms ease;
 }
 #repixbridge-panel .rb-collect-row:hover {
+  background: var(--rb-surface);
+}
+/* Mirror-emphasis applied from the page side: when the user hovers a
+   collected element on the live page, the corresponding stage row
+   takes the same neutral light-grey hover treatment as a direct
+   widget-side row hover. No outline / no blue tint — those would
+   compete with the persistent blue marker on the page outline. */
+#repixbridge-panel .rb-collect-row.rb-collect-row-hovered {
   background: var(--rb-surface);
 }
 /* Group row — leading vertical bar so the user reads "this is a
@@ -876,14 +953,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-  font-size: 11.5px;
+  font-size: 10px;
   color: rgba(239, 238, 235, 0.85);
-}
-#__rb-collect-stack-popup .__rb-stack-dim {
-  font-size: 11px;
-  color: rgba(239, 238, 235, 0.45);
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
 }
 #__rb-collect-stack-popup .__rb-stack-sep {
   height: 1px;

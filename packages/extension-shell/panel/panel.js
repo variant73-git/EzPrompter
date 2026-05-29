@@ -35,6 +35,32 @@
   const panel = document.createElement('div');
   panel.id = 'repixbridge-panel';
   panel.innerHTML = `
+    <!-- Unsaved-assets confirmation modal. Shown when the user is about
+         to leave / live-remix / refresh and there are uncommitted items
+         in the Collect Assets stage. Three actions: discard everything
+         and proceed, keep editing (cancel), save then proceed. Styled
+         in the widget's own design language (solid surface, Instrument
+         typography, --rb- tokens). -->
+    <div class="rb-modal-overlay" id="rb-unsavedOverlay" hidden>
+      <div class="rb-modal-card" role="dialog" aria-modal="true" aria-labelledby="rb-unsavedTitle">
+        <h3 class="rb-modal-title" id="rb-unsavedTitle">
+          <span class="rb-serif"><i>Save</i></span> your assets?
+        </h3>
+        <p class="rb-modal-body" id="rb-unsavedBody">You have items in the Collect stage. Save them before continuing?</p>
+        <div class="rb-modal-actions">
+          <button type="button" class="rb-btn rb-btn-outline rb-btn-sm" id="rb-unsavedDiscard">
+            <span class="rb-btn-label">Discard</span>
+          </button>
+          <button type="button" class="rb-btn rb-btn-outline rb-btn-sm" id="rb-unsavedCancel">
+            <span class="rb-btn-label">Cancel</span>
+          </button>
+          <button type="button" class="rb-btn rb-btn-primary rb-btn-sm" id="rb-unsavedSave">
+            <span class="rb-btn-label">Save</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div class="rb-inner">
       <header class="rb-header">
         <div class="rb-logo">
@@ -192,7 +218,7 @@
               </button>
             </div>
             <button type="button" class="rb-btn rb-btn-primary rb-btn-full" id="rb-collectSave">
-              <span class="rb-btn-label">Save selected</span>
+              <span class="rb-btn-label">Collect Selected to Assets Library</span>
             </button>
           </div>
         </div>
@@ -432,7 +458,7 @@
   const $$ = (sel) => panel.querySelectorAll(sel);
 
   // --- Close ---
-  $('#rb-close').addEventListener('click', () => {
+  function closePanelImmediate() {
     // Tear down Collect mode first so its document-level listeners
     // and overlay don't outlive the widget. panel.remove() drops the
     // widget DOM but those handlers were attached to document, not to
@@ -442,7 +468,19 @@
       const el = document.getElementById(id);
       if (el && el.parentNode) el.parentNode.removeChild(el);
     }
+    // Persistent collected-item outlines have per-item ids
+    // (__rb-collect-mark-<itemid>); brute-force querySelectorAll wipes
+    // any that slipped through clearAllOutlines on deactivate.
+    document.querySelectorAll('[id^="__rb-collect-mark-"]').forEach((n) => {
+      if (n.parentNode) n.parentNode.removeChild(n);
+    });
     panel.remove();
+  }
+  $('#rb-close').addEventListener('click', () => {
+    // Closing the widget destroys the in-memory stage — same data-loss
+    // risk as Live Remix. Gate behind the unsaved dialog when there's
+    // anything pending.
+    guardUnsaved(closePanelImmediate, 'Closing the widget discards your collected items. Save them first?');
   });
 
   // --- Drag ---
@@ -662,7 +700,7 @@
     collectState.overlay = ov;
     return ov;
   }
-  function positionOverlay(el, type) {
+  function positionOverlay(el, type, mode) {
     const ov = ensureOverlay();
     const r = el.getBoundingClientRect();
     ov.style.display = 'block';
@@ -671,10 +709,84 @@
     ov.style.width = `${r.width}px`;
     ov.style.height = `${r.height}px`;
     const tag = ov.querySelector('#__rb-collect-overlay-tag');
-    if (tag) tag.textContent = `Click to collect · ${TYPE_LABEL[type] || type}`;
+    if (tag) {
+      // `mode` flips the verb so the user reads what THIS click will
+      // actually do — collect (new element) vs deselect (re-clicking
+      // a previously collected one).
+      const verb = mode === 'deselect' ? 'Click to deselect' : 'Click to collect';
+      tag.textContent = `${verb} · ${TYPE_LABEL[type] || type}`;
+    }
   }
   function hideOverlay() {
     if (collectState.overlay) collectState.overlay.style.display = 'none';
+  }
+
+  // ── Persistent "collected" outlines ──────────────────────────────────
+  // Once an item is captured, it keeps a thin blue outline pinned to
+  // its DOM element so the user can SEE what they've already collected
+  // while browsing the rest of the page. One outline per item.
+  // Different colour + thinner border than the hover preview overlay so
+  // the two coexist cleanly: grey-dark hover (transient) vs blue (the
+  // accent restricted to the checkbox affordance and now this).
+  function ensureItemOutline(item) {
+    if (item._outlineEl || !item._elRef) return;
+    const ov = document.createElement('div');
+    ov.setAttribute('data-uncraft-internal', '1');
+    ov.id = `__rb-collect-mark-${item.id}`;
+    Object.assign(ov.style, {
+      position: 'fixed',
+      pointerEvents: 'none',
+      // Below the hover overlay (2147483645) so the hover preview wins
+      // when the user is targeting a NEW element on top of a collected
+      // one. Above page content.
+      zIndex: '2147483640',
+      border: '1.5px solid #0095FF',
+      borderRadius: '3px',
+      transition: 'left 80ms ease-out, top 80ms ease-out, width 80ms ease-out, height 80ms ease-out',
+      boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.20)',
+      background: 'rgba(0, 149, 255, 0.05)'
+    });
+    document.documentElement.appendChild(ov);
+    item._outlineEl = ov;
+    positionItemOutline(item);
+  }
+
+  function positionItemOutline(item) {
+    if (!item._outlineEl || !item._elRef) return;
+    // Element disconnected from DOM (SPA navigated, lazy-load tore it
+    // down): hide rather than render at 0/0/0/0.
+    if (!item._elRef.isConnected) {
+      item._outlineEl.style.display = 'none';
+      return;
+    }
+    const r = item._elRef.getBoundingClientRect();
+    // Off-screen: hide so we don't paint scroll-offset ghosts.
+    if (r.width === 0 || r.height === 0) {
+      item._outlineEl.style.display = 'none';
+      return;
+    }
+    item._outlineEl.style.display = 'block';
+    item._outlineEl.style.left = `${r.left}px`;
+    item._outlineEl.style.top = `${r.top}px`;
+    item._outlineEl.style.width = `${r.width}px`;
+    item._outlineEl.style.height = `${r.height}px`;
+  }
+
+  function removeItemOutline(item) {
+    if (item._outlineEl && item._outlineEl.parentNode) {
+      item._outlineEl.parentNode.removeChild(item._outlineEl);
+    }
+    item._outlineEl = null;
+  }
+
+  function repositionAllOutlines() {
+    for (const it of collectState.items) {
+      if (it._outlineEl) positionItemOutline(it);
+    }
+  }
+
+  function clearAllOutlines() {
+    for (const it of collectState.items) removeItemOutline(it);
   }
 
   // ── Activation / deactivation ─────────────────────────────────────────
@@ -686,11 +798,37 @@
     // overlay doesn't flicker between target page elements and popup
     // row hover-preview.
     if (_stackPopup && _stackPopup.style.display === 'block') return;
-    if (isWidgetEl(e.target)) { hideOverlay(); _hoverEl = null; return; }
+    if (isWidgetEl(e.target)) {
+      hideOverlay();
+      // Mouse left the page back onto the widget — clear any in-flight
+      // emphasis on the previously-hovered collected element.
+      if (_hoverEl) {
+        const prev = findCollectedByElement(_hoverEl);
+        if (prev) emphasiseItem(prev, false);
+      }
+      _hoverEl = null;
+      return;
+    }
     if (e.target === _hoverEl) return;
+    // Clear emphasis on the element we're leaving (if it was collected).
+    if (_hoverEl) {
+      const prev = findCollectedByElement(_hoverEl);
+      if (prev) emphasiseItem(prev, false);
+    }
     _hoverEl = e.target;
     const type = inferAssetType(e.target);
-    positionOverlay(e.target, type);
+    // Bidirectional emphasis: hovering an already-collected element on
+    // the page brightens BOTH its on-page outline AND its row in the
+    // staging list (scrollIntoView nudges hidden rows into view). The
+    // hover-overlay verb also flips to "Click to deselect" so the
+    // toggle behaviour reads at a glance.
+    const existing = findCollectedByElement(e.target);
+    if (existing) {
+      positionOverlay(e.target, type, 'deselect');
+      emphasiseItem(existing, true);
+    } else {
+      positionOverlay(e.target, type);
+    }
   }
   function onCollectClick(e) {
     if (!collectState.active) return;
@@ -715,10 +853,26 @@
     e.preventDefault();
     e.stopPropagation();
     const el = e.target;
+    // Toggle: clicking an already-collected element removes it from
+    // the stage and clears its persistent outline. Same gesture both
+    // ways — selection and deselection.
+    const existing = findCollectedByElement(el);
+    if (existing) {
+      removeItem(existing);
+      showCollectToast(`Removed ${existing.name}`);
+      return;
+    }
     const type = inferAssetType(el);
     collectItem(el, type);
   }
-  function onCollectLeave() { hideOverlay(); }
+  function onCollectLeave() {
+    hideOverlay();
+    if (_hoverEl) {
+      const prev = findCollectedByElement(_hoverEl);
+      if (prev) emphasiseItem(prev, false);
+    }
+    _hoverEl = null;
+  }
 
   function activateCollect() {
     if (collectState.active) return;
@@ -737,6 +891,11 @@
     document.addEventListener('mousedown', onMarqueeMouseDown, true);
     document.addEventListener('mousemove', onMarqueeMouseMove, true);
     document.addEventListener('mouseup', onMarqueeMouseUp, true);
+    // Outlines pinned to collected elements need to follow scroll +
+    // resize so they don't drift to wrong positions when the user
+    // moves around the page.
+    window.addEventListener('scroll', repositionAllOutlines, true);
+    window.addEventListener('resize', repositionAllOutlines, true);
     renderCollectStage();
   }
   function deactivateCollect() {
@@ -753,8 +912,11 @@
     document.removeEventListener('mousedown', onMarqueeMouseDown, true);
     document.removeEventListener('mousemove', onMarqueeMouseMove, true);
     document.removeEventListener('mouseup', onMarqueeMouseUp, true);
+    window.removeEventListener('scroll', repositionAllOutlines, true);
+    window.removeEventListener('resize', repositionAllOutlines, true);
     closeStackPopup();
     hideOverlay();
+    clearAllOutlines();
     marquee.active = false;
     marquee.armed = false;
     if (marquee.rectEl) marquee.rectEl.style.display = 'none';
@@ -866,15 +1028,12 @@
     const clsHint = (typeof el.className === 'string' && el.className.trim())
       ? '.' + el.className.trim().split(/\s+/)[0] : '';
     const label = forcedLabel || `<${tag}>${idHint || clsHint}`;
-    const r = el.getBoundingClientRect();
-    const dim = `${Math.round(r.width)}×${Math.round(r.height)}`;
     const idx = _stackRowRefs.length;
     _stackRowRefs.push(el);
     return `
       <button type="button" class="__rb-stack-row${isSynthetic ? ' __rb-stack-row-synth' : ''}" data-stack-idx="${idx}" data-type="${type}">
         <span class="__rb-stack-type">${TYPE_LABEL[type] || type}</span>
         <span class="__rb-stack-label">${escapeHtml(label)}</span>
-        <span class="__rb-stack-dim">${dim}</span>
       </button>
     `;
   }
@@ -950,6 +1109,15 @@
     if (!row) return;
     const el = _stackRowRefs[parseInt(row.dataset.stackIdx, 10)];
     if (!el) return;
+    // Same toggle semantics as a regular click — picking an already-
+    // collected element from the stack popup deselects it.
+    const existing = findCollectedByElement(el);
+    if (existing) {
+      removeItem(existing);
+      showCollectToast(`Removed ${existing.name}`);
+      closeStackPopup();
+      return;
+    }
     const type = row.dataset.type || inferAssetType(el);
     collectItem(el, type);
     closeStackPopup();
@@ -1023,16 +1191,12 @@
     return r;
   }
 
-  // Show a "Cmd-drag to marquee" hint on the hover overlay tag while
-  // Cmd is held but no drag has started yet. Reuses the existing
-  // overlay tag.
-  function setArmedCursor(on) {
-    if (!collectState.active) return;
-    if (on) {
-      document.documentElement.style.cursor = 'crosshair';
-    } else {
-      document.documentElement.style.cursor = '';
-    }
+  // Cursor stays untouched in all Collect modes (per the editor's
+  // Live Remix behaviour). The Cmd-armed marquee state is signalled
+  // by the hover overlay disappearing and the dashed-rectangle
+  // following the drag — no cursor change.
+  function setArmedCursor(_on) {
+    // intentional no-op
   }
 
   function onMarqueeKeyDown(e) {
@@ -1144,11 +1308,18 @@
       showCollectToast('Marquee was empty — try a larger area.');
       return;
     }
-    for (const el of els) {
+    // Marquee never overwrites already-collected elements (toggle in a
+    // batch context is confusing). Pre-filter so the toast count
+    // reflects only new captures.
+    const fresh = els.filter((el) => !findCollectedByElement(el));
+    const skipped = els.length - fresh.length;
+    for (const el of fresh) {
       const type = inferAssetType(el);
       collectItem(el, type);
     }
-    showCollectToast(`Marquee → ${els.length} item${els.length === 1 ? '' : 's'} collected.`);
+    const parts = [`${fresh.length} new`];
+    if (skipped) parts.push(`${skipped} already collected`);
+    showCollectToast(`Marquee → ${parts.join(', ')}.`);
   }
 
   // ── Cmd+G grouping ────────────────────────────────────────────────────
@@ -1214,7 +1385,10 @@
       tag: ancestor.tagName.toLowerCase(),
       html,
       rect: pickRect(r),
-      childCount: els.length
+      childCount: els.length,
+      _ancestorEl: ancestor  // kept on the snapshot so groupSelected can
+                              // attach an outline to the common ancestor
+                              // bbox. Stripped before serialising to API.
     };
   }
 
@@ -1278,14 +1452,23 @@
       snapshot: snap,
       childIds,
       capturedAt: Date.now(),
-      sourceUrl: location.href
+      sourceUrl: location.href,
+      _elRef: snap._ancestorEl  // promote the ancestor ref to top-level
+                                 // so positionItemOutline can find it
+                                 // without reaching into snapshot
     };
+    // Tear down the children's outlines first; the group is about to
+    // adopt a single outline around the common ancestor and we don't
+    // want stacked rectangles.
+    for (const it of collectState.items) {
+      if (childIds.includes(it.id)) removeItemOutline(it);
+    }
     collectState.items = collectState.items.filter((it) => !childIds.includes(it.id));
-    collectState.selected.delete(...childIds);
     childIds.forEach((id) => collectState.selected.delete(id));
     collectState.items.push(group);
     collectState.selected.add(groupId);
     renderCollectStage();
+    ensureItemOutline(group);
     showCollectToast(`Grouped ${childIds.length} items.`);
   }
 
@@ -1426,6 +1609,23 @@
     return family;
   }
 
+  // Find a staged item whose source DOM ref is this element. Used by
+  // the click handlers to implement toggle-on-reclick: clicking an
+  // already-collected element removes it instead of duplicating.
+  function findCollectedByElement(el) {
+    return collectState.items.find((it) => it._elRef === el);
+  }
+
+  // Remove an item from the stage AND tear down its persistent outline.
+  // Used both by the row × button and by the toggle-on-reclick path.
+  function removeItem(item) {
+    if (!item) return;
+    removeItemOutline(item);
+    collectState.items = collectState.items.filter((it) => it.id !== item.id);
+    collectState.selected.delete(item.id);
+    renderCollectStage();
+  }
+
   // ── Capture + staging ─────────────────────────────────────────────────
   function collectItem(el, type) {
     const id = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -1444,6 +1644,7 @@
     collectState.items.push(item);
     collectState.selected.add(id);
     renderCollectStage();
+    ensureItemOutline(item);
     showCollectToast(`Saved as ${TYPE_LABEL[type] || type} → ${item.name}`);
     // Text + leaf-text components also capture the font used. The font
     // becomes a separate, deduped asset (one per family on this page).
@@ -1545,10 +1746,69 @@
       else collectState.selected.add(id);
       renderCollectStage();
     } else if (action === 'remove') {
+      const idx = collectState.items.findIndex((it) => it.id === id);
+      if (idx >= 0) removeItemOutline(collectState.items[idx]);
       collectState.items = collectState.items.filter((it) => it.id !== id);
       collectState.selected.delete(id);
       renderCollectStage();
     }
+  });
+
+  // Hovering a row in the stage emphasises the persistent outline of
+  // the corresponding element on the page — thicker border, slightly
+  // stronger inner glow. Helps the user pair each stage row back to
+  // its source element at a glance. mouseover/mouseout delegated on
+  // the stage container (mouseenter/leave don't bubble).
+  function emphasiseOutline(item, on) {
+    const ov = item?._outlineEl;
+    if (!ov) return;
+    // Persistent blue border + boxShadow are NEVER changed by hover —
+    // that's the steady-state "this is collected" mark. Hover only
+    // washes the inside with a soft grey overlay so both directions
+    // (page hover, row hover) read as the same neutral highlight.
+    if (on) {
+      ov.style.background = 'rgba(239, 238, 235, 0.18)';
+    } else {
+      ov.style.background = 'rgba(0, 149, 255, 0.05)';
+    }
+  }
+  // Mirror of emphasiseOutline for the staging list — hovering the
+  // collected element ON the page brightens its row in the widget's
+  // stage, and (when needed) scrolls the row into view. Pairs both
+  // directions so the user can always see where their cursor maps
+  // back to in the staging list.
+  function emphasiseStageRow(itemId, on) {
+    const row = panel.querySelector(`#rb-collectStage .rb-collect-row[data-id="${itemId}"]`);
+    if (!row) return;
+    row.classList.toggle('rb-collect-row-hovered', on);
+    if (on) {
+      // block:'nearest' avoids scrolling when the row is already visible.
+      try { row.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch {}
+    }
+  }
+  // Combined helper — applies / clears emphasis on BOTH the on-page
+  // outline AND the corresponding stage row. Called from the page-side
+  // hover handler.
+  function emphasiseItem(item, on) {
+    if (!item) return;
+    emphasiseOutline(item, on);
+    emphasiseStageRow(item.id, on);
+  }
+  $('#rb-collectStage')?.addEventListener('mouseover', (e) => {
+    const row = e.target.closest('.rb-collect-row');
+    if (!row) return;
+    const item = collectState.items.find((it) => it.id === row.dataset.id);
+    if (item) emphasiseOutline(item, true);
+  });
+  $('#rb-collectStage')?.addEventListener('mouseout', (e) => {
+    const row = e.target.closest('.rb-collect-row');
+    if (!row) return;
+    // Only fire the leave when we're actually leaving the row (not
+    // moving between its children).
+    const related = e.relatedTarget;
+    if (related && row.contains(related)) return;
+    const item = collectState.items.find((it) => it.id === row.dataset.id);
+    if (item) emphasiseOutline(item, false);
   });
 
   $('#rb-collectSelectAll')?.addEventListener('click', () => {
@@ -1853,6 +2113,10 @@
       showCollectToast(`Saved ${selected.length} item${selected.length === 1 ? '' : 's'} to ${dest_label} →`);
       // Remove saved items from stage. Keep destination + boards cache.
       const savedIds = new Set(selected.map((it) => it.id));
+      // Tear down their persistent outlines too — once saved, the on-
+      // page mark goes away (the user already committed; outline noise
+      // would compete with collecting new items).
+      for (const it of selected) removeItemOutline(it);
       collectState.items = collectState.items.filter((it) => !savedIds.has(it.id));
       for (const id of savedIds) collectState.selected.delete(id);
       renderCollectStage();
@@ -1863,11 +2127,91 @@
       // Restore label after a beat so the "Saved ✓" reads.
       setTimeout(() => {
         const lbl = saveBtn.querySelector('.rb-btn-label');
-        if (lbl) lbl.textContent = 'Save selected';
+        if (lbl) lbl.textContent = 'Collect Selected to Assets Library';
       }, 1400);
     }
   }
   $('#rb-collectSave')?.addEventListener('click', saveSelectedAssets);
+
+  // ── Unsaved-items confirmation flow ───────────────────────────────────
+  // Promise-style wrapper around the modal. Resolves to 'save', 'discard',
+  // or 'cancel' so callers can decide whether to proceed with the
+  // destructive action (close, reload, Live Remix).
+  function hasUnsavedItems() {
+    return collectState.items.length > 0;
+  }
+  function openUnsavedModal({ body } = {}) {
+    return new Promise((resolve) => {
+      const overlay = $('#rb-unsavedOverlay');
+      if (!overlay) { resolve('cancel'); return; }
+      if (body) $('#rb-unsavedBody').textContent = body;
+      overlay.hidden = false;
+      const cleanup = () => { overlay.hidden = true; };
+      const onDiscard = () => { cleanup(); resolve('discard'); };
+      const onCancel = () => { cleanup(); resolve('cancel'); };
+      const onSave = async () => {
+        cleanup();
+        try { await saveSelectedAssets(); resolve('save'); }
+        catch { resolve('save'); }
+      };
+      $('#rb-unsavedDiscard').onclick = onDiscard;
+      $('#rb-unsavedCancel').onclick = onCancel;
+      $('#rb-unsavedSave').onclick = onSave;
+      // Esc → Cancel (the safest default for a "you have unsaved work"
+      // dialog — Discard would lose data on a misclick).
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); document.removeEventListener('keydown', onKey, true); onCancel(); }
+      };
+      document.addEventListener('keydown', onKey, true);
+    });
+  }
+  // Convenience: runs `action` after the user resolves the unsaved
+  // dialog (or immediately when there's nothing pending). `action` only
+  // runs on 'save' or 'discard' — 'cancel' aborts silently.
+  async function guardUnsaved(action, body) {
+    if (!hasUnsavedItems()) { action(); return; }
+    const decision = await openUnsavedModal({ body });
+    if (decision === 'cancel') return;
+    // Mark stage cleared on discard so subsequent beforeunload doesn't
+    // re-warn.
+    if (decision === 'discard') {
+      for (const it of collectState.items) removeItemOutline(it);
+      collectState.items = [];
+      collectState.selected.clear();
+      renderCollectStage();
+    }
+    action();
+  }
+
+  // Intercept Live Remix click — gates the destructive page replace
+  // behind the unsaved-items dialog. Wired in capture phase so we run
+  // BEFORE the existing handler (which sends toggleEditor + tears down
+  // the widget).
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest && e.target.closest('#rb-remixSite');
+    if (!t) return;
+    if (!hasUnsavedItems()) return; // nothing to warn about
+    e.preventDefault();
+    e.stopPropagation();
+    guardUnsaved(() => {
+      // Re-fire the action by synthesising a click after the dialog
+      // resolves. The original capture-phase listener will allow it
+      // through this time because the stage is empty (no unsaved items).
+      const evt = new MouseEvent('click', { bubbles: true, cancelable: true });
+      t.dispatchEvent(evt);
+    }, 'Live Remix will replace this page. Save your collected items first?');
+  }, true);
+
+  // Tab close / reload — beforeunload only supports the native browser
+  // prompt (browsers stripped custom messages from this lifecycle for
+  // security in 2017). We just set returnValue so the prompt fires;
+  // the widget's own modal isn't reachable here.
+  window.addEventListener('beforeunload', (e) => {
+    if (!hasUnsavedItems()) return;
+    e.preventDefault();
+    e.returnValue = '';
+    return '';
+  });
 
   // --- Mode toggle ---
   function applyMode(mode) {
