@@ -114,9 +114,21 @@
           </div>
         </section>
 
+        <!-- Mode toggle. Labels reflect the v2 positioning:
+             - "Design from Website" (dark mode) = the capture-and-rebuild
+               family (Mode E / Iter 9 / static, picked contextually by us)
+             - "Collect Asset" (light mode) = pick a visual artifact off
+               the live site (image, SVG, screenshot of a UI section,
+               palette, font) and save it to the user's Uncraft asset
+               library. Smart Remix moved out of the widget — it lives
+               on the canvas (layers panel → assets tab → per-asset
+               edit button opens a side panel right of the layers panel).
+             data-mode values kept ("dark" / "light") so existing
+             applyMode() logic and storage keys don't churn — just the
+             display labels change for now. -->
         <div class="rb-toggle">
-          <button type="button" class="rb-toggle-seg active" data-mode="dark">HTML -> Design</button>
-          <button type="button" class="rb-toggle-seg" data-mode="light">Smart Remix</button>
+          <button type="button" class="rb-toggle-seg active" data-mode="dark">Design from Website</button>
+          <button type="button" class="rb-toggle-seg" data-mode="light">Collect Asset</button>
         </div>
 
         <!-- Site Analysis (shown initially, replaced by history when available) -->
