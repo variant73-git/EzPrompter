@@ -76,7 +76,7 @@
                affordances next to it. -->
           <button type="button" class="rb-send-cta" id="rb-sendCanvas" aria-label="Send this page to Uncraft canvas" title="Save your work to a canvas project">
             <span class="rb-send-cta-icon" aria-hidden="true">${SEND_CANVAS_SVG}</span>
-            <span class="rb-send-cta-label">Send to Canvas</span>
+            <span class="rb-send-cta-label">Send to Node-Canvas</span>
           </button>
           <button type="button" class="rb-icon-btn" id="rb-cog" aria-label="Settings">${GEAR_SVG}</button>
           <button type="button" class="rb-icon-btn" id="rb-close" aria-label="Close">${CLOSE_SVG}</button>
@@ -87,23 +87,22 @@
       <div class="rb-view rb-onboarding rb-active" id="rb-viewOnboarding">
         <button type="button" class="rb-skip" id="rb-skip">Skip</button>
         <article class="rb-slide" data-step="0">
-          <h2 class="rb-slide-title"><span class="rb-serif">HTML</span> <em>to</em>
+          <h2 class="rb-slide-title">Redesign
             <span class="rb-pill-rotate" id="rb-pillRotate">
-              <span class="rb-pill-word rb-pill-active">Figma</span>
-              <span class="rb-pill-word">Pencil</span>
-              <span class="rb-pill-word">Paper</span>
-              <span class="rb-pill-word">Sketch</span>
-            </span><br><em>from</em> <span class="rb-serif">where it</span><br><span class="rb-serif">happens.</span></h2>
-          <p class="rb-slide-text"><span class="rb-sans">Import any website to</span> <em>Figma</em><br><span class="rb-sans">in one click.</span></p>
+              <span class="rb-pill-word rb-pill-active">websites</span>
+              <span class="rb-pill-word">assets</span>
+              <span class="rb-pill-word">components</span>
+              <span class="rb-pill-word">sections</span>
+            </span><br>right <em>in place</em>.</h2>
+          <p class="rb-slide-text">The whole web is a <em>template</em>. Redesign any website with a familiar live editor.</p>
         </article>
         <article class="rb-slide" data-step="1" hidden>
-          <h2 class="rb-slide-title"><span class="rb-sans-title">Two</span> <em>superpowers</em></h2>
-          <p class="rb-slide-text"><em>HTML to Design</em> <span class="rb-sans">captures full pages.</span> <em>Image Remix</em> <span class="rb-sans">reverse-engineers any image's prompt.</span></p>
+          <h2 class="rb-slide-title">Your <em>personal</em> assets collection.</h2>
+          <p class="rb-slide-text">Gather components and assets from all over the web and use in <em>any project</em>.</p>
         </article>
         <article class="rb-slide" data-step="2" hidden>
-          <h2 class="rb-slide-title"><em>Zero-cost</em> <span class="rb-sans-title">start</span></h2>
-          <span class="rb-badge-free">Free setup available</span>
-          <p class="rb-slide-text"><span class="rb-sans">Use</span> <em>Ollama</em> <span class="rb-sans">for AI and</span> <em>Pencil</em> <span class="rb-sans">or</span> <em>Paper</em> <span class="rb-sans">for design. No API keys, no subscriptions.</span></p>
+          <h2 class="rb-slide-title">The first webdesign focused <em>node-based</em> tool.</h2>
+          <p class="rb-slide-text">Edit, remix, create and mix &amp; match websites in a <em>canvas</em>.</p>
         </article>
         <div class="rb-onboarding-footer">
           <div class="rb-dots">
@@ -168,7 +167,7 @@
             <div class="rb-site-msg" id="rb-siteMsg">Analyzing...</div>
             <button type="button" class="rb-motion-btn rb-motion-full" id="rb-remixSite" style="display:none"><span class="rb-motion-arrow">${ARROW_RIGHT_SVG}</span><span class="rb-motion-label">Live Remix</span></button>
           </div>
-          <p class="rb-site-footer" id="rb-siteFooter">Don't know where to start?<br><span style="text-decoration:underline;cursor:pointer">Use the Quick Setup Wizard</span></p>
+          <p class="rb-site-footer" id="rb-siteFooter">Save your designs and collection.<br><span id="rb-signupLink" style="text-decoration:underline;cursor:pointer">Create account</span></p>
         </div>
 
         <!-- Collect Assets view — replaces #rb-siteAnalysis + Smart Remix
@@ -246,7 +245,7 @@
       <div class="rb-view" id="rb-viewSendToCanvas">
         <div class="rb-settings-header">
           <button type="button" class="rb-back" id="rb-stcBack">${BACK_SVG}</button>
-          <h2 class="rb-settings-title">Send to canvas</h2>
+          <h2 class="rb-settings-title">Send to Node-Canvas</h2>
         </div>
         <div class="rb-content-scroll rb-stc-scroll">
           <div class="rb-stc-tab-meta">
@@ -272,7 +271,7 @@
 
           <div class="rb-stc-actions">
             <button type="button" class="rb-btn rb-btn-primary rb-btn-full" id="rb-stcSend" disabled>
-              <span class="rb-btn-label">Send to canvas</span>
+              <span class="rb-btn-label">Send to Node-Canvas</span>
             </button>
             <p class="rb-stc-status-msg" id="rb-stcStatus" hidden></p>
             <a id="rb-stcOpenCanvas" class="rb-stc-followlink" hidden target="_blank" rel="noopener">Open canvas →</a>
@@ -3426,9 +3425,19 @@
     }, 2200);
   })();
 
-  // --- Wire footer Quick Setup link ---
-  const siteFooter = $('#rb-siteFooter');
-  if (siteFooter) siteFooter.addEventListener('click', () => goToWizard());
+  // --- Wire footer "Create account" link ---
+  // Opens the web-shell signup page in a new tab. Uses the cached/discovered
+  // origin so localhost dev users land on localhost:3030, prod on uncraft.app.
+  const signupLink = $('#rb-signupLink');
+  if (signupLink) signupLink.addEventListener('click', async () => {
+    let origin = null;
+    try {
+      const disc = await stcDiscoverOrigin();
+      origin = disc && disc.origin;
+    } catch (e) { /* fall through to prod */ }
+    const target = (origin || 'https://uncraft.app') + '/signup';
+    try { window.open(target, '_blank', 'noopener,noreferrer'); } catch (e) {}
+  });
 
   // --- Send to canvas (manual capture into a board) ---
   // Discovers the Uncraft web-shell origin (prod → localhost fallback),

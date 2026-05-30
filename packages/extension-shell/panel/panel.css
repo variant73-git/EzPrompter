@@ -226,31 +226,40 @@
 #repixbridge-panel .rb-slide-title .rb-sans-title {
   font-size: inherit;
 }
-/* Rotating pill (onboarding) */
+/* Rotating pill (onboarding) — pill width tracks the active word. Active
+   word sits in flow (position:relative) so it drives the container's
+   intrinsic width with symmetric padding on both sides; inactive/exiting
+   words are absolutely positioned, filling the pill so their slide-in /
+   slide-out transforms read as a smooth swap. */
 #repixbridge-panel .rb-pill-rotate {
-  display: inline-flex; align-items: center; justify-content: center;
+  display: inline-flex;
+  align-items: center; justify-content: center;
   position: relative;
-  background: none; border: 1.5px solid var(--rb-fg-muted);
-  border-radius: 999px; padding: 4px 20px;
+  background: none; border: 2.5px solid var(--rb-fg-muted);
+  border-radius: 999px; padding: 4px 10px 7px;
   font-family: 'Instrument Sans', sans-serif; font-weight: 400;
-  font-size: inherit; color: var(--rb-fg); font-style: normal;
-  overflow: hidden; height: 1.25em;
-  min-width: 80px; text-align: center;
-  vertical-align: baseline;
-  line-height: 1.15;
+  font-size: 0.85em; color: var(--rb-fg); font-style: normal;
+  overflow: hidden;
+  text-align: center;
+  vertical-align: middle;
+  line-height: 1;
 }
 #repixbridge-panel .rb-pill-word {
   display: flex; align-items: center; justify-content: center;
   transition: transform 350ms ease, opacity 350ms ease;
-  position: absolute; inset: 0;
+  /* Match the pill's asymmetric padding so absolute (entering/exiting)
+     words share the active word's vertical box — no 1.5px jump on swap. */
+  position: absolute; inset: 4px 0 7px 0;
   transform: translateY(100%); opacity: 0;
+  white-space: nowrap;
+  line-height: 1;
 }
 #repixbridge-panel .rb-pill-word.rb-pill-active {
-  position: relative;
+  position: relative; inset: auto;
   transform: translateY(0); opacity: 1;
 }
 #repixbridge-panel .rb-pill-word.rb-pill-exit {
-  position: absolute;
+  position: absolute; inset: 4px 0 7px 0;
   transform: translateY(-100%); opacity: 0;
 }
 

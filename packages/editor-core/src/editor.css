@@ -697,6 +697,133 @@ body.rb-ed-light .rb-ed-zoom-sep { background:rgba(0,0,0,0.08); }
 .rb-insp-eye-btn:hover { color:#EFEEEB; }
 .rb-insp-eye-btn.rb-insp-eye-off { color:rgba(239,238,235,0.2); }
 
+/* ===== ASSETS TAB — COLLAPSIBLE CARDS ===== */
+.rb-ed-assets-card { padding:0; }
+.rb-ed-assets-card .rb-insp-sec-hd { padding:10px 14px; }
+.rb-ed-assets-card .rb-insp-sec-body { padding:4px 0 8px; }
+.rb-ed-assets-card.collapsed .rb-insp-sec-body { display:none; }
+
+/* Scope dropdown trigger — small chip in the User Collected card header. */
+.rb-ed-assets-scope {
+  display:inline-flex; align-items:center; gap:4px;
+  padding:3px 7px;
+  background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.10);
+  border-radius:4px;
+  color:rgba(239,238,235,0.75);
+  font:500 10px 'Instrument Sans',sans-serif;
+  cursor:pointer; -webkit-appearance:none;
+  transition:background 120ms, border-color 120ms, color 120ms;
+}
+.rb-ed-assets-scope:hover {
+  background:rgba(255,255,255,0.08);
+  border-color:rgba(255,255,255,0.18);
+  color:#EFEEEB;
+}
+.rb-ed-assets-scope svg { flex-shrink:0; opacity:0.7; }
+
+/* Scope dropdown popup — frosted, parented to body, fixed-positioned. */
+.rb-ed-assets-scope-menu {
+  position:fixed; z-index:2147483646;
+  background:rgba(10,10,10,0.92);
+  -webkit-backdrop-filter:blur(28px) saturate(140%);
+  backdrop-filter:blur(28px) saturate(140%);
+  border:1px solid rgba(255,255,255,0.10);
+  border-radius:8px;
+  padding:4px; min-width:180px;
+  box-shadow:0 16px 40px rgba(0,0,0,0.55);
+  font:400 12px 'Instrument Sans',sans-serif;
+  animation:rb-ed-fade 100ms ease-out;
+}
+.rb-ed-assets-scope-opt {
+  display:flex; align-items:center; justify-content:space-between;
+  width:100%; padding:7px 10px;
+  background:none; border:none;
+  color:#EFEEEB;
+  font:500 12px 'Instrument Sans',sans-serif;
+  cursor:pointer; border-radius:5px;
+  text-align:left; -webkit-appearance:none;
+  transition:background 100ms;
+}
+.rb-ed-assets-scope-opt:hover { background:rgba(255,255,255,0.06); }
+.rb-ed-assets-scope-tick { color:#0095FF; font-weight:600; }
+
+/* Status messages (loading / empty / unauthorized) inside the body. */
+.rb-ed-assets-status {
+  padding:14px;
+  font:400 11px 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.5);
+  text-align:center; line-height:1.5;
+}
+.rb-ed-assets-signin {
+  display:inline-block; margin-top:0;
+  background:none; border:1px solid rgba(255,255,255,0.18);
+  border-radius:4px; padding:5px 12px;
+  color:#0095FF;
+  font:500 11px 'Instrument Sans',sans-serif;
+  cursor:pointer; -webkit-appearance:none;
+  transition:border-color 120ms;
+}
+.rb-ed-assets-signin:hover { border-color:#0095FF; }
+
+/* Persisted asset grid. */
+.rb-ed-assets-pgrid {
+  display:grid; grid-template-columns:repeat(3, 1fr); gap:3px;
+  padding:0 8px 8px;
+}
+.rb-ed-assets-pitem {
+  aspect-ratio:1; overflow:hidden;
+  border-radius:4px;
+  background:rgba(255,255,255,0.04);
+  cursor:pointer; position:relative;
+  display:flex; align-items:center; justify-content:center;
+}
+.rb-ed-assets-pitem-svg {
+  width:60%; height:60%;
+  display:flex; align-items:center; justify-content:center;
+  color:rgba(239,238,235,0.75);
+}
+.rb-ed-assets-pitem-font {
+  font-size:22px; font-weight:500;
+  color:rgba(239,238,235,0.85);
+  line-height:1;
+}
+.rb-ed-assets-pitem-label {
+  font:500 10px 'Instrument Sans',sans-serif;
+  color:rgba(239,238,235,0.6);
+  text-align:center; padding:4px;
+  text-transform:capitalize;
+}
+
+/* Light mode parity. */
+body.rb-ed-light .rb-ed-assets-scope {
+  background:rgba(0,0,0,0.03);
+  border-color:rgba(0,0,0,0.10);
+  color:rgba(51,51,51,0.75);
+}
+body.rb-ed-light .rb-ed-assets-scope:hover {
+  background:rgba(0,0,0,0.06);
+  border-color:rgba(0,0,0,0.20);
+  color:#1a1a1a;
+}
+body.rb-ed-light .rb-ed-assets-scope-menu {
+  background:rgba(255,255,255,0.92);
+  border-color:rgba(0,0,0,0.08);
+  box-shadow:0 16px 40px rgba(0,0,0,0.18);
+}
+body.rb-ed-light .rb-ed-assets-scope-opt { color:#1a1a1a; }
+body.rb-ed-light .rb-ed-assets-scope-opt:hover { background:rgba(0,0,0,0.05); }
+body.rb-ed-light .rb-ed-assets-status { color:rgba(51,51,51,0.55); }
+body.rb-ed-light .rb-ed-assets-pitem { background:rgba(0,0,0,0.03); }
+body.rb-ed-light .rb-ed-assets-pitem-svg { color:rgba(51,51,51,0.75); }
+body.rb-ed-light .rb-ed-assets-pitem-font,
+body.rb-ed-light .rb-ed-assets-pitem-label { color:rgba(51,51,51,0.7); }
+body.rb-ed-light .rb-ed-assets-signin {
+  border-color:rgba(0,0,0,0.18);
+  color:#0095FF;
+}
+body.rb-ed-light .rb-ed-assets-signin:hover { border-color:#0095FF; }
+
 /* ===== ADVANCED BUTTON + POPUP ===== */
 .rb-insp-adv-btn {
   background:none; border:none; cursor:pointer; padding:4px;

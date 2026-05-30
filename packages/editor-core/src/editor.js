@@ -2940,11 +2940,346 @@
 
   var SMART_EDIT_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
 
+  // Web-shell origin discovery — mirrors panel.js stcDiscoverOrigin so the
+  // editor can fetch persisted assets from inside the content-script
+  // context. Cache key matches panel.js so both surfaces share the resolved
+  // origin once either side has probed it.
+  var WEB_SHELL_ORIGIN_KEY = 'uncraft.webShellOrigin';
+  var WEB_SHELL_CANDIDATES = ['https://uncraft.app', 'http://localhost:3030', 'http://127.0.0.1:3030'];
+  var webShellOriginCache = null;
+  // Proxies a fetch through background.js. Content scripts inherit the
+  // page's origin (e.g. https://gistr.so) which the /api/* CORS allowlist
+  // rejects; the service worker fetches with the extension origin instead.
+  // Returns { ok, status, data, text, error }.
+  function bgFetch(url, options) {
+    return new Promise(function(resolve) {
+      try {
+        if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+          // Canvas-mount (no extension context) — same-origin direct fetch.
+          fetch(url, Object.assign({ credentials: 'include' }, options || {})).then(function(res) {
+            var ct = res.headers.get('content-type') || '';
+            var parser = ct.indexOf('application/json') >= 0 ? res.json() : res.text();
+            parser.then(function(body) {
+              resolve({ ok: res.ok, status: res.status, data: ct.indexOf('application/json') >= 0 ? body : null, text: ct.indexOf('application/json') >= 0 ? null : body });
+            }).catch(function() { resolve({ ok: res.ok, status: res.status, data: null, text: null }); });
+          }).catch(function(err) { resolve({ ok: false, status: 0, error: String((err && err.message) || err) }); });
+          return;
+        }
+        chrome.runtime.sendMessage({ action: 'uncraft.apiFetch', url: url, options: options || {} }, function(resp) {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, status: 0, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(resp || { ok: false, status: 0, error: 'no response' });
+        });
+      } catch (e) {
+        resolve({ ok: false, status: 0, error: String((e && e.message) || e) });
+      }
+    });
+  }
+
+  function getWebShellOrigin() {
+    if (webShellOriginCache) return Promise.resolve(webShellOriginCache);
+    // Canvas-mount: editor.js is loaded as <script> inside the web-shell
+    // itself, so the API lives at our own origin. No discovery needed and
+    // chrome.* APIs aren't available outside content-script context.
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+      try {
+        webShellOriginCache = hostWin.location.origin;
+        return Promise.resolve(webShellOriginCache);
+      } catch (e) { return Promise.resolve(null); }
+    }
+    return new Promise(function(resolve) {
+      var done = false;
+      function finish(o) { if (!done) { done = true; webShellOriginCache = o; resolve(o); } }
+      try {
+        chrome.storage.local.get([WEB_SHELL_ORIGIN_KEY], function(cache) {
+          var seed = cache && cache[WEB_SHELL_ORIGIN_KEY];
+          var order = seed
+            ? [seed].concat(WEB_SHELL_CANDIDATES.filter(function(o) { return o !== seed; }))
+            : WEB_SHELL_CANDIDATES.slice();
+          (function tryNext(i) {
+            if (i >= order.length) return finish(null);
+            var origin = order[i];
+            bgFetch(origin + '/api/boards').then(function(resp) {
+              if (resp && (resp.ok || resp.status === 401)) {
+                try { chrome.storage.local.set({ 'uncraft.webShellOrigin': origin }); } catch (e) {}
+                finish(origin);
+              } else tryNext(i + 1);
+            });
+          })(0);
+        });
+      } catch (e) { finish(null); }
+    });
+  }
+
+  // Persisted across rebuilds of populateAssets so the user's scope choice
+  // survives a tab toggle. Default = global library (works without a board).
+  var assetsScopeState = { kind: 'library' };
+  // Generation counter — every populateAssets() bump invalidates any
+  // in-flight fetch so stale responses don't paint over a newer render.
+  var assetsGen = 0;
+
+  // Builds one collapsible card matching the inspector's .rb-insp-sec
+  // pattern, but parented to the Assets tab body instead of inspBody.
+  // Returns refs the caller can use to inject controls into the header
+  // and populate the body.
+  function buildAssetsCard(parent, title, slug) {
+    var sec = mk('div', 'rb-insp-sec rb-ed-assets-card');
+    sec.setAttribute('data-rb-sec', slug);
+    var hd = mk('div', 'rb-insp-sec-hd');
+    var titleSpan = mk('span', 'rb-insp-sec-title');
+    titleSpan.textContent = title;
+    hd.appendChild(titleSpan);
+    var hdRight = mk('div', 'rb-ed-assets-card-hdright');
+    hdRight.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    var chev = hostDoc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chev.setAttribute('class', 'rb-insp-sec-chev');
+    chev.setAttribute('viewBox', '0 0 24 24');
+    chev.setAttribute('fill', 'none');
+    chev.setAttribute('stroke', 'currentColor');
+    chev.setAttribute('stroke-width', '1.5');
+    chev.innerHTML = '<path d="M6 9l6 6 6-6"/>';
+    hdRight.appendChild(chev);
+    hd.appendChild(hdRight);
+    sec.appendChild(hd);
+    var body = mk('div', 'rb-insp-sec-body');
+    sec.appendChild(body);
+    parent.appendChild(sec);
+    hd.addEventListener('click', function(e) {
+      // Header controls (scope dropdown) shouldn't collapse the card.
+      if (e.target.closest('.rb-ed-assets-scope') || e.target.closest('.rb-ed-assets-scope-menu')) return;
+      sec.classList.toggle('collapsed');
+    }, { signal: sig });
+    return { sec: sec, header: hdRight, body: body };
+  }
+
   function populateAssets() {
     var ab = hostDoc.getElementById('rb-ed-assets-body');
     if (!ab) return;
     ab.innerHTML = '';
+    assetsGen++;
 
+    var userCard = buildAssetsCard(ab, 'User Collected Assets', 'user-collected');
+    mountScopePicker(userCard.header, userCard.body);
+    renderUserCollectedBody(userCard.body, assetsGen);
+
+    var pageCard = buildAssetsCard(ab, 'Page Assets', 'page-assets');
+    populatePageAssets(pageCard.body);
+  }
+
+  function mountScopePicker(header, body) {
+    var scopeBtn = mk('button', 'rb-ed-assets-scope');
+    scopeBtn.type = 'button';
+    var label = mk('span', 'rb-ed-assets-scope-label');
+    label.textContent = scopeLabel();
+    var chev = hostDoc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chev.setAttribute('viewBox', '0 0 24 24');
+    chev.setAttribute('width', '9');
+    chev.setAttribute('height', '9');
+    chev.setAttribute('fill', 'none');
+    chev.setAttribute('stroke', 'currentColor');
+    chev.setAttribute('stroke-width', '2');
+    chev.innerHTML = '<path d="M6 9l6 6 6-6"/>';
+    scopeBtn.appendChild(label);
+    scopeBtn.appendChild(chev);
+    header.insertBefore(scopeBtn, header.firstChild);
+    scopeBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      openScopePicker(scopeBtn, function(newScope) {
+        if (newScope === assetsScopeState.kind) return;
+        assetsScopeState.kind = newScope;
+        label.textContent = scopeLabel();
+        assetsGen++;
+        renderUserCollectedBody(body, assetsGen);
+      });
+    }, { capture: true, signal: sig });
+  }
+
+  function scopeLabel() {
+    return assetsScopeState.kind === 'project' ? 'Project' : 'Global';
+  }
+
+  function openScopePicker(anchorBtn, onPick) {
+    var existing = hostDoc.querySelector('.rb-ed-assets-scope-menu');
+    if (existing) { existing.remove(); return; }
+    var menu = mk('div', 'rb-ed-assets-scope-menu');
+    function makeOpt(labelText, value) {
+      var btn = mk('button', 'rb-ed-assets-scope-opt');
+      btn.type = 'button';
+      var sel = assetsScopeState.kind === value;
+      var lbl = mk('span'); lbl.textContent = labelText; btn.appendChild(lbl);
+      if (sel) {
+        var tick = mk('span', 'rb-ed-assets-scope-tick');
+        tick.textContent = '✓';
+        btn.appendChild(tick);
+      }
+      btn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        menu.remove();
+        onPick(value);
+      }, { capture: true });
+      return btn;
+    }
+    menu.appendChild(makeOpt('Global collection', 'library'));
+    menu.appendChild(makeOpt('Project collection', 'project'));
+    hostDoc.body.appendChild(menu);
+    var r = anchorBtn.getBoundingClientRect();
+    var mw = menu.offsetWidth || 180;
+    menu.style.top = (r.bottom + 4) + 'px';
+    menu.style.left = Math.max(8, Math.min(window.innerWidth - 8 - mw, r.right - mw)) + 'px';
+    setTimeout(function() {
+      function close(e) {
+        if (!menu.contains(e.target) && e.target !== anchorBtn && !anchorBtn.contains(e.target)) {
+          menu.remove();
+          hostDoc.removeEventListener('mousedown', close, true);
+        }
+      }
+      hostDoc.addEventListener('mousedown', close, true);
+    }, 50);
+  }
+
+  function renderUserCollectedBody(body, gen) {
+    body.innerHTML = '';
+    var loading = mk('div', 'rb-ed-assets-status');
+    loading.textContent = 'Loading…';
+    body.appendChild(loading);
+    fetchUserAssets(assetsScopeState.kind).then(function(result) {
+      // Bail if the user has rebuilt the assets tab (scope change, tab
+      // re-open) while our fetch was in flight.
+      if (gen !== assetsGen) return;
+      if (!body.isConnected) return;
+      body.innerHTML = '';
+      if (result.error === 'no-origin') {
+        body.appendChild(statusMsg("Couldn't reach Uncraft."));
+        return;
+      }
+      if (result.error === 'unauthorized') {
+        body.appendChild(signInPrompt());
+        return;
+      }
+      if (result.error === 'no-board') {
+        body.appendChild(statusMsg('Open this editor from a project node to see project assets.'));
+        return;
+      }
+      if (result.error) {
+        body.appendChild(statusMsg("Couldn't load assets."));
+        return;
+      }
+      var assets = (result.assets || []).filter(function(a) { return a && a.type; });
+      if (assets.length === 0) {
+        body.appendChild(statusMsg(assetsScopeState.kind === 'project'
+          ? 'No assets in this project yet.'
+          : 'No assets collected yet. Use the Uncraft widget to collect.'));
+        return;
+      }
+      renderPersistedAssetGrid(body, assets);
+    });
+  }
+
+  function statusMsg(text) {
+    var d = mk('div', 'rb-ed-assets-status');
+    d.textContent = text;
+    return d;
+  }
+
+  function signInPrompt() {
+    var wrap = mk('div', 'rb-ed-assets-status');
+    wrap.style.lineHeight = '1.5';
+    wrap.appendChild(hostDoc.createTextNode('Sign in to see your collected assets.'));
+    wrap.appendChild(mk('br'));
+    wrap.appendChild(mk('br'));
+    var link = mk('button', 'rb-ed-assets-signin');
+    link.type = 'button';
+    link.textContent = 'Open Uncraft';
+    link.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      getWebShellOrigin().then(function(o) {
+        try { window.open((o || 'https://uncraft.app') + '/login', '_blank', 'noopener,noreferrer'); } catch (err) {}
+      });
+    }, { capture: true, signal: sig });
+    wrap.appendChild(link);
+    return wrap;
+  }
+
+  function fetchUserAssets(kind) {
+    return getWebShellOrigin().then(function(origin) {
+      if (!origin) return { error: 'no-origin' };
+      var url;
+      if (kind === 'project') {
+        var opt = hostWin.__uncraftMountOptions;
+        var boardId = (opt && opt.boardId) || null;
+        if (!boardId) return { error: 'no-board' };
+        url = origin + '/api/assets?scope=project&id=' + encodeURIComponent(boardId);
+      } else {
+        url = origin + '/api/assets?scope=library';
+      }
+      return bgFetch(url).then(function(resp) {
+        if (!resp) return { error: 'fetch' };
+        if (resp.status === 401) return { error: 'unauthorized' };
+        if (!resp.ok) return { error: 'http-' + resp.status };
+        return resp.data || { assets: [] };
+      });
+    });
+  }
+
+  function renderPersistedAssetGrid(body, assets) {
+    var grid = mk('div', 'rb-ed-assets-pgrid');
+    assets.slice(0, 60).forEach(function(asset) {
+      var item = mk('div', 'rb-ed-assets-pitem');
+      var thumb = (asset.thumb_url || asset.blob_url || asset.source_url || '').trim();
+      var t = asset.type;
+      if ((t === 'image' || t === 'background-image' || t === 'video') && thumb) {
+        var imgEl = mk('img');
+        imgEl.src = thumb;
+        imgEl.alt = asset.name || '';
+        imgEl.loading = 'lazy';
+        imgEl.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+        item.appendChild(imgEl);
+      } else if ((t === 'svg' || t === 'icon') && (asset.html || thumb)) {
+        if (asset.html) {
+          var svgWrap = mk('div', 'rb-ed-assets-pitem-svg');
+          svgWrap.innerHTML = asset.html;
+          var svgEl = svgWrap.querySelector('svg');
+          if (svgEl) {
+            svgEl.removeAttribute('width');
+            svgEl.removeAttribute('height');
+            svgEl.style.width = '100%';
+            svgEl.style.height = '100%';
+          }
+          item.appendChild(svgWrap);
+        } else {
+          var im = mk('img');
+          im.src = thumb;
+          im.style.cssText = 'width:60%;height:60%;object-fit:contain;';
+          item.appendChild(im);
+        }
+      } else if (t === 'font') {
+        var family = (asset.meta && asset.meta.family) || asset.name || 'sans-serif';
+        var fontPreview = mk('div', 'rb-ed-assets-pitem-font');
+        fontPreview.style.fontFamily = '"' + family.replace(/"/g, '') + '", sans-serif';
+        fontPreview.textContent = 'Aa';
+        item.appendChild(fontPreview);
+      } else if (t === 'group' || t === 'component' || t === 'section') {
+        var lbl = mk('div', 'rb-ed-assets-pitem-label');
+        var cnt = (asset.meta && asset.meta.itemCount) ? ' · ' + asset.meta.itemCount : '';
+        lbl.textContent = t.charAt(0).toUpperCase() + t.slice(1) + cnt;
+        item.appendChild(lbl);
+      } else {
+        var fallback = mk('div', 'rb-ed-assets-pitem-label');
+        fallback.textContent = t || '?';
+        item.appendChild(fallback);
+      }
+      var overlay = mk('div', 'rb-asset-overlay');
+      overlay.innerHTML = SMART_EDIT_ICON;
+      item.appendChild(overlay);
+      if (asset.name) item.title = asset.name;
+      grid.appendChild(item);
+    });
+    body.appendChild(grid);
+  }
+
+  function populatePageAssets(body) {
     // Collect <img> elements
     var imgElements = [];
     targetDoc.querySelectorAll('img').forEach(function(img) {
@@ -2965,7 +3300,6 @@
       if (r.width < 2 || r.height < 2) return;
       try {
         var clone = svg.cloneNode(true);
-        // Ensure the SVG has xmlns for standalone rendering
         if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
         var serialized = new XMLSerializer().serializeToString(clone);
         var dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(serialized)));
@@ -2974,7 +3308,7 @@
       } catch(e) {}
     });
 
-    // Collect background images (separate)
+    // Collect background images
     var bgImages = [];
     targetDoc.querySelectorAll('section,div,article,header,footer').forEach(function(el) {
       if (isEditorEl(el)) return;
@@ -2993,17 +3327,16 @@
     var dimColor = isLight() ? 'rgba(51,51,51,0.3)' : 'rgba(239,238,235,0.3)';
 
     function buildAssetGrid(items, label) {
-      // Section label
       var secLabel = mk('div');
       secLabel.style.cssText = 'padding:8px 14px 4px;font:500 11px "Instrument Sans",sans-serif;color:' + mutedColor + ';';
       secLabel.textContent = label + ' (' + items.length + ')';
-      ab.appendChild(secLabel);
+      body.appendChild(secLabel);
 
       if (items.length === 0) {
         var empty = mk('div');
         empty.style.cssText = 'padding:2px 14px 8px;font:400 11px "Instrument Sans",sans-serif;color:' + dimColor + ';';
         empty.textContent = 'None found';
-        ab.appendChild(empty);
+        body.appendChild(empty);
         return;
       }
 
@@ -3019,12 +3352,10 @@
         imgEl.loading = 'lazy';
         item.appendChild(imgEl);
 
-        // Hover overlay with smart edit icon
         var overlay = mk('div', 'rb-asset-overlay');
         overlay.innerHTML = SMART_EDIT_ICON;
         item.appendChild(overlay);
 
-        // Click: scroll to image, flash highlight, show action bar
         item.addEventListener('mousedown', function(e) {
           e.stopImmediatePropagation();
           if (img.type === 'image') {
@@ -3040,23 +3371,22 @@
 
         grid.appendChild(item);
       });
-      ab.appendChild(grid);
+      body.appendChild(grid);
     }
 
-    // Divider-separated sections
     buildAssetGrid(imgElements, 'Images');
 
     if (svgIcons.length > 0) {
       var divider1 = mk('div');
       divider1.style.cssText = 'height:1px;background:' + (isLight() ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)') + ';margin:4px 14px;';
-      ab.appendChild(divider1);
+      body.appendChild(divider1);
       buildAssetGrid(svgIcons, 'Icons');
     }
 
     if (bgImages.length > 0) {
       var divider2 = mk('div');
       divider2.style.cssText = 'height:1px;background:' + (isLight() ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)') + ';margin:4px 14px;';
-      ab.appendChild(divider2);
+      body.appendChild(divider2);
       buildAssetGrid(bgImages, 'Backgrounds');
     }
   }
@@ -3652,12 +3982,19 @@
       applyTheme(!isLight());
     }, {capture: true, signal: sig});
 
-    // Minimize / undock / theme buttons are no longer surfaced in the
-    // layers panel header — minimize was removed at user request and the
-    // theme toggle moved to the canvas toolbar (web-shell). The button
-    // elements + handlers stay declared above so the rest of the code
-    // (mini-widget restore, floating toggles, applyTheme on boot) keeps
-    // working without churn.
+    // Minimize / theme buttons are no longer surfaced in the layers panel
+    // header — minimize was removed at user request and theme moved to the
+    // canvas toolbar (web-shell). Their elements + handlers stay declared
+    // above so the rest of the code (mini-widget restore, applyTheme on
+    // boot) keeps working without churn.
+    //
+    // Undock IS surfaced — but only in the extension. On the canvas, panels
+    // are sized to the editing node and undocking them would put them out
+    // of the user's viewport context. `__uncraftZoom` is the canvas-only
+    // API stamped by CanvasClient, so its absence = extension context.
+    if (!hostWin.__uncraftZoom) {
+      logoActions.appendChild(panelUndockBtn);
+    }
     logoRow.appendChild(logoLeft);
     logoRow.appendChild(logoActions);
     layersHd.appendChild(logoRow);
