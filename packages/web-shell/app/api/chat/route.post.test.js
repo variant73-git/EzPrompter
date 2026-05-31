@@ -15,11 +15,16 @@ vi.mock('../../../lib/agent/tools/index.js', () => ({
     toAnthropicSpec: () => [],
   }),
 }));
+vi.mock('../../../lib/agent/llm-anthropic.js', () => ({ callAnthropic: vi.fn() }));
+vi.mock('../../../lib/agent/llm-openai.js', () => ({ callOpenAI: vi.fn() }));
+vi.mock('../../../lib/agent/llm-gemini.js', () => ({ callGemini: vi.fn() }));
+const driverCalls = [];
 vi.mock('../../../lib/agent/driver.js', () => ({
-  runAgentLoop: vi.fn(async ({ onEvent }) => {
-    onEvent({ type: 'text_delta', text: 'hi' });
-    onEvent({ type: 'message_complete', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
-    onEvent({ type: 'run_status', status: 'completed' });
+  runAgentLoop: vi.fn(async (opts) => {
+    driverCalls.push({ llm: opts.llm });
+    opts.onEvent({ type: 'text_delta', text: 'hi' });
+    opts.onEvent({ type: 'message_complete', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
+    opts.onEvent({ type: 'run_status', status: 'completed' });
     return { stop_reason: 'end_turn', iterations: 1, usage: { input_tokens: 1, output_tokens: 1 } };
   }),
 }));
@@ -61,5 +66,48 @@ describe('POST /api/chat', () => {
     });
     const res = await POST(req);
     expect(res.status).toBe(400);
+  });
+
+  it('routes claude-sonnet-4-6 to callAnthropic', async () => {
+    driverCalls.length = 0;
+    process.env.ANTHROPIC_API_KEY = 'fake';
+    const { callAnthropic } = await import('../../../lib/agent/llm-anthropic.js');
+    const req = new Request('http://test/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boardId: 'b1', message: 'hi', modelId: 'claude-sonnet-4-6' }),
+    });
+    const res = await POST(req);
+    // Consume to ensure handler runs to completion
+    await res.body.getReader().read();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(driverCalls[0]?.llm).toBe(callAnthropic);
+  });
+
+  it('routes gpt-5.5 to callOpenAI', async () => {
+    driverCalls.length = 0;
+    process.env.OPENAI_API_KEY = 'fake';
+    const { callOpenAI } = await import('../../../lib/agent/llm-openai.js');
+    const req = new Request('http://test/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boardId: 'b1', message: 'hi', modelId: 'gpt-5.5' }),
+    });
+    const res = await POST(req);
+    await res.body.getReader().read();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(driverCalls[0]?.llm).toBe(callOpenAI);
+  });
+
+  it('routes gemini-3.1-pro to callGemini', async () => {
+    driverCalls.length = 0;
+    process.env.GEMINI_API_KEY = 'fake';
+    const { callGemini } = await import('../../../lib/agent/llm-gemini.js');
+    const req = new Request('http://test/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boardId: 'b1', message: 'hi', modelId: 'gemini-3.1-pro' }),
+    });
+    const res = await POST(req);
+    await res.body.getReader().read();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(driverCalls[0]?.llm).toBe(callGemini);
   });
 });
