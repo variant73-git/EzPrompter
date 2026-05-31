@@ -9380,6 +9380,33 @@
       __pendingTextRange = { range: r.cloneRange(), editableRoot: selectedEl };
     }, {signal: sig});
 
+    // Canvas-only: redraw overlay boxes when the viewport transforms.
+    // hover/selection boxes are anchored to live target-doc rects via
+    // getOverlayBox, but they only repaint when their update fn runs —
+    // without this hook they stay frozen at pre-zoom dimensions until
+    // the next mousemove (which doesn't fire while the user wheels).
+    // rAF-coalesced so a burst of wheel deltas costs one paint, and
+    // listeners are passive + capture:true so we don't fight the canvas
+    // pan/zoom handler in CanvasClient.
+    if (hostDoc !== targetDoc) {
+      var _overlayRefreshScheduled = false;
+      var _refreshOverlayBoxes = function() {
+        _overlayRefreshScheduled = false;
+        if (lastHoverEl && targetDoc.body.contains(lastHoverEl)) updateHoverBox(lastHoverEl);
+        if (selectedEl && targetDoc.body.contains(selectedEl)) {
+          updateSelBox(selectedEl);
+          try { updateSpacingGuides(selectedEl); } catch (_) {}
+        }
+      };
+      var _onViewportWheel = function() {
+        if (_overlayRefreshScheduled) return;
+        _overlayRefreshScheduled = true;
+        requestAnimationFrame(_refreshOverlayBoxes);
+      };
+      hostDoc.addEventListener('wheel', _onViewportWheel, {passive: true, capture: true, signal: sig});
+      targetDoc.addEventListener('wheel', _onViewportWheel, {passive: true, capture: true, signal: sig});
+    }
+
     // INLINE_TAGS / VISUAL_TAGS / drillIntoChild / resolveContainer hoisted
     // to IIFE outer scope (above) — they're called from guide-drag handlers
     // outside listen(), so they can't be closed over here.
