@@ -36,6 +36,9 @@ const { POST } = await import('./route.js');
 describe('POST /api/chat', () => {
   beforeEach(() => {
     process.env.ANTHROPIC_API_KEY = 'test-key';
+    // Default AGENT_MODEL for the generic SSE test that doesn't override.
+    // Routing tests below set their own UNCRAFT_AGENT_MODEL per-case.
+    process.env.UNCRAFT_AGENT_MODEL = 'claude-sonnet-4-6';
   });
 
   it('returns SSE response with events', async () => {
@@ -73,10 +76,11 @@ describe('POST /api/chat', () => {
   it('routes claude-sonnet-4-6 to callAnthropic', async () => {
     driverCalls.length = 0;
     process.env.ANTHROPIC_API_KEY = 'fake';
+    process.env.UNCRAFT_AGENT_MODEL = 'claude-sonnet-4-6';
     const { callAnthropic } = await import('../../../lib/agent/llm-anthropic.js');
     const req = new Request('http://test/api/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boardId: 'b1', message: 'hi', modelId: 'claude-sonnet-4-6' }),
+      body: JSON.stringify({ boardId: 'b1', message: 'hi' }),
     });
     const res = await POST(req);
     // Consume to ensure handler runs to completion
@@ -85,13 +89,14 @@ describe('POST /api/chat', () => {
     expect(driverCalls[0]?.llm).toBe(callAnthropic);
   });
 
-  it('routes gpt-5.5 to callOpenAI', async () => {
+  it('routes UNCRAFT_AGENT_MODEL=gpt-5.5 to callOpenAI', async () => {
     driverCalls.length = 0;
     process.env.OPENAI_API_KEY = 'fake';
+    process.env.UNCRAFT_AGENT_MODEL = 'gpt-5.5';
     const { callOpenAI } = await import('../../../lib/agent/llm-openai.js');
     const req = new Request('http://test/api/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boardId: 'b1', message: 'hi', modelId: 'gpt-5.5' }),
+      body: JSON.stringify({ boardId: 'b1', message: 'hi' }),
     });
     const res = await POST(req);
     await res.body.getReader().read();
@@ -99,13 +104,14 @@ describe('POST /api/chat', () => {
     expect(driverCalls[0]?.llm).toBe(callOpenAI);
   });
 
-  it('routes gemini-3.1-pro to callGemini', async () => {
+  it('routes UNCRAFT_AGENT_MODEL=gemini-3.1-pro-preview to callGemini', async () => {
     driverCalls.length = 0;
     process.env.GEMINI_API_KEY = 'fake';
+    process.env.UNCRAFT_AGENT_MODEL = 'gemini-3.1-pro-preview';
     const { callGemini } = await import('../../../lib/agent/llm-gemini.js');
     const req = new Request('http://test/api/chat', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ boardId: 'b1', message: 'hi', modelId: 'gemini-3.1-pro' }),
+      body: JSON.stringify({ boardId: 'b1', message: 'hi' }),
     });
     const res = await POST(req);
     await res.body.getReader().read();

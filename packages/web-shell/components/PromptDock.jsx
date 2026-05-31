@@ -301,15 +301,13 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         break;
       case 'tool_status':
         dispatchChat({ type: 'TOOL_CALL_STATUS', id: payload.id, status: payload.status, result: payload.result, error: payload.error });
-        // When a graph-mutating tool finishes successfully, ask the canvas
-        // to refresh so the new/changed/deleted node appears immediately.
-        // (createNode / addEdge / updateNode / deleteNode — read-only tools
-        // don't change graph state.)
+        // Refetch canvas state after EVERY successful tool. Looking up the
+        // tool name from chat.activeToolCalls was unreliable (stale closure
+        // — the just-dispatched reducer hadn't committed when handleSseEvent
+        // ran). Read-only tools (queryNodes etc.) trigger a harmless extra
+        // GET; mutating tools update the canvas as intended.
         if (payload.status === 'done') {
-          const t = chat.activeToolCalls.find((tc) => tc.id === payload.id)?.name;
-          if (t === 'createNode' || t === 'addEdge' || t === 'updateNode' || t === 'deleteNode') {
-            onAgentMutatedGraph?.();
-          }
+          onAgentMutatedGraph?.();
         }
         break;
       case 'run_status':
