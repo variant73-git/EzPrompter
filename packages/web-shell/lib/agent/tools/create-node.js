@@ -1,17 +1,32 @@
 import { sql } from '../../db.js';
+import { BLANK_SITE_HTML, BLANK_SITE_DEFAULTS } from '../../blank-site-html.js';
 
-// Type → {kind, meta-mixin} map. The agent reasons in these user-facing
-// types; we translate to the kind/meta shape the rest of the system
-// (nodeOrigin, edge color, runFlow target detection) expects.
+// Type → {kind, meta-mixin, ...} map. The agent reasons in these
+// user-facing types; we translate to the kind/meta shape the rest of the
+// system (nodeOrigin, edge color, runFlow target detection) expects.
 //
-// Border colors are documented for the LLM in the tool description so it
-// can ack "I added a teal blank website node" without guessing.
+// Border colors documented in the tool description so the LLM can ack
+// "I added a teal blank website node" without guessing.
+//
+// For blank-website, we also seed an initial HTML snapshot (matching what
+// CanvasClient.handleAddBlankSite does via the "+" button) so both creation
+// paths produce a visually identical node — same white card with "Blank
+// website" heading rendered inside the iframe, instead of an empty body.
 const NODE_TYPES = {
-  'blank-website':  { kind: 'site',     meta: { source: 'blank' }, color: 'teal',    desc: 'Empty website canvas — compose by connecting other nodes into it' },
-  'prompt':         { kind: 'prompt',   meta: {},                  color: 'yellow',  desc: 'A text prompt — give it instructions, then chain it into a website to apply' },
-  'design-system':  { kind: 'designmd', meta: {},                  color: 'green',   desc: 'A design.md spec (colors, fonts, spacing) — connect to a website to restyle it' },
-  'asset':          { kind: 'asset',    meta: {},                  color: 'violet',  desc: 'An image/asset slot — fill via Smart Edit or by attaching uploads' },
-  'skill':          { kind: 'skill',    meta: {},                  color: 'pink',    desc: 'A reusable skill node (rarely needed — only ask if user mentions skills)' },
+  'blank-website':  {
+    kind: 'site',
+    meta: { source: 'blank' },
+    color: 'teal',
+    desc: 'Empty website canvas — compose by connecting other nodes into it',
+    width: BLANK_SITE_DEFAULTS.width,
+    height: BLANK_SITE_DEFAULTS.height,
+    defaultName: BLANK_SITE_DEFAULTS.name,
+    seedHtml: BLANK_SITE_HTML,
+  },
+  'prompt':         { kind: 'prompt',   meta: {}, color: 'yellow',  desc: 'A text prompt — give it instructions, then chain it into a website to apply' },
+  'design-system':  { kind: 'designmd', meta: {}, color: 'green',   desc: 'A design.md spec (colors, fonts, spacing) — connect to a website to restyle it' },
+  'asset':          { kind: 'asset',    meta: {}, color: 'violet',  desc: 'An image/asset slot — fill via Smart Edit or by attaching uploads' },
+  'skill':          { kind: 'skill',    meta: {}, color: 'pink',    desc: 'A reusable skill node (rarely needed — only ask if user mentions skills)' },
 };
 
 const TYPE_LIST = Object.keys(NODE_TYPES);
@@ -54,19 +69,37 @@ If the user wants a CAPTURED website (a real URL they want to snapshot), don't u
     const owned = await sql`SELECT id FROM boards WHERE id = ${ctx.boardId} AND user_id = ${ctx.userId}`;
     if (!owned.length) return { error: 'forbidden', message: 'board not found or not owned' };
 
-    const finalMeta = name ? { ...mapping.meta, name } : mapping.meta;
+    const effectiveName = name || mapping.defaultName || null;
+    const finalMeta = effectiveName ? { ...mapping.meta, name: effectiveName } : mapping.meta;
+    const w = mapping.width || 1280;
+    const h = mapping.height || 800;
 
     const [node] = await sql`
-      INSERT INTO nodes (board_id, kind, pos_x, pos_y, meta)
-      VALUES (${ctx.boardId}, ${mapping.kind}, ${posX}, ${posY}, ${finalMeta}::jsonb)
-      RETURNING id, kind, pos_x, pos_y, meta, created_at
+      INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
+      VALUES (${ctx.boardId}, ${mapping.kind}, ${posX}, ${posY}, ${w}, ${h}, ${finalMeta}::jsonb)
+      RETURNING id, kind, pos_x, pos_y, width, height, meta, created_at
     `;
+
+    // Seed an initial snapshot when the type defines one (currently only
+    // blank-website). This is what gives the iframe content to render, so
+    // the agent-created node looks identical to the "+" button variant.
+    if (mapping.seedHtml) {
+      const [snap] = await sql`
+        INSERT INTO snapshots (node_id, html, source)
+        VALUES (${node.id}, ${mapping.seedHtml}, 'seed')
+        RETURNING id
+      `;
+      await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${node.id}`;
+    }
+
     return {
       id: node.id,
       type,
       color: mapping.color,
       posX: node.pos_x,
       posY: node.pos_y,
+      width: node.width,
+      height: node.height,
       meta: node.meta,
     };
   },
