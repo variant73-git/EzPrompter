@@ -1188,8 +1188,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   }
 
   async function persistBoardName(name) {
-    if (name === board.name) return;
-    await api.renameBoard(board.id, name).catch(console.warn);
+    // Empty / whitespace-only resets to 'Untitled' so the toolbar can't end
+    // up as a blank slot (which also breaks the size-by-length input width).
+    const clean = (name || '').trim() || 'Untitled';
+    if (clean !== name) setBoardName(clean);
+    if (clean === board.name) return;
+    await api.renameBoard(board.id, clean).catch(console.warn);
   }
 
   function logout() {

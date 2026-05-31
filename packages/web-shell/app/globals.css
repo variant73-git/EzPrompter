@@ -2108,24 +2108,40 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
 
 /* Cancel-edit prompt — minimal variant of the reset-confirm card. The
    body copy is gone, so the title sits next to a close (X) button and
-   the action buttons line up below. Width is tighter than the reset
-   confirm (no body paragraph to fit). The TITLE alone gets right
-   padding to clear the absolute-positioned close button — the card
-   keeps symmetric padding so the action buttons read as centred. */
+   the action buttons line up below. Title is set in Instrument Serif
+   at editorial size; card width is generous so neither button label
+   ("Discard" / "Save and exit") ever wraps to a second line. */
 .cancel-edit-card {
   position: relative;
-  width: calc(220px / var(--canvas-scale, 1));
+  width: calc(340px / var(--canvas-scale, 1));
+  padding: calc(24px / var(--canvas-scale, 1)) calc(26px / var(--canvas-scale, 1));
 }
-.cancel-edit-card .reset-confirm-title {
-  padding-right: calc(28px / var(--canvas-scale, 1));
-  margin-bottom: calc(10px / var(--canvas-scale, 1));
+.cancel-edit-card .popup-title {
+  font-family: var(--popup-font-serif);
+  font-weight: 400;
+  font-size: calc(26px / var(--canvas-scale, 1));
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  margin-bottom: calc(16px / var(--canvas-scale, 1));
+  padding-right: calc(32px / var(--canvas-scale, 1));
+}
+/* Inner emphasis span inherits serif/size from the parent — drop the
+   hardcoded 19px override so the scaled title stays uniform. */
+.cancel-edit-card .popup-title .popup-serif {
+  font-family: inherit;
+  font-size: inherit;
+}
+/* Buttons never wrap — even if a future label grows longer than the
+   current width math expects. */
+.cancel-edit-card .popup-btn {
+  white-space: nowrap;
 }
 .cancel-edit-close {
   position: absolute;
-  top: calc(8px / var(--canvas-scale, 1));
-  right: calc(8px / var(--canvas-scale, 1));
-  width: calc(22px / var(--canvas-scale, 1));
-  height: calc(22px / var(--canvas-scale, 1));
+  top: calc(14px / var(--canvas-scale, 1));
+  right: calc(14px / var(--canvas-scale, 1));
+  width: calc(24px / var(--canvas-scale, 1));
+  height: calc(24px / var(--canvas-scale, 1));
   display: inline-flex;
   align-items: center;
   justify-content: center;

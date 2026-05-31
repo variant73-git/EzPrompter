@@ -216,11 +216,15 @@
   if (hostDoc !== targetDoc) {
     var cursorStyle = targetDoc.createElement('style');
     cursorStyle.id = 'rb-cursor-style';
+    // Class qualifier stacked 3x so specificity beats site CSS that targets
+    // text/links via `.section .paragraph p { cursor: text }` patterns
+    // (Webflow, Framer, reconstructed pages). Without the bump, sites win
+    // the cursor war and the native I-beam leaks over text elements.
     cursorStyle.textContent =
-      "body.rb-ed-active, body.rb-ed-active *:not(input):not(textarea):not(select) {" +
+      "body.rb-ed-active.rb-ed-active.rb-ed-active, body.rb-ed-active.rb-ed-active.rb-ed-active *:not(input):not(textarea):not(select) {" +
         "cursor: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='28' viewBox='-2 -2 42 42'%3E%3Cdefs%3E%3Cfilter id='s'%3E%3CfeDropShadow dx='1' dy='2' stdDeviation='1.5' flood-opacity='0.4'/%3E%3C/filter%3E%3C/defs%3E%3Cpath filter='url(%23s)' d='M34.25,17.94l-13.58,2.72-2.72,13.58c-.22,1.1-1.29,1.81-2.39,1.59-.67-.13-1.23-.6-1.49-1.23L2.15,4.78c-.42-1.04.09-2.22,1.13-2.64.48-.19,1.02-.19,1.51,0l29.82,11.93c1.04.42,1.55,1.6,1.13,2.64-.25.64-.81,1.1-1.48,1.24Z' fill='%23fff' stroke='%23000' stroke-width='1.5'/%3E%3C/svg%3E\") 2 1, default !important;" +
       "}" +
-      "body.rb-ed-active .rb-ed-text-hint {" +
+      "body.rb-ed-active.rb-ed-active.rb-ed-active .rb-ed-text-hint {" +
         "cursor: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='38' viewBox='-2 -2 56 52'%3E%3Cdefs%3E%3Cfilter id='s'%3E%3CfeDropShadow dx='1' dy='2' stdDeviation='1.5' flood-opacity='0.4'/%3E%3C/filter%3E%3C/defs%3E%3Cpath filter='url(%23s)' d='M34.25,17.94l-13.58,2.72-2.72,13.58c-.22,1.1-1.29,1.81-2.39,1.59-.67-.13-1.23-.6-1.49-1.23L2.15,4.78c-.42-1.04.09-2.22,1.13-2.64.48-.19,1.02-.19,1.51,0l29.82,11.93c1.04.42,1.55,1.6,1.13,2.64-.25.64-.81,1.1-1.48,1.24Z' fill='%23fff' stroke='%23000' stroke-width='1.5'/%3E%3Cg transform='translate(32,28) scale(0.7)' fill='%23fff' stroke='%23000' stroke-width='1'%3E%3Cpolygon points='24.5 1 1 1 1 4.99 1.01 4.99 1.01 9 5 9 5 4.99 10.75 4.99 10.75 22.65 7.58 22.65 7.58 26.64 17.91 26.64 17.91 22.65 14.74 22.65 14.74 4.99 20.54 4.99 20.54 9 24.53 9 24.53 1 24.5 1'/%3E%3C/g%3E%3C/svg%3E\") 2 1, text !important;" +
       "}";
     targetDoc.head.appendChild(cursorStyle);
@@ -572,12 +576,28 @@
     pushUndo({ prop: '__linkUnwrap', anchor: a, parent: parent, nextSibling: firstChild ? firstChild.nextSibling : null, children: Array.prototype.slice.call(a.childNodes) });
   }
 
+  // Currently-open link editor popup. Tracked so the minidocks can dismiss
+  // it when they close — otherwise the popup is orphaned in hostDoc.body and
+  // hangs around after the user clicks to a different element (the dock's
+  // own outside-click listener fires on the new target, removing the dock,
+  // but the link popup never sees a mousedown inside itself).
+  var _openLinkPopup = null;
+  function removeLinkEditor() {
+    var p = _openLinkPopup;
+    _openLinkPopup = null;
+    if (p && p.parentNode) p.remove();
+    // Fallback in case _openLinkPopup got cleared but a stale popup remains.
+    var orphan = hostDoc.querySelector('.rb-link-editor');
+    if (orphan) orphan.remove();
+  }
+
   // Popup to edit a link (href + target + clear). Anchored near `anchorBtn`.
   // onChange(href | null) — null signals "remove link". Returns popup node.
   function openLinkEditor(anchorBtn, currentHref, onChange) {
-    // Popup lives in HOST (panels surface).
-    var existing = hostDoc.querySelector('.rb-link-editor');
-    if (existing) existing.remove();
+    // Popup lives in HOST (panels surface). Clear any prior popup + its
+    // outside listeners through the central helper so re-opening doesn't
+    // leak listeners.
+    removeLinkEditor();
     var pop = hostDoc.createElement('div');
     pop.className = 'rb-link-editor rb-ed-img-menu';
     pop.style.cssText = 'position:fixed;padding:8px;display:flex;flex-direction:column;gap:6px;min-width:280px;z-index:2147483647;';
@@ -603,36 +623,49 @@
       clrBtn.addEventListener('mousedown', function(e) {
         e.stopImmediatePropagation();
         onChange(null);
+        if (_openLinkPopup === pop) _openLinkPopup = null;
         pop.remove();
       }, {capture: true});
       pop.appendChild(clrBtn);
     }
     hostDoc.body.appendChild(pop);
+    _openLinkPopup = pop;
     var r = anchorBtn.getBoundingClientRect();
     pop.style.left = Math.max(8, Math.min(hostWin.innerWidth - pop.offsetWidth - 8, r.left)) + 'px';
     pop.style.top = Math.min(hostWin.innerHeight - pop.offsetHeight - 8, r.bottom + 6) + 'px';
     setTimeout(function() { inp.focus(); inp.select(); }, 0);
+    function closePop() {
+      if (_openLinkPopup === pop) _openLinkPopup = null;
+      if (pop.parentNode) pop.remove();
+      hostDoc.removeEventListener('mousedown', outside, true);
+      if (hostDoc !== targetDoc) targetDoc.removeEventListener('mousedown', outsideT, true);
+    }
     function commit() {
       var v = inp.value.trim();
-      if (!v) { pop.remove(); return; }
+      if (!v) { closePop(); return; }
       if (!/^[a-z]+:\/\//i.test(v) && !v.startsWith('mailto:') && !v.startsWith('tel:') && !v.startsWith('#') && !v.startsWith('/')) {
         v = 'https://' + v;
       }
       onChange(v);
-      pop.remove();
+      closePop();
     }
     saveBtn.addEventListener('mousedown', function(e) { e.stopImmediatePropagation(); commit(); }, {capture: true});
     inp.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      else if (e.key === 'Escape') { pop.remove(); }
+      else if (e.key === 'Escape') { closePop(); }
     });
     function outside(ev) {
-      if (!pop.contains(ev.target) && ev.target !== anchorBtn && !anchorBtn.contains(ev.target)) {
-        pop.remove();
-        hostDoc.removeEventListener('mousedown', outside, true);
-      }
+      if (!pop.contains(ev.target) && ev.target !== anchorBtn && !anchorBtn.contains(ev.target)) closePop();
     }
-    setTimeout(function() { hostDoc.addEventListener('mousedown', outside, true); }, 150);
+    // Canvas mode: mousedown inside the iframe (targetDoc) never bubbles to
+    // hostDoc, so listening on host alone leaves the popup open when the
+    // user clicks back into the page. Mirror on target so any click outside
+    // the popup (in either doc) dismisses it.
+    function outsideT(ev) { closePop(); }
+    setTimeout(function() {
+      hostDoc.addEventListener('mousedown', outside, true);
+      if (hostDoc !== targetDoc) targetDoc.addEventListener('mousedown', outsideT, true);
+    }, 150);
     return pop;
   }
 
@@ -3674,6 +3707,10 @@
       projectName.select();
     });
     projectName.addEventListener('blur', function() {
+      // Restore 'Untitled' when the user cleared the field — the panel
+      // header should never render with an empty name.
+      var clean = (projectName.value || '').trim();
+      if (!clean) projectName.value = 'Untitled';
       projectName.readOnly = true;
       projectName.style.cursor = 'default';
     });
@@ -5995,17 +6032,23 @@
       else u.anchor.setAttribute('href', target);
     } else if (u.prop === '__coordswap') {
       if (forward) {
+        if (u.newElPos !== undefined) u.el.style.position = u.newElPos;
         u.el.style.top = u.newElTop || '';
         u.el.style.left = u.newElLeft || '';
+        if (u.newTPos !== undefined) u.target.style.position = u.newTPos;
         u.target.style.top = u.newTTop || '';
         u.target.style.left = u.newTLeft || '';
       } else {
+        u.newElPos = u.el.style.position;
         u.newElTop = u.el.style.top;
         u.newElLeft = u.el.style.left;
+        u.newTPos = u.target.style.position;
         u.newTTop = u.target.style.top;
         u.newTLeft = u.target.style.left;
+        u.el.style.position = u.elPos || '';
         u.el.style.top = u.elTop;
         u.el.style.left = u.elLeft;
+        u.target.style.position = u.tPos || '';
         u.target.style.top = u.tTop;
         u.target.style.left = u.tLeft;
       }
@@ -6648,6 +6691,9 @@
     textEditOriginalHTML = null;
     isTextEditing = false;
     __pendingTextRange = null;
+    // Text dock is a text-edit-session affordance — kill it when the session
+    // ends so it doesn't hang on after the user clicks elsewhere.
+    try { removeTextDock(); } catch (_) {}
   }
 
   function deselectEl() {
@@ -6879,14 +6925,6 @@
     widget.setAttribute('data-rb-guide', key);
     spacingGuides[key].appendChild(widget);
 
-    // Feedback tab \u2014 anchored to the top-right border of the guide,
-    // sticking OUT (translated above the top edge). Visible only when
-    // the guide is active. Independent from the value widget so it
-    // survives innerHTML rebuilds during inline edit.
-    var fbTab = mk('div', 'rb-spacing-fb-tab');
-    fbTab.innerHTML = spacingFeedbackTabMarkup();
-    spacingGuides[key].appendChild(fbTab);
-
     spacingGuides[key].style.display = 'none';
     spacingGuides[key].style.pointerEvents = 'auto';
     spacingGuides[key].style.cursor = (guideAxis[key] === 'x') ? 'ew-resize' : 'ns-resize';
@@ -6897,19 +6935,6 @@
     spacingGuides[key].addEventListener('mouseenter', function() { setActiveGuide(key); });
     spacingGuides[key].addEventListener('mouseleave', function() {
       if (!spacingGuides[key].classList.contains('rb-spacing-dragging')) setActiveGuide(null);
-    });
-
-    // Feedback tab \u2014 stop drag/resize from triggering when clicking the tab.
-    fbTab.addEventListener('mousedown', function(e) {
-      e.stopPropagation();
-      e.preventDefault();
-    }, true);
-    fbTab.addEventListener('click', function(e) {
-      e.stopPropagation();
-      e.preventDefault();
-      // Hand-off to host shell \u2014 fires through transport when wired.
-      // Stub matching the WIP feedback flow in PromptDock.
-      try { hostWin.dispatchEvent(new CustomEvent('uncraft:feedback', { detail: { source: 'guide', guideKey: key } })); } catch (err) {}
     });
 
     // Dbl-click on the label → inline numeric input (supports 20, 20px, 1rem, 2em, 50%, +5, -3)
@@ -7406,6 +7431,9 @@
     _imgMenuGeneration++;
     var m = root.querySelector('.rb-ed-img-menu');
     if (m) m.remove();
+    // Link popup is opened from the image minidock; close it when the dock dies
+    // so it doesn't strand in hostDoc.body after selection changes.
+    removeLinkEditor();
   }
 
   // Shared: prepend drag handle to any minidock
@@ -7749,6 +7777,37 @@
       }
     };
     setTimeout(function() { hostDoc.addEventListener('mousedown', closeOutside, true); }, 150);
+
+    // Canvas-only auto-dismiss on viewport movement. The dock is anchored to
+    // the text element's screen position; once the user pans/zooms the canvas
+    // more than ~100px, the anchor is wildly off — better to drop the dock
+    // than to leave it hovering nowhere. Wheel covers trackpad pan + Cmd-zoom.
+    // Skip in extension mode (host === target) since the page scroll there is
+    // the page itself, which the dock already follows via repositioning.
+    // Cross-doc wheel events don't bubble between iframe and host — listen on
+    // both so panning over either the canvas chrome OR the iframe counts.
+    if (hostDoc !== targetDoc) {
+      var scrollAccum = 0;
+      var dockScrollHandler = function(ev) {
+        if (gen !== _textDockGen) {
+          hostDoc.removeEventListener('wheel', dockScrollHandler, true);
+          try { targetDoc.removeEventListener('wheel', dockScrollHandler, true); } catch(_){}
+          return;
+        }
+        scrollAccum += Math.abs(ev.deltaX || 0) + Math.abs(ev.deltaY || 0);
+        if (scrollAccum > 100) {
+          removeTextDock();
+          hostDoc.removeEventListener('wheel', dockScrollHandler, true);
+          try { targetDoc.removeEventListener('wheel', dockScrollHandler, true); } catch(_){}
+        }
+      };
+      hostDoc.addEventListener('wheel', dockScrollHandler, true);
+      try { targetDoc.addEventListener('wheel', dockScrollHandler, true); } catch(_){}
+      sig.addEventListener('abort', function() {
+        try { hostDoc.removeEventListener('wheel', dockScrollHandler, true); } catch(_){}
+        try { targetDoc.removeEventListener('wheel', dockScrollHandler, true); } catch(_){}
+      });
+    }
   }
 
   var _textDockGen = 0;
@@ -7756,6 +7815,9 @@
     _textDockGen++;
     var m = root.querySelector('.rb-ed-text-dock');
     if (m) m.remove();
+    // Link popup is opened from the text minidock; close it when the dock dies
+    // so it doesn't strand in hostDoc.body after selection changes.
+    removeLinkEditor();
   }
 
   // ============ MOVE / SNAP (Figma-style) ============
@@ -7765,14 +7827,34 @@
   var lastDropTarget = null;
   var lastDropPos = null; // 'before' or 'after'
 
+  // Convert a target-doc rect to host-doc coords (matches eventToHostXY logic).
+  // In extension mode (host === target) returns the rect unchanged. The ghost
+  // lives in hostDoc, but el.getBoundingClientRect() reports in the doc el is
+  // in (target) — so width/height/left/top need scaling by the iframe's
+  // displayed-to-native ratio plus translation by the iframe's host offset.
+  function rectToHost(r) {
+    if (hostDoc === targetDoc) return {left: r.left, top: r.top, width: r.width, height: r.height};
+    var ifr = targetWin && targetWin.frameElement;
+    if (!ifr) return {left: r.left, top: r.top, width: r.width, height: r.height};
+    var ir = ifr.getBoundingClientRect();
+    var contentW = targetWin.innerWidth || ir.width;
+    var scale = ir.width / (contentW || 1);
+    return {
+      left: ir.left + r.left * scale,
+      top: ir.top + r.top * scale,
+      width: r.width * scale,
+      height: r.height * scale
+    };
+  }
+
   function createDragGhost(el) {
     if (dragGhost) dragGhost.remove();
-    var r = el.getBoundingClientRect();
+    var hr = rectToHost(el.getBoundingClientRect());
     dragGhost = mk('div', 'rb-ed-ghost');
-    dragGhost.style.width = r.width + 'px';
-    dragGhost.style.height = Math.min(r.height, 120) + 'px';
-    dragGhost.style.left = r.left + 'px';
-    dragGhost.style.top = r.top + 'px';
+    dragGhost.style.width = hr.width + 'px';
+    dragGhost.style.height = Math.min(hr.height, 120) + 'px';
+    dragGhost.style.left = hr.left + 'px';
+    dragGhost.style.top = hr.top + 'px';
     // Capture visual snapshot
     dragGhost.style.background = getCS(el).backgroundColor || 'rgba(147,197,253,0.1)';
     dragGhost.style.borderRadius = getCS(el).borderRadius || '4px';
@@ -7785,10 +7867,15 @@
     el.style.transition = 'opacity 100ms';
   }
 
+  // Center the ghost on the cursor in both axes (was vertical fixed at y-20,
+  // which read as "ghost lagging behind the mouse" and — in canvas mode where
+  // x/y arrive in host coords — pulled the ghost outside the node entirely).
   function updateDragGhost(x, y) {
     if (!dragGhost) return;
-    dragGhost.style.left = (x - parseInt(dragGhost.style.width) / 2) + 'px';
-    dragGhost.style.top = (y - 20) + 'px';
+    var w = parseInt(dragGhost.style.width) || 0;
+    var h = parseInt(dragGhost.style.height) || 0;
+    dragGhost.style.left = (x - w / 2) + 'px';
+    dragGhost.style.top = (y - h / 2) + 'px';
   }
 
   function removeDragGhost(el) {
@@ -7848,7 +7935,11 @@
     var parent = el.parentElement;
     if (!parent) return;
 
-    updateDragGhost(e.clientX, e.clientY);
+    // Ghost lives in hostDoc; in canvas mode the event's clientX/Y are in
+    // target (iframe) coords. Translate before positioning so the ghost
+    // tracks the actual cursor across the iframe boundary + canvas scale.
+    var hp = eventToHostXY(e);
+    updateDragGhost(hp.x, hp.y);
 
     // Mode D always uses coord swap. Others detect from layout.
     useCoordSwap = (currentMode === 'D') || isAbsoluteLayout(parent);
@@ -7910,11 +8001,15 @@
       var elLeft = el.style.left || elRect.left + 'px';
       var tTop = lastDropTarget.style.top || tRect.top + 'px';
       var tLeft = lastDropTarget.style.left || tRect.left + 'px';
+      // Capture original inline position so undo can restore relative/static
+      // elements that were force-promoted to absolute below.
+      var elPos = el.style.position;
+      var tPos = lastDropTarget.style.position;
 
       pushUndo({
         el: el, prop: '__coordswap',
-        elTop: elTop, elLeft: elLeft,
-        target: lastDropTarget, tTop: tTop, tLeft: tLeft
+        elPos: elPos, elTop: elTop, elLeft: elLeft,
+        target: lastDropTarget, tPos: tPos, tTop: tTop, tLeft: tLeft
       });
 
       // Ensure both are absolute
@@ -8092,7 +8187,12 @@
         selectionAncestor = el;
 
         if (el.tagName === 'IMG' || el.tagName === 'VIDEO') showImgMenu(el);
-        else if (isDirectText(el) || isTextWrapper(el)) showTextDock(el);
+        // Text minidock fires for direct text elements only. Wrapper
+        // containers (isTextWrapper — divs with multiple text children) were
+        // surfacing the dock with "Mixed" font readouts even when the user
+        // just wanted to select the box; clicking such containers now shows
+        // no dock. The raw-text fallback still catches deep span hits.
+        else if (isDirectText(el)) showTextDock(el);
         else if (isDirectText(rawEl)) showTextDock(rawEl);
         selectEl(el);
 
