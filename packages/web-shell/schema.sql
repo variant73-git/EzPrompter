@@ -118,3 +118,56 @@ CREATE INDEX IF NOT EXISTS idx_assets_group ON assets(group_id) WHERE group_id I
 -- library. Not a unique constraint (the user may collect the same image
 -- twice intentionally; dedup is opt-in at the API layer).
 CREATE INDEX IF NOT EXISTS idx_assets_user_source ON assets(user_id, source_url, type);
+
+-- ============================================================================
+-- Chat agent (Phase 1 of agent-promptdock feature).
+-- See docs/superpowers/specs/2026-05-31-agent-promptdock-design.md §9.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS chat_threads (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  board_id UUID NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scope VARCHAR(10) NOT NULL DEFAULT 'board' CHECK (scope IN ('board','asset')),
+  asset_id UUID REFERENCES assets(id) ON DELETE CASCADE,
+  title TEXT,
+  status VARCHAR(10) NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  archived_at TIMESTAMPTZ,
+  CHECK ((scope = 'board' AND asset_id IS NULL) OR (scope = 'asset' AND asset_id IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS chat_threads_one_active_per_board
+  ON chat_threads(board_id) WHERE status = 'active' AND scope = 'board';
+CREATE UNIQUE INDEX IF NOT EXISTS chat_threads_one_active_per_asset
+  ON chat_threads(asset_id) WHERE status = 'active' AND scope = 'asset';
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  thread_id UUID NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  role VARCHAR(10) NOT NULL CHECK (role IN ('user','assistant','tool','system')),
+  content TEXT,
+  tool_calls JSONB,
+  tool_call_id TEXT,
+  model VARCHAR(60),
+  agent_run_id UUID,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS chat_messages_thread_ts ON chat_messages(thread_id, created_at);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  thread_id UUID NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+  status VARCHAR(20) NOT NULL CHECK (status IN (
+    'running','paused_confirm','paused_choice','paused_softlimit',
+    'completed','failed','cancelled','hard_limited'
+  )),
+  iterations INT NOT NULL DEFAULT 0,
+  tool_call_counts JSONB NOT NULL DEFAULT '{}'::jsonb,
+  err TEXT,
+  tokens_in INT,
+  tokens_out INT,
+  cost_cents INT,
+  started_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS agent_runs_thread_status ON agent_runs(thread_id, status);
