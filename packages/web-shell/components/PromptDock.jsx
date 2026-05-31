@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useReducer } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
+import ChatPanel from './chat/ChatPanel.jsx';
 
 const ICON_PLUS = (
   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -176,7 +177,63 @@ const ACCEPT_ANY = 'image/*,.md,.markdown,.html,text/markdown,text/html';
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
 const TEXTAREA_MAX_HEIGHT = 240;
 
-export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowError, nodeCount }) {
+// --- Chat reducer -----------------------------------------------------------
+// Phase 1 wiring: holds the active thread, the streaming message list, and
+// any in-flight tool calls. The transient assistant message (one growing
+// bubble during the stream) is detected by an `id` prefix of `tmp-asst-`
+// so we know whether to append to the last bubble or start a new one.
+
+const initialChat = {
+  threadId: null,
+  messages: [],
+  activeToolCalls: [],
+  streaming: false,
+};
+
+function lastIsTransientAssistant(messages) {
+  const last = messages[messages.length - 1];
+  return last?.role === 'assistant' && last?.id?.startsWith('tmp-asst-');
+}
+
+function chatReducer(state, action) {
+  switch (action.type) {
+    case 'THREAD_LOADED':
+      return { ...state, threadId: action.threadId, messages: action.messages };
+    case 'USER_MSG_OPTIMISTIC':
+      return {
+        ...state,
+        messages: [...state.messages, { id: `tmp-${Date.now()}`, role: 'user', content: action.content }],
+        streaming: true,
+        activeToolCalls: [],
+      };
+    case 'ASSISTANT_TOKEN':
+      return {
+        ...state,
+        messages: lastIsTransientAssistant(state.messages)
+          ? state.messages.map((m, i) => i === state.messages.length - 1
+              ? { ...m, content: (m.content || '') + action.delta }
+              : m)
+          : [...state.messages, { id: `tmp-asst-${Date.now()}`, role: 'assistant', content: action.delta, tool_calls: null }],
+      };
+    case 'TOOL_CALL_STARTED':
+      return {
+        ...state,
+        activeToolCalls: [...state.activeToolCalls, { id: action.id, name: action.name, args: action.args, status: 'running' }],
+      };
+    case 'TOOL_CALL_STATUS': {
+      const updated = state.activeToolCalls.map((tc) => tc.id === action.id
+        ? { ...tc, status: action.status, result: action.result, error: action.error }
+        : tc);
+      return { ...state, activeToolCalls: updated };
+    }
+    case 'RUN_FINISHED':
+      return { ...state, streaming: false, activeToolCalls: [] };
+    default:
+      return state;
+  }
+}
+
+export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowError, nodeCount }) {
   const [text, setText] = useState('');
   const [imageFile, setImageFile] = useState(null);   // attached image (preview only)
   const [imagePreview, setImagePreview] = useState(null);
@@ -192,6 +249,101 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
   const taRef = useRef(null);
   const addBtnRef = useRef(null);
   const modelBtnRef = useRef(null);
+
+  // --- Chat state (Phase 1) ----------------------------------------------
+  const [chat, dispatchChat] = useReducer(chatReducer, initialChat);
+
+  // Load the board's active thread on mount / when boardId changes. The
+  // route auto-creates a thread if none exists, so messages will be `[]`
+  // for a fresh board.
+  useEffect(() => {
+    if (!boardId) return;
+    let aborted = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/chat?boardId=${encodeURIComponent(boardId)}`, { credentials: 'include' });
+        if (!res.ok || aborted) return;
+        const { thread, messages } = await res.json();
+        dispatchChat({ type: 'THREAD_LOADED', threadId: thread.id, messages });
+      } catch (e) {
+        console.warn('[PromptDock] failed to load chat thread', e);
+      }
+    })();
+    return () => { aborted = true; };
+  }, [boardId]);
+
+  // SSE event dispatch — keep small and pure so the streaming loop in
+  // sendChatMessage stays readable. RUN_FINISHED is dispatched after the
+  // reader-loop exits (covers normal end-of-stream and server-side errors
+  // that just close the connection).
+  function handleSseEvent(name, payload) {
+    switch (name) {
+      case 'assistant_token':
+        dispatchChat({ type: 'ASSISTANT_TOKEN', delta: payload.delta });
+        break;
+      case 'tool_call':
+        dispatchChat({ type: 'TOOL_CALL_STARTED', id: payload.id, name: payload.name, args: payload.args });
+        break;
+      case 'tool_status':
+        dispatchChat({ type: 'TOOL_CALL_STATUS', id: payload.id, status: payload.status, result: payload.result, error: payload.error });
+        break;
+      case 'run_status':
+        // Final RUN_FINISHED dispatched after the reader-loop exits.
+        break;
+    }
+  }
+
+  // Send a chat message and stream-parse the SSE response. Native
+  // EventSource doesn't support POST bodies, so we use fetch + a manual
+  // reader. Buffer + split on `\n\n` to recover one SSE event block at a
+  // time; lines starting with `event:` and `data:` are reassembled.
+  async function sendChatMessage(content) {
+    if (!boardId || !content?.trim()) return;
+    dispatchChat({ type: 'USER_MSG_OPTIMISTIC', content });
+
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: JSON.stringify({
+        boardId,
+        message: content,
+        modelId,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error('[chat] POST failed', err);
+      dispatchChat({ type: 'RUN_FINISHED' });
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const evBlock = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const lines = evBlock.split('\n');
+        let evName = null, dataStr = '';
+        for (const ln of lines) {
+          if (ln.startsWith('event: ')) evName = ln.slice(7).trim();
+          else if (ln.startsWith('data: ')) dataStr += ln.slice(6);
+        }
+        if (!evName) continue;
+        let data;
+        try { data = JSON.parse(dataStr); } catch { continue; }
+        handleSseEvent(evName, data);
+      }
+    }
+    dispatchChat({ type: 'RUN_FINISHED' });
+  }
 
   // Hydrate persisted model on mount.
   useEffect(() => {
@@ -383,11 +535,27 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
       }
     }
 
-    // Free-text path (chat / feedback) — wired later. For now, log + clear.
-    // eslint-disable-next-line no-console
-    console.log('[prompt-dock] submit (no chat handler yet):', { text: value, imageFile, modelId });
-    setText('');
-    clearImage();
+    // Free-text path → chat agent (Phase 1). Image-only stays a no-op
+    // until vision is wired into the chat route. Clears the textarea
+    // immediately so the optimistic user bubble is the only visible echo.
+    if (value) {
+      setText('');
+      clearImage();
+      try {
+        await sendChatMessage(value);
+      } catch (e) {
+        console.error('[prompt-dock] sendChatMessage failed', e);
+      }
+      return;
+    }
+
+    // Image-only submit (no text, no URL) — still unwired in chat. Drop the
+    // attachment to keep the dock in a clean state.
+    if (imageFile) {
+      // eslint-disable-next-line no-console
+      console.log('[prompt-dock] image-only submit (chat does not handle vision yet)', { imageFile, modelId });
+      clearImage();
+    }
   }
 
   function handleKeyDown(e) {
@@ -457,6 +625,10 @@ export default function PromptDock({ onAddUrl, onUploadMd, onUploadHtml, onAddPr
           </motion.div>
         )}
       </AnimatePresence>
+
+      {(chat.messages.length > 0 || chat.activeToolCalls.length > 0) && (
+        <ChatPanel messages={chat.messages} activeToolCalls={chat.activeToolCalls} />
+      )}
 
       <textarea
         ref={taRef}
