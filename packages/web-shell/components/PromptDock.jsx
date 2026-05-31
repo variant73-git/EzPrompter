@@ -248,7 +248,7 @@ function chatReducer(state, action) {
   }
 }
 
-export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowError, nodeCount }) {
+export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowError, nodeCount, onAgentMutatedGraph }) {
   const [text, setText] = useState('');
   const [imageFile, setImageFile] = useState(null);   // attached image (preview only)
   const [imagePreview, setImagePreview] = useState(null);
@@ -301,6 +301,16 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         break;
       case 'tool_status':
         dispatchChat({ type: 'TOOL_CALL_STATUS', id: payload.id, status: payload.status, result: payload.result, error: payload.error });
+        // When a graph-mutating tool finishes successfully, ask the canvas
+        // to refresh so the new/changed/deleted node appears immediately.
+        // (createNode / addEdge / updateNode / deleteNode — read-only tools
+        // don't change graph state.)
+        if (payload.status === 'done') {
+          const t = chat.activeToolCalls.find((tc) => tc.id === payload.id)?.name;
+          if (t === 'createNode' || t === 'addEdge' || t === 'updateNode' || t === 'deleteNode') {
+            onAgentMutatedGraph?.();
+          }
+        }
         break;
       case 'run_status':
         // Show backend agent failures inline. Successful completions get

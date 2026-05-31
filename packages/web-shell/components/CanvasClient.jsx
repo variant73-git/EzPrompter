@@ -1933,6 +1933,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         runFlowBusy={runFlowBusy}
         runFlowError={runFlowError}
         nodeCount={nodes.length}
+        onAgentMutatedGraph={async () => {
+          // Agent created/deleted/updated a node or edge — refetch board
+          // state so the canvas reflects it. Cheap (one query); we can
+          // optimize to per-mutation patches later if it gets chatty.
+          try {
+            const res = await fetch(`/api/boards/${board.id}`, { credentials: 'include' });
+            if (!res.ok) return;
+            const data = await res.json();
+            if (Array.isArray(data.nodes)) setNodes(data.nodes);
+            if (Array.isArray(data.edges)) setEdges(data.edges);
+          } catch (e) { console.warn('[CanvasClient] agent-mutation refetch failed', e); }
+        }}
       />
 
       {runFlowError && (
