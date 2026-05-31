@@ -45,4 +45,37 @@ export class Registry {
         input_schema: t.inputSchema || { type: 'object', properties: {} },
       }));
   }
+
+  /**
+   * Emit the OpenAI chat.completions tools[] spec.
+   *   [{type:'function', function:{name, description, parameters}}, ...]
+   */
+  toOpenAISpec(allowlist = null) {
+    return this.all()
+      .filter((t) => !allowlist || allowlist.includes(t.name))
+      .map((t) => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description || '',
+          parameters: t.inputSchema || { type: 'object', properties: {} },
+        },
+      }));
+  }
+
+  /**
+   * Emit the Gemini generateContent tools[] spec. Gemini wraps all function
+   * declarations into a single tool object — the array always has length 1
+   * with all the functionDeclarations inside it (even when empty).
+   */
+  toGeminiSpec(allowlist = null) {
+    const declarations = this.all()
+      .filter((t) => !allowlist || allowlist.includes(t.name))
+      .map((t) => ({
+        name: t.name,
+        description: t.description || '',
+        parameters: t.inputSchema || { type: 'object', properties: {} },
+      }));
+    return [{ functionDeclarations: declarations }];
+  }
 }
