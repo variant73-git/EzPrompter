@@ -292,6 +292,8 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
   // reader-loop exits (covers normal end-of-stream and server-side errors
   // that just close the connection).
   function handleSseEvent(name, payload) {
+    // TEMP debug log — remove once chat feedback is reliable.
+    if (typeof window !== 'undefined') console.log('[chat-sse]', name, payload);
     switch (name) {
       case 'assistant_token':
         dispatchChat({ type: 'ASSISTANT_TOKEN', delta: payload.delta });
@@ -301,14 +303,10 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         break;
       case 'tool_status':
         dispatchChat({ type: 'TOOL_CALL_STATUS', id: payload.id, status: payload.status, result: payload.result, error: payload.error });
-        // Refetch canvas state after EVERY successful tool. Looking up the
-        // tool name from chat.activeToolCalls was unreliable (stale closure
-        // — the just-dispatched reducer hadn't committed when handleSseEvent
-        // ran). Read-only tools (queryNodes etc.) trigger a harmless extra
-        // GET; mutating tools update the canvas as intended.
-        if (payload.status === 'done') {
-          onAgentMutatedGraph?.();
-        }
+        // (Refetch moved to end-of-run in sendChatMessage — refetching on
+        // every tool caused setNodes/setEdges to fire 5+ times per turn,
+        // tearing down TransformWrapper's zoom/pan state and locking the
+        // canvas mid-conversation.)
         break;
       case 'run_status':
         // Show backend agent failures inline. Successful completions get
@@ -372,6 +370,9 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
       }
     }
     dispatchChat({ type: 'RUN_FINISHED' });
+    // Single refetch at end of run — picks up everything the agent did
+    // in one go without re-rendering the canvas N times mid-stream.
+    onAgentMutatedGraph?.();
   }
 
   // Hydrate persisted model on mount.
