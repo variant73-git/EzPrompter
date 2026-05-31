@@ -59,3 +59,23 @@
   animation: tool-chip-spin 0.8s linear infinite;
 }
 @keyframes tool-chip-spin { to { transform: rotate(360deg); } }
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+  max-height: 60vh;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  font-family: var(--popup-font-sans, system-ui);
+}
+.chat-panel-empty {
+  padding: 24px 16px;
+  text-align: center;
+}
+.chat-empty-hint {
+  color: var(--text-muted, rgba(245, 245, 245, 0.5));
+  font-family: var(--popup-font-serif, Georgia, serif);
+  font-style: italic;
+  font-size: 13px;
+}
