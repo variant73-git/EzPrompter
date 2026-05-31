@@ -121,6 +121,16 @@ export async function POST(request) {
   (async () => {
     send('thread_id', { threadId: thread.id });
     try {
+      // Each provider expects a different tool spec shape (Anthropic uses
+      // {name, input_schema}; OpenAI wraps in {type:'function', function:{...}};
+      // Gemini wraps everything in [{functionDeclarations:[...]}]). Pick the
+      // right emitter based on the provider chosen above.
+      const tools = resolved.providerLabel === 'openai'
+        ? registry.toOpenAISpec(toolAllowlist)
+        : resolved.providerLabel === 'gemini'
+        ? registry.toGeminiSpec(toolAllowlist)
+        : registry.toAnthropicSpec(toolAllowlist);
+
       await runAgentLoop({
         llm: resolved.adapter,
         registry,
@@ -130,6 +140,7 @@ export async function POST(request) {
         apiKey: resolved.apiKey,
         ctx: { boardId, userId: user.id },
         toolAllowlist,
+        tools,
         onEvent: (ev) => {
           // Normalize driver events to SSE event names per spec §5.
           switch (ev.type) {

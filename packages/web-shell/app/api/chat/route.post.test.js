@@ -13,6 +13,8 @@ vi.mock('../../../lib/agent/tools/index.js', () => ({
     get: () => ({ name: 'noop', classification: 'safe' }),
     all: () => [],
     toAnthropicSpec: () => [],
+    toOpenAISpec: () => [],
+    toGeminiSpec: () => [{ functionDeclarations: [] }],
   }),
 }));
 vi.mock('../../../lib/agent/llm-anthropic.js', () => ({ callAnthropic: vi.fn() }));
