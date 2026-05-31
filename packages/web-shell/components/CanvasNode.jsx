@@ -840,6 +840,17 @@ export default function CanvasNode({
               {isExpanded ? <CollapseIcon /> : <ExpandIcon />}
             </button>
           </div>
+        ) : node.kind === 'site' && node.meta?.source === 'blank' ? (
+          // Blank-website node — nothing's loading; this is an empty
+          // canvas waiting for the user to compose. Show a friendly
+          // empty state, not a spinner that implies background work.
+          <div className="cnode-empty">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" strokeDasharray="3 2.5"/>
+              <path d="M9 10h6M9 14h4" opacity="0.55"/>
+            </svg>
+            <span>Empty canvas — connect sources to build it</span>
+          </div>
         ) : (
           <div className="cnode-loading">
             <div className="cnode-spinner" />

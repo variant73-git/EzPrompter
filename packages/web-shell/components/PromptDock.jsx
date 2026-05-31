@@ -267,6 +267,11 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
 
   // --- Chat state (Phase 1) ----------------------------------------------
   const [chat, dispatchChat] = useReducer(chatReducer, initialChat);
+  // Collapsed = dock shows input only (no bubble panel). Auto-collapsed
+  // after each turn so the dock returns to its compact "original size".
+  // New send or manual expand sets it back to false. Chevron in the panel
+  // sets it to true on demand.
+  const [chatCollapsed, setChatCollapsed] = useState(true);
 
   // Load the board's active thread on mount / when boardId changes. The
   // route auto-creates a thread if none exists, so messages will be `[]`
@@ -327,6 +332,9 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
   async function sendChatMessage(content) {
     if (!boardId || !content?.trim()) return;
     dispatchChat({ type: 'USER_MSG_OPTIMISTIC', content });
+    // Expand the chat panel so the user sees their bubble + the agent's
+    // streaming reply. Auto-collapse fires at the end of the turn.
+    setChatCollapsed(false);
 
     const res = await fetch('/api/chat', {
       method: 'POST',
@@ -373,6 +381,12 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
     // Single refetch at end of run — picks up everything the agent did
     // in one go without re-rendering the canvas N times mid-stream.
     onAgentMutatedGraph?.();
+    // Auto-collapse: return the dock to its compact "input-only" size
+    // after each turn so the canvas isn't permanently obscured by chat
+    // history. User can re-expand by sending another message (history
+    // persists in state and reappears) or by clicking past messages via
+    // the existing chevron when expanded.
+    setChatCollapsed(true);
   }
 
   // Hydrate persisted model on mount.
@@ -656,8 +670,12 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         )}
       </AnimatePresence>
 
-      {(chat.messages.length > 0 || chat.activeToolCalls.length > 0) && (
-        <ChatPanel messages={chat.messages} activeToolCalls={chat.activeToolCalls} />
+      {!chatCollapsed && (chat.messages.length > 0 || chat.activeToolCalls.length > 0) && (
+        <ChatPanel
+          messages={chat.messages}
+          activeToolCalls={chat.activeToolCalls}
+          onCollapse={() => setChatCollapsed(true)}
+        />
       )}
 
       <textarea

@@ -1934,15 +1934,49 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         runFlowError={runFlowError}
         nodeCount={nodes.length}
         onAgentMutatedGraph={async () => {
-          // Agent created/deleted/updated a node or edge — refetch board
-          // state so the canvas reflects it. Cheap (one query); we can
-          // optimize to per-mutation patches later if it gets chatty.
+          // Agent finished a turn — refetch board state so the canvas
+          // reflects creates/updates/deletes. Also frame any NEW nodes
+          // so the user's "camera" follows what the agent just made.
           try {
             const res = await fetch(`/api/boards/${board.id}`, { credentials: 'include' });
             if (!res.ok) return;
             const data = await res.json();
-            if (Array.isArray(data.nodes)) setNodes(data.nodes);
+            if (!Array.isArray(data.nodes)) return;
+
+            // Diff against the current node list to detect what's new.
+            // Done inside the setNodes callback so we don't race against
+            // the queued state update.
+            let newNodes = [];
+            setNodes((prev) => {
+              const prevIds = new Set(prev.map((n) => n.id));
+              newNodes = data.nodes.filter((n) => !prevIds.has(n.id));
+              return data.nodes;
+            });
             if (Array.isArray(data.edges)) setEdges(data.edges);
+
+            // Single new node → center it. Multiple → frame the whole
+            // bounding box so the user sees the workflow at once.
+            // Small delay so React commits the new nodes (and their
+            // measured DOM size) before zooming.
+            if (newNodes.length === 1) {
+              setTimeout(() => zoomToNode(newNodes[0], 400, null), 80);
+            } else if (newNodes.length > 1) {
+              setTimeout(() => {
+                const PAD = 80;
+                const minX = Math.min(...newNodes.map((n) => n.pos_x));
+                const minY = Math.min(...newNodes.map((n) => n.pos_y));
+                const maxX = Math.max(...newNodes.map((n) => n.pos_x + (n.width || 1280)));
+                const maxY = Math.max(...newNodes.map((n) => n.pos_y + (n.height || 800)));
+                const cx = (minX + maxX) / 2;
+                const cy = (minY + maxY) / 2;
+                const vw = window.innerWidth;
+                const vh = window.innerHeight - 48;
+                const scale = Math.min(vw / (maxX - minX + PAD * 2), vh / (maxY - minY + PAD * 2), 1.0);
+                const posX = vw / 2 - cx * scale;
+                const posY = (vh / 2 + 48) - cy * scale;
+                transformRef.current?.setTransform(posX, posY, scale, 400);
+              }, 80);
+            }
           } catch (e) { console.warn('[CanvasClient] agent-mutation refetch failed', e); }
         }}
       />

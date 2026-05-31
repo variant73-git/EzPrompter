@@ -1,10 +1,22 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import ChatBubble from './ChatBubble.jsx';
 import ToolChip from './ToolChip.jsx';
 import './chat.css';
 
-export default function ChatPanel({ messages, activeToolCalls }) {
+export default function ChatPanel({ messages, activeToolCalls, onCollapse }) {
+  const scrollRef = useRef(null);
+
+  // Always scroll to the bottom when content changes — new user message,
+  // new assistant token streaming, new tool chip. Uses the panel's own
+  // scroll container so the parent dock layout stays stable.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages, activeToolCalls]);
+
   if (!messages.length && !activeToolCalls.length) {
     return (
       <div className="chat-panel chat-panel-empty">
@@ -20,7 +32,20 @@ export default function ChatPanel({ messages, activeToolCalls }) {
   })();
 
   return (
-    <div className="chat-panel">
+    <div className="chat-panel" ref={scrollRef}>
+      {onCollapse && (
+        <button
+          type="button"
+          className="chat-panel-collapse"
+          onClick={onCollapse}
+          title="Collapse chat"
+          aria-label="Collapse chat panel"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+      )}
       {messages.map((m, idx) => (
         <ChatBubble key={m.id} role={m.role} content={m.content}>
           {m.tool_calls?.map((tc) => (

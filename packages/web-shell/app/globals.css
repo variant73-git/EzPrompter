@@ -3266,6 +3266,29 @@ body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.4
   border-radius: 10px;
 }
 
+/* Empty-state body for blank-website (teal) nodes. Distinct from
+   cnode-loading: no spinner, calmer tint, hint text that explains
+   what the node is for instead of implying background work. */
+.cnode-empty {
+  width: 100%;
+  height: 800px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  color: rgba(45, 212, 191, 0.85);
+  background: rgba(45, 212, 191, 0.03);
+  font: 500 12.5px var(--popup-font-sans, system-ui);
+  letter-spacing: 0.01em;
+  border-radius: 10px;
+}
+.cnode-empty svg { opacity: 0.75; }
+body.rb-ed-light .cnode-empty {
+  color: rgba(13, 148, 136, 0.95);
+  background: rgba(13, 148, 136, 0.04);
+}
+
 .cnode-spinner {
   width: 22px;
   height: 22px;
