@@ -1,4 +1,5 @@
 (function() {
+  console.log('[uncraft] editor.js BUILD-MARKER 2026-05-30 slice-B drag-drop');
   if (window.__rbEditorActive) { deactivate(); return; }
   window.__rbEditorActive = true;
 
@@ -2973,11 +2974,1236 @@
 
   var SMART_EDIT_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
 
+  // Generic placeholder for thumbs whose original src + proxy retry both
+  // failed. Mounted as a sibling of the broken <img> with absolute fill.
+  var BROKEN_THUMB_SVG = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>';
+
+  // Attaches an error-fallback handler to a thumbnail <img>. On first load
+  // failure (CORS / hotlink protection / 404), retries via the canvas-side
+  // server proxy at /api/proxy/image which synthesizes a matching Referer
+  // header. If the proxy also fails (or we're in extension-mount where the
+  // proxy isn't reachable), swaps the <img> for a clean placeholder
+  // instead of letting the browser's broken-image glyph leak through.
+  function attachThumbFallback(imgEl, originalSrc) {
+    if (!imgEl || !originalSrc || /^data:/.test(originalSrc)) return;
+    imgEl.addEventListener('error', function onErr() {
+      // Skip proxy retry for same-origin URLs — the proxy refuses to fetch
+      // its own server (correct SSRF guard) and a 404 on our own origin
+      // means the file is genuinely missing. Go straight to placeholder.
+      var sameOrigin = false;
+      try {
+        if (originalSrc.startsWith('/')) sameOrigin = true;
+        else sameOrigin = new URL(originalSrc).origin === hostWin.location.origin;
+      } catch (e) {}
+      if (hostWin.__uncraftZoom && !imgEl.dataset.uncraftProxyTried && !sameOrigin) {
+        imgEl.dataset.uncraftProxyTried = '1';
+        imgEl.src = '/api/proxy/image?url=' + encodeURIComponent(originalSrc);
+        return;
+      }
+      imgEl.removeEventListener('error', onErr);
+      showBrokenThumb(imgEl);
+    });
+  }
+  function showBrokenThumb(imgEl) {
+    imgEl.style.opacity = '0';
+    var parent = imgEl.parentElement;
+    if (!parent || parent.querySelector('.rb-ed-thumb-broken')) return;
+    var ph = mk('div', 'rb-ed-thumb-broken');
+    ph.innerHTML = BROKEN_THUMB_SVG;
+    parent.appendChild(ph);
+  }
+
+  // Web-shell origin discovery — mirrors panel.js stcDiscoverOrigin so the
+  // editor can fetch persisted assets from inside the content-script
+  // context. Cache key matches panel.js so both surfaces share the resolved
+  // origin once either side has probed it.
+  var WEB_SHELL_ORIGIN_KEY = 'uncraft.webShellOrigin';
+  var WEB_SHELL_CANDIDATES = ['https://uncraft.app', 'http://localhost:3030', 'http://127.0.0.1:3030'];
+  var webShellOriginCache = null;
+  // Proxies a fetch through background.js. Content scripts inherit the
+  // page's origin (e.g. https://gistr.so) which the /api/* CORS allowlist
+  // rejects; the service worker fetches with the extension origin instead.
+  // Returns { ok, status, data, text, error }.
+  function bgFetch(url, options) {
+    return new Promise(function(resolve) {
+      try {
+        if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+          // Canvas-mount (no extension context) — same-origin direct fetch.
+          fetch(url, Object.assign({ credentials: 'include' }, options || {})).then(function(res) {
+            var ct = res.headers.get('content-type') || '';
+            var parser = ct.indexOf('application/json') >= 0 ? res.json() : res.text();
+            parser.then(function(body) {
+              resolve({ ok: res.ok, status: res.status, data: ct.indexOf('application/json') >= 0 ? body : null, text: ct.indexOf('application/json') >= 0 ? null : body });
+            }).catch(function() { resolve({ ok: res.ok, status: res.status, data: null, text: null }); });
+          }).catch(function(err) { resolve({ ok: false, status: 0, error: String((err && err.message) || err) }); });
+          return;
+        }
+        chrome.runtime.sendMessage({ action: 'uncraft.apiFetch', url: url, options: options || {} }, function(resp) {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, status: 0, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(resp || { ok: false, status: 0, error: 'no response' });
+        });
+      } catch (e) {
+        resolve({ ok: false, status: 0, error: String((e && e.message) || e) });
+      }
+    });
+  }
+
+  function getWebShellOrigin() {
+    if (webShellOriginCache) return Promise.resolve(webShellOriginCache);
+    // Canvas-mount: editor.js is loaded as <script> inside the web-shell
+    // itself, so the API lives at our own origin. No discovery needed and
+    // chrome.* APIs aren't available outside content-script context.
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+      try {
+        webShellOriginCache = hostWin.location.origin;
+        return Promise.resolve(webShellOriginCache);
+      } catch (e) { return Promise.resolve(null); }
+    }
+    return new Promise(function(resolve) {
+      var done = false;
+      function finish(o) { if (!done) { done = true; webShellOriginCache = o; resolve(o); } }
+      try {
+        chrome.storage.local.get([WEB_SHELL_ORIGIN_KEY], function(cache) {
+          var seed = cache && cache[WEB_SHELL_ORIGIN_KEY];
+          var order = seed
+            ? [seed].concat(WEB_SHELL_CANDIDATES.filter(function(o) { return o !== seed; }))
+            : WEB_SHELL_CANDIDATES.slice();
+          (function tryNext(i) {
+            if (i >= order.length) return finish(null);
+            var origin = order[i];
+            bgFetch(origin + '/api/boards').then(function(resp) {
+              if (resp && (resp.ok || resp.status === 401)) {
+                try { chrome.storage.local.set({ 'uncraft.webShellOrigin': origin }); } catch (e) {}
+                finish(origin);
+              } else tryNext(i + 1);
+            });
+          })(0);
+        });
+      } catch (e) { finish(null); }
+    });
+  }
+
+  // Persisted across rebuilds of populateAssets so the user's scope choice
+  // survives a tab toggle. Default = global library (works without a board).
+  var assetsScopeState = { kind: 'library' };
+  // Generation counter — every populateAssets() bump invalidates any
+  // in-flight fetch so stale responses don't paint over a newer render.
+  var assetsGen = 0;
+  // Smart-edit floating panel — Slice C v2. The panel mounts to the editor
+  // root anchored to the right edge of the layers panel and almost fills
+  // the site height. It survives Assets tab re-renders because it lives
+  // outside the tab body.
+  var assetEditPanel = null;
+  var assetEditTarget = null;
+
+  // Serializes the asset into dataTransfer for cross-iframe drag onto the
+  // canvas surface. Same-origin srcDoc iframes (canvas-mount) share the
+  // dataTransfer payload natively — CanvasClient reads it from the drop
+  // event and calls api.createNode. The MIME type carries our descriptor
+  // separately from any text/url so non-canvas drop targets are unaffected.
+  function buildAssetDragData(e, asset) {
+    if (!asset || !e || !e.dataTransfer) return;
+    try {
+      var descriptor = {
+        type: asset.type || 'image',
+        name: asset.name || '',
+        source_url: asset.source_url || null,
+        thumb_url: asset.thumb_url || null,
+        blob_url: asset.blob_url || null,
+        html: asset.html || null,
+        meta: asset.meta || {}
+      };
+      e.dataTransfer.setData('application/x-uncraft-asset', JSON.stringify(descriptor));
+      // Fallback for browsers that strip custom MIME types in some flows.
+      var url = descriptor.thumb_url || descriptor.blob_url || descriptor.source_url;
+      if (url) e.dataTransfer.setData('text/uri-list', url);
+      e.dataTransfer.effectAllowed = 'copy';
+    } catch (err) { /* swallow — drag still starts, drop will no-op */ }
+  }
+
+  // Build an asset-shaped object from a DOM element so the image minidock
+  // can hand off into the same smart-edit panel that persisted assets use.
+  function assetFromElement(el) {
+    if (!el) return null;
+    var tag = (el.tagName || '').toLowerCase();
+    var src = el.currentSrc || el.src || '';
+    var type = tag === 'video' ? 'video' : (tag === 'img' ? 'image' : 'image');
+    var name = el.alt || el.title || '';
+    if (!name && src) {
+      try { name = src.split('/').pop().split('?')[0] || 'Asset'; } catch (e) { name = 'Asset'; }
+    }
+    return {
+      type: type,
+      name: name || 'Asset',
+      source_url: src || null,
+      thumb_url: src || null,
+      blob_url: null,
+      html: null,
+      css: null,
+      meta: {},
+      _domEl: el
+    };
+  }
+
+  // Mixed-font detection — Skip the text minidock for wrappers that
+  // contain multiple fonts; the dock can't represent that cleanly so we
+  // suppress it entirely per user request.
+  function isTextMixedFonts(el) {
+    try {
+      var v = readTextStyle(el, 'fontFamily');
+      return !!(v && typeof v === 'object' && v.mixed);
+    } catch (e) { return false; }
+  }
+
+  // Builds one collapsible card matching the inspector's .rb-insp-sec
+  // pattern, but parented to the Assets tab body instead of inspBody.
+  // Returns refs the caller can use to inject controls into the header
+  // and populate the body.
+  function buildAssetsCard(parent, title, slug) {
+    var sec = mk('div', 'rb-insp-sec rb-ed-assets-card');
+    sec.setAttribute('data-rb-sec', slug);
+    var hd = mk('div', 'rb-insp-sec-hd');
+    var titleSpan = mk('span', 'rb-insp-sec-title');
+    titleSpan.textContent = title;
+    hd.appendChild(titleSpan);
+    var hdRight = mk('div', 'rb-ed-assets-card-hdright');
+    hdRight.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    var chev = hostDoc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chev.setAttribute('class', 'rb-insp-sec-chev');
+    chev.setAttribute('viewBox', '0 0 24 24');
+    chev.setAttribute('fill', 'none');
+    chev.setAttribute('stroke', 'currentColor');
+    chev.setAttribute('stroke-width', '1.5');
+    chev.innerHTML = '<path d="M6 9l6 6 6-6"/>';
+    hdRight.appendChild(chev);
+    hd.appendChild(hdRight);
+    sec.appendChild(hd);
+    var body = mk('div', 'rb-insp-sec-body');
+    sec.appendChild(body);
+    parent.appendChild(sec);
+    hd.addEventListener('click', function(e) {
+      // Header controls (scope dropdown) shouldn't collapse the card.
+      if (e.target.closest('.rb-ed-assets-scope') || e.target.closest('.rb-ed-assets-scope-menu')) return;
+      sec.classList.toggle('collapsed');
+    }, { signal: sig });
+    return { sec: sec, header: hdRight, body: body };
+  }
+
   function populateAssets() {
     var ab = hostDoc.getElementById('rb-ed-assets-body');
     if (!ab) return;
     ab.innerHTML = '';
+    assetsGen++;
 
+    var userCard = buildAssetsCard(ab, 'User Collected Assets', 'user-collected');
+    mountScopePicker(userCard.header, userCard.body);
+    renderUserCollectedBody(userCard.body, assetsGen);
+
+    var pageCard = buildAssetsCard(ab, 'Page Assets', 'page-assets');
+    populatePageAssets(pageCard.body);
+  }
+
+  // Smart Edit (Slice D) — analyze → editable JSON → generate → result.
+  // Mirrors the widget's Smart Remix flow (panel.js buildGenCard) but
+  // collapsed to what the floating panel needs. Background handlers
+  // (describeImage, generateImage) are reused as-is.
+  var assetEditState = null; // { phase, json, prompt, provider, resultUrl, err, dirty }
+  var assetEditMsgListener = null;
+  var assetEditSmartContainer = null;
+  // Optional handler bound at enterAssetEdit time. When set, the idle screen
+  // shows a "Show in page" button alongside "Smart edit"; clicking it
+  // closes the panel and runs the caller's handler (typically: scroll the
+  // page, select the element, mount the image minidock).
+  var assetEditShowInPage = null;
+
+  function enterAssetEdit(asset, showInPageHandler, autoAnalyze) {
+    if (!asset) return;
+    if (assetEditPanel) exitAssetEdit();
+    assetEditTarget = asset;
+    assetEditShowInPage = typeof showInPageHandler === 'function' ? showInPageHandler : null;
+    assetEditState = { phase: 'idle', dirty: false };
+    assetEditPanel = mk('div', 'rb-ed-asset-edit-panel');
+    renderAssetEditView(assetEditPanel, asset);
+    // Mount to the editor root so the panel sits above the page but inside
+    // the editor's own stacking context — same surface that hosts the
+    // banner, inspector, layers panel, etc.
+    root.appendChild(assetEditPanel);
+    attachAssetEditMessageListener();
+    // Callers that mean "edit this now" (image minidock Smart Edit button)
+    // can ask the panel to skip the idle gate and run the analyze step
+    // immediately. Layers-panel clicks leave this off so the user picks
+    // Smart edit / Show in page themselves.
+    if (autoAnalyze) {
+      setTimeout(triggerAnalyze, 30);
+    }
+  }
+
+  function exitAssetEdit() {
+    detachAssetEditMessageListener();
+    if (assetEditPanel) {
+      assetEditPanel.remove();
+      assetEditPanel = null;
+    }
+    assetEditTarget = null;
+    assetEditState = null;
+    assetEditSmartContainer = null;
+    assetEditShowInPage = null;
+  }
+
+  function attachAssetEditMessageListener() {
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.onMessage) return;
+    detachAssetEditMessageListener();
+    assetEditMsgListener = function(msg) {
+      if (!msg || !assetEditPanel) return;
+      if (msg.action === 'promptReady') {
+        assetEditState.phase = 'ready';
+        assetEditState.json = msg.structuredJson || { style: 'photorealistic', aspectRatio: '1:1' };
+        assetEditState.prompt = msg.prompt || '';
+        assetEditState.provider = msg.provider || 'gemini';
+        renderSmartSection();
+      } else if (msg.action === 'promptError') {
+        assetEditState.phase = 'error';
+        assetEditState.err = msg.error || 'Failed to analyze image.';
+        renderSmartSection();
+      } else if (msg.action === 'imageGenerated') {
+        assetEditState.phase = 'done';
+        assetEditState.resultUrl = msg.dataUrl || '';
+        renderSmartSection();
+      } else if (msg.action === 'imageGenError') {
+        assetEditState.phase = 'gen-error';
+        assetEditState.err = msg.error || 'Image generation failed.';
+        renderSmartSection();
+      }
+    };
+    chrome.runtime.onMessage.addListener(assetEditMsgListener);
+  }
+
+  function detachAssetEditMessageListener() {
+    if (assetEditMsgListener && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+      try { chrome.runtime.onMessage.removeListener(assetEditMsgListener); } catch (e) {}
+    }
+    assetEditMsgListener = null;
+  }
+
+  function triggerAnalyze() {
+    if (!assetEditTarget) return;
+    var url = assetEditTarget.source_url || assetEditTarget.thumb_url;
+    if (!url) {
+      assetEditState.phase = 'error';
+      assetEditState.err = 'No image URL to analyze.';
+      renderSmartSection();
+      return;
+    }
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+      assetEditState.phase = 'error';
+      assetEditState.err = 'Smart Edit needs the extension context.';
+      renderSmartSection();
+      return;
+    }
+    assetEditState.phase = 'analyzing';
+    renderSmartSection();
+    try { chrome.runtime.sendMessage({ action: 'describeImage', imageUrl: url }); } catch (e) {}
+  }
+
+  function triggerGenerate() {
+    if (!assetEditTarget || !assetEditState || !assetEditState.json) return;
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) return;
+    var combined = (assetEditState.prompt || '') + '\n\n' + JSON.stringify(assetEditState.json, null, 2);
+    assetEditState.phase = 'generating';
+    renderSmartSection();
+    try {
+      chrome.runtime.sendMessage({
+        action: 'generateImage',
+        prompt: combined,
+        // No provider picker in the panel — let background pick the default.
+        imageProvider: assetEditState.provider || 'gemini'
+      });
+    } catch (e) {}
+  }
+
+  // Renders the Smart Edit section based on current phase. Replaces the
+  // body of assetEditSmartContainer so we can transition idle → analyzing
+  // → ready (editor) → generating → done (result) without re-rendering
+  // the rest of the panel (header, preview, meta).
+  function renderSmartSection() {
+    var c = assetEditSmartContainer;
+    if (!c || !assetEditState) return;
+    c.innerHTML = '';
+    var phase = assetEditState.phase;
+
+    if (phase === 'idle') {
+      var row = mk('div', 'rb-ed-asset-smart-cta-row');
+
+      var smartBtn = mk('button', 'rb-ed-asset-smart-cta');
+      smartBtn.type = 'button';
+      smartBtn.innerHTML = '<svg viewBox="0 0 37 40" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M16,29.7c0,.8-.6,1.4-1.3,1.5-1,0-2.7.5-3.2,1.1-.6.6-1,2.3-1.1,3.2,0,.8-.7,1.3-1.5,1.3s-1.4-.6-1.5-1.3c0-1-.5-2.7-1.1-3.2-.6-.6-2.3-1-3.2-1.1-.8,0-1.3-.7-1.3-1.5s.6-1.4,1.3-1.5c1,0,2.7-.5,3.2-1.1.6-.6,1-2.3,1.1-3.2,0-.8.7-1.3,1.5-1.3s1.4.6,1.5,1.3c0,1,.5,2.7,1.1,3.2.6.6,2.3,1,3.2,1.1.8,0,1.3.7,1.3,1.5ZM33.3,16.7c-1.5-.2-5.8-1-7.5-2.7-1.7-1.7-2.5-6-2.7-7.5,0-.8-.7-1.3-1.5-1.3s-1.4.6-1.5,1.3c-.2,1.5-1,5.8-2.7,7.5s-6,2.5-7.5,2.7c-.8,0-1.3.7-1.3,1.5s.6,1.4,1.3,1.5c1.5.2,5.8,1,7.5,2.7s2.5,6,2.7,7.5c0,.8.7,1.3,1.5,1.3s1.4-.6,1.5-1.3c.2-1.5,1-5.8,2.7-7.5,1.7-1.7,6-2.5,7.5-2.7.8,0,1.3-.7,1.3-1.5s-.6-1.4-1.3-1.5Z"/></svg><span>Smart edit</span>';
+      smartBtn.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        triggerAnalyze();
+      }, { capture: true });
+      row.appendChild(smartBtn);
+
+      if (assetEditShowInPage) {
+        var showBtn = mk('button', 'rb-ed-asset-smart-cta rb-ed-asset-smart-cta-secondary');
+        showBtn.type = 'button';
+        showBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg><span>Show in page</span>';
+        showBtn.addEventListener('mousedown', function(e) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          var handler = assetEditShowInPage;
+          exitAssetEdit();
+          if (handler) handler();
+        }, { capture: true });
+        row.appendChild(showBtn);
+      }
+
+      c.appendChild(row);
+      return;
+    }
+
+    if (phase === 'analyzing') {
+      var st = mk('div', 'rb-ed-asset-smart-status');
+      st.innerHTML = '<span class="rb-ed-asset-smart-spinner"></span><span>Analyzing image…</span>';
+      c.appendChild(st);
+      return;
+    }
+
+    if (phase === 'error') {
+      var er = mk('div', 'rb-ed-asset-smart-error');
+      er.textContent = assetEditState.err || 'Something went wrong.';
+      c.appendChild(er);
+      var retry = mk('button', 'rb-ed-asset-smart-retry');
+      retry.type = 'button';
+      retry.textContent = 'Try again';
+      retry.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        assetEditState.phase = 'idle';
+        renderSmartSection();
+      }, { capture: true });
+      c.appendChild(retry);
+      return;
+    }
+
+    if (phase === 'ready' || phase === 'generating' || phase === 'done' || phase === 'gen-error') {
+      // Section title + tooltip
+      var title = mk('div', 'rb-ed-asset-smart-title');
+      title.textContent = 'Edit Live';
+      c.appendChild(title);
+      var tip = mk('div', 'rb-ed-asset-smart-tip');
+      tip.textContent = 'write over each value';
+      c.appendChild(tip);
+
+      // JSON editor — categorized pills
+      var editor = mk('div', 'rb-ed-asset-smart-editor');
+      renderJsonEditor(editor, assetEditState.json);
+      c.appendChild(editor);
+
+      // Actions — Copy prompt (compact, right-aligned) above the
+      // full-width Generate pill. Generate gates on assetEditState.dirty
+      // so the user has to actually edit at least one pill before firing
+      // a generation; on first analyze, no edits = no generation.
+      var actions = mk('div', 'rb-ed-asset-smart-actions');
+      var copyBtn = mk('button', 'rb-ed-asset-smart-copy');
+      copyBtn.type = 'button';
+      copyBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy prompt</span>';
+      copyBtn.title = 'Copy prompt + JSON';
+      copyBtn.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        var combined = (assetEditState.prompt || '') + '\n\n' + JSON.stringify(assetEditState.json, null, 2);
+        try {
+          navigator.clipboard.writeText(combined).then(function() {
+            var orig = copyBtn.innerHTML;
+            copyBtn.innerHTML = '<span>Copied!</span>';
+            setTimeout(function() { copyBtn.innerHTML = orig; }, 1400);
+          }).catch(function() {});
+        } catch (e2) {}
+      }, { capture: true });
+      actions.appendChild(copyBtn);
+
+      var genBtn = mk('button', 'rb-ed-asset-smart-gen rb-ed-asset-smart-gen-block');
+      genBtn.type = 'button';
+      var isGenerating = phase === 'generating';
+      var canGenerate = !!assetEditState.dirty;
+      if (isGenerating) {
+        genBtn.innerHTML = '<span class="rb-ed-asset-smart-spinner rb-ed-asset-smart-spinner-light"></span><span>Generating…</span>';
+        genBtn.disabled = true;
+      } else if (!canGenerate) {
+        genBtn.innerHTML = '<span>Generate</span>';
+        genBtn.disabled = true;
+        genBtn.title = 'Edit at least one variable to enable generation';
+      } else {
+        genBtn.innerHTML = '<span>Generate</span><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>';
+        genBtn.addEventListener('mousedown', function(e) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          triggerGenerate();
+        }, { capture: true });
+      }
+      actions.appendChild(genBtn);
+      c.appendChild(actions);
+
+      // Generation result / error
+      if (phase === 'done' && assetEditState.resultUrl) {
+        var result = mk('div', 'rb-ed-asset-smart-result');
+        var img = mk('img');
+        img.src = assetEditState.resultUrl;
+        img.alt = 'Generated';
+        result.appendChild(img);
+        c.appendChild(result);
+
+        var resActions = mk('div', 'rb-ed-asset-smart-result-actions');
+        var dlBtn = mk('button', 'rb-ed-asset-smart-pill');
+        dlBtn.type = 'button';
+        dlBtn.textContent = 'Download';
+        dlBtn.addEventListener('mousedown', function(e) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          var a = hostDoc.createElement('a');
+          a.href = assetEditState.resultUrl;
+          a.download = 'uncraft-generated.png';
+          a.click();
+        }, { capture: true });
+        resActions.appendChild(dlBtn);
+
+        var againBtn = mk('button', 'rb-ed-asset-smart-pill');
+        againBtn.type = 'button';
+        againBtn.textContent = 'Generate again';
+        againBtn.addEventListener('mousedown', function(e) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          triggerGenerate();
+        }, { capture: true });
+        resActions.appendChild(againBtn);
+        c.appendChild(resActions);
+      } else if (phase === 'gen-error') {
+        var ge = mk('div', 'rb-ed-asset-smart-error');
+        ge.textContent = assetEditState.err || 'Generation failed.';
+        c.appendChild(ge);
+      }
+    }
+  }
+
+  // Model picker — mirrors the canvas PromptDock options + storage key so
+  // the selection follows the user across surfaces. Persistence falls back
+  // gracefully when localStorage isn't writable (private browsing).
+  var ASSET_EDIT_MODELS = [
+    { id: 'gemini-3.1-pro',  name: 'Gemini 3.1 Pro',  provider: 'google' },
+    { id: 'gpt-5.5',         name: 'GPT-5.5',         provider: 'openai' },
+    { id: 'claude-4.6-opus', name: 'Claude 4.6 Opus', provider: 'anthropic' },
+    { id: 'kimi-k2.6',       name: 'Kimi K2.6',       provider: 'kimi' }
+  ];
+  var ASSET_EDIT_MODEL_KEY = 'uncraft-model';
+  var ASSET_EDIT_DEFAULT_MODEL = 'gpt-5.5';
+  function getAssetEditModelId() {
+    try {
+      var saved = localStorage.getItem(ASSET_EDIT_MODEL_KEY);
+      if (saved && ASSET_EDIT_MODELS.some(function(m) { return m.id === saved; })) return saved;
+    } catch (e) {}
+    return ASSET_EDIT_DEFAULT_MODEL;
+  }
+  function setAssetEditModelId(id) {
+    try { localStorage.setItem(ASSET_EDIT_MODEL_KEY, id); } catch (e) {}
+  }
+  function findAssetEditModel(id) {
+    return ASSET_EDIT_MODELS.find(function(m) { return m.id === id; }) || ASSET_EDIT_MODELS[0];
+  }
+
+  // Pinned chat dock at the bottom of the floating panel. Textarea + model
+  // picker + send. Pressing Enter (without shift) or clicking send merges
+  // the user's instruction with the current JSON state and dispatches a
+  // generate call, same path as the inline Generate button.
+  function buildAssetChatDock() {
+    var dock = mk('div', 'rb-ed-asset-edit-chat');
+
+    var ta = mk('textarea', 'rb-ed-asset-chat-ta');
+    ta.placeholder = 'Tell the AI how to change this image…';
+    ta.rows = 1;
+    ta.addEventListener('input', function() {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+    });
+
+    var actions = mk('div', 'rb-ed-asset-chat-actions');
+
+    // Model picker
+    var modelBtn = mk('button', 'rb-ed-asset-chat-model');
+    modelBtn.type = 'button';
+    var modelIcon = mk('span', 'rb-ed-asset-chat-model-icon');
+    var modelName = mk('span', 'rb-ed-asset-chat-model-name');
+    var modelChev = hostDoc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    modelChev.setAttribute('class', 'rb-ed-asset-chat-model-chev');
+    modelChev.setAttribute('viewBox', '0 0 24 24');
+    modelChev.setAttribute('width', '10');
+    modelChev.setAttribute('height', '10');
+    modelChev.setAttribute('fill', 'none');
+    modelChev.setAttribute('stroke', 'currentColor');
+    modelChev.setAttribute('stroke-width', '2');
+    modelChev.innerHTML = '<path d="M6 9l6 6 6-6"/>';
+    modelBtn.appendChild(modelIcon);
+    modelBtn.appendChild(modelName);
+    modelBtn.appendChild(modelChev);
+    function refreshModelLabel() {
+      var m = findAssetEditModel(getAssetEditModelId());
+      modelName.textContent = m.name;
+      modelIcon.textContent = m.provider === 'google' ? 'G'
+        : m.provider === 'openai' ? 'O'
+        : m.provider === 'anthropic' ? 'A'
+        : m.provider === 'kimi' ? 'K' : '·';
+    }
+    refreshModelLabel();
+    modelBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      openAssetEditModelMenu(modelBtn, function(id) {
+        setAssetEditModelId(id);
+        refreshModelLabel();
+      });
+    }, { capture: true });
+    actions.appendChild(modelBtn);
+
+    // Send button (arrow-up)
+    var sendBtn = mk('button', 'rb-ed-asset-chat-send');
+    sendBtn.type = 'button';
+    sendBtn.title = 'Send';
+    sendBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>';
+
+    function submit() {
+      var msg = ta.value.trim();
+      if (!msg) return;
+      if (!assetEditState || !assetEditState.json) return;
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) return;
+      var combined = (assetEditState.prompt || '') + '\n\n' +
+                     JSON.stringify(assetEditState.json, null, 2) +
+                     '\n\nUser instruction: ' + msg;
+      ta.value = '';
+      ta.style.height = 'auto';
+      assetEditState.phase = 'generating';
+      renderSmartSection();
+      try {
+        chrome.runtime.sendMessage({
+          action: 'generateImage',
+          prompt: combined,
+          imageProvider: assetEditState.provider || 'gemini'
+        });
+      } catch (e) {}
+    }
+
+    ta.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        submit();
+      }
+    });
+    sendBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      submit();
+    }, { capture: true });
+
+    actions.appendChild(sendBtn);
+    dock.appendChild(ta);
+    dock.appendChild(actions);
+    return dock;
+  }
+
+  function openAssetEditModelMenu(anchor, onPick) {
+    var existing = hostDoc.querySelector('.rb-ed-asset-chat-model-menu');
+    if (existing) { existing.remove(); return; }
+    var menu = mk('div', 'rb-ed-asset-chat-model-menu');
+    var current = getAssetEditModelId();
+    ASSET_EDIT_MODELS.forEach(function(m) {
+      var opt = mk('button', 'rb-ed-asset-chat-model-opt');
+      opt.type = 'button';
+      var sel = m.id === current;
+      var lbl = mk('span'); lbl.textContent = m.name; opt.appendChild(lbl);
+      if (sel) {
+        var tick = mk('span', 'rb-ed-asset-chat-model-tick');
+        tick.textContent = '✓';
+        opt.appendChild(tick);
+      }
+      opt.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        menu.remove();
+        onPick(m.id);
+      }, { capture: true });
+      menu.appendChild(opt);
+    });
+    hostDoc.body.appendChild(menu);
+    var r = anchor.getBoundingClientRect();
+    var mw = menu.offsetWidth || 200;
+    var mh = menu.offsetHeight || 160;
+    menu.style.left = Math.max(8, Math.min(window.innerWidth - 8 - mw, r.left)) + 'px';
+    menu.style.top = Math.max(8, r.top - mh - 6) + 'px';
+    setTimeout(function() {
+      function close(e) {
+        if (!menu.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) {
+          menu.remove();
+          hostDoc.removeEventListener('mousedown', close, true);
+        }
+      }
+      hostDoc.addEventListener('mousedown', close, true);
+    }, 50);
+  }
+
+  // Renders a categorized pill editor for an object structured as
+  // { category: { field: value|array }, ... }. Editing a pill writes
+  // back to the source object so subsequent generate() picks up edits.
+  function renderJsonEditor(parent, jsonData) {
+    var CATEGORY_LABELS = {
+      subject: 'Subject', environment: 'Environment', style: 'Style',
+      color: 'Color', mood: 'Mood', camera: 'Camera',
+      lighting: 'Lighting', technical: 'Technical'
+    };
+    function humanize(k) {
+      return String(k || '').replace(/([A-Z])/g, ' $1').replace(/^./, function(s) { return s.toUpperCase(); });
+    }
+    function makePill(catKey, fieldKey, idx, value) {
+      // wrap holds both the pill and (when editing) the black editor that
+      // 'embraces' it with a text input above.
+      var wrap = mk('span', 'rb-ed-asset-json-pill-wrap');
+      var pill = mk('span', 'rb-ed-asset-json-pill');
+      pill.textContent = String(value);
+      var isColor = /^#[0-9a-fA-F]{3,8}$/.test(String(value));
+      if (isColor) {
+        pill.classList.add('rb-ed-asset-color-pill');
+        pill.style.setProperty('--rb-swatch-color', String(value));
+      }
+      pill.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (wrap.classList.contains('rb-ed-pill-editing')) return;
+        openPillEditor(wrap, pill, catKey, fieldKey, idx, jsonData);
+      }, { capture: true });
+      wrap.appendChild(pill);
+      return wrap;
+    }
+    function appendField(parentEl, catKey, fieldKey, fieldVal) {
+      var row = mk('div', 'rb-ed-asset-json-field');
+      var k = mk('div', 'rb-ed-asset-json-key');
+      k.textContent = humanize(fieldKey);
+      row.appendChild(k);
+      var vals = mk('div', 'rb-ed-asset-json-values');
+      if (Array.isArray(fieldVal)) {
+        fieldVal.forEach(function(item, i) {
+          vals.appendChild(makePill(catKey, fieldKey, i, item));
+        });
+      } else {
+        vals.appendChild(makePill(catKey, fieldKey, null, fieldVal));
+      }
+      row.appendChild(vals);
+      parentEl.appendChild(row);
+    }
+    Object.keys(jsonData).forEach(function(catKey) {
+      var catVal = jsonData[catKey];
+      if (catVal !== null && typeof catVal === 'object' && !Array.isArray(catVal)) {
+        var cat = mk('div', 'rb-ed-asset-json-category');
+        var ct = mk('div', 'rb-ed-asset-json-cat-title');
+        ct.textContent = CATEGORY_LABELS[catKey] || humanize(catKey);
+        cat.appendChild(ct);
+        var fields = mk('div', 'rb-ed-asset-json-cat-fields');
+        Object.keys(catVal).forEach(function(fk) {
+          appendField(fields, catKey, fk, catVal[fk]);
+        });
+        cat.appendChild(fields);
+        parent.appendChild(cat);
+      } else {
+        // Flat field
+        appendField(parent, null, catKey, catVal);
+      }
+    });
+  }
+
+  // Opens the inline pill editor: a black container that envelops the pill
+  // and renders a text input above it with a white checkmark confirm
+  // button. Enter / checkmark commit; ESC / outside-click cancel and the
+  // original value stays.
+  function openPillEditor(wrap, pill, catKey, fieldKey, idx, jsonData) {
+    closeOpenPillEditor();
+    wrap.classList.add('rb-ed-pill-editing');
+
+    var originalValue = pill.textContent;
+
+    var editor = mk('div', 'rb-ed-pill-editor');
+    var row = mk('div', 'rb-ed-pill-editor-row');
+    var input = mk('input', 'rb-ed-pill-editor-input');
+    input.type = 'text';
+    input.value = originalValue;
+
+    var confirmBtn = mk('button', 'rb-ed-pill-editor-confirm');
+    confirmBtn.type = 'button';
+    confirmBtn.title = 'Confirm';
+    confirmBtn.innerHTML = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+
+    var closed = false;
+    function teardown() {
+      if (closed) return;
+      closed = true;
+      wrap.classList.remove('rb-ed-pill-editing');
+      if (editor.parentNode) editor.parentNode.removeChild(editor);
+      if (outsideHandler) {
+        try { hostDoc.removeEventListener('mousedown', outsideHandler, true); } catch (e) {}
+        outsideHandler = null;
+      }
+    }
+    function commit() {
+      var newVal = input.value.trim();
+      var changed = newVal !== originalValue;
+      var target = catKey && jsonData[catKey] ? jsonData[catKey] : jsonData;
+      if (idx !== null && idx !== undefined) {
+        if (Array.isArray(target[fieldKey])) target[fieldKey][idx] = newVal;
+      } else {
+        target[fieldKey] = newVal;
+      }
+      pill.textContent = newVal;
+      if (pill.classList.contains('rb-ed-asset-color-pill') && /^#[0-9a-fA-F]{3,8}$/.test(newVal)) {
+        pill.style.setProperty('--rb-swatch-color', newVal);
+      }
+      teardown();
+      // Mark dirty + re-render so the Generate button unlocks. Re-render
+      // also rebuilds the categorized editor from the (now mutated)
+      // assetEditState.json — the new pill carries the new value.
+      if (changed && assetEditState) {
+        assetEditState.dirty = true;
+        renderSmartSection();
+      }
+    }
+    function cancel() { teardown(); }
+
+    confirmBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      commit();
+    }, { capture: true });
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    });
+    input.addEventListener('mousedown', function(e) {
+      // Block selection / drag handlers above while the input is focused.
+      e.stopImmediatePropagation();
+    }, { capture: true });
+
+    row.appendChild(input);
+    row.appendChild(confirmBtn);
+    editor.appendChild(row);
+    // Editor sits BEFORE the pill so the input renders above it inside the
+    // shared black wrapper (CSS handles the visual envelope).
+    wrap.insertBefore(editor, pill);
+
+    setTimeout(function() {
+      input.focus();
+      input.select();
+    }, 0);
+
+    // Cancel on outside click (anywhere not inside this wrap).
+    var outsideHandler = function(e) {
+      if (!wrap.contains(e.target)) cancel();
+    };
+    setTimeout(function() {
+      if (!closed) hostDoc.addEventListener('mousedown', outsideHandler, true);
+    }, 80);
+
+    // Park a reference so a sibling open will close this one first.
+    _openPillEditor = { teardown: teardown };
+  }
+  var _openPillEditor = null;
+  function closeOpenPillEditor() {
+    if (_openPillEditor && _openPillEditor.teardown) {
+      _openPillEditor.teardown();
+      _openPillEditor = null;
+    }
+  }
+
+  // Right-click context menu for asset thumbs. Exposes "Edit" (opens the
+  // smart-edit floating panel) and optionally "Show in page" (selects the
+  // matching DOM element + image minidock). Show-in-page is omitted when
+  // no page handler is given (e.g. for persisted assets whose source URL
+  // isn't this page).
+  function showAssetContextMenu(ev, asset, onShowInPage) {
+    closeAssetContextMenu();
+    var menu = mk('div', 'rb-ed-assets-ctx');
+    function addOpt(label, handler) {
+      var btn = mk('button', 'rb-ed-assets-ctx-opt');
+      btn.type = 'button';
+      btn.textContent = label;
+      btn.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        closeAssetContextMenu();
+        handler();
+      }, { capture: true });
+      menu.appendChild(btn);
+    }
+    addOpt('Edit', function() { enterAssetEdit(asset, onShowInPage); });
+    if (typeof onShowInPage === 'function') {
+      addOpt('Show in page', onShowInPage);
+    }
+    hostDoc.body.appendChild(menu);
+    var mw = menu.offsetWidth || 160;
+    var mh = menu.offsetHeight || 64;
+    var x = Math.max(8, Math.min(window.innerWidth - 8 - mw, ev.clientX));
+    var y = Math.max(8, Math.min(window.innerHeight - 8 - mh, ev.clientY));
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    setTimeout(function() {
+      function close(e) {
+        if (!menu.contains(e.target)) {
+          closeAssetContextMenu();
+          hostDoc.removeEventListener('mousedown', close, true);
+        }
+      }
+      hostDoc.addEventListener('mousedown', close, true);
+    }, 50);
+  }
+  function closeAssetContextMenu() {
+    var existing = hostDoc.querySelectorAll('.rb-ed-assets-ctx');
+    existing.forEach(function(n) { n.remove(); });
+  }
+
+  function mountScopePicker(header, body) {
+    var scopeBtn = mk('button', 'rb-ed-assets-scope');
+    scopeBtn.type = 'button';
+    var label = mk('span', 'rb-ed-assets-scope-label');
+    label.textContent = scopeLabel();
+    var chev = hostDoc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chev.setAttribute('viewBox', '0 0 24 24');
+    chev.setAttribute('width', '9');
+    chev.setAttribute('height', '9');
+    chev.setAttribute('fill', 'none');
+    chev.setAttribute('stroke', 'currentColor');
+    chev.setAttribute('stroke-width', '2');
+    chev.innerHTML = '<path d="M6 9l6 6 6-6"/>';
+    scopeBtn.appendChild(label);
+    scopeBtn.appendChild(chev);
+    header.insertBefore(scopeBtn, header.firstChild);
+    scopeBtn.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      openScopePicker(scopeBtn, function(newScope) {
+        if (newScope === assetsScopeState.kind) return;
+        assetsScopeState.kind = newScope;
+        label.textContent = scopeLabel();
+        assetsGen++;
+        renderUserCollectedBody(body, assetsGen);
+      });
+    }, { capture: true, signal: sig });
+  }
+
+  function scopeLabel() {
+    return assetsScopeState.kind === 'project' ? 'Project' : 'Global';
+  }
+
+  function openScopePicker(anchorBtn, onPick) {
+    var existing = hostDoc.querySelector('.rb-ed-assets-scope-menu');
+    if (existing) { existing.remove(); return; }
+    var menu = mk('div', 'rb-ed-assets-scope-menu');
+    function makeOpt(labelText, value) {
+      var btn = mk('button', 'rb-ed-assets-scope-opt');
+      btn.type = 'button';
+      var sel = assetsScopeState.kind === value;
+      var lbl = mk('span'); lbl.textContent = labelText; btn.appendChild(lbl);
+      if (sel) {
+        var tick = mk('span', 'rb-ed-assets-scope-tick');
+        tick.textContent = '✓';
+        btn.appendChild(tick);
+      }
+      btn.addEventListener('mousedown', function(e) {
+        e.stopImmediatePropagation();
+        menu.remove();
+        onPick(value);
+      }, { capture: true });
+      return btn;
+    }
+    menu.appendChild(makeOpt('Global collection', 'library'));
+    menu.appendChild(makeOpt('Project collection', 'project'));
+    hostDoc.body.appendChild(menu);
+    var r = anchorBtn.getBoundingClientRect();
+    var mw = menu.offsetWidth || 180;
+    menu.style.top = (r.bottom + 4) + 'px';
+    menu.style.left = Math.max(8, Math.min(window.innerWidth - 8 - mw, r.right - mw)) + 'px';
+    setTimeout(function() {
+      function close(e) {
+        if (!menu.contains(e.target) && e.target !== anchorBtn && !anchorBtn.contains(e.target)) {
+          menu.remove();
+          hostDoc.removeEventListener('mousedown', close, true);
+        }
+      }
+      hostDoc.addEventListener('mousedown', close, true);
+    }, 50);
+  }
+
+  function renderUserCollectedBody(body, gen) {
+    body.innerHTML = '';
+    var loading = mk('div', 'rb-ed-assets-status');
+    loading.textContent = 'Loading…';
+    body.appendChild(loading);
+    fetchUserAssets(assetsScopeState.kind).then(function(result) {
+      // Bail if the user has rebuilt the assets tab (scope change, tab
+      // re-open) while our fetch was in flight.
+      if (gen !== assetsGen) return;
+      if (!body.isConnected) return;
+      body.innerHTML = '';
+      if (result.error === 'no-origin') {
+        body.appendChild(statusMsg("Couldn't reach Uncraft."));
+        return;
+      }
+      if (result.error === 'unauthorized') {
+        body.appendChild(signInPrompt());
+        return;
+      }
+      if (result.error === 'no-board') {
+        body.appendChild(statusMsg('Open this editor from a project node to see project assets.'));
+        return;
+      }
+      if (result.error) {
+        body.appendChild(statusMsg("Couldn't load assets."));
+        return;
+      }
+      var assets = (result.assets || []).filter(function(a) { return a && a.type; });
+      if (assets.length === 0) {
+        body.appendChild(statusMsg(assetsScopeState.kind === 'project'
+          ? 'No assets in this project yet.'
+          : 'No assets collected yet. Use the Uncraft widget to collect.'));
+        return;
+      }
+      renderPersistedAssetGrid(body, assets);
+    });
+  }
+
+  function statusMsg(text) {
+    var d = mk('div', 'rb-ed-assets-status');
+    d.textContent = text;
+    return d;
+  }
+
+  function signInPrompt() {
+    var wrap = mk('div', 'rb-ed-assets-status');
+    wrap.style.lineHeight = '1.5';
+    wrap.appendChild(hostDoc.createTextNode('Sign in to see your collected assets.'));
+    wrap.appendChild(mk('br'));
+    wrap.appendChild(mk('br'));
+    var link = mk('button', 'rb-ed-assets-signin');
+    link.type = 'button';
+    link.textContent = 'Open Uncraft';
+    link.addEventListener('mousedown', function(e) {
+      e.stopImmediatePropagation();
+      getWebShellOrigin().then(function(o) {
+        try { window.open((o || 'https://uncraft.app') + '/login', '_blank', 'noopener,noreferrer'); } catch (err) {}
+      });
+    }, { capture: true, signal: sig });
+    wrap.appendChild(link);
+    return wrap;
+  }
+
+  function fetchUserAssets(kind) {
+    return getWebShellOrigin().then(function(origin) {
+      if (!origin) return { error: 'no-origin' };
+      var url;
+      if (kind === 'project') {
+        var opt = hostWin.__uncraftMountOptions;
+        var boardId = (opt && opt.boardId) || null;
+        if (!boardId) return { error: 'no-board' };
+        url = origin + '/api/assets?scope=project&id=' + encodeURIComponent(boardId);
+      } else {
+        url = origin + '/api/assets?scope=library';
+      }
+      return bgFetch(url).then(function(resp) {
+        if (!resp) return { error: 'fetch' };
+        if (resp.status === 401) return { error: 'unauthorized' };
+        if (!resp.ok) return { error: 'http-' + resp.status };
+        return resp.data || { assets: [] };
+      });
+    });
+  }
+
+  function renderPersistedAssetGrid(body, assets) {
+    var grid = mk('div', 'rb-ed-assets-pgrid');
+    assets.slice(0, 60).forEach(function(asset) {
+      var item = mk('div', 'rb-ed-assets-pitem');
+      var thumb = (asset.thumb_url || asset.blob_url || asset.source_url || '').trim();
+      var t = asset.type;
+      if ((t === 'image' || t === 'background-image' || t === 'video') && thumb) {
+        var imgEl = mk('img');
+        imgEl.alt = asset.name || '';
+        imgEl.loading = 'lazy';
+        imgEl.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+        item.appendChild(imgEl);
+        attachThumbFallback(imgEl, thumb);
+        imgEl.src = thumb;
+      } else if ((t === 'svg' || t === 'icon') && (asset.html || thumb)) {
+        if (asset.html) {
+          var svgWrap = mk('div', 'rb-ed-assets-pitem-svg');
+          svgWrap.innerHTML = asset.html;
+          var svgEl = svgWrap.querySelector('svg');
+          if (svgEl) {
+            svgEl.removeAttribute('width');
+            svgEl.removeAttribute('height');
+            svgEl.style.width = '100%';
+            svgEl.style.height = '100%';
+          }
+          item.appendChild(svgWrap);
+        } else {
+          var im = mk('img');
+          im.style.cssText = 'width:60%;height:60%;object-fit:contain;';
+          item.appendChild(im);
+          attachThumbFallback(im, thumb);
+          im.src = thumb;
+        }
+      } else if (t === 'font') {
+        var family = (asset.meta && asset.meta.family) || asset.name || 'sans-serif';
+        var fontPreview = mk('div', 'rb-ed-assets-pitem-font');
+        fontPreview.style.fontFamily = '"' + family.replace(/"/g, '') + '", sans-serif';
+        fontPreview.textContent = 'Aa';
+        item.appendChild(fontPreview);
+      } else if (t === 'group' || t === 'component' || t === 'section') {
+        var lbl = mk('div', 'rb-ed-assets-pitem-label');
+        var cnt = (asset.meta && asset.meta.itemCount) ? ' · ' + asset.meta.itemCount : '';
+        lbl.textContent = t.charAt(0).toUpperCase() + t.slice(1) + cnt;
+        item.appendChild(lbl);
+      } else {
+        var fallback = mk('div', 'rb-ed-assets-pitem-label');
+        fallback.textContent = t || '?';
+        item.appendChild(fallback);
+      }
+      // Empty hover overlay — darkens the thumb on hover, no clickable
+      // icon (left/right click is delegated to the item itself).
+      var overlay = mk('div', 'rb-asset-overlay');
+      item.appendChild(overlay);
+      if (asset.name) item.title = asset.name;
+
+      // Drag-to-canvas (Slice B) — only enabled in canvas-mount where the
+      // host doc IS the canvas. Extension-mount has no canvas to drop on.
+      if (hostWin.__uncraftZoom) {
+        item.setAttribute('draggable', 'true');
+        item.addEventListener('dragstart', function(e) {
+          buildAssetDragData(e, asset);
+        });
+      }
+
+      // Right-click context menu — Edit always; Show in page when the
+      // persisted asset's source URL has a matching <img>/<video> on the
+      // current page (rare but useful when collecting from a page you're
+      // editing right now).
+      item.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        var showFn = null;
+        if (asset.source_url) {
+          try {
+            var match = targetDoc.querySelector(
+              'img[src="' + asset.source_url.replace(/"/g, '\\"') + '"], ' +
+              'video[src="' + asset.source_url.replace(/"/g, '\\"') + '"]'
+            );
+            if (match) {
+              showFn = function() {
+                if (isValid(match)) {
+                  try { match.scrollIntoView({ behavior: 'auto', block: 'center' }); } catch (e) {}
+                  selectEl(match);
+                  if (match.tagName === 'IMG' || match.tagName === 'VIDEO') showImgMenu(match);
+                }
+              };
+            }
+          } catch (e2) {}
+        }
+        showAssetContextMenu(e, asset, showFn);
+      }, { capture: true });
+      grid.appendChild(item);
+    });
+    body.appendChild(grid);
+  }
+
+  // Renders one asset in a takeover "edit" view that occupies the whole
+  // Assets tab body. Header has a back button + asset title; main area
+  // shows a large preview; meta area shows type / source / added; actions
+  // area is a placeholder for Slice D (Smart Remix migration).
+  function renderAssetEditView(ab, asset) {
+    // Header: back + title — flex-shrink:0, stays at top.
+    var hd = mk('div', 'rb-ed-asset-edit-hd');
+    var backBtn = mk('button', 'rb-ed-asset-edit-back');
+    backBtn.type = 'button';
+    backBtn.title = 'Back to Assets';
+    backBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
+    backBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      exitAssetEdit();
+    }, { capture: true });
+    hd.appendChild(backBtn);
+    var titleEl = mk('span', 'rb-ed-asset-edit-title');
+    titleEl.textContent = asset.name || 'Untitled';
+    hd.appendChild(titleEl);
+    ab.appendChild(hd);
+
+    // Source hero — edge-to-edge image at the top, mirroring the widget's
+    // Smart Remix layout. For non-image asset types we still use the same
+    // hero box but with a centered glyph/label.
+    var hero = mk('div', 'rb-ed-asset-edit-hero');
+    var thumb = (asset.thumb_url || asset.blob_url || asset.source_url || '').trim();
+    var t = asset.type;
+    if ((t === 'image' || t === 'background-image' || t === 'video') && thumb) {
+      var imgEl = mk('img');
+      imgEl.alt = asset.name || '';
+      imgEl.loading = 'lazy';
+      hero.appendChild(imgEl);
+      attachThumbFallback(imgEl, thumb);
+      imgEl.src = thumb;
+    } else if ((t === 'svg' || t === 'icon') && (asset.html || thumb)) {
+      if (asset.html) {
+        var svgWrap = mk('div', 'rb-ed-asset-edit-svg');
+        svgWrap.innerHTML = asset.html;
+        var svgEl = svgWrap.querySelector('svg');
+        if (svgEl) {
+          svgEl.removeAttribute('width');
+          svgEl.removeAttribute('height');
+          svgEl.style.width = '100%';
+          svgEl.style.height = '100%';
+        }
+        hero.appendChild(svgWrap);
+      } else {
+        var im = mk('img');
+        hero.appendChild(im);
+        attachThumbFallback(im, thumb);
+        im.src = thumb;
+      }
+    } else if (t === 'font') {
+      var family = (asset.meta && asset.meta.family) || asset.name || 'sans-serif';
+      var fp = mk('div', 'rb-ed-asset-edit-font');
+      fp.style.fontFamily = '"' + family.replace(/"/g, '') + '", sans-serif';
+      fp.textContent = 'Aa Bb Cc';
+      hero.appendChild(fp);
+    } else if (t === 'group' || t === 'component' || t === 'section') {
+      var pl = mk('div', 'rb-ed-asset-edit-label');
+      pl.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+      hero.appendChild(pl);
+    } else {
+      var pl2 = mk('div', 'rb-ed-asset-edit-label');
+      pl2.textContent = t || '?';
+      hero.appendChild(pl2);
+    }
+    ab.appendChild(hero);
+
+    // Scrollable middle — wraps the smart-edit section so the hero above
+    // and the chat dock below stay visible at all times while the editor
+    // pills/result region scrolls independently.
+    var scroll = mk('div', 'rb-ed-asset-edit-scroll');
+    var smart = mk('div', 'rb-ed-asset-edit-actions');
+    assetEditSmartContainer = smart;
+    scroll.appendChild(smart);
+    ab.appendChild(scroll);
+    renderSmartSection();
+
+    // Chat dock — textarea + model picker + send.
+    var chat = buildAssetChatDock();
+    ab.appendChild(chat);
+  }
+
+  function populatePageAssets(body) {
     // Collect <img> elements
     var imgElements = [];
     targetDoc.querySelectorAll('img').forEach(function(img) {
@@ -2998,7 +4224,6 @@
       if (r.width < 2 || r.height < 2) return;
       try {
         var clone = svg.cloneNode(true);
-        // Ensure the SVG has xmlns for standalone rendering
         if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
         var serialized = new XMLSerializer().serializeToString(clone);
         var dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(serialized)));
@@ -3007,7 +4232,7 @@
       } catch(e) {}
     });
 
-    // Collect background images (separate)
+    // Collect background images
     var bgImages = [];
     targetDoc.querySelectorAll('section,div,article,header,footer').forEach(function(el) {
       if (isEditorEl(el)) return;
@@ -3026,17 +4251,16 @@
     var dimColor = isLight() ? 'rgba(51,51,51,0.3)' : 'rgba(239,238,235,0.3)';
 
     function buildAssetGrid(items, label) {
-      // Section label
       var secLabel = mk('div');
       secLabel.style.cssText = 'padding:8px 14px 4px;font:500 11px "Instrument Sans",sans-serif;color:' + mutedColor + ';';
       secLabel.textContent = label + ' (' + items.length + ')';
-      ab.appendChild(secLabel);
+      body.appendChild(secLabel);
 
       if (items.length === 0) {
         var empty = mk('div');
         empty.style.cssText = 'padding:2px 14px 8px;font:400 11px "Instrument Sans",sans-serif;color:' + dimColor + ';';
         empty.textContent = 'None found';
-        ab.appendChild(empty);
+        body.appendChild(empty);
         return;
       }
 
@@ -3046,50 +4270,101 @@
         var item = mk('div');
         item.style.cssText = 'aspect-ratio:1;overflow:hidden;border-radius:4px;cursor:pointer;position:relative;';
         var imgEl = mk('img');
-        imgEl.src = img.src;
         imgEl.alt = img.alt;
         imgEl.style.cssText = 'width:100%;height:100%;object-fit:cover;';
         imgEl.loading = 'lazy';
         item.appendChild(imgEl);
+        attachThumbFallback(imgEl, img.src);
+        imgEl.src = img.src;
 
-        // Hover overlay with smart edit icon
         var overlay = mk('div', 'rb-asset-overlay');
-        overlay.innerHTML = SMART_EDIT_ICON;
         item.appendChild(overlay);
 
-        // Click: scroll to image, flash highlight, show action bar
-        item.addEventListener('mousedown', function(e) {
-          e.stopImmediatePropagation();
+        function showInPage() {
           if (img.type === 'image') {
             var pageImg = targetDoc.querySelector('img[src="' + img.src.replace(/"/g, '\\"') + '"]');
             if (pageImg && isValid(pageImg)) {
+              // Instant scroll so showImgMenu's inView check passes and the
+              // dock mounts immediately at the right coords (the default
+              // smooth scroll bakes in a 400ms settle delay).
+              try { pageImg.scrollIntoView({ behavior: 'auto', block: 'center' }); } catch (e) {}
               selectEl(pageImg);
               showImgMenu(pageImg);
             }
           } else if (img.el) {
+            try { img.el.scrollIntoView({ behavior: 'auto', block: 'center' }); } catch (e) {}
             selectEl(img.el);
           }
+        }
+
+        // Left click → open the Smart Edit floating panel for this image.
+        // Using `click` (not `mousedown`) so dragging the thumb to spawn a
+        // canvas node doesn't also open the panel — browsers fire click
+        // only when there was no drag.
+        function resolveAssetFromThumb() {
+          var pageEl = null;
+          if (img.type === 'image') {
+            try { pageEl = targetDoc.querySelector('img[src="' + img.src.replace(/"/g, '\\"') + '"]'); } catch (e2) {}
+          } else {
+            pageEl = img.el || null;
+          }
+          return pageEl ? assetFromElement(pageEl) : {
+            type: 'image',
+            name: img.alt || 'Asset', source_url: img.src, thumb_url: img.src,
+            blob_url: null, html: null, css: null, meta: {}
+          };
+        }
+        item.addEventListener('click', function(e) {
+          e.stopImmediatePropagation();
+          enterAssetEdit(resolveAssetFromThumb(), showInPage);
+        });
+
+        // Drag-to-canvas (Slice B) — only enabled in canvas-mount.
+        if (hostWin.__uncraftZoom) {
+          item.setAttribute('draggable', 'true');
+          item.addEventListener('dragstart', function(e) {
+            buildAssetDragData(e, resolveAssetFromThumb());
+          });
+        }
+
+        // Right click → context menu (Edit / Show in page). Both options
+        // route through the floating panel — Edit opens it with the
+        // image hero; Show in page bypasses it.
+        item.addEventListener('contextmenu', function(e) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          var pageEl = null;
+          if (img.type === 'image') {
+            try { pageEl = targetDoc.querySelector('img[src="' + img.src.replace(/"/g, '\\"') + '"]'); } catch (e2) {}
+          } else {
+            pageEl = img.el || null;
+          }
+          var asset = pageEl ? assetFromElement(pageEl) : {
+            type: 'image',
+            name: img.alt || 'Asset', source_url: img.src, thumb_url: img.src,
+            blob_url: null, html: null, css: null, meta: {}
+          };
+          showAssetContextMenu(e, asset, showInPage);
         }, {capture: true});
 
         grid.appendChild(item);
       });
-      ab.appendChild(grid);
+      body.appendChild(grid);
     }
 
-    // Divider-separated sections
     buildAssetGrid(imgElements, 'Images');
 
     if (svgIcons.length > 0) {
       var divider1 = mk('div');
       divider1.style.cssText = 'height:1px;background:' + (isLight() ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)') + ';margin:4px 14px;';
-      ab.appendChild(divider1);
+      body.appendChild(divider1);
       buildAssetGrid(svgIcons, 'Icons');
     }
 
     if (bgImages.length > 0) {
       var divider2 = mk('div');
       divider2.style.cssText = 'height:1px;background:' + (isLight() ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)') + ';margin:4px 14px;';
-      ab.appendChild(divider2);
+      body.appendChild(divider2);
       buildAssetGrid(bgImages, 'Backgrounds');
     }
   }
@@ -3685,12 +4960,19 @@
       applyTheme(!isLight());
     }, {capture: true, signal: sig});
 
-    // Minimize / undock / theme buttons are no longer surfaced in the
-    // layers panel header — minimize was removed at user request and the
-    // theme toggle moved to the canvas toolbar (web-shell). The button
-    // elements + handlers stay declared above so the rest of the code
-    // (mini-widget restore, floating toggles, applyTheme on boot) keeps
-    // working without churn.
+    // Minimize / theme buttons are no longer surfaced in the layers panel
+    // header — minimize was removed at user request and theme moved to the
+    // canvas toolbar (web-shell). Their elements + handlers stay declared
+    // above so the rest of the code (mini-widget restore, applyTheme on
+    // boot) keeps working without churn.
+    //
+    // Undock IS surfaced — but only in the extension. On the canvas, panels
+    // are sized to the editing node and undocking them would put them out
+    // of the user's viewport context. `__uncraftZoom` is the canvas-only
+    // API stamped by CanvasClient, so its absence = extension context.
+    if (!hostWin.__uncraftZoom) {
+      logoActions.appendChild(panelUndockBtn);
+    }
     logoRow.appendChild(logoLeft);
     logoRow.appendChild(logoActions);
     layersHd.appendChild(logoRow);
@@ -7407,8 +8689,19 @@
     smartBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 37 40"><path fill="#2b2b2b" d="M16,29.7c0,.8-.6,1.4-1.3,1.5-1,0-2.7.5-3.2,1.1-.6.6-1,2.3-1.1,3.2,0,.8-.7,1.3-1.5,1.3s-1.4-.6-1.5-1.3c0-1-.5-2.7-1.1-3.2-.6-.6-2.3-1-3.2-1.1-.8,0-1.3-.7-1.3-1.5s.6-1.4,1.3-1.5c1,0,2.7-.5,3.2-1.1.6-.6,1-2.3,1.1-3.2,0-.8.7-1.3,1.5-1.3s1.4.6,1.5,1.3c0,1,.5,2.7,1.1,3.2.6.6,2.3,1,3.2,1.1.8,0,1.3.7,1.3,1.5ZM33.3,16.7c-1.5-.2-5.8-1-7.5-2.7-1.7-1.7-2.5-6-2.7-7.5,0-.8-.7-1.3-1.5-1.3s-1.4.6-1.5,1.3c-.2,1.5-1,5.8-2.7,7.5s-6,2.5-7.5,2.7c-.8,0-1.3.7-1.3,1.5s.6,1.4,1.3,1.5c1.5.2,5.8,1,7.5,2.7s2.5,6,2.7,7.5c0,.8.7,1.3,1.5,1.3s1.4-.6,1.5-1.3c.2-1.5,1-5.8,2.7-7.5,1.7-1.7,6-2.5,7.5-2.7.8,0,1.3-.7,1.3-1.5s-.6-1.4-1.3-1.5Z"/></svg><span>Smart Edit</span>';
     smartBtn.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
-      chrome.runtime.sendMessage({action: 'smartRemix', imageUrl: img.src});
+      var asset = assetFromElement(img);
+      var imgRef = img;
       removeImgMenu();
+      if (!asset) return;
+      // Auto-analyze: clicking Smart Edit from the minidock signals intent
+      // to edit immediately, so skip the idle "Smart edit / Show in page"
+      // gate and go straight to analyzing.
+      enterAssetEdit(asset, function() {
+        if (!imgRef || !isValid(imgRef)) return;
+        try { imgRef.scrollIntoView({ behavior: 'auto', block: 'center' }); } catch (e2) {}
+        selectEl(imgRef);
+        showImgMenu(imgRef);
+      }, true);
     }, {capture: true});
 
     m.appendChild(copyBtn);
@@ -8187,12 +9480,13 @@
         selectionAncestor = el;
 
         if (el.tagName === 'IMG' || el.tagName === 'VIDEO') showImgMenu(el);
-        // Text minidock fires for direct text elements only. Wrapper
-        // containers (isTextWrapper — divs with multiple text children) were
-        // surfacing the dock with "Mixed" font readouts even when the user
-        // just wanted to select the box; clicking such containers now shows
-        // no dock. The raw-text fallback still catches deep span hits.
+        // Text minidock fires for direct text elements, AND for wrappers
+        // (isTextWrapper — divs with multiple text children) ONLY when the
+        // wrapper's children share a single font family. The mixed-fonts
+        // case was surfacing the dock with a useless "Mixed" font readout
+        // when the user just wanted to select the box — guard skips it.
         else if (isDirectText(el)) showTextDock(el);
+        else if (isTextWrapper(el) && !isTextMixedFonts(el)) showTextDock(el);
         else if (isDirectText(rawEl)) showTextDock(rawEl);
         selectEl(el);
 

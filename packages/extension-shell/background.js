@@ -288,6 +288,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Proxy fetch for content scripts that need to hit the web-shell API
+  // cross-origin. Content scripts inherit the host page's origin, so the
+  // /api/* CORS allowlist rejects them on random sites. Service worker
+  // fetches use the extension origin (chrome-extension://<id>) which the
+  // API permits, AND they go through the browser cookie jar so authenticated
+  // calls work without OAuth dancing.
+  if (message.action === 'uncraft.apiFetch') {
+    const opts = message.options || {};
+    const init = {
+      method: opts.method || 'GET',
+      credentials: 'include'
+    };
+    if (opts.headers) init.headers = opts.headers;
+    if (opts.body != null) init.body = opts.body;
+    fetch(message.url, init).then(async (res) => {
+      let data = null;
+      let text = null;
+      const ct = res.headers.get('content-type') || '';
+      try {
+        if (ct.includes('application/json')) data = await res.json();
+        else text = await res.text();
+      } catch (e) { /* leave both null on parse failure */ }
+      sendResponse({ ok: res.ok, status: res.status, data, text });
+    }).catch((err) => {
+      sendResponse({ ok: false, status: 0, error: String((err && err.message) || err) });
+    });
+    return true;
+  }
+
   if (message.action === 'getSettings') {
     getSettings().then(settings => sendResponse(settings));
     return true;
