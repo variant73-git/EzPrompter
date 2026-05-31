@@ -2829,6 +2829,20 @@ body.rb-ed-light .rb-fill-popup .rb-insp-sec-title { color:#1f1f1f !important; }
 }
 .rb-fill-add-swatch:hover { color:#EFEEEB; border-color:rgba(255,255,255,0.3); }
 
+/* ── Thumbnail broken-state placeholder ── */
+.rb-ed-thumb-broken {
+  position:absolute; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(255,255,255,0.05);
+  color:rgba(239,238,235,0.30);
+  border-radius:4px;
+  pointer-events:none;
+}
+body.rb-ed-light .rb-ed-thumb-broken {
+  background:rgba(0,0,0,0.04);
+  color:rgba(51,51,51,0.35);
+}
+
 /* ── Asset overlay (hover-only darken; clicks pass through to thumb) ── */
 .rb-asset-overlay {
   position:absolute; inset:0;

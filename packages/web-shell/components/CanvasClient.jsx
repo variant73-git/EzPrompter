@@ -649,6 +649,102 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     } catch (e) { toast.error(`Upload failed: ${e.message}`); }
   }
 
+  // Drag-from-asset drop (Slice B). Editor.js writes a JSON descriptor
+  // into dataTransfer when a thumb in the layers Assets tab is dragged.
+  // We translate the drop's client coords to canvas space and spawn an
+  // 'asset' node centered on the cursor.
+  async function handleAssetDrop(e) {
+    const raw = (() => {
+      try { return e.dataTransfer.getData('application/x-uncraft-asset'); } catch { return ''; }
+    })();
+    if (!raw) return;
+    e.preventDefault();
+    let asset;
+    try { asset = JSON.parse(raw); } catch { return; }
+
+    // Resolve a usable image source. The 'asset' node kind renders
+    // <img src={meta.dataUrl}> so we need a fetchable URL or data URI.
+    let imageSrc = null;
+    const t = asset.type;
+    if (t === 'image' || t === 'background-image' || t === 'video') {
+      imageSrc = asset.thumb_url || asset.blob_url || asset.source_url;
+    } else if (t === 'svg' || t === 'icon') {
+      if (asset.source_url && asset.source_url.startsWith('data:')) {
+        imageSrc = asset.source_url;
+      } else if (asset.html) {
+        try {
+          imageSrc = 'data:image/svg+xml;base64,' +
+            btoa(unescape(encodeURIComponent(asset.html)));
+        } catch (err) { imageSrc = asset.source_url || asset.thumb_url; }
+      } else {
+        imageSrc = asset.source_url || asset.thumb_url;
+      }
+    }
+    if (!imageSrc) {
+      toast.error(`Drag for ${t} assets isn't supported yet.`);
+      return;
+    }
+
+    // Inline as data URL so the node survives hotlink protection / strict
+    // CORS on the original host (e.g. CDN-served images that refuse
+    // cross-origin GETs without the original site's Referer). Falls back
+    // to the URL when fetch can't read the body (no CORS headers, 403,
+    // etc.) — the node still exists, the user just sees the broken-image
+    // glyph and can replace the URL later.
+    imageSrc = await tryInlineAsDataUrl(imageSrc);
+
+    const w = clientToWorld(transformRef, e.clientX, e.clientY);
+    const width = 600, height = 600;
+    const posX = w.x - width / 2;
+    const posY = w.y - height / 2;
+    try {
+      const created = await api.createNode({
+        boardId: board.id,
+        kind: 'asset',
+        posX, posY, width, height,
+        meta: { name: asset.name || 'asset', dataUrl: imageSrc, mimeType: 'image/*' }
+      });
+      setNodes((prev) => [...prev, { ...created.node }]);
+    } catch (err) {
+      toast.error(`Drop failed: ${err.message}`);
+    }
+  }
+
+  // Two-tier inline: direct browser fetch first (CORS-friendly hosts —
+  // fast, no server hop), then server-side proxy (handles hotlink
+  // protection / strict CORS by synthesizing a same-origin Referer).
+  // Falls back to the original URL when both fail — the node still
+  // exists; the broken-image placeholder handler kicks in at render
+  // time.
+  async function tryInlineAsDataUrl(url) {
+    if (!url || url.startsWith('data:')) return url;
+    // Tier 1 — direct fetch with credentials omitted.
+    try {
+      const r = await fetch(url, { credentials: 'omit', mode: 'cors' });
+      if (r.ok) {
+        const blob = await r.blob();
+        if (blob.size > 0) return await blobToDataUrl(blob);
+      }
+    } catch {}
+    // Tier 2 — server-side proxy at /api/proxy/image (auth required).
+    try {
+      const r = await fetch('/api/proxy/image?url=' + encodeURIComponent(url), { credentials: 'include' });
+      if (r.ok) {
+        const blob = await r.blob();
+        if (blob.size > 0) return await blobToDataUrl(blob);
+      }
+    } catch {}
+    return url;
+  }
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = () => reject(fr.error);
+      fr.readAsDataURL(blob);
+    });
+  }
+
   async function handleAddPrompt(opts = {}) {
     // 3:1 text-field node. Width chosen so it stays comfortable at 1× zoom.
     const width = 600, height = 200;
@@ -1562,6 +1658,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       className="canvas-shell"
       onMouseMove={moveDraftEdge}
       onMouseUp={handleGlobalMouseUp}
+      onDragOver={(e) => {
+        // Accept drags carrying our custom MIME — editor.js sets this on
+        // asset-thumb dragstart. preventDefault is required to allow drop.
+        const types = e.dataTransfer.types;
+        if (types && (types.includes ? types.includes('application/x-uncraft-asset') : Array.prototype.indexOf.call(types, 'application/x-uncraft-asset') >= 0)) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }
+      }}
+      onDrop={handleAssetDrop}
       onContextMenu={(e) => {
         // Ignore right-clicks landed on a node, the prompt dock, edge popups,
         // header, or the existing empty-drop menu. The browser's default

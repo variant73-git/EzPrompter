@@ -103,6 +103,55 @@ const CloseIcon = () => (
 // editor-only markers so the saved snapshot doesn't carry stale data-rb-*
 // attributes or rb-ed-* classes from the previous edit session. The next
 // edit re-tags from scratch via rebuild.js so dropping these is safe.
+// Tiny inline component for asset-kind nodes. Falls back to the
+// /api/proxy/image route on first load error (hotlink-protected hosts
+// that refuse cross-origin GETs from the canvas) and finally to a
+// clean placeholder card if the proxy can't recover it either.
+function AssetNodeImage({ dataUrl, name }) {
+  const [src, setSrc] = useState(dataUrl);
+  const [phase, setPhase] = useState('loading'); // loading | ok | proxy | broken
+  // dataUrl can change when the node row is updated; resync.
+  useEffect(() => {
+    setSrc(dataUrl);
+    setPhase('loading');
+  }, [dataUrl]);
+
+  function onError() {
+    if (phase === 'loading' && src && !/^data:/.test(src)) {
+      setSrc('/api/proxy/image?url=' + encodeURIComponent(src));
+      setPhase('proxy');
+      return;
+    }
+    setPhase('broken');
+  }
+  function onLoad() {
+    setPhase((p) => (p === 'broken' ? p : 'ok'));
+  }
+
+  if (phase === 'broken') {
+    return (
+      <div className="cnode-asset-broken" aria-label={name}>
+        <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <circle cx="9" cy="9" r="2"/>
+          <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
+        </svg>
+        <span>Image unavailable</span>
+      </div>
+    );
+  }
+  return (
+    <img
+      className="cnode-asset-img"
+      src={src}
+      alt={name}
+      draggable={false}
+      onError={onError}
+      onLoad={onLoad}
+    />
+  );
+}
+
 function captureCleanHtml(iframe) {
   const doc = iframe?.contentDocument;
   if (!doc?.documentElement) return null;
@@ -819,11 +868,9 @@ export default function CanvasNode({
           style={{ height: (node.height || 600) + 'px' }}
         >
           {node.meta?.dataUrl ? (
-            <img
-              className="cnode-asset-img"
-              src={node.meta.dataUrl}
-              alt={node.meta?.name || 'asset'}
-              draggable={false}
+            <AssetNodeImage
+              dataUrl={node.meta.dataUrl}
+              name={node.meta?.name || 'asset'}
             />
           ) : (
             <div className="cnode-loading"><span>No image data</span></div>

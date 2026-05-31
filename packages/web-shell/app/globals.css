@@ -3502,6 +3502,25 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
 }
 body.rb-ed-light .cnode-body-asset { background: #ECECF0; }
 
+/* Asset node placeholder — fired when both the original URL and the
+   server-side proxy fail to deliver bytes. Keeps the node visible (so
+   the user can right-click → delete) without leaking the browser's
+   broken-image glyph. */
+.cnode-asset-broken {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: rgba(239, 238, 235, 0.35);
+  font: 500 12px 'Instrument Sans', sans-serif;
+  text-align: center;
+  user-select: none;
+}
+.cnode-asset-broken svg { opacity: 0.75; }
+body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
+
 /* Prompt dock — frosted-glass widget at the base of the canvas viewport. */
 
 .prompt-dock {

@@ -1,4 +1,5 @@
 (function() {
+  console.log('[uncraft] editor.js BUILD-MARKER 2026-05-30 slice-B drag-drop');
   if (window.__rbEditorActive) { deactivate(); return; }
   window.__rbEditorActive = true;
 
@@ -2940,6 +2941,45 @@
 
   var SMART_EDIT_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
 
+  // Generic placeholder for thumbs whose original src + proxy retry both
+  // failed. Mounted as a sibling of the broken <img> with absolute fill.
+  var BROKEN_THUMB_SVG = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>';
+
+  // Attaches an error-fallback handler to a thumbnail <img>. On first load
+  // failure (CORS / hotlink protection / 404), retries via the canvas-side
+  // server proxy at /api/proxy/image which synthesizes a matching Referer
+  // header. If the proxy also fails (or we're in extension-mount where the
+  // proxy isn't reachable), swaps the <img> for a clean placeholder
+  // instead of letting the browser's broken-image glyph leak through.
+  function attachThumbFallback(imgEl, originalSrc) {
+    if (!imgEl || !originalSrc || /^data:/.test(originalSrc)) return;
+    imgEl.addEventListener('error', function onErr() {
+      // Skip proxy retry for same-origin URLs — the proxy refuses to fetch
+      // its own server (correct SSRF guard) and a 404 on our own origin
+      // means the file is genuinely missing. Go straight to placeholder.
+      var sameOrigin = false;
+      try {
+        if (originalSrc.startsWith('/')) sameOrigin = true;
+        else sameOrigin = new URL(originalSrc).origin === hostWin.location.origin;
+      } catch (e) {}
+      if (hostWin.__uncraftZoom && !imgEl.dataset.uncraftProxyTried && !sameOrigin) {
+        imgEl.dataset.uncraftProxyTried = '1';
+        imgEl.src = '/api/proxy/image?url=' + encodeURIComponent(originalSrc);
+        return;
+      }
+      imgEl.removeEventListener('error', onErr);
+      showBrokenThumb(imgEl);
+    });
+  }
+  function showBrokenThumb(imgEl) {
+    imgEl.style.opacity = '0';
+    var parent = imgEl.parentElement;
+    if (!parent || parent.querySelector('.rb-ed-thumb-broken')) return;
+    var ph = mk('div', 'rb-ed-thumb-broken');
+    ph.innerHTML = BROKEN_THUMB_SVG;
+    parent.appendChild(ph);
+  }
+
   // Web-shell origin discovery — mirrors panel.js stcDiscoverOrigin so the
   // editor can fetch persisted assets from inside the content-script
   // context. Cache key matches panel.js so both surfaces share the resolved
@@ -3025,6 +3065,31 @@
   // outside the tab body.
   var assetEditPanel = null;
   var assetEditTarget = null;
+
+  // Serializes the asset into dataTransfer for cross-iframe drag onto the
+  // canvas surface. Same-origin srcDoc iframes (canvas-mount) share the
+  // dataTransfer payload natively — CanvasClient reads it from the drop
+  // event and calls api.createNode. The MIME type carries our descriptor
+  // separately from any text/url so non-canvas drop targets are unaffected.
+  function buildAssetDragData(e, asset) {
+    if (!asset || !e || !e.dataTransfer) return;
+    try {
+      var descriptor = {
+        type: asset.type || 'image',
+        name: asset.name || '',
+        source_url: asset.source_url || null,
+        thumb_url: asset.thumb_url || null,
+        blob_url: asset.blob_url || null,
+        html: asset.html || null,
+        meta: asset.meta || {}
+      };
+      e.dataTransfer.setData('application/x-uncraft-asset', JSON.stringify(descriptor));
+      // Fallback for browsers that strip custom MIME types in some flows.
+      var url = descriptor.thumb_url || descriptor.blob_url || descriptor.source_url;
+      if (url) e.dataTransfer.setData('text/uri-list', url);
+      e.dataTransfer.effectAllowed = 'copy';
+    } catch (err) { /* swallow — drag still starts, drop will no-op */ }
+  }
 
   // Build an asset-shaped object from a DOM element so the image minidock
   // can hand off into the same smart-edit panel that persisted assets use.
@@ -3932,11 +3997,12 @@
       var t = asset.type;
       if ((t === 'image' || t === 'background-image' || t === 'video') && thumb) {
         var imgEl = mk('img');
-        imgEl.src = thumb;
         imgEl.alt = asset.name || '';
         imgEl.loading = 'lazy';
         imgEl.style.cssText = 'width:100%;height:100%;object-fit:cover;';
         item.appendChild(imgEl);
+        attachThumbFallback(imgEl, thumb);
+        imgEl.src = thumb;
       } else if ((t === 'svg' || t === 'icon') && (asset.html || thumb)) {
         if (asset.html) {
           var svgWrap = mk('div', 'rb-ed-assets-pitem-svg');
@@ -3951,9 +4017,10 @@
           item.appendChild(svgWrap);
         } else {
           var im = mk('img');
-          im.src = thumb;
           im.style.cssText = 'width:60%;height:60%;object-fit:contain;';
           item.appendChild(im);
+          attachThumbFallback(im, thumb);
+          im.src = thumb;
         }
       } else if (t === 'font') {
         var family = (asset.meta && asset.meta.family) || asset.name || 'sans-serif';
@@ -3976,6 +4043,16 @@
       var overlay = mk('div', 'rb-asset-overlay');
       item.appendChild(overlay);
       if (asset.name) item.title = asset.name;
+
+      // Drag-to-canvas (Slice B) — only enabled in canvas-mount where the
+      // host doc IS the canvas. Extension-mount has no canvas to drop on.
+      if (hostWin.__uncraftZoom) {
+        item.setAttribute('draggable', 'true');
+        item.addEventListener('dragstart', function(e) {
+          buildAssetDragData(e, asset);
+        });
+      }
+
       // Right-click context menu — Edit always; Show in page when the
       // persisted asset's source URL has a matching <img>/<video> on the
       // current page (rare but useful when collecting from a page you're
@@ -4038,10 +4115,11 @@
     var t = asset.type;
     if ((t === 'image' || t === 'background-image' || t === 'video') && thumb) {
       var imgEl = mk('img');
-      imgEl.src = thumb;
       imgEl.alt = asset.name || '';
       imgEl.loading = 'lazy';
       hero.appendChild(imgEl);
+      attachThumbFallback(imgEl, thumb);
+      imgEl.src = thumb;
     } else if ((t === 'svg' || t === 'icon') && (asset.html || thumb)) {
       if (asset.html) {
         var svgWrap = mk('div', 'rb-ed-asset-edit-svg');
@@ -4056,8 +4134,9 @@
         hero.appendChild(svgWrap);
       } else {
         var im = mk('img');
-        im.src = thumb;
         hero.appendChild(im);
+        attachThumbFallback(im, thumb);
+        im.src = thumb;
       }
     } else if (t === 'font') {
       var family = (asset.meta && asset.meta.family) || asset.name || 'sans-serif';
@@ -4158,11 +4237,12 @@
         var item = mk('div');
         item.style.cssText = 'aspect-ratio:1;overflow:hidden;border-radius:4px;cursor:pointer;position:relative;';
         var imgEl = mk('img');
-        imgEl.src = img.src;
         imgEl.alt = img.alt;
         imgEl.style.cssText = 'width:100%;height:100%;object-fit:cover;';
         imgEl.loading = 'lazy';
         item.appendChild(imgEl);
+        attachThumbFallback(imgEl, img.src);
+        imgEl.src = img.src;
 
         var overlay = mk('div', 'rb-asset-overlay');
         item.appendChild(overlay);
@@ -4185,25 +4265,34 @@
         }
 
         // Left click → open the Smart Edit floating panel for this image.
-        // The panel's idle state surfaces "Smart edit" (analyze) and
-        // "Show in page" buttons so the user picks the next action;
-        // analysis is no longer triggered automatically.
-        item.addEventListener('mousedown', function(e) {
-          if (e.button !== 0) return;
-          e.stopImmediatePropagation();
+        // Using `click` (not `mousedown`) so dragging the thumb to spawn a
+        // canvas node doesn't also open the panel — browsers fire click
+        // only when there was no drag.
+        function resolveAssetFromThumb() {
           var pageEl = null;
           if (img.type === 'image') {
             try { pageEl = targetDoc.querySelector('img[src="' + img.src.replace(/"/g, '\\"') + '"]'); } catch (e2) {}
           } else {
             pageEl = img.el || null;
           }
-          var asset = pageEl ? assetFromElement(pageEl) : {
+          return pageEl ? assetFromElement(pageEl) : {
             type: 'image',
             name: img.alt || 'Asset', source_url: img.src, thumb_url: img.src,
             blob_url: null, html: null, css: null, meta: {}
           };
-          enterAssetEdit(asset, showInPage);
-        }, {capture: true});
+        }
+        item.addEventListener('click', function(e) {
+          e.stopImmediatePropagation();
+          enterAssetEdit(resolveAssetFromThumb(), showInPage);
+        });
+
+        // Drag-to-canvas (Slice B) — only enabled in canvas-mount.
+        if (hostWin.__uncraftZoom) {
+          item.setAttribute('draggable', 'true');
+          item.addEventListener('dragstart', function(e) {
+            buildAssetDragData(e, resolveAssetFromThumb());
+          });
+        }
 
         // Right click → context menu (Edit / Show in page). Both options
         // route through the floating panel — Edit opens it with the
