@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import AssetSmartEditDock from './AssetSmartEditDock.jsx';
 
@@ -56,5 +56,46 @@ describe('AssetSmartEditDock', () => {
     await userEvent.click(screen.getByRole('button', { name: /generate another/i }));
     expect(screen.queryByRole('img')).toBeNull();
     expect(screen.getByPlaceholderText(/tell the ai/i)).toBeInTheDocument();
+  });
+});
+
+describe('AssetSmartEditDock — multi-choice picker', () => {
+  it('shows picker when needs_choice has 2 options + posts choice on click', async () => {
+    globalThis.fetch = vi.fn((url) => {
+      if (url === '/api/chat/confirm') {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({
+        ok: true,
+        body: {
+          getReader: () => {
+            const events = [
+              'event: thread_id\ndata: {"threadId":"t1"}\n\n',
+              'event: run_id\ndata: {"runId":"r1"}\n\n',
+              'event: needs_choice\ndata: {"id":"tc1","choices":[{"id":"gemini","label":"Gemini"},{"id":"openai","label":"GPT-5.5"}]}\n\n',
+            ];
+            let i = 0;
+            return {
+              read: () => Promise.resolve(
+                i < events.length
+                  ? { value: new TextEncoder().encode(events[i++]), done: false }
+                  : { value: undefined, done: true }
+              ),
+            };
+          },
+        },
+      });
+    });
+    render(<AssetSmartEditDock boardId="b1" assetId="a1" />);
+    const ta = screen.getByPlaceholderText(/tell the ai/i);
+    await userEvent.type(ta, 'cat');
+    await userEvent.click(screen.getByRole('button', { name: /send/i }));
+    await waitFor(() => screen.getByText(/Gemini/));
+    expect(screen.getByText(/GPT-5\.5/)).toBeInTheDocument();
+    await userEvent.click(screen.getByText(/GPT-5\.5/));
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/chat/confirm', expect.objectContaining({
+      method: 'POST',
+      body: expect.stringContaining('"choice":"openai"'),
+    }));
   });
 });

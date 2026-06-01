@@ -1,6 +1,6 @@
 'use client';
 
-import { useReducer, useRef, useCallback } from 'react';
+import { useReducer, useRef, useCallback, useEffect } from 'react';
 import './asset-smart-edit-dock.css';
 
 const initial = {
@@ -8,15 +8,18 @@ const initial = {
   message: '',
   result: null,
   err: null,
+  pendingChoice: null, // { toolCallId, choices } when awaiting pick
 };
 
 function reducer(state, action) {
   switch (action.type) {
     case 'SET_MESSAGE':   return { ...state, message: action.value };
-    case 'SUBMIT':        return { ...state, phase: 'generating', message: '', result: null, err: null };
+    case 'SUBMIT':        return { ...state, phase: 'generating', message: '', result: null, err: null, pendingChoice: null };
     case 'TOOL_DONE':     return { ...state, phase: 'done', result: action.result };
     case 'ERROR':         return { ...state, phase: 'error', err: action.err };
     case 'RESET_TO_IDLE': return { ...initial };
+    case 'NEEDS_CHOICE':  return { ...state, phase: 'awaiting_choice', pendingChoice: { toolCallId: action.toolCallId, choices: action.choices } };
+    case 'CHOICE_PICKED': return { ...state, phase: 'generating', pendingChoice: null };
     default:              return state;
   }
 }
@@ -34,10 +37,22 @@ export default function AssetSmartEditDock({ boardId, assetId, onResult, onClose
   const [state, dispatch] = useReducer(reducer, initial);
   const runIdRef = useRef(null);
   const taRef = useRef(null);
+  const abortRef = useRef(null);
+
+  // Abort in-flight stream on unmount
+  useEffect(() => {
+    return () => {
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, []);
 
   const submit = useCallback(async () => {
     const msg = state.message.trim();
     if (!msg || !boardId || !assetId) return;
+    // Abort any previous in-flight stream
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     runIdRef.current = null;
     dispatch({ type: 'SUBMIT' });
 
@@ -47,6 +62,7 @@ export default function AssetSmartEditDock({ boardId, assetId, onResult, onClose
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         credentials: 'include',
+        signal: controller.signal,
         body: JSON.stringify({
           boardId,
           threadScope: 'asset',
@@ -57,6 +73,7 @@ export default function AssetSmartEditDock({ boardId, assetId, onResult, onClose
         }),
       });
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       dispatch({ type: 'ERROR', err: String(err?.message || err) });
       return;
     }
@@ -72,6 +89,7 @@ export default function AssetSmartEditDock({ boardId, assetId, onResult, onClose
     let sawToolDone = false;
 
     while (true) {
+      if (controller.signal.aborted) break;
       const r = await reader.read();
       if (r.done) break;
       buf += dec.decode(r.value);
@@ -88,13 +106,17 @@ export default function AssetSmartEditDock({ boardId, assetId, onResult, onClose
         if (ev === 'run_id') {
           runIdRef.current = payload.runId;
         } else if (ev === 'needs_choice') {
-          if (Array.isArray(payload.choices) && payload.choices.length > 0 && runIdRef.current) {
+          if (Array.isArray(payload.choices) && payload.choices.length === 1 && runIdRef.current) {
+            // Single choice — auto-confirm
             postConfirm({
               runId: runIdRef.current,
               toolCallId: payload.id,
               action: 'confirm',
               choice: payload.choices[0].id,
             });
+          } else if (Array.isArray(payload.choices) && payload.choices.length > 1) {
+            // Multi-choice — surface picker to user
+            dispatch({ type: 'NEEDS_CHOICE', toolCallId: payload.id, choices: payload.choices });
           }
         } else if (ev === 'tool_status') {
           if (payload.status === 'done' && payload.result?.dataUrl) {
@@ -123,6 +145,7 @@ export default function AssetSmartEditDock({ boardId, assetId, onResult, onClose
   const isGenerating = state.phase === 'generating';
   const showResult = state.phase === 'done' && state.result?.dataUrl;
   const showError = state.phase === 'error';
+  const showChoice = state.phase === 'awaiting_choice' && state.pendingChoice;
 
   return (
     <div className="asset-smart-edit-dock">
@@ -135,7 +158,7 @@ export default function AssetSmartEditDock({ boardId, assetId, onResult, onClose
         )}
       </div>
 
-      {!showResult && (
+      {!showResult && !showChoice && (
         <>
           <textarea
             ref={taRef}
@@ -164,6 +187,32 @@ export default function AssetSmartEditDock({ boardId, assetId, onResult, onClose
             </button>
           </div>
         </>
+      )}
+
+      {showChoice && (
+        <div className="asmd-choices">
+          <div className="asmd-choices-hint">Claude can&apos;t generate images — pick a provider:</div>
+          {state.pendingChoice.choices.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className="asmd-choice-btn"
+              onClick={() => {
+                if (!runIdRef.current) return;
+                dispatch({ type: 'CHOICE_PICKED' });
+                postConfirm({
+                  runId: runIdRef.current,
+                  toolCallId: state.pendingChoice.toolCallId,
+                  action: 'confirm',
+                  choice: c.id,
+                });
+              }}
+            >
+              <span className="asmd-choice-label">{c.label}</span>
+              {c.hint && <span className="asmd-choice-hint">{c.hint}</span>}
+            </button>
+          ))}
+        </div>
       )}
 
       {showResult && (
