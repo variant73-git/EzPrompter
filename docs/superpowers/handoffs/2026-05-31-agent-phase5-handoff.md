@@ -54,9 +54,8 @@ Phase 4b (orphan backfill) becomes more urgent after 4c since users will want to
 **Phase 4b — orphan asset backfill (DONE)**
 Shipped as POST /api/nodes/[id]/asset-backfill. CanvasNode Smart Edit button now appears for any asset node with meta.dataUrl OR meta.assetId. Click triggers backfill if needed (idempotent) before opening the dock.
 
-**Phase 5b — history reconstruction (medium, ~2-3hr)**
-- Currently `appendMessage({role:'assistant', content:''})` saves empty stub. Phase 5b populates content + saves separate `role:'tool'` messages with tool_call_id + result JSON + builds tool_calls JSONB on assistant message → ChatPanel rehydrates on reload
-- Affects: route.js (collect tokens during stream, save proper messages), ChatPanel (render tool_calls from messages instead of activeToolCalls), GET /api/chat (currently returns messages as-is — should work with new shape)
+**Phase 5b — history reconstruction (DONE)**
+Route accumulates assistant text + tool_calls during stream + saves full message. PromptDock fetches GET /api/chat on mount and rehydrates messages into state. ChatPanel auto-expands if history exists. Tool chips render from persisted tool_calls JSONB.
 
 **Phase 5c — cost tracking + credits (medium, ~3-4hr)**
 - `agent_runs.{tokens_in, tokens_out, cost_cents}` columns exist but never written
