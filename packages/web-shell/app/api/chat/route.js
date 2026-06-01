@@ -1,13 +1,16 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '../../../lib/auth.js';
-import { getOrCreateActiveThread, loadMessages, appendMessage } from '../../../lib/chat-persistence.js';
-import { buildSafeRegistry } from '../../../lib/agent/tools/index.js';
+import { getOrCreateActiveThread, loadMessages, appendMessage,
+         startAgentRun, finishAgentRun } from '../../../lib/chat-persistence.js';
+import { buildFullRegistry, buildSafeRegistry } from '../../../lib/agent/tools/index.js';
 import { runAgentLoop } from '../../../lib/agent/driver.js';
 import { callAnthropic } from '../../../lib/agent/llm-anthropic.js';
 import { callOpenAI }    from '../../../lib/agent/llm-openai.js';
 import { callGemini }    from '../../../lib/agent/llm-gemini.js';
 import { BOARD_AGENT, EDIT_IMAGE_SYSTEM } from '../../../lib/agent/prompts.js';
 import { createSseStream, SSE_HEADERS } from '../../../lib/agent/sse-bridge.js';
+import { registerRun, unregisterRun } from '../../../lib/agent/run-map.js';
+import { getCaps } from '../../../lib/agent/caps.js';
 
 export const runtime = 'nodejs';
 
@@ -78,6 +81,17 @@ function resolveAdapter(resolvedModel) {
 
 const PROMPT_KEYS = { BOARD_AGENT, EDIT_IMAGE_SYSTEM };
 
+function mapLoopResultToRunStatus(stopReason) {
+  switch (stopReason) {
+    case 'end_turn':            return 'completed';
+    case 'hard_limited':        return 'hard_limited';
+    case 'wall_timeout':        return 'failed';
+    case 'cancelled':
+    case 'cancelled_softpause': return 'cancelled';
+    default:                    return 'failed';
+  }
+}
+
 export async function GET(request) {
   const { user, error } = await requireUser(request);
   if (error) return error;
@@ -139,7 +153,9 @@ export async function POST(request) {
   // Persist the user message immediately so it's visible on reload even if the run errors out.
   await appendMessage({ threadId: thread.id, role: 'user', content: message });
 
-  const registry = buildSafeRegistry();
+  // Asset-scoped chats (Smart Edit) get the safe registry only — they can't
+  // delete/runFlow/editSite from there. Board chats get the full registry.
+  const registry = threadScope === 'asset' ? buildSafeRegistry() : buildFullRegistry();
   const systemPrompt = PROMPT_KEYS[systemPromptKey] || PROMPT_KEYS.BOARD_AGENT;
 
   // Build the message history for the LLM from the new user msg.
@@ -151,7 +167,15 @@ export async function POST(request) {
   // Fire and forget: run the agent, stream events as they happen.
   (async () => {
     send('thread_id', { threadId: thread.id });
+    let runId = null;
+    let loopResult = null;
     try {
+      const run = await startAgentRun({ threadId: thread.id });
+      runId = run.id;
+      registerRun(runId);
+      send('run_id', { runId });
+      const caps = getCaps();
+
       // Each provider expects a different tool spec shape (Anthropic uses
       // {name, input_schema}; OpenAI wraps in {type:'function', function:{...}};
       // Gemini wraps everything in [{functionDeclarations:[...]}]). Pick the
@@ -162,7 +186,7 @@ export async function POST(request) {
         ? registry.toGeminiSpec(toolAllowlist)
         : registry.toAnthropicSpec(toolAllowlist);
 
-      await runAgentLoop({
+      loopResult = await runAgentLoop({
         llm: resolved.adapter,
         registry,
         systemPrompt,
@@ -172,8 +196,9 @@ export async function POST(request) {
         ctx: { boardId, userId: user.id },
         toolAllowlist,
         tools,
+        runId,
+        caps,
         onEvent: (ev) => {
-          // Normalize driver events to SSE event names per spec §5.
           switch (ev.type) {
             case 'text_delta':
               send('assistant_token', { delta: ev.text });
@@ -187,8 +212,20 @@ export async function POST(request) {
             case 'tool_status':
               send('tool_status', { id: ev.id, status: ev.status, result: ev.result, error: ev.error });
               break;
+            case 'needs_confirm':
+              send('needs_confirm', { id: ev.id, name: ev.name, args: ev.args, summary: ev.summary });
+              break;
+            case 'needs_choice':
+              send('needs_choice', { id: ev.id, name: ev.name, args: ev.args, summary: ev.summary, choices: ev.choices });
+              break;
+            case 'needs_softlimit_continue':
+              send('needs_softlimit_continue', {
+                id: ev.id,
+                iterationsSoFar: ev.iterationsSoFar,
+                breakdown: ev.breakdown,
+              });
+              break;
             case 'message_complete':
-              // Not surfaced as a dedicated SSE event in Phase 1; usage rolled up at run_status.
               break;
             case 'run_status':
               send('run_status', { status: ev.status, err: ev.err });
@@ -197,19 +234,30 @@ export async function POST(request) {
         },
       });
 
-      // Persist final assistant message stub.
-      // (Phase 1: minimal — store the run summary; Phase 5 will reconstruct per-iteration messages.)
+      const finalStatus = mapLoopResultToRunStatus(loopResult.stop_reason);
+      await finishAgentRun({
+        runId,
+        status: finalStatus,
+        iterations: loopResult.iterations,
+        toolCallCounts: loopResult.toolCounts || {},
+      });
       await appendMessage({
         threadId: thread.id,
         role: 'assistant',
-        content: '',
+        content: '',                       // Phase 5b will populate this from the run.
         model: resolvedModel,
-        agentRunId: null,
+        agentRunId: runId,
       });
     } catch (e) {
       console.error('[POST /api/chat] agent error', e);
       send('run_status', { status: 'failed', err: String(e?.message || e) });
+      if (runId) {
+        try {
+          await finishAgentRun({ runId, status: 'failed', iterations: 0, err: String(e?.message || e) });
+        } catch (_) {}
+      }
     } finally {
+      if (runId) unregisterRun(runId);
       close();
     }
   })();
