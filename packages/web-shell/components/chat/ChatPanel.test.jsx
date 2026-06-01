@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import ChatPanel from './ChatPanel.jsx';
 
 const sampleMessages = [
@@ -36,5 +37,24 @@ describe('ChatPanel', () => {
   it('shows empty state when no messages', () => {
     render(<ChatPanel messages={[]} activeToolCalls={[]} />);
     expect(screen.getByText(/start a conversation/i)).toBeInTheDocument();
+  });
+});
+
+describe('ChatPanel — soft pause', () => {
+  it('renders softPause prop as SoftPauseChip and fires through callbacks', async () => {
+    const onContinue = vi.fn();
+    const onStop = vi.fn();
+    render(
+      <ChatPanel
+        messages={[{ id: 'm1', role: 'assistant', content: 'working' }]}
+        activeToolCalls={[]}
+        softPause={{ iterationsSoFar: 10, breakdown: { createNode: 10 } }}
+        onSoftContinue={onContinue}
+        onSoftStop={onStop}
+      />
+    );
+    expect(screen.getByText(/10 actions/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(onContinue).toHaveBeenCalled();
   });
 });

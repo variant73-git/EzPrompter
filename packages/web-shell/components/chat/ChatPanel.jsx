@@ -3,9 +3,15 @@
 import { useEffect, useRef } from 'react';
 import ChatBubble from './ChatBubble.jsx';
 import ToolChip from './ToolChip.jsx';
+import SoftPauseChip from './SoftPauseChip.jsx';
 import './chat.css';
 
-export default function ChatPanel({ messages, activeToolCalls, onCollapse }) {
+export default function ChatPanel({
+  messages, activeToolCalls,
+  softPause, onSoftContinue, onSoftStop,
+  onConfirmTool, onSkipTool, onChooseTool,
+  onCollapse,
+}) {
   const scrollRef = useRef(null);
 
   // Always scroll to the bottom when content changes — new user message,
@@ -66,6 +72,11 @@ export default function ChatPanel({ messages, activeToolCalls, onCollapse }) {
               args={tc.args}
               result={tc.result}
               error={tc.error}
+              summary={tc.summary}
+              choices={tc.choices}
+              onConfirm={() => onConfirmTool?.(tc.id)}
+              onSkip={() => onSkipTool?.(tc.id)}
+              onChoose={(choiceId) => onChooseTool?.(tc.id, choiceId)}
             />
           ))}
         </ChatBubble>
@@ -77,6 +88,14 @@ export default function ChatPanel({ messages, activeToolCalls, onCollapse }) {
             <ToolChip key={tc.id} toolName={tc.name} status={tc.status || 'running'} args={tc.args} />
           ))}
         </ChatBubble>
+      )}
+      {softPause && (
+        <SoftPauseChip
+          iterationsSoFar={softPause.iterationsSoFar}
+          breakdown={softPause.breakdown}
+          onContinue={onSoftContinue}
+          onStop={onSoftStop}
+        />
       )}
     </div>
   );
