@@ -31,3 +31,16 @@ export function buildFullRegistry() {
   r.register(createImageTool);
   return r;
 }
+
+/**
+ * Phase 4 asset-scope chat surface — safe tools + createImage. Use when
+ * threadScope === 'asset' so the Smart Edit chat dock has graph context
+ * (queryNodes, listAssets) plus the ability to regenerate the image
+ * (createImage), but NOT the ability to delete graph nodes, run flows,
+ * or edit sites from an image-focused chat.
+ */
+export function buildAssetRegistry() {
+  const r = buildSafeRegistry();
+  r.register(createImageTool);
+  return r;
+}
