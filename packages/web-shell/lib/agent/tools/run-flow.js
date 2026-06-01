@@ -20,30 +20,34 @@ DESTRUCTIVE: pauses for user confirmation before running because it costs money.
     if (!nodeId) return { error: 'invalid_args', message: 'nodeId required' };
 
     const [target] = await sql`
-      SELECT n.* FROM nodes n
+      SELECT n.id, n.kind, n.meta, n.board_id,
+             s.html AS current_html,
+             s.design_md AS current_design_md
+        FROM nodes n
         JOIN boards b ON b.id = n.board_id
+        LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
        WHERE n.id = ${nodeId} AND b.user_id = ${ctx.userId} AND b.id = ${ctx.boardId}
     `;
     if (!target) return { error: 'forbidden', message: 'node not found on this board' };
 
     const incoming = await sql`
-      SELECT e.*, n.kind AS source_kind, n.current_snapshot_id AS source_snapshot_id
-        FROM edges e JOIN nodes n ON n.id = e.from_node_id
-       WHERE e.to_node_id = ${nodeId}
+      SELECT e.id        AS edge_id,
+             e.payload   AS edge_payload,
+             n.id        AS source_node_id,
+             n.kind      AS kind,
+             n.meta      AS meta,
+             s.html      AS source_html,
+             s.design_md AS source_design_md
+        FROM edges e
+        JOIN nodes n ON n.id = e.source_node_id
+        LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
+       WHERE e.target_node_id = ${nodeId}
     `;
     if (!incoming.length) {
       return { error: 'no_sources', message: 'target has no incoming edges — connect sources before running' };
     }
 
-    const sources = [];
-    for (const edge of incoming) {
-      let snap = null;
-      if (edge.source_snapshot_id) {
-        const [s] = await sql`SELECT id, html, design_md, prompt, screenshot_url FROM snapshots WHERE id = ${edge.source_snapshot_id}`;
-        snap = s || null;
-      }
-      sources.push({ kind: edge.source_kind, snapshot: snap, edgeMeta: edge.meta || null });
-    }
+    const sources = incoming;
 
     try {
       const result = await runCompose({ target, sources, modelId });
