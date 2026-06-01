@@ -333,6 +333,10 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
 
   // --- Chat state (Phase 1) ----------------------------------------------
   const [chat, dispatchChat] = useReducer(chatReducer, initialChat);
+  // Tracks the active runId synchronously so auto-confirm in needs_choice
+  // doesn't read a stale closure (React may not have re-rendered between
+  // the run_id SSE event and the immediately following needs_choice event).
+  const latestRunIdRef = useRef(null);
   // Collapsed = dock shows input only (no bubble panel). Auto-collapsed
   // after each turn so the dock returns to its compact "original size".
   // New send or manual expand sets it back to false. Chevron in the panel
@@ -383,14 +387,17 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         if (payload.status === 'failed' || payload.status === 'hard_limited') {
           const msg = payload.err
             || (payload.status === 'hard_limited' ? 'Hit the action limit for this turn. Send a new message to continue.' : 'Agent failed.');
+          latestRunIdRef.current = null;
           dispatchChat({ type: 'RUN_ERROR', err: msg });
         } else if (payload.status === 'cancelled' || payload.status === 'cancelled_softpause') {
           // Agent was cancelled — treat as a clean finish so streaming state
           // clears. No error bubble; the user initiated the cancel.
+          latestRunIdRef.current = null;
           dispatchChat({ type: 'RUN_FINISHED' });
         }
         break;
       case 'run_id':
+        latestRunIdRef.current = payload.runId;
         dispatchChat({ type: 'RUN_ID_RECEIVED', runId: payload.runId });
         break;
       case 'needs_confirm':
@@ -398,10 +405,14 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         break;
       case 'needs_choice': {
         // Single-choice → auto-confirm without prompting the user.
+        // Use latestRunIdRef (set synchronously on run_id) instead of
+        // chat.activeRun?.runId — the React state may not have re-rendered
+        // yet when this case fires immediately after run_id in the same
+        // stream chunk, leading to a null runId and a 400 from /api/chat/confirm.
         if (Array.isArray(payload.choices) && payload.choices.length <= 1) {
           const choice = payload.choices[0]?.id || 'auto';
           postConfirm({
-            runId: chat.activeRun?.runId,
+            runId: latestRunIdRef.current,
             toolCallId: payload.id,
             action: 'confirm',
             choice,
@@ -469,6 +480,7 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         handleSseEvent(evName, data);
       }
     }
+    latestRunIdRef.current = null;
     dispatchChat({ type: 'RUN_FINISHED' });
     // Single refetch at end of run — picks up everything the agent did
     // in one go without re-rendering the canvas N times mid-stream.
