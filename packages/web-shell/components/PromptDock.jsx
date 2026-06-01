@@ -297,8 +297,6 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
   // reader-loop exits (covers normal end-of-stream and server-side errors
   // that just close the connection).
   function handleSseEvent(name, payload) {
-    // TEMP debug log — remove once chat feedback is reliable.
-    if (typeof window !== 'undefined') console.log('[chat-sse]', name, payload);
     switch (name) {
       case 'assistant_token':
         dispatchChat({ type: 'ASSISTANT_TOKEN', delta: payload.delta });
