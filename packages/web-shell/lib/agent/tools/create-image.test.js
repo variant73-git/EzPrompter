@@ -8,25 +8,50 @@ vi.mock('../../db.js', () => {
   return { sql };
 });
 
-const { sql } = await import('../../db.js');
+vi.mock('../../image-gen/gemini-imagen.js', () => ({
+  generateGeminiImage: vi.fn(async () => ({
+    base64: 'B64',
+    mimeType: 'image/png',
+    dataUrl: 'data:image/png;base64,B64',
+    prompt: 'cat',
+    model: 'imagen-3.0-fast-generate-001',
+  })),
+}));
 
-const fetchMock = vi.fn();
-globalThis.fetch = fetchMock;
+vi.mock('../../image-gen/openai-image.js', () => ({
+  generateOpenAIImage: vi.fn(async () => ({
+    base64: 'B64',
+    mimeType: 'image/png',
+    dataUrl: 'data:image/png;base64,B64',
+    prompt: 'cat',
+    model: 'gpt-image-1',
+  })),
+}));
+
+const { sql } = await import('../../db.js');
+const { generateGeminiImage } = await import('../../image-gen/gemini-imagen.js');
+const { generateOpenAIImage } = await import('../../image-gen/openai-image.js');
 
 beforeEach(() => {
   sql._reset();
-  fetchMock.mockReset();
-  fetchMock.mockImplementation(async () => ({
-    ok: true,
-    json: async () => ({
-      provider: 'gemini',
-      base64: 'B64',
-      mimeType: 'image/png',
-      dataUrl: 'data:image/png;base64,B64',
-      prompt: 'cat',
-      model: 'imagen-3.0-fast-generate-001',
-    }),
-  }));
+  vi.mocked(generateGeminiImage).mockClear();
+  vi.mocked(generateGeminiImage).mockResolvedValue({
+    base64: 'B64',
+    mimeType: 'image/png',
+    dataUrl: 'data:image/png;base64,B64',
+    prompt: 'cat',
+    model: 'imagen-3.0-fast-generate-001',
+  });
+  vi.mocked(generateOpenAIImage).mockClear();
+  vi.mocked(generateOpenAIImage).mockResolvedValue({
+    base64: 'B64',
+    mimeType: 'image/png',
+    dataUrl: 'data:image/png;base64,B64',
+    prompt: 'cat',
+    model: 'gpt-image-1',
+  });
+  process.env.GEMINI_API_KEY = 'gem';
+  process.env.OPENAI_API_KEY = 'oai';
 });
 
 const { createImageTool } = await import('./create-image.js');
@@ -68,9 +93,8 @@ describe('createImageTool', () => {
       { prompt: 'cat', provider: 'auto' },
       { boardId: 'b1', userId: 42, conversationModel: 'claude-sonnet-4-6', choice: 'openai' }
     );
-    expect(fetchMock).toHaveBeenCalled();
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.provider).toBe('openai');
+    expect(generateOpenAIImage).toHaveBeenCalled();
+    expect(generateGeminiImage).not.toHaveBeenCalled();
   });
 
   it('persists asset and returns assetId', async () => {
@@ -98,12 +122,8 @@ describe('createImageTool', () => {
     expect(r.nodeId).toBe('node-1');
   });
 
-  it('returns image_gen_failed when route returns !ok', async () => {
-    fetchMock.mockImplementation(async () => ({
-      ok: false,
-      status: 500,
-      json: async () => ({ error: 'boom' }),
-    }));
+  it('returns image_gen_failed when adapter throws', async () => {
+    vi.mocked(generateGeminiImage).mockRejectedValueOnce(new Error('boom'));
     const r = await createImageTool.execute(
       { prompt: 'cat' },
       { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
