@@ -7,6 +7,7 @@ import { nodeOrigin } from '../lib/node-origin.js';
 import MdPreviewBody from './node-bodies/MdPreviewBody.jsx';
 import PromptBody from './node-bodies/PromptBody.jsx';
 import SkillBody from './node-bodies/SkillBody.jsx';
+import AssetSmartEditDock from './canvas/AssetSmartEditDock.jsx';
 
 const DRAG_THRESHOLD = 4;
 
@@ -265,6 +266,7 @@ export default function CanvasNode({
   // first toggle so an instant expand→collapse round-trips correctly.
   const preExpandRef = useRef({ w: null, h: null });
   const [isExpanded, setIsExpanded] = useState(false);
+  const [smartEditOpen, setSmartEditOpen] = useState(false);
 
   // Save the current iframe state as a snapshot, then exit edit mode.
   // Used by the Done button and by "Save and exit" inside the cancel
@@ -886,6 +888,20 @@ export default function CanvasNode({
           ) : (
             <div className="cnode-loading"><span>No image data</span></div>
           )}
+          {node.meta?.assetId && (
+            <button
+              type="button"
+              className="cnode-smart-edit-btn"
+              onMouseDown={(e) => { e.stopPropagation(); }}
+              onClick={(e) => { e.stopPropagation(); setSmartEditOpen((v) => !v); }}
+              title="Smart Edit"
+              aria-label="Smart Edit"
+            >
+              <svg viewBox="0 0 37 40" width="14" height="14" aria-hidden="true">
+                <path fill="currentColor" d="M16,29.7c0,.8-.6,1.4-1.3,1.5-1,0-2.7.5-3.2,1.1-.6.6-1,2.3-1.1,3.2,0,.8-.7,1.3-1.5,1.3s-1.4-.6-1.5-1.3c0-1-.5-2.7-1.1-3.2-.6-.6-2.3-1-3.2-1.1-.8,0-1.3-.7-1.3-1.5s.6-1.4,1.3-1.5c1,0,2.7-.5,3.2-1.1.6-.6,1-2.3,1.1-3.2,0-.8.7-1.3,1.5-1.3s1.4.6,1.5,1.3c0,1,.5,2.7,1.1,3.2.6.6,2.3,1,3.2,1.1.8,0,1.3.7,1.3,1.5ZM33.3,16.7c-1.5-.2-5.8-1-7.5-2.7-1.7-1.7-2.5-6-2.7-7.5,0-.8-.7-1.3-1.5-1.3s-1.4.6-1.5,1.3c-.2,1.5-1,5.8-2.7,7.5s-6,2.5-7.5,2.7c-.8,0-1.3.7-1.3,1.5s.6,1.4,1.3,1.5c1.5.2,5.8,1,7.5,2.7s2.5,6,2.7,7.5c0,.8.7,1.3,1.5,1.3s1.4-.6,1.5-1.3c.2-1.5,1-5.8,2.7-7.5,1.7-1.7,6-2.5,7.5-2.7.8,0,1.3-.7,1.3-1.5s-.6-1.4-1.3-1.5Z"/>
+              </svg>
+            </button>
+          )}
         </div>
       ) : null}
       <>
@@ -991,6 +1007,25 @@ export default function CanvasNode({
             }
           }}
         />
+      )}
+
+      {smartEditOpen && node.meta?.assetId && (
+        <div
+          className="cnode-smart-edit-dock-wrap"
+          style={{
+            position: 'absolute',
+            left: (node.width || 512) + 12,
+            top: 0,
+            zIndex: 50,
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <AssetSmartEditDock
+            boardId={node.board_id}
+            assetId={node.meta.assetId}
+            onClose={() => setSmartEditOpen(false)}
+          />
+        </div>
       )}
 
       {/* Portal to document.body so the menu's `position: fixed`

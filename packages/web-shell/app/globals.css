@@ -3528,6 +3528,7 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
   align-items: center;
   justify-content: center;
   cursor: default;
+  position: relative;
 }
 .cnode-asset-img {
   max-width: 100%;
@@ -3540,6 +3541,36 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
   -webkit-user-drag: none;
 }
 body.rb-ed-light .cnode-body-asset { background: #ECECF0; }
+
+/* Smart Edit button — appears on hover or when node is selected */
+.cnode-smart-edit-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(10, 10, 10, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(245, 245, 245, 0.9);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  z-index: 10;
+}
+.cnode-body-asset:hover .cnode-smart-edit-btn,
+.cnode.selected .cnode-smart-edit-btn {
+  opacity: 1;
+}
+.cnode-smart-edit-btn:hover {
+  background: rgba(10, 10, 10, 0.8);
+  border-color: rgba(255, 255, 255, 0.20);
+}
 
 /* Asset node placeholder — fired when both the original URL and the
    server-side proxy fail to deliver bytes. Keeps the node visible (so
