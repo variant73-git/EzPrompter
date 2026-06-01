@@ -189,7 +189,7 @@ export async function runAgentLoop(opts) {
         // ── Execute ─────────────────────────────────────────────────────
         onEvent({ type: 'tool_status', id: call.id, status: 'running' });
         try {
-          const result = await tool.execute(call.input, { ...ctx, choice: decision.choice || null });
+          const result = await tool.execute(call.input, { ...ctx, choice: decision.choice ?? null });
           if (result && result.error) {
             toolFailures[call.name] = (toolFailures[call.name] || 0) + 1;
             onEvent({ type: 'tool_status', id: call.id, status: 'error', error: result.message || result.error });
