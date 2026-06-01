@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock the OpenAI library
 let mockGenerate;
+let mockEdit;
 
 vi.mock('openai', () => {
   class MockOpenAI {
@@ -9,11 +10,18 @@ vi.mock('openai', () => {
       this.config = config;
       this.images = {
         generate: async (...args) => mockGenerate(...args),
+        edit: async (...args) => mockEdit(...args),
       };
     }
   }
   return { default: MockOpenAI };
 });
+
+vi.mock('openai/uploads', () => ({
+  // Accept whatever buffer / metadata the adapter hands us; the assertions
+  // care about CALL args, not the file object's internals.
+  toFile: async (buffer, filename, opts) => ({ __mockFile: true, filename, type: opts?.type, byteLength: buffer.byteLength }),
+}));
 
 const { generateOpenAIImage } = await import('./openai-image.js');
 
@@ -23,6 +31,11 @@ describe('generateOpenAIImage', () => {
     mockGenerate = vi.fn(async () => ({
       data: [{
         b64_json: Buffer.from('fake-png-bytes').toString('base64'),
+      }],
+    }));
+    mockEdit = vi.fn(async () => ({
+      data: [{
+        b64_json: Buffer.from('edited-png-bytes').toString('base64'),
       }],
     }));
   });
@@ -123,5 +136,44 @@ describe('generateOpenAIImage', () => {
     expect(mockGenerate).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'gpt-image-2' })
     );
+  });
+
+  it('routes to images.edit when baseImageDataUrl is provided', async () => {
+    const result = await generateOpenAIImage({
+      prompt: 'make it sunset-lit',
+      apiKey: 'sk-test-key',
+      baseImageDataUrl: `data:image/png;base64,${Buffer.from('source-png').toString('base64')}`,
+    });
+
+    expect(mockEdit).toHaveBeenCalledTimes(1);
+    expect(mockGenerate).not.toHaveBeenCalled();
+    expect(result.mode).toBe('edit');
+    expect(result.base64).toBe(Buffer.from('edited-png-bytes').toString('base64'));
+    // Should pass the converted File-like object as image + the original prompt + size.
+    expect(mockEdit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'make it sunset-lit',
+        size: '1024x1024',
+        image: expect.objectContaining({ __mockFile: true, type: 'image/png' }),
+      })
+    );
+  });
+
+  it('text-to-image keeps default mode "generate"', async () => {
+    const result = await generateOpenAIImage({
+      prompt: 'a dog',
+      apiKey: 'sk-test-key',
+    });
+    expect(result.mode).toBe('generate');
+  });
+
+  it('rejects malformed baseImageDataUrl', async () => {
+    await expect(
+      generateOpenAIImage({
+        prompt: 'x',
+        apiKey: 'sk-test-key',
+        baseImageDataUrl: 'not-a-data-url',
+      })
+    ).rejects.toThrow(/base64 data URL/);
   });
 });

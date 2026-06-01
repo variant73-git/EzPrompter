@@ -61,7 +61,7 @@ If the user wants a CAPTURED website (a real URL they want to snapshot), don't u
     required: ['type'],
   },
   async execute(args, ctx) {
-    const { type, name = null, posX = 0, posY = 0 } = args || {};
+    const { type, name = null, posX, posY } = args || {};
     if (!type) return { error: 'invalid_args', message: 'type is required' };
     const mapping = NODE_TYPES[type];
     if (!mapping) return { error: 'invalid_args', message: `type must be one of: ${TYPE_LIST.join(', ')}` };
@@ -74,9 +74,27 @@ If the user wants a CAPTURED website (a real URL they want to snapshot), don't u
     const w = mapping.width || 1280;
     const h = mapping.height || 800;
 
+    // Auto-place: if caller didn't pass coords, drop the node to the right
+    // of whatever's already on the board with a generous gap. Each call in
+    // the same agent turn picks up the previous insert, so N createNode
+    // calls land side-by-side instead of stacking on (0, 0).
+    let placedX = posX;
+    let placedY = posY;
+    if (placedX == null || placedY == null) {
+      const [row] = await sql`
+        SELECT COALESCE(MAX(pos_x + width), -240) AS right_edge,
+               COALESCE(MIN(pos_y), 0) AS top_edge
+        FROM nodes
+        WHERE board_id = ${ctx.boardId}
+      `;
+      const GAP = 240;
+      if (placedX == null) placedX = Number(row?.right_edge ?? 0) + GAP;
+      if (placedY == null) placedY = Number(row?.top_edge ?? 0);
+    }
+
     const [node] = await sql`
       INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
-      VALUES (${ctx.boardId}, ${mapping.kind}, ${posX}, ${posY}, ${w}, ${h}, ${finalMeta}::jsonb)
+      VALUES (${ctx.boardId}, ${mapping.kind}, ${placedX}, ${placedY}, ${w}, ${h}, ${finalMeta}::jsonb)
       RETURNING id, kind, pos_x, pos_y, width, height, meta, created_at
     `;
 

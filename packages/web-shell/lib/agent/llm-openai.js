@@ -33,10 +33,12 @@ export async function callOpenAI({ model, system, messages, tools, apiKey, onEve
       oaMessages.push({ role: m.role, content: m.content });
     } else if (Array.isArray(m.content)) {
       // Either assistant tool_use blocks (re-emit as assistant message with tool_calls)
-      // or user tool_result blocks (re-emit as one tool message per result).
+      // or user tool_result blocks (re-emit as one tool message per result)
+      // or multimodal user blocks (text + image → OpenAI's content array).
       const toolUseBlocks = m.content.filter((b) => b.type === 'tool_use');
       const toolResultBlocks = m.content.filter((b) => b.type === 'tool_result');
       const textBlocks = m.content.filter((b) => b.type === 'text');
+      const imageBlocks = m.content.filter((b) => b.type === 'image' && typeof b.dataUrl === 'string');
       if (toolUseBlocks.length) {
         oaMessages.push({
           role: 'assistant',
@@ -55,6 +57,14 @@ export async function callOpenAI({ model, system, messages, tools, apiKey, onEve
             content: typeof b.content === 'string' ? b.content : JSON.stringify(b.content),
           });
         }
+      } else if (imageBlocks.length) {
+        // Multimodal user message — OpenAI takes a content array with
+        // {type:'text'} and {type:'image_url', image_url:{url}} entries.
+        // Data URLs work directly; no CDN required.
+        const parts = [];
+        for (const t of textBlocks) parts.push({ type: 'text', text: t.text });
+        for (const im of imageBlocks) parts.push({ type: 'image_url', image_url: { url: im.dataUrl } });
+        oaMessages.push({ role: m.role, content: parts });
       } else if (textBlocks.length) {
         oaMessages.push({ role: m.role, content: textBlocks.map((b) => b.text).join('') });
       }

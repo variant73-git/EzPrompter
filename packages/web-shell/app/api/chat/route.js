@@ -132,10 +132,13 @@ export async function POST(request) {
     message,
     tools: toolAllowlist = null,
     systemPromptKey = 'BOARD_AGENT',
+    attachments = null,
   } = body || {};
 
   if (!boardId) return NextResponse.json({ error: 'boardId required' }, { status: 400 });
-  if (!message?.trim()) return NextResponse.json({ error: 'message required' }, { status: 400 });
+  const hasText = !!message?.trim();
+  const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+  if (!hasText && !hasAttachments) return NextResponse.json({ error: 'message or attachments required' }, { status: 400 });
 
   // The agent's orchestrating model is OUR choice (cost/quality), not the
   // user's picker. The picker on PromptDock chooses which model runs
@@ -162,16 +165,38 @@ export async function POST(request) {
   const thread = await getOrCreateActiveThread({ boardId, userId: user.id, scope: threadScope, assetId });
 
   // Persist the user message immediately so it's visible on reload even if the run errors out.
-  await appendMessage({ threadId: thread.id, role: 'user', content: message });
+  // Attachments are NOT persisted yet — they only travel with this turn so the agent can see
+  // them. The result (asset nodes, generated images) IS the durable record.
+  const persistedText = hasText
+    ? message
+    : `[image attachment${attachments.length > 1 ? 's' : ''}: ${attachments.map((a) => a.name || 'image').join(', ')}]`;
+  await appendMessage({ threadId: thread.id, role: 'user', content: persistedText });
 
   // Asset-scoped chats (Smart Edit) get the asset registry (safe + createImage) —
   // they can't delete/runFlow/editSite from there. Board chats get the full registry.
   const registry = threadScope === 'asset' ? buildAssetRegistry() : buildFullRegistry();
   const systemPrompt = PROMPT_KEYS[systemPromptKey] || PROMPT_KEYS.BOARD_AGENT;
 
-  // Build the message history for the LLM from the new user msg.
-  // (Cheap path for Phase 1: just the current user message; richer history support in Phase 5.)
-  const initialMessages = [{ role: 'user', content: message }];
+  // Build the message history for the LLM. When attachments are present the
+  // user content becomes an Anthropic-style array of blocks: one text block
+  // (the typed message, or a default cue if user only attached without text)
+  // plus one image block per attachment. Each adapter translates this shape
+  // into its provider's native multimodal format.
+  let initialMessages;
+  if (hasAttachments) {
+    const textPart = hasText
+      ? message
+      : 'Anexei a(s) imagem(s) acima. Use seu próprio julgamento sobre o que fazer com ela(s).';
+    const blocks = [{ type: 'text', text: textPart }];
+    for (const a of attachments) {
+      if (a?.kind === 'image' && typeof a.dataUrl === 'string') {
+        blocks.push({ type: 'image', dataUrl: a.dataUrl, name: a.name, mimeType: a.mimeType });
+      }
+    }
+    initialMessages = [{ role: 'user', content: blocks }];
+  } else {
+    initialMessages = [{ role: 'user', content: message }];
+  }
 
   const { stream, send, close } = createSseStream();
 
