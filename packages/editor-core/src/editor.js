@@ -3322,6 +3322,7 @@
         systemPromptKey: 'EDIT_IMAGE_SYSTEM',
       }),
     }).then(consumeAssetEditSse).catch(function(err) {
+      if (!assetEditState) return;
       assetEditState.phase = 'gen-error';
       assetEditState.err = String(err && err.message || err);
       renderSmartSection();
@@ -3331,6 +3332,7 @@
   function consumeAssetEditSse(res) {
     if (!res.ok) {
       return res.text().then(function(t) {
+        if (!assetEditState) return;
         assetEditState.phase = 'gen-error';
         assetEditState.err = 'HTTP ' + res.status + ': ' + (t || 'request failed');
         renderSmartSection();
@@ -3365,6 +3367,7 @@
   }
 
   function handleAssetEditSse(name, payload) {
+    if (!assetEditState) return;
     switch (name) {
       case 'run_id':
         assetEditRunIdRef.current = payload.runId;
@@ -3402,7 +3405,8 @@
         }
         break;
       case 'run_status':
-        if (payload.status === 'failed' || payload.status === 'hard_limited') {
+        if (payload.status === 'failed' || payload.status === 'hard_limited' ||
+            payload.status === 'cancelled' || payload.status === 'cancelled_softpause') {
           if (assetEditState.phase !== 'done') {
             assetEditState.phase = 'gen-error';
             assetEditState.err = payload.err || 'agent run ' + payload.status;
@@ -3631,7 +3635,7 @@
         imgCanvas.src = assetEditState.result.dataUrl;
         imgWrap.appendChild(imgCanvas);
 
-        var canvasActions = mk('div', 'rb-ed-asset-smart-result-actions');
+        var canvasActions = mk('div', 'rb-ed-asset-smart-result-canvas-actions');
         var againBtnCanvas = mk('button', 'rb-ed-asset-smart-result-btn');
         againBtnCanvas.type = 'button';
         againBtnCanvas.textContent = 'Generate another';

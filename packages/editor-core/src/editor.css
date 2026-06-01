@@ -3076,7 +3076,7 @@ body.rb-ed-light .rb-img-bar-btn.rb-dock-link-active:hover { color:#2563eb; back
   border-radius: 8px;
   display: block;
 }
-.rb-ed-asset-smart-result-actions {
+.rb-ed-asset-smart-result-canvas-actions {
   display: flex;
   gap: 6px;
 }
