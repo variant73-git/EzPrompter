@@ -384,6 +384,10 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
           const msg = payload.err
             || (payload.status === 'hard_limited' ? 'Hit the action limit for this turn. Send a new message to continue.' : 'Agent failed.');
           dispatchChat({ type: 'RUN_ERROR', err: msg });
+        } else if (payload.status === 'cancelled' || payload.status === 'cancelled_softpause') {
+          // Agent was cancelled — treat as a clean finish so streaming state
+          // clears. No error bubble; the user initiated the cancel.
+          dispatchChat({ type: 'RUN_FINISHED' });
         }
         break;
       case 'run_id':
@@ -753,24 +757,24 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
           onCollapse={() => setChatCollapsed(true)}
           softPause={chat.softPause}
           onConfirmTool={async (toolCallId) => {
-            await postConfirm({ runId: chat.activeRun?.runId, toolCallId, action: 'confirm' });
-            dispatchChat({ type: 'TOOL_RESUMED', id: toolCallId });
+            const res = await postConfirm({ runId: chat.activeRun?.runId, toolCallId, action: 'confirm' });
+            if (res.ok) dispatchChat({ type: 'TOOL_RESUMED', id: toolCallId });
           }}
           onSkipTool={async (toolCallId) => {
-            await postConfirm({ runId: chat.activeRun?.runId, toolCallId, action: 'skip' });
-            dispatchChat({ type: 'TOOL_RESUMED', id: toolCallId });
+            const res = await postConfirm({ runId: chat.activeRun?.runId, toolCallId, action: 'skip' });
+            if (res.ok) dispatchChat({ type: 'TOOL_RESUMED', id: toolCallId });
           }}
           onChooseTool={async (toolCallId, choiceId) => {
-            await postConfirm({ runId: chat.activeRun?.runId, toolCallId, action: 'confirm', choice: choiceId });
-            dispatchChat({ type: 'TOOL_RESUMED', id: toolCallId });
+            const res = await postConfirm({ runId: chat.activeRun?.runId, toolCallId, action: 'confirm', choice: choiceId });
+            if (res.ok) dispatchChat({ type: 'TOOL_RESUMED', id: toolCallId });
           }}
           onSoftContinue={async () => {
-            await postContinue({ runId: chat.activeRun?.runId, action: 'continue' });
-            dispatchChat({ type: 'RUN_CONTINUED' });
+            const res = await postContinue({ runId: chat.activeRun?.runId, action: 'continue' });
+            if (res.ok) dispatchChat({ type: 'RUN_CONTINUED' });
           }}
           onSoftStop={async () => {
-            await postContinue({ runId: chat.activeRun?.runId, action: 'stop' });
-            dispatchChat({ type: 'RUN_CONTINUED' });
+            const res = await postContinue({ runId: chat.activeRun?.runId, action: 'stop' });
+            if (res.ok) dispatchChat({ type: 'RUN_CONTINUED' });
           }}
         />
       )}
@@ -784,7 +788,7 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         onPaste={handlePaste}
         placeholder={placeholder}
         rows={1}
-        disabled={busy}
+        disabled={busy || chat.streaming || chat.softPause !== null}
       />
 
       <div className="prompt-dock-actions">
@@ -912,7 +916,7 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
           whileHover={(hasContent || nodeCount > 0) && !runFlowBusy ? { scale: 1.06 } : {}}
           whileTap={(hasContent || nodeCount > 0) && !runFlowBusy ? { scale: 0.94 } : {}}
           transition={{ type: 'spring', stiffness: 400, damping: 22 }}
-          disabled={busy || runFlowBusy || (!hasContent && nodeCount === 0)}
+          disabled={busy || runFlowBusy || chat.streaming || chat.softPause !== null || (!hasContent && nodeCount === 0)}
           onClick={submit}
           aria-label={hasContent ? 'Send' : 'Run flow'}
           title={runFlowBusy ? 'Running…' : (hasContent ? 'Send' : 'Run flow (process connected nodes)')}
