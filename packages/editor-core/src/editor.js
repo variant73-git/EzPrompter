@@ -3212,6 +3212,7 @@
   // (describeImage, generateImage) are reused as-is.
   var assetEditState = null; // { phase, json, prompt, provider, resultUrl, err, dirty }
   var assetEditMsgListener = null;
+  var assetEditRunIdRef = { current: null };
   var assetEditSmartContainer = null;
   // Optional handler bound at enterAssetEdit time. When set, the idle screen
   // shows a "Show in page" button alongside "Smart edit"; clicking it
@@ -3288,8 +3289,149 @@
     assetEditMsgListener = null;
   }
 
+  function isCanvasMode() {
+    return typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage;
+  }
+
+  function submitCanvas(msg, ta) {
+    var opt = hostWin && hostWin.__uncraftMountOptions;
+    var boardId = (opt && opt.boardId) || null;
+    var assetId = assetEditTarget && assetEditTarget.id;
+    if (!boardId || !assetId) {
+      assetEditState.phase = 'gen-error';
+      assetEditState.err = 'Smart Edit needs an asset record (only works on AI-generated images for now).';
+      renderSmartSection();
+      return;
+    }
+    assetEditState.phase = 'generating';
+    assetEditState.err = null;
+    assetEditState.result = null;
+    assetEditRunIdRef.current = null;
+    renderSmartSection();
+
+    fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        boardId: boardId,
+        threadScope: 'asset',
+        assetId: assetId,
+        message: msg,
+        tools: ['createImage', 'getNodeOutput'],
+        systemPromptKey: 'EDIT_IMAGE_SYSTEM',
+      }),
+    }).then(consumeAssetEditSse).catch(function(err) {
+      assetEditState.phase = 'gen-error';
+      assetEditState.err = String(err && err.message || err);
+      renderSmartSection();
+    });
+  }
+
+  function consumeAssetEditSse(res) {
+    if (!res.ok) {
+      return res.text().then(function(t) {
+        assetEditState.phase = 'gen-error';
+        assetEditState.err = 'HTTP ' + res.status + ': ' + (t || 'request failed');
+        renderSmartSection();
+      });
+    }
+    var reader = res.body.getReader();
+    var dec = new TextDecoder();
+    var buf = '';
+    function pump() {
+      return reader.read().then(function(r) {
+        if (r.done) return;
+        buf += dec.decode(r.value);
+        var idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+          var block = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          var lines = block.split('\n');
+          var ev = null, dt = null;
+          for (var i = 0; i < lines.length; i++) {
+            if (lines[i].indexOf('event:') === 0) ev = lines[i];
+            else if (lines[i].indexOf('data:') === 0) dt = lines[i];
+          }
+          if (!ev || !dt) continue;
+          var name = ev.slice(6).trim();
+          var payload;
+          try { payload = JSON.parse(dt.slice(5).trim()); } catch (e) { continue; }
+          handleAssetEditSse(name, payload);
+        }
+        return pump();
+      });
+    }
+    return pump();
+  }
+
+  function handleAssetEditSse(name, payload) {
+    switch (name) {
+      case 'run_id':
+        assetEditRunIdRef.current = payload.runId;
+        break;
+      case 'needs_choice':
+        // Phase 4 MVP: single-choice auto-confirms. Multi-choice (Claude+auto)
+        // auto-picks first as a temporary fallback — Phase 4b adds a proper
+        // inline picker in the dock.
+        if (Array.isArray(payload.choices) && payload.choices.length > 0) {
+          fetch('/api/chat/confirm', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              runId: assetEditRunIdRef.current,
+              toolCallId: payload.id,
+              action: 'confirm',
+              choice: payload.choices[0].id,
+            }),
+          });
+        }
+        break;
+      case 'tool_status':
+        if (payload.status === 'done' && payload.result && payload.result.dataUrl) {
+          assetEditState.phase = 'done';
+          assetEditState.result = {
+            dataUrl: payload.result.dataUrl,
+            assetId: payload.result.assetId,
+          };
+          renderSmartSection();
+        } else if (payload.status === 'error') {
+          assetEditState.phase = 'gen-error';
+          assetEditState.err = payload.error || 'tool error';
+          renderSmartSection();
+        }
+        break;
+      case 'run_status':
+        if (payload.status === 'failed' || payload.status === 'hard_limited') {
+          if (assetEditState.phase !== 'done') {
+            assetEditState.phase = 'gen-error';
+            assetEditState.err = payload.err || 'agent run ' + payload.status;
+            renderSmartSection();
+          }
+        } else if (payload.status === 'completed' && assetEditState.phase === 'generating') {
+          // Run completed but no createImage done event — agent talked without
+          // calling the tool. Surface as soft error so user can retry.
+          assetEditState.phase = 'gen-error';
+          assetEditState.err = 'Agent did not generate an image. Try a more specific instruction.';
+          renderSmartSection();
+        }
+        break;
+    }
+  }
+
   function triggerAnalyze() {
     if (!assetEditTarget) return;
+    if (isCanvasMode()) {
+      // Canvas skips vision pre-analysis (no extension's describeImage handler).
+      // Go straight to chat-ready phase — user types instructions directly. The
+      // agent has graph context via queryNodes/listAssets if it wants the
+      // asset's existing meta.
+      assetEditState.phase = 'ready';
+      assetEditState.prompt = '';
+      assetEditState.json = { canvasAssetId: assetEditTarget.id || null, source: 'canvas' };
+      renderSmartSection();
+      return;
+    }
     var url = assetEditTarget.source_url || assetEditTarget.thumb_url;
     if (!url) {
       assetEditState.phase = 'error';
@@ -3481,7 +3623,32 @@
         }, { capture: true });
         resActions.appendChild(againBtn);
         c.appendChild(resActions);
-      } else if (phase === 'gen-error') {
+      }
+
+      if (phase === 'done' && assetEditState.result && assetEditState.result.dataUrl) {
+        var imgWrap = mk('div', 'rb-ed-asset-smart-result');
+        var imgCanvas = mk('img', 'rb-ed-asset-smart-result-img');
+        imgCanvas.src = assetEditState.result.dataUrl;
+        imgWrap.appendChild(imgCanvas);
+
+        var canvasActions = mk('div', 'rb-ed-asset-smart-result-actions');
+        var againBtnCanvas = mk('button', 'rb-ed-asset-smart-result-btn');
+        againBtnCanvas.type = 'button';
+        againBtnCanvas.textContent = 'Generate another';
+        againBtnCanvas.addEventListener('mousedown', function(e) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          assetEditState.phase = 'ready';
+          assetEditState.result = null;
+          renderSmartSection();
+        }, { capture: true });
+        canvasActions.appendChild(againBtnCanvas);
+        imgWrap.appendChild(canvasActions);
+
+        c.appendChild(imgWrap);
+      }
+
+      if (phase === 'gen-error') {
         var ge = mk('div', 'rb-ed-asset-smart-error');
         ge.textContent = assetEditState.err || 'Generation failed.';
         c.appendChild(ge);
@@ -3576,13 +3743,20 @@
     function submit() {
       var msg = ta.value.trim();
       if (!msg) return;
-      if (!assetEditState || !assetEditState.json) return;
-      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) return;
+      if (!assetEditState) return;
+      ta.value = '';
+      ta.style.height = 'auto';
+
+      if (isCanvasMode()) {
+        submitCanvas(msg, ta);
+        return;
+      }
+
+      // Extension path (unchanged)
+      if (!assetEditState.json) return;
       var combined = (assetEditState.prompt || '') + '\n\n' +
                      JSON.stringify(assetEditState.json, null, 2) +
                      '\n\nUser instruction: ' + msg;
-      ta.value = '';
-      ta.style.height = 'auto';
       assetEditState.phase = 'generating';
       renderSmartSection();
       try {
