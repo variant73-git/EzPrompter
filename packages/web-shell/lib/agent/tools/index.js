@@ -8,6 +8,7 @@ import { listAssetsTool }    from './list-assets.js';
 import { deleteNodeTool }    from './delete-node.js';
 import { runFlowTool }       from './run-flow.js';
 import { editSiteTool }      from './edit-site.js';
+import { createImageTool }   from './create-image.js';
 
 /** Phase 1 safe tools only — kept for the smoke-test path and for asset-scoped chats. */
 export function buildSafeRegistry() {
@@ -27,5 +28,6 @@ export function buildFullRegistry() {
   r.register(deleteNodeTool);
   r.register(runFlowTool);
   r.register(editSiteTool);
+  r.register(createImageTool);
   return r;
 }
