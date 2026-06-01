@@ -99,3 +99,39 @@ export async function archiveActiveThread({ boardId, scope = 'board', assetId = 
       `;
   return rows[0] || null;
 }
+
+/** Insert a new agent_runs row in status=running. Returns the row. */
+export async function startAgentRun({ threadId }) {
+  const [r] = await sql`
+    INSERT INTO agent_runs (thread_id, status, iterations, tool_call_counts)
+    VALUES (${threadId}, 'running', 0, '{}'::jsonb)
+    RETURNING *
+  `;
+  return r;
+}
+
+/** Update just the status (e.g. running → paused_confirm). Returns the row. */
+export async function updateAgentRunStatus({ runId, status }) {
+  const [r] = await sql`
+    UPDATE agent_runs SET status = ${status} WHERE id = ${runId} RETURNING *
+  `;
+  return r;
+}
+
+/**
+ * Finalize the run: set status + iterations + tool_call_counts + completed_at + err.
+ * `status` is one of: completed|failed|cancelled|hard_limited.
+ */
+export async function finishAgentRun({ runId, status, iterations, toolCallCounts = {}, err = null }) {
+  const [r] = await sql`
+    UPDATE agent_runs
+       SET status = ${status},
+           iterations = ${iterations},
+           tool_call_counts = ${JSON.stringify(toolCallCounts)}::jsonb,
+           err = ${err},
+           completed_at = NOW()
+     WHERE id = ${runId}
+     RETURNING *
+  `;
+  return r;
+}

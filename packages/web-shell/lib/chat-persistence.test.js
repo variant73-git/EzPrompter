@@ -4,6 +4,9 @@ import {
   appendMessage,
   loadMessages,
   archiveActiveThread,
+  startAgentRun,
+  updateAgentRunStatus,
+  finishAgentRun,
 } from './chat-persistence.js';
 
 // Mock the sql tagged template
@@ -88,5 +91,30 @@ describe('archiveActiveThread', () => {
     sql._nextResult = [{ id: 't1', status: 'archived' }];
     const r = await archiveActiveThread({ boardId: 'b1', scope: 'board' });
     expect(r?.status).toBe('archived');
+  });
+});
+
+describe('agent_runs helpers', () => {
+  it('startAgentRun inserts a row with status=running and returns it', async () => {
+    sql._nextResult = [{ id: 'run-1', thread_id: 't1', status: 'running', iterations: 0 }];
+    const r = await startAgentRun({ threadId: 't1' });
+    expect(r.id).toBe('run-1');
+    expect(r.status).toBe('running');
+  });
+
+  it('updateAgentRunStatus updates status', async () => {
+    sql._nextResult = [{ id: 'run-1', status: 'paused_confirm' }];
+    const r = await updateAgentRunStatus({ runId: 'run-1', status: 'paused_confirm' });
+    expect(r.status).toBe('paused_confirm');
+  });
+
+  it('finishAgentRun updates status + iterations + tool_call_counts + completed_at', async () => {
+    sql._nextResult = [{ id: 'run-1', status: 'completed', iterations: 4, tool_call_counts: { createNode: 3, addEdge: 1 } }];
+    const r = await finishAgentRun({
+      runId: 'run-1', status: 'completed', iterations: 4,
+      toolCallCounts: { createNode: 3, addEdge: 1 },
+    });
+    expect(r.status).toBe('completed');
+    expect(r.iterations).toBe(4);
   });
 });
