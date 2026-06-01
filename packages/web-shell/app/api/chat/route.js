@@ -186,6 +186,10 @@ export async function POST(request) {
         ? registry.toGeminiSpec(toolAllowlist)
         : registry.toAnthropicSpec(toolAllowlist);
 
+      // Phase 5b: accumulators for assistant content + tool calls.
+      let accumulatedText = '';
+      const toolCallMap = new Map(); // toolCallId → {id, name, args, status, result?, error?}
+
       loopResult = await runAgentLoop({
         llm: resolved.adapter,
         registry,
@@ -201,17 +205,30 @@ export async function POST(request) {
         onEvent: (ev) => {
           switch (ev.type) {
             case 'text_delta':
+              accumulatedText += ev.text;
               send('assistant_token', { delta: ev.text });
               break;
             case 'tool_use':
+              toolCallMap.set(ev.id, {
+                id: ev.id,
+                name: ev.name,
+                args: ev.input,
+                status: 'pending',
+              });
               send('tool_call', {
                 id: ev.id, name: ev.name, args: ev.input,
                 classification: registry.get(ev.name)?.classification || 'safe',
               });
               break;
-            case 'tool_status':
+            case 'tool_status': {
+              const existing = toolCallMap.get(ev.id) || { id: ev.id };
+              const updated = { ...existing, status: ev.status };
+              if (ev.result !== undefined) updated.result = ev.result;
+              if (ev.error !== undefined) updated.error = ev.error;
+              toolCallMap.set(ev.id, updated);
               send('tool_status', { id: ev.id, status: ev.status, result: ev.result, error: ev.error });
               break;
+            }
             case 'needs_confirm':
               send('needs_confirm', { id: ev.id, name: ev.name, args: ev.args, summary: ev.summary });
               break;
@@ -241,10 +258,12 @@ export async function POST(request) {
         iterations: loopResult.iterations,
         toolCallCounts: loopResult.toolCounts || {},
       });
+      const toolCallsForPersistence = Array.from(toolCallMap.values());
       await appendMessage({
         threadId: thread.id,
         role: 'assistant',
-        content: '',                       // Phase 5b will populate this from the run.
+        content: accumulatedText,
+        toolCalls: toolCallsForPersistence.length > 0 ? toolCallsForPersistence : null,
         model: resolvedModel,
         agentRunId: runId,
       });

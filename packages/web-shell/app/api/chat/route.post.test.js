@@ -170,4 +170,26 @@ describe('POST /api/chat — Phase 2 wiring', () => {
     expect(order.indexOf('run_id')).toBeLessThan(order.indexOf('assistant_token'));
     expect(order[order.length - 1]).toBe('run_status');
   });
+
+  it('Phase 5b: persists assistant message with accumulated text content', async () => {
+    // The top-level runAgentLoop mock emits text_delta with 'hi'.
+    // This test verifies route accumulates that text and saves it via appendMessage.
+    const req = new Request('http://test/api/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ boardId: 'b1', message: 'hello' }),
+    });
+    const res = await POST(req);
+    await readSseEvents(res);
+    // Give the async IIFE a tick to complete after stream closes.
+    await new Promise((r) => setTimeout(r, 30));
+
+    const { appendMessage } = await import('../../../lib/chat-persistence.js');
+    const calls = appendMessage.mock.calls;
+    const assistantCall = calls.find((c) => c[0]?.role === 'assistant');
+    expect(assistantCall).toBeTruthy();
+    // The mock emits text_delta with 'hi' — accumulated text should be 'hi'.
+    expect(assistantCall[0].content).toBe('hi');
+    // No tool_use events from the mock, so toolCalls should be null.
+    expect(assistantCall[0].toolCalls).toBeNull();
+  });
 });
