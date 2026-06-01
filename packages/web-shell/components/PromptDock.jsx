@@ -396,9 +396,21 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
       case 'needs_confirm':
         dispatchChat({ type: 'TOOL_NEEDS_CONFIRM', id: payload.id, summary: payload.summary });
         break;
-      case 'needs_choice':
+      case 'needs_choice': {
+        // Single-choice → auto-confirm without prompting the user.
+        if (Array.isArray(payload.choices) && payload.choices.length <= 1) {
+          const choice = payload.choices[0]?.id || 'auto';
+          postConfirm({
+            runId: chat.activeRun?.runId,
+            toolCallId: payload.id,
+            action: 'confirm',
+            choice,
+          });
+          break;
+        }
         dispatchChat({ type: 'TOOL_NEEDS_CHOICE', id: payload.id, summary: payload.summary, choices: payload.choices });
         break;
+      }
       case 'needs_softlimit_continue':
         dispatchChat({ type: 'RUN_SOFT_PAUSED', iterationsSoFar: payload.iterationsSoFar, breakdown: payload.breakdown });
         break;
