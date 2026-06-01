@@ -69,4 +69,21 @@ describe('run-map', () => {
     const ok = resolveConfirm('run-1', 'tc-1', { action: 'confirm' });
     expect(ok).toBe(false);
   });
+
+  it('unregisterRun resolves pending awaits before deleting (no orphans)', async () => {
+    registerRun('run-1');
+    const pConfirm = awaitConfirm('run-1', 'tc-1');
+    const pCont = awaitContinue('run-1');
+    unregisterRun('run-1');
+    await expect(pConfirm).resolves.toMatchObject({ action: 'cancelled' });
+    await expect(pCont).resolves.toMatchObject({ action: 'cancelled' });
+    expect(hasRun('run-1')).toBe(false);
+  });
+
+  it('awaitContinue called twice resolves the first with overwritten reason', async () => {
+    registerRun('run-1');
+    const p1 = awaitContinue('run-1');
+    awaitContinue('run-1');  // overwrites
+    await expect(p1).resolves.toEqual({ action: 'cancelled', reason: 'overwritten' });
+  });
 });
