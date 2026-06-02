@@ -120,6 +120,33 @@ export async function runAgentLoop(opts) {
       }
       history.push({ role: 'assistant', content: finalMsg.content });
 
+      // After the agent has seen the user's multimodal attachment in iter 1,
+      // replace the image block with a slim text placeholder so subsequent
+      // iterations don't re-send the full base64 payload (which trivially
+      // pushes a Gemini call past the 1M-token cap when combined with tool
+      // outputs). The model already has the asset id via the hint text and
+      // can use baseImageAssetId to operate on it through tools.
+      if (iterations === 1) {
+        for (let i = 0; i < history.length; i++) {
+          const m = history[i];
+          if (m.role !== 'user' || !Array.isArray(m.content)) continue;
+          let touched = false;
+          const nextContent = [];
+          for (const block of m.content) {
+            if (block && block.type === 'image') {
+              touched = true;
+              nextContent.push({
+                type: 'text',
+                text: `[image attachment from the user — already shown to you in this conversation; refer to the assetIds in the user's text to operate on it via tools]`,
+              });
+            } else {
+              nextContent.push(block);
+            }
+          }
+          if (touched) history[i] = { ...m, content: nextContent };
+        }
+      }
+
       if (finalMsg.stop_reason === 'end_turn' || finalMsg.stop_reason === 'stop_sequence') {
         onEvent({ type: 'run_status', status: 'completed' });
         return { stop_reason: 'end_turn', iterations, usage: totalUsage, toolCounts };
@@ -224,11 +251,11 @@ export async function runAgentLoop(opts) {
           if (result && result.error) {
             toolFailures[call.name] = (toolFailures[call.name] || 0) + 1;
             onEvent({ type: 'tool_status', id: call.id, status: 'error', error: result.message || result.error });
-            toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(result), is_error: true });
+            toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(slimForHistory(result)), is_error: true });
           } else {
             toolFailures[call.name] = 0;
             onEvent({ type: 'tool_status', id: call.id, status: 'done', result });
-            toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(result) });
+            toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(slimForHistory(result)) });
           }
         } catch (e) {
           toolFailures[call.name] = (toolFailures[call.name] || 0) + 1;
@@ -251,6 +278,37 @@ export async function runAgentLoop(opts) {
   } finally {
     clearTimeout(wallTimer);
   }
+}
+
+// Strip huge fields from a tool result before it goes into the LLM history.
+// The full result still streams to the UI via tool_status; only the agent's
+// view gets trimmed. Without this, createImage's `dataUrl` (often >700KB of
+// base64) lands as text in the next iteration's prompt and pushes the call
+// past the model's context window (Gemini 1M hard cap was hit on the very
+// first style-transfer attempt). Replace large strings with a short
+// placeholder so the agent still knows the field existed.
+const LARGE_STRING_THRESHOLD = 4000; // chars
+const NOISY_FIELD_RX = /^(dataUrl|base64|html|raw|content)$/i;
+function slimForHistory(value) {
+  if (value == null) return value;
+  if (typeof value === 'string') {
+    return value.length > LARGE_STRING_THRESHOLD
+      ? `[omitted ${value.length} chars — too large for LLM history]`
+      : value;
+  }
+  if (Array.isArray(value)) return value.map(slimForHistory);
+  if (typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (typeof v === 'string' && (NOISY_FIELD_RX.test(k) || v.length > LARGE_STRING_THRESHOLD)) {
+        out[k] = `[omitted ${v.length} chars]`;
+      } else {
+        out[k] = slimForHistory(v);
+      }
+    }
+    return out;
+  }
+  return value;
 }
 
 /** Short human-readable summary shown in confirm chips. Per-tool overrides preferred. */
