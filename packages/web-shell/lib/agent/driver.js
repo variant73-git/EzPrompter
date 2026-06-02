@@ -54,6 +54,15 @@ export async function runAgentLoop(opts) {
   let wallExpired = false;
   const wallTimer = setTimeout(() => { wallExpired = true; }, effectiveCaps.wallTimeoutMs);
 
+  // "Announce-and-stop" safety net counter. Gemini in particular loves to
+  // narrate intent ("Agora vou aplicar o estilo…") and then end_turn
+  // without calling the next tool. When we detect that pattern, inject a
+  // synthetic user nudge and loop again. Hard-capped so we don't fight an
+  // adversarial model forever.
+  let forcedContinues = 0;
+  const MAX_FORCED_CONTINUES = 2;
+  const INTENT_RX = /\b(vou|vamos)\s+(criar|gerar|aplicar|fazer|trazer|transferir|montar|conectar|construir|preparar|adicionar)\b|\bagora\s+(vou|vamos)\b|\bem\s+seguida\b|\b(now|next)\s+(i('|')?ll|i\s+will|i'?m\s+going\s+to)\b|\blet\s+me\s+(create|generate|apply|do|make|build)\b/i;
+
   try {
     while (true) {
       if (runId && isCancelled(runId)) {
@@ -148,6 +157,25 @@ export async function runAgentLoop(opts) {
       }
 
       if (finalMsg.stop_reason === 'end_turn' || finalMsg.stop_reason === 'stop_sequence') {
+        // Announce-and-stop guard: if the agent ended its turn AFTER
+        // narrating intent ("Agora vou aplicar o estilo…") but BEFORE
+        // calling the tool that would have done it, force one more
+        // iteration with a synthetic user nudge. Capped at
+        // MAX_FORCED_CONTINUES so a chatty model can't trap us in a
+        // forever loop of empty promises.
+        const lastText = (finalMsg.content || [])
+          .filter((b) => b?.type === 'text')
+          .map((b) => b.text || '')
+          .join(' ');
+        const announcedIntent = INTENT_RX.test(lastText);
+        if (announcedIntent && forcedContinues < MAX_FORCED_CONTINUES) {
+          forcedContinues++;
+          history.push({
+            role: 'user',
+            content: 'Continua. Você disse que ia executar o próximo passo — faça agora, no mesmo turno, chamando a ferramenta necessária. Não anuncie de novo, ACT.',
+          });
+          continue;
+        }
         onEvent({ type: 'run_status', status: 'completed' });
         return { stop_reason: 'end_turn', iterations, usage: totalUsage, toolCounts };
       }
