@@ -372,30 +372,59 @@ input:focus {
   background: var(--bg-base);
   overflow: hidden;
   transition: background 200ms ease;
-  /* Empty canvas → grab hand. While the user is mid-pan, browsers
-     match :active and we flip to grabbing. Chrome elements (toolbars,
-     dock, minimap, nodes, ports) override this back to their own
-     cursors via more-specific rules. */
+  /* Default = arrow + drag-to-marquee-select (Figma / Linear).
+     Holding Space switches to grab + drag-to-pan (see body.canvas-pan-mode
+     overrides below). Chrome elements (toolbars, dock, minimap, nodes,
+     ports) override this back to their own cursors via more-specific
+     rules. */
+  cursor: default;
+}
+
+/* Marquee selection rectangle drawn while the user click-drags on the
+   empty canvas. Pure cosmetic overlay — hit-testing happens against
+   `nodes` state in JS. Viewport-fixed coords so it stays put while the
+   transform layer scrolls / scales underneath. */
+.canvas-marquee {
+  position: fixed;
+  pointer-events: none;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  border-radius: 2px;
+  z-index: 200;
+}
+
+/* Space-held → pan mode. Cursor becomes grab everywhere on the canvas
+   shell + the transform-pan layers; grabbing while the gesture is live. */
+body.canvas-pan-mode .canvas-shell,
+body.canvas-pan-mode .react-transform-wrapper,
+body.canvas-pan-mode .react-transform-component {
   cursor: grab;
 }
-.canvas-shell:active { cursor: grabbing; }
+body.canvas-pan-mode .canvas-shell:active,
+body.canvas-pan-mode .react-transform-wrapper:active,
+body.canvas-pan-mode .react-transform-component:active {
+  cursor: grabbing;
+}
 
 /* In canvas + edit mode, editor.css line 30 forces `cursor: auto
    !important` on every host-doc element so the editor's own cursor
    inside the iframe takes over. That blanket rule kills our grab
-   cursor even when the mouse is OUTSIDE the node. Re-assert grab on
-   the actual hover-target — the react-zoom-pan-pinch transform
-   layers, which sit between canvas-shell and the nodes and own all
-   the empty canvas hit-testing. .canvas-bg has pointer-events:none
-   so its cursor is irrelevant. */
+   cursor even when the mouse is OUTSIDE the node. Re-assert default
+   on the empty-canvas hit-target (the react-zoom-pan-pinch transform
+   layers). Pan mode (Space held) overrides with grab below. */
 body.rb-ed-active.rb-ed-canvas .canvas-shell,
 body.rb-ed-active.rb-ed-canvas .react-transform-wrapper,
 body.rb-ed-active.rb-ed-canvas .react-transform-component {
+  cursor: default !important;
+}
+body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .canvas-shell,
+body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-wrapper,
+body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component {
   cursor: grab !important;
 }
-body.rb-ed-active.rb-ed-canvas .canvas-shell:active,
-body.rb-ed-active.rb-ed-canvas .react-transform-wrapper:active,
-body.rb-ed-active.rb-ed-canvas .react-transform-component:active {
+body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .canvas-shell:active,
+body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-wrapper:active,
+body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active {
   cursor: grabbing !important;
 }
 

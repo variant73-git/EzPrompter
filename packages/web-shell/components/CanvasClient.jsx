@@ -97,6 +97,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   const [editingNodeId, setEditingNodeId] = useState(null);
   const [canvasScale, setCanvasScale] = useState(0.6);
   const [lightMode, setLightMode] = useState(false);
+  // Pan-on-space mode. Default cursor is the arrow + drag = marquee select.
+  // Holding Space switches to grab cursor + drag = pan canvas (Figma /
+  // Linear convention). `spaceDown` toggles TransformWrapper panning.disabled
+  // and adds a `canvas-pan-mode` class to <body> for cursor + UX hints.
+  const [spaceDown, setSpaceDown] = useState(false);
+  // Marquee selection rect — viewport coords while drawing, set to null when
+  // not active. Drawn as a fixed overlay; on mouseup we convert to world
+  // coords and intersect with each node's rect to pick the selection set.
+  const [marquee, setMarquee] = useState(null);
+  // Multi-selection lives alongside the single `selectedNodeId` so all the
+  // single-select code (inspector, popup, edit-mode entry) keeps working.
+  // selectedNodeIds is the source of truth for batch ops (Delete, future
+  // multi-move). When non-empty AND no single selection, render highlights
+  // on every member.
+  const [selectedNodeIds, setSelectedNodeIds] = useState(() => new Set());
   // Bot-protection interstitial state. When captureSnapshot returns 409
   // challenge_required, we stash {kind, url, signals, placeholderId} here
   // so <ChallengeModal /> mounts. placeholderId lets the modal's cancel /
@@ -117,6 +132,47 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       document.body.classList.add('rb-ed-light');
     }
   }, []);
+
+  // Space-to-pan: while the user holds Space, switch from marquee-select
+  // mode (default) to drag-to-pan mode. Skip when the focus is inside an
+  // editable field so we don't break typing. Also reset on blur so the
+  // user can't get stuck in pan mode if they Cmd+Tabbed out mid-hold.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    function isTypingTarget(el) {
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+    }
+    function onKeyDown(e) {
+      if (e.code !== 'Space') return;
+      if (isTypingTarget(e.target)) return;
+      if (e.repeat) return;
+      e.preventDefault();
+      setSpaceDown(true);
+    }
+    function onKeyUp(e) {
+      if (e.code !== 'Space') return;
+      setSpaceDown(false);
+    }
+    function onBlur() { setSpaceDown(false); }
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, []);
+
+  // Mirror spaceDown to a <body> class so CSS can swap the cursor
+  // (default arrow ↔ grab) without prop-drilling.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('canvas-pan-mode', spaceDown);
+    return () => document.body.classList.remove('canvas-pan-mode');
+  }, [spaceDown]);
 
   // Dedup duplicate edges on mount. Each (source, target) pair should
   // have at most one edge — earlier UX permitted creating many. The
@@ -764,6 +820,86 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setEdges((prev) => prev.filter((e) => e.source_node_id !== id && e.target_node_id !== id));
     if (id.startsWith?.('temp-')) return;
     await api.deleteNode(id).catch(console.warn);
+  }
+
+  // Batch delete used by the Delete key when a multi-selection is active.
+  // Updates local state once with a single pass, then fires the server
+  // deletes in parallel so the canvas feels instant even on a big batch.
+  async function handleDeleteNodes(ids) {
+    if (!ids?.length) return;
+    const idSet = new Set(ids);
+    setNodes((prev) => prev.filter((n) => !idSet.has(n.id)));
+    setEdges((prev) => prev.filter((e) => !idSet.has(e.source_node_id) && !idSet.has(e.target_node_id)));
+    await Promise.all(
+      ids
+        .filter((id) => !String(id).startsWith('temp-'))
+        .map((id) => api.deleteNode(id).catch(console.warn))
+    );
+  }
+
+  // Marquee start: called from canvas-shell mousedown when (a) Space is NOT
+  // held, (b) the click landed on the canvas background, not on a node /
+  // edge / chrome. Tracks the rect in viewport coords while drawing, then
+  // commits the selection by intersecting world-coord nodes on mouseup.
+  function startMarquee(ev) {
+    const x0 = ev.clientX, y0 = ev.clientY;
+    setMarquee({ x0, y0, x1: x0, y1: y0 });
+    // Clear stale single-selection so visual feedback is unambiguous while
+    // the user is drawing the marquee.
+    setSelectedNodeId(null);
+    setSelectedEdgeId(null);
+    setPopupPos(null);
+    let moved = false;
+    function move(e) {
+      moved = true;
+      setMarquee({ x0, y0, x1: e.clientX, y1: e.clientY });
+    }
+    function up(e) {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      setMarquee(null);
+      // Click-without-drag → treat as a "click on empty canvas" — clear
+      // multi-select and leave it at that.
+      if (!moved) {
+        setSelectedNodeIds((s) => (s.size ? new Set() : s));
+        return;
+      }
+      // Convert the screen-space rect into world coords for hit-testing.
+      const a = clientToWorld(transformRef, Math.min(x0, e.clientX), Math.min(y0, e.clientY));
+      const b = clientToWorld(transformRef, Math.max(x0, e.clientX), Math.max(y0, e.clientY));
+      const hits = new Set();
+      for (const n of nodes) {
+        const nL = n.pos_x ?? 0, nT = n.pos_y ?? 0;
+        const nR = nL + (n.width || 0), nB = nT + (n.height || 0);
+        // Standard AABB intersection: hit when the marquee overlaps the
+        // node rect at all (not just contains it — that matches Figma).
+        if (nR < a.x || nL > b.x || nB < a.y || nT > b.y) continue;
+        hits.add(n.id);
+      }
+      setSelectedNodeIds(hits);
+      // Mirror the first hit into selectedNodeId so single-select consumers
+      // (inspector / popup / focus targets) still see something selected.
+      if (hits.size > 0) setSelectedNodeId(hits.values().next().value);
+    }
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  }
+
+  // Decide whether a canvas-shell mousedown should kick off a marquee.
+  // Skip when the user is holding Space (pan mode), when they hit a node /
+  // edge / chrome, or when an edit / modal is already in flight. Otherwise
+  // call startMarquee with the event.
+  function maybeStartMarquee(ev) {
+    if (ev.button !== 0) return;            // left click only
+    if (spaceDown) return;                  // pan mode owns the gesture
+    if (editingNodeId) return;
+    if (challenge) return;
+    if (emptyDropMenu || contextMenu) return;
+    if (draftEdge) return;
+    const t = ev.target;
+    if (!t || typeof t.closest !== 'function') return;
+    if (t.closest('.cnode, .edge-line, .edge-popup, .canvas-toolbar-left, .canvas-toolbar-right, .canvas-toolbars-left, .canvas-toolbars-right, .canvas-theme-floater, .prompt-dock, .empty-drop-menu, .canvas-context-menu, .canvas-header, .zoom-controls, .zoom-menu, .user-menu, .reset-confirm-card, .reset-confirm-overlay, .superwidget')) return;
+    startMarquee(ev);
   }
 
   async function handleResetNode(id) {
@@ -1552,11 +1688,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         }
         setSelectedNodeId(null);
         setSelectedEdgeId(null);
+        setSelectedNodeIds((s) => (s.size ? new Set() : s));
         setPopupPos(null);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         // Don't bother if we're inside the editor — its own Backspace logic
         // owns those keys.
         if (editingNodeId) return;
+        // Multi-selection wins when populated — batch-delete every node in
+        // the set so a marquee selection can be cleared in one keystroke.
+        if (selectedNodeIds.size > 0) {
+          e.preventDefault();
+          handleDeleteNodes(Array.from(selectedNodeIds));
+          setSelectedNodeIds(new Set());
+          setSelectedNodeId(null);
+          return;
+        }
         if (selectedNodeId) {
           e.preventDefault();
           handleDeleteNode(selectedNodeId);
@@ -1619,6 +1765,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   return (
     <div
       className="canvas-shell"
+      onMouseDown={maybeStartMarquee}
       onMouseMove={moveDraftEdge}
       onMouseUp={handleGlobalMouseUp}
       onDragOver={(e) => {
@@ -1717,7 +1864,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         initialPositionY={-WORLD_HEIGHT * 0.25}
         limitToBounds={false}
         wheel={{ disabled: true }}
-        panning={{ excluded: ['cnode', 'cnode-topbar', 'cnode-body', 'cnode-iframe', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'cnode-handle', 'cnode-viewport-switcher', 'cnode-vp-btn', 'cnode-port-right', 'cnode-port-left', 'edge-line', 'edge-popup', 'reset-confirm-card', 'reset-confirm-overlay', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu', 'user-menu'] }}
+        panning={{ disabled: !spaceDown, excluded: ['cnode', 'cnode-topbar', 'cnode-body', 'cnode-iframe', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'cnode-handle', 'cnode-viewport-switcher', 'cnode-vp-btn', 'cnode-port-right', 'cnode-port-left', 'edge-line', 'edge-popup', 'reset-confirm-card', 'reset-confirm-overlay', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu', 'user-menu'] }}
         doubleClick={{ disabled: true }}
         onPanningStart={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setPopupPos(null); }}
         onTransformed={(_ref, state) => {
@@ -1750,13 +1897,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             <CanvasNode
               key={n.id} node={n}
               incomingEdges={incomingByTarget.get(n.id) || []}
-              selected={selectedNodeId === n.id}
+              selected={selectedNodeId === n.id || selectedNodeIds.has(n.id)}
               editing={editingNodeId === n.id}
               onEditingChange={(willEdit) => handleEditingToggle(n.id, willEdit)}
               onSelect={() => {
                 setSelectedNodeId(n.id);
                 setSelectedEdgeId(null);
                 setPopupPos(null);
+                // Single-click on a node clears any prior marquee multi-select
+                // unless that node was already in the set — keeps the click
+                // unambiguous. We always reduce to a one-node selection here.
+                setSelectedNodeIds((s) => (s.size ? new Set() : s));
                 // Steal focus from any text input (notably the PromptDock
                 // textarea) so a follow-up Delete keypress reaches the
                 // canvas keydown handler instead of falling through to a
@@ -1813,6 +1964,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           />
         </TransformComponent>
       </TransformWrapper>
+
+      {marquee && (
+        <div
+          className="canvas-marquee"
+          style={{
+            left:   Math.min(marquee.x0, marquee.x1) + 'px',
+            top:    Math.min(marquee.y0, marquee.y1) + 'px',
+            width:  Math.abs(marquee.x1 - marquee.x0) + 'px',
+            height: Math.abs(marquee.y1 - marquee.y0) + 'px',
+          }}
+        />
+      )}
 
       {nodes.length === 0 && (
         <div className="canvas-empty">
