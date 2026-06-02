@@ -295,7 +295,12 @@ export async function POST(request) {
       let accumulatedText = '';
       const toolCallMap = new Map(); // toolCallId → {id, name, args, status, result?, error?}
 
-      loopResult = await runAgentLoop({
+      // Outer hard cap on the whole agent run. If runAgentLoop's own
+      // wall_timeout, per-tool 3-min cap, and per-LLM 4-min cap somehow
+      // all miss, this is the last line of defense to keep the SSE
+      // stream from staying open for 20+ minutes.
+      const RUN_HARD_CAP_MS = 6 * 60 * 1000;
+      const loopPromise = runAgentLoop({
         llm: resolved.adapter,
         registry,
         systemPrompt,
@@ -375,6 +380,20 @@ export async function POST(request) {
           }
         },
       });
+      try {
+        loopResult = await Promise.race([
+          loopPromise,
+          new Promise((_, reject) => setTimeout(
+            () => reject(new Error(`agent run exceeded ${RUN_HARD_CAP_MS / 1000}s`)),
+            RUN_HARD_CAP_MS,
+          )),
+        ]);
+      } catch (e) {
+        // Hard cap fired — surface a clean error to the client and let
+        // the outer catch finish up the run rows + close the SSE.
+        send('run_status', { status: 'failed', err: e?.message || 'hard_cap' });
+        loopResult = { stop_reason: 'failed', iterations: 0, usage: { input_tokens: 0, output_tokens: 0 }, toolCounts: {} };
+      }
 
       const tokensIn = loopResult.usage?.input_tokens || 0;
       const tokensOut = loopResult.usage?.output_tokens || 0;
