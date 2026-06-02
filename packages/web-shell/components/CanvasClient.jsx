@@ -869,6 +869,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setSelectedEdgeId(null);
     setPopupPos(null);
     setSelectedNodeIds((s) => (s.size ? new Set() : s));
+    // Move keyboard focus off the prompt-dock textarea (or any input)
+    // so the Delete key reaches the canvas keydown handler after the
+    // marquee commits. Without this, focus stays in the textarea and
+    // Delete just edits the input.
+    if (typeof document !== 'undefined') {
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT') && typeof ae.blur === 'function') {
+        ae.blur();
+      }
+    }
     let moved = false;
     function move(e) {
       moved = true;
@@ -1915,14 +1925,27 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               selected={selectedNodeId === n.id || selectedNodeIds.has(n.id)}
               editing={editingNodeId === n.id}
               onEditingChange={(willEdit) => handleEditingToggle(n.id, willEdit)}
-              onSelect={() => {
-                setSelectedNodeId(n.id);
+              onSelect={(e) => {
+                const shift = !!e?.shiftKey;
+                if (shift) {
+                  // Shift-click toggles this node in the multi-select set —
+                  // add if absent, remove if already there. Matches Figma /
+                  // Linear additive selection convention.
+                  setSelectedNodeIds((s) => {
+                    const next = new Set(s);
+                    if (next.has(n.id)) next.delete(n.id);
+                    else next.add(n.id);
+                    return next;
+                  });
+                  setSelectedNodeId(n.id);
+                } else {
+                  setSelectedNodeId(n.id);
+                  // Single-click clears any prior marquee selection so the
+                  // click is unambiguous.
+                  setSelectedNodeIds((s) => (s.size ? new Set() : s));
+                }
                 setSelectedEdgeId(null);
                 setPopupPos(null);
-                // Single-click on a node clears any prior marquee multi-select
-                // unless that node was already in the set — keeps the click
-                // unambiguous. We always reduce to a one-node selection here.
-                setSelectedNodeIds((s) => (s.size ? new Set() : s));
                 // Steal focus from any text input (notably the PromptDock
                 // textarea) so a follow-up Delete keypress reaches the
                 // canvas keydown handler instead of falling through to a

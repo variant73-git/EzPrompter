@@ -495,7 +495,7 @@ export default function CanvasNode({
     if (e.target?.closest?.('button')) return;
     e.stopPropagation();
     e.preventDefault();
-    onSelect();
+    onSelect(e);
     // Pos lives in world coords, but mouse moves in screen coords. At
     // canvas scale 0.5, moving the mouse 1px must shift the node by 2px in
     // world space, otherwise the node lags behind the cursor.
@@ -526,7 +526,7 @@ export default function CanvasNode({
     if (e.target?.closest?.('.cnode-port-right')) return;
     e.stopPropagation();
     e.preventDefault();
-    onSelect();
+    onSelect(e);
     const start = { x: e.clientX, y: e.clientY, started: false };
     function move(ev) {
       if (start.started) return;
@@ -548,7 +548,7 @@ export default function CanvasNode({
     if (editing) return;
     e.stopPropagation();
     e.preventDefault();
-    onSelect();
+    onSelect(e);
     // Side tells the canvas WHICH port spawned the cord. The draft path
     // anchors to that port instead of always assuming right.
     onStartEdge(e, side);
