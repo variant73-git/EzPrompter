@@ -878,6 +878,7 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         <ChatPanel
           messages={chat.messages}
           activeToolCalls={chat.activeToolCalls}
+          streaming={chat.streaming}
           onCollapse={() => setChatCollapsed(true)}
           softPause={chat.softPause}
           onConfirmTool={async (toolCallId) => {
