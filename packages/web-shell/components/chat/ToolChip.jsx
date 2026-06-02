@@ -10,6 +10,7 @@ export default function ToolChip({
     status === 'done'             ? '✓'
     : status === 'error'          ? '✕'
     : status === 'skipped'        ? '⊘'
+    : status === 'stale'          ? '·'
     : status === 'awaiting_confirm' || status === 'awaiting_choice' ? '⚠'
     : null
   );
@@ -30,6 +31,7 @@ export default function ToolChip({
       {summaryNode && <span className="tool-chip-summary"><span className="tool-chip-sep"> — </span><span className="tool-chip-summary-text">{summaryNode}</span></span>}
       {error && <span className="tool-chip-error"><span className="tool-chip-sep"> — </span>{error}</span>}
       {status === 'skipped' && <span className="tool-chip-skipped-label"><span className="tool-chip-sep"> — </span>skipped</span>}
+      {status === 'stale' && <span className="tool-chip-stale-label"><span className="tool-chip-sep"> — </span>interrupted</span>}
 
       {status === 'awaiting_confirm' && (
         <span className="tool-chip-actions">
