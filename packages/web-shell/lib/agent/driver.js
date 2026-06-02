@@ -305,8 +305,15 @@ export async function runAgentLoop(opts) {
           // promise against a 3-minute reject so a single bad call can't
           // freeze the whole run.
           const TOOL_TIMEOUT_MS = 3 * 60 * 1000;
+          // Let tools emit arbitrary SSE events mid-execution. Used by
+          // createImage to push a graph_mutated event the moment the
+          // placeholder node + edges are INSERTed — the user sees the
+          // workflow skeleton BEFORE the long image-gen call returns.
+          const emit = (eventName, payload) => {
+            onEvent({ type: 'custom_emit', name: eventName, payload });
+          };
           const result = await Promise.race([
-            tool.execute(call.input, { ...ctx, choice: decision.choice ?? null }),
+            tool.execute(call.input, { ...ctx, choice: decision.choice ?? null, emit }),
             new Promise((_, reject) => setTimeout(
               () => reject(new Error(`tool ${call.name} exceeded ${TOOL_TIMEOUT_MS / 1000}s — likely a stuck upstream call`)),
               TOOL_TIMEOUT_MS,

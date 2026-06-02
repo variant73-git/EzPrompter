@@ -301,11 +301,23 @@ function chatReducer(state, action) {
               : m)
           : [...state.messages, { id: `tmp-asst-${Date.now()}`, role: 'assistant', content: action.delta, tool_calls: null }],
       };
-    case 'TOOL_CALL_STARTED':
+    case 'TOOL_CALL_STARTED': {
+      // When a tool call starts, close any in-progress (transient) assistant
+      // bubble so the NEXT iter's text streams into a fresh bubble instead of
+      // appending to the previous iter's announcement. Without this, an
+      // agent that says "Trouxe a ref" in iter 1 and "Criei a imagem" in
+      // iter 2 ends up with both sentences merged into one paragraph.
+      const sealedMessages = state.messages.map((m, i) => {
+        if (i !== state.messages.length - 1) return m;
+        if (m.role !== 'assistant' || !m.id?.startsWith?.('tmp-asst-')) return m;
+        return { ...m, id: m.id.replace('tmp-asst-', 'closed-asst-') };
+      });
       return {
         ...state,
+        messages: sealedMessages,
         activeToolCalls: [...state.activeToolCalls, { id: action.id, name: action.name, args: action.args, status: 'running' }],
       };
+    }
     case 'TOOL_CALL_STATUS': {
       const updated = state.activeToolCalls.map((tc) => tc.id === action.id
         ? { ...tc, status: action.status, result: action.result, error: action.error }

@@ -24,21 +24,22 @@ export default function ChatPanel({
     el.scrollTop = el.scrollHeight;
   }, [messages, activeToolCalls, streaming]);
 
-  // Show the thinking dots whenever the agent is streaming but hasn't put
-  // any text on screen for the current turn yet. Once the first assistant
-  // token arrives, the bubble takes over and the dots hide.
+  // Show the thinking dots whenever the agent is streaming but no
+  // CURRENTLY-OPEN assistant bubble has content. After a tool call the
+  // previous iter's bubble gets sealed (id flips to closed-asst-), so
+  // between iters there's no transient bubble — dots reappear, telling
+  // the user the agent is still working instead of leaving the panel
+  // visually frozen on the last sentence.
   const showThinking = (() => {
     if (!streaming) return false;
-    // Find current-turn assistant (after the last user msg). If it has
-    // non-empty content, the agent is already talking — no dots needed.
-    let lastUserIdx = -1;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') { lastUserIdx = i; break; }
-    }
-    for (let i = messages.length - 1; i > lastUserIdx; i--) {
-      const m = messages[i];
-      if (m.role === 'assistant' && (m.content || '').trim().length > 0) return false;
-    }
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg) return true;
+    if (lastMsg.role === 'user') return true;
+    // Assistant bubble. If it's still transient (in-progress) and has
+    // content, the agent is mid-stream — no dots. Otherwise (sealed or
+    // empty) dots show.
+    const isTransient = lastMsg.id?.startsWith?.('tmp-asst-');
+    if (isTransient && (lastMsg.content || '').trim().length > 0) return false;
     return true;
   })();
 

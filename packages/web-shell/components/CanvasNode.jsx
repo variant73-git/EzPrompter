@@ -913,6 +913,13 @@ export default function CanvasNode({
               dataUrl={node.meta.dataUrl}
               name={node.meta?.name || 'asset'}
             />
+          ) : node.meta?.status === 'generating' ? (
+            <div className="cnode-loading cnode-loading-gen">
+              <span className="cnode-gen-spinner" aria-hidden="true" />
+              <span>Generating…</span>
+            </div>
+          ) : node.meta?.status === 'error' ? (
+            <div className="cnode-loading cnode-loading-error"><span>Generation failed</span></div>
           ) : (
             <div className="cnode-loading"><span>No image data</span></div>
           )}

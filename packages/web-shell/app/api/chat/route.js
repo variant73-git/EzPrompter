@@ -361,6 +361,12 @@ export async function POST(request) {
                 breakdown: ev.breakdown,
               });
               break;
+            case 'custom_emit':
+              // A tool fired an arbitrary SSE event mid-execution. Pass it
+              // straight through to the client so things like graph_mutated
+              // can flow without waiting for the tool to complete.
+              send(ev.name, ev.payload || {});
+              break;
             case 'message_complete':
               break;
             case 'run_status':
