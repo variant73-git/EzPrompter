@@ -112,6 +112,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // multi-move). When non-empty AND no single selection, render highlights
   // on every member.
   const [selectedNodeIds, setSelectedNodeIds] = useState(() => new Set());
+  // Undo stack for destructive canvas actions. Each entry is one operation
+  // the user can reverse with Cmd+Z. Keep this in a ref (not state) so the
+  // keyboard handler always sees the latest stack without re-binding.
+  // Entry shape: { type: 'deleteNodes', nodes: [...rows], edges: [...rows] }.
+  const undoStackRef = useRef([]);
   // Bot-protection interstitial state. When captureSnapshot returns 409
   // challenge_required, we stash {kind, url, signals, placeholderId} here
   // so <ChallengeModal /> mounts. placeholderId lets the modal's cancel /
@@ -815,7 +820,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (r) r(file || null);
   }
 
+  // Capture a node + its incident edges for the undo stack BEFORE we strip
+  // them from local state. Snapshot the *current* nodes/edges arrays since
+  // setNodes/setEdges queue updates asynchronously.
+  function captureForUndo(idSet) {
+    const idsArr = Array.from(idSet);
+    const snapshotNodes = nodes.filter((n) => idSet.has(n.id));
+    const snapshotEdges = edges.filter((e) => idSet.has(e.source_node_id) || idSet.has(e.target_node_id));
+    if (snapshotNodes.length === 0 && snapshotEdges.length === 0) return null;
+    return { type: 'deleteNodes', nodes: snapshotNodes, edges: snapshotEdges };
+  }
+
   async function handleDeleteNode(id) {
+    const entry = captureForUndo(new Set([id]));
+    if (entry) undoStackRef.current.push(entry);
     setNodes((prev) => prev.filter((n) => n.id !== id));
     setEdges((prev) => prev.filter((e) => e.source_node_id !== id && e.target_node_id !== id));
     if (id.startsWith?.('temp-')) return;
@@ -828,6 +846,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   async function handleDeleteNodes(ids) {
     if (!ids?.length) return;
     const idSet = new Set(ids);
+    const entry = captureForUndo(idSet);
+    if (entry) undoStackRef.current.push(entry);
     setNodes((prev) => prev.filter((n) => !idSet.has(n.id)));
     setEdges((prev) => prev.filter((e) => !idSet.has(e.source_node_id) && !idSet.has(e.target_node_id)));
     await Promise.all(
@@ -835,6 +855,46 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         .filter((id) => !String(id).startsWith('temp-'))
         .map((id) => api.deleteNode(id).catch(console.warn))
     );
+  }
+
+  // Pop the latest undo entry and reverse it. Only deleteNodes is supported
+  // right now — restores both the nodes and any incident edges via the
+  // /api/nodes/restore endpoint (uses ON CONFLICT DO NOTHING so it's safe
+  // to invoke multiple times if the user spams Cmd+Z).
+  async function handleUndo() {
+    const entry = undoStackRef.current.pop();
+    if (!entry) return;
+    if (entry.type === 'deleteNodes') {
+      // Optimistic local restore first so the canvas snaps back instantly,
+      // then send the server request. If the server fails, the local state
+      // will get corrected on the next refetch / page reload.
+      setNodes((prev) => {
+        const ids = new Set(prev.map((n) => n.id));
+        return [...prev, ...entry.nodes.filter((n) => !ids.has(n.id))];
+      });
+      setEdges((prev) => {
+        const keys = new Set(prev.map((e) => `${e.source_node_id}::${e.target_node_id}`));
+        return [...prev, ...entry.edges.filter((e) => !keys.has(`${e.source_node_id}::${e.target_node_id}`))];
+      });
+      // Skip server call for temp- ids (never persisted).
+      const persistedNodes = entry.nodes.filter((n) => !String(n.id).startsWith('temp-'));
+      const persistedEdges = entry.edges.filter((e) => !String(e.id || '').startsWith('temp-'));
+      if (persistedNodes.length === 0 && persistedEdges.length === 0) return;
+      try {
+        await fetch('/api/nodes/restore', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            boardId: board.id,
+            nodes: persistedNodes,
+            edges: persistedEdges,
+          }),
+        });
+      } catch (e) {
+        console.warn('[undo] restore call failed', e);
+      }
+    }
   }
 
   // Compute the set of nodes whose rects overlap a viewport-space marquee
@@ -1744,11 +1804,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       } else if (e.key === '0') {
         const t = transformRef.current;
         if (t) t.setTransform(window.innerWidth / 2 - WORLD_WIDTH / 2, window.innerHeight / 2 - WORLD_HEIGHT / 2, 1, 250);
+      } else if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+        // Cmd+Z / Ctrl+Z → undo the latest destructive canvas action
+        // (currently delete-nodes only). Don't fire when editing inside a
+        // node — its iframe owns Cmd+Z for in-document edits.
+        if (editingNodeId) return;
+        e.preventDefault();
+        handleUndo();
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [nodes, edges, draftEdge, selectedNodeId, selectedEdgeId, editingNodeId, emptyDropMenu, contextMenu]);
+  }, [nodes, edges, draftEdge, selectedNodeId, selectedNodeIds, selectedEdgeId, editingNodeId, emptyDropMenu, contextMenu]);
 
   // Force-blur the project name input when the user clicks anywhere
   // outside the toolbar. react-zoom-pan-pinch calls preventDefault on

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '../../../lib/auth.js';
 import { sql } from '../../../lib/db.js';
+import { placeStackDown } from '../../../lib/canvas-layout.js';
 import { getOrCreateActiveThread, loadMessages, appendMessage,
          startAgentRun, finishAgentRun } from '../../../lib/chat-persistence.js';
 import { buildFullRegistry, buildSafeRegistry, buildAssetRegistry } from '../../../lib/agent/tools/index.js';
@@ -187,21 +188,6 @@ export async function POST(request) {
   // we tell it the node already exists.
   const persistedAttachmentAssets = [];
   if (hasAttachments) {
-    // Look up the rightmost existing node once so all attachments line up
-    // side-by-side starting from there.
-    let nextX = 0;
-    let topY = 0;
-    try {
-      const [edge] = await sql`
-        SELECT COALESCE(MAX(pos_x + width), -240) AS right_edge,
-               COALESCE(MIN(pos_y), 0) AS top_edge
-        FROM nodes WHERE board_id = ${boardId}
-      `;
-      nextX = Number(edge?.right_edge ?? 0) + 240;
-      topY = Number(edge?.top_edge ?? 0);
-    } catch (e) {
-      console.warn('[chat] auto-place query failed; defaulting to (0,0)', e?.message || e);
-    }
     for (const a of attachments) {
       if (a?.kind !== 'image' || typeof a.dataUrl !== 'string') continue;
       const mimeType = a.mimeType || (/^data:([^;]+);/.exec(a.dataUrl)?.[1]) || 'image/png';
@@ -222,13 +208,13 @@ export async function POST(request) {
         };
         let nodeId = null;
         try {
+          const { x: placedX, y: placedY } = await placeStackDown(boardId, 512, 512, sql);
           const [nodeRow] = await sql`
             INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
-            VALUES (${boardId}, 'asset', ${nextX}, ${topY}, 512, 512, ${JSON.stringify(nodeMeta)}::jsonb)
+            VALUES (${boardId}, 'asset', ${placedX}, ${placedY}, 512, 512, ${JSON.stringify(nodeMeta)}::jsonb)
             RETURNING id
           `;
           nodeId = nodeRow.id;
-          nextX += 512 + 240;
         } catch (e) {
           console.warn('[chat] failed to create node for attachment', e?.message || e);
         }

@@ -1,4 +1,5 @@
 import { sql } from '../../db.js';
+import { placeStackDown } from '../../canvas-layout.js';
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB cap — keep base64 row size sane
 const ALLOWED_MIME_PREFIXES = ['image/'];
@@ -93,15 +94,9 @@ Safe (no charge), but does hit the network. If the URL isn't an image or the hos
     let placedX = 0;
     let placedY = 0;
     if (attachToBoard) {
-      const [row] = await sql`
-        SELECT COALESCE(MAX(pos_x + width), -240) AS right_edge,
-               COALESCE(MIN(pos_y), 0) AS top_edge
-        FROM nodes
-        WHERE board_id = ${ctx.boardId}
-      `;
-      const GAP = 240;
-      placedX = Number(row?.right_edge ?? 0) + GAP;
-      placedY = Number(row?.top_edge ?? 0);
+      const pos = await placeStackDown(ctx.boardId, 512, 512, sql);
+      placedX = pos.x;
+      placedY = pos.y;
 
       const nodeMeta = { source: 'agent-ingested-url', assetId: asset.id, name: effectiveName, dataUrl, mimeType };
       const [node] = await sql`

@@ -1,5 +1,6 @@
 import { sql } from '../../db.js';
 import { BLANK_SITE_HTML, BLANK_SITE_DEFAULTS } from '../../blank-site-html.js';
+import { placeStackDown } from '../../canvas-layout.js';
 
 // Type → {kind, meta-mixin, ...} map. The agent reasons in these
 // user-facing types; we translate to the kind/meta shape the rest of the
@@ -74,22 +75,16 @@ If the user wants a CAPTURED website (a real URL they want to snapshot), don't u
     const w = mapping.width || 1280;
     const h = mapping.height || 800;
 
-    // Auto-place: if caller didn't pass coords, drop the node to the right
-    // of whatever's already on the board with a generous gap. Each call in
-    // the same agent turn picks up the previous insert, so N createNode
-    // calls land side-by-side instead of stacking on (0, 0).
+    // Auto-place: if caller didn't pass coords, stack vertically in the
+    // rightmost column already in use. Each call in the same agent turn
+    // picks up the previous insert, so N createNode calls pile under each
+    // other instead of running across the canvas as a horizontal line.
     let placedX = posX;
     let placedY = posY;
     if (placedX == null || placedY == null) {
-      const [row] = await sql`
-        SELECT COALESCE(MAX(pos_x + width), -240) AS right_edge,
-               COALESCE(MIN(pos_y), 0) AS top_edge
-        FROM nodes
-        WHERE board_id = ${ctx.boardId}
-      `;
-      const GAP = 240;
-      if (placedX == null) placedX = Number(row?.right_edge ?? 0) + GAP;
-      if (placedY == null) placedY = Number(row?.top_edge ?? 0);
+      const pos = await placeStackDown(ctx.boardId, w, h, sql);
+      if (placedX == null) placedX = pos.x;
+      if (placedY == null) placedY = pos.y;
     }
 
     const [node] = await sql`

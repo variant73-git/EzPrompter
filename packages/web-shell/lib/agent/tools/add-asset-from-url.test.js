@@ -60,7 +60,9 @@ describe('addAssetFromUrl tool', () => {
     sql
       .mockResolvedValueOnce([{ id: 'b1' }])              // SELECT board
       .mockResolvedValueOnce([{ id: 'asset-1' }])         // INSERT asset
-      .mockResolvedValueOnce([{ right_edge: 200, top_edge: 100 }]) // SELECT auto-place
+      // New placeStackDown(): SELECT pos_x, pos_y, width, height of every
+      // node on the board. One existing node 512x512 at (200, 100).
+      .mockResolvedValueOnce([{ pos_x: 200, pos_y: 100, width: 512, height: 512 }])
       .mockResolvedValueOnce([{ id: 'node-1' }]);         // INSERT node
 
     const r = await addAssetFromUrlTool.execute(
@@ -72,8 +74,10 @@ describe('addAssetFromUrl tool', () => {
     expect(r.nodeId).toBe('node-1');
     expect(r.name).toBe('c.png');
     expect(r.mimeType).toBe('image/png');
-    expect(r.posX).toBe(440); // 200 + 240 gap
-    expect(r.posY).toBe(100);
+    // Same column as the existing node (pos_x=200), stacked under it
+    // (pos_y = 100 + 512 + 80 gap).
+    expect(r.posX).toBe(200);
+    expect(r.posY).toBe(692);
   });
 
   it('skips node creation when attachToBoard:false', async () => {
