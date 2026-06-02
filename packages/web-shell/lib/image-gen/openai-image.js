@@ -40,12 +40,22 @@ export async function generateOpenAIImage({
   if (!apiKey) throw new Error('apiKey required');
 
   const size = SIZE_MAP[aspectRatio] || SIZE_MAP['1:1'];
-  const client = new OpenAI({ apiKey });
+  // Fail fast: the SDK default is 10min timeout × 2 retries (~30min). When
+  // the API hangs or returns 4xx in a way the SDK keeps retrying, the agent
+  // loop has no way to escape — the chip spins forever and the user has to
+  // refresh. 120s per attempt + 0 retries surfaces failures to the agent
+  // turn so it can react (skip / try a different provider / tell the user).
+  const client = new OpenAI({ apiKey, timeout: 120_000, maxRetries: 0 });
 
   let resp;
   if (baseImageDataUrl) {
     const { mimeType, base64 } = parseDataUrl(baseImageDataUrl);
-    const ext = mimeType === 'image/png' ? 'png' : mimeType === 'image/jpeg' ? 'jpg' : 'png';
+    // gpt-image-1 accepts PNG, WebP, and JPG up to 25MB. dall-e-2 (PNG-only)
+    // is not in scope here. Match the ext to the mime so the multipart body
+    // looks well-formed.
+    const ext = mimeType === 'image/jpeg' ? 'jpg'
+              : mimeType === 'image/webp' ? 'webp'
+              : 'png';
     const buffer = Buffer.from(base64, 'base64');
     const file = await toFile(buffer, `base.${ext}`, { type: mimeType });
     resp = await client.images.edit({
