@@ -62,6 +62,12 @@ export async function runAgentLoop(opts) {
   let forcedContinues = 0;
   const MAX_FORCED_CONTINUES = 2;
   const INTENT_RX = /\b(vou|vamos)\s+(criar|gerar|aplicar|fazer|trazer|transferir|montar|conectar|construir|preparar|adicionar)\b|\bagora\s+(vou|vamos)\b|\bem\s+seguida\b|\b(now|next)\s+(i('|')?ll|i\s+will|i'?m\s+going\s+to)\b|\blet\s+me\s+(create|generate|apply|do|make|build)\b/i;
+  // Track the most recent non-empty assistant text emitted ANYWHERE in
+  // this run. Intent like "Agora vou gerar a imagem" is usually emitted
+  // in the same iter as the previous tool_use (so stop_reason='tool_use'
+  // there). When the LATER iter ends with 'end_turn' and an empty text,
+  // we still want to catch the unfulfilled promise from an earlier iter.
+  let lastNonEmptyAssistantText = '';
 
   try {
     while (true) {
@@ -156,17 +162,23 @@ export async function runAgentLoop(opts) {
         }
       }
 
+      // Track the latest assistant text BEFORE the end_turn branch — the
+      // announce-and-stop pattern often hides in the same iter as the
+      // last tool_use, so by the time we hit end_turn the current iter's
+      // content is empty.
+      const thisIterText = (finalMsg.content || [])
+        .filter((b) => b?.type === 'text')
+        .map((b) => b.text || '')
+        .join(' ');
+      if (thisIterText.trim()) lastNonEmptyAssistantText = thisIterText;
+
       if (finalMsg.stop_reason === 'end_turn' || finalMsg.stop_reason === 'stop_sequence') {
-        // Announce-and-stop guard: if the agent ended its turn AFTER
-        // narrating intent ("Agora vou aplicar o estilo…") but BEFORE
-        // calling the tool that would have done it, force one more
+        // Announce-and-stop guard: if any iter in this run announced an
+        // intent that wasn't fulfilled by a tool call, force one more
         // iteration with a synthetic user nudge. Capped at
         // MAX_FORCED_CONTINUES so a chatty model can't trap us in a
         // forever loop of empty promises.
-        const lastText = (finalMsg.content || [])
-          .filter((b) => b?.type === 'text')
-          .map((b) => b.text || '')
-          .join(' ');
+        const lastText = lastNonEmptyAssistantText || thisIterText;
         const announcedIntent = INTENT_RX.test(lastText);
         if (announcedIntent && forcedContinues < MAX_FORCED_CONTINUES) {
           forcedContinues++;
