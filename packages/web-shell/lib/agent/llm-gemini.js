@@ -79,7 +79,6 @@ export async function callGemini({ model, system, messages, tools, apiKey, onEve
   const assembledToolCalls = [];
   let stopReason = null;
   let usage = { input_tokens: 0, output_tokens: 0 };
-  let fcCounter = 0;
 
   for await (const chunk of stream) {
     const candidate = chunk?.candidates?.[0];
@@ -90,7 +89,13 @@ export async function callGemini({ model, system, messages, tools, apiKey, onEve
           assembledText += part.text;
         }
         if (part.functionCall) {
-          const id = `gemini-fc-${++fcCounter}`;
+          // Globally-unique id — Gemini doesn't assign one. A per-call counter
+          // (`gemini-fc-${++n}`) collides across the agent loop's many calls
+          // and crashes React (duplicate key under the same chat bubble),
+          // which silently freezes status updates and looks like a stuck
+          // tool. crypto.randomUUID is available in Node 19+ and works in
+          // edge runtimes too.
+          const id = `gemini-fc-${crypto.randomUUID()}`;
           const name = part.functionCall.name;
           const input = part.functionCall.args || {};
           onEvent({ type: 'tool_use', id, name, input });
