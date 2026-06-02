@@ -58,13 +58,8 @@ function getAgentModel(user) {
   if (plan === 'enterprise') return 'claude-sonnet-4-6';
   // TODO Phase 5d: wire DeepSeek adapter (OpenAI-compatible, baseURL=https://api.deepseek.com).
   // Until then, pro tier downgrades to the same model as free to avoid 500s.
-  if (plan === 'pro') return 'claude-sonnet-4-6';
-  // TEMP: free tier is on Sonnet instead of Gemini Flash while we diagnose
-  // why Flash keeps stopping after addAssetFromUrl in style-transfer flows.
-  // Bumps cost from ~$0.0015 to ~$0.07 per turn at typical sizes — fine
-  // for dev; flip back to gemini-2.5-flash once the multi-step regression
-  // is identified and fixed.
-  return 'claude-sonnet-4-6';
+  if (plan === 'pro') return 'gemini-2.5-flash';
+  return 'gemini-2.5-flash';
 }
 
 /**
