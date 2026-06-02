@@ -837,10 +837,29 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     );
   }
 
+  // Compute the set of nodes whose rects overlap a viewport-space marquee
+  // rectangle. Shared between live mousemove updates (highlight nodes
+  // before mouseup) and the final commit step.
+  function hitsForMarqueeRect(clientX0, clientY0, clientX1, clientY1) {
+    const a = clientToWorld(transformRef, Math.min(clientX0, clientX1), Math.min(clientY0, clientY1));
+    const b = clientToWorld(transformRef, Math.max(clientX0, clientX1), Math.max(clientY0, clientY1));
+    const hits = new Set();
+    for (const n of nodes) {
+      const nL = n.pos_x ?? 0, nT = n.pos_y ?? 0;
+      const nR = nL + (n.width || 0), nB = nT + (n.height || 0);
+      // Standard AABB intersection: hit when the marquee overlaps the
+      // node rect at all (not just contains it — that matches Figma).
+      if (nR < a.x || nL > b.x || nB < a.y || nT > b.y) continue;
+      hits.add(n.id);
+    }
+    return hits;
+  }
+
   // Marquee start: called from canvas-shell mousedown when (a) Space is NOT
   // held, (b) the click landed on the canvas background, not on a node /
-  // edge / chrome. Tracks the rect in viewport coords while drawing, then
-  // commits the selection by intersecting world-coord nodes on mouseup.
+  // edge / chrome. Tracks the rect + the live selection set in viewport
+  // coords while drawing; nodes light up the instant the marquee touches
+  // them, so the gesture has the same immediate feedback as in Figma.
   function startMarquee(ev) {
     const x0 = ev.clientX, y0 = ev.clientY;
     setMarquee({ x0, y0, x1: x0, y1: y0 });
@@ -849,10 +868,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
     setPopupPos(null);
+    setSelectedNodeIds((s) => (s.size ? new Set() : s));
     let moved = false;
     function move(e) {
       moved = true;
       setMarquee({ x0, y0, x1: e.clientX, y1: e.clientY });
+      // Live highlight: recompute hits each move so any node the marquee
+      // currently overlaps shows the selection ring while the drag is in
+      // flight. Cheap enough — N nodes × constant work, runs at mousemove
+      // frequency.
+      const hits = hitsForMarqueeRect(x0, y0, e.clientX, e.clientY);
+      setSelectedNodeIds(hits);
     }
     function up(e) {
       window.removeEventListener('mousemove', move);
@@ -864,18 +890,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         setSelectedNodeIds((s) => (s.size ? new Set() : s));
         return;
       }
-      // Convert the screen-space rect into world coords for hit-testing.
-      const a = clientToWorld(transformRef, Math.min(x0, e.clientX), Math.min(y0, e.clientY));
-      const b = clientToWorld(transformRef, Math.max(x0, e.clientX), Math.max(y0, e.clientY));
-      const hits = new Set();
-      for (const n of nodes) {
-        const nL = n.pos_x ?? 0, nT = n.pos_y ?? 0;
-        const nR = nL + (n.width || 0), nB = nT + (n.height || 0);
-        // Standard AABB intersection: hit when the marquee overlaps the
-        // node rect at all (not just contains it — that matches Figma).
-        if (nR < a.x || nL > b.x || nB < a.y || nT > b.y) continue;
-        hits.add(n.id);
-      }
+      const hits = hitsForMarqueeRect(x0, y0, e.clientX, e.clientY);
       setSelectedNodeIds(hits);
       // Mirror the first hit into selectedNodeId so single-select consumers
       // (inspector / popup / focus targets) still see something selected.
