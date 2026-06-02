@@ -170,6 +170,10 @@ export async function runAgentLoop(opts) {
         const announcedIntent = INTENT_RX.test(lastText);
         if (announcedIntent && forcedContinues < MAX_FORCED_CONTINUES) {
           forcedContinues++;
+          // Visible in dev-server stdout so we can verify the safety net
+          // actually fires when the agent stops after announcing intent.
+          // eslint-disable-next-line no-console
+          console.log(`[agent] announce-and-stop detected (forced #${forcedContinues}) — last text: ${lastText.slice(0, 120)}`);
           history.push({
             role: 'user',
             content: 'Continua. Você disse que ia executar o próximo passo — faça agora, no mesmo turno, chamando a ferramenta necessária. Não anuncie de novo, ACT.',
