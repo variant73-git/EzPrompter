@@ -11,7 +11,14 @@
  *   unregisterRun(runId)                            ← run completes/fails/cancelled
  */
 
-const runs = new Map(); // runId → { confirms: Map<tcId, resolveFn>, choices: Map<tcId, resolveFn>, continues: resolveFn|null, cancelled: bool }
+// Stash on globalThis so Next.js dev-server HMR doesn't wipe the run state
+// when /api/chat/confirm or another importer of this module is recompiled.
+// Without this, a run registered by /api/chat is invisible to /api/chat/confirm
+// after a hot reload — the confirm POST 404s, the driver's awaitChoice
+// never resolves, and the entire turn hangs until the outer route hard-cap
+// closes the SSE 6 minutes later. globalThis carries across re-evaluations.
+const GLOBAL_KEY = '__uncraft_runMap';
+const runs = globalThis[GLOBAL_KEY] || (globalThis[GLOBAL_KEY] = new Map()); // runId → { confirms: Map<tcId, resolveFn>, choices: Map<tcId, resolveFn>, continues: resolveFn|null, cancelled: bool }
 
 export function registerRun(runId) {
   if (!runs.has(runId)) {
