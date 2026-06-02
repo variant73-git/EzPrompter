@@ -78,11 +78,53 @@ Remove with a single commit once the user reports a few more successful runs.
 
 ## Known-pending / deferred
 
-- **Skeleton placeholder for createImage during gen** — user explicitly asked for the result node + edges to appear BEFORE the long gen call, so they see the workflow assemble during the wait instead of a flat "thinking dots" stretch. First attempt (commit `1a58f8e`) introduced a hang and was reverted (`a53e112`). Need to re-attempt with the runMap fix in place — the hang may have been masked by the confirm 404 issue.
-- **Image-to-image quality** — user mentioned the result was "mal feito" but said "vamos falar disso depois". OpenAI gpt-image-1 edit quality is what it is; might need to tune the prompt template to coach the model more aggressively about composition preservation.
-- **DeepSeek pro-tier wiring** — still TODO (Phase 5d). Default for `pro` plan falls back to Gemini Flash.
-- **Anthropic Sonnet for free tier** — tried briefly, user's Anthropic console balance was empty. claude.ai Pro/Max is a separate billing bucket; the API needs credits in `console.anthropic.com/settings/billing`.
-- **`/api/chat/confirm` 404 even with the fix** — if the user sees this again in production logs, look at horizontal scaling. The globalThis singleton is per-process; a load-balanced multi-node deployment would need Redis-backed runMap.
+Carried over from prior session (2026-06-01 handoff) — not touched this session:
+1. **SmartEditDockWrap flicker** — first render always right-side, useEffect flips afterwards. Fix: `useLayoutEffect` or sync `node.pos_x + node.width` calc. ~10 min.
+2. **Stale `node.meta.assetId` after backfill** — local `resolvedAssetId` is correct but the parent Map doesn't update until refetch. No data loss, just confusing UX on reload. ~20 min.
+
+New this session:
+3. **Placeholder skeleton during createImage gen** — user explicitly asked for the result node + edges to appear BEFORE the long gen call, so they see the workflow assemble during the wait instead of a flat "thinking dots" stretch. First attempt (commit `1a58f8e`) introduced a hang and was reverted (`a53e112`). **The hang was probably masked by the same confirm 404 we just fixed** — worth re-attempting now that runMap is sane.
+4. **Image-to-image quality "mal feito"** — user said the visual result was acceptable but quality wasn't great. "Vamos falar disso depois". Likely fixes: tune `BOARD_AGENT` prompt to coach the agent on composition-preservation phrasing inside the `createImage` prompt arg.
+5. **Diagnostic logs still in place** — `[agent] iter/EXEC/DONE` (driver), `[createImage] starting/gen/persist` (create-image). Remove with one commit once the runMap fix has held for a few more real sessions.
+6. **"Could not reach the site" overlay UX** — Pinterest CDN blocked by Cloudflare when the user pastes the URL into the URL+ chip (separate from chat attachment flow). Currently shows a console-error red overlay; should be a friendly toast.
+7. **Anthropic Sonnet bump** — attempted mid-session, user's Anthropic console balance was empty. claude.ai Pro/Max is a separate billing bucket; the API needs credits at `console.anthropic.com/settings/billing`.
+8. **`/api/chat/confirm` 404 in production** — the globalThis singleton fix is per-process. A load-balanced multi-node deployment would still 404 if the confirm POST lands on a different replica than the one that called `registerRun`. Move runMap to Redis when horizontalizing.
+
+### Antipattern grep before shipping
+
+Catch other HMR-vulnerable / cross-process-vulnerable singletons we may have written:
+
+```bash
+grep -rn "^const \w\+ = new Map()" packages/web-shell/lib/
+grep -rn "^const \w\+ = new Set()" packages/web-shell/lib/
+```
+
+Stash any of these on `globalThis` (dev safety) and document as "needs Redis if horizontalizing" (prod safety).
+
+---
+
+## Strategic: who fills the "cheap pro tier" slot (was: DeepSeek)
+
+Prior plan was DeepSeek for the pro tier (cheaper than Sonnet, more disciplined than Gemini Flash). Reconsidering before wiring:
+
+**DeepSeek concerns (as of knowledge cutoff Jan 2026):**
+- **Latency**: inference is China-hosted. US/EU users see +200–500ms vs Anthropic/OpenAI regional endpoints. Noticeable in SSE streaming.
+- **Regulatory**: Italy banned for privacy (Jan 2025), Korea suspended, several US states (TX, NY, OH) banned on gov devices. TikTok-style federal debate ongoing in the US.
+- **GDPR**: data flows through Chinese servers, subject to PIPL + Cybersecurity Law. DeepSeek almost certainly does not qualify as a GDPR data processor — real risk for any EU user.
+- **Self-censorship**: model refuses on Tiananmen / Taiwan / Xi. Doesn't affect image-gen but could affect future copy/branding flows.
+- **Distillation lawsuits**: OpenAI alleged DeepSeek trained on GPT outputs. Litigation open.
+
+**Alternatives for the pro tier slot:**
+| Model | Host | $/1M in | Function calling | Notes |
+|---|---|---|---|---|
+| **GPT-4o-mini** | OpenAI (US/EU) | $0.15 | Tested in our codebase via gpt-5.5 path | Compliance handled by existing OPENAI_API_KEY. Recommended. |
+| **Groq + Llama 3.3 70B** | Groq (US) | $0.59 | Decent | Super low latency (~50ms first token). Adds a new provider integration. |
+| **Mistral Large** | Mistral (Paris) | ~$2 | Solid | EU-friendly. ~13× cost of mini. |
+| Qwen 2.5 via Together.ai | Together (US) | $0.88 | OK | Resolves DeepSeek's latency, doesn't fully resolve compliance for sensitive data. |
+
+**Recommended:** GPT-4o-mini fills the pro slot. We already have the OpenAI adapter wired, the OPENAI_API_KEY is in `.env.local`, no new provider integration needed — flip `getAgentModel` for `plan === 'pro'` to `gpt-4o-mini` (or whatever we call it in `MODEL_ALIAS`) and lock the cost ladder: free = Gemini Flash ($1.8M/yr @ 1M users), pro = GPT-4o-mini (~$15M/yr), enterprise = Sonnet (~$84M/yr).
+
+Killing DeepSeek from the plan also kills the Phase 5d wiring TODO that's been hanging around. Item 3 in the deferred list above becomes "wire `gpt-4o-mini` (or chosen pro model) in `getAgentModel`" — ~5 lines instead of a new SDK integration.
 
 ## Files touched this session (high-traffic)
 
