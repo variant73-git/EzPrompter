@@ -90,22 +90,45 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
     // Call adapters directly — server-to-server fetch would hit requireUser
     // without auth cookies and return 401.
     let result;
+    const stepStart = Date.now();
+    // eslint-disable-next-line no-console
+    console.log(`[createImage] starting ${effective} gen (edit=${!!baseImageDataUrl} baseBytes=${baseImageDataUrl ? Math.floor(baseImageDataUrl.length * 0.75) : 0})`);
     try {
-      if (effective === 'gemini') {
-        const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-        if (!apiKey) return { error: 'image_gen_failed', message: 'GEMINI_API_KEY not configured' };
-        result = await generateGeminiImage({ prompt, aspectRatio, apiKey });
-      } else {
-        // openai — text-to-image or edit (when baseImageDataUrl is set)
-        const apiKey = process.env.OPENAI_API_KEY;
-        if (!apiKey) return { error: 'image_gen_failed', message: 'OPENAI_API_KEY not configured' };
-        result = await generateOpenAIImage({ prompt, aspectRatio, apiKey, baseImageDataUrl });
-      }
+      // Belt-and-suspenders: even if the underlying SDK timeout / driver
+      // 3-min cap don't fire (observed in field), this explicit Promise.race
+      // guarantees the await resolves within 90s.
+      const GEN_TIMEOUT_MS = 90_000;
+      const genPromise = effective === 'gemini'
+        ? (async () => {
+            const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+            if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+            return generateGeminiImage({ prompt, aspectRatio, apiKey });
+          })()
+        : (async () => {
+            const apiKey = process.env.OPENAI_API_KEY;
+            if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
+            return generateOpenAIImage({ prompt, aspectRatio, apiKey, baseImageDataUrl });
+          })();
+      result = await Promise.race([
+        genPromise,
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error(`${effective} gen exceeded ${GEN_TIMEOUT_MS / 1000}s`)),
+          GEN_TIMEOUT_MS,
+        )),
+      ]);
+      // eslint-disable-next-line no-console
+      console.log(`[createImage] gen ok in ${Date.now() - stepStart}ms`);
       // Normalize shape so downstream code has result.provider.
       result.provider = effective;
     } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log(`[createImage] gen FAILED in ${Date.now() - stepStart}ms: ${e?.message || e}`);
       return { error: 'image_gen_failed', message: String(e?.message || e) };
     }
+    // eslint-disable-next-line no-console
+    console.log(`[createImage] starting DB persistence`);
+    const persistStart = Date.now();
+    try {
 
     const mode = result.mode || 'generate';
     // Display name on the canvas node — short + contextual instead of the
@@ -206,6 +229,8 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
       }
     }
 
+    // eslint-disable-next-line no-console
+    console.log(`[createImage] DB persistence ok in ${Date.now() - persistStart}ms`);
     return {
       generated: true,
       mode,
@@ -218,5 +243,10 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
       posY: placedY,
       edges: edgesCreated,
     };
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log(`[createImage] DB persistence FAILED in ${Date.now() - persistStart}ms: ${e?.message || e}`);
+      return { error: 'persist_failed', message: String(e?.message || e) };
+    }
   },
 };
