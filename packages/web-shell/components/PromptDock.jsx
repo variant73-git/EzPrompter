@@ -589,9 +589,11 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
     }
     latestRunIdRef.current = null;
     dispatchChat({ type: 'RUN_FINISHED' });
-    // Single refetch at end of run — picks up everything the agent did
-    // in one go without re-rendering the canvas N times mid-stream.
-    onAgentMutatedGraph?.();
+    // End-of-run refetch + workflow framing. frame:true tells the canvas
+    // to zoom out and centre everything the agent created across this
+    // turn — instead of jumping the camera per-node mid-stream, we land
+    // a single composed view of the finished workflow.
+    onAgentMutatedGraph?.({ frame: true });
     // Panel stays open so the user can read the agent's reply and the
     // completed tool chips. Collapse manually via the chevron.
   }

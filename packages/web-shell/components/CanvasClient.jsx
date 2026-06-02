@@ -117,6 +117,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // keyboard handler always sees the latest stack without re-binding.
   // Entry shape: { type: 'deleteNodes', nodes: [...rows], edges: [...rows] }.
   const undoStackRef = useRef([]);
+  // Accumulator of nodes the agent created across a single run. Each
+  // graph_mutated refetch appends new node IDs/rows here. RUN_FINISHED
+  // reads + clears so the end-of-run camera frame can fit the entire
+  // workflow at once instead of jumping per-node mid-run.
+  const agentRunNewNodesRef = useRef(new Map());
   // Bot-protection interstitial state. When captureSnapshot returns 409
   // challenge_required, we stash {kind, url, signals, placeholderId} here
   // so <ChallengeModal /> mounts. placeholderId lets the modal's cancel /
@@ -2193,10 +2198,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         runFlowBusy={runFlowBusy}
         runFlowError={runFlowError}
         nodeCount={nodes.length}
-        onAgentMutatedGraph={async () => {
-          // Agent finished a turn — refetch board state so the canvas
-          // reflects creates/updates/deletes. Also frame any NEW nodes
-          // so the user's "camera" follows what the agent just made.
+        onAgentMutatedGraph={async ({ frame = false } = {}) => {
+          // Agent emitted a graph mutation. Refetch board state so the
+          // canvas reflects creates/updates/deletes. We DON'T frame on
+          // every mid-run mutation — that made the camera jump per
+          // tool call as the workflow was being assembled. The single
+          // framing pass happens when `frame: true` is set (end of run).
           try {
             const res = await fetch(`/api/boards/${board.id}`, { credentials: 'include' });
             if (!res.ok) return;
@@ -2214,29 +2221,36 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             });
             if (Array.isArray(data.edges)) setEdges(data.edges);
 
-            // Single new node → center it. Multiple → frame the whole
-            // bounding box so the user sees the workflow at once.
-            // Small delay so React commits the new nodes (and their
-            // measured DOM size) before zooming.
-            if (newNodes.length === 1) {
-              setTimeout(() => zoomToNode(newNodes[0], 400, null), 80);
-            } else if (newNodes.length > 1) {
-              setTimeout(() => {
-                const PAD = 80;
-                const minX = Math.min(...newNodes.map((n) => n.pos_x));
-                const minY = Math.min(...newNodes.map((n) => n.pos_y));
-                const maxX = Math.max(...newNodes.map((n) => n.pos_x + (n.width || 1280)));
-                const maxY = Math.max(...newNodes.map((n) => n.pos_y + (n.height || 800)));
-                const cx = (minX + maxX) / 2;
-                const cy = (minY + maxY) / 2;
-                const vw = window.innerWidth;
-                const vh = window.innerHeight - 48;
-                const scale = Math.min(vw / (maxX - minX + PAD * 2), vh / (maxY - minY + PAD * 2), 1.0);
-                const posX = vw / 2 - cx * scale;
-                const posY = (vh / 2 + 48) - cy * scale;
-                transformRef.current?.setTransform(posX, posY, scale, 400);
-              }, 80);
-            }
+            // Track every node created across this run so the end-of-run
+            // frame can include the full workflow even if intermediate
+            // refetches only saw it piece by piece.
+            if (!agentRunNewNodesRef.current) agentRunNewNodesRef.current = new Map();
+            for (const n of newNodes) agentRunNewNodesRef.current.set(n.id, n);
+
+            if (!frame) return;
+
+            // End-of-run framing: zoom the camera to fit the entire workflow
+            // the agent just built, not just the latest node. Use the
+            // accumulated set from agentRunNewNodesRef.
+            const accumulated = Array.from(agentRunNewNodesRef.current.values());
+            agentRunNewNodesRef.current = new Map();  // reset for next run
+            if (accumulated.length === 0) return;
+
+            setTimeout(() => {
+              const PAD = 160;
+              const minX = Math.min(...accumulated.map((n) => n.pos_x));
+              const minY = Math.min(...accumulated.map((n) => n.pos_y));
+              const maxX = Math.max(...accumulated.map((n) => n.pos_x + (n.width || 1280)));
+              const maxY = Math.max(...accumulated.map((n) => n.pos_y + (n.height || 800)));
+              const cx = (minX + maxX) / 2;
+              const cy = (minY + maxY) / 2;
+              const vw = window.innerWidth;
+              const vh = window.innerHeight - 48;
+              const scale = Math.min(vw / (maxX - minX + PAD * 2), vh / (maxY - minY + PAD * 2), 1.0);
+              const posX = vw / 2 - cx * scale;
+              const posY = (vh / 2 + 48) - cy * scale;
+              transformRef.current?.setTransform(posX, posY, scale, 500);
+            }, 80);
           } catch (e) { console.warn('[CanvasClient] agent-mutation refetch failed', e); }
         }}
       />
