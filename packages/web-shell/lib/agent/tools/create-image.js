@@ -34,6 +34,11 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
       provider:           { type: 'string', enum: ['auto', 'gemini', 'openai'], description: 'auto picks Gemini for text-to-image; edit mode (baseImageAssetId set) forces openai' },
       attachToBoard:      { type: 'boolean', description: 'When true, also create an asset node on the canvas' },
       baseImageAssetId:   { type: 'string', description: 'Optional. UUID of an existing asset to EDIT (image-to-image). Forces openai provider.' },
+      inputAssetIds:      {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional list of source asset UUIDs (e.g. style references you ingested + the base image). When provided AND attachToBoard:true, the tool will draw an edge from each source asset\'s canvas node to the new result node, so the workflow is visible on the canvas instead of being implicit. Always set this when doing image-to-image so the user sees the chain. Typically: [referenceAssetId, baseImageAssetId].',
+      },
     },
     required: ['prompt'],
   },
@@ -47,7 +52,7 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
   },
 
   async execute(args, ctx) {
-    const { prompt, aspectRatio = '1:1', provider = 'auto', attachToBoard = false, baseImageAssetId = null } = args || {};
+    const { prompt, aspectRatio = '1:1', provider = 'auto', attachToBoard = false, baseImageAssetId = null, inputAssetIds = null } = args || {};
     if (!prompt) return { error: 'invalid_args', message: 'prompt required' };
     if (!VALID_ASPECT.has(aspectRatio)) return { error: 'invalid_args', message: `aspectRatio must be one of ${[...VALID_ASPECT].join(',')}` };
     if (!VALID_PROVIDER.has(provider)) return { error: 'invalid_args', message: `provider must be one of ${[...VALID_PROVIDER].join(',')}` };
@@ -145,6 +150,46 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
       nodeId = node.id;
     }
 
+    // Wire source assets → result node so the canvas shows the workflow
+    // as a visible chain (Flora / Comfy-style), not as a pile of disconnected
+    // nodes. Map each input assetId to its canvas node via assets.id →
+    // nodes.meta.assetId, then INSERT an edge per match. Silently skip
+    // sources that don't have a node on the board (some assets are storage-
+    // only — chat attachments + addAssetFromUrl + this tool's own output
+    // always create nodes, so the typical style-transfer path lights up).
+    const edgesCreated = [];
+    if (nodeId && Array.isArray(inputAssetIds) && inputAssetIds.length > 0) {
+      // Always include baseImageAssetId implicitly so the agent doesn't have
+      // to duplicate it.
+      const all = Array.from(new Set([
+        ...(baseImageAssetId ? [baseImageAssetId] : []),
+        ...inputAssetIds.filter((x) => typeof x === 'string' && x),
+      ]));
+      if (all.length > 0) {
+        // For each source assetId, look up the matching node on this board.
+        // Use a JSONB match against nodes.meta->>'assetId'.
+        const rows = await sql`
+          SELECT id, meta->>'assetId' AS asset_id
+          FROM nodes
+          WHERE board_id = ${ctx.boardId}
+            AND meta->>'assetId' = ANY(${all})
+        `;
+        for (const row of rows) {
+          if (!row?.id || row.id === nodeId) continue;
+          try {
+            const [edge] = await sql`
+              INSERT INTO edges (board_id, source_node_id, target_node_id, kind)
+              VALUES (${ctx.boardId}, ${row.id}, ${nodeId}, 'generic')
+              RETURNING id
+            `;
+            edgesCreated.push({ id: edge.id, fromAssetId: row.asset_id, fromNodeId: row.id, toNodeId: nodeId });
+          } catch (e) {
+            // Edge insert can fail on duplicates (unique constraint) — ignore.
+          }
+        }
+      }
+    }
+
     return {
       generated: true,
       mode,
@@ -155,6 +200,7 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
       bytes: Math.floor((result.base64 || '').length * 0.75),
       posX: placedX,
       posY: placedY,
+      edges: edgesCreated,
     };
   },
 };
