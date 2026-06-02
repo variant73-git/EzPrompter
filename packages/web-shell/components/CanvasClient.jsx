@@ -1931,15 +1931,30 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   // Shift-click toggles this node in the multi-select set —
                   // add if absent, remove if already there. Matches Figma /
                   // Linear additive selection convention.
+                  //
+                  // Important: when toggling OFF, do NOT promote this node
+                  // to selectedNodeId. The `selected` prop on CanvasNode
+                  // is the OR of (selectedNodeId === id, selectedNodeIds
+                  // has id), so setting selectedNodeId to a node we just
+                  // removed from the set keeps it visually selected on
+                  // half the clicks. Only set selectedNodeId when adding.
                   const alreadyIn = selectedNodeIds.has(n.id) || selectedNodeId === n.id;
-                  setSelectedNodeIds((s) => {
-                    const next = new Set(s);
-                    if (alreadyIn) next.delete(n.id);
-                    else next.add(n.id);
-                    return next;
-                  });
-                  if (alreadyIn && selectedNodeId === n.id) setSelectedNodeId(null);
-                  else setSelectedNodeId(n.id);
+                  if (alreadyIn) {
+                    setSelectedNodeIds((s) => {
+                      if (!s.has(n.id)) return s;
+                      const next = new Set(s);
+                      next.delete(n.id);
+                      return next;
+                    });
+                    if (selectedNodeId === n.id) setSelectedNodeId(null);
+                  } else {
+                    setSelectedNodeIds((s) => {
+                      const next = new Set(s);
+                      next.add(n.id);
+                      return next;
+                    });
+                    setSelectedNodeId(n.id);
+                  }
                 } else {
                   setSelectedNodeId(n.id);
                   // Single-click clears any prior marquee selection so the
