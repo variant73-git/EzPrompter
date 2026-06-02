@@ -501,6 +501,12 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
       case 'needs_softlimit_continue':
         dispatchChat({ type: 'RUN_SOFT_PAUSED', iterationsSoFar: payload.iterationsSoFar, breakdown: payload.breakdown });
         break;
+      case 'graph_mutated':
+        // The server pre-created some nodes (e.g. chat attachment persistence)
+        // before the agent even started. Tell the canvas to refetch so the
+        // user sees them appear immediately, without waiting for run end.
+        onAgentMutatedGraph?.();
+        break;
     }
   }
 
@@ -512,7 +518,14 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
     if (!boardId) return;
     const trimmed = (content || '').trim();
     if (!trimmed && !(attachments && attachments.length)) return;
-    dispatchChat({ type: 'USER_MSG_OPTIMISTIC', content: trimmed });
+    // Optimistic bubble: if user sent image-only (no text), show the
+    // file name(s) so the bubble isn't empty. Matches the placeholder the
+    // server persists in chat_messages.content.
+    const optimisticText = trimmed
+      || (attachments && attachments.length
+        ? `[📎 ${attachments.map((a) => a.name || 'image').join(', ')}]`
+        : '');
+    dispatchChat({ type: 'USER_MSG_OPTIMISTIC', content: optimisticText });
     // Expand the chat panel so the user sees their bubble + the agent's
     // streaming reply. Stays open after the turn — user collapses via chevron.
     setChatCollapsed(false);
@@ -761,10 +774,11 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
     // Free-text path → chat agent. If an image is attached, forward it as a
     // multimodal user message so the agent can SEE the reference and decide
     // what to do (ingest as asset, edit it, describe its style, etc.).
-    // Pure image-only submits also go through with a placeholder text so the
-    // agent has something to react to.
+    // Image-only submits pass an empty text — the server side handles that
+    // case by displaying a clean "[image attachment: file.png]" in the
+    // chat history, without putting words in the user's mouth.
     if (value || imageFile) {
-      const text = value || (imageFile ? 'Anexei uma imagem. O que dá pra fazer com ela aqui?' : '');
+      const text = value;
       const attachment = imageFile ? await fileToAttachment(imageFile) : null;
       setText('');
       clearImage();

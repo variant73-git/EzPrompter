@@ -178,25 +178,66 @@ export async function POST(request) {
   const registry = threadScope === 'asset' ? buildAssetRegistry() : buildFullRegistry();
   const systemPrompt = PROMPT_KEYS[systemPromptKey] || PROMPT_KEYS.BOARD_AGENT;
 
-  // Persist image attachments as asset rows BEFORE building the LLM message.
-  // This gives the agent two things in the same turn: (a) vision over the
-  // pixels via the multimodal user block, (b) a real assetId it can pass to
-  // createImage's baseImageAssetId for image-to-image edits / style transfer.
-  // Without this step, attached images were invisible to graph-side tools —
-  // the agent could see them but had nothing to point at.
+  // Persist image attachments BEFORE building the LLM message. For each one
+  // we create BOTH an `assets` row (so it has an id the agent can pass to
+  // createImage) AND a `nodes` row with the dataUrl baked into meta (so the
+  // user immediately sees a node on the canvas — matches the ChatGPT
+  // pattern where uploads visibly appear in the conversation). The agent
+  // then doesn't need to redundantly call createNode for the attachment;
+  // we tell it the node already exists.
   const persistedAttachmentAssets = [];
   if (hasAttachments) {
+    // Look up the rightmost existing node once so all attachments line up
+    // side-by-side starting from there.
+    let nextX = 0;
+    let topY = 0;
+    try {
+      const [edge] = await sql`
+        SELECT COALESCE(MAX(pos_x + width), -240) AS right_edge,
+               COALESCE(MIN(pos_y), 0) AS top_edge
+        FROM nodes WHERE board_id = ${boardId}
+      `;
+      nextX = Number(edge?.right_edge ?? 0) + 240;
+      topY = Number(edge?.top_edge ?? 0);
+    } catch (e) {
+      console.warn('[chat] auto-place query failed; defaulting to (0,0)', e?.message || e);
+    }
     for (const a of attachments) {
       if (a?.kind !== 'image' || typeof a.dataUrl !== 'string') continue;
       const mimeType = a.mimeType || (/^data:([^;]+);/.exec(a.dataUrl)?.[1]) || 'image/png';
-      const meta = { dataUrl: a.dataUrl, mimeType, source: 'chat-attachment' };
+      const displayName = a.name || 'attachment';
+      const assetMeta = { dataUrl: a.dataUrl, mimeType, source: 'chat-attachment' };
       try {
-        const [row] = await sql`
+        const [assetRow] = await sql`
           INSERT INTO assets (user_id, project_id, type, name, meta)
-          VALUES (${user.id}, ${boardId}, 'image', ${a.name || 'attachment'}, ${JSON.stringify(meta)}::jsonb)
+          VALUES (${user.id}, ${boardId}, 'image', ${displayName}, ${JSON.stringify(assetMeta)}::jsonb)
           RETURNING id
         `;
-        persistedAttachmentAssets.push({ id: row.id, name: a.name || 'attachment', mimeType });
+        const nodeMeta = {
+          source: 'chat-attachment',
+          assetId: assetRow.id,
+          name: displayName,
+          dataUrl: a.dataUrl,
+          mimeType,
+        };
+        let nodeId = null;
+        try {
+          const [nodeRow] = await sql`
+            INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
+            VALUES (${boardId}, 'asset', ${nextX}, ${topY}, 512, 512, ${JSON.stringify(nodeMeta)}::jsonb)
+            RETURNING id
+          `;
+          nodeId = nodeRow.id;
+          nextX += 512 + 240;
+        } catch (e) {
+          console.warn('[chat] failed to create node for attachment', e?.message || e);
+        }
+        persistedAttachmentAssets.push({
+          id: assetRow.id,
+          nodeId,
+          name: displayName,
+          mimeType,
+        });
       } catch (e) {
         console.warn('[chat] failed to persist attachment as asset', e?.message || e);
       }
@@ -205,10 +246,10 @@ export async function POST(request) {
 
   // Build the message history for the LLM. When attachments are present the
   // user content becomes an Anthropic-style array of blocks: one text block
-  // (the typed message + a hint about persisted assetIds, or a default cue
-  // if user only attached without text) plus one image block per attachment.
-  // Each adapter translates this shape into its provider's native multimodal
-  // format.
+  // (the typed message + a hint about persisted assetIds + the fact that the
+  // node already lives on the canvas, or a default cue if user only attached
+  // without text) plus one image block per attachment. Each adapter
+  // translates this shape into its provider's native multimodal format.
   let initialMessages;
   if (hasAttachments) {
     let textPart = hasText
@@ -216,9 +257,9 @@ export async function POST(request) {
       : 'Anexei a(s) imagem(s) acima. Use seu próprio julgamento sobre o que fazer com ela(s).';
     if (persistedAttachmentAssets.length) {
       const inv = persistedAttachmentAssets
-        .map((a) => `id=${a.id} (${a.name})`)
-        .join(', ');
-      textPart += `\n\n[The attached image(s) are persisted as assets ready for tool use: ${inv}. Pass these IDs to createImage as baseImageAssetId when doing image-to-image edits / style transfer.]`;
+        .map((a) => `assetId=${a.id}${a.nodeId ? `, nodeId=${a.nodeId}` : ''} (${a.name})`)
+        .join('; ');
+      textPart += `\n\n[The attached image(s) are ALREADY on the canvas as asset nodes. Do NOT call createNode for them — they exist. Inventory: ${inv}. Use the assetId as baseImageAssetId in createImage when doing image-to-image edits / style transfer.]`;
     }
     const blocks = [{ type: 'text', text: textPart }];
     for (const a of attachments) {
@@ -236,6 +277,15 @@ export async function POST(request) {
   // Fire and forget: run the agent, stream events as they happen.
   (async () => {
     send('thread_id', { threadId: thread.id });
+    // If we already created asset nodes for the user's attachments, tell
+    // the client to refetch the graph NOW — don't make them wait for the
+    // agent run to finish for their upload to appear on the canvas.
+    if (persistedAttachmentAssets.length > 0) {
+      send('graph_mutated', {
+        reason: 'attachments_persisted',
+        nodeIds: persistedAttachmentAssets.map((a) => a.nodeId).filter(Boolean),
+      });
+    }
     let runId = null;
     let loopResult = null;
     try {
