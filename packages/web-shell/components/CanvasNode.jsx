@@ -11,6 +11,33 @@ import AssetSmartEditDock from './canvas/AssetSmartEditDock.jsx';
 
 const DRAG_THRESHOLD = 4;
 
+// Truncate a filename / title to `max` chars while ALWAYS keeping the
+// trailing extension (`.jpg`, `.png`, etc) visible. Without this, a long
+// asset name like "ultra-long-character-design-final-v3.jpg" would lose
+// the extension after a plain slice, and the user wouldn't be able to
+// tell the type at a glance. Falls back to plain truncate when there's
+// no recognisable extension or when the extension itself is too long.
+function truncateWithExtension(name, max = 15) {
+  if (!name) return name;
+  const s = String(name);
+  if (s.length <= max) return s;
+  const lastDot = s.lastIndexOf('.');
+  const extLen = lastDot >= 0 ? s.length - lastDot : 0;
+  // No extension, leading dot only, or absurdly long extension → simple
+  // ellipsis truncate.
+  if (lastDot <= 0 || extLen > 8) {
+    return s.slice(0, Math.max(1, max - 1)) + '…';
+  }
+  const ext = s.slice(lastDot);          // e.g. ".jpg"
+  const ELLIPSIS = '...';
+  const baseAvailable = max - ext.length - ELLIPSIS.length;
+  if (baseAvailable < 1) {
+    // Extension too long to fit a base + ellipsis; just trim with single dot.
+    return s.slice(0, Math.max(1, max - 1)) + '…';
+  }
+  return s.slice(0, baseAvailable) + ELLIPSIS + ext;
+}
+
 // Aspect-ratio metadata. API output dims match what the createImage tool
 // requests from gpt-image-1 (SIZE_MAP in lib/image-gen/openai-image.js).
 // Node display dims should match the create-image tool's ASPECT_DIMENSIONS
@@ -799,9 +826,9 @@ export default function CanvasNode({
       {/* Anchored title — only visible when the canvas is zoomed-out enough
           that the topbar collapses (`body.canvas-zoom-low`). Sits above the
           node at top-left so the user can still tell what each node is. */}
-      <div className="cnode-anchor-title" aria-hidden={!selected}>
+      <div className="cnode-anchor-title" aria-hidden={!selected} title={title}>
         {KindIcon && <KindIcon />}
-        <span className="cnode-anchor-title-text">{title}</span>
+        <span className="cnode-anchor-title-text">{truncateWithExtension(title, 15)}</span>
       </div>
 
       {/* Run-flow status chip — appears below the node while a target is

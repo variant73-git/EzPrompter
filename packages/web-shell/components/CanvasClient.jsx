@@ -2143,17 +2143,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // would persist as overrides; this MVP is fully derived.
   const sections = useMemo(() => {
     if (!nodes || nodes.length < 2) return [];
-    const SECTION_GAP = 40;
-    // The name tag is taller now (font-size 20 / padding 6+6) — reserve
-    // 70px on top so the tag never overlaps the topmost member.
-    const NAME_TAG_RESERVE = 70;
-    // Asset nodes extend visually below their bounding box via the
-    // aspect pill (sits half-outside, ~22px below the card edge) and
-    // the output-dimensions label (font 20px at bottom: -32px, so
-    // ~52px below the card). Without this extra bottom reserve the
-    // section frame cuts through the pill / dims of the bottom-most
-    // node. 60px covers both with a small breathing margin.
-    const BOTTOM_RESERVE = 60;
+    // Single uniform gap on all 4 sides. The top gap had to grow to
+    // accommodate the bigger name tag + 50% extra breathing room; the
+    // other sides match for visual balance. 165px = old top (40 gap +
+    // 70 name reserve = 110) × 1.5.
+    const UNIFORM_GAP = 165;
     const nodeById = new Map(nodes.map((n) => [n.id, n]));
     // Build adjacency map. Skip edges whose endpoints aren't both in the
     // current nodes array (e.g. mid-flight temp edges that haven't synced).
@@ -2247,16 +2241,61 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         memberIds,
         theme: t,
         name: `${THEME_LABEL[t]} #${themeCounter[t]}`,
-        // Box includes top reserve for the name tag + bottom reserve so
-        // asset nodes' aspect pill + dims label sit INSIDE the frame.
-        x: minX - SECTION_GAP,
-        y: minY - SECTION_GAP - NAME_TAG_RESERVE,
-        width: (maxX - minX) + SECTION_GAP * 2,
-        height: (maxY - minY) + SECTION_GAP * 2 + NAME_TAG_RESERVE + BOTTOM_RESERVE,
+        // Uniform gap on all 4 sides — the top fits the name tag, the
+        // bottom fits any asset-pill + dims overflow, sides match for
+        // visual balance.
+        x: minX - UNIFORM_GAP,
+        y: minY - UNIFORM_GAP,
+        width: (maxX - minX) + UNIFORM_GAP * 2,
+        height: (maxY - minY) + UNIFORM_GAP * 2,
       });
     }
     return out;
   }, [nodes, edges]);
+
+  // Section drag — grabbing the dot-grid handle at the top of a section
+  // translates ALL member nodes by the same delta so the workflow moves
+  // as a group. No resize math, no scaling; just translate. Persists each
+  // member's new position via api.updateNode on mouseup.
+  function startSectionMove(sectionId, e) {
+    e.stopPropagation();
+    e.preventDefault();
+    const section = sections.find((x) => x.id === sectionId);
+    if (!section) return;
+    const memberNodes = section.memberIds
+      .map((id) => nodes.find((n) => n.id === id))
+      .filter(Boolean);
+    if (memberNodes.length === 0) return;
+    const startMembers = memberNodes.map((m) => ({ id: m.id, pos_x: m.pos_x, pos_y: m.pos_y }));
+    const readScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
+    const startScale = readScale();
+    const startMouseX = e.clientX;
+    const startMouseY = e.clientY;
+    function onMove(ev) {
+      const dx = (ev.clientX - startMouseX) / startScale;
+      const dy = (ev.clientY - startMouseY) / startScale;
+      setNodes((prev) => prev.map((n) => {
+        const orig = startMembers.find((m) => m.id === n.id);
+        if (!orig) return n;
+        return { ...n, pos_x: Math.round(orig.pos_x + dx), pos_y: Math.round(orig.pos_y + dy) };
+      }));
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      setNodes((cur) => {
+        for (const m of startMembers) {
+          const node = cur.find((n) => n.id === m.id);
+          if (node && !String(node.id).startsWith('temp-')) {
+            api.updateNode(node.id, { posX: node.pos_x, posY: node.pos_y }).catch(console.warn);
+          }
+        }
+        return cur;
+      });
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
 
   // Section corner resize — dragging a section's NW/NE/SW/SE handle scales
   // the member node positions proportionally around the OPPOSITE corner
@@ -2544,21 +2583,42 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   }}
                   aria-label={`Re-run ${s.name}`}
                 >
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="40" height="40" fill="currentColor" aria-hidden="true">
                     <polygon points="6,4 20,12 6,20" />
                   </svg>
                 </button>
               </div>
+              {/* Drag grip — dot grid centered at the top of the section.
+                  Grabbing this translates ALL member nodes by the same
+                  delta so the whole workflow moves as a group. */}
+              <div
+                className="canvas-section-grip"
+                onMouseDown={(e) => startSectionMove(s.id, e)}
+                title="Drag to move workflow"
+                aria-label="Drag workflow"
+              >
+                <span /><span /><span /><span /><span /><span />
+                <span /><span /><span /><span /><span /><span />
+              </div>
               {/* Corner resize handles. Each hosts the appropriate
                   diagonal cursor + a drag handler that scales member
-                  node positions around the opposite corner. */}
+                  node positions around the opposite corner. The SE
+                  handle also renders a visible diagonal-lines icon as
+                  an explicit resize affordance. */}
               {['nw', 'ne', 'sw', 'se'].map((corner) => (
                 <div
                   key={corner}
                   className={`canvas-section-handle canvas-section-handle-${corner}`}
                   onMouseDown={(e) => startSectionResize(s.id, corner, e)}
                   aria-hidden="true"
-                />
+                >
+                  {corner === 'se' && (
+                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+                      <line x1="7" y1="20" x2="20" y2="7" />
+                      <line x1="13" y1="20" x2="20" y2="13" />
+                    </svg>
+                  )}
+                </div>
               ))}
             </div>
           ))}
