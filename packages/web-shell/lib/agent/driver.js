@@ -210,7 +210,7 @@ export async function runAgentLoop(opts) {
           history.push({
             role: 'user',
             content: ingestedButDidntGenerate
-              ? 'Você ingeriu a referência mas não gerou a imagem. Chama createImage AGORA com baseImageAssetId=<a imagem anexa>, inputAssetIds incluindo a referência, attachToBoard:true, e prompt descrevendo o estilo da referência. Não responda com texto antes, ACT.'
+              ? 'Você ingeriu a referência mas não gerou a imagem. Chama createImage AGORA com baseImageAssetId=<a imagem anexa>, styleReferenceAssetIds=[<as referências ingeridas>], inputAssetIds=[baseImageAssetId, ...styleReferenceAssetIds], attachToBoard:true, prompt="" (vazio — o modelo vê as referências direto). Não responda com texto antes, ACT.'
               : 'Continua. Você disse que ia executar o próximo passo — faça agora, no mesmo turno, chamando a ferramenta necessária. Não anuncie de novo, ACT.',
           });
           continue;

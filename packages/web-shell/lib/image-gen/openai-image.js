@@ -35,6 +35,13 @@ export async function generateOpenAIImage({
   apiKey,
   model = DEFAULT_MODEL,
   baseImageDataUrl = null,
+  // Phase 1 of image quality fix: when caller has additional style reference
+  // images (typical of style-transfer flows), pass them DIRECTLY to gpt-image-1
+  // as additional inputs. The model sees both the composition base (first
+  // image) and the style references (subsequent images) natively, removing
+  // the Flash-described-the-style-in-text bottleneck that was producing
+  // hallucinated styles disconnected from either input.
+  styleReferenceDataUrls = null,
 }) {
   if (!prompt) throw new Error('prompt required');
   if (!apiKey) throw new Error('apiKey required');
@@ -47,22 +54,38 @@ export async function generateOpenAIImage({
   // turn so it can react (skip / try a different provider / tell the user).
   const client = new OpenAI({ apiKey, timeout: 120_000, maxRetries: 0 });
 
-  let resp;
-  if (baseImageDataUrl) {
-    const { mimeType, base64 } = parseDataUrl(baseImageDataUrl);
-    // gpt-image-1 accepts PNG, WebP, and JPG up to 25MB. dall-e-2 (PNG-only)
-    // is not in scope here. Match the ext to the mime so the multipart body
-    // looks well-formed.
+  // Convert a data URL → File compatible with the multipart upload.
+  async function dataUrlToFile(dataUrl, name) {
+    const { mimeType, base64 } = parseDataUrl(dataUrl);
     const ext = mimeType === 'image/jpeg' ? 'jpg'
               : mimeType === 'image/webp' ? 'webp'
               : 'png';
     const buffer = Buffer.from(base64, 'base64');
-    const file = await toFile(buffer, `base.${ext}`, { type: mimeType });
+    return toFile(buffer, `${name}.${ext}`, { type: mimeType });
+  }
+
+  let resp;
+  if (baseImageDataUrl) {
+    const baseFile = await dataUrlToFile(baseImageDataUrl, 'base');
+    // gpt-image-1's images.edit accepts an ARRAY of images. Passing the base
+    // first (composition source) followed by style references lets the model
+    // attend to both directly — far better signal than a text description of
+    // a style the orchestrator (Gemini Flash) had to invent.
+    let imageArg = baseFile;
+    if (Array.isArray(styleReferenceDataUrls) && styleReferenceDataUrls.length > 0) {
+      const refFiles = await Promise.all(
+        styleReferenceDataUrls
+          .filter((u) => typeof u === 'string' && u)
+          .map((u, i) => dataUrlToFile(u, `ref-${i + 1}`)),
+      );
+      imageArg = [baseFile, ...refFiles];
+    }
     resp = await client.images.edit({
       model,
-      image: file,
+      image: imageArg,
       prompt,
       size,
+      quality: 'high',
       n: 1,
     });
   } else {
@@ -70,6 +93,7 @@ export async function generateOpenAIImage({
       model,
       prompt,
       size,
+      quality: 'high',
       n: 1,
       response_format: 'b64_json',
     });

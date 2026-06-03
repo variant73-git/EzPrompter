@@ -271,7 +271,7 @@ export default function CanvasNode({
   onSelect, onMove, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload,
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
-  incomingEdges = [], draftActive, runStatus = null
+  incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -436,8 +436,8 @@ export default function CanvasNode({
   // toggling draft state / resizing the node doesn't detach+reattach
   // the listener — and so future edits don't trip React's "dep array
   // size changed" HMR error.
-  const cursorTrackAdvisory = useRef({ draftActive, height: node.height });
-  cursorTrackAdvisory.current = { draftActive, height: node.height };
+  const cursorTrackAdvisory = useRef({ draftActive, height: node.height, hasOutgoingEdges });
+  cursorTrackAdvisory.current = { draftActive, height: node.height, hasOutgoingEdges };
   useEffect(() => {
     const cnode = cnodeRef.current;
     const port = portRightRef.current;
@@ -448,7 +448,15 @@ export default function CanvasNode({
       return v > 0 ? v : 1;
     }
     function onMove(e) {
-      const { draftActive: isDrafting, height } = cursorTrackAdvisory.current;
+      const { draftActive: isDrafting, height, hasOutgoingEdges: connected } = cursorTrackAdvisory.current;
+      // Once the node is wired as a source of at least one edge, freeze the
+      // emitter ball at its default CSS position. The cursor-tracks-port
+      // "reach assist" only adds value when there's nothing connected yet —
+      // after that, the moving ball becomes visual noise without function.
+      if (connected) {
+        if (port.style.top) port.style.top = '';
+        return;
+      }
       // While a draft cord is being drawn FROM this node, freezing the
       // port keeps the cord origin stable — moving it mid-drag would
       // make the line whip around as the user moves the mouse.
@@ -478,6 +486,16 @@ export default function CanvasNode({
       port.style.top = '';
     };
   }, [editing]);
+
+  // When a node BECOMES connected (first outgoing edge), reset the port's
+  // inline top immediately so the ball snaps back to its CSS-default
+  // center position without waiting for the next mousemove. Otherwise the
+  // ball would freeze at whatever Y the cursor last hovered.
+  useEffect(() => {
+    if (hasOutgoingEdges && portRightRef.current) {
+      portRightRef.current.style.top = '';
+    }
+  }, [hasOutgoingEdges]);
 
   // Close the topbar context menu on Esc / click outside.
   useEffect(() => {

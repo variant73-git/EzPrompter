@@ -172,4 +172,86 @@ describe('createImageTool', () => {
     expect(r.error).toBe('invalid_args');
     expect(r.message).toMatch(/no dataUrl/);
   });
+
+  it('passes styleReferenceDataUrls through when refs resolved', async () => {
+    let call = 0;
+    sql.mockImplementation(() => {
+      call++;
+      // Calls in order:
+      // 1) SELECT base asset
+      // 2) SELECT ref assets (returns 2 rows)
+      // 3) INSERT placeholder asset
+      if (call === 1) return Promise.resolve([{ meta: { dataUrl: 'data:image/png;base64,BASE' } }]);
+      if (call === 2) return Promise.resolve([
+        { id: 'ref-1', meta: { dataUrl: 'data:image/png;base64,REF1' } },
+        { id: 'ref-2', meta: { dataUrl: 'data:image/png;base64,REF2' } },
+      ]);
+      return Promise.resolve([{ id: 'asset-new' }]);
+    });
+    await createImageTool.execute(
+      {
+        prompt: 'warmer palette',
+        baseImageAssetId: 'asset-base',
+        styleReferenceAssetIds: ['ref-1', 'ref-2'],
+      },
+      { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
+    );
+    expect(generateOpenAIImage).toHaveBeenCalledWith(expect.objectContaining({
+      baseImageDataUrl: 'data:image/png;base64,BASE',
+      styleReferenceDataUrls: ['data:image/png;base64,REF1', 'data:image/png;base64,REF2'],
+    }));
+    // Final prompt should contain the strict preservation template, not
+    // just the agent's "warmer palette" intent verbatim.
+    const callArgs = generateOpenAIImage.mock.calls[0][0];
+    expect(callArgs.prompt).toMatch(/PRESERVE EXACTLY/);
+    expect(callArgs.prompt).toMatch(/warmer palette/);
+  });
+
+  it('builds preservation template even without style references in edit mode', async () => {
+    sql.mockImplementation(() => Promise.resolve([{ meta: { dataUrl: 'data:image/png;base64,BASE' } }]));
+    await createImageTool.execute(
+      { prompt: 'remove the background', baseImageAssetId: 'asset-base' },
+      { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
+    );
+    const callArgs = generateOpenAIImage.mock.calls[0][0];
+    expect(callArgs.prompt).toMatch(/PRESERVE EXACTLY/);
+    expect(callArgs.prompt).toMatch(/remove the background/);
+    // styleReferenceDataUrls should be null/undefined when no refs.
+    expect(callArgs.styleReferenceDataUrls).toBeFalsy();
+  });
+
+  it('does NOT impose template in pure text-to-image (no base)', async () => {
+    sql._nextResult = [{ id: 'asset-1' }];
+    await createImageTool.execute(
+      { prompt: 'a sleeping cat in space' },
+      { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
+    );
+    const callArgs = generateGeminiImage.mock.calls[0][0];
+    expect(callArgs.prompt).toBe('a sleeping cat in space');
+    expect(callArgs.prompt).not.toMatch(/PRESERVE/);
+  });
+
+  it('dedupes styleReferenceAssetIds and filters baseImageAssetId out of refs', async () => {
+    let call = 0;
+    sql.mockImplementation(() => {
+      call++;
+      if (call === 1) return Promise.resolve([{ meta: { dataUrl: 'data:image/png;base64,BASE' } }]);
+      // call 2 = SELECT refs (only ref-1 — duplicate + base-equal were filtered before SQL)
+      if (call === 2) return Promise.resolve([
+        { id: 'ref-1', meta: { dataUrl: 'data:image/png;base64,REF1' } },
+      ]);
+      return Promise.resolve([{ id: 'asset-new' }]);
+    });
+    await createImageTool.execute(
+      {
+        prompt: '',
+        baseImageAssetId: 'asset-base',
+        // 'asset-base' should be filtered (same as base); 'ref-1' deduped
+        styleReferenceAssetIds: ['ref-1', 'ref-1', 'asset-base'],
+      },
+      { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
+    );
+    const callArgs = generateOpenAIImage.mock.calls[0][0];
+    expect(callArgs.styleReferenceDataUrls).toEqual(['data:image/png;base64,REF1']);
+  });
 });
