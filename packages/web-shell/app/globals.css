@@ -3749,6 +3749,14 @@ input.canvas-section-name-input:focus {
   border-radius: 0;
   transition: none;
 }
+/* Placeholder = current name at 15% opacity. The qualified selector
+   beats the global input[type='text']::placeholder rule on
+   specificity + source order. The placeholder vanishes on the first
+   keystroke (browser default). */
+input.canvas-section-name-input::placeholder {
+  color: inherit;
+  opacity: 0.15;
+}
 .canvas-section-play-btn {
   /* Circle, stable on-screen size — ~40x40 (down 20% from the prior
      50). width = height so border-radius:999px renders a clean disc. */
