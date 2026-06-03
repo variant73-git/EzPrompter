@@ -122,7 +122,30 @@ body.rb-ed-light .chat-thinking-dot {
      The bottom stays solid so the latest reply is fully legible. */
   mask-image: linear-gradient(to bottom, transparent 0, #000 30px);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 30px);
+  /* Firefox custom scrollbar: thin width, gray thumb, transparent track
+     (kills the system-default white track strip that showed behind the
+     mask gradient at the top). */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
 }
+/* WebKit / Chrome scrollbar — same intent. Transparent track + gray
+   thumb. Thumb brightens on hover for a tiny affordance bump. */
+.chat-panel::-webkit-scrollbar {
+  width: 6px;
+}
+.chat-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-panel::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 3px;
+}
+.chat-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+body.rb-ed-light .chat-panel { scrollbar-color: rgba(0, 0, 0, 0.22) transparent; }
+body.rb-ed-light .chat-panel::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.22); }
+body.rb-ed-light .chat-panel::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.4); }
 .chat-panel-empty {
   padding: 24px 16px;
   text-align: center;

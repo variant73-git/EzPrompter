@@ -3644,6 +3644,47 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
   overflow: visible;
 }
 
+/* ── Custom tooltip system ──────────────────────────────────────────
+   Replaces the OS-native title-attribute tooltip with a styled pill:
+   white bg, rounded corners, faster activation (~150ms vs the ~500ms
+   browser default). Use data-tooltip="text" + aria-label="text" on the
+   trigger element (don't use title= so the native tooltip doesn't ALSO
+   show). Position defaults to top; pass data-tooltip-position="bottom"
+   to flip. */
+[data-tooltip] { position: relative; }
+[data-tooltip]:not([data-tooltip=""])::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%) translateY(2px);
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #0a0a0a;
+  font: 500 11.5px/1.2 var(--popup-font-sans, system-ui), sans-serif;
+  letter-spacing: 0;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.22);
+  transition: opacity 100ms ease, visibility 0s 100ms, transform 120ms ease;
+  z-index: 10001;
+}
+[data-tooltip][data-tooltip-position="bottom"]:not([data-tooltip=""])::after {
+  bottom: auto;
+  top: calc(100% + 6px);
+  transform: translateX(-50%) translateY(-2px);
+}
+[data-tooltip]:hover:not([data-tooltip=""])::after,
+[data-tooltip]:focus-visible:not([data-tooltip=""])::after {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+  transition-delay: 150ms, 0s, 150ms;
+}
+
 /* ── Section frames (auto-derived workflow groups) ──────────────── */
 .canvas-section-frame {
   position: absolute;
@@ -3675,18 +3716,18 @@ body.rb-ed-light .canvas-section-frame {
      padding so the pill hugs both elements. Pill total height ≈ 48px
      (4px top + 40px play-btn + 4px bottom). All values inverse-scaled
      so the chip reads at a stable on-screen size at any zoom. */
+  /* Inverse-scale CAPPED via max(0.25, scale): below 25% canvas zoom
+     the chip stops growing in world space. Otherwise the chip would
+     keep multiplying by 1/scale (1/0.1 = 10x at extreme zoom-out) and
+     dominate the entire canvas overview. */
   padding:
-    calc(4px / var(--canvas-scale, 1))
-    calc(4px / var(--canvas-scale, 1))
-    calc(4px / var(--canvas-scale, 1))
-    calc(20px / var(--canvas-scale, 1));
+    calc(4px / max(0.25, var(--canvas-scale, 1)))
+    calc(4px / max(0.25, var(--canvas-scale, 1)))
+    calc(4px / max(0.25, var(--canvas-scale, 1)))
+    calc(20px / max(0.25, var(--canvas-scale, 1)));
   font-family: inherit;
-  /* -20% from prior pass (18 -> 14) so the label stays subordinate to
-     the play button visually. */
-  font-size: calc(14px / var(--canvas-scale, 1));
+  font-size: calc(14px / max(0.25, var(--canvas-scale, 1)));
   font-weight: 500;
-  /* Tighter tracking at small sizes — wide tracking at chip scale reads
-     as a logo, not a label. */
   letter-spacing: 0.01em;
   color: var(--text-primary);
   pointer-events: auto;
@@ -3694,7 +3735,7 @@ body.rb-ed-light .canvas-section-frame {
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: calc(10px / var(--canvas-scale, 1));
+  gap: calc(10px / max(0.25, var(--canvas-scale, 1)));
   cursor: pointer;
 }
 .canvas-section-name-tag:hover { background: rgba(28, 28, 30, 0.82); }
@@ -3744,8 +3785,8 @@ input.canvas-section-name-input:focus {
   padding: 0;
   margin: 0;
   white-space: nowrap;
-  min-width: calc(60px / var(--canvas-scale, 1));
-  max-width: calc(280px / var(--canvas-scale, 1));
+  min-width: calc(60px / max(0.25, var(--canvas-scale, 1)));
+  max-width: calc(280px / max(0.25, var(--canvas-scale, 1)));
   border-radius: 0;
   transition: none;
 }
@@ -3758,10 +3799,10 @@ input.canvas-section-name-input::placeholder {
   opacity: 0.15;
 }
 .canvas-section-play-btn {
-  /* Circle, stable on-screen size — ~40x40 (down 20% from the prior
-     50). width = height so border-radius:999px renders a clean disc. */
-  width: calc(40px / var(--canvas-scale, 1));
-  height: calc(40px / var(--canvas-scale, 1));
+  /* Circle, stable on-screen size — ~40x40 with the same 0.25 floor
+     as the surrounding pill so play btn + label stay proportional. */
+  width: calc(40px / max(0.25, var(--canvas-scale, 1)));
+  height: calc(40px / max(0.25, var(--canvas-scale, 1)));
   border-radius: 999px;
   /* Solid offwhite chip with an offblack triangle inside. Light-mode
      swaps to offblack/offwhite below. */
@@ -3780,8 +3821,8 @@ input.canvas-section-name-input::placeholder {
 }
 .canvas-section-play-btn:active { transform: scale(0.93); }
 .canvas-section-play-btn svg {
-  width: calc(18px / var(--canvas-scale, 1));
-  height: calc(18px / var(--canvas-scale, 1));
+  width: calc(18px / max(0.25, var(--canvas-scale, 1)));
+  height: calc(18px / max(0.25, var(--canvas-scale, 1)));
 }
 body.rb-ed-light .canvas-section-play-btn { background: #0a0a0a; color: #fff; }
 body.rb-ed-light .canvas-section-play-btn:hover { background: #1a1a1a; }
@@ -3801,9 +3842,10 @@ body.rb-ed-light .canvas-section-frame.selected {
   border-color: rgba(0, 0, 0, 0.18);
 }
 
-/* Drag grip — dot grid centered at the top of the section, mirrors the
-   per-node topbar-grip pattern (6×2 dots) at canvas scale. Grabbing this
-   translates ALL member nodes by the same delta. */
+/* Drag grip — dot grid centered at the top of the section. Inverse-
+   scaled (same 0.25 floor as the section pill). All sizes -50% on
+   top of the inverse-scale base: dots 6→3, gap 4→2, padding 8/12→4/6,
+   radius 14→7. Discreet handle, still grab-able. */
 .canvas-section-grip {
   position: absolute;
   top: 32px;
@@ -3811,26 +3853,26 @@ body.rb-ed-light .canvas-section-frame.selected {
   transform: translateX(-50%);
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  grid-auto-rows: 6px;
-  gap: 4px;
-  padding: 8px 12px;
-  border-radius: 14px;
+  grid-auto-rows: calc(3px / max(0.25, var(--canvas-scale, 1)));
+  gap: calc(2px / max(0.25, var(--canvas-scale, 1)));
+  padding:
+    calc(4px / max(0.25, var(--canvas-scale, 1)))
+    calc(6px / max(0.25, var(--canvas-scale, 1)));
+  border-radius: calc(7px / max(0.25, var(--canvas-scale, 1)));
   background: transparent;
   cursor: grab;
   pointer-events: auto;
   z-index: 3;
   transition: background 120ms ease;
 }
-.canvas-section-grip:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
+.canvas-section-grip:hover { background: rgba(255, 255, 255, 0.06); }
 .canvas-section-grip:active {
   cursor: grabbing;
   background: rgba(255, 255, 255, 0.1);
 }
 .canvas-section-grip span {
-  width: 6px;
-  height: 6px;
+  width: calc(3px / max(0.25, var(--canvas-scale, 1)));
+  height: calc(3px / max(0.25, var(--canvas-scale, 1)));
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.55);
 }
@@ -4299,15 +4341,17 @@ body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
   top: 10px;
   left: 50%;
   transform: translateX(-50%);
-  width: 60px;
-  height: 22px;
+  /* -20% from the original 60x22 → 48x18 — more discreet, still
+     comfortably grab-able. */
+  width: 48px;
+  height: 18px;
   border-radius: 999px;
   background: rgba(36, 36, 38, 0.92);
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   align-items: center;
   justify-items: center;
-  padding: 0 6px;
+  padding: 0 5px;
   gap: 3px;
   cursor: grab;
   z-index: 6;
@@ -4356,7 +4400,9 @@ body.rb-ed-light .prompt-dock-collapse-btn {
   position: fixed;
   top: 0;
   bottom: 0;
-  width: 15px;
+  /* -40% from the original 15px → 9px. Slimmer indicator, still
+     unmissable thanks to the white + glow. */
+  width: 9px;
   background: #ffffff;
   z-index: 10000;
   pointer-events: none;
