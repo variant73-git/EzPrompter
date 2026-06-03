@@ -2374,121 +2374,40 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     window.addEventListener('mouseup', onUp);
   }
 
-  // Section corner resize — hybrid behaviour. For each axis independently:
-  //   • If member POSITIONS have spread along that axis (at least 2 distinct
-  //     coordinates), SCALE positions around the opposite corner — Figma
-  //     frame-style spread.
-  //   • If positions are collinear (e.g. 2 nodes on the same row), no
-  //     scaling can spread them in the perpendicular axis. Grow the
-  //     section's size override instead so the FRAME visibly resizes
-  //     without moving the nodes.
-  // This guarantees every section is resizable in every direction.
+  // Section corner resize — pure FRAME resize. Members NEVER move. Dragging
+  // a corner grows the section's size override on the two sides that
+  // corner touches. Override is clamped to >= 0 so the frame can't shrink
+  // below its auto-derived minimum size (bbox + UNIFORM_GAP + TOP_GAP).
+  // Sections are spatial groupings; resizing the frame is a labelling /
+  // visual-grouping act, not an act on the contents.
   function startSectionResize(sectionId, corner, e) {
     e.stopPropagation();
     e.preventDefault();
     const section = sections.find((x) => x.id === sectionId);
     if (!section) return;
-    const memberNodes = section.memberIds
-      .map((id) => nodes.find((n) => n.id === id))
-      .filter(Boolean);
-    if (memberNodes.length === 0) return;
 
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    let minPosX = Infinity, maxPosX = -Infinity;
-    let minPosY = Infinity, maxPosY = -Infinity;
-    for (const m of memberNodes) {
-      minX = Math.min(minX, m.pos_x || 0);
-      minY = Math.min(minY, m.pos_y || 0);
-      maxX = Math.max(maxX, (m.pos_x || 0) + (m.width || 0));
-      maxY = Math.max(maxY, (m.pos_y || 0) + (m.height || 0));
-      minPosX = Math.min(minPosX, m.pos_x || 0);
-      maxPosX = Math.max(maxPosX, m.pos_x || 0);
-      minPosY = Math.min(minPosY, m.pos_y || 0);
-      maxPosY = Math.max(maxPosY, m.pos_y || 0);
-    }
-    const canScaleX = (maxPosX - minPosX) > 0.5;
-    const canScaleY = (maxPosY - minPosY) > 0.5;
-
-    const startMin = { x: minX, y: minY };
-    const startMax = { x: maxX, y: maxY };
-    const startMembers = memberNodes.map((m) => ({ id: m.id, pos_x: m.pos_x, pos_y: m.pos_y }));
     const startOverride = sectionSizeOverrides[sectionId] || { dTop: 0, dRight: 0, dBottom: 0, dLeft: 0 };
     const readScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
     const startScale = readScale();
     const startMouseX = e.clientX;
     const startMouseY = e.clientY;
-    const MIN_W = 120;
-    const MIN_H = 80;
 
     function onMove(ev) {
       const dx = (ev.clientX - startMouseX) / startScale;
       const dy = (ev.clientY - startMouseY) / startScale;
-      // Map corner+(dx,dy) to per-side outward deltas.
       let outLeft = 0, outRight = 0, outTop = 0, outBottom = 0;
-      if (corner === 'nw') { outLeft = -dx; outTop = -dy; }
+      if (corner === 'nw')      { outLeft = -dx; outTop = -dy; }
       else if (corner === 'ne') { outRight = dx; outTop = -dy; }
       else if (corner === 'sw') { outLeft = -dx; outBottom = dy; }
       else if (corner === 'se') { outRight = dx; outBottom = dy; }
 
-      let newMembersById = new Map();
-      const newOverride = { ...startOverride };
+      const newOverride = {
+        dTop:    Math.max(0, (startOverride.dTop    || 0) + outTop),
+        dRight:  Math.max(0, (startOverride.dRight  || 0) + outRight),
+        dBottom: Math.max(0, (startOverride.dBottom || 0) + outBottom),
+        dLeft:   Math.max(0, (startOverride.dLeft   || 0) + outLeft),
+      };
 
-      // ── X axis ────────────────────────────────────────────────────
-      if (canScaleX) {
-        let newMinX = startMin.x;
-        let newMaxX = startMax.x;
-        if (corner === 'nw' || corner === 'sw') newMinX = startMin.x + dx;
-        else newMaxX = startMax.x + dx;
-        if (newMaxX - newMinX < MIN_W) {
-          if (corner === 'nw' || corner === 'sw') newMinX = newMaxX - MIN_W;
-          else newMaxX = newMinX + MIN_W;
-        }
-        const oldW = startMax.x - startMin.x;
-        const scaleX = (newMaxX - newMinX) / oldW;
-        const oldAnchorX = (corner === 'nw' || corner === 'sw') ? startMax.x : startMin.x;
-        const newAnchorX = (corner === 'nw' || corner === 'sw') ? newMaxX : newMinX;
-        for (const m of startMembers) {
-          const slot = newMembersById.get(m.id) || { pos_x: m.pos_x, pos_y: m.pos_y };
-          slot.pos_x = Math.round(newAnchorX + (m.pos_x - oldAnchorX) * scaleX);
-          newMembersById.set(m.id, slot);
-        }
-      } else {
-        newOverride.dLeft = Math.max(0, (startOverride.dLeft || 0) + outLeft);
-        newOverride.dRight = Math.max(0, (startOverride.dRight || 0) + outRight);
-      }
-
-      // ── Y axis ────────────────────────────────────────────────────
-      if (canScaleY) {
-        let newMinY = startMin.y;
-        let newMaxY = startMax.y;
-        if (corner === 'nw' || corner === 'ne') newMinY = startMin.y + dy;
-        else newMaxY = startMax.y + dy;
-        if (newMaxY - newMinY < MIN_H) {
-          if (corner === 'nw' || corner === 'ne') newMinY = newMaxY - MIN_H;
-          else newMaxY = newMinY + MIN_H;
-        }
-        const oldH = startMax.y - startMin.y;
-        const scaleY = (newMaxY - newMinY) / oldH;
-        const oldAnchorY = (corner === 'nw' || corner === 'ne') ? startMax.y : startMin.y;
-        const newAnchorY = (corner === 'nw' || corner === 'ne') ? newMaxY : newMinY;
-        for (const m of startMembers) {
-          const slot = newMembersById.get(m.id) || { pos_x: m.pos_x, pos_y: m.pos_y };
-          slot.pos_y = Math.round(newAnchorY + (m.pos_y - oldAnchorY) * scaleY);
-          newMembersById.set(m.id, slot);
-        }
-      } else {
-        newOverride.dTop = Math.max(0, (startOverride.dTop || 0) + outTop);
-        newOverride.dBottom = Math.max(0, (startOverride.dBottom || 0) + outBottom);
-      }
-
-      // Apply member moves
-      if (newMembersById.size > 0) {
-        setNodes((prev) => prev.map((n) => {
-          const m = newMembersById.get(n.id);
-          return m ? { ...n, pos_x: m.pos_x, pos_y: m.pos_y } : n;
-        }));
-      }
-      // Apply size override
       setSectionSizeOverrides((prev) => {
         const cur = prev[sectionId];
         if (cur && cur.dTop === newOverride.dTop && cur.dRight === newOverride.dRight
@@ -2503,17 +2422,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     function onUp() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      // Persist member positions
-      setNodes((cur) => {
-        for (const m of startMembers) {
-          const node = cur.find((n) => n.id === m.id);
-          if (node && !String(node.id).startsWith('temp-') && (node.pos_x !== m.pos_x || node.pos_y !== m.pos_y)) {
-            api.updateNode(node.id, { posX: node.pos_x, posY: node.pos_y }).catch(console.warn);
-          }
-        }
-        return cur;
-      });
-      // Persist size overrides
       setSectionSizeOverrides((cur) => {
         try { localStorage.setItem('rb-section-sizes', JSON.stringify(cur)); } catch {}
         return cur;

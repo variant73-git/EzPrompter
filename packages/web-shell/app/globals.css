@@ -3718,13 +3718,21 @@ body.rb-ed-light .canvas-section-name-tag {
 /* Inline rename input — sits in the pill slot, inherits typography so
    the swap doesn't shift surrounding layout. */
 /* Rename input — no field outline / no background. The input visually
-   IS the label; only the caret + selection differ. Force every font
-   property explicitly because some browsers don't fully apply `font:
-   inherit` on form controls. Clearing all text + clicking outside
-   resets the section name to its auto-generated default (the empty
-   string flows through setSectionNameOverride which deletes the
-   override and falls back to fallbackName). */
-.canvas-section-name-input {
+   IS the label; only the caret + selection differ. Clearing all text +
+   clicking outside resets the section name to its auto-generated
+   default (empty string flows through setSectionNameOverride which
+   deletes the override and falls back to fallbackName).
+
+   CRITICAL: the selector must be `input.canvas-section-name-input`
+   (element + class, specificity 0,0,1,1) so it ties with the global
+   `input[type='text']` form-control rule and wins by source order.
+   A bare .class selector (0,0,1,0) LOSES to the global rule, and the
+   input renders with the global's padding 0.85rem, font-size 0.95rem,
+   visible border, etc. The chip-scale font + clean look ONLY land
+   with the qualified selector. */
+input.canvas-section-name-input,
+input.canvas-section-name-input:focus {
+  width: auto;
   background: transparent;
   border: none;
   outline: none;
@@ -3734,9 +3742,12 @@ body.rb-ed-light .canvas-section-name-tag {
   font-weight: inherit;
   letter-spacing: inherit;
   padding: 0;
+  margin: 0;
   white-space: nowrap;
   min-width: calc(60px / var(--canvas-scale, 1));
   max-width: calc(280px / var(--canvas-scale, 1));
+  border-radius: 0;
+  transition: none;
 }
 .canvas-section-play-btn {
   /* Circle, stable on-screen size — ~40x40 (down 20% from the prior
