@@ -1180,7 +1180,7 @@ export default function CanvasNode({
         <button
           ref={portRightRef}
           type="button"
-          className={`cnode-port-right${editing ? ' disabled' : ''}`}
+          className={`cnode-port-right${editing ? ' disabled' : ''}${hasOutgoingEdges ? ' is-connected' : ''}`}
           onMouseDown={editing ? undefined : (e) => onPortMouseDown(e, 'right')}
           disabled={editing}
           title={editing ? 'disabled on edit mode' : 'Drag to connect'}

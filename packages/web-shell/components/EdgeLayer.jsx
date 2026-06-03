@@ -14,8 +14,8 @@ const WORLD_HEIGHT = 6000;
 // on-screen size at any zoom. nodePort applies the same inverse-scale to
 // place its endpoint at the actual circle centre — without this, at low
 // zoom the cord landed between slots instead of in their middles.
-const SLOT_SIZE = 24;
-const SLOT_GAP = 8;
+const SLOT_SIZE = 19;
+const SLOT_GAP = 6;
 
 function nodePort(n, side, measuredH, slotIndex = 0, slotCount = 1, scale = 1) {
   const h = measuredH ?? n.height ?? 800;
