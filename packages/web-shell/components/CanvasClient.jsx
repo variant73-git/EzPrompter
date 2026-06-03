@@ -2143,11 +2143,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // would persist as overrides; this MVP is fully derived.
   const sections = useMemo(() => {
     if (!nodes || nodes.length < 2) return [];
-    // Single uniform gap on all 4 sides. The top gap had to grow to
-    // accommodate the bigger name tag + 50% extra breathing room; the
-    // other sides match for visual balance. 165px = old top (40 gap +
-    // 70 name reserve = 110) × 1.5.
+    // Sides + bottom use a uniform 165px gap. The TOP gap is larger
+    // (260px) because the name tag's play button is stable-sized on
+    // screen, so at moderate zoom-out it occupies more world space —
+    // 260px reserves enough room that nodes can't visually overlap
+    // the play button across the typical zoom range.
     const UNIFORM_GAP = 165;
+    const TOP_GAP = 260;
     const nodeById = new Map(nodes.map((n) => [n.id, n]));
     // Build adjacency map. Skip edges whose endpoints aren't both in the
     // current nodes array (e.g. mid-flight temp edges that haven't synced).
@@ -2246,13 +2248,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         memberIds,
         theme: t,
         name: `${THEME_LABEL[t]} #${themeCounter[t]}`,
-        // Uniform gap on all 4 sides — the top fits the name tag, the
-        // bottom fits any asset-pill + dims overflow, sides match for
-        // visual balance.
+        // Asymmetric padding: TOP_GAP reserves room for the play
+        // button + name tag, sides/bottom keep UNIFORM_GAP. The bottom
+        // already accounts for asset-pill/dims overflow via the +80
+        // bump on maxY above, so it stays at UNIFORM_GAP.
         x: minX - UNIFORM_GAP,
-        y: minY - UNIFORM_GAP,
+        y: minY - TOP_GAP,
         width: (maxX - minX) + UNIFORM_GAP * 2,
-        height: (maxY - minY) + UNIFORM_GAP * 2,
+        height: (maxY - minY) + TOP_GAP + UNIFORM_GAP,
       });
     }
     return out;
