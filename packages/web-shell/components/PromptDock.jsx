@@ -428,6 +428,53 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   const taRef = useRef(null);
   const addBtnRef = useRef(null);
   const modelBtnRef = useRef(null);
+  const dockRef = useRef(null);
+
+  // ── Dock position + drag state ──────────────────────────────────────
+  // dockPos is either a string ('bottom' | 'left' | 'right') or a
+  // {x, y} object when the user has dragged the widget to a free
+  // position. dragState is non-null DURING a drag and carries the
+  // cursor-tracking coords + an optional snapTarget ('left' / 'right')
+  // computed from proximity to the viewport edges.
+  const [dockPos, setDockPos] = useState('bottom');
+  const [dragState, setDragState] = useState(null);
+
+  function startDockDrag(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dockRef.current) return;
+    const rect = dockRef.current.getBoundingClientRect();
+    const startMouseX = e.clientX;
+    const startMouseY = e.clientY;
+    const startLeft = rect.left;
+    const startTop = rect.top;
+    const SNAP_THRESHOLD = 80;
+
+    function onMove(ev) {
+      const dx = ev.clientX - startMouseX;
+      const dy = ev.clientY - startMouseY;
+      let snapTarget = null;
+      if (ev.clientX < SNAP_THRESHOLD) snapTarget = 'left';
+      else if (ev.clientX > window.innerWidth - SNAP_THRESHOLD) snapTarget = 'right';
+      setDragState({ x: startLeft + dx, y: startTop + dy, snapTarget });
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      setDragState((cur) => {
+        if (!cur) return null;
+        if (cur.snapTarget) setDockPos(cur.snapTarget);
+        else setDockPos({ x: cur.x, y: cur.y });
+        return null;
+      });
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  // Reset the dock back to its default bottom-center position. Wired to
+  // a double-click on the drag handle so the user can always recover.
+  function resetDockToBottom() { setDockPos('bottom'); }
 
   // Expose imperative API so the canvas can drive the dock (e.g. play-section
   // button fires a synthetic chat message scoped to the workflow context).
@@ -882,12 +929,60 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   const currentModel = findModel(modelId);
   const ProviderIcon = PROVIDER_ICON[currentModel.provider];
 
+  // Dock position styling. While dragging, follow the cursor via inline
+  // top/left + transform:none. Otherwise rely on CSS classes for the
+  // standard bottom-center / left-edge / right-edge placements, or
+  // inline x/y for a free-floating position the user dragged it to.
+  const isFloating = typeof dockPos === 'object' && dockPos !== null;
+  const dockStyle = dragState
+    ? { left: dragState.x, top: dragState.y, right: 'auto', bottom: 'auto', transform: 'none' }
+    : isFloating
+      ? { left: dockPos.x, top: dockPos.y, right: 'auto', bottom: 'auto', transform: 'none' }
+      : undefined;
+  const dockClass = [
+    'prompt-dock',
+    dockPos === 'left' ? 'dock-left' : '',
+    dockPos === 'right' ? 'dock-right' : '',
+    isFloating ? 'dock-floating' : '',
+    dragState ? (dragState.snapTarget ? 'is-snapping' : 'is-dragging') : '',
+  ].filter(Boolean).join(' ');
+
   return (
     <div
-      className="prompt-dock"
+      ref={dockRef}
+      className={dockClass}
+      style={dockStyle}
       onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDrop={handleDrop}
     >
+      {/* Drag handle — 6 dots in a dark pill, centred at the top.
+          mousedown enters drag mode; doubleclick resets the dock to
+          its bottom-center default. */}
+      <div
+        className="prompt-dock-drag-handle"
+        title="Drag to move · Double-click to reset"
+        onMouseDown={startDockDrag}
+        onDoubleClick={resetDockToBottom}
+      >
+        <span /><span /><span /><span /><span /><span />
+      </div>
+      {/* Top-right collapse chevron — only relevant when the chat panel
+          has content to hide / reveal. Black chevron in a gray circle. */}
+      {(chat.messages.length > 0 || chat.activeToolCalls.length > 0) && (
+        <button
+          type="button"
+          className="prompt-dock-collapse-btn"
+          onClick={() => setChatCollapsed((v) => !v)}
+          title={chatCollapsed ? 'Expand chat' : 'Collapse chat'}
+          aria-label={chatCollapsed ? 'Expand chat' : 'Collapse chat'}
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {chatCollapsed
+              ? <polyline points="6 9 12 15 18 9" />
+              : <polyline points="18 15 12 9 6 15" />}
+          </svg>
+        </button>
+      )}
       <AnimatePresence>
         {imagePreview && (
           <motion.div
@@ -1263,6 +1358,16 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           e.target.value = '';
         }}
       />
+      {/* Snap indicator — a 15px white bar at the viewport edge that
+          shows where the dock will land if released. Portal'd to body
+          so it isn't constrained by the dock's transform/clipping. */}
+      {dragState?.snapTarget && typeof document !== 'undefined' && createPortal(
+        <div
+          className={`prompt-dock-snap-bar prompt-dock-snap-bar-${dragState.snapTarget}`}
+          aria-hidden="true"
+        />,
+        document.body
+      )}
     </div>
   );
 });

@@ -3664,13 +3664,13 @@ body.rb-ed-light .canvas-section-frame {
   -webkit-backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
-  /* Horizontal padding bumped +10% (36/14 -> 40/15) so the pill has more
-     breathing around the label. Cursor:pointer + the JSX-level onClick
-     make the WHOLE pill the workflow-select hit area (not just the
-     label). */
-  padding: 12px 15px 12px 40px;
+  /* Inverse-scaled padding so the chip stays at a stable on-screen
+     size regardless of canvas zoom — matches the play-button stable-
+     sizing convention. Horizontal padding kept proportionally bumped
+     (40/15 vs the earlier 36/14). */
+  padding: calc(12px / var(--canvas-scale, 1)) calc(15px / var(--canvas-scale, 1)) calc(12px / var(--canvas-scale, 1)) calc(40px / var(--canvas-scale, 1));
   font-family: inherit;
-  font-size: 40px;
+  font-size: calc(40px / var(--canvas-scale, 1));
   font-weight: 500;
   letter-spacing: 0.04em;
   color: var(--text-primary);
@@ -3679,7 +3679,7 @@ body.rb-ed-light .canvas-section-frame {
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: 22px;
+  gap: calc(22px / var(--canvas-scale, 1));
   cursor: pointer;
 }
 .canvas-section-name-tag:hover { background: rgba(28, 28, 30, 0.82); }
@@ -3827,17 +3827,16 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
 .canvas-section-handle-se {
   bottom: -10px;
   right: -10px;
-  /* Grow the hit area to fit the bigger inverse-scaled icon at any
-     zoom — inverse-scale capped on the lower end so high zoom-in
-     doesn't shrink the icon below readability. */
-  width: calc(56px / var(--canvas-scale, 1));
-  height: calc(56px / var(--canvas-scale, 1));
+  /* Hit area inverse-scaled and -50% from prior pass (56 -> 28). Icon
+     stays stable on screen at any zoom. */
+  width: calc(28px / var(--canvas-scale, 1));
+  height: calc(28px / var(--canvas-scale, 1));
   cursor: nwse-resize;
   color: rgba(255, 255, 255, 0.45);
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;
-  padding: calc(6px / var(--canvas-scale, 1));
+  padding: calc(3px / var(--canvas-scale, 1));
 }
 /* Section context menu separator — hairline between groups of items
    (currently Rename | sep | Delete). Inherits the frosted-menu hairline
@@ -3848,11 +3847,11 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
   margin: 4px 6px;
 }
 .canvas-section-handle-se:hover { color: rgba(255, 255, 255, 0.85); }
-/* Resize icon: +100% (24 -> 48) AND inverse-scaled so it stays a
-   stable ~48px on screen regardless of canvas zoom. */
+/* Resize icon -50% from prior pass (48 -> 24), still inverse-scaled
+   so it reads as a stable ~24px on screen across the zoom range. */
 .canvas-section-handle-se svg {
-  width: calc(48px / var(--canvas-scale, 1));
-  height: calc(48px / var(--canvas-scale, 1));
+  width: calc(24px / var(--canvas-scale, 1));
+  height: calc(24px / var(--canvas-scale, 1));
 }
 body.rb-ed-light .canvas-section-handle-se { color: rgba(0, 0, 0, 0.35); }
 body.rb-ed-light .canvas-section-handle-se:hover { color: rgba(0, 0, 0, 0.7); }
@@ -4213,6 +4212,7 @@ body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
   width: min(560px, calc(100vw - 32px));
   z-index: 200;
   padding: 10px;
+  padding-top: 38px;       /* space for drag handle + collapse chevron */
   border-radius: 22px;
   background: rgba(10, 10, 10, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -4222,6 +4222,111 @@ body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
   display: flex;
   flex-direction: column;
   gap: 6px;
+  transition: opacity 140ms ease, outline-color 140ms ease;
+}
+/* Side-docked layouts — full-height sidebar at left or right edge. */
+.prompt-dock.dock-left,
+.prompt-dock.dock-right {
+  top: 24px;
+  bottom: 24px;
+  width: 400px;
+  transform: none;
+}
+.prompt-dock.dock-left { left: 24px; right: auto; }
+.prompt-dock.dock-right { right: 24px; left: auto; }
+/* Floating: position set inline; no transform needed. */
+.prompt-dock.dock-floating { transform: none; }
+/* During a drag, fade the dock so the user can see the snap-bar +
+   the canvas underneath. */
+.prompt-dock.is-dragging {
+  opacity: 0.65;
+  pointer-events: none;
+}
+/* When dragged INTO a snap zone, drop further to 20% + add a 1px
+   white outline as an "about to dock" affordance. */
+.prompt-dock.is-snapping {
+  opacity: 0.2;
+  outline: 1px solid #ffffff;
+  outline-offset: 2px;
+  pointer-events: none;
+}
+
+/* Drag handle — dark pill with 6 light dots, centred at the top of
+   the dock. Hover reveals it more; mousedown enters drag mode. */
+.prompt-dock-drag-handle {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(36, 36, 38, 0.92);
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  align-items: center;
+  justify-items: center;
+  padding: 0 6px;
+  gap: 3px;
+  cursor: grab;
+  z-index: 6;
+  transition: background 120ms ease;
+  user-select: none;
+}
+.prompt-dock-drag-handle:hover { background: rgba(50, 50, 52, 0.95); }
+.prompt-dock-drag-handle:active { cursor: grabbing; }
+.prompt-dock-drag-handle span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+/* Top-right collapse / expand chevron — black chevron in a gray
+   circular bg. Stands out against the dark dock chrome. */
+.prompt-dock-collapse-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  border: none;
+  color: #0a0a0a;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 6;
+  transition: background 120ms ease, transform 80ms ease;
+  padding: 0;
+}
+.prompt-dock-collapse-btn:hover { background: rgba(255, 255, 255, 0.28); }
+.prompt-dock-collapse-btn:active { transform: scale(0.92); }
+body.rb-ed-light .prompt-dock-collapse-btn {
+  background: rgba(0, 0, 0, 0.12);
+  color: #0a0a0a;
+}
+
+/* Snap indicator — 15px-wide white bar at the viewport edge while
+   the dock is being dragged into that edge's snap zone. */
+.prompt-dock-snap-bar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 15px;
+  background: #ffffff;
+  z-index: 10000;
+  pointer-events: none;
+  box-shadow: 0 0 24px rgba(255, 255, 255, 0.5);
+  animation: prompt-dock-snap-pulse 1.1s ease-in-out infinite;
+}
+.prompt-dock-snap-bar-left { left: 0; }
+.prompt-dock-snap-bar-right { right: 0; }
+@keyframes prompt-dock-snap-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 /* Hidden during edit mode — the editor's own inspector + layers panel
