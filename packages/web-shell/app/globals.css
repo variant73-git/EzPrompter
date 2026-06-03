@@ -3724,16 +3724,22 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
 .prompt-dock [data-tooltip]:focus-visible:not([data-tooltip=""])::after {
   transition-delay: 300ms, 0s, 300ms;
 }
-/* Section chrome (grip / name tag / play / handles) — even slower
-   activation (500ms). Hovering across the canvas while panning or
-   selecting nodes should NOT surface a tooltip on every section grip
-   the cursor passes over; the longer dwell required keeps the canvas
-   visually quiet. */
+/* Section chrome (name tag / play / handles) — slower activation
+   (500ms). Hovering across the canvas while panning or selecting
+   nodes should NOT surface a tooltip on every section element the
+   cursor passes over. */
 .canvas-section-chrome [data-tooltip]:hover:not([data-tooltip=""])::after,
 .canvas-section-chrome [data-tooltip]:focus-visible:not([data-tooltip=""])::after,
 .canvas-section-name-tag[data-tooltip]:hover:not([data-tooltip=""])::after,
 .canvas-section-name-tag[data-tooltip]:focus-visible:not([data-tooltip=""])::after {
   transition-delay: 500ms, 0s, 500ms;
+}
+/* The section grip itself — sits in the busy top-centre region above
+   nodes and gets a LOT of incidental hover traffic. 3× the chrome
+   delay (1500ms) so the tooltip only surfaces on intentional dwell. */
+.canvas-section-grip[data-tooltip]:hover:not([data-tooltip=""])::after,
+.canvas-section-grip[data-tooltip]:focus-visible:not([data-tooltip=""])::after {
+  transition-delay: 1500ms, 0s, 1500ms;
 }
 
 /* ── Section frames (auto-derived workflow groups) ──────────────── */
