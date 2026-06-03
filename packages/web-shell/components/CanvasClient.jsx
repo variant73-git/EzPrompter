@@ -2672,9 +2672,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               DOM order + low z-index on the frame element). pointer-events:
               none on the frame so it doesn't intercept canvas clicks; the
               name tag has its own pointer-events:auto. */}
+          {/* Section BACKGROUND pass — frosted glass + selected outline
+              only. Paints BEFORE nodes so the glass sits behind them.
+              The chrome (grip / name tag / corner handles) renders in
+              a separate pass AFTER nodes so hit-testing reaches it
+              regardless of whether the section frame's backdrop-filter
+              creates a stacking context. */}
           {sections.map((s) => (
             <div
-              key={s.id}
+              key={`bg-${s.id}`}
               className={`canvas-section-frame${selectedSectionId === s.id ? ' selected' : ''}`}
               style={{
                 left: s.x,
@@ -2683,114 +2689,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 height: s.height,
               }}
               data-section-id={s.id}
-            >
-              <div
-                className="canvas-section-name-tag"
-                role="button"
-                tabIndex={0}
-                data-tooltip={editingSectionId === s.id ? '' : 'Double click to edit'}
-                aria-label={editingSectionId === s.id ? undefined : 'Double click to edit'}
-                onClick={(e) => {
-                  // Whole pill selects the workflow — but not during inline
-                  // edit, and not when the play button bubbles a click.
-                  if (editingSectionId === s.id) return;
-                  e.stopPropagation();
-                  setSelectedSectionId((prev) => (prev === s.id ? null : s.id));
-                  setSelectedNodeId(null);
-                  setSelectedNodeIds(new Set());
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setSectionMenu({ sectionId: s.id, x: e.clientX, y: e.clientY });
-                }}
-              >
-                {editingSectionId === s.id ? (
-                  <input
-                    type="text"
-                    className="canvas-section-name-input"
-                    /* Empty value + current name as placeholder so the
-                       caret blinks at position 0 (before the first
-                       letter) and the current name shows faded at 15%
-                       until the user starts typing. */
-                    defaultValue=""
-                    placeholder={s.name}
-                    autoFocus
-                    onClick={(e) => e.stopPropagation()}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onBlur={(e) => {
-                      setSectionNameOverride(s.id, e.target.value);
-                      setEditingSectionId(null);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        setSectionNameOverride(s.id, e.target.value);
-                        setEditingSectionId(null);
-                      } else if (e.key === 'Escape') {
-                        setEditingSectionId(null);
-                      }
-                    }}
-                  />
-                ) : (
-                  <span
-                    className="canvas-section-name-label"
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      setEditingSectionId(s.id);
-                    }}
-                  >
-                    {s.name}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className="canvas-section-play-btn"
-                  data-tooltip="Re-run this workflow"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPlaySection({ section: s, busy: false });
-                  }}
-                  aria-label={`Re-run ${s.name}`}
-                >
-                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <polygon points="6,4 20,12 6,20" />
-                  </svg>
-                </button>
-              </div>
-              {/* Drag grip — dot grid centered at the top of the section.
-                  Grabbing this translates ALL member nodes by the same
-                  delta so the whole workflow moves as a group. */}
-              <div
-                className="canvas-section-grip"
-                onMouseDown={(e) => startSectionMove(s.id, e)}
-                data-tooltip="Drag to move workflow"
-                aria-label="Drag workflow"
-              >
-                <span /><span /><span /><span /><span /><span />
-                <span /><span /><span /><span /><span /><span />
-              </div>
-              {/* Corner resize handles. Each hosts the appropriate
-                  diagonal cursor + a drag handler that scales member
-                  node positions around the opposite corner. The SE
-                  handle also renders a visible diagonal-lines icon as
-                  an explicit resize affordance. */}
-              {['nw', 'ne', 'sw', 'se'].map((corner) => (
-                <div
-                  key={corner}
-                  className={`canvas-section-handle canvas-section-handle-${corner}`}
-                  onMouseDown={(e) => startSectionResize(s.id, corner, e)}
-                  aria-hidden="true"
-                >
-                  {corner === 'se' && (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
-                      <line x1="8" y1="20" x2="20" y2="8" />
-                      <line x1="12" y1="20" x2="20" y2="12" />
-                      <line x1="16" y1="20" x2="20" y2="16" />
-                    </svg>
-                  )}
-                </div>
-              ))}
-            </div>
+            />
           ))}
           <EdgeLayer
             nodes={nodes} edges={edges}
@@ -2899,6 +2798,117 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               onReplaceContent={handleReplaceContent}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
             />
+          ))}
+          {/* Section CHROME pass — name tag, grip, corner handles.
+              Renders AFTER nodes so hit-testing lands here even when
+              a node visually overlaps the chrome position. The wrapper
+              is pointer-events:none so the empty space around the
+              chrome elements still passes clicks through to the canvas
+              / nodes underneath. */}
+          {sections.map((s) => (
+            <div
+              key={`chrome-${s.id}`}
+              className="canvas-section-chrome"
+              style={{
+                left: s.x,
+                top: s.y,
+                width: s.width,
+                height: s.height,
+              }}
+            >
+              <div
+                className="canvas-section-name-tag"
+                role="button"
+                tabIndex={0}
+                data-tooltip={editingSectionId === s.id ? '' : 'Double click to edit'}
+                aria-label={editingSectionId === s.id ? undefined : 'Double click to edit'}
+                onClick={(e) => {
+                  if (editingSectionId === s.id) return;
+                  e.stopPropagation();
+                  setSelectedSectionId((prev) => (prev === s.id ? null : s.id));
+                  setSelectedNodeId(null);
+                  setSelectedNodeIds(new Set());
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSectionMenu({ sectionId: s.id, x: e.clientX, y: e.clientY });
+                }}
+              >
+                {editingSectionId === s.id ? (
+                  <input
+                    type="text"
+                    className="canvas-section-name-input"
+                    defaultValue=""
+                    placeholder={s.name}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onBlur={(e) => {
+                      setSectionNameOverride(s.id, e.target.value);
+                      setEditingSectionId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        setSectionNameOverride(s.id, e.target.value);
+                        setEditingSectionId(null);
+                      } else if (e.key === 'Escape') {
+                        setEditingSectionId(null);
+                      }
+                    }}
+                  />
+                ) : (
+                  <span
+                    className="canvas-section-name-label"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setEditingSectionId(s.id);
+                    }}
+                  >
+                    {s.name}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="canvas-section-play-btn"
+                  data-tooltip="Re-run this workflow"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPlaySection({ section: s, busy: false });
+                  }}
+                  aria-label={`Re-run ${s.name}`}
+                >
+                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <polygon points="6,4 20,12 6,20" />
+                  </svg>
+                </button>
+              </div>
+              <div
+                className="canvas-section-grip"
+                onMouseDown={(e) => startSectionMove(s.id, e)}
+                data-tooltip="Drag to move workflow"
+                aria-label="Drag workflow"
+              >
+                <span /><span /><span /><span /><span /><span />
+                <span /><span /><span /><span /><span /><span />
+              </div>
+              {['nw', 'ne', 'sw', 'se'].map((corner) => (
+                <div
+                  key={corner}
+                  className={`canvas-section-handle canvas-section-handle-${corner}`}
+                  onMouseDown={(e) => startSectionResize(s.id, corner, e)}
+                  aria-hidden="true"
+                >
+                  {corner === 'se' && (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
+                      <line x1="8" y1="20" x2="20" y2="8" />
+                      <line x1="12" y1="20" x2="20" y2="12" />
+                      <line x1="16" y1="20" x2="20" y2="16" />
+                    </svg>
+                  )}
+                </div>
+              ))}
+            </div>
           ))}
           <DraftEdgeLayer
             nodes={nodes}
