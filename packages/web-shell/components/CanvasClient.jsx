@@ -1383,39 +1383,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
   }
 
-  // Active chat context — derived from selectedSectionId (preferred) or
-  // selectedNodeId. PromptDock renders a pill for this; sending a chat
-  // message prepends the context hint so the agent operates in scope.
-  const activeContext = useMemo(() => {
-    if (selectedSectionId) {
-      const s = sections.find((x) => x.id === selectedSectionId);
-      if (s) {
-        return {
-          kind: 'section',
-          id: s.id,
-          name: s.name,
-          theme: s.theme,
-          memberIds: s.memberIds,
-          memberCount: s.memberIds.length,
-        };
-      }
-    }
-    if (selectedNodeId) {
-      const n = nodes.find((x) => x.id === selectedNodeId);
-      if (n) {
-        return {
-          kind: 'node',
-          id: n.id,
-          name: n.meta?.name || n.kind,
-          nodeKind: n.kind,
-          origin: nodeOrigin(n),
-          color: originColor(n),
-        };
-      }
-    }
-    return null;
-  }, [selectedSectionId, selectedNodeId, sections, nodes]);
-
   function handleClearActiveContext() {
     setSelectedSectionId(null);
     setSelectedNodeId(null);
@@ -2281,6 +2248,41 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
     return out;
   }, [nodes, edges]);
+
+  // Active chat context — derived from selectedSectionId (preferred) or
+  // selectedNodeId. PromptDock renders a pill for this; sending a chat
+  // message prepends the context hint so the agent operates in scope.
+  // Lives AFTER `sections` because it reads `sections` in its body — moving
+  // it above the `sections` useMemo would TDZ-fail on first render.
+  const activeContext = useMemo(() => {
+    if (selectedSectionId) {
+      const s = sections.find((x) => x.id === selectedSectionId);
+      if (s) {
+        return {
+          kind: 'section',
+          id: s.id,
+          name: s.name,
+          theme: s.theme,
+          memberIds: s.memberIds,
+          memberCount: s.memberIds.length,
+        };
+      }
+    }
+    if (selectedNodeId) {
+      const n = nodes.find((x) => x.id === selectedNodeId);
+      if (n) {
+        return {
+          kind: 'node',
+          id: n.id,
+          name: n.meta?.name || n.kind,
+          nodeKind: n.kind,
+          origin: nodeOrigin(n),
+          color: originColor(n),
+        };
+      }
+    }
+    return null;
+  }, [selectedSectionId, selectedNodeId, sections, nodes]);
 
   return (
     <div
