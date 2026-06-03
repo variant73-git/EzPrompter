@@ -3681,7 +3681,9 @@ body.rb-ed-light .canvas-section-frame {
     calc(4px / var(--canvas-scale, 1))
     calc(20px / var(--canvas-scale, 1));
   font-family: inherit;
-  font-size: calc(18px / var(--canvas-scale, 1));
+  /* -20% from prior pass (18 -> 14) so the label stays subordinate to
+     the play button visually. */
+  font-size: calc(14px / var(--canvas-scale, 1));
   font-weight: 500;
   /* Tighter tracking at small sizes — wide tracking at chip scale reads
      as a logo, not a label. */
@@ -3715,22 +3717,27 @@ body.rb-ed-light .canvas-section-name-tag {
 }
 /* Inline rename input — sits in the pill slot, inherits typography so
    the swap doesn't shift surrounding layout. */
+/* Rename input — no field outline / no background. The input visually
+   IS the label; only the caret + selection differ. Force every font
+   property explicitly because some browsers don't fully apply `font:
+   inherit` on form controls. Clearing all text + clicking outside
+   resets the section name to its auto-generated default (the empty
+   string flows through setSectionNameOverride which deletes the
+   override and falls back to fallbackName). */
 .canvas-section-name-input {
   background: transparent;
   border: none;
-  outline: 1px solid rgba(255, 255, 255, 0.35);
-  outline-offset: 4px;
+  outline: none;
   color: inherit;
-  font: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
   letter-spacing: inherit;
   padding: 0;
   white-space: nowrap;
-  /* Inverse-scaled to track the smaller chip-style font. */
-  min-width: calc(100px / var(--canvas-scale, 1));
+  min-width: calc(60px / var(--canvas-scale, 1));
   max-width: calc(280px / var(--canvas-scale, 1));
-  border-radius: 4px;
 }
-body.rb-ed-light .canvas-section-name-input { outline-color: rgba(0, 0, 0, 0.45); }
 .canvas-section-play-btn {
   /* Circle, stable on-screen size — ~40x40 (down 20% from the prior
      50). width = height so border-radius:999px renders a clean disc. */
@@ -3846,7 +3853,8 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
   width: calc(28px / var(--canvas-scale, 1));
   height: calc(28px / var(--canvas-scale, 1));
   cursor: nwse-resize;
-  color: rgba(255, 255, 255, 0.45);
+  /* -30% opacity from .45 -> .315 — discreet affordance, not a CTA. */
+  color: rgba(255, 255, 255, 0.315);
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;

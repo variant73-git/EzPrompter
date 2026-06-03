@@ -158,6 +158,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       return raw ? JSON.parse(raw) : {};
     } catch { return {}; }
   });
+  // Section size overrides — delta padding added to the auto-derived frame
+  // bbox per side. Used when the user resizes a section in an axis where
+  // members can't be scaled apart (e.g. 2 nodes on the same row → no
+  // vertical spread to scale; instead the override grows the frame bottom).
+  // {sectionId: {dTop, dRight, dBottom, dLeft}}.
+  const [sectionSizeOverrides, setSectionSizeOverrides] = useState(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem('rb-section-sizes');
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
   function setSectionNameOverride(sectionId, name) {
     setSectionNameOverrides((prev) => {
       const next = { ...prev };
@@ -2300,23 +2312,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       }
       const sectionId = `section-${memberIds.slice().sort().join('-').slice(0, 64)}`;
       const fallbackName = `${THEME_LABEL[t]} #${themeCounter[t]}`;
+      // Apply user-resize overrides as ADDITIONAL padding beyond the auto
+      // bbox. Auto bbox + auto padding (TOP_GAP/UNIFORM_GAP) is the
+      // minimum size; override grows the frame outward.
+      const ov = sectionSizeOverrides[sectionId] || { dTop: 0, dRight: 0, dBottom: 0, dLeft: 0 };
       out.push({
         id: sectionId,
         memberIds,
         theme: t,
         name: sectionNameOverrides[sectionId] || fallbackName,
-        // Asymmetric padding: TOP_GAP reserves room for the play
-        // button + name tag, sides/bottom keep UNIFORM_GAP. The bottom
-        // already accounts for asset-pill/dims overflow via the +80
-        // bump on maxY above, so it stays at UNIFORM_GAP.
-        x: minX - UNIFORM_GAP,
-        y: minY - TOP_GAP,
-        width: (maxX - minX) + UNIFORM_GAP * 2,
-        height: (maxY - minY) + TOP_GAP + UNIFORM_GAP,
+        x: minX - UNIFORM_GAP - (ov.dLeft || 0),
+        y: minY - TOP_GAP - (ov.dTop || 0),
+        width: (maxX - minX) + UNIFORM_GAP * 2 + (ov.dLeft || 0) + (ov.dRight || 0),
+        height: (maxY - minY) + TOP_GAP + UNIFORM_GAP + (ov.dTop || 0) + (ov.dBottom || 0),
       });
     }
     return out;
-  }, [nodes, edges, sectionNameOverrides]);
+  }, [nodes, edges, sectionNameOverrides, sectionSizeOverrides]);
 
   // Section drag — grabbing the dot-grid handle at the top of a section
   // translates ALL member nodes by the same delta so the workflow moves
@@ -2362,11 +2374,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     window.addEventListener('mouseup', onUp);
   }
 
-  // Section corner resize — dragging a section's NW/NE/SW/SE handle scales
-  // the member node positions proportionally around the OPPOSITE corner
-  // (Figma-frame-style). The section frame itself is auto-derived from
-  // those positions, so updating positions implicitly resizes the frame.
-  // Sizes stay constant — sections are spatial groupings, not zoom targets.
+  // Section corner resize — hybrid behaviour. For each axis independently:
+  //   • If member POSITIONS have spread along that axis (at least 2 distinct
+  //     coordinates), SCALE positions around the opposite corner — Figma
+  //     frame-style spread.
+  //   • If positions are collinear (e.g. 2 nodes on the same row), no
+  //     scaling can spread them in the perpendicular axis. Grow the
+  //     section's size override instead so the FRAME visibly resizes
+  //     without moving the nodes.
+  // This guarantees every section is resizable in every direction.
   function startSectionResize(sectionId, corner, e) {
     e.stopPropagation();
     e.preventDefault();
@@ -2377,17 +2393,26 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       .filter(Boolean);
     if (memberNodes.length === 0) return;
 
-    // Member bbox (no gap padding).
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let minPosX = Infinity, maxPosX = -Infinity;
+    let minPosY = Infinity, maxPosY = -Infinity;
     for (const m of memberNodes) {
       minX = Math.min(minX, m.pos_x || 0);
       minY = Math.min(minY, m.pos_y || 0);
       maxX = Math.max(maxX, (m.pos_x || 0) + (m.width || 0));
       maxY = Math.max(maxY, (m.pos_y || 0) + (m.height || 0));
+      minPosX = Math.min(minPosX, m.pos_x || 0);
+      maxPosX = Math.max(maxPosX, m.pos_x || 0);
+      minPosY = Math.min(minPosY, m.pos_y || 0);
+      maxPosY = Math.max(maxPosY, m.pos_y || 0);
     }
+    const canScaleX = (maxPosX - minPosX) > 0.5;
+    const canScaleY = (maxPosY - minPosY) > 0.5;
+
     const startMin = { x: minX, y: minY };
     const startMax = { x: maxX, y: maxY };
     const startMembers = memberNodes.map((m) => ({ id: m.id, pos_x: m.pos_x, pos_y: m.pos_y }));
+    const startOverride = sectionSizeOverrides[sectionId] || { dTop: 0, dRight: 0, dBottom: 0, dLeft: 0 };
     const readScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
     const startScale = readScale();
     const startMouseX = e.clientX;
@@ -2398,58 +2423,99 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     function onMove(ev) {
       const dx = (ev.clientX - startMouseX) / startScale;
       const dy = (ev.clientY - startMouseY) / startScale;
-      let newMinX = startMin.x, newMaxX = startMax.x;
-      let newMinY = startMin.y, newMaxY = startMax.y;
-      if (corner === 'nw') { newMinX += dx; newMinY += dy; }
-      else if (corner === 'ne') { newMaxX += dx; newMinY += dy; }
-      else if (corner === 'sw') { newMinX += dx; newMaxY += dy; }
-      else if (corner === 'se') { newMaxX += dx; newMaxY += dy; }
-      // Clamp to keep the bbox from inverting / collapsing.
-      if (newMaxX - newMinX < MIN_W) {
-        if (corner === 'nw' || corner === 'sw') newMinX = newMaxX - MIN_W;
-        else newMaxX = newMinX + MIN_W;
+      // Map corner+(dx,dy) to per-side outward deltas.
+      let outLeft = 0, outRight = 0, outTop = 0, outBottom = 0;
+      if (corner === 'nw') { outLeft = -dx; outTop = -dy; }
+      else if (corner === 'ne') { outRight = dx; outTop = -dy; }
+      else if (corner === 'sw') { outLeft = -dx; outBottom = dy; }
+      else if (corner === 'se') { outRight = dx; outBottom = dy; }
+
+      let newMembersById = new Map();
+      const newOverride = { ...startOverride };
+
+      // ── X axis ────────────────────────────────────────────────────
+      if (canScaleX) {
+        let newMinX = startMin.x;
+        let newMaxX = startMax.x;
+        if (corner === 'nw' || corner === 'sw') newMinX = startMin.x + dx;
+        else newMaxX = startMax.x + dx;
+        if (newMaxX - newMinX < MIN_W) {
+          if (corner === 'nw' || corner === 'sw') newMinX = newMaxX - MIN_W;
+          else newMaxX = newMinX + MIN_W;
+        }
+        const oldW = startMax.x - startMin.x;
+        const scaleX = (newMaxX - newMinX) / oldW;
+        const oldAnchorX = (corner === 'nw' || corner === 'sw') ? startMax.x : startMin.x;
+        const newAnchorX = (corner === 'nw' || corner === 'sw') ? newMaxX : newMinX;
+        for (const m of startMembers) {
+          const slot = newMembersById.get(m.id) || { pos_x: m.pos_x, pos_y: m.pos_y };
+          slot.pos_x = Math.round(newAnchorX + (m.pos_x - oldAnchorX) * scaleX);
+          newMembersById.set(m.id, slot);
+        }
+      } else {
+        newOverride.dLeft = Math.max(0, (startOverride.dLeft || 0) + outLeft);
+        newOverride.dRight = Math.max(0, (startOverride.dRight || 0) + outRight);
       }
-      if (newMaxY - newMinY < MIN_H) {
-        if (corner === 'nw' || corner === 'ne') newMinY = newMaxY - MIN_H;
-        else newMaxY = newMinY + MIN_H;
+
+      // ── Y axis ────────────────────────────────────────────────────
+      if (canScaleY) {
+        let newMinY = startMin.y;
+        let newMaxY = startMax.y;
+        if (corner === 'nw' || corner === 'ne') newMinY = startMin.y + dy;
+        else newMaxY = startMax.y + dy;
+        if (newMaxY - newMinY < MIN_H) {
+          if (corner === 'nw' || corner === 'ne') newMinY = newMaxY - MIN_H;
+          else newMaxY = newMinY + MIN_H;
+        }
+        const oldH = startMax.y - startMin.y;
+        const scaleY = (newMaxY - newMinY) / oldH;
+        const oldAnchorY = (corner === 'nw' || corner === 'ne') ? startMax.y : startMin.y;
+        const newAnchorY = (corner === 'nw' || corner === 'ne') ? newMaxY : newMinY;
+        for (const m of startMembers) {
+          const slot = newMembersById.get(m.id) || { pos_x: m.pos_x, pos_y: m.pos_y };
+          slot.pos_y = Math.round(newAnchorY + (m.pos_y - oldAnchorY) * scaleY);
+          newMembersById.set(m.id, slot);
+        }
+      } else {
+        newOverride.dTop = Math.max(0, (startOverride.dTop || 0) + outTop);
+        newOverride.dBottom = Math.max(0, (startOverride.dBottom || 0) + outBottom);
       }
-      const oldW = startMax.x - startMin.x || 1;
-      const oldH = startMax.y - startMin.y || 1;
-      const scaleX = (newMaxX - newMinX) / oldW;
-      const scaleY = (newMaxY - newMinY) / oldH;
-      // Anchor = corner that DIDN'T move. NW drag → anchor SE (startMax),
-      // SE drag → anchor NW (startMin), NE drag → anchor SW (startMinX, startMaxY),
-      // SW drag → anchor NE (startMaxX, startMinY).
-      const oldAnchorX = (corner === 'nw' || corner === 'sw') ? startMax.x : startMin.x;
-      const oldAnchorY = (corner === 'nw' || corner === 'ne') ? startMax.y : startMin.y;
-      const newAnchorX = (corner === 'nw' || corner === 'sw') ? newMaxX : newMinX;
-      const newAnchorY = (corner === 'nw' || corner === 'ne') ? newMaxY : newMinY;
-      const idToNewPos = new Map();
-      for (const m of startMembers) {
-        const relX = m.pos_x - oldAnchorX;
-        const relY = m.pos_y - oldAnchorY;
-        idToNewPos.set(m.id, {
-          pos_x: Math.round(newAnchorX + relX * scaleX),
-          pos_y: Math.round(newAnchorY + relY * scaleY),
-        });
+
+      // Apply member moves
+      if (newMembersById.size > 0) {
+        setNodes((prev) => prev.map((n) => {
+          const m = newMembersById.get(n.id);
+          return m ? { ...n, pos_x: m.pos_x, pos_y: m.pos_y } : n;
+        }));
       }
-      setNodes((prev) => prev.map((n) => {
-        const np = idToNewPos.get(n.id);
-        return np ? { ...n, pos_x: np.pos_x, pos_y: np.pos_y } : n;
-      }));
+      // Apply size override
+      setSectionSizeOverrides((prev) => {
+        const cur = prev[sectionId];
+        if (cur && cur.dTop === newOverride.dTop && cur.dRight === newOverride.dRight
+                && cur.dBottom === newOverride.dBottom && cur.dLeft === newOverride.dLeft) return prev;
+        const anyNonZero = newOverride.dTop || newOverride.dRight || newOverride.dBottom || newOverride.dLeft;
+        if (anyNonZero) return { ...prev, [sectionId]: newOverride };
+        const next = { ...prev };
+        delete next[sectionId];
+        return next;
+      });
     }
     function onUp() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      // Persist each member's final position. Use a no-op setNodes to read
-      // the freshest state inside the callback.
+      // Persist member positions
       setNodes((cur) => {
         for (const m of startMembers) {
           const node = cur.find((n) => n.id === m.id);
-          if (node && !String(node.id).startsWith('temp-')) {
+          if (node && !String(node.id).startsWith('temp-') && (node.pos_x !== m.pos_x || node.pos_y !== m.pos_y)) {
             api.updateNode(node.id, { posX: node.pos_x, posY: node.pos_y }).catch(console.warn);
           }
         }
+        return cur;
+      });
+      // Persist size overrides
+      setSectionSizeOverrides((cur) => {
+        try { localStorage.setItem('rb-section-sizes', JSON.stringify(cur)); } catch {}
         return cur;
       });
     }
@@ -2716,9 +2782,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   aria-hidden="true"
                 >
                   {corner === 'se' && (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-                      <line x1="7" y1="20" x2="20" y2="7" />
-                      <line x1="13" y1="20" x2="20" y2="13" />
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
+                      <line x1="8" y1="20" x2="20" y2="8" />
+                      <line x1="12" y1="20" x2="20" y2="12" />
+                      <line x1="16" y1="20" x2="20" y2="16" />
                     </svg>
                   )}
                 </div>

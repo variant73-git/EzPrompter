@@ -735,7 +735,7 @@ export default function CanvasNode({
     node.kind === 'designmd' ? 'design.md' :
     node.kind === 'prompt' ? 'prompt' :
     node.kind === 'skill' ? 'skill' :
-    (node.kind === 'asset' || node.kind === 'image') ? 'screenshot / asset' :
+    (node.kind === 'asset' || node.kind === 'image') ? 'media' :
     'chunk';
   const title = node.origin_url || node.meta?.name || node.template_slug || 'untitled';
   const hasEdits = !!(node.current_snapshot_id && node.original_snapshot_id && node.current_snapshot_id !== node.original_snapshot_id);

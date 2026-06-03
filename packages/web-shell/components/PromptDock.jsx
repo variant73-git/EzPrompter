@@ -1269,7 +1269,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
               <button onClick={() => pickAddItem('blank')}><MENU_ICON.Blank /><span>Add blank website</span></button>
               <button onClick={() => pickAddItem('html')}><MENU_ICON.Html /><span>Add .html</span></button>
               <button onClick={() => pickAddItem('md')}><MENU_ICON.Md /><span>Add .md</span></button>
-              <button onClick={() => pickAddItem('screenshot')}><MENU_ICON.Image /><span>Add screenshot</span></button>
+              <button onClick={() => pickAddItem('screenshot')}><MENU_ICON.Image /><span>Add screenshot/media</span></button>
               <button onClick={() => pickAddItem('prompt')}><MENU_ICON.Prompt /><span>Add prompt</span></button>
               <button onClick={() => pickAddItem('skill')}><MENU_ICON.Skill /><span>Add skill</span></button>
               <button onClick={() => pickAddItem('multiple')}><MENU_ICON.Files /><span>Add multiple files</span></button>
