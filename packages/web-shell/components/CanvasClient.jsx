@@ -5,6 +5,7 @@ import { nodeOrigin, originColor } from '../lib/node-origin.js';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
 import CanvasNode from './CanvasNode.jsx';
+import ConfirmModal from './ConfirmModal.jsx';
 import EdgeLayer, { DraftEdgeLayer } from './EdgeLayer.jsx';
 import ZoomControls from './ZoomControls.jsx';
 import UserPill from './UserPill.jsx';
@@ -127,6 +128,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // so <ChallengeModal /> mounts. placeholderId lets the modal's cancel /
   // open-site handlers clean up the temp node from the canvas.
   const [challenge, setChallenge] = useState(null);
+  // Regen-aspect confirm modal. Open when user picks a different aspect via
+  // the asset-pill. busy=true while the regen call is in flight so the
+  // confirm button shows a spinner and click-outside is disabled.
+  const [regenAspect, setRegenAspect] = useState(null); // { nodeId, aspect, busy }
   const transformRef = useRef(null);
 
   // ── HMR / refresh hard reset of canvas-scale state ────────────────────
@@ -1334,6 +1339,142 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setTimeout(() => URL.revokeObjectURL(url), 100);
   }
 
+  // Replace node content with a freshly uploaded file. Accept image/html/md;
+  // the endpoint figures out the new kind from the explicit `kind` we send
+  // (derived from the file's mime + extension here) and patches the node row
+  // accordingly. Border colour, body renderer, and tools all shift to match
+  // the new media after refetch.
+  async function handleReplaceContent(nodeId) {
+    const file = await pickFile('image/*,.html,.htm,text/html,.md,.markdown,text/markdown,text/plain');
+    if (!file) return;
+    const name = file.name || 'replacement';
+    const lowerName = name.toLowerCase();
+    const mime = file.type || '';
+    let payload = null;
+    if (mime.startsWith('image/') || /\.(png|jpe?g|webp|gif|svg)$/i.test(lowerName)) {
+      // Image → base64 data URL
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(new Error('Could not read image file'));
+        fr.readAsDataURL(file);
+      });
+      payload = { kind: 'asset', dataUrl, mimeType: mime || 'image/png', name };
+    } else if (/\.(html?|xhtml)$/i.test(lowerName) || mime === 'text/html') {
+      const html = await file.text();
+      if (!/<!doctype|<html|<body|<div|<section/i.test(html.trim())) {
+        toast.error('File does not look like HTML.');
+        return;
+      }
+      payload = { kind: 'site', html, name };
+    } else if (/\.(md|markdown)$/i.test(lowerName) || mime === 'text/markdown' || mime === 'text/plain') {
+      const designMd = await file.text();
+      payload = { kind: 'designmd', designMd, name };
+    } else {
+      toast.error('Unsupported file type. Use image, .html, or .md.');
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/nodes/${nodeId}/replace-content`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.message || body?.error || `HTTP ${res.status}`);
+      // Patch local state: new kind, new meta, new content fields. The
+      // current_html / current_design_md come from a fresh snapshot the
+      // endpoint just created.
+      setNodes((prev) => prev.map((n) => {
+        if (n.id !== nodeId) return n;
+        const next = {
+          ...n,
+          kind: body.kind,
+          meta: body.meta || n.meta,
+        };
+        if (body.kind === 'site') {
+          next.current_html = payload.html;
+          next.current_snapshot_id = body.snapshotId;
+        }
+        if (body.kind === 'designmd') {
+          next.current_design_md = payload.designMd;
+          next.current_snapshot_id = body.snapshotId;
+        }
+        if (body.kind === 'asset') {
+          // No HTML/MD content fields apply to asset nodes.
+          next.current_html = null;
+          next.current_design_md = null;
+          next.current_snapshot_id = null;
+        }
+        return next;
+      }));
+      toast.info('Content replaced.');
+    } catch (e) {
+      console.warn('[replace-content] failed:', e?.message || e);
+      toast.error(e?.message || 'Replace failed.');
+    }
+  }
+
+  // Aspect-ratio regen: user picked a different aspect on the asset pill.
+  // We open a confirm modal first (the regen costs credits and replaces
+  // the existing image in place — wanted to be explicit before firing).
+  function handleRequestRegenAspect(nodeId, aspect) {
+    setRegenAspect({ nodeId, aspect, busy: false });
+  }
+  async function handleConfirmRegenAspect() {
+    if (!regenAspect || regenAspect.busy) return;
+    setRegenAspect((s) => (s ? { ...s, busy: true } : s));
+    const { nodeId, aspect } = regenAspect;
+    // Optimistic: flip the node into generating state so the spinner shows
+    // even before the server commits.
+    setNodes((prev) => prev.map((n) => (
+      n.id === nodeId
+        ? { ...n, meta: { ...(n.meta || {}), status: 'generating' } }
+        : n
+    )));
+    try {
+      const res = await fetch(`/api/nodes/${nodeId}/regen-aspect`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ aspectRatio: aspect }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.detail || body?.message || body?.error || `HTTP ${res.status}`);
+      // Patch the node in-place with new dataUrl + dims so the canvas re-renders
+      // without a full refetch.
+      setNodes((prev) => prev.map((n) => (
+        n.id === nodeId
+          ? {
+              ...n,
+              width: body.width ?? n.width,
+              height: body.height ?? n.height,
+              meta: {
+                ...(n.meta || {}),
+                dataUrl: body.dataUrl,
+                mimeType: body.mimeType,
+                aspectRatio: body.aspectRatio,
+                status: 'done',
+              },
+            }
+          : n
+      )));
+      setRegenAspect(null);
+    } catch (e) {
+      console.warn('[regen-aspect] failed:', e?.message || e);
+      // Revert optimistic generating flag.
+      setNodes((prev) => prev.map((n) => (
+        n.id === nodeId
+          ? { ...n, meta: { ...(n.meta || {}), status: 'done' } }
+          : n
+      )));
+      toast.error(e?.message || 'Regen failed.');
+      setRegenAspect((s) => (s ? { ...s, busy: false } : s));
+    }
+  }
+
   // Synchronous ref mirror of draftEdge — closure-captured state goes
   // stale between mousedown (which calls setDraftEdge) and the next
   // re-render. The first batch of mousemove events would otherwise read
@@ -2165,6 +2306,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   nn.id === n.id ? { ...nn, meta: { ...(nn.meta || {}), ...metaPatch } } : nn
                 )));
               }}
+              onRequestRegenAspect={handleRequestRegenAspect}
+              onReplaceContent={handleReplaceContent}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
             />
           ))}
@@ -2352,6 +2495,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       )}
 
       <ToastRoot />
+
+      <ConfirmModal
+        open={!!regenAspect}
+        title="Regenerate image?"
+        message={regenAspect ? `This will replace the current image with a new ${regenAspect.aspect} generation using the same prompt and references. Costs credits.` : ''}
+        confirmLabel="Regenerate"
+        cancelLabel="Cancel"
+        busy={!!regenAspect?.busy}
+        onConfirm={handleConfirmRegenAspect}
+        onCancel={() => { if (!regenAspect?.busy) setRegenAspect(null); }}
+      />
 
       {challenge && (
         <ChallengeModal
