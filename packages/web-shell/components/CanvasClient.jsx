@@ -2226,15 +2226,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     for (const memberIds of components) {
       const t = themeOf(memberIds);
       themeCounter[t] = (themeCounter[t] || 0) + 1;
-      // Bounding box of member nodes.
+      // Bounding box of member nodes. Asset nodes extend visually below
+      // their height (aspect pill half-outside + dims label below);
+      // counting that overflow in the bbox keeps the chain centered in
+      // the frame instead of pushing it to the top.
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const id of memberIds) {
         const n = nodeById.get(id);
         if (!n) continue;
+        const isAsset = n.kind === 'asset' || n.kind === 'image';
+        const bottomOverflow = isAsset ? 80 : 0;
         minX = Math.min(minX, n.pos_x || 0);
         minY = Math.min(minY, n.pos_y || 0);
         maxX = Math.max(maxX, (n.pos_x || 0) + (n.width || 0));
-        maxY = Math.max(maxY, (n.pos_y || 0) + (n.height || 0));
+        maxY = Math.max(maxY, (n.pos_y || 0) + (n.height || 0) + bottomOverflow);
       }
       out.push({
         id: `section-${memberIds.slice().sort().join('-').slice(0, 64)}`,
@@ -2583,7 +2588,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   }}
                   aria-label={`Re-run ${s.name}`}
                 >
-                  <svg viewBox="0 0 24 24" width="40" height="40" fill="currentColor" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                     <polygon points="6,4 20,12 6,20" />
                   </svg>
                 </button>

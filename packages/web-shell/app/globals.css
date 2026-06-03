@@ -730,24 +730,23 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
 /* Counts row stacks above the SVG map. pointer-events:auto so the
    trigger button + dropdown receive clicks (the minimap card itself
    stays pointer-events:none for display-only behaviour). Container
-   height reduced 45% from the original toolbar version (padding 6/8
-   -> 3/8) while keeping the icons + numbers at their inherited
-   default sizes — only the surrounding container shrinks. */
+   height shrunk again — another -30% on top of the previous -45%
+   pass. Vertical padding nuked entirely (0px); the row is now just
+   icon height + hairline border. */
 .canvas-minimap-counts {
   pointer-events: auto;
-  padding: 3px 8px;
+  padding: 0 8px;
   border-bottom: 1px solid var(--border-frosted);
   border-top-left-radius: 10px;
   border-top-right-radius: 10px;
+  line-height: 1;
 }
-/* Within the merged minimap, the counts trigger drops its own
-   chrome (border/bg) — it inherits the minimap card's frosted look.
-   Padding/typography kept at default so the icons read at their
-   intended size; only the wrapping container is compressed. */
 .canvas-minimap-counts .canvas-counts {
   background: transparent;
   border: none;
   box-shadow: none;
+  padding: 2px 4px;
+  line-height: 1;
 }
 .canvas-minimap-counts .canvas-counts:hover {
   background: rgba(255, 255, 255, 0.06);
@@ -3642,20 +3641,18 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
 /* ── Section frames (auto-derived workflow groups) ──────────────── */
 .canvas-section-frame {
   position: absolute;
-  /* Bumped transparency in two passes — first -50% from the first
-     draft (0.15/0.45 -> 0.075/0.225), then another -25% applied
-     uniformly (-> 0.056/0.169). Reads as a faint envelope, not a
-     coloured container. */
-  background: rgba(255, 255, 255, 0.056);
-  border: 1.5px solid rgba(255, 255, 255, 0.169);
+  /* Bumped transparency repeatedly: first -50%, then -25%, now another
+     -25% (current). bg .056 -> .042, border .169 -> .127. */
+  background: rgba(255, 255, 255, 0.042);
+  border: 1.5px solid rgba(255, 255, 255, 0.127);
   border-radius: 24px;
   pointer-events: none; /* canvas clicks pass through the frame body */
   z-index: 0;
   transition: background 140ms ease, border-color 140ms ease;
 }
 body.rb-ed-light .canvas-section-frame {
-  background: rgba(0, 0, 0, 0.018);
-  border-color: rgba(0, 0, 0, 0.083);
+  background: rgba(0, 0, 0, 0.014);
+  border-color: rgba(0, 0, 0, 0.062);
 }
 
 .canvas-section-name-tag {
@@ -3697,12 +3694,18 @@ body.rb-ed-light .canvas-section-name-tag {
 }
 .canvas-section-name-btn:hover { opacity: 0.85; }
 .canvas-section-play-btn {
-  width: 80px;
-  height: 80px;
+  /* Stable on-screen size: ~140x35 regardless of canvas zoom. Inverse-
+     scaled width/height + inverse-scaled inner SVG keep the proportions
+     constant across the zoom range. */
+  width: calc(140px / var(--canvas-scale, 1));
+  height: calc(35px / var(--canvas-scale, 1));
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
+  /* Colour-inverted vs the previous draft: now a solid offwhite chip
+     with an offblack triangle inside. Stands out against the dark
+     frosted section name tag. */
+  background: #f5f5f5;
   border: none;
-  color: var(--text-primary);
+  color: #0a0a0a;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -3711,9 +3714,17 @@ body.rb-ed-light .canvas-section-name-tag {
   padding: 0;
 }
 .canvas-section-play-btn:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: #ffffff;
 }
 .canvas-section-play-btn:active { transform: scale(0.93); }
+/* Inverse-scale the play triangle too so it stays proportional to
+   the stable-sized button. */
+.canvas-section-play-btn svg {
+  width: calc(20px / var(--canvas-scale, 1));
+  height: calc(20px / var(--canvas-scale, 1));
+}
+body.rb-ed-light .canvas-section-play-btn { background: #0a0a0a; color: #fff; }
+body.rb-ed-light .canvas-section-play-btn:hover { background: #1a1a1a; }
 body.rb-ed-light .canvas-section-play-btn {
   background: rgba(0, 0, 0, 0.08);
 }
@@ -4080,10 +4091,11 @@ body.rb-ed-light .cnode-aspect-pill-menu {
 .cnode-asset-dims {
   position: absolute;
   right: 0;
-  /* Distance from node edge bumped +75% (32 -> 56) so the label has
-     more breathing room from the card. */
-  bottom: -56px;
-  font-size: 20px;
+  /* Distance from edge -25% from the +75% pass: 56 -> 42. Inverse-
+     scaled so the label sits at a stable ~42px offset and font reads at
+     a constant ~20px regardless of canvas zoom. */
+  bottom: calc(-42px / var(--canvas-scale, 1));
+  font-size: calc(20px / var(--canvas-scale, 1));
   font-family: inherit;
   letter-spacing: 0.04em;
   color: var(--text-primary);
