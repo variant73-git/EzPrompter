@@ -20,7 +20,7 @@ import OpenAI from 'openai';
 
 const MAX_TOKENS = 8000;
 
-export async function callOpenAI({ model, system, messages, tools, apiKey, onEvent }) {
+export async function callOpenAI({ model, system, messages, tools, apiKey, onEvent, userId = null }) {
   const client = new OpenAI({ apiKey });
 
   // Translate the agent-driver messages format (Anthropic-style content blocks
@@ -71,6 +71,13 @@ export async function callOpenAI({ model, system, messages, tools, apiKey, onEve
     }
   }
 
+  // ── Prompt caching ─────────────────────────────────────────────────
+  // OpenAI auto-caches any prefix ≥1024 tokens that repeats across calls
+  // (since Oct 2024). Cached input tokens are billed at 50% of fresh rate.
+  // `prompt_cache_key` (optional) is an internal routing hint: requests
+  // sharing the same key are routed to the same replica's cache, raising
+  // hit rate in multi-replica deployments. Scoping per-user gives each
+  // user a stable cache hot path without leaking prompts across tenants.
   const stream = await client.chat.completions.create({
     model,
     messages: oaMessages,
@@ -78,6 +85,7 @@ export async function callOpenAI({ model, system, messages, tools, apiKey, onEve
     max_completion_tokens: MAX_TOKENS,
     stream: true,
     stream_options: { include_usage: true },
+    ...(userId ? { prompt_cache_key: `u-${userId}` } : {}),
   });
 
   // tool_calls accumulator: index → {id, name, argsBuf}
@@ -114,9 +122,14 @@ export async function callOpenAI({ model, system, messages, tools, apiKey, onEve
       }
     }
     if (chunk?.usage) {
+      // OpenAI surfaces cache hits as `prompt_tokens_details.cached_tokens`
+      // (subset of prompt_tokens — NOT additive). Cached portion costs 50%.
+      // No "cache_write" line item — writes are free, only reads discount.
       usage = {
         input_tokens: chunk.usage.prompt_tokens || 0,
         output_tokens: chunk.usage.completion_tokens || 0,
+        cached_input_tokens: chunk.usage.prompt_tokens_details?.cached_tokens || 0,
+        cache_write_tokens: 0,
       };
     }
   }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useCallback, useEffect, useState } from 'react';
+import { useRef, useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
 import { nodeOrigin } from '../lib/node-origin.js';
@@ -14,7 +14,10 @@ const DRAG_THRESHOLD = 4;
 function SmartEditDockWrap({ node, children }) {
   const wrapRef = useRef(null);
   const [side, setSide] = useState('right');
-  useEffect(() => {
+  // useLayoutEffect runs synchronously after DOM mutations but BEFORE the
+  // browser paints, so the user never sees the dock flash on the right
+  // before it flips left. Safe because this component is client-only ('use client').
+  useLayoutEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
@@ -267,7 +270,7 @@ export default function CanvasNode({
   node, selected, editing = false, onEditingChange,
   onSelect, onMove, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload,
-  onStartEdge, onSlotMouseDown, onPromptTextChange,
+  onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
   incomingEdges = [], draftActive, runStatus = null
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -943,6 +946,12 @@ export default function CanvasNode({
                   if (!r.ok) throw new Error(`HTTP ${r.status}`);
                   const body = await r.json();
                   setResolvedAssetId(body.assetId);
+                  // Push the resolved assetId up to the parent's node map so
+                  // a future remount (navigation away/back, refetch) sees
+                  // node.meta.assetId populated. Without this, the local
+                  // useState re-initializes to null on remount and the user
+                  // has to backfill again.
+                  onMetaPatch?.({ assetId: body.assetId });
                   setSmartEditOpen(true);
                 } catch (err) {
                   console.error('[smart-edit] backfill failed', err);
