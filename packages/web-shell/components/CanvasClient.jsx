@@ -147,6 +147,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Section being inline-renamed. Opens via double-click on the name
   // label or the Rename item in the right-click menu.
   const [editingSectionId, setEditingSectionId] = useState(null);
+  // Section pending delete confirmation. Same ConfirmModal pattern as
+  // playSection / regenAspect — { section, busy }.
+  const [sectionDelete, setSectionDelete] = useState(null);
   // Custom section names — sections are derived from connected components,
   // so the id is stable as long as members don't change. We keep overrides
   // in localStorage keyed by that id; the auto-generated theme name is the
@@ -3029,39 +3032,69 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         onCancel={() => { if (!regenAspect?.busy) setRegenAspect(null); }}
       />
 
-      {sectionMenu && typeof document !== 'undefined' && createPortal(
-        <div
-          className="empty-drop-menu cnode-topbar-menu section-context-menu"
-          style={{
-            left: Math.min(sectionMenu.x, window.innerWidth - 240),
-            top: Math.min(sectionMenu.y, window.innerHeight - 160),
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onContextMenu={(e) => e.preventDefault()}
-        >
-          <button onClick={() => {
-            setEditingSectionId(sectionMenu.sectionId);
-            setSectionMenu(null);
-          }}>
-            <span>Rename…</span>
-          </button>
-          <div className="section-menu-sep" aria-hidden="true" />
-          <button
-            className="cnode-topbar-menu-danger"
-            onClick={() => {
-              const s = sections.find((x) => x.id === sectionMenu.sectionId);
-              if (s && confirm(`Delete the entire "${s.name}" workflow? ${s.memberIds.length} nodes will be removed.`)) {
-                handleDeleteNodes(s.memberIds);
-                if (selectedSectionId === sectionMenu.sectionId) setSelectedSectionId(null);
-              }
-              setSectionMenu(null);
+      {sectionMenu && typeof document !== 'undefined' && (() => {
+        const s = sections.find((x) => x.id === sectionMenu.sectionId);
+        if (!s) return null;
+        const title = s.name.length > 15 ? s.name.slice(0, 12) + '...' : s.name;
+        return createPortal(
+          <div
+            className="empty-drop-menu cnode-topbar-menu section-context-menu"
+            style={{
+              left: Math.min(sectionMenu.x, window.innerWidth - 240),
+              top: Math.min(sectionMenu.y, window.innerHeight - 180),
             }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
           >
-            <span>Delete</span>
-          </button>
-        </div>,
-        document.body
-      )}
+            {/* Trash button in the top-left corner — quick-delete affordance
+                with a confirmation modal. Sits absolutely above the title /
+                items so it doesn't shift their layout. */}
+            <button
+              type="button"
+              className="section-context-menu-trash"
+              data-tooltip="Delete workflow"
+              aria-label="Delete workflow"
+              onClick={() => {
+                setSectionMenu(null);
+                setSectionDelete({ section: s, busy: false });
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6M14 11v6" />
+                <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+              </svg>
+            </button>
+            <div className="section-context-menu-title" title={s.name}>{title}</div>
+            <button onClick={() => {
+              setEditingSectionId(sectionMenu.sectionId);
+              setSectionMenu(null);
+            }}>
+              <span>Rename…</span>
+            </button>
+          </div>,
+          document.body
+        );
+      })()}
+
+      <ConfirmModal
+        open={!!sectionDelete}
+        title="Delete workflow?"
+        message={sectionDelete ? `Delete the "${sectionDelete.section.name}" workflow? All ${sectionDelete.section.memberIds.length} member nodes will be removed.` : ''}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        busy={!!sectionDelete?.busy}
+        onConfirm={() => {
+          if (!sectionDelete) return;
+          const s = sectionDelete.section;
+          handleDeleteNodes(s.memberIds);
+          if (selectedSectionId === s.id) setSelectedSectionId(null);
+          setSectionDelete(null);
+        }}
+        onCancel={() => { if (!sectionDelete?.busy) setSectionDelete(null); }}
+      />
 
       <ConfirmModal
         open={!!playSection}
