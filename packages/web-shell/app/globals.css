@@ -4316,33 +4316,39 @@ body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
   transition: opacity 140ms ease, outline-color 140ms ease;
 }
 /* Side-docked layouts — full-height sidebar at left or right edge.
-   Width -15% from the prior 400 → 340px. */
+   Tight gaps: top matches the minimap (76px) so they align horizontally,
+   bottom + lateral edges drop to 12px to reclaim viewport space. */
 .prompt-dock.dock-left,
 .prompt-dock.dock-right {
-  top: 24px;
-  bottom: 24px;
+  top: 76px;
+  bottom: 12px;
   width: 340px;
   transform: none;
 }
-.prompt-dock.dock-left { left: 24px; right: auto; }
-.prompt-dock.dock-right { right: 24px; left: auto; }
+.prompt-dock.dock-left { left: 12px; right: auto; }
+.prompt-dock.dock-right { right: 12px; left: auto; }
 
 /* CSS vars consumed by the canvas chrome to shift toolbars + minimap
-   inward so they don't paint UNDER a side-docked chat. The vars are
-   set on <body> from PromptDock's useEffect when dockPos is 'left' or
-   'right'. Width matches the .prompt-dock side dock (340) + 24px gap
-   to the dock + the existing 24px offset = total 388px shift. */
+   inward when the chat is side-docked. Math: edge_offset (12) +
+   dock_width (340) + gap_to_chrome (24) − chrome_base_offset (18) = 358. */
 body { --chat-dock-left-shift: 0px; --chat-dock-right-shift: 0px; }
-body.chat-dock-l { --chat-dock-left-shift: 388px; }
-body.chat-dock-r { --chat-dock-right-shift: 388px; }
+body.chat-dock-l { --chat-dock-left-shift: 358px; }
+body.chat-dock-r { --chat-dock-right-shift: 358px; }
 /* When docked, the chat panel must FILL the vertical space between
-   the top chrome (grip + chevron + chips) and the bottom chrome
-   (textarea + actions). Without these overrides the panel keeps its
-   28vh cap and the rest of the dock paints empty dark space. */
+   the top chrome (grip + chips) and the bottom chrome (textarea +
+   actions). Without these overrides the panel keeps its 28vh cap and
+   the rest of the dock paints empty dark space. */
 .prompt-dock.dock-left .chat-panel,
 .prompt-dock.dock-right .chat-panel {
   flex: 1 1 auto;
   max-height: none;
+}
+/* Hide the collapse chevron in side-dock layouts — the panel is meant
+   to stay open here; collapsing it would leave a tall narrow strip of
+   dock chrome with no content. */
+.prompt-dock.dock-left .prompt-dock-collapse-btn,
+.prompt-dock.dock-right .prompt-dock-collapse-btn {
+  display: none;
 }
 /* Floating: position set inline; no transform needed. */
 .prompt-dock.dock-floating { transform: none; }
@@ -4651,7 +4657,13 @@ body.rb-ed-active .prompt-dock { display: none !important; }
 }
 
 .prompt-dock-send {
+  /* Lock the circular shape: flex:none keeps the button from being
+     stretched by the parent's space-between layout in narrow side-
+     docked widths (where flexbox can otherwise let it shrink/grow). */
+  flex: 0 0 34px;
   width: 34px;
+  min-width: 34px;
+  max-width: 34px;
   height: 34px;
   border-radius: 50%;
   border: none;
