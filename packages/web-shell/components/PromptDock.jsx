@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useReducer } from 'react';
+import { useState, useRef, useEffect, useReducer, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
@@ -412,7 +412,7 @@ function chatReducer(state, action) {
   }
 }
 
-export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowError, nodeCount, onAgentMutatedGraph }) {
+const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowError, nodeCount, onAgentMutatedGraph, activeContext = null, onClearActiveContext }, forwardedRef) {
   const [text, setText] = useState('');
   const [imageFile, setImageFile] = useState(null);   // attached image (preview only)
   const [imagePreview, setImagePreview] = useState(null);
@@ -428,6 +428,12 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
   const taRef = useRef(null);
   const addBtnRef = useRef(null);
   const modelBtnRef = useRef(null);
+
+  // Expose imperative API so the canvas can drive the dock (e.g. play-section
+  // button fires a synthetic chat message scoped to the workflow context).
+  useImperativeHandle(forwardedRef, () => ({
+    sendMessage: (text, attachments) => sendChatMessage(text, attachments),
+  }));
 
   // --- Chat state (Phase 1) ----------------------------------------------
   const [chat, dispatchChat] = useReducer(chatReducer, initialChat);
@@ -545,9 +551,22 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
     if (!boardId) return;
     const trimmed = (content || '').trim();
     if (!trimmed && !(attachments && attachments.length)) return;
+    // When the user has selected a workflow/section or a single node, the
+    // chat is "scoped" to that context. Prepend a structured hint to the
+    // outbound message so the agent operates in scope — the user's bubble
+    // STILL shows only the typed text (we strip the hint from the optimistic
+    // render). The agent sees the hint as the first line.
+    let scoped = trimmed;
+    if (activeContext) {
+      const hint = activeContext.kind === 'section'
+        ? `[Active workflow: "${activeContext.name}" (${activeContext.memberCount} nodes, ids: ${(activeContext.memberIds || []).map((id) => id.slice(0, 8)).join(', ')}). Operate inside this workflow.]`
+        : `[Active node: ${activeContext.nodeKind} "${activeContext.name}" id=${activeContext.id.slice(0, 8)}. Operate on this node.]`;
+      scoped = trimmed ? `${hint}\n\n${trimmed}` : hint;
+    }
     // Optimistic bubble: if user sent image-only (no text), show the
     // file name(s) so the bubble isn't empty. Matches the placeholder the
-    // server persists in chat_messages.content.
+    // server persists in chat_messages.content. NEVER include the scope hint
+    // in the optimistic text — that's an agent-only nudge, not user-typed.
     const optimisticText = trimmed
       || (attachments && attachments.length
         ? `[📎 ${attachments.map((a) => a.name || 'image').join(', ')}]`
@@ -563,7 +582,7 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
       body: JSON.stringify({
         boardId,
-        message: trimmed,
+        message: scoped,
         modelId,
         attachments: attachments && attachments.length ? attachments : undefined,
       }),
@@ -891,6 +910,45 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         )}
       </AnimatePresence>
 
+      {/* Active context pill — surfaces when the user has selected a
+          workflow (section) or a single node on the canvas. The pill
+          mirrors the section/node colour and gives the user an explicit
+          "you are operating inside X" affordance + an X to clear. */}
+      <AnimatePresence>
+        {activeContext && (
+          <motion.div
+            key={activeContext.id}
+            className="prompt-dock-context-wrap"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.16 }}
+          >
+            <div className="prompt-dock-context-pill" data-kind={activeContext.kind}>
+              <span
+                className="prompt-dock-context-dot"
+                style={activeContext.color ? { background: activeContext.color } : undefined}
+                aria-hidden="true"
+              />
+              <span className="prompt-dock-context-label">
+                {activeContext.kind === 'section' ? 'In workflow' : 'On node'}
+              </span>
+              <span className="prompt-dock-context-name">{activeContext.name}</span>
+              <button
+                type="button"
+                className="prompt-dock-context-x"
+                onClick={onClearActiveContext}
+                title="Clear context"
+                aria-label="Clear active context"
+              >
+                {ICON_X}
+              </button>
+            </div>
+            <div className="prompt-dock-chips-divider" aria-hidden="true" />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {!chatCollapsed && (chat.messages.length > 0 || chat.activeToolCalls.length > 0) && (
         <ChatPanel
           messages={chat.messages}
@@ -1207,5 +1265,7 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
       />
     </div>
   );
-}
+});
+
+export default PromptDock;
 

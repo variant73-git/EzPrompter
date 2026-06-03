@@ -712,7 +712,11 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
      context which contains the menu. */
   z-index: 90;
   border-radius: 10px;
-  overflow: hidden;
+  /* overflow:visible so the connections dropdown anchored inside the
+     counts row can extend past the minimap bottom edge. The SVG is
+     clipped by its own .canvas-minimap-svg rounded corners + the
+     parent's bottom border-radius via the wrapper structure below. */
+  overflow: visible;
   /* Frosted glass — slightly transparent surface so the canvas dot grid
      reads through the blur. 1px border for the hairline frame. */
   background: rgba(18, 18, 18, 0.55);
@@ -722,6 +726,34 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
   -webkit-backdrop-filter: blur(28px) saturate(140%);
   pointer-events: none;
   transition: right 180ms ease;
+}
+/* Counts row stacks above the SVG map. pointer-events:auto so the
+   trigger button + dropdown receive clicks (the minimap card itself
+   stays pointer-events:none for display-only behaviour). */
+.canvas-minimap-counts {
+  pointer-events: auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-frosted);
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+}
+/* Within the merged minimap, the counts trigger drops its own
+   chrome (border/bg) — it inherits the minimap card's frosted look. */
+.canvas-minimap-counts .canvas-counts {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 2px 4px;
+}
+.canvas-minimap-counts .canvas-counts:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.canvas-minimap-svg {
+  border-bottom-left-radius: 10px;
+  border-bottom-right-radius: 10px;
+  /* SVG hosts the world rect background which paints to the corners
+     unless we clip. Use overflow on the SVG itself; its viewBox does
+     the clipping. */
 }
 body.rb-ed-light .canvas-minimap {
   background: rgba(228, 230, 234, 0.55);
@@ -3591,6 +3623,159 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
   cursor: default;
   position: relative;
   overflow: visible;
+}
+
+/* ── Section frames (auto-derived workflow groups) ──────────────── */
+.canvas-section-frame {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1.5px solid rgba(255, 255, 255, 0.45);
+  border-radius: 24px;
+  pointer-events: none; /* canvas clicks pass through the frame body */
+  z-index: 0;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+body.rb-ed-light .canvas-section-frame {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.22);
+}
+
+.canvas-section-name-tag {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: rgba(20, 20, 22, 0.78);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 3px 4px 3px 12px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
+  pointer-events: auto;
+  user-select: none;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+body.rb-ed-light .canvas-section-name-tag {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: var(--text-primary);
+}
+.canvas-section-name-btn {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.canvas-section-name-btn:hover { opacity: 0.85; }
+.canvas-section-play-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, transform 80ms ease;
+  padding: 0;
+}
+.canvas-section-play-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.canvas-section-play-btn:active { transform: scale(0.93); }
+body.rb-ed-light .canvas-section-play-btn {
+  background: rgba(0, 0, 0, 0.08);
+}
+body.rb-ed-light .canvas-section-play-btn:hover {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.canvas-section-frame.selected {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.55);
+}
+body.rb-ed-light .canvas-section-frame.selected {
+  background: rgba(0, 0, 0, 0.08);
+  border-color: rgba(0, 0, 0, 0.32);
+}
+
+/* ── Active context pill in PromptDock ──────────────────────────── */
+.prompt-dock-context-wrap {
+  overflow: hidden;
+  margin: 0 -10px;
+}
+.prompt-dock-context-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px 7px 14px;
+  margin: 2px 14px 0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+  user-select: none;
+  white-space: nowrap;
+  width: fit-content;
+  max-width: calc(100% - 28px);
+}
+body.rb-ed-light .prompt-dock-context-pill {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+.prompt-dock-context-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.6);
+  flex-shrink: 0;
+}
+.prompt-dock-context-label {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.prompt-dock-context-name {
+  font-weight: 500;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prompt-dock-context-x {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-left: 2px;
+}
+.prompt-dock-context-x:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+body.rb-ed-light .prompt-dock-context-x:hover {
+  background: rgba(0, 0, 0, 0.08);
 }
 
 /* ── Confirm modal (regen / play / destructive) ─────────────────── */
