@@ -3685,12 +3685,32 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
   top: calc(100% + 6px);
   transform: translateX(-50%) translateY(-2px);
 }
+/* Section name tag lives inside the canvas transform, so a fixed-px
+   tooltip would shrink with low zoom (read as tiny on a zoomed-out
+   board). Inverse-scale capped at 0.25 — matches the pill's own scaling
+   convention so the tooltip stays proportional to the chip itself
+   across the zoom range. */
+.canvas-section-name-tag[data-tooltip]:not([data-tooltip=""])::after {
+  font-size: calc(11.5px / max(0.25, var(--canvas-scale, 1)));
+  padding:
+    calc(5px / max(0.25, var(--canvas-scale, 1)))
+    calc(9px / max(0.25, var(--canvas-scale, 1)));
+  border-radius: calc(7px / max(0.25, var(--canvas-scale, 1)));
+  bottom: calc(100% + calc(6px / max(0.25, var(--canvas-scale, 1))));
+}
 [data-tooltip]:hover:not([data-tooltip=""])::after,
 [data-tooltip]:focus-visible:not([data-tooltip=""])::after {
   opacity: 1;
   visibility: visible;
   transform: translateX(-50%) translateY(0);
   transition-delay: 150ms, 0s, 150ms;
+}
+/* Chat widget elements use 2x the default delay (300ms) — slower trigger
+   so quick mouse-overs while typing or navigating bubbles don't surface
+   tooltips on every passing element. */
+.prompt-dock [data-tooltip]:hover:not([data-tooltip=""])::after,
+.prompt-dock [data-tooltip]:focus-visible:not([data-tooltip=""])::after {
+  transition-delay: 300ms, 0s, 300ms;
 }
 
 /* ── Section frames (auto-derived workflow groups) ──────────────── */
@@ -4361,11 +4381,12 @@ body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
   transition: opacity 140ms ease, outline-color 140ms ease;
 }
 /* Side-docked layouts — full-height sidebar at left or right edge.
-   Tight gaps: top matches the minimap (76px) so they align horizontally,
-   bottom + lateral edges drop to 12px to reclaim viewport space. */
+   Top matches the top edge of the zoom widget (18px) so the dock
+   reaches all the way up to align with the rest of the top chrome.
+   Bottom + lateral edges keep the tight 12px reclaim. */
 .prompt-dock.dock-left,
 .prompt-dock.dock-right {
-  top: 76px;
+  top: 18px;
   bottom: 12px;
   width: 340px;
   transform: none;
@@ -4489,6 +4510,16 @@ body.rb-ed-light .prompt-dock-collapse-btn {
 }
 .prompt-dock-snap-bar-left { left: 0; }
 .prompt-dock-snap-bar-right { right: 0; }
+/* Bottom-centre snap: horizontal bar that spans the centre region so
+   the user perceives "drop here for default position". */
+.prompt-dock-snap-bar-bottom {
+  top: auto;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 240px;
+  height: 9px;
+}
 @keyframes prompt-dock-snap-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }

@@ -70,19 +70,11 @@ export default function ChatPanel({
 
   return (
     <div className="chat-panel" ref={scrollRef}>
-      {onCollapse && (
-        <button
-          type="button"
-          className="chat-panel-collapse"
-          onClick={onCollapse}
-          title="Collapse chat"
-          aria-label="Collapse chat panel"
-        >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points="6 9 12 15 18 9"/>
-          </svg>
-        </button>
-      )}
+      {/* Legacy in-panel collapse chevron removed — the prompt-dock now
+          renders its own collapse button at the dock's top-right (single
+          source of truth). The onCollapse prop is still threaded for
+          backwards compat and other potential consumers but no longer
+          painted here. */}
       {messages.map((m, idx) => (
         <ChatBubble key={m.id} role={m.role} content={m.content}>
           {/* Persisted tool_calls never render any more — the agent's own
