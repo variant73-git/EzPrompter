@@ -34,7 +34,7 @@ vi.mock('../../../lib/agent/llm-gemini.js', () => ({ callGemini: vi.fn() }));
 const driverCalls = [];
 vi.mock('../../../lib/agent/driver.js', () => ({
   runAgentLoop: vi.fn(async (opts) => {
-    driverCalls.push({ llm: opts.llm });
+    driverCalls.push({ llm: opts.llm, messages: opts.messages });
     opts.onEvent({ type: 'text_delta', text: 'hi' });
     opts.onEvent({ type: 'message_complete', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
     opts.onEvent({ type: 'run_status', status: 'completed' });
@@ -191,5 +191,89 @@ describe('POST /api/chat — Phase 2 wiring', () => {
     expect(assistantCall[0].content).toBe('hi');
     // No tool_use events from the mock, so toolCalls should be null.
     expect(assistantCall[0].toolCalls).toBeNull();
+  });
+});
+
+describe('POST /api/chat — multimodal user content', () => {
+  beforeEach(() => {
+    process.env.ANTHROPIC_API_KEY = 'sk-fake';
+    process.env.UNCRAFT_AGENT_MODEL = 'claude-sonnet-4-6';
+  });
+
+  it('builds a content array with text + image block when attachments are present', async () => {
+    driverCalls.length = 0;
+    const req = new Request('http://test/api/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        boardId: 'b1',
+        message: 'what do you see?',
+        attachments: [{ kind: 'image', dataUrl: 'data:image/png;base64,ABC', name: 'ref.png', mimeType: 'image/png' }],
+      }),
+    });
+    const res = await POST(req);
+    await res.body.getReader().read();
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(driverCalls.length).toBe(1);
+    const userMsg = driverCalls[0].messages[0];
+    expect(userMsg.role).toBe('user');
+    expect(Array.isArray(userMsg.content)).toBe(true);
+    expect(userMsg.content[0]).toEqual({ type: 'text', text: 'what do you see?' });
+    expect(userMsg.content[1]).toEqual({
+      type: 'image',
+      dataUrl: 'data:image/png;base64,ABC',
+      name: 'ref.png',
+      mimeType: 'image/png',
+    });
+  });
+
+  it('accepts attachments without a text message + auto-prefills cue', async () => {
+    driverCalls.length = 0;
+    const req = new Request('http://test/api/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        boardId: 'b1',
+        attachments: [{ kind: 'image', dataUrl: 'data:image/png;base64,XYZ' }],
+      }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    await res.body.getReader().read();
+    await new Promise((r) => setTimeout(r, 30));
+
+    const userMsg = driverCalls[0].messages[0];
+    expect(userMsg.content[0].type).toBe('text');
+    expect(userMsg.content[0].text).toMatch(/anexei/i);
+    expect(userMsg.content[1].type).toBe('image');
+  });
+
+  it('persists a text-only placeholder when only attachments were sent (no dataUrl bloat)', async () => {
+    const { appendMessage } = await import('../../../lib/chat-persistence.js');
+    appendMessage.mockClear?.();
+    const req = new Request('http://test/api/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        boardId: 'b1',
+        attachments: [{ kind: 'image', dataUrl: 'data:image/png;base64,XYZ', name: 'cat.png' }],
+      }),
+    });
+    const res = await POST(req);
+    await res.body.getReader().read();
+    await new Promise((r) => setTimeout(r, 30));
+
+    const userPersistCall = appendMessage.mock.calls.find((c) => c[0]?.role === 'user');
+    expect(userPersistCall).toBeTruthy();
+    expect(userPersistCall[0].content).toMatch(/\[image attachment.*cat\.png/);
+    // Critically: no base64 leaks into the persisted content
+    expect(userPersistCall[0].content).not.toContain('XYZ');
+  });
+
+  it('400s when neither message nor attachments provided', async () => {
+    const req = new Request('http://test/api/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ boardId: 'b1' }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
   });
 });
