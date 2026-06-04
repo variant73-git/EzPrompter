@@ -193,7 +193,7 @@ export async function POST(request) {
         messages: initialMessages,
         modelId: resolvedModel,
         apiKey: resolved.apiKey,
-        ctx: { boardId, userId: user.id },
+        ctx: { boardId, userId: user.id, conversationModel: resolvedModel },
         toolAllowlist,
         tools,
         runId,
