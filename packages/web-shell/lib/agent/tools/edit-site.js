@@ -23,8 +23,12 @@ This will refuse if the user is currently editing the node in-place (you'll get 
     if (!nodeId || !instruction) return { error: 'invalid_args', message: 'nodeId and instruction required' };
 
     const [target] = await sql`
-      SELECT n.* FROM nodes n
+      SELECT n.id, n.kind, n.meta, n.board_id,
+             s.html AS current_html,
+             s.design_md AS current_design_md
+        FROM nodes n
         JOIN boards b ON b.id = n.board_id
+        LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
        WHERE n.id = ${nodeId} AND b.user_id = ${ctx.userId} AND b.id = ${ctx.boardId}
     `;
     if (!target) return { error: 'forbidden', message: 'node not found on this board' };
@@ -32,19 +36,16 @@ This will refuse if the user is currently editing the node in-place (you'll get 
     if (target.meta?.editing === true) {
       return { error: 'node_open_in_edit', message: 'node is currently open in edit mode — ask the user to close it' };
     }
-    if (!target.current_snapshot_id) {
+    if (!target.current_html) {
       return { error: 'no_snapshot', message: 'node has no current snapshot to edit' };
     }
-
-    const [snap] = await sql`SELECT id, html FROM snapshots WHERE id = ${target.current_snapshot_id}`;
-    if (!snap) return { error: 'no_snapshot', message: 'current snapshot not found' };
 
     try {
       const result = await runCompose({
         target,
         sources: [
-          { kind: 'site', snapshot: { html: snap.html } },
-          { kind: 'prompt', snapshot: { prompt: instruction } },
+          { kind: 'site', source_html: target.current_html },
+          { kind: 'prompt', meta: { prompt: instruction } },
         ],
         systemPromptOverride: EDIT_SITE_SYSTEM,
       });
