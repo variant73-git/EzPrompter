@@ -14,7 +14,7 @@
  */
 export async function runAgentLoop({
   llm,                       // LLM adapter fn ({model, system, messages, tools, apiKey, onEvent}) → Promise<final>
-  registry,                  // Registry instance
+  registry,                  // Registry instance — used to look up executors by name
   systemPrompt,              // string
   messages,                  // initial messages (just the user msg in fresh run)
   modelId,                   // 'claude-sonnet-4-6' etc — already aliased
@@ -22,9 +22,15 @@ export async function runAgentLoop({
   ctx,                       // { boardId, userId, db, conversationModel, ... } passed to tool executors
   onEvent,                   // ({type, ...payload}) => void  (caller emits SSE)
   maxIterations = 10,
-  toolAllowlist = null,
+  toolAllowlist = null,      // kept for back-compat; ignored when `tools` is supplied
+  tools = null,              // pre-formatted tool spec for the chosen provider — REQUIRED to use any non-Anthropic adapter
 }) {
-  const tools = registry.toAnthropicSpec(toolAllowlist);
+  // Back-compat: if caller didn't pass formatted tools, assume Anthropic.
+  // The route handler that picks the adapter is responsible for passing the
+  // right spec (toAnthropicSpec / toOpenAISpec / toGeminiSpec). Without
+  // this branching the OpenAI/Gemini adapters fail with "Missing required
+  // parameter: 'tools[0].type'" because they receive Anthropic-shaped tools.
+  if (!tools) tools = registry.toAnthropicSpec(toolAllowlist);
   const history = [...messages];
   const totalUsage = { input_tokens: 0, output_tokens: 0 };
   let iterations = 0;
