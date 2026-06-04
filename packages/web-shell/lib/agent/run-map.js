@@ -25,6 +25,12 @@ export function registerRun(runId) {
 }
 
 export function unregisterRun(runId) {
+  const entry = runs.get(runId);
+  if (entry) {
+    // Flush any pending awaits so callers don't hang. cancelRun is idempotent
+    // — safe to call even if there are no pending Promises.
+    cancelRun(runId);
+  }
   runs.delete(runId);
 }
 
@@ -76,6 +82,11 @@ export function awaitContinue(runId) {
   const entry = runs.get(runId);
   if (!entry) return Promise.resolve({ action: 'cancelled', reason: 'unknown_run' });
   return new Promise((resolve) => {
+    if (entry.continues) {
+      // A previous awaitContinue is still pending — shouldn't happen in normal
+      // driver flow, but resolve it cleanly instead of orphaning the Promise.
+      entry.continues({ action: 'cancelled', reason: 'overwritten' });
+    }
     entry.continues = resolve;
   });
 }
