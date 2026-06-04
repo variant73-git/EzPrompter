@@ -87,8 +87,13 @@ export async function runAgentLoop(opts) {
       iterations++;
 
       // ── LLM call ───────────────────────────────────────────────────────
+      // Race the LLM call against the same wall-clock deadline so a slow
+      // adapter / hung provider stream cannot stall the entire run beyond
+      // the configured wall_timeout. The original `wallExpired` flag only
+      // helps BETWEEN iterations; without this race a 25-minute Anthropic
+      // / Gemini stream gets to run to completion before we notice.
       const toolCalls = [];
-      const finalMsg = await llm({
+      const llmPromise = llm({
         model: modelId, system: systemPrompt, messages: history, tools, apiKey,
         onEvent: (ev) => {
           if (ev.type === 'tool_use') toolCalls.push(ev);
@@ -99,6 +104,20 @@ export async function runAgentLoop(opts) {
           onEvent(ev);
         },
       });
+      const LLM_HARD_TIMEOUT_MS = Math.min(effectiveCaps.wallTimeoutMs, 4 * 60 * 1000);
+      let finalMsg;
+      try {
+        finalMsg = await Promise.race([
+          llmPromise,
+          new Promise((_, reject) => setTimeout(
+            () => reject(new Error(`llm call exceeded ${LLM_HARD_TIMEOUT_MS / 1000}s`)),
+            LLM_HARD_TIMEOUT_MS,
+          )),
+        ]);
+      } catch (e) {
+        onEvent({ type: 'run_status', status: 'failed', err: e?.message || 'llm_timeout' });
+        return { stop_reason: 'failed', iterations, usage: totalUsage, toolCounts };
+      }
       history.push({ role: 'assistant', content: finalMsg.content });
 
       if (finalMsg.stop_reason === 'end_turn' || finalMsg.stop_reason === 'stop_sequence') {
