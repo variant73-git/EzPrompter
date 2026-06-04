@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser } from '../../../lib/auth.js';
+import { sql } from '../../../lib/db.js';
 import { getOrCreateActiveThread, loadMessages, appendMessage,
          startAgentRun, finishAgentRun } from '../../../lib/chat-persistence.js';
 import { buildFullRegistry, buildSafeRegistry, buildAssetRegistry } from '../../../lib/agent/tools/index.js';
@@ -177,16 +178,48 @@ export async function POST(request) {
   const registry = threadScope === 'asset' ? buildAssetRegistry() : buildFullRegistry();
   const systemPrompt = PROMPT_KEYS[systemPromptKey] || PROMPT_KEYS.BOARD_AGENT;
 
+  // Persist image attachments as asset rows BEFORE building the LLM message.
+  // This gives the agent two things in the same turn: (a) vision over the
+  // pixels via the multimodal user block, (b) a real assetId it can pass to
+  // createImage's baseImageAssetId for image-to-image edits / style transfer.
+  // Without this step, attached images were invisible to graph-side tools —
+  // the agent could see them but had nothing to point at.
+  const persistedAttachmentAssets = [];
+  if (hasAttachments) {
+    for (const a of attachments) {
+      if (a?.kind !== 'image' || typeof a.dataUrl !== 'string') continue;
+      const mimeType = a.mimeType || (/^data:([^;]+);/.exec(a.dataUrl)?.[1]) || 'image/png';
+      const meta = { dataUrl: a.dataUrl, mimeType, source: 'chat-attachment' };
+      try {
+        const [row] = await sql`
+          INSERT INTO assets (user_id, project_id, type, name, meta)
+          VALUES (${user.id}, ${boardId}, 'image', ${a.name || 'attachment'}, ${JSON.stringify(meta)}::jsonb)
+          RETURNING id
+        `;
+        persistedAttachmentAssets.push({ id: row.id, name: a.name || 'attachment', mimeType });
+      } catch (e) {
+        console.warn('[chat] failed to persist attachment as asset', e?.message || e);
+      }
+    }
+  }
+
   // Build the message history for the LLM. When attachments are present the
   // user content becomes an Anthropic-style array of blocks: one text block
-  // (the typed message, or a default cue if user only attached without text)
-  // plus one image block per attachment. Each adapter translates this shape
-  // into its provider's native multimodal format.
+  // (the typed message + a hint about persisted assetIds, or a default cue
+  // if user only attached without text) plus one image block per attachment.
+  // Each adapter translates this shape into its provider's native multimodal
+  // format.
   let initialMessages;
   if (hasAttachments) {
-    const textPart = hasText
+    let textPart = hasText
       ? message
       : 'Anexei a(s) imagem(s) acima. Use seu próprio julgamento sobre o que fazer com ela(s).';
+    if (persistedAttachmentAssets.length) {
+      const inv = persistedAttachmentAssets
+        .map((a) => `id=${a.id} (${a.name})`)
+        .join(', ');
+      textPart += `\n\n[The attached image(s) are persisted as assets ready for tool use: ${inv}. Pass these IDs to createImage as baseImageAssetId when doing image-to-image edits / style transfer.]`;
+    }
     const blocks = [{ type: 'text', text: textPart }];
     for (const a of attachments) {
       if (a?.kind === 'image' && typeof a.dataUrl === 'string') {

@@ -3,6 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../../lib/auth.js', () => ({
   requireUser: vi.fn(async () => ({ user: { id: 42 } })),
 }));
+vi.mock('../../../lib/db.js', () => ({
+  sql: vi.fn(async () => [{ id: 'asset-mock-123' }]),
+}));
 vi.mock('../../../lib/chat-persistence.js', () => ({
   getOrCreateActiveThread: vi.fn(async () => ({ id: 'thread-1' })),
   appendMessage: vi.fn(async (m) => ({ id: 'msg-x', ...m })),
@@ -218,7 +221,11 @@ describe('POST /api/chat — multimodal user content', () => {
     const userMsg = driverCalls[0].messages[0];
     expect(userMsg.role).toBe('user');
     expect(Array.isArray(userMsg.content)).toBe(true);
-    expect(userMsg.content[0]).toEqual({ type: 'text', text: 'what do you see?' });
+    // First text block is the user message + a hint listing the persisted
+    // attachment asset IDs (so the agent can pass them to createImage).
+    expect(userMsg.content[0].type).toBe('text');
+    expect(userMsg.content[0].text).toMatch(/^what do you see\?/);
+    expect(userMsg.content[0].text).toMatch(/asset-mock-123/);
     expect(userMsg.content[1]).toEqual({
       type: 'image',
       dataUrl: 'data:image/png;base64,ABC',

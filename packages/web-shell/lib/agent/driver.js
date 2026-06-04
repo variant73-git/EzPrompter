@@ -189,7 +189,19 @@ export async function runAgentLoop(opts) {
         // ── Execute ─────────────────────────────────────────────────────
         onEvent({ type: 'tool_status', id: call.id, status: 'running' });
         try {
-          const result = await tool.execute(call.input, { ...ctx, choice: decision.choice ?? null });
+          // Per-tool hard timeout. The wall_timeout cap only fires between
+          // iterations; if a single tool hangs (e.g. an upstream API stuck
+          // in retry-loop), the loop never gets to check it. Race the tool
+          // promise against a 3-minute reject so a single bad call can't
+          // freeze the whole run.
+          const TOOL_TIMEOUT_MS = 3 * 60 * 1000;
+          const result = await Promise.race([
+            tool.execute(call.input, { ...ctx, choice: decision.choice ?? null }),
+            new Promise((_, reject) => setTimeout(
+              () => reject(new Error(`tool ${call.name} exceeded ${TOOL_TIMEOUT_MS / 1000}s — likely a stuck upstream call`)),
+              TOOL_TIMEOUT_MS,
+            )),
+          ]);
           if (result && result.error) {
             toolFailures[call.name] = (toolFailures[call.name] || 0) + 1;
             onEvent({ type: 'tool_status', id: call.id, status: 'error', error: result.message || result.error });
