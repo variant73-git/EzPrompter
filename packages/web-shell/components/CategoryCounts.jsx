@@ -201,7 +201,9 @@ export default function CategoryCounts({ nodes, edges, onZoomToConnection }) {
     return c;
   }, [nodes]);
 
-  const visibleCounts = CATEGORY_ORDER.filter((k) => counts[k] > 0);
+  // Always render every category — categories with zero nodes appear
+  // at 40% opacity via .is-zero so the user sees the full taxonomy.
+  const visibleCounts = CATEGORY_ORDER;
 
   const chains = useMemo(() => buildChains(nodes, edges), [nodes, edges]);
 
@@ -237,8 +239,13 @@ export default function CategoryCounts({ nodes, edges, onZoomToConnection }) {
       >
         {visibleCounts.map((k) => {
           const Icon = CategoryIcon[k];
+          const isZero = counts[k] === 0;
           return (
-            <span key={k} className="cat-counts-item" style={{ '--cat-colour': ORIGIN_COLORS[k] }}>
+            <span
+              key={k}
+              className={`cat-counts-item${isZero ? ' is-zero' : ''}`}
+              style={{ '--cat-colour': ORIGIN_COLORS[k] }}
+            >
               <Icon />
               <span className="cat-counts-num">{counts[k]}</span>
             </span>
