@@ -346,6 +346,20 @@ export async function POST(request) {
               if (ev.error !== undefined) updated.error = ev.error;
               toolCallMap.set(ev.id, updated);
               send('tool_status', { id: ev.id, status: ev.status, result: ev.result, error: ev.error });
+              // Mid-run canvas refetch trigger for tools that change the
+              // graph. Without this, addAssetFromUrl / createImage results
+              // only become visible at end-of-run — long agent turns end
+              // up looking dead from the user's POV.
+              if (ev.status === 'done') {
+                const toolName = updated.name || '';
+                const GRAPH_MUTATING = new Set([
+                  'createNode', 'addEdge', 'updateNode', 'deleteNode',
+                  'addAssetFromUrl', 'createImage', 'runFlow', 'editSite',
+                ]);
+                if (GRAPH_MUTATING.has(toolName)) {
+                  send('graph_mutated', { reason: `tool:${toolName}` });
+                }
+              }
               break;
             }
             case 'needs_confirm':
