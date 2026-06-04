@@ -2622,7 +2622,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   <input
                     type="text"
                     className="canvas-section-name-input"
-                    defaultValue={s.name}
+                    /* Empty value + current name as placeholder so the
+                       caret blinks at position 0 (before the first
+                       letter) and the current name shows faded at 15%
+                       until the user starts typing. */
+                    defaultValue=""
+                    placeholder={s.name}
                     autoFocus
                     onClick={(e) => e.stopPropagation()}
                     onMouseDown={(e) => e.stopPropagation()}
