@@ -387,10 +387,14 @@ input:focus {
 .canvas-marquee {
   position: fixed;
   pointer-events: none;
-  background: rgba(56, 189, 248, 0.12);
-  border: 1px solid rgba(56, 189, 248, 0.55);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.32);
   border-radius: 2px;
   z-index: 200;
+}
+body.rb-ed-light .canvas-marquee {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.32);
 }
 
 /* Space-held → pan mode. Cursor becomes grab everywhere on the canvas
