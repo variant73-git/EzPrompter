@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { nodeOrigin, originColor } from '../lib/node-origin.js';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
@@ -140,6 +141,47 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Play-section confirm modal: holds the section being re-executed while
   // the user confirms in the modal.
   const [playSection, setPlaySection] = useState(null); // { section, busy }
+  // Right-click context menu over a section. Holds the section id + the
+  // viewport coords where the menu should anchor.
+  const [sectionMenu, setSectionMenu] = useState(null); // { sectionId, x, y }
+  // Section being inline-renamed. Opens via double-click on the name
+  // label or the Rename item in the right-click menu.
+  const [editingSectionId, setEditingSectionId] = useState(null);
+  // Custom section names — sections are derived from connected components,
+  // so the id is stable as long as members don't change. We keep overrides
+  // in localStorage keyed by that id; the auto-generated theme name is the
+  // fallback when no override exists.
+  const [sectionNameOverrides, setSectionNameOverrides] = useState(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem('rb-section-names');
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+  function setSectionNameOverride(sectionId, name) {
+    setSectionNameOverrides((prev) => {
+      const next = { ...prev };
+      const trimmed = (name || '').trim();
+      if (trimmed) next[sectionId] = trimmed;
+      else delete next[sectionId];
+      try { localStorage.setItem('rb-section-names', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
+  // Close the section context menu on outside click or Escape.
+  useEffect(() => {
+    if (!sectionMenu) return;
+    function onDown(e) {
+      if (!e.target?.closest?.('.section-context-menu')) setSectionMenu(null);
+    }
+    function onKey(e) { if (e.key === 'Escape') setSectionMenu(null); }
+    window.addEventListener('mousedown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [sectionMenu]);
   // Imperative ref to the PromptDock so the canvas can fire chat sends
   // from the section play button without round-tripping through props.
   const promptDockRef = useRef(null);
@@ -2049,8 +2091,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         // Don't bother if we're inside the editor — its own Backspace logic
         // owns those keys.
         if (editingNodeId) return;
-        // Multi-selection wins when populated — batch-delete every node in
-        // the set so a marquee selection can be cleared in one keystroke.
+        // Selected section wins first — Del nukes the WHOLE workflow
+        // (every member node + every edge incident to it). One confirm.
+        if (selectedSectionId) {
+          const s = sections.find((x) => x.id === selectedSectionId);
+          if (s) {
+            e.preventDefault();
+            if (confirm(`Delete the entire "${s.name}" workflow? ${s.memberIds.length} nodes will be removed.`)) {
+              handleDeleteNodes(s.memberIds);
+              setSelectedSectionId(null);
+            }
+          }
+          return;
+        }
+        // Multi-selection wins next — batch-delete every node in the set
+        // so a marquee selection can be cleared in one keystroke.
         if (selectedNodeIds.size > 0) {
           e.preventDefault();
           handleDeleteNodes(Array.from(selectedNodeIds));
@@ -2243,11 +2298,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         maxX = Math.max(maxX, (n.pos_x || 0) + (n.width || 0));
         maxY = Math.max(maxY, (n.pos_y || 0) + (n.height || 0) + bottomOverflow);
       }
+      const sectionId = `section-${memberIds.slice().sort().join('-').slice(0, 64)}`;
+      const fallbackName = `${THEME_LABEL[t]} #${themeCounter[t]}`;
       out.push({
-        id: `section-${memberIds.slice().sort().join('-').slice(0, 64)}`,
+        id: sectionId,
         memberIds,
         theme: t,
-        name: `${THEME_LABEL[t]} #${themeCounter[t]}`,
+        name: sectionNameOverrides[sectionId] || fallbackName,
         // Asymmetric padding: TOP_GAP reserves room for the play
         // button + name tag, sides/bottom keep UNIFORM_GAP. The bottom
         // already accounts for asset-pill/dims overflow via the +80
@@ -2259,7 +2316,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       });
     }
     return out;
-  }, [nodes, edges]);
+  }, [nodes, edges, sectionNameOverrides]);
 
   // Section drag — grabbing the dot-grid handle at the top of a section
   // translates ALL member nodes by the same delta so the workflow moves
@@ -2567,20 +2624,58 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }}
               data-section-id={s.id}
             >
-              <div className="canvas-section-name-tag">
-                <button
-                  type="button"
-                  className="canvas-section-name-btn"
-                  title="Select workflow"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedSectionId((prev) => (prev === s.id ? null : s.id));
-                    setSelectedNodeId(null);
-                    setSelectedNodeIds(new Set());
-                  }}
-                >
-                  {s.name}
-                </button>
+              <div
+                className="canvas-section-name-tag"
+                role="button"
+                tabIndex={0}
+                title={editingSectionId === s.id ? '' : 'Double click to edit'}
+                onClick={(e) => {
+                  // Whole pill selects the workflow — but not during inline
+                  // edit, and not when the play button bubbles a click.
+                  if (editingSectionId === s.id) return;
+                  e.stopPropagation();
+                  setSelectedSectionId((prev) => (prev === s.id ? null : s.id));
+                  setSelectedNodeId(null);
+                  setSelectedNodeIds(new Set());
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSectionMenu({ sectionId: s.id, x: e.clientX, y: e.clientY });
+                }}
+              >
+                {editingSectionId === s.id ? (
+                  <input
+                    type="text"
+                    className="canvas-section-name-input"
+                    defaultValue={s.name}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onBlur={(e) => {
+                      setSectionNameOverride(s.id, e.target.value);
+                      setEditingSectionId(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        setSectionNameOverride(s.id, e.target.value);
+                        setEditingSectionId(null);
+                      } else if (e.key === 'Escape') {
+                        setEditingSectionId(null);
+                      }
+                    }}
+                  />
+                ) : (
+                  <span
+                    className="canvas-section-name-label"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setEditingSectionId(s.id);
+                    }}
+                  >
+                    {s.name}
+                  </span>
+                )}
                 <button
                   type="button"
                   className="canvas-section-play-btn"
@@ -2621,7 +2716,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   aria-hidden="true"
                 >
                   {corner === 'se' && (
-                    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
                       <line x1="7" y1="20" x2="20" y2="7" />
                       <line x1="13" y1="20" x2="20" y2="13" />
                     </svg>
@@ -2936,6 +3031,40 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         onConfirm={handleConfirmRegenAspect}
         onCancel={() => { if (!regenAspect?.busy) setRegenAspect(null); }}
       />
+
+      {sectionMenu && typeof document !== 'undefined' && createPortal(
+        <div
+          className="empty-drop-menu cnode-topbar-menu section-context-menu"
+          style={{
+            left: Math.min(sectionMenu.x, window.innerWidth - 240),
+            top: Math.min(sectionMenu.y, window.innerHeight - 160),
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button onClick={() => {
+            setEditingSectionId(sectionMenu.sectionId);
+            setSectionMenu(null);
+          }}>
+            <span>Rename…</span>
+          </button>
+          <div className="section-menu-sep" aria-hidden="true" />
+          <button
+            className="cnode-topbar-menu-danger"
+            onClick={() => {
+              const s = sections.find((x) => x.id === sectionMenu.sectionId);
+              if (s && confirm(`Delete the entire "${s.name}" workflow? ${s.memberIds.length} nodes will be removed.`)) {
+                handleDeleteNodes(s.memberIds);
+                if (selectedSectionId === sectionMenu.sectionId) setSelectedSectionId(null);
+              }
+              setSectionMenu(null);
+            }}
+          >
+            <span>Delete</span>
+          </button>
+        </div>,
+        document.body
+      )}
 
       <ConfirmModal
         open={!!playSection}

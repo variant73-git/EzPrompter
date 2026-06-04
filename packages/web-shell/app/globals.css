@@ -3664,7 +3664,11 @@ body.rb-ed-light .canvas-section-frame {
   -webkit-backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
-  padding: 12px 14px 12px 36px;
+  /* Horizontal padding bumped +10% (36/14 -> 40/15) so the pill has more
+     breathing around the label. Cursor:pointer + the JSX-level onClick
+     make the WHOLE pill the workflow-select hit area (not just the
+     label). */
+  padding: 12px 15px 12px 40px;
   font-family: inherit;
   font-size: 40px;
   font-weight: 500;
@@ -3676,28 +3680,48 @@ body.rb-ed-light .canvas-section-frame {
   display: inline-flex;
   align-items: center;
   gap: 22px;
+  cursor: pointer;
 }
+.canvas-section-name-tag:hover { background: rgba(28, 28, 30, 0.82); }
 body.rb-ed-light .canvas-section-name-tag {
   background: rgba(255, 255, 255, 0.92);
   border-color: rgba(0, 0, 0, 0.12);
   color: var(--text-primary);
 }
-.canvas-section-name-btn {
+/* Label inside the pill (was a button; the parent div is now the click
+   surface). Double-clicking opens the inline rename input. */
+.canvas-section-name-label {
   background: transparent;
   border: none;
   color: inherit;
   font: inherit;
   letter-spacing: inherit;
   padding: 0;
-  cursor: pointer;
   white-space: nowrap;
+  cursor: text;
 }
-.canvas-section-name-btn:hover { opacity: 0.85; }
+/* Inline rename input — sits in the pill slot, inherits typography so
+   the swap doesn't shift surrounding layout. */
+.canvas-section-name-input {
+  background: transparent;
+  border: none;
+  outline: 1px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 4px;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  padding: 0;
+  white-space: nowrap;
+  min-width: 200px;
+  max-width: 460px;
+  border-radius: 4px;
+}
+body.rb-ed-light .canvas-section-name-input { outline-color: rgba(0, 0, 0, 0.45); }
 .canvas-section-play-btn {
-  /* Circle, stable on-screen size — ~50x50 regardless of canvas zoom.
-     width = height so border-radius:999px renders a clean disc. */
-  width: calc(50px / var(--canvas-scale, 1));
-  height: calc(50px / var(--canvas-scale, 1));
+  /* Circle, stable on-screen size — ~40x40 (down 20% from the prior
+     50). width = height so border-radius:999px renders a clean disc. */
+  width: calc(40px / var(--canvas-scale, 1));
+  height: calc(40px / var(--canvas-scale, 1));
   border-radius: 999px;
   /* Solid offwhite chip with an offblack triangle inside. Light-mode
      swaps to offblack/offwhite below. */
@@ -3716,8 +3740,8 @@ body.rb-ed-light .canvas-section-name-tag {
 }
 .canvas-section-play-btn:active { transform: scale(0.93); }
 .canvas-section-play-btn svg {
-  width: calc(22px / var(--canvas-scale, 1));
-  height: calc(22px / var(--canvas-scale, 1));
+  width: calc(18px / var(--canvas-scale, 1));
+  height: calc(18px / var(--canvas-scale, 1));
 }
 body.rb-ed-light .canvas-section-play-btn { background: #0a0a0a; color: #fff; }
 body.rb-ed-light .canvas-section-play-btn:hover { background: #1a1a1a; }
@@ -3803,14 +3827,33 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
 .canvas-section-handle-se {
   bottom: -10px;
   right: -10px;
+  /* Grow the hit area to fit the bigger inverse-scaled icon at any
+     zoom — inverse-scale capped on the lower end so high zoom-in
+     doesn't shrink the icon below readability. */
+  width: calc(56px / var(--canvas-scale, 1));
+  height: calc(56px / var(--canvas-scale, 1));
   cursor: nwse-resize;
   color: rgba(255, 255, 255, 0.45);
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;
-  padding: 4px;
+  padding: calc(6px / var(--canvas-scale, 1));
+}
+/* Section context menu separator — hairline between groups of items
+   (currently Rename | sep | Delete). Inherits the frosted-menu hairline
+   token used elsewhere. */
+.section-menu-sep {
+  height: 1px;
+  background: var(--border-frosted);
+  margin: 4px 6px;
 }
 .canvas-section-handle-se:hover { color: rgba(255, 255, 255, 0.85); }
+/* Resize icon: +100% (24 -> 48) AND inverse-scaled so it stays a
+   stable ~48px on screen regardless of canvas zoom. */
+.canvas-section-handle-se svg {
+  width: calc(48px / var(--canvas-scale, 1));
+  height: calc(48px / var(--canvas-scale, 1));
+}
 body.rb-ed-light .canvas-section-handle-se { color: rgba(0, 0, 0, 0.35); }
 body.rb-ed-light .canvas-section-handle-se:hover { color: rgba(0, 0, 0, 0.7); }
 
