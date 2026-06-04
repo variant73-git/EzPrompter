@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { nodeOrigin, originColor } from '../lib/node-origin.js';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
@@ -128,6 +128,41 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // open-site handlers clean up the temp node from the canvas.
   const [challenge, setChallenge] = useState(null);
   const transformRef = useRef(null);
+
+  // ── HMR / refresh hard reset of canvas-scale state ────────────────────
+  // `--canvas-scale` lives as an inline style on <html>, and the two
+  // `canvas-zoom-low` / `canvas-zoom-very-low` classes follow it. Both are
+  // only WRITTEN by TransformWrapper's onTransformed callback — never
+  // cleared. That leaves three failure modes:
+  //   (1) Next.js Fast Refresh swaps the component but leaves the previous
+  //       inline style on <html>. The new TransformWrapper mounts at
+  //       initialScale=0.6 but onTransformed doesn't fire until the user
+  //       interacts, so the stale value (e.g. 0.1 from a zoomed-out session)
+  //       is what CSS reads — inverse-scaled chrome becomes 10× bigger.
+  //   (2) React StrictMode double-invokes effects in dev; if the previous
+  //       cycle's class state lingers across the remount cycle the same
+  //       "huge chrome" symptom appears.
+  //   (3) Cross-refresh — Chrome occasionally preserves inline style on
+  //       html across navigations in dev (Fast Navigation cache). User-
+  //       reported symptom: "tudo aumenta a cada refresh."
+  // Defensive cleanup: remove the property + classes on mount AND unmount
+  // so every mount starts with a clean baseline. The next onTransformed
+  // fire (which TransformWrapper triggers when it settles initialScale)
+  // restores the correct value.
+  useLayoutEffect(() => {
+    const reset = () => {
+      // Pin the baseline to match `initialScale` below so the chrome
+      // doesn't flash native-sized between mount and the first
+      // onTransformed fire. If you change initialScale, update this too.
+      document.documentElement.style.setProperty('--canvas-scale', '0.6');
+      document.documentElement.classList.remove('canvas-zoom-low', 'canvas-zoom-very-low');
+    };
+    reset();
+    return () => {
+      document.documentElement.style.removeProperty('--canvas-scale');
+      document.documentElement.classList.remove('canvas-zoom-low', 'canvas-zoom-very-low');
+    };
+  }, []);
 
   // Light/dark theme — toggling sets `body.rb-ed-light` so the editor
   // (when active) inherits the same setting. Persisted under the SAME
@@ -1248,6 +1283,40 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   function handleDownloadNode(id) {
     const n = nodes.find((x) => x.id === id);
     if (!n) return;
+
+    // Asset nodes hold their data as a base64 data URL in meta.dataUrl.
+    // Decode → blob → trigger download with the correct mime + extension
+    // pulled from the data URL header (typically image/png from gpt-image-1
+    // and Imagen; JPEG/WebP also supported).
+    if (n.kind === 'asset' || n.kind === 'image') {
+      const dataUrl = n.meta?.dataUrl;
+      if (!dataUrl) { toast.info('Nothing to download yet.'); return; }
+      const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
+      if (!m) { toast.error('Could not read this image.'); return; }
+      const mime = m[1] || 'image/png';
+      const base64 = m[2];
+      // Map mime → file extension. Default to .png for unknowns.
+      const ext = mime === 'image/jpeg' || mime === 'image/jpg' ? 'jpg'
+                : mime === 'image/webp' ? 'webp'
+                : mime === 'image/gif'  ? 'gif'
+                : 'png';
+      const byteString = atob(base64);
+      const bytes = new Uint8Array(byteString.length);
+      for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
+      const blob = new Blob([bytes], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const baseName = (n.meta?.name || 'uncraft-image').toString().replace(/[^a-zA-Z0-9._-]+/g, '_');
+      const fname = baseName.endsWith('.' + ext) ? baseName : `${baseName}.${ext}`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+      return;
+    }
+
     const isMd = n.kind === 'designmd';
     const content = isMd ? (n.current_design_md || '') : (n.current_html || '');
     if (!content) { toast.info('Nothing to download yet.'); return; }
@@ -1863,6 +1932,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     return m;
   }, [edges, nodes]);
 
+  // Set of node IDs that already source at least one outgoing edge. Used
+  // by CanvasNode to freeze the right-port emitter ball at its default
+  // position — once a node is wired as a source, the "cursor-tracks-port"
+  // slide animation stops adding value (user already has visual proof the
+  // node connects) and the moving ball becomes noise.
+  const hasOutgoingBySource = useMemo(() => {
+    const s = new Set();
+    for (const e of edges) s.add(e.source_node_id);
+    return s;
+  }, [edges]);
+
   return (
     <div
       className="canvas-shell"
@@ -1998,6 +2078,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             <CanvasNode
               key={n.id} node={n}
               incomingEdges={incomingByTarget.get(n.id) || []}
+              hasOutgoingEdges={hasOutgoingBySource.has(n.id)}
               selected={selectedNodeId === n.id || selectedNodeIds.has(n.id)}
               editing={editingNodeId === n.id}
               onEditingChange={(willEdit) => handleEditingToggle(n.id, willEdit)}
