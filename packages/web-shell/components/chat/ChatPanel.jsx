@@ -31,9 +31,20 @@ export default function ChatPanel({
     );
   }
 
-  // Find the last assistant message (we attach live activeToolCalls under it).
-  const lastAssistantIdx = (() => {
-    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'assistant') return i;
+  // Where do we anchor in-flight activeToolCalls? Only under the CURRENT
+  // turn's assistant bubble — i.e. an assistant message that comes AFTER
+  // the latest user message. Otherwise we'd render new chips under a prior
+  // turn's bubble, which (a) makes them look like they belong to that older
+  // exchange and (b) collides ids with already-rendered chips in that
+  // bubble's persisted tool_calls.
+  const lastUserIdx = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user') return i;
+    return -1;
+  })();
+  const currentTurnAssistantIdx = (() => {
+    for (let i = messages.length - 1; i > lastUserIdx; i--) {
+      if (messages[i].role === 'assistant') return i;
+    }
     return -1;
   })();
 
@@ -55,8 +66,11 @@ export default function ChatPanel({
       {messages.map((m, idx) => (
         <ChatBubble key={m.id} role={m.role} content={m.content}>
           {m.tool_calls?.map((tc) => (
+            // Namespaced key prevents collisions when an active chip and a
+            // persisted chip happen to share an id (e.g. Gemini's per-call
+            // counter wrapping back to 1 across turns).
             <ToolChip
-              key={tc.id}
+              key={`m-${tc.id}`}
               toolName={tc.name}
               status={tc.status || 'done'}
               args={tc.args}
@@ -64,9 +78,9 @@ export default function ChatPanel({
               error={tc.error}
             />
           ))}
-          {idx === lastAssistantIdx && activeToolCalls.map((tc) => (
+          {idx === currentTurnAssistantIdx && activeToolCalls.map((tc) => (
             <ToolChip
-              key={tc.id}
+              key={`a-${tc.id}`}
               toolName={tc.name}
               status={tc.status || 'running'}
               args={tc.args}
@@ -81,11 +95,12 @@ export default function ChatPanel({
           ))}
         </ChatBubble>
       ))}
-      {/* If there's no assistant message yet but tools are running, render a fresh bubble */}
-      {lastAssistantIdx === -1 && activeToolCalls.length > 0 && (
+      {/* If this turn hasn't streamed an assistant bubble yet but tools are
+          running, render a fresh transient bubble for them. */}
+      {currentTurnAssistantIdx === -1 && activeToolCalls.length > 0 && (
         <ChatBubble role="assistant" content="">
           {activeToolCalls.map((tc) => (
-            <ToolChip key={tc.id} toolName={tc.name} status={tc.status || 'running'} args={tc.args} />
+            <ToolChip key={`a-${tc.id}`} toolName={tc.name} status={tc.status || 'running'} args={tc.args} />
           ))}
         </ChatBubble>
       )}
