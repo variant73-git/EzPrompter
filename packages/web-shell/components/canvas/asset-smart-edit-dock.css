@@ -137,3 +137,19 @@
 .asmd-choice-btn:hover { background: rgba(56, 189, 248, 0.18); }
 .asmd-choice-label { font-weight: 500; }
 .asmd-choice-hint { font-size: 10px; opacity: 0.7; }
+.asmd-choice-cancel {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.asmd-choice-cancel:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary, #f5f5f5);
+}

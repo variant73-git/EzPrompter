@@ -38,12 +38,12 @@ const MODEL_ALIAS = {
 /**
  * Pick the model that orchestrates the agent (tool calls). Tier ladder:
  *   - free:       gemini-2.5-flash (cheap, weaker function-calling but adequate)
- *   - pro:        deepseek-chat (mid-tier, requires DEEPSEEK_API_KEY)
+ *   - pro:        gemini-2.5-flash (temporarily same as free; DeepSeek adapter pending Phase 5d)
  *   - enterprise: claude-sonnet-4-6 (best function-calling quality)
  *
  * Cost floor math per turn @ ~15k in + 1.5k out:
  *   gemini-2.5-flash  — $0.0015 / turn  ($1.8M/yr @ 1M users)
- *   deepseek-chat     — $0.006          ($7.2M/yr)
+ *   deepseek-chat     — $0.006          ($7.2M/yr)  [TODO Phase 5d]
  *   claude-sonnet-4-6 — $0.07           ($84M/yr)
  *
  * UNCRAFT_AGENT_MODEL env override always wins (dev/test).
@@ -54,7 +54,9 @@ function getAgentModel(user) {
   if (process.env.UNCRAFT_AGENT_MODEL) return process.env.UNCRAFT_AGENT_MODEL;
   const plan = user?.plan || 'free';
   if (plan === 'enterprise') return 'claude-sonnet-4-6';
-  if (plan === 'pro') return 'deepseek-chat';
+  // TODO Phase 5d: wire DeepSeek adapter (OpenAI-compatible, baseURL=https://api.deepseek.com).
+  // Until then, pro tier downgrades to the same model as free to avoid 500s.
+  if (plan === 'pro') return 'gemini-2.5-flash';
   return 'gemini-2.5-flash';
 }
 
@@ -140,7 +142,7 @@ export async function POST(request) {
   // INSIDE a node when the agent calls runFlow/createImage — that's a
   // different concern handled by run-flow.js / image gen routes.
   const resolvedModel = getAgentModel(user);
-  if (!/^(claude|opus|sonnet|haiku|gpt|gemini|deepseek)/i.test(resolvedModel)) {
+  if (!/^(claude|opus|sonnet|haiku|gpt|gemini)/i.test(resolvedModel)) {
     return NextResponse.json({ error: `unsupported AGENT_MODEL configured: ${resolvedModel}` }, { status: 500 });
   }
 

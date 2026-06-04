@@ -212,6 +212,22 @@ export default function AssetSmartEditDock({ boardId, assetId, onResult, onClose
               {c.hint && <span className="asmd-choice-hint">{c.hint}</span>}
             </button>
           ))}
+          <button
+            type="button"
+            className="asmd-choice-cancel"
+            onClick={() => {
+              if (runIdRef.current && state.pendingChoice?.toolCallId) {
+                postConfirm({
+                  runId: runIdRef.current,
+                  toolCallId: state.pendingChoice.toolCallId,
+                  action: 'skip',
+                });
+              }
+              dispatch({ type: 'RESET_TO_IDLE' });
+            }}
+          >
+            Cancel
+          </button>
         </div>
       )}
 
