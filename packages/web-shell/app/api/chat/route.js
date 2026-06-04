@@ -11,6 +11,8 @@ import { BOARD_AGENT, EDIT_IMAGE_SYSTEM } from '../../../lib/agent/prompts.js';
 import { createSseStream, SSE_HEADERS } from '../../../lib/agent/sse-bridge.js';
 import { registerRun, unregisterRun } from '../../../lib/agent/run-map.js';
 import { getCaps } from '../../../lib/agent/caps.js';
+import { computeCost } from '../../../lib/agent/cost.js';
+import { hasEnoughCredits } from '../../../lib/credits.js';
 
 export const runtime = 'nodejs';
 
@@ -33,27 +35,27 @@ const MODEL_ALIAS = {
   // Kimi (deferred — accepted alias, falls through to error below for now)
 };
 
-// Which model orchestrates the agent (tool calls, workflow building).
-// Internal infrastructure choice — NOT the user's picker selection.
-//
-// Override per env: UNCRAFT_AGENT_MODEL=<id>
-//
-// Default is Gemini 2.5 Flash because at scale (target: 100k-1M users) the
-// agent cost dominates. Math per turn @ ~15k in + 1.5k out:
-//   gemini-2.5-flash      — $0.0015 / turn  ($1.8M/yr @ 1M users)
-//   deepseek-chat         — $0.006        ($7.2M/yr)
-//   claude-haiku-4-5      — $0.022        ($26M/yr)
-//   claude-sonnet-4-6     — $0.07         ($84M/yr)
-//
-// Flash has slightly weaker function-calling quality than Sonnet/DeepSeek
-// (BFCL ~85% vs ~94% / ~88%) but is the safest cost-floor for a free tier
-// targeting millions of users. Tiered routing (free=Flash, pro=DeepSeek,
-// enterprise=Sonnet) goes here when the credit system lands.
-//
-// Wrapped in a function so tests can override the env var per-test and
-// hot-reload picks up changes without restarting the dev server.
-function getAgentModel() {
-  return process.env.UNCRAFT_AGENT_MODEL || 'gemini-2.5-flash';
+/**
+ * Pick the model that orchestrates the agent (tool calls). Tier ladder:
+ *   - free:       gemini-2.5-flash (cheap, weaker function-calling but adequate)
+ *   - pro:        deepseek-chat (mid-tier, requires DEEPSEEK_API_KEY)
+ *   - enterprise: claude-sonnet-4-6 (best function-calling quality)
+ *
+ * Cost floor math per turn @ ~15k in + 1.5k out:
+ *   gemini-2.5-flash  — $0.0015 / turn  ($1.8M/yr @ 1M users)
+ *   deepseek-chat     — $0.006          ($7.2M/yr)
+ *   claude-sonnet-4-6 — $0.07           ($84M/yr)
+ *
+ * UNCRAFT_AGENT_MODEL env override always wins (dev/test).
+ * Wrapped in a function so tests can override the env var per-test and
+ * hot-reload picks up changes without restarting the dev server.
+ */
+function getAgentModel(user) {
+  if (process.env.UNCRAFT_AGENT_MODEL) return process.env.UNCRAFT_AGENT_MODEL;
+  const plan = user?.plan || 'free';
+  if (plan === 'enterprise') return 'claude-sonnet-4-6';
+  if (plan === 'pro') return 'deepseek-chat';
+  return 'gemini-2.5-flash';
 }
 
 /**
@@ -137,9 +139,16 @@ export async function POST(request) {
   // user's picker. The picker on PromptDock chooses which model runs
   // INSIDE a node when the agent calls runFlow/createImage — that's a
   // different concern handled by run-flow.js / image gen routes.
-  const resolvedModel = getAgentModel();
-  if (!/^(claude|opus|sonnet|haiku|gpt|gemini)/i.test(resolvedModel)) {
+  const resolvedModel = getAgentModel(user);
+  if (!/^(claude|opus|sonnet|haiku|gpt|gemini|deepseek)/i.test(resolvedModel)) {
     return NextResponse.json({ error: `unsupported AGENT_MODEL configured: ${resolvedModel}` }, { status: 500 });
+  }
+
+  // Phase 5c credit gate — currently permissive (lib/credits.js stub always returns true).
+  // Flipping enforcement on requires only lib/credits.js changing.
+  const enough = await hasEnoughCredits({ userId: user.id, cents: 100 }); // pre-check notional budget
+  if (!enough) {
+    return NextResponse.json({ error: 'insufficient_credits' }, { status: 402 });
   }
 
   // Route to the correct provider adapter based on the resolved model.
@@ -251,12 +260,19 @@ export async function POST(request) {
         },
       });
 
+      const tokensIn = loopResult.usage?.input_tokens || 0;
+      const tokensOut = loopResult.usage?.output_tokens || 0;
+      const costCents = computeCost({ model: resolvedModel, tokensIn, tokensOut });
+
       const finalStatus = mapLoopResultToRunStatus(loopResult.stop_reason);
       await finishAgentRun({
         runId,
         status: finalStatus,
         iterations: loopResult.iterations,
         toolCallCounts: loopResult.toolCounts || {},
+        tokensIn,
+        tokensOut,
+        costCents,
       });
       const toolCallsForPersistence = Array.from(toolCallMap.values());
       await appendMessage({
