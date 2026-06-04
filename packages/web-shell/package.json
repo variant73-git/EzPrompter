@@ -7,7 +7,10 @@
     "dev": "next dev --port 3030",
     "dev:keep": "next dev --port 3030",
     "build": "next build",
-    "start": "next start --port 3030"
+    "start": "next start --port 3030",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "latest",
@@ -26,5 +29,14 @@
     "react-dom": "^19",
     "react-zoom-pan-pinch": "^3.6.0",
     "stripe": "^17"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@vitejs/plugin-react": "^6.0.2",
+    "@vitest/ui": "^4.1.7",
+    "jsdom": "^29.1.1",
+    "vitest": "^4.1.7"
   }
 }
