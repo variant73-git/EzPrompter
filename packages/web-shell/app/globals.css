@@ -603,6 +603,11 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
   align-items: center;
   gap: 4px;
 }
+/* Categories with zero nodes render dimmed — the user sees the full
+   taxonomy without the empty entries shouting for attention. */
+.cat-counts-item.is-zero {
+  opacity: 0.4;
+}
 .cat-counts-item svg {
   color: var(--cat-colour, var(--text-secondary));
 }
