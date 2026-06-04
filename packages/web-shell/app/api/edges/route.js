@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '../../../lib/db.js';
 import { requireUser } from '../../../lib/auth.js';
 
-const VALID_KINDS = new Set(['transplant', 'token-swap', 'reskin']);
+const VALID_KINDS = new Set(['transplant', 'token-swap', 'reskin', 'generic']);
 
 export async function POST(request) {
   const { user, error } = await requireUser(request);
