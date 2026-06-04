@@ -11,6 +11,99 @@ import AssetSmartEditDock from './canvas/AssetSmartEditDock.jsx';
 
 const DRAG_THRESHOLD = 4;
 
+// Aspect-ratio metadata. API output dims match what the createImage tool
+// requests from gpt-image-1 (SIZE_MAP in lib/image-gen/openai-image.js).
+// Node display dims should match the create-image tool's ASPECT_DIMENSIONS
+// so the pill text + dims label stay consistent across regen + initial gen.
+const ASPECT_OPTIONS = [
+  { id: '1:1',  apiW: 1024, apiH: 1024 },
+  { id: '16:9', apiW: 1792, apiH: 1024 },
+  { id: '9:16', apiW: 1024, apiH: 1792 },
+  { id: '3:4',  apiW: 1024, apiH: 1280 },
+  { id: '4:3',  apiW: 1280, apiH: 1024 },
+];
+function inferAspect(node) {
+  const stored = node?.meta?.aspectRatio;
+  if (stored && ASPECT_OPTIONS.find((o) => o.id === stored)) return stored;
+  const w = node?.width || 512;
+  const h = node?.height || 512;
+  if (!h) return '1:1';
+  const r = w / h;
+  let best = '1:1', bestDiff = Infinity;
+  for (const o of ASPECT_OPTIONS) {
+    const targetR = o.apiW / o.apiH;
+    const diff = Math.abs(r - targetR);
+    if (diff < bestDiff) { bestDiff = diff; best = o.id; }
+  }
+  return best;
+}
+function dimsForAspect(aspectId) {
+  return ASPECT_OPTIONS.find((o) => o.id === aspectId) || ASPECT_OPTIONS[0];
+}
+
+const ChevronDownIcon = () => (
+  <svg className="cnode-aspect-pill-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <polyline points="6 9 12 15 18 9" />
+  </svg>
+);
+
+// Aspect-ratio pill rendered on the bottom edge of asset cards. Click opens
+// a dropdown of standard aspects; choosing a different one calls onRequestRegen
+// which the parent surfaces via a confirm modal.
+function AssetAspectPill({ node, onRequestRegen }) {
+  const [open, setOpen] = useState(false);
+  const current = inferAspect(node);
+  useEffect(() => {
+    if (!open) return;
+    function close(e) {
+      const t = e.target;
+      if (!t?.closest?.('.cnode-aspect-pill') && !t?.closest?.('.cnode-aspect-pill-menu')) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', close, true);
+    return () => document.removeEventListener('mousedown', close, true);
+  }, [open]);
+  return (
+    <>
+      <button
+        type="button"
+        className="cnode-aspect-pill"
+        title="Change aspect ratio"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); setOpen((p) => !p); }}
+      >
+        <span>{current}</span>
+        <span className="cnode-aspect-pill-divider" aria-hidden="true" />
+        <ChevronDownIcon />
+      </button>
+      {open && (
+        <div className="cnode-aspect-pill-menu" onMouseDown={(e) => e.stopPropagation()}>
+          {ASPECT_OPTIONS.map((o) => {
+            const isCurrent = o.id === current;
+            return (
+              <button
+                key={o.id}
+                type="button"
+                className={isCurrent ? 'current' : ''}
+                disabled={isCurrent}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpen(false);
+                  if (!isCurrent) onRequestRegen?.(o.id);
+                }}
+              >
+                <span>{o.id}</span>
+                {isCurrent ? <span>✓</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
 function SmartEditDockWrap({ node, children }) {
   const wrapRef = useRef(null);
   const [side, setSide] = useState('right');
@@ -53,6 +146,15 @@ const ResetIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M3 12a9 9 0 1 0 3-6.7"/>
     <path d="M3 4v5h5"/>
+  </svg>
+);
+
+const ReplaceIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M17 3l4 4-4 4" />
+    <path d="M21 7H7a4 4 0 0 0-4 4v0" />
+    <path d="M7 21l-4-4 4-4" />
+    <path d="M3 17h14a4 4 0 0 0 4-4v0" />
   </svg>
 );
 
@@ -270,7 +372,8 @@ export default function CanvasNode({
   node, selected, editing = false, onEditingChange,
   onSelect, onMove, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload,
-  onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
+  onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch, onRequestRegenAspect,
+  onReplaceContent,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -985,6 +1088,27 @@ export default function CanvasNode({
               </svg>
             </button>
           )}
+          {/* Aspect-ratio pill sits half-inside / half-outside the bottom
+              edge. Only shown when the node already has image data — for
+              generating / error states the pill would be misleading. */}
+          {node.meta?.dataUrl && node.meta?.status !== 'generating' && (
+            <AssetAspectPill
+              node={node}
+              onRequestRegen={(aspect) => onRequestRegenAspect?.(node.id, aspect)}
+            />
+          )}
+          {/* Output dimensions label — anchored to the bottom-right corner,
+              just below the card. 70% opacity, pointer-events:none so it
+              doesn't intercept clicks. Reads the API output size for the
+              current aspect (NOT the canvas display size). */}
+          {node.meta?.dataUrl && (() => {
+            const d = dimsForAspect(inferAspect(node));
+            return (
+              <div className="cnode-asset-dims" aria-hidden="true">
+                {d.apiW} × {d.apiH}
+              </div>
+            );
+          })()}
         </div>
       ) : null}
       <>
@@ -1114,10 +1238,12 @@ export default function CanvasNode({
           y={menuPos.y}
           canEdit={renderIframeBody && !!html}
           canReset={renderIframeBody && !!html && hasEdits}
+          canReplace={node.kind === 'asset' || node.kind === 'image' || node.kind === 'site' || node.kind === 'designmd'}
           editing={editing}
           onEdit={() => { setMenuPos(null); onEditingChange?.(!editing); }}
           onDuplicate={() => { setMenuPos(null); onDuplicate?.(); }}
           onDownload={() => { setMenuPos(null); onDownload?.(); }}
+          onReplace={() => { setMenuPos(null); onReplaceContent?.(node.id); }}
           onReset={() => { setMenuPos(null); setShowResetConfirm(true); }}
           onDelete={() => { setMenuPos(null); if (confirm('Delete this node?')) onDelete(); }}
           onClose={() => setMenuPos(null)}
@@ -1128,7 +1254,7 @@ export default function CanvasNode({
   );
 }
 
-function TopbarContextMenu({ x, y, canEdit, canReset, editing, onEdit, onDuplicate, onDownload, onReset, onDelete, onClose }) {
+function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, editing, onEdit, onDuplicate, onDownload, onReplace, onReset, onDelete, onClose }) {
   // Clamp to viewport so the menu stays fully visible. Width matches
   // .empty-drop-menu (260px) so this reads as the same family of menu.
   const W = 260, H_EST = 240;
@@ -1159,6 +1285,12 @@ function TopbarContextMenu({ x, y, canEdit, canReset, editing, onEdit, onDuplica
         <DownloadIcon />
         <span>Download</span>
       </button>
+      {canReplace && (
+        <button onClick={onReplace}>
+          <ReplaceIcon />
+          <span>Replace content…</span>
+        </button>
+      )}
       {canReset && (
         <button onClick={onReset}>
           <ResetIcon />

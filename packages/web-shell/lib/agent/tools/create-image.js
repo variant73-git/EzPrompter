@@ -165,12 +165,18 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
     let sourceNodeIds = [];
     const edgesCreated = [];
     try {
+      // Persist enough context to enable re-rolls (different aspect ratio,
+      // regen-from-source). styleReferenceAssetIds lets the regen-aspect
+      // endpoint re-resolve the same references without going through chat.
       const placeholderAssetMeta = {
         prompt,
         mode,
         aspectRatio,
         status: 'generating',
         ...(baseImageAssetId ? { baseImageAssetId } : {}),
+        ...(Array.isArray(styleReferenceAssetIds) && styleReferenceAssetIds.length > 0
+          ? { styleReferenceAssetIds: styleReferenceAssetIds.filter((x) => typeof x === 'string' && x) }
+          : {}),
       };
       const inserted = await sql`
         INSERT INTO assets (user_id, project_id, type, name, meta)
