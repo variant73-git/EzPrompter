@@ -4,6 +4,8 @@ import { getOrCreateActiveThread, loadMessages, appendMessage } from '../../../l
 import { buildSafeRegistry } from '../../../lib/agent/tools/index.js';
 import { runAgentLoop } from '../../../lib/agent/driver.js';
 import { callAnthropic } from '../../../lib/agent/llm-anthropic.js';
+import { callOpenAI }    from '../../../lib/agent/llm-openai.js';
+import { callGemini }    from '../../../lib/agent/llm-gemini.js';
 import { BOARD_AGENT, EDIT_IMAGE_SYSTEM } from '../../../lib/agent/prompts.js';
 import { createSseStream, SSE_HEADERS } from '../../../lib/agent/sse-bridge.js';
 
@@ -11,11 +13,39 @@ export const runtime = 'nodejs';
 
 // Picker IDs → SDK-friendly model strings (mirror MODEL_ALIAS in run-flow.js).
 const MODEL_ALIAS = {
+  // Anthropic
   'claude-4.6-opus':   'claude-opus-4-6',
   'claude-4.7-opus':   'claude-opus-4-7',
   'claude-sonnet-4-6': 'claude-sonnet-4-6',
-  // Phase 1 is Claude-only; non-Claude picker IDs error below.
+  // OpenAI
+  'gpt-5.5':           'gpt-5.5',
+  // Gemini
+  'gemini-3.1-pro':    'gemini-3.1-pro-preview',
+  // Kimi (deferred — accepted alias, falls through to error below for now)
 };
+
+/**
+ * Pick the LLM adapter for a resolved model string.
+ * Returns {adapter, apiKey, providerLabel} or {error: string} if no key/unsupported.
+ */
+function resolveAdapter(resolvedModel) {
+  if (/^(claude|opus|sonnet|haiku)/i.test(resolvedModel)) {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return { error: 'ANTHROPIC_API_KEY not configured on server' };
+    return { adapter: callAnthropic, apiKey, providerLabel: 'anthropic' };
+  }
+  if (/^(gpt|openai|o[1-9])/i.test(resolvedModel)) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return { error: 'OPENAI_API_KEY not configured on server' };
+    return { adapter: callOpenAI, apiKey, providerLabel: 'openai' };
+  }
+  if (/^gemini/i.test(resolvedModel)) {
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (!apiKey) return { error: 'GEMINI_API_KEY (or GOOGLE_API_KEY) not configured on server' };
+    return { adapter: callGemini, apiKey, providerLabel: 'gemini' };
+  }
+  return { error: `unsupported model: ${resolvedModel} (Phase 5a supports Claude / GPT / Gemini)` };
+}
 
 const PROMPT_KEYS = { BOARD_AGENT, EDIT_IMAGE_SYSTEM };
 
@@ -61,15 +91,16 @@ export async function POST(request) {
   if (!boardId) return NextResponse.json({ error: 'boardId required' }, { status: 400 });
   if (!message?.trim()) return NextResponse.json({ error: 'message required' }, { status: 400 });
 
-  // Phase 1: Claude-only.
+  // Resolve the picker ID to an SDK-friendly model string.
   const resolvedModel = MODEL_ALIAS[modelId];
   if (!resolvedModel) {
-    return NextResponse.json({ error: `Phase 1 supports Claude models only. Got: ${modelId}` }, { status: 400 });
+    return NextResponse.json({ error: `unknown modelId: ${modelId}` }, { status: 400 });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: 'ANTHROPIC_API_KEY not configured on server' }, { status: 500 });
+  // Route to the correct provider adapter based on the resolved model.
+  const resolved = resolveAdapter(resolvedModel);
+  if (resolved.error) {
+    return NextResponse.json({ error: resolved.error }, { status: 500 });
   }
 
   const thread = await getOrCreateActiveThread({ boardId, userId: user.id, scope: threadScope, assetId });
@@ -91,12 +122,12 @@ export async function POST(request) {
     send('thread_id', { threadId: thread.id });
     try {
       await runAgentLoop({
-        llm: callAnthropic,
+        llm: resolved.adapter,
         registry,
         systemPrompt,
         messages: initialMessages,
         modelId: resolvedModel,
-        apiKey,
+        apiKey: resolved.apiKey,
         ctx: { boardId, userId: user.id },
         toolAllowlist,
         onEvent: (ev) => {

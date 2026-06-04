@@ -329,11 +329,7 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
       body: JSON.stringify({
         boardId,
         message: content,
-        // Phase 1 backend supports Claude only — coerce non-Claude picker
-        // selections to Sonnet 4.6 so first-run UX works without the user
-        // having to switch the model picker manually. Phase 5 wires the
-        // other providers (OpenAI / Gemini / Kimi) and this fallback goes.
-        modelId: modelId?.startsWith?.('claude') ? modelId : 'claude-sonnet-4-6',
+        modelId,
       }),
     });
 
