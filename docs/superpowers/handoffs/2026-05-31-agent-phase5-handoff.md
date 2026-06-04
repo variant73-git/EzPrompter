@@ -39,6 +39,18 @@ These should run first thing next session.
 
 ## Suggested next pickup
 
+**Phase 4c — canvas Smart Edit entry point (CRITICAL, ~1hr)**
+
+The Phase 4 plumbing (asset registry + canvas-mode submit + SSE consumer + inline render) is shipped but currently INERT in the canvas UI — `CanvasNode.jsx` has no Smart Edit button for `kind='asset'` nodes, so end users can't trigger the dock. The agent-generated asset node from Phase 3 just renders the img with no edit affordance.
+
+To make Phase 4 actually usable end-to-end:
+- Add a "Smart Edit" button overlay to `CanvasNode` when `kind === 'asset'` AND `meta.assetId` exists
+- Click → propagate `meta.assetId` to editor-core's mount options
+- Editor-core's `assetEditTarget` fetches from `/api/assets/[id]` to populate the row
+- Editor opens with Smart Edit panel pre-targeted to that asset
+
+Phase 4b (orphan backfill) becomes more urgent after 4c since users will want to Smart Edit on any asset node, not just agent-generated ones.
+
 **Phase 4b — orphan asset backfill (small, ~30min)**
 - When canvas Smart Edit clicks on an asset node without `meta.assetId`, auto-create an `assets` row from the node's existing data (kind='asset', meta.dataUrl or .source_url, etc.)
 - Update `node.meta.assetId` after insert
