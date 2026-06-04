@@ -106,7 +106,7 @@ body.rb-ed-light .chat-thinking-dot {
      .prompt-dock which is in NATIVE_WHEEL_SELECTOR (CanvasClient), so
      any area the dock covers becomes dead to canvas zoom/pan/drag.
      Keep it small so the canvas stays usable. */
-  max-height: 28vh;
+  max-height: var(--chat-panel-max-height, 28vh);
   min-height: 0;
   overflow-y: auto;
   scroll-behavior: smooth;

@@ -1456,10 +1456,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
   }
 
-  function handleClearActiveContext() {
-    setSelectedSectionId(null);
-    setSelectedNodeId(null);
-    setSelectedNodeIds((s) => (s.size ? new Set() : s));
+  function handleClearActiveContext(nodeId) {
+    // Without a target id, clears the entire context (section + all
+    // selected nodes). With a target id, drops just that one node from
+    // the multi-selection so the user can curate which pills stay.
+    if (!nodeId) {
+      setSelectedSectionId(null);
+      setSelectedNodeId(null);
+      setSelectedNodeIds((s) => (s.size ? new Set() : s));
+      return;
+    }
+    setSelectedNodeId((cur) => (cur === nodeId ? null : cur));
+    setSelectedNodeIds((s) => {
+      if (!s.has(nodeId)) return s;
+      const next = new Set(s);
+      next.delete(nodeId);
+      return next;
+    });
   }
 
   // Replace node content with a freshly uploaded file. Accept image/html/md;
@@ -1685,7 +1698,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // the cursor. The draft cord endpoint snaps to that slot's world coord
   // so the user gets clear visual confirmation that a drop will land.
   const SNAP_RADIUS_SCREEN = 56;
-  const SLOT_SIZE = 24, SLOT_GAP = 8;
+  const SLOT_SIZE = 19, SLOT_GAP = 6;
   function findSnapTarget(clientX, clientY, sourceNodeId) {
     if (!sourceNodeId) return null;
     const w = clientToWorld(transformRef, clientX, clientY);
@@ -2503,35 +2516,41 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // message prepends the context hint so the agent operates in scope.
   // Lives AFTER `sections` because it reads `sections` in its body — moving
   // it above the `sections` useMemo would TDZ-fail on first render.
-  const activeContext = useMemo(() => {
+  const activeContexts = useMemo(() => {
     if (selectedSectionId) {
       const s = sections.find((x) => x.id === selectedSectionId);
       if (s) {
-        return {
+        return [{
           kind: 'section',
           id: s.id,
           name: s.name,
           theme: s.theme,
           memberIds: s.memberIds,
           memberCount: s.memberIds.length,
-        };
+        }];
       }
     }
-    if (selectedNodeId) {
-      const n = nodes.find((x) => x.id === selectedNodeId);
-      if (n) {
-        return {
-          kind: 'node',
-          id: n.id,
-          name: n.meta?.name || n.kind,
-          nodeKind: n.kind,
-          origin: nodeOrigin(n),
-          color: originColor(n),
-        };
-      }
+    // Union of the primary selection + shift-multi selection. Dedup
+    // and preserve insertion order so the user reads pills left-to-right
+    // matching the click order (primary first, then additions).
+    const ids = [];
+    if (selectedNodeId) ids.push(selectedNodeId);
+    for (const id of selectedNodeIds) if (id !== selectedNodeId) ids.push(id);
+    const out = [];
+    for (const id of ids) {
+      const n = nodes.find((x) => x.id === id);
+      if (!n) continue;
+      out.push({
+        kind: 'node',
+        id: n.id,
+        name: n.meta?.name || n.kind,
+        nodeKind: n.kind,
+        origin: nodeOrigin(n),
+        color: originColor(n),
+      });
     }
-    return null;
-  }, [selectedSectionId, selectedNodeId, sections, nodes]);
+    return out.length ? out : null;
+  }, [selectedSectionId, selectedNodeId, selectedNodeIds, sections, nodes]);
 
   return (
     <div
@@ -2991,7 +3010,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
       <PromptDock
         ref={promptDockRef}
-        activeContext={activeContext}
+        activeContexts={activeContexts}
         onClearActiveContext={handleClearActiveContext}
         boardId={board.id}
         onAddUrl={handleAddUrl}

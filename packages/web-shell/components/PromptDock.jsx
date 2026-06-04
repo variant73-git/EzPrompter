@@ -412,7 +412,10 @@ function chatReducer(state, action) {
   }
 }
 
-const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowError, nodeCount, onAgentMutatedGraph, activeContext = null, onClearActiveContext }, forwardedRef) {
+const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowError, nodeCount, onAgentMutatedGraph, activeContexts = null, onClearActiveContext }, forwardedRef) {
+  // Normalise to an array. activeContexts can be: null (no context),
+  // an array of {kind:'section'|'node', ...} items.
+  const contextList = Array.isArray(activeContexts) ? activeContexts : (activeContexts ? [activeContexts] : []);
   const [text, setText] = useState('');
   const [imageFile, setImageFile] = useState(null);   // attached image (preview only)
   const [imagePreview, setImagePreview] = useState(null);
@@ -448,20 +451,42 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     const startMouseY = e.clientY;
     const startLeft = rect.left;
     const startTop = rect.top;
-    const SNAP_THRESHOLD = 80;
+    // Grab offset = where inside the widget the cursor caught it. We
+    // need this so the snap check can reason about the WIDGET'S position
+    // (where it will land) instead of the cursor position (which is up
+    // near the drag handle at the top of the widget).
+    const grabOffsetX = startMouseX - startLeft;
+    const grabOffsetY = startMouseY - startTop;
+    const widgetWidth = rect.width;
+    const widgetHeight = rect.height;
+    // Snap activates the moment the cursor enters the side-dock ghost
+    // on either edge. Ghost geometry mirrors the CSS: left: 12px,
+    // width: 340px → ghost right edge = 352. So cursor < 352px from
+    // the left viewport edge = inside the left ghost = "snap left",
+    // symmetrical for the right edge.
+    const GHOST_OFFSET = 12;
+    const GHOST_WIDTH = 340;
+    const SNAP_THRESHOLD = GHOST_OFFSET + GHOST_WIDTH;
 
     function onMove(ev) {
       const dx = ev.clientX - startMouseX;
       const dy = ev.clientY - startMouseY;
       let snapTarget = null;
       const centerX = window.innerWidth / 2;
-      const BOTTOM_BAND = 140;          // px from viewport bottom
-      const CENTER_BAND = 90;           // px around horizontal centre
+      const BOTTOM_BAND = 160;          // px from viewport bottom
+      const CENTER_BAND = 140;          // px around horizontal centre
+      // Reconstruct the widget's would-be position from the cursor +
+      // grab offset so the bottom-centre snap reads the widget's actual
+      // footprint, not the cursor up near the drag handle.
+      const widgetLeft = ev.clientX - grabOffsetX;
+      const widgetTop = ev.clientY - grabOffsetY;
+      const widgetCenterX = widgetLeft + widgetWidth / 2;
+      const widgetBottom = widgetTop + widgetHeight;
       if (ev.clientX < SNAP_THRESHOLD) snapTarget = 'left';
       else if (ev.clientX > window.innerWidth - SNAP_THRESHOLD) snapTarget = 'right';
       else if (
-        ev.clientY > window.innerHeight - BOTTOM_BAND
-        && Math.abs(ev.clientX - centerX) < CENTER_BAND
+        widgetBottom > window.innerHeight - BOTTOM_BAND
+        && Math.abs(widgetCenterX - centerX) < CENTER_BAND
       ) snapTarget = 'bottom';
       setDragState({ x: startLeft + dx, y: startTop + dy, snapTarget });
     }
@@ -492,6 +517,83 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   // a double-click on the drag handle so the user can always recover.
   function resetDockToBottom() { setDockPos('bottom'); }
 
+  // ── Chat-panel height resize ────────────────────────────────────────
+  // Two thin edge strips show ns-resize cursor when the chat panel is
+  // visible. The TOP strip is active only when dockPos === 'bottom'
+  // (original docked position); the BOTTOM strip is active only when
+  // the user has moved the dock from origin (floating). Lateral docks
+  // ('left'/'right') already flex to full sidebar height — no resize.
+  const CHAT_HEIGHT_KEY = 'uncraft-chat-panel-height';
+  const CHAT_HEIGHT_MIN = 120;
+  const [chatPanelHeight, setChatPanelHeight] = useState(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const saved = parseInt(localStorage.getItem(CHAT_HEIGHT_KEY) || '', 10);
+      if (Number.isFinite(saved) && saved >= CHAT_HEIGHT_MIN) setChatPanelHeight(saved);
+    } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (chatPanelHeight) localStorage.setItem(CHAT_HEIGHT_KEY, String(chatPanelHeight));
+      else localStorage.removeItem(CHAT_HEIGHT_KEY);
+    } catch (e) {}
+  }, [chatPanelHeight]);
+
+  function startResizeTop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const panel = dockRef.current?.querySelector('.chat-panel');
+    const startHeight = panel?.offsetHeight || Math.round(window.innerHeight * 0.28);
+    const maxHeight = window.innerHeight - 160;
+    document.body.style.cursor = 'ns-resize';
+    function onMove(ev) {
+      const dy = startY - ev.clientY;
+      const next = Math.max(CHAT_HEIGHT_MIN, Math.min(maxHeight, startHeight + dy));
+      setChatPanelHeight(next);
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function startResizeBottom(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof dockPos !== 'object' || dockPos === null) return;
+    const startY = e.clientY;
+    const panel = dockRef.current?.querySelector('.chat-panel');
+    const startHeight = panel?.offsetHeight || Math.round(window.innerHeight * 0.28);
+    const startFromBottom = dockPos.fromBottom;
+    const maxHeight = window.innerHeight - 160;
+    document.body.style.cursor = 'ns-resize';
+    function onMove(ev) {
+      const dy = ev.clientY - startY;
+      const next = Math.max(CHAT_HEIGHT_MIN, Math.min(maxHeight, startHeight + dy));
+      const delta = next - startHeight;
+      setChatPanelHeight(next);
+      setDockPos((prev) => {
+        if (typeof prev !== 'object' || prev === null) return prev;
+        return { ...prev, fromBottom: Math.max(8, startFromBottom - delta) };
+      });
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
   // Expose imperative API so the canvas can drive the dock (e.g. play-section
   // button fires a synthetic chat message scoped to the workflow context).
   useImperativeHandle(forwardedRef, () => ({
@@ -510,6 +612,16 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
       document.body.classList.remove('chat-dock-l', 'chat-dock-r');
     };
   }, [dockPos]);
+
+  // During a drag-to-dock, preview the side-dock reorganization on BOTH
+  // edges so the user sees where canvas chrome will move regardless of
+  // the drop side. Body class toggles --chat-dock-left-shift and
+  // --chat-dock-right-shift in parallel.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('chat-dock-preview', !!dragState);
+    return () => { document.body.classList.remove('chat-dock-preview'); };
+  }, [dragState]);
 
   // --- Chat state (Phase 1) ----------------------------------------------
   const [chat, dispatchChat] = useReducer(chatReducer, initialChat);
@@ -633,11 +745,20 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     // STILL shows only the typed text (we strip the hint from the optimistic
     // render). The agent sees the hint as the first line.
     let scoped = trimmed;
-    if (activeContext) {
-      const hint = activeContext.kind === 'section'
-        ? `[Active workflow: "${activeContext.name}" (${activeContext.memberCount} nodes, ids: ${(activeContext.memberIds || []).map((id) => id.slice(0, 8)).join(', ')}). Operate inside this workflow.]`
-        : `[Active node: ${activeContext.nodeKind} "${activeContext.name}" id=${activeContext.id.slice(0, 8)}. Operate on this node.]`;
-      scoped = trimmed ? `${hint}\n\n${trimmed}` : hint;
+    if (contextList.length > 0) {
+      const sectionCtx = contextList.find((c) => c.kind === 'section');
+      const nodeCtxs = contextList.filter((c) => c.kind === 'node');
+      let hint = '';
+      if (sectionCtx) {
+        hint = `[Active workflow: "${sectionCtx.name}" (${sectionCtx.memberCount} nodes, ids: ${(sectionCtx.memberIds || []).map((id) => id.slice(0, 8)).join(', ')}). Operate inside this workflow.]`;
+      } else if (nodeCtxs.length === 1) {
+        const c = nodeCtxs[0];
+        hint = `[Active node: ${c.nodeKind} "${c.name}" id=${c.id.slice(0, 8)}. Operate on this node.]`;
+      } else if (nodeCtxs.length > 1) {
+        const list = nodeCtxs.map((c) => `${c.nodeKind} "${c.name}" (id=${c.id.slice(0, 8)})`).join(', ');
+        hint = `[Active nodes (${nodeCtxs.length}): ${list}. Operate across these nodes.]`;
+      }
+      if (hint) scoped = trimmed ? `${hint}\n\n${trimmed}` : hint;
     }
     // Optimistic bubble: if user sent image-only (no text), show the
     // file name(s) so the bubble isn't empty. Matches the placeholder the
@@ -963,11 +1084,17 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   // standard bottom-center / left-edge / right-edge placements, or
   // inline x/y for a free-floating position the user dragged it to.
   const isFloating = typeof dockPos === 'object' && dockPos !== null;
-  const dockStyle = dragState
+  const chatPanelVisible = !chatCollapsed && (chat.messages.length > 0 || chat.activeToolCalls.length > 0);
+  const showTopResize = chatPanelVisible && dockPos === 'bottom';
+  const showBottomResize = chatPanelVisible && isFloating;
+  let dockStyle = dragState
     ? { left: dragState.x, top: dragState.y, right: 'auto', bottom: 'auto', transform: 'none' }
     : isFloating
       ? { left: dockPos.x, bottom: dockPos.fromBottom, right: 'auto', top: 'auto', transform: 'none' }
       : undefined;
+  if (chatPanelHeight) {
+    dockStyle = { ...(dockStyle || {}), '--chat-panel-max-height': `${chatPanelHeight}px` };
+  }
   const dockClass = [
     'prompt-dock',
     dockPos === 'left' ? 'dock-left' : '',
@@ -996,6 +1123,20 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
       >
         <span /><span /><span /><span /><span /><span />
       </div>
+      {showTopResize && (
+        <div
+          className="prompt-dock-resize prompt-dock-resize-top"
+          onMouseDown={startResizeTop}
+          aria-label="Drag to resize chat height"
+        />
+      )}
+      {showBottomResize && (
+        <div
+          className="prompt-dock-resize prompt-dock-resize-bottom"
+          onMouseDown={startResizeBottom}
+          aria-label="Drag to resize chat height"
+        />
+      )}
       {/* Top-right collapse chevron — only relevant when the chat panel
           has content to hide / reveal. Black chevron in a gray circle. */}
       {(chat.messages.length > 0 || chat.activeToolCalls.length > 0) && (
@@ -1038,39 +1179,47 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
         )}
       </AnimatePresence>
 
-      {/* Active context pill — surfaces when the user has selected a
-          workflow (section) or a single node on the canvas. The pill
-          mirrors the section/node colour and gives the user an explicit
-          "you are operating inside X" affordance + an X to clear. */}
+      {/* Active context pills — one per selected workflow/node. Shift-
+          clicking nodes on the canvas appends each as its own pill. The
+          per-pill X drops that single context; the section pill's X
+          clears the workflow entirely. */}
       <AnimatePresence>
-        {activeContext && (
+        {contextList.length > 0 && (
           <motion.div
-            key={activeContext.id}
+            key="context-wrap"
             className="prompt-dock-context-wrap"
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.16 }}
           >
-            <div className="prompt-dock-context-pill" data-kind={activeContext.kind}>
-              <span
-                className="prompt-dock-context-dot"
-                style={activeContext.color ? { background: activeContext.color } : undefined}
-                aria-hidden="true"
-              />
-              <span className="prompt-dock-context-label">
-                {activeContext.kind === 'section' ? 'In workflow' : 'On node'}
-              </span>
-              <span className="prompt-dock-context-name">{activeContext.name}</span>
-              <button
-                type="button"
-                className="prompt-dock-context-x"
-                onClick={onClearActiveContext}
-                title="Clear context"
-                aria-label="Clear active context"
-              >
-                {ICON_X}
-              </button>
+            <div className="prompt-dock-context-pills">
+              {contextList.map((ctx) => (
+                <div
+                  key={ctx.id}
+                  className="prompt-dock-context-pill"
+                  data-kind={ctx.kind}
+                >
+                  <span
+                    className="prompt-dock-context-dot"
+                    style={ctx.color ? { background: ctx.color } : undefined}
+                    aria-hidden="true"
+                  />
+                  <span className="prompt-dock-context-label">
+                    {ctx.kind === 'section' ? 'In workflow' : 'On node'}
+                  </span>
+                  <span className="prompt-dock-context-name">{ctx.name}</span>
+                  <button
+                    type="button"
+                    className="prompt-dock-context-x"
+                    onClick={() => onClearActiveContext?.(ctx.kind === 'node' ? ctx.id : undefined)}
+                    title="Clear context"
+                    aria-label="Clear context"
+                  >
+                    {ICON_X}
+                  </button>
+                </div>
+              ))}
             </div>
             <div className="prompt-dock-chips-divider" aria-hidden="true" />
           </motion.div>
@@ -1105,6 +1254,10 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
             if (res.ok) dispatchChat({ type: 'RUN_CONTINUED' });
           }}
         />
+      )}
+
+      {chatPanelVisible && (
+        <div className="prompt-dock-chat-divider" aria-hidden="true" />
       )}
 
       <textarea
@@ -1391,14 +1544,19 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           e.target.value = '';
         }}
       />
-      {/* Snap indicator — a 9px white bar at the viewport edge / centre
-          that shows where the dock will land if released. Portal'd to
-          body so it isn't constrained by the dock's transform/clipping. */}
-      {dragState?.snapTarget && typeof document !== 'undefined' && createPortal(
-        <div
-          className={`prompt-dock-snap-bar prompt-dock-snap-bar-${dragState.snapTarget}`}
-          aria-hidden="true"
-        />,
+      {/* Snap UI — visible for the WHOLE drag, not only when in a snap
+          zone. Three slim white bars (left, right, bottom-centre) +
+          two dashed ghosts outlining the side-dock footprints. Each
+          bar grows + glows when its snap target becomes active so the
+          user immediately reads "drop here". */}
+      {dragState && typeof document !== 'undefined' && createPortal(
+        <>
+          <div className={`prompt-dock-snap-bar prompt-dock-snap-bar-left${dragState.snapTarget === 'left' ? ' active' : ''}`} aria-hidden="true" />
+          <div className={`prompt-dock-snap-bar prompt-dock-snap-bar-right${dragState.snapTarget === 'right' ? ' active' : ''}`} aria-hidden="true" />
+          <div className={`prompt-dock-snap-bar prompt-dock-snap-bar-bottom${dragState.snapTarget === 'bottom' ? ' active' : ''}`} aria-hidden="true" />
+          <div className={`prompt-dock-ghost prompt-dock-ghost-left${dragState.snapTarget === 'left' ? ' active' : ''}`} aria-hidden="true" />
+          <div className={`prompt-dock-ghost prompt-dock-ghost-right${dragState.snapTarget === 'right' ? ' active' : ''}`} aria-hidden="true" />
+        </>,
         document.body
       )}
     </div>
