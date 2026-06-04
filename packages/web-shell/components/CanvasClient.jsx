@@ -151,25 +151,41 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // so the id is stable as long as members don't change. We keep overrides
   // in localStorage keyed by that id; the auto-generated theme name is the
   // fallback when no override exists.
-  const [sectionNameOverrides, setSectionNameOverrides] = useState(() => {
-    if (typeof window === 'undefined') return {};
-    try {
-      const raw = localStorage.getItem('rb-section-names');
-      return raw ? JSON.parse(raw) : {};
-    } catch { return {}; }
-  });
+  //
+  // Initial state MUST be {} on both server + first client render to avoid
+  // hydration mismatch (server has no localStorage; client would otherwise
+  // populate with stored values and the sections useMemo would compute
+  // different x/y/width/height between render passes). The useEffect below
+  // hydrates from localStorage AFTER the first paint, scheduling a normal
+  // re-render with the real values.
+  const [sectionNameOverrides, setSectionNameOverrides] = useState({});
   // Section size overrides — delta padding added to the auto-derived frame
   // bbox per side. Used when the user resizes a section in an axis where
   // members can't be scaled apart (e.g. 2 nodes on the same row → no
   // vertical spread to scale; instead the override grows the frame bottom).
-  // {sectionId: {dTop, dRight, dBottom, dLeft}}.
-  const [sectionSizeOverrides, setSectionSizeOverrides] = useState(() => {
-    if (typeof window === 'undefined') return {};
+  // {sectionId: {dTop, dRight, dBottom, dLeft}}. Same hydration-safe
+  // pattern as sectionNameOverrides — populated post-mount via useEffect.
+  const [sectionSizeOverrides, setSectionSizeOverrides] = useState({});
+  // Post-mount hydration of both override maps from localStorage. Running
+  // once after the first render keeps SSR + first client paint identical
+  // (both start with {}); the stored values land on the SECOND paint, so
+  // React's hydration tree comparison never sees a mismatch.
+  useEffect(() => {
     try {
-      const raw = localStorage.getItem('rb-section-sizes');
-      return raw ? JSON.parse(raw) : {};
-    } catch { return {}; }
-  });
+      const namesRaw = localStorage.getItem('rb-section-names');
+      if (namesRaw) {
+        const parsed = JSON.parse(namesRaw);
+        if (parsed && typeof parsed === 'object') setSectionNameOverrides(parsed);
+      }
+    } catch {}
+    try {
+      const sizesRaw = localStorage.getItem('rb-section-sizes');
+      if (sizesRaw) {
+        const parsed = JSON.parse(sizesRaw);
+        if (parsed && typeof parsed === 'object') setSectionSizeOverrides(parsed);
+      }
+    } catch {}
+  }, []);
   function setSectionNameOverride(sectionId, name) {
     setSectionNameOverrides((prev) => {
       const next = { ...prev };
@@ -2602,7 +2618,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 className="canvas-section-name-tag"
                 role="button"
                 tabIndex={0}
-                title={editingSectionId === s.id ? '' : 'Double click to edit'}
+                data-tooltip={editingSectionId === s.id ? '' : 'Double click to edit'}
+                aria-label={editingSectionId === s.id ? undefined : 'Double click to edit'}
                 onClick={(e) => {
                   // Whole pill selects the workflow — but not during inline
                   // edit, and not when the play button bubbles a click.
@@ -2658,7 +2675,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 <button
                   type="button"
                   className="canvas-section-play-btn"
-                  title="Re-run this workflow"
+                  data-tooltip="Re-run this workflow"
                   onClick={(e) => {
                     e.stopPropagation();
                     setPlaySection({ section: s, busy: false });
@@ -2676,7 +2693,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               <div
                 className="canvas-section-grip"
                 onMouseDown={(e) => startSectionMove(s.id, e)}
-                title="Drag to move workflow"
+                data-tooltip="Drag to move workflow"
                 aria-label="Drag workflow"
               >
                 <span /><span /><span /><span /><span /><span />

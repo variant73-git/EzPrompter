@@ -464,7 +464,16 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
       setDragState((cur) => {
         if (!cur) return null;
         if (cur.snapTarget) setDockPos(cur.snapTarget);
-        else setDockPos({ x: cur.x, y: cur.y });
+        else {
+          // Convert the top-anchored drop into a BOTTOM-anchored position
+          // so that expanding the chat panel grows the widget UPWARD from
+          // the current bottom edge instead of overflowing the viewport.
+          // This mirrors the bottom-default dock's behaviour.
+          const rect = dockRef.current?.getBoundingClientRect();
+          const heightAtDrop = rect?.height || 100;
+          const fromBottom = Math.max(8, window.innerHeight - cur.y - heightAtDrop);
+          setDockPos({ x: cur.x, fromBottom });
+        }
         return null;
       });
     }
@@ -937,7 +946,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   const dockStyle = dragState
     ? { left: dragState.x, top: dragState.y, right: 'auto', bottom: 'auto', transform: 'none' }
     : isFloating
-      ? { left: dockPos.x, top: dockPos.y, right: 'auto', bottom: 'auto', transform: 'none' }
+      ? { left: dockPos.x, bottom: dockPos.fromBottom, right: 'auto', top: 'auto', transform: 'none' }
       : undefined;
   const dockClass = [
     'prompt-dock',
@@ -960,7 +969,8 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           its bottom-center default. */}
       <div
         className="prompt-dock-drag-handle"
-        title="Drag to move · Double-click to reset"
+        data-tooltip="Drag to move · Double-click to reset"
+        aria-label="Drag the chat dock"
         onMouseDown={startDockDrag}
         onDoubleClick={resetDockToBottom}
       >
@@ -973,13 +983,16 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           type="button"
           className="prompt-dock-collapse-btn"
           onClick={() => setChatCollapsed((v) => !v)}
-          title={chatCollapsed ? 'Expand chat' : 'Collapse chat'}
+          data-tooltip={chatCollapsed ? 'Expand chat' : 'Collapse chat'}
+          data-tooltip-position="bottom"
           aria-label={chatCollapsed ? 'Expand chat' : 'Collapse chat'}
         >
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {/* Collapsed → arrow UP (click to expand upward).
+                Expanded → arrow DOWN (click to collapse downward). */}
             {chatCollapsed
-              ? <polyline points="6 9 12 15 18 9" />
-              : <polyline points="18 15 12 9 6 15" />}
+              ? <polyline points="18 15 12 9 6 15" />
+              : <polyline points="6 9 12 15 18 9" />}
           </svg>
         </button>
       )}
