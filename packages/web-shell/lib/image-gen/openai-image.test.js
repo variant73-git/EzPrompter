@@ -91,7 +91,7 @@ describe('generateOpenAIImage', () => {
     );
   });
 
-  it('maps aspectRatio 16:9 to 1792x1024', async () => {
+  it('maps aspectRatio 16:9 to 1536x1024 (gpt-image-1 landscape)', async () => {
     await generateOpenAIImage({
       prompt: 'a dog',
       aspectRatio: '16:9',
@@ -99,11 +99,11 @@ describe('generateOpenAIImage', () => {
     });
 
     expect(mockGenerate).toHaveBeenCalledWith(
-      expect.objectContaining({ size: '1792x1024' })
+      expect.objectContaining({ size: '1536x1024' })
     );
   });
 
-  it('maps aspectRatio 9:16 to 1024x1792', async () => {
+  it('maps aspectRatio 9:16 to 1024x1536 (gpt-image-1 portrait)', async () => {
     await generateOpenAIImage({
       prompt: 'a dog',
       aspectRatio: '9:16',
@@ -111,7 +111,7 @@ describe('generateOpenAIImage', () => {
     });
 
     expect(mockGenerate).toHaveBeenCalledWith(
-      expect.objectContaining({ size: '1024x1792' })
+      expect.objectContaining({ size: '1024x1536' })
     );
   });
 

@@ -15,12 +15,17 @@ import { toFile } from 'openai/uploads';
 
 const DEFAULT_MODEL = 'gpt-image-1';
 
+// gpt-image-1 accepts ONLY 1024x1024, 1024x1536, 1536x1024, or 'auto'.
+// Anything else (e.g. DALL-E 3's 1792x1024) returns a 400. Previous map
+// had DALL-E 3 sizes for the non-square aspects, which silently broke
+// every 16:9 / 9:16 / 3:4 / 4:3 generation. 3:4 + 4:3 are mapped to the
+// nearest supported portrait/landscape.
 const SIZE_MAP = {
   '1:1': '1024x1024',
-  '16:9': '1792x1024',
-  '9:16': '1024x1792',
-  '3:4': '1024x1280',
-  '4:3': '1280x1024',
+  '16:9': '1536x1024',
+  '9:16': '1024x1536',
+  '3:4': '1024x1536',
+  '4:3': '1536x1024',
 };
 
 function parseDataUrl(dataUrl) {

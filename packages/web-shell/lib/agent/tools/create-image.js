@@ -50,7 +50,7 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
     type: 'object',
     properties: {
       prompt:                  { type: 'string', description: 'Short additional intent (≤15 words). In edit mode, leave blank or describe ONLY the change beyond what the references already convey. Long style descriptions belong in styleReferenceAssetIds (the model sees those images directly).' },
-      aspectRatio:             { type: 'string', enum: ['1:1', '16:9', '9:16', '3:4', '4:3'], description: 'Aspect ratio (default 1:1, ignored in edit mode — output matches the base image size)' },
+      aspectRatio:             { type: 'string', enum: ['1:1', '16:9', '9:16', '3:4', '4:3'], description: 'Aspect ratio of the OUTPUT. Default 1:1. IN EDIT MODE you MUST pass the aspect ratio that matches the base image (a 16:9 base with no aspectRatio arg comes back squared off). The image model does NOT auto-detect from the base.' },
       provider:                { type: 'string', enum: ['auto', 'gemini', 'openai'], description: 'auto picks Gemini for text-to-image; edit mode (baseImageAssetId set) forces openai' },
       attachToBoard:           { type: 'boolean', description: 'When true, also create an asset node on the canvas' },
       baseImageAssetId:        { type: 'string', description: 'UUID of the asset to EDIT — the image whose COMPOSITION + SUBJECT must be preserved. Usually the user-attached image. Setting this forces openai provider.' },
@@ -276,9 +276,9 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
         ? [
             'You are editing the FIRST image.',
             'PRESERVE EXACTLY: the subject, composition, framing, perspective, scale, and content of the first image.',
-            'APPLY: the artistic style — palette, lighting, brushwork or texture, line work, level of detail, and overall mood — visible in the additional reference image(s).',
+            'APPLY: the visual style of the additional reference image(s) — match their MEDIUM (photograph, illustration, painting, 3D render, etc.) exactly, plus their palette, lighting, texture, line quality, and level of detail.',
             'DO NOT change the subject, swap it for the reference\'s subject, or invent new elements.',
-            'The output should be the same scene as the first image, rendered as if drawn or painted in the style of the references.',
+            'The output is the same scene as the first image, re-rendered as if it had been produced in the same medium and style as the references.',
             userIntent ? `Additional intent: ${userIntent}` : '',
           ].filter(Boolean).join(' ')
         : [
