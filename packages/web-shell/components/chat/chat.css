@@ -1,4 +1,39 @@
 /* components/chat/chat.css — minimal Phase 1 styles. Visual polish in Phase 5+. */
+
+/* Thinking indicator — three pulsing dots shown while the agent is
+   streaming but hasn't put text on screen yet. Sits below the last
+   bubble like a fresh assistant reply would. */
+.chat-thinking {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+}
+.chat-thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.65);
+  animation: chat-thinking-pulse 1.2s ease-in-out infinite both;
+}
+.chat-thinking-dot:nth-child(2) { animation-delay: 0.15s; }
+.chat-thinking-dot:nth-child(3) { animation-delay: 0.30s; }
+@keyframes chat-thinking-pulse {
+  0%, 60%, 100% { opacity: 0.25; transform: scale(0.85); }
+  30%           { opacity: 1;    transform: scale(1); }
+}
+body.rb-ed-light .chat-thinking {
+  background: rgba(0, 0, 0, 0.06);
+}
+body.rb-ed-light .chat-thinking-dot {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+
 .chat-bubble {
   max-width: 80%;
   margin: 6px 0;

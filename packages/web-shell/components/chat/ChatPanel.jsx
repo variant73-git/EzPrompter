@@ -8,6 +8,7 @@ import './chat.css';
 
 export default function ChatPanel({
   messages, activeToolCalls,
+  streaming = false,
   softPause, onSoftContinue, onSoftStop,
   onConfirmTool, onSkipTool, onChooseTool,
   onCollapse,
@@ -21,7 +22,25 @@ export default function ChatPanel({
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, activeToolCalls]);
+  }, [messages, activeToolCalls, streaming]);
+
+  // Show the thinking dots whenever the agent is streaming but hasn't put
+  // any text on screen for the current turn yet. Once the first assistant
+  // token arrives, the bubble takes over and the dots hide.
+  const showThinking = (() => {
+    if (!streaming) return false;
+    // Find current-turn assistant (after the last user msg). If it has
+    // non-empty content, the agent is already talking — no dots needed.
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') { lastUserIdx = i; break; }
+    }
+    for (let i = messages.length - 1; i > lastUserIdx; i--) {
+      const m = messages[i];
+      if (m.role === 'assistant' && (m.content || '').trim().length > 0) return false;
+    }
+    return true;
+  })();
 
   if (!messages.length && !activeToolCalls.length) {
     return (
@@ -116,6 +135,13 @@ export default function ChatPanel({
             ) : null
           ))}
         </ChatBubble>
+      )}
+      {showThinking && (
+        <div className="chat-thinking" aria-label="Pensando…">
+          <span className="chat-thinking-dot" />
+          <span className="chat-thinking-dot" />
+          <span className="chat-thinking-dot" />
+        </div>
       )}
       {softPause && (
         <SoftPauseChip
