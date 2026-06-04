@@ -184,7 +184,7 @@ function assemblePrompt({ targetHtml, buckets }) {
   return { text: parts.join('\n\n'), images };
 }
 
-export async function runCompose({ target, sources, model, modelId }) {
+export async function runCompose({ target, sources, model, modelId, systemPromptOverride }) {
   // Caller can pass either the resolved provider model string (`model`)
   // or the picker's short id (`modelId`). resolveModel() maps the
   // short id to the SDK-friendly value via MODEL_ALIAS.
@@ -219,9 +219,10 @@ export async function runCompose({ target, sources, model, modelId }) {
   }
 
   const { text: userPrompt, images } = assemblePrompt({ targetHtml: target.current_html, buckets });
+  const systemPrompt = systemPromptOverride || COMPOSE_SYSTEM;
   const { text } = await callLLM({
     model: effectiveModel,
-    system: COMPOSE_SYSTEM,
+    system: systemPrompt,
     user: userPrompt,
     images,
     maxTokens: 32000,
