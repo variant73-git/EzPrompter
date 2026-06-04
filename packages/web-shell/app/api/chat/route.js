@@ -12,17 +12,40 @@ import { createSseStream, SSE_HEADERS } from '../../../lib/agent/sse-bridge.js';
 export const runtime = 'nodejs';
 
 // Picker IDs → SDK-friendly model strings (mirror MODEL_ALIAS in run-flow.js).
+// NOTE: kept for completeness even though the picker no longer drives the
+// agent — the picker selects which model runs INSIDE a node (runFlow / image
+// gen). The agent itself (the assistant that orchestrates tools to build
+// workflows) uses AGENT_MODEL below.
 const MODEL_ALIAS = {
   // Anthropic
-  'claude-4.6-opus':   'claude-opus-4-6',
-  'claude-4.7-opus':   'claude-opus-4-7',
-  'claude-sonnet-4-6': 'claude-sonnet-4-6',
+  'claude-4.6-opus':    'claude-opus-4-6',
+  'claude-4.7-opus':    'claude-opus-4-7',
+  'claude-sonnet-4-6':  'claude-sonnet-4-6',
+  'claude-haiku-4-5':   'claude-haiku-4-5-20251001',
   // OpenAI
-  'gpt-5.5':           'gpt-5.5',
+  'gpt-5.5':            'gpt-5.5',
   // Gemini
-  'gemini-3.1-pro':    'gemini-3.1-pro-preview',
+  'gemini-3.1-pro':     'gemini-3.1-pro-preview',
+  'gemini-2.5-flash':   'gemini-2.5-flash',
   // Kimi (deferred — accepted alias, falls through to error below for now)
 };
+
+// Which model orchestrates the agent (tool calls, workflow building).
+// Internal infrastructure choice — NOT the user's picker selection.
+//
+// Override per env: UNCRAFT_AGENT_MODEL=claude-sonnet-4-6
+//
+// Recommended choices (by descending tool-use quality):
+//   claude-sonnet-4-6           — best tool compliance, $3/$15 per 1M tokens
+//   gemini-3.1-pro-preview      — good, $1.25/$10 — current default (Anthropic creditless tier)
+//   claude-haiku-4-5-20251001   — 90% Sonnet quality at 3x less cost
+//   gemini-2.5-flash            — 40x cheaper than Sonnet; OK quality for simple tool routing
+//
+// Wrapped in a function so tests can override the env var per-test and
+// hot-reload picks up changes without restarting the dev server.
+function getAgentModel() {
+  return process.env.UNCRAFT_AGENT_MODEL || 'gemini-3.1-pro-preview';
+}
 
 /**
  * Pick the LLM adapter for a resolved model string.
@@ -83,7 +106,6 @@ export async function POST(request) {
     threadScope = 'board',
     assetId = null,
     message,
-    modelId = 'claude-sonnet-4-6',
     tools: toolAllowlist = null,
     systemPromptKey = 'BOARD_AGENT',
   } = body || {};
@@ -91,10 +113,13 @@ export async function POST(request) {
   if (!boardId) return NextResponse.json({ error: 'boardId required' }, { status: 400 });
   if (!message?.trim()) return NextResponse.json({ error: 'message required' }, { status: 400 });
 
-  // Resolve the picker ID to an SDK-friendly model string.
-  const resolvedModel = MODEL_ALIAS[modelId];
-  if (!resolvedModel) {
-    return NextResponse.json({ error: `unknown modelId: ${modelId}` }, { status: 400 });
+  // The agent's orchestrating model is OUR choice (cost/quality), not the
+  // user's picker. The picker on PromptDock chooses which model runs
+  // INSIDE a node when the agent calls runFlow/createImage — that's a
+  // different concern handled by run-flow.js / image gen routes.
+  const resolvedModel = getAgentModel();
+  if (!/^(claude|opus|sonnet|haiku|gpt|gemini)/i.test(resolvedModel)) {
+    return NextResponse.json({ error: `unsupported AGENT_MODEL configured: ${resolvedModel}` }, { status: 500 });
   }
 
   // Route to the correct provider adapter based on the resolved model.
