@@ -57,18 +57,11 @@ Shipped as POST /api/nodes/[id]/asset-backfill. CanvasNode Smart Edit button now
 **Phase 5b — history reconstruction (DONE)**
 Route accumulates assistant text + tool_calls during stream + saves full message. PromptDock fetches GET /api/chat on mount and rehydrates messages into state. ChatPanel auto-expands if history exists. Tool chips render from persisted tool_calls JSONB.
 
-**Phase 5c — cost tracking + credits (medium, ~3-4hr)**
-- `agent_runs.{tokens_in, tokens_out, cost_cents}` columns exist but never written
-- New: `lib/agent-cost.js` price table per model + per image gen
-- Driver tallies usage from message_complete events
-- Route persists at run end via finishAgentRun
-- `lib/credits.js` decrements user balance; route returns 402 if balance would go negative
-- Tier ladder routing in `getAgentModel(user)`:
-  ```js
-  if (user.plan === 'free') return 'gemini-2.5-flash';
-  if (user.plan === 'pro')  return 'deepseek-chat';
-  return 'claude-sonnet-4-6';
-  ```
+**Phase 5c — cost tracking + credits (DONE)**
+lib/agent/cost.js price table + computeCost. lib/credits.js MVP stub (unlimited).
+finishAgentRun persists tokens_in/out/cost_cents. getAgentModel(user) tier ladder
+free→pro→enterprise. Real Stripe enforcement = 5-line change in lib/credits.js
+when wiring up users.credits_cents column.
 
 **Phase 3b — image-to-image (medium, ~2hr)**
 - Pass existing image as input to next generation (regenerate with edits as reference)
@@ -124,7 +117,7 @@ The PromptDock agent feature spec (`docs/superpowers/specs/2026-05-31-agent-prom
 | §9 Persistence (chat_threads, chat_messages, agent_runs) | ✅ Phase 1+2 (history reconstruction = 5b) |
 | §10 createImage provider routing | ✅ Phase 3 |
 | §11 System prompts | ✅ Phase 1 |
-| §12 Cost tracking | ⏸ Phase 5c |
+| §12 Cost tracking | ✅ Phase 5c |
 | §13 Error handling | ✅ Phase 1+2 |
 | §14 Testing | ✅ unit + integration (manual smoke pending) |
 
