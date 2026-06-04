@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireUser } from '../../../lib/auth.js';
 import { getOrCreateActiveThread, loadMessages, appendMessage,
          startAgentRun, finishAgentRun } from '../../../lib/chat-persistence.js';
-import { buildFullRegistry, buildSafeRegistry } from '../../../lib/agent/tools/index.js';
+import { buildFullRegistry, buildSafeRegistry, buildAssetRegistry } from '../../../lib/agent/tools/index.js';
 import { runAgentLoop } from '../../../lib/agent/driver.js';
 import { callAnthropic } from '../../../lib/agent/llm-anthropic.js';
 import { callOpenAI }    from '../../../lib/agent/llm-openai.js';
@@ -153,9 +153,9 @@ export async function POST(request) {
   // Persist the user message immediately so it's visible on reload even if the run errors out.
   await appendMessage({ threadId: thread.id, role: 'user', content: message });
 
-  // Asset-scoped chats (Smart Edit) get the safe registry only — they can't
-  // delete/runFlow/editSite from there. Board chats get the full registry.
-  const registry = threadScope === 'asset' ? buildSafeRegistry() : buildFullRegistry();
+  // Asset-scoped chats (Smart Edit) get the asset registry (safe + createImage) —
+  // they can't delete/runFlow/editSite from there. Board chats get the full registry.
+  const registry = threadScope === 'asset' ? buildAssetRegistry() : buildFullRegistry();
   const systemPrompt = PROMPT_KEYS[systemPromptKey] || PROMPT_KEYS.BOARD_AGENT;
 
   // Build the message history for the LLM from the new user msg.
