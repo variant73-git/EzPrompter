@@ -11,6 +11,32 @@ import AssetSmartEditDock from './canvas/AssetSmartEditDock.jsx';
 
 const DRAG_THRESHOLD = 4;
 
+function SmartEditDockWrap({ node, children }) {
+  const wrapRef = useRef(null);
+  const [side, setSide] = useState('right');
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.right > window.innerWidth - 16) {
+      setSide('left');
+    }
+  }, []);
+  const style = side === 'right'
+    ? { position: 'absolute', left: (node.width || 512) + 12, top: 0, zIndex: 50 }
+    : { position: 'absolute', left: -340, top: 0, zIndex: 50 };
+  return (
+    <div
+      ref={wrapRef}
+      className={`cnode-smart-edit-dock-wrap cnode-smart-edit-dock-wrap-${side}`}
+      style={style}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {children}
+    </div>
+  );
+}
+
 const TrashIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <polyline points="3 6 5 6 21 6" />
@@ -1033,22 +1059,13 @@ export default function CanvasNode({
       )}
 
       {smartEditOpen && resolvedAssetId && (
-        <div
-          className="cnode-smart-edit-dock-wrap"
-          style={{
-            position: 'absolute',
-            left: (node.width || 512) + 12,
-            top: 0,
-            zIndex: 50,
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
+        <SmartEditDockWrap node={node}>
           <AssetSmartEditDock
             boardId={node.board_id}
             assetId={resolvedAssetId}
             onClose={() => setSmartEditOpen(false)}
           />
-        </div>
+        </SmartEditDockWrap>
       )}
 
       {/* Portal to document.body so the menu's `position: fixed`
