@@ -7,15 +7,26 @@ vi.mock('../../../lib/chat-persistence.js', () => ({
   getOrCreateActiveThread: vi.fn(async () => ({ id: 'thread-1' })),
   appendMessage: vi.fn(async (m) => ({ id: 'msg-x', ...m })),
   loadMessages: vi.fn(async () => []),
+  startAgentRun: vi.fn(async () => ({ id: 'run-99' })),
+  finishAgentRun: vi.fn(async () => ({})),
 }));
+const mockRegistry = {
+  get: () => ({ name: 'noop', classification: 'safe' }),
+  all: () => [],
+  toAnthropicSpec: () => [],
+  toOpenAISpec: () => [],
+  toGeminiSpec: () => [{ functionDeclarations: [] }],
+};
 vi.mock('../../../lib/agent/tools/index.js', () => ({
-  buildSafeRegistry: () => ({
-    get: () => ({ name: 'noop', classification: 'safe' }),
-    all: () => [],
-    toAnthropicSpec: () => [],
-    toOpenAISpec: () => [],
-    toGeminiSpec: () => [{ functionDeclarations: [] }],
-  }),
+  buildSafeRegistry: () => mockRegistry,
+  buildFullRegistry: () => mockRegistry,
+}));
+vi.mock('../../../lib/agent/run-map.js', () => ({
+  registerRun: vi.fn(),
+  unregisterRun: vi.fn(),
+}));
+vi.mock('../../../lib/agent/caps.js', () => ({
+  getCaps: vi.fn(() => ({ softLimit: 10, hardLimit: 50 })),
 }));
 vi.mock('../../../lib/agent/llm-anthropic.js', () => ({ callAnthropic: vi.fn() }));
 vi.mock('../../../lib/agent/llm-openai.js', () => ({ callOpenAI: vi.fn() }));
@@ -117,5 +128,46 @@ describe('POST /api/chat', () => {
     await res.body.getReader().read();
     await new Promise((r) => setTimeout(r, 50));
     expect(driverCalls[0]?.llm).toBe(callGemini);
+  });
+});
+
+describe('POST /api/chat — Phase 2 wiring', () => {
+  beforeEach(() => {
+    process.env.ANTHROPIC_API_KEY = 'sk-fake';
+    process.env.UNCRAFT_AGENT_MODEL = 'claude-sonnet-4-6';
+  });
+
+  async function readSseEvents(res) {
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    const events = [];
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value);
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) !== -1) {
+        const block = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        const lines = block.split('\n');
+        const event = lines.find((l) => l.startsWith('event:'))?.slice(6).trim();
+        const data = lines.find((l) => l.startsWith('data:'))?.slice(5).trim();
+        events.push({ event, data: data ? JSON.parse(data) : null });
+      }
+    }
+    return events;
+  }
+
+  it('emits thread_id → run_id → assistant_token → run_status in order', async () => {
+    const req = new Request('http://test/api/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ boardId: 'b1', message: 'hi' }),
+    });
+    const res = await POST(req);
+    const events = await readSseEvents(res);
+    const order = events.map((e) => e.event);
+    expect(order.indexOf('thread_id')).toBeLessThan(order.indexOf('run_id'));
+    expect(order.indexOf('run_id')).toBeLessThan(order.indexOf('assistant_token'));
+    expect(order[order.length - 1]).toBe('run_status');
   });
 });
