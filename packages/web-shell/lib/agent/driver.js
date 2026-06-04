@@ -298,6 +298,11 @@ export async function runAgentLoop(opts) {
 
         // ── Execute ─────────────────────────────────────────────────────
         onEvent({ type: 'tool_status', id: call.id, status: 'running' });
+        // Log the tool name + sizes BEFORE awaiting it. If the next log line
+        // we see is the 6-min hard cap fire, this name is the culprit.
+        // eslint-disable-next-line no-console
+        console.log(`[agent] EXEC tool=${call.name} args=${JSON.stringify(call.input).slice(0, 200)}`);
+        const toolStart = Date.now();
         try {
           // Per-tool hard timeout. The wall_timeout cap only fires between
           // iterations; if a single tool hangs (e.g. an upstream API stuck
@@ -321,15 +326,21 @@ export async function runAgentLoop(opts) {
           ]);
           if (result && result.error) {
             toolFailures[call.name] = (toolFailures[call.name] || 0) + 1;
+            // eslint-disable-next-line no-console
+            console.log(`[agent] DONE tool=${call.name} status=error duration=${Date.now() - toolStart}ms err=${(result.message || result.error).toString().slice(0, 120)}`);
             onEvent({ type: 'tool_status', id: call.id, status: 'error', error: result.message || result.error });
             toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(slimForHistory(result)), is_error: true });
           } else {
             toolFailures[call.name] = 0;
+            // eslint-disable-next-line no-console
+            console.log(`[agent] DONE tool=${call.name} status=ok duration=${Date.now() - toolStart}ms`);
             onEvent({ type: 'tool_status', id: call.id, status: 'done', result });
             toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(slimForHistory(result)) });
           }
         } catch (e) {
           toolFailures[call.name] = (toolFailures[call.name] || 0) + 1;
+          // eslint-disable-next-line no-console
+          console.log(`[agent] DONE tool=${call.name} status=THREW duration=${Date.now() - toolStart}ms err=${String(e?.message || e).slice(0, 120)}`);
           const errPayload = { error: 'execution_failed', message: String(e?.message || e) };
           onEvent({ type: 'tool_status', id: call.id, status: 'error', error: errPayload.message });
           toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(errPayload), is_error: true });
