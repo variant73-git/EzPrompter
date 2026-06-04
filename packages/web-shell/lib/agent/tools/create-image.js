@@ -1,4 +1,6 @@
 import { sql } from '../../db.js';
+import { generateGeminiImage } from '../../image-gen/gemini-imagen.js';
+import { generateOpenAIImage } from '../../image-gen/openai-image.js';
 
 const VALID_ASPECT = new Set(['1:1', '16:9', '9:16', '3:4', '4:3']);
 const VALID_PROVIDER = new Set(['auto', 'gemini', 'openai']);
@@ -56,22 +58,25 @@ Use when the user asks for an image to be generated. If they want to attach the 
       else                                    effective = 'gemini';
     }
 
-    const baseUrl = process.env.UNCRAFT_INTERNAL_BASE_URL || 'http://localhost:3030';
-    let resp;
+    // Call adapters directly — server-to-server fetch would hit requireUser
+    // without auth cookies and return 401.
+    let result;
     try {
-      resp = await fetch(`${baseUrl}/api/images/generate`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ prompt, aspectRatio, provider: effective }),
-      });
+      if (effective === 'gemini') {
+        const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+        if (!apiKey) return { error: 'image_gen_failed', message: 'GEMINI_API_KEY not configured' };
+        result = await generateGeminiImage({ prompt, aspectRatio, apiKey });
+      } else {
+        // openai
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey) return { error: 'image_gen_failed', message: 'OPENAI_API_KEY not configured' };
+        result = await generateOpenAIImage({ prompt, aspectRatio, apiKey });
+      }
+      // Normalize shape so downstream code has result.provider.
+      result.provider = effective;
     } catch (e) {
       return { error: 'image_gen_failed', message: String(e?.message || e) };
     }
-    if (!resp.ok) {
-      const errBody = await resp.json().catch(() => ({}));
-      return { error: 'image_gen_failed', message: errBody.error || `HTTP ${resp.status}` };
-    }
-    const result = await resp.json();
 
     const assetName = `generated:${prompt.slice(0, 50)}`;
     const meta = {
@@ -94,7 +99,7 @@ Use when the user asks for an image to be generated. If they want to attach the 
         INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
         VALUES (
           ${ctx.boardId}, 'asset', 0, 0, 512, 512,
-          ${JSON.stringify({ source: 'agent-generated', assetId: asset.id, dataUrl: result.dataUrl, name: assetName })}::jsonb
+          ${JSON.stringify({ source: 'agent-generated', assetId: asset.id, name: assetName })}::jsonb
         )
         RETURNING id
       `;
