@@ -1,14 +1,15 @@
 import { Registry } from '../registry.js';
-import { createNodeTool }    from './create-node.js';
-import { addEdgeTool }       from './add-edge.js';
-import { updateNodeTool }    from './update-node.js';
-import { queryNodesTool }    from './query-nodes.js';
-import { getNodeOutputTool } from './get-node-output.js';
-import { listAssetsTool }    from './list-assets.js';
-import { deleteNodeTool }    from './delete-node.js';
-import { runFlowTool }       from './run-flow.js';
-import { editSiteTool }      from './edit-site.js';
-import { createImageTool }   from './create-image.js';
+import { createNodeTool }      from './create-node.js';
+import { addEdgeTool }         from './add-edge.js';
+import { updateNodeTool }      from './update-node.js';
+import { queryNodesTool }      from './query-nodes.js';
+import { getNodeOutputTool }   from './get-node-output.js';
+import { listAssetsTool }      from './list-assets.js';
+import { addAssetFromUrlTool } from './add-asset-from-url.js';
+import { deleteNodeTool }      from './delete-node.js';
+import { runFlowTool }         from './run-flow.js';
+import { editSiteTool }        from './edit-site.js';
+import { createImageTool }     from './create-image.js';
 
 /** Phase 1 safe tools only — kept for the smoke-test path and for asset-scoped chats. */
 export function buildSafeRegistry() {
@@ -19,6 +20,7 @@ export function buildSafeRegistry() {
   r.register(queryNodesTool);
   r.register(getNodeOutputTool);
   r.register(listAssetsTool);
+  r.register(addAssetFromUrlTool);
   return r;
 }
 

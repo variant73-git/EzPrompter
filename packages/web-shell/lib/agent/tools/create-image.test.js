@@ -108,10 +108,12 @@ describe('createImageTool', () => {
   });
 
   it('attachToBoard creates a node and returns nodeId', async () => {
+    // 3 SQL calls now: asset insert, SELECT max(pos_x + width) for auto-place, node insert.
     let call = 0;
     sql.mockImplementation(() => {
       call++;
       if (call === 1) return Promise.resolve([{ id: 'asset-1' }]); // asset insert
+      if (call === 2) return Promise.resolve([{ right_edge: -240, top_edge: 0 }]); // auto-place
       return Promise.resolve([{ id: 'node-1' }]); // node insert
     });
     const r = await createImageTool.execute(
@@ -130,5 +132,44 @@ describe('createImageTool', () => {
     );
     expect(r.error).toBe('image_gen_failed');
     expect(r.message).toBe('boom');
+  });
+
+  it('forces openai when baseImageAssetId provided + passes dataUrl through', async () => {
+    let call = 0;
+    sql.mockImplementation(() => {
+      call++;
+      if (call === 1) return Promise.resolve([{ meta: { dataUrl: 'data:image/png;base64,BASE' } }]); // SELECT base asset
+      return Promise.resolve([{ id: 'asset-new' }]); // asset insert
+    });
+    await createImageTool.execute(
+      { prompt: 'remix this', baseImageAssetId: 'asset-base', provider: 'gemini' }, // gemini req should be ignored
+      { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
+    );
+    expect(generateOpenAIImage).toHaveBeenCalledWith(expect.objectContaining({
+      baseImageDataUrl: 'data:image/png;base64,BASE',
+    }));
+    expect(generateGeminiImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects baseImageAssetId that does not belong to the user', async () => {
+    // Use mockImplementation directly — sql._reset() only clears history,
+    // so a prior test's mockImplementation can leak otherwise.
+    sql.mockImplementation(() => Promise.resolve([])); // SELECT returns 0 rows
+    const r = await createImageTool.execute(
+      { prompt: 'x', baseImageAssetId: 'asset-stranger' },
+      { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
+    );
+    expect(r.error).toBe('invalid_args');
+    expect(r.message).toMatch(/not found/);
+  });
+
+  it('rejects baseImageAssetId when asset has no dataUrl', async () => {
+    sql.mockImplementation(() => Promise.resolve([{ meta: { provider: 'manual', model: 'unknown' } }])); // no dataUrl
+    const r = await createImageTool.execute(
+      { prompt: 'x', baseImageAssetId: 'asset-no-data' },
+      { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
+    );
+    expect(r.error).toBe('invalid_args');
+    expect(r.message).toMatch(/no dataUrl/);
   });
 });

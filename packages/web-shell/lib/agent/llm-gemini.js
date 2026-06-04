@@ -41,6 +41,11 @@ export async function callGemini({ model, system, messages, tools, apiKey, onEve
       const parts = [];
       for (const b of m.content) {
         if (b.type === 'text') parts.push({ text: b.text });
+        else if (b.type === 'image' && typeof b.dataUrl === 'string') {
+          // Multimodal user content — Gemini takes {inlineData:{mimeType, data}}.
+          const match = /^data:([^;]+);base64,(.+)$/.exec(b.dataUrl);
+          if (match) parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+        }
         else if (b.type === 'tool_use') parts.push({ functionCall: { name: b.name, args: b.input || {} } });
         else if (b.type === 'tool_result') {
           parts.push({

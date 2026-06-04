@@ -9,6 +9,23 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const MAX_TOKENS = 8000;
 
+// Translate the route-emitted multimodal blocks ({type:'image', dataUrl})
+// into Anthropic's native image-block shape ({type:'image', source:{...}}).
+// Other block types (text, tool_use, tool_result) pass through untouched.
+function normalizeContentForAnthropic(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return content;
+  return content.map((b) => {
+    if (b?.type === 'image' && typeof b.dataUrl === 'string') {
+      const m = /^data:([^;]+);base64,(.+)$/.exec(b.dataUrl);
+      if (m) {
+        return { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } };
+      }
+    }
+    return b;
+  });
+}
+
 /**
  * @param {object} opts
  * @param {string} opts.model        — provider model id (already resolved via MODEL_ALIAS upstream)
@@ -21,11 +38,12 @@ const MAX_TOKENS = 8000;
  */
 export async function callAnthropic({ model, system, messages, tools, apiKey, onEvent }) {
   const client = new Anthropic({ apiKey });
+  const normalizedMessages = messages.map((m) => ({ ...m, content: normalizeContentForAnthropic(m.content) }));
   const stream = client.messages.stream({
     model,
     max_tokens: MAX_TOKENS,
     system,
-    messages,
+    messages: normalizedMessages,
     tools,
   });
 

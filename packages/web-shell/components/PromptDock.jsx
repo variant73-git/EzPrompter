@@ -168,6 +168,26 @@ function getModelMenuStyle(buttonRef) {
   return { position: 'fixed', left, bottom, right: 'auto', zIndex: 1000 };
 }
 
+// Convert an attached File into the {kind:'image', dataUrl, name, mimeType}
+// shape that /api/chat expects in `attachments`. Reads as base64 data URL so
+// the server can hand it directly to the LLM adapter without an intermediate
+// upload step. Capped at MAX_IMAGE_SIZE upstream by handlePickedFile.
+async function fileToAttachment(file) {
+  if (!file) return null;
+  const dataUrl = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => reject(fr.error || new Error('FileReader failed'));
+    fr.readAsDataURL(file);
+  });
+  return {
+    kind: 'image',
+    dataUrl,
+    name: file.name || 'attachment',
+    mimeType: file.type || 'image/png',
+  };
+}
+
 // --- Control-route helpers --------------------------------------------------
 // Used by ChatPanel callbacks to post user decisions back to the agent runner.
 
@@ -265,8 +285,40 @@ function chatReducer(state, action) {
         : tc);
       return { ...state, activeToolCalls: updated };
     }
-    case 'RUN_FINISHED':
-      return { ...state, streaming: false, activeToolCalls: [], softPause: null };
+    case 'RUN_FINISHED': {
+      // Persist the just-completed tool calls into the conversation so they
+      // remain visible after the run ends. Attach them to the last assistant
+      // message; if none exists (tool-only turn with no streamed reply),
+      // synthesize an empty assistant bubble to hold the chips.
+      const finishedChips = state.activeToolCalls.map((tc) => ({
+        id: tc.id,
+        name: tc.name,
+        args: tc.args,
+        status: tc.status === 'running' ? 'done' : tc.status,
+        result: tc.result,
+        error: tc.error,
+      }));
+      let nextMessages = state.messages;
+      if (finishedChips.length > 0) {
+        let lastAsstIdx = -1;
+        for (let i = state.messages.length - 1; i >= 0; i--) {
+          if (state.messages[i].role === 'assistant') { lastAsstIdx = i; break; }
+        }
+        if (lastAsstIdx === -1) {
+          nextMessages = [...state.messages, {
+            id: `tmp-asst-${Date.now()}`,
+            role: 'assistant',
+            content: '',
+            tool_calls: finishedChips,
+          }];
+        } else {
+          nextMessages = state.messages.map((m, i) => i === lastAsstIdx
+            ? { ...m, tool_calls: [...(m.tool_calls || []), ...finishedChips] }
+            : m);
+        }
+      }
+      return { ...state, messages: nextMessages, streaming: false, activeToolCalls: [], softPause: null };
+    }
     case 'RUN_ID_RECEIVED':
       return { ...state, activeRun: { runId: action.runId, status: 'running' } };
     case 'TOOL_NEEDS_CONFIRM':
@@ -444,11 +496,13 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
   // EventSource doesn't support POST bodies, so we use fetch + a manual
   // reader. Buffer + split on `\n\n` to recover one SSE event block at a
   // time; lines starting with `event:` and `data:` are reassembled.
-  async function sendChatMessage(content) {
-    if (!boardId || !content?.trim()) return;
-    dispatchChat({ type: 'USER_MSG_OPTIMISTIC', content });
+  async function sendChatMessage(content, attachments = null) {
+    if (!boardId) return;
+    const trimmed = (content || '').trim();
+    if (!trimmed && !(attachments && attachments.length)) return;
+    dispatchChat({ type: 'USER_MSG_OPTIMISTIC', content: trimmed });
     // Expand the chat panel so the user sees their bubble + the agent's
-    // streaming reply. Auto-collapse fires at the end of the turn.
+    // streaming reply. Stays open after the turn — user collapses via chevron.
     setChatCollapsed(false);
 
     const res = await fetch('/api/chat', {
@@ -457,8 +511,9 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
       body: JSON.stringify({
         boardId,
-        message: content,
+        message: trimmed,
         modelId,
+        attachments: attachments && attachments.length ? attachments : undefined,
       }),
     });
 
@@ -497,12 +552,8 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
     // Single refetch at end of run — picks up everything the agent did
     // in one go without re-rendering the canvas N times mid-stream.
     onAgentMutatedGraph?.();
-    // Auto-collapse: return the dock to its compact "input-only" size
-    // after each turn so the canvas isn't permanently obscured by chat
-    // history. User can re-expand by sending another message (history
-    // persists in state and reappears) or by clicking past messages via
-    // the existing chevron when expanded.
-    setChatCollapsed(true);
+    // Panel stays open so the user can read the agent's reply and the
+    // completed tool chips. Collapse manually via the chevron.
   }
 
   // Hydrate persisted model on mount.
@@ -695,26 +746,22 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
       }
     }
 
-    // Free-text path → chat agent (Phase 1). Image-only stays a no-op
-    // until vision is wired into the chat route. Clears the textarea
-    // immediately so the optimistic user bubble is the only visible echo.
-    if (value) {
+    // Free-text path → chat agent. If an image is attached, forward it as a
+    // multimodal user message so the agent can SEE the reference and decide
+    // what to do (ingest as asset, edit it, describe its style, etc.).
+    // Pure image-only submits also go through with a placeholder text so the
+    // agent has something to react to.
+    if (value || imageFile) {
+      const text = value || (imageFile ? 'Anexei uma imagem. O que dá pra fazer com ela aqui?' : '');
+      const attachment = imageFile ? await fileToAttachment(imageFile) : null;
       setText('');
       clearImage();
       try {
-        await sendChatMessage(value);
+        await sendChatMessage(text, attachment ? [attachment] : null);
       } catch (e) {
         console.error('[prompt-dock] sendChatMessage failed', e);
       }
       return;
-    }
-
-    // Image-only submit (no text, no URL) — still unwired in chat. Drop the
-    // attachment to keep the dock in a clean state.
-    if (imageFile) {
-      // eslint-disable-next-line no-console
-      console.log('[prompt-dock] image-only submit (chat does not handle vision yet)', { imageFile, modelId });
-      clearImage();
     }
   }
 

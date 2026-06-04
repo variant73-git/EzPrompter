@@ -13,9 +13,10 @@ describe('createNode tool', () => {
   beforeEach(() => sql.mockReset());
 
   it('inserts a "blank-website" type as kind=site + meta.source=blank with seed snapshot', async () => {
-    // 4 SQL calls for blank-website: SELECT board ownership, INSERT node,
-    // INSERT snapshot, UPDATE current_snapshot_id.
+    // 5 SQL calls for blank-website: SELECT board ownership, SELECT auto-place
+    // (no posX/posY given), INSERT node, INSERT snapshot, UPDATE current_snapshot_id.
     sql.mockResolvedValueOnce([{ id: 'board-1' }]);
+    sql.mockResolvedValueOnce([{ right_edge: -240, top_edge: 0 }]); // auto-place query (empty board)
     sql.mockResolvedValueOnce([{ id: 'node-1', kind: 'site', pos_x: 0, pos_y: 0, width: 1280, height: 720, meta: { source: 'blank', name: 'hero' } }]);
     sql.mockResolvedValueOnce([{ id: 'snap-1' }]);
     sql.mockResolvedValueOnce([]); // UPDATE returning nothing
@@ -28,12 +29,12 @@ describe('createNode tool', () => {
     expect(result.color).toBe('teal');
     expect(result.width).toBe(1280);
     expect(result.height).toBe(720);
-    // Verify the seed snapshot path ran (4 SQL calls, not 2)
-    expect(sql.mock.calls.length).toBe(4);
+    expect(sql.mock.calls.length).toBe(5);
   });
 
   it('inserts a "prompt" type (no seed snapshot)', async () => {
     sql.mockResolvedValueOnce([{ id: 'board-1' }]);
+    sql.mockResolvedValueOnce([{ right_edge: -240, top_edge: 0 }]); // auto-place query
     sql.mockResolvedValueOnce([{ id: 'node-2', kind: 'prompt', pos_x: 0, pos_y: 0, width: 1280, height: 800, meta: {} }]);
     const result = await createNodeTool.execute(
       { type: 'prompt' },
@@ -41,7 +42,19 @@ describe('createNode tool', () => {
     );
     expect(result.type).toBe('prompt');
     expect(result.color).toBe('yellow');
-    expect(sql.mock.calls.length).toBe(2); // no seed snapshot for prompt
+    expect(sql.mock.calls.length).toBe(3); // SELECT board + SELECT auto-place + INSERT node
+  });
+
+  it('skips the auto-place query when posX and posY are explicit', async () => {
+    sql.mockResolvedValueOnce([{ id: 'board-1' }]);
+    sql.mockResolvedValueOnce([{ id: 'node-3', kind: 'prompt', pos_x: 500, pos_y: 200, width: 1280, height: 800, meta: {} }]);
+    const result = await createNodeTool.execute(
+      { type: 'prompt', posX: 500, posY: 200 },
+      { boardId: 'board-1', userId: 42 },
+    );
+    expect(result.posX).toBe(500);
+    expect(result.posY).toBe(200);
+    expect(sql.mock.calls.length).toBe(2); // SELECT board + INSERT node, no auto-place
   });
 
   it('returns invalid_args for missing type', async () => {
