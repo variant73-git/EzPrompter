@@ -2423,6 +2423,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       .filter(Boolean);
     if (memberNodes.length === 0) return;
     const startMembers = memberNodes.map((m) => ({ id: m.id, pos_x: m.pos_x, pos_y: m.pos_y }));
+    // Snapshot the section's current frame so we can translate it
+    // alongside its members. Without this, the stored frame (when
+    // present) stays anchored while the content slides — the user
+    // sees "content moves but the section doesn't".
+    const startFrame = {
+      left:   section.x,
+      top:    section.y,
+      right:  section.x + section.width,
+      bottom: section.y + section.height,
+    };
     const readScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
     const startScale = readScale();
     const startMouseX = e.clientX;
@@ -2434,6 +2444,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         const orig = startMembers.find((m) => m.id === n.id);
         if (!orig) return n;
         return { ...n, pos_x: Math.round(orig.pos_x + dx), pos_y: Math.round(orig.pos_y + dy) };
+      }));
+      // Translate the section frame by the same delta so it travels
+      // with its members as a single unit.
+      setSectionFrames((prev) => ({
+        ...prev,
+        [sectionId]: {
+          left:   Math.round(startFrame.left   + dx),
+          top:    Math.round(startFrame.top    + dy),
+          right:  Math.round(startFrame.right  + dx),
+          bottom: Math.round(startFrame.bottom + dy),
+        },
       }));
     }
     function onUp() {
