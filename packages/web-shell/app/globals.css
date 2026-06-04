@@ -3460,15 +3460,21 @@ body.rb-ed-light .cnode-empty {
   white-space: nowrap;
 }
 html.canvas-zoom-low .cnode-anchor-title { display: inline-flex; }
-/* Asset / image nodes are typically <520px wide, which triggers the
-   .cnode.narrow rule that hides their topbar's kind-pill + title. With
-   no chrome inside the card, the user can't tell what the node is. The
-   anchor-title floating above the node carries the same kind icon +
-   name (truncated to 15 chars in the JSX), and we surface it here at
-   ANY zoom level — matching the visible-name affordance URL/site
-   nodes get from their full topbar. */
-.cnode.narrow.origin-screenshot .cnode-anchor-title {
+/* Asset / image nodes mirror URL/site behaviour: at NORMAL zoom the
+   topbar shows the kind-pill + title (overriding the .cnode.narrow
+   rule that hides them for other narrow kinds); at zoom-low the topbar
+   collapses and the floating .cnode-anchor-title carries the same name
+   above the card. The html:not(.canvas-zoom-low) prefix scopes these
+   overrides to normal zoom so the zoom-low hide rule still wins
+   there. */
+html:not(.canvas-zoom-low) .cnode.narrow.origin-screenshot .cnode-topbar .title {
+  display: inline;
+}
+html:not(.canvas-zoom-low) .cnode.narrow.origin-screenshot .cnode-topbar .kind-pill {
   display: inline-flex;
+}
+html:not(.canvas-zoom-low) .cnode.narrow.origin-screenshot .cnode-topbar .kind-pill-lbl {
+  display: inline;
 }
 body.rb-ed-light .cnode-anchor-title {
   background: var(--bg-frosted-solid);
@@ -3664,22 +3670,29 @@ body.rb-ed-light .canvas-section-frame {
   -webkit-backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
-  /* Inverse-scaled padding so the chip stays at a stable on-screen
-     size regardless of canvas zoom — matches the play-button stable-
-     sizing convention. Horizontal padding kept proportionally bumped
-     (40/15 vs the earlier 36/14). */
-  padding: calc(12px / var(--canvas-scale, 1)) calc(15px / var(--canvas-scale, 1)) calc(12px / var(--canvas-scale, 1)) calc(40px / var(--canvas-scale, 1));
+  /* Chip-scale design: play button (40px stable) is the visual anchor;
+     the label sits BELOW it in hierarchy via smaller font + tighter
+     padding so the pill hugs both elements. Pill total height ≈ 48px
+     (4px top + 40px play-btn + 4px bottom). All values inverse-scaled
+     so the chip reads at a stable on-screen size at any zoom. */
+  padding:
+    calc(4px / var(--canvas-scale, 1))
+    calc(4px / var(--canvas-scale, 1))
+    calc(4px / var(--canvas-scale, 1))
+    calc(20px / var(--canvas-scale, 1));
   font-family: inherit;
-  font-size: calc(40px / var(--canvas-scale, 1));
+  font-size: calc(18px / var(--canvas-scale, 1));
   font-weight: 500;
-  letter-spacing: 0.04em;
+  /* Tighter tracking at small sizes — wide tracking at chip scale reads
+     as a logo, not a label. */
+  letter-spacing: 0.01em;
   color: var(--text-primary);
   pointer-events: auto;
   user-select: none;
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: calc(22px / var(--canvas-scale, 1));
+  gap: calc(10px / var(--canvas-scale, 1));
   cursor: pointer;
 }
 .canvas-section-name-tag:hover { background: rgba(28, 28, 30, 0.82); }
@@ -3712,8 +3725,9 @@ body.rb-ed-light .canvas-section-name-tag {
   letter-spacing: inherit;
   padding: 0;
   white-space: nowrap;
-  min-width: 200px;
-  max-width: 460px;
+  /* Inverse-scaled to track the smaller chip-style font. */
+  min-width: calc(100px / var(--canvas-scale, 1));
+  max-width: calc(280px / var(--canvas-scale, 1));
   border-radius: 4px;
 }
 body.rb-ed-light .canvas-section-name-input { outline-color: rgba(0, 0, 0, 0.45); }
