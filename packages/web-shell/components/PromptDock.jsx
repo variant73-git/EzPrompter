@@ -229,8 +229,15 @@ function lastIsTransientAssistant(messages) {
 
 function chatReducer(state, action) {
   switch (action.type) {
-    case 'THREAD_LOADED':
-      return { ...state, threadId: action.threadId, messages: action.messages };
+    case 'THREAD_LOADED': {
+      // Normalize tool_calls from DB — neon driver usually parses JSONB but
+      // be defensive in case the value comes back as a raw string.
+      const normalized = (action.messages || []).map((m) => ({
+        ...m,
+        tool_calls: typeof m.tool_calls === 'string' ? JSON.parse(m.tool_calls) : m.tool_calls,
+      }));
+      return { ...state, threadId: action.threadId, messages: normalized };
+    }
     case 'USER_MSG_OPTIMISTIC':
       return {
         ...state,
@@ -345,21 +352,26 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
 
   // Load the board's active thread on mount / when boardId changes. The
   // route auto-creates a thread if none exists, so messages will be `[]`
-  // for a fresh board.
+  // for a fresh board. Auto-expands the chat panel if there's history so
+  // the user immediately sees past conversation on reload.
   useEffect(() => {
     if (!boardId) return;
-    let aborted = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/chat?boardId=${encodeURIComponent(boardId)}`, { credentials: 'include' });
-        if (!res.ok || aborted) return;
-        const { thread, messages } = await res.json();
-        dispatchChat({ type: 'THREAD_LOADED', threadId: thread.id, messages });
-      } catch (e) {
-        console.warn('[PromptDock] failed to load chat thread', e);
-      }
-    })();
-    return () => { aborted = true; };
+    const ctrl = new AbortController();
+    fetch(`/api/chat?boardId=${encodeURIComponent(boardId)}`, {
+      credentials: 'include',
+      signal: ctrl.signal,
+    })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data?.messages) return;
+        dispatchChat({ type: 'THREAD_LOADED', threadId: data.thread?.id, messages: data.messages });
+        if (data.messages.length > 0) setChatCollapsed(false);
+      })
+      .catch((err) => {
+        if (err?.name === 'AbortError') return;
+        console.warn('[PromptDock] failed to load chat thread', err);
+      });
+    return () => ctrl.abort();
   }, [boardId]);
 
   // SSE event dispatch — keep small and pure so the streaming loop in
