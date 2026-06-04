@@ -3069,3 +3069,25 @@ body.rb-ed-light .rb-font-picker-list::-webkit-scrollbar-thumb { background:rgba
 .rb-img-bar-btn.rb-dock-link-active:hover { color:#93C5FD; background:rgba(147,197,253,0.12); }
 body.rb-ed-light .rb-img-bar-btn.rb-dock-link-active { color:#2563eb; }
 body.rb-ed-light .rb-img-bar-btn.rb-dock-link-active:hover { color:#2563eb; background:rgba(37,99,235,0.08); }
+
+/* ===== SMART EDIT CANVAS-MODE RESULT ===== */
+.rb-ed-asset-smart-result-img {
+  width: 100%;
+  border-radius: 8px;
+  display: block;
+}
+.rb-ed-asset-smart-result-actions {
+  display: flex;
+  gap: 6px;
+}
+.rb-ed-asset-smart-result-btn {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  cursor: pointer;
+}
+.rb-ed-asset-smart-result-btn:hover { background: rgba(255, 255, 255, 0.10); }
