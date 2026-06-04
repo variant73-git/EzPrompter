@@ -117,4 +117,16 @@ describe('agent_runs helpers', () => {
     expect(r.status).toBe('completed');
     expect(r.iterations).toBe(4);
   });
+
+  it('finishAgentRun persists tokens_in, tokens_out, cost_cents when provided', async () => {
+    sql._nextResult = [{ id: 'run-1', status: 'completed', tokens_in: 1000, tokens_out: 500, cost_cents: 2 }];
+    const r = await finishAgentRun({
+      runId: 'run-1', status: 'completed', iterations: 4,
+      toolCallCounts: {},
+      tokensIn: 1000, tokensOut: 500, costCents: 2,
+    });
+    expect(r.tokens_in).toBe(1000);
+    expect(r.tokens_out).toBe(500);
+    expect(r.cost_cents).toBe(2);
+  });
 });

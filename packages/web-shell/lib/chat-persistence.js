@@ -121,14 +121,22 @@ export async function updateAgentRunStatus({ runId, status }) {
 /**
  * Finalize the run: set status + iterations + tool_call_counts + completed_at + err.
  * `status` is one of: completed|failed|cancelled|hard_limited.
+ * `tokensIn`, `tokensOut`, `costCents` are optional — persisted when provided.
  */
-export async function finishAgentRun({ runId, status, iterations, toolCallCounts = {}, err = null }) {
+export async function finishAgentRun({
+  runId, status, iterations,
+  toolCallCounts = {}, err = null,
+  tokensIn = null, tokensOut = null, costCents = null,
+}) {
   const [r] = await sql`
     UPDATE agent_runs
        SET status = ${status},
            iterations = ${iterations},
            tool_call_counts = ${JSON.stringify(toolCallCounts)}::jsonb,
            err = ${err},
+           tokens_in = ${tokensIn},
+           tokens_out = ${tokensOut},
+           cost_cents = ${costCents},
            completed_at = NOW()
      WHERE id = ${runId}
      RETURNING *
