@@ -1922,6 +1922,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       <input ref={fileInputRef} type="file" onChange={onFileInputChange} style={{ display: 'none' }} />
 
       <PromptDock
+        boardId={board.id}
         onAddUrl={handleAddUrl}
         onUploadMd={handleUploadMd}
         onUploadHtml={handleUploadHtml}
