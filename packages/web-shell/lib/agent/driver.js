@@ -180,15 +180,29 @@ export async function runAgentLoop(opts) {
         // forever loop of empty promises.
         const lastText = lastNonEmptyAssistantText || thisIterText;
         const announcedIntent = INTENT_RX.test(lastText);
-        if (announcedIntent && forcedContinues < MAX_FORCED_CONTINUES) {
+        // Semantic backup: a style-transfer / image-edit workflow that
+        // INGESTED a reference but never GENERATED is the canonical
+        // incomplete state. Force a continuation even if the text didn't
+        // light up INTENT_RX. Same applies if the agent created a node
+        // but never connected it (createNode without addEdge).
+        const ingestedButDidntGenerate =
+          (toolCounts.addAssetFromUrl || 0) > 0 && (toolCounts.createImage || 0) === 0;
+        const shouldForce = (announcedIntent || ingestedButDidntGenerate)
+          && forcedContinues < MAX_FORCED_CONTINUES;
+        if (shouldForce) {
           forcedContinues++;
+          const reason = announcedIntent
+            ? 'announced intent'
+            : 'ingested without generating';
           // Visible in dev-server stdout so we can verify the safety net
           // actually fires when the agent stops after announcing intent.
           // eslint-disable-next-line no-console
-          console.log(`[agent] announce-and-stop detected (forced #${forcedContinues}) — last text: ${lastText.slice(0, 120)}`);
+          console.log(`[agent] safety-net fired (#${forcedContinues}, ${reason}) — last text: ${lastText.slice(0, 120)}`);
           history.push({
             role: 'user',
-            content: 'Continua. Você disse que ia executar o próximo passo — faça agora, no mesmo turno, chamando a ferramenta necessária. Não anuncie de novo, ACT.',
+            content: ingestedButDidntGenerate
+              ? 'Você ingeriu a referência mas não gerou a imagem. Chama createImage AGORA com baseImageAssetId=<a imagem anexa>, inputAssetIds incluindo a referência, attachToBoard:true, e prompt descrevendo o estilo da referência. Não responda com texto antes, ACT.'
+              : 'Continua. Você disse que ia executar o próximo passo — faça agora, no mesmo turno, chamando a ferramenta necessária. Não anuncie de novo, ACT.',
           });
           continue;
         }

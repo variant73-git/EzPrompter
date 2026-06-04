@@ -23,8 +23,8 @@
  */
 
 const COL_TOLERANCE = 80;   // x-distance treated as "same column"
-const GAP_X = 240;
-const GAP_Y = 80;
+const GAP_X = 360;
+const GAP_Y = 200;
 
 export async function placeStackDown(boardId, w, h, sql) {
   const rows = await sql`

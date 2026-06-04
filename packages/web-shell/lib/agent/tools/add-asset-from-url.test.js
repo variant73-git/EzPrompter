@@ -75,9 +75,9 @@ describe('addAssetFromUrl tool', () => {
     expect(r.name).toBe('c.png');
     expect(r.mimeType).toBe('image/png');
     // Same column as the existing node (pos_x=200), stacked under it
-    // (pos_y = 100 + 512 + 80 gap).
+    // (pos_y = 100 + 512 + 200 gap).
     expect(r.posX).toBe(200);
-    expect(r.posY).toBe(692);
+    expect(r.posY).toBe(812);
   });
 
   it('skips node creation when attachToBoard:false', async () => {
