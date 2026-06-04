@@ -3832,6 +3832,25 @@ body.rb-ed-active .prompt-dock { display: none !important; }
   cursor: progress;
 }
 
+/* Stop state — replaces the up-arrow with a square while the agent runs. */
+.prompt-dock-send.stop {
+  background: #1a1a1a;
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+.prompt-dock-send.stop:hover {
+  background: #0a0a0a;
+  border-color: rgba(255, 255, 255, 0.32);
+}
+body.rb-ed-light .prompt-dock-send.stop {
+  background: #1f1f1f;
+  color: #fafafa;
+  border-color: rgba(0, 0, 0, 0.18);
+}
+body.rb-ed-light .prompt-dock-send.stop:hover {
+  background: #000;
+}
+
 /* Run-flow error toast — anchored above the prompt dock so the dock
    itself doesn't shift; auto-dismisses via setTimeout in CanvasClient. */
 /* Run-flow status chip — anchored just below the node body so the

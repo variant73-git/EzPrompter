@@ -252,10 +252,22 @@ function chatReducer(state, action) {
     case 'THREAD_LOADED': {
       // Normalize tool_calls from DB — neon driver usually parses JSONB but
       // be defensive in case the value comes back as a raw string.
-      const normalized = (action.messages || []).map((m) => ({
-        ...m,
-        tool_calls: typeof m.tool_calls === 'string' ? JSON.parse(m.tool_calls) : m.tool_calls,
-      }));
+      // Also: any tool_call still in pending/running/awaiting_* state from a
+      // prior run is now ORPHANED (the live runMap entry was wiped by HMR,
+      // a server restart, or just by time). Mark them 'stale' so the chip
+      // renders an inert label instead of looping a spinner that will never
+      // resolve and a Confirm button that 404s.
+      const normalized = (action.messages || []).map((m) => {
+        const raw = typeof m.tool_calls === 'string' ? JSON.parse(m.tool_calls) : m.tool_calls;
+        const tc = Array.isArray(raw)
+          ? raw.map((t) => (
+              t && (t.status === 'pending' || t.status === 'running' || t.status === 'awaiting_confirm' || t.status === 'awaiting_choice')
+                ? { ...t, status: 'stale' }
+                : t
+            ))
+          : raw;
+        return { ...m, tool_calls: tc };
+      });
       return { ...state, threadId: action.threadId, messages: normalized };
     }
     case 'USER_MSG_OPTIMISTIC':
@@ -995,16 +1007,37 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
 
         <motion.button
           type="button"
-          className={`prompt-dock-send ${hasContent || (nodeCount > 0) ? 'active' : ''}${runFlowBusy ? ' busy' : ''}`}
-          whileHover={(hasContent || nodeCount > 0) && !runFlowBusy ? { scale: 1.06 } : {}}
-          whileTap={(hasContent || nodeCount > 0) && !runFlowBusy ? { scale: 0.94 } : {}}
+          className={`prompt-dock-send ${chat.streaming ? 'stop active' : (hasContent || (nodeCount > 0) ? 'active' : '')}${runFlowBusy ? ' busy' : ''}`}
+          whileHover={chat.streaming || ((hasContent || nodeCount > 0) && !runFlowBusy) ? { scale: 1.06 } : {}}
+          whileTap={chat.streaming || ((hasContent || nodeCount > 0) && !runFlowBusy) ? { scale: 0.94 } : {}}
           transition={{ type: 'spring', stiffness: 400, damping: 22 }}
-          disabled={busy || runFlowBusy || chat.streaming || chat.softPause !== null || (!hasContent && nodeCount === 0)}
-          onClick={submit}
-          aria-label={hasContent ? 'Send' : 'Run flow'}
-          title={runFlowBusy ? 'Running…' : (hasContent ? 'Send' : 'Run flow (process connected nodes)')}
+          disabled={busy || runFlowBusy || (!chat.streaming && chat.softPause !== null) || (!chat.streaming && !hasContent && nodeCount === 0)}
+          onClick={async () => {
+            if (chat.streaming) {
+              // Stop the in-flight agent run. The backend cancellation flushes
+              // any pending confirm/choice/continue Promises and the SSE stream
+              // closes with run_status=cancelled; our reducer treats that as
+              // RUN_FINISHED so streaming clears immediately.
+              const runId = latestRunIdRef.current || chat.activeRun?.runId;
+              if (runId) {
+                try { await postCancel({ runId }); } catch (e) { console.warn('[prompt-dock] cancel failed', e); }
+              }
+              // Optimistically clear streaming state even if the cancel POST
+              // didn't go through — the user wants to move on.
+              latestRunIdRef.current = null;
+              dispatchChat({ type: 'RUN_FINISHED' });
+              return;
+            }
+            submit();
+          }}
+          aria-label={chat.streaming ? 'Stop' : (hasContent ? 'Send' : 'Run flow')}
+          title={chat.streaming ? 'Stop the agent' : (runFlowBusy ? 'Running…' : (hasContent ? 'Send' : 'Run flow (process connected nodes)'))}
         >
-          {runFlowBusy ? (
+          {chat.streaming ? (
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <rect x="6" y="6" width="12" height="12" rx="1.5"/>
+            </svg>
+          ) : runFlowBusy ? (
             <svg className="prompt-dock-spin" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
               <circle cx="12" cy="12" r="9" opacity="0.25"/>
               <path d="M21 12a9 9 0 0 1-9 9"/>
