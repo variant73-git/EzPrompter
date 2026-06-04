@@ -15,11 +15,11 @@ describe('buildSafeRegistry', () => {
 });
 
 describe('buildFullRegistry', () => {
-  it('registers all 9 Phase 2 tools', () => {
+  it('registers all 10 Phase 2 tools', () => {
     const r = buildFullRegistry();
     const names = r.all().map((t) => t.name).sort();
     expect(names).toEqual([
-      'addEdge', 'createNode', 'deleteNode', 'editSite',
+      'addEdge', 'createImage', 'createNode', 'deleteNode', 'editSite',
       'getNodeOutput', 'listAssets', 'queryNodes', 'runFlow', 'updateNode',
     ]);
   });
