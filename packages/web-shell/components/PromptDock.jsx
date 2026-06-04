@@ -1075,29 +1075,38 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         </motion.button>
       </div>
 
-      <AnimatePresence>
-        {showAddMenu && (
-          <motion.div
-            key="add-menu"
-            className="prompt-dock-popover prompt-dock-add-menu"
-            style={getAddMenuStyle(addBtnRef)}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 6 }}
-            transition={{ duration: 0.14 }}
-            role="menu"
-          >
-            <div className="prompt-dock-popover-title">Add to canvas</div>
-            <button onClick={() => pickAddItem('blank')}><MENU_ICON.Blank /><span>Add blank website</span></button>
-            <button onClick={() => pickAddItem('html')}><MENU_ICON.Html /><span>Add .html</span></button>
-            <button onClick={() => pickAddItem('md')}><MENU_ICON.Md /><span>Add .md</span></button>
-            <button onClick={() => pickAddItem('screenshot')}><MENU_ICON.Image /><span>Add screenshot</span></button>
-            <button onClick={() => pickAddItem('prompt')}><MENU_ICON.Prompt /><span>Add prompt</span></button>
-            <button onClick={() => pickAddItem('skill')}><MENU_ICON.Skill /><span>Add skill</span></button>
-            <button onClick={() => pickAddItem('multiple')}><MENU_ICON.Files /><span>Add multiple files</span></button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Same portal trick as the model menu — the .prompt-dock has
+          transform:translateX(-50%) which traps descendant position:fixed
+          inside the dock's containing block instead of the viewport.
+          Portal to body so getAddMenuStyle's viewport coords land where
+          we want. AnimatePresence MUST live inside the portal so the
+          motion.div is its direct child. */}
+      {typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {showAddMenu && (
+            <motion.div
+              key="add-menu"
+              className="prompt-dock-popover prompt-dock-add-menu"
+              style={getAddMenuStyle(addBtnRef)}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+              transition={{ duration: 0.14 }}
+              role="menu"
+            >
+              <div className="prompt-dock-popover-title">Add to canvas</div>
+              <button onClick={() => pickAddItem('blank')}><MENU_ICON.Blank /><span>Add blank website</span></button>
+              <button onClick={() => pickAddItem('html')}><MENU_ICON.Html /><span>Add .html</span></button>
+              <button onClick={() => pickAddItem('md')}><MENU_ICON.Md /><span>Add .md</span></button>
+              <button onClick={() => pickAddItem('screenshot')}><MENU_ICON.Image /><span>Add screenshot</span></button>
+              <button onClick={() => pickAddItem('prompt')}><MENU_ICON.Prompt /><span>Add prompt</span></button>
+              <button onClick={() => pickAddItem('skill')}><MENU_ICON.Skill /><span>Add skill</span></button>
+              <button onClick={() => pickAddItem('multiple')}><MENU_ICON.Files /><span>Add multiple files</span></button>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+      )}
 
       {/* Anchor the menu to the model button via getBoundingClientRect.
           The dock has `transform: translateX(-50%)`, which traps any
