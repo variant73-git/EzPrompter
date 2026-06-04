@@ -1928,30 +1928,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               onSelect={(e) => {
                 const shift = !!e?.shiftKey;
                 if (shift) {
-                  // Shift-click ADDS to the multi-select when the node isn't
-                  // already in it. Shift-click on an ALREADY-selected node
-                  // DELETES that node from the canvas — keeps the other
-                  // selected nodes alive. (User asked for this specifically:
-                  // the shift modifier acts as a quick-prune tool while
-                  // holding the multi-selection together.)
+                  // Shift-click toggles this node in the multi-select set —
+                  // add if absent, remove if already there. Matches Figma /
+                  // Linear additive selection convention.
                   const alreadyIn = selectedNodeIds.has(n.id) || selectedNodeId === n.id;
-                  if (alreadyIn) {
-                    setSelectedNodeIds((s) => {
-                      if (!s.has(n.id)) return s;
-                      const next = new Set(s);
-                      next.delete(n.id);
-                      return next;
-                    });
-                    if (selectedNodeId === n.id) setSelectedNodeId(null);
-                    handleDeleteNode(n.id);
-                  } else {
-                    setSelectedNodeIds((s) => {
-                      const next = new Set(s);
-                      next.add(n.id);
-                      return next;
-                    });
-                    setSelectedNodeId(n.id);
-                  }
+                  setSelectedNodeIds((s) => {
+                    const next = new Set(s);
+                    if (alreadyIn) next.delete(n.id);
+                    else next.add(n.id);
+                    return next;
+                  });
+                  if (alreadyIn && selectedNodeId === n.id) setSelectedNodeId(null);
+                  else setSelectedNodeId(n.id);
                 } else {
                   setSelectedNodeId(n.id);
                   // Single-click clears any prior marquee selection so the
