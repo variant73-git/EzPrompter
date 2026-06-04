@@ -121,3 +121,37 @@ body.rb-ed-light .chat-panel-collapse:hover { background: rgba(0, 0, 0, 0.08); c
   font-style: italic;
   font-size: 13px;
 }
+
+.tool-chip-awaiting_confirm,
+.tool-chip-awaiting_choice {
+  background: rgba(251, 191, 36, 0.10);
+  border-color: rgba(251, 191, 36, 0.30);
+  color: rgba(254, 226, 168, 0.95);
+}
+.tool-chip-skipped {
+  background: rgba(120, 120, 120, 0.10);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(170, 170, 170, 0.75);
+  font-style: italic;
+}
+.tool-chip-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+.tool-chip-btn {
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  cursor: pointer;
+}
+.tool-chip-btn:hover { background: rgba(255, 255, 255, 0.10); }
+.tool-chip-confirm { border-color: rgba(74, 222, 128, 0.35); color: rgba(187, 247, 208, 0.95); }
+.tool-chip-confirm:hover { background: rgba(74, 222, 128, 0.15); }
+.tool-chip-skip { color: rgba(255, 255, 255, 0.6); }
+.tool-chip-choice { border-color: rgba(186, 230, 253, 0.35); color: rgba(186, 230, 253, 0.95); }
+.tool-chip-choice:hover { background: rgba(56, 189, 248, 0.15); }
