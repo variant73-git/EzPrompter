@@ -108,7 +108,9 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
     }
 
     const mode = result.mode || 'generate';
-    const assetName = `${mode === 'edit' ? 'edited' : 'generated'}:${prompt.slice(0, 50)}`;
+    // Display name on the canvas node — short + contextual instead of the
+    // full prompt. The full prompt still lives in meta.prompt for traceability.
+    const assetName = mode === 'edit' ? 'Edited image' : 'Generated image';
     const meta = {
       dataUrl: result.dataUrl,
       mimeType: result.mimeType,

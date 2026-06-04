@@ -177,31 +177,9 @@ export default function EdgeLayer({ nodes, edges, incomingByTarget, scale = 1, s
               className={`edge-line${isSelected ? ' selected' : ''} ${e.status || ''}`.trim()}
               onMouseDown={(evt) => bindEdgeMouseDown(e, evt, onSelectEdge, onEdgeDragStart)}
             />
-            {/* Label pill — outline only, same gradient as the cord. Text
-                fill also uses the gradient so the label reads as a single
-                colour-coded token. */}
-            <rect
-              x={mid.x - pillW / 2}
-              y={mid.y - pillH / 2}
-              width={pillW}
-              height={pillH}
-              rx={pillH / 2}
-              ry={pillH / 2}
-              stroke={`url(#${gradId})`}
-              className="edge-label-pill"
-            />
-            <text
-              x={mid.x}
-              y={mid.y}
-              textAnchor="middle"
-              dominantBaseline="central"
-              fontSize={fontSize / scale}
-              fill={`url(#${gradId})`}
-              className="edge-label"
-              pointerEvents="none"
-            >
-              {labelText}
-            </text>
+            {/* Edge-kind label pill removed — was visual noise on every cord
+                and conveyed implementation detail the user doesn't reason
+                about. The colour-coded gradient already encodes provenance. */}
           </g>
         );
       })}
