@@ -729,10 +729,12 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
 }
 /* Counts row stacks above the SVG map. pointer-events:auto so the
    trigger button + dropdown receive clicks (the minimap card itself
-   stays pointer-events:none for display-only behaviour). */
+   stays pointer-events:none for display-only behaviour). Height
+   reduced ~40% vs first draft: padding 6/8 -> 3/6, inner button
+   padding 2/4 -> 1/4, icons + numbers shrunk. */
 .canvas-minimap-counts {
   pointer-events: auto;
-  padding: 6px 8px;
+  padding: 3px 6px;
   border-bottom: 1px solid var(--border-frosted);
   border-top-left-radius: 10px;
   border-top-right-radius: 10px;
@@ -743,10 +745,23 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
   background: transparent;
   border: none;
   box-shadow: none;
-  padding: 2px 4px;
+  padding: 1px 4px;
+  gap: 6px;
+  font-size: 9px;
+  line-height: 1;
 }
 .canvas-minimap-counts .canvas-counts:hover {
   background: rgba(255, 255, 255, 0.06);
+}
+.canvas-minimap-counts .cat-counts-item {
+  gap: 3px;
+}
+.canvas-minimap-counts .cat-counts-item svg {
+  width: 11px;
+  height: 11px;
+}
+.canvas-minimap-counts .cat-counts-num {
+  font-size: 9px;
 }
 .canvas-minimap-svg {
   border-bottom-left-radius: 10px;
@@ -3628,30 +3643,33 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
 /* ── Section frames (auto-derived workflow groups) ──────────────── */
 .canvas-section-frame {
   position: absolute;
-  background: rgba(255, 255, 255, 0.15);
-  border: 1.5px solid rgba(255, 255, 255, 0.45);
+  /* 50% more transparent than the first draft: bg 0.15 -> 0.075,
+     border 0.45 -> 0.225. Reads as a discrete envelope rather than a
+     coloured container. */
+  background: rgba(255, 255, 255, 0.075);
+  border: 1.5px solid rgba(255, 255, 255, 0.225);
   border-radius: 24px;
   pointer-events: none; /* canvas clicks pass through the frame body */
   z-index: 0;
   transition: background 140ms ease, border-color 140ms ease;
 }
 body.rb-ed-light .canvas-section-frame {
-  background: rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.22);
+  background: rgba(0, 0, 0, 0.025);
+  border-color: rgba(0, 0, 0, 0.11);
 }
 
 .canvas-section-name-tag {
   position: absolute;
-  top: 10px;
-  right: 12px;
+  top: 18px;
+  right: 22px;
   background: rgba(20, 20, 22, 0.78);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
-  padding: 3px 4px 3px 12px;
+  padding: 6px 8px 6px 22px;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 20px;
   font-weight: 500;
   letter-spacing: 0.04em;
   color: var(--text-primary);
@@ -3660,7 +3678,7 @@ body.rb-ed-light .canvas-section-frame {
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 14px;
 }
 body.rb-ed-light .canvas-section-name-tag {
   background: rgba(255, 255, 255, 0.92);
@@ -3679,8 +3697,8 @@ body.rb-ed-light .canvas-section-name-tag {
 }
 .canvas-section-name-btn:hover { opacity: 0.85; }
 .canvas-section-play-btn {
-  width: 22px;
-  height: 22px;
+  width: 40px;
+  height: 40px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.12);
   border: none;
@@ -3704,12 +3722,45 @@ body.rb-ed-light .canvas-section-play-btn:hover {
 }
 
 .canvas-section-frame.selected {
-  background: rgba(255, 255, 255, 0.18);
-  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.35);
 }
 body.rb-ed-light .canvas-section-frame.selected {
-  background: rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.32);
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.18);
+}
+
+/* Corner resize handles — 28px hit areas extending slightly outside
+   the frame for easy grabbing. Invisible by default; cursor change is
+   the affordance (CSS nwse-resize / nesw-resize show the standard
+   diagonal arrows). pointer-events:auto overrides the section frame's
+   own pointer-events:none. */
+.canvas-section-handle {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  pointer-events: auto;
+  z-index: 2;
+}
+.canvas-section-handle-nw {
+  top: -10px;
+  left: -10px;
+  cursor: nwse-resize;
+}
+.canvas-section-handle-ne {
+  top: -10px;
+  right: -10px;
+  cursor: nesw-resize;
+}
+.canvas-section-handle-sw {
+  bottom: -10px;
+  left: -10px;
+  cursor: nesw-resize;
+}
+.canvas-section-handle-se {
+  bottom: -10px;
+  right: -10px;
+  cursor: nwse-resize;
 }
 
 /* ── Active context pill in PromptDock ──────────────────────────── */
@@ -3720,14 +3771,14 @@ body.rb-ed-light .canvas-section-frame.selected {
 .prompt-dock-context-pill {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 8px 7px 14px;
-  margin: 2px 14px 0;
+  gap: 10px;
+  padding: 10px 10px 10px 18px;
+  margin: 4px 14px 0;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 14px;
   letter-spacing: 0.02em;
   color: var(--text-primary);
   user-select: none;
@@ -3893,7 +3944,8 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
 /* Aspect ratio pill — sits half-inside half-outside the bottom edge of
    asset cards, centered horizontally. Solid color matches the node's
    own origin colour (--cnode-port-fill) so the pill reads as a property
-   of THIS node, not a floating UI element. */
+   of THIS node, not a floating UI element. Sized at +200% of the first
+   draft so it reads as a proper chip, not a sticker. */
 .cnode-aspect-pill {
   position: absolute;
   left: 50%;
@@ -3903,67 +3955,67 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
   color: #fff;
   border: none;
   border-radius: 999px;
-  padding: 5px 6px 5px 12px;
+  padding: 10px 12px 10px 22px;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 20px;
   font-weight: 500;
   letter-spacing: 0.02em;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   cursor: pointer;
   z-index: 6;
   user-select: none;
   white-space: nowrap;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.3);
   transition: filter 120ms ease, transform 120ms ease;
 }
 .cnode-aspect-pill:hover { filter: brightness(1.12); }
 .cnode-aspect-pill:active { transform: translate(-50%, 50%) scale(0.97); }
 .cnode-aspect-pill-divider {
   width: 1px;
-  height: 12px;
+  height: 22px;
   background: rgba(255, 255, 255, 0.45);
   align-self: center;
 }
 .cnode-aspect-pill-chevron {
-  width: 12px;
-  height: 12px;
+  width: 22px;
+  height: 22px;
   opacity: 0.95;
-  margin-right: 4px;
+  margin-right: 6px;
 }
 .cnode-aspect-pill-menu {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%);
   background: rgba(20, 20, 22, 0.92);
   backdrop-filter: blur(28px) saturate(140%);
   -webkit-backdrop-filter: blur(28px) saturate(140%);
   border: 1px solid var(--border-frosted);
-  border-radius: 12px;
-  padding: 5px;
+  border-radius: 16px;
+  padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  min-width: 84px;
+  gap: 2px;
+  min-width: 150px;
   z-index: 7;
-  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 18px 56px rgba(0, 0, 0, 0.5);
 }
 .cnode-aspect-pill-menu button {
   background: transparent;
   border: none;
   color: var(--text-primary);
-  padding: 6px 10px;
-  border-radius: 8px;
+  padding: 10px 16px;
+  border-radius: 10px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 20px;
   text-align: left;
   cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   letter-spacing: 0.02em;
 }
 .cnode-aspect-pill-menu button:hover { background: var(--hover-bg); }
@@ -3979,13 +4031,13 @@ body.rb-ed-light .cnode-aspect-pill-menu {
 
 /* Output dimensions label — anchored to the bottom-right CORNER of the
    asset node, sits OUTSIDE the card (slightly below + flush right).
-   70% opacity, tiny font, pointer-events:none so it doesn't intercept
-   clicks meant for the canvas / node-port below. */
+   70% opacity, pointer-events:none so it doesn't intercept clicks
+   meant for the canvas / node-port below. */
 .cnode-asset-dims {
   position: absolute;
   right: 0;
-  bottom: -18px;
-  font-size: 10px;
+  bottom: -32px;
+  font-size: 20px;
   font-family: inherit;
   letter-spacing: 0.04em;
   color: var(--text-primary);

@@ -2144,7 +2144,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   const sections = useMemo(() => {
     if (!nodes || nodes.length < 2) return [];
     const SECTION_GAP = 40;
-    const NAME_TAG_RESERVE = 36;
+    // The name tag is taller now (font-size 20 / padding 6+6) — reserve
+    // 70px on top so the tag never overlaps the topmost member.
+    const NAME_TAG_RESERVE = 70;
+    // Asset nodes extend visually below their bounding box via the
+    // aspect pill (sits half-outside, ~22px below the card edge) and
+    // the output-dimensions label (font 20px at bottom: -32px, so
+    // ~52px below the card). Without this extra bottom reserve the
+    // section frame cuts through the pill / dims of the bottom-most
+    // node. 60px covers both with a small breathing margin.
+    const BOTTOM_RESERVE = 60;
     const nodeById = new Map(nodes.map((n) => [n.id, n]));
     // Build adjacency map. Skip edges whose endpoints aren't both in the
     // current nodes array (e.g. mid-flight temp edges that haven't synced).
@@ -2238,16 +2247,111 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         memberIds,
         theme: t,
         name: `${THEME_LABEL[t]} #${themeCounter[t]}`,
-        // Box includes the top reserve so the name tag sits OUTSIDE the
-        // node bounding box (won't overlap the topmost member).
+        // Box includes top reserve for the name tag + bottom reserve so
+        // asset nodes' aspect pill + dims label sit INSIDE the frame.
         x: minX - SECTION_GAP,
         y: minY - SECTION_GAP - NAME_TAG_RESERVE,
         width: (maxX - minX) + SECTION_GAP * 2,
-        height: (maxY - minY) + SECTION_GAP * 2 + NAME_TAG_RESERVE,
+        height: (maxY - minY) + SECTION_GAP * 2 + NAME_TAG_RESERVE + BOTTOM_RESERVE,
       });
     }
     return out;
   }, [nodes, edges]);
+
+  // Section corner resize — dragging a section's NW/NE/SW/SE handle scales
+  // the member node positions proportionally around the OPPOSITE corner
+  // (Figma-frame-style). The section frame itself is auto-derived from
+  // those positions, so updating positions implicitly resizes the frame.
+  // Sizes stay constant — sections are spatial groupings, not zoom targets.
+  function startSectionResize(sectionId, corner, e) {
+    e.stopPropagation();
+    e.preventDefault();
+    const section = sections.find((x) => x.id === sectionId);
+    if (!section) return;
+    const memberNodes = section.memberIds
+      .map((id) => nodes.find((n) => n.id === id))
+      .filter(Boolean);
+    if (memberNodes.length === 0) return;
+
+    // Member bbox (no gap padding).
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const m of memberNodes) {
+      minX = Math.min(minX, m.pos_x || 0);
+      minY = Math.min(minY, m.pos_y || 0);
+      maxX = Math.max(maxX, (m.pos_x || 0) + (m.width || 0));
+      maxY = Math.max(maxY, (m.pos_y || 0) + (m.height || 0));
+    }
+    const startMin = { x: minX, y: minY };
+    const startMax = { x: maxX, y: maxY };
+    const startMembers = memberNodes.map((m) => ({ id: m.id, pos_x: m.pos_x, pos_y: m.pos_y }));
+    const readScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
+    const startScale = readScale();
+    const startMouseX = e.clientX;
+    const startMouseY = e.clientY;
+    const MIN_W = 120;
+    const MIN_H = 80;
+
+    function onMove(ev) {
+      const dx = (ev.clientX - startMouseX) / startScale;
+      const dy = (ev.clientY - startMouseY) / startScale;
+      let newMinX = startMin.x, newMaxX = startMax.x;
+      let newMinY = startMin.y, newMaxY = startMax.y;
+      if (corner === 'nw') { newMinX += dx; newMinY += dy; }
+      else if (corner === 'ne') { newMaxX += dx; newMinY += dy; }
+      else if (corner === 'sw') { newMinX += dx; newMaxY += dy; }
+      else if (corner === 'se') { newMaxX += dx; newMaxY += dy; }
+      // Clamp to keep the bbox from inverting / collapsing.
+      if (newMaxX - newMinX < MIN_W) {
+        if (corner === 'nw' || corner === 'sw') newMinX = newMaxX - MIN_W;
+        else newMaxX = newMinX + MIN_W;
+      }
+      if (newMaxY - newMinY < MIN_H) {
+        if (corner === 'nw' || corner === 'ne') newMinY = newMaxY - MIN_H;
+        else newMaxY = newMinY + MIN_H;
+      }
+      const oldW = startMax.x - startMin.x || 1;
+      const oldH = startMax.y - startMin.y || 1;
+      const scaleX = (newMaxX - newMinX) / oldW;
+      const scaleY = (newMaxY - newMinY) / oldH;
+      // Anchor = corner that DIDN'T move. NW drag → anchor SE (startMax),
+      // SE drag → anchor NW (startMin), NE drag → anchor SW (startMinX, startMaxY),
+      // SW drag → anchor NE (startMaxX, startMinY).
+      const oldAnchorX = (corner === 'nw' || corner === 'sw') ? startMax.x : startMin.x;
+      const oldAnchorY = (corner === 'nw' || corner === 'ne') ? startMax.y : startMin.y;
+      const newAnchorX = (corner === 'nw' || corner === 'sw') ? newMaxX : newMinX;
+      const newAnchorY = (corner === 'nw' || corner === 'ne') ? newMaxY : newMinY;
+      const idToNewPos = new Map();
+      for (const m of startMembers) {
+        const relX = m.pos_x - oldAnchorX;
+        const relY = m.pos_y - oldAnchorY;
+        idToNewPos.set(m.id, {
+          pos_x: Math.round(newAnchorX + relX * scaleX),
+          pos_y: Math.round(newAnchorY + relY * scaleY),
+        });
+      }
+      setNodes((prev) => prev.map((n) => {
+        const np = idToNewPos.get(n.id);
+        return np ? { ...n, pos_x: np.pos_x, pos_y: np.pos_y } : n;
+      }));
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      // Persist each member's final position. Use a no-op setNodes to read
+      // the freshest state inside the callback.
+      setNodes((cur) => {
+        for (const m of startMembers) {
+          const node = cur.find((n) => n.id === m.id);
+          if (node && !String(node.id).startsWith('temp-')) {
+            api.updateNode(node.id, { posX: node.pos_x, posY: node.pos_y }).catch(console.warn);
+          }
+        }
+        return cur;
+      });
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
 
   // Active chat context — derived from selectedSectionId (preferred) or
   // selectedNodeId. PromptDock renders a pill for this; sending a chat
@@ -2440,11 +2544,22 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   }}
                   aria-label={`Re-run ${s.name}`}
                 >
-                  <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
                     <polygon points="6,4 20,12 6,20" />
                   </svg>
                 </button>
               </div>
+              {/* Corner resize handles. Each hosts the appropriate
+                  diagonal cursor + a drag handler that scales member
+                  node positions around the opposite corner. */}
+              {['nw', 'ne', 'sw', 'se'].map((corner) => (
+                <div
+                  key={corner}
+                  className={`canvas-section-handle canvas-section-handle-${corner}`}
+                  onMouseDown={(e) => startSectionResize(s.id, corner, e)}
+                  aria-hidden="true"
+                />
+              ))}
             </div>
           ))}
           <EdgeLayer
