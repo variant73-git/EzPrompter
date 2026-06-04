@@ -1,6 +1,7 @@
 import { sql } from '../../db.js';
 import { generateGeminiImage } from '../../image-gen/gemini-imagen.js';
 import { generateOpenAIImage } from '../../image-gen/openai-image.js';
+import { placeRightOfSources, placeStackDown } from '../../canvas-layout.js';
 
 const VALID_ASPECT = new Set(['1:1', '16:9', '9:16', '3:4', '4:3']);
 const VALID_PROVIDER = new Set(['auto', 'gemini', 'openai']);
@@ -128,16 +129,29 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
     let placedX = 0;
     let placedY = 0;
     if (attachToBoard) {
-      // Place to the right of existing nodes (mirrors createNode auto-stagger).
-      const [row] = await sql`
-        SELECT COALESCE(MAX(pos_x + width), -240) AS right_edge,
-               COALESCE(MIN(pos_y), 0) AS top_edge
-        FROM nodes
-        WHERE board_id = ${ctx.boardId}
-      `;
-      const GAP = 240;
-      placedX = Number(row?.right_edge ?? 0) + GAP;
-      placedY = Number(row?.top_edge ?? 0);
+      // Resolve placement: when the agent passed source assets (image-to-
+      // image / style transfer), drop the result to the RIGHT of every
+      // source, vertically centered between them so the input edges don't
+      // cross. Otherwise fall back to the rightmost-column stack-down used
+      // by other auto-creates.
+      const allSourceAssetIds = Array.from(new Set([
+        ...(baseImageAssetId ? [baseImageAssetId] : []),
+        ...(Array.isArray(inputAssetIds) ? inputAssetIds.filter((x) => typeof x === 'string' && x) : []),
+      ]));
+      let sourceNodeIds = [];
+      if (allSourceAssetIds.length > 0) {
+        const srcRows = await sql`
+          SELECT id FROM nodes
+          WHERE board_id = ${ctx.boardId}
+            AND meta->>'assetId' = ANY(${allSourceAssetIds})
+        `;
+        sourceNodeIds = srcRows.map((r) => r.id);
+      }
+      const pos = sourceNodeIds.length > 0
+        ? await placeRightOfSources(ctx.boardId, sourceNodeIds, 512, 512, sql)
+        : await placeStackDown(ctx.boardId, 512, 512, sql);
+      placedX = pos.x;
+      placedY = pos.y;
 
       const [node] = await sql`
         INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
