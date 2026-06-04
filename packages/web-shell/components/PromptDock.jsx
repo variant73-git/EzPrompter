@@ -168,6 +168,21 @@ function getModelMenuStyle(buttonRef) {
   return { position: 'fixed', left, bottom, right: 'auto', zIndex: 1000 };
 }
 
+// Same pattern for the add (+) menu — when the chat panel expands inside
+// the prompt dock, an absolute popover with `bottom: 100%` lands at the
+// top of the entire chat block instead of right above the + button.
+// Fixed positioning anchored to the button rect keeps the menu glued to
+// the button regardless of how tall the dock has grown.
+function getAddMenuStyle(buttonRef) {
+  if (typeof window === 'undefined') return {};
+  const r = buttonRef?.current?.getBoundingClientRect();
+  if (!r) return { position: 'fixed', left: 8, bottom: 80, right: 'auto', zIndex: 1000 };
+  const MENU_W = 240;
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - MENU_W - 8));
+  const bottom = window.innerHeight - r.top + 8;
+  return { position: 'fixed', left, bottom, right: 'auto', zIndex: 1000 };
+}
+
 // Convert an attached File into the {kind:'image', dataUrl, name, mimeType}
 // shape that /api/chat expects in `attachments`. Reads as base64 data URL so
 // the server can hand it directly to the LLM adapter without an intermediate
@@ -1065,6 +1080,7 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
           <motion.div
             key="add-menu"
             className="prompt-dock-popover prompt-dock-add-menu"
+            style={getAddMenuStyle(addBtnRef)}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6 }}
