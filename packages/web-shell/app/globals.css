@@ -729,39 +729,28 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
 }
 /* Counts row stacks above the SVG map. pointer-events:auto so the
    trigger button + dropdown receive clicks (the minimap card itself
-   stays pointer-events:none for display-only behaviour). Height
-   reduced ~40% vs first draft: padding 6/8 -> 3/6, inner button
-   padding 2/4 -> 1/4, icons + numbers shrunk. */
+   stays pointer-events:none for display-only behaviour). Container
+   height reduced 45% from the original toolbar version (padding 6/8
+   -> 3/8) while keeping the icons + numbers at their inherited
+   default sizes — only the surrounding container shrinks. */
 .canvas-minimap-counts {
   pointer-events: auto;
-  padding: 3px 6px;
+  padding: 3px 8px;
   border-bottom: 1px solid var(--border-frosted);
   border-top-left-radius: 10px;
   border-top-right-radius: 10px;
 }
 /* Within the merged minimap, the counts trigger drops its own
-   chrome (border/bg) — it inherits the minimap card's frosted look. */
+   chrome (border/bg) — it inherits the minimap card's frosted look.
+   Padding/typography kept at default so the icons read at their
+   intended size; only the wrapping container is compressed. */
 .canvas-minimap-counts .canvas-counts {
   background: transparent;
   border: none;
   box-shadow: none;
-  padding: 1px 4px;
-  gap: 6px;
-  font-size: 9px;
-  line-height: 1;
 }
 .canvas-minimap-counts .canvas-counts:hover {
   background: rgba(255, 255, 255, 0.06);
-}
-.canvas-minimap-counts .cat-counts-item {
-  gap: 3px;
-}
-.canvas-minimap-counts .cat-counts-item svg {
-  width: 11px;
-  height: 11px;
-}
-.canvas-minimap-counts .cat-counts-num {
-  font-size: 9px;
 }
 .canvas-minimap-svg {
   border-bottom-left-radius: 10px;
@@ -3472,6 +3461,16 @@ body.rb-ed-light .cnode-empty {
   white-space: nowrap;
 }
 html.canvas-zoom-low .cnode-anchor-title { display: inline-flex; }
+/* Asset / image nodes are typically <520px wide, which triggers the
+   .cnode.narrow rule that hides their topbar's kind-pill + title. With
+   no chrome inside the card, the user can't tell what the node is. The
+   anchor-title floating above the node carries the same kind icon +
+   name (truncated to 15 chars in the JSX), and we surface it here at
+   ANY zoom level — matching the visible-name affordance URL/site
+   nodes get from their full topbar. */
+.cnode.narrow.origin-screenshot .cnode-anchor-title {
+  display: inline-flex;
+}
 body.rb-ed-light .cnode-anchor-title {
   background: var(--bg-frosted-solid);
   color: var(--text-primary);
@@ -3643,33 +3642,34 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
 /* ── Section frames (auto-derived workflow groups) ──────────────── */
 .canvas-section-frame {
   position: absolute;
-  /* 50% more transparent than the first draft: bg 0.15 -> 0.075,
-     border 0.45 -> 0.225. Reads as a discrete envelope rather than a
+  /* Bumped transparency in two passes — first -50% from the first
+     draft (0.15/0.45 -> 0.075/0.225), then another -25% applied
+     uniformly (-> 0.056/0.169). Reads as a faint envelope, not a
      coloured container. */
-  background: rgba(255, 255, 255, 0.075);
-  border: 1.5px solid rgba(255, 255, 255, 0.225);
+  background: rgba(255, 255, 255, 0.056);
+  border: 1.5px solid rgba(255, 255, 255, 0.169);
   border-radius: 24px;
   pointer-events: none; /* canvas clicks pass through the frame body */
   z-index: 0;
   transition: background 140ms ease, border-color 140ms ease;
 }
 body.rb-ed-light .canvas-section-frame {
-  background: rgba(0, 0, 0, 0.025);
-  border-color: rgba(0, 0, 0, 0.11);
+  background: rgba(0, 0, 0, 0.018);
+  border-color: rgba(0, 0, 0, 0.083);
 }
 
 .canvas-section-name-tag {
   position: absolute;
-  top: 18px;
-  right: 22px;
+  top: 24px;
+  right: 30px;
   background: rgba(20, 20, 22, 0.78);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
-  padding: 6px 8px 6px 22px;
+  padding: 12px 14px 12px 36px;
   font-family: inherit;
-  font-size: 20px;
+  font-size: 40px;
   font-weight: 500;
   letter-spacing: 0.04em;
   color: var(--text-primary);
@@ -3678,7 +3678,7 @@ body.rb-ed-light .canvas-section-frame {
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: 14px;
+  gap: 22px;
 }
 body.rb-ed-light .canvas-section-name-tag {
   background: rgba(255, 255, 255, 0.92);
@@ -3697,8 +3697,8 @@ body.rb-ed-light .canvas-section-name-tag {
 }
 .canvas-section-name-btn:hover { opacity: 0.85; }
 .canvas-section-play-btn {
-  width: 40px;
-  height: 40px;
+  width: 80px;
+  height: 80px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.12);
   border: none;
@@ -3730,11 +3730,47 @@ body.rb-ed-light .canvas-section-frame.selected {
   border-color: rgba(0, 0, 0, 0.18);
 }
 
-/* Corner resize handles — 28px hit areas extending slightly outside
-   the frame for easy grabbing. Invisible by default; cursor change is
-   the affordance (CSS nwse-resize / nesw-resize show the standard
-   diagonal arrows). pointer-events:auto overrides the section frame's
-   own pointer-events:none. */
+/* Drag grip — dot grid centered at the top of the section, mirrors the
+   per-node topbar-grip pattern (6×2 dots) at canvas scale. Grabbing this
+   translates ALL member nodes by the same delta. */
+.canvas-section-grip {
+  position: absolute;
+  top: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  grid-auto-rows: 6px;
+  gap: 4px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: transparent;
+  cursor: grab;
+  pointer-events: auto;
+  z-index: 3;
+  transition: background 120ms ease;
+}
+.canvas-section-grip:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.canvas-section-grip:active {
+  cursor: grabbing;
+  background: rgba(255, 255, 255, 0.1);
+}
+.canvas-section-grip span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+}
+body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
+
+/* Corner resize handles — invisible 28px hit areas extending slightly
+   outside the frame for easy grabbing. Cursor change is the affordance
+   (CSS nwse-resize / nesw-resize show the standard diagonal arrows).
+   pointer-events:auto overrides the section frame's own pointer-events:
+   none. The SE handle hosts a visible diagonal-lines icon as an extra
+   affordance. */
 .canvas-section-handle {
   position: absolute;
   width: 28px;
@@ -3761,7 +3797,15 @@ body.rb-ed-light .canvas-section-frame.selected {
   bottom: -10px;
   right: -10px;
   cursor: nwse-resize;
+  color: rgba(255, 255, 255, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 4px;
 }
+.canvas-section-handle-se:hover { color: rgba(255, 255, 255, 0.85); }
+body.rb-ed-light .canvas-section-handle-se { color: rgba(0, 0, 0, 0.35); }
+body.rb-ed-light .canvas-section-handle-se:hover { color: rgba(0, 0, 0, 0.7); }
 
 /* ── Active context pill in PromptDock ──────────────────────────── */
 .prompt-dock-context-wrap {
@@ -4036,7 +4080,9 @@ body.rb-ed-light .cnode-aspect-pill-menu {
 .cnode-asset-dims {
   position: absolute;
   right: 0;
-  bottom: -32px;
+  /* Distance from node edge bumped +75% (32 -> 56) so the label has
+     more breathing room from the card. */
+  bottom: -56px;
   font-size: 20px;
   font-family: inherit;
   letter-spacing: 0.04em;
