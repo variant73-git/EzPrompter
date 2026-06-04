@@ -3299,6 +3299,33 @@ body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.4
   border-radius: 10px;
 }
 
+/* Generating state for agent-created result nodes — pulses subtly so the
+   user knows the canvas isn't frozen while image gen runs (30–120s). */
+.cnode-loading-gen {
+  background: linear-gradient(135deg, #1a1a3a 0%, #14142a 100%);
+  color: rgba(255, 255, 255, 0.55);
+  animation: cnode-gen-pulse 2.2s ease-in-out infinite;
+}
+.cnode-gen-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  border-top-color: rgba(255, 255, 255, 0.65);
+  animation: cnode-gen-spin 0.9s linear infinite;
+}
+.cnode-loading-error {
+  background: #2a1414;
+  color: rgba(255, 200, 200, 0.75);
+}
+@keyframes cnode-gen-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes cnode-gen-pulse {
+  0%, 100% { opacity: 0.92; }
+  50%      { opacity: 0.7;  }
+}
+
 /* Empty-state body for blank-website (teal) nodes. Distinct from
    cnode-loading: no spinner, calmer tint, hint text that explains
    what the node is for instead of implying background work. */
