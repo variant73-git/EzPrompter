@@ -1,0 +1,24 @@
+/* components/chat/chat.css — minimal Phase 1 styles. Visual polish in Phase 5+. */
+.chat-bubble {
+  max-width: 80%;
+  margin: 6px 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-family: var(--popup-font-sans, system-ui);
+  font-size: 13px;
+  line-height: 1.45;
+  word-wrap: break-word;
+}
+.chat-bubble-user {
+  align-self: flex-end;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary, #f5f5f5);
+  margin-left: auto;
+}
+.chat-bubble-assistant {
+  align-self: flex-start;
+  background: transparent;
+  color: var(--text-primary, #f5f5f5);
+}
+.chat-bubble-content { white-space: pre-wrap; }
+.chat-bubble-children { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
