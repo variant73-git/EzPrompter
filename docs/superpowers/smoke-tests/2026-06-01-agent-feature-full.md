@@ -66,6 +66,23 @@ Remover overrides depois.
 
 ---
 
+## Bloco D+ — Multimodal chat + image-to-image (2026-06-01 add-on)
+
+Pré: `UNCRAFT_AGENT_MODEL=claude-sonnet-4-6` (Claude lê imagens nativamente — Gemini Flash também serve, mas Claude é mais confiável pra interpretar referências).
+
+| # | Cenário | Esperado |
+|---|---|---|
+| D5 | Image attachment in chat | Anexa imagem no PromptDock (botão +), digita "o que é isso?" → Enter. Agent descreve o conteúdo (sinal: agora ele VÊ o anexo, antes era dropado). |
+| D6 | addAssetFromUrl | `ingere https://i.pinimg.com/736x/<alguma_imagem>.jpg como asset` → chip `addAssetFromUrl` done → asset node violeta aparece no canvas com a imagem dentro |
+| D7 | Style transfer (estilo + base anexada) | Anexa imagem A no chat + texto: "aplica nessa imagem o estilo dessa referência https://<URL_imagem_B>". Agent deve: (a) addAssetFromUrl da B (b) addAssetFromUrl da A OU usar a A do anexo (c) descrever o estilo da B no prompt (d) createImage com baseImageAssetId = asset A. Result: asset node novo com o resultado |
+| D8 | Style transfer (duas URLs) | `aplica o estilo de <URL ref> em <URL base>` → mesma orquestração mas as duas vêm de URL |
+| D9 | DB verify edit mode | `psql -c "SELECT id, name, meta->>'mode', meta->>'baseImageAssetId' FROM assets WHERE meta->>'mode' = 'edit' ORDER BY created_at DESC LIMIT 5"` → linha aparece com mode=edit + baseImageAssetId apontando pro asset original |
+| D10 | Refusa graceful (sem base) | "transfere o estilo de https://X.jpg" (só uma URL, sem base) → agent pergunta UMA coisa: "qual é a imagem-base?" |
+
+**Sinais de regressão:** se o agent disser "não consigo transferir estilo com minhas ferramentas" → system prompt não chegou OR multimodal user-message não chegou → checar route.js + adapter mod.
+
+---
+
 ## Bloco E — Smart Edit canvas (Phase 4 + 4c + 4d)
 
 Pré: ter pelo menos um asset node de D1/D2/D3.
