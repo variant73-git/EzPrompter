@@ -51,11 +51,8 @@ To make Phase 4 actually usable end-to-end:
 
 Phase 4b (orphan backfill) becomes more urgent after 4c since users will want to Smart Edit on any asset node, not just agent-generated ones.
 
-**Phase 4b — orphan asset backfill (small, ~30min)**
-- When canvas Smart Edit clicks on an asset node without `meta.assetId`, auto-create an `assets` row from the node's existing data (kind='asset', meta.dataUrl or .source_url, etc.)
-- Update `node.meta.assetId` after insert
-- Smart Edit then proceeds normally
-- One new function in lib/agent/canvas-asset-bridge.js; one new flow in editor.js's submit canvas path
+**Phase 4b — orphan asset backfill (DONE)**
+Shipped as POST /api/nodes/[id]/asset-backfill. CanvasNode Smart Edit button now appears for any asset node with meta.dataUrl OR meta.assetId. Click triggers backfill if needed (idempotent) before opening the dock.
 
 **Phase 5b — history reconstruction (medium, ~2-3hr)**
 - Currently `appendMessage({role:'assistant', content:''})` saves empty stub. Phase 5b populates content + saves separate `role:'tool'` messages with tool_call_id + result JSON + builds tool_calls JSONB on assistant message → ChatPanel rehydrates on reload
