@@ -171,6 +171,8 @@ export async function runAgentLoop(opts) {
         .map((b) => b.text || '')
         .join(' ');
       if (thisIterText.trim()) lastNonEmptyAssistantText = thisIterText;
+      // eslint-disable-next-line no-console
+      console.log(`[agent] iter=${iterations} stop=${finalMsg.stop_reason} tools=${JSON.stringify(toolCounts)} text=${thisIterText.slice(0, 80)}`);
 
       if (finalMsg.stop_reason === 'end_turn' || finalMsg.stop_reason === 'stop_sequence') {
         // Announce-and-stop guard: if any iter in this run announced an
