@@ -33,18 +33,24 @@ const MODEL_ALIAS = {
 // Which model orchestrates the agent (tool calls, workflow building).
 // Internal infrastructure choice — NOT the user's picker selection.
 //
-// Override per env: UNCRAFT_AGENT_MODEL=claude-sonnet-4-6
+// Override per env: UNCRAFT_AGENT_MODEL=<id>
 //
-// Recommended choices (by descending tool-use quality):
-//   claude-sonnet-4-6           — best tool compliance, $3/$15 per 1M tokens
-//   gemini-3.1-pro-preview      — good, $1.25/$10 — current default (Anthropic creditless tier)
-//   claude-haiku-4-5-20251001   — 90% Sonnet quality at 3x less cost
-//   gemini-2.5-flash            — 40x cheaper than Sonnet; OK quality for simple tool routing
+// Default is Gemini 2.5 Flash because at scale (target: 100k-1M users) the
+// agent cost dominates. Math per turn @ ~15k in + 1.5k out:
+//   gemini-2.5-flash      — $0.0015 / turn  ($1.8M/yr @ 1M users)
+//   deepseek-chat         — $0.006        ($7.2M/yr)
+//   claude-haiku-4-5      — $0.022        ($26M/yr)
+//   claude-sonnet-4-6     — $0.07         ($84M/yr)
+//
+// Flash has slightly weaker function-calling quality than Sonnet/DeepSeek
+// (BFCL ~85% vs ~94% / ~88%) but is the safest cost-floor for a free tier
+// targeting millions of users. Tiered routing (free=Flash, pro=DeepSeek,
+// enterprise=Sonnet) goes here when the credit system lands.
 //
 // Wrapped in a function so tests can override the env var per-test and
 // hot-reload picks up changes without restarting the dev server.
 function getAgentModel() {
-  return process.env.UNCRAFT_AGENT_MODEL || 'gemini-3.1-pro-preview';
+  return process.env.UNCRAFT_AGENT_MODEL || 'gemini-2.5-flash';
 }
 
 /**
