@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { originColor } from '../lib/node-origin.js';
+import CategoryCounts from './CategoryCounts.jsx';
 
 const WORLD_WIDTH = 8000;
 const WORLD_HEIGHT = 6000;
@@ -38,7 +39,7 @@ const FrameIcon = {
   )
 };
 
-export default function Minimap({ nodes, transformRef, frameMode = 'all', hasSelection = false, onToggleFrame }) {
+export default function Minimap({ nodes, edges = [], transformRef, frameMode = 'all', hasSelection = false, onToggleFrame, onZoomToConnection }) {
   const [tick, setTick] = useState(0);
   const [heights, setHeights] = useState(() => new Map());
   // The minimap's bbox depends on `window.innerWidth/Height`,
@@ -151,8 +152,22 @@ export default function Minimap({ nodes, transformRef, frameMode = 'all', hasSel
   const vRectH = Math.max(0, vy1 - vy0);
 
   return (
-    <div className="canvas-minimap" style={{ width: MAP_W, height: MAP_H }}>
-      <svg width={MAP_W} height={MAP_H} viewBox={`0 0 ${MAP_W} ${MAP_H}`}>
+    <div className="canvas-minimap" style={{ width: MAP_W }}>
+      {/* Category counts strip — merged from the old top-right widget.
+          Collapsed form is the row of icons + counts; expanded form
+          opens the connections dropdown anchored under the strip.
+          When the canvas is empty we hide this row entirely so the
+          minimap doesn't reserve space for nothing. */}
+      {nodes.length > 0 && onZoomToConnection && (
+        <div className="canvas-minimap-counts">
+          <CategoryCounts
+            nodes={nodes}
+            edges={edges}
+            onZoomToConnection={onZoomToConnection}
+          />
+        </div>
+      )}
+      <svg width={MAP_W} height={MAP_H} viewBox={`0 0 ${MAP_W} ${MAP_H}`} className="canvas-minimap-svg">
         {/* World background — same dot grid feel as the canvas. */}
         <rect x={0} y={0} width={MAP_W} height={MAP_H} className="minimap-world" />
         {nodes.map((n) => {

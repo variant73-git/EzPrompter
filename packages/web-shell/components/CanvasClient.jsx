@@ -132,6 +132,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // the asset-pill. busy=true while the regen call is in flight so the
   // confirm button shows a spinner and click-outside is disabled.
   const [regenAspect, setRegenAspect] = useState(null); // { nodeId, aspect, busy }
+  // Active section selection — the workflow the user is currently operating
+  // on. When set, the PromptDock surfaces a ContextPill, the section frame
+  // gets an accent border, and the agent receives section context with every
+  // chat message it sends.
+  const [selectedSectionId, setSelectedSectionId] = useState(null);
+  // Play-section confirm modal: holds the section being re-executed while
+  // the user confirms in the modal.
+  const [playSection, setPlaySection] = useState(null); // { section, busy }
+  // Imperative ref to the PromptDock so the canvas can fire chat sends
+  // from the section play button without round-tripping through props.
+  const promptDockRef = useRef(null);
   const transformRef = useRef(null);
 
   // ── HMR / refresh hard reset of canvas-scale state ────────────────────
@@ -1339,6 +1350,78 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setTimeout(() => URL.revokeObjectURL(url), 100);
   }
 
+  // Play a section: send a synthetic chat message via the PromptDock's
+  // imperative API. The agent receives the workflow context in the message
+  // body and decides which tool(s) re-execute the operation that produced
+  // the section's terminal node.
+  async function handleConfirmPlaySection() {
+    if (!playSection || playSection.busy) return;
+    const s = playSection.section;
+    setPlaySection((prev) => (prev ? { ...prev, busy: true } : prev));
+    // Compose a hint the agent can parse. Member kinds + names help it
+    // pick the right tool (createImage vs runFlow vs editSite).
+    const memberSummary = s.memberIds.map((id) => {
+      const n = nodes.find((x) => x.id === id);
+      if (!n) return null;
+      const label = n.meta?.name || n.kind;
+      return `${n.id.slice(0, 8)} (${n.kind}: ${label})`;
+    }).filter(Boolean).join(', ');
+    const synth = `[Workflow play] Re-execute the workflow "${s.name}". Member nodes: ${memberSummary}. Re-run the operation that produced the terminal result in this chain — preserve the same inputs and references.`;
+    try {
+      // Fire via PromptDock imperative API. The chat panel will open and
+      // stream the agent's response as usual.
+      const api = promptDockRef.current;
+      if (!api?.sendMessage) {
+        throw new Error('PromptDock not ready');
+      }
+      await api.sendMessage(synth);
+      setPlaySection(null);
+    } catch (e) {
+      console.warn('[play-section] failed:', e?.message || e);
+      toast.error(e?.message || 'Play failed.');
+      setPlaySection((prev) => (prev ? { ...prev, busy: false } : prev));
+    }
+  }
+
+  // Active chat context — derived from selectedSectionId (preferred) or
+  // selectedNodeId. PromptDock renders a pill for this; sending a chat
+  // message prepends the context hint so the agent operates in scope.
+  const activeContext = useMemo(() => {
+    if (selectedSectionId) {
+      const s = sections.find((x) => x.id === selectedSectionId);
+      if (s) {
+        return {
+          kind: 'section',
+          id: s.id,
+          name: s.name,
+          theme: s.theme,
+          memberIds: s.memberIds,
+          memberCount: s.memberIds.length,
+        };
+      }
+    }
+    if (selectedNodeId) {
+      const n = nodes.find((x) => x.id === selectedNodeId);
+      if (n) {
+        return {
+          kind: 'node',
+          id: n.id,
+          name: n.meta?.name || n.kind,
+          nodeKind: n.kind,
+          origin: nodeOrigin(n),
+          color: originColor(n),
+        };
+      }
+    }
+    return null;
+  }, [selectedSectionId, selectedNodeId, sections, nodes]);
+
+  function handleClearActiveContext() {
+    setSelectedSectionId(null);
+    setSelectedNodeId(null);
+    setSelectedNodeIds((s) => (s.size ? new Set() : s));
+  }
+
   // Replace node content with a freshly uploaded file. Accept image/html/md;
   // the endpoint figures out the new kind from the explicit `kind` we send
   // (derived from the file's mime + extension here) and patches the node row
@@ -1992,6 +2075,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         }
         setSelectedNodeId(null);
         setSelectedEdgeId(null);
+        setSelectedSectionId(null);
         setSelectedNodeIds((s) => (s.size ? new Set() : s));
         setPopupPos(null);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -2084,6 +2168,120 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     return s;
   }, [edges]);
 
+  // ── Sections (auto-derived workflow groups) ───────────────────────────
+  // Every set of >=2 connected nodes is automatically encapsulated as a
+  // "section" — a discrete frosted frame with a name tag in the upper-right.
+  // No DB schema: components are derived from nodes+edges on every render
+  // via union-find / BFS. Renames + manual splits/merges are Phase 2 and
+  // would persist as overrides; this MVP is fully derived.
+  const sections = useMemo(() => {
+    if (!nodes || nodes.length < 2) return [];
+    const SECTION_GAP = 40;
+    const NAME_TAG_RESERVE = 36;
+    const nodeById = new Map(nodes.map((n) => [n.id, n]));
+    // Build adjacency map. Skip edges whose endpoints aren't both in the
+    // current nodes array (e.g. mid-flight temp edges that haven't synced).
+    const adj = new Map();
+    for (const n of nodes) adj.set(n.id, []);
+    for (const e of edges) {
+      const a = e.source_node_id;
+      const b = e.target_node_id;
+      if (adj.has(a) && adj.has(b)) {
+        adj.get(a).push(b);
+        adj.get(b).push(a);
+      }
+    }
+    // Connected components via iterative BFS (avoid recursion depth on
+    // large boards).
+    const visited = new Set();
+    const components = [];
+    for (const n of nodes) {
+      if (visited.has(n.id)) continue;
+      const neighbours = adj.get(n.id) || [];
+      if (neighbours.length === 0) {
+        visited.add(n.id);
+        continue;
+      }
+      const members = [];
+      const queue = [n.id];
+      while (queue.length) {
+        const cur = queue.shift();
+        if (visited.has(cur)) continue;
+        visited.add(cur);
+        members.push(cur);
+        for (const nb of adj.get(cur) || []) {
+          if (!visited.has(nb)) queue.push(nb);
+        }
+      }
+      if (members.length >= 2) components.push(members);
+    }
+    if (components.length === 0) return [];
+    // Auto-name by content: count kinds present in each component, pick the
+    // dominant theme. Number sections by appearance order in top-left → bot-
+    // right reading (sort by min member pos_x + pos_y).
+    components.sort((a, b) => {
+      const aMin = Math.min(...a.map((id) => (nodeById.get(id)?.pos_x || 0) + (nodeById.get(id)?.pos_y || 0)));
+      const bMin = Math.min(...b.map((id) => (nodeById.get(id)?.pos_x || 0) + (nodeById.get(id)?.pos_y || 0)));
+      return aMin - bMin;
+    });
+    const themeCount = { image: 0, site: 0, designmd: 0, prompt: 0, mixed: 0 };
+    function themeOf(memberIds) {
+      let hasImage = 0, hasSite = 0, hasMd = 0, hasPrompt = 0;
+      for (const id of memberIds) {
+        const k = nodeById.get(id)?.kind;
+        if (k === 'asset' || k === 'image') hasImage++;
+        else if (k === 'site') hasSite++;
+        else if (k === 'designmd') hasMd++;
+        else if (k === 'prompt') hasPrompt++;
+      }
+      const variety = [hasImage, hasSite, hasMd, hasPrompt].filter((n) => n > 0).length;
+      if (variety >= 2 && hasSite > 0 && hasImage > 0) return 'site-with-image';
+      if (variety >= 2) return 'mixed';
+      if (hasImage > 0) return 'image';
+      if (hasSite > 0) return 'site';
+      if (hasMd > 0) return 'designmd';
+      if (hasPrompt > 0) return 'prompt';
+      return 'mixed';
+    }
+    const THEME_LABEL = {
+      'image':           'Image flow',
+      'site':            'Site flow',
+      'site-with-image': 'Site + image',
+      'designmd':        'Design spec',
+      'prompt':          'Prompt chain',
+      'mixed':           'Workflow',
+    };
+    const themeCounter = {};
+    const out = [];
+    for (const memberIds of components) {
+      const t = themeOf(memberIds);
+      themeCounter[t] = (themeCounter[t] || 0) + 1;
+      // Bounding box of member nodes.
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const id of memberIds) {
+        const n = nodeById.get(id);
+        if (!n) continue;
+        minX = Math.min(minX, n.pos_x || 0);
+        minY = Math.min(minY, n.pos_y || 0);
+        maxX = Math.max(maxX, (n.pos_x || 0) + (n.width || 0));
+        maxY = Math.max(maxY, (n.pos_y || 0) + (n.height || 0));
+      }
+      out.push({
+        id: `section-${memberIds.slice().sort().join('-').slice(0, 64)}`,
+        memberIds,
+        theme: t,
+        name: `${THEME_LABEL[t]} #${themeCounter[t]}`,
+        // Box includes the top reserve so the name tag sits OUTSIDE the
+        // node bounding box (won't overlap the topmost member).
+        x: minX - SECTION_GAP,
+        y: minY - SECTION_GAP - NAME_TAG_RESERVE,
+        width: (maxX - minX) + SECTION_GAP * 2,
+        height: (maxY - minY) + SECTION_GAP * 2 + NAME_TAG_RESERVE,
+      });
+    }
+    return out;
+  }, [nodes, edges]);
+
   return (
     <div
       className="canvas-shell"
@@ -2160,21 +2358,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       <div className="canvas-toolbars-right">
         <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} />
         <div className="canvas-toolbar-right">
-          <CategoryCounts
-            nodes={nodes}
-            edges={edges}
-            onZoomToConnection={(ids) => zoomToConnection(ids)}
-          />
-          <span className="canvas-toolbar-sep" aria-hidden="true" />
           <UserPill compact name={user?.name} email={user?.email} plan={user?.plan} onSignOut={logout} />
         </div>
       </div>
       <Minimap
         nodes={nodes}
+        edges={edges}
         transformRef={transformRef}
         frameMode={frameMode}
         hasSelection={!!selectedNodeId}
         onToggleFrame={toggleFrame}
+        onZoomToConnection={(ids) => zoomToConnection(ids)}
       />
 
       <TransformWrapper
@@ -2204,6 +2398,53 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         }}
       >
         <TransformComponent wrapperStyle={{ width: '100vw', height: '100vh' }} contentStyle={{ width: WORLD_WIDTH, height: WORLD_HEIGHT }}>
+          {/* Section frames render BEHIND edges + nodes (z-index handled via
+              DOM order + low z-index on the frame element). pointer-events:
+              none on the frame so it doesn't intercept canvas clicks; the
+              name tag has its own pointer-events:auto. */}
+          {sections.map((s) => (
+            <div
+              key={s.id}
+              className={`canvas-section-frame${selectedSectionId === s.id ? ' selected' : ''}`}
+              style={{
+                left: s.x,
+                top: s.y,
+                width: s.width,
+                height: s.height,
+              }}
+              data-section-id={s.id}
+            >
+              <div className="canvas-section-name-tag">
+                <button
+                  type="button"
+                  className="canvas-section-name-btn"
+                  title="Select workflow"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedSectionId((prev) => (prev === s.id ? null : s.id));
+                    setSelectedNodeId(null);
+                    setSelectedNodeIds(new Set());
+                  }}
+                >
+                  {s.name}
+                </button>
+                <button
+                  type="button"
+                  className="canvas-section-play-btn"
+                  title="Re-run this workflow"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPlaySection({ section: s, busy: false });
+                  }}
+                  aria-label={`Re-run ${s.name}`}
+                >
+                  <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true">
+                    <polygon points="6,4 20,12 6,20" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          ))}
           <EdgeLayer
             nodes={nodes} edges={edges}
             incomingByTarget={incomingByTarget}
@@ -2260,6 +2501,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   setSelectedNodeIds((s) => (s.size ? new Set() : s));
                 }
                 setSelectedEdgeId(null);
+                setSelectedSectionId(null);
                 setPopupPos(null);
                 // Steal focus from any text input (notably the PromptDock
                 // textarea) so a follow-up Delete keypress reaches the
@@ -2420,6 +2662,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       <input ref={fileInputRef} type="file" onChange={onFileInputChange} style={{ display: 'none' }} />
 
       <PromptDock
+        ref={promptDockRef}
+        activeContext={activeContext}
+        onClearActiveContext={handleClearActiveContext}
         boardId={board.id}
         onAddUrl={handleAddUrl}
         onUploadMd={handleUploadMd}
@@ -2505,6 +2750,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         busy={!!regenAspect?.busy}
         onConfirm={handleConfirmRegenAspect}
         onCancel={() => { if (!regenAspect?.busy) setRegenAspect(null); }}
+      />
+
+      <ConfirmModal
+        open={!!playSection}
+        title="Re-run workflow?"
+        message={playSection ? `Re-execute "${playSection.section.name}" with the same inputs. The new result will replace or extend the current one and consumes credits.` : ''}
+        confirmLabel="Run"
+        cancelLabel="Cancel"
+        busy={!!playSection?.busy}
+        onConfirm={handleConfirmPlaySection}
+        onCancel={() => { if (!playSection?.busy) setPlaySection(null); }}
       />
 
       {challenge && (
