@@ -87,32 +87,49 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
       else                                    effective = 'gemini';
     }
 
+    // Call adapters directly — server-to-server fetch would hit requireUser
+    // without auth cookies and return 401.
+    let result;
+    try {
+      if (effective === 'gemini') {
+        const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+        if (!apiKey) return { error: 'image_gen_failed', message: 'GEMINI_API_KEY not configured' };
+        result = await generateGeminiImage({ prompt, aspectRatio, apiKey });
+      } else {
+        // openai — text-to-image or edit (when baseImageDataUrl is set)
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey) return { error: 'image_gen_failed', message: 'OPENAI_API_KEY not configured' };
+        result = await generateOpenAIImage({ prompt, aspectRatio, apiKey, baseImageDataUrl });
+      }
+      // Normalize shape so downstream code has result.provider.
+      result.provider = effective;
+    } catch (e) {
+      return { error: 'image_gen_failed', message: String(e?.message || e) };
+    }
+
+    const mode = result.mode || 'generate';
     // Display name on the canvas node — short + contextual instead of the
     // full prompt. The full prompt still lives in meta.prompt for traceability.
-    const mode = baseImageDataUrl ? 'edit' : 'generate';
     const assetName = mode === 'edit' ? 'Edited image' : 'Generated image';
-
-    // Step 1 — INSERT placeholder asset (no dataUrl yet, status='generating')
-    // so the canvas can show a skeleton card immediately. We backfill the
-    // dataUrl after the image gen call returns. Storing the prompt + mode
-    // up front means meta is already complete enough for Smart Edit reuse.
-    const placeholderMeta = {
+    const meta = {
+      dataUrl: result.dataUrl,
+      mimeType: result.mimeType,
       prompt,
-      mode,
+      provider: result.provider,
+      model: result.model,
       aspectRatio,
-      status: 'generating',
+      mode,
       ...(baseImageAssetId ? { baseImageAssetId } : {}),
     };
     const [asset] = await sql`
       INSERT INTO assets (user_id, project_id, type, name, meta)
-      VALUES (${ctx.userId}, ${ctx.boardId}, 'image', ${assetName}, ${JSON.stringify(placeholderMeta)}::jsonb)
+      VALUES (${ctx.userId}, ${ctx.boardId}, 'image', ${assetName}, ${JSON.stringify(meta)}::jsonb)
       RETURNING id
     `;
 
     let nodeId = null;
     let placedX = 0;
     let placedY = 0;
-    let sourceNodeIds = [];
     if (attachToBoard) {
       // Resolve placement: when the agent passed source assets (image-to-
       // image / style transfer), drop the result to the RIGHT of every
@@ -123,6 +140,7 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
         ...(baseImageAssetId ? [baseImageAssetId] : []),
         ...(Array.isArray(inputAssetIds) ? inputAssetIds.filter((x) => typeof x === 'string' && x) : []),
       ]));
+      let sourceNodeIds = [];
       if (allSourceAssetIds.length > 0) {
         const srcRows = await sql`
           SELECT id FROM nodes
@@ -137,119 +155,35 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
       placedX = pos.x;
       placedY = pos.y;
 
-      const placeholderNodeMeta = {
-        source: 'agent-generated',
-        assetId: asset.id,
-        name: assetName,
-        status: 'generating',
-      };
       const [node] = await sql`
         INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
         VALUES (
           ${ctx.boardId}, 'asset', ${placedX}, ${placedY}, 512, 512,
-          ${JSON.stringify(placeholderNodeMeta)}::jsonb
+          ${JSON.stringify({ source: 'agent-generated', assetId: asset.id, name: assetName, dataUrl: result.dataUrl, mimeType: result.mimeType })}::jsonb
         )
         RETURNING id
       `;
       nodeId = node.id;
     }
 
-    // Step 2 — INSERT edges from each source's node → result node so the
-    // skeleton already shows the workflow chain before the image lands.
+    // Wire source assets → result node so the canvas shows the workflow
+    // as a visible chain (Flora / Comfy-style), not as a pile of disconnected
+    // nodes. Map each input assetId to its canvas node via assets.id →
+    // nodes.meta.assetId, then INSERT an edge per match. Silently skip
+    // sources that don't have a node on the board (some assets are storage-
+    // only — chat attachments + addAssetFromUrl + this tool's own output
+    // always create nodes, so the typical style-transfer path lights up).
     const edgesCreated = [];
-    if (nodeId && sourceNodeIds.length > 0) {
-      for (const fromId of sourceNodeIds) {
-        if (fromId === nodeId) continue;
-        try {
-          const [edge] = await sql`
-            INSERT INTO edges (board_id, source_node_id, target_node_id, kind)
-            VALUES (${ctx.boardId}, ${fromId}, ${nodeId}, 'generic')
-            RETURNING id
-          `;
-          edgesCreated.push({ id: edge.id, fromNodeId: fromId, toNodeId: nodeId });
-        } catch (_) { /* dup edge — ignore */ }
-      }
-    }
-
-    // Step 3 — emit graph_mutated so the canvas refetches AT THIS POINT,
-    // before the long-running image gen call. The user sees the workflow
-    // skeleton (sources + placeholder result + edges) wired up, with a
-    // 'generating' state on the result.
-    if (ctx.emit) {
-      try { ctx.emit('graph_mutated', { reason: 'createImage:placeholder' }); } catch (_) {}
-    }
-
-    // Step 4 — actually generate the image. Long-running (30–120s on
-    // OpenAI images.edit). On failure, mark the placeholder as errored
-    // and return the error so the agent / UI sees it.
-    let result;
-    try {
-      if (effective === 'gemini') {
-        const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-        if (!apiKey) {
-          await sql`UPDATE nodes SET meta = meta || '{"status":"error"}'::jsonb WHERE id = ${nodeId}`;
-          if (ctx.emit) try { ctx.emit('graph_mutated', { reason: 'createImage:error' }); } catch (_) {}
-          return { error: 'image_gen_failed', message: 'GEMINI_API_KEY not configured' };
-        }
-        result = await generateGeminiImage({ prompt, aspectRatio, apiKey });
-      } else {
-        const apiKey = process.env.OPENAI_API_KEY;
-        if (!apiKey) {
-          await sql`UPDATE nodes SET meta = meta || '{"status":"error"}'::jsonb WHERE id = ${nodeId}`;
-          if (ctx.emit) try { ctx.emit('graph_mutated', { reason: 'createImage:error' }); } catch (_) {}
-          return { error: 'image_gen_failed', message: 'OPENAI_API_KEY not configured' };
-        }
-        result = await generateOpenAIImage({ prompt, aspectRatio, apiKey, baseImageDataUrl });
-      }
-      result.provider = effective;
-    } catch (e) {
-      // Mark placeholder errored so the visible skeleton tells the user
-      // gen failed (instead of looking stuck forever).
-      if (nodeId) {
-        try {
-          await sql`UPDATE nodes SET meta = meta || '{"status":"error"}'::jsonb WHERE id = ${nodeId}`;
-        } catch (_) {}
-      }
-      if (ctx.emit) try { ctx.emit('graph_mutated', { reason: 'createImage:error' }); } catch (_) {}
-      return { error: 'image_gen_failed', message: String(e?.message || e) };
-    }
-
-    // Step 5 — backfill the asset + node with the real dataUrl now that
-    // generation succeeded. Single UPDATE per row; meta is merged via
-    // jsonb concat (`||`) so keys we added in the placeholder stick.
-    const finalAssetMeta = {
-      dataUrl: result.dataUrl,
-      mimeType: result.mimeType,
-      provider: result.provider,
-      model: result.model,
-      mode,
-      status: 'done',
-    };
-    await sql`UPDATE assets SET meta = meta || ${JSON.stringify(finalAssetMeta)}::jsonb WHERE id = ${asset.id}`;
-    if (nodeId) {
-      const finalNodeMeta = {
-        dataUrl: result.dataUrl,
-        mimeType: result.mimeType,
-        status: 'done',
-      };
-      await sql`UPDATE nodes SET meta = meta || ${JSON.stringify(finalNodeMeta)}::jsonb WHERE id = ${nodeId}`;
-    }
-
-    // Step 6 — emit one more graph_mutated so the canvas refetches and the
-    // placeholder card gets replaced with the real image.
-    if (ctx.emit) {
-      try { ctx.emit('graph_mutated', { reason: 'createImage:done' }); } catch (_) {}
-    }
-
-    // Keep the existing edge-creation block for backwards compatibility with
-    // older callers that didn't go through the placeholder path — the loop
-    // is now a no-op when edgesCreated already covers everything.
-    if (nodeId && Array.isArray(inputAssetIds) && inputAssetIds.length > 0 && edgesCreated.length === 0) {
+    if (nodeId && Array.isArray(inputAssetIds) && inputAssetIds.length > 0) {
+      // Always include baseImageAssetId implicitly so the agent doesn't have
+      // to duplicate it.
       const all = Array.from(new Set([
         ...(baseImageAssetId ? [baseImageAssetId] : []),
         ...inputAssetIds.filter((x) => typeof x === 'string' && x),
       ]));
       if (all.length > 0) {
+        // For each source assetId, look up the matching node on this board.
+        // Use a JSONB match against nodes.meta->>'assetId'.
         const rows = await sql`
           SELECT id, meta->>'assetId' AS asset_id
           FROM nodes
