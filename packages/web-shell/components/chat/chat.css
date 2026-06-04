@@ -22,3 +22,40 @@
 }
 .chat-bubble-content { white-space: pre-wrap; }
 .chat-bubble-children { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: var(--popup-font-sans, system-ui);
+  font-size: 11px;
+  border: 1px solid transparent;
+}
+.tool-chip-pending, .tool-chip-running {
+  background: rgba(56, 189, 248, 0.08);
+  border-color: rgba(56, 189, 248, 0.18);
+  color: rgba(186, 230, 253, 0.95);
+}
+.tool-chip-done {
+  background: rgba(74, 222, 128, 0.08);
+  border-color: rgba(74, 222, 128, 0.20);
+  color: rgba(187, 247, 208, 0.95);
+}
+.tool-chip-error {
+  background: rgba(248, 113, 113, 0.10);
+  border-color: rgba(248, 113, 113, 0.20);
+  color: rgba(252, 165, 165, 0.95);
+}
+.tool-chip-name { font-weight: 500; }
+.tool-chip-summary { opacity: 0.75; }
+.tool-chip-icon { display: inline-flex; }
+.tool-chip-spinner {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  border-top-color: rgba(56, 189, 248, 0.85);
+  animation: tool-chip-spin 0.8s linear infinite;
+}
+@keyframes tool-chip-spin { to { transform: rotate(360deg); } }
