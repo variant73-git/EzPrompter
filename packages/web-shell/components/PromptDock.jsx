@@ -168,6 +168,36 @@ function getModelMenuStyle(buttonRef) {
   return { position: 'fixed', left, bottom, right: 'auto', zIndex: 1000 };
 }
 
+// --- Control-route helpers --------------------------------------------------
+// Used by ChatPanel callbacks to post user decisions back to the agent runner.
+
+async function postConfirm({ runId, toolCallId, action, choice }) {
+  return fetch('/api/chat/confirm', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ runId, toolCallId, action, ...(choice ? { choice } : {}) }),
+  });
+}
+
+async function postContinue({ runId, action }) {
+  return fetch('/api/chat/continue', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ runId, action }),
+  });
+}
+
+async function postCancel({ runId }) {
+  return fetch('/api/chat/cancel', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ runId }),
+  });
+}
+
 // --- File picker accept maps ------------------------------------------------
 
 const ACCEPT_HTML = '.html,.htm,text/html';
@@ -188,6 +218,8 @@ const initialChat = {
   messages: [],
   activeToolCalls: [],
   streaming: false,
+  softPause: null,
+  activeRun: null,
 };
 
 function lastIsTransientAssistant(messages) {
@@ -227,7 +259,41 @@ function chatReducer(state, action) {
       return { ...state, activeToolCalls: updated };
     }
     case 'RUN_FINISHED':
-      return { ...state, streaming: false, activeToolCalls: [] };
+      return { ...state, streaming: false, activeToolCalls: [], softPause: null };
+    case 'RUN_ID_RECEIVED':
+      return { ...state, activeRun: { runId: action.runId, status: 'running' } };
+    case 'TOOL_NEEDS_CONFIRM':
+      return {
+        ...state,
+        activeToolCalls: state.activeToolCalls.map((tc) =>
+          tc.id === action.id ? { ...tc, status: 'awaiting_confirm', summary: action.summary } : tc
+        ),
+        streaming: false,
+      };
+    case 'TOOL_NEEDS_CHOICE':
+      return {
+        ...state,
+        activeToolCalls: state.activeToolCalls.map((tc) =>
+          tc.id === action.id ? { ...tc, status: 'awaiting_choice', summary: action.summary, choices: action.choices } : tc
+        ),
+        streaming: false,
+      };
+    case 'TOOL_RESUMED':
+      return {
+        ...state,
+        activeToolCalls: state.activeToolCalls.map((tc) =>
+          tc.id === action.id ? { ...tc, status: 'running' } : tc
+        ),
+        streaming: true,
+      };
+    case 'RUN_SOFT_PAUSED':
+      return {
+        ...state,
+        softPause: { iterationsSoFar: action.iterationsSoFar, breakdown: action.breakdown },
+        streaming: false,
+      };
+    case 'RUN_CONTINUED':
+      return { ...state, softPause: null, streaming: true };
     case 'RUN_ERROR':
       // Surface backend agent failures as an assistant bubble so users see
       // what went wrong (e.g. "credit balance too low", "rate limit"). Phase 5
@@ -319,6 +385,18 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
             || (payload.status === 'hard_limited' ? 'Hit the action limit for this turn. Send a new message to continue.' : 'Agent failed.');
           dispatchChat({ type: 'RUN_ERROR', err: msg });
         }
+        break;
+      case 'run_id':
+        dispatchChat({ type: 'RUN_ID_RECEIVED', runId: payload.runId });
+        break;
+      case 'needs_confirm':
+        dispatchChat({ type: 'TOOL_NEEDS_CONFIRM', id: payload.id, summary: payload.summary });
+        break;
+      case 'needs_choice':
+        dispatchChat({ type: 'TOOL_NEEDS_CHOICE', id: payload.id, summary: payload.summary, choices: payload.choices });
+        break;
+      case 'needs_softlimit_continue':
+        dispatchChat({ type: 'RUN_SOFT_PAUSED', iterationsSoFar: payload.iterationsSoFar, breakdown: payload.breakdown });
         break;
     }
   }
@@ -673,6 +751,27 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
           messages={chat.messages}
           activeToolCalls={chat.activeToolCalls}
           onCollapse={() => setChatCollapsed(true)}
+          softPause={chat.softPause}
+          onConfirmTool={async (toolCallId) => {
+            await postConfirm({ runId: chat.activeRun?.runId, toolCallId, action: 'confirm' });
+            dispatchChat({ type: 'TOOL_RESUMED', id: toolCallId });
+          }}
+          onSkipTool={async (toolCallId) => {
+            await postConfirm({ runId: chat.activeRun?.runId, toolCallId, action: 'skip' });
+            dispatchChat({ type: 'TOOL_RESUMED', id: toolCallId });
+          }}
+          onChooseTool={async (toolCallId, choiceId) => {
+            await postConfirm({ runId: chat.activeRun?.runId, toolCallId, action: 'confirm', choice: choiceId });
+            dispatchChat({ type: 'TOOL_RESUMED', id: toolCallId });
+          }}
+          onSoftContinue={async () => {
+            await postContinue({ runId: chat.activeRun?.runId, action: 'continue' });
+            dispatchChat({ type: 'RUN_CONTINUED' });
+          }}
+          onSoftStop={async () => {
+            await postContinue({ runId: chat.activeRun?.runId, action: 'stop' });
+            dispatchChat({ type: 'RUN_CONTINUED' });
+          }}
         />
       )}
 
