@@ -267,6 +267,8 @@ export default function CanvasNode({
   const preExpandRef = useRef({ w: null, h: null });
   const [isExpanded, setIsExpanded] = useState(false);
   const [smartEditOpen, setSmartEditOpen] = useState(false);
+  const [resolvedAssetId, setResolvedAssetId] = useState(node.meta?.assetId || null);
+  const [backfilling, setBackfilling] = useState(false);
 
   // Save the current iframe state as a snapshot, then exit edit mode.
   // Used by the Done button and by "Save and exit" inside the cancel
@@ -888,12 +890,33 @@ export default function CanvasNode({
           ) : (
             <div className="cnode-loading"><span>No image data</span></div>
           )}
-          {node.meta?.assetId && (
+          {(node.meta?.assetId || node.meta?.dataUrl) && (
             <button
               type="button"
-              className="cnode-smart-edit-btn"
+              className={`cnode-smart-edit-btn${backfilling ? ' busy' : ''}`}
+              disabled={backfilling}
               onMouseDown={(e) => { e.stopPropagation(); }}
-              onClick={(e) => { e.stopPropagation(); setSmartEditOpen((v) => !v); }}
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (smartEditOpen) { setSmartEditOpen(false); return; }
+                if (resolvedAssetId) { setSmartEditOpen(true); return; }
+                // Backfill needed — call API, then open dock
+                setBackfilling(true);
+                try {
+                  const r = await fetch(`/api/nodes/${node.id}/asset-backfill`, {
+                    method: 'POST',
+                    credentials: 'include',
+                  });
+                  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                  const body = await r.json();
+                  setResolvedAssetId(body.assetId);
+                  setSmartEditOpen(true);
+                } catch (err) {
+                  console.error('[smart-edit] backfill failed', err);
+                } finally {
+                  setBackfilling(false);
+                }
+              }}
               title="Smart Edit"
               aria-label="Smart Edit"
             >
@@ -1009,7 +1032,7 @@ export default function CanvasNode({
         />
       )}
 
-      {smartEditOpen && node.meta?.assetId && (
+      {smartEditOpen && resolvedAssetId && (
         <div
           className="cnode-smart-edit-dock-wrap"
           style={{
@@ -1022,7 +1045,7 @@ export default function CanvasNode({
         >
           <AssetSmartEditDock
             boardId={node.board_id}
-            assetId={node.meta.assetId}
+            assetId={resolvedAssetId}
             onClose={() => setSmartEditOpen(false)}
           />
         </div>
