@@ -3694,15 +3694,13 @@ body.rb-ed-light .canvas-section-name-tag {
 }
 .canvas-section-name-btn:hover { opacity: 0.85; }
 .canvas-section-play-btn {
-  /* Stable on-screen size: ~140x35 regardless of canvas zoom. Inverse-
-     scaled width/height + inverse-scaled inner SVG keep the proportions
-     constant across the zoom range. */
-  width: calc(140px / var(--canvas-scale, 1));
-  height: calc(35px / var(--canvas-scale, 1));
+  /* Circle, stable on-screen size — ~50x50 regardless of canvas zoom.
+     width = height so border-radius:999px renders a clean disc. */
+  width: calc(50px / var(--canvas-scale, 1));
+  height: calc(50px / var(--canvas-scale, 1));
   border-radius: 999px;
-  /* Colour-inverted vs the previous draft: now a solid offwhite chip
-     with an offblack triangle inside. Stands out against the dark
-     frosted section name tag. */
+  /* Solid offwhite chip with an offblack triangle inside. Light-mode
+     swaps to offblack/offwhite below. */
   background: #f5f5f5;
   border: none;
   color: #0a0a0a;
@@ -3717,11 +3715,9 @@ body.rb-ed-light .canvas-section-name-tag {
   background: #ffffff;
 }
 .canvas-section-play-btn:active { transform: scale(0.93); }
-/* Inverse-scale the play triangle too so it stays proportional to
-   the stable-sized button. */
 .canvas-section-play-btn svg {
-  width: calc(20px / var(--canvas-scale, 1));
-  height: calc(20px / var(--canvas-scale, 1));
+  width: calc(22px / var(--canvas-scale, 1));
+  height: calc(22px / var(--canvas-scale, 1));
 }
 body.rb-ed-light .canvas-section-play-btn { background: #0a0a0a; color: #fff; }
 body.rb-ed-light .canvas-section-play-btn:hover { background: #1a1a1a; }
@@ -4091,11 +4087,10 @@ body.rb-ed-light .cnode-aspect-pill-menu {
 .cnode-asset-dims {
   position: absolute;
   right: 0;
-  /* Distance from edge -25% from the +75% pass: 56 -> 42. Inverse-
-     scaled so the label sits at a stable ~42px offset and font reads at
-     a constant ~20px regardless of canvas zoom. */
-  bottom: calc(-42px / var(--canvas-scale, 1));
-  font-size: calc(20px / var(--canvas-scale, 1));
+  /* Fixed world-space size — scales naturally with the canvas zoom
+     (rolled back from the inverse-scale experiment). */
+  bottom: -42px;
+  font-size: 20px;
   font-family: inherit;
   letter-spacing: 0.04em;
   color: var(--text-primary);
