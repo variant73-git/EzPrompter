@@ -3676,11 +3676,33 @@ body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
    take over the chrome, and the dock would only compete for clicks. */
 body.rb-ed-active .prompt-dock { display: none !important; }
 
+.prompt-dock-chips-wrap {
+  /* Container for the chip row + the edge-to-edge divider underneath.
+     AnimatePresence drives the height transition here, so both children
+     fade in/out together. The wrap itself escapes the dock's 10px
+     horizontal padding via negative margin so the divider can reach
+     both side edges without needing its own negative margin — which
+     would be clipped by overflow:hidden. */
+  overflow: hidden;
+  margin: 0 -10px;
+}
+
 .prompt-dock-chips {
   display: flex;
   gap: 6px;
-  padding: 2px 4px 0;
+  /* 14px = 4px original chip-row gutter + 10px to compensate for the
+     wrap's negative margin (so the chip itself doesn't shift left). */
+  padding: 2px 14px 0;
   overflow: hidden;
+}
+
+.prompt-dock-chips-divider {
+  height: 1px;
+  background: var(--border-frosted);
+  /* No horizontal margin — the wrap is already edge-to-edge, so the
+     divider naturally spans from the dock's left inner border to the
+     right inner border. Top margin = breathing room from the chip row. */
+  margin-top: 8px;
 }
 
 .prompt-dock-chip {

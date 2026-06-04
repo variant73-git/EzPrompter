@@ -44,7 +44,11 @@ export async function runAgentLoop(opts) {
 
   const tools = providedTools || registry.toAnthropicSpec(toolAllowlist);
   const history = [...messages];
-  const totalUsage = { input_tokens: 0, output_tokens: 0 };
+  // cached_input_tokens is a SUBSET of input_tokens (already counted there);
+  // cost.js subtracts it from the fresh-rate calculation and re-applies the
+  // discounted cache-read rate. cache_write_tokens is Anthropic-only and
+  // bills at +25% of fresh input.
+  const totalUsage = { input_tokens: 0, output_tokens: 0, cached_input_tokens: 0, cache_write_tokens: 0 };
   const toolCounts = {};        // toolName → invocation count
   const toolFailures = {};      // toolName → consecutive failures (resets on success)
   let iterations = 0;
@@ -110,11 +114,16 @@ export async function runAgentLoop(opts) {
       const toolCalls = [];
       const llmPromise = llm({
         model: modelId, system: systemPrompt, messages: history, tools, apiKey,
+        // OpenAI uses this as a routing hint (same user → same cache replica);
+        // other adapters ignore the extra field.
+        userId: ctx?.userId || null,
         onEvent: (ev) => {
           if (ev.type === 'tool_use') toolCalls.push(ev);
           if (ev.type === 'message_complete') {
-            totalUsage.input_tokens  += ev.usage?.input_tokens  || 0;
-            totalUsage.output_tokens += ev.usage?.output_tokens || 0;
+            totalUsage.input_tokens         += ev.usage?.input_tokens         || 0;
+            totalUsage.output_tokens        += ev.usage?.output_tokens        || 0;
+            totalUsage.cached_input_tokens  += ev.usage?.cached_input_tokens  || 0;
+            totalUsage.cache_write_tokens   += ev.usage?.cache_write_tokens   || 0;
           }
           onEvent(ev);
         },
@@ -171,12 +180,6 @@ export async function runAgentLoop(opts) {
         .map((b) => b.text || '')
         .join(' ');
       if (thisIterText.trim()) lastNonEmptyAssistantText = thisIterText;
-      // Write to BOTH stdout and stderr so the diagnostic line shows up
-      // even if one is being filtered by the dev server's log pipeline.
-      const diagLine = `[agent] iter=${iterations} stop=${finalMsg.stop_reason} tools=${JSON.stringify(toolCounts)} text=${thisIterText.slice(0, 80)}`;
-      // eslint-disable-next-line no-console
-      console.log(diagLine);
-      try { process.stderr.write(diagLine + '\n'); } catch (_) {}
 
       if (finalMsg.stop_reason === 'end_turn' || finalMsg.stop_reason === 'stop_sequence') {
         // Announce-and-stop guard: if any iter in this run announced an
@@ -298,11 +301,6 @@ export async function runAgentLoop(opts) {
 
         // ── Execute ─────────────────────────────────────────────────────
         onEvent({ type: 'tool_status', id: call.id, status: 'running' });
-        // Log the tool name + sizes BEFORE awaiting it. If the next log line
-        // we see is the 6-min hard cap fire, this name is the culprit.
-        // eslint-disable-next-line no-console
-        console.log(`[agent] EXEC tool=${call.name} args=${JSON.stringify(call.input).slice(0, 200)}`);
-        const toolStart = Date.now();
         try {
           // Per-tool hard timeout. The wall_timeout cap only fires between
           // iterations; if a single tool hangs (e.g. an upstream API stuck
@@ -326,21 +324,15 @@ export async function runAgentLoop(opts) {
           ]);
           if (result && result.error) {
             toolFailures[call.name] = (toolFailures[call.name] || 0) + 1;
-            // eslint-disable-next-line no-console
-            console.log(`[agent] DONE tool=${call.name} status=error duration=${Date.now() - toolStart}ms err=${(result.message || result.error).toString().slice(0, 120)}`);
             onEvent({ type: 'tool_status', id: call.id, status: 'error', error: result.message || result.error });
             toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(slimForHistory(result)), is_error: true });
           } else {
             toolFailures[call.name] = 0;
-            // eslint-disable-next-line no-console
-            console.log(`[agent] DONE tool=${call.name} status=ok duration=${Date.now() - toolStart}ms`);
             onEvent({ type: 'tool_status', id: call.id, status: 'done', result });
             toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(slimForHistory(result)) });
           }
         } catch (e) {
           toolFailures[call.name] = (toolFailures[call.name] || 0) + 1;
-          // eslint-disable-next-line no-console
-          console.log(`[agent] DONE tool=${call.name} status=THREW duration=${Date.now() - toolStart}ms err=${String(e?.message || e).slice(0, 120)}`);
           const errPayload = { error: 'execution_failed', message: String(e?.message || e) };
           onEvent({ type: 'tool_status', id: call.id, status: 'error', error: errPayload.message });
           toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(errPayload), is_error: true });

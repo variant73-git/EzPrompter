@@ -39,12 +39,35 @@ function normalizeContentForAnthropic(content) {
 export async function callAnthropic({ model, system, messages, tools, apiKey, onEvent }) {
   const client = new Anthropic({ apiKey });
   const normalizedMessages = messages.map((m) => ({ ...m, content: normalizeContentForAnthropic(m.content) }));
+
+  // ── Prompt caching ─────────────────────────────────────────────────
+  // Anthropic requires explicit breakpoints (no auto-cache). Strategy:
+  //   1. Wrap the system string as a single content block + mark it ephemeral
+  //      so the system prompt is cached on its own (survives even when the
+  //      tools list changes).
+  //   2. Clone the tools array and tag the LAST tool with cache_control.
+  //      Anthropic caches everything up to and including that breakpoint,
+  //      which means system + all tools land in one cached prefix.
+  // 5min TTL. Writes cost +25% vs base input; reads cost only 10%.
+  // Break-even: 2 hits — any agent loop with ≥2 iterations is in the black.
+  const systemBlocks = typeof system === 'string'
+    ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+    : system;
+  let cachedTools = tools;
+  if (Array.isArray(tools) && tools.length > 0) {
+    cachedTools = tools.map((t, i) => (
+      i === tools.length - 1
+        ? { ...t, cache_control: { type: 'ephemeral' } }
+        : t
+    ));
+  }
+
   const stream = client.messages.stream({
     model,
     max_tokens: MAX_TOKENS,
-    system,
+    system: systemBlocks,
     messages: normalizedMessages,
-    tools,
+    tools: cachedTools,
   });
 
   // Accumulator for tool_use input (the SDK emits input deltas as partial JSON strings)
@@ -87,7 +110,18 @@ export async function callAnthropic({ model, system, messages, tools, apiKey, on
       onEvent({ type: 'tool_use', id: block.id, name: block.name, input: block.input });
     }
   }
-  onEvent({ type: 'message_complete', stop_reason: final.stop_reason, usage: final.usage });
+  // Normalize usage shape so cached_input_tokens is a first-class field
+  // alongside input_tokens / output_tokens. Anthropic returns
+  // cache_read_input_tokens (charged at 10% — these are the hits) and
+  // cache_creation_input_tokens (charged at 125% — these are the writes).
+  // For accurate cost we surface BOTH so cost.js can split-price them.
+  const usage = {
+    input_tokens:           final.usage?.input_tokens || 0,
+    output_tokens:          final.usage?.output_tokens || 0,
+    cached_input_tokens:    final.usage?.cache_read_input_tokens || 0,
+    cache_write_tokens:     final.usage?.cache_creation_input_tokens || 0,
+  };
+  onEvent({ type: 'message_complete', stop_reason: final.stop_reason, usage });
 
-  return final;
+  return { ...final, usage };
 }

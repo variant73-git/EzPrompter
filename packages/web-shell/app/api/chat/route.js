@@ -31,6 +31,7 @@ const MODEL_ALIAS = {
   'claude-haiku-4-5':   'claude-haiku-4-5-20251001',
   // OpenAI
   'gpt-5.5':            'gpt-5.5',
+  'gpt-4o-mini':        'gpt-4o-mini',
   // Gemini
   'gemini-3.1-pro':     'gemini-3.1-pro-preview',
   'gemini-2.5-flash':   'gemini-2.5-flash',
@@ -39,13 +40,18 @@ const MODEL_ALIAS = {
 
 /**
  * Pick the model that orchestrates the agent (tool calls). Tier ladder:
- *   - free:       gemini-2.5-flash (cheap, weaker function-calling but adequate)
- *   - pro:        gemini-2.5-flash (temporarily same as free; DeepSeek adapter pending Phase 5d)
+ *   - free:       gemini-2.5-flash  (cheap; weaker function-calling but adequate)
+ *   - pro:        gpt-4o-mini       (US/EU host, no regulatory friction, $0.15/1M in)
  *   - enterprise: claude-sonnet-4-6 (best function-calling quality)
+ *
+ * DeepSeek was the prior plan for pro but was dropped due to China-hosted
+ * latency, EU regulatory exposure (PIPL/GDPR), and several US state bans on
+ * gov devices. GPT-4o-mini fills the slot without adding a new adapter —
+ * the OpenAI key is already wired.
  *
  * Cost floor math per turn @ ~15k in + 1.5k out:
  *   gemini-2.5-flash  — $0.0015 / turn  ($1.8M/yr @ 1M users)
- *   deepseek-chat     — $0.006          ($7.2M/yr)  [TODO Phase 5d]
+ *   gpt-4o-mini       — $0.003          ($3.6M/yr)
  *   claude-sonnet-4-6 — $0.07           ($84M/yr)
  *
  * UNCRAFT_AGENT_MODEL env override always wins (dev/test).
@@ -56,9 +62,7 @@ function getAgentModel(user) {
   if (process.env.UNCRAFT_AGENT_MODEL) return process.env.UNCRAFT_AGENT_MODEL;
   const plan = user?.plan || 'free';
   if (plan === 'enterprise') return 'claude-sonnet-4-6';
-  // TODO Phase 5d: wire DeepSeek adapter (OpenAI-compatible, baseURL=https://api.deepseek.com).
-  // Until then, pro tier downgrades to the same model as free to avoid 500s.
-  if (plan === 'pro') return 'gemini-2.5-flash';
+  if (plan === 'pro')        return 'gpt-4o-mini';
   return 'gemini-2.5-flash';
 }
 
@@ -395,9 +399,14 @@ export async function POST(request) {
         loopResult = { stop_reason: 'failed', iterations: 0, usage: { input_tokens: 0, output_tokens: 0 }, toolCounts: {} };
       }
 
-      const tokensIn = loopResult.usage?.input_tokens || 0;
-      const tokensOut = loopResult.usage?.output_tokens || 0;
-      const costCents = computeCost({ model: resolvedModel, tokensIn, tokensOut });
+      const tokensIn         = loopResult.usage?.input_tokens         || 0;
+      const tokensOut        = loopResult.usage?.output_tokens        || 0;
+      const cachedInTokens   = loopResult.usage?.cached_input_tokens  || 0;
+      const cacheWriteTokens = loopResult.usage?.cache_write_tokens   || 0;
+      const costCents = computeCost({
+        model: resolvedModel,
+        tokensIn, tokensOut, cachedInTokens, cacheWriteTokens,
+      });
 
       const finalStatus = mapLoopResultToRunStatus(loopResult.stop_reason);
       await finishAgentRun({

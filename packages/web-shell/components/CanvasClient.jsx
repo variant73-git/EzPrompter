@@ -571,7 +571,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         }
         return;
       }
-      console.error(e);
+      // Use console.warn instead of console.error so Next.js's dev-server
+      // doesn't surface the red full-screen error overlay for an expected
+      // outcome (unreachable host, bot-policy block on the CDN, etc).
+      // The toast already conveys the failure to the user.
+      console.warn('[capture-url] failed:', e?.message || e);
       setNodes((prev) => prev.filter((n) => n.id !== id));
       toast.error(e.message || 'Could not add this URL.');
     }
@@ -2075,6 +2079,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               onStartEdge={(e, side) => startEdgeFromNode(n.id, e, side)}
               onSlotMouseDown={onSlotMouseDown}
               onPromptTextChange={(value) => handlePromptTextChange(n.id, value)}
+              onMetaPatch={(metaPatch) => {
+                setNodes((prev) => prev.map((nn) => (
+                  nn.id === n.id ? { ...nn, meta: { ...(nn.meta || {}), ...metaPatch } } : nn
+                )));
+              }}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
             />
           ))}

@@ -30,6 +30,49 @@ describe('cost — chat models', () => {
     expect(MODEL_PRICES['gemini-2.5-flash']).toBeDefined();
     expect(MODEL_PRICES['gemini-3.1-pro-preview']).toBeDefined();
     expect(MODEL_PRICES['gpt-5.5']).toBeDefined();
+    expect(MODEL_PRICES['gpt-4o-mini']).toBeDefined();
+  });
+});
+
+describe('cost — prompt caching', () => {
+  it('Anthropic cache READ is 10% of fresh input rate', () => {
+    // 10k all-cached vs 10k all-fresh — should be exactly 10%
+    const fresh  = computeCost({ model: 'claude-sonnet-4-6', tokensIn: 10000, tokensOut: 0 });
+    const cached = computeCost({ model: 'claude-sonnet-4-6', tokensIn: 10000, tokensOut: 0, cachedInTokens: 10000 });
+    expect(cached).toBe(Math.round(fresh * 0.10));
+  });
+
+  it('Anthropic cache WRITE is 125% of fresh input rate (the +25% surcharge)', () => {
+    const fresh = computeCost({ model: 'claude-sonnet-4-6', tokensIn: 10000, tokensOut: 0 });
+    const withWrite = computeCost({
+      model: 'claude-sonnet-4-6', tokensIn: 10000, tokensOut: 0,
+      cacheWriteTokens: 10000,
+    });
+    // fresh covers the 10k in + write_rate * 10k separately
+    expect(withWrite).toBeGreaterThan(fresh * 2);
+  });
+
+  it('OpenAI gpt-4o-mini cache READ is 50% of fresh input rate', () => {
+    const fresh  = computeCost({ model: 'gpt-4o-mini', tokensIn: 100000, tokensOut: 0 });
+    const cached = computeCost({ model: 'gpt-4o-mini', tokensIn: 100000, tokensOut: 0, cachedInTokens: 100000 });
+    expect(cached).toBe(Math.round(fresh * 0.50));
+  });
+
+  it('Gemini 2.5 Flash cache READ is 25% of fresh input rate', () => {
+    const fresh  = computeCost({ model: 'gemini-2.5-flash', tokensIn: 100000, tokensOut: 0 });
+    const cached = computeCost({ model: 'gemini-2.5-flash', tokensIn: 100000, tokensOut: 0, cachedInTokens: 100000 });
+    expect(cached).toBe(Math.round(fresh * 0.25));
+  });
+
+  it('partial cache hits split between fresh and discounted rates', () => {
+    // Use 1M tokens so the cents values are large enough that integer
+    // rounding doesn't collapse the three cases to 0.
+    // 1M @ $0.15 = 15 cents fresh; @ $0.075 = 7.5 → 8 cents cached.
+    const allFresh  = computeCost({ model: 'gpt-4o-mini', tokensIn: 1_000_000, tokensOut: 0 });
+    const allCached = computeCost({ model: 'gpt-4o-mini', tokensIn: 1_000_000, tokensOut: 0, cachedInTokens: 1_000_000 });
+    const partial   = computeCost({ model: 'gpt-4o-mini', tokensIn: 1_000_000, tokensOut: 0, cachedInTokens: 600_000 });
+    expect(partial).toBeGreaterThan(allCached);
+    expect(partial).toBeLessThan(allFresh);
   });
 });
 

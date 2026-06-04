@@ -872,18 +872,21 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
       <AnimatePresence>
         {imagePreview && (
           <motion.div
-            className="prompt-dock-chips"
+            className="prompt-dock-chips-wrap"
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.18 }}
           >
-            <div className="prompt-dock-chip">
-              <img src={imagePreview} alt={imageFile.name} />
-              <button className="prompt-dock-chip-x" onClick={clearImage} aria-label="Remove image">
-                {ICON_X}
-              </button>
+            <div className="prompt-dock-chips">
+              <div className="prompt-dock-chip">
+                <img src={imagePreview} alt={imageFile.name} />
+                <button className="prompt-dock-chip-x" onClick={clearImage} aria-label="Remove image">
+                  {ICON_X}
+                </button>
+              </div>
             </div>
+            <div className="prompt-dock-chips-divider" aria-hidden="true" />
           </motion.div>
         )}
       </AnimatePresence>

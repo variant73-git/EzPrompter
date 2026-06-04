@@ -107,9 +107,15 @@ export async function callGemini({ model, system, messages, tools, apiKey, onEve
       stopReason = candidate.finishReason;
     }
     if (chunk?.usageMetadata) {
+      // Gemini 2.5 Flash implicit-caches any prefix ≥1024 tokens (since
+      // 2025). Hits surface as `cachedContentTokenCount` — subset of
+      // promptTokenCount, NOT additive. Implicit cache pricing on
+      // 2.5 Flash: cached portion at 25% of fresh rate. No write surcharge.
       usage = {
         input_tokens: chunk.usageMetadata.promptTokenCount || 0,
         output_tokens: chunk.usageMetadata.candidatesTokenCount || 0,
+        cached_input_tokens: chunk.usageMetadata.cachedContentTokenCount || 0,
+        cache_write_tokens: 0,
       };
     }
   }

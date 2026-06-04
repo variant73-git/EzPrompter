@@ -87,12 +87,112 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
       else                                    effective = 'gemini';
     }
 
-    // Call adapters directly — server-to-server fetch would hit requireUser
-    // without auth cookies and return 401.
+    // ── Skeleton flow ───────────────────────────────────────────────────
+    // The image gen call is the long part (~20s on Imagen, 20-60s on
+    // openai images.edit). Inserting the result row + edges BEFORE that
+    // call, then emitting `graph_mutated` so the canvas refetches, lets
+    // the user watch the workflow assemble in real time instead of
+    // staring at "thinking" for the full duration.
+    //
+    // Display name on the canvas node — short + contextual instead of the
+    // full prompt. The full prompt still lives in meta.prompt for traceability.
+    const mode = baseImageDataUrl ? 'edit' : 'generate';
+    const assetName = mode === 'edit' ? 'Edited image' : 'Generated image';
+
+    // Step 1: INSERT placeholder rows + edges. Wrapped in a single try so
+    // any DB failure here returns persist_failed before we even touch the
+    // image-gen adapter (cheaper to fail fast on infra problems).
+    let asset;
+    let nodeId = null;
+    let placedX = 0;
+    let placedY = 0;
+    let sourceNodeIds = [];
+    const edgesCreated = [];
+    try {
+      const placeholderAssetMeta = {
+        prompt,
+        mode,
+        aspectRatio,
+        status: 'generating',
+        ...(baseImageAssetId ? { baseImageAssetId } : {}),
+      };
+      const inserted = await sql`
+        INSERT INTO assets (user_id, project_id, type, name, meta)
+        VALUES (${ctx.userId}, ${ctx.boardId}, 'image', ${assetName}, ${JSON.stringify(placeholderAssetMeta)}::jsonb)
+        RETURNING id
+      `;
+      asset = inserted[0];
+
+      if (attachToBoard) {
+        // Resolve placement: when the agent passed source assets (image-to-
+        // image / style transfer), drop the result to the RIGHT of every
+        // source, vertically centered between them so the input edges don't
+        // cross. Otherwise fall back to the rightmost-column stack-down used
+        // by other auto-creates.
+        const allSourceAssetIds = Array.from(new Set([
+          ...(baseImageAssetId ? [baseImageAssetId] : []),
+          ...(Array.isArray(inputAssetIds) ? inputAssetIds.filter((x) => typeof x === 'string' && x) : []),
+        ]));
+        if (allSourceAssetIds.length > 0) {
+          const srcRows = await sql`
+            SELECT id FROM nodes
+            WHERE board_id = ${ctx.boardId}
+              AND meta->>'assetId' = ANY(${allSourceAssetIds})
+          `;
+          sourceNodeIds = srcRows.map((r) => r.id);
+        }
+        const pos = sourceNodeIds.length > 0
+          ? await placeRightOfSources(ctx.boardId, sourceNodeIds, 512, 512, sql)
+          : await placeStackDown(ctx.boardId, 512, 512, sql);
+        placedX = pos.x;
+        placedY = pos.y;
+
+        const placeholderNodeMeta = {
+          source: 'agent-generated',
+          assetId: asset.id,
+          name: assetName,
+          status: 'generating',
+        };
+        const [node] = await sql`
+          INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
+          VALUES (
+            ${ctx.boardId}, 'asset', ${placedX}, ${placedY}, 512, 512,
+            ${JSON.stringify(placeholderNodeMeta)}::jsonb
+          )
+          RETURNING id
+        `;
+        nodeId = node.id;
+
+        // Wire source nodes → result placeholder so the skeleton already
+        // shows the chain. Duplicate-edge inserts (unique constraint) are
+        // silently swallowed.
+        for (const fromId of sourceNodeIds) {
+          if (fromId === nodeId) continue;
+          try {
+            const [edge] = await sql`
+              INSERT INTO edges (board_id, source_node_id, target_node_id, kind)
+              VALUES (${ctx.boardId}, ${fromId}, ${nodeId}, 'generic')
+              RETURNING id
+            `;
+            edgesCreated.push({ id: edge.id, fromNodeId: fromId, toNodeId: nodeId });
+          } catch (_) { /* dup edge — ignore */ }
+        }
+      }
+    } catch (e) {
+      return { error: 'persist_failed', message: String(e?.message || e) };
+    }
+
+    // Step 2: emit graph_mutated so the canvas refetches and renders the
+    // skeleton (sources + placeholder result + edges). The CanvasNode
+    // renderer shows a spinner + "Generating…" pulse for status:'generating'.
+    if (ctx?.emit) {
+      try { ctx.emit('graph_mutated', { reason: 'createImage:placeholder' }); } catch (_) {}
+    }
+
+    // Step 3: actually generate the image. On failure, mark the placeholder
+    // node as errored so the visible card shows "Generation failed" instead
+    // of a stuck spinner.
     let result;
-    const stepStart = Date.now();
-    // eslint-disable-next-line no-console
-    console.log(`[createImage] starting ${effective} gen (edit=${!!baseImageDataUrl} baseBytes=${baseImageDataUrl ? Math.floor(baseImageDataUrl.length * 0.75) : 0})`);
     try {
       // Belt-and-suspenders: even if the underlying SDK timeout / driver
       // 3-min cap don't fire (observed in field), this explicit Promise.race
@@ -116,124 +216,59 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
           GEN_TIMEOUT_MS,
         )),
       ]);
-      // eslint-disable-next-line no-console
-      console.log(`[createImage] gen ok in ${Date.now() - stepStart}ms`);
       // Normalize shape so downstream code has result.provider.
       result.provider = effective;
     } catch (e) {
-      // eslint-disable-next-line no-console
-      console.log(`[createImage] gen FAILED in ${Date.now() - stepStart}ms: ${e?.message || e}`);
+      if (nodeId) {
+        try {
+          await sql`UPDATE nodes SET meta = meta || '{"status":"error"}'::jsonb WHERE id = ${nodeId}`;
+        } catch (_) {}
+      }
+      try {
+        await sql`UPDATE assets SET meta = meta || '{"status":"error"}'::jsonb WHERE id = ${asset.id}`;
+      } catch (_) {}
+      if (ctx?.emit) {
+        try { ctx.emit('graph_mutated', { reason: 'createImage:error' }); } catch (_) {}
+      }
       return { error: 'image_gen_failed', message: String(e?.message || e) };
     }
-    // eslint-disable-next-line no-console
-    console.log(`[createImage] starting DB persistence`);
-    const persistStart = Date.now();
+
+    // Step 4: backfill the asset + node with the real dataUrl. jsonb concat
+    // (`||`) merges into the placeholder meta so the prompt/mode/aspectRatio
+    // we already stored stick.
     try {
-
-    const mode = result.mode || 'generate';
-    // Display name on the canvas node — short + contextual instead of the
-    // full prompt. The full prompt still lives in meta.prompt for traceability.
-    const assetName = mode === 'edit' ? 'Edited image' : 'Generated image';
-    const meta = {
-      dataUrl: result.dataUrl,
-      mimeType: result.mimeType,
-      prompt,
-      provider: result.provider,
-      model: result.model,
-      aspectRatio,
-      mode,
-      ...(baseImageAssetId ? { baseImageAssetId } : {}),
-    };
-    const [asset] = await sql`
-      INSERT INTO assets (user_id, project_id, type, name, meta)
-      VALUES (${ctx.userId}, ${ctx.boardId}, 'image', ${assetName}, ${JSON.stringify(meta)}::jsonb)
-      RETURNING id
-    `;
-
-    let nodeId = null;
-    let placedX = 0;
-    let placedY = 0;
-    if (attachToBoard) {
-      // Resolve placement: when the agent passed source assets (image-to-
-      // image / style transfer), drop the result to the RIGHT of every
-      // source, vertically centered between them so the input edges don't
-      // cross. Otherwise fall back to the rightmost-column stack-down used
-      // by other auto-creates.
-      const allSourceAssetIds = Array.from(new Set([
-        ...(baseImageAssetId ? [baseImageAssetId] : []),
-        ...(Array.isArray(inputAssetIds) ? inputAssetIds.filter((x) => typeof x === 'string' && x) : []),
-      ]));
-      let sourceNodeIds = [];
-      if (allSourceAssetIds.length > 0) {
-        const srcRows = await sql`
-          SELECT id FROM nodes
-          WHERE board_id = ${ctx.boardId}
-            AND meta->>'assetId' = ANY(${allSourceAssetIds})
-        `;
-        sourceNodeIds = srcRows.map((r) => r.id);
+      const finalAssetMeta = {
+        dataUrl: result.dataUrl,
+        mimeType: result.mimeType,
+        provider: result.provider,
+        model: result.model,
+        mode: result.mode || mode,
+        status: 'done',
+      };
+      await sql`UPDATE assets SET meta = meta || ${JSON.stringify(finalAssetMeta)}::jsonb WHERE id = ${asset.id}`;
+      if (nodeId) {
+        const finalNodeMeta = {
+          dataUrl: result.dataUrl,
+          mimeType: result.mimeType,
+          status: 'done',
+        };
+        await sql`UPDATE nodes SET meta = meta || ${JSON.stringify(finalNodeMeta)}::jsonb WHERE id = ${nodeId}`;
       }
-      const pos = sourceNodeIds.length > 0
-        ? await placeRightOfSources(ctx.boardId, sourceNodeIds, 512, 512, sql)
-        : await placeStackDown(ctx.boardId, 512, 512, sql);
-      placedX = pos.x;
-      placedY = pos.y;
-
-      const [node] = await sql`
-        INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
-        VALUES (
-          ${ctx.boardId}, 'asset', ${placedX}, ${placedY}, 512, 512,
-          ${JSON.stringify({ source: 'agent-generated', assetId: asset.id, name: assetName, dataUrl: result.dataUrl, mimeType: result.mimeType })}::jsonb
-        )
-        RETURNING id
-      `;
-      nodeId = node.id;
+    } catch (e) {
+      return { error: 'persist_failed', message: String(e?.message || e) };
     }
 
-    // Wire source assets → result node so the canvas shows the workflow
-    // as a visible chain (Flora / Comfy-style), not as a pile of disconnected
-    // nodes. Map each input assetId to its canvas node via assets.id →
-    // nodes.meta.assetId, then INSERT an edge per match. Silently skip
-    // sources that don't have a node on the board (some assets are storage-
-    // only — chat attachments + addAssetFromUrl + this tool's own output
-    // always create nodes, so the typical style-transfer path lights up).
-    const edgesCreated = [];
-    if (nodeId && Array.isArray(inputAssetIds) && inputAssetIds.length > 0) {
-      // Always include baseImageAssetId implicitly so the agent doesn't have
-      // to duplicate it.
-      const all = Array.from(new Set([
-        ...(baseImageAssetId ? [baseImageAssetId] : []),
-        ...inputAssetIds.filter((x) => typeof x === 'string' && x),
-      ]));
-      if (all.length > 0) {
-        // For each source assetId, look up the matching node on this board.
-        // Use a JSONB match against nodes.meta->>'assetId'.
-        const rows = await sql`
-          SELECT id, meta->>'assetId' AS asset_id
-          FROM nodes
-          WHERE board_id = ${ctx.boardId}
-            AND meta->>'assetId' = ANY(${all})
-        `;
-        for (const row of rows) {
-          if (!row?.id || row.id === nodeId) continue;
-          try {
-            const [edge] = await sql`
-              INSERT INTO edges (board_id, source_node_id, target_node_id, kind)
-              VALUES (${ctx.boardId}, ${row.id}, ${nodeId}, 'generic')
-              RETURNING id
-            `;
-            edgesCreated.push({ id: edge.id, fromAssetId: row.asset_id, fromNodeId: row.id, toNodeId: nodeId });
-          } catch (e) {
-            // Edge insert can fail on duplicates (unique constraint) — ignore.
-          }
-        }
-      }
+    // Step 5: emit graph_mutated again so canvas refetches and swaps the
+    // skeleton for the real image. The route also emits one at tool 'done',
+    // but emitting here means the visible swap happens the moment the UPDATE
+    // commits, not after the tool_result block round-trips through the LLM.
+    if (ctx?.emit) {
+      try { ctx.emit('graph_mutated', { reason: 'createImage:done' }); } catch (_) {}
     }
 
-    // eslint-disable-next-line no-console
-    console.log(`[createImage] DB persistence ok in ${Date.now() - persistStart}ms`);
     return {
       generated: true,
-      mode,
+      mode: result.mode || mode,
       assetId: asset.id,
       nodeId,
       provider: result.provider,
@@ -243,10 +278,5 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
       posY: placedY,
       edges: edgesCreated,
     };
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.log(`[createImage] DB persistence FAILED in ${Date.now() - persistStart}ms: ${e?.message || e}`);
-      return { error: 'persist_failed', message: String(e?.message || e) };
-    }
   },
 };
