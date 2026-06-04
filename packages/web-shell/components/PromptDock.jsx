@@ -491,6 +491,19 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     sendMessage: (text, attachments) => sendChatMessage(text, attachments),
   }));
 
+  // Reflect the dock's side-dock state on <body> so the canvas chrome
+  // (top-right toolbar, minimap, top-left toolbar) can shift inward via
+  // CSS vars and not be covered by the sidebar. Cleared on unmount or
+  // when the dock leaves side-dock mode.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('chat-dock-l', dockPos === 'left');
+    document.body.classList.toggle('chat-dock-r', dockPos === 'right');
+    return () => {
+      document.body.classList.remove('chat-dock-l', 'chat-dock-r');
+    };
+  }, [dockPos]);
+
   // --- Chat state (Phase 1) ----------------------------------------------
   const [chat, dispatchChat] = useReducer(chatReducer, initialChat);
   // Tracks the active runId synchronously so auto-confirm in needs_choice

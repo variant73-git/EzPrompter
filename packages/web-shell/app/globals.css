@@ -491,11 +491,15 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
 .canvas-toolbars-left {
   position: fixed;
   top: 18px;
-  left: 18px;
+  /* Shift right when chat is docked to the left so the toolbar isn't
+     hidden under the sidebar. var is 0 by default; PromptDock bumps it
+     to 388 when dockPos = 'left'. */
+  left: calc(18px + var(--chat-dock-left-shift, 0px));
   display: flex;
   align-items: center;
   gap: 8px;
   z-index: 100;
+  transition: left 180ms ease;
 }
 
 .canvas-theme-floater {
@@ -525,7 +529,9 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
 .canvas-toolbars-right {
   position: fixed;
   top: 18px;
-  right: 18px;
+  /* Shift left when chat is docked to the right. var is 0 by default;
+     PromptDock bumps it to 388 when dockPos = 'right'. */
+  right: calc(18px + var(--chat-dock-right-shift, 0px));
   display: flex;
   align-items: center;
   gap: 8px;
@@ -705,7 +711,9 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
 .canvas-minimap {
   position: fixed;
   top: 76px;
-  right: 18px;
+  /* Same right-shift as the toolbar above so the minimap follows the
+     toolbar inward when the chat is docked right. */
+  right: calc(18px + var(--chat-dock-right-shift, 0px));
   /* Below the toolbar-right wrapper (z:100) so when the connections
      dropdown opens it paints over the minimap. The minimap is still
      above the canvas content, just below the toolbar's stacking
@@ -4307,16 +4315,35 @@ body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
   gap: 6px;
   transition: opacity 140ms ease, outline-color 140ms ease;
 }
-/* Side-docked layouts — full-height sidebar at left or right edge. */
+/* Side-docked layouts — full-height sidebar at left or right edge.
+   Width -15% from the prior 400 → 340px. */
 .prompt-dock.dock-left,
 .prompt-dock.dock-right {
   top: 24px;
   bottom: 24px;
-  width: 400px;
+  width: 340px;
   transform: none;
 }
 .prompt-dock.dock-left { left: 24px; right: auto; }
 .prompt-dock.dock-right { right: 24px; left: auto; }
+
+/* CSS vars consumed by the canvas chrome to shift toolbars + minimap
+   inward so they don't paint UNDER a side-docked chat. The vars are
+   set on <body> from PromptDock's useEffect when dockPos is 'left' or
+   'right'. Width matches the .prompt-dock side dock (340) + 24px gap
+   to the dock + the existing 24px offset = total 388px shift. */
+body { --chat-dock-left-shift: 0px; --chat-dock-right-shift: 0px; }
+body.chat-dock-l { --chat-dock-left-shift: 388px; }
+body.chat-dock-r { --chat-dock-right-shift: 388px; }
+/* When docked, the chat panel must FILL the vertical space between
+   the top chrome (grip + chevron + chips) and the bottom chrome
+   (textarea + actions). Without these overrides the panel keeps its
+   28vh cap and the rest of the dock paints empty dark space. */
+.prompt-dock.dock-left .chat-panel,
+.prompt-dock.dock-right .chat-panel {
+  flex: 1 1 auto;
+  max-height: none;
+}
 /* Floating: position set inline; no transform needed. */
 .prompt-dock.dock-floating { transform: none; }
 /* During a drag, fade the dock so the user can see the snap-bar +
