@@ -454,8 +454,15 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
       const dx = ev.clientX - startMouseX;
       const dy = ev.clientY - startMouseY;
       let snapTarget = null;
+      const centerX = window.innerWidth / 2;
+      const BOTTOM_BAND = 140;          // px from viewport bottom
+      const CENTER_BAND = 90;           // px around horizontal centre
       if (ev.clientX < SNAP_THRESHOLD) snapTarget = 'left';
       else if (ev.clientX > window.innerWidth - SNAP_THRESHOLD) snapTarget = 'right';
+      else if (
+        ev.clientY > window.innerHeight - BOTTOM_BAND
+        && Math.abs(ev.clientX - centerX) < CENTER_BAND
+      ) snapTarget = 'bottom';
       setDragState({ x: startLeft + dx, y: startTop + dy, snapTarget });
     }
     function onUp() {
@@ -1384,9 +1391,9 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           e.target.value = '';
         }}
       />
-      {/* Snap indicator — a 15px white bar at the viewport edge that
-          shows where the dock will land if released. Portal'd to body
-          so it isn't constrained by the dock's transform/clipping. */}
+      {/* Snap indicator — a 9px white bar at the viewport edge / centre
+          that shows where the dock will land if released. Portal'd to
+          body so it isn't constrained by the dock's transform/clipping. */}
       {dragState?.snapTarget && typeof document !== 'undefined' && createPortal(
         <div
           className={`prompt-dock-snap-bar prompt-dock-snap-bar-${dragState.snapTarget}`}
