@@ -1080,6 +1080,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       if (!started) {
         setSelectedEdgeId(edgeId);
         setSelectedNodeId(null);
+        // Same focus steal as node selection — let Delete reach the canvas
+        // keydown handler instead of dying inside the PromptDock textarea.
+        if (typeof document !== 'undefined') {
+          const ae = document.activeElement;
+          if (ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT') && typeof ae.blur === 'function') {
+            ae.blur();
+          }
+        }
       }
       cleanup();
     }
@@ -1745,7 +1753,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               selected={selectedNodeId === n.id}
               editing={editingNodeId === n.id}
               onEditingChange={(willEdit) => handleEditingToggle(n.id, willEdit)}
-              onSelect={() => { setSelectedNodeId(n.id); setSelectedEdgeId(null); setPopupPos(null); }}
+              onSelect={() => {
+                setSelectedNodeId(n.id);
+                setSelectedEdgeId(null);
+                setPopupPos(null);
+                // Steal focus from any text input (notably the PromptDock
+                // textarea) so a follow-up Delete keypress reaches the
+                // canvas keydown handler instead of falling through to a
+                // character delete inside the input. Matches Figma /
+                // Linear behaviour where clicking a node moves keyboard
+                // focus to the canvas.
+                if (typeof document !== 'undefined') {
+                  const ae = document.activeElement;
+                  if (ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT') && typeof ae.blur === 'function') {
+                    ae.blur();
+                  }
+                }
+              }}
               onMove={(posX, posY) => {
                 updateNodeLocal(n.id, { pos_x: posX, pos_y: posY });
                 if (!String(n.id).startsWith('temp-')) persistNodePosition(n.id, posX, posY);
