@@ -162,14 +162,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // hydrates from localStorage AFTER the first paint, scheduling a normal
   // re-render with the real values.
   const [sectionNameOverrides, setSectionNameOverrides] = useState({});
-  // Section size overrides — delta padding added to the auto-derived frame
-  // bbox per side. Used when the user resizes a section in an axis where
-  // members can't be scaled apart (e.g. 2 nodes on the same row → no
-  // vertical spread to scale; instead the override grows the frame bottom).
-  // {sectionId: {dTop, dRight, dBottom, dLeft}}. Same hydration-safe
-  // pattern as sectionNameOverrides — populated post-mount via useEffect.
-  const [sectionSizeOverrides, setSectionSizeOverrides] = useState({});
-  // Post-mount hydration of both override maps from localStorage. Running
+  // Section frames — absolute coords per section. Replaces the older
+  // delta-based size override. The frame "sticks" at its initial / last
+  // user-positioned size; node drags only push the frame outward when a
+  // member node gets within MIN_FRAME_CLEARANCE (40px) of the frame edge.
+  // {sectionId: {left, top, right, bottom}}. Same hydration-safe pattern
+  // as sectionNameOverrides — populated post-mount via useEffect.
+  const [sectionFrames, setSectionFrames] = useState({});
+  // Post-mount hydration of the override maps from localStorage. Running
   // once after the first render keeps SSR + first client paint identical
   // (both start with {}); the stored values land on the SECOND paint, so
   // React's hydration tree comparison never sees a mismatch.
@@ -182,10 +182,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       }
     } catch {}
     try {
-      const sizesRaw = localStorage.getItem('rb-section-sizes');
-      if (sizesRaw) {
-        const parsed = JSON.parse(sizesRaw);
-        if (parsed && typeof parsed === 'object') setSectionSizeOverrides(parsed);
+      const framesRaw = localStorage.getItem('rb-section-frames');
+      if (framesRaw) {
+        const parsed = JSON.parse(framesRaw);
+        if (parsed && typeof parsed === 'object') setSectionFrames(parsed);
       }
     } catch {}
   }, []);
@@ -2331,23 +2331,70 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       }
       const sectionId = `section-${memberIds.slice().sort().join('-').slice(0, 64)}`;
       const fallbackName = `${THEME_LABEL[t]} #${themeCounter[t]}`;
-      // Apply user-resize overrides as ADDITIONAL padding beyond the auto
-      // bbox. Auto bbox + auto padding (TOP_GAP/UNIFORM_GAP) is the
-      // minimum size; override grows the frame outward.
-      const ov = sectionSizeOverrides[sectionId] || { dTop: 0, dRight: 0, dBottom: 0, dLeft: 0 };
+      // Frame coords: prefer the stored sectionFrame if present, expanded
+      // to maintain MIN_FRAME_CLEARANCE (40px) from every member edge.
+      // First-time sections fall back to the auto-bbox + UNIFORM_GAP /
+      // TOP_GAP defaults — captured by the useEffect below on next tick.
+      const MIN_FRAME_CLEARANCE = 40;
+      const stored = sectionFrames[sectionId];
+      let frameLeft, frameTop, frameRight, frameBottom;
+      if (stored) {
+        frameLeft   = Math.min(stored.left,   minX - MIN_FRAME_CLEARANCE);
+        frameTop    = Math.min(stored.top,    minY - MIN_FRAME_CLEARANCE);
+        frameRight  = Math.max(stored.right,  maxX + MIN_FRAME_CLEARANCE);
+        frameBottom = Math.max(stored.bottom, maxY + MIN_FRAME_CLEARANCE);
+      } else {
+        frameLeft   = minX - UNIFORM_GAP;
+        frameTop    = minY - TOP_GAP;
+        frameRight  = maxX + UNIFORM_GAP;
+        frameBottom = maxY + UNIFORM_GAP;
+      }
       out.push({
         id: sectionId,
         memberIds,
         theme: t,
         name: sectionNameOverrides[sectionId] || fallbackName,
-        x: minX - UNIFORM_GAP - (ov.dLeft || 0),
-        y: minY - TOP_GAP - (ov.dTop || 0),
-        width: (maxX - minX) + UNIFORM_GAP * 2 + (ov.dLeft || 0) + (ov.dRight || 0),
-        height: (maxY - minY) + TOP_GAP + UNIFORM_GAP + (ov.dTop || 0) + (ov.dBottom || 0),
+        x: frameLeft,
+        y: frameTop,
+        width: frameRight - frameLeft,
+        height: frameBottom - frameTop,
       });
     }
     return out;
-  }, [nodes, edges, sectionNameOverrides, sectionSizeOverrides]);
+  }, [nodes, edges, sectionNameOverrides, sectionFrames]);
+
+  // Capture / grow sectionFrames after each sections render. New sections
+  // initialise their stored frame from the default-padded coords; existing
+  // sections only update when the constraint expansion (max with auto+40)
+  // pushed the frame past the stored coords. Old entries for removed
+  // sections are cleaned up. Persisted to localStorage so a refresh
+  // restores the same frames.
+  useEffect(() => {
+    setSectionFrames((prev) => {
+      const next = {};
+      let changed = false;
+      const activeIds = new Set();
+      for (const s of sections) {
+        activeIds.add(s.id);
+        const cur = prev[s.id];
+        const target = { left: s.x, top: s.y, right: s.x + s.width, bottom: s.y + s.height };
+        if (!cur || cur.left !== target.left || cur.top !== target.top || cur.right !== target.right || cur.bottom !== target.bottom) {
+          next[s.id] = target;
+          changed = true;
+        } else {
+          next[s.id] = cur;
+        }
+      }
+      for (const id of Object.keys(prev)) {
+        if (!activeIds.has(id)) changed = true;
+      }
+      if (changed) {
+        try { localStorage.setItem('rb-section-frames', JSON.stringify(next)); } catch {}
+        return next;
+      }
+      return prev;
+    });
+  }, [sections]);
 
   // Section drag — grabbing the dot-grid handle at the top of a section
   // translates ALL member nodes by the same delta so the workflow moves
@@ -2393,19 +2440,29 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     window.addEventListener('mouseup', onUp);
   }
 
-  // Section corner resize — pure FRAME resize. Members NEVER move. Dragging
-  // a corner grows the section's size override on the two sides that
-  // corner touches. Override is clamped to >= 0 so the frame can't shrink
-  // below its auto-derived minimum size (bbox + UNIFORM_GAP + TOP_GAP).
-  // Sections are spatial groupings; resizing the frame is a labelling /
-  // visual-grouping act, not an act on the contents.
+  // Section corner resize — pure FRAME resize. Members NEVER move. Drags
+  // update sectionFrames absolute coords directly. Frame is clamped to
+  // contain all member nodes + MIN_FRAME_CLEARANCE (40px) so resizing
+  // inward can't push a node out of the frame.
   function startSectionResize(sectionId, corner, e) {
     e.stopPropagation();
     e.preventDefault();
     const section = sections.find((x) => x.id === sectionId);
     if (!section) return;
+    const memberNodes = section.memberIds
+      .map((id) => nodes.find((n) => n.id === id))
+      .filter(Boolean);
+    if (memberNodes.length === 0) return;
 
-    const startOverride = sectionSizeOverrides[sectionId] || { dTop: 0, dRight: 0, dBottom: 0, dLeft: 0 };
+    let memMinX = Infinity, memMinY = Infinity, memMaxX = -Infinity, memMaxY = -Infinity;
+    for (const m of memberNodes) {
+      memMinX = Math.min(memMinX, m.pos_x || 0);
+      memMinY = Math.min(memMinY, m.pos_y || 0);
+      memMaxX = Math.max(memMaxX, (m.pos_x || 0) + (m.width || 0));
+      memMaxY = Math.max(memMaxY, (m.pos_y || 0) + (m.height || 0));
+    }
+    const MIN_CLEARANCE = 40;
+    const startFrame = { left: section.x, top: section.y, right: section.x + section.width, bottom: section.y + section.height };
     const readScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
     const startScale = readScale();
     const startMouseX = e.clientX;
@@ -2414,35 +2471,26 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     function onMove(ev) {
       const dx = (ev.clientX - startMouseX) / startScale;
       const dy = (ev.clientY - startMouseY) / startScale;
-      let outLeft = 0, outRight = 0, outTop = 0, outBottom = 0;
-      if (corner === 'nw')      { outLeft = -dx; outTop = -dy; }
-      else if (corner === 'ne') { outRight = dx; outTop = -dy; }
-      else if (corner === 'sw') { outLeft = -dx; outBottom = dy; }
-      else if (corner === 'se') { outRight = dx; outBottom = dy; }
-
-      const newOverride = {
-        dTop:    Math.max(0, (startOverride.dTop    || 0) + outTop),
-        dRight:  Math.max(0, (startOverride.dRight  || 0) + outRight),
-        dBottom: Math.max(0, (startOverride.dBottom || 0) + outBottom),
-        dLeft:   Math.max(0, (startOverride.dLeft   || 0) + outLeft),
-      };
-
-      setSectionSizeOverrides((prev) => {
-        const cur = prev[sectionId];
-        if (cur && cur.dTop === newOverride.dTop && cur.dRight === newOverride.dRight
-                && cur.dBottom === newOverride.dBottom && cur.dLeft === newOverride.dLeft) return prev;
-        const anyNonZero = newOverride.dTop || newOverride.dRight || newOverride.dBottom || newOverride.dLeft;
-        if (anyNonZero) return { ...prev, [sectionId]: newOverride };
-        const next = { ...prev };
-        delete next[sectionId];
-        return next;
-      });
+      let newLeft = startFrame.left, newTop = startFrame.top, newRight = startFrame.right, newBottom = startFrame.bottom;
+      if (corner === 'nw')      { newLeft = startFrame.left + dx; newTop = startFrame.top + dy; }
+      else if (corner === 'ne') { newRight = startFrame.right + dx; newTop = startFrame.top + dy; }
+      else if (corner === 'sw') { newLeft = startFrame.left + dx; newBottom = startFrame.bottom + dy; }
+      else if (corner === 'se') { newRight = startFrame.right + dx; newBottom = startFrame.bottom + dy; }
+      // Clamp so frame always contains members + 40px clearance.
+      newLeft   = Math.min(newLeft,   memMinX - MIN_CLEARANCE);
+      newTop    = Math.min(newTop,    memMinY - MIN_CLEARANCE);
+      newRight  = Math.max(newRight,  memMaxX + MIN_CLEARANCE);
+      newBottom = Math.max(newBottom, memMaxY + MIN_CLEARANCE);
+      setSectionFrames((prev) => ({
+        ...prev,
+        [sectionId]: { left: newLeft, top: newTop, right: newRight, bottom: newBottom },
+      }));
     }
     function onUp() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      setSectionSizeOverrides((cur) => {
-        try { localStorage.setItem('rb-section-sizes', JSON.stringify(cur)); } catch {}
+      setSectionFrames((cur) => {
+        try { localStorage.setItem('rb-section-frames', JSON.stringify(cur)); } catch {}
         return cur;
       });
     }

@@ -3842,12 +3842,13 @@ body.rb-ed-light .canvas-section-play-btn:hover {
 }
 
 .canvas-section-frame.selected {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.35);
+  /* Clean 2px white outline at 70% opacity over the existing faint
+     bg/border. outline-offset 0 keeps it flush against the frame edge. */
+  outline: 2px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 0;
 }
 body.rb-ed-light .canvas-section-frame.selected {
-  background: rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.18);
+  outline-color: rgba(0, 0, 0, 0.55);
 }
 
 /* Drag grip — dot grid centered at the top of the section. Inverse-
