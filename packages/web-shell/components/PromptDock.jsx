@@ -228,6 +228,21 @@ function chatReducer(state, action) {
     }
     case 'RUN_FINISHED':
       return { ...state, streaming: false, activeToolCalls: [] };
+    case 'RUN_ERROR':
+      // Surface backend agent failures as an assistant bubble so users see
+      // what went wrong (e.g. "credit balance too low", "rate limit"). Phase 5
+      // can promote this to a styled error chip.
+      return {
+        ...state,
+        messages: [...state.messages, {
+          id: `tmp-err-${Date.now()}`,
+          role: 'assistant',
+          content: `⚠️ ${action.err || 'Agent failed.'}`,
+          tool_calls: null,
+        }],
+        streaming: false,
+        activeToolCalls: [],
+      };
     default:
       return state;
   }
@@ -288,7 +303,13 @@ export default function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml
         dispatchChat({ type: 'TOOL_CALL_STATUS', id: payload.id, status: payload.status, result: payload.result, error: payload.error });
         break;
       case 'run_status':
-        // Final RUN_FINISHED dispatched after the reader-loop exits.
+        // Show backend agent failures inline. Successful completions get
+        // their final RUN_FINISHED after the reader-loop exits.
+        if (payload.status === 'failed' || payload.status === 'hard_limited') {
+          const msg = payload.err
+            || (payload.status === 'hard_limited' ? 'Hit the action limit for this turn. Send a new message to continue.' : 'Agent failed.');
+          dispatchChat({ type: 'RUN_ERROR', err: msg });
+        }
         break;
     }
   }
