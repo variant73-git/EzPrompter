@@ -65,42 +65,55 @@ export default function ChatPanel({
       )}
       {messages.map((m, idx) => (
         <ChatBubble key={m.id} role={m.role} content={m.content}>
-          {m.tool_calls?.map((tc) => (
-            // Namespaced key prevents collisions when an active chip and a
-            // persisted chip happen to share an id (e.g. Gemini's per-call
-            // counter wrapping back to 1 across turns).
-            <ToolChip
-              key={`m-${tc.id}`}
-              toolName={tc.name}
-              status={tc.status || 'done'}
-              args={tc.args}
-              result={tc.result}
-              error={tc.error}
-            />
-          ))}
+          {/* Persisted tool_calls never render any more — the agent's own
+              text bubble is the single source of truth for what happened.
+              We keep the data in m.tool_calls (for analytics / future
+              debug surfaces) but hide all routine status chips. */}
           {idx === currentTurnAssistantIdx && activeToolCalls.map((tc) => (
-            <ToolChip
-              key={`a-${tc.id}`}
-              toolName={tc.name}
-              status={tc.status || 'running'}
-              args={tc.args}
-              result={tc.result}
-              error={tc.error}
-              summary={tc.summary}
-              choices={tc.choices}
-              onConfirm={() => onConfirmTool?.(tc.id)}
-              onSkip={() => onSkipTool?.(tc.id)}
-              onChoose={(choiceId) => onChooseTool?.(tc.id, choiceId)}
-            />
+            // Only chips that REQUIRE the user's decision render — confirm
+            // / choice prompts are the buttons that drive resolveConfirm /
+            // resolveChoice. Routine running / done / error / skipped /
+            // stale states are hidden; the agent will narrate them in its
+            // own text bubble.
+            tc.status === 'awaiting_confirm' || tc.status === 'awaiting_choice' ? (
+              <ToolChip
+                key={`a-${tc.id}`}
+                toolName={tc.name}
+                status={tc.status}
+                args={tc.args}
+                result={tc.result}
+                error={tc.error}
+                summary={tc.summary}
+                choices={tc.choices}
+                onConfirm={() => onConfirmTool?.(tc.id)}
+                onSkip={() => onSkipTool?.(tc.id)}
+                onChoose={(choiceId) => onChooseTool?.(tc.id, choiceId)}
+              />
+            ) : null
           ))}
         </ChatBubble>
       ))}
       {/* If this turn hasn't streamed an assistant bubble yet but tools are
-          running, render a fresh transient bubble for them. */}
-      {currentTurnAssistantIdx === -1 && activeToolCalls.length > 0 && (
+          AWAITING a decision, render a fresh transient bubble for the
+          actionable chip. Routine running tools no longer materialise their
+          own bubble — wait for the agent's text. */}
+      {currentTurnAssistantIdx === -1
+        && activeToolCalls.some((tc) => tc.status === 'awaiting_confirm' || tc.status === 'awaiting_choice') && (
         <ChatBubble role="assistant" content="">
           {activeToolCalls.map((tc) => (
-            <ToolChip key={`a-${tc.id}`} toolName={tc.name} status={tc.status || 'running'} args={tc.args} />
+            tc.status === 'awaiting_confirm' || tc.status === 'awaiting_choice' ? (
+              <ToolChip
+                key={`a-${tc.id}`}
+                toolName={tc.name}
+                status={tc.status}
+                args={tc.args}
+                summary={tc.summary}
+                choices={tc.choices}
+                onConfirm={() => onConfirmTool?.(tc.id)}
+                onSkip={() => onSkipTool?.(tc.id)}
+                onChoose={(choiceId) => onChooseTool?.(tc.id, choiceId)}
+              />
+            ) : null
           ))}
         </ChatBubble>
       )}

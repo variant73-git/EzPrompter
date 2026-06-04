@@ -20,18 +20,33 @@ describe('ChatPanel', () => {
     expect(bubbles[1]).toHaveClass('chat-bubble-assistant');
   });
 
-  it('renders tool chips inside the assistant bubble that has tool_calls', () => {
+  it('does NOT render persisted tool_calls — the agent text is the single source of truth', () => {
     render(<ChatPanel messages={sampleMessages} activeToolCalls={[]} />);
-    expect(screen.getByText(/createNode/)).toBeInTheDocument();
-    expect(screen.getByText(/node-aaa/)).toBeInTheDocument();
+    expect(screen.queryByText(/createNode/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/node-aaa/)).not.toBeInTheDocument();
+    // The assistant bubbles still render (one with text 'oi', one empty).
+    expect(document.querySelectorAll('.chat-bubble-assistant')).toHaveLength(2);
   });
 
-  it('renders active (in-flight) tool calls in the most recent assistant bubble', () => {
+  it('does NOT render routine running tool chips', () => {
     render(<ChatPanel
       messages={sampleMessages.slice(0, 2)}
       activeToolCalls={[{ id: 'tc-live', name: 'queryNodes', status: 'running', args: {} }]}
     />);
-    expect(screen.getByText(/queryNodes/)).toBeInTheDocument();
+    expect(screen.queryByText(/queryNodes/)).not.toBeInTheDocument();
+  });
+
+  it('renders awaiting_confirm chip with action buttons (user decision required)', () => {
+    render(<ChatPanel
+      messages={sampleMessages.slice(0, 2)}
+      activeToolCalls={[{
+        id: 'tc-conf', name: 'deleteNode', status: 'awaiting_confirm',
+        args: {}, summary: 'Delete node abc',
+      }]}
+    />);
+    // The actionable chip renders because the user needs to confirm.
+    expect(screen.getByText(/deleteNode/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /confirm/i })).toBeInTheDocument();
   });
 
   it('shows empty state when no messages', () => {
