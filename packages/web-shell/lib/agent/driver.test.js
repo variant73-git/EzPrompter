@@ -257,3 +257,96 @@ describe('runAgentLoop — retry budget', () => {
     expect(errors[3].error).toMatch(/too many failures/i);
   });
 });
+
+// ── Provider failover ─────────────────────────────────────────────────────────
+
+describe('runAgentLoop — provider failover', () => {
+  const r = buildRegistry([{
+    name: 'noop', classification: 'safe',
+    inputSchema: { type: 'object' }, execute: async () => ({ ok: true }),
+  }]);
+  const okLLM = () => vi.fn(async ({ onEvent }) => {
+    onEvent({ type: 'message_complete', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
+    return { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } };
+  });
+  const throwLLM = (status, msg = 'boom') => vi.fn(async () => { const e = new Error(msg); e.status = status; throw e; });
+
+  it('falls over to the next provider on a retriable 429 and completes', async () => {
+    const primary = throwLLM(429, 'prepayment credits are depleted');
+    const fallback = okLLM();
+    const events = [];
+    const result = await runAgentLoop({
+      llm: primary, providerLabel: 'gemini',
+      fallbacks: [{ llm: fallback, modelId: 'gpt-4o-mini', apiKey: 'k2', tools: [], label: 'openai' }],
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'go' }],
+      modelId: 'gemini-2.5-flash', apiKey: 'k', ctx: {}, onEvent: (e) => events.push(e), maxIterations: 5,
+    });
+    expect(primary).toHaveBeenCalledTimes(1);
+    expect(fallback).toHaveBeenCalledTimes(1);
+    expect(result.stop_reason).toBe('end_turn');
+    const fo = events.find((e) => e.type === 'provider_failover');
+    expect(fo).toBeTruthy();
+    expect(fo.from).toBe('gemini');
+    expect(fo.to).toBe('openai');
+  });
+
+  it('does NOT fall over on a non-retriable 400 — fails fast', async () => {
+    const primary = throwLLM(400, 'bad request');
+    const fallback = okLLM();
+    const events = [];
+    const result = await runAgentLoop({
+      llm: primary, providerLabel: 'gemini',
+      fallbacks: [{ llm: fallback, modelId: 'gpt-4o-mini', apiKey: 'k2', tools: [], label: 'openai' }],
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'go' }],
+      modelId: 'gemini-2.5-flash', apiKey: 'k', ctx: {}, onEvent: (e) => events.push(e), maxIterations: 5,
+    });
+    expect(primary).toHaveBeenCalledTimes(1);
+    expect(fallback).not.toHaveBeenCalled();
+    expect(result.stop_reason).toBe('failed');
+    expect(events.some((e) => e.type === 'provider_failover')).toBe(false);
+  });
+
+  it('falls over on an open circuit (code=circuit_open)', async () => {
+    const primary = vi.fn(async () => { const e = new Error('gemini circuit open'); e.code = 'circuit_open'; throw e; });
+    const fallback = okLLM();
+    const events = [];
+    const result = await runAgentLoop({
+      llm: primary, providerLabel: 'gemini',
+      fallbacks: [{ llm: fallback, modelId: 'gpt-4o-mini', apiKey: 'k2', tools: [], label: 'openai' }],
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'go' }],
+      modelId: 'gemini-2.5-flash', apiKey: 'k', ctx: {}, onEvent: (e) => events.push(e), maxIterations: 5,
+    });
+    expect(fallback).toHaveBeenCalledTimes(1);
+    expect(result.stop_reason).toBe('end_turn');
+    expect(events.find((e) => e.type === 'provider_failover').reason).toBe('circuit_open');
+  });
+
+  it('fails the run when every provider is exhausted', async () => {
+    const primary = throwLLM(503, 'overloaded');
+    const fallback = throwLLM(503, 'also overloaded');
+    const events = [];
+    const result = await runAgentLoop({
+      llm: primary, providerLabel: 'gemini',
+      fallbacks: [{ llm: fallback, modelId: 'gpt-4o-mini', apiKey: 'k2', tools: [], label: 'openai' }],
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'go' }],
+      modelId: 'gemini-2.5-flash', apiKey: 'k', ctx: {}, onEvent: (e) => events.push(e), maxIterations: 5,
+    });
+    expect(primary).toHaveBeenCalledTimes(1);
+    expect(fallback).toHaveBeenCalledTimes(1);
+    expect(result.stop_reason).toBe('failed');
+    // exactly one failover hop (gemini→openai) happened before exhaustion
+    expect(events.filter((e) => e.type === 'provider_failover').length).toBe(1);
+  });
+
+  it('with no fallbacks configured, behaves exactly as before (fails on error)', async () => {
+    const primary = throwLLM(429, 'quota');
+    const events = [];
+    const result = await runAgentLoop({
+      llm: primary,
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'go' }],
+      modelId: 'gemini-2.5-flash', apiKey: 'k', ctx: {}, onEvent: (e) => events.push(e), maxIterations: 5,
+    });
+    expect(result.stop_reason).toBe('failed');
+    expect(events.some((e) => e.type === 'provider_failover')).toBe(false);
+  });
+});

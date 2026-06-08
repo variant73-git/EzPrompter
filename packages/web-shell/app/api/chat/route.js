@@ -104,6 +104,40 @@ function resolveAdapter(resolvedModel) {
   return { error: `unsupported model: ${resolvedModel} (Phase 5a supports Claude / GPT / Gemini)` };
 }
 
+// Provider failover chain for the agent's orchestrating model. When the
+// primary provider returns a retriable error mid-run (rate limit, depleted
+// prepaid credits, outage), the driver falls over to the next provider here
+// that (a) isn't the primary and (b) has a key configured. Order is
+// cost-ascending so a forced failover never silently jumps to the priciest
+// model. Availability beats matching the primary's quality during an outage.
+const AGENT_FALLBACK_CHAIN = [
+  { model: 'gemini-2.5-flash',          label: 'gemini'    },
+  { model: 'gpt-4o-mini',               label: 'openai'    },
+  { model: 'claude-haiku-4-5-20251001', label: 'anthropic' },
+];
+
+/**
+ * Build the ordered list of alternate providers for the driver's failover.
+ * Reuses resolveAdapter (so each entry inherits the same circuit-breaker-
+ * wrapped adapter + server key) and builds the provider-specific tool spec.
+ * Skips providers with no key and the primary's own provider.
+ */
+function buildAgentFallbacks({ primaryLabel, registry, toolAllowlist }) {
+  const out = [];
+  for (const entry of AGENT_FALLBACK_CHAIN) {
+    if (entry.label === primaryLabel) continue;
+    const r = resolveAdapter(entry.model);
+    if (r.error) continue; // provider has no key on this server — skip silently
+    const tools = entry.label === 'openai'
+      ? registry.toOpenAISpec(toolAllowlist)
+      : entry.label === 'gemini'
+      ? registry.toGeminiSpec(toolAllowlist)
+      : registry.toAnthropicSpec(toolAllowlist);
+    out.push({ llm: r.adapter, modelId: entry.model, apiKey: r.apiKey, tools, label: entry.label });
+  }
+  return out;
+}
+
 const PROMPT_KEYS = { BOARD_AGENT, EDIT_IMAGE_SYSTEM };
 
 function mapLoopResultToRunStatus(stopReason) {
@@ -561,6 +595,12 @@ export async function POST(request) {
       // all miss, this is the last line of defense to keep the SSE
       // stream from staying open for 20+ minutes.
       const RUN_HARD_CAP_MS = 6 * 60 * 1000;
+      // Alternate providers the driver falls over to when the primary returns
+      // a retriable error mid-run (the depleted-prepaid-credits 429 is the
+      // motivating case). Empty when no other provider has a key configured.
+      const agentFallbacks = buildAgentFallbacks({
+        primaryLabel: resolved.providerLabel, registry, toolAllowlist,
+      });
       const loopPromise = runAgentLoop({
         llm: resolved.adapter,
         registry,
@@ -568,6 +608,8 @@ export async function POST(request) {
         messages: initialMessages,
         modelId: resolvedModel,
         apiKey: resolved.apiKey,
+        providerLabel: resolved.providerLabel,
+        fallbacks: agentFallbacks,
         ctx: { boardId, userId: user.id, conversationModel: resolvedModel },
         toolAllowlist,
         tools,
@@ -634,6 +676,12 @@ export async function POST(request) {
               send(ev.name, ev.payload || {});
               break;
             case 'message_complete':
+              break;
+            case 'provider_failover':
+              // The primary provider failed mid-run; the driver switched to a
+              // backup. Surface it so the client can optionally note the
+              // degraded-mode switch. Unknown event types are ignored client-side.
+              send('provider_failover', { from: ev.from, to: ev.to, reason: ev.reason, iter: ev.iter });
               break;
             case 'run_status':
               send('run_status', { status: ev.status, err: ev.err });

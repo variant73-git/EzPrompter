@@ -37,7 +37,15 @@ export async function runAgentLoop(opts) {
     caps = DEFAULT_CAPS,
     // Legacy compat: Phase 1 callers pass maxIterations instead of caps.
     maxIterations = null,
+    // Provider failover (optional). Each entry is a fully-formed alternate
+    // provider { llm, modelId, apiKey, tools, label } tried IN ORDER when the
+    // primary LLM call fails with a retriable error (rate limit / depleted
+    // credits / outage / open circuit / hung stream). Empty = no failover
+    // (every pre-failover caller keeps its exact behaviour).
+    fallbacks = [],
+    providerLabel = null,         // human label for the primary (for the failover event)
   } = opts;
+  const primaryLabel = providerLabel || labelForModel(modelId);
 
   // Merge legacy maxIterations into caps so Phase 1 tests keep passing.
   const effectiveCaps = maxIterations != null
@@ -130,54 +138,98 @@ export async function runAgentLoop(opts) {
       // the configured wall_timeout. The original `wallExpired` flag only
       // helps BETWEEN iterations; without this race a 25-minute Anthropic
       // / Gemini stream gets to run to completion before we notice.
-      const toolCalls = [];
-      if (runId && ctx?.userId) {
-        logAgentEvent({ runId, userId: ctx.userId, type: 'llm_call', payload: { iter: iterations, model: modelId } });
-      }
+      // Ordered attempt list: primary first, then any configured fallbacks.
+      // Each attempt carries its OWN model, key, and tool spec — the spec
+      // shape differs per provider, so failover can't just swap the adapter.
+      const attempts = [
+        { llm, modelId, apiKey, tools, label: primaryLabel },
+        ...fallbacks,
+      ];
+      let toolCalls = [];
       const llmCallStartTs = Date.now();
-      const llmPromise = llm({
-        model: modelId, system: systemPrompt, messages: history, tools, apiKey,
-        // OpenAI uses this as a routing hint (same user → same cache replica);
-        // other adapters ignore the extra field.
-        userId: ctx?.userId || null,
-        onEvent: (ev) => {
-          if (ev.type === 'tool_use') toolCalls.push(ev);
-          if (ev.type === 'message_complete') {
-            totalUsage.input_tokens         += ev.usage?.input_tokens         || 0;
-            totalUsage.output_tokens        += ev.usage?.output_tokens        || 0;
-            totalUsage.cached_input_tokens  += ev.usage?.cached_input_tokens  || 0;
-            totalUsage.cache_write_tokens   += ev.usage?.cache_write_tokens   || 0;
-          }
-          onEvent(ev);
-        },
-      });
       const LLM_HARD_TIMEOUT_MS = Math.min(effectiveCaps.wallTimeoutMs, 4 * 60 * 1000);
-      let finalMsg;
-      try {
-        finalMsg = await Promise.race([
-          llmPromise,
-          new Promise((_, reject) => setTimeout(
-            () => reject(new Error(`llm call exceeded ${LLM_HARD_TIMEOUT_MS / 1000}s`)),
-            LLM_HARD_TIMEOUT_MS,
-          )),
-        ]);
-      } catch (e) {
+      let finalMsg = null;
+      let usedModelId = modelId;
+      let usedLabel = primaryLabel;
+
+      for (let attemptIdx = 0; attemptIdx < attempts.length; attemptIdx++) {
+        const attempt = attempts[attemptIdx];
+        // Fresh per attempt — a failed attempt's partial tool_use events are
+        // discarded so we don't execute tools the failed provider proposed.
+        toolCalls = [];
         if (runId && ctx?.userId) {
           logAgentEvent({
-            runId, userId: ctx.userId, type: 'error',
-            payload: { iter: iterations, where: 'llm_call', message: String(e?.message || e), code: e?.code || null },
-            durationMs: Date.now() - llmCallStartTs,
+            runId, userId: ctx.userId, type: 'llm_call',
+            payload: { iter: iterations, model: attempt.modelId, provider: attempt.label, fallback: attemptIdx > 0 },
           });
         }
-        onEvent({ type: 'run_status', status: 'failed', err: e?.message || 'llm_timeout' });
-        return { stop_reason: 'failed', iterations, usage: totalUsage, toolCounts };
+        const llmPromise = attempt.llm({
+          model: attempt.modelId, system: systemPrompt, messages: history, tools: attempt.tools, apiKey: attempt.apiKey,
+          // OpenAI uses this as a routing hint (same user → same cache replica);
+          // other adapters ignore the extra field.
+          userId: ctx?.userId || null,
+          onEvent: (ev) => {
+            if (ev.type === 'tool_use') toolCalls.push(ev);
+            if (ev.type === 'message_complete') {
+              totalUsage.input_tokens         += ev.usage?.input_tokens         || 0;
+              totalUsage.output_tokens        += ev.usage?.output_tokens        || 0;
+              totalUsage.cached_input_tokens  += ev.usage?.cached_input_tokens  || 0;
+              totalUsage.cache_write_tokens   += ev.usage?.cache_write_tokens   || 0;
+            }
+            onEvent(ev);
+          },
+        });
+        try {
+          finalMsg = await Promise.race([
+            llmPromise,
+            new Promise((_, reject) => setTimeout(
+              () => reject(Object.assign(new Error(`llm call exceeded ${LLM_HARD_TIMEOUT_MS / 1000}s`), { code: 'llm_timeout' })),
+              LLM_HARD_TIMEOUT_MS,
+            )),
+          ]);
+          usedModelId = attempt.modelId;
+          usedLabel = attempt.label;
+          break; // success — leave the failover loop
+        } catch (e) {
+          const retriable = isRetriableProviderError(e);
+          const hasNext = attemptIdx < attempts.length - 1;
+          if (runId && ctx?.userId) {
+            logAgentEvent({
+              runId, userId: ctx.userId, type: 'error',
+              payload: {
+                iter: iterations, where: 'llm_call', provider: attempt.label,
+                message: String(e?.message || e), code: e?.code || null, status: e?.status ?? null,
+                retriable, willFailover: retriable && hasNext,
+              },
+              durationMs: Date.now() - llmCallStartTs,
+            });
+          }
+          if (retriable && hasNext) {
+            const next = attempts[attemptIdx + 1];
+            // eslint-disable-next-line no-console
+            console.warn(`[agent] provider failover ${attempt.label} → ${next.label} (iter ${iterations}): ${e?.code || e?.status || e?.message}`);
+            onEvent({
+              type: 'provider_failover',
+              from: attempt.label, to: next.label,
+              reason: e?.code || (e?.status ? `http_${e.status}` : 'error'),
+              iter: iterations,
+            });
+            continue; // try the next provider, same iteration
+          }
+          // Non-retriable error, or no providers left → fail the run.
+          onEvent({ type: 'run_status', status: 'failed', err: e?.message || 'llm_error' });
+          return { stop_reason: 'failed', iterations, usage: totalUsage, toolCounts };
+        }
       }
+
       const llmDuration = Date.now() - llmCallStartTs;
       if (runId && ctx?.userId) {
         logAgentEvent({
           runId, userId: ctx.userId, type: 'llm_response',
           payload: {
             iter: iterations,
+            provider: usedLabel,
+            model: usedModelId,
             stop_reason: finalMsg.stop_reason,
             tool_calls_pending: toolCalls.length,
             usage_input: finalMsg.usage?.input_tokens || 0,
@@ -188,7 +240,7 @@ export async function runAgentLoop(opts) {
       }
       logGeneration(trace, {
         name: `llm.iter-${iterations}`,
-        model: modelId,
+        model: usedModelId,
         input: history,
         output: finalMsg.content,
         usage: finalMsg.usage,
@@ -465,6 +517,39 @@ function slimForHistory(value) {
     return out;
   }
   return value;
+}
+
+/** Map an SDK model string to its provider label (for failover telemetry). */
+function labelForModel(modelId) {
+  const m = String(modelId || '');
+  if (/^(claude|opus|sonnet|haiku)/i.test(m)) return 'anthropic';
+  if (/^(gpt|openai|o[1-9])/i.test(m)) return 'openai';
+  if (/^gemini/i.test(m)) return 'gemini';
+  return 'llm';
+}
+
+/**
+ * Should this LLM error trigger failover to the next provider?
+ * YES for transient/availability failures the next provider might survive:
+ *   - open circuit (this provider's breaker tripped)
+ *   - our own per-call hard timeout (provider hung mid-stream)
+ *   - HTTP 429 (rate limit / quota / DEPLETED PREPAID CREDITS — the Gemini case)
+ *   - HTTP 5xx (provider outage / overload)
+ *   - Gemini's RESOURCE_EXHAUSTED / "prepayment credits" message (when no
+ *     numeric status is surfaced by the SDK)
+ * NO for client-side errors (400 bad request, 401/403 auth) — failover to a
+ * different provider wouldn't fix a malformed request, and masking an auth
+ * misconfig would hide a real bug.
+ */
+function isRetriableProviderError(e) {
+  if (!e) return false;
+  if (e.code === 'circuit_open' || e.code === 'llm_timeout') return true;
+  const status = e.status ?? e.statusCode ?? e.response?.status ?? null;
+  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 529) return true;
+  const msg = String(e.message || '');
+  if (/RESOURCE_EXHAUSTED|prepayment credits|rate.?limit|overloaded|quota exceeded|temporarily unavailable|service unavailable/i.test(msg)) return true;
+  if (/llm call exceeded \d+s/.test(msg)) return true;
+  return false;
 }
 
 /** Short human-readable summary shown in confirm chips. Per-tool overrides preferred. */
