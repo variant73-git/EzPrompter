@@ -1,0 +1,13 @@
+# gitleaks fingerprint allowlist — one finding per line (commit:file:rule:line).
+# gitleaks reads this file automatically and skips matching findings.
+#
+# Below: a dead AWS STS *temporary* session token (ASIA…, expires within hours)
+# that was captured inside a firecrawl research scrape (.firecrawl/same-yc.md)
+# and committed 2026-04-05. It is NOT a project credential (we don't use AWS)
+# and expired ~2 months before it was ever flagged. Allowlisted by exact
+# fingerprint so the rest of the file is still scanned for anything new.
+2c54cfead811d865d35e1e0d29c06993cfb9bd80:.firecrawl/same-yc.md:aws-access-token:33
+2c54cfead811d865d35e1e0d29c06993cfb9bd80:.firecrawl/same-yc.md:aws-access-token:43
+2c54cfead811d865d35e1e0d29c06993cfb9bd80:.firecrawl/same-yc.md:aws-access-token:53
+2c54cfead811d865d35e1e0d29c06993cfb9bd80:.firecrawl/same-yc.md:aws-access-token:63
+2c54cfead811d865d35e1e0d29c06993cfb9bd80:.firecrawl/same-yc.md:aws-access-token:99
