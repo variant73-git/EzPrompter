@@ -9,12 +9,17 @@ import { runAgentLoop } from '../../../lib/agent/driver.js';
 import { callAnthropic } from '../../../lib/agent/llm-anthropic.js';
 import { callOpenAI }    from '../../../lib/agent/llm-openai.js';
 import { callGemini }    from '../../../lib/agent/llm-gemini.js';
+import { breakerFor }    from '../../../lib/agent/circuit.js';
 import { BOARD_AGENT, EDIT_IMAGE_SYSTEM } from '../../../lib/agent/prompts.js';
 import { createSseStream, SSE_HEADERS } from '../../../lib/agent/sse-bridge.js';
 import { registerRun, unregisterRun } from '../../../lib/agent/run-map.js';
 import { getCaps } from '../../../lib/agent/caps.js';
 import { computeCost } from '../../../lib/agent/cost.js';
 import { hasEnoughCredits } from '../../../lib/credits.js';
+import { checkRateLimit, CHAT_POLICY } from '../../../lib/rate-limit.js';
+import { moderateText, flaggedCategories } from '../../../lib/moderation.js';
+import { scanPrompt } from '../../../lib/llm-guard.js';
+import { flushLangfuse } from '../../../lib/agent/trace.js';
 
 export const runtime = 'nodejs';
 
@@ -66,6 +71,16 @@ function getAgentModel(user) {
   return 'gemini-2.5-flash';
 }
 
+// Each provider gets a singleton circuit breaker — declared once at module
+// scope so the breaker state persists across requests within the Node
+// process. After N consecutive failures inside the rolling window, the
+// breaker opens and subsequent calls fail-fast with code='circuit_open'
+// for ~45s, then probes again. Spares us from bombarding a provider mid-
+// outage and gives the agent loop a clear early exit.
+const callAnthropicSafe = breakerFor('anthropic', callAnthropic);
+const callOpenAISafe    = breakerFor('openai',    callOpenAI);
+const callGeminiSafe    = breakerFor('gemini',    callGemini);
+
 /**
  * Pick the LLM adapter for a resolved model string.
  * Returns {adapter, apiKey, providerLabel} or {error: string} if no key/unsupported.
@@ -74,17 +89,17 @@ function resolveAdapter(resolvedModel) {
   if (/^(claude|opus|sonnet|haiku)/i.test(resolvedModel)) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return { error: 'ANTHROPIC_API_KEY not configured on server' };
-    return { adapter: callAnthropic, apiKey, providerLabel: 'anthropic' };
+    return { adapter: callAnthropicSafe, apiKey, providerLabel: 'anthropic' };
   }
   if (/^(gpt|openai|o[1-9])/i.test(resolvedModel)) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return { error: 'OPENAI_API_KEY not configured on server' };
-    return { adapter: callOpenAI, apiKey, providerLabel: 'openai' };
+    return { adapter: callOpenAISafe, apiKey, providerLabel: 'openai' };
   }
   if (/^gemini/i.test(resolvedModel)) {
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     if (!apiKey) return { error: 'GEMINI_API_KEY (or GOOGLE_API_KEY) not configured on server' };
-    return { adapter: callGemini, apiKey, providerLabel: 'gemini' };
+    return { adapter: callGeminiSafe, apiKey, providerLabel: 'gemini' };
   }
   return { error: `unsupported model: ${resolvedModel} (Phase 5a supports Claude / GPT / Gemini)` };
 }
@@ -126,6 +141,97 @@ export async function GET(request) {
   }
 }
 
+/**
+ * Build the surgical context hint sent with every chat turn.
+ *
+ * Architecture: tools-first. The hint stays MINIMAL — it only carries
+ * what the agent would otherwise need a tool call to learn, but only
+ * for cases common enough that the round-trip savings matter:
+ *
+ *   1. Active selection ids (10 tokens, agent always wants this)
+ *   2. Workflow terminal info when a section is selected (avoids 2-3
+ *      tool calls for the most common "re-run / tweak" flow)
+ *
+ * Everything else — proximity searches, board listings, viewing the
+ * content of non-selected nodes — is on-demand via the exploration
+ * tools (listBoard / findNearest / viewNode / getWorkflow).
+ */
+async function buildWorkflowHint({ activeContexts, sql, userId, boardId }) {
+  if (!Array.isArray(activeContexts) || activeContexts.length === 0) return '';
+  const lines = [];
+
+  const sectionCtx = activeContexts.find((c) => c?.kind === 'section');
+  if (sectionCtx) {
+    const memberIds = Array.isArray(sectionCtx.memberIds) ? sectionCtx.memberIds.filter((s) => typeof s === 'string') : [];
+    if (memberIds.length > 0) {
+      lines.push(`[Active workflow: "${sectionCtx.name || 'workflow'}" — ${memberIds.length} nodes (ids: ${memberIds.map((id) => id.slice(0, 8)).join(', ')}).]`);
+      // Terminal = asset member with incoming-from-member edges and no
+      // outgoing-to-member edges. Mirrors the section-rerun endpoint
+      // heuristic so both paths agree on what "terminal" means.
+      const edgeRows = await sql`
+        SELECT id, source_node_id, target_node_id
+        FROM edges
+        WHERE board_id = ${boardId}
+          AND source_node_id = ANY(${memberIds})
+          AND target_node_id = ANY(${memberIds})
+      `;
+      const nodeRows = await sql`
+        SELECT id, kind, meta FROM nodes
+        WHERE id = ANY(${memberIds}) AND board_id = ${boardId}
+      `;
+      const terminals = nodeRows.filter((n) => {
+        if (n.kind !== 'asset') return false;
+        const incoming = edgeRows.some((e) => e.target_node_id === n.id);
+        const outgoing = edgeRows.some((e) => e.source_node_id === n.id);
+        return incoming && !outgoing;
+      });
+      if (terminals.length === 1) {
+        const terminal = terminals[0];
+        const tAssetId = terminal.meta?.assetId;
+        if (tAssetId) {
+          const arows = await sql`SELECT meta FROM assets WHERE id = ${tAssetId} AND user_id = ${userId}`;
+          if (arows.length) {
+            const m = arows[0].meta || {};
+            const rawPrompt = (m.prompt ?? '').toString();
+            const promptTrunc = rawPrompt.length > 240 ? rawPrompt.slice(0, 240) + '…' : rawPrompt;
+            const refIds = Array.isArray(m.styleReferenceAssetIds) ? m.styleReferenceAssetIds : [];
+            lines.push(
+              `[Terminal of this workflow: nodeId=${terminal.id}, assetId=${tAssetId}, mode=${m.mode || 'unknown'}, base=${m.baseImageAssetId || 'none'}, refs=[${refIds.join(', ')}], prompt="${promptTrunc}". To update this terminal IN PLACE, pass replaceAssetId=${tAssetId} to createImage.]`
+            );
+          }
+        }
+      }
+    }
+  }
+
+  // Active node lines — one short line per selected node. Asset nodes
+  // expose their assetId (so the agent can pass it to createImage
+  // without a viewNode call), other kinds just expose nodeId + kind.
+  // No proximity listings, no "this is what the user means by 'this'"
+  // prose — the BOARD_AGENT system prompt covers that once, here we
+  // just deliver IDs.
+  const nodeCtxs = activeContexts.filter((c) => c?.kind === 'node');
+  const activeIds = nodeCtxs.map((c) => c?.id).filter((id) => typeof id === 'string' && id);
+  if (activeIds.length > 0) {
+    const activeNodeRows = await sql`
+      SELECT id, kind, meta
+      FROM nodes
+      WHERE id = ANY(${activeIds}) AND board_id = ${boardId}
+    `;
+    for (const n of activeNodeRows) {
+      const name = n.meta?.name || n.kind;
+      const assetId = n.kind === 'asset' ? (n.meta?.assetId || null) : null;
+      if (assetId) {
+        lines.push(`[Active node: image asset "${name}" nodeId=${n.id} assetId=${assetId}.]`);
+      } else {
+        lines.push(`[Active node: ${n.kind} "${name}" nodeId=${n.id}.]`);
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
 export async function POST(request) {
   const { user, error } = await requireUser(request);
   if (error) return error;
@@ -139,12 +245,92 @@ export async function POST(request) {
     tools: toolAllowlist = null,
     systemPromptKey = 'BOARD_AGENT',
     attachments = null,
+    activeContexts = null,
   } = body || {};
 
   if (!boardId) return NextResponse.json({ error: 'boardId required' }, { status: 400 });
   const hasText = !!message?.trim();
   const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
   if (!hasText && !hasAttachments) return NextResponse.json({ error: 'message or attachments required' }, { status: 400 });
+
+  // Input size validation — prevents two attack classes:
+  //   1. Token-bomb: user pastes 5MB of text to burn agent tokens (each turn
+  //      can blow the wall-clock cap and rack up bills before fail-fast).
+  //   2. Memory exhaustion: huge JSON payloads can OOM the route worker.
+  // Caps:
+  //   - text message: 16k chars (~4k tokens) — enough for thoughtful prompts,
+  //     well below any realistic abuse pattern.
+  //   - attachments: 6 images max, 10MB each (the dataUrl base64 inflates 33%,
+  //     so 10MB ≈ 7.5MB raw; matches what gpt-image-1 accepts).
+  //   - activeContexts: 64 entries (user can't realistically select more).
+  const MAX_MESSAGE_CHARS = 16_000;
+  const MAX_ATTACHMENTS = 6;
+  const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+  const MAX_ACTIVE_CONTEXTS = 64;
+  if (hasText && message.length > MAX_MESSAGE_CHARS) {
+    return NextResponse.json({ error: `message exceeds ${MAX_MESSAGE_CHARS} characters` }, { status: 413 });
+  }
+  if (hasAttachments) {
+    if (attachments.length > MAX_ATTACHMENTS) {
+      return NextResponse.json({ error: `too many attachments (max ${MAX_ATTACHMENTS})` }, { status: 413 });
+    }
+    for (const a of attachments) {
+      if (typeof a?.dataUrl === 'string' && a.dataUrl.length > MAX_ATTACHMENT_BYTES) {
+        return NextResponse.json({ error: 'attachment exceeds 10MB' }, { status: 413 });
+      }
+    }
+  }
+  if (Array.isArray(activeContexts) && activeContexts.length > MAX_ACTIVE_CONTEXTS) {
+    return NextResponse.json({ error: `too many activeContexts (max ${MAX_ACTIVE_CONTEXTS})` }, { status: 413 });
+  }
+
+  // Per-user rate limit. Caps cost-attack speed and accidental hammering.
+  // Returns 429 with a Retry-After hint when exceeded. Fails open if
+  // Upstash isn't configured (warns once in dev/staging).
+  const rl = await checkRateLimit({
+    key: `chat:user:${user.id}`,
+    limit: CHAT_POLICY.limit,
+    windowSec: CHAT_POLICY.windowSec,
+  });
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'rate_limited', message: `Too many chat turns. Wait a moment and try again.` },
+      { status: 429, headers: { 'Retry-After': String(CHAT_POLICY.windowSec) } }
+    );
+  }
+
+  // Pre-filter pipeline. Run in parallel (each ~100-500ms) so the cumulative
+  // gate stays well under a second:
+  //   1. OpenAI Moderation — blocks content that violates LLM provider TOS
+  //      (CSAM, real-world violence, etc.); free.
+  //   2. LLM Guard — prompt-injection scan + PII sanitization (anonymize);
+  //      requires LLM_GUARD_URL sidecar to be active.
+  // Both fail OPEN when unavailable — security gates shouldn't take down
+  // the whole chat.
+  let sanitizedMessage = message;
+  if (hasText) {
+    const [mod, guard] = await Promise.all([
+      moderateText(message),
+      scanPrompt(message),
+    ]);
+    if (mod.flagged) {
+      const cats = flaggedCategories(mod).join(', ') || 'content policy';
+      return NextResponse.json(
+        { error: 'content_policy', message: `Mensagem bloqueada por política de conteúdo (${cats}).` },
+        { status: 400 }
+      );
+    }
+    if (guard.ok === false) {
+      return NextResponse.json(
+        { error: 'prompt_blocked', message: guard.reason || 'Sua mensagem foi bloqueada pela proteção de prompt.' },
+        { status: 400 }
+      );
+    }
+    // LLM Guard may have redacted PII; downstream uses the sanitized text.
+    if (guard.sanitizedPrompt && guard.sanitizedPrompt !== message) {
+      sanitizedMessage = guard.sanitizedPrompt;
+    }
+  }
 
   // The agent's orchestrating model is OUR choice (cost/quality), not the
   // user's picker. The picker on PromptDock chooses which model runs
@@ -173,8 +359,11 @@ export async function POST(request) {
   // Persist the user message immediately so it's visible on reload even if the run errors out.
   // Attachments are NOT persisted yet — they only travel with this turn so the agent can see
   // them. The result (asset nodes, generated images) IS the durable record.
+  // Persist the SANITIZED message (LLM Guard may have anonymized PII). The
+  // chat_messages row is what gets exported on LGPD right-to-access, so we
+  // store the redacted version everywhere except the agent's working copy.
   const persistedText = hasText
-    ? message
+    ? sanitizedMessage
     : `[image attachment${attachments.length > 1 ? 's' : ''}: ${attachments.map((a) => a.name || 'image').join(', ')}]`;
   await appendMessage({ threadId: thread.id, role: 'user', content: persistedText });
 
@@ -234,32 +423,100 @@ export async function POST(request) {
     }
   }
 
+  // Resolve the dataUrls of any IMAGE assets the user has selected as
+  // active context. We feed those bytes to the agent as multimodal
+  // image blocks even when the user didn't attach anything in chat —
+  // otherwise the agent can only "read about" the selection via assetId
+  // text, which is what made it operate blind in cheap models.
+  //
+  // The cap matches gpt-image-1's own image-edit input limit (4): if
+  // the user selects more than 4 assets, the agent can't fit them in
+  // an edit call anyway, so injecting more than 4 just wastes tokens.
+  // For 1-4 active assets we inject ALL of them — multi-image flows
+  // (base + style refs) are first-class.
+  const CONTEXT_IMAGE_CAP = 4;
+  const contextImages = [];
+  if (Array.isArray(activeContexts) && activeContexts.length > 0) {
+    const activeNodeIds = activeContexts
+      .filter((c) => c?.kind === 'node' && typeof c.id === 'string')
+      .map((c) => c.id);
+    if (activeNodeIds.length > 0) {
+      const rows = await sql`
+        SELECT n.id AS node_id, n.meta AS node_meta,
+               (n.meta->>'assetId') AS asset_id
+        FROM nodes n
+        WHERE n.id = ANY(${activeNodeIds})
+          AND n.board_id = ${boardId}
+          AND n.kind = 'asset'
+      `;
+      const assetIds = rows.map((r) => r.asset_id).filter((s) => typeof s === 'string' && s);
+      let assetMetaById = new Map();
+      if (assetIds.length > 0) {
+        const aRows = await sql`SELECT id, meta FROM assets WHERE id = ANY(${assetIds}) AND user_id = ${user.id}`;
+        assetMetaById = new Map(aRows.map((a) => [a.id, a.meta || {}]));
+      }
+      for (const r of rows) {
+        if (contextImages.length >= CONTEXT_IMAGE_CAP) break;
+        const aMeta = assetMetaById.get(r.asset_id) || {};
+        const dataUrl = aMeta.dataUrl || r.node_meta?.dataUrl || null;
+        if (typeof dataUrl !== 'string' || !dataUrl) continue;
+        const mimeType = aMeta.mimeType || r.node_meta?.mimeType
+          || (/^data:([^;]+);/.exec(dataUrl)?.[1])
+          || 'image/png';
+        const name = r.node_meta?.name || 'active';
+        contextImages.push({ kind: 'image', dataUrl, mimeType, name, nodeId: r.node_id, assetId: r.asset_id });
+      }
+    }
+  }
+
   // Build the message history for the LLM. When attachments are present the
   // user content becomes an Anthropic-style array of blocks: one text block
   // (the typed message + a hint about persisted assetIds + the fact that the
   // node already lives on the canvas, or a default cue if user only attached
   // without text) plus one image block per attachment. Each adapter
   // translates this shape into its provider's native multimodal format.
+  // Surgical context hint resolved server-side from activeContexts:
+  // active selection ids + workflow terminal info when a section is
+  // selected. Everything else (board listings, proximity, viewing
+  // other nodes, etc.) is on-demand via the exploration tools.
+  const fullHint = await buildWorkflowHint({ activeContexts, sql, userId: user.id, boardId });
+  const hasContextImages = contextImages.length > 0;
+  const goesMultimodal = hasAttachments || hasContextImages;
   let initialMessages;
-  if (hasAttachments) {
+  if (goesMultimodal) {
     let textPart = hasText
-      ? message
-      : 'Anexei a(s) imagem(s) acima. Use seu próprio julgamento sobre o que fazer com ela(s).';
+      ? sanitizedMessage
+      : (hasAttachments
+        ? 'Anexei a(s) imagem(s) acima. Use seu próprio julgamento sobre o que fazer com ela(s).'
+        : 'Veja a(s) imagem(s) do meu contexto ativo acima.');
     if (persistedAttachmentAssets.length) {
       const inv = persistedAttachmentAssets
         .map((a) => `assetId=${a.id}${a.nodeId ? `, nodeId=${a.nodeId}` : ''} (${a.name})`)
         .join('; ');
       textPart += `\n\n[The attached image(s) are ALREADY on the canvas as asset nodes. Do NOT call createNode for them — they exist. Inventory: ${inv}. Use the assetId as baseImageAssetId in createImage when doing image-to-image edits / style transfer.]`;
     }
+    if (hasContextImages) {
+      const inv = contextImages
+        .map((c) => `assetId=${c.assetId} nodeId=${c.nodeId} ("${c.name}")`)
+        .join('; ');
+      textPart += `\n\n[The image(s) below this text are the user's ACTIVE CONTEXT — already on the canvas. You can SEE them now. Inventory: ${inv}. Refer to them by their assetId for createImage calls.]`;
+    }
+    if (fullHint) textPart = `${fullHint}\n\n${textPart}`;
     const blocks = [{ type: 'text', text: textPart }];
-    for (const a of attachments) {
-      if (a?.kind === 'image' && typeof a.dataUrl === 'string') {
-        blocks.push({ type: 'image', dataUrl: a.dataUrl, name: a.name, mimeType: a.mimeType });
+    if (hasAttachments) {
+      for (const a of attachments) {
+        if (a?.kind === 'image' && typeof a.dataUrl === 'string') {
+          blocks.push({ type: 'image', dataUrl: a.dataUrl, name: a.name, mimeType: a.mimeType });
+        }
       }
+    }
+    for (const c of contextImages) {
+      blocks.push({ type: 'image', dataUrl: c.dataUrl, name: c.name, mimeType: c.mimeType });
     }
     initialMessages = [{ role: 'user', content: blocks }];
   } else {
-    initialMessages = [{ role: 'user', content: message }];
+    const text = fullHint ? `${fullHint}\n\n${sanitizedMessage}` : sanitizedMessage;
+    initialMessages = [{ role: 'user', content: text }];
   }
 
   const { stream, send, close } = createSseStream();
@@ -437,6 +694,10 @@ export async function POST(request) {
       }
     } finally {
       if (runId) unregisterRun(runId);
+      // Langfuse batches events — flush BEFORE close() so the SSE
+      // response doesn't tear down the serverless worker while traces
+      // are still queued.
+      try { await flushLangfuse(); } catch (_) {}
       close();
     }
   })();

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { nodeOrigin, originColor, ORIGIN_COLORS } from '../lib/node-origin.js';
 
-const CATEGORY_ORDER = ['url', 'html', 'md', 'screenshot', 'prompt', 'skill'];
+const CATEGORY_ORDER = ['url', 'html', 'md', 'screenshot'];
 
 const CategoryIcon = {
   url: () => (
@@ -193,7 +193,7 @@ export default function CategoryCounts({ nodes, edges, onZoomToConnection }) {
   const ref = useRef(null);
 
   const counts = useMemo(() => {
-    const c = { url: 0, html: 0, md: 0, screenshot: 0, prompt: 0, skill: 0 };
+    const c = { url: 0, html: 0, md: 0, screenshot: 0 };
     for (const n of nodes) {
       const o = nodeOrigin(n);
       if (c[o] !== undefined) c[o]++;

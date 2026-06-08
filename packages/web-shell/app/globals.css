@@ -1,3 +1,37 @@
+/* Tailwind v4 — utility-first layer for new components and microanimations.
+   Coexists with the plain CSS below: legacy components (PromptDock,
+   CanvasNode, etc.) keep their hand-written rules; new work uses Tailwind
+   utilities, and old rules migrate gradually when touched. Theme tokens
+   live in the @theme block so Tailwind utilities reference the same design
+   values as the plain CSS variables defined under :root further down. */
+@import "tailwindcss";
+
+@theme {
+  --color-bg-base: #0a0a0a;
+  --color-bg-frosted: rgba(10, 10, 10, 0.72);
+  --color-text-primary: #f5f5f5;
+  --color-text-secondary: rgba(245, 245, 245, 0.62);
+  --color-text-muted: rgba(245, 245, 245, 0.42);
+  --color-text-faint: rgba(245, 245, 245, 0.22);
+  --color-border-frosted: rgba(255, 255, 255, 0.08);
+  --color-border-frosted-strong: rgba(255, 255, 255, 0.12);
+  --color-hover-bg: rgba(255, 255, 255, 0.06);
+  --color-hover-bg-strong: rgba(255, 255, 255, 0.12);
+
+  --shadow-frost: 0 16px 60px rgba(0, 0, 0, 0.55);
+
+  --radius-pill: 999px;
+  --radius-sm: 12px;
+  --radius-md: 18px;
+  --radius-lg: 22px;
+
+  /* Aeonik wired as the default sans so `font-sans` resolves to it
+     automatically. Instrument Serif is exposed via `font-display`. */
+  --font-sans: 'Aeonik', system-ui, -apple-system, sans-serif;
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 /* ─── Aeonik (local) ────────────────────────────────────────────────────── */
 @font-face {
   font-family: 'Aeonik';
@@ -760,6 +794,12 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
   box-shadow: none;
   padding: 2px 4px;
   line-height: 1;
+  /* Span the full row width and distribute the category items evenly —
+     without this the inline-flex trigger only takes content width and
+     packs at the start, leaving an asymmetric gap on the right. */
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
 }
 .canvas-minimap-counts .canvas-counts:hover {
   background: rgba(255, 255, 255, 0.06);
@@ -3750,11 +3790,10 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
 /* ── Section frames (auto-derived workflow groups) ──────────────── */
 .canvas-section-frame {
   position: absolute;
-  /* Effectively no tint — the blur alone carries the glass effect and
-     the dot grid behind reads through almost unchanged. */
-  background: rgba(255, 255, 255, 0.003);
-  backdrop-filter: blur(10px) saturate(118%);
-  -webkit-backdrop-filter: blur(10px) saturate(118%);
+  /* #181818 tint, translucent so the dot grid blurs through. */
+  background: rgba(24, 24, 24, 0.5);
+  backdrop-filter: blur(24px) saturate(120%);
+  -webkit-backdrop-filter: blur(24px) saturate(120%);
   border: 1.5px solid rgba(255, 255, 255, 0.127);
   border-radius: 24px;
   pointer-events: none;
@@ -4061,7 +4100,6 @@ body.rb-ed-light .canvas-section-handle-se:hover { color: rgba(0, 0, 0, 0.7); }
 
 /* ── Active context pill in PromptDock ──────────────────────────── */
 .prompt-dock-context-wrap {
-  overflow: hidden;
   margin: 0 -10px;
 }
 .prompt-dock-context-pill {
@@ -4279,94 +4317,6 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
   background: #1a1a1a;
 }
 
-/* Aspect ratio pill — sits half-inside half-outside the bottom edge of
-   asset cards, centered horizontally. Solid color matches the node's
-   own origin colour (--cnode-port-fill) so the pill reads as a property
-   of THIS node, not a floating UI element. Sized at +200% of the first
-   draft so it reads as a proper chip, not a sticker. */
-.cnode-aspect-pill {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  transform: translate(-50%, 50%);
-  background: var(--cnode-port-fill, #94a3b8);
-  color: #fff;
-  border: none;
-  border-radius: 999px;
-  padding: 10px 12px 10px 22px;
-  font-family: inherit;
-  font-size: 20px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  cursor: pointer;
-  z-index: 6;
-  user-select: none;
-  white-space: nowrap;
-  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.3);
-  transition: filter 120ms ease, transform 120ms ease;
-}
-.cnode-aspect-pill:hover { filter: brightness(1.12); }
-.cnode-aspect-pill:active { transform: translate(-50%, 50%) scale(0.97); }
-.cnode-aspect-pill-divider {
-  width: 1px;
-  height: 22px;
-  background: rgba(255, 255, 255, 0.45);
-  align-self: center;
-}
-.cnode-aspect-pill-chevron {
-  width: 22px;
-  height: 22px;
-  opacity: 0.95;
-  margin-right: 6px;
-}
-.cnode-aspect-pill-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(20, 20, 22, 0.92);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
-  border: 1px solid var(--border-frosted);
-  border-radius: 16px;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 150px;
-  z-index: 7;
-  box-shadow: 0 18px 56px rgba(0, 0, 0, 0.5);
-}
-.cnode-aspect-pill-menu button {
-  background: transparent;
-  border: none;
-  color: var(--text-primary);
-  padding: 10px 16px;
-  border-radius: 10px;
-  font-family: inherit;
-  font-size: 20px;
-  text-align: left;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  letter-spacing: 0.02em;
-}
-.cnode-aspect-pill-menu button:hover { background: var(--hover-bg); }
-.cnode-aspect-pill-menu button.current {
-  color: var(--text-faint);
-  cursor: default;
-}
-.cnode-aspect-pill-menu button.current:hover { background: transparent; }
-body.rb-ed-light .cnode-aspect-pill-menu {
-  background: rgba(255, 255, 255, 0.94);
-  border-color: var(--border-frosted);
-}
-
 /* Output dimensions label — anchored to the bottom-right CORNER of the
    asset node, sits OUTSIDE the card (slightly below + flush right).
    70% opacity, pointer-events:none so it doesn't intercept clicks
@@ -4472,39 +4422,76 @@ body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
 /* Side-docked layouts — full-height sidebar at left or right edge.
    Top matches the top edge of the zoom widget (18px) so the dock
    reaches all the way up to align with the rest of the top chrome.
-   Bottom + lateral edges keep the tight 12px reclaim. */
+   Bottom + lateral edges keep the tight 12px reclaim. Width 306px
+   (10% less than the original 340) per UX request — leaves more
+   canvas visible. justify-content: flex-end pins the input cluster
+   to the bottom when there's no chat panel to absorb leftover space. */
 .prompt-dock.dock-left,
 .prompt-dock.dock-right {
   top: 18px;
   bottom: 12px;
-  width: 340px;
+  width: 306px;
   transform: none;
+  justify-content: flex-end;
 }
 .prompt-dock.dock-left { left: 12px; right: auto; }
 .prompt-dock.dock-right { right: 12px; left: auto; }
 
 /* CSS vars consumed by the canvas chrome to shift toolbars + minimap
    inward when the chat is side-docked. Math: edge_offset (12) +
-   dock_width (340) + gap_to_chrome (24) − chrome_base_offset (18) = 358. */
+   dock_width (306) + gap_to_chrome (24) − chrome_base_offset (18) = 324. */
 body { --chat-dock-left-shift: 0px; --chat-dock-right-shift: 0px; }
-body.chat-dock-l { --chat-dock-left-shift: 358px; }
-body.chat-dock-r { --chat-dock-right-shift: 358px; }
+body.chat-dock-l { --chat-dock-left-shift: 324px; }
+body.chat-dock-r { --chat-dock-right-shift: 324px; }
 /* While dragging, preview both sidebars so the user sees the canvas
    chrome reorganise as if the dock were already side-docked at either
    edge. CSS transition on the toolbar/minimap shifts gives a smooth
    slide instead of a snap. */
 body.chat-dock-preview {
-  --chat-dock-left-shift: 358px;
-  --chat-dock-right-shift: 358px;
+  --chat-dock-left-shift: 324px;
+  --chat-dock-right-shift: 324px;
 }
 /* When docked, the chat panel must FILL the vertical space between
-   the top chrome (grip + chips) and the bottom chrome (textarea +
-   actions). Without these overrides the panel keeps its 28vh cap and
-   the rest of the dock paints empty dark space. */
+   the chat history (top) and the input cluster (bottom). The order
+   rules below put the active-context pill DIRECTLY above the textarea
+   (the user explicitly wants it close to where they type in docked
+   mode, separate from the default bottom-dock layout where the pill
+   sits at the very top). The drag handle / resize handles / collapse
+   chevron are absolutely positioned so the order property doesn't
+   affect them. */
 .prompt-dock.dock-left .chat-panel,
 .prompt-dock.dock-right .chat-panel {
   flex: 1 1 auto;
   max-height: none;
+}
+.prompt-dock.dock-left .chat-panel,
+.prompt-dock.dock-right .chat-panel               { order: 1; }
+.prompt-dock.dock-left .prompt-dock-chat-divider,
+.prompt-dock.dock-right .prompt-dock-chat-divider { order: 2; }
+.prompt-dock.dock-left .prompt-dock-chips-wrap,
+.prompt-dock.dock-right .prompt-dock-chips-wrap   { order: 3; }
+.prompt-dock.dock-left .prompt-dock-context-wrap,
+.prompt-dock.dock-right .prompt-dock-context-wrap { order: 4; }
+.prompt-dock.dock-left .prompt-dock-textarea,
+.prompt-dock.dock-right .prompt-dock-textarea     { order: 5; }
+.prompt-dock.dock-left .prompt-dock-actions,
+.prompt-dock.dock-right .prompt-dock-actions      { order: 6; }
+/* Lift the textarea + actions cluster off the dock floor — without
+   this the last line of typed text crowded into the bottom corner
+   where the absolute-positioned send button overlaps the visual
+   safe zone. Extra bottom padding pushes the input area up. */
+.prompt-dock.dock-left .prompt-dock-actions,
+.prompt-dock.dock-right .prompt-dock-actions {
+  padding-bottom: 14px;
+}
+/* 3× the default empty-state height (40px → 120px) when docked. The
+   auto-resize useEffect sets `height` inline based on scrollHeight so
+   the JS still grows the field as the user types; min-height is what
+   the CSS-vs-inline cascade resolves as the floor, so the visible
+   default lands at 120px and the field never shrinks below that. */
+.prompt-dock.dock-left .prompt-dock-textarea,
+.prompt-dock.dock-right .prompt-dock-textarea {
+  min-height: 120px;
 }
 /* Hide the collapse chevron in side-dock layouts — the panel is meant
    to stay open here; collapsing it would leave a tall narrow strip of
@@ -4731,7 +4718,7 @@ body.rb-ed-light .prompt-dock-collapse-btn {
 .prompt-dock-ghost-right {
   top: 18px;
   bottom: 12px;
-  width: 340px;
+  width: 306px;
 }
 .prompt-dock-ghost-left  { left: 12px; }
 .prompt-dock-ghost-right { right: 12px; }
@@ -4968,13 +4955,15 @@ body.rb-ed-active .prompt-dock { display: none !important; }
 }
 
 .prompt-dock-send {
-  /* Lock the circular shape: flex:none keeps the button from being
-     stretched by the parent's space-between layout in narrow side-
-     docked widths (where flexbox can otherwise let it shrink/grow). */
-  flex: 0 0 34px;
+  /* Tucked into the dock's bottom-right rounded corner. position:absolute
+     escapes the actions-row flex flow so the button can sit FLUSH with
+     the dock's rounded edge (border-radius 22px); the 6px insets leave a
+     small visual gap inside the curve so the button hugs the corner
+     instead of overflowing past it. */
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
   width: 34px;
-  min-width: 34px;
-  max-width: 34px;
   height: 34px;
   border-radius: 50%;
   border: none;

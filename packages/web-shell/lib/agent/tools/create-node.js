@@ -35,17 +35,11 @@ const TYPE_DOC = TYPE_LIST.map((t) => `  - "${t}" (${NODE_TYPES[t].color} border
 
 export const createNodeTool = {
   name: 'createNode',
-  description: `Add a new node to the user's board. Pick "type" by what the user actually wants:
+  description: `Add a new node to the user's board.
 
 ${TYPE_DOC}
 
-IMPORTANT picking tips:
-- "blank website", "site em branco", "blank node", "novo site vazio", "empty canvas to fill" → type "blank-website" (teal). NOT "html-snippet" or bare site. Blank is for the user to manually compose by dragging things in.
-- "prompt node", "node de prompt", "instruction" → type "prompt"
-- "design system", "design.md", "tokens", "style guide" → type "design-system"
-- "image slot", "asset", "placeholder for an image" → type "asset"
-
-If the user wants a CAPTURED website (a real URL they want to snapshot), don't use this tool — ask them to paste the URL into the input bar; the capture flow is separate.`,
+If the user wants to CAPTURE a real website by URL (snapshot a live site), don't use this tool — that's a separate flow driven from the input bar.`,
   classification: 'safe',
   inputSchema: {
     type: 'object',

@@ -1,0 +1,43 @@
+# gitleaks config — scans staged diffs for accidentally committed secrets.
+# Run on each commit via .githooks/pre-commit. Project-specific allowlist
+# below covers test fixtures + the mock keys we use in vitest mocks.
+
+title = "Uncraft gitleaks config"
+
+[extend]
+# Inherits gitleaks' default rules (API keys, JWTs, AWS / GCP / Azure
+# credentials, Slack tokens, Stripe keys, etc.). Project additions below.
+useDefault = true
+
+[[rules]]
+id = "uncraft-openai-direct"
+description = "OpenAI key (sk-... patterns)"
+regex = '''sk-[a-zA-Z0-9]{20,}'''
+keywords = ["sk-"]
+
+[[rules]]
+id = "uncraft-anthropic-direct"
+description = "Anthropic key (sk-ant- patterns)"
+regex = '''sk-ant-[a-zA-Z0-9_-]{20,}'''
+keywords = ["sk-ant-"]
+
+[[rules]]
+id = "uncraft-gemini-direct"
+description = "Google AI Studio key (AIza... patterns)"
+regex = '''AIza[a-zA-Z0-9_-]{30,}'''
+keywords = ["AIza"]
+
+[allowlist]
+description = "Test fixtures and mock secrets — never real credentials"
+paths = [
+  '''.*\.test\.(js|jsx|ts|tsx)$''',
+  '''.*\.test\.post\.js$''',
+  '''.*\.fixture\.(js|json)$''',
+]
+regexes = [
+  # vitest mocks use these specific stub strings — never real secrets
+  '''sk-test-key''',
+  '''sk-ant-mock''',
+  '''AIza-mock''',
+  '''data:image/png;base64,''',
+]

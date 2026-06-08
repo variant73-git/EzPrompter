@@ -149,13 +149,27 @@ describe('generateOpenAIImage', () => {
     expect(mockGenerate).not.toHaveBeenCalled();
     expect(result.mode).toBe('edit');
     expect(result.base64).toBe(Buffer.from('edited-png-bytes').toString('base64'));
-    // Should pass the converted File-like object as image + the original prompt + size.
+    // Edit mode without explicit aspectRatio → size:'auto' so gpt-image-1
+    // matches the base image's aspect. Saves the agent from having to
+    // describe / ask about the input aspect.
     expect(mockEdit).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: 'make it sunset-lit',
-        size: '1024x1024',
+        size: 'auto',
         image: expect.objectContaining({ __mockFile: true, type: 'image/png' }),
       })
+    );
+  });
+
+  it('uses explicit aspectRatio in edit mode when agent forces a change', async () => {
+    await generateOpenAIImage({
+      prompt: 'make it widescreen',
+      aspectRatio: '16:9',
+      apiKey: 'sk-test-key',
+      baseImageDataUrl: `data:image/png;base64,${Buffer.from('src').toString('base64')}`,
+    });
+    expect(mockEdit).toHaveBeenCalledWith(
+      expect.objectContaining({ size: '1536x1024' })
     );
   });
 

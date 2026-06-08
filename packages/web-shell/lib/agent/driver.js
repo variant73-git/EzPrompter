@@ -18,6 +18,8 @@ import {
   awaitConfirm, awaitChoice, awaitContinue,
   isCancelled,
 } from './run-map.js';
+import { logAgentEvent } from '../agent-events.js';
+import { startAgentTrace, logGeneration, logToolSpan, endAgentTrace } from './trace.js';
 
 const DEFAULT_CAPS = {
   softIterations: 10,
@@ -73,6 +75,17 @@ export async function runAgentLoop(opts) {
   // we still want to catch the unfulfilled promise from an earlier iter.
   let lastNonEmptyAssistantText = '';
 
+  // Open a Langfuse trace for the whole run. Returns null when not
+  // configured — every other trace call below null-checks the handle.
+  const trace = startAgentTrace({
+    runId,
+    userId: ctx?.userId,
+    model: modelId,
+    sessionId: ctx?.threadId,
+    threadId: ctx?.threadId,
+    input: messages.slice(-1)?.[0]?.content,
+  });
+
   try {
     while (true) {
       if (runId && isCancelled(runId)) {
@@ -104,6 +117,12 @@ export async function runAgentLoop(opts) {
         lastSoftPauseAt = iterations;
       }
       iterations++;
+      // Audit: open a new iteration. Lets us reconstruct timeline + measure
+      // per-iter latency from the event stream alone.
+      if (runId && ctx?.userId) {
+        logAgentEvent({ runId, userId: ctx.userId, type: 'iter_start', payload: { iter: iterations } });
+      }
+      const iterStartTs = Date.now();
 
       // ── LLM call ───────────────────────────────────────────────────────
       // Race the LLM call against the same wall-clock deadline so a slow
@@ -112,6 +131,10 @@ export async function runAgentLoop(opts) {
       // helps BETWEEN iterations; without this race a 25-minute Anthropic
       // / Gemini stream gets to run to completion before we notice.
       const toolCalls = [];
+      if (runId && ctx?.userId) {
+        logAgentEvent({ runId, userId: ctx.userId, type: 'llm_call', payload: { iter: iterations, model: modelId } });
+      }
+      const llmCallStartTs = Date.now();
       const llmPromise = llm({
         model: modelId, system: systemPrompt, messages: history, tools, apiKey,
         // OpenAI uses this as a routing hint (same user → same cache replica);
@@ -139,9 +162,38 @@ export async function runAgentLoop(opts) {
           )),
         ]);
       } catch (e) {
+        if (runId && ctx?.userId) {
+          logAgentEvent({
+            runId, userId: ctx.userId, type: 'error',
+            payload: { iter: iterations, where: 'llm_call', message: String(e?.message || e), code: e?.code || null },
+            durationMs: Date.now() - llmCallStartTs,
+          });
+        }
         onEvent({ type: 'run_status', status: 'failed', err: e?.message || 'llm_timeout' });
         return { stop_reason: 'failed', iterations, usage: totalUsage, toolCounts };
       }
+      const llmDuration = Date.now() - llmCallStartTs;
+      if (runId && ctx?.userId) {
+        logAgentEvent({
+          runId, userId: ctx.userId, type: 'llm_response',
+          payload: {
+            iter: iterations,
+            stop_reason: finalMsg.stop_reason,
+            tool_calls_pending: toolCalls.length,
+            usage_input: finalMsg.usage?.input_tokens || 0,
+            usage_output: finalMsg.usage?.output_tokens || 0,
+          },
+          durationMs: llmDuration,
+        });
+      }
+      logGeneration(trace, {
+        name: `llm.iter-${iterations}`,
+        model: modelId,
+        input: history,
+        output: finalMsg.content,
+        usage: finalMsg.usage,
+        durationMs: llmDuration,
+      });
       history.push({ role: 'assistant', content: finalMsg.content });
 
       // After the agent has seen the user's multimodal attachment in iter 1,
@@ -182,36 +234,25 @@ export async function runAgentLoop(opts) {
       if (thisIterText.trim()) lastNonEmptyAssistantText = thisIterText;
 
       if (finalMsg.stop_reason === 'end_turn' || finalMsg.stop_reason === 'stop_sequence') {
-        // Announce-and-stop guard: if any iter in this run announced an
-        // intent that wasn't fulfilled by a tool call, force one more
-        // iteration with a synthetic user nudge. Capped at
-        // MAX_FORCED_CONTINUES so a chatty model can't trap us in a
-        // forever loop of empty promises.
+        // Announce-and-stop guard: a cheap model occasionally says
+        // "vou fazer X" and then ends the turn without calling X. When
+        // that pattern shows up, force one more iteration with a neutral
+        // nudge so the user isn't stranded. Capped at MAX_FORCED_CONTINUES.
+        // The "ingestedButDidntGenerate" heuristic that used to live here
+        // was removed — it assumed every addAssetFromUrl was meant to be
+        // followed by a createImage, which over-prescribed the agent's
+        // intent (e.g. user just wants to save a reference image, no edit).
         const lastText = lastNonEmptyAssistantText || thisIterText;
         const announcedIntent = INTENT_RX.test(lastText);
-        // Semantic backup: a style-transfer / image-edit workflow that
-        // INGESTED a reference but never GENERATED is the canonical
-        // incomplete state. Force a continuation even if the text didn't
-        // light up INTENT_RX. Same applies if the agent created a node
-        // but never connected it (createNode without addEdge).
-        const ingestedButDidntGenerate =
-          (toolCounts.addAssetFromUrl || 0) > 0 && (toolCounts.createImage || 0) === 0;
-        const shouldForce = (announcedIntent || ingestedButDidntGenerate)
-          && forcedContinues < MAX_FORCED_CONTINUES;
-        if (shouldForce) {
+        if (announcedIntent && forcedContinues < MAX_FORCED_CONTINUES) {
           forcedContinues++;
-          const reason = announcedIntent
-            ? 'announced intent'
-            : 'ingested without generating';
           // Visible in dev-server stdout so we can verify the safety net
           // actually fires when the agent stops after announcing intent.
           // eslint-disable-next-line no-console
-          console.log(`[agent] safety-net fired (#${forcedContinues}, ${reason}) — last text: ${lastText.slice(0, 120)}`);
+          console.log(`[agent] safety-net fired (#${forcedContinues}, announced intent) — last text: ${lastText.slice(0, 120)}`);
           history.push({
             role: 'user',
-            content: ingestedButDidntGenerate
-              ? 'Você ingeriu a referência mas não gerou a imagem. Chama createImage AGORA com baseImageAssetId=<a imagem anexa>, styleReferenceAssetIds=[<as referências ingeridas>], inputAssetIds=[baseImageAssetId, ...styleReferenceAssetIds], attachToBoard:true, prompt="" (vazio — o modelo vê as referências direto). Não responda com texto antes, ACT.'
-              : 'Continua. Você disse que ia executar o próximo passo — faça agora, no mesmo turno, chamando a ferramenta necessária. Não anuncie de novo, ACT.',
+            content: 'Continue. Você anunciou um próximo passo mas terminou o turno sem chamá-lo. Se ainda pretende executá-lo, chame a ferramenta agora; se não, conclua com uma frase curta dizendo o que ficou pendente.',
           });
           continue;
         }
@@ -301,6 +342,13 @@ export async function runAgentLoop(opts) {
 
         // ── Execute ─────────────────────────────────────────────────────
         onEvent({ type: 'tool_status', id: call.id, status: 'running' });
+        if (runId && ctx?.userId) {
+          logAgentEvent({
+            runId, userId: ctx.userId, type: 'tool_call',
+            payload: { iter: iterations, tool: call.name, args: call.input, callId: call.id },
+          });
+        }
+        const toolStartTs = Date.now();
         try {
           // Per-tool hard timeout. The wall_timeout cap only fires between
           // iterations; if a single tool hangs (e.g. an upstream API stuck
@@ -322,20 +370,46 @@ export async function runAgentLoop(opts) {
               TOOL_TIMEOUT_MS,
             )),
           ]);
+          const toolDuration = Date.now() - toolStartTs;
           if (result && result.error) {
             toolFailures[call.name] = (toolFailures[call.name] || 0) + 1;
             onEvent({ type: 'tool_status', id: call.id, status: 'error', error: result.message || result.error });
             toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(slimForHistory(result)), is_error: true });
+            if (runId && ctx?.userId) {
+              logAgentEvent({
+                runId, userId: ctx.userId, type: 'tool_error',
+                payload: { tool: call.name, callId: call.id, error: result.message || result.error },
+                durationMs: toolDuration,
+              });
+            }
+            logToolSpan(trace, { name: call.name, input: call.input, output: result, durationMs: toolDuration, error: result.message || result.error });
           } else {
             toolFailures[call.name] = 0;
             onEvent({ type: 'tool_status', id: call.id, status: 'done', result });
             toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(slimForHistory(result)) });
+            if (runId && ctx?.userId) {
+              logAgentEvent({
+                runId, userId: ctx.userId, type: 'tool_result',
+                payload: { tool: call.name, callId: call.id, result: slimForHistory(result) },
+                durationMs: toolDuration,
+              });
+            }
+            logToolSpan(trace, { name: call.name, input: call.input, output: slimForHistory(result), durationMs: toolDuration });
           }
         } catch (e) {
+          const toolDuration = Date.now() - toolStartTs;
           toolFailures[call.name] = (toolFailures[call.name] || 0) + 1;
           const errPayload = { error: 'execution_failed', message: String(e?.message || e) };
           onEvent({ type: 'tool_status', id: call.id, status: 'error', error: errPayload.message });
           toolResultsForHistory.push({ tool_use_id: call.id, content: JSON.stringify(errPayload), is_error: true });
+          if (runId && ctx?.userId) {
+            logAgentEvent({
+              runId, userId: ctx.userId, type: 'tool_error',
+              payload: { tool: call.name, callId: call.id, error: errPayload.message, threw: true },
+              durationMs: toolDuration,
+            });
+          }
+          logToolSpan(trace, { name: call.name, input: call.input, output: errPayload, durationMs: toolDuration, error: errPayload.message });
         }
       }
 
@@ -351,6 +425,14 @@ export async function runAgentLoop(opts) {
     }
   } finally {
     clearTimeout(wallTimer);
+    // Close the Langfuse trace with whatever final state we have. The
+    // SDK batches and flushes async; we don't await here — the route's
+    // finally block calls flushLangfuse() before the response ends.
+    endAgentTrace(trace, {
+      output: lastNonEmptyAssistantText,
+      status: 'completed',
+      iterations,
+    });
   }
 }
 

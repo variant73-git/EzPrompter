@@ -34,6 +34,12 @@ vi.mock('../../../lib/agent/caps.js', () => ({
 vi.mock('../../../lib/agent/llm-anthropic.js', () => ({ callAnthropic: vi.fn() }));
 vi.mock('../../../lib/agent/llm-openai.js', () => ({ callOpenAI: vi.fn() }));
 vi.mock('../../../lib/agent/llm-gemini.js', () => ({ callGemini: vi.fn() }));
+// In tests we bypass the circuit breaker so route routing assertions can
+// still rely on function identity. Breaker behaviour itself is verified
+// directly against opossum at lib/agent/circuit.test.js when we add it.
+vi.mock('../../../lib/agent/circuit.js', () => ({
+  breakerFor: (_name, fn) => fn,
+}));
 const driverCalls = [];
 vi.mock('../../../lib/agent/driver.js', () => ({
   runAgentLoop: vi.fn(async (opts) => {
@@ -221,8 +227,9 @@ describe('POST /api/chat — multimodal user content', () => {
     const userMsg = driverCalls[0].messages[0];
     expect(userMsg.role).toBe('user');
     expect(Array.isArray(userMsg.content)).toBe(true);
-    // First text block is the user message + a hint listing the persisted
-    // attachment asset IDs (so the agent can pass them to createImage).
+    // First text block carries the user's typed message + the attachment-
+    // inventory line. No board-state preamble — that moved to the on-
+    // demand listBoard() tool in the tools-first architecture.
     expect(userMsg.content[0].type).toBe('text');
     expect(userMsg.content[0].text).toMatch(/^what do you see\?/);
     expect(userMsg.content[0].text).toMatch(/asset-mock-123/);

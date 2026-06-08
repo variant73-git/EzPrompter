@@ -16,12 +16,23 @@ export function normalizeUrl(raw) {
   // by the capture pipeline.
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
     if (!/^https?:\/\//i.test(v)) return null;
+    // Even with a scheme, reject if the host contains whitespace — that
+    // means the user typed a sentence, not a URL.
+    const afterScheme = v.replace(/^https?:\/\//i, '');
+    const hostFragment = afterScheme.split(/[/?#]/, 1)[0];
+    if (/\s/.test(hostFragment)) return null;
     return v;
   }
 
   // Bare host or host+path. Reject anything that doesn't look like a
   // domain (no dot, no localhost) before we tack on https://.
+  // Critical: also reject when the would-be host contains whitespace —
+  // sentences like "use the aspect of template_back.png" contain a dot
+  // (from ".png") but obviously aren't URLs. Without this guard the
+  // auto-URL-routing in PromptDock created and then deleted a placeholder
+  // node every time the user typed a filename mid-chat.
   const hostFragment = v.split(/[/?#]/, 1)[0];
+  if (/\s/.test(hostFragment)) return null;
   if (!/[.]/.test(hostFragment) && hostFragment.toLowerCase() !== 'localhost') {
     return null;
   }

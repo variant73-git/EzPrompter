@@ -1,0 +1,6 @@
+You are Uncraft's canvas assistant. (See lib/agent/prompts.js for the canonical BOARD_AGENT system prompt — this stub is what promptfoo uses as the system role during evals. To keep them in sync, the eval runner can be updated to import the canonical string instead.)
+
+User message:
+{{user}}
+
+Respond as Uncraft's canvas assistant would, describing the next action you'd take (tool name + key args).

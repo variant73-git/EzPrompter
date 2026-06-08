@@ -129,10 +129,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // so <ChallengeModal /> mounts. placeholderId lets the modal's cancel /
   // open-site handlers clean up the temp node from the canvas.
   const [challenge, setChallenge] = useState(null);
-  // Regen-aspect confirm modal. Open when user picks a different aspect via
-  // the asset-pill. busy=true while the regen call is in flight so the
-  // confirm button shows a spinner and click-outside is disabled.
-  const [regenAspect, setRegenAspect] = useState(null); // { nodeId, aspect, busy }
   // Active section selection — the workflow the user is currently operating
   // on. When set, the PromptDock surfaces a ContextPill, the section frame
   // gets an accent border, and the agent receives section context with every
@@ -148,7 +144,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // label or the Rename item in the right-click menu.
   const [editingSectionId, setEditingSectionId] = useState(null);
   // Section pending delete confirmation. Same ConfirmModal pattern as
-  // playSection / regenAspect — { section, busy }.
+  // playSection — { section, busy }.
   const [sectionDelete, setSectionDelete] = useState(null);
   // Custom section names — sections are derived from connected components,
   // so the id is stable as long as members don't change. We keep overrides
@@ -1423,36 +1419,83 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setTimeout(() => URL.revokeObjectURL(url), 100);
   }
 
-  // Play a section: send a synthetic chat message via the PromptDock's
-  // imperative API. The agent receives the workflow context in the message
-  // body and decides which tool(s) re-execute the operation that produced
-  // the section's terminal node.
+  // Play a section: deterministic server-side re-run. NO agent involved —
+  // the terminal asset stores everything we need (prompt, mode, aspect,
+  // base + style ref asset ids, provider) so the rerun is a pure data
+  // op. The result REPLACES the terminal node in place: same graph, new
+  // pixels. Removing the agent from this path is what makes re-run
+  // actually "re-run" instead of "the agent recreates everything from
+  // scratch and asks the user 3 questions first".
   async function handleConfirmPlaySection() {
-    if (!playSection || playSection.busy) return;
+    if (!playSection) return;
     const s = playSection.section;
-    setPlaySection((prev) => (prev ? { ...prev, busy: true } : prev));
-    // Compose a hint the agent can parse. Member kinds + names help it
-    // pick the right tool (createImage vs runFlow vs editSite).
-    const memberSummary = s.memberIds.map((id) => {
-      const n = nodes.find((x) => x.id === id);
-      if (!n) return null;
-      const label = n.meta?.name || n.kind;
-      return `${n.id.slice(0, 8)} (${n.kind}: ${label})`;
-    }).filter(Boolean).join(', ');
-    const synth = `[Workflow play] Re-execute the workflow "${s.name}". Member nodes: ${memberSummary}. Re-run the operation that produced the terminal result in this chain — preserve the same inputs and references.`;
+    setPlaySection(null);
+
+    // Find the terminal node of the chain — the member that receives
+    // edges from other members but doesn't fan out to another member.
+    // For typical style-transfer workflows (base + ref → result) there
+    // is exactly one such node; if zero or multiple are found, fall
+    // back to an explicit error so the user knows the chain shape isn't
+    // re-runnable yet.
+    const memberSet = new Set(s.memberIds);
+    const candidates = s.memberIds.filter((id) => {
+      const node = nodes.find((n) => n.id === id);
+      if (!node || node.kind !== 'asset') return false;
+      const hasIncomingFromMember = edges.some((e) => e.target_node_id === id && memberSet.has(e.source_node_id));
+      const hasOutgoingToMember   = edges.some((e) => e.source_node_id === id && memberSet.has(e.target_node_id));
+      return hasIncomingFromMember && !hasOutgoingToMember;
+    });
+    if (candidates.length !== 1) {
+      toast.error(candidates.length === 0
+        ? 'Could not find a terminal node to re-run in this workflow.'
+        : 'This workflow has multiple terminal nodes; ambiguous re-run.');
+      return;
+    }
+    const terminalId = candidates[0];
+
+    // Optimistic: flip the terminal into the generating state right away
+    // so the canvas card shows the same spinner the first run did. If
+    // the server call errors we revert below.
+    setNodes((prev) => prev.map((n) => (
+      n.id === terminalId
+        ? { ...n, meta: { ...(n.meta || {}), status: 'generating' } }
+        : n
+    )));
+
     try {
-      // Fire via PromptDock imperative API. The chat panel will open and
-      // stream the agent's response as usual.
-      const api = promptDockRef.current;
-      if (!api?.sendMessage) {
-        throw new Error('PromptDock not ready');
-      }
-      await api.sendMessage(synth);
-      setPlaySection(null);
+      const res = await fetch('/api/sections/rerun', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ terminalNodeId: terminalId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.message || body?.error || `HTTP ${res.status}`);
+
+      // Patch the node in place with the new image data.
+      setNodes((prev) => prev.map((n) => (
+        n.id === terminalId
+          ? {
+              ...n,
+              meta: {
+                ...(n.meta || {}),
+                dataUrl: body.dataUrl,
+                mimeType: body.mimeType,
+                provider: body.provider,
+                status: 'done',
+              },
+            }
+          : n
+      )));
     } catch (e) {
-      console.warn('[play-section] failed:', e?.message || e);
-      toast.error(e?.message || 'Play failed.');
-      setPlaySection((prev) => (prev ? { ...prev, busy: false } : prev));
+      console.warn('[section-rerun] failed:', e?.message || e);
+      toast.error(e?.message || 'Re-run failed.');
+      // Revert the optimistic generating flag so the existing image keeps showing.
+      setNodes((prev) => prev.map((n) => (
+        n.id === terminalId
+          ? { ...n, meta: { ...(n.meta || {}), status: 'done' } }
+          : n
+      )));
     }
   }
 
@@ -1550,64 +1593,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     } catch (e) {
       console.warn('[replace-content] failed:', e?.message || e);
       toast.error(e?.message || 'Replace failed.');
-    }
-  }
-
-  // Aspect-ratio regen: user picked a different aspect on the asset pill.
-  // We open a confirm modal first (the regen costs credits and replaces
-  // the existing image in place — wanted to be explicit before firing).
-  function handleRequestRegenAspect(nodeId, aspect) {
-    setRegenAspect({ nodeId, aspect, busy: false });
-  }
-  async function handleConfirmRegenAspect() {
-    if (!regenAspect || regenAspect.busy) return;
-    setRegenAspect((s) => (s ? { ...s, busy: true } : s));
-    const { nodeId, aspect } = regenAspect;
-    // Optimistic: flip the node into generating state so the spinner shows
-    // even before the server commits.
-    setNodes((prev) => prev.map((n) => (
-      n.id === nodeId
-        ? { ...n, meta: { ...(n.meta || {}), status: 'generating' } }
-        : n
-    )));
-    try {
-      const res = await fetch(`/api/nodes/${nodeId}/regen-aspect`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ aspectRatio: aspect }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.detail || body?.message || body?.error || `HTTP ${res.status}`);
-      // Patch the node in-place with new dataUrl + dims so the canvas re-renders
-      // without a full refetch.
-      setNodes((prev) => prev.map((n) => (
-        n.id === nodeId
-          ? {
-              ...n,
-              width: body.width ?? n.width,
-              height: body.height ?? n.height,
-              meta: {
-                ...(n.meta || {}),
-                dataUrl: body.dataUrl,
-                mimeType: body.mimeType,
-                aspectRatio: body.aspectRatio,
-                status: 'done',
-              },
-            }
-          : n
-      )));
-      setRegenAspect(null);
-    } catch (e) {
-      console.warn('[regen-aspect] failed:', e?.message || e);
-      // Revert optimistic generating flag.
-      setNodes((prev) => prev.map((n) => (
-        n.id === nodeId
-          ? { ...n, meta: { ...(n.meta || {}), status: 'done' } }
-          : n
-      )));
-      toast.error(e?.message || 'Regen failed.');
-      setRegenAspect((s) => (s ? { ...s, busy: false } : s));
     }
   }
 
@@ -2815,7 +2800,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   nn.id === n.id ? { ...nn, meta: { ...(nn.meta || {}), ...metaPatch } } : nn
                 )));
               }}
-              onRequestRegenAspect={handleRequestRegenAspect}
               onReplaceContent={handleReplaceContent}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
             />
@@ -2892,7 +2876,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 <button
                   type="button"
                   className="canvas-section-play-btn"
-                  data-tooltip="Re-run this workflow"
                   onClick={(e) => {
                     e.stopPropagation();
                     setPlaySection({ section: s, busy: false });
@@ -3118,17 +3101,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       )}
 
       <ToastRoot />
-
-      <ConfirmModal
-        open={!!regenAspect}
-        title="Regenerate image?"
-        message={regenAspect ? `This will replace the current image with a new ${regenAspect.aspect} generation using the same prompt and references. Costs credits.` : ''}
-        confirmLabel="Regenerate"
-        cancelLabel="Cancel"
-        busy={!!regenAspect?.busy}
-        onConfirm={handleConfirmRegenAspect}
-        onCancel={() => { if (!regenAspect?.busy) setRegenAspect(null); }}
-      />
 
       {sectionMenu && typeof document !== 'undefined' && (() => {
         const s = sections.find((x) => x.id === sectionMenu.sectionId);

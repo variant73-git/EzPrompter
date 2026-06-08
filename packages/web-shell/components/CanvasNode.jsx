@@ -1,13 +1,12 @@
 'use client';
 
-import { useRef, useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { useRef, useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
 import { nodeOrigin } from '../lib/node-origin.js';
 import MdPreviewBody from './node-bodies/MdPreviewBody.jsx';
 import PromptBody from './node-bodies/PromptBody.jsx';
 import SkillBody from './node-bodies/SkillBody.jsx';
-import AssetSmartEditDock from './canvas/AssetSmartEditDock.jsx';
 
 const DRAG_THRESHOLD = 4;
 
@@ -38,126 +37,32 @@ function truncateWithExtension(name, max = 15) {
   return s.slice(0, baseAvailable) + ELLIPSIS + ext;
 }
 
-// Aspect-ratio metadata. API output dims match what the createImage tool
-// requests from gpt-image-1 (SIZE_MAP in lib/image-gen/openai-image.js).
-// Node display dims should match the create-image tool's ASPECT_DIMENSIONS
-// so the pill text + dims label stay consistent across regen + initial gen.
-const ASPECT_OPTIONS = [
-  { id: '1:1',  apiW: 1024, apiH: 1024 },
-  { id: '16:9', apiW: 1792, apiH: 1024 },
-  { id: '9:16', apiW: 1024, apiH: 1792 },
-  { id: '3:4',  apiW: 1024, apiH: 1280 },
-  { id: '4:3',  apiW: 1280, apiH: 1024 },
-];
-function inferAspect(node) {
-  const stored = node?.meta?.aspectRatio;
-  if (stored && ASPECT_OPTIONS.find((o) => o.id === stored)) return stored;
-  const w = node?.width || 512;
-  const h = node?.height || 512;
-  if (!h) return '1:1';
-  const r = w / h;
-  let best = '1:1', bestDiff = Infinity;
-  for (const o of ASPECT_OPTIONS) {
-    const targetR = o.apiW / o.apiH;
-    const diff = Math.abs(r - targetR);
-    if (diff < bestDiff) { bestDiff = diff; best = o.id; }
-  }
-  return best;
-}
-function dimsForAspect(aspectId) {
-  return ASPECT_OPTIONS.find((o) => o.id === aspectId) || ASPECT_OPTIONS[0];
-}
-
-const ChevronDownIcon = () => (
-  <svg className="cnode-aspect-pill-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <polyline points="6 9 12 15 18 9" />
-  </svg>
-);
-
-// Aspect-ratio pill rendered on the bottom edge of asset cards. Click opens
-// a dropdown of standard aspects; choosing a different one calls onRequestRegen
-// which the parent surfaces via a confirm modal.
-function AssetAspectPill({ node, onRequestRegen }) {
-  const [open, setOpen] = useState(false);
-  const current = inferAspect(node);
+// Decode the natural pixel dimensions of an image source (data URL or
+// remote URL). Used to label asset nodes with the TRUE dims + aspect of
+// the underlying content, not the canvas card size or a stored aspect
+// guess. Returns null while loading or on error; consumers should hide
+// the label until it resolves.
+function useImageNaturalDims(src) {
+  const [dims, setDims] = useState(null);
   useEffect(() => {
-    if (!open) return;
-    function close(e) {
-      const t = e.target;
-      if (!t?.closest?.('.cnode-aspect-pill') && !t?.closest?.('.cnode-aspect-pill-menu')) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', close, true);
-    return () => document.removeEventListener('mousedown', close, true);
-  }, [open]);
-  return (
-    <>
-      <button
-        type="button"
-        className="cnode-aspect-pill"
-        title="Change aspect ratio"
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={(e) => { e.stopPropagation(); setOpen((p) => !p); }}
-      >
-        <span>{current}</span>
-        <span className="cnode-aspect-pill-divider" aria-hidden="true" />
-        <ChevronDownIcon />
-      </button>
-      {open && (
-        <div className="cnode-aspect-pill-menu" onMouseDown={(e) => e.stopPropagation()}>
-          {ASPECT_OPTIONS.map((o) => {
-            const isCurrent = o.id === current;
-            return (
-              <button
-                key={o.id}
-                type="button"
-                className={isCurrent ? 'current' : ''}
-                disabled={isCurrent}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setOpen(false);
-                  if (!isCurrent) onRequestRegen?.(o.id);
-                }}
-              >
-                <span>{o.id}</span>
-                {isCurrent ? <span>✓</span> : null}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </>
-  );
+    if (!src) { setDims(null); return; }
+    let cancelled = false;
+    const img = new window.Image();
+    img.onload = () => {
+      if (cancelled) return;
+      setDims({ w: img.naturalWidth, h: img.naturalHeight });
+    };
+    img.onerror = () => { if (!cancelled) setDims(null); };
+    img.src = src;
+    return () => { cancelled = true; };
+  }, [src]);
+  return dims;
 }
-
-function SmartEditDockWrap({ node, children }) {
-  const wrapRef = useRef(null);
-  const [side, setSide] = useState('right');
-  // useLayoutEffect runs synchronously after DOM mutations but BEFORE the
-  // browser paints, so the user never sees the dock flash on the right
-  // before it flips left. Safe because this component is client-only ('use client').
-  useLayoutEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    if (rect.right > window.innerWidth - 16) {
-      setSide('left');
-    }
-  }, []);
-  const style = side === 'right'
-    ? { position: 'absolute', left: (node.width || 512) + 12, top: 0, zIndex: 50 }
-    : { position: 'absolute', left: -340, top: 0, zIndex: 50 };
-  return (
-    <div
-      ref={wrapRef}
-      className={`cnode-smart-edit-dock-wrap cnode-smart-edit-dock-wrap-${side}`}
-      style={style}
-      onMouseDown={(e) => e.stopPropagation()}
-    >
-      {children}
-    </div>
-  );
+function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
+function formatAspect(w, h) {
+  if (!w || !h) return null;
+  const g = gcd(w, h);
+  return `${w / g}:${h / g}`;
 }
 
 const TrashIcon = () => (
@@ -399,13 +304,16 @@ export default function CanvasNode({
   node, selected, editing = false, onEditingChange,
   onSelect, onMove, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload,
-  onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch, onRequestRegenAspect,
+  onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
   onReplaceContent,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [menuPos, setMenuPos] = useState(null); // {x, y} for topbar context menu
+  // Natural dimensions of the asset's image content. Used by the dims label
+  // below the card. Non-asset nodes pass a null src so the hook short-circuits.
+  const assetNaturalDims = useImageNaturalDims(node.meta?.dataUrl || null);
   // Cancel-with-unsaved-edits prompt. Shown when user clicks Cancel from
   // edit mode; offers Save / Discard / Continue editing.
   const [showCancelPrompt, setShowCancelPrompt] = useState(false);
@@ -425,9 +333,6 @@ export default function CanvasNode({
   // first toggle so an instant expand→collapse round-trips correctly.
   const preExpandRef = useRef({ w: null, h: null });
   const [isExpanded, setIsExpanded] = useState(false);
-  const [smartEditOpen, setSmartEditOpen] = useState(false);
-  const [resolvedAssetId, setResolvedAssetId] = useState(node.meta?.assetId || null);
-  const [backfilling, setBackfilling] = useState(false);
 
   // Save the current iframe state as a snapshot, then exit edit mode.
   // Used by the Done button and by "Save and exit" inside the cancel
@@ -1074,68 +979,15 @@ export default function CanvasNode({
           ) : (
             <div className="cnode-loading"><span>No image data</span></div>
           )}
-          {(node.meta?.assetId || node.meta?.dataUrl) && (
-            <button
-              type="button"
-              className={`cnode-smart-edit-btn${backfilling ? ' busy' : ''}`}
-              disabled={backfilling}
-              onMouseDown={(e) => { e.stopPropagation(); }}
-              onClick={async (e) => {
-                e.stopPropagation();
-                if (smartEditOpen) { setSmartEditOpen(false); return; }
-                if (resolvedAssetId) { setSmartEditOpen(true); return; }
-                // Backfill needed — call API, then open dock
-                setBackfilling(true);
-                try {
-                  const r = await fetch(`/api/nodes/${node.id}/asset-backfill`, {
-                    method: 'POST',
-                    credentials: 'include',
-                  });
-                  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                  const body = await r.json();
-                  setResolvedAssetId(body.assetId);
-                  // Push the resolved assetId up to the parent's node map so
-                  // a future remount (navigation away/back, refetch) sees
-                  // node.meta.assetId populated. Without this, the local
-                  // useState re-initializes to null on remount and the user
-                  // has to backfill again.
-                  onMetaPatch?.({ assetId: body.assetId });
-                  setSmartEditOpen(true);
-                } catch (err) {
-                  console.error('[smart-edit] backfill failed', err);
-                } finally {
-                  setBackfilling(false);
-                }
-              }}
-              title="Smart Edit"
-              aria-label="Smart Edit"
-            >
-              <svg viewBox="0 0 37 40" width="14" height="14" aria-hidden="true">
-                <path fill="currentColor" d="M16,29.7c0,.8-.6,1.4-1.3,1.5-1,0-2.7.5-3.2,1.1-.6.6-1,2.3-1.1,3.2,0,.8-.7,1.3-1.5,1.3s-1.4-.6-1.5-1.3c0-1-.5-2.7-1.1-3.2-.6-.6-2.3-1-3.2-1.1-.8,0-1.3-.7-1.3-1.5s.6-1.4,1.3-1.5c1,0,2.7-.5,3.2-1.1.6-.6,1-2.3,1.1-3.2,0-.8.7-1.3,1.5-1.3s1.4.6,1.5,1.3c0,1,.5,2.7,1.1,3.2.6.6,2.3,1,3.2,1.1.8,0,1.3.7,1.3,1.5ZM33.3,16.7c-1.5-.2-5.8-1-7.5-2.7-1.7-1.7-2.5-6-2.7-7.5,0-.8-.7-1.3-1.5-1.3s-1.4.6-1.5,1.3c-.2,1.5-1,5.8-2.7,7.5s-6,2.5-7.5,2.7c-.8,0-1.3.7-1.3,1.5s.6,1.4,1.3,1.5c1.5.2,5.8,1,7.5,2.7s2.5,6,2.7,7.5c0,.8.7,1.3,1.5,1.3s1.4-.6,1.5-1.3c.2-1.5,1-5.8,2.7-7.5,1.7-1.7,6-2.5,7.5-2.7.8,0,1.3-.7,1.3-1.5s-.6-1.4-1.3-1.5Z"/>
-              </svg>
-            </button>
+          {/* Dimensions label — anchored to the bottom-right corner, just
+              below the card. Shows the actual decoded pixel size of the
+              image content plus its true aspect ratio (gcd-reduced), not
+              the canvas card dims. Hidden while the image is loading. */}
+          {node.meta?.dataUrl && assetNaturalDims && (
+            <div className="cnode-asset-dims" aria-hidden="true">
+              {assetNaturalDims.w} × {assetNaturalDims.h} / {formatAspect(assetNaturalDims.w, assetNaturalDims.h)}
+            </div>
           )}
-          {/* Aspect-ratio pill sits half-inside / half-outside the bottom
-              edge. Only shown when the node already has image data — for
-              generating / error states the pill would be misleading. */}
-          {node.meta?.dataUrl && node.meta?.status !== 'generating' && (
-            <AssetAspectPill
-              node={node}
-              onRequestRegen={(aspect) => onRequestRegenAspect?.(node.id, aspect)}
-            />
-          )}
-          {/* Output dimensions label — anchored to the bottom-right corner,
-              just below the card. 70% opacity, pointer-events:none so it
-              doesn't intercept clicks. Reads the API output size for the
-              current aspect (NOT the canvas display size). */}
-          {node.meta?.dataUrl && (() => {
-            const d = dimsForAspect(inferAspect(node));
-            return (
-              <div className="cnode-asset-dims" aria-hidden="true">
-                {d.apiW} × {d.apiH}
-              </div>
-            );
-          })()}
         </div>
       ) : null}
       <>
@@ -1241,16 +1093,6 @@ export default function CanvasNode({
             }
           }}
         />
-      )}
-
-      {smartEditOpen && resolvedAssetId && (
-        <SmartEditDockWrap node={node}>
-          <AssetSmartEditDock
-            boardId={node.board_id}
-            assetId={resolvedAssetId}
-            onClose={() => setSmartEditOpen(false)}
-          />
-        </SmartEditDockWrap>
       )}
 
       {/* Portal to document.body so the menu's `position: fixed`

@@ -36,7 +36,7 @@ function parseDataUrl(dataUrl) {
 
 export async function generateOpenAIImage({
   prompt,
-  aspectRatio = '1:1',
+  aspectRatio = null,
   apiKey,
   model = DEFAULT_MODEL,
   baseImageDataUrl = null,
@@ -51,7 +51,17 @@ export async function generateOpenAIImage({
   if (!prompt) throw new Error('prompt required');
   if (!apiKey) throw new Error('apiKey required');
 
-  const size = SIZE_MAP[aspectRatio] || SIZE_MAP['1:1'];
+  // Size resolution:
+  //  - Edit mode without explicit aspectRatio → 'auto'. gpt-image-1 reads
+  //    the base image's aspect and matches it. Saves the agent from having
+  //    to ask the user "what aspect is the input?"
+  //  - Edit mode with explicit aspectRatio → use it (user / agent wants a
+  //    deliberate aspect change like square → widescreen).
+  //  - Generate mode without aspectRatio → default to 1:1 square (text-to-
+  //    image has no base to mirror).
+  const size = aspectRatio
+    ? (SIZE_MAP[aspectRatio] || SIZE_MAP['1:1'])
+    : (baseImageDataUrl ? 'auto' : SIZE_MAP['1:1']);
   // Fail fast: the SDK default is 10min timeout × 2 retries (~30min). When
   // the API hangs or returns 4xx in a way the SDK keeps retrying, the agent
   // loop has no way to escape — the chip spins forever and the user has to

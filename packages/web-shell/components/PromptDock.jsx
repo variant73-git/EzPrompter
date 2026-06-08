@@ -20,13 +20,6 @@ const ICON_GLOBE = (
   </svg>
 );
 
-const ICON_PIN = (
-  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="12" x2="12" y1="17" y2="22"/>
-    <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
-  </svg>
-);
-
 const ICON_BRAIN = (
   <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/>
@@ -421,7 +414,6 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   const [imagePreview, setImagePreview] = useState(null);
   const [showAddUrl, setShowAddUrl] = useState(false);
   const [showBrain, setShowBrain] = useState(false);
-  const [showPin, setShowPin] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
@@ -461,11 +453,11 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     const widgetHeight = rect.height;
     // Snap activates the moment the cursor enters the side-dock ghost
     // on either edge. Ghost geometry mirrors the CSS: left: 12px,
-    // width: 340px → ghost right edge = 352. So cursor < 352px from
+    // width: 306px → ghost right edge = 318. So cursor < 318px from
     // the left viewport edge = inside the left ghost = "snap left",
     // symmetrical for the right edge.
     const GHOST_OFFSET = 12;
-    const GHOST_WIDTH = 340;
+    const GHOST_WIDTH = 306;
     const SNAP_THRESHOLD = GHOST_OFFSET + GHOST_WIDTH;
 
     function onMove(ev) {
@@ -739,31 +731,9 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     if (!boardId) return;
     const trimmed = (content || '').trim();
     if (!trimmed && !(attachments && attachments.length)) return;
-    // When the user has selected a workflow/section or a single node, the
-    // chat is "scoped" to that context. Prepend a structured hint to the
-    // outbound message so the agent operates in scope — the user's bubble
-    // STILL shows only the typed text (we strip the hint from the optimistic
-    // render). The agent sees the hint as the first line.
-    let scoped = trimmed;
-    if (contextList.length > 0) {
-      const sectionCtx = contextList.find((c) => c.kind === 'section');
-      const nodeCtxs = contextList.filter((c) => c.kind === 'node');
-      let hint = '';
-      if (sectionCtx) {
-        hint = `[Active workflow: "${sectionCtx.name}" (${sectionCtx.memberCount} nodes, ids: ${(sectionCtx.memberIds || []).map((id) => id.slice(0, 8)).join(', ')}). Operate inside this workflow.]`;
-      } else if (nodeCtxs.length === 1) {
-        const c = nodeCtxs[0];
-        hint = `[Active node: ${c.nodeKind} "${c.name}" id=${c.id.slice(0, 8)}. Operate on this node.]`;
-      } else if (nodeCtxs.length > 1) {
-        const list = nodeCtxs.map((c) => `${c.nodeKind} "${c.name}" (id=${c.id.slice(0, 8)})`).join(', ');
-        hint = `[Active nodes (${nodeCtxs.length}): ${list}. Operate across these nodes.]`;
-      }
-      if (hint) scoped = trimmed ? `${hint}\n\n${trimmed}` : hint;
-    }
     // Optimistic bubble: if user sent image-only (no text), show the
     // file name(s) so the bubble isn't empty. Matches the placeholder the
-    // server persists in chat_messages.content. NEVER include the scope hint
-    // in the optimistic text — that's an agent-only nudge, not user-typed.
+    // server persists in chat_messages.content.
     const optimisticText = trimmed
       || (attachments && attachments.length
         ? `[📎 ${attachments.map((a) => a.name || 'image').join(', ')}]`
@@ -773,15 +743,20 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     // streaming reply. Stays open after the turn — user collapses via chevron.
     setChatCollapsed(false);
 
+    // Workflow / context hint is resolved SERVER-SIDE from activeContexts —
+    // the route has DB access so it can pull the terminal node's stored
+    // prompt + inputs and give the agent enough info to act without
+    // asking. We just forward the raw context array.
     const res = await fetch('/api/chat', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
       body: JSON.stringify({
         boardId,
-        message: scoped,
+        message: trimmed,
         modelId,
         attachments: attachments && attachments.length ? attachments : undefined,
+        activeContexts: contextList.length > 0 ? contextList : undefined,
       }),
     });
 
@@ -937,7 +912,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     if (kind === 'screenshot') return openPicker(ACCEPT_IMAGE);
     if (kind === 'multiple') return openMultiPicker();
     if (kind === 'prompt') {
-      setShowAddUrl(false); setShowBrain(false); setShowPin(false);
+      setShowAddUrl(false); setShowBrain(false);
       if (onAddPrompt) {
         onAddPrompt();
       } else {
@@ -1070,11 +1045,9 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     ? 'example.com or full URL…'
     : showBrain
       ? 'Brainstorm…'
-      : showPin
-        ? 'Pin feedback on the canvas…'
-        : nodeCount === 0
-          ? 'Add a site URL or design.md to start your canvas…'
-          : 'Add another node…';
+      : nodeCount === 0
+        ? 'Add a site URL or design.md to start your canvas…'
+        : 'Add another node…';
 
   const currentModel = findModel(modelId);
   const ProviderIcon = PROVIDER_ICON[currentModel.provider];
@@ -1084,7 +1057,15 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   // standard bottom-center / left-edge / right-edge placements, or
   // inline x/y for a free-floating position the user dragged it to.
   const isFloating = typeof dockPos === 'object' && dockPos !== null;
-  const chatPanelVisible = !chatCollapsed && (chat.messages.length > 0 || chat.activeToolCalls.length > 0);
+  const isSideDocked = dockPos === 'left' || dockPos === 'right';
+  // When side-docked the chat is ALWAYS shown expanded — the dock fills
+  // a full-height column where a collapsed panel would just leave a tall
+  // empty strip. The collapse chevron is already hidden via CSS in this
+  // mode (.dock-left/.dock-right .prompt-dock-collapse-btn { display:none }),
+  // so the user can't toggle back to collapsed; we just override the
+  // state derivation here too.
+  const effectivelyCollapsed = isSideDocked ? false : chatCollapsed;
+  const chatPanelVisible = !effectivelyCollapsed && (chat.messages.length > 0 || chat.activeToolCalls.length > 0);
   const showTopResize = chatPanelVisible && dockPos === 'bottom';
   const showBottomResize = chatPanelVisible && isFloating;
   let dockStyle = dragState
@@ -1182,15 +1163,18 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
       {/* Active context pills — one per selected workflow/node. Shift-
           clicking nodes on the canvas appends each as its own pill. The
           per-pill X drops that single context; the section pill's X
-          clears the workflow entirely. */}
+          clears the workflow entirely. Animation kept to opacity only —
+          framer-motion's `height: 0 → 'auto'` interaction breaks inside
+          a fixed-height flex column where a sibling has flex:1 (the
+          side-dock layout), leaving the wrap stuck at height 0. */}
       <AnimatePresence>
         {contextList.length > 0 && (
           <motion.div
             key="context-wrap"
             className="prompt-dock-context-wrap"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
             transition={{ duration: 0.16 }}
           >
             <div className="prompt-dock-context-pills">
@@ -1226,7 +1210,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
         )}
       </AnimatePresence>
 
-      {!chatCollapsed && (chat.messages.length > 0 || chat.activeToolCalls.length > 0) && (
+      {!effectivelyCollapsed && (chat.messages.length > 0 || chat.activeToolCalls.length > 0) && (
         <ChatPanel
           messages={chat.messages}
           activeToolCalls={chat.activeToolCalls}
@@ -1290,7 +1274,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           <button
             type="button"
             className={`prompt-dock-pill ${showAddUrl ? 'active add-url' : ''}`}
-            onClick={() => { setShowAddUrl((p) => !p); setShowBrain(false); setShowPin(false); }}
+            onClick={() => { setShowAddUrl((p) => !p); setShowBrain(false); }}
             disabled={busy}
           >
             <motion.span
@@ -1318,7 +1302,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           <button
             type="button"
             className={`prompt-dock-pill ${showBrain ? 'active brain' : ''}`}
-            onClick={() => { setShowBrain((p) => !p); setShowAddUrl(false); setShowPin(false); }}
+            onClick={() => { setShowBrain((p) => !p); setShowAddUrl(false); }}
             title="Brainstorming"
             disabled={busy}
           >
@@ -1339,35 +1323,6 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
                   transition={{ duration: 0.18 }}
                 >
                   Brainstorming
-                </motion.span>
-              )}
-            </AnimatePresence>
-          </button>
-
-          <button
-            type="button"
-            className={`prompt-dock-pill ${showPin ? 'active pin' : ''}`}
-            onClick={() => { setShowPin((p) => !p); setShowAddUrl(false); setShowBrain(false); }}
-            title="Feedback mode (coming next)"
-            disabled={busy}
-          >
-            <motion.span
-              className="prompt-dock-pill-icon"
-              animate={{ rotate: showPin ? 360 : 0, scale: showPin ? 1.1 : 1 }}
-              transition={{ type: 'spring', stiffness: 260, damping: 25 }}
-            >
-              {ICON_PIN}
-            </motion.span>
-            <AnimatePresence initial={false}>
-              {showPin && (
-                <motion.span
-                  className="prompt-dock-pill-label"
-                  initial={{ width: 0, opacity: 0 }}
-                  animate={{ width: 'auto', opacity: 1 }}
-                  exit={{ width: 0, opacity: 0 }}
-                  transition={{ duration: 0.18 }}
-                >
-                  Feedback Mode
                 </motion.span>
               )}
             </AnimatePresence>

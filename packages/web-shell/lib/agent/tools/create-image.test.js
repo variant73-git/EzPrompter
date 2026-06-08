@@ -200,24 +200,36 @@ describe('createImageTool', () => {
       baseImageDataUrl: 'data:image/png;base64,BASE',
       styleReferenceDataUrls: ['data:image/png;base64,REF1', 'data:image/png;base64,REF2'],
     }));
-    // Final prompt should contain the strict preservation template, not
-    // just the agent's "warmer palette" intent verbatim.
+    // The agent's prompt now passes through verbatim — we removed the
+    // hardcoded preservation template because gpt-image-1 was reading
+    // "PRESERVE composition" as "preserve the subject" and filling the
+    // canvas, dropping any blank space the original had.
     const callArgs = generateOpenAIImage.mock.calls[0][0];
-    expect(callArgs.prompt).toMatch(/PRESERVE EXACTLY/);
-    expect(callArgs.prompt).toMatch(/warmer palette/);
+    expect(callArgs.prompt).toBe('warmer palette');
   });
 
-  it('builds preservation template even without style references in edit mode', async () => {
+  it('passes the agent prompt verbatim in edit mode without refs', async () => {
     sql.mockImplementation(() => Promise.resolve([{ meta: { dataUrl: 'data:image/png;base64,BASE' } }]));
     await createImageTool.execute(
       { prompt: 'remove the background', baseImageAssetId: 'asset-base' },
       { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
     );
     const callArgs = generateOpenAIImage.mock.calls[0][0];
-    expect(callArgs.prompt).toMatch(/PRESERVE EXACTLY/);
-    expect(callArgs.prompt).toMatch(/remove the background/);
+    expect(callArgs.prompt).toBe('remove the background');
     // styleReferenceDataUrls should be null/undefined when no refs.
     expect(callArgs.styleReferenceDataUrls).toBeFalsy();
+  });
+
+  it('falls back to a minimal safety prompt when edit-mode prompt is empty', async () => {
+    sql.mockImplementation(() => Promise.resolve([{ meta: { dataUrl: 'data:image/png;base64,BASE' } }]));
+    await createImageTool.execute(
+      { prompt: '', baseImageAssetId: 'asset-base' },
+      { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
+    );
+    const callArgs = generateOpenAIImage.mock.calls[0][0];
+    // Non-empty default so gpt-image-1 has something to act on.
+    expect(callArgs.prompt.length).toBeGreaterThan(0);
+    expect(callArgs.prompt).toMatch(/preserve/i);
   });
 
   it('does NOT impose template in pure text-to-image (no base)', async () => {
@@ -229,6 +241,38 @@ describe('createImageTool', () => {
     const callArgs = generateGeminiImage.mock.calls[0][0];
     expect(callArgs.prompt).toBe('a sleeping cat in space');
     expect(callArgs.prompt).not.toMatch(/PRESERVE/);
+  });
+
+  it('replaceAssetId path skips INSERT and returns the same assetId + linked nodeId', async () => {
+    let call = 0;
+    sql.mockImplementation(() => {
+      call++;
+      // 1) SELECT replaceAssetId asset (verify ownership + existence)
+      if (call === 1) return Promise.resolve([{ id: 'asset-existing', meta: { prompt: 'old', mode: 'edit', baseImageAssetId: 'asset-base' } }]);
+      // 2) SELECT linked node by board + meta->>'assetId'
+      if (call === 2) return Promise.resolve([{ id: 'node-existing' }]);
+      // 3) SELECT base asset (for baseImageAssetId resolution)
+      if (call === 3) return Promise.resolve([{ meta: { dataUrl: 'data:image/png;base64,BASE' } }]);
+      // 4+ UPDATE assets/nodes — no shape inspected
+      return Promise.resolve([]);
+    });
+    const r = await createImageTool.execute(
+      { prompt: 'tweak the lighting', baseImageAssetId: 'asset-base', replaceAssetId: 'asset-existing' },
+      { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
+    );
+    expect(r.assetId).toBe('asset-existing');
+    expect(r.nodeId).toBe('node-existing');
+    expect(generateOpenAIImage).toHaveBeenCalled();
+  });
+
+  it('replaceAssetId rejects when asset not owned by user', async () => {
+    sql.mockImplementation(() => Promise.resolve([])); // SELECT returns 0 rows
+    const r = await createImageTool.execute(
+      { prompt: 'x', replaceAssetId: 'asset-stranger' },
+      { boardId: 'b1', userId: 42, conversationModel: 'gemini-2.5-flash' }
+    );
+    expect(r.error).toBe('invalid_args');
+    expect(r.message).toMatch(/replaceAssetId not found/);
   });
 
   it('dedupes styleReferenceAssetIds and filters baseImageAssetId out of refs', async () => {

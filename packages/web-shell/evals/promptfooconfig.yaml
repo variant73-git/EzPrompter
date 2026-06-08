@@ -1,0 +1,83 @@
+# Promptfoo eval config — smoke tests for the agent's prompt logic.
+#
+# Run with:  bunx promptfoo eval -c evals/promptfooconfig.yaml
+# View results: bunx promptfoo view
+#
+# These tests evaluate the BOARD_AGENT system prompt against representative
+# user inputs and assert behavioural properties (mentions the right concept,
+# avoids leaking IDs, etc.). They are NOT end-to-end tests of the route or
+# tools — those live in vitest. Think of these as "regression tests for the
+# prompt itself" so a future edit to BOARD_AGENT doesn't silently break
+# common behaviours.
+#
+# Add new cases to the `tests:` block. Each case has:
+#   - vars:  values interpolated into the prompt template
+#   - assert: list of assertions (regex / contains / icontains / not-icontains
+#             / llm-rubric — see https://promptfoo.dev/docs/configuration/expected-outputs)
+
+description: 'Uncraft BOARD_AGENT smoke evals'
+
+# Cheap default — change to claude/gpt to compare. Keep flash for CI cost.
+providers:
+  - id: 'google:gemini-2.5-flash'
+    config:
+      apiKey: $GEMINI_API_KEY
+
+# Prompt template loaded from the shipping system prompt so a code-side
+# edit triggers the eval suite automatically (vs. duplicating the prompt
+# here and falling out of sync).
+prompts:
+  - file://./prompts/board-agent.txt
+
+tests:
+  # ─── 1. The agent must NOT leak IDs / tool names to the user ────────
+  - description: 'Does not leak node IDs in plain prose'
+    vars:
+      user: 'apaga esse node'
+    assert:
+      - type: not-icontains
+        value: 'nodeId='
+      - type: not-icontains
+        value: 'UUID'
+      - type: not-icontains
+        value: 'deleteNode('
+
+  # ─── 2. Treats vague "this one" as the active selection ────────────
+  - description: 'Resolves "essa imagem" to the active node hint'
+    vars:
+      user: '[Active node: image asset "ref" nodeId=abc12345 assetId=A1.]\n\naplica o estilo dessa imagem na outra'
+    assert:
+      - type: not-icontains
+        value: 'qual imagem'  # shouldn't ask
+      - type: icontains-any
+        value: ['ref', 'estilo', 'aplicar']
+
+  # ─── 3. Prompt-as-variable: non-skeleton + active node → prompt node ─
+  - description: 'Skeleton edits stay inline; qualitative direction promotes to a prompt node'
+    vars:
+      user: '[Active node: site "landing" nodeId=def67890.]\n\ndeixa o tom mais playful e a paleta mais quente'
+    assert:
+      - type: icontains-any
+        value: ['createNode', 'prompt node', 'prompt', 'variável']
+      - type: not-icontains
+        value: 'editSite'  # not a skeleton edit; should NOT go to editSite
+
+  # ─── 4. Skeleton instruction → editSite, not prompt node ───────────
+  - description: 'Skeleton edits (add/remove elements) use editSite'
+    vars:
+      user: '[Active node: site "landing" nodeId=def67890.]\n\nadiciona uma seção de pricing depois do hero'
+    assert:
+      - type: icontains-any
+        value: ['editSite', 'pricing']
+      - type: not-icontains
+        value: 'createNode'
+
+  # ─── 5. Re-run flow: terminal info given → uses replaceAssetId ─────
+  - description: 'Uses replaceAssetId when re-running a workflow terminal in place'
+    vars:
+      user: '[Active workflow: "img flow" — 3 nodes.]\n[Terminal of this workflow: nodeId=t1 assetId=AX prompt="warmer palette".]\n\nrefaz com o mesmo prompt'
+    assert:
+      - type: icontains
+        value: 'replaceAssetId'
+      - type: not-icontains
+        value: 'createNode'

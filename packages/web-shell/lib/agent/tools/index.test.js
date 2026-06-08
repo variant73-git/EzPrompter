@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildSafeRegistry, buildFullRegistry, buildAssetRegistry } from './index.js';
 
 describe('buildSafeRegistry', () => {
-  it('registers the safe tools including addAssetFromUrl', () => {
+  it('registers safe write tools + exploration tools', () => {
     const r = buildSafeRegistry();
     expect(r.get('createNode')).toBeDefined();
     expect(r.get('addEdge')).toBeDefined();
@@ -11,17 +11,24 @@ describe('buildSafeRegistry', () => {
     expect(r.get('getNodeOutput')).toBeDefined();
     expect(r.get('listAssets')).toBeDefined();
     expect(r.get('addAssetFromUrl')).toBeDefined();
-    expect(r.all()).toHaveLength(7);
+    // Exploration tools — the canvas-side equivalents of ls / cat / grep.
+    expect(r.get('viewNode')).toBeDefined();
+    expect(r.get('listBoard')).toBeDefined();
+    expect(r.get('findNearest')).toBeDefined();
+    expect(r.get('getWorkflow')).toBeDefined();
   });
 });
 
 describe('buildFullRegistry', () => {
-  it('registers all 11 board-agent tools', () => {
+  it('registers safe + destructive + site-pipeline tools', () => {
     const r = buildFullRegistry();
     const names = r.all().map((t) => t.name).sort();
     expect(names).toEqual([
-      'addAssetFromUrl', 'addEdge', 'createImage', 'createNode', 'deleteNode',
-      'editSite', 'getNodeOutput', 'listAssets', 'queryNodes', 'runFlow', 'updateNode',
+      'addAssetFromUrl', 'addEdge', 'applyDesign', 'captureUrl',
+      'createImage', 'createNode', 'deleteNode', 'editSite',
+      'extractDesign', 'findNearest', 'getNodeOutput', 'getWorkflow',
+      'listAssets', 'listBoard', 'queryNodes', 'runFlow',
+      'updateNode', 'viewNode',
     ]);
   });
 });
@@ -32,7 +39,8 @@ describe('buildAssetRegistry', () => {
     const names = r.all().map((t) => t.name).sort();
     expect(names).toEqual([
       'addAssetFromUrl', 'addEdge', 'createImage', 'createNode',
-      'getNodeOutput', 'listAssets', 'queryNodes', 'updateNode',
+      'findNearest', 'getNodeOutput', 'getWorkflow', 'listAssets',
+      'listBoard', 'queryNodes', 'updateNode', 'viewNode',
     ]);
   });
 
@@ -42,5 +50,8 @@ describe('buildAssetRegistry', () => {
     expect(names).not.toContain('deleteNode');
     expect(names).not.toContain('runFlow');
     expect(names).not.toContain('editSite');
+    expect(names).not.toContain('captureUrl');
+    expect(names).not.toContain('extractDesign');
+    expect(names).not.toContain('applyDesign');
   });
 });

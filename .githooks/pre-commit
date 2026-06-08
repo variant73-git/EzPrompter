@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Pre-commit hook: scan staged diff for secrets via gitleaks.
+#
+# Setup (run once after cloning):
+#   git config core.hooksPath .githooks
+#
+# Install gitleaks (one of):
+#   brew install gitleaks
+#   curl -L https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | sh
+#
+# If gitleaks isn't installed, the hook warns once per commit and lets
+# the commit through — keeps onboarding frictionless. CI should run the
+# same scan against the full diff as a backstop.
+
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "⚠️  gitleaks not installed — secret scan SKIPPED."
+  echo "   Install: brew install gitleaks  (or curl install.sh from github.com/gitleaks/gitleaks)"
+  echo "   The CI scan will still catch leaks before merge."
+  exit 0
+fi
+
+# `gitleaks protect --staged` scans only the diff about to be committed.
+# Exit code 1 means it found something — abort the commit so the dev can
+# unstage / redact / move to env vars.
+if ! gitleaks protect --staged --redact --config .gitleaks.toml --no-banner; then
+  echo ""
+  echo "❌ gitleaks found potential secrets in staged changes."
+  echo "   Move the value to env vars / a secret manager and try again."
+  echo "   To bypass (DANGEROUS — only for false positives): git commit --no-verify"
+  exit 1
+fi

@@ -2,6 +2,7 @@ import { sql } from '../../db.js';
 import { generateGeminiImage } from '../../image-gen/gemini-imagen.js';
 import { generateOpenAIImage } from '../../image-gen/openai-image.js';
 import { placeRightOfSources, placeStackDown } from '../../canvas-layout.js';
+import { decodeImageDimsFromDataUrl, pickAspectForDims } from '../../image-dims.js';
 
 const VALID_ASPECT = new Set(['1:1', '16:9', '9:16', '3:4', '4:3']);
 const VALID_PROVIDER = new Set(['auto', 'gemini', 'openai']);
@@ -29,41 +30,34 @@ const AUTO_SINGLE = [{ id: 'auto', label: 'Generate' }];
 
 export const createImageTool = {
   name: 'createImage',
-  description: `Generate a new image and optionally drop it onto the user's canvas as an asset node.
+  description: `Generate or edit an image. Optionally adds the result to the canvas as an asset node connected to its inputs.
 
 Modes:
-  - text-to-image (default) — just pass prompt
-  - image-to-image / edit    — pass baseImageAssetId of the user's target image. The model preserves THAT image's composition and applies changes guided by prompt and any styleReferenceAssetIds.
+- Text-to-image: pass \`prompt\` only.
+- Edit: pass \`baseImageAssetId\`. The image model receives that image plus your prompt and interprets the prompt LITERALLY — there is no automatic preservation wrapper. Write the prompt yourself describing what to keep (subject, framing, padding, aspect, blank space around the content) and what to change. If you can see the base image (multimodal), be specific about what's visually there.
+- Style transfer / remix: pass \`baseImageAssetId\` AND \`styleReferenceAssetIds\`. The references are fed DIRECTLY to the image model alongside the base, so describing the references' style in text is redundant. The prompt should describe what about the BASE to preserve.
 
-STYLE-TRANSFER / REMIX — the canonical flow:
-  When the user wants to "apply the style of X to Y" or "make Y look like X":
-  1. baseImageAssetId = the IMAGE WHOSE COMPOSITION YOU MUST PRESERVE — usually the user's attached image.
-  2. styleReferenceAssetIds = the IMAGES WHOSE STYLE YOU WANT TO COPY — usually external references the user pointed to. The tool feeds these DIRECTLY to the image model so you do NOT have to describe them in text. The model sees them.
-  3. prompt = a SHORT additional intent (e.g. "warmer palette", "more dramatic lighting"). NEVER paste long style descriptions here — the references are already attached. Keep it under 15 words. Leave blank ("") if no extra direction is needed.
-  4. inputAssetIds = [baseImageAssetId, ...styleReferenceAssetIds] so the canvas draws edges from every source node to the result.
-
-The tool internally builds the model prompt with strict preservation language — you do NOT need to write "preserve composition" / "do not change subject" etc. That is already enforced.
-
-DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conversation model is Claude and provider is 'auto').`,
+Costs money. Pauses for confirmation when the conversation model is Claude (so the user can pick Gemini vs GPT for the underlying generation).`,
   classification: 'needs_choice',
   inputSchema: {
     type: 'object',
     properties: {
-      prompt:                  { type: 'string', description: 'Short additional intent (≤15 words). In edit mode, leave blank or describe ONLY the change beyond what the references already convey. Long style descriptions belong in styleReferenceAssetIds (the model sees those images directly).' },
-      aspectRatio:             { type: 'string', enum: ['1:1', '16:9', '9:16', '3:4', '4:3'], description: 'Aspect ratio of the OUTPUT. Default 1:1. IN EDIT MODE you MUST pass the aspect ratio that matches the base image (a 16:9 base with no aspectRatio arg comes back squared off). The image model does NOT auto-detect from the base.' },
-      provider:                { type: 'string', enum: ['auto', 'gemini', 'openai'], description: 'auto picks Gemini for text-to-image; edit mode (baseImageAssetId set) forces openai' },
-      attachToBoard:           { type: 'boolean', description: 'When true, also create an asset node on the canvas' },
-      baseImageAssetId:        { type: 'string', description: 'UUID of the asset to EDIT — the image whose COMPOSITION + SUBJECT must be preserved. Usually the user-attached image. Setting this forces openai provider.' },
+      prompt:                  { type: 'string', description: 'Plain-language description of what to generate, or — in edit mode — the change to apply. Can be empty in edit mode when the style references already convey the intent.' },
+      aspectRatio:             { type: 'string', enum: ['1:1', '16:9', '9:16', '3:4', '4:3'], description: 'Aspect ratio of the output. Optional in edit mode — when omitted, the image model preserves the base image\'s aspect automatically. In generate mode, defaults to 1:1.' },
+      provider:                { type: 'string', enum: ['auto', 'gemini', 'openai'], description: 'Image-model provider. "auto" picks Gemini for text-to-image. Edit mode (baseImageAssetId set) always uses openai (Gemini Imagen has no image-edit endpoint).' },
+      attachToBoard:           { type: 'boolean', description: 'When true, also create an asset node on the canvas for the result.' },
+      baseImageAssetId:        { type: 'string', description: 'Asset id of the image to edit. Composition and subject are preserved; the prompt and any styleReferenceAssetIds describe the change.' },
       styleReferenceAssetIds:  {
         type: 'array',
         items: { type: 'string' },
-        description: 'UUIDs of style-source assets. Fed DIRECTLY to the image model alongside the base. Use for style-transfer flows: the model attends to these as visual style references without needing a text description. Up to 4 references practical.',
+        description: 'Asset ids of additional images whose visual style should be applied. Fed directly to the image model alongside the base, so no text description of the style is needed. Up to 4.',
       },
       inputAssetIds:           {
         type: 'array',
         items: { type: 'string' },
-        description: 'Canvas wiring only — list of source asset UUIDs that should draw incoming edges to the result node. When attachToBoard:true, an edge is drawn from each source\'s canvas node to the result. Independent of styleReferenceAssetIds (which controls what the IMAGE MODEL sees). Typically: [baseImageAssetId, ...styleReferenceAssetIds].',
+        description: 'Canvas wiring: source asset ids that should draw incoming edges to the result node (when attachToBoard:true). Independent of styleReferenceAssetIds, which controls what the image model sees.',
       },
+      replaceAssetId:          { type: 'string', description: 'Asset id of an EXISTING result to update in place. When set, the linked node and asset are updated with the new dataUrl — no new node, no new edges, the existing graph + spatial layout is preserved. Use this for "re-run" / "tweak" requests on a workflow whose terminal you already know.' },
     },
     required: ['prompt'],
   },
@@ -79,16 +73,38 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
   async execute(args, ctx) {
     const {
       prompt,
-      aspectRatio = '1:1',
       provider = 'auto',
       attachToBoard = false,
       baseImageAssetId = null,
       styleReferenceAssetIds = null,
       inputAssetIds = null,
+      replaceAssetId = null,
     } = args || {};
+    // aspectRatio is OPTIONAL. null = "infer from the base image's actual
+    // dimensions in edit mode, or fall back to 1:1 in generate mode". Kept
+    // mutable so we can override with the inferred value before kicking off
+    // the generation.
+    let aspectRatio = (args && Object.prototype.hasOwnProperty.call(args, 'aspectRatio'))
+      ? args.aspectRatio
+      : null;
     if (prompt == null) return { error: 'invalid_args', message: 'prompt required (empty string OK in edit mode)' };
-    if (!VALID_ASPECT.has(aspectRatio)) return { error: 'invalid_args', message: `aspectRatio must be one of ${[...VALID_ASPECT].join(',')}` };
+    if (aspectRatio !== null && !VALID_ASPECT.has(aspectRatio)) return { error: 'invalid_args', message: `aspectRatio must be one of ${[...VALID_ASPECT].join(',')}` };
     if (!VALID_PROVIDER.has(provider)) return { error: 'invalid_args', message: `provider must be one of ${[...VALID_PROVIDER].join(',')}` };
+
+    // Replace-in-place path: resolve the existing asset + linked node up
+    // front so we know they exist (and belong to the user) before we
+    // start spending money on image gen. The rest of the function then
+    // either creates a NEW asset/node (replaceAssetId=null, original path)
+    // or updates the existing rows (replaceAssetId set).
+    let replaceTargetNodeId = null;
+    if (replaceAssetId) {
+      const r = await sql`SELECT id, meta FROM assets WHERE id = ${replaceAssetId} AND user_id = ${ctx.userId}`;
+      if (!r.length) return { error: 'invalid_args', message: 'replaceAssetId not found or not owned' };
+      const linkedNode = await sql`
+        SELECT id FROM nodes WHERE board_id = ${ctx.boardId} AND meta->>'assetId' = ${replaceAssetId} LIMIT 1
+      `;
+      if (linkedNode.length > 0) replaceTargetNodeId = linkedNode[0].id;
+    }
 
     // Edit mode requires OpenAI (Gemini Imagen has no equivalent images.edit).
     let baseImageDataUrl = null;
@@ -101,6 +117,22 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
       const m = rows[0].meta || {};
       baseImageDataUrl = m.dataUrl || null;
       if (!baseImageDataUrl) return { error: 'invalid_args', message: 'base asset has no dataUrl (only generated/ingested images can be edited)' };
+    }
+
+    // When the agent didn't pass an explicit aspectRatio in edit mode, infer
+    // the closest supported one from the BASE IMAGE's actual pixel
+    // dimensions. gpt-image-1's `size: 'auto'` was supposed to do this for
+    // us, but in practice it returns a 1024x1024 square whenever the input
+    // doesn't match one of its 3 canonical sizes (1024² / 1024x1536 /
+    // 1536x1024). Decoding the PNG/JPEG header server-side and mapping to
+    // the nearest supported aspect gives us a deterministic output ratio
+    // that actually tracks the source.
+    if (!aspectRatio && baseImageDataUrl) {
+      const dims = decodeImageDimsFromDataUrl(baseImageDataUrl);
+      if (dims) {
+        const picked = pickAspectForDims(dims);
+        if (picked) aspectRatio = picked;
+      }
     }
 
     // Resolve style references → dataUrls. These are fed DIRECTLY to
@@ -158,13 +190,30 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
     // Step 1: INSERT placeholder rows + edges. Wrapped in a single try so
     // any DB failure here returns persist_failed before we even touch the
     // image-gen adapter (cheaper to fail fast on infra problems).
+    //
+    // When replaceAssetId is set, we SKIP the INSERT path entirely: the
+    // existing asset + node rows ARE the target. We just flip them into
+    // the generating state so the canvas shows a spinner, and reuse the
+    // same ids for the UPDATE at the end. No new edges, no new node, the
+    // user's spatial layout and graph stay intact.
     let asset;
     let nodeId = null;
     let placedX = 0;
     let placedY = 0;
     let sourceNodeIds = [];
     const edgesCreated = [];
-    try {
+    if (replaceAssetId) {
+      asset = { id: replaceAssetId };
+      nodeId = replaceTargetNodeId;
+      try {
+        await sql`UPDATE assets SET meta = meta || '{"status":"generating"}'::jsonb WHERE id = ${replaceAssetId}`;
+        if (nodeId) {
+          await sql`UPDATE nodes SET meta = meta || '{"status":"generating"}'::jsonb WHERE id = ${nodeId}`;
+        }
+      } catch (e) {
+        return { error: 'persist_failed', message: String(e?.message || e) };
+      }
+    } else try {
       // Persist enough context to enable re-rolls (different aspect ratio,
       // regen-from-source). styleReferenceAssetIds lets the regen-aspect
       // endpoint re-resolve the same references without going through chat.
@@ -186,12 +235,32 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
       asset = inserted[0];
 
       if (attachToBoard) {
-        // Node display dims follow the aspect ratio so the image fills the
-        // card without letterboxing. In edit mode the agent doesn't pass
-        // aspectRatio (output matches base), so we'd ideally read base dims
-        // — for MVP we trust the agent's `aspectRatio` arg when set,
-        // otherwise default to 1:1.
-        const { width: nodeW, height: nodeH } = dimsForAspect(aspectRatio);
+        // Node display dims:
+        //   1. Explicit aspectRatio from agent → dimsForAspect(that).
+        //   2. Edit mode with no aspectRatio → copy the base node's dims so
+        //      the result pairs visually with its source (matches what
+        //      gpt-image-1 will return via size:'auto').
+        //   3. Fallback → 1:1 square (text-to-image with no hint).
+        let nodeW;
+        let nodeH;
+        if (aspectRatio) {
+          ({ width: nodeW, height: nodeH } = dimsForAspect(aspectRatio));
+        } else if (baseImageAssetId) {
+          const baseNodeRows = await sql`
+            SELECT width, height FROM nodes
+            WHERE board_id = ${ctx.boardId}
+              AND meta->>'assetId' = ${baseImageAssetId}
+            LIMIT 1
+          `;
+          if (baseNodeRows.length > 0 && baseNodeRows[0].width && baseNodeRows[0].height) {
+            nodeW = baseNodeRows[0].width;
+            nodeH = baseNodeRows[0].height;
+          } else {
+            ({ width: nodeW, height: nodeH } = dimsForAspect('1:1'));
+          }
+        } else {
+          ({ width: nodeW, height: nodeH } = dimsForAspect('1:1'));
+        }
 
         // Resolve placement: when the agent passed source assets (image-to-
         // image / style transfer), drop the result to the RIGHT of every
@@ -268,30 +337,18 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
     // glass mosaic" as the style of a painted-wood Hearthstone card, with
     // predictable garbage results). The agent's `prompt` becomes a short
     // optional intent appended to the template.
+    // The agent's `prompt` passes through verbatim. The previous hardcoded
+    // preservation template ("PRESERVE EXACTLY composition, framing…") was
+    // being interpreted by gpt-image-1 as "preserve the SUBJECT" — the
+    // model then filled the canvas with the subject and dropped any
+    // empty space / padding around it, producing the "cropped" feel. The
+    // agent can see the base image (multimodal) and write preservation
+    // language tailored to it. Edit-mode callers with an empty prompt
+    // get a minimal safety net so the model has something to act on.
     const userIntent = (prompt || '').trim();
-    let finalPrompt;
-    if (baseImageDataUrl) {
-      const hasRefs = Array.isArray(styleReferenceDataUrls) && styleReferenceDataUrls.length > 0;
-      finalPrompt = hasRefs
-        ? [
-            'You are editing the FIRST image.',
-            'PRESERVE EXACTLY: the subject, composition, framing, perspective, scale, and content of the first image.',
-            'APPLY: the visual style of the additional reference image(s) — match their MEDIUM (photograph, illustration, painting, 3D render, etc.) exactly, plus their palette, lighting, texture, line quality, and level of detail.',
-            'DO NOT change the subject, swap it for the reference\'s subject, or invent new elements.',
-            'The output is the same scene as the first image, re-rendered as if it had been produced in the same medium and style as the references.',
-            userIntent ? `Additional intent: ${userIntent}` : '',
-          ].filter(Boolean).join(' ')
-        : [
-            'You are editing the input image.',
-            'PRESERVE EXACTLY: the subject, composition, framing, perspective, scale, and content.',
-            userIntent ? `APPLY this change: ${userIntent}` : 'APPLY a subtle high-quality refinement that improves clarity and detail without changing anything else.',
-            'DO NOT change the subject or invent new elements.',
-          ].filter(Boolean).join(' ');
-    } else {
-      // Pure text-to-image. Pass the agent's prompt verbatim — no template
-      // imposition here, since no base image means no preservation contract.
-      finalPrompt = userIntent || 'A clean, professional image.';
-    }
+    const finalPrompt = userIntent || (baseImageDataUrl
+      ? 'Re-render the input image with the style of the references applied. Preserve the subject, framing, padding, and overall canvas composition exactly.'
+      : 'A clean, professional image.');
 
     // of a stuck spinner.
     let result;
@@ -304,7 +361,10 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
         ? (async () => {
             const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
             if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
-            return generateGeminiImage({ prompt: finalPrompt, aspectRatio, apiKey });
+            // Gemini Imagen has no equivalent of gpt-image-1's size:'auto';
+            // it requires a concrete aspectRatio string. Fall back to 1:1
+            // when null (text-to-image with no explicit aspect from agent).
+            return generateGeminiImage({ prompt: finalPrompt, aspectRatio: aspectRatio || '1:1', apiKey });
           })()
         : (async () => {
             const apiKey = process.env.OPENAI_API_KEY;
@@ -342,17 +402,25 @@ DESTRUCTIVE: costs money, pauses for user confirmation (or choice when the conve
     }
 
     // Step 4: backfill the asset + node with the real dataUrl. jsonb concat
-    // (`||`) merges into the placeholder meta so the prompt/mode/aspectRatio
-    // we already stored stick. We ALSO stash the template-built finalPrompt
-    // and the count of style references so a "why did my image come out
-    // weird?" debug pass can see exactly what the model was asked.
+    // (`||`) merges over existing keys, so we ALSO write back the call's
+    // prompt + mode + aspectRatio + base + refs. That keeps the asset's
+    // re-run config up to date when the agent replaced in place with
+    // different args (e.g. modified prompt, swapped refs). On the
+    // non-replace path these fields were already written by the placeholder
+    // INSERT, so re-writing them is a no-op.
     try {
       const finalAssetMeta = {
+        prompt,
+        mode,
+        aspectRatio,
+        ...(baseImageAssetId ? { baseImageAssetId } : {}),
+        ...(Array.isArray(styleReferenceAssetIds) && styleReferenceAssetIds.length > 0
+          ? { styleReferenceAssetIds: styleReferenceAssetIds.filter((x) => typeof x === 'string' && x) }
+          : {}),
         dataUrl: result.dataUrl,
         mimeType: result.mimeType,
         provider: result.provider,
         model: result.model,
-        mode: result.mode || mode,
         status: 'done',
         finalPrompt,
         styleReferenceCount: styleReferenceDataUrls ? styleReferenceDataUrls.length : 0,

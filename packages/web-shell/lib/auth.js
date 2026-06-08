@@ -56,13 +56,20 @@ export async function getAuthUser(request) {
   return rows[0] || null;
 }
 
+// Secure cookies in production only — localhost http dev sessions stay
+// usable because Secure cookies would be rejected by the browser over
+// plain http. NODE_ENV=production triggers the flag automatically; the
+// reverse-proxy / Vercel runtime is always HTTPS.
+const COOKIE_SECURE_FLAG = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+
 export function sessionCookieHeader(token) {
-  // 30d, httpOnly, SameSite=Lax (good default for canvas SPA navigation).
-  return `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 24 * 3600}`;
+  // 30d, httpOnly, SameSite=Lax (good default for canvas SPA navigation),
+  // Secure in production.
+  return `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax${COOKIE_SECURE_FLAG}; Max-Age=${30 * 24 * 3600}`;
 }
 
 export function clearSessionCookieHeader() {
-  return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  return `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax${COOKIE_SECURE_FLAG}; Max-Age=0`;
 }
 
 /**

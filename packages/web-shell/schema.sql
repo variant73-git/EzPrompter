@@ -171,3 +171,34 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   completed_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS agent_runs_thread_status ON agent_runs(thread_id, status);
+
+-- Per-event audit log for every agent run. Records every iteration,
+-- tool call, tool result (slimmed), provider call, and error. Queried
+-- for: production debugging ("why did run X fail?"), LGPD compliance
+-- (right-to-access + right-to-deletion forensics), cost attribution,
+-- security review (what did the agent actually do).
+--
+-- Partitioning note: at scale (millions of events), partition by
+-- created_at (monthly). For MVP a single table is fine — Postgres
+-- handles tens of millions of rows cleanly with proper indexes.
+CREATE TABLE IF NOT EXISTS agent_run_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  type VARCHAR(40) NOT NULL CHECK (type IN (
+    'iter_start','llm_call','llm_response',
+    'tool_call','tool_result','tool_error',
+    'needs_confirm','needs_choice','needs_softlimit_continue',
+    'safety_net_fired','run_status','error'
+  )),
+  -- Free-form payload. Big strings (dataUrl, html, raw LLM output) are
+  -- pre-truncated at the application layer before insert — driver uses
+  -- slimForHistory() to keep this column under a few KB per row.
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  duration_ms INT,
+  cost_cents INT
+);
+CREATE INDEX IF NOT EXISTS agent_run_events_run_ts ON agent_run_events(run_id, ts);
+CREATE INDEX IF NOT EXISTS agent_run_events_user_ts ON agent_run_events(user_id, ts DESC);
+CREATE INDEX IF NOT EXISTS agent_run_events_type_ts ON agent_run_events(type, ts DESC);
