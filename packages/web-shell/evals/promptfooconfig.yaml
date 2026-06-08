@@ -27,6 +27,10 @@ description: 'Uncraft BOARD_AGENT smoke evals'
 # field and ends up sending a literal/empty key ("API key not valid").
 providers:
   - id: 'google:gemini-2.5-flash'
+    config:
+      # temperature 0 → near-deterministic routing so the gate doesn't flake
+      # on ambiguous inputs (a CI gate that fails 1-in-3 runs is worse than none).
+      temperature: 0
 
 # Prompt template is GENERATED from the shipping BOARD_AGENT (lib/agent/prompts.js)
 # by evals/gen-prompt.mjs, which runs as the first step of `bun run evals`. That
@@ -36,27 +40,38 @@ prompts:
   - file://./prompts/board-agent.txt
 
 tests:
-  # ─── 1. The agent must NOT leak IDs / tool names to the user ────────
-  - description: 'Does not leak node IDs in plain prose'
-    vars:
-      user: 'apaga esse node'
-    assert:
-      - type: not-icontains
-        value: 'nodeId='
-      - type: not-icontains
-        value: 'UUID'
-      - type: not-icontains
-        value: 'deleteNode('
+  # NOTE: these assert on ROUTING (which tool, on which target) because the
+  # generated prompt runs in "evaluation mode" — it asks the model to name the
+  # tool it would call. The shipping prompt's voice rule (never name tools to
+  # the user) is a PROSE property that can't be tested through this harness; a
+  # separate prose-mode prompt would be needed for that (future).
 
-  # ─── 2. Treats vague "this one" as the active selection ────────────
-  - description: 'Resolves "essa imagem" to the active node hint'
+  # ─── 1. Vague "esse node" → deleteNode on the active selection, no question ─
+  # Active node is a PROMPT node on purpose: "apaga esse node" is unambiguous
+  # (no site to editSite into), so the only correct route is deleteNode. A
+  # `section` node here invites the "remove the section via editSite" reading.
+  - description: 'Resolves "esse node" to the active selection and routes to deleteNode'
+    vars:
+      user: '[Active node: prompt "tom de voz" nodeId=p1.]\n\napaga esse node'
+    assert:
+      - type: icontains
+        value: 'deleteNode'        # picked the right tool
+      - type: icontains
+        value: 'p1'                # targeted the active selection, didn't invent another
+      - type: not-icontains
+        value: 'qual node'         # didn't ask which one
+
+  # ─── 2. Vague "a outra imagem" → explore/act, don't ask which ──────────────
+  - description: 'Resolves "a outra imagem" via exploration instead of asking'
     vars:
       user: '[Active node: image asset "ref" nodeId=abc12345 assetId=A1.]\n\naplica o estilo dessa imagem na outra'
     assert:
       - type: not-icontains
-        value: 'qual imagem'  # shouldn't ask
+        value: 'qual imagem'       # shouldn't ask which image
       - type: icontains-any
-        value: ['ref', 'estilo', 'aplicar']
+        # takes a tools-first step toward the goal (find the other image, read
+        # the board, or proceed with the style transfer) rather than stalling
+        value: ['findNearest', 'listBoard', 'viewNode', 'createImage', 'applyDesign']
 
   # ─── 3. Prompt-as-variable: non-skeleton + active node → prompt node ─
   - description: 'Skeleton edits stay inline; qualitative direction promotes to a prompt node'
