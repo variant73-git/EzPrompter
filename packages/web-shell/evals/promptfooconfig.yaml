@@ -1,7 +1,11 @@
 # Promptfoo eval config — smoke tests for the agent's prompt logic.
 #
-# Run with:  bunx promptfoo eval -c evals/promptfooconfig.yaml
-# View results: bunx promptfoo view
+# Run with:  bun run evals          (regenerates the prompt, then evaluates)
+# View last: bun run evals:view
+# Needs a funded Gemini key in env:  GEMINI_API_KEY=... bun run evals
+# (don't call `promptfoo eval` directly — the prompt file is generated first
+#  by evals/gen-prompt.mjs and is gitignored, so a raw call sees a stale/absent
+#  prompt.)
 #
 # These tests evaluate the BOARD_AGENT system prompt against representative
 # user inputs and assert behavioural properties (mentions the right concept,
@@ -18,14 +22,16 @@
 description: 'Uncraft BOARD_AGENT smoke evals'
 
 # Cheap default — change to claude/gpt to compare. Keep flash for CI cost.
+# Key is read from GOOGLE_API_KEY / GEMINI_API_KEY env by the provider itself —
+# don't hardcode `apiKey: $VAR`, promptfoo doesn't interpolate $-refs in that
+# field and ends up sending a literal/empty key ("API key not valid").
 providers:
   - id: 'google:gemini-2.5-flash'
-    config:
-      apiKey: $GEMINI_API_KEY
 
-# Prompt template loaded from the shipping system prompt so a code-side
-# edit triggers the eval suite automatically (vs. duplicating the prompt
-# here and falling out of sync).
+# Prompt template is GENERATED from the shipping BOARD_AGENT (lib/agent/prompts.js)
+# by evals/gen-prompt.mjs, which runs as the first step of `bun run evals`. That
+# means a code-side edit to the system prompt flows straight into this suite —
+# the .txt is a derived artifact (gitignored), never hand-edited.
 prompts:
   - file://./prompts/board-agent.txt
 

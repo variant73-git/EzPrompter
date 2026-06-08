@@ -5,3 +5,7 @@ node_modules
 
 # build output: editor-core synced from packages/editor-core/src/ via scripts/build-editor.sh
 public/editor-core/
+
+# derived eval prompt: generated from lib/agent/prompts.js by evals/gen-prompt.mjs.
+# never hand-edit, never commit — `bun run evals` regenerates it.
+evals/prompts/board-agent.txt

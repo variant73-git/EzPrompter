@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "evals": "promptfoo eval -c evals/promptfooconfig.yaml",
+    "evals:gen": "node evals/gen-prompt.mjs",
+    "evals": "node evals/gen-prompt.mjs && promptfoo eval -c evals/promptfooconfig.yaml",
     "evals:view": "promptfoo view"
   },
   "dependencies": {
