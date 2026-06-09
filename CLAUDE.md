@@ -582,6 +582,7 @@ Ferramenta de **inspiração e aprendizado** — designer edita para criar algo 
 - **Tipografia (web-shell):** **Aeonik** local (Light/Regular/Medium/Bold em `packages/web-shell/public/fonts/aeonik/*.otf`). `@font-face` em `globals.css`. Body usa `'Aeonik', system fallback`.
 
 ## Web-shell — design system + arquitetura
+> **Fonte canônica: [`DESIGN.md`](DESIGN.md) na raiz.** Ler ANTES de qualquer decisão visual/UI (cores, fonts, spacing, raios, blur, motion). Tokens reais vivem em `packages/web-shell/app/globals.css` (`@theme` + `:root` + `body.rb-ed-light`). Usar os tokens (`var(--accent)`, `var(--surface)`, `var(--blur-chrome)`, etc.), não literais. Não desviar do sistema sem aprovação explícita do user; em QA, sinalizar código que não bate com o DESIGN.md.
 - **CSS design tokens** em `packages/web-shell/app/globals.css` (`:root`):
   - `--bg-base: #0a0a0a`, `--bg-frosted: rgba(10,10,10,0.72)`
   - `--border-frosted: rgba(255,255,255,0.08)`, `--border-frosted-strong: rgba(255,255,255,0.12)`

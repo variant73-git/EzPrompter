@@ -18,12 +18,29 @@
   --color-hover-bg: rgba(255, 255, 255, 0.06);
   --color-hover-bg-strong: rgba(255, 255, 255, 0.12);
 
+  /* Product accent (canonical blue) + common surface fill. Added in the
+     2026-06-09 token cleanup so utilities and plain CSS share one source
+     instead of ~38 hardcoded var(--accent) / scattered white-alpha fills. */
+  --color-accent: #0095FF;
+  --color-accent-hover: #0086e6;
+  --color-accent-weak: rgba(0, 149, 255, 0.18);
+  --color-surface: rgba(255, 255, 255, 0.04);
+  --color-surface-strong: rgba(255, 255, 255, 0.06);
+
   --shadow-frost: 0 16px 60px rgba(0, 0, 0, 0.55);
 
   --radius-pill: 999px;
   --radius-sm: 12px;
   --radius-md: 18px;
   --radius-lg: 22px;
+  --radius-xs: 8px;
+  --radius-2xs: 6px;
+
+  /* Chrome blur amounts — 28px house value, 36px heavy menus, 24px soft
+     backgrounds. Were 9 different literals before the cleanup. */
+  --blur-chrome: 28px;
+  --blur-menu: 36px;
+  --blur-soft: 24px;
 
   /* Aeonik wired as the default sans so `font-sans` resolves to it
      automatically. Instrument Serif is exposed via `font-display`. */
@@ -78,10 +95,22 @@
   --canvas-dot: rgba(255, 255, 255, 0.20);
   --hover-bg: rgba(255, 255, 255, 0.06);
   --hover-bg-strong: rgba(255, 255, 255, 0.10);
+  /* Accent + surface — see @theme note. Accent stays blue in both themes;
+     surface flips dark-on-light in body.rb-ed-light below. */
+  --accent: #0095FF;
+  --accent-hover: #0086e6;
+  --accent-weak: rgba(0, 149, 255, 0.18);
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-strong: rgba(255, 255, 255, 0.06);
   --radius-pill: 999px;
   --radius-sm: 12px;
   --radius-md: 18px;
   --radius-lg: 22px;
+  --radius-xs: 8px;
+  --radius-2xs: 6px;
+  --blur-chrome: 28px;
+  --blur-menu: 36px;
+  --blur-soft: 24px;
 
   /* ── Popup design tokens — ported from the Uncraft extension widget
         (panel.css's #repixbridge-panel block). The canvas popups
@@ -131,6 +160,9 @@ body.rb-ed-light {
   --canvas-dot: rgba(15, 23, 42, 0.18);
   --hover-bg: rgba(15, 23, 42, 0.06);
   --hover-bg-strong: rgba(15, 23, 42, 0.10);
+  /* Accent keeps the blue; surface flips to dark-on-light. */
+  --surface: rgba(15, 23, 42, 0.04);
+  --surface-strong: rgba(15, 23, 42, 0.06);
 
   /* Popup light-theme overrides — mirrors the widget's .rb-light. */
   --popup-bg: #EFEEEB;
@@ -272,14 +304,14 @@ input:focus {
 }
 
 .btn-primary {
-  background: #0095FF;
-  border-color: #0095FF;
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
 
 .btn-primary:hover {
-  background: #0086e6;
-  border-color: #0086e6;
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .error {
@@ -329,13 +361,13 @@ input:focus {
 .badge-pro {
   background: rgba(0, 149, 255, 0.2);
   color: #38bdf8;
-  border: 1px solid #0095FF;
+  border: 1px solid var(--accent);
 }
 
 .badge-free {
   background: rgba(148, 163, 184, 0.1);
   color: #94a3b8;
-  border: 1px solid #2a2a4a;
+  border: 1px solid var(--border-frosted-strong);
 }
 
 .stat-row {
@@ -343,7 +375,7 @@ input:focus {
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 0;
-  border-bottom: 1px solid #2a2a4a;
+  border-bottom: 1px solid var(--border-frosted-strong);
 }
 
 .stat-row:last-child {
@@ -361,8 +393,8 @@ input:focus {
 }
 
 .token-box {
-  background: #0f0f23;
-  border: 1px solid #2a2a4a;
+  background: var(--bg-frosted-solid);
+  border: 1px solid var(--border-frosted-strong);
   border-radius: 8px;
   padding: 0.75rem 1rem;
   font-family: monospace;
@@ -509,8 +541,8 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
      = inner-button-radius). */
   padding: 4px;
   background: var(--bg-frosted);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: 12px;
   font-size: 0.85rem;
@@ -544,8 +576,8 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
   height: 44px;
   padding: 0;
   background: var(--bg-frosted);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: 12px;
   box-shadow: var(--shadow-frost);
@@ -666,8 +698,8 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
   border-radius: 18px;
   padding: 6px;
   box-shadow: 0 16px 60px rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(36px) saturate(160%);
-  -webkit-backdrop-filter: blur(36px) saturate(160%);
+  backdrop-filter: blur(var(--blur-menu)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--blur-menu)) saturate(160%);
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -769,8 +801,8 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
   background: rgba(18, 18, 18, 0.55);
   border: 1px solid var(--border-frosted);
   box-shadow: var(--shadow-frost);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   pointer-events: none;
   transition: right 180ms ease;
 }
@@ -1025,8 +1057,8 @@ body.rb-ed-light .minimap-node-stroke {
   width: 100%;
   max-width: 380px;
   background: rgba(15, 15, 15, 0.55);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: var(--radius-lg);
   padding: 1.75rem;
@@ -1142,8 +1174,8 @@ body.rb-ed-light .minimap-node-stroke {
   flex-direction: column;
   padding: 1.5rem 1rem;
   background: rgba(8, 8, 8, 0.65);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border-right: 1px solid var(--border-frosted);
 }
 
@@ -1278,8 +1310,8 @@ body.rb-ed-light .minimap-node-stroke {
   display: flex;
   flex-direction: column;
   background: rgba(20, 20, 20, 0.55);
-  backdrop-filter: blur(24px) saturate(140%);
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(var(--blur-soft)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-soft)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: var(--radius-lg);
   overflow: hidden;
@@ -1582,7 +1614,7 @@ body.rb-ed-light .minimap-node-stroke {
 .user-menu-plan-tag.plan-pro,
 .user-menu-plan-tag.plan-team,
 .user-menu-plan-tag.plan-business {
-  background: linear-gradient(135deg, #0095FF, #38bdf8);
+  background: linear-gradient(135deg, var(--accent), #38bdf8);
   color: #fff;
   border-color: transparent;
 }
@@ -1603,7 +1635,7 @@ body.rb-ed-light .minimap-node-stroke {
   justify-content: center;
   margin-top: 8px;
   padding: 7px 12px;
-  background: linear-gradient(135deg, #0095FF, #38bdf8);
+  background: linear-gradient(135deg, var(--accent), #38bdf8);
   color: #fff;
   font-family: inherit;
   font-size: 0.78rem;
@@ -2058,8 +2090,8 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
   box-shadow: var(--shadow-frost, 0 16px 60px rgba(0, 0, 0, 0.55));
   font-family: 'Aeonik', inherit;
   color: var(--text-primary, #f5f5f5);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
 }
 
 .challenge-modal-icon {
@@ -2342,7 +2374,7 @@ html, body { overscroll-behavior: none; }
 .cnode.selected {
   border-color: transparent;
   box-shadow:
-    0 0 0 calc(3px / var(--canvas-scale, 1)) var(--cnode-port-fill, #0095FF),
+    0 0 0 calc(3px / var(--canvas-scale, 1)) var(--cnode-port-fill, var(--accent)),
     0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
@@ -2556,8 +2588,8 @@ html, body { overscroll-behavior: none; }
 }
 
 .cnode-topbar .btn-edit.active {
-  background: #0095FF;
-  border-color: #0095FF;
+  background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
 
@@ -2769,8 +2801,8 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   height: 44px;
   padding: 4px;
   background: var(--bg-frosted);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: 12px;
   box-shadow: var(--shadow-frost);
@@ -2852,7 +2884,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   transition: background 100ms;
 }
 .zoom-menu-item:hover { background: var(--hover-bg); }
-.zoom-menu-item.active { background: var(--hover-bg); color: #0095FF; }
+.zoom-menu-item.active { background: var(--hover-bg); color: var(--accent); }
 .zoom-menu-kbd {
   display: inline-flex;
   align-items: center;
@@ -2912,13 +2944,13 @@ body.rb-ed-light .cnode { border-color: rgba(0, 0, 0, 0.10); box-shadow: 0 8px 3
 body.rb-ed-light .cnode.selected {
   border-color: transparent;
   box-shadow:
-    0 0 0 calc(3px / var(--canvas-scale, 1)) var(--cnode-port-fill, #0095FF),
+    0 0 0 calc(3px / var(--canvas-scale, 1)) var(--cnode-port-fill, var(--accent)),
     0 8px 32px rgba(0, 0, 0, 0.18);
 }
 body.rb-ed-light .cnode-topbar button { color: #4a4a4a; }
 body.rb-ed-light .cnode-topbar .btn-edit { background: rgba(31, 31, 31, 0.06); border-color: rgba(31, 31, 31, 0.16); color: #1f1f1f; }
 body.rb-ed-light .cnode-topbar .btn-edit:hover { background: #1f1f1f; border-color: #1f1f1f; color: #fafafa; }
-body.rb-ed-light .cnode-topbar .btn-edit.active { background: #0095FF; border-color: #0095FF; color: #fff; }
+body.rb-ed-light .cnode-topbar .btn-edit.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 body.rb-ed-light .cnode-topbar .btn-delete:hover { background: #F67293; color: #fff; border-color: #F67293; }
 
 /* Reset button — in dark mode it inherits a faint slate icon on offblack
@@ -2970,8 +3002,8 @@ body.rb-ed-light .cnode-port-right {
   background: rgba(26, 26, 26, 0.78);
   border-color: rgba(245, 245, 245, 0.85);
   color: rgba(241, 245, 249, 0.85);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
 }
 body.rb-ed-light .cnode-port-left {
   background: rgba(26, 26, 26, 0.78);
@@ -3139,8 +3171,8 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
   transform: translateY(-50%);
   border-radius: 50%;
   background: rgba(26, 26, 26, 0.78);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid rgba(245, 245, 245, 0.85);
   color: rgba(241, 245, 249, 0.85);
   display: flex;
@@ -3153,8 +3185,8 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
 }
 
 .cnode-port-right:hover {
-  background: var(--cnode-port-fill, #0095FF);
-  border-color: var(--cnode-port-fill, #0095FF);
+  background: var(--cnode-port-fill, var(--accent));
+  border-color: var(--cnode-port-fill, var(--accent));
   color: #fff;
   transform: translateY(-50%) scale(1.15);
 }
@@ -3164,8 +3196,8 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
    cord visibly originates from a same-coloured circle. Idle (no outgoing
    edge) stays in the neutral dark-mode family. */
 .cnode-port-right.is-connected {
-  background: var(--cnode-port-fill, #0095FF);
-  border-color: var(--cnode-port-fill, #0095FF);
+  background: var(--cnode-port-fill, var(--accent));
+  border-color: var(--cnode-port-fill, var(--accent));
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -3173,8 +3205,8 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
   background: #fff;
 }
 body.rb-ed-light .cnode-port-right.is-connected {
-  background: var(--cnode-port-fill, #0095FF);
-  border-color: var(--cnode-port-fill, #0095FF);
+  background: var(--cnode-port-fill, var(--accent));
+  border-color: var(--cnode-port-fill, var(--accent));
 }
 body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
   background: #fff;
@@ -3211,8 +3243,8 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
   height: calc(19px / var(--canvas-scale, 1));
   border-radius: 50%;
   background: rgba(26, 26, 26, 0.78);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: calc(1.5px / var(--canvas-scale, 1)) solid rgba(245, 245, 245, 0.85);
   display: flex;
   align-items: center;
@@ -3340,7 +3372,7 @@ html.canvas-zoom-very-low .cnode-port-dot {
 }
 .cnode-resize-dash:hover::after,
 .cnode-resize-dash:active::after {
-  background: var(--cnode-port-fill, #0095FF);
+  background: var(--cnode-port-fill, var(--accent));
   transform: scale(1.05);
 }
 .cnode-resize-dash-bottom {
@@ -3451,8 +3483,8 @@ body.rb-ed-light .cnode-empty {
 .cnode-spinner {
   width: 22px;
   height: 22px;
-  border: 2px solid #2a2a4a;
-  border-top-color: #0095FF;
+  border: 2px solid var(--border-frosted-strong);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -3792,8 +3824,8 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
   position: absolute;
   /* #181818 tint, translucent so the dot grid blurs through. */
   background: rgba(24, 24, 24, 0.5);
-  backdrop-filter: blur(24px) saturate(120%);
-  -webkit-backdrop-filter: blur(24px) saturate(120%);
+  backdrop-filter: blur(var(--blur-soft)) saturate(120%);
+  -webkit-backdrop-filter: blur(var(--blur-soft)) saturate(120%);
   border: 1.5px solid rgba(255, 255, 255, 0.127);
   border-radius: 24px;
   pointer-events: none;
@@ -4224,8 +4256,8 @@ body.rb-ed-light .prompt-dock-context-x:hover {
 }
 .confirm-modal-card {
   background: rgba(20, 20, 22, 0.92);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: 18px;
   padding: 22px 24px;
@@ -4411,8 +4443,8 @@ body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
   border-radius: 22px;
   background: rgba(10, 10, 10, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   box-shadow: 0 16px 60px rgba(0, 0, 0, 0.55);
   display: flex;
   flex-direction: column;
@@ -4696,8 +4728,8 @@ body.rb-ed-light .prompt-dock-collapse-btn {
      so the preview previews. Dashed border keeps the "this is a
      simulation" affordance separate from the eventual solid dock. */
   background: rgba(10, 10, 10, 0.55);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border-radius: 22px;
   pointer-events: none;
   z-index: 9999;
@@ -4980,7 +5012,7 @@ body.rb-ed-active .prompt-dock { display: none !important; }
 
 .prompt-dock-send.active {
   background: #f8fafc;
-  color: #0f0f23;
+  color: var(--bg-frosted-solid);
 }
 
 .prompt-dock-send.active:hover {
@@ -5044,7 +5076,7 @@ body.rb-ed-light .prompt-dock-send.stop:hover {
 }
 .cnode-run-spin {
   animation: prompt-dock-spin 0.85s linear infinite;
-  color: var(--cnode-port-fill, #0095FF);
+  color: var(--cnode-port-fill, var(--accent));
   width: calc(13px / var(--canvas-scale, 1));
   height: calc(13px / var(--canvas-scale, 1));
   flex-shrink: 0;
@@ -5052,7 +5084,7 @@ body.rb-ed-light .prompt-dock-send.stop:hover {
 .cnode-run-step {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  color: var(--cnode-port-fill, #0095FF);
+  color: var(--cnode-port-fill, var(--accent));
   font-size: calc(11px / var(--canvas-scale, 1));
   letter-spacing: 0.02em;
 }
@@ -5577,7 +5609,7 @@ body.rb-ed-light .edge-label-pill {
 
 .ins-field input:focus,
 .ins-field select:focus {
-  border-color: #0095FF;
+  border-color: var(--accent);
 }
 
 .ins-color-row {
@@ -5669,8 +5701,8 @@ body.rb-ed-light .edge-label-pill {
 .empty-drop-menu {
   position: fixed;
   background: rgba(20, 20, 20, 0.78);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 22px;
   padding: 8px;
@@ -5777,7 +5809,7 @@ body.rb-ed-light .edge-label-pill {
   position: fixed;
   background: rgba(20, 20, 42, 0.95);
   backdrop-filter: blur(20px);
-  border: 1px solid #2a2a4a;
+  border: 1px solid var(--border-frosted-strong);
   border-radius: 12px;
   padding: 1rem;
   z-index: 300;
@@ -5795,8 +5827,8 @@ body.rb-ed-light .edge-label-pill {
 
 .edge-popup select, .edge-popup input {
   width: 100%;
-  background: #0f0f23;
-  border: 1px solid #2a2a4a;
+  background: var(--bg-frosted-solid);
+  border: 1px solid var(--border-frosted-strong);
   color: #e2e8f0;
   padding: 0.4rem 0.6rem;
   border-radius: 6px;
@@ -5806,6 +5838,6 @@ body.rb-ed-light .edge-label-pill {
 
 .edge-popup .row { display: flex; gap: 0.4rem; margin-top: 0.75rem; }
 .edge-popup .row button { flex: 1; padding: 0.5rem; border-radius: 6px; border: none; font-size: 0.8rem; cursor: pointer; font-family: inherit; }
-.edge-popup .row .apply { background: #0095FF; color: #fff; }
+.edge-popup .row .apply { background: var(--accent); color: #fff; }
 .edge-popup .row .delete { background: rgba(248, 113, 113, 0.15); color: #fca5a5; }
 
