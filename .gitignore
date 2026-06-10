@@ -73,3 +73,4 @@ coverage/
 .claude/skills/
 /skills/
 skills-lock.json
+.gstack/
