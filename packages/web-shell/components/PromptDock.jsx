@@ -33,6 +33,20 @@ const ICON_ARROW_UP = (
   </svg>
 );
 
+const ICON_MIC = (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+    <path d="M12 19v3"/>
+  </svg>
+);
+
+const ICON_MIC_STOP = (
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
+    <rect x="6" y="6" width="12" height="12" rx="1.5"/>
+  </svg>
+);
+
 const ICON_X = (
   <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
@@ -229,7 +243,9 @@ async function postCancel({ runId }) {
 // --- File picker accept maps ------------------------------------------------
 
 const ACCEPT_HTML = '.html,.htm,text/html';
-const ACCEPT_MD = '.md,.markdown,text/markdown,text/plain';
+// Strictly .md — plain .txt is NOT a design spec; each node kind accepts
+// only its own format (plan C).
+const ACCEPT_MD = '.md,.markdown,text/markdown';
 const ACCEPT_IMAGE = 'image/*';
 const ACCEPT_ANY = 'image/*,.md,.markdown,.html,text/markdown,text/html';
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -424,6 +440,105 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   const addBtnRef = useRef(null);
   const modelBtnRef = useRef(null);
   const dockRef = useRef(null);
+
+  // ── Speech-to-text (mic button left of the send arrow) ─────────────
+  // MediaRecorder captures a webm/opus clip; stop uploads it as a base64
+  // data URL to POST /api/transcribe (OpenAI Whisper, server-side key) and
+  // appends the text to the textarea. States: idle → rec → busy → idle,
+  // with a transient 'err' flash on denial/failure.
+  const [micState, setMicState] = useState('idle');
+  const micRecorderRef = useRef(null);
+  const micStreamRef = useRef(null);
+  const micChunksRef = useRef([]);
+  const micErrTimerRef = useRef(null);
+  const micStopTimerRef = useRef(null);
+  const MIC_MAX_MS = 120000; // auto-stop guard — keeps payloads tiny
+
+  function micCleanupStream() {
+    try { micStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch (e) {}
+    micStreamRef.current = null;
+    if (micStopTimerRef.current) { clearTimeout(micStopTimerRef.current); micStopTimerRef.current = null; }
+  }
+
+  function micFlashError(e) {
+    if (e) console.warn('[prompt-dock] dictation failed', e);
+    micCleanupStream();
+    micRecorderRef.current = null;
+    setMicState('err');
+    if (micErrTimerRef.current) clearTimeout(micErrTimerRef.current);
+    micErrTimerRef.current = setTimeout(() => setMicState('idle'), 2500);
+  }
+
+  async function micTranscribeBlob(blob) {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(new Error('could not read recording'));
+      r.readAsDataURL(blob);
+    });
+    const res = await fetch('/api/transcribe', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audioDataUrl: dataUrl }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error || `transcribe failed (${res.status})`);
+    return (json?.text || '').trim();
+  }
+
+  async function toggleMic() {
+    if (micState === 'busy') return;
+    if (micState === 'rec') {
+      try { micRecorderRef.current?.stop(); } catch (e) { micFlashError(e); }
+      return;
+    }
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      micFlashError(new Error('MediaRecorder unavailable'));
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+        : (MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+      const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      micChunksRef.current = [];
+      rec.ondataavailable = (ev) => { if (ev.data && ev.data.size) micChunksRef.current.push(ev.data); };
+      rec.onerror = (ev) => micFlashError(ev?.error || new Error('recorder error'));
+      rec.onstop = async () => {
+        micCleanupStream();
+        micRecorderRef.current = null;
+        const blob = new Blob(micChunksRef.current, { type: rec.mimeType || 'audio/webm' });
+        micChunksRef.current = [];
+        if (!blob.size) { setMicState('idle'); return; }
+        setMicState('busy');
+        try {
+          const spoken = await micTranscribeBlob(blob);
+          if (spoken) setText((prev) => (prev ? prev.replace(/\s+$/, '') + ' ' + spoken : spoken));
+          setMicState('idle');
+          taRef.current?.focus();
+        } catch (e) {
+          micFlashError(e);
+        }
+      };
+      rec.start();
+      micRecorderRef.current = rec;
+      setMicState('rec');
+      micStopTimerRef.current = setTimeout(() => {
+        try { rec.state === 'recording' && rec.stop(); } catch (e) {}
+      }, MIC_MAX_MS);
+    } catch (e) {
+      micFlashError(e); // permission denied / no input device
+    }
+  }
+
+  useEffect(() => () => {
+    // Unmount — drop the mic and any pending timers.
+    try { micRecorderRef.current?.state === 'recording' && micRecorderRef.current.stop(); } catch (e) {}
+    micCleanupStream();
+    if (micErrTimerRef.current) clearTimeout(micErrTimerRef.current);
+  }, []);
 
   // ── Dock position + drag state ──────────────────────────────────────
   // dockPos is either a string ('bottom' | 'left' | 'right') or a
@@ -1345,6 +1460,25 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
             <span className="prompt-dock-model-chev">{ICON_CHEVRON}</span>
           </button>
         </div>
+
+        <motion.button
+          type="button"
+          className={`prompt-dock-mic ${micState === 'rec' ? 'rec' : ''}${micState === 'busy' ? ' busy' : ''}${micState === 'err' ? ' err' : ''}`}
+          whileHover={micState === 'busy' ? {} : { scale: 1.06 }}
+          whileTap={micState === 'busy' ? {} : { scale: 0.94 }}
+          transition={{ type: 'spring', stiffness: 400, damping: 22 }}
+          disabled={busy || chat.streaming || chat.softPause !== null || micState === 'busy'}
+          onClick={toggleMic}
+          aria-label={micState === 'rec' ? 'Stop dictation' : 'Dictate'}
+          title={micState === 'rec' ? 'Stop recording' : micState === 'busy' ? 'Transcribing…' : micState === 'err' ? 'Dictation failed — check mic permission' : 'Dictate (speech to text)'}
+        >
+          {micState === 'busy' ? (
+            <svg className="prompt-dock-spin" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+              <circle cx="12" cy="12" r="9" opacity="0.25"/>
+              <path d="M21 12a9 9 0 0 1-9 9"/>
+            </svg>
+          ) : micState === 'rec' ? ICON_MIC_STOP : ICON_MIC}
+        </motion.button>
 
         <motion.button
           type="button"

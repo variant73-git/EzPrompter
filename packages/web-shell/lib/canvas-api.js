@@ -88,6 +88,9 @@ export const api = {
     throw new Error('Stream ended without a done event');
   },
   saveNodeEdit: (nodeId, html) => fetch(`/api/nodes/${nodeId}/save-edit`, { ...COMMON, method: 'POST', body: JSON.stringify({ html }) }).then(jsonOrThrow),
+  // Same route, content-shaped body — used by the unpopulated-node upload
+  // flow to seed { html } or { designMd } into an existing node.
+  saveNodeContent: (nodeId, body) => fetch(`/api/nodes/${nodeId}/save-edit`, { ...COMMON, method: 'POST', body: JSON.stringify(body) }).then(jsonOrThrow),
   runNode: (nodeId, opts = {}) => fetch(`/api/nodes/${nodeId}/run`, { ...COMMON, method: 'POST', body: JSON.stringify(opts) }).then(jsonOrThrow),
   // Used by the handoff polling loop in CanvasClient — returns the node
   // row + current snapshot (when present) in one round-trip.

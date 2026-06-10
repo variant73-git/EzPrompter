@@ -169,21 +169,27 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // once after the first render keeps SSR + first client paint identical
   // (both start with {}); the stored values land on the SECOND paint, so
   // React's hydration tree comparison never sees a mismatch.
+  // Storage keys are board-scoped — the old global keys meant visiting
+  // board B wiped board A's frames via the orphan cleanup. One-time
+  // orphaning of the legacy global keys is accepted (plan A1).
+  const SECTION_NAMES_KEY = `rb-section-names:${board.id}`;
+  const SECTION_FRAMES_KEY = `rb-section-frames:${board.id}`;
   useEffect(() => {
     try {
-      const namesRaw = localStorage.getItem('rb-section-names');
+      const namesRaw = localStorage.getItem(SECTION_NAMES_KEY);
       if (namesRaw) {
         const parsed = JSON.parse(namesRaw);
         if (parsed && typeof parsed === 'object') setSectionNameOverrides(parsed);
       }
     } catch {}
     try {
-      const framesRaw = localStorage.getItem('rb-section-frames');
+      const framesRaw = localStorage.getItem(SECTION_FRAMES_KEY);
       if (framesRaw) {
         const parsed = JSON.parse(framesRaw);
         if (parsed && typeof parsed === 'object') setSectionFrames(parsed);
       }
     } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   function setSectionNameOverride(sectionId, name) {
     setSectionNameOverrides((prev) => {
@@ -191,10 +197,26 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const trimmed = (name || '').trim();
       if (trimmed) next[sectionId] = trimmed;
       else delete next[sectionId];
-      try { localStorage.setItem('rb-section-names', JSON.stringify(next)); } catch {}
+      try { localStorage.setItem(SECTION_NAMES_KEY, JSON.stringify(next)); } catch {}
       return next;
     });
   }
+  // ── Drag-adoption state (plan A4) ──────────────────────────────────
+  // While a LOOSE node (no real edges) is dragged over another section's
+  // frame, that section live-expands to engulf it. adoptPreview carries the
+  // candidate + the engulfed rect; the ref mirrors state synchronously so
+  // the mouseup commit never reads a stale closure (same pattern as
+  // draftEdgeRef).
+  const [adoptPreview, setAdoptPreview] = useState(null); // {nodeId, sectionId, rootId, rect:{left,top,right,bottom}}
+  const adoptPreviewRef = useRef(null);
+  function setAdoptPreviewSync(v) {
+    adoptPreviewRef.current = v;
+    setAdoptPreview(v);
+  }
+  // Pre-drag snapshot for loose-node drags: lets the node's own singleton
+  // frame TRANSLATE with the drag (instead of being stretched by the
+  // grow-only frame logic) and gives the drop handler the start position.
+  const looseDragRef = useRef(null); // {nodeId, startX, startY, frameAtStart|null}
   // Close the section context menu on outside click or Escape.
   useEffect(() => {
     if (!sectionMenu) return;
@@ -465,12 +487,38 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const newH = opts.height || 800;
     const GAP = 80;
 
+    // Section frames are placement obstacles too (plan A5): a standalone
+    // node must never spawn on top of someone else's workflow frame. Two
+    // exemptions keep creation flows sane:
+    //  - connector flows (linkFromNodeId) — the source's section is the
+    //    one the node is JOINING; treating it as an obstacle would push
+    //    the node out of its own section.
+    //  - explicit world-coord creations (context menu / cord drop) whose
+    //    anchor lands INSIDE a frame — the user aimed there, so the node
+    //    is adopted into that section instead of being shoved away.
+    //    Returned as `adoptInto` for the caller to persist.
+    let allowedSectionId = null;
+    let adoptInto = null;
+    if (opts.linkFromNodeId) {
+      const src = sections.find((s) => s.memberIds.includes(opts.linkFromNodeId));
+      if (src) allowedSectionId = src.id;
+    } else if (opts.worldX != null && opts.worldY != null) {
+      const hit = sections.find((s) =>
+        opts.worldX >= s.x && opts.worldX <= s.x + s.width &&
+        opts.worldY >= s.y && opts.worldY <= s.y + s.height);
+      if (hit && !String(hit.rootId || '').startsWith('temp-')) {
+        allowedSectionId = hit.id;
+        adoptInto = { sectionId: hit.id, rootId: hit.rootId };
+      }
+    }
+    const sectionObstacles = sections.filter((s) => s.id !== allowedSectionId);
+
     // Find a non-overlapping (x, y) starting from a desired anchor. Walks
     // right first (raster), drops a row when no x fits, eventually returns
     // the desired anchor verbatim if 2k iterations didn't find space (unrealistic).
     function settle(desiredX, desiredY) {
       function overlaps(testX, testY) {
-        return nodes.some((n) => {
+        const nodeHit = nodes.some((n) => {
           if (n._loading && !n.width) return false;
           const nx = n.pos_x, ny = n.pos_y;
           const nw = n.width || 1280, nh = n.height || 800;
@@ -479,6 +527,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                    testY + newH + GAP <= ny ||
                    ny + nh + GAP <= testY);
         });
+        if (nodeHit) return true;
+        return sectionObstacles.some((s) =>
+          !(testX + newW + GAP <= s.x ||
+            s.x + s.width + GAP <= testX ||
+            testY + newH + GAP <= s.y ||
+            s.y + s.height + GAP <= testY));
       }
       let x = desiredX, y = desiredY;
       const STEP_X = 240;
@@ -492,10 +546,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
 
     // Caller-supplied world coords (right-click context, edge drop) — honour
-    // the anchor but slide off any collision.
+    // the anchor but slide off any collision. When the anchor sits inside an
+    // adopting section we skip the obstacle dance entirely: the frame will
+    // grow around the node, overlap with members is still avoided.
     if (opts.worldX != null && opts.worldY != null) {
       const s = settle(opts.worldX, opts.worldY);
-      return { posX: s.x, posY: s.y };
+      return { posX: s.x, posY: s.y, adoptInto };
     }
 
     // For new URL nodes, sit immediately to the LEFT of the leftmost
@@ -517,14 +573,215 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   }
 
   async function autoLinkNewNode(sourceNodeId, newNodeId) {
-    if (!sourceNodeId || !newNodeId) return;
+    if (!sourceNodeId || !newNodeId) return null;
+    // Mark membership intent BEFORE the edge round-trip so the sections
+    // memo unions the new node with its source immediately — no one-render
+    // singleton-frame flash while the edge is in flight (plan A3).
+    const clearPending = () => setNodes((prev) => prev.map((n) => {
+      if (n.id !== newNodeId || n._pendingLinkFrom === undefined) return n;
+      const next = { ...n };
+      delete next._pendingLinkFrom;
+      return next;
+    }));
+    setNodes((prev) => prev.map((n) => (n.id === newNodeId ? { ...n, _pendingLinkFrom: sourceNodeId } : n)));
     try {
       const { edge } = await api.createEdge({
         boardId: board.id, sourceNodeId, targetNodeId: newNodeId,
         kind: 'transplant', payload: { sourceSelector: 'body', targetSelector: 'body' }
       });
       setEdges((prev) => [...prev, edge]);
-    } catch (e) { console.warn('auto-link failed', e); }
+      clearPending();
+      return edge;
+    } catch (e) {
+      console.warn('auto-link failed', e);
+      clearPending();
+      return null;
+    }
+  }
+
+  // ── Drag adoption (plan A4) ─────────────────────────────────────────
+  // Nodes touched by at least one REAL edge (both endpoints present).
+  // Mirrors the sections derivation rule — adoption only applies to
+  // edge-less ("loose") nodes; connectivity membership always wins.
+  const edgeTouchedIds = useMemo(() => {
+    const present = new Set(nodes.map((n) => n.id));
+    const s = new Set();
+    for (const e of edges) {
+      if (present.has(e.source_node_id) && present.has(e.target_node_id)) {
+        s.add(e.source_node_id);
+        s.add(e.target_node_id);
+      }
+    }
+    return s;
+  }, [nodes, edges]);
+
+  function nodeWorldRect(node, posX, posY) {
+    const isAsset = node.kind === 'asset' || node.kind === 'image';
+    return {
+      left: posX,
+      top: posY,
+      right: posX + (node.width || 600),
+      // Same 80px visual overflow assets get in the section bbox math, so
+      // the preview rect exactly equals the post-commit grow result.
+      bottom: posY + (node.height || 600) + (isAsset ? 80 : 0),
+    };
+  }
+
+  function handleNodeMoveStart(node) {
+    if (String(node.id).startsWith('temp-')) return;
+    if (edgeTouchedIds.has(node.id)) return;
+    // Loose-node drag baseline: lets the singleton frame TRANSLATE with the
+    // drag (instead of being stretched by grow-only frame logic), and gives
+    // the drop handler the pre-drag section rect for un-adopt detection.
+    const own = sections.find((s) => s.memberIds.includes(node.id) && s.memberIds.length > 1) || null;
+    looseDragRef.current = {
+      nodeId: node.id,
+      startX: node.pos_x,
+      startY: node.pos_y,
+      lastX: node.pos_x,
+      lastY: node.pos_y,
+      frameAtStart: sectionFrames[`section-${node.id}`] || null,
+      ownSectionId: own?.id || null,
+      ownRectAtStart: own ? { left: own.x, top: own.y, right: own.x + own.width, bottom: own.y + own.height } : null,
+    };
+  }
+
+  function maybeUpdateAdoptPreview(node, posX, posY) {
+    const drag = looseDragRef.current;
+    if (!drag || drag.nodeId !== node.id) return;
+    drag.lastX = posX;
+    drag.lastY = posY;
+    const rect = nodeWorldRect(node, posX, posY);
+    // Singleton-frame carry — translate the node's own frame by the drag
+    // delta so it travels as a unit (same approach as startSectionMove).
+    if (drag.frameAtStart) {
+      const dx = posX - drag.startX;
+      const dy = posY - drag.startY;
+      const f = drag.frameAtStart;
+      setSectionFrames((prev) => ({
+        ...prev,
+        [`section-${node.id}`]: {
+          left:   Math.round(f.left + dx),
+          top:    Math.round(f.top + dy),
+          right:  Math.round(f.right + dx),
+          bottom: Math.round(f.bottom + dy),
+        },
+      }));
+    }
+    // Candidate = the section whose BASE rendered rect intersects the
+    // dragged node (testing the base rect — not the expanded preview —
+    // avoids the "once engulfed, can never leave" trap). Largest
+    // intersection wins when frames overlap.
+    let best = null, bestArea = 0;
+    for (const s of sections) {
+      if (s.memberIds.includes(node.id)) continue;
+      if (String(s.rootId || '').startsWith('temp-')) continue;
+      const ix = Math.min(rect.right, s.x + s.width) - Math.max(rect.left, s.x);
+      const iy = Math.min(rect.bottom, s.y + s.height) - Math.max(rect.top, s.y);
+      if (ix <= 0 || iy <= 0) continue;
+      const area = ix * iy;
+      if (area > bestArea) { best = s; bestArea = area; }
+    }
+    if (!best) {
+      if (adoptPreviewRef.current) setAdoptPreviewSync(null);
+      return;
+    }
+    // Engulf rect = section frame grown to contain the node with the same
+    // 40px clearance the committed grow path uses ⇒ zero snap on drop.
+    const CLEAR = 40;
+    const previewRect = {
+      left:   Math.min(best.x, rect.left - CLEAR),
+      top:    Math.min(best.y, rect.top - CLEAR),
+      right:  Math.max(best.x + best.width, rect.right + CLEAR),
+      bottom: Math.max(best.y + best.height, rect.bottom + CLEAR),
+    };
+    const cur = adoptPreviewRef.current;
+    if (cur && cur.sectionId === best.id &&
+        cur.rect.left === previewRect.left && cur.rect.top === previewRect.top &&
+        cur.rect.right === previewRect.right && cur.rect.bottom === previewRect.bottom) return;
+    setAdoptPreviewSync({ nodeId: node.id, sectionId: best.id, rootId: best.rootId, rect: previewRect });
+  }
+
+  function handleNodeMove(node, posX, posY) {
+    updateNodeLocal(node.id, { pos_x: posX, pos_y: posY });
+    if (!String(node.id).startsWith('temp-')) persistNodePosition(node.id, posX, posY);
+    maybeUpdateAdoptPreview(node, posX, posY);
+  }
+
+  async function handleNodeMoveEnd(node, moved) {
+    const drag = looseDragRef.current;
+    looseDragRef.current = null;
+    const preview = adoptPreviewRef.current;
+    if (preview) setAdoptPreviewSync(null);
+    if (!moved || !drag || drag.nodeId !== node.id) return;
+    const finalX = drag.lastX;
+    const finalY = drag.lastY;
+
+    // Combined position+meta PATCH for both commit paths below — the
+    // debounced position PATCH must be cancelled first, otherwise its
+    // delayed write reads the node row server-side and clobbers the meta
+    // we just committed (plan A4's subtlest race).
+    const commitMeta = async (meta) => {
+      clearTimeout(dragNodeServer.current.get(node.id));
+      dragNodeServer.current.delete(node.id);
+      setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, meta } : n)));
+      await api.updateNode(node.id, { posX: finalX, posY: finalY, meta });
+    };
+
+    // Adopt — dropped while a section preview was active.
+    if (preview && preview.nodeId === node.id) {
+      const meta = { ...(node.meta || {}), adoptedInto: preview.rootId };
+      setSectionFrames((prev) => {
+        const next = { ...prev, [preview.sectionId]: preview.rect };
+        // Retire the node's singleton frame; if it came from ANOTHER
+        // section, drop that section's stored frame too so it re-fits to
+        // its remaining members instead of keeping the drag-stretched rect.
+        delete next[`section-${node.id}`];
+        if (drag.ownSectionId && drag.ownSectionId !== preview.sectionId) delete next[drag.ownSectionId];
+        try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(next)); } catch {}
+        return next;
+      });
+      try {
+        await commitMeta(meta);
+      } catch (e) {
+        console.warn('adopt failed', e);
+        toast.error('Could not attach the node to the section.');
+        setNodes((prev) => prev.map((n) => {
+          if (n.id !== node.id) return n;
+          const m = { ...(n.meta || {}) };
+          delete m.adoptedInto;
+          return { ...n, meta: m };
+        }));
+      }
+      return;
+    }
+
+    // Un-adopt — an adopted loose node dropped clear of its section's
+    // pre-drag rect reverts to its own singleton section.
+    if (node.meta?.adoptedInto && drag.ownRectAtStart) {
+      const rect = nodeWorldRect(node, finalX, finalY);
+      const o = drag.ownRectAtStart;
+      const intersects = rect.left < o.right && rect.right > o.left && rect.top < o.bottom && rect.bottom > o.top;
+      if (!intersects) {
+        const meta = { ...(node.meta || {}) };
+        delete meta.adoptedInto;
+        // Drop the stretched stored frame so the abandoned section re-fits
+        // to its remaining members on the next render.
+        if (drag.ownSectionId) {
+          setSectionFrames((prev) => {
+            const next = { ...prev };
+            delete next[drag.ownSectionId];
+            try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(next)); } catch {}
+            return next;
+          });
+        }
+        try {
+          await commitMeta(meta);
+        } catch (e) {
+          console.warn('un-adopt failed', e);
+        }
+      }
+    }
   }
 
   // Poll a handoff-pending node for the snapshot the extension will
@@ -653,7 +910,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         _loading: false
       };
       setNodes((prev) => prev.map((n) => (n.id === id ? finalNode : n)));
-      if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      let linkEdge = null;
+      if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      // Undo entry only AFTER the real (persisted) node exists — undoing
+      // a creation mid-capture would orphan the placeholder swap.
+      pushCreateUndo(created.node, linkEdge);
       // Frame the new node at 100% so it's the immediate focus.
       setTimeout(() => zoomToNode(finalNode, 350, 1), 80);
     } catch (e) {
@@ -707,16 +968,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       toast.error('File does not look like a complete HTML document.');
       return;
     }
-    const { posX, posY } = nextNodePosition(opts);
+    const { posX, posY, adoptInto } = nextNodePosition(opts);
     try {
+      const meta = { name: file.name, source: 'upload' };
+      if (adoptInto && !opts.linkFromNodeId) meta.adoptedInto = adoptInto.rootId;
       const created = await api.createNode({
         boardId: board.id, kind: 'site',
         posX, posY, width: 1280, height: Math.round(1280 * 9 / 16),
-        meta: { name: file.name, source: 'upload' },
+        meta,
         html
       });
       setNodes((prev) => [...prev, { ...created.node, current_html: html }]);
-      if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      let linkEdge = null;
+      if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      pushCreateUndo(created.node, linkEdge);
     } catch (e) { toast.error(`Upload failed: ${e.message}`); }
   }
 
@@ -729,18 +994,22 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   async function handleAddBlankSite(opts = {}) {
     const width = 1280;
     const height = Math.round(width * 9 / 16);
-    const { posX, posY } = nextNodePosition({ ...opts, width });
+    const { posX, posY, adoptInto } = nextNodePosition({ ...opts, width });
     try {
+      const meta = { source: 'blank', name: 'Blank website' };
+      if (adoptInto && !opts.linkFromNodeId) meta.adoptedInto = adoptInto.rootId;
       const created = await api.createNode({
         boardId: board.id, kind: 'site',
         posX, posY, width, height,
         isMain: nodes.length === 0,
-        meta: { source: 'blank', name: 'Blank website' },
+        meta,
         html: BLANK_SITE_HTML
       });
       const finalNode = { ...created.node, current_html: BLANK_SITE_HTML };
       setNodes((prev) => [...prev, finalNode]);
-      if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      let linkEdge = null;
+      if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      pushCreateUndo(created.node, linkEdge);
       setTimeout(() => zoomToNode(finalNode, 350, 1), 80);
     } catch (e) { toast.error(`Could not add blank website: ${e.message}`); }
   }
@@ -750,16 +1019,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // Square node — the new MdPreviewBody renders a typography sample,
     // colour palette + lorem-ipsum stack inside a 1:1 frame.
     const width = 600, height = 600;
-    const { posX, posY } = nextNodePosition({ ...opts, width, height });
+    const { posX, posY, adoptInto } = nextNodePosition({ ...opts, width, height });
     try {
+      const meta = { name: file.name };
+      if (adoptInto && !opts.linkFromNodeId) meta.adoptedInto = adoptInto.rootId;
       const created = await api.createNode({
         boardId: board.id, kind: 'designmd',
         posX, posY, width, height,
-        meta: { name: file.name },
+        meta,
         designMd: text
       });
       setNodes((prev) => [...prev, { ...created.node, current_design_md: text }]);
-      if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      let linkEdge = null;
+      if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      pushCreateUndo(created.node, linkEdge);
     } catch (e) { toast.error(`Upload failed: ${e.message}`); }
   }
 
@@ -777,16 +1050,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
     // Square frame by default; user can resize via the dash handles.
     const width = 600, height = 600;
-    const { posX, posY } = nextNodePosition({ ...opts, width, height });
+    const { posX, posY, adoptInto } = nextNodePosition({ ...opts, width, height });
     try {
+      const meta = { name: file.name, dataUrl, mimeType: file.type || 'image/*' };
+      if (adoptInto && !opts.linkFromNodeId) meta.adoptedInto = adoptInto.rootId;
       const created = await api.createNode({
         boardId: board.id,
         kind: 'asset',
         posX, posY, width, height,
-        meta: { name: file.name, dataUrl, mimeType: file.type || 'image/*' }
+        meta
       });
       setNodes((prev) => [...prev, { ...created.node }]);
-      if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      let linkEdge = null;
+      if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      pushCreateUndo(created.node, linkEdge);
     } catch (e) { toast.error(`Upload failed: ${e.message}`); }
   }
 
@@ -839,13 +1116,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const posX = w.x - width / 2;
     const posY = w.y - height / 2;
     try {
+      const meta = { name: asset.name || 'asset', dataUrl: imageSrc, mimeType: 'image/*' };
+      // Library drops keep the cursor-centered position; when that point
+      // lands inside a section frame the node joins that section instead
+      // of overlapping it as a stranger.
+      const hit = sections.find((s) =>
+        w.x >= s.x && w.x <= s.x + s.width && w.y >= s.y && w.y <= s.y + s.height);
+      if (hit && !String(hit.rootId || '').startsWith('temp-')) meta.adoptedInto = hit.rootId;
       const created = await api.createNode({
         boardId: board.id,
         kind: 'asset',
         posX, posY, width, height,
-        meta: { name: asset.name || 'asset', dataUrl: imageSrc, mimeType: 'image/*' }
+        meta
       });
       setNodes((prev) => [...prev, { ...created.node }]);
+      pushCreateUndo(created.node, null);
     } catch (err) {
       toast.error(`Drop failed: ${err.message}`);
     }
@@ -889,15 +1174,19 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   async function handleAddPrompt(opts = {}) {
     // 3:1 text-field node. Width chosen so it stays comfortable at 1× zoom.
     const width = 600, height = 200;
-    const { posX, posY } = nextNodePosition({ ...opts, width, height });
+    const { posX, posY, adoptInto } = nextNodePosition({ ...opts, width, height });
     try {
+      const meta = { name: 'prompt', prompt: '' };
+      if (adoptInto && !opts.linkFromNodeId) meta.adoptedInto = adoptInto.rootId;
       const created = await api.createNode({
         boardId: board.id, kind: 'prompt',
         posX, posY, width, height,
-        meta: { name: 'prompt', prompt: '' }
+        meta
       });
       setNodes((prev) => [...prev, { ...created.node }]);
-      if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      let linkEdge = null;
+      if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      pushCreateUndo(created.node, linkEdge);
       setSelectedNodeId(created.node.id);
     } catch (e) { toast.error(`Could not add prompt: ${e.message}`); }
   }
@@ -906,15 +1195,19 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // Skill is a small, square card with a file glyph + name. Default
     // dimensions read as a "tile" rather than a document.
     const width = 240, height = 280;
-    const { posX, posY } = nextNodePosition({ ...opts, width, height });
+    const { posX, posY, adoptInto } = nextNodePosition({ ...opts, width, height });
     try {
+      const meta = { name: 'skill' };
+      if (adoptInto && !opts.linkFromNodeId) meta.adoptedInto = adoptInto.rootId;
       const created = await api.createNode({
         boardId: board.id, kind: 'skill',
         posX, posY, width, height,
-        meta: { name: 'skill' }
+        meta
       });
       setNodes((prev) => [...prev, { ...created.node }]);
-      if (opts.linkFromNodeId) await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      let linkEdge = null;
+      if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      pushCreateUndo(created.node, linkEdge);
     } catch (e) { toast.error(`Could not add skill: ${e.message}`); }
   }
 
@@ -947,6 +1240,111 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const r = fileInputResolverRef.current;
     fileInputResolverRef.current = null;
     if (r) r(file || null);
+  }
+
+  // Per-kind upload accept filters (plan C). One map drives the empty
+  // node's center upload button AND the connect-to/context pickers, so a
+  // node kind can never ingest the wrong format. accept= on the input is
+  // advisory only — validFileForKind re-checks after the pick.
+  const ACCEPT_BY_KIND = {
+    site: '.html,.htm,text/html',
+    designmd: '.md,.markdown,text/markdown',
+    asset: 'image/*',
+  };
+  const MAX_ASSET_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+  function validFileForKind(kind, file) {
+    const name = (file?.name || '').toLowerCase();
+    if (kind === 'site') return /\.html?$/.test(name) || file?.type === 'text/html';
+    if (kind === 'designmd') return /\.(md|markdown)$/.test(name);
+    if (kind === 'asset') return (file?.type || '').startsWith('image/');
+    return false;
+  }
+
+  // Record a creation on the undo stack so Cmd+Z removes the node again
+  // (plus its auto-link edge when the creation came from a connector).
+  function pushCreateUndo(node, edge) {
+    if (!node) return;
+    undoStackRef.current.push({ type: 'createNodes', nodes: [node], edges: edge ? [edge] : [] });
+  }
+
+  // "Connect to" flow (plan B): create an UNPOPULATED node of the picked
+  // category at the cord-drop point, auto-linked to its source node. The
+  // body renders a centered upload button (prompt is the exception — it
+  // opens as an inline-editable textarea); content arrives later through
+  // handlePopulateNode.
+  async function handleCreateEmptyNode(kind, opts = {}) {
+    const DIMS = {
+      site:     { width: 1280, height: Math.round(1280 * 9 / 16) },
+      designmd: { width: 600,  height: 600 },
+      asset:    { width: 600,  height: 600 },
+      prompt:   { width: 600,  height: 200 },
+    };
+    const { width, height } = DIMS[kind] || DIMS.designmd;
+    const { posX, posY, adoptInto } = nextNodePosition({ ...opts, width, height });
+    const NAME = { site: 'Untitled.html', designmd: 'Untitled.md', asset: 'Untitled image', prompt: 'prompt' };
+    const meta = { name: NAME[kind] || 'Untitled' };
+    if (kind === 'site') meta.source = 'empty';
+    if (kind === 'prompt') meta.prompt = '';
+    if (adoptInto && !opts.linkFromNodeId) meta.adoptedInto = adoptInto.rootId;
+    try {
+      const created = await api.createNode({
+        boardId: board.id, kind,
+        posX, posY, width, height,
+        meta
+      });
+      setNodes((prev) => [...prev, { ...created.node }]);
+      let linkEdge = null;
+      if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
+      pushCreateUndo(created.node, linkEdge);
+      if (kind === 'prompt') setSelectedNodeId(created.node.id);
+    } catch (e) { toast.error(`Could not create node: ${e.message}`); }
+  }
+
+  // Center upload button on an unpopulated node — opens the kind-scoped
+  // picker and persists the content into the EXISTING node (snapshot for
+  // site/designmd, meta.dataUrl for asset).
+  async function handlePopulateNode(node) {
+    const kind = node.kind === 'image' ? 'asset' : node.kind;
+    const accept = ACCEPT_BY_KIND[kind];
+    if (!accept) return;
+    const file = await pickFile(accept);
+    if (!file) return;
+    if (!validFileForKind(kind, file)) {
+      const expected = kind === 'asset' ? 'an image file'
+        : kind === 'designmd' ? 'a .md file'
+        : 'an .html file';
+      toast.error(`This node only accepts ${expected}.`);
+      return;
+    }
+    try {
+      if (kind === 'site') {
+        const html = await file.text();
+        if (!/^<!doctype|<html/i.test(html.trim())) {
+          toast.error('File does not look like a complete HTML document.');
+          return;
+        }
+        await api.saveNodeContent(node.id, { html });
+        const meta = { ...(node.meta || {}), name: file.name, source: 'upload' };
+        setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, current_html: html, meta } : n)));
+        api.updateNode(node.id, { meta }).catch(() => {});
+      } else if (kind === 'designmd') {
+        const text = await file.text();
+        await api.saveNodeContent(node.id, { designMd: text });
+        const meta = { ...(node.meta || {}), name: file.name };
+        setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, current_design_md: text, meta } : n)));
+        api.updateNode(node.id, { meta }).catch(() => {});
+      } else {
+        if (file.size > MAX_ASSET_UPLOAD_BYTES) {
+          toast.error('Image too large (max 10MB).');
+          return;
+        }
+        const dataUrl = await blobToDataUrl(file);
+        const meta = { ...(node.meta || {}), name: file.name, dataUrl, mimeType: file.type || 'image/*' };
+        setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, meta } : n)));
+        await api.updateNode(node.id, { meta });
+      }
+    } catch (e) { toast.error(`Upload failed: ${e.message}`); }
   }
 
   // Capture a node + its incident edges for the undo stack BEFORE we strip
@@ -993,6 +1391,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   async function handleUndo() {
     const entry = undoStackRef.current.pop();
     if (!entry) return;
+
+    if (entry.type === 'createNodes') {
+      // Reverse a creation — remove the created node(s) plus the auto-link
+      // edge(s). No new undo entry is pushed (that would loop). Server-side
+      // edge rows cascade away with the node delete.
+      const ids = new Set(entry.nodes.map((n) => n.id));
+      setNodes((prev) => prev.filter((n) => !ids.has(n.id)));
+      setEdges((prev) => prev.filter((e) => !ids.has(e.source_node_id) && !ids.has(e.target_node_id)));
+      for (const n of entry.nodes) {
+        if (String(n.id).startsWith('temp-')) continue;
+        api.deleteNode(n.id).catch(console.warn);
+      }
+      return;
+    }
+
     if (entry.type === 'deleteNodes') {
       // Optimistic local restore first so the canvas snaps back instantly,
       // then send the server request. If the server fails, the local state
@@ -1002,8 +1415,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         return [...prev, ...entry.nodes.filter((n) => !ids.has(n.id))];
       });
       setEdges((prev) => {
+        // Dedup by edge id AND endpoint pair — an undo arriving after the
+        // same pair was reconnected manually must not double the cord.
         const keys = new Set(prev.map((e) => `${e.source_node_id}::${e.target_node_id}`));
-        return [...prev, ...entry.edges.filter((e) => !keys.has(`${e.source_node_id}::${e.target_node_id}`))];
+        const ids = new Set(prev.map((e) => e.id));
+        return [...prev, ...entry.edges.filter((e) =>
+          !ids.has(e.id) && !keys.has(`${e.source_node_id}::${e.target_node_id}`))];
       });
       // Skip server call for temp- ids (never persisted).
       const persistedNodes = entry.nodes.filter((n) => !String(n.id).startsWith('temp-'));
@@ -1016,7 +1433,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             boardId: board.id,
-            nodes: persistedNodes,
+            // Ship the snapshot content along — deleting the node cascaded
+            // its snapshots away, so the restore route must RECREATE one
+            // (otherwise the node comes back hollow after a reload).
+            nodes: persistedNodes.map((n) => ({
+              ...n,
+              html: typeof n.current_html === 'string' ? n.current_html : null,
+              design_md: typeof n.current_design_md === 'string' ? n.current_design_md : null,
+            })),
             edges: persistedEdges,
           }),
         });
@@ -1430,6 +1854,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (!playSection) return;
     const s = playSection.section;
     setPlaySection(null);
+    // Edge-less sections (singletons / purely-adopted groups) have no flow
+    // to re-run; the play button is hidden for them, this is the backstop.
+    if (s.hasEdges === false) return;
 
     // Find the terminal node of the chain — the member that receives
     // edges from other members but doesn't fan out to another member.
@@ -2226,7 +2653,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // via union-find / BFS. Renames + manual splits/merges are Phase 2 and
   // would persist as overrides; this MVP is fully derived.
   const sections = useMemo(() => {
-    if (!nodes || nodes.length < 2) return [];
+    if (!nodes || nodes.length === 0) return [];
     // Sides + bottom use a uniform 165px gap. The TOP gap is larger
     // (260px) because the name tag's play button is stable-sized on
     // screen, so at moderate zoom-out it occupies more world space —
@@ -2247,17 +2674,28 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         adj.get(b).push(a);
       }
     }
+    // Adoption virtual links (plan A3): a LOOSE node (no real edges) that
+    // carries meta.adoptedInto — or the transient _pendingLinkFrom while
+    // its auto-link edge is in flight — attaches to its anchor's component.
+    // Real edges always win: a node with real adjacency ignores stale
+    // adoption pointers, and a dangling anchor (deleted node) simply adds
+    // no link, so the node falls back to its own singleton section.
+    const fullAdj = new Map();
+    for (const [k, v] of adj) fullAdj.set(k, v.slice());
+    for (const n of nodes) {
+      if ((adj.get(n.id) || []).length > 0) continue;
+      const anchor = n._pendingLinkFrom || n.meta?.adoptedInto;
+      if (!anchor || anchor === n.id || !fullAdj.has(anchor)) continue;
+      fullAdj.get(n.id).push(anchor);
+      fullAdj.get(anchor).push(n.id);
+    }
     // Connected components via iterative BFS (avoid recursion depth on
-    // large boards).
+    // large boards). Singletons included — EVERY node lives inside a
+    // section (plan A2); an isolated node is a 1-member component.
     const visited = new Set();
     const components = [];
     for (const n of nodes) {
       if (visited.has(n.id)) continue;
-      const neighbours = adj.get(n.id) || [];
-      if (neighbours.length === 0) {
-        visited.add(n.id);
-        continue;
-      }
       const members = [];
       const queue = [n.id];
       while (queue.length) {
@@ -2265,11 +2703,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         if (visited.has(cur)) continue;
         visited.add(cur);
         members.push(cur);
-        for (const nb of adj.get(cur) || []) {
+        for (const nb of fullAdj.get(cur) || []) {
           if (!visited.has(nb)) queue.push(nb);
         }
       }
-      if (members.length >= 2) components.push(members);
+      components.push(members);
     }
     if (components.length === 0) return [];
     // Auto-name by content: count kinds present in each component, pick the
@@ -2308,6 +2746,24 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       'mixed':           'Workflow',
     };
     const themeCounter = {};
+    // Section identity = the OLDEST member (earliest created_at, tiebreak
+    // smallest id) — plan A1. Adding members never changes the root (new
+    // nodes are always newer), so stored frames + name overrides keyed by
+    // `section-<rootId>` survive adoption and new connections. created_at
+    // arrives as a Date (RSC) or ISO string (JSON refetch); temp- rows
+    // have none and sort last (Infinity) so they can never out-root a
+    // real node.
+    function rootOf(memberIds) {
+      let best = null, bestKey = Infinity, bestId = '';
+      for (const id of memberIds) {
+        const t = +new Date(nodeById.get(id)?.created_at);
+        const key = Number.isFinite(t) ? t : Infinity;
+        if (best === null || key < bestKey || (key === bestKey && String(id) < bestId)) {
+          best = id; bestKey = key; bestId = String(id);
+        }
+      }
+      return best;
+    }
     const out = [];
     for (const memberIds of components) {
       const t = themeOf(memberIds);
@@ -2327,7 +2783,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         maxX = Math.max(maxX, (n.pos_x || 0) + (n.width || 0));
         maxY = Math.max(maxY, (n.pos_y || 0) + (n.height || 0) + bottomOverflow);
       }
-      const sectionId = `section-${memberIds.slice().sort().join('-').slice(0, 64)}`;
+      const rootId = rootOf(memberIds);
+      const sectionId = `section-${rootId}`;
+      // Sections with no real edge have nothing to run — the play button
+      // is hidden for them (singletons + purely-adopted groups).
+      const hasEdges = memberIds.some((id) => (adj.get(id) || []).length > 0);
       const fallbackName = `${THEME_LABEL[t]} #${themeCounter[t]}`;
       // Frame coords: prefer the stored sectionFrame if present, expanded
       // to maintain MIN_FRAME_CLEARANCE (40px) from every member edge.
@@ -2349,6 +2809,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       }
       out.push({
         id: sectionId,
+        rootId,
+        hasEdges,
         memberIds,
         theme: t,
         name: sectionNameOverrides[sectionId] || fallbackName,
@@ -2367,17 +2829,56 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // pushed the frame past the stored coords. Old entries for removed
   // sections are cleaned up. Persisted to localStorage so a refresh
   // restores the same frames.
+  //
+  // Migration pass (plan A1/7b): when a section re-roots (its oldest member
+  // was deleted → new id) the frame + custom name of the vanished id are
+  // inherited by the new id, matched via member overlap. prevSectionsRef
+  // remembers last render's id → memberIds for that detection.
+  const prevSectionsRef = useRef({});
   useEffect(() => {
+    const activeIds = new Set(sections.map((s) => s.id));
+    const prevMap = prevSectionsRef.current;
+    const inherit = {}; // newId -> vanished oldId
+    for (const s of sections) {
+      if (prevMap[s.id]) continue; // id existed last render — not a re-root
+      for (const [oldId, oldMembers] of Object.entries(prevMap)) {
+        if (activeIds.has(oldId)) continue;
+        if (oldMembers.some((id) => s.memberIds.includes(id))) { inherit[s.id] = oldId; break; }
+      }
+    }
+    if (Object.keys(inherit).length) {
+      setSectionNameOverrides((prevNames) => {
+        let touched = false;
+        const nextNames = { ...prevNames };
+        for (const [newId, oldId] of Object.entries(inherit)) {
+          if (nextNames[oldId] != null) {
+            if (nextNames[newId] == null) nextNames[newId] = nextNames[oldId];
+            delete nextNames[oldId];
+            touched = true;
+          }
+        }
+        if (!touched) return prevNames;
+        try { localStorage.setItem(SECTION_NAMES_KEY, JSON.stringify(nextNames)); } catch {}
+        return nextNames;
+      });
+    }
     setSectionFrames((prev) => {
       const next = {};
       let changed = false;
-      const activeIds = new Set();
       for (const s of sections) {
-        activeIds.add(s.id);
-        const cur = prev[s.id];
+        const inherited = inherit[s.id] ? prev[inherit[s.id]] : null;
         const target = { left: s.x, top: s.y, right: s.x + s.width, bottom: s.y + s.height };
-        if (!cur || cur.left !== target.left || cur.top !== target.top || cur.right !== target.right || cur.bottom !== target.bottom) {
-          next[s.id] = target;
+        // Union with the inherited frame so a re-rooted section keeps any
+        // user-resized extent while still containing all current members.
+        const merged = inherited ? {
+          left:   Math.min(inherited.left,   target.left),
+          top:    Math.min(inherited.top,    target.top),
+          right:  Math.max(inherited.right,  target.right),
+          bottom: Math.max(inherited.bottom, target.bottom),
+        } : target;
+        const cur = prev[s.id];
+        if (!cur || cur.left !== merged.left || cur.top !== merged.top || cur.right !== merged.right || cur.bottom !== merged.bottom) {
+          next[s.id] = merged;
           changed = true;
         } else {
           next[s.id] = cur;
@@ -2387,11 +2888,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         if (!activeIds.has(id)) changed = true;
       }
       if (changed) {
-        try { localStorage.setItem('rb-section-frames', JSON.stringify(next)); } catch {}
+        try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(next)); } catch {}
         return next;
       }
       return prev;
     });
+    const memo = {};
+    for (const s of sections) memo[s.id] = s.memberIds;
+    prevSectionsRef.current = memo;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sections]);
 
   // Section drag — grabbing the dot-grid handle at the top of a section
@@ -2684,19 +3189,27 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               a separate pass AFTER nodes so hit-testing reaches it
               regardless of whether the section frame's backdrop-filter
               creates a stacking context. */}
-          {sections.map((s) => (
-            <div
-              key={`bg-${s.id}`}
-              className={`canvas-section-frame${selectedSectionId === s.id ? ' selected' : ''}`}
-              style={{
-                left: s.x,
-                top: s.y,
-                width: s.width,
-                height: s.height,
-              }}
-              data-section-id={s.id}
-            />
-          ))}
+          {sections.map((s) => {
+            // While a loose node is being offered to another section, its
+            // own singleton frame hides (two frames fighting over one node
+            // reads as a glitch) and the candidate paints the engulfed
+            // preview rect instead of its base rect.
+            if (adoptPreview && s.memberIds.length === 1 && s.memberIds[0] === adoptPreview.nodeId) return null;
+            const pv = adoptPreview?.sectionId === s.id ? adoptPreview.rect : null;
+            return (
+              <div
+                key={`bg-${s.id}`}
+                className={`canvas-section-frame${selectedSectionId === s.id ? ' selected' : ''}${pv ? ' adopt-preview' : ''}`}
+                style={{
+                  left: pv ? pv.left : s.x,
+                  top: pv ? pv.top : s.y,
+                  width: pv ? pv.right - pv.left : s.width,
+                  height: pv ? pv.bottom - pv.top : s.height,
+                }}
+                data-section-id={s.id}
+              />
+            );
+          })}
           <EdgeLayer
             nodes={nodes} edges={edges}
             incomingByTarget={incomingByTarget}
@@ -2768,10 +3281,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   }
                 }
               }}
-              onMove={(posX, posY) => {
-                updateNodeLocal(n.id, { pos_x: posX, pos_y: posY });
-                if (!String(n.id).startsWith('temp-')) persistNodePosition(n.id, posX, posY);
-              }}
+              onMove={(posX, posY) => handleNodeMove(n, posX, posY)}
+              onMoveStart={() => handleNodeMoveStart(n)}
+              onMoveEnd={(moved) => handleNodeMoveEnd(n, moved)}
               onResize={(width, height, opts) => {
                 const patch = { width };
                 if (typeof height === 'number' && height > 0) patch.height = height;
@@ -2801,6 +3313,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 )));
               }}
               onReplaceContent={handleReplaceContent}
+              onRequestUpload={() => handlePopulateNode(n)}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
             />
           ))}
@@ -2810,15 +3323,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               is pointer-events:none so the empty space around the
               chrome elements still passes clicks through to the canvas
               / nodes underneath. */}
-          {sections.map((s) => (
+          {sections.map((s) => {
+            if (adoptPreview && s.memberIds.length === 1 && s.memberIds[0] === adoptPreview.nodeId) return null;
+            const pv = adoptPreview?.sectionId === s.id ? adoptPreview.rect : null;
+            return (
             <div
               key={`chrome-${s.id}`}
               className="canvas-section-chrome"
               style={{
-                left: s.x,
-                top: s.y,
-                width: s.width,
-                height: s.height,
+                left: pv ? pv.left : s.x,
+                top: pv ? pv.top : s.y,
+                width: pv ? pv.right - pv.left : s.width,
+                height: pv ? pv.bottom - pv.top : s.height,
               }}
             >
               <div
@@ -2873,19 +3389,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                     {s.name}
                   </span>
                 )}
-                <button
-                  type="button"
-                  className="canvas-section-play-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPlaySection({ section: s, busy: false });
-                  }}
-                  aria-label={`Re-run ${s.name}`}
-                >
-                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <polygon points="6,4 20,12 6,20" />
-                  </svg>
-                </button>
+                {s.hasEdges && (
+                  <button
+                    type="button"
+                    className="canvas-section-play-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPlaySection({ section: s, busy: false });
+                    }}
+                    aria-label={`Re-run ${s.name}`}
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <polygon points="6,4 20,12 6,20" />
+                    </svg>
+                  </button>
+                )}
               </div>
               <div
                 className="canvas-section-grip"
@@ -2913,7 +3431,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 </div>
               ))}
             </div>
-          ))}
+            );
+          })}
           <DraftEdgeLayer
             nodes={nodes}
             scale={canvasScale}
@@ -2956,22 +3475,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           x={emptyDropMenu.x}
           y={emptyDropMenu.y}
           onClose={() => setEmptyDropMenu(null)}
-          onPickHtml={async () => {
-            const m = emptyDropMenu;
-            const file = await pickFile('.html,.htm,text/html');
-            setEmptyDropMenu(null);
-            if (file) await handleUploadHtml(file, { worldX: m.worldX, worldY: m.worldY, linkFromNodeId: m.sourceNodeId });
-          }}
-          onPickMd={async () => {
-            const m = emptyDropMenu;
-            const file = await pickFile('.md,.markdown,text/markdown,text/plain');
-            setEmptyDropMenu(null);
-            if (file) await handleUploadMd(file, { worldX: m.worldX, worldY: m.worldY, linkFromNodeId: m.sourceNodeId });
-          }}
-          onPickSkill={async () => {
+          onPick={async (kind) => {
+            // "Connect to" — spawn an UNPOPULATED node of the picked
+            // category at the drop point, auto-linked to the cord's source.
+            // Content arrives later via the node's center upload button
+            // (prompt opens as an inline textarea instead).
             const m = emptyDropMenu;
             setEmptyDropMenu(null);
-            await handleAddSkill({ worldX: m.worldX, worldY: m.worldY, linkFromNodeId: m.sourceNodeId });
+            await handleCreateEmptyNode(kind, { worldX: m.worldX, worldY: m.worldY, linkFromNodeId: m.sourceNodeId });
           }}
         />
       )}
@@ -2994,7 +3505,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           }}
           onPickMd={async () => {
             const m = contextMenu;
-            const file = await pickFile('.md,.markdown,text/markdown,text/plain');
+            const file = await pickFile(ACCEPT_BY_KIND.designmd);
             setContextMenu(null);
             if (file) await handleUploadMd(file, { worldX: m.worldX, worldY: m.worldY });
           }}
@@ -3279,14 +3790,19 @@ function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onP
   );
 }
 
-// Drop-on-empty after dragging a cord from a node's right port. The menu
-// asks the user what KIND of node to extract the source's content into.
-// New types currently spawn empty placeholders + auto-link to the source;
-// the actual extraction (URL → design.md tokens, etc) lands when the
-// edge resolver is implemented (see HANDOFF_TECHNICAL §6).
-function EmptyDropMenu({ x, y, onClose, onPickHtml, onPickMd, onPickSkill }) {
+// Drop-on-empty after dragging a cord from a node's right port. "Connect
+// to…" — picking a category spawns an UNPOPULATED node of that kind at the
+// drop point, auto-linked to the source. The new node carries a center
+// upload button (kind-scoped formats); prompt opens as an inline textarea.
+const EMPTY_DROP_ITEMS = [
+  { kind: 'prompt',   label: 'prompt', Icon: MenuIcon.Prompt },
+  { kind: 'site',     label: '.html',  Icon: MenuIcon.Html },
+  { kind: 'designmd', label: '.md',    Icon: MenuIcon.Md },
+  { kind: 'asset',    label: 'image',  Icon: MenuIcon.Image },
+];
+function EmptyDropMenu({ x, y, onClose, onPick }) {
   const left = Math.min(x + 8, window.innerWidth - 280);
-  const top = Math.min(y + 8, window.innerHeight - 200);
+  const top = Math.min(y + 8, window.innerHeight - 240);
 
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose(); }
@@ -3311,10 +3827,12 @@ function EmptyDropMenu({ x, y, onClose, onPickHtml, onPickMd, onPickSkill }) {
 
   return (
     <div className="popup-menu empty-drop-menu" style={{ left, top }} onMouseDown={(e) => e.stopPropagation()}>
-      <div className="popup-menu-title">Extract to…</div>
-      <button className="popup-menu-btn" onClick={onPickMd}><MenuIcon.Md /><span>design.md</span></button>
-      <button className="popup-menu-btn" onClick={onPickSkill}><MenuIcon.Skill /><span>skill</span></button>
-      <button className="popup-menu-btn" onClick={onPickHtml}><MenuIcon.Html /><span>.html</span></button>
+      <div className="popup-menu-title">Connect to…</div>
+      {EMPTY_DROP_ITEMS.map(({ kind, label, Icon }) => (
+        <button key={kind} className="popup-menu-btn" onClick={() => onPick(kind)}>
+          <Icon /><span>{label}</span>
+        </button>
+      ))}
       <button className="popup-menu-btn popup-menu-btn-cancel" onClick={onClose}>Cancel (Esc)</button>
     </div>
   );

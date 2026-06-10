@@ -3738,6 +3738,114 @@
     }, { capture: true });
     actions.appendChild(modelBtn);
 
+    // Mic button (speech-to-text) — sits LEFT of the send arrow. Records
+    // via MediaRecorder, transcribes through POST /api/transcribe (OpenAI
+    // Whisper, server-side key). Canvas mode fetches same-origin; extension
+    // mode rides bgFetch → background.js → web-shell with the cookie jar,
+    // so no per-user key is needed (same posture as the assets save flow).
+    var MIC_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>';
+    var MIC_STOP_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>';
+    var MIC_SPIN_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9" opacity="0.25"/><path d="M21 12a9 9 0 0 1-9 9"/></svg>';
+    var micBtn = mk('button', 'rb-ed-asset-chat-mic');
+    micBtn.type = 'button';
+    var micPhase = 'idle'; // idle | rec | busy | error
+    var micRec = null, micStream = null, micChunks = [], micErrTimer = null, micStopTimer = null;
+    function micSetPhase(p, errMsg) {
+      micPhase = p;
+      micBtn.classList.toggle('rec', p === 'rec');
+      micBtn.classList.toggle('busy', p === 'busy');
+      micBtn.classList.toggle('err', p === 'error');
+      micBtn.innerHTML = p === 'busy' ? MIC_SPIN_SVG : (p === 'rec' ? MIC_STOP_SVG : MIC_SVG);
+      micBtn.title = p === 'rec' ? 'Stop recording'
+        : p === 'busy' ? 'Transcribing…'
+        : p === 'error' ? (errMsg || 'Dictation failed')
+        : 'Dictate (speech to text)';
+    }
+    micSetPhase('idle');
+    function micStopTracks() {
+      if (micStream) { try { micStream.getTracks().forEach(function(t) { t.stop(); }); } catch (e) {} micStream = null; }
+      if (micStopTimer) { clearTimeout(micStopTimer); micStopTimer = null; }
+    }
+    function micFail(msg) {
+      micStopTracks();
+      micRec = null;
+      micSetPhase('error', msg);
+      if (micErrTimer) clearTimeout(micErrTimer);
+      micErrTimer = setTimeout(function() { micSetPhase('idle'); }, 2500);
+    }
+    function micTranscribe(dataUrl) {
+      getWebShellOrigin().then(function(origin) {
+        if (!origin) { micFail('Open the Uncraft canvas once to enable dictation'); return; }
+        bgFetch(origin + '/api/transcribe', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ audioDataUrl: dataUrl })
+        }).then(function(resp) {
+          if (!resp || !resp.ok) {
+            var msg = (resp && resp.data && resp.data.error)
+              || (resp && resp.status === 401 ? 'Sign in to Uncraft to use dictation' : 'Transcription failed');
+            micFail(msg);
+            return;
+          }
+          var spoken = resp.data && resp.data.text;
+          if (spoken) {
+            ta.value = ta.value ? (ta.value.replace(/\s+$/, '') + ' ' + spoken) : spoken;
+            try { ta.dispatchEvent(new Event('input')); } catch (e) {} // re-run autosize
+            try { ta.focus(); } catch (e) {}
+          }
+          micSetPhase('idle');
+        });
+      });
+    }
+    function micToggle() {
+      if (micPhase === 'busy') return;
+      if (micRec) { try { micRec.stop(); } catch (e) { micFail('Recorder error'); } return; }
+      var nav = (hostWin && hostWin.navigator) || navigator;
+      var MR = (hostWin && hostWin.MediaRecorder) || (typeof MediaRecorder !== 'undefined' ? MediaRecorder : null);
+      if (!MR || !nav.mediaDevices || !nav.mediaDevices.getUserMedia) { micFail('Microphone not available here'); return; }
+      nav.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+        micStream = stream;
+        var mime = '';
+        try {
+          mime = MR.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+            : (MR.isTypeSupported('audio/webm') ? 'audio/webm' : '');
+        } catch (e) {}
+        var rec;
+        try { rec = mime ? new MR(stream, { mimeType: mime }) : new MR(stream); }
+        catch (e) { micFail('Recorder error'); return; }
+        micChunks = [];
+        rec.ondataavailable = function(ev) { if (ev.data && ev.data.size) micChunks.push(ev.data); };
+        rec.onerror = function() { micFail('Recorder error'); };
+        rec.onstop = function() {
+          micStopTracks();
+          micRec = null;
+          var blob = new Blob(micChunks, { type: rec.mimeType || 'audio/webm' });
+          micChunks = [];
+          if (!blob.size) { micSetPhase('idle'); return; }
+          micSetPhase('busy');
+          var reader = new FileReader();
+          reader.onload = function() { micTranscribe(reader.result); };
+          reader.onerror = function() { micFail('Could not read recording'); };
+          reader.readAsDataURL(blob);
+        };
+        try { rec.start(); } catch (e) { micFail('Recorder error'); return; }
+        micRec = rec;
+        micSetPhase('rec');
+        // Auto-stop guard — keeps payloads well under the API body cap.
+        micStopTimer = setTimeout(function() {
+          try { if (rec.state === 'recording') rec.stop(); } catch (e) {}
+        }, 120000);
+      }).catch(function() {
+        micFail('Microphone permission denied');
+      });
+    }
+    micBtn.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      micToggle();
+    }, { capture: true });
+    actions.appendChild(micBtn);
+
     // Send button (arrow-up)
     var sendBtn = mk('button', 'rb-ed-asset-chat-send');
     sendBtn.type = 'button';

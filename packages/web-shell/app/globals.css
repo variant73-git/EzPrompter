@@ -3480,6 +3480,62 @@ body.rb-ed-light .cnode-empty {
   background: rgba(13, 148, 136, 0.04);
 }
 
+/* Neutral variant of the empty body — unpopulated "Connect to" nodes.
+   The teal default stays reserved for blank-website composition nodes. */
+.cnode-empty.cnode-empty-neutral {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.02);
+}
+body.rb-ed-light .cnode-empty.cnode-empty-neutral {
+  color: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* Center upload affordance on unpopulated nodes (site/.md/image). */
+.cnode-empty-upload {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+}
+.cnode-upload-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-frosted-strong);
+  color: rgba(241, 245, 249, 0.85);
+  cursor: pointer;
+  padding: 0;
+  pointer-events: auto;
+  transition: background 0.15s, border-color 0.15s, transform 0.12s;
+}
+.cnode-upload-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.24);
+  transform: scale(1.05);
+}
+.cnode-upload-btn:active { transform: scale(0.96); }
+.cnode-empty-upload-label {
+  font: 500 12px var(--popup-font-sans, system-ui);
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+body.rb-ed-light .cnode-upload-btn {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #1a1a1a;
+}
+body.rb-ed-light .cnode-upload-btn:hover { background: rgba(0, 0, 0, 0.08); }
+body.rb-ed-light .cnode-empty-upload-label { color: rgba(0, 0, 0, 0.5); }
+
 .cnode-spinner {
   width: 22px;
   height: 22px;
@@ -3831,6 +3887,20 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
   pointer-events: none;
   z-index: 0;
   transition: background 140ms ease, border-color 140ms ease;
+}
+
+/* Live drag-adoption preview — the candidate section engulfing a loose
+   node. Geometry transitions are scoped HERE (not on the base frame) so
+   section move/resize stay snappy; only the preview eases. */
+.canvas-section-frame.adopt-preview {
+  border-color: rgba(255, 255, 255, 0.45);
+  background: rgba(24, 24, 24, 0.62);
+  transition: background 140ms ease, border-color 140ms ease,
+    left 90ms ease, top 90ms ease, width 90ms ease, height 90ms ease;
+}
+body.rb-ed-light .canvas-section-frame.adopt-preview {
+  border-color: rgba(0, 0, 0, 0.32);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 /* Section CHROME wrapper — renders AFTER nodes (separate pass in
@@ -5046,6 +5116,75 @@ body.rb-ed-light .prompt-dock-send.stop {
 }
 body.rb-ed-light .prompt-dock-send.stop:hover {
   background: #000;
+}
+
+/* Mic (speech-to-text) — sibling of .prompt-dock-send, same corner-hugging
+   absolute trick offset one button-width left so the pair reads as a
+   cluster tucked into the dock's rounded corner. */
+.prompt-dock-mic {
+  position: absolute;
+  right: 44px;
+  bottom: 6px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(241, 245, 249, 0.42);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: inherit;
+  transition: background 0.18s, color 0.18s;
+}
+
+.prompt-dock-mic:hover {
+  background: rgba(255, 255, 255, 0.10);
+  color: rgba(241, 245, 249, 0.85);
+}
+
+/* Recording — red wash + soft sonar pulse so the live mic is unmissable. */
+.prompt-dock-mic.rec {
+  background: rgba(239, 68, 68, 0.16);
+  color: #ef4444;
+  animation: prompt-dock-mic-pulse 1.6s ease-in-out infinite;
+}
+
+.prompt-dock-mic.busy {
+  color: rgba(241, 245, 249, 0.85);
+  cursor: progress;
+}
+
+.prompt-dock-mic.err {
+  color: #ef4444;
+}
+
+.prompt-dock-mic:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@keyframes prompt-dock-mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+body.rb-ed-light .prompt-dock-mic {
+  background: rgba(0, 0, 0, 0.05);
+  color: rgba(0, 0, 0, 0.45);
+}
+body.rb-ed-light .prompt-dock-mic:hover {
+  background: rgba(0, 0, 0, 0.09);
+  color: rgba(0, 0, 0, 0.8);
+}
+body.rb-ed-light .prompt-dock-mic.rec {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+body.rb-ed-light .prompt-dock-mic.err {
+  color: #dc2626;
 }
 
 /* Run-flow error toast — anchored above the prompt dock so the dock

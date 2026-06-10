@@ -300,12 +300,40 @@ function activeViewportId(width) {
   return best;
 }
 
+// Centered upload affordance for UNPOPULATED nodes (created via the
+// "Connect to" cord-drop menu, or any asset node without image data).
+// The picker + persistence live in CanvasClient.handlePopulateNode; the
+// accept filter there is kind-scoped so the wrong format can't land here.
+function EmptyUploadBody({ kind, onRequestUpload }) {
+  const LABEL = { site: 'Upload .html', designmd: 'Upload .md', asset: 'Upload image' };
+  const label = LABEL[kind] || 'Upload file';
+  return (
+    <div className="cnode-empty-upload">
+      <button
+        type="button"
+        className="cnode-upload-btn"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); onRequestUpload?.(); }}
+        title={label}
+        aria-label={label}
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <path d="m17 8-5-5-5 5"/>
+          <path d="M12 3v12"/>
+        </svg>
+      </button>
+      <span className="cnode-empty-upload-label">{label}</span>
+    </div>
+  );
+}
+
 export default function CanvasNode({
   node, selected, editing = false, onEditingChange,
-  onSelect, onMove, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
+  onSelect, onMove, onMoveStart, onMoveEnd, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload,
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
-  onReplaceContent,
+  onReplaceContent, onRequestUpload,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -565,16 +593,22 @@ export default function CanvasNode({
       const dx = (ev.clientX - start.x) / scale;
       const dy = (ev.clientY - start.y) / scale;
       if (!start.moved && Math.hypot(dx, dy) * scale < DRAG_THRESHOLD) return;
-      start.moved = true;
+      if (!start.moved) {
+        start.moved = true;
+        // Fires once, before the first onMove, so the canvas can snapshot
+        // pre-drag state (section frame carry + adoption preview baseline).
+        onMoveStart?.();
+      }
       onMove(start.ox + dx, start.oy + dy);
     }
     function up() {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
+      onMoveEnd?.(start.moved);
     }
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
-  }, [node.pos_x, node.pos_y, onMove, onSelect]);
+  }, [node.pos_x, node.pos_y, onMove, onMoveStart, onMoveEnd, onSelect]);
 
   const onBodyMouseDown = useCallback((e) => {
     if (editing) return;
@@ -604,11 +638,13 @@ export default function CanvasNode({
     if (editing) return;
     e.stopPropagation();
     e.preventDefault();
-    onSelect(e);
+    // Deliberately NOT selecting here — grabbing a port starts a cord, not
+    // a selection, so the chat dock's context pill stays reserved for
+    // explicitly selected nodes.
     // Side tells the canvas WHICH port spawned the cord. The draft path
     // anchors to that port instead of always assuming right.
     onStartEdge(e, side);
-  }, [editing, onStartEdge, onSelect]);
+  }, [editing, onStartEdge]);
 
   // Capture the iframe content's natural size so the Expand button can
   // grow the viewport to fit the whole site without re-measuring on
@@ -926,6 +962,12 @@ export default function CanvasNode({
               {isExpanded ? <CollapseIcon /> : <ExpandIcon />}
             </button>
           </div>
+        ) : node.kind === 'site' && node.meta?.source === 'empty' ? (
+          // Unpopulated .html node from the "Connect to" flow — waiting
+          // for the user to upload a document via the center button.
+          <div className="cnode-empty cnode-empty-neutral" onMouseDown={onBodyMouseDown}>
+            <EmptyUploadBody kind="site" onRequestUpload={onRequestUpload} />
+          </div>
         ) : node.kind === 'site' && node.meta?.source === 'blank' ? (
           // Blank-website node — nothing's loading; this is an empty
           // canvas waiting for the user to compose. Show a friendly
@@ -945,7 +987,11 @@ export default function CanvasNode({
         )
       ) : renderMdBody ? (
         <div className="cnode-body cnode-body-md" onMouseDown={onBodyMouseDown}>
-          <MdPreviewBody node={node} />
+          {(node.current_design_md || node.design_md) ? (
+            <MdPreviewBody node={node} />
+          ) : (
+            <EmptyUploadBody kind="designmd" onRequestUpload={onRequestUpload} />
+          )}
         </div>
       ) : renderPromptBody ? (
         <div className="cnode-body cnode-body-prompt" onMouseDown={onBodyMouseDown}>
@@ -977,7 +1023,7 @@ export default function CanvasNode({
           ) : node.meta?.status === 'error' ? (
             <div className="cnode-loading cnode-loading-error"><span>Generation failed</span></div>
           ) : (
-            <div className="cnode-loading"><span>No image data</span></div>
+            <EmptyUploadBody kind="asset" onRequestUpload={onRequestUpload} />
           )}
           {/* Dimensions label — anchored to the bottom-right corner, just
               below the card. Shows the actual decoded pixel size of the

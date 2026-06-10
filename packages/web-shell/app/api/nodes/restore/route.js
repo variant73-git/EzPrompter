@@ -50,7 +50,31 @@ export async function POST(request) {
         ON CONFLICT (id) DO NOTHING
         RETURNING *
       `;
-      if (row) restoredNodes.push(row);
+      if (row) {
+        // Deleting a node CASCADE-dropped its snapshots, so the restored
+        // row's current_snapshot_id points at nothing. When the client
+        // shipped the content along (html / design_md captured in the undo
+        // entry), recreate a snapshot so the node survives a reload with
+        // its content intact; otherwise null the stale pointer.
+        const html = typeof n.html === 'string' && n.html.length ? n.html : null;
+        const designMd = typeof n.design_md === 'string' && n.design_md.length ? n.design_md : null;
+        if (html || designMd) {
+          const [snap] = await sql`
+            INSERT INTO snapshots (node_id, html, design_md, source)
+            VALUES (${row.id}, ${html || ''}, ${designMd}, 'restore')
+            RETURNING id
+          `;
+          await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${row.id}`;
+          row.current_snapshot_id = snap.id;
+        } else if (row.current_snapshot_id) {
+          const [live] = await sql`SELECT id FROM snapshots WHERE id = ${row.current_snapshot_id}`;
+          if (!live) {
+            await sql`UPDATE nodes SET current_snapshot_id = NULL WHERE id = ${row.id}`;
+            row.current_snapshot_id = null;
+          }
+        }
+        restoredNodes.push(row);
+      }
     } catch (e) {
       // Skip nodes that can't be reinserted (e.g. referenced snapshot is
       // gone). The remaining ones still come back so the undo is useful.

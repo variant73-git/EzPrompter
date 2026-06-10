@@ -23,11 +23,14 @@ export async function POST(request) {
     RETURNING *
   `;
 
-  // If html supplied (e.g. drag-out chunk, designmd upload, template), seed first snapshot.
-  if (html) {
+  // Seed the first snapshot when content arrives with the node. designMd
+  // WITHOUT html (a .md upload) seeds a snapshot too — snapshots.html is
+  // NOT NULL so md-only rows store html = ''. (Previously md-only content
+  // was silently dropped server-side and vanished on reload.)
+  if (html || designMd) {
     const [snap] = await sql`
       INSERT INTO snapshots (node_id, html, design_md, source)
-      VALUES (${node.id}, ${html}, ${designMd || null}, 'upload')
+      VALUES (${node.id}, ${html || ''}, ${designMd || null}, 'upload')
       RETURNING id
     `;
     await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${node.id}`;

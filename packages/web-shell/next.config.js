@@ -13,8 +13,10 @@ const SECURITY_HEADERS = [
   { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   {
+    // microphone=(self) — the chat docks' speech-to-text button records
+    // via MediaRecorder on our own origin (PromptDock + canvas editor).
     key: 'Permissions-Policy',
-    value: 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+    value: 'camera=(), microphone=(self), geolocation=(), interest-cohort=()',
   },
   {
     key: 'Cross-Origin-Opener-Policy',
