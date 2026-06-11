@@ -80,6 +80,40 @@ const MenuIcon = {
 const WORLD_WIDTH = 8000;
 const WORLD_HEIGHT = 6000;
 
+// Section frame breathing room (world px). Sides + bottom share the
+// uniform gap; the top reserves extra space for the name tag + play
+// button which keep a stable on-screen size across zoom levels. Shared
+// by the sections derivation (frame defaults + geometric-absorption core
+// rects) and the drag-release logic in handleNodeMoveEnd, which must
+// agree on the SAME core area or nodes get stuck half-released.
+const SECTION_UNIFORM_GAP = 165;
+const SECTION_TOP_GAP = 260;
+// Asset cards draw their dims label below the body — counted in every
+// section bbox so frames wrap the full visual footprint.
+const ASSET_BOTTOM_OVERFLOW = 80;
+
+// Core area of a section = members' bbox + default gaps. The STORED
+// frame is grow-only and chases dragged members, so membership tests
+// must use this stable core instead.
+function sectionCoreRect(memberNodes) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of memberNodes) {
+    if (!n) continue;
+    const overflow = (n.kind === 'asset' || n.kind === 'image') ? ASSET_BOTTOM_OVERFLOW : 0;
+    minX = Math.min(minX, n.pos_x || 0);
+    minY = Math.min(minY, n.pos_y || 0);
+    maxX = Math.max(maxX, (n.pos_x || 0) + (n.width || 0));
+    maxY = Math.max(maxY, (n.pos_y || 0) + (n.height || 0) + overflow);
+  }
+  if (!Number.isFinite(minX)) return null;
+  return {
+    left: minX - SECTION_UNIFORM_GAP,
+    top: minY - SECTION_TOP_GAP,
+    right: maxX + SECTION_UNIFORM_GAP,
+    bottom: maxY + SECTION_UNIFORM_GAP,
+  };
+}
+
 // Empty scaffold for the "Add blank website" flow. Renders as a calm
 // near-white page with a dashed-frame hint so the empty state reads as
 // intentional ("compose here") rather than a broken capture. Designed
@@ -621,9 +655,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       left: posX,
       top: posY,
       right: posX + (node.width || 600),
-      // Same 80px visual overflow assets get in the section bbox math, so
-      // the preview rect exactly equals the post-commit grow result.
-      bottom: posY + (node.height || 600) + (isAsset ? 80 : 0),
+      // Same visual overflow assets get in the section bbox math, so the
+      // preview rect exactly equals the post-commit grow result.
+      bottom: posY + (node.height || 600) + (isAsset ? ASSET_BOTTOM_OVERFLOW : 0),
     };
   }
 
@@ -756,29 +790,39 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       return;
     }
 
-    // Un-adopt — an adopted loose node dropped clear of its section's
-    // pre-drag rect reverts to its own singleton section.
-    if (node.meta?.adoptedInto && drag.ownRectAtStart) {
-      const rect = nodeWorldRect(node, finalX, finalY);
-      const o = drag.ownRectAtStart;
-      const intersects = rect.left < o.right && rect.right > o.left && rect.top < o.bottom && rect.bottom > o.top;
-      if (!intersects) {
-        const meta = { ...(node.meta || {}) };
-        delete meta.adoptedInto;
+    // Release — a loose node that was a member of a multi-node section at
+    // drag start (explicitly adopted OR standing geometrically inside the
+    // frame) got dropped clear of that section. The membership test must
+    // mirror the derivation's absorption rule exactly: node CENTER vs the
+    // section's CORE rect computed from the REMAINING members — the stored
+    // frame is grow-only and chased the node during the drag, so testing
+    // against it would leave the node half-released (singleton framed
+    // inside the stretched host frame).
+    if (drag.ownSectionId) {
+      const own = sections.find((s) => s.id === drag.ownSectionId);
+      const remaining = own ? own.memberIds.filter((id) => id !== node.id).map((id) => nodes.find((n) => n.id === id)) : [];
+      const core = sectionCoreRect(remaining.filter(Boolean));
+      const cx = finalX + (node.width || 600) / 2;
+      const cy = finalY + (node.height || 600) / 2;
+      const insideCore = core && cx >= core.left && cx <= core.right && cy >= core.top && cy <= core.bottom;
+      if (!insideCore) {
         // Drop the stretched stored frame so the abandoned section re-fits
-        // to its remaining members on the next render.
-        if (drag.ownSectionId) {
-          setSectionFrames((prev) => {
-            const next = { ...prev };
-            delete next[drag.ownSectionId];
-            try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(next)); } catch {}
-            return next;
-          });
-        }
-        try {
-          await commitMeta(meta);
-        } catch (e) {
-          console.warn('un-adopt failed', e);
+        // to its remaining members on the next render — otherwise the
+        // released singleton renders INSIDE the stale-grown host frame.
+        setSectionFrames((prev) => {
+          const next = { ...prev };
+          delete next[drag.ownSectionId];
+          try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(next)); } catch {}
+          return next;
+        });
+        if (node.meta?.adoptedInto) {
+          const meta = { ...(node.meta || {}) };
+          delete meta.adoptedInto;
+          try {
+            await commitMeta(meta);
+          } catch (e) {
+            console.warn('un-adopt failed', e);
+          }
         }
       }
     }
@@ -2659,8 +2703,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // screen, so at moderate zoom-out it occupies more world space —
     // 260px reserves enough room that nodes can't visually overlap
     // the play button across the typical zoom range.
-    const UNIFORM_GAP = 165;
-    const TOP_GAP = 260;
+    const UNIFORM_GAP = SECTION_UNIFORM_GAP;
+    const TOP_GAP = SECTION_TOP_GAP;
     const nodeById = new Map(nodes.map((n) => [n.id, n]));
     // Build adjacency map. Skip edges whose endpoints aren't both in the
     // current nodes array (e.g. mid-flight temp edges that haven't synced).
@@ -2710,6 +2754,52 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       components.push(members);
     }
     if (components.length === 0) return [];
+    // Geometric absorption — no nested sections, ever. A 1-node component
+    // (loose node) whose CENTER sits inside another component's core area
+    // belongs to THAT section instead of spawning a singleton frame on top
+    // of it. This is what keeps a freshly-DISCONNECTED node a member of
+    // the section it's still standing in (disconnecting must not create a
+    // section), and guarantees a lone node never floats framed inside a
+    // bigger frame. The core area is the members' bbox + the default gaps
+    // (NOT the stored frame, which grows and would trap the node forever).
+    {
+      const coreRects = components.map((c) => sectionCoreRect(c.map((id) => nodeById.get(id))));
+      const absorbedBy = new Array(components.length).fill(-1);
+      for (let i = 0; i < components.length; i++) {
+        if (components[i].length !== 1) continue;
+        const n = nodeById.get(components[i][0]);
+        if (!n) continue;
+        const cx = (n.pos_x || 0) + (n.width || 0) / 2;
+        const cy = (n.pos_y || 0) + (n.height || 0) / 2;
+        let best = -1, bestArea = Infinity;
+        for (let j = 0; j < components.length; j++) {
+          if (j === i || absorbedBy[j] !== -1) continue;
+          const r = coreRects[j];
+          if (!r) continue;
+          if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) continue;
+          // Smallest containing core = the most specific host.
+          const area = (r.right - r.left) * (r.bottom - r.top);
+          if (area < bestArea) { best = j; bestArea = area; }
+        }
+        if (best !== -1) absorbedBy[i] = best;
+      }
+      for (let i = components.length - 1; i >= 0; i--) {
+        let target = absorbedBy[i];
+        if (target === -1) continue;
+        // Follow absorption chains (singleton absorbed into a singleton
+        // that itself got absorbed) to the terminal host.
+        while (absorbedBy[target] !== -1) target = absorbedBy[target];
+        if (target === i) continue;
+        components[target].push(...components[i]);
+        components.splice(i, 1);
+        // Re-index: removing i shifts later entries left.
+        absorbedBy.splice(i, 1);
+        for (let k = 0; k < absorbedBy.length; k++) {
+          if (absorbedBy[k] > i) absorbedBy[k] -= 1;
+          else if (absorbedBy[k] === i) absorbedBy[k] = target > i ? target - 1 : target;
+        }
+      }
+    }
     // Auto-name by content: count kinds present in each component, pick the
     // dominant theme. Number sections by appearance order in top-left → bot-
     // right reading (sort by min member pos_x + pos_y).
@@ -2777,7 +2867,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         const n = nodeById.get(id);
         if (!n) continue;
         const isAsset = n.kind === 'asset' || n.kind === 'image';
-        const bottomOverflow = isAsset ? 80 : 0;
+        const bottomOverflow = isAsset ? ASSET_BOTTOM_OVERFLOW : 0;
         minX = Math.min(minX, n.pos_x || 0);
         minY = Math.min(minY, n.pos_y || 0);
         maxX = Math.max(maxX, (n.pos_x || 0) + (n.width || 0));

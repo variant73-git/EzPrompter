@@ -820,72 +820,81 @@ export default function CanvasNode({
           setMenuPos({ x: e.clientX, y: e.clientY });
         }}
       >
-        <div className="topbar-left">
-          <span className={`kind-pill kind-${kindLabel === 'site' ? 'site' : 'other'}`}>
-            {KindIcon && <KindIcon />}
-            <span className="kind-pill-lbl">{kindLabel}</span>
-          </span>
-          {node.kind !== 'prompt' && (
-            <span className="title" title={title}>{title}</span>
-          )}
+        {/* topbar-main spans from the node's left edge to the vertical
+            separator. The grip centers ABSOLUTELY inside it, so it always
+            sits at the midpoint between the left edge and the divider —
+            regardless of how wide the action buttons get at low zoom. */}
+        <div className="topbar-main">
+          <div className="topbar-left">
+            <span className={`kind-pill kind-${kindLabel === 'site' ? 'site' : 'other'}`}>
+              {KindIcon && <KindIcon />}
+              <span className="kind-pill-lbl">{kindLabel}</span>
+            </span>
+            {node.kind !== 'prompt' && (
+              <span className="title" title={title}>{title}</span>
+            )}
+          </div>
+          <div className="topbar-grip" aria-hidden>
+            <span /><span /><span /><span /><span /><span />
+            <span /><span /><span /><span /><span /><span />
+          </div>
+          <div className="topbar-actions">
+            {renderIframeBody && html && editing && (
+              <button
+                className="btn-cancel"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (editorBusy) return;
+                  setShowCancelPrompt(true);
+                }}
+                title="Cancel — exit edit mode (you'll be asked to save)"
+                aria-label="Cancel edit"
+                disabled={editorBusy}
+              >
+                <CloseIcon />
+                <span className="btn-edit-lbl">Cancel</span>
+              </button>
+            )}
+            {renderIframeBody && html && (
+              <button
+                className={editing ? 'btn-edit active' : 'btn-edit'}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (editorBusy) return;
+                  if (editing) saveAndExit();
+                  else onEditingChange?.(true);
+                }}
+                title={editing ? 'Save and exit edit mode' : 'Open editor (layers + inspector + guides)'}
+                disabled={editorBusy}
+              >
+                {editing ? <CheckIcon /> : <EditIcon />}
+                <span className="btn-edit-lbl">{editing ? (editorBusy ? 'Saving…' : 'Done') : 'Edit'}</span>
+              </button>
+            )}
+          </div>
         </div>
-        <div className="topbar-grip" aria-hidden>
-          <span /><span /><span /><span /><span /><span />
-          <span /><span /><span /><span /><span /><span />
-        </div>
-        <div className="topbar-right">
-          {renderIframeBody && html && editing && (
-            <button
-              className="btn-cancel"
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (editorBusy) return;
-                setShowCancelPrompt(true);
-              }}
-              title="Cancel — exit edit mode (you'll be asked to save)"
-              aria-label="Cancel edit"
-              disabled={editorBusy}
-            >
-              <CloseIcon />
-              <span className="btn-edit-lbl">Cancel</span>
-            </button>
-          )}
-          {renderIframeBody && html && (
-            <button
-              className={editing ? 'btn-edit active' : 'btn-edit'}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (editorBusy) return;
-                if (editing) saveAndExit();
-                else onEditingChange?.(true);
-              }}
-              title={editing ? 'Save and exit edit mode' : 'Open editor (layers + inspector + guides)'}
-              disabled={editorBusy}
-            >
-              {editing ? <CheckIcon /> : <EditIcon />}
-              <span className="btn-edit-lbl">{editing ? (editorBusy ? 'Saving…' : 'Done') : 'Edit'}</span>
-            </button>
-          )}
-          {/* Vertical separator that fills the topbar's full vertical
-              extent — visually splits the primary action (Edit/Done)
-              from the More dropdown. */}
-          <span className="topbar-sep" aria-hidden="true" />
-          <button
-            className="btn-more"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              const r = e.currentTarget.getBoundingClientRect();
-              setMenuPos({ x: r.right + 6, y: r.top });
-            }}
-            title="More actions"
-            aria-label="Open node actions menu"
-          >
-            <MoreIcon />
-          </button>
-        </div>
+        {/* Vertical separator that fills the topbar's full vertical
+            extent — visually splits the primary action (Edit/Done)
+            from the More dropdown. The More button sits centered in the
+            zone between this divider and the node's right edge (the
+            topbar's flex gap on its left mirrors the padding on its
+            right). */}
+        <span className="topbar-sep" aria-hidden="true" />
+        <button
+          className="btn-more"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            const r = e.currentTarget.getBoundingClientRect();
+            setMenuPos({ x: r.right + 6, y: r.top });
+          }}
+          title="More actions"
+          aria-label="Open node actions menu"
+        >
+          <MoreIcon />
+        </button>
       </div>
       {node._loading ? (
         <div className={`cnode-loading${node._challenge ? ' cnode-loading-challenge' : ''}`}>
