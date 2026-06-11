@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
 import ChatPanel from './chat/ChatPanel.jsx';
+import BorderTrail from './BorderTrail.jsx';
 
 const ICON_PLUS = (
   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1643,8 +1644,12 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           <div className={`prompt-dock-snap-bar prompt-dock-snap-bar-left${dragState.snapTarget === 'left' ? ' active' : ''}`} aria-hidden="true" />
           <div className={`prompt-dock-snap-bar prompt-dock-snap-bar-right${dragState.snapTarget === 'right' ? ' active' : ''}`} aria-hidden="true" />
           <div className={`prompt-dock-snap-bar prompt-dock-snap-bar-bottom${dragState.snapTarget === 'bottom' ? ' active' : ''}`} aria-hidden="true" />
-          <div className={`prompt-dock-ghost prompt-dock-ghost-left${dragState.snapTarget === 'left' ? ' active' : ''}`} aria-hidden="true" />
-          <div className={`prompt-dock-ghost prompt-dock-ghost-right${dragState.snapTarget === 'right' ? ' active' : ''}`} aria-hidden="true" />
+          <div className={`prompt-dock-ghost prompt-dock-ghost-left${dragState.snapTarget === 'left' ? ' active' : ''}`} aria-hidden="true">
+            <BorderTrail size={72} radius={22} duration={4.5} />
+          </div>
+          <div className={`prompt-dock-ghost prompt-dock-ghost-right${dragState.snapTarget === 'right' ? ' active' : ''}`} aria-hidden="true">
+            <BorderTrail size={72} radius={22} duration={4.5} />
+          </div>
         </>,
         document.body
       )}

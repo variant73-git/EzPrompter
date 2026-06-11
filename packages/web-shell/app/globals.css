@@ -4861,17 +4861,17 @@ body.rb-ed-light .prompt-dock-collapse-btn {
   50%      { opacity: 0.55; }
 }
 
-/* Dock-area ghost: dashed outline rectangle in the position the dock
-   would occupy after a side-dock snap. Renders for the WHOLE drag so
-   the user sees the docked footprint before committing. Active state
-   (cursor in that snap zone) brightens the outline + fills the body
-   slightly. */
+/* Dock-area ghost: outlines the position the dock would occupy after a
+   side-dock snap. Renders for the WHOLE drag so the user sees the docked
+   footprint before committing. The "this is a preview" affordance is the
+   BorderTrail — a glowing light lapping the border — instead of the old
+   dashed outline. Active state (cursor in that snap zone) brightens the
+   hairline + fills the body slightly. */
 .prompt-dock-ghost {
   position: fixed;
-  border: 1.5px dashed rgba(255, 255, 255, 0.30);
+  border: 1.5px solid rgba(255, 255, 255, 0.14);
   /* Dark frosted glass — same dark surface as the real docked sidebar
-     so the preview previews. Dashed border keeps the "this is a
-     simulation" affordance separate from the eventual solid dock. */
+     so the preview previews. */
   background: rgba(10, 10, 10, 0.55);
   backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
@@ -4901,16 +4901,54 @@ body.rb-ed-light .prompt-dock-collapse-btn {
 .prompt-dock-ghost-right { right: 12px; }
 .prompt-dock-ghost.active {
   opacity: 1;
-  border-color: rgba(255, 255, 255, 0.75);
+  border-color: rgba(255, 255, 255, 0.45);
   background: rgba(10, 10, 10, 0.78);
 }
 body.rb-ed-light .prompt-dock-ghost {
   background: rgba(245, 245, 245, 0.55);
-  border-color: rgba(0, 0, 0, 0.28);
+  border-color: rgba(0, 0, 0, 0.14);
 }
 body.rb-ed-light .prompt-dock-ghost.active {
   background: rgba(245, 245, 245, 0.78);
-  border-color: rgba(0, 0, 0, 0.55);
+  border-color: rgba(0, 0, 0, 0.35);
+}
+
+/* ── BorderTrail — traveling border light (motion-primitives port) ──
+   Ring div clips to a thin band along the parent's border via the
+   double-mask intersect trick; the dot rides offset-path around it. */
+.border-trail-ring {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid transparent;
+  mask-image: linear-gradient(transparent, transparent), linear-gradient(#000, #000);
+  mask-clip: padding-box, border-box;
+  mask-composite: intersect;
+  -webkit-mask-image: linear-gradient(transparent, transparent), linear-gradient(#000, #000);
+  -webkit-mask-clip: padding-box, border-box;
+  -webkit-mask-composite: source-in;
+}
+.border-trail-dot {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 0 40px 14px rgba(255, 255, 255, 0.45),
+    0 0 90px 40px rgba(255, 255, 255, 0.12);
+}
+body.rb-ed-light .border-trail-dot {
+  background: rgba(17, 17, 17, 0.9);
+  box-shadow:
+    0 0 40px 14px rgba(0, 0, 0, 0.25),
+    0 0 90px 40px rgba(0, 0, 0, 0.08);
+}
+/* Active snap zone — the lap brightens. */
+.prompt-dock-ghost.active .border-trail-dot {
+  background: #fff;
+  box-shadow:
+    0 0 50px 18px rgba(255, 255, 255, 0.65),
+    0 0 110px 50px rgba(255, 255, 255, 0.18);
 }
 
 /* Hidden during edit mode — the editor's own inspector + layers panel
