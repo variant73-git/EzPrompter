@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
 import { runCompose } from '../../../../../lib/run-flow.js';
+import { BLANK_SITE_HTML } from '../../../../../lib/blank-site-html.js';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -29,6 +30,14 @@ export async function POST(request, { params }) {
      WHERE n.id = ${id} AND b.user_id = ${user.id}
   `;
   if (!target) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+  // Empty site targets (unpopulated .html node from the Connect-to flow)
+  // run as blank compositions — same base the "Add blank website" node
+  // uses, so the LLM builds the page from the connected sources instead
+  // of the route failing on a missing snapshot.
+  if (!target.current_html && target.kind === 'site') {
+    target.current_html = BLANK_SITE_HTML;
+  }
 
   const sources = await sql`
     SELECT e.id        AS edge_id,

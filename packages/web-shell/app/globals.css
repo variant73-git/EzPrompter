@@ -3524,6 +3524,16 @@ body.rb-ed-light .cnode-empty.cnode-empty-neutral {
   width: 100%;
   height: 100%;
   min-height: 320px;
+  /* Frosted glass — same family as the section frames / dock chrome, so
+     the unpopulated node reads as Uncraft chrome with the dot grid
+     blurring through rather than a flat hole in the canvas. */
+  background: rgba(16, 16, 18, 0.55);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  border-radius: 10px;
+}
+body.rb-ed-light .cnode-empty-upload {
+  background: rgba(255, 255, 255, 0.55);
 }
 .cnode-upload-btn {
   width: calc(52px / max(0.25, var(--canvas-scale, 1)));

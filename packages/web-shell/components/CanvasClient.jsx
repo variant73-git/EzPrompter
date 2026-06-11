@@ -1678,7 +1678,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const runnable = [...targets].filter((id) => {
       if (String(id).startsWith('temp-')) return false;
       const n = nodes.find((x) => x.id === id);
-      return !!n && !!n.current_html;
+      if (!n) return false;
+      // Site targets are runnable even WITHOUT content: an empty .html
+      // node (from the Connect-to menu) is a composition target — the
+      // server seeds it with the blank scaffold and the LLM builds the
+      // page from the connected sources.
+      return !!n.current_html || (n.kind === 'site' && !n._loading);
     });
     if (runnable.length === 0) {
       setRunFlowError('Connect at least one source node into a target with a snapshot, then try again.');
@@ -2203,6 +2208,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (!draft) return;
     const src = draft.sourceNodeId;
     const isReroute = !!draft.rerouteEdgeId;
+    // An OUTPUT port can never receive a cord. Dropping on one cancels the
+    // draft outright — otherwise the snap radius (or the .cnode fallback
+    // below) would happily wire output→output, attaching the cord to the
+    // target's LEFT slots while the user aimed at its right port.
+    if (e.target?.closest?.('.cnode-port-right')) {
+      setDraftEdgeSync(null);
+      return;
+    }
     // Snap target wins over closest('.cnode') so the magnetic affordance
     // is honoured even if the user's mouseup landed a few px off-target.
     let targetId = draft.snapTo?.nodeId || null;
@@ -2863,11 +2876,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // counting that overflow in the bbox keeps the chain centered in
       // the frame instead of pushing it to the top.
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      // The topbar renders ABOVE the declared body height and inflates
+      // inversely with zoom (36px on screen), so the node's true visual
+      // bottom = pos_y + topbarWorld + height. Without counting it, nodes
+      // bleed past the frame bottom by 36/scale − clearance at working
+      // zooms. Floored at 0.25 (the chrome cap used by the name tag) so
+      // deep zoom-outs don't permanently inflate the grow-only frames.
+      const chromeWorld = 36 / Math.max(0.25, canvasScale || 1);
       for (const id of memberIds) {
         const n = nodeById.get(id);
         if (!n) continue;
         const isAsset = n.kind === 'asset' || n.kind === 'image';
-        const bottomOverflow = isAsset ? ASSET_BOTTOM_OVERFLOW : 0;
+        const bottomOverflow = chromeWorld + (isAsset ? ASSET_BOTTOM_OVERFLOW : 0);
         minX = Math.min(minX, n.pos_x || 0);
         minY = Math.min(minY, n.pos_y || 0);
         maxX = Math.max(maxX, (n.pos_x || 0) + (n.width || 0));
@@ -2911,7 +2931,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       });
     }
     return out;
-  }, [nodes, edges, sectionNameOverrides, sectionFrames]);
+  }, [nodes, edges, sectionNameOverrides, sectionFrames, canvasScale]);
 
   // Capture / grow sectionFrames after each sections render. New sections
   // initialise their stored frame from the default-padded coords; existing
