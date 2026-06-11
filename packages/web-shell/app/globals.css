@@ -93,10 +93,6 @@
   /* Canvas dot grid — bumped from 0.18 → 0.20 for ~10% extra contrast
      on the dark canvas surface. */
   --canvas-dot: rgba(255, 255, 255, 0.20);
-  /* Halftone mesh ink (canvas-bg). The Uiverse reference uses dark ink
-     over content; on our near-black canvas the ink flips light so the
-     pinhole texture stays visible. */
-  --canvas-mesh-ink: rgba(255, 255, 255, 0.05);
   --hover-bg: rgba(255, 255, 255, 0.06);
   --hover-bg-strong: rgba(255, 255, 255, 0.10);
   /* Accent + surface — see @theme note. Accent stays blue in both themes;
@@ -162,7 +158,6 @@ body.rb-ed-light {
   --shadow-frost: 0 16px 48px rgba(15, 23, 42, 0.14);
   /* Slightly stronger dot grid in light mode too — 0.16 → 0.18. */
   --canvas-dot: rgba(15, 23, 42, 0.18);
-  --canvas-mesh-ink: rgba(0, 0, 0, 0.07);
   --hover-bg: rgba(15, 23, 42, 0.06);
   --hover-bg-strong: rgba(15, 23, 42, 0.10);
   /* Accent keeps the blue; surface flips to dark-on-light. */
@@ -523,12 +518,11 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
 .canvas-shell .canvas-bg {
   position: absolute;
   inset: 0;
-  /* Halftone mesh (Uiverse/SelfMadeSystem backdrop) — replaces the old
-     sparse dot grid: an inverted dot field where the INK fills the space
-     between transparent pinholes, reading as a fine woven texture. */
+  /* Dot color follows the theme — picks up the right contrast against
+     the canvas bg in either dark or light mode. */
   background-image:
-    radial-gradient(circle at 50% 50%, transparent 0, transparent 20%, var(--canvas-mesh-ink, #111111aa) 50%);
-  background-size: 6px 6px;
+    radial-gradient(circle at 1px 1px, var(--canvas-dot) 1.4px, transparent 0);
+  background-size: 28px 28px;
   pointer-events: none;
 }
 
@@ -2958,8 +2952,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
    couldn't be reached via vars without churning every selector. */
 
 body.rb-ed-light .canvas-shell .canvas-bg {
-  background-image:
-    radial-gradient(circle at 50% 50%, transparent 0, transparent 20%, rgba(0, 0, 0, 0.07) 50%);
+  background-image: radial-gradient(circle at 1px 1px, var(--canvas-dot) 1.4px, transparent 0);
 }
 
 /* Node frame — offblack topbar + reset-confirm + viewport switcher all
