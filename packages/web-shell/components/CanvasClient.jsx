@@ -3422,6 +3422,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }}
               onReplaceContent={handleReplaceContent}
               onRequestUpload={() => handlePopulateNode(n)}
+              onFrameZoom={() => zoomToNode(n, 350, 1)}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
             />
           ))}

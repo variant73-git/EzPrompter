@@ -33,11 +33,20 @@ function nodePort(n, side, measuredH, slotIndex = 0, slotCount = 1, scale = 1) {
   };
 }
 
-function edgePath(a, b) {
-  // Smooth cubic bezier between port positions with horizontal-ish bias.
+function edgePath(a, b, scale = 1) {
+  // Smooth cubic bezier between port positions. Control points ALWAYS
+  // point outward — right of the emitter, left of the receiver — so the
+  // cord exits past the port circle and hooks back into the other one,
+  // even when the target sits LEFT of the source. (The old sign-following
+  // control points flipped inward in that case and the cord dove "behind"
+  // both nodes, surfacing only at the port.) Minimum bow is screen-stable
+  // so the hook reads at any zoom; large spans get a proportional but
+  // capped bow to avoid balloon loops.
   const dx = Math.abs(b.x - a.x);
-  const cp1x = a.x + dx * 0.3 * Math.sign(b.x - a.x || 1);
-  const cp2x = b.x - dx * 0.3 * Math.sign(b.x - a.x || 1);
+  const minBow = 48 / scale;
+  const k = Math.max(minBow, Math.min(420, dx * 0.35));
+  const cp1x = a.x + k;
+  const cp2x = b.x - k;
   return `M ${a.x} ${a.y} C ${cp1x} ${a.y}, ${cp2x} ${b.y}, ${b.x} ${b.y}`;
 }
 
@@ -147,7 +156,7 @@ export default function EdgeLayer({ nodes, edges, incomingByTarget, scale = 1, s
         const targetColor = originColor(b);
         const gradId = `edge-grad-${e.id}`;
         const labelText = `${e.kind}${e.status === 'applied' ? ' ✓' : e.status === 'failed' ? ' ✗' : ''}`;
-        const d = edgePath(ca, cb);
+        const d = edgePath(ca, cb, scale);
         const isSelected = selectedEdgeId === e.id;
         // Pill geometry: same inverse-scale trick as the ports — kept in
         // 1/scale world units so it renders at constant on-screen size.
@@ -201,7 +210,7 @@ export function DraftEdgeLayer({ nodes, draftEdge, scale = 1 }) {
   // user gets clear "this drop will land" feedback.
   const endX = draftEdge.snapTo ? draftEdge.snapTo.x : draftEdge.x2;
   const endY = draftEdge.snapTo ? draftEdge.snapTo.y : draftEdge.y2;
-  const path = edgePath(a, { x: endX, y: endY });
+  const path = edgePath(a, { x: endX, y: endY }, scale);
   const stroke = originColor(src);
   return (
     <svg

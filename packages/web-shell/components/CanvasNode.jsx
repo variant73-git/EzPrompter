@@ -333,7 +333,7 @@ export default function CanvasNode({
   onSelect, onMove, onMoveStart, onMoveEnd, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload,
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
-  onReplaceContent, onRequestUpload,
+  onReplaceContent, onRequestUpload, onFrameZoom,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -916,9 +916,12 @@ export default function CanvasNode({
             className="cnode-body"
             onMouseDown={onBodyMouseDown}
             onDoubleClick={(e) => {
+              // Double-click on a populated node = frame it at 100% zoom,
+              // centered in the viewport. (Edit mode keeps its dedicated
+              // topbar button — dblclick used to enter editing.)
               if (editing) return;
               e.stopPropagation();
-              onEditingChange?.(true);
+              onFrameZoom?.();
             }}
             style={{ height: (node.height || 800) + 'px' }}
           >
@@ -997,7 +1000,14 @@ export default function CanvasNode({
           </div>
         )
       ) : renderMdBody ? (
-        <div className="cnode-body cnode-body-md" onMouseDown={onBodyMouseDown}>
+        <div
+          className="cnode-body cnode-body-md"
+          onMouseDown={onBodyMouseDown}
+          onDoubleClick={(node.current_design_md || node.design_md) ? (e) => {
+            e.stopPropagation();
+            onFrameZoom?.();
+          } : undefined}
+        >
           {(node.current_design_md || node.design_md) ? (
             <MdPreviewBody node={node} />
           ) : (
@@ -1019,6 +1029,10 @@ export default function CanvasNode({
         <div
           className="cnode-body cnode-body-asset"
           onMouseDown={onBodyMouseDown}
+          onDoubleClick={node.meta?.dataUrl ? (e) => {
+            e.stopPropagation();
+            onFrameZoom?.();
+          } : undefined}
           style={{ height: (node.height || 600) + 'px' }}
         >
           {node.meta?.dataUrl ? (

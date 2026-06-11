@@ -3292,6 +3292,26 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
   box-shadow: none;
 }
 
+/* Connected receiver — same treatment as the connected emitter
+   (.cnode-port-right.is-connected): solid fill in the node's own origin
+   colour + white dot. Both ends of a wired cord read as "plugged". */
+.cnode-port-left:not(.is-empty) {
+  background: var(--cnode-port-fill, var(--accent));
+  border-color: var(--cnode-port-fill, var(--accent));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.cnode-port-left:not(.is-empty) .cnode-port-dot {
+  background: #fff;
+}
+body.rb-ed-light .cnode-port-left:not(.is-empty) {
+  background: var(--cnode-port-fill, var(--accent));
+  border-color: var(--cnode-port-fill, var(--accent));
+}
+body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
+  background: #fff;
+}
+
 .cnode-port-left:hover {
   transform: scale(1.15);
   box-shadow: 0 0 0 calc(2px / var(--canvas-scale, 1)) rgba(255, 255, 255, 0.25);
