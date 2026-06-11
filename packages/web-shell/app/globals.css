@@ -3462,19 +3462,27 @@ body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.4
    what the node is for instead of implying background work. */
 .cnode-empty {
   width: 100%;
-  height: 800px;
+  /* Fallback only — CanvasNode passes an inline height matching
+     node.height so the body never bleeds past the section frame. */
+  height: 720px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 10px;
+  gap: calc(10px / max(0.25, var(--canvas-scale, 1)));
   color: rgba(45, 212, 191, 0.85);
   background: rgba(45, 212, 191, 0.03);
-  font: 500 12.5px var(--popup-font-sans, system-ui);
+  /* Inverse-scaled with the name-tag cap so the hint stays legible at
+     zoom-out instead of collapsing into unreadable specks. */
+  font: 500 calc(12.5px / max(0.25, var(--canvas-scale, 1))) var(--popup-font-sans, system-ui);
   letter-spacing: 0.01em;
   border-radius: 10px;
 }
-.cnode-empty svg { opacity: 0.75; }
+.cnode-empty svg {
+  opacity: 0.75;
+  width: calc(22px / max(0.25, var(--canvas-scale, 1)));
+  height: calc(22px / max(0.25, var(--canvas-scale, 1)));
+}
 body.rb-ed-light .cnode-empty {
   color: rgba(13, 148, 136, 0.95);
   background: rgba(13, 148, 136, 0.04);
@@ -3491,20 +3499,23 @@ body.rb-ed-light .cnode-empty.cnode-empty-neutral {
   background: rgba(0, 0, 0, 0.02);
 }
 
-/* Center upload affordance on unpopulated nodes (site/.md/image). */
+/* Center upload affordance on unpopulated nodes (site/.md/image).
+   All metrics inverse-scaled with the same max(0.25, scale) cap the
+   section name tag uses, so the button reads at a stable on-screen size
+   across the zoom range instead of shrinking into an unclickable dot. */
 .cnode-empty-upload {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: calc(12px / max(0.25, var(--canvas-scale, 1)));
   width: 100%;
   height: 100%;
   min-height: 320px;
 }
 .cnode-upload-btn {
-  width: 52px;
-  height: 52px;
+  width: calc(52px / max(0.25, var(--canvas-scale, 1)));
+  height: calc(52px / max(0.25, var(--canvas-scale, 1)));
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -3517,6 +3528,10 @@ body.rb-ed-light .cnode-empty.cnode-empty-neutral {
   pointer-events: auto;
   transition: background 0.15s, border-color 0.15s, transform 0.12s;
 }
+.cnode-upload-btn svg {
+  width: calc(20px / max(0.25, var(--canvas-scale, 1)));
+  height: calc(20px / max(0.25, var(--canvas-scale, 1)));
+}
 .cnode-upload-btn:hover {
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.24);
@@ -3524,7 +3539,7 @@ body.rb-ed-light .cnode-empty.cnode-empty-neutral {
 }
 .cnode-upload-btn:active { transform: scale(0.96); }
 .cnode-empty-upload-label {
-  font: 500 12px var(--popup-font-sans, system-ui);
+  font: 500 calc(12px / max(0.25, var(--canvas-scale, 1))) var(--popup-font-sans, system-ui);
   color: var(--text-muted);
   letter-spacing: 0.01em;
 }

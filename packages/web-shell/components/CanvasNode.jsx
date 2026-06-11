@@ -965,14 +965,17 @@ export default function CanvasNode({
         ) : node.kind === 'site' && node.meta?.source === 'empty' ? (
           // Unpopulated .html node from the "Connect to" flow — waiting
           // for the user to upload a document via the center button.
-          <div className="cnode-empty cnode-empty-neutral" onMouseDown={onBodyMouseDown}>
+          // Height follows the node's declared height — the section frame
+          // math measures pos_y + height, so a fixed-height body would
+          // bleed past the frame's bottom edge.
+          <div className="cnode-empty cnode-empty-neutral" onMouseDown={onBodyMouseDown} style={{ height: (node.height || 720) + 'px' }}>
             <EmptyUploadBody kind="site" onRequestUpload={onRequestUpload} />
           </div>
         ) : node.kind === 'site' && node.meta?.source === 'blank' ? (
           // Blank-website node — nothing's loading; this is an empty
           // canvas waiting for the user to compose. Show a friendly
           // empty state, not a spinner that implies background work.
-          <div className="cnode-empty">
+          <div className="cnode-empty" style={{ height: (node.height || 720) + 'px' }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <rect x="3" y="3" width="18" height="18" rx="2" strokeDasharray="3 2.5"/>
               <path d="M9 10h6M9 14h4" opacity="0.55"/>
