@@ -2533,11 +2533,11 @@ html, body { overscroll-behavior: none; }
   align-self: stretch;
 }
 
-/* 2 rows × 6 dots horizontal — absolutely centred inside topbar-main
-   (left edge → divider). Inverse-scale is CAPPED at 15%: at zoom ≥ 15%
-   the grip reads at a stable on-screen size; below 15% it stops
-   compensating and shrinks proportionally with the zoom, fading away
-   instead of inflating over the inflating action buttons. */
+/* 2 rows × 6 dots horizontal — absolutely centred on the TOPBAR itself,
+   i.e. the node's overall width (anchor is .cnode-topbar, not
+   topbar-main). Inverse-scale is CAPPED at 15%: at zoom ≥ 15% the grip
+   reads at a stable on-screen size; below 15% it stops compensating and
+   shrinks proportionally with the zoom. */
 .cnode-topbar .topbar-grip {
   position: absolute;
   left: 50%;
@@ -5174,11 +5174,11 @@ body.rb-ed-light .prompt-dock-send.stop:hover {
 }
 
 /* Mic (speech-to-text) — sibling of .prompt-dock-send, same corner-hugging
-   absolute trick offset one button-width left so the pair reads as a
-   cluster tucked into the dock's rounded corner. */
+   absolute trick. Offset = send inset (6) + send width (34) + 11px gap so
+   the mic reads as its own affordance rather than glued to the arrow. */
 .prompt-dock-mic {
   position: absolute;
-  right: 44px;
+  right: 51px;
   bottom: 6px;
   width: 34px;
   height: 34px;

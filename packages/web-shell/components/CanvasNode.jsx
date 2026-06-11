@@ -820,10 +820,13 @@ export default function CanvasNode({
           setMenuPos({ x: e.clientX, y: e.clientY });
         }}
       >
-        {/* topbar-main spans from the node's left edge to the vertical
-            separator. The grip centers ABSOLUTELY inside it, so it always
-            sits at the midpoint between the left edge and the divider —
-            regardless of how wide the action buttons get at low zoom. */}
+        {/* The grip anchors to the TOPBAR itself (not topbar-main) so it
+            centers on the node's overall width, regardless of how the
+            left/actions groups distribute around it. */}
+        <div className="topbar-grip" aria-hidden>
+          <span /><span /><span /><span /><span /><span />
+          <span /><span /><span /><span /><span /><span />
+        </div>
         <div className="topbar-main">
           <div className="topbar-left">
             <span className={`kind-pill kind-${kindLabel === 'site' ? 'site' : 'other'}`}>
@@ -833,10 +836,6 @@ export default function CanvasNode({
             {node.kind !== 'prompt' && (
               <span className="title" title={title}>{title}</span>
             )}
-          </div>
-          <div className="topbar-grip" aria-hidden>
-            <span /><span /><span /><span /><span /><span />
-            <span /><span /><span /><span /><span /><span />
           </div>
           <div className="topbar-actions">
             {renderIframeBody && html && editing && (

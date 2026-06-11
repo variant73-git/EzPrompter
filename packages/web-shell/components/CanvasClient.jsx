@@ -2747,10 +2747,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       fullAdj.get(anchor).push(n.id);
     }
     // Connected components via iterative BFS (avoid recursion depth on
-    // large boards). Singletons included — EVERY node lives inside a
-    // section (plan A2); an isolated node is a 1-member component.
+    // large boards).
     const visited = new Set();
-    const components = [];
+    let components = [];
     for (const n of nodes) {
       if (visited.has(n.id)) continue;
       const members = [];
@@ -2767,17 +2766,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       components.push(members);
     }
     if (components.length === 0) return [];
-    // Geometric absorption — no nested sections, ever. A 1-node component
-    // (loose node) whose CENTER sits inside another component's core area
-    // belongs to THAT section instead of spawning a singleton frame on top
-    // of it. This is what keeps a freshly-DISCONNECTED node a member of
+    // Geometric absorption — no nested sections, ever. A LOOSE node whose
+    // CENTER sits inside a real section's core area belongs to THAT
+    // section. This is what keeps a freshly-DISCONNECTED node a member of
     // the section it's still standing in (disconnecting must not create a
-    // section), and guarantees a lone node never floats framed inside a
-    // bigger frame. The core area is the members' bbox + the default gaps
-    // (NOT the stored frame, which grows and would trap the node forever).
+    // section). Targets are MULTI-member components only — lone nodes
+    // render no frame, so there is no invisible singleton core to fall
+    // into. The core area is the members' bbox + the default gaps (NOT
+    // the stored frame, which grows and would trap the node forever).
     {
-      const coreRects = components.map((c) => sectionCoreRect(c.map((id) => nodeById.get(id))));
-      const absorbedBy = new Array(components.length).fill(-1);
+      const coreRects = components.map((c) =>
+        c.length >= 2 ? sectionCoreRect(c.map((id) => nodeById.get(id))) : null);
+      const absorbed = new Set();
       for (let i = 0; i < components.length; i++) {
         if (components[i].length !== 1) continue;
         const n = nodeById.get(components[i][0]);
@@ -2786,7 +2786,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         const cy = (n.pos_y || 0) + (n.height || 0) / 2;
         let best = -1, bestArea = Infinity;
         for (let j = 0; j < components.length; j++) {
-          if (j === i || absorbedBy[j] !== -1) continue;
+          if (j === i) continue;
           const r = coreRects[j];
           if (!r) continue;
           if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) continue;
@@ -2794,25 +2794,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           const area = (r.right - r.left) * (r.bottom - r.top);
           if (area < bestArea) { best = j; bestArea = area; }
         }
-        if (best !== -1) absorbedBy[i] = best;
-      }
-      for (let i = components.length - 1; i >= 0; i--) {
-        let target = absorbedBy[i];
-        if (target === -1) continue;
-        // Follow absorption chains (singleton absorbed into a singleton
-        // that itself got absorbed) to the terminal host.
-        while (absorbedBy[target] !== -1) target = absorbedBy[target];
-        if (target === i) continue;
-        components[target].push(...components[i]);
-        components.splice(i, 1);
-        // Re-index: removing i shifts later entries left.
-        absorbedBy.splice(i, 1);
-        for (let k = 0; k < absorbedBy.length; k++) {
-          if (absorbedBy[k] > i) absorbedBy[k] -= 1;
-          else if (absorbedBy[k] === i) absorbedBy[k] = target > i ? target - 1 : target;
+        if (best !== -1) {
+          components[best].push(components[i][0]);
+          absorbed.add(i);
         }
       }
+      if (absorbed.size) components = components.filter((_, i) => !absorbed.has(i));
     }
+    // Sections exist only for RELATIONSHIPS — a lone node renders no
+    // frame. A new/standalone node stays frameless until it's connected,
+    // dropped inside a section, or adopted by drag.
+    components = components.filter((c) => c.length >= 2);
+    if (components.length === 0) return [];
     // Auto-name by content: count kinds present in each component, pick the
     // dominant theme. Number sections by appearance order in top-left → bot-
     // right reading (sort by min member pos_x + pos_y).
