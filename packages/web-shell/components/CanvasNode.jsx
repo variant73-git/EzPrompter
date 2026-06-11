@@ -764,6 +764,21 @@ export default function CanvasNode({
       style={{ left: node.pos_x, top: node.pos_y, width: node.width }}
       data-node-id={node.id}
     >
+      {/* Generating border — Uiverse spin effect while content is being
+          produced INTO this node (capture stream, image generation,
+          run-flow). Skipped for the challenge state, which is "waiting
+          for a human", not "working". */}
+      {((node._loading && !node._challenge) || node.meta?.status === 'generating' || !!runStatus) && (
+        <div className="cnode-gen-border" aria-hidden="true">
+          <div className="cnode-spin cnode-spin-blur" />
+          <div className="cnode-spin cnode-spin-intense" />
+          <div className="cnode-spin cnode-spin-inside" />
+          {/* Solid card face — occludes the spinning gradients inside the
+              node (translucent frosted bodies would let them bleed
+              through), leaving only the ring + outer halo visible. */}
+          <div className="cnode-gen-face" />
+        </div>
+      )}
       {/* Anchored title — only visible when the canvas is zoomed-out enough
           that the topbar collapses (`body.canvas-zoom-low`). Sits above the
           node at top-left so the user can still tell what each node is. */}

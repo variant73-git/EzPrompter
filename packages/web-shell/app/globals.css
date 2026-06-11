@@ -93,6 +93,10 @@
   /* Canvas dot grid — bumped from 0.18 → 0.20 for ~10% extra contrast
      on the dark canvas surface. */
   --canvas-dot: rgba(255, 255, 255, 0.20);
+  /* Halftone mesh ink (canvas-bg). The Uiverse reference uses dark ink
+     over content; on our near-black canvas the ink flips light so the
+     pinhole texture stays visible. */
+  --canvas-mesh-ink: rgba(255, 255, 255, 0.05);
   --hover-bg: rgba(255, 255, 255, 0.06);
   --hover-bg-strong: rgba(255, 255, 255, 0.10);
   /* Accent + surface — see @theme note. Accent stays blue in both themes;
@@ -158,6 +162,7 @@ body.rb-ed-light {
   --shadow-frost: 0 16px 48px rgba(15, 23, 42, 0.14);
   /* Slightly stronger dot grid in light mode too — 0.16 → 0.18. */
   --canvas-dot: rgba(15, 23, 42, 0.18);
+  --canvas-mesh-ink: rgba(0, 0, 0, 0.07);
   --hover-bg: rgba(15, 23, 42, 0.06);
   --hover-bg-strong: rgba(15, 23, 42, 0.10);
   /* Accent keeps the blue; surface flips to dark-on-light. */
@@ -518,11 +523,12 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
 .canvas-shell .canvas-bg {
   position: absolute;
   inset: 0;
-  /* Dot color follows the theme — picks up the right contrast against
-     the canvas bg in either dark or light mode. */
+  /* Halftone mesh (Uiverse/SelfMadeSystem backdrop) — replaces the old
+     sparse dot grid: an inverted dot field where the INK fills the space
+     between transparent pinholes, reading as a fine woven texture. */
   background-image:
-    radial-gradient(circle at 1px 1px, var(--canvas-dot) 1.4px, transparent 0);
-  background-size: 28px 28px;
+    radial-gradient(circle at 50% 50%, transparent 0, transparent 20%, var(--canvas-mesh-ink, #111111aa) 50%);
+  background-size: 6px 6px;
   pointer-events: none;
 }
 
@@ -2389,14 +2395,19 @@ html, body { overscroll-behavior: none; }
      edges at minimum zoom, and the section bbox (36 / max(0.15, scale))
      matches the rendered chrome exactly (no bottom bleed). */
   --tb: max(0.15, var(--canvas-scale, 1));
+  /* Horizontal breathing (padding + the gaps flanking the divider/⋯)
+     shrinks EARLIER than the rest of the chrome: linear with the zoom
+     below 50%. Keeps the right-side zone from marching left into the
+     centered grip as the node gets small on screen. */
+  --tbgap: calc(10px / max(0.5, var(--canvas-scale, 1)));
   flex: 0 0 calc(36px / var(--tb));
   height: calc(36px / var(--tb));
   background: #0f0f0f;
   border-radius: calc(10px / var(--tb)) calc(10px / var(--tb)) 0 0;
   display: flex;
   align-items: center;
-  padding: 0 calc(10px / var(--tb));
-  gap: calc(10px / var(--tb));
+  padding: 0 var(--tbgap);
+  gap: var(--tbgap);
   cursor: move;
   user-select: none;
   color: #cbd5e1;
@@ -2555,14 +2566,21 @@ html, body { overscroll-behavior: none; }
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.35);
 }
-/* Below the 0.15 chrome floor the bar shrinks with the zoom but narrow
-   nodes (≤512px assets) still leave the 6-column grip grazing the left
-   edge. Compact it to 3×2 dots — same affordance, half the width. */
-html.canvas-zoom-min .cnode-topbar .topbar-grip {
+/* Deep zoom-out (<20%): the screen-stable grip + ⋯ start fighting for
+   the shrinking node width. Compact the grip to 3×2 dots — same
+   affordance, half the footprint — so neither the divider nor the node
+   edges ever touch it. */
+html.canvas-zoom-very-low .cnode-topbar .topbar-grip {
   grid-template-columns: repeat(3, 1fr);
 }
-html.canvas-zoom-min .cnode-topbar .topbar-grip span:nth-child(n+7) {
+html.canvas-zoom-very-low .cnode-topbar .topbar-grip span:nth-child(n+7) {
   display: none;
+}
+/* Narrow nodes (skill tiles etc) at deep zoom-out have no geometric room
+   between the centered grip and the ⋯ zone — drop the divider line there
+   rather than let it cross the grip. */
+html.canvas-zoom-very-low .cnode.narrow .cnode-topbar .topbar-sep {
+  opacity: 0;
 }
 
 .cnode-topbar .topbar-actions {
@@ -2940,7 +2958,8 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
    couldn't be reached via vars without churning every selector. */
 
 body.rb-ed-light .canvas-shell .canvas-bg {
-  background-image: radial-gradient(circle at 1px 1px, var(--canvas-dot) 1.4px, transparent 0);
+  background-image:
+    radial-gradient(circle at 50% 50%, transparent 0, transparent 20%, rgba(0, 0, 0, 0.07) 50%);
 }
 
 /* Node frame — offblack topbar + reset-confirm + viewport switcher all
@@ -4949,6 +4968,67 @@ body.rb-ed-light .border-trail-dot {
   box-shadow:
     0 0 50px 18px rgba(255, 255, 255, 0.65),
     0 0 110px 50px rgba(255, 255, 255, 0.18);
+}
+
+/* ── Generating-node border (Uiverse / SelfMadeSystem spin) ─────────
+   Three rotating dual-colour gradients stacked behind the card face:
+   a wide blurred halo, a tighter intense ring and a thin inside line —
+   each alpha-boosted through the #uncraft-unopaq* SVG filters mounted
+   by CanvasClient. Shown while content is being generated INTO a node
+   (capture stream, image gen, run-flow). All insets inverse-scaled so
+   the ring thickness reads the same at any zoom. */
+.cnode-gen-border {
+  position: absolute;
+  inset: 0;
+  border-radius: calc(12px / var(--canvas-scale, 1));
+  pointer-events: none;
+  z-index: 0;
+}
+.cnode-spin {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+}
+.cnode-spin::before {
+  content: "";
+  position: absolute;
+  inset: -30%;
+  animation: cnode-speen 8s cubic-bezier(0.56, 0.15, 0.28, 0.86) infinite;
+}
+.cnode-spin-blur {
+  filter: blur(3em) url(#uncraft-unopaq);
+}
+.cnode-spin-blur::before {
+  background: linear-gradient(-45deg, #f50, #0000 46% 54%, #05f);
+}
+.cnode-spin-intense {
+  inset: calc(-2px / var(--canvas-scale, 1));
+  filter: blur(0.5em) url(#uncraft-unopaq2);
+}
+.cnode-spin-intense::before {
+  background: linear-gradient(-45deg, #f95, #0000 35% 65%, #59f);
+}
+.cnode-spin-inside {
+  inset: calc(-3px / var(--canvas-scale, 1));
+  filter: blur(2px) url(#uncraft-unopaq3);
+}
+.cnode-spin-inside::before {
+  background: linear-gradient(-45deg, #fc9, #0000 35% 65%, #9cf);
+}
+@keyframes cnode-speen {
+  0%  { rotate: 10deg; }
+  50% { rotate: 190deg; }
+  to  { rotate: 370deg; }
+}
+.cnode-gen-face {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #111215;
+}
+body.rb-ed-light .cnode-gen-face {
+  background: #f3f3f2;
 }
 
 /* Hidden during edit mode — the editor's own inspector + layers panel
