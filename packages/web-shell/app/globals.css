@@ -4442,6 +4442,27 @@ body.rb-ed-light .prompt-dock-context-x:hover {
   color: var(--text-secondary);
   margin-bottom: 20px;
 }
+/* Optional "don't ask again" row — sits between the body text and the
+   action buttons, quiet by default so it never competes with them. */
+.confirm-modal-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -8px 0 18px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.confirm-modal-checkbox input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.confirm-modal-checkbox:hover {
+  color: var(--text-secondary);
+}
 .confirm-modal-actions {
   display: flex;
   gap: 10px;

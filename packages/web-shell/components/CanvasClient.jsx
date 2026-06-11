@@ -88,6 +88,8 @@ const WORLD_HEIGHT = 6000;
 // agree on the SAME core area or nodes get stuck half-released.
 const SECTION_UNIFORM_GAP = 165;
 const SECTION_TOP_GAP = 260;
+// "Don't ask again" pref for the section re-run confirm modal.
+const RERUN_CONFIRM_SKIP_KEY = 'rb-rerun-confirm-skip';
 // Asset cards draw their dims label below the body — counted in every
 // section bbox so frames wrap the full visual footprint.
 const ASSET_BOTTOM_OVERFLOW = 80;
@@ -1899,20 +1901,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // pixels. Removing the agent from this path is what makes re-run
   // actually "re-run" instead of "the agent recreates everything from
   // scratch and asks the user 3 questions first".
-  async function handleConfirmPlaySection() {
-    if (!playSection) return;
-    const s = playSection.section;
-    setPlaySection(null);
-    // Edge-less sections (singletons / purely-adopted groups) have no flow
-    // to re-run; the play button is hidden for them, this is the backstop.
-    if (s.hasEdges === false) return;
-
-    // Find the terminal node of the chain — the member that receives
-    // edges from other members but doesn't fan out to another member.
-    // For typical style-transfer workflows (base + ref → result) there
-    // is exactly one such node; if zero or multiple are found, fall
-    // back to an explicit error so the user knows the chain shape isn't
-    // re-runnable yet.
+  // Terminal node of a section's chain — the ASSET member that receives
+  // edges from other members and doesn't fan out to another member. For
+  // typical style-transfer workflows (base + ref → result) there is
+  // exactly one; zero/multiple means the chain shape isn't re-runnable.
+  function findSectionTerminal(s) {
     const memberSet = new Set(s.memberIds);
     const candidates = s.memberIds.filter((id) => {
       const node = nodes.find((n) => n.id === id);
@@ -1921,13 +1914,41 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const hasOutgoingToMember   = edges.some((e) => e.source_node_id === id && memberSet.has(e.target_node_id));
       return hasIncomingFromMember && !hasOutgoingToMember;
     });
-    if (candidates.length !== 1) {
-      toast.error(candidates.length === 0
+    return { terminalId: candidates.length === 1 ? candidates[0] : null, count: candidates.length };
+  }
+
+  // The re-run confirm only earns its interruption when there's a
+  // GENERATED RESULT about to be overwritten. First runs (terminal still
+  // empty) fire straight away.
+  function sectionRerunWouldOverwrite(s) {
+    const { terminalId } = findSectionTerminal(s);
+    if (!terminalId) return false;
+    const t = nodes.find((n) => n.id === terminalId);
+    return !!t?.meta?.dataUrl;
+  }
+
+  async function handleConfirmPlaySection(skipFutureConfirms = false) {
+    if (!playSection) return;
+    const s = playSection.section;
+    setPlaySection(null);
+    if (skipFutureConfirms) {
+      try { localStorage.setItem(RERUN_CONFIRM_SKIP_KEY, '1'); } catch {}
+    }
+    await runSectionRerun(s);
+  }
+
+  async function runSectionRerun(s) {
+    // Edge-less sections (purely-adopted groups) have no flow to re-run;
+    // the play button is hidden for them, this is the backstop.
+    if (s.hasEdges === false) return;
+
+    const { terminalId, count } = findSectionTerminal(s);
+    if (!terminalId) {
+      toast.error(count === 0
         ? 'Could not find a terminal node to re-run in this workflow.'
         : 'This workflow has multiple terminal nodes; ambiguous re-run.');
       return;
     }
-    const terminalId = candidates[0];
 
     // Optimistic: flip the terminal into the generating state right away
     // so the canvas card shows the same spinner the first run did. If
@@ -3521,6 +3542,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                     className="canvas-section-play-btn"
                     onClick={(e) => {
                       e.stopPropagation();
+                      // Confirm only when a generated result would be
+                      // OVERWRITTEN; first runs (and opted-out users)
+                      // fire straight away.
+                      let skip = false;
+                      try { skip = localStorage.getItem(RERUN_CONFIRM_SKIP_KEY) === '1'; } catch {}
+                      if (skip || !sectionRerunWouldOverwrite(s)) {
+                        runSectionRerun(s);
+                        return;
+                      }
                       setPlaySection({ section: s, busy: false });
                     }}
                     aria-label={`Re-run ${s.name}`}
@@ -3806,11 +3836,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       <ConfirmModal
         open={!!playSection}
         title="Re-run workflow?"
-        message={playSection ? `Re-execute "${playSection.section.name}" with the same inputs. The new result will replace or extend the current one and consumes credits.` : ''}
+        message={playSection ? `Re-execute "${playSection.section.name}" with the same inputs. The new result will replace the current one and consumes credits.` : ''}
         confirmLabel="Run"
         cancelLabel="Cancel"
         busy={!!playSection?.busy}
-        onConfirm={handleConfirmPlaySection}
+        checkboxLabel="Don't ask again"
+        onConfirm={(skipFuture) => handleConfirmPlaySection(skipFuture)}
         onCancel={() => { if (!playSection?.busy) setPlaySection(null); }}
       />
 
