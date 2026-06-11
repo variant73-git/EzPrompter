@@ -2382,14 +2382,21 @@ html, body { overscroll-behavior: none; }
    prompt dock. Rounds its own top corners since cnode no longer clips. */
 .cnode-topbar {
   position: relative;
-  flex: 0 0 calc(36px / var(--canvas-scale, 1));
-  height: calc(36px / var(--canvas-scale, 1));
+  /* --tb floors the chrome's inverse-scale at 15% (same floor as the
+     grip): at zoom ≥ 15% the topbar reads at a stable on-screen size;
+     below it, the WHOLE bar (height, paddings, icons, ⋯ button) shrinks
+     proportionally with the zoom — so nothing inflates into the node's
+     edges at minimum zoom, and the section bbox (36 / max(0.15, scale))
+     matches the rendered chrome exactly (no bottom bleed). */
+  --tb: max(0.15, var(--canvas-scale, 1));
+  flex: 0 0 calc(36px / var(--tb));
+  height: calc(36px / var(--tb));
   background: #0f0f0f;
-  border-radius: calc(10px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1)) 0 0;
+  border-radius: calc(10px / var(--tb)) calc(10px / var(--tb)) 0 0;
   display: flex;
   align-items: center;
-  padding: 0 calc(10px / var(--canvas-scale, 1));
-  gap: calc(10px / var(--canvas-scale, 1));
+  padding: 0 calc(10px / var(--tb));
+  gap: calc(10px / var(--tb));
   cursor: move;
   user-select: none;
   color: #cbd5e1;
@@ -2400,7 +2407,7 @@ html, body { overscroll-behavior: none; }
 .cnode-topbar .topbar-left {
   display: flex;
   align-items: center;
-  gap: calc(8px / var(--canvas-scale, 1));
+  gap: calc(8px / var(--tb));
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
@@ -2409,15 +2416,15 @@ html, body { overscroll-behavior: none; }
      "50% of the padded topbar − half grip width − safety margin", written
      in scale-aware terms so the gap stays the same on screen at any
      canvas zoom. */
-  max-width: calc(50% - calc(20px / var(--canvas-scale, 1)));
+  max-width: calc(50% - calc(20px / var(--tb)));
 }
 
 .cnode-topbar .kind-pill {
   display: inline-flex;
   align-items: center;
-  gap: calc(5px / var(--canvas-scale, 1));
-  padding: calc(2px / var(--canvas-scale, 1)) calc(8px / var(--canvas-scale, 1));
-  border-radius: calc(999px / var(--canvas-scale, 1));
+  gap: calc(5px / var(--tb));
+  padding: calc(2px / var(--tb)) calc(8px / var(--tb));
+  border-radius: calc(999px / var(--tb));
   background: transparent;
   /* Pill border + icon + text colour all follow the node's origin via
      --cnode-port-* (set on .cnode.origin-*). Falls back to sky for any
@@ -2425,19 +2432,19 @@ html, body { overscroll-behavior: none; }
   border: 1px solid var(--cnode-port-border, rgba(56, 189, 248, 0.5));
   color: var(--cnode-port-fill, #38bdf8);
   text-transform: uppercase;
-  font-size: calc(10px / var(--canvas-scale, 1));
+  font-size: calc(10px / var(--tb));
   font-weight: 600;
   letter-spacing: 0.05em;
   flex-shrink: 0;
 }
 .cnode-topbar .kind-pill svg {
-  width: calc(11px / var(--canvas-scale, 1));
-  height: calc(11px / var(--canvas-scale, 1));
+  width: calc(11px / var(--tb));
+  height: calc(11px / var(--tb));
   flex-shrink: 0;
 }
 
 .cnode-topbar .title {
-  font-size: calc(12px / var(--canvas-scale, 1));
+  font-size: calc(12px / var(--tb));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2520,7 +2527,7 @@ html, body { overscroll-behavior: none; }
   position: relative;
   display: flex;
   align-items: center;
-  gap: calc(10px / var(--canvas-scale, 1));
+  gap: calc(10px / var(--tb));
   flex: 1 1 0;
   min-width: 0;
   align-self: stretch;
@@ -2538,15 +2545,24 @@ html, body { overscroll-behavior: none; }
   transform: translate(-50%, -50%);
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  grid-auto-rows: calc(3px / max(0.15, var(--canvas-scale, 1)));
-  gap: calc(2px / max(0.15, var(--canvas-scale, 1)));
+  grid-auto-rows: calc(3px / var(--tb));
+  gap: calc(2px / var(--tb));
   pointer-events: none;
 }
 .cnode-topbar .topbar-grip span {
-  width: calc(3px / max(0.15, var(--canvas-scale, 1)));
-  height: calc(3px / max(0.15, var(--canvas-scale, 1)));
+  width: calc(3px / var(--tb));
+  height: calc(3px / var(--tb));
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.35);
+}
+/* Below the 0.15 chrome floor the bar shrinks with the zoom but narrow
+   nodes (≤512px assets) still leave the 6-column grip grazing the left
+   edge. Compact it to 3×2 dots — same affordance, half the width. */
+html.canvas-zoom-min .cnode-topbar .topbar-grip {
+  grid-template-columns: repeat(3, 1fr);
+}
+html.canvas-zoom-min .cnode-topbar .topbar-grip span:nth-child(n+7) {
+  display: none;
 }
 
 .cnode-topbar .topbar-actions {
@@ -2554,7 +2570,7 @@ html, body { overscroll-behavior: none; }
   align-items: center;
   /* Tight gap — same scale as the topbar's top/bottom breathing so the
      buttons don't get visually shoved into the grip at low zoom. */
-  gap: calc(3px / var(--canvas-scale, 1));
+  gap: calc(3px / var(--tb));
   flex: 0 0 auto;
   /* Anchor to the end of topbar-main regardless of how the flex spacer
      math resolves. topbar-left has flex:1 with a max-width cap, so it
@@ -2568,9 +2584,9 @@ html, body { overscroll-behavior: none; }
   background: rgba(255, 255, 255, 0.06);
   color: #cbd5e1;
   cursor: pointer;
-  font-size: calc(12px / var(--canvas-scale, 1));
-  padding: calc(4px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1));
-  border-radius: calc(5px / var(--canvas-scale, 1));
+  font-size: calc(12px / var(--tb));
+  padding: calc(4px / var(--tb)) calc(10px / var(--tb));
+  border-radius: calc(5px / var(--tb));
   font-family: inherit;
   font-weight: 500;
   white-space: nowrap;
@@ -2579,14 +2595,14 @@ html, body { overscroll-behavior: none; }
 .cnode-topbar .btn-edit {
   display: inline-flex;
   align-items: center;
-  gap: calc(5px / var(--canvas-scale, 1));
+  gap: calc(5px / var(--tb));
   background: rgba(245, 245, 245, 0.10);
   border-color: rgba(245, 245, 245, 0.22);
   color: #f5f5f5;
 }
 .cnode-topbar .btn-edit svg {
-  width: calc(13px / var(--canvas-scale, 1));
-  height: calc(13px / var(--canvas-scale, 1));
+  width: calc(13px / var(--tb));
+  height: calc(13px / var(--tb));
   flex-shrink: 0;
 }
 
@@ -2608,14 +2624,14 @@ html, body { overscroll-behavior: none; }
 .cnode-topbar .btn-cancel {
   display: inline-flex;
   align-items: center;
-  gap: calc(5px / var(--canvas-scale, 1));
+  gap: calc(5px / var(--tb));
   background: transparent;
   border-color: rgba(245, 245, 245, 0.22);
   color: rgba(241, 245, 249, 0.78);
 }
 .cnode-topbar .btn-cancel svg {
-  width: calc(13px / var(--canvas-scale, 1));
-  height: calc(13px / var(--canvas-scale, 1));
+  width: calc(13px / var(--tb));
+  height: calc(13px / var(--tb));
   flex-shrink: 0;
 }
 .cnode-topbar .btn-cancel:hover {
@@ -2678,10 +2694,12 @@ body.rb-ed-light .cnode-topbar .topbar-sep { background: rgba(0, 0, 0, 0.10); }
    z-index. */
 .cnode-expand-float {
   position: absolute;
-  bottom: calc(16px / var(--canvas-scale, 1));
-  right: calc(16px / var(--canvas-scale, 1));
-  width: calc(28px / var(--canvas-scale, 1));
-  height: calc(28px / var(--canvas-scale, 1));
+  /* Same 15% inverse-scale floor as the topbar chrome — below it the
+     floater shrinks with the zoom instead of crowding the tiny body. */
+  bottom: calc(16px / max(0.15, var(--canvas-scale, 1)));
+  right: calc(16px / max(0.15, var(--canvas-scale, 1)));
+  width: calc(28px / max(0.15, var(--canvas-scale, 1)));
+  height: calc(28px / max(0.15, var(--canvas-scale, 1)));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2699,8 +2717,8 @@ body.rb-ed-light .cnode-topbar .topbar-sep { background: rgba(0, 0, 0, 0.10); }
   box-shadow: 0 calc(4px / var(--canvas-scale, 1)) calc(12px / var(--canvas-scale, 1)) rgba(0, 0, 0, 0.35);
 }
 .cnode-expand-float svg {
-  width: calc(13px / var(--canvas-scale, 1));
-  height: calc(13px / var(--canvas-scale, 1));
+  width: calc(13px / max(0.15, var(--canvas-scale, 1)));
+  height: calc(13px / max(0.15, var(--canvas-scale, 1)));
 }
 .cnode:hover .cnode-expand-float,
 .cnode.selected .cnode-expand-float { opacity: 1; }
@@ -2730,30 +2748,30 @@ body.rb-ed-light .cnode-expand-float:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: calc(5px / var(--canvas-scale, 1)) calc(7px / var(--canvas-scale, 1));
+  padding: calc(5px / var(--tb)) calc(7px / var(--tb));
   background: transparent;
   border: none;
   color: rgba(241, 245, 249, 0.62);
   cursor: pointer;
-  border-radius: calc(6px / var(--canvas-scale, 1));
+  border-radius: calc(6px / var(--tb));
   transition: background 0.12s, color 0.12s;
   line-height: 1;
 }
 .cnode-topbar .btn-duplicate svg,
 .cnode-topbar .btn-download svg {
-  width: calc(14px / var(--canvas-scale, 1));
-  height: calc(14px / var(--canvas-scale, 1));
+  width: calc(14px / var(--tb));
+  height: calc(14px / var(--tb));
 }
 /* More button — bigger glyph than the other icon buttons (it carries
    the entire secondary-action menu) but tight square padding so the
    horizontal breathing matches the vertical and the chip doesn't push
    the Edit button toward the centre at low zoom. */
 .cnode-topbar .btn-more {
-  padding: calc(3px / var(--canvas-scale, 1));
+  padding: calc(3px / var(--tb));
 }
 .cnode-topbar .btn-more svg {
-  width: calc(18px / var(--canvas-scale, 1));
-  height: calc(18px / var(--canvas-scale, 1));
+  width: calc(18px / var(--tb));
+  height: calc(18px / var(--tb));
 }
 .cnode-topbar .btn-duplicate:hover,
 .cnode-topbar .btn-download:hover,
@@ -3133,7 +3151,7 @@ html.canvas-zoom-low .cnode-topbar .btn-edit,
 html.canvas-zoom-low .cnode-topbar .btn-cancel,
 .cnode.narrow .cnode-topbar .btn-edit,
 .cnode.narrow .cnode-topbar .btn-cancel {
-  padding: calc(5px / var(--canvas-scale, 1)) calc(7px / var(--canvas-scale, 1));
+  padding: calc(5px / var(--tb)) calc(7px / var(--tb));
   gap: 0;
 }
 html.canvas-zoom-low .cnode-topbar .btn-edit .btn-edit-lbl,

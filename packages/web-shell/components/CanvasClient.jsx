@@ -296,12 +296,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // doesn't flash native-sized between mount and the first
       // onTransformed fire. If you change initialScale, update this too.
       document.documentElement.style.setProperty('--canvas-scale', '0.6');
-      document.documentElement.classList.remove('canvas-zoom-low', 'canvas-zoom-very-low');
+      document.documentElement.classList.remove('canvas-zoom-low', 'canvas-zoom-very-low', 'canvas-zoom-min');
     };
     reset();
     return () => {
       document.documentElement.style.removeProperty('--canvas-scale');
-      document.documentElement.classList.remove('canvas-zoom-low', 'canvas-zoom-very-low');
+      document.documentElement.classList.remove('canvas-zoom-low', 'canvas-zoom-very-low', 'canvas-zoom-min');
     };
   }, []);
 
@@ -2879,10 +2879,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // The topbar renders ABOVE the declared body height and inflates
       // inversely with zoom (36px on screen), so the node's true visual
       // bottom = pos_y + topbarWorld + height. Without counting it, nodes
-      // bleed past the frame bottom by 36/scale − clearance at working
-      // zooms. Floored at 0.25 (the chrome cap used by the name tag) so
-      // deep zoom-outs don't permanently inflate the grow-only frames.
-      const chromeWorld = 36 / Math.max(0.25, canvasScale || 1);
+      // bleed past the frame bottom by 36/scale − clearance. The 0.15
+      // floor matches the CSS `--tb` cap on .cnode-topbar EXACTLY — below
+      // 15% zoom the rendered chrome stops inflating in world space, so
+      // measured and rendered heights agree at every zoom level.
+      const chromeWorld = 36 / Math.max(0.15, canvasScale || 1);
       for (const id of memberIds) {
         const n = nodeById.get(id);
         if (!n) continue;
@@ -3285,6 +3286,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // Below ~0.2 the ports start to dominate the tiny node frames —
           // shrink them 30% so the colour-coded squares stay readable.
           document.documentElement.classList.toggle('canvas-zoom-very-low', scale < 0.2);
+          // Below the 0.15 chrome floor (--tb) the topbar shrinks with the
+          // zoom; narrow nodes also compact the grip to 3×2 dots so it
+          // never grazes the node's left edge at minimum zoom.
+          document.documentElement.classList.toggle('canvas-zoom-min', scale < 0.15);
           setCanvasScale(scale);
         }}
       >
