@@ -19,6 +19,7 @@ import Minimap from './Minimap.jsx';
 import ChallengeModal from './ChallengeModal.jsx';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
+import { findSectionTerminal, sectionRerunWouldOverwrite } from '../lib/section-run.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -1894,38 +1895,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setTimeout(() => URL.revokeObjectURL(url), 100);
   }
 
-  // Play a section: deterministic server-side re-run. NO agent involved —
-  // the terminal asset stores everything we need (prompt, mode, aspect,
-  // base + style ref asset ids, provider) so the rerun is a pure data
-  // op. The result REPLACES the terminal node in place: same graph, new
-  // pixels. Removing the agent from this path is what makes re-run
-  // actually "re-run" instead of "the agent recreates everything from
-  // scratch and asks the user 3 questions first".
-  // Terminal node of a section's chain — the ASSET member that receives
-  // edges from other members and doesn't fan out to another member. For
-  // typical style-transfer workflows (base + ref → result) there is
-  // exactly one; zero/multiple means the chain shape isn't re-runnable.
-  function findSectionTerminal(s) {
-    const memberSet = new Set(s.memberIds);
-    const candidates = s.memberIds.filter((id) => {
-      const node = nodes.find((n) => n.id === id);
-      if (!node || node.kind !== 'asset') return false;
-      const hasIncomingFromMember = edges.some((e) => e.target_node_id === id && memberSet.has(e.source_node_id));
-      const hasOutgoingToMember   = edges.some((e) => e.source_node_id === id && memberSet.has(e.target_node_id));
-      return hasIncomingFromMember && !hasOutgoingToMember;
-    });
-    return { terminalId: candidates.length === 1 ? candidates[0] : null, count: candidates.length };
-  }
-
-  // The re-run confirm only earns its interruption when there's a
-  // GENERATED RESULT about to be overwritten. First runs (terminal still
-  // empty) fire straight away.
-  function sectionRerunWouldOverwrite(s) {
-    const { terminalId } = findSectionTerminal(s);
-    if (!terminalId) return false;
-    const t = nodes.find((n) => n.id === terminalId);
-    return !!t?.meta?.dataUrl;
-  }
+  // Play a section: execute whatever chain lives in it. The terminal
+  // node's kind decides the engine (helpers in lib/section-run.js):
+  //   - asset → deterministic image re-run, NO agent involved — the
+  //     terminal asset stores everything we need (prompt, mode, aspect,
+  //     base + style ref asset ids, provider) so the rerun is a pure
+  //     data op. Same graph, new pixels.
+  //   - site → compose engine (/api/nodes/[id]/run), the same call the
+  //     PromptDock arrow makes. Works on a blank scaffold too.
+  //   - designmd / others → honest "not supported yet" toast.
 
   async function handleConfirmPlaySection(skipFutureConfirms = false) {
     if (!playSection) return;
@@ -1942,14 +1920,43 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // the play button is hidden for them, this is the backstop.
     if (s.hasEdges === false) return;
 
-    const { terminalId, count } = findSectionTerminal(s);
-    if (!terminalId) {
-      toast.error(count === 0
-        ? 'Could not find a terminal node to re-run in this workflow.'
-        : 'This workflow has multiple terminal nodes; ambiguous re-run.');
+    const { terminal, terminalId, count, unsupportedKind } = findSectionTerminal(s, nodes, edges);
+    if (!terminal) {
+      if (unsupportedKind) {
+        toast.info(`This workflow ends in a ${unsupportedKind === 'designmd' ? '.md' : unsupportedKind} node — re-running it isn't supported yet.`);
+      } else {
+        toast.error(count === 0
+          ? 'Could not find a terminal node to re-run in this workflow.'
+          : 'This workflow has multiple terminal nodes; ambiguous re-run.');
+      }
       return;
     }
 
+    // Site terminal → compose engine. runOneTarget drives the 3-step
+    // status chip below the node, exactly like the PromptDock arrow.
+    if (terminal.kind === 'site') {
+      try {
+        const result = await runOneTarget(terminalId);
+        if (result?.snapshotId) {
+          setNodes((prev) => prev.map((n) => (
+            n.id === terminalId
+              ? {
+                  ...n,
+                  current_html: result.html,
+                  current_snapshot_id: result.snapshotId,
+                  _resetTick: (n._resetTick || 0) + 1,
+                }
+              : n
+          )));
+        }
+      } catch (e) {
+        console.warn('[section-rerun] site compose failed:', e?.message || e);
+        toast.error(e?.message || 'Re-run failed.');
+      }
+      return;
+    }
+
+    // Asset terminal → deterministic image re-run.
     // Optimistic: flip the terminal into the generating state right away
     // so the canvas card shows the same spinner the first run did. If
     // the server call errors we revert below.
@@ -3547,7 +3554,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                       // fire straight away.
                       let skip = false;
                       try { skip = localStorage.getItem(RERUN_CONFIRM_SKIP_KEY) === '1'; } catch {}
-                      if (skip || !sectionRerunWouldOverwrite(s)) {
+                      if (skip || !sectionRerunWouldOverwrite(s, nodes, edges)) {
                         runSectionRerun(s);
                         return;
                       }
