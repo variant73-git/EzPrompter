@@ -4984,65 +4984,55 @@ body.rb-ed-light .border-trail-dot {
     0 0 110px 50px rgba(255, 255, 255, 0.18);
 }
 
-/* ── Generating-node border (Uiverse / SelfMadeSystem spin) ─────────
-   Three rotating dual-colour gradients stacked behind the card face:
-   a wide blurred halo, a tighter intense ring and a thin inside line —
-   each alpha-boosted through the #uncraft-unopaq* SVG filters mounted
-   by CanvasClient. Shown while content is being generated INTO a node
-   (capture stream, image gen, run-flow). All insets inverse-scaled so
-   the ring thickness reads the same at any zoom. */
-.cnode-gen-border {
+/* Generation progress ring — replaces the Uiverse spin. An SVG outline
+   that hugs the node frame and fills clockwise from 12 o'clock in the
+   node's category colour (--cnode-port-fill), with a large grey % in the
+   centre. Swapped out wholesale when the real result arrives. */
+.cnode-progress {
   position: absolute;
   inset: 0;
-  border-radius: calc(12px / var(--canvas-scale, 1));
   pointer-events: none;
-  z-index: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.cnode-spin {
+.cnode-progress-svg {
   position: absolute;
   inset: 0;
-  border-radius: inherit;
-  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
-.cnode-spin::before {
-  content: "";
-  position: absolute;
-  inset: -30%;
-  animation: cnode-speen 8s cubic-bezier(0.56, 0.15, 0.28, 0.86) infinite;
+.cnode-progress-track {
+  fill: none;
+  stroke: #2a2d33;                       /* solid dark grey rail */
+  stroke-width: 3px;
+  vector-effect: non-scaling-stroke;     /* constant on-screen at any zoom */
 }
-.cnode-spin-blur {
-  filter: blur(3em) url(#uncraft-unopaq);
+.cnode-progress-arc {
+  fill: none;
+  stroke: var(--cnode-port-fill, var(--accent));
+  stroke-width: 3px;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  transition: stroke-dashoffset 0.12s linear;  /* smooth between ticks */
 }
-.cnode-spin-blur::before {
-  background: linear-gradient(-45deg, #f50, #0000 46% 54%, #05f);
+.cnode-progress-num {
+  position: relative;
+  font-family: 'Aeonik', system-ui, sans-serif;
+  font-weight: 500;
+  /* Big and proportional to the node so it scales with zoom and always
+     fits. Floored so it stays legible on small / zoomed-out nodes. */
+  font-size: clamp(14px, calc(0.28 * var(--cnode-h, 120px)), 96px);
+  line-height: 1;
+  color: #2a2d33;                        /* same grey as the track */
+  letter-spacing: -0.02em;
 }
-.cnode-spin-intense {
-  inset: calc(-2px / var(--canvas-scale, 1));
-  filter: blur(0.5em) url(#uncraft-unopaq2);
-}
-.cnode-spin-intense::before {
-  background: linear-gradient(-45deg, #f95, #0000 35% 65%, #59f);
-}
-.cnode-spin-inside {
-  inset: calc(-3px / var(--canvas-scale, 1));
-  filter: blur(2px) url(#uncraft-unopaq3);
-}
-.cnode-spin-inside::before {
-  background: linear-gradient(-45deg, #fc9, #0000 35% 65%, #9cf);
-}
-@keyframes cnode-speen {
-  0%  { rotate: 10deg; }
-  50% { rotate: 190deg; }
-  to  { rotate: 370deg; }
-}
-.cnode-gen-face {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: #111215;
-}
-body.rb-ed-light .cnode-gen-face {
-  background: #f3f3f2;
+body.rb-ed-light .cnode-progress-track,
+body.rb-ed-light .cnode-progress-num {
+  color: #c4c4c2;
+  stroke: #c4c4c2;
 }
 
 /* Hidden during edit mode — the editor's own inspector + layers panel
@@ -5393,57 +5383,6 @@ body.rb-ed-light .prompt-dock-mic.rec {
 body.rb-ed-light .prompt-dock-mic.err {
   color: #dc2626;
 }
-
-/* Run-flow error toast — anchored above the prompt dock so the dock
-   itself doesn't shift; auto-dismisses via setTimeout in CanvasClient. */
-/* Run-flow status chip — anchored just below the node body so the
-   user sees the engine progressing through its 3 steps while the LLM
-   call is in flight. Scale-aware so it stays readable at any zoom. */
-.cnode-run-status {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: calc(8px / var(--canvas-scale, 1));
-  display: inline-flex;
-  align-items: center;
-  gap: calc(8px / var(--canvas-scale, 1));
-  padding: calc(6px / var(--canvas-scale, 1)) calc(12px / var(--canvas-scale, 1));
-  background: rgba(15, 15, 15, 0.88);
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: calc(999px / var(--canvas-scale, 1));
-  color: rgba(241, 245, 249, 0.92);
-  font: 500 calc(12px / var(--canvas-scale, 1))/1 'Aeonik', system-ui, sans-serif;
-  white-space: nowrap;
-  pointer-events: none;
-  box-shadow: 0 calc(8px / var(--canvas-scale, 1)) calc(22px / var(--canvas-scale, 1)) rgba(0, 0, 0, 0.45);
-  z-index: 30;
-}
-.cnode-run-spin {
-  animation: prompt-dock-spin 0.85s linear infinite;
-  color: var(--cnode-port-fill, var(--accent));
-  width: calc(13px / var(--canvas-scale, 1));
-  height: calc(13px / var(--canvas-scale, 1));
-  flex-shrink: 0;
-}
-.cnode-run-step {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--cnode-port-fill, var(--accent));
-  font-size: calc(11px / var(--canvas-scale, 1));
-  letter-spacing: 0.02em;
-}
-.cnode-run-label {
-  font-weight: 400;
-  color: rgba(241, 245, 249, 0.78);
-}
-body.rb-ed-light .cnode-run-status {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(0, 0, 0, 0.10);
-  color: rgba(31, 31, 31, 0.85);
-}
-body.rb-ed-light .cnode-run-label { color: rgba(31, 31, 31, 0.65); }
 
 .run-flow-toast {
   position: fixed;
