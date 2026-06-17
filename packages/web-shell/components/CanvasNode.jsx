@@ -905,20 +905,24 @@ export default function CanvasNode({
         </button>
       </div>
       {node._loading ? (
-        <div className={`cnode-loading${node._challenge ? ' cnode-loading-challenge' : ''}`}>
-          {node._challenge ? (
-            // Shield icon — same family as the ChallengeModal, signals
-            // "this is paused waiting for human verification" rather
-            // than "we're working on it"; spinner would be misleading.
+        node._challenge ? (
+          <div className="cnode-loading cnode-loading-challenge">
+            {/* Shield icon — same family as the ChallengeModal, signals
+                "this is paused waiting for human verification" rather
+                than "we're working on it"; spinner would be misleading.
+                The progress ring is intentionally NOT shown for challenge. */}
             <svg className="cnode-loading-icon" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
               <path d="M9 12l2 2 4-4"/>
             </svg>
-          ) : (
-            <div className="cnode-spinner" />
-          )}
-          <span>{node._loadingLabel || (node.kind === 'site' ? 'Capturing…' : 'Loading…')}</span>
-        </div>
+            <span>{node._loadingLabel || (node.kind === 'site' ? 'Capturing…' : 'Loading…')}</span>
+          </div>
+        ) : (
+          // Working: the NodeProgressRing overlay is the sole loading
+          // feedback (outline + centered %). Body stays empty so the
+          // ring's number doesn't collide with an inner spinner/label.
+          <div className="cnode-loading" />
+        )
       ) : renderIframeBody ? (
         html ? (
           <div
@@ -1050,10 +1054,9 @@ export default function CanvasNode({
               name={node.meta?.name || 'asset'}
             />
           ) : node.meta?.status === 'generating' ? (
-            <div className="cnode-loading cnode-loading-gen">
-              <span className="cnode-gen-spinner" aria-hidden="true" />
-              <span>Generating…</span>
-            </div>
+            // The NodeProgressRing overlay is the sole feedback while
+            // generating — no inner spinner/label to collide with its %.
+            <div className="cnode-loading cnode-loading-gen" />
           ) : node.meta?.status === 'error' ? (
             <div className="cnode-loading cnode-loading-error"><span>Generation failed</span></div>
           ) : (
