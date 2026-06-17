@@ -4,6 +4,8 @@ import { useRef, useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
 import { nodeOrigin } from '../lib/node-origin.js';
+import { NodeProgressRing, useGenerationProgress } from './NodeProgressRing.jsx';
+import { estimatedDurationMs } from '../lib/generation-progress.js';
 import MdPreviewBody from './node-bodies/MdPreviewBody.jsx';
 import PromptBody from './node-bodies/PromptBody.jsx';
 import SkillBody from './node-bodies/SkillBody.jsx';
@@ -757,27 +759,32 @@ export default function CanvasNode({
   const origin = nodeOrigin(node);
   const KindIcon = ORIGIN_ICON[origin] || null;
 
+  // Generation feedback: the progress ring shows whenever the node is
+  // producing content (capture stream, run-flow, image gen). Excludes the
+  // challenge state, which is "waiting for a human", not "working".
+  const generating =
+    (node._loading && !node._challenge) ||
+    node.meta?.status === 'generating' ||
+    !!runStatus;
+  const genPct = useGenerationProgress(generating, estimatedDurationMs(node));
+
   return (
     <div
       ref={cnodeRef}
       className={`cnode origin-${origin}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}`}
-      style={{ left: node.pos_x, top: node.pos_y, width: node.width }}
+      style={{ left: node.pos_x, top: node.pos_y, width: node.width, '--cnode-h': `${node.height}px` }}
       data-node-id={node.id}
     >
-      {/* Generating border — Uiverse spin effect while content is being
-          produced INTO this node (capture stream, image generation,
-          run-flow). Skipped for the challenge state, which is "waiting
-          for a human", not "working". */}
-      {((node._loading && !node._challenge) || node.meta?.status === 'generating' || !!runStatus) && (
-        <div className="cnode-gen-border" aria-hidden="true">
-          <div className="cnode-spin cnode-spin-blur" />
-          <div className="cnode-spin cnode-spin-intense" />
-          <div className="cnode-spin cnode-spin-inside" />
-          {/* Solid card face — occludes the spinning gradients inside the
-              node (translucent frosted bodies would let them bleed
-              through), leaving only the ring + outer halo visible. */}
-          <div className="cnode-gen-face" />
-        </div>
+      {/* Generation progress ring — category-coloured outline filling
+          clockwise from 12 o'clock + a large grey % in the centre. The
+          percentage is a reassurance estimate; the ring is swapped out
+          for the real content the instant generation finishes. */}
+      {generating && (
+        <NodeProgressRing
+          pct={genPct}
+          width={node.width}
+          height={node.height || Math.round(node.width * 9 / 16)}
+        />
       )}
       {/* Anchored title — only visible when the canvas is zoomed-out enough
           that the topbar collapses (`body.canvas-zoom-low`). Sits above the
@@ -787,19 +794,6 @@ export default function CanvasNode({
         <span className="cnode-anchor-title-text">{truncateWithExtension(title, 15)}</span>
       </div>
 
-      {/* Run-flow status chip — appears below the node while a target is
-          being processed. Drives a 3-step animation so the user knows
-          the system is alive during the long LLM call. */}
-      {runStatus && (
-        <div className="cnode-run-status" aria-live="polite">
-          <svg className="cnode-run-spin" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="9" opacity="0.25"/>
-            <path d="M21 12a9 9 0 0 1-9 9"/>
-          </svg>
-          <span className="cnode-run-step">{runStatus.step}/3</span>
-          <span className="cnode-run-label">{runStatus.label}</span>
-        </div>
-      )}
       {selected && onResize && node.kind === 'site' && (
         <div
           className={`cnode-viewport-switcher${editing ? ' disabled' : ''}`}
