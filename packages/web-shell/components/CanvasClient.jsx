@@ -3225,23 +3225,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     >
       <div className="canvas-bg" />
 
-      {/* Alpha-boost filters for the generating-node spin border (Uiverse
-          effect): blurred gradients lose opacity fast, feColorMatrix
-          multiplies alpha back up at three intensities. */}
-      <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
-        <defs>
-          <filter id="uncraft-unopaq">
-            <feColorMatrix values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 3 0" />
-          </filter>
-          <filter id="uncraft-unopaq2">
-            <feColorMatrix values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 6 0" />
-          </filter>
-          <filter id="uncraft-unopaq3">
-            <feColorMatrix values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 9 0" />
-          </filter>
-        </defs>
-      </svg>
-
       <div className="canvas-toolbars-left">
         <div className="canvas-toolbar-left">
           <a href="/canvas" className="uncraft-mark" title="Boards">
