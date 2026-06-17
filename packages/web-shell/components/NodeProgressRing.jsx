@@ -13,21 +13,24 @@ const TICK_MS = 120;
 export function useGenerationProgress(active, durationMs) {
   const [pct, setPct] = useState(0);
   const elapsedRef = useRef(0);
+  // Hold the latest durationMs in a ref so the interval picks up changes
+  // WITHOUT restarting the clock (which would jump the % back to 0 mid-run).
+  const durationRef = useRef(durationMs);
+  durationRef.current = durationMs;
 
   useEffect(() => {
-    if (!active) {
-      elapsedRef.current = 0;
-      setPct(0);
-      return undefined;
-    }
+    // Reset on every active transition: 0 when inactive, fresh clock when a
+    // run starts. Depending only on `active` means a durationMs change while
+    // running keeps the elapsed clock intact.
     elapsedRef.current = 0;
     setPct(0);
+    if (!active) return undefined;
     const id = setInterval(() => {
       elapsedRef.current += TICK_MS;
-      setPct(progressAt(elapsedRef.current, durationMs));
+      setPct(progressAt(elapsedRef.current, durationRef.current));
     }, TICK_MS);
     return () => clearInterval(id);
-  }, [active, durationMs]);
+  }, [active]);
 
   return pct;
 }
@@ -37,16 +40,14 @@ export function useGenerationProgress(active, durationMs) {
 // pixels (the SVG viewBox is the node's real dimensions). Closing with Z
 // completes the loop along the top edge for the dash math.
 export function buildPerimeterPath(width, height, r) {
-  const w = width;
-  const h = height;
   return [
-    `M${w / 2},0`,
-    `H${w - r}`,
-    `A${r},${r} 0 0 1 ${w},${r}`,
-    `V${h - r}`,
-    `A${r},${r} 0 0 1 ${w - r},${h}`,
+    `M${width / 2},0`,
+    `H${width - r}`,
+    `A${r},${r} 0 0 1 ${width},${r}`,
+    `V${height - r}`,
+    `A${r},${r} 0 0 1 ${width - r},${height}`,
     `H${r}`,
-    `A${r},${r} 0 0 1 0,${h - r}`,
+    `A${r},${r} 0 0 1 0,${height - r}`,
     `V${r}`,
     `A${r},${r} 0 0 1 ${r},0`,
     'Z',

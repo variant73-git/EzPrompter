@@ -69,4 +69,24 @@ describe('useGenerationProgress', () => {
     act(() => { vi.advanceTimersByTime(30000); });
     expect(screen.getByTestId('pct').textContent).toBe('0');
   });
+
+  it('resets to 0 when active flips back to false (ring disappears)', () => {
+    vi.useFakeTimers();
+    const { rerender } = render(<Probe active={true} durationMs={45000} />);
+    act(() => { vi.advanceTimersByTime(5000); });
+    expect(Number(screen.getByTestId('pct').textContent)).toBeGreaterThan(0);
+    rerender(<Probe active={false} durationMs={45000} />);
+    expect(screen.getByTestId('pct').textContent).toBe('0');
+  });
+
+  it('does not restart the clock when only durationMs changes mid-run', () => {
+    vi.useFakeTimers();
+    const { rerender } = render(<Probe active={true} durationMs={45000} />);
+    act(() => { vi.advanceTimersByTime(5000); });
+    const before = Number(screen.getByTestId('pct').textContent);
+    rerender(<Probe active={true} durationMs={25000} />);
+    act(() => { vi.advanceTimersByTime(120); });
+    const after = Number(screen.getByTestId('pct').textContent);
+    expect(after).toBeGreaterThanOrEqual(before); // climbed, did NOT reset to 0
+  });
 });
