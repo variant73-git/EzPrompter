@@ -131,6 +131,11 @@ blank `#2dd4bf`). No new color definitions.
 
 - Real per-stage progress wiring (explicitly rejected — estimate is enough).
 - Removing the SSE stage events from the clone pipeline (they stay; we just
-  stop surfacing them as text). The 3-step `runStatus` chip text may be
-  dropped or kept — decided at implementation; the ring is the primary
-  feedback either way.
+  stop surfacing them as text).
+
+## Decided
+
+- **The 3-step `runStatus` text chip (`cnode-run-status`, "1/3 Reading
+  inputs…") is removed.** The ring is the sole generation feedback. The
+  `runStatus` *signal* still drives whether the ring shows; only its text
+  rendering goes away.
