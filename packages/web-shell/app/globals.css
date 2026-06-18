@@ -5006,7 +5006,7 @@ body.rb-ed-light .border-trail-dot {
 }
 .cnode-progress-track {
   fill: none;
-  stroke: #2a2d33;                       /* solid dark grey rail */
+  stroke: #3f444d;                       /* soft grey rail, visible on the dark loading body */
   stroke-width: 3px;
   vector-effect: non-scaling-stroke;     /* constant on-screen at any zoom */
 }
@@ -5026,13 +5026,8 @@ body.rb-ed-light .border-trail-dot {
      fits. Floored so it stays legible on small / zoomed-out nodes. */
   font-size: clamp(14px, calc(0.28 * var(--cnode-h, 120px)), 96px);
   line-height: 1;
-  color: #2a2d33;                        /* same grey as the track */
+  color: #6b7280;                        /* mid grey — legible on the dark loading body, quieter than the arc */
   letter-spacing: -0.02em;
-}
-body.rb-ed-light .cnode-progress-track,
-body.rb-ed-light .cnode-progress-num {
-  color: #c4c4c2;
-  stroke: #c4c4c2;
 }
 
 /* Hidden during edit mode — the editor's own inspector + layers panel
