@@ -135,6 +135,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   const [contextMenu, setContextMenu] = useState(null);  // {x, y, worldX, worldY} — right-click on empty canvas
   const [editingNodeId, setEditingNodeId] = useState(null);
   const [canvasScale, setCanvasScale] = useState(0.6);
+  // Last scale we pushed into React state. onTransformed fires repeatedly as
+  // TransformWrapper settles (and setTransform with anim=0 fires it inline);
+  // pushing setCanvasScale on every fire re-renders → can re-enter the
+  // transform → "Maximum update depth exceeded". We only setState when the
+  // scale actually moved (epsilon), which breaks that feedback.
+  const lastAppliedScaleRef = useRef(0.6);
   const [lightMode, setLightMode] = useState(false);
   // Pan-on-space mode. Default cursor is the arrow + drag = marquee select.
   // Holding Space switches to grab cursor + drag = pan canvas (Figma /
@@ -3311,7 +3317,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // zoom; narrow nodes also compact the grip to 3×2 dots so it
           // never grazes the node's left edge at minimum zoom.
           document.documentElement.classList.toggle('canvas-zoom-min', scale < 0.15);
-          setCanvasScale(scale);
+          // Only push React state when the scale truly moved — see
+          // lastAppliedScaleRef note. Idempotent DOM writes above stay
+          // unguarded so chrome sizing always tracks the live transform.
+          if (Math.abs(scale - lastAppliedScaleRef.current) > 0.0005) {
+            lastAppliedScaleRef.current = scale;
+            setCanvasScale(scale);
+          }
         }}
       >
         <TransformComponent wrapperStyle={{ width: '100vw', height: '100vh' }} contentStyle={{ width: WORLD_WIDTH, height: WORLD_HEIGHT }}>

@@ -25,7 +25,8 @@ const DEFAULT_CAPS = {
   softIterations: 10,
   hardIterations: 50,
   retryBudget: 3,
-  wallTimeoutMs: 5 * 60 * 1000,
+  // Keep in sync with lib/agent/caps.js DEFAULTS.
+  wallTimeoutMs: 10 * 60 * 1000,
 };
 
 export async function runAgentLoop(opts) {
@@ -61,6 +62,12 @@ export async function runAgentLoop(opts) {
   const totalUsage = { input_tokens: 0, output_tokens: 0, cached_input_tokens: 0, cache_write_tokens: 0 };
   const toolCounts = {};        // toolName → invocation count
   const toolFailures = {};      // toolName → consecutive failures (resets on success)
+  // Sticky per-run confirm decisions (2026-06-12). "Clean my board" fans
+  // out into N deleteNode calls; asking N times reads as the same chip
+  // reappearing after Confirm, and skipping one delete used to spawn yet
+  // another chip for the next. The FIRST answer for a tool name now
+  // applies to every later call of that tool in the same run.
+  const confirmMemo = {};       // toolName → 'confirm' | 'skip'
   let iterations = 0;
   let lastSoftPauseAt = 0;      // last iteration count at which we paused
 
@@ -345,15 +352,32 @@ export async function runAgentLoop(opts) {
             // Treat as auto-confirm but log a warning so we notice in dev.
             console.warn(`[agent] destructive tool ${call.name} executed without runId — pause/resume unavailable`);
             decision = { action: 'confirm' };
+          } else if (confirmMemo[call.name]) {
+            // User already answered for this tool in this run — reuse the
+            // decision silently instead of re-raising the chip. No status
+            // emit here: the skip/execute branches below emit their own.
+            decision = { action: confirmMemo[call.name] };
           } else {
+            // Per-tool summarize(args, ctx) can resolve a friendly message
+            // (e.g. the node's name from the DB); fall back to the static
+            // summary otherwise.
+            let confirmSummary;
+            try {
+              confirmSummary = (await tool.summarize?.(call.input, ctx)) || summarizeDestructiveCall(call.name, call.input);
+            } catch {
+              confirmSummary = summarizeDestructiveCall(call.name, call.input);
+            }
             onEvent({
               type: 'needs_confirm',
               id: call.id,
               name: call.name,
               args: call.input,
-              summary: summarizeDestructiveCall(call.name, call.input),
+              summary: confirmSummary,
             });
             decision = await awaitConfirm(runId, call.id);
+            if (decision.action === 'confirm' || decision.action === 'skip') {
+              confirmMemo[call.name] = decision.action;
+            }
           }
         } else if (tool.classification === 'needs_choice') {
           // Phase 3 wires this for real; Phase 2 still emits the event for the UI.
@@ -406,8 +430,9 @@ export async function runAgentLoop(opts) {
           // iterations; if a single tool hangs (e.g. an upstream API stuck
           // in retry-loop), the loop never gets to check it. Race the tool
           // promise against a 3-minute reject so a single bad call can't
-          // freeze the whole run.
-          const TOOL_TIMEOUT_MS = 3 * 60 * 1000;
+          // freeze the whole run. Long-running tools (captureUrl's
+          // reconstruct path takes 2-3min) override via `tool.timeoutMs`.
+          const TOOL_TIMEOUT_MS = tool.timeoutMs || 3 * 60 * 1000;
           // Let tools emit arbitrary SSE events mid-execution. Used by
           // createImage to push a graph_mutated event the moment the
           // placeholder node + edges are INSERTed — the user sees the

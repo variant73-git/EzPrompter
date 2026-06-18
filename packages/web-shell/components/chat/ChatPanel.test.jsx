@@ -44,8 +44,10 @@ describe('ChatPanel', () => {
         args: {}, summary: 'Delete node abc',
       }]}
     />);
-    // The actionable chip renders because the user needs to confirm.
-    expect(screen.getByText(/deleteNode/)).toBeInTheDocument();
+    // The confirm chip reads as a plain human question (no code-y tool
+    // name prefix) and offers the decision buttons.
+    expect(screen.getByText(/Delete node abc/)).toBeInTheDocument();
+    expect(screen.queryByText('deleteNode')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /confirm/i })).toBeInTheDocument();
   });
 

@@ -22,16 +22,27 @@ export default function ToolChip({
       : null
   );
 
+  // When asking the user a question (confirm / choice), the chip is a plain
+  // human sentence — no code-y tool name prefix, never wraps. Status chips
+  // (running / done / error) keep the tool name as a label.
+  const isPrompt = status === 'awaiting_confirm' || status === 'awaiting_choice';
+
   return (
     <div className={cls} data-tool={toolName} data-status={status}>
       <span className="tool-chip-icon">
         {icon || <span role="status" className="tool-chip-spinner" aria-label="working" />}
       </span>
-      <span className="tool-chip-name">{toolName}</span>
-      {summaryNode && <span className="tool-chip-summary"><span className="tool-chip-sep"> — </span><span className="tool-chip-summary-text">{summaryNode}</span></span>}
-      {error && <span className="tool-chip-error"><span className="tool-chip-sep"> — </span>{error}</span>}
-      {status === 'skipped' && <span className="tool-chip-skipped-label"><span className="tool-chip-sep"> — </span>skipped</span>}
-      {status === 'stale' && <span className="tool-chip-stale-label"><span className="tool-chip-sep"> — </span>interrupted</span>}
+      {isPrompt ? (
+        summaryNode && <span className="tool-chip-prompt">{summaryNode}</span>
+      ) : (
+        <>
+          <span className="tool-chip-name">{toolName}</span>
+          {summaryNode && <span className="tool-chip-summary"><span className="tool-chip-sep"> — </span><span className="tool-chip-summary-text">{summaryNode}</span></span>}
+          {error && <span className="tool-chip-error"><span className="tool-chip-sep"> — </span>{error}</span>}
+          {status === 'skipped' && <span className="tool-chip-skipped-label"><span className="tool-chip-sep"> — </span>skipped</span>}
+          {status === 'stale' && <span className="tool-chip-stale-label"><span className="tool-chip-sep"> — </span>interrupted</span>}
+        </>
+      )}
 
       {status === 'awaiting_confirm' && (
         <span className="tool-chip-actions">

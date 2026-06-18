@@ -1,5 +1,17 @@
 import { sql } from '../../db.js';
 
+// Friendly category label for a node — used in the confirm message when the
+// node has no name yet.
+function categoryLabel(node) {
+  if (!node) return 'node';
+  if (node.kind === 'image' || node.kind === 'asset') return 'image';
+  if (node.kind === 'designmd') return 'design doc';
+  if (node.kind === 'prompt') return 'prompt';
+  if (node.kind === 'skill') return 'skill';
+  if (node.kind === 'site') return 'website';
+  return 'node';
+}
+
 export const deleteNodeTool = {
   name: 'deleteNode',
   description: `Delete a node from the user's current board.
@@ -12,6 +24,26 @@ DESTRUCTIVE: the user will be asked to confirm before this runs. Use sparingly. 
       id: { type: 'string', description: 'UUID of the node to delete' },
     },
     required: ['id'],
+  },
+
+  // Human-readable confirm message shown verbatim in the chip: the node's
+  // name in quotes, or its category when the node has no name yet.
+  async summarize(args, ctx) {
+    const id = args?.id;
+    if (!id) return 'Delete this node?';
+    try {
+      const rows = await sql`
+        SELECT kind, meta FROM nodes
+         WHERE id = ${id} AND board_id = ${ctx.boardId}
+      `;
+      const node = rows[0];
+      if (!node) return 'Delete this node?';
+      const name = (node.meta?.name || '').trim();
+      const label = name || categoryLabel(node);
+      return `Delete node "${label.slice(0, 40)}"?`;
+    } catch {
+      return 'Delete this node?';
+    }
   },
   async execute(args, ctx) {
     const { id } = args || {};
