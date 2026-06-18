@@ -25,6 +25,40 @@
 const COL_TOLERANCE = 80;   // x-distance treated as "same column"
 const GAP_X = 360;
 const GAP_Y = 200;
+const CLEAR_GAP = 80;       // minimum empty space kept around a placed node
+
+// Do two rects (a = candidate, b = existing node) overlap, treating `gap`
+// as required empty space around the candidate so they never even touch?
+function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh, gap) {
+  return (
+    ax - gap < bx + bw &&
+    ax + aw + gap > bx &&
+    ay - gap < by + bh &&
+    ay + ah + gap > by
+  );
+}
+
+// Given a candidate top-left (x, y) for a w×h node and the full set of
+// existing node rects, push the candidate straight DOWN until it clears
+// every node with CLEAR_GAP breathing room. Pushing down (not sideways)
+// keeps column alignment and avoids landing back on the source nodes that
+// sit to the left. Bounded loop so a pathological board can't hang.
+function resolveDownCollision(x, y, w, h, rows) {
+  let cy = y;
+  for (let guard = 0; guard < 500; guard++) {
+    let pushedTo = null;
+    for (const r of rows) {
+      const rx = r.pos_x ?? 0, ry = r.pos_y ?? 0, rw = r.width ?? 0, rh = r.height ?? 0;
+      if (rectsOverlap(x, cy, w, h, rx, ry, rw, rh, CLEAR_GAP)) {
+        const below = ry + rh + CLEAR_GAP;       // clear past this node
+        if (pushedTo == null || below > pushedTo) pushedTo = below;
+      }
+    }
+    if (pushedTo == null) break;                  // no overlap → done
+    cy = pushedTo;
+  }
+  return { x, y: cy };
+}
 
 export async function placeStackDown(boardId, w, h, sql) {
   const rows = await sql`
@@ -44,18 +78,21 @@ export async function placeStackDown(boardId, w, h, sql) {
       if (b > maxBottom) maxBottom = b;
     }
   }
-  if (!any) return { x: columnX, y: 0 };
-  return { x: columnX, y: maxBottom + GAP_Y };
+  const candidateY = any ? maxBottom + GAP_Y : 0;
+  // Final guard: never overlap ANY node (a node in another column could
+  // still sit under this x-range). Push down until fully clear.
+  return resolveDownCollision(columnX, candidateY, w, h, rows);
 }
 
 export async function placeRightOfSources(boardId, sourceNodeIds, w, h, sql) {
   if (!Array.isArray(sourceNodeIds) || sourceNodeIds.length === 0) {
     return placeStackDown(boardId, w, h, sql);
   }
-  const sources = await sql`
-    SELECT pos_x, pos_y, width, height FROM nodes
-    WHERE board_id = ${boardId} AND id = ANY(${sourceNodeIds})
+  // Need ALL nodes for the collision pass, not just the sources.
+  const rows = await sql`
+    SELECT id, pos_x, pos_y, width, height FROM nodes WHERE board_id = ${boardId}
   `;
+  const sources = rows.filter((r) => sourceNodeIds.includes(r.id));
   if (!sources.length) return placeStackDown(boardId, w, h, sql);
   let maxRight = -Infinity;
   let sumCenterY = 0;
@@ -65,8 +102,9 @@ export async function placeRightOfSources(boardId, sourceNodeIds, w, h, sql) {
     sumCenterY += (s.pos_y ?? 0) + (s.height ?? 0) / 2;
   }
   const avgCenterY = sumCenterY / sources.length;
-  return {
-    x: maxRight + GAP_X,
-    y: Math.round(avgCenterY - h / 2),
-  };
+  const x = maxRight + GAP_X;
+  const candidateY = Math.round(avgCenterY - h / 2);
+  // Don't land on an existing node that happens to sit at that y to the
+  // right of the sources — push down until clear.
+  return resolveDownCollision(x, candidateY, w, h, rows);
 }
