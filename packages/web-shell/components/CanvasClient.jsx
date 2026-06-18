@@ -3729,20 +3729,24 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             });
             if (Array.isArray(data.edges)) setEdges(data.edges);
 
-            // Track every node created across this run so the end-of-run
-            // frame can include the full workflow even if intermediate
-            // refetches only saw it piece by piece.
+            // Track every node created across this run so framing can fit
+            // the full workflow even if intermediate refetches only saw it
+            // piece by piece.
             if (!agentRunNewNodesRef.current) agentRunNewNodesRef.current = new Map();
             for (const n of newNodes) agentRunNewNodesRef.current.set(n.id, n);
 
-            if (!frame) return;
-
-            // End-of-run framing: zoom the camera to fit the entire workflow
-            // the agent just built, not just the latest node. Use the
-            // accumulated set from agentRunNewNodesRef.
             const accumulated = Array.from(agentRunNewNodesRef.current.values());
-            agentRunNewNodesRef.current = new Map();  // reset for next run
+            if (frame) agentRunNewNodesRef.current = new Map();  // reset at end of run
             if (accumulated.length === 0) return;
+
+            // Focus the camera on the new content the moment it lands on the
+            // canvas (loading state included) so the user never has to hunt
+            // for where it appeared. We fit the ACCUMULATED bbox (not each
+            // node), so as more nodes arrive the frame expands smoothly to
+            // include them instead of hard-jumping per tool call. Only frame
+            // when something new actually appeared this tick (or at run end),
+            // so plain updates/deletes don't move the camera.
+            if (newNodes.length === 0 && !frame) return;
 
             setTimeout(() => {
               const PAD = 160;
@@ -3757,7 +3761,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               const scale = Math.min(vw / (maxX - minX + PAD * 2), vh / (maxY - minY + PAD * 2), 1.0);
               const posX = vw / 2 - cx * scale;
               const posY = (vh / 2 + 48) - cy * scale;
-              transformRef.current?.setTransform(posX, posY, scale, 500);
+              transformRef.current?.setTransform(posX, posY, scale, frame ? 500 : 420);
             }, 80);
           } catch (e) { console.warn('[CanvasClient] agent-mutation refetch failed', e); }
         }}
