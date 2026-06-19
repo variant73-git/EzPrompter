@@ -62,7 +62,8 @@ describe('addAssetFromUrl tool', () => {
       .mockResolvedValueOnce([{ id: 'asset-1' }])         // INSERT asset
       // New placeStackDown(): SELECT pos_x, pos_y, width, height of every
       // node on the board. One existing node 512x512 at (200, 100).
-      .mockResolvedValueOnce([{ pos_x: 200, pos_y: 100, width: 512, height: 512 }])
+      .mockResolvedValueOnce([{ pos_x: 200, pos_y: 100, width: 512, height: 512 }]) // placeStackDown: nodes
+      .mockResolvedValueOnce([])                          // placeStackDown: edges (section detection)
       .mockResolvedValueOnce([{ id: 'node-1' }]);         // INSERT node
 
     const r = await addAssetFromUrlTool.execute(

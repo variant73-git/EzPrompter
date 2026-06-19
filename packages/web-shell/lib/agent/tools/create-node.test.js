@@ -16,7 +16,7 @@ describe('createNode tool', () => {
     // 5 SQL calls for blank-website: SELECT board ownership, SELECT auto-place
     // (no posX/posY given), INSERT node, INSERT snapshot, UPDATE current_snapshot_id.
     sql.mockResolvedValueOnce([{ id: 'board-1' }]);
-    sql.mockResolvedValueOnce([{ right_edge: -240, top_edge: 0 }]); // auto-place query (empty board)
+    sql.mockResolvedValueOnce([]); // auto-place query — empty board (placeStackDown returns 0,0, no edges query) (empty board)
     sql.mockResolvedValueOnce([{ id: 'node-1', kind: 'site', pos_x: 0, pos_y: 0, width: 1280, height: 720, meta: { source: 'blank', name: 'hero' } }]);
     sql.mockResolvedValueOnce([{ id: 'snap-1' }]);
     sql.mockResolvedValueOnce([]); // UPDATE returning nothing
@@ -34,7 +34,7 @@ describe('createNode tool', () => {
 
   it('inserts a "prompt" type (no seed snapshot)', async () => {
     sql.mockResolvedValueOnce([{ id: 'board-1' }]);
-    sql.mockResolvedValueOnce([{ right_edge: -240, top_edge: 0 }]); // auto-place query
+    sql.mockResolvedValueOnce([]); // auto-place query — empty board (placeStackDown returns 0,0, no edges query)
     sql.mockResolvedValueOnce([{ id: 'node-2', kind: 'prompt', pos_x: 0, pos_y: 0, width: 1280, height: 800, meta: {} }]);
     const result = await createNodeTool.execute(
       { type: 'prompt' },
