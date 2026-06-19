@@ -1276,11 +1276,13 @@ function CancelEditPrompt({ busy, onContinue, onDiscard, onSave }) {
     };
   }, [busy, onContinue]);
 
-  return (
-    <div className="reset-confirm-overlay">
+  // Portal to <body> so the popup lives OUTSIDE the canvas zoom transform —
+  // a true viewport-level modal at a fixed size, immune to canvas zoom.
+  return createPortal(
+    <div className="cancel-edit-fixed-overlay">
       <div
         ref={cardRef}
-        className="popup-card popup-card-anchored cancel-edit-card"
+        className="popup-card cancel-edit-card"
         role="dialog"
         aria-modal="true"
         aria-labelledby="cancel-edit-title"
@@ -1308,7 +1310,8 @@ function CancelEditPrompt({ busy, onContinue, onDiscard, onSave }) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

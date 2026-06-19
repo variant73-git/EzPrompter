@@ -2264,22 +2264,34 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
    the action buttons line up below. Title is set in Instrument Serif
    at editorial size; card width is generous so neither button label
    ("Discard" / "Save and exit") ever wraps to a second line. */
+/* The cancel-edit popup renders via a body-level portal (OUTSIDE the canvas
+   zoom transform), so it must use FIXED px — never inverse-scale. It always
+   looks like the 100%-zoom version regardless of canvas zoom. */
+.cancel-edit-fixed-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: rb-fade-in 140ms ease-out;
+}
 .cancel-edit-card {
   position: relative;
-  width: calc(340px / var(--canvas-scale, 1));
-  padding: calc(24px / var(--canvas-scale, 1)) calc(26px / var(--canvas-scale, 1));
+  width: 340px;
+  padding: 24px 26px;
 }
 .cancel-edit-card .popup-title {
   font-family: var(--popup-font-serif);
   font-weight: 400;
-  font-size: calc(26px / var(--canvas-scale, 1));
+  font-size: 26px;
   letter-spacing: -0.01em;
   line-height: 1.15;
-  margin-bottom: calc(16px / var(--canvas-scale, 1));
-  padding-right: calc(32px / var(--canvas-scale, 1));
+  margin-bottom: 16px;
+  padding-right: 32px;
 }
 /* Inner emphasis span inherits serif/size from the parent — drop the
-   hardcoded 19px override so the scaled title stays uniform. */
+   hardcoded 19px override so the title stays uniform. */
 .cancel-edit-card .popup-title .popup-serif {
   font-family: inherit;
   font-size: inherit;
@@ -2291,23 +2303,23 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
 }
 .cancel-edit-close {
   position: absolute;
-  top: calc(14px / var(--canvas-scale, 1));
-  right: calc(14px / var(--canvas-scale, 1));
-  width: calc(24px / var(--canvas-scale, 1));
-  height: calc(24px / var(--canvas-scale, 1));
+  top: 14px;
+  right: 14px;
+  width: 24px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  border-radius: calc(4px / var(--canvas-scale, 1));
+  border-radius: 4px;
   color: rgba(241, 245, 249, 0.55);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
 .cancel-edit-close svg {
-  width: calc(13px / var(--canvas-scale, 1));
-  height: calc(13px / var(--canvas-scale, 1));
+  width: 13px;
+  height: 13px;
 }
 .cancel-edit-close:hover {
   background: rgba(255, 255, 255, 0.08);
