@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
 import ChatPanel from './chat/ChatPanel.jsx';
+import WorkingIndicator from './chat/WorkingIndicator.jsx';
 import BorderTrail from './BorderTrail.jsx';
 
 const ICON_PLUS = (
@@ -1194,6 +1195,13 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   // so the user can't toggle back to collapsed; we just override the
   // state derivation here too.
   const effectivelyCollapsed = isSideDocked ? false : chatCollapsed;
+  // #2 — animated "working on it" feedback while the agent runs. Colored by
+  // the involved node's category (gradient across categories). Distinct
+  // colors come from the active-context node chips (each carries .color).
+  const working = chat.activeRun?.status === 'running' || chat.streaming;
+  const workingColors = [...new Set(
+    contextList.filter((c) => c && c.kind === 'node' && c.color).map((c) => c.color)
+  )];
   const chatPanelVisible = !effectivelyCollapsed && (chat.messages.length > 0 || chat.activeToolCalls.length > 0);
   const showTopResize = chatPanelVisible && dockPos === 'bottom';
   const showBottomResize = chatPanelVisible && isFloating;
@@ -1344,6 +1352,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           messages={chat.messages}
           activeToolCalls={chat.activeToolCalls}
           streaming={chat.streaming}
+          workingColors={workingColors}
           onCollapse={() => setChatCollapsed(true)}
           softPause={chat.softPause}
           onConfirmTool={async (toolCallId) => {
@@ -1373,17 +1382,26 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
         <div className="prompt-dock-chat-divider" aria-hidden="true" />
       )}
 
-      <textarea
-        ref={taRef}
-        className="prompt-dock-textarea"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onPaste={handlePaste}
-        placeholder={placeholder}
-        rows={1}
-        disabled={busy || chat.streaming || chat.softPause !== null}
-      />
+      <div className="prompt-dock-field">
+        <textarea
+          ref={taRef}
+          className="prompt-dock-textarea"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          placeholder={working && effectivelyCollapsed ? '' : placeholder}
+          rows={1}
+          disabled={busy || chat.streaming || chat.softPause !== null}
+        />
+        {/* Collapsed working feedback: animated "working on it" over the
+            empty field, colored by the involved node category. */}
+        {working && effectivelyCollapsed && !text && (
+          <div className="prompt-dock-working-overlay" aria-hidden="true">
+            <WorkingIndicator colors={workingColors} />
+          </div>
+        )}
+      </div>
 
       <div className="prompt-dock-actions">
         <div className="prompt-dock-actions-left">

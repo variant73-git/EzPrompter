@@ -5141,6 +5141,47 @@ body.rb-ed-active .prompt-dock { display: none !important; }
   overflow-y: auto;
 }
 
+/* Wrapper that lets the collapsed "working on it" overlay sit over the
+   field without disturbing the textarea's own layout. */
+.prompt-dock-field {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.prompt-dock.dock-left .prompt-dock-field,
+.prompt-dock.dock-right .prompt-dock-field { order: 5; }
+
+.prompt-dock-working-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;            /* matches the textarea's horizontal padding */
+  pointer-events: none;
+}
+
+/* Animated "working on it" feedback (10 languages, 1.5s cycle), colored by
+   the involved node category (gradient across categories). Shared by the
+   collapsed field overlay and the expanded thinking row. */
+.working-indicator {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.working-indicator-text {
+  display: inline-block;
+  animation: working-in 360ms ease-out;
+}
+.working-indicator-dots { letter-spacing: 1px; }
+@keyframes working-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: none; }
+}
+
 .prompt-dock-textarea::placeholder {
   color: rgba(241, 245, 249, 0.42);
 }

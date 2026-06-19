@@ -4,11 +4,13 @@ import { useEffect, useRef } from 'react';
 import ChatBubble from './ChatBubble.jsx';
 import ToolChip from './ToolChip.jsx';
 import SoftPauseChip from './SoftPauseChip.jsx';
+import WorkingIndicator from './WorkingIndicator.jsx';
 import './chat.css';
 
 export default function ChatPanel({
   messages, activeToolCalls,
   streaming = false,
+  workingColors = [],
   softPause, onSoftContinue, onSoftStop,
   onConfirmTool, onSkipTool, onChooseTool,
   onCollapse,
@@ -130,10 +132,11 @@ export default function ChatPanel({
         </ChatBubble>
       )}
       {showThinking && (
-        <div className="chat-thinking" aria-label="Pensando…">
+        <div className="chat-thinking" aria-label="Working…">
           <span className="chat-thinking-dot" />
           <span className="chat-thinking-dot" />
           <span className="chat-thinking-dot" />
+          <WorkingIndicator colors={workingColors} className="chat-thinking-working" />
         </div>
       )}
       {softPause && (
