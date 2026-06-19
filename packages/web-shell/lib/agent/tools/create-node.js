@@ -50,13 +50,14 @@ If the user wants to CAPTURE a real website by URL (snapshot a live site), don't
         description: 'What KIND of node to add. See description for the full meaning of each type.',
       },
       name: { type: 'string', description: 'Optional display name shown on the node' },
+      content: { type: 'string', description: 'Optional body for the node. For a "prompt" node: the brief/instruction text (becomes the prompt the node feeds into a site). For a "design-system" node: the DESIGN.md spec text. Omit to leave the node a blank slot the user fills later.' },
       posX: { type: 'number', description: 'Canvas X (optional)' },
       posY: { type: 'number', description: 'Canvas Y (optional)' },
     },
     required: ['type'],
   },
   async execute(args, ctx) {
-    const { type, name = null, posX, posY } = args || {};
+    const { type, name = null, posX, posY, content = null } = args || {};
     if (!type) return { error: 'invalid_args', message: 'type is required' };
     const mapping = NODE_TYPES[type];
     if (!mapping) return { error: 'invalid_args', message: `type must be one of: ${TYPE_LIST.join(', ')}` };
@@ -66,6 +67,13 @@ If the user wants to CAPTURE a real website by URL (snapshot a live site), don't
 
     const effectiveName = name || mapping.defaultName || null;
     const finalMeta = effectiveName ? { ...mapping.meta, name: effectiveName } : mapping.meta;
+
+    // Prompt nodes carry their brief in meta.prompt — that's what run-flow
+    // reads to compose. Without it an agent-made prompt node is inert.
+    const metaWithContent = (mapping.kind === 'prompt' && content)
+      ? { ...finalMeta, prompt: content }
+      : finalMeta;
+
     const w = mapping.width || 1280;
     const h = mapping.height || 800;
 
@@ -89,7 +97,7 @@ If the user wants to CAPTURE a real website by URL (snapshot a live site), don't
 
     const [node] = await sql`
       INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
-      VALUES (${ctx.boardId}, ${mapping.kind}, ${placedX}, ${placedY}, ${w}, ${h}, ${finalMeta}::jsonb)
+      VALUES (${ctx.boardId}, ${mapping.kind}, ${placedX}, ${placedY}, ${w}, ${h}, ${metaWithContent}::jsonb)
       RETURNING id, kind, pos_x, pos_y, width, height, meta, created_at
     `;
 
@@ -100,6 +108,18 @@ If the user wants to CAPTURE a real website by URL (snapshot a live site), don't
       const [snap] = await sql`
         INSERT INTO snapshots (node_id, html, source)
         VALUES (${node.id}, ${mapping.seedHtml}, 'seed')
+        RETURNING id
+      `;
+      await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${node.id}`;
+    }
+
+    // Design-system nodes with content get a design_md snapshot, so they
+    // work as an md source in run-flow (read as source_design_md) AND via
+    // applyDesign. No content → blank slot (no snapshot), per the spec.
+    if (mapping.kind === 'designmd' && content) {
+      const [snap] = await sql`
+        INSERT INTO snapshots (node_id, html, design_md, source)
+        VALUES (${node.id}, ${null}, ${content}, 'seed')
         RETURNING id
       `;
       await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${node.id}`;

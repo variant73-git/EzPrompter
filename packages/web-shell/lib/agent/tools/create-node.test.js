@@ -76,4 +76,46 @@ describe('createNode tool', () => {
     );
     expect(result.error).toBe('forbidden');
   });
+
+  it('stores content as meta.prompt for a prompt node', async () => {
+    sql.mockResolvedValueOnce([{ id: 'board-1' }]);                                  // SELECT board
+    sql.mockResolvedValueOnce([]);                                                   // placeStackDown SELECT nodes
+    sql.mockResolvedValueOnce([{ id: 'node-9', kind: 'prompt', pos_x: 0, pos_y: 0, width: 600, height: 200, meta: { name: 'prompt', prompt: 'a fintech website' } }]); // INSERT
+    const result = await createNodeTool.execute(
+      { type: 'prompt', content: 'a fintech website' },
+      { boardId: 'board-1', userId: 42 },
+    );
+    expect(result.meta.prompt).toBe('a fintech website');
+    const insertCall = sql.mock.calls.find((c) => String(c[0].join('')).includes('INSERT INTO nodes'));
+    expect(JSON.stringify(insertCall)).toContain('a fintech website');
+  });
+
+  it('seeds a design_md snapshot for a design-system node with content', async () => {
+    sql.mockResolvedValueOnce([{ id: 'board-1' }]);                                  // SELECT board
+    sql.mockResolvedValueOnce([]);                                                   // placeStackDown
+    sql.mockResolvedValueOnce([{ id: 'node-10', kind: 'designmd', pos_x: 0, pos_y: 0, width: 600, height: 600, meta: { name: 'Untitled.md' } }]); // INSERT node
+    sql.mockResolvedValueOnce([{ id: 'snap-1' }]);                                   // INSERT snapshot
+    sql.mockResolvedValueOnce([]);                                                   // UPDATE current_snapshot_id
+    const result = await createNodeTool.execute(
+      { type: 'design-system', content: '# Colors\n- navy #0b1f3a' },
+      { boardId: 'board-1', userId: 42 },
+    );
+    expect(result.id).toBe('node-10');
+    const snapCall = sql.mock.calls.find((c) => String(c[0].join('')).includes('INSERT INTO snapshots'));
+    expect(snapCall).toBeTruthy();
+    expect(JSON.stringify(snapCall)).toContain('navy #0b1f3a');
+  });
+
+  it('leaves a design-system node blank when no content given (no snapshot)', async () => {
+    sql.mockResolvedValueOnce([{ id: 'board-1' }]);                                  // SELECT board
+    sql.mockResolvedValueOnce([]);                                                   // placeStackDown
+    sql.mockResolvedValueOnce([{ id: 'node-11', kind: 'designmd', pos_x: 0, pos_y: 0, width: 600, height: 600, meta: { name: 'Untitled.md' } }]); // INSERT node
+    const result = await createNodeTool.execute(
+      { type: 'design-system' },
+      { boardId: 'board-1', userId: 42 },
+    );
+    expect(result.id).toBe('node-11');
+    const snapCall = sql.mock.calls.find((c) => String(c[0].join('')).includes('INSERT INTO snapshots'));
+    expect(snapCall).toBeFalsy();
+  });
 });
