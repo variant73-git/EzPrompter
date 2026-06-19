@@ -1,6 +1,22 @@
 import { generateDesignMd } from './design-md.js';
 import { extractContent } from './demarcelize.js';
 
+// Render a standalone HTML string to a PNG data URL via headless Chromium.
+// Used for site→Screenshot extraction (the node's snapshot HTML, not a URL).
+export async function htmlToScreenshotDataUrl(html, { width = 1280, height = 800 } = {}) {
+  const { chromium } = await import('playwright-core');
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.setViewportSize({ width, height });
+    await page.setContent(html, { waitUntil: 'networkidle' });
+    const buf = await page.screenshot({ type: 'png', fullPage: false });
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  } finally {
+    await browser.close();
+  }
+}
+
 // Which `to` targets are valid for which source kind. Keeps the route and
 // the UI honest about combos that actually have a generator.
 const SITE_TARGETS = new Set(['designmd', 'content', 'screenshot', 'style', 'prompt']);
@@ -49,7 +65,12 @@ export async function runExtract({ to, node, model }) {
         return result({ kind: 'designmd', html: node.html,
           meta: { name: `${name} — style`, source: 'extract', extractTo: 'style', sourceNodeId: node.id } });
       }
-      // screenshot / prompt land in later tasks.
+      case 'screenshot': {
+        const dataUrl = await htmlToScreenshotDataUrl(node.html);
+        return result({ kind: 'asset', dataUrl,
+          meta: { name: `${name} — screenshot`, source: 'extract', extractTo: 'screenshot', sourceNodeId: node.id } });
+      }
+      // prompt lands in a later task.
     }
   }
   // asset targets land in later tasks.

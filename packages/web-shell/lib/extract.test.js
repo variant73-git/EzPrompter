@@ -2,6 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('./design-md.js', () => ({ generateDesignMd: vi.fn(async () => ({ md: '# Design', truncated: false })) }));
 vi.mock('./demarcelize.js', () => ({ extractContent: vi.fn(async () => '# Content') }));
+vi.mock('playwright-core', () => ({
+  chromium: { launch: vi.fn(async () => ({
+    newPage: vi.fn(async () => ({
+      setContent: vi.fn(async () => {}),
+      setViewportSize: vi.fn(async () => {}),
+      screenshot: vi.fn(async () => Buffer.from('PNGBYTES')),
+    })),
+    close: vi.fn(async () => {}),
+  })) },
+}));
 
 const { runExtract } = await import('./extract.js');
 const siteNode = { id: 's1', kind: 'site', html: '<html><body>hi</body></html>', meta: { name: 'Acme' } };
@@ -48,5 +58,14 @@ describe('runExtract — style template', () => {
     expect(r.html).toBe(siteNode.html);
     expect(r.designMd).toBeNull();
     expect(r.meta.extractTo).toBe('style');
+  });
+});
+
+describe('runExtract — screenshot', () => {
+  it('returns an asset node with a png data URL', async () => {
+    const r = await runExtract({ to: 'screenshot', node: siteNode });
+    expect(r.kind).toBe('asset');
+    expect(r.dataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(r.meta.extractTo).toBe('screenshot');
   });
 });
