@@ -6097,6 +6097,25 @@ body.rb-ed-light .edge-label-pill {
   border-color: rgba(56, 189, 248, 0.55);
 }
 
+/* Extract-to submenu inside EmptyDropMenu */
+.empty-drop-extract { position: relative; }
+.empty-drop-submenu {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  margin-left: 4px;
+  min-width: 180px;
+  background: rgba(20, 20, 20, 0.78);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 16px 60px rgba(0, 0, 0, 0.55);
+  padding: 4px;
+  z-index: 10;
+}
+.empty-drop-submenu-trigger { display: flex; justify-content: space-between; align-items: center; }
+
 .edge-popup {
   position: fixed;
   background: rgba(20, 20, 42, 0.95);

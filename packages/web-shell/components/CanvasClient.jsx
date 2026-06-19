@@ -3663,6 +3663,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         <EmptyDropMenu
           x={emptyDropMenu.x}
           y={emptyDropMenu.y}
+          sourceKind={nodes.find((n) => n.id === emptyDropMenu.sourceNodeId)?.kind || null}
           onClose={() => setEmptyDropMenu(null)}
           onPick={async (kind) => {
             // "Connect to" — spawn an UNPOPULATED node of the picked
@@ -3672,6 +3673,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             const m = emptyDropMenu;
             setEmptyDropMenu(null);
             await handleCreateEmptyNode(kind, { worldX: m.worldX, worldY: m.worldY, linkFromNodeId: m.sourceNodeId });
+          }}
+          onExtract={async (to) => {
+            const m = emptyDropMenu;
+            setEmptyDropMenu(null);
+            await handleExtractTo(to, { sourceNodeId: m.sourceNodeId, worldX: m.worldX, worldY: m.worldY });
           }}
         />
       )}
@@ -3994,9 +4000,26 @@ const EMPTY_DROP_ITEMS = [
   { kind: 'designmd', label: '.md',    Icon: MenuIcon.Md },
   { kind: 'asset',    label: 'image',  Icon: MenuIcon.Image },
 ];
-function EmptyDropMenu({ x, y, onClose, onPick }) {
+
+const EXTRACT_OPTIONS = {
+  site: [
+    { to: 'designmd',   label: 'Design system (.md)' },
+    { to: 'content',    label: 'Content (.md)' },
+    { to: 'screenshot', label: 'Screenshot' },
+    { to: 'style',      label: 'Style template' },
+    { to: 'prompt',     label: 'Prompt' },
+  ],
+  asset: [
+    { to: 'tokens', label: 'Design tokens (.md)' },
+    { to: 'prompt', label: 'Prompt' },
+  ],
+};
+
+function EmptyDropMenu({ x, y, sourceKind, onClose, onPick, onExtract }) {
   const left = Math.min(x + 8, window.innerWidth - 280);
   const top = Math.min(y + 8, window.innerHeight - 240);
+  const [extractOpen, setExtractOpen] = useState(false);
+  const extractOpts = EXTRACT_OPTIONS[sourceKind === 'image' ? 'asset' : sourceKind] || null;
 
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose(); }
@@ -4027,6 +4050,28 @@ function EmptyDropMenu({ x, y, onClose, onPick }) {
           <Icon /><span>{label}</span>
         </button>
       ))}
+      {extractOpts && (
+        <div className="empty-drop-extract">
+          <button
+            type="button"
+            className="popup-menu-btn empty-drop-submenu-trigger"
+            onMouseEnter={() => setExtractOpen(true)}
+            onClick={() => setExtractOpen((v) => !v)}
+          >
+            Extract to ▸
+          </button>
+          {extractOpen && (
+            <div className="empty-drop-submenu" onMouseLeave={() => setExtractOpen(false)}>
+              {extractOpts.map((o) => (
+                <button key={o.to} type="button" className="popup-menu-btn"
+                  onClick={() => onExtract?.(o.to)}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <button className="popup-menu-btn popup-menu-btn-cancel" onClick={onClose}>Cancel (Esc)</button>
     </div>
   );
