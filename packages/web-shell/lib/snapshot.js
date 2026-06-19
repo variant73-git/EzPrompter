@@ -472,6 +472,26 @@ export async function captureSnapshot(url, opts = {}) {
       }
     }
 
+    // Guard for the heroBg body injection below: only fill the body
+    // background when the page itself left it UNPAINTED (transparent on
+    // both <html> and <body>, no body background-image). That's the void
+    // the sampling was designed to fill (IX3 scroll-narrative tracks over
+    // a default white body). When the site DID paint its body, injecting
+    // the hero's sampled colour floods every transparent section with the
+    // hero hue — observed 2026-06-12 as "one section's background
+    // stretched over the whole site, growing with node height".
+    const bodyHasOwnBg = await page.evaluate(() => {
+      const opaque = (c) => {
+        if (!c || c === 'transparent') return false;
+        const m = /rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(?:,\s*([\d.]+)\s*)?\)/.exec(c);
+        if (!m) return true; // unknown format — assume painted
+        return m[1] === undefined || parseFloat(m[1]) > 0;
+      };
+      const bs = getComputedStyle(document.body);
+      const hs = getComputedStyle(document.documentElement);
+      return opaque(bs.backgroundColor) || opaque(hs.backgroundColor) || bs.backgroundImage !== 'none';
+    }).catch(() => true); // probe failure → don't inject
+
     const title = (await page.title()) || url;
     const rawHtml = await page.content();
 
@@ -489,7 +509,9 @@ export async function captureSnapshot(url, opts = {}) {
 
     // Inject the sampled hero bg into <body> inline style so any transparent
     // scroll-narrative track below the hero doesn't expose a white body.
+    // Skipped when the page painted its own body bg (see guard above).
     let bodyPatched = htmlWithCss;
+    if (heroBg && bodyHasOwnBg) heroBg = null;
     if (heroBg) {
       bodyPatched = bodyPatched.replace(/<body\b([^>]*)>/i, (m, attrs) => {
         // If body already has a style attribute, prepend our bg (browser

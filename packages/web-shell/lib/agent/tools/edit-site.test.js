@@ -14,8 +14,8 @@ const { sql } = await import('../../db.js');
 const { editSiteTool } = await import('./edit-site.js');
 
 describe('editSiteTool', () => {
-  it('classification is destructive', () => {
-    expect(editSiteTool.classification).toBe('destructive');
+  it('classification is safe — confirm chips are reserved for deletes (2026-06-12)', () => {
+    expect(editSiteTool.classification).toBe('safe');
   });
 
   it('returns error when required args missing', async () => {

@@ -506,6 +506,13 @@
    Frosted dim backdrop + solid card. Uses the widget's own --rb-*
    tokens + Instrument typography so the dialog reads as part of the
    widget surface rather than a foreign element. */
+/* CRITICAL: the rule below sets display:flex, which BEATS the UA's
+   [hidden] { display:none } (author styles > UA styles). Without this
+   explicit override the modal renders permanently from injection —
+   visible, handler-less (handlers are only wired in openUnsavedModal),
+   and blocking the whole widget (bug observed 2026-06-12). Same pattern
+   as every other [hidden] element in this file. */
+#repixbridge-panel .rb-modal-overlay[hidden] { display: none !important; }
 #repixbridge-panel .rb-modal-overlay {
   position: absolute;
   inset: 0;

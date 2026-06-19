@@ -1074,6 +1074,19 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
       return;
     }
 
+    // Guard: while the agent run is PAUSED on a confirm/choice chip, the
+    // arrow must not double as the flow runner — the user almost certainly
+    // means "proceed", and firing run-flow here just surfaces a confusing
+    // "connect a source node" toast over the pending chip (observed
+    // 2026-06-12). Open the chat so the chip is visible and bail.
+    const pendingDecision = (chat.activeToolCalls || []).some(
+      (t) => t.status === 'awaiting_confirm' || t.status === 'awaiting_choice'
+    );
+    if (!value && !imageFile && pendingDecision) {
+      setChatCollapsed(false);
+      return;
+    }
+
     // Bare arrow click (no text, no image, not in URL mode) = "run flow" —
     // process the canvas graph. The button doubles as a runner trigger
     // until we wire the conversational chat path. The selected model

@@ -5,8 +5,11 @@ export const runFlowTool = {
   name: 'runFlow',
   description: `Run the compose pipeline on a target node, pulling content from its incoming sources (edges) and writing a new snapshot.
 
-DESTRUCTIVE: pauses for user confirmation before running because it costs money. Use after you've created and connected the right nodes — don't call runFlow before any edges exist (the result will be empty). Specify modelId to override the user's picker for this specific run.`,
-  classification: 'destructive',
+Use after you've created and connected the right nodes — don't call runFlow before any edges exist (the result will be empty). The previous snapshot is preserved in history, so the operation is recoverable. Specify modelId to override the user's picker for this specific run.`,
+  // 2026-06-12 user decision: confirm chips are reserved for DELETES only.
+  // runFlow overwrites the target's snapshot, but history (parent_snapshot_id
+  // + saved versions + reset) makes it recoverable — not chip-worthy.
+  classification: 'safe',
   inputSchema: {
     type: 'object',
     properties: {

@@ -17,8 +17,8 @@ const { sql } = await import('../../db.js');
 const { runFlowTool } = await import('./run-flow.js');
 
 describe('runFlowTool', () => {
-  it('classification is destructive', () => {
-    expect(runFlowTool.classification).toBe('destructive');
+  it('classification is safe — confirm chips are reserved for deletes (2026-06-12)', () => {
+    expect(runFlowTool.classification).toBe('safe');
   });
 
   it('returns error when nodeId missing', async () => {

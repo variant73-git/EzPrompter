@@ -591,10 +591,13 @@ export async function POST(request) {
       const toolCallMap = new Map(); // toolCallId → {id, name, args, status, result?, error?}
 
       // Outer hard cap on the whole agent run. If runAgentLoop's own
-      // wall_timeout, per-tool 3-min cap, and per-LLM 4-min cap somehow
+      // wall_timeout, per-tool cap, and per-LLM 4-min cap somehow
       // all miss, this is the last line of defense to keep the SSE
-      // stream from staying open for 20+ minutes.
-      const RUN_HARD_CAP_MS = 6 * 60 * 1000;
+      // stream from staying open for 20+ minutes. Must stay ABOVE the
+      // driver's wallTimeoutMs (10min) so the driver's clean wall_timeout
+      // fires first — this cap dying first produces an opaque hard_cap
+      // error instead.
+      const RUN_HARD_CAP_MS = 12 * 60 * 1000;
       // Alternate providers the driver falls over to when the primary returns
       // a retriable error mid-run (the depleted-prepaid-credits 429 is the
       // motivating case). Empty when no other provider has a key configured.

@@ -15,7 +15,11 @@ import { placeStackDown } from '../../canvas-layout.js';
 export const captureUrlTool = {
   name: 'captureUrl',
   description: 'Capture a live website URL into a site node on the canvas. Runs the same snapshot pipeline as the user pasting the URL into the input bar — static capture for plain sites, full reconstruction for animated builders. Costs no AI tokens for static paths but reconstructPage runs vision calls. Returns the new nodeId on success. On Cloudflare/captcha/login walls, returns a `challenge_required` error so you can tell the user to paste the URL themselves (the extension handoff bypasses the wall).',
-  classification: 'destructive',
+  // Confirm chips are reserved for deletes (2026-06-12). Capture only
+  // creates a node. Long-running: gets an extended per-tool timeout —
+  // the animated-builder reconstruct pipeline alone takes 2-3 min.
+  classification: 'safe',
+  timeoutMs: 5 * 60 * 1000,
   inputSchema: {
     type: 'object',
     properties: {

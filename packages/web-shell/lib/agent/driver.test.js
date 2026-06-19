@@ -201,6 +201,81 @@ describe('runAgentLoop — destructive confirm', () => {
     expect(events.some((e) => e.type === 'tool_status' && e.status === 'done')).toBe(true);
   });
 
+  it('asks ONCE per tool per run — later calls of the same tool reuse the confirm (sticky memo)', async () => {
+    _resetForTests();
+    registerRun('run-memo');
+    let executions = 0;
+    const r = buildRegistry([{
+      name: 'zap', classification: 'destructive',
+      inputSchema: { type: 'object' },
+      execute: async () => { executions++; return { ok: true }; },
+    }]);
+    // Iter 1 emits TWO zap calls; iter 2 emits a third; iter 3 ends.
+    const llm = buildLLM([
+      { events: [
+          { type: 'tool_use', id: 'tc-1', name: 'zap', input: { n: 1 } },
+          { type: 'tool_use', id: 'tc-2', name: 'zap', input: { n: 2 } },
+        ],
+        finalContent: [
+          { type: 'tool_use', id: 'tc-1', name: 'zap', input: { n: 1 } },
+          { type: 'tool_use', id: 'tc-2', name: 'zap', input: { n: 2 } },
+        ],
+        stop_reason: 'tool_use' },
+      { events: [{ type: 'tool_use', id: 'tc-3', name: 'zap', input: { n: 3 } }],
+        finalContent: [{ type: 'tool_use', id: 'tc-3', name: 'zap', input: { n: 3 } }],
+        stop_reason: 'tool_use' },
+      { events: [], finalContent: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ]);
+    const events = [];
+    const loopP = runAgentLoop({
+      llm, registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'clean board' }],
+      modelId: 'm', apiKey: 'k', ctx: {}, runId: 'run-memo',
+      onEvent: (ev) => events.push(ev),
+      caps: { softIterations: 99, hardIterations: 99, retryBudget: 3, wallTimeoutMs: 60000 },
+    });
+    await new Promise((r2) => setTimeout(r2, 10));
+    resolveConfirm('run-memo', 'tc-1', { action: 'confirm' });
+    await loopP;
+    const confirms = events.filter((e) => e.type === 'needs_confirm');
+    expect(confirms.length).toBe(1); // single chip for the whole run
+    expect(executions).toBe(3);      // all three calls executed
+  });
+
+  it('sticky memo also applies to Skip — no follow-up chip after skipping', async () => {
+    _resetForTests();
+    registerRun('run-skipmemo');
+    const r = buildRegistry([{
+      name: 'zap', classification: 'destructive',
+      inputSchema: { type: 'object' },
+      execute: async () => { throw new Error('should not be called'); },
+    }]);
+    const llm = buildLLM([
+      { events: [
+          { type: 'tool_use', id: 'tc-1', name: 'zap', input: {} },
+          { type: 'tool_use', id: 'tc-2', name: 'zap', input: {} },
+        ],
+        finalContent: [
+          { type: 'tool_use', id: 'tc-1', name: 'zap', input: {} },
+          { type: 'tool_use', id: 'tc-2', name: 'zap', input: {} },
+        ],
+        stop_reason: 'tool_use' },
+      { events: [], finalContent: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' },
+    ]);
+    const events = [];
+    const loopP = runAgentLoop({
+      llm, registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'go' }],
+      modelId: 'm', apiKey: 'k', ctx: {}, runId: 'run-skipmemo',
+      onEvent: (ev) => events.push(ev),
+      caps: { softIterations: 99, hardIterations: 99, retryBudget: 3, wallTimeoutMs: 60000 },
+    });
+    await new Promise((r2) => setTimeout(r2, 10));
+    resolveConfirm('run-skipmemo', 'tc-1', { action: 'skip' });
+    await loopP;
+    expect(events.filter((e) => e.type === 'needs_confirm').length).toBe(1);
+    const skipped = events.filter((e) => e.type === 'tool_status' && e.status === 'skipped');
+    expect(skipped.length).toBe(2); // both calls skipped, second silently
+  });
+
   it('skips destructive tool when user clicks Skip', async () => {
     _resetForTests();
     registerRun('run-skip');

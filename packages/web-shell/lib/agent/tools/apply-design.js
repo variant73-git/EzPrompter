@@ -12,7 +12,9 @@ import { placeRightOfSources } from '../../canvas-layout.js';
 export const applyDesignTool = {
   name: 'applyDesign',
   description: 'Apply a saved design template (a designmd node) to a target site node — produces a NEW site node whose content matches the target but whose visual style matches the design. Uses Demarcelizer\'s reskin pipeline. The result is wired with edges from both source nodes so the chain reads as "[content site] + [design template] → [restyled site]". Use this when the user says "apply this design to that site", "restyle X with Y", "make X look like Y".',
-  classification: 'destructive',
+  // Confirm chips are reserved for deletes (2026-06-12). applyDesign
+  // creates a NEW node; sources are untouched.
+  classification: 'safe',
   inputSchema: {
     type: 'object',
     properties: {

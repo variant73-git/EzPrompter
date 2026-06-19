@@ -6,10 +6,12 @@ export const editSiteTool = {
   name: 'editSite',
   description: `Apply a plain-language edit to a website node, producing a new snapshot.
 
-DESTRUCTIVE: pauses for user confirmation. Use when the user describes a change to an existing site rather than building something new — e.g. "make the hero teal", "rewrite the headline to say X", "swap the logo for this image".
+Use when the user describes a change to an existing site rather than building something new — e.g. "make the hero teal", "rewrite the headline to say X", "swap the logo for this image". The previous snapshot is preserved in history, so the edit is recoverable.
 
 This will refuse if the user is currently editing the node in-place (you'll get error="node_open_in_edit") — wait for them to close edit mode first.`,
-  classification: 'destructive',
+  // Confirm chips are reserved for deletes (2026-06-12). Edits are
+  // snapshot-recoverable.
+  classification: 'safe',
   inputSchema: {
     type: 'object',
     properties: {
