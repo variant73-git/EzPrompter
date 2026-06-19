@@ -24,10 +24,10 @@ import { flushLangfuse } from '../../../lib/agent/trace.js';
 export const runtime = 'nodejs';
 
 // Picker IDs → SDK-friendly model strings (mirror MODEL_ALIAS in run-flow.js).
-// NOTE: kept for completeness even though the picker no longer drives the
-// agent — the picker selects which model runs INSIDE a node (runFlow / image
-// gen). The agent itself (the assistant that orchestrates tools to build
-// workflows) uses AGENT_MODEL below.
+// The chat dropdown's pick drives the ASSISTANT model (see resolvedModel in
+// POST): an explicit pick wins over the tier default in getAgentModel. The
+// same picker value is also forwarded to runFlow / image gen for the model
+// that runs INSIDE a node.
 const MODEL_ALIAS = {
   // Anthropic
   'claude-4.6-opus':    'claude-opus-4-6',
@@ -280,6 +280,7 @@ export async function POST(request) {
     systemPromptKey = 'BOARD_AGENT',
     attachments = null,
     activeContexts = null,
+    modelId = null,        // chat dropdown pick — drives the assistant model
   } = body || {};
 
   if (!boardId) return NextResponse.json({ error: 'boardId required' }, { status: 400 });
@@ -370,9 +371,13 @@ export async function POST(request) {
   // user's picker. The picker on PromptDock chooses which model runs
   // INSIDE a node when the agent calls runFlow/createImage — that's a
   // different concern handled by run-flow.js / image gen routes.
-  const resolvedModel = getAgentModel(user);
+  // The chat dropdown picks the model that runs the assistant. An explicit,
+  // known pick WINS over the tier default — the user expects the dropdown to
+  // drive the chat (and to dodge a provider whose credit is depleted). An
+  // unknown/absent pick falls back to the tier ladder.
+  const resolvedModel = (modelId && MODEL_ALIAS[modelId]) || getAgentModel(user);
   if (!/^(claude|opus|sonnet|haiku|gpt|gemini)/i.test(resolvedModel)) {
-    return NextResponse.json({ error: `unsupported AGENT_MODEL configured: ${resolvedModel}` }, { status: 500 });
+    return NextResponse.json({ error: `unsupported model: ${resolvedModel}` }, { status: 500 });
   }
 
   // Phase 5c credit gate — currently permissive (lib/credits.js stub always returns true).
