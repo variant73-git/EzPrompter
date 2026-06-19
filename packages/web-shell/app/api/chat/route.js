@@ -71,6 +71,16 @@ function getAgentModel(user) {
   return 'gemini-2.5-flash';
 }
 
+/**
+ * The model that runs the assistant for one chat turn. An explicit, KNOWN
+ * dropdown pick (a MODEL_ALIAS key) wins over the tier default — the user
+ * expects the chat dropdown to drive the chat. An unknown or absent pick
+ * falls back to the tier ladder in getAgentModel.
+ */
+export function resolveAgentModel(modelId, user) {
+  return (modelId && MODEL_ALIAS[modelId]) || getAgentModel(user);
+}
+
 // Each provider gets a singleton circuit breaker — declared once at module
 // scope so the breaker state persists across requests within the Node
 // process. After N consecutive failures inside the rolling window, the
@@ -375,7 +385,7 @@ export async function POST(request) {
   // known pick WINS over the tier default — the user expects the dropdown to
   // drive the chat (and to dodge a provider whose credit is depleted). An
   // unknown/absent pick falls back to the tier ladder.
-  const resolvedModel = (modelId && MODEL_ALIAS[modelId]) || getAgentModel(user);
+  const resolvedModel = resolveAgentModel(modelId, user);
   if (!/^(claude|opus|sonnet|haiku|gpt|gemini)/i.test(resolvedModel)) {
     return NextResponse.json({ error: `unsupported model: ${resolvedModel}` }, { status: 500 });
   }

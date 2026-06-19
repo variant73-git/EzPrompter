@@ -10,7 +10,31 @@ vi.mock('../../../lib/chat-persistence.js', () => ({
   ]),
 }));
 
-const { GET } = await import('./route.js');
+const { GET, resolveAgentModel } = await import('./route.js');
+
+describe('resolveAgentModel', () => {
+  beforeEach(() => { delete process.env.UNCRAFT_AGENT_MODEL; });
+
+  it('honors a known dropdown pick over the tier default', () => {
+    expect(resolveAgentModel('gpt-5.5', { plan: 'free' })).toBe('gpt-5.5');
+    expect(resolveAgentModel('claude-sonnet-4-6', { plan: 'free' })).toBe('claude-sonnet-4-6');
+    expect(resolveAgentModel('gemini-3.1-pro', { plan: 'free' })).toBe('gemini-3.1-pro-preview');
+  });
+
+  it('falls back to the tier ladder for an unknown/absent pick', () => {
+    expect(resolveAgentModel('kimi-k2.6', { plan: 'free' })).toBe('gemini-2.5-flash'); // unknown alias
+    expect(resolveAgentModel(null, { plan: 'free' })).toBe('gemini-2.5-flash');
+    expect(resolveAgentModel(null, { plan: 'pro' })).toBe('gpt-4o-mini');
+    expect(resolveAgentModel(null, { plan: 'enterprise' })).toBe('claude-sonnet-4-6');
+  });
+
+  it('lets UNCRAFT_AGENT_MODEL env win when no explicit pick', () => {
+    process.env.UNCRAFT_AGENT_MODEL = 'gemini-2.5-flash';
+    expect(resolveAgentModel(null, { plan: 'enterprise' })).toBe('gemini-2.5-flash');
+    // …but an explicit pick still overrides the env default.
+    expect(resolveAgentModel('gpt-5.5', { plan: 'enterprise' })).toBe('gpt-5.5');
+  });
+});
 
 describe('GET /api/chat', () => {
   it('returns 400 when boardId missing', async () => {
