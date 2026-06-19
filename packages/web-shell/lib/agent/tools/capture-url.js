@@ -37,10 +37,30 @@ export const captureUrlTool = {
     const [board] = await sql`SELECT id FROM boards WHERE id = ${ctx.boardId} AND user_id = ${ctx.userId}`;
     if (!board) return { error: 'forbidden', message: 'board not found or not owned' };
 
+    const width = 1280;
+    const height = Math.round(width * 9 / 16);
+    const { x: posX, y: posY } = await placeStackDown(ctx.boardId, width, height, sql);
+    const displayName = name || new URL(url).hostname;
+
+    // Create a LOADING placeholder node up front so the canvas shows the
+    // generating ring + % during the (2-3 min) capture — instead of nothing
+    // until it finishes. meta.status='generating' is what the ring keys on.
+    const placeholderMeta = { name: displayName, source: 'agent-captured', status: 'generating' };
+    const [node] = await sql`
+      INSERT INTO nodes (board_id, kind, origin_url, pos_x, pos_y, width, height, meta)
+      VALUES (${ctx.boardId}, 'site', ${url}, ${posX}, ${posY}, ${width}, ${height}, ${JSON.stringify(placeholderMeta)}::jsonb)
+      RETURNING id
+    `;
+    if (ctx?.emit) { try { ctx.emit('graph_mutated', { reason: 'captureUrl:start' }); } catch (_) {} }
+
     let cap;
     try {
       cap = await captureSnapshot(url);
     } catch (e) {
+      // Capture failed — drop the placeholder so a broken loading node isn't
+      // left behind, then re-emit so the canvas removes it.
+      try { await sql`DELETE FROM nodes WHERE id = ${node.id}`; } catch (_) {}
+      if (ctx?.emit) { try { ctx.emit('graph_mutated', { reason: 'captureUrl:failed' }); } catch (_) {} }
       if (e instanceof ChallengeRequiredError) {
         return {
           error: 'challenge_required',
@@ -52,23 +72,19 @@ export const captureUrlTool = {
       return { error: 'capture_failed', message: String(e?.message || e) };
     }
 
-    const width = 1280;
-    const height = Math.round(width * 9 / 16);
-    const { x: posX, y: posY } = await placeStackDown(ctx.boardId, width, height, sql);
-    const displayName = name || cap.title || new URL(url).hostname;
-    const meta = { name: displayName, source: 'agent-captured' };
-
-    const [node] = await sql`
-      INSERT INTO nodes (board_id, kind, origin_url, pos_x, pos_y, width, height, meta)
-      VALUES (${ctx.boardId}, 'site', ${url}, ${posX}, ${posY}, ${width}, ${height}, ${JSON.stringify(meta)}::jsonb)
-      RETURNING id
-    `;
+    const finalName = name || cap.title || displayName;
     const [snap] = await sql`
       INSERT INTO snapshots (node_id, html, source)
       VALUES (${node.id}, ${cap.html}, 'capture')
       RETURNING id
     `;
-    await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${node.id}`;
+    // Populate: point at the snapshot and clear the generating status (so the
+    // ring disappears and the captured content renders).
+    const finalMeta = { name: finalName, source: 'agent-captured' };
+    await sql`
+      UPDATE nodes SET current_snapshot_id = ${snap.id}, meta = ${JSON.stringify(finalMeta)}::jsonb
+      WHERE id = ${node.id}
+    `;
 
     if (ctx?.emit) {
       try { ctx.emit('graph_mutated', { reason: 'captureUrl:done' }); } catch (_) {}
@@ -77,7 +93,7 @@ export const captureUrlTool = {
       captured: true,
       nodeId: node.id,
       url,
-      name: displayName,
+      name: finalName,
       posX,
       posY,
       width,

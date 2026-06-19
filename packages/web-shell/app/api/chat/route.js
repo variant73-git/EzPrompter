@@ -81,6 +81,15 @@ export function resolveAgentModel(modelId, user) {
   return (modelId && MODEL_ALIAS[modelId]) || getAgentModel(user);
 }
 
+// Clones always run on Opus (best reconstruction + it narrates the capture).
+const CLONE_AGENT_MODEL = process.env.UNCRAFT_CLONE_MODEL || 'claude-opus-4-7';
+
+/** True when the user's message is asking to clone/capture/replicate a site. */
+export function isCloneRequest(message) {
+  return typeof message === 'string'
+    && /\b(clon(e|es|ed|ar|ando|ing)?|captur(e|es|ed|ar|ando|ing)?|replicat(e|es|ed|ar)?|recriar|recreate)\b/i.test(message);
+}
+
 // Each provider gets a singleton circuit breaker — declared once at module
 // scope so the breaker state persists across requests within the Node
 // process. After N consecutive failures inside the rolling window, the
@@ -394,7 +403,11 @@ export async function POST(request) {
   // known pick WINS over the tier default — the user expects the dropdown to
   // drive the chat (and to dodge a provider whose credit is depleted). An
   // unknown/absent pick falls back to the tier ladder.
-  const resolvedModel = resolveAgentModel(modelId, user);
+  let resolvedModel = resolveAgentModel(modelId, user);
+  // Clones ALWAYS run on Opus — it gives the best reconstruction and narrates
+  // the capture. A clone/capture request forces Opus over the picker/tier.
+  // (The reconstruction pipeline itself stays gpt-5.5; this is the chat agent.)
+  if (hasText && isCloneRequest(message)) resolvedModel = CLONE_AGENT_MODEL;
   if (!/^(claude|opus|sonnet|haiku|gpt|gemini)/i.test(resolvedModel)) {
     return NextResponse.json({ error: `unsupported model: ${resolvedModel}` }, { status: 500 });
   }

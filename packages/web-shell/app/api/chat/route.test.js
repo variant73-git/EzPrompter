@@ -10,7 +10,24 @@ vi.mock('../../../lib/chat-persistence.js', () => ({
   ]),
 }));
 
-const { GET, resolveAgentModel } = await import('./route.js');
+const { GET, resolveAgentModel, isCloneRequest } = await import('./route.js');
+
+describe('isCloneRequest', () => {
+  it('detects clone/capture/replicate requests (any language form)', () => {
+    expect(isCloneRequest('clone https://stripe.com')).toBe(true);
+    expect(isCloneRequest('clone the Stripe homepage')).toBe(true);
+    expect(isCloneRequest('capture this site')).toBe(true);
+    expect(isCloneRequest('capturar esse site pra mim')).toBe(true);
+    expect(isCloneRequest('recreate netflix')).toBe(true);
+    expect(isCloneRequest('replicate this landing page')).toBe(true);
+  });
+  it('does NOT fire on non-clone build requests', () => {
+    expect(isCloneRequest('create a fintech site')).toBe(false);
+    expect(isCloneRequest('make it darker')).toBe(false);
+    expect(isCloneRequest('add a pricing section')).toBe(false);
+    expect(isCloneRequest(null)).toBe(false);
+  });
+});
 
 describe('resolveAgentModel', () => {
   beforeEach(() => { delete process.env.UNCRAFT_AGENT_MODEL; });
