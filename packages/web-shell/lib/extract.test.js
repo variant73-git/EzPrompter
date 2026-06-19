@@ -40,3 +40,13 @@ describe('runExtract — content (.md)', () => {
     expect(r.meta.name).toMatch(/content/i);
   });
 });
+
+describe('runExtract — style template', () => {
+  it('returns a designmd node with the html chassis and no LLM call', async () => {
+    const r = await runExtract({ to: 'style', node: siteNode });
+    expect(r.kind).toBe('designmd');
+    expect(r.html).toBe(siteNode.html);
+    expect(r.designMd).toBeNull();
+    expect(r.meta.extractTo).toBe('style');
+  });
+});

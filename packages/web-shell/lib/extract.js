@@ -43,7 +43,13 @@ export async function runExtract({ to, node, model }) {
         return result({ kind: 'designmd', designMd: md,
           meta: { name: `${name} — content`, source: 'extract', extractTo: 'content', sourceNodeId: node.id } });
       }
-      // screenshot / style / prompt land in later tasks.
+      case 'style': {
+        // No LLM — keep the raw HTML as a reusable style chassis (applyDesign
+        // reads the html source; run-flow's md bucket is empty here).
+        return result({ kind: 'designmd', html: node.html,
+          meta: { name: `${name} — style`, source: 'extract', extractTo: 'style', sourceNodeId: node.id } });
+      }
+      // screenshot / prompt land in later tasks.
     }
   }
   // asset targets land in later tasks.
