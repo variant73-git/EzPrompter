@@ -1,6 +1,6 @@
 import { sql } from '../../db.js';
 import { BLANK_SITE_HTML, BLANK_SITE_DEFAULTS } from '../../blank-site-html.js';
-import { placeStackDown } from '../../canvas-layout.js';
+import { placeStackDown, resolvePlacement } from '../../canvas-layout.js';
 
 // Type → {kind, meta-mixin, ...} map. The agent reasons in these
 // user-facing types; we translate to the kind/meta shape the rest of the
@@ -79,6 +79,12 @@ If the user wants to CAPTURE a real website by URL (snapshot a live site), don't
       const pos = await placeStackDown(ctx.boardId, w, h, sql);
       if (placedX == null) placedX = pos.x;
       if (placedY == null) placedY = pos.y;
+    } else {
+      // Explicit coords still must not overlap anything already on the
+      // board — resolve them against the live nodes (push down to clear).
+      const pos = await resolvePlacement(ctx.boardId, placedX, placedY, w, h, sql);
+      placedX = pos.x;
+      placedY = pos.y;
     }
 
     const [node] = await sql`

@@ -45,16 +45,18 @@ describe('createNode tool', () => {
     expect(sql.mock.calls.length).toBe(3); // SELECT board + SELECT auto-place + INSERT node
   });
 
-  it('skips the auto-place query when posX and posY are explicit', async () => {
-    sql.mockResolvedValueOnce([{ id: 'board-1' }]);
-    sql.mockResolvedValueOnce([{ id: 'node-3', kind: 'prompt', pos_x: 500, pos_y: 200, width: 1280, height: 800, meta: {} }]);
+  it('resolves explicit coords against the board, preserving them when clear', async () => {
+    sql.mockResolvedValueOnce([{ id: 'board-1' }]);           // SELECT board (owner check)
+    sql.mockResolvedValueOnce([]);                             // resolvePlacement: empty board → coords kept
+    sql.mockResolvedValueOnce([{ id: 'node-3', kind: 'prompt', pos_x: 500, pos_y: 200, width: 1280, height: 800, meta: {} }]); // INSERT
     const result = await createNodeTool.execute(
       { type: 'prompt', posX: 500, posY: 200 },
       { boardId: 'board-1', userId: 42 },
     );
     expect(result.posX).toBe(500);
     expect(result.posY).toBe(200);
-    expect(sql.mock.calls.length).toBe(2); // SELECT board + INSERT node, no auto-place
+    // Even explicit coords now get a collision pass (SELECT nodes) before INSERT.
+    expect(sql.mock.calls.length).toBe(3);
   });
 
   it('returns invalid_args for missing type', async () => {

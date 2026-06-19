@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { placeStackDown, placeRightOfSources } from './canvas-layout.js';
+import { placeStackDown, placeRightOfSources, resolvePlacement } from './canvas-layout.js';
 
 // The placement helpers call `sql` as a tagged template and return rows.
 // A fake that ignores the template and resolves to a fixed row set is enough.
@@ -53,5 +53,26 @@ describe('placeRightOfSources', () => {
     const rows = [{ id: 'other', pos_x: 0, pos_y: 0, width: 200, height: 200 }];
     const p = await placeRightOfSources('b', ['nope'], 200, 200, fakeSql(rows));
     expect(overlapsNode(p.x, p.y, 200, 200, rows[0])).toBe(false);
+  });
+});
+
+describe('resolvePlacement', () => {
+  it('keeps a clear candidate where it is', async () => {
+    const rows = [{ pos_x: 0, pos_y: 0, width: 200, height: 200 }];
+    const p = await resolvePlacement('b', 1000, 1000, 200, 200, fakeSql(rows));
+    expect(p).toEqual({ x: 1000, y: 1000 });
+  });
+
+  it('pushes an overlapping explicit candidate clear of the node', async () => {
+    const rows = [{ pos_x: 0, pos_y: 0, width: 400, height: 400 }];
+    // Explicit coords land right on top of the node — must be resolved.
+    const p = await resolvePlacement('b', 50, 50, 200, 200, fakeSql(rows));
+    expect(overlapsNode(p.x, p.y, 200, 200, rows[0])).toBe(false);
+    expect(p.y).toBeGreaterThanOrEqual(400); // pushed below the node
+  });
+
+  it('returns the candidate unchanged on an empty board', async () => {
+    const p = await resolvePlacement('b', 30, 40, 200, 200, fakeSql([]));
+    expect(p).toEqual({ x: 30, y: 40 });
   });
 });

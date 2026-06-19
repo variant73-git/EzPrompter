@@ -25,7 +25,19 @@
 const COL_TOLERANCE = 80;   // x-distance treated as "same column"
 const GAP_X = 360;
 const GAP_Y = 200;
-const CLEAR_GAP = 80;       // minimum empty space kept around a placed node
+
+// Minimum empty space kept around any newly-placed node. The user's rule:
+// at least 100px clearance from every existing node/section, allowed to
+// shrink proportionally once the board is crowded so a busy board doesn't
+// keep flinging new nodes ever-further away. Base 100 → floor 40 as the
+// node count climbs.
+const BASE_CLEAR_GAP = 100;
+const MIN_CLEAR_GAP = 40;
+function clearGapFor(nodeCount) {
+  // Full linear shrink reached at ~40 nodes; clamped to [40, 100].
+  const shrunk = BASE_CLEAR_GAP * (1 - Math.min(nodeCount, 40) / 80);
+  return Math.round(Math.max(MIN_CLEAR_GAP, shrunk));
+}
 
 // Do two rects (a = candidate, b = existing node) overlap, treating `gap`
 // as required empty space around the candidate so they never even touch?
@@ -40,17 +52,17 @@ function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh, gap) {
 
 // Given a candidate top-left (x, y) for a w×h node and the full set of
 // existing node rects, push the candidate straight DOWN until it clears
-// every node with CLEAR_GAP breathing room. Pushing down (not sideways)
-// keeps column alignment and avoids landing back on the source nodes that
-// sit to the left. Bounded loop so a pathological board can't hang.
-function resolveDownCollision(x, y, w, h, rows) {
+// every node with `gap` breathing room. Pushing down (not sideways) keeps
+// column alignment and avoids landing back on the source nodes that sit to
+// the left. Bounded loop so a pathological board can't hang.
+function resolveDownCollision(x, y, w, h, rows, gap) {
   let cy = y;
   for (let guard = 0; guard < 500; guard++) {
     let pushedTo = null;
     for (const r of rows) {
       const rx = r.pos_x ?? 0, ry = r.pos_y ?? 0, rw = r.width ?? 0, rh = r.height ?? 0;
-      if (rectsOverlap(x, cy, w, h, rx, ry, rw, rh, CLEAR_GAP)) {
-        const below = ry + rh + CLEAR_GAP;       // clear past this node
+      if (rectsOverlap(x, cy, w, h, rx, ry, rw, rh, gap)) {
+        const below = ry + rh + gap;             // clear past this node
         if (pushedTo == null || below > pushedTo) pushedTo = below;
       }
     }
@@ -58,6 +70,17 @@ function resolveDownCollision(x, y, w, h, rows) {
     cy = pushedTo;
   }
   return { x, y: cy };
+}
+
+// Resolve ANY candidate position against the live board so it never overlaps
+// an existing node. Used by paths that already have a target (x, y) — e.g.
+// the agent passing explicit coords — so even those can't land on a node.
+export async function resolvePlacement(boardId, x, y, w, h, sql) {
+  const rows = await sql`
+    SELECT pos_x, pos_y, width, height FROM nodes WHERE board_id = ${boardId}
+  `;
+  if (!rows.length) return { x, y };
+  return resolveDownCollision(x, y, w, h, rows, clearGapFor(rows.length));
 }
 
 export async function placeStackDown(boardId, w, h, sql) {
@@ -81,7 +104,7 @@ export async function placeStackDown(boardId, w, h, sql) {
   const candidateY = any ? maxBottom + GAP_Y : 0;
   // Final guard: never overlap ANY node (a node in another column could
   // still sit under this x-range). Push down until fully clear.
-  return resolveDownCollision(columnX, candidateY, w, h, rows);
+  return resolveDownCollision(columnX, candidateY, w, h, rows, clearGapFor(rows.length));
 }
 
 export async function placeRightOfSources(boardId, sourceNodeIds, w, h, sql) {
@@ -106,5 +129,5 @@ export async function placeRightOfSources(boardId, sourceNodeIds, w, h, sql) {
   const candidateY = Math.round(avgCenterY - h / 2);
   // Don't land on an existing node that happens to sit at that y to the
   // right of the sources — push down until clear.
-  return resolveDownCollision(x, candidateY, w, h, rows);
+  return resolveDownCollision(x, candidateY, w, h, rows, clearGapFor(rows.length));
 }
