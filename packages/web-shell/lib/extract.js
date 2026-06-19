@@ -4,8 +4,8 @@ import { extractContent } from './demarcelize.js';
 // Render a standalone HTML string to a PNG data URL via headless Chromium.
 // Used for site→Screenshot extraction (the node's snapshot HTML, not a URL).
 export async function htmlToScreenshotDataUrl(html, { width = 1280, height = 800 } = {}) {
-  const { chromium } = await import('playwright-core');
-  const browser = await chromium.launch();
+  const { launchBrowser } = await import('./browser.js');
+  const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
     await page.setViewportSize({ width, height });
