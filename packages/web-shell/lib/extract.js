@@ -28,6 +28,43 @@ function result({ kind, meta, html = null, designMd = null, dataUrl = null, trun
   return { kind, meta, html, designMd, dataUrl, truncated };
 }
 
+// extractContent() returns a structured content object; turn it into a
+// readable markdown document for the .md (designmd) node body.
+function contentToMarkdown(c) {
+  if (!c || typeof c !== 'object') return String(c ?? '');
+  const lines = [];
+  if (c.brand) lines.push(`# ${c.brand}`);
+  if (c.tagline) lines.push(`\n${c.tagline}`);
+  if (c.hero) {
+    lines.push('\n## Hero');
+    if (c.hero.headline) lines.push(`**${c.hero.headline}**`);
+    if (c.hero.subheadline) lines.push(c.hero.subheadline);
+    const ctas = [c.hero.cta_primary, c.hero.cta_secondary].filter(Boolean);
+    if (ctas.length) lines.push(`CTAs: ${ctas.join(' · ')}`);
+  }
+  if (Array.isArray(c.nav) && c.nav.length) {
+    lines.push('\n## Navigation');
+    lines.push(c.nav.map((n) => `- ${typeof n === 'string' ? n : (n.label || n.title || JSON.stringify(n))}`).join('\n'));
+  }
+  if (Array.isArray(c.features) && c.features.length) {
+    lines.push('\n## Features');
+    lines.push(c.features.map((f) => `- **${f.title || ''}** — ${f.description || ''}`).join('\n'));
+  }
+  for (const key of ['stats', 'testimonials', 'pricing', 'faq', 'sections']) {
+    const arr = c[key];
+    if (Array.isArray(arr) && arr.length) {
+      lines.push(`\n## ${key[0].toUpperCase()}${key.slice(1)}`);
+      lines.push(arr.map((x) => `- ${typeof x === 'string' ? x : JSON.stringify(x)}`).join('\n'));
+    }
+  }
+  if (c.footer) {
+    lines.push('\n## Footer');
+    if (c.footer.tagline) lines.push(c.footer.tagline);
+    if (c.footer.copyright) lines.push(c.footer.copyright);
+  }
+  return lines.join('\n').trim();
+}
+
 /**
  * Produce a derived artifact from a source node. Pure of DB — the caller
  * persists. Returns { error } on bad input (never throws for validation);
@@ -56,8 +93,8 @@ export async function runExtract({ to, node, model }) {
           meta: { name: `${name} — design`, source: 'extract', extractTo: 'designmd', sourceNodeId: node.id } });
       }
       case 'content': {
-        const md = await extractContent({ html: node.html, ...(model ? { model } : {}) });
-        return result({ kind: 'designmd', designMd: md,
+        const content = await extractContent({ html: node.html, ...(model ? { model } : {}) });
+        return result({ kind: 'designmd', designMd: contentToMarkdown(content),
           meta: { name: `${name} — content`, source: 'extract', extractTo: 'content', sourceNodeId: node.id } });
       }
       case 'style': {

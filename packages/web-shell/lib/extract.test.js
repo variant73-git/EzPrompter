@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('./design-md.js', () => ({ generateDesignMd: vi.fn(async () => ({ md: '# Design', truncated: false })) }));
-vi.mock('./demarcelize.js', () => ({ extractContent: vi.fn(async () => '# Content') }));
+vi.mock('./demarcelize.js', () => ({ extractContent: vi.fn(async () => ({ brand: 'Acme', tagline: 'Pay fast', hero: { headline: 'Move money' } })) }));
 vi.mock('./extract-llm.js', () => ({
   describeSiteAsPrompt: vi.fn(async () => 'A bold fintech landing page, navy + lime, tight grotesk headlines.'),
   describeImageAsTokens: vi.fn(async () => '# Tokens\n- navy #0b1f3a'),
@@ -48,10 +48,12 @@ describe('runExtract — design system (.md)', () => {
 });
 
 describe('runExtract — content (.md)', () => {
-  it('returns a designmd node whose design_md is the extracted content', async () => {
+  it('returns a designmd node whose design_md is the extracted content serialized to markdown', async () => {
     const r = await runExtract({ to: 'content', node: siteNode });
     expect(r.kind).toBe('designmd');
-    expect(r.designMd).toBe('# Content');
+    expect(r.designMd).toMatch(/# Acme/);
+    expect(r.designMd).toMatch(/Pay fast/);
+    expect(r.designMd).toMatch(/Move money/);
     expect(r.meta.name).toMatch(/content/i);
   });
 });
