@@ -96,5 +96,7 @@ export const api = {
   // row + current snapshot (when present) in one round-trip.
   getNode: (nodeId) => fetch(`/api/nodes/${nodeId}`, { ...COMMON, method: 'GET' }).then(jsonOrThrow),
 
+  extractNode: (id, { to }) => fetch(`/api/nodes/${id}/extract`, { ...COMMON, method: 'POST', body: JSON.stringify({ to }) }).then(jsonOrThrow),
+
   logout: () => fetch('/api/auth/logout', { ...COMMON, method: 'POST' }).then(jsonOrThrow)
 };

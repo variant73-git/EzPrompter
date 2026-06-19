@@ -1354,6 +1354,32 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     } catch (e) { toast.error(`Could not create node: ${e.message}`); }
   }
 
+  // "Extract to" flow: derive a NEW node from a source node (site/asset).
+  // Unlike Connect-to (empty node to fill later), extract runs a generator
+  // and lands a populated node. Shows a loading placeholder while the
+  // generator runs (LLM / screenshot can take a few seconds).
+  async function handleExtractTo(to, { sourceNodeId, worldX, worldY }) {
+    const tmpId = `tmp-extract-${sourceNodeId}-${to}`;
+    const { posX, posY } = nextNodePosition({ worldX, worldY, width: 600, height: 200 });
+    const placeholder = {
+      id: tmpId, board_id: board.id, kind: 'designmd',
+      pos_x: posX, pos_y: posY, width: 600, height: 200,
+      meta: { name: `Extracting ${to}…` }, current_html: null, _loading: true,
+      _loadingLabel: 'Extracting…',
+    };
+    setNodes((prev) => [...prev, placeholder]);
+    try {
+      const { node } = await api.extractNode(sourceNodeId, { to });
+      setNodes((prev) => prev.map((n) => (n.id === tmpId ? { ...node, current_html: null } : n)));
+      const fresh = await api.getBoard(board.id);
+      if (Array.isArray(fresh.edges)) setEdges(fresh.edges);
+      setTimeout(() => zoomToNode(node, 350, 1), 80);
+    } catch (e) {
+      setNodes((prev) => prev.filter((n) => n.id !== tmpId));
+      toast.error(`Could not extract: ${e.message}`);
+    }
+  }
+
   // Center upload button on an unpopulated node — opens the kind-scoped
   // picker and persists the content into the EXISTING node (snapshot for
   // site/designmd, meta.dataUrl for asset).
