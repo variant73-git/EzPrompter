@@ -16,7 +16,7 @@ describe('getCaps', () => {
       softIterations: 10,
       hardIterations: 50,
       retryBudget: 3,
-      wallTimeoutMs: 5 * 60 * 1000,
+      wallTimeoutMs: 10 * 60 * 1000,
     });
   });
 
