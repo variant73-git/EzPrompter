@@ -1370,8 +1370,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setNodes((prev) => [...prev, placeholder]);
     try {
       const { node } = await api.extractNode(sourceNodeId, { to });
-      setNodes((prev) => prev.map((n) => (n.id === tmpId ? { ...node, current_html: null } : n)));
+      // Pull the full board so the derived node arrives POPULATED (its
+      // content lives in the snapshot the route created, not in the INSERT
+      // RETURNING row). The fresh list omits the temp placeholder, so it's
+      // dropped in the same swap. Edges bring the source→derived cord.
       const fresh = await api.getBoard(board.id);
+      if (Array.isArray(fresh.nodes)) setNodes(fresh.nodes);
+      else setNodes((prev) => prev.filter((n) => n.id !== tmpId));
       if (Array.isArray(fresh.edges)) setEdges(fresh.edges);
       setTimeout(() => zoomToNode(node, 350, 1), 80);
     } catch (e) {
