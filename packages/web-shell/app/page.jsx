@@ -155,6 +155,7 @@ export default function HomePage() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Your name"
                 aria-label="Name"
+                suppressHydrationWarning
               />
             )}
             <input
@@ -165,6 +166,7 @@ export default function HomePage() {
               placeholder="you@email.com"
               aria-label="Email"
               required
+              suppressHydrationWarning
             />
             <input
               id="password"
@@ -174,6 +176,7 @@ export default function HomePage() {
               placeholder={mode === 'login' ? 'Password' : 'At least 8 characters'}
               aria-label="Password"
               required
+              suppressHydrationWarning
             />
             <motion.button
               type="submit"
