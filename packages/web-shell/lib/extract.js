@@ -1,5 +1,6 @@
 import { generateDesignMd } from './design-md.js';
 import { extractContent } from './demarcelize.js';
+import { describeSiteAsPrompt, describeImageAsTokens, describeImageAsPrompt } from './extract-llm.js';
 
 // Render a standalone HTML string to a PNG data URL via headless Chromium.
 // Used for site→Screenshot extraction (the node's snapshot HTML, not a URL).
@@ -70,7 +71,11 @@ export async function runExtract({ to, node, model }) {
         return result({ kind: 'asset', dataUrl,
           meta: { name: `${name} — screenshot`, source: 'extract', extractTo: 'screenshot', sourceNodeId: node.id } });
       }
-      // prompt lands in a later task.
+      case 'prompt': {
+        const text = await describeSiteAsPrompt({ html: node.html, ...(model ? { model } : {}) });
+        return result({ kind: 'prompt',
+          meta: { name: `${name} — prompt`, prompt: text, source: 'extract', extractTo: 'prompt', sourceNodeId: node.id } });
+      }
     }
   }
   // asset targets land in later tasks.

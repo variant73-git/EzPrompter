@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('./design-md.js', () => ({ generateDesignMd: vi.fn(async () => ({ md: '# Design', truncated: false })) }));
 vi.mock('./demarcelize.js', () => ({ extractContent: vi.fn(async () => '# Content') }));
+vi.mock('./extract-llm.js', () => ({
+  describeSiteAsPrompt: vi.fn(async () => 'A bold fintech landing page, navy + lime, tight grotesk headlines.'),
+  describeImageAsTokens: vi.fn(async () => '# Tokens\n- navy #0b1f3a'),
+  describeImageAsPrompt: vi.fn(async () => 'Editorial product shot, soft daylight, muted palette.'),
+}));
 vi.mock('playwright-core', () => ({
   chromium: { launch: vi.fn(async () => ({
     newPage: vi.fn(async () => ({
@@ -67,5 +72,14 @@ describe('runExtract — screenshot', () => {
     expect(r.kind).toBe('asset');
     expect(r.dataUrl).toMatch(/^data:image\/png;base64,/);
     expect(r.meta.extractTo).toBe('screenshot');
+  });
+});
+
+describe('runExtract — site→prompt', () => {
+  it('returns a prompt node whose meta.prompt is the description', async () => {
+    const r = await runExtract({ to: 'prompt', node: siteNode });
+    expect(r.kind).toBe('prompt');
+    expect(r.meta.prompt).toMatch(/fintech/i);
+    expect(r.meta.extractTo).toBe('prompt');
   });
 });
