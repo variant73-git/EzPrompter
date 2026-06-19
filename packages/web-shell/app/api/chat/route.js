@@ -262,13 +262,22 @@ async function buildWorkflowHint({ activeContexts, sql, userId, boardId }) {
       FROM nodes
       WHERE id = ANY(${activeIds}) AND board_id = ${boardId}
     `;
+    // The user SELECTED these nodes (shown as chips in the chat). That
+    // selection is the target of the request — the agent must apply the
+    // request to the selected node(s) and NOT ask which one, unless the
+    // user clearly names a different node. With exactly one selected node,
+    // say so unambiguously.
+    const single = activeNodeRows.length === 1;
     for (const n of activeNodeRows) {
       const name = n.meta?.name || n.kind;
       const assetId = n.kind === 'asset' ? (n.meta?.assetId || null) : null;
+      const lead = single
+        ? `The user SELECTED this node (its chip is shown in the chat) — apply the request to it; do NOT ask which one`
+        : `The user SELECTED this node (chip shown) — the request targets the selected node(s)`;
       if (assetId) {
-        lines.push(`[Active node: image asset "${name}" nodeId=${n.id} assetId=${assetId}.]`);
+        lines.push(`[${lead}: image asset "${name}" nodeId=${n.id} assetId=${assetId}.]`);
       } else {
-        lines.push(`[Active node: ${n.kind} "${name}" nodeId=${n.id}.]`);
+        lines.push(`[${lead}: ${n.kind} "${name}" nodeId=${n.id}.]`);
       }
     }
   }

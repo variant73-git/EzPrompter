@@ -3,7 +3,14 @@ import { placeStackDown, placeRightOfSources, resolvePlacement } from './canvas-
 
 // The placement helpers call `sql` as a tagged template and return rows.
 // A fake that ignores the template and resolves to a fixed row set is enough.
+// (Helpers now also query edges; with this single-value fake the edge query
+// returns node rows, which have no source/target_node_id → no sections form,
+// so legacy tests behave exactly as before.)
 const fakeSql = (rows) => () => Promise.resolve(rows);
+
+// Sequenced fake: returns `nodes` on the first sql call, `edges` on the
+// second — matches loadBoardObstacles's (nodes, edges) query order.
+const seqSql = (nodes, edges) => { let i = 0; return () => Promise.resolve(i++ === 0 ? nodes : edges); };
 
 // Does a placed w×h node at (x,y) overlap rect r (no gap — strict overlap)?
 function overlapsNode(x, y, w, h, r) {
@@ -74,5 +81,30 @@ describe('resolvePlacement', () => {
   it('returns the candidate unchanged on an empty board', async () => {
     const p = await resolvePlacement('b', 30, 40, 200, 200, fakeSql([]));
     expect(p).toEqual({ x: 30, y: 40 });
+  });
+});
+
+describe('section-aware placement (keep new nodes clear of section frames)', () => {
+  it('clears the whole section frame, not just individual members', async () => {
+    // Two connected nodes (a→b) form a section with a 400px gap between them.
+    const nodes = [
+      { id: 'a', pos_x: 0, pos_y: 0,   width: 300, height: 300 },
+      { id: 'b', pos_x: 0, pos_y: 700, width: 300, height: 300 },
+    ];
+    const edges = [{ source_node_id: 'a', target_node_id: 'b' }];
+    // Candidate dropped into the gap between a and b.
+    const p = await resolvePlacement('board', 0, 400, 200, 200, seqSql(nodes, edges));
+    // Section frame ≈ y[-80..1080]. The node must be pushed below it.
+    expect(p.y).toBeGreaterThanOrEqual(1080);
+  });
+
+  it('does NOT treat two unconnected nodes as a section (gap is usable)', async () => {
+    const nodes = [
+      { id: 'a', pos_x: 0, pos_y: 0,   width: 300, height: 300 },
+      { id: 'b', pos_x: 0, pos_y: 700, width: 300, height: 300 },
+    ];
+    const edges = []; // no edge → no section
+    const p = await resolvePlacement('board', 0, 400, 200, 200, seqSql(nodes, edges));
+    expect(p.y).toBeLessThan(700); // stays in the gap; only clears the nodes
   });
 });

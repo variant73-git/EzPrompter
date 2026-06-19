@@ -72,21 +72,77 @@ function resolveDownCollision(x, y, w, h, rows, gap) {
   return { x, y: cy };
 }
 
-// Resolve ANY candidate position against the live board so it never overlaps
-// an existing node. Used by paths that already have a target (x, y) — e.g.
-// the agent passing explicit coords — so even those can't land on a node.
-export async function resolvePlacement(boardId, x, y, w, h, sql) {
+// Padding a section frame adds around its members on the canvas. New
+// standalone nodes must clear the whole frame (with the usual gap on top),
+// so they land WELL away from any existing section — not just away from the
+// individual member nodes (a node could otherwise slip into the gap between
+// two members and still sit inside the section's frame).
+const SECTION_FRAME_PAD = 80;
+
+// A "section" is a connected component of the board graph with >= 2 nodes.
+// Returns each section's padded bounding box (an obstacle rect). Rows with
+// no id are treated as standalone — they never form a section.
+function sectionRects(rows, edgeRows) {
+  const byId = new Map();
+  for (const r of rows) if (r.id) byId.set(r.id, r);
+  const parent = new Map();
+  for (const id of byId.keys()) parent.set(id, id);
+  const find = (a) => { while (parent.get(a) !== a) { parent.set(a, parent.get(parent.get(a))); a = parent.get(a); } return a; };
+  for (const e of edgeRows || []) {
+    const s = e.source_node_id, t = e.target_node_id;
+    if (byId.has(s) && byId.has(t)) { const rs = find(s), rt = find(t); if (rs !== rt) parent.set(rs, rt); }
+  }
+  const groups = new Map();
+  for (const id of byId.keys()) {
+    const root = find(id);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(byId.get(id));
+  }
+  const rects = [];
+  for (const members of groups.values()) {
+    if (members.length < 2) continue;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const m of members) {
+      const x = m.pos_x ?? 0, y = m.pos_y ?? 0, w = m.width ?? 0, h = m.height ?? 0;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x + w > maxX) maxX = x + w;
+      if (y + h > maxY) maxY = y + h;
+    }
+    rects.push({
+      pos_x: minX - SECTION_FRAME_PAD,
+      pos_y: minY - SECTION_FRAME_PAD,
+      width: (maxX - minX) + SECTION_FRAME_PAD * 2,
+      height: (maxY - minY) + SECTION_FRAME_PAD * 2,
+    });
+  }
+  return rects;
+}
+
+// Load the board's collision obstacles: every node rect PLUS a padded frame
+// rect for each section (>= 2 connected nodes). Returns { rows, obstacles }.
+async function loadBoardObstacles(boardId, sql) {
   const rows = await sql`
-    SELECT pos_x, pos_y, width, height FROM nodes WHERE board_id = ${boardId}
+    SELECT id, pos_x, pos_y, width, height FROM nodes WHERE board_id = ${boardId}
   `;
+  if (!rows.length) return { rows, obstacles: [] };
+  const edgeRows = await sql`
+    SELECT source_node_id, target_node_id FROM edges WHERE board_id = ${boardId}
+  `;
+  return { rows, obstacles: [...rows, ...sectionRects(rows, edgeRows)] };
+}
+
+// Resolve ANY candidate position against the live board so it never overlaps
+// an existing node OR section frame. Used by paths that already have a target
+// (x, y) — e.g. the agent passing explicit coords.
+export async function resolvePlacement(boardId, x, y, w, h, sql) {
+  const { rows, obstacles } = await loadBoardObstacles(boardId, sql);
   if (!rows.length) return { x, y };
-  return resolveDownCollision(x, y, w, h, rows, clearGapFor(rows.length));
+  return resolveDownCollision(x, y, w, h, obstacles, clearGapFor(rows.length));
 }
 
 export async function placeStackDown(boardId, w, h, sql) {
-  const rows = await sql`
-    SELECT pos_x, pos_y, width, height FROM nodes WHERE board_id = ${boardId}
-  `;
+  const { rows, obstacles } = await loadBoardObstacles(boardId, sql);
   if (!rows.length) return { x: 0, y: 0 };
   // Rightmost LEFT-edge defines the active column.
   let columnX = rows[0].pos_x;
@@ -102,19 +158,17 @@ export async function placeStackDown(boardId, w, h, sql) {
     }
   }
   const candidateY = any ? maxBottom + GAP_Y : 0;
-  // Final guard: never overlap ANY node (a node in another column could
-  // still sit under this x-range). Push down until fully clear.
-  return resolveDownCollision(columnX, candidateY, w, h, rows, clearGapFor(rows.length));
+  // Final guard: never overlap ANY node OR section frame (a node/section in
+  // another column could still sit under this x-range). Push down to clear.
+  return resolveDownCollision(columnX, candidateY, w, h, obstacles, clearGapFor(rows.length));
 }
 
 export async function placeRightOfSources(boardId, sourceNodeIds, w, h, sql) {
   if (!Array.isArray(sourceNodeIds) || sourceNodeIds.length === 0) {
     return placeStackDown(boardId, w, h, sql);
   }
-  // Need ALL nodes for the collision pass, not just the sources.
-  const rows = await sql`
-    SELECT id, pos_x, pos_y, width, height FROM nodes WHERE board_id = ${boardId}
-  `;
+  // All nodes + section frames for the collision pass, not just the sources.
+  const { rows, obstacles } = await loadBoardObstacles(boardId, sql);
   const sources = rows.filter((r) => sourceNodeIds.includes(r.id));
   if (!sources.length) return placeStackDown(boardId, w, h, sql);
   let maxRight = -Infinity;
@@ -127,7 +181,7 @@ export async function placeRightOfSources(boardId, sourceNodeIds, w, h, sql) {
   const avgCenterY = sumCenterY / sources.length;
   const x = maxRight + GAP_X;
   const candidateY = Math.round(avgCenterY - h / 2);
-  // Don't land on an existing node that happens to sit at that y to the
-  // right of the sources — push down until clear.
-  return resolveDownCollision(x, candidateY, w, h, rows, clearGapFor(rows.length));
+  // Don't land on an existing node OR section frame at that y to the right
+  // of the sources — push down until clear.
+  return resolveDownCollision(x, candidateY, w, h, obstacles, clearGapFor(rows.length));
 }
