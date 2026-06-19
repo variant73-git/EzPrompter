@@ -78,6 +78,21 @@ export async function runExtract({ to, node, model }) {
       }
     }
   }
-  // asset targets land in later tasks.
+  if (isAsset) {
+    const dataUrl = node.meta?.dataUrl;
+    if (!dataUrl) return { error: 'no_source', message: 'asset has no image data' };
+    switch (to) {
+      case 'tokens': {
+        const md = await describeImageAsTokens({ dataUrl, ...(model ? { model } : {}) });
+        return result({ kind: 'designmd', designMd: md,
+          meta: { name: `${name} — tokens`, source: 'extract', extractTo: 'tokens', sourceNodeId: node.id } });
+      }
+      case 'prompt': {
+        const text = await describeImageAsPrompt({ dataUrl, ...(model ? { model } : {}) });
+        return result({ kind: 'prompt',
+          meta: { name: `${name} — prompt`, prompt: text, source: 'extract', extractTo: 'prompt', sourceNodeId: node.id } });
+      }
+    }
+  }
   return { error: 'not_implemented', message: `extract "${to}" not implemented yet` };
 }

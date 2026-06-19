@@ -83,3 +83,26 @@ describe('runExtract — site→prompt', () => {
     expect(r.meta.extractTo).toBe('prompt');
   });
 });
+
+const assetNode = { id: 'a1', kind: 'asset', meta: { name: 'shot', dataUrl: 'data:image/png;base64,AAA' } };
+
+describe('runExtract — asset→tokens', () => {
+  it('returns a designmd node from the image', async () => {
+    const r = await runExtract({ to: 'tokens', node: assetNode });
+    expect(r.kind).toBe('designmd');
+    expect(r.designMd).toMatch(/Tokens/);
+    expect(r.meta.extractTo).toBe('tokens');
+  });
+  it('rejects an asset with no image data', async () => {
+    const r = await runExtract({ to: 'tokens', node: { id: 'a2', kind: 'asset', meta: {} } });
+    expect(r.error).toBe('no_source');
+  });
+});
+
+describe('runExtract — asset→prompt', () => {
+  it('returns a prompt node from the image', async () => {
+    const r = await runExtract({ to: 'prompt', node: assetNode });
+    expect(r.kind).toBe('prompt');
+    expect(r.meta.prompt).toMatch(/editorial/i);
+  });
+});
