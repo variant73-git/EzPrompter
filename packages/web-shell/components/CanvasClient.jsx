@@ -21,6 +21,10 @@ import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
 import { findSectionTerminal, sectionRerunWouldOverwrite } from '../lib/section-run.js';
 import { clampToViewport } from '../lib/menu-position.js';
+import {
+  shouldTearOut, nodeCenter, pointInRect,
+  selectGeometricMembersToLatch, TEAR_MARGIN,
+} from '../lib/section-membership.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -280,6 +284,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // the absorption GEOMETRY uses this frozen start position. Adoption/release
   // is decided once, on drop, by the move-end handler.
   const [dragFreeze, setDragFreeze] = useState(null); // { id, startX, startY }
+  // Organic node removal. `removing` holds the node that is "armed" to leave
+  // its section (entered by an elastic pull-out past the tear margin, or via
+  // the node menu). While armed the node shows the red removal state; dropping
+  // it OUTSIDE the section commits (breaks all its edges + clears adoption),
+  // dropping it back INSIDE — or the Cancel button — cancels.
+  const [removing, setRemoving] = useState(null); // { nodeId, sectionId, rootId }
+  const removingRef = useRef(null);
+  function setRemovingSync(v) { removingRef.current = v; setRemoving(v); }
+  // True while an armed node is currently dragged outside its section — drives
+  // the subtle canvas lighten.
+  const [removingOutside, setRemovingOutside] = useState(false);
   // Close the section context menu on outside click or Escape.
   useEffect(() => {
     if (!sectionMenu) return;
@@ -692,24 +707,30 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
   function handleNodeMoveStart(node) {
     if (String(node.id).startsWith('temp-')) return;
-    // Freeze this node's absorption geometry for the whole drag — applies to
-    // EVERY dragged node (incl. edge-connected ones, which return early
-    // below), because any member's live movement reshapes its section's core
-    // and would otherwise expel/absorb other nodes mid-drag.
+    // Freeze this node's absorption geometry for the whole drag so a member's
+    // live movement never reshapes its section's core (which would expel/absorb
+    // other nodes mid-drag).
     setDragFreeze({ id: node.id, startX: node.pos_x, startY: node.pos_y });
-    if (edgeTouchedIds.has(node.id)) return;
-    // Loose-node drag baseline: lets the singleton frame TRANSLATE with the
-    // drag (instead of being stretched by grow-only frame logic), and gives
-    // the drop handler the pre-drag section rect for un-adopt detection.
+    // Track EVERY dragged node — edge-connected members included — so the
+    // elastic tear-out gesture works the same for all of them. `isLoose` gates
+    // the adopt-into-ANOTHER-section preview (only loose nodes join a new
+    // section by drag); tear-out (leaving the OWN section) applies to all.
     const own = sections.find((s) => s.memberIds.includes(node.id) && s.memberIds.length > 1) || null;
+    // Core of the REMAINING members (stable — excludes the dragged node), the
+    // reference the tear-out threshold is measured against.
+    const remainingCore = own
+      ? sectionCoreRect(own.memberIds.filter((id) => id !== node.id).map((id) => nodes.find((n) => n.id === id)).filter(Boolean))
+      : null;
     looseDragRef.current = {
       nodeId: node.id,
       startX: node.pos_x,
       startY: node.pos_y,
       lastX: node.pos_x,
       lastY: node.pos_y,
+      isLoose: !edgeTouchedIds.has(node.id),
       ownSectionId: own?.id || null,
-      ownRectAtStart: own ? { left: own.x, top: own.y, right: own.x + own.width, bottom: own.y + own.height } : null,
+      ownRootId: own?.rootId || null,
+      remainingCore,
     };
   }
 
@@ -719,13 +740,38 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     drag.lastX = posX;
     drag.lastY = posY;
     const rect = nodeWorldRect(node, posX, posY);
+
+    // ── Elastic tear-out ────────────────────────────────────────────────
+    // A member detaches from its OWN section when its center is pulled past
+    // the remaining-members core by TEAR_MARGIN. Until then the frame just
+    // stretches (grow-only). Once armed, it stays armed for the rest of the
+    // drag; the drop decides commit (outside) vs cancel (inside).
+    if (drag.ownSectionId && drag.remainingCore) {
+      const { cx, cy } = nodeCenter(node, posX, posY);
+      if (!removingRef.current && shouldTearOut(cx, cy, drag.remainingCore, TEAR_MARGIN)) {
+        const sec = sections.find((s) => s.id === drag.ownSectionId);
+        const siblingIds = sec ? sec.memberIds.filter((id) => id !== node.id) : [];
+        setRemovingSync({ nodeId: node.id, sectionId: drag.ownSectionId, rootId: drag.ownRootId, siblingIds });
+        if (adoptPreviewRef.current) setAdoptPreviewSync(null);
+      }
+    }
+    // While a removal is armed for THIS node, drive the canvas-lighten by
+    // whether it's currently outside its (now member-fitted) section frame,
+    // and skip the join-another-section preview entirely.
+    if (removingRef.current && removingRef.current.nodeId === node.id) {
+      const { cx, cy } = nodeCenter(node, posX, posY);
+      const rect = removalSectionRect(removingRef.current);
+      setRemovingOutside(!pointInRect(cx, cy, rect));
+      return;
+    }
+
+    // Only loose nodes (no real edge) can be ADOPTED into another section by
+    // dragging — edge-connected members already belong to their workflow.
+    if (!drag.isLoose) return;
     // NOTE: a node drag must NEVER translate a section frame. The frame only
     // expands/retracts to fit its members (grow-only derivation + shrink on
     // membership change) — moving the WHOLE section is a separate gesture via
-    // the grip handle (startSectionMove). The old "singleton-frame carry"
-    // here slid `section-${node.id}`, which is a real frame only when the
-    // dragged node is its section's ROOT — so dragging that one node dragged
-    // the entire section. Removed.
+    // the grip handle (startSectionMove).
     // Candidate = the section whose BASE rendered rect intersects the
     // dragged node (testing the base rect — not the expanded preview —
     // avoids the "once engulfed, can never leave" trap). Largest
@@ -774,6 +820,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     looseDragRef.current = null;
     const preview = adoptPreviewRef.current;
     if (preview) setAdoptPreviewSync(null);
+
+    // Armed removal — decide on drop: outside the section commits the removal
+    // (break all edges + clear adoption); inside cancels (stays a member).
+    const arm = removingRef.current;
+    if (arm && arm.nodeId === node.id && moved) {
+      const fx = drag ? drag.lastX : node.pos_x;
+      const fy = drag ? drag.lastY : node.pos_y;
+      const { cx, cy } = nodeCenter(node, fx, fy);
+      const inside = pointInRect(cx, cy, removalSectionRect(arm));
+      if (inside) cancelNodeRemoval();
+      else await commitNodeRemoval(node, fx, fy, arm);
+      return;
+    }
+
     if (!moved || !drag || drag.nodeId !== node.id) return;
     const finalX = drag.lastX;
     const finalY = drag.lastY;
@@ -817,41 +877,74 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       return;
     }
 
-    // Release — a loose node that was a member of a multi-node section at
-    // drag start (explicitly adopted OR standing geometrically inside the
-    // frame) got dropped clear of that section. The membership test must
-    // mirror the derivation's absorption rule exactly: node CENTER vs the
-    // section's CORE rect computed from the REMAINING members — the stored
-    // frame is grow-only and chased the node during the drag, so testing
-    // against it would leave the node half-released (singleton framed
-    // inside the stretched host frame).
-    if (drag.ownSectionId) {
-      const own = sections.find((s) => s.id === drag.ownSectionId);
-      const remaining = own ? own.memberIds.filter((id) => id !== node.id).map((id) => nodes.find((n) => n.id === id)) : [];
-      const core = sectionCoreRect(remaining.filter(Boolean));
-      const cx = finalX + (node.width || 600) / 2;
-      const cy = finalY + (node.height || 600) / 2;
-      const insideCore = core && cx >= core.left && cx <= core.right && cy >= core.top && cy <= core.bottom;
-      if (!insideCore) {
-        // Drop the stretched stored frame so the abandoned section re-fits
-        // to its remaining members on the next render — otherwise the
-        // released singleton renders INSIDE the stale-grown host frame.
-        setSectionFrames((prev) => {
-          const next = { ...prev };
-          delete next[drag.ownSectionId];
-          try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(next)); } catch {}
-          return next;
-        });
-        if (node.meta?.adoptedInto) {
-          const meta = { ...(node.meta || {}) };
-          delete meta.adoptedInto;
-          try {
-            await commitMeta(meta);
-          } catch (e) {
-            console.warn('un-adopt failed', e);
-          }
-        }
+    // NOTE: there is no silent "release on drop outside" anymore. A member
+    // stays a member when simply dragged around — leaving a section is an
+    // explicit gesture (elastic tear-out) or menu action, handled by the
+    // armed-removal branch above. This is what makes every in-section node
+    // behave consistently.
+  }
+
+  // The live "inside" region for an armed removal: the section frame derived
+  // from the remaining siblings (robust to the section re-rooting when the
+  // armed node was its root), falling back to the siblings' core when the
+  // section dissolved (e.g. a 2-member section losing one).
+  function removalSectionRect(arm) {
+    if (!arm) return null;
+    const sibIds = arm.siblingIds || [];
+    const sec = sections.find((s) => sibIds.some((id) => s.memberIds.includes(id)));
+    if (sec) return { left: sec.x, top: sec.y, right: sec.x + sec.width, bottom: sec.y + sec.height };
+    const sibs = sibIds.map((id) => nodes.find((n) => n.id === id)).filter(Boolean);
+    return sectionCoreRect(sibs);
+  }
+
+  // Arm a node for removal from its section (menu action). The node enters the
+  // red removal state; the user then drags it outside to commit (or Cancel).
+  function armNodeRemoval(node) {
+    const own = sections.find((s) => s.memberIds.includes(node.id) && s.memberIds.length > 1);
+    if (!own) return;
+    const siblingIds = own.memberIds.filter((id) => id !== node.id);
+    setRemovingSync({ nodeId: node.id, sectionId: own.id, rootId: own.rootId, siblingIds });
+    setRemovingOutside(false);
+  }
+
+  // Cancel an armed removal — the node stays a member, edges + adoption intact.
+  function cancelNodeRemoval() {
+    setRemovingSync(null);
+    setRemovingOutside(false);
+  }
+
+  // Commit removal — the node leaves the section: all of its edges are cut and
+  // its adoption marker cleared, so it becomes a free standalone node at its
+  // dropped position. The abandoned section's stored frame is reset so it
+  // re-fits its remaining members.
+  async function commitNodeRemoval(node, finalX, finalY, arm) {
+    setRemovingSync(null);
+    setRemovingOutside(false);
+    // Cut every edge touching this node.
+    const touching = edges.filter((e) => e.source_node_id === node.id || e.target_node_id === node.id);
+    if (touching.length) {
+      setEdges((prev) => prev.filter((e) => e.source_node_id !== node.id && e.target_node_id !== node.id));
+      for (const e of touching) {
+        if (!String(e.id).startsWith('temp-')) api.deleteEdge(e.id).catch(console.warn);
       }
+    }
+    // Clear adoption + persist final position.
+    const meta = { ...(node.meta || {}) };
+    delete meta.adoptedInto;
+    clearTimeout(dragNodeServer.current.get(node.id));
+    dragNodeServer.current.delete(node.id);
+    setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, pos_x: finalX, pos_y: finalY, meta } : n)));
+    if (!String(node.id).startsWith('temp-')) {
+      api.updateNode(node.id, { posX: finalX, posY: finalY, meta }).catch(console.warn);
+    }
+    // Reset the abandoned section's frame so it shrinks to its remaining members.
+    if (arm?.sectionId) {
+      setSectionFrames((prev) => {
+        const next = { ...prev };
+        delete next[arm.sectionId];
+        try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(next)); } catch {}
+        return next;
+      });
     }
   }
 
@@ -2697,6 +2790,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.target?.isContentEditable) return;
       if (e.key === 'Escape') {
+        // Cancel an armed node removal first — Esc is the keyboard twin of the
+        // red topbar's Cancel button.
+        if (removingRef.current) { cancelNodeRemoval(); return; }
         // Cancel an in-flight edge drag in isolation — keep the source
         // node selected so the viewport switcher / chrome stays put.
         if (draftEdge) { setDraftEdgeSync(null); return; }
@@ -2824,6 +2920,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // would persist as overrides; this MVP is fully derived.
   const sections = useMemo(() => {
     if (!nodes || nodes.length === 0) return [];
+    // A node armed for removal is excluded from section membership/geometry so
+    // the frame snaps back to the remaining members while it floats free in the
+    // red removal state. Its edges still render until the drop commits.
+    const excludedId = removing?.nodeId || null;
+    const memberPool = excludedId ? nodes.filter((n) => n.id !== excludedId) : nodes;
     // Sides + bottom use a uniform 165px gap. The TOP gap is larger
     // (260px) because the name tag's play button is stable-sized on
     // screen, so at moderate zoom-out it occupies more world space —
@@ -2831,11 +2932,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // the play button across the typical zoom range.
     const UNIFORM_GAP = SECTION_UNIFORM_GAP;
     const TOP_GAP = SECTION_TOP_GAP;
-    const nodeById = new Map(nodes.map((n) => [n.id, n]));
+    const nodeById = new Map(memberPool.map((n) => [n.id, n]));
     // Build adjacency map. Skip edges whose endpoints aren't both in the
-    // current nodes array (e.g. mid-flight temp edges that haven't synced).
+    // current nodes array (e.g. mid-flight temp edges that haven't synced),
+    // and skip the removal-armed node so it doesn't anchor a component.
     const adj = new Map();
-    for (const n of nodes) adj.set(n.id, []);
+    for (const n of memberPool) adj.set(n.id, []);
     for (const e of edges) {
       const a = e.source_node_id;
       const b = e.target_node_id;
@@ -2852,7 +2954,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // no link, so the node falls back to its own singleton section.
     const fullAdj = new Map();
     for (const [k, v] of adj) fullAdj.set(k, v.slice());
-    for (const n of nodes) {
+    for (const n of memberPool) {
       if ((adj.get(n.id) || []).length > 0) continue;
       const anchor = n._pendingLinkFrom || n.meta?.adoptedInto;
       if (!anchor || anchor === n.id || !fullAdj.has(anchor)) continue;
@@ -2863,7 +2965,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // large boards).
     const visited = new Set();
     let components = [];
-    for (const n of nodes) {
+    for (const n of memberPool) {
       if (visited.has(n.id)) continue;
       const members = [];
       const queue = [n.id];
@@ -3053,7 +3155,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       });
     }
     return out;
-  }, [nodes, edges, sectionNameOverrides, sectionFrames, canvasScale, dragFreeze]);
+  }, [nodes, edges, sectionNameOverrides, sectionFrames, canvasScale, dragFreeze, removing]);
 
   // Capture / grow sectionFrames after each sections render. New sections
   // initialise their stored frame from the default-padded coords; existing
@@ -3144,6 +3246,43 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     for (const s of sections) memo[s.id] = s.memberIds;
     prevSectionsRef.current = memo;
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sections]);
+
+  // Sticky membership latch. A node that belongs to a section ONLY
+  // geometrically (it was engulfed when a neighbour got connected — no edge of
+  // its own, no adoption marker yet) has fragile, position-derived membership
+  // and would silently fall out when moved. Persist meta.adoptedInto = section
+  // root ONCE so its membership becomes permanent, like every other member.
+  // From then on membership is edges ∪ adoptedInto — both position-independent.
+  // Skipped during a drag (dragFreeze) and while a removal is armed so we never
+  // latch mid-gesture.
+  useEffect(() => {
+    if (dragFreeze || removing) return;
+    const nodeById = new Map(nodes.map((n) => [n.id, n]));
+    const toLatch = selectGeometricMembersToLatch({
+      sections, nodeById, edgeTouchedSet: edgeTouchedIds,
+    });
+    if (!toLatch.length) return;
+    setNodes((prev) => prev.map((n) => {
+      const hit = toLatch.find((t) => t.nodeId === n.id);
+      if (!hit) return n;
+      return { ...n, meta: { ...(n.meta || {}), adoptedInto: hit.rootId } };
+    }));
+    for (const { nodeId, rootId } of toLatch) {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (!node || String(nodeId).startsWith('temp-')) continue;
+      const meta = { ...(node.meta || {}), adoptedInto: rootId };
+      api.updateNode(nodeId, { meta }).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sections, dragFreeze, removing]);
+
+  // Set of node ids that belong to a section — drives the "Remove from this
+  // section" menu item (only shown for actual members).
+  const sectionMemberIds = useMemo(() => {
+    const s = new Set();
+    for (const sec of sections) for (const id of sec.memberIds) s.add(id);
+    return s;
   }, [sections]);
 
   // Section drag — grabbing the dot-grid handle at the top of a section
@@ -3329,7 +3468,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
   return (
     <div
-      className="canvas-shell"
+      className={`canvas-shell${removingOutside ? ' removing-outside' : ''}`}
       onMouseDown={maybeStartMarquee}
       onMouseMove={moveDraftEdge}
       onMouseUp={handleGlobalMouseUp}
@@ -3590,6 +3729,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               onRequestUpload={() => handlePopulateNode(n)}
               onFrameZoom={() => zoomToNode(n, 350, 1)}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
+              removing={removing?.nodeId === n.id}
+              removingOutside={removing?.nodeId === n.id && removingOutside}
+              inSection={sectionMemberIds.has(n.id)}
+              onRemoveFromSection={() => armNodeRemoval(n)}
+              onCancelRemove={cancelNodeRemoval}
             />
           ))}
           {/* Section CHROME pass — name tag, grip, corner handles.

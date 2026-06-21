@@ -336,7 +336,9 @@ export default function CanvasNode({
   onDuplicate, onDownload,
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
   onReplaceContent, onRequestUpload, onFrameZoom,
-  incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null
+  incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
+  removing = false, removingOutside = false, inSection = false,
+  onRemoveFromSection, onCancelRemove
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -796,7 +798,7 @@ export default function CanvasNode({
   return (
     <div
       ref={cnodeRef}
-      className={`cnode origin-${origin}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}${generating ? ' generating' : ''}`}
+      className={`cnode origin-${origin}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}${generating ? ' generating' : ''}${removing ? ' removing' : ''}`}
       style={{ left: node.pos_x, top: node.pos_y, width: node.width, '--cnode-h': `${node.height}px` }}
       data-node-id={node.id}
     >
@@ -851,14 +853,33 @@ export default function CanvasNode({
         </div>
       )}
       <div
-        className="cnode-topbar"
+        className={`cnode-topbar${removing ? ' removing' : ''}`}
         onMouseDown={onTopbarMouseDown}
         onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
+          if (removing) return;
           setMenuPos({ x: e.clientX, y: e.clientY });
         }}
       >
+        {/* Removal-armed topbar: the grip is replaced by a "Drag outside"
+            instruction and the actions by a single Cancel button. The topbar
+            still receives onTopbarMouseDown so the node can be dragged out. */}
+        {removing && (
+          <>
+            <span className="topbar-remove-hint" aria-hidden>Drag outside</span>
+            <button
+              className="btn-remove-cancel"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onCancelRemove?.(); }}
+              title="Cancel removal"
+              aria-label="Cancel removal"
+            >
+              Cancel
+            </button>
+          </>
+        )}
+        {!removing && (<>
         {/* The grip anchors to the TOPBAR itself (not topbar-main) so it
             centers on the node's overall width, regardless of how the
             left/actions groups distribute around it. */}
@@ -933,6 +954,7 @@ export default function CanvasNode({
         >
           <MoreIcon />
         </button>
+        </>)}
       </div>
       {node._loading ? (
         node._challenge ? (
@@ -1221,12 +1243,14 @@ export default function CanvasNode({
           canEdit={renderIframeBody && !!html}
           canReset={renderIframeBody && !!html && hasEdits}
           canReplace={node.kind === 'asset' || node.kind === 'image' || node.kind === 'site' || node.kind === 'designmd'}
+          canRemoveFromSection={inSection}
           editing={editing}
           onEdit={() => { setMenuPos(null); onEditingChange?.(!editing); }}
           onDuplicate={() => { setMenuPos(null); onDuplicate?.(); }}
           onDownload={() => { setMenuPos(null); onDownload?.(); }}
           onReplace={() => { setMenuPos(null); onReplaceContent?.(node.id); }}
           onReset={() => { setMenuPos(null); setShowResetConfirm(true); }}
+          onRemoveFromSection={() => { setMenuPos(null); onRemoveFromSection?.(); }}
           onDelete={() => { setMenuPos(null); if (confirm('Delete this node?')) onDelete(); }}
           onClose={() => setMenuPos(null)}
         />,
@@ -1236,7 +1260,7 @@ export default function CanvasNode({
   );
 }
 
-function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, editing, onEdit, onDuplicate, onDownload, onReplace, onReset, onDelete, onClose }) {
+function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, canRemoveFromSection, editing, onEdit, onDuplicate, onDownload, onReplace, onReset, onRemoveFromSection, onDelete, onClose }) {
   // Clamp to viewport so the menu stays fully visible. Width matches
   // .empty-drop-menu (260px) so this reads as the same family of menu.
   const W = 260, H_EST = 240;
@@ -1277,6 +1301,17 @@ function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, editing, onEdi
         <button onClick={onReset}>
           <ResetIcon />
           <span>Restore original</span>
+        </button>
+      )}
+      {(canRemoveFromSection) && <div className="cnode-topbar-menu-sep" aria-hidden="true" />}
+      {canRemoveFromSection && (
+        <button onClick={onRemoveFromSection}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+          <span>Remove from this section</span>
         </button>
       )}
       <button className="cnode-topbar-menu-danger" onClick={onDelete}>
