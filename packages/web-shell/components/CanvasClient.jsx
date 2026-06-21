@@ -983,21 +983,26 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const giveUpAfterMs = 10 * 60 * 1000;
     const tick = async () => {
       try {
-        const { node, snapshot } = await api.getNode(nodeId);
-        if (snapshot?.html) {
-          // Handoff landed — render it.
-          setNodes((prev) => prev.map((n) =>
-            n.id === nodeId ? {
-              ...n,
-              ...node,
-              current_html: snapshot.html,
-              current_screenshot: snapshot.screenshot_url || null,
-              _loading: false, _loadingLabel: undefined,
-              _challenge: false, _handoffPending: false
-            } : n
-          ));
-          stopHandoffPolling(nodeId);
-          return;
+        // Cheap probe — ~30 bytes vs ~85KB when the route streams snapshot.html
+        // on every 3s tick. We only do the full GET once `ready:true` lands.
+        const probe = await api.getNode(nodeId, { readyCheck: true });
+        if (probe?.ready) {
+          const { node, snapshot } = await api.getNode(nodeId);
+          if (snapshot?.html) {
+            // Handoff landed — render it.
+            setNodes((prev) => prev.map((n) =>
+              n.id === nodeId ? {
+                ...n,
+                ...node,
+                current_html: snapshot.html,
+                current_screenshot: snapshot.screenshot_url || null,
+                _loading: false, _loadingLabel: undefined,
+                _challenge: false, _handoffPending: false
+              } : n
+            ));
+            stopHandoffPolling(nodeId);
+            return;
+          }
         }
       } catch (e) {
         // 404 → node was deleted; abandon the poller. Other errors
@@ -4035,21 +4040,62 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // tool call as the workflow was being assembled. The single
           // framing pass happens when `frame: true` is set (end of run).
           try {
-            const res = await fetch(`/api/boards/${board.id}`, { credentials: 'include' });
-            if (!res.ok) return;
-            const data = await res.json();
-            if (!Array.isArray(data.nodes)) return;
+            // Light refetch — metadata only, no snapshot HTML/design_md JOIN.
+            // Most agent mutations are creates/deletes/position moves that
+            // don't touch snapshots, so dragging the heavy payload on every
+            // refetch is pure waste. We then targeted-fetch ONLY the nodes
+            // whose current_snapshot_id actually changed (runFlow/editSite/
+            // createNode-with-content), preserving the rendered HTML for all
+            // unchanged nodes.
+            const data = await api.getBoard(board.id, { light: true }).catch(() => null);
+            if (!data || !Array.isArray(data.nodes)) return;
 
-            // Diff against the current node list to detect what's new.
-            // Done inside the setNodes callback so we don't race against
-            // the queued state update.
+            // Diff inside the setNodes callback so we don't race against
+            // the queued state update. We MERGE light metadata into the
+            // existing nodes instead of replacing — replacing would wipe
+            // current_html for every existing site node and force iframes
+            // to remount empty until the next full GET.
             let newNodes = [];
+            const stalenessByNode = new Map(); // nodeId → true when snapshot needs fetch
             setNodes((prev) => {
-              const prevIds = new Set(prev.map((n) => n.id));
-              newNodes = data.nodes.filter((n) => !prevIds.has(n.id));
-              return data.nodes;
+              const prevById = new Map(prev.map((n) => [n.id, n]));
+              newNodes = data.nodes.filter((n) => !prevById.has(n.id));
+              return data.nodes.map((n) => {
+                const old = prevById.get(n.id);
+                if (!old) {
+                  // Brand-new node — if it already has a snapshot id
+                  // (agent created with content), we need its html.
+                  if (n.current_snapshot_id) stalenessByNode.set(n.id, true);
+                  return n;
+                }
+                const snapChanged = old.current_snapshot_id !== n.current_snapshot_id;
+                if (snapChanged) stalenessByNode.set(n.id, true);
+                return {
+                  ...old,                                          // preserve client-only fields (_loading, etc.)
+                  ...n,                                            // overwrite with fresh metadata
+                  current_html:        snapChanged ? null : old.current_html,
+                  current_design_md:   snapChanged ? null : old.current_design_md,
+                  current_screenshot:  snapChanged ? null : old.current_screenshot,
+                };
+              });
             });
             if (Array.isArray(data.edges)) setEdges(data.edges);
+
+            // For each node whose snapshot id changed (or new node with a
+            // snapshot), fire a targeted full GET to load the html. Runs
+            // in parallel; failures are silent (next mutation refetches).
+            for (const nodeId of stalenessByNode.keys()) {
+              api.getNode(nodeId).then(({ snapshot }) => {
+                if (!snapshot?.html) return;
+                setNodes((prev) => prev.map((n) =>
+                  n.id === nodeId ? {
+                    ...n,
+                    current_html: snapshot.html,
+                    current_screenshot: snapshot.screenshot_url || null,
+                  } : n
+                ));
+              }).catch(() => {});
+            }
 
             // Track every node created across this run so framing can fit
             // the full workflow even if intermediate refetches only saw it

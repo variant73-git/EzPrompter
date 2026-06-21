@@ -11,7 +11,11 @@ async function jsonOrThrow(r) {
 export const api = {
   listBoards: () => fetch('/api/boards', COMMON).then(jsonOrThrow),
   createBoard: (name = 'Untitled') => fetch('/api/boards', { ...COMMON, method: 'POST', body: JSON.stringify({ name }) }).then(jsonOrThrow),
-  getBoard: (id) => fetch(`/api/boards/${id}`, COMMON).then(jsonOrThrow),
+  // `light:true` skips the snapshot JOIN — nodes come back without
+  // current_html/current_design_md/current_screenshot. Use when only
+  // metadata is needed (e.g. post-agent-mutation refetch).
+  getBoard: (id, { light = false } = {}) =>
+    fetch(`/api/boards/${id}${light ? '?light=1' : ''}`, COMMON).then(jsonOrThrow),
   renameBoard: (id, name) => fetch(`/api/boards/${id}`, { ...COMMON, method: 'PATCH', body: JSON.stringify({ name }) }).then(jsonOrThrow),
   deleteBoard: (id) => fetch(`/api/boards/${id}`, { ...COMMON, method: 'DELETE' }).then(jsonOrThrow),
 
@@ -92,9 +96,15 @@ export const api = {
   // flow to seed { html } or { designMd } into an existing node.
   saveNodeContent: (nodeId, body) => fetch(`/api/nodes/${nodeId}/save-edit`, { ...COMMON, method: 'POST', body: JSON.stringify(body) }).then(jsonOrThrow),
   runNode: (nodeId, opts = {}) => fetch(`/api/nodes/${nodeId}/run`, { ...COMMON, method: 'POST', body: JSON.stringify(opts) }).then(jsonOrThrow),
-  // Used by the handoff polling loop in CanvasClient — returns the node
-  // row + current snapshot (when present) in one round-trip.
-  getNode: (nodeId) => fetch(`/api/nodes/${nodeId}`, { ...COMMON, method: 'GET' }).then(jsonOrThrow),
+  // Default: node row + current snapshot html (one round-trip when caller
+  // actually wants content). `readyCheck:true`: tiny `{ready, snapshotId}`
+  // probe used by the handoff poller — avoids transferring snapshot.html
+  // on every 3s tick.
+  getNode: (nodeId, { readyCheck = false } = {}) =>
+    fetch(
+      `/api/nodes/${nodeId}${readyCheck ? '?ready_check=1' : ''}`,
+      { ...COMMON, method: 'GET' }
+    ).then(jsonOrThrow),
 
   extractNode: (id, { to, posX, posY }) => fetch(`/api/nodes/${id}/extract`, { ...COMMON, method: 'POST', body: JSON.stringify({ to, posX, posY }) }).then(jsonOrThrow),
 

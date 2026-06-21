@@ -15,14 +15,30 @@ export async function GET(request, { params }) {
   const board = await ownedBoard(sql, user.id, id);
   if (!board) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
-  const nodes = await sql`
-    SELECT n.*, s.html AS current_html, s.design_md AS current_design_md, s.screenshot_url AS current_screenshot,
-           (SELECT id FROM snapshots WHERE node_id = n.id ORDER BY created_at ASC LIMIT 1) AS original_snapshot_id
-      FROM nodes n
-      LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
-     WHERE n.board_id = ${id}
-     ORDER BY n.created_at ASC
-  `;
+  // Bandwidth: caller can opt out of snapshot payload (`?light=1`) when only
+  // node metadata is needed — e.g. the post-agent-mutation refetch that only
+  // wants to know about creates/deletes/position changes. Saves ~50-200KB per
+  // captured site node by skipping the snapshots JOIN.
+  const url = new URL(request.url);
+  const light = url.searchParams.get('light') === '1';
+
+  const nodes = light
+    ? await sql`
+        SELECT n.*,
+               (n.current_snapshot_id IS NOT NULL) AS "hasSnapshot",
+               (SELECT id FROM snapshots WHERE node_id = n.id ORDER BY created_at ASC LIMIT 1) AS original_snapshot_id
+          FROM nodes n
+         WHERE n.board_id = ${id}
+         ORDER BY n.created_at ASC
+      `
+    : await sql`
+        SELECT n.*, s.html AS current_html, s.design_md AS current_design_md, s.screenshot_url AS current_screenshot,
+               (SELECT id FROM snapshots WHERE node_id = n.id ORDER BY created_at ASC LIMIT 1) AS original_snapshot_id
+          FROM nodes n
+          LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
+         WHERE n.board_id = ${id}
+         ORDER BY n.created_at ASC
+      `;
   const edges = await sql`SELECT * FROM edges WHERE board_id = ${id} ORDER BY created_at ASC`;
   return NextResponse.json({ board, nodes, edges });
 }
