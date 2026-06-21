@@ -3190,6 +3190,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // remembers last render's id → memberIds for that detection.
   const prevSectionsRef = useRef({});
   useEffect(() => {
+    // Skip while a node is actively dragged. This effect writes sectionFrames,
+    // which is a dependency of the `sections` memo — running it every drag
+    // frame creates a setState↔recompute feedback loop that trips React's
+    // "maximum update depth". The frame still visually grows during the drag
+    // (the derivation grows against live member positions); we persist the
+    // captured frame once the drag settles (dragFreeze clears → sections
+    // recompute → this effect runs).
+    if (dragFreeze) return;
     const activeIds = new Set(sections.map((s) => s.id));
     const prevMap = prevSectionsRef.current;
     const inherit = {}; // newId -> vanished oldId
@@ -3266,7 +3274,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     for (const s of sections) memo[s.id] = s.memberIds;
     prevSectionsRef.current = memo;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sections]);
+  }, [sections, dragFreeze]);
 
   // Sticky membership latch. A node that belongs to a section ONLY
   // geometrically (it was engulfed when a neighbour got connected — no edge of
