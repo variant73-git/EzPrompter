@@ -82,7 +82,9 @@ function readCanvasScale() {
 // curve the card uses at every zoom level.
 export function NodeProgressRing({ pct, width, height }) {
   const scale = readCanvasScale();
-  const r = Math.min(CORNER_PX / scale, width / 2, height / 2);
+  // Floor at 0.15 to mirror the card's `border-radius: 10px / max(0.15, scale)`
+  // so the ring corners track the node's corners at every zoom level.
+  const r = Math.min(CORNER_PX / Math.max(0.15, scale), width / 2, height / 2);
   const d = buildPerimeterPath(width, height, r);
   return (
     <div className="cnode-progress" aria-hidden="true">
