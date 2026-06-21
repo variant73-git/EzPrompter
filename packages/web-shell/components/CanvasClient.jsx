@@ -748,7 +748,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // drag; the drop decides commit (outside) vs cancel (inside).
     if (drag.ownSectionId && drag.remainingCore) {
       const { cx, cy } = nodeCenter(node, posX, posY);
-      if (!removingRef.current && shouldTearOut(cx, cy, drag.remainingCore, TEAR_MARGIN)) {
+      // Scale the tear threshold inversely with zoom so it takes the SAME
+      // on-screen pull to detach at any zoom — the further out (smaller
+      // scale), the larger the world-space margin.
+      const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
+      const margin = TEAR_MARGIN / (scale > 0 ? scale : 1);
+      if (!removingRef.current && shouldTearOut(cx, cy, drag.remainingCore, margin)) {
         const sec = sections.find((s) => s.id === drag.ownSectionId);
         const siblingIds = sec ? sec.memberIds.filter((id) => id !== node.id) : [];
         setRemovingSync({ nodeId: node.id, sectionId: drag.ownSectionId, rootId: drag.ownRootId, siblingIds });
@@ -882,6 +887,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // explicit gesture (elastic tear-out) or menu action, handled by the
     // armed-removal branch above. This is what makes every in-section node
     // behave consistently.
+    //
+    // Eager latch: if the moved node was a member only geometrically (no real
+    // edge, no adoption marker yet), persist meta.adoptedInto NOW — in the same
+    // batched update as dragFreeze clearing — so the post-drop re-derivation
+    // never sees it briefly leave the section. Without this, a geometric member
+    // could drop for one render (section vanishes → its manually-resized frame
+    // gets GC'd → reappears fit-to-content), wiping a manual resize.
+    if (drag.ownSectionId && drag.ownRootId &&
+        !edgeTouchedIds.has(node.id) && !node.meta?.adoptedInto) {
+      const meta = { ...(node.meta || {}), adoptedInto: drag.ownRootId };
+      setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, meta } : n)));
+      if (!String(node.id).startsWith('temp-')) {
+        api.updateNode(node.id, { meta }).catch(() => {});
+      }
+    }
   }
 
   // The live "inside" region for an armed removal: the section frame derived
