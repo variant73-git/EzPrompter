@@ -45,7 +45,9 @@ CREATE INDEX IF NOT EXISTS idx_nodes_board ON nodes(board_id);
 CREATE TABLE IF NOT EXISTS snapshots (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   node_id UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-  html TEXT NOT NULL,
+  -- Nullable: designmd/content/tokens snapshots carry design_md only, prompt
+  -- and asset nodes carry no snapshot at all. Only site/style snapshots have html.
+  html TEXT,
   design_md TEXT,
   screenshot_url TEXT,
   source VARCHAR(20) NOT NULL,

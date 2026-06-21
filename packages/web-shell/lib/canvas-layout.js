@@ -73,11 +73,19 @@ function resolveDownCollision(x, y, w, h, rows, gap) {
 }
 
 // Padding a section frame adds around its members on the canvas. New
-// standalone nodes must clear the whole frame (with the usual gap on top),
-// so they land WELL away from any existing section — not just away from the
-// individual member nodes (a node could otherwise slip into the gap between
-// two members and still sit inside the section's frame).
-const SECTION_FRAME_PAD = 80;
+// standalone nodes must clear the whole frame, so they land WELL away from any
+// existing section — not just away from the individual member nodes (a node
+// could otherwise slip into the gap between two members and still sit inside
+// the section's frame).
+//
+// These MIRROR the rendered footprint in CanvasClient (sectionCoreRect:
+// SECTION_UNIFORM_GAP=165 sides/bottom, SECTION_TOP_GAP=260 top). The top is
+// larger to reserve the section TITLE CHIP band — the chip is a stable on-
+// screen size, so it occupies more world space when zoomed out. Without this,
+// a new node lands in the chip's band and ends up hidden behind it. Keep in
+// sync with CanvasClient.
+const SECTION_SIDE_PAD = 165;
+const SECTION_TOP_PAD = 260;
 
 // A "section" is a connected component of the board graph with >= 2 nodes.
 // Returns each section's padded bounding box (an obstacle rect). Rows with
@@ -110,10 +118,10 @@ function sectionRects(rows, edgeRows) {
       if (y + h > maxY) maxY = y + h;
     }
     rects.push({
-      pos_x: minX - SECTION_FRAME_PAD,
-      pos_y: minY - SECTION_FRAME_PAD,
-      width: (maxX - minX) + SECTION_FRAME_PAD * 2,
-      height: (maxY - minY) + SECTION_FRAME_PAD * 2,
+      pos_x: minX - SECTION_SIDE_PAD,
+      pos_y: minY - SECTION_TOP_PAD,                       // reserve the title-chip band
+      width: (maxX - minX) + SECTION_SIDE_PAD * 2,
+      height: (maxY - minY) + SECTION_TOP_PAD + SECTION_SIDE_PAD,
     });
   }
   return rects;

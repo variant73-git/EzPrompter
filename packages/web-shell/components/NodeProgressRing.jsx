@@ -54,18 +54,43 @@ export function buildPerimeterPath(width, height, r) {
   ].join(' ');
 }
 
-// Pure render: an SVG outline that hugs the node frame and fills clockwise
-// to `pct` from 12 o'clock, plus the centered percentage. Color comes from
-// the parent's --cnode-port-fill via CSS (.cnode-progress-arc); the number
-// + track are solid dark grey. viewBox = node dimensions so the path maps
-// 1:1 to node pixels with no aspect distortion.
-const CORNER_R = 10;
+// On-screen corner radius the card uses (.cnode border-radius: 10px / scale).
+const CORNER_PX = 10;
 
+function readCanvasScale() {
+  if (typeof document === 'undefined') return 1;
+  const v = parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')
+  );
+  return v > 0 ? v : 1;
+}
+
+// Pure render: an SVG outline that hugs the node frame and fills clockwise
+// to `pct` from 12 o'clock, plus the corner percentage. Color comes from
+// the parent's --cnode-port-fill via CSS (.cnode-progress-arc); the number
+// + track are solid dark grey.
+//
+// `preserveAspectRatio="none"` stretches the viewBox to fill the SVG element
+// box EXACTLY — so the ring always lands on the real rendered card edges no
+// matter how the measured width/height relate to the element's own box
+// (border inset, fixed-height loading body, stale measurement). Without it
+// the default `meet` letterboxed the path, making the ring narrower than the
+// node — the "width desencontrado" the user saw.
+//
+// Corner radius matches the card's `10px / scale`: in node-local units (the
+// viewBox space) that's CORNER_PX / scale, so the ring corners trace the same
+// curve the card uses at every zoom level.
 export function NodeProgressRing({ pct, width, height }) {
-  const d = buildPerimeterPath(width, height, CORNER_R);
+  const scale = readCanvasScale();
+  const r = Math.min(CORNER_PX / scale, width / 2, height / 2);
+  const d = buildPerimeterPath(width, height, r);
   return (
     <div className="cnode-progress" aria-hidden="true">
-      <svg className="cnode-progress-svg" viewBox={`0 0 ${width} ${height}`}>
+      <svg
+        className="cnode-progress-svg"
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+      >
         <path className="cnode-progress-track" d={d} pathLength="100" />
         <path
           className="cnode-progress-arc"

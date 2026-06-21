@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useCallback, useEffect, useState } from 'react';
+import { useRef, useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
 import { nodeOrigin } from '../lib/node-origin.js';
@@ -768,10 +768,35 @@ export default function CanvasNode({
     !!runStatus;
   const genPct = useGenerationProgress(generating, estimatedDurationMs(node));
 
+  // The progress ring traces the node's OUTER frame (topbar + body), so it
+  // must use the real rendered box — not the body-only node.height, which made
+  // the rounded-rect path letterbox into a small rectangle floating inside the
+  // node. Measure on the way in (useLayoutEffect = before paint, no flash).
+  const [ringFrame, setRingFrame] = useState(null);
+  useLayoutEffect(() => {
+    if (!generating) { setRingFrame(null); return; }
+    const el = cnodeRef.current;
+    if (el) setRingFrame({ w: el.offsetWidth, h: el.offsetHeight });
+  }, [generating, node.width, node.height]);
+
+  // Loading body: a node that ALREADY has content gets a dark frosted blur of
+  // that content (the new version is materialising over the old); an empty
+  // node gets a neutral frosted surface. The status line shows the real
+  // request driving the run (run-flow plumbs runStatus.request) with honest
+  // fallbacks to the operation label.
+  const hasContent = !!html || !!node.meta?.dataUrl;
+  const loadingRequest =
+    runStatus?.request ||
+    node._loadingLabel ||
+    node.meta?.prompt ||
+    (node.kind === 'site' && node.origin_url ? `Capturing ${node.origin_url}` : '') ||
+    runStatus?.label ||
+    'Working on it…';
+
   return (
     <div
       ref={cnodeRef}
-      className={`cnode origin-${origin}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}`}
+      className={`cnode origin-${origin}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}${generating ? ' generating' : ''}`}
       style={{ left: node.pos_x, top: node.pos_y, width: node.width, '--cnode-h': `${node.height}px` }}
       data-node-id={node.id}
     >
@@ -780,10 +805,15 @@ export default function CanvasNode({
           percentage is a reassurance estimate; the ring is swapped out
           for the real content the instant generation finishes. */}
       {generating && (
+        <div className={`cnode-gen-overlay${hasContent ? ' has-content' : ''}`} aria-hidden="true">
+          <div className="cnode-gen-status">{loadingRequest}</div>
+        </div>
+      )}
+      {generating && (
         <NodeProgressRing
           pct={genPct}
-          width={node.width}
-          height={node.height || Math.round(node.width * 9 / 16)}
+          width={ringFrame?.w || node.width}
+          height={ringFrame?.h || node.height || Math.round(node.width * 9 / 16)}
         />
       )}
       {/* Anchored title — only visible when the canvas is zoomed-out enough

@@ -94,8 +94,22 @@ describe('section-aware placement (keep new nodes clear of section frames)', () 
     const edges = [{ source_node_id: 'a', target_node_id: 'b' }];
     // Candidate dropped into the gap between a and b.
     const p = await resolvePlacement('board', 0, 400, 200, 200, seqSql(nodes, edges));
-    // Section frame ≈ y[-80..1080]. The node must be pushed below it.
-    expect(p.y).toBeGreaterThanOrEqual(1080);
+    // Section frame now mirrors the rendered footprint: y[-260 .. 1000+165].
+    // The node must be pushed below the whole frame.
+    expect(p.y).toBeGreaterThanOrEqual(1165);
+  });
+
+  it('reserves the title-chip band above a section (new node never lands behind the chip)', async () => {
+    const nodes = [
+      { id: 'a', pos_x: 0, pos_y: 1000, width: 300, height: 300 },
+      { id: 'b', pos_x: 0, pos_y: 1700, width: 300, height: 300 },
+    ];
+    const edges = [{ source_node_id: 'a', target_node_id: 'b' }];
+    // Drop a candidate in the band just ABOVE the top member (y 800), where
+    // the section TITLE CHIP lives (within the 260px top reservation). It must
+    // not stay there — it clears the whole frame and lands below the bottom.
+    const p = await resolvePlacement('board', 0, 800, 200, 200, seqSql(nodes, edges));
+    expect(p.y).toBeGreaterThanOrEqual(2165); // maxY 2000 + 165 bottom pad
   });
 
   it('does NOT treat two unconnected nodes as a section (gap is usable)', async () => {

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
 import { runExtract } from '../../../../../lib/extract.js';
-import { placeStackDown } from '../../../../../lib/canvas-layout.js';
+import { placeStackDown, resolvePlacement } from '../../../../../lib/canvas-layout.js';
 
 export const runtime = 'nodejs';
 
@@ -18,6 +18,12 @@ export async function POST(request, { params }) {
   const body = await request.json().catch(() => ({}));
   const to = body?.to;
   if (!to) return NextResponse.json({ error: 'to required' }, { status: 400 });
+  // Requested drop position (world coords from where the user released the
+  // cord). When present, the derived node lands THERE (collision-avoided)
+  // instead of being stacked at the bottom of the board — so it stays put
+  // where the user asked, matching its loading placeholder.
+  const reqX = Number.isFinite(body?.posX) ? Math.round(body.posX) : null;
+  const reqY = Number.isFinite(body?.posY) ? Math.round(body.posY) : null;
 
   const rows = await sql`
     SELECT n.id, n.board_id, n.kind, n.meta, s.html, s.design_md
@@ -43,7 +49,10 @@ export async function POST(request, { params }) {
   const DIMS = { designmd: { width: 600, height: 600 }, asset: { width: 600, height: 600 }, prompt: { width: 600, height: 200 } };
   const { width, height } = DIMS[out.kind] || DIMS.designmd;
 
-  const { x: posX, y: posY } = await placeStackDown(src.board_id, width, height, sql);
+  const { x: posX, y: posY } =
+    reqX != null && reqY != null
+      ? await resolvePlacement(src.board_id, reqX, reqY, width, height, sql)
+      : await placeStackDown(src.board_id, width, height, sql);
 
   const meta = { ...out.meta };
   const [node] = await sql`
@@ -51,12 +60,19 @@ export async function POST(request, { params }) {
     VALUES (${src.board_id}, ${out.kind}, ${posX}, ${posY}, ${width}, ${height}, ${JSON.stringify(meta)}::jsonb)
     RETURNING id, board_id, kind, pos_x, pos_y, width, height, meta, created_at
   `;
-  const [snap] = await sql`
-    INSERT INTO snapshots (node_id, html, design_md, source)
-    VALUES (${node.id}, ${out.html}, ${out.designMd}, 'extract')
-    RETURNING id
-  `;
-  await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${node.id}`;
+  // Only create a snapshot when there's snapshot-worthy content. prompt nodes
+  // carry their text in meta.prompt and asset (screenshot) nodes carry the
+  // image in meta.dataUrl — neither needs a snapshot row (mirrors createNode /
+  // createImage). Inserting one with html+design_md both null is useless and
+  // would dangle current_snapshot_id at an empty row.
+  if (out.html != null || out.designMd != null) {
+    const [snap] = await sql`
+      INSERT INTO snapshots (node_id, html, design_md, source)
+      VALUES (${node.id}, ${out.html}, ${out.designMd}, 'extract')
+      RETURNING id
+    `;
+    await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${node.id}`;
+  }
   if (out.dataUrl) {
     await sql`UPDATE nodes SET meta = meta || ${JSON.stringify({ dataUrl: out.dataUrl })}::jsonb WHERE id = ${node.id}`;
     node.meta = { ...node.meta, dataUrl: out.dataUrl };

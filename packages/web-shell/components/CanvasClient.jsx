@@ -20,6 +20,7 @@ import ChallengeModal from './ChallengeModal.jsx';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
 import { findSectionTerminal, sectionRerunWouldOverwrite } from '../lib/section-run.js';
+import { clampToViewport } from '../lib/menu-position.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -183,6 +184,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Right-click context menu over a section. Holds the section id + the
   // viewport coords where the menu should anchor.
   const [sectionMenu, setSectionMenu] = useState(null); // { sectionId, x, y }
+  // Measured viewport-clamp for the (inline) section context menu — same
+  // robustness as the EmptyDropMenu / CanvasContextMenu hook, but the menu
+  // is rendered inline via a portal so it can't use the hook directly.
+  const sectionMenuRef = useRef(null);
+  const [sectionMenuPos, setSectionMenuPos] = useState(null);
+  useLayoutEffect(() => {
+    if (!sectionMenu) { setSectionMenuPos(null); return; }
+    const el = sectionMenuRef.current;
+    if (el) setSectionMenuPos(clampToViewport(sectionMenu.x, sectionMenu.y, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight));
+  }, [sectionMenu]);
   // Section being inline-renamed. Opens via double-click on the name
   // label or the Rename item in the right-click menu.
   const [editingSectionId, setEditingSectionId] = useState(null);
@@ -259,7 +270,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Pre-drag snapshot for loose-node drags: lets the node's own singleton
   // frame TRANSLATE with the drag (instead of being stretched by the
   // grow-only frame logic) and gives the drop handler the start position.
-  const looseDragRef = useRef(null); // {nodeId, startX, startY, frameAtStart|null}
+  const looseDragRef = useRef(null); // {nodeId, startX, startY, lastX, lastY, ownSectionId, ownRectAtStart}
+  // While a node is being dragged, its membership in the section graph must
+  // stay FROZEN — otherwise the geometric-absorption step recomputes from the
+  // node's live position every frame, so pushing a node around its section's
+  // edge makes loose members fall in/out and whole sections merge/split
+  // mid-drag (the erratic "node leaves / section vanishes / others expelled"
+  // behaviour). The frame still follows the node live (grow-only bbox); only
+  // the absorption GEOMETRY uses this frozen start position. Adoption/release
+  // is decided once, on drop, by the move-end handler.
+  const [dragFreeze, setDragFreeze] = useState(null); // { id, startX, startY }
   // Close the section context menu on outside click or Escape.
   useEffect(() => {
     if (!sectionMenu) return;
@@ -672,6 +692,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
   function handleNodeMoveStart(node) {
     if (String(node.id).startsWith('temp-')) return;
+    // Freeze this node's absorption geometry for the whole drag — applies to
+    // EVERY dragged node (incl. edge-connected ones, which return early
+    // below), because any member's live movement reshapes its section's core
+    // and would otherwise expel/absorb other nodes mid-drag.
+    setDragFreeze({ id: node.id, startX: node.pos_x, startY: node.pos_y });
     if (edgeTouchedIds.has(node.id)) return;
     // Loose-node drag baseline: lets the singleton frame TRANSLATE with the
     // drag (instead of being stretched by grow-only frame logic), and gives
@@ -683,7 +708,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       startY: node.pos_y,
       lastX: node.pos_x,
       lastY: node.pos_y,
-      frameAtStart: sectionFrames[`section-${node.id}`] || null,
       ownSectionId: own?.id || null,
       ownRectAtStart: own ? { left: own.x, top: own.y, right: own.x + own.width, bottom: own.y + own.height } : null,
     };
@@ -695,22 +719,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     drag.lastX = posX;
     drag.lastY = posY;
     const rect = nodeWorldRect(node, posX, posY);
-    // Singleton-frame carry — translate the node's own frame by the drag
-    // delta so it travels as a unit (same approach as startSectionMove).
-    if (drag.frameAtStart) {
-      const dx = posX - drag.startX;
-      const dy = posY - drag.startY;
-      const f = drag.frameAtStart;
-      setSectionFrames((prev) => ({
-        ...prev,
-        [`section-${node.id}`]: {
-          left:   Math.round(f.left + dx),
-          top:    Math.round(f.top + dy),
-          right:  Math.round(f.right + dx),
-          bottom: Math.round(f.bottom + dy),
-        },
-      }));
-    }
+    // NOTE: a node drag must NEVER translate a section frame. The frame only
+    // expands/retracts to fit its members (grow-only derivation + shrink on
+    // membership change) — moving the WHOLE section is a separate gesture via
+    // the grip handle (startSectionMove). The old "singleton-frame carry"
+    // here slid `section-${node.id}`, which is a real frame only when the
+    // dragged node is its section's ROOT — so dragging that one node dragged
+    // the entire section. Removed.
     // Candidate = the section whose BASE rendered rect intersects the
     // dragged node (testing the base rect — not the expanded preview —
     // avoids the "once engulfed, can never leave" trap). Largest
@@ -752,6 +767,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   }
 
   async function handleNodeMoveEnd(node, moved) {
+    // Unfreeze membership — from here the next render re-derives sections from
+    // live positions (the node has settled), so adoption/release lands once.
+    setDragFreeze(null);
     const drag = looseDragRef.current;
     looseDragRef.current = null;
     const preview = adoptPreviewRef.current;
@@ -1360,27 +1378,44 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // generator runs (LLM / screenshot can take a few seconds).
   async function handleExtractTo(to, { sourceNodeId, worldX, worldY }) {
     const tmpId = `tmp-extract-${sourceNodeId}-${to}`;
+    const tmpEdgeId = `tmp-extract-edge-${sourceNodeId}-${to}`;
     const { posX, posY } = nextNodePosition({ worldX, worldY, width: 600, height: 200 });
     const placeholder = {
       id: tmpId, board_id: board.id, kind: 'designmd',
       pos_x: posX, pos_y: posY, width: 600, height: 200,
+      // _pendingLinkFrom unions the placeholder with its source in the
+      // sections memo immediately — no singleton-frame flash while the
+      // real edge round-trips.
+      _pendingLinkFrom: sourceNodeId,
       meta: { name: `Extracting ${to}…` }, current_html: null, _loading: true,
       _loadingLabel: 'Extracting…',
     };
+    // Optimistic cord source → placeholder so the derived node reads as
+    // CONNECTED from the first frame (the real edge replaces it on refetch).
+    const tmpEdge = {
+      id: tmpEdgeId, board_id: board.id,
+      source_node_id: sourceNodeId, target_node_id: tmpId, kind: 'generic',
+    };
     setNodes((prev) => [...prev, placeholder]);
+    setEdges((prev) => [...prev, tmpEdge]);
     try {
-      const { node } = await api.extractNode(sourceNodeId, { to });
+      // Persist the derived node at the SAME spot the placeholder occupies
+      // so it doesn't jump on refetch (was stacked at the board bottom).
+      const { node } = await api.extractNode(sourceNodeId, { to, posX, posY });
       // Pull the full board so the derived node arrives POPULATED (its
       // content lives in the snapshot the route created, not in the INSERT
-      // RETURNING row). The fresh list omits the temp placeholder, so it's
-      // dropped in the same swap. Edges bring the source→derived cord.
+      // RETURNING row). The fresh list omits the temp placeholder + temp
+      // edge, so both are dropped in the same swap. Real edges bring the
+      // source→derived cord.
       const fresh = await api.getBoard(board.id);
       if (Array.isArray(fresh.nodes)) setNodes(fresh.nodes);
       else setNodes((prev) => prev.filter((n) => n.id !== tmpId));
       if (Array.isArray(fresh.edges)) setEdges(fresh.edges);
+      else setEdges((prev) => prev.filter((e) => e.id !== tmpEdgeId));
       setTimeout(() => zoomToNode(node, 350, 1), 80);
     } catch (e) {
       setNodes((prev) => prev.filter((n) => n.id !== tmpId));
+      setEdges((prev) => prev.filter((e) => e.id !== tmpEdgeId));
       toast.error(`Could not extract: ${e.message}`);
     }
   }
@@ -1680,21 +1715,34 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       return next;
     });
   }
+  // The real "client request" driving a run = the text of the prompt sources
+  // wired into this target. Surfaced in the generating node's status line.
+  function requestTextForTarget(id) {
+    const srcIds = new Set(
+      edges.filter((e) => e.target_node_id === id).map((e) => e.source_node_id)
+    );
+    const texts = nodes
+      .filter((n) => srcIds.has(n.id) && n.meta?.prompt)
+      .map((n) => String(n.meta.prompt).trim())
+      .filter(Boolean);
+    return texts.join(' ');
+  }
   async function runOneTarget(id, opts = {}) {
-    setNodeRunStatus(id, { step: 1, label: 'Reading inputs…' });
+    const request = requestTextForTarget(id);
+    setNodeRunStatus(id, { step: 1, label: 'Reading inputs…', request });
     const advanceToStep2 = setTimeout(() => {
       setRunStatus((prev) => {
         const cur = prev.get(id);
         if (!cur || cur.step !== 1) return prev;
         const next = new Map(prev);
-        next.set(id, { step: 2, label: 'Generating…' });
+        next.set(id, { step: 2, label: 'Generating…', request });
         return next;
       });
     }, 1500);
     try {
       const result = await api.runNode(id, opts);
       clearTimeout(advanceToStep2);
-      setNodeRunStatus(id, { step: 3, label: 'Saving…' });
+      setNodeRunStatus(id, { step: 3, label: 'Saving…', request });
       // Hold the saving label briefly so the transition reads as a
       // resolved step rather than a flash.
       await new Promise((r) => setTimeout(r, 700));
@@ -2831,40 +2879,55 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       components.push(members);
     }
     if (components.length === 0) return [];
-    // Geometric absorption — no nested sections, ever. A LOOSE node whose
-    // CENTER sits inside a real section's core area belongs to THAT
-    // section. This is what keeps a freshly-DISCONNECTED node a member of
-    // the section it's still standing in (disconnecting must not create a
-    // section). Targets are MULTI-member components only — lone nodes
-    // render no frame, so there is no invisible singleton core to fall
-    // into. The core area is the members' bbox + the default gaps (NOT
-    // the stored frame, which grows and would trap the node forever).
+    // Geometric absorption — no nested sections, EVER. A component (of ANY
+    // size) whose members ALL sit inside another component's core area
+    // belongs to THAT section: its members are merged in rather than drawing
+    // a frame nested inside the other. This keeps a freshly-DISCONNECTED node
+    // — OR a whole sub-chain left behind by a disconnect (e.g. .md→site after
+    // unhooking the image) — a member of the section it's still standing in,
+    // instead of spawning a section-within-a-section. The host core is the
+    // members' bbox + default gaps (NOT the grown stored frame, which would
+    // trap nodes forever). Fixed-point: merging grows a host core, which can
+    // then swallow more; bounded by component count.
     {
-      const coreRects = components.map((c) =>
-        c.length >= 2 ? sectionCoreRect(c.map((id) => nodeById.get(id))) : null);
-      const absorbed = new Set();
-      for (let i = 0; i < components.length; i++) {
-        if (components[i].length !== 1) continue;
-        const n = nodeById.get(components[i][0]);
-        if (!n) continue;
+      // Absorption geometry uses the dragged node's FROZEN start position so
+      // dragging a node never reshapes section cores mid-drag (see dragFreeze).
+      const geomNode = (id) => {
+        const n = nodeById.get(id);
+        if (n && dragFreeze && id === dragFreeze.id) {
+          return { ...n, pos_x: dragFreeze.startX, pos_y: dragFreeze.startY };
+        }
+        return n;
+      };
+      const centerInside = (n, r) => {
+        if (!n || !r) return false;
         const cx = (n.pos_x || 0) + (n.width || 0) / 2;
         const cy = (n.pos_y || 0) + (n.height || 0) / 2;
-        let best = -1, bestArea = Infinity;
-        for (let j = 0; j < components.length; j++) {
-          if (j === i) continue;
-          const r = coreRects[j];
-          if (!r) continue;
-          if (cx < r.left || cx > r.right || cy < r.top || cy > r.bottom) continue;
-          // Smallest containing core = the most specific host.
-          const area = (r.right - r.left) * (r.bottom - r.top);
-          if (area < bestArea) { best = j; bestArea = area; }
+        return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
+      };
+      for (let guard = 0; guard < 64; guard++) {
+        const coreRects = components.map((c) =>
+          c.length >= 2 ? sectionCoreRect(c.map((id) => geomNode(id))) : null);
+        let pick = null; // { i, j } — absorb i into host j
+        for (let i = 0; i < components.length && !pick; i++) {
+          let bestJ = -1, bestArea = Infinity;
+          for (let j = 0; j < components.length; j++) {
+            if (j === i) continue;
+            const r = coreRects[j];
+            if (!r) continue;
+            // Every member of i must sit inside host j's core.
+            const allIn = components[i].every((id) => centerInside(geomNode(id), r));
+            if (!allIn) continue;
+            // Smallest containing core = the most specific host.
+            const area = (r.right - r.left) * (r.bottom - r.top);
+            if (area < bestArea) { bestArea = area; bestJ = j; }
+          }
+          if (bestJ !== -1) pick = { i, j: bestJ };
         }
-        if (best !== -1) {
-          components[best].push(components[i][0]);
-          absorbed.add(i);
-        }
+        if (!pick) break;
+        components[pick.j] = components[pick.j].concat(components[pick.i]);
+        components.splice(pick.i, 1);
       }
-      if (absorbed.size) components = components.filter((_, i) => !absorbed.has(i));
     }
     // Sections exist only for RELATIONSHIPS — a lone node renders no
     // frame. A new/standalone node stays frameless until it's connected,
@@ -2990,7 +3053,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       });
     }
     return out;
-  }, [nodes, edges, sectionNameOverrides, sectionFrames, canvasScale]);
+  }, [nodes, edges, sectionNameOverrides, sectionFrames, canvasScale, dragFreeze]);
 
   // Capture / grow sectionFrames after each sections render. New sections
   // initialise their stored frame from the default-padded coords; existing
@@ -3031,10 +3094,25 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         return nextNames;
       });
     }
+    // Sections that LOST a member since last render (e.g. a disconnect split
+    // the workflow, or a node was dragged out). Their grow-only stored frame
+    // was sized for the bigger member set and would keep engulfing the
+    // departed nodes — which renders as a section sitting INSIDE another.
+    // Reset those frames so they recompute tight around the current members.
+    const shrunk = new Set();
+    for (const s of sections) {
+      const prevMembers = prevMap[s.id];
+      if (prevMembers && prevMembers.some((id) => !s.memberIds.includes(id))) {
+        shrunk.add(s.id);
+      }
+    }
     setSectionFrames((prev) => {
       const next = {};
       let changed = false;
       for (const s of sections) {
+        // Drop the stale frame for a shrunk section: omit it from `next` so
+        // the next derivation falls back to the default (members + gap) box.
+        if (shrunk.has(s.id)) { changed = true; continue; }
         const inherited = inherit[s.id] ? prev[inherit[s.id]] : null;
         const target = { left: s.x, top: s.y, right: s.x + s.width, bottom: s.y + s.height };
         // Union with the inherited frame so a re-rooted section keeps any
@@ -3077,7 +3155,24 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     e.preventDefault();
     const section = sections.find((x) => x.id === sectionId);
     if (!section) return;
-    const memberNodes = section.memberIds
+    // Move set = graph members UNION every node whose center sits inside the
+    // section's rendered frame. Rule: "everything within a section's
+    // demarcation belongs to the section" — so an image (or any) node that
+    // visually lives inside the frame travels with it even if it isn't a
+    // graph member yet (e.g. dropped in, or created from a member but not
+    // edge-linked). Without this, the purple image nodes were left behind
+    // while the connected (teal) ones moved.
+    const fL = section.x, fT = section.y;
+    const fR = section.x + section.width, fB = section.y + section.height;
+    const moveIds = new Set(section.memberIds);
+    for (const n of nodes) {
+      if (moveIds.has(n.id)) continue;
+      if (String(n.id).startsWith('temp-')) continue;
+      const cx = (n.pos_x || 0) + (n.width || 0) / 2;
+      const cy = (n.pos_y || 0) + (n.height || 0) / 2;
+      if (cx >= fL && cx <= fR && cy >= fT && cy <= fB) moveIds.add(n.id);
+    }
+    const memberNodes = [...moveIds]
       .map((id) => nodes.find((n) => n.id === id))
       .filter(Boolean);
     if (memberNodes.length === 0) return;
@@ -3818,11 +3913,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         const title = s.name.length > 15 ? s.name.slice(0, 12) + '...' : s.name;
         return createPortal(
           <div
+            ref={sectionMenuRef}
             className="empty-drop-menu cnode-topbar-menu section-context-menu"
-            style={{
-              left: Math.min(sectionMenu.x, window.innerWidth - 240),
-              top: Math.min(sectionMenu.y, window.innerHeight - 180),
-            }}
+            style={sectionMenuPos || { left: sectionMenu.x, top: sectionMenu.y }}
             onMouseDown={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
           >
@@ -3920,11 +4013,24 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   );
 }
 
+// Measure a menu after mount and clamp it to the viewport. Re-runs when the
+// anchor or any `deps` (e.g. a submenu toggling height) change. useLayoutEffect
+// repositions before paint, so there's no visible jump.
+function useClampedMenuPos(x, y, deps = []) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState({ left: x, top: y });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el) setPos(clampToViewport(x, y, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [x, y, ...deps]);
+  return [ref, pos];
+}
+
 function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onPickScreenshot, onPickPrompt, onPickCode, onPickBlankSite }) {
   const [mode, setMode] = useState('choices');
   const [url, setUrl] = useState('');
-  const left = Math.min(x + 8, window.innerWidth - 280);
-  const top = Math.min(y + 8, window.innerHeight - 240);
+  const [menuRef, { left, top }] = useClampedMenuPos(x + 8, y + 8, [mode]);
 
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose(); }
@@ -3941,6 +4047,7 @@ function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onP
 
   return (
     <div
+      ref={menuRef}
       className="popup-menu canvas-context-menu"
       style={{ left, top }}
       onMouseDown={(e) => e.stopPropagation()}
@@ -4016,9 +4123,8 @@ const EXTRACT_OPTIONS = {
 };
 
 function EmptyDropMenu({ x, y, sourceKind, onClose, onPick, onExtract }) {
-  const left = Math.min(x + 8, window.innerWidth - 280);
-  const top = Math.min(y + 8, window.innerHeight - 240);
   const [extractOpen, setExtractOpen] = useState(false);
+  const [menuRef, { left, top }] = useClampedMenuPos(x + 8, y + 8, [extractOpen]);
   const extractOpts = EXTRACT_OPTIONS[sourceKind === 'image' ? 'asset' : sourceKind] || null;
 
   useEffect(() => {
@@ -4043,7 +4149,7 @@ function EmptyDropMenu({ x, y, sourceKind, onClose, onPick, onExtract }) {
   }, [onClose]);
 
   return (
-    <div className="popup-menu empty-drop-menu" style={{ left, top }} onMouseDown={(e) => e.stopPropagation()}>
+    <div ref={menuRef} className="popup-menu empty-drop-menu" style={{ left, top }} onMouseDown={(e) => e.stopPropagation()}>
       <div className="popup-menu-title">Connect to…</div>
       {EMPTY_DROP_ITEMS.map(({ kind, label, Icon }) => (
         <button key={kind} className="popup-menu-btn" onClick={() => onPick(kind)}>

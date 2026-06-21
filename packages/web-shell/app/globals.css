@@ -2390,6 +2390,14 @@ html, body { overscroll-behavior: none; }
     0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
+/* While generating, the progress ring (cnode-progress-arc) traces the frame
+   and serves as the outline. Drop the static selection ring so the two don't
+   stack into a double border — the ring takes the selected outline's place. */
+.cnode.generating.selected {
+  border-color: transparent;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
 /* Topbar — offblack frosted, matches the editor panels (#1A1A1A) and the
    prompt dock. Rounds its own top corners since cnode no longer clips. */
 .cnode-topbar {
@@ -3492,22 +3500,28 @@ body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.4
 
 .cnode-loading {
   width: 100%;
-  height: 800px;
+  /* Track the node's declared height (set inline as --cnode-h) so the
+     loading body matches the real node box — a fixed 800px made the
+     rendered frame taller than node.height, which threw off the progress
+     ring measurement and let the body bleed past the section frame. */
+  height: var(--cnode-h, 800px);
   display: flex;
   align-items: center;
   justify-content: center;
   color: #94a3b8;
   font-size: 0.85rem;
-  background: #14142a;
+  /* Same offblack as the topbar (.cnode-topbar) so the generating node
+     reads as ONE surface (topbar + body), not a topbar over a blue card. */
+  background: #0f0f0f;
   flex-direction: column;
   gap: 0.5rem;
-  border-radius: 10px;
+  border-radius: 0 0 10px 10px;
 }
 
 /* Generating state for agent-created result nodes — pulses subtly so the
    user knows the canvas isn't frozen while image gen runs (30–120s). */
 .cnode-loading-gen {
-  background: linear-gradient(135deg, #1a1a3a 0%, #14142a 100%);
+  background: #0f0f0f;                    /* topbar offblack — one surface */
   color: rgba(255, 255, 255, 0.55);
   animation: cnode-gen-pulse 2.2s ease-in-out infinite;
 }
@@ -5002,12 +5016,13 @@ body.rb-ed-light .border-trail-dot {
    centre. Swapped out wholesale when the real result arrives. */
 .cnode-progress {
   position: absolute;
-  inset: 0;
+  /* Expand by the border width (1px / scale) so the SVG box reaches the
+     node's OUTER edge — `inset: 0` would sit it inside the border, making
+     the ring read slightly narrower than the card. Combined with the SVG's
+     viewBox = node offset dimensions, the ring traces the true frame. */
+  inset: calc(-1px / var(--canvas-scale, 1));
   pointer-events: none;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  z-index: 3;                            /* above the loading overlay (z-index 2) */
 }
 .cnode-progress-svg {
   position: absolute;
@@ -5018,28 +5033,79 @@ body.rb-ed-light .border-trail-dot {
 }
 .cnode-progress-track {
   fill: none;
-  stroke: #3f444d;                       /* soft grey rail, visible on the dark loading body */
-  stroke-width: 3px;
+  stroke: #313131;                       /* unfilled rail — quiet, just reads the path */
+  stroke-width: 2px;                     /* thinner than the filled arc */
   vector-effect: non-scaling-stroke;     /* constant on-screen at any zoom */
 }
 .cnode-progress-arc {
   fill: none;
   stroke: var(--cnode-port-fill, var(--accent));
-  stroke-width: 3px;
+  stroke-width: 4px;                     /* thicker + brighter than the track */
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
+  /* Soft glow in the category colour — matches the reference's lit ring. */
+  filter: drop-shadow(0 0 3px var(--cnode-port-fill, var(--accent)));
   transition: stroke-dashoffset 0.12s linear;  /* smooth between ticks */
 }
 .cnode-progress-num {
-  position: relative;
+  position: absolute;
+  /* Bottom-right of the frame (= bottom-right of the body, since the topbar
+     is at the top) — per the reference, not centred. */
+  right: calc(20px / max(0.2, var(--canvas-scale, 1)));
+  bottom: calc(14px / max(0.2, var(--canvas-scale, 1)));
   font-family: 'Aeonik', system-ui, sans-serif;
   font-weight: 500;
   /* Big and proportional to the node so it scales with zoom and always
      fits. Floored so it stays legible on small / zoomed-out nodes. */
   font-size: clamp(14px, calc(0.28 * var(--cnode-h, 120px)), 96px);
   line-height: 1;
-  color: #6b7280;                        /* mid grey — legible on the dark loading body, quieter than the arc */
+  color: rgba(148, 155, 165, 0.85);      /* mid grey, slightly translucent — quieter than the arc */
   letter-spacing: -0.02em;
+}
+
+/* Generating overlay — sits over the BODY only (starts below the topbar so
+   the SITE pill / grip stay crisp), rounds the body's bottom corners. The
+   progress ring (z-index 3) + its % sit above this. */
+.cnode-gen-overlay {
+  position: absolute;
+  top: calc(36px / max(0.15, var(--canvas-scale, 1)));  /* topbar height — clears it */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 0 0
+    calc(10px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1));
+}
+/* Empty node: nothing behind to blur — match the topbar offblack so the
+   whole generating node reads as one continuous surface (no blue card). */
+.cnode-gen-overlay:not(.has-content) {
+  background: #0f0f0f;
+}
+/* Node with content: dark frosted blur of the real content behind it. */
+.cnode-gen-overlay.has-content {
+  background: rgba(10, 10, 16, 0.5);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+}
+.cnode-gen-status {
+  position: absolute;
+  top: calc(20px / max(0.2, var(--canvas-scale, 1)));
+  left: calc(22px / max(0.2, var(--canvas-scale, 1)));
+  /* Leave room on the right so it never runs under the % in the corner. */
+  right: 38%;
+  font-family: 'Aeonik', system-ui, sans-serif;
+  font-weight: 400;
+  font-size: clamp(13px, calc(0.052 * var(--cnode-h, 600px)), 30px);
+  line-height: 1.32;
+  color: rgba(255, 255, 255, 0.62);
+  letter-spacing: -0.01em;
+  /* Clamp to a few lines with an ellipsis — the request can be long. */
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* Hidden during edit mode — the editor's own inspector + layers panel
@@ -5679,9 +5745,13 @@ body.rb-ed-light .prompt-dock-add-btn.open {
 
 .edge-line:hover,
 .edge-line.selected { stroke-width: 6; }
-.edge-line.applied { stroke: #10b981 !important; animation: none; stroke-dasharray: none; }
+/* Applied: keep the source→target gradient (set inline) — just settle the
+   cord (stop marching, solid line). Overriding the stroke to flat emerald
+   here is what was killing the gradient on every run/extract edge. */
+.edge-line.applied { animation: none; stroke-dasharray: none; }
+.edge-line-base.applied { opacity: 0.55; }
+/* Failed stays red — an error signal is worth losing the gradient for. */
 .edge-line.failed  { stroke: #f87171 !important; animation: none; stroke-dasharray: none; }
-.edge-line-base.applied { stroke: #10b981 !important; opacity: 0.4; }
 .edge-line-base.failed  { stroke: #f87171 !important; opacity: 0.4; }
 
 /* Draft edge — actively dragging from a port. */
