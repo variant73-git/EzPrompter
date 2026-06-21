@@ -2345,7 +2345,10 @@ html, body { overscroll-behavior: none; }
    the topbar; bottom corners on the body. */
 .cnode {
   position: absolute;
-  border-radius: calc(10px / var(--canvas-scale, 1));
+  /* Corner radius holds ~10px on screen down to 15% zoom, then (floored at
+     0.15, matching the topbar's --tb) shrinks proportionally as you zoom
+     further out — so the rounding doesn't balloon relative to the tiny node. */
+  border-radius: calc(10px / max(0.15, var(--canvas-scale, 1)));
   background: transparent;
   /* 1px scale-aware border (constant on-screen at any zoom).
      Per-origin colour set by .cnode.origin-* below. */
@@ -2579,6 +2582,14 @@ html, body { overscroll-behavior: none; }
   height: calc(3px / var(--tb));
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.35);
+}
+/* Zoom-out past 25%: compact the grip from 6 to 4 dots per row (4×2) so it
+   stops crowding the shrinking node. Below 20% it compacts further (3×2). */
+html.canvas-zoom-mid .cnode-topbar .topbar-grip {
+  grid-template-columns: repeat(4, 1fr);
+}
+html.canvas-zoom-mid .cnode-topbar .topbar-grip span:nth-child(n+9) {
+  display: none;
 }
 /* Deep zoom-out (<20%): the screen-stable grip + ⋯ start fighting for
    the shrinking node width. Compact the grip to 3×2 dots — same
@@ -4029,6 +4040,7 @@ body.rb-ed-light .cnode-topbar.removing {
   color: rgba(255, 255, 255, 0.92);
   pointer-events: none;
   white-space: nowrap;
+  margin-left: calc(3px / max(0.15, var(--canvas-scale, 1)));
 }
 .btn-remove-cancel {
   font-family: 'Aeonik', system-ui, sans-serif;

@@ -337,7 +337,7 @@ export default function CanvasNode({
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
   onReplaceContent, onRequestUpload, onFrameZoom,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
-  removing = false, removingOutside = false, inSection = false,
+  removing = false, removingOutside = false, removeFromMenu = false, inSection = false,
   onRemoveFromSection, onCancelRemove
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -868,15 +868,20 @@ export default function CanvasNode({
         {removing && (
           <>
             <span className="topbar-remove-hint" aria-hidden>Drag outside</span>
-            <button
-              className="btn-remove-cancel"
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onCancelRemove?.(); }}
-              title="Cancel removal"
-              aria-label="Cancel removal"
-            >
-              Cancel
-            </button>
+            {/* Cancel only exists for the MENU-armed flow — there the node is
+                idle and needs an explicit way out. A tear-out is mid-drag, so
+                releasing (inside = cancel, outside = commit) is the only path. */}
+            {removeFromMenu && (
+              <button
+                className="btn-remove-cancel"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onCancelRemove?.(); }}
+                title="Cancel removal"
+                aria-label="Cancel removal"
+              >
+                Cancel
+              </button>
+            )}
           </>
         )}
         {!removing && (<>

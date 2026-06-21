@@ -746,8 +746,9 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
 
   // Load the board's active thread on mount / when boardId changes. The
   // route auto-creates a thread if none exists, so messages will be `[]`
-  // for a fresh board. Auto-expands the chat panel if there's history so
-  // the user immediately sees past conversation on reload.
+  // for a fresh board. The panel always opens COLLAPSED on canvas open —
+  // past history loads into state but stays tucked behind the chevron until
+  // the user expands or sends, so the canvas isn't covered on entry.
   useEffect(() => {
     if (!boardId) return;
     const ctrl = new AbortController();
@@ -759,7 +760,6 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
       .then((data) => {
         if (!data?.messages) return;
         dispatchChat({ type: 'THREAD_LOADED', threadId: data.thread?.id, messages: data.messages });
-        if (data.messages.length > 0) setChatCollapsed(false);
       })
       .catch((err) => {
         if (err?.name === 'AbortError') return;

@@ -340,12 +340,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // doesn't flash native-sized between mount and the first
       // onTransformed fire. If you change initialScale, update this too.
       document.documentElement.style.setProperty('--canvas-scale', '0.6');
-      document.documentElement.classList.remove('canvas-zoom-low', 'canvas-zoom-very-low', 'canvas-zoom-min');
+      document.documentElement.classList.remove('canvas-zoom-low', 'canvas-zoom-mid', 'canvas-zoom-very-low', 'canvas-zoom-min');
     };
     reset();
     return () => {
       document.documentElement.style.removeProperty('--canvas-scale');
-      document.documentElement.classList.remove('canvas-zoom-low', 'canvas-zoom-very-low', 'canvas-zoom-min');
+      document.documentElement.classList.remove('canvas-zoom-low', 'canvas-zoom-mid', 'canvas-zoom-very-low', 'canvas-zoom-min');
     };
   }, []);
 
@@ -903,7 +903,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const own = sections.find((s) => s.memberIds.includes(node.id) && s.memberIds.length > 1);
     if (!own) return;
     const siblingIds = own.memberIds.filter((id) => id !== node.id);
-    setRemovingSync({ nodeId: node.id, sectionId: own.id, rootId: own.rootId, siblingIds });
+    setRemovingSync({ nodeId: node.id, sectionId: own.id, rootId: own.rootId, siblingIds, fromMenu: true });
     setRemovingOutside(false);
   }
 
@@ -3408,6 +3408,19 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       newTop    = Math.min(newTop,    memMinY - MIN_CLEARANCE);
       newRight  = Math.max(newRight,  memMaxX + MIN_CLEARANCE);
       newBottom = Math.max(newBottom, memMaxY + MIN_CLEARANCE);
+      // Write the frame + chrome geometry straight to the DOM this frame so
+      // the dragged corner handle tracks the cursor with no lag — the React
+      // state update below is one frame behind and would leave the handle
+      // trailing the section area. React reconciles to the same values.
+      const w = newRight - newLeft, h = newBottom - newTop;
+      if (typeof document !== 'undefined') {
+        document.querySelectorAll(`[data-section-id="${sectionId}"]`).forEach((el) => {
+          el.style.left = `${newLeft}px`;
+          el.style.top = `${newTop}px`;
+          el.style.width = `${w}px`;
+          el.style.height = `${h}px`;
+        });
+      }
       setSectionFrames((prev) => ({
         ...prev,
         [sectionId]: { left: newLeft, top: newTop, right: newRight, bottom: newBottom },
@@ -3575,6 +3588,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // Below ~0.5 the topbar items overlap the centered grip; collapse
           // chrome so only the grip stays visible.
           document.documentElement.classList.toggle('canvas-zoom-low', scale < 0.5);
+          // At/below 25% the topbar grip compacts from 6 to 4 dots per row so
+          // it doesn't crowd the shrinking node.
+          document.documentElement.classList.toggle('canvas-zoom-mid', scale < 0.25);
           // Below ~0.2 the ports start to dominate the tiny node frames —
           // shrink them 30% so the colour-coded squares stay readable.
           document.documentElement.classList.toggle('canvas-zoom-very-low', scale < 0.2);
@@ -3731,6 +3747,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
               removing={removing?.nodeId === n.id}
               removingOutside={removing?.nodeId === n.id && removingOutside}
+              removeFromMenu={removing?.nodeId === n.id && !!removing.fromMenu}
               inSection={sectionMemberIds.has(n.id)}
               onRemoveFromSection={() => armNodeRemoval(n)}
               onCancelRemove={cancelNodeRemoval}
@@ -3749,6 +3766,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             <div
               key={`chrome-${s.id}`}
               className="canvas-section-chrome"
+              data-section-id={s.id}
               style={{
                 left: pv ? pv.left : s.x,
                 top: pv ? pv.top : s.y,
