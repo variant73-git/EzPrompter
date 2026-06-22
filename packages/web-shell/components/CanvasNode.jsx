@@ -60,13 +60,6 @@ function useImageNaturalDims(src) {
   }, [src]);
   return dims;
 }
-function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a; }
-function formatAspect(w, h) {
-  if (!w || !h) return null;
-  const g = gcd(w, h);
-  return `${w / g}:${h / g}`;
-}
-
 const TrashIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <polyline points="3 6 5 6 21 6" />
@@ -1121,11 +1114,11 @@ export default function CanvasNode({
           )}
           {/* Dimensions label — anchored to the bottom-right corner, just
               below the card. Shows the actual decoded pixel size of the
-              image content plus its true aspect ratio (gcd-reduced), not
-              the canvas card dims. Hidden while the image is loading. */}
+              image content, not the canvas card dims. Hidden while the
+              image is loading. */}
           {node.meta?.dataUrl && assetNaturalDims && (
             <div className="cnode-asset-dims" aria-hidden="true">
-              {assetNaturalDims.w} × {assetNaturalDims.h} / {formatAspect(assetNaturalDims.w, assetNaturalDims.h)}
+              {assetNaturalDims.w} × {assetNaturalDims.h}
             </div>
           )}
         </div>

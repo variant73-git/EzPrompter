@@ -536,10 +536,10 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
   align-items: center;
   gap: 4px;
   height: 44px;
-  /* Padding equals inner-button border-radius so the hover bg corner
-     curves match the widget's inner corner curves (widget-radius − padding
-     = inner-button-radius). */
-  padding: 4px;
+  /* Padding = the hover-bg gap on every side. 2px, with inner pills at
+     border-radius 10px (widget-radius 12 − padding 2), so each hover
+     highlight sits 2px off the frame with a concentric corner. */
+  padding: 2px;
   background: var(--bg-frosted);
   backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
@@ -611,10 +611,10 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
 
 .canvas-toolbar-sep {
   width: 1px;
-  /* Extend through the parent's 4px padding so the separator runs the
+  /* Extend through the parent's 2px padding so the separator runs the
      FULL widget height (44px) flush with the top + bottom edges. */
   align-self: stretch;
-  margin: -4px 0;
+  margin: -2px 0;
   /* Same colour as the widget's own border outline so the divider
      reads as part of the same hairline family — no contrast jump
      between outer rim and internal separator. */
@@ -828,7 +828,10 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
   background: transparent;
   border: none;
   box-shadow: none;
-  padding: 2px 4px;
+  /* Horizontal padding bumped 4→7px: the row distributes its items with
+     justify-content:space-between, so insetting the content by 3px each side
+     narrows the spread and tightens every inter-item gap by ~2px. */
+  padding: 2px 7px;
   line-height: 1;
   /* Span the full row width and distribute the category items evenly —
      without this the inline-flex trigger only takes content width and
@@ -949,9 +952,13 @@ body.rb-ed-light .minimap-node-stroke {
   background: transparent;
   border: 1px solid transparent;
   padding: 6px 10px;
-  border-radius: 8px;
+  /* Concentric with the 12px toolbar at the new 2px padding (12 − 2). */
+  border-radius: 10px;
   outline: none;
   margin-bottom: 0;
+  /* Fill the widget's content height so the hover background keeps a uniform
+     2px gap top/bottom (matching the sides), like the other toolbar pills. */
+  align-self: stretch;
   /* Size grows with the typed value via the size attribute (set in JSX
      based on string length). field-sizing covers Chromium 123+ for free
      resizing on browsers that support it. */
@@ -964,9 +971,12 @@ body.rb-ed-light .minimap-node-stroke {
   font-family: inherit;
 }
 
-.canvas-board-name:focus,
+/* Hover = bg only (no outline), consistent with the zoom pill. */
 .canvas-board-name:hover {
-  border-color: var(--border-frosted);
+  background: var(--hover-bg);
+}
+/* Focus (actively renaming) keeps a subtle frame as an editing affordance. */
+.canvas-board-name:focus {
   background: rgba(255, 255, 255, 0.04);
 }
 
@@ -1431,6 +1441,13 @@ body.rb-ed-light .minimap-node-stroke {
 .user-pill-wrap {
   position: relative;
 }
+/* In the canvas top-right toolbar the wrap must stretch to the widget's
+   content height so the compact pill (height:100%) fills it and its hover
+   keeps a uniform 2px gap on every side. */
+.canvas-toolbar-right .user-pill-wrap {
+  align-self: stretch;
+  display: flex;
+}
 
 .user-pill {
   display: flex;
@@ -1498,6 +1515,11 @@ body.rb-ed-light .minimap-node-stroke {
   color: var(--text-muted);
   margin-right: 4px;
 }
+/* Canvas top-right avatar pill: nudge the chevron 3px right for better
+   balance next to the round avatar. */
+.user-pill.compact .user-pill-chevron {
+  transform: translateX(3px);
+}
 
 /* Compact variant — used in the canvas top-right toolbar. Mirrors the
    small avatar + chevron of the editor inspector header (26px circle on
@@ -1505,14 +1527,19 @@ body.rb-ed-light .minimap-node-stroke {
 .user-pill.compact {
   width: auto;
   gap: 4px;
-  height: 36px;
+  /* Fill the wrap (stretched to the toolbar content height below) so the
+     hover gap is a uniform 2px — the pill is nested in .user-pill-wrap, so
+     align-self can't reach the toolbar directly. */
+  height: 100%;
   padding: 0 6px 0 4px;
   background: transparent;
   border-color: transparent;
-  border-radius: 8px;
+  /* Concentric with the 12px toolbar at the new 2px padding (12 − 2). */
+  border-radius: 10px;
 }
+/* Hover = bg only (no outline), consistent with the zoom pill. */
 .user-pill.compact:hover,
-.user-pill.compact.open { background: var(--hover-bg); border-color: var(--border-frosted); }
+.user-pill.compact.open { background: var(--hover-bg); }
 .user-pill.compact .user-pill-avatar {
   width: 26px;
   height: 26px;
@@ -3044,7 +3071,8 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   align-items: center;
   gap: 2px;
   height: 44px;
-  padding: 4px;
+  /* 2px hover-bg gap, concentric with inner pills at radius 10 (12 − 2). */
+  padding: 2px;
   background: var(--bg-frosted);
   backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
@@ -3058,11 +3086,13 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 36px;
+  /* Fill the widget content height so the hover gap is a uniform 2px. */
+  align-self: stretch;
   padding: 0 10px;
   background: transparent;
   border: none;
-  border-radius: 8px;
+  /* Concentric with the 12px zoom widget at its 2px padding (12 − 2). */
+  border-radius: 10px;
   color: var(--text-primary);
   font: 500 12px/1 'Aeonik', system-ui, sans-serif;
   cursor: pointer;
@@ -3073,11 +3103,13 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
 
 .zoom-pill-divider {
   width: 1px;
-  /* Stretch through the widget's 4px padding so it spans the full
+  /* Stretch through the widget's 2px padding so it spans the full
      44px height — same treatment as .canvas-toolbar-sep. Colour
-     matches the widget border for hairline parity. */
+     matches the widget border for hairline parity. Horizontal margin is 0
+     so the only space between a pill's hover and the separator is the
+     widget's 2px flex gap (was +4px each side → an uneven ~6px gap). */
   align-self: stretch;
-  margin: -4px 4px;
+  margin: -2px 0;
   background: var(--border-frosted);
   flex-shrink: 0;
 }
@@ -3087,10 +3119,12 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   align-items: center;
   justify-content: center;
   width: 36px;
-  height: 36px;
+  /* Fill the widget content height so the hover gap is a uniform 2px. */
+  align-self: stretch;
   background: transparent;
   border: none;
-  border-radius: 8px;
+  /* Concentric with the 12px zoom widget at its 2px padding (12 − 2). */
+  border-radius: 10px;
   color: var(--text-secondary);
   cursor: pointer;
   transition: background 120ms, color 120ms;
