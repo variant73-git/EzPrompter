@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findSectionTerminal, sectionRerunWouldOverwrite } from './section-run.js';
+import { findSectionTerminal, sectionRerunWouldOverwrite, chainSignature } from './section-run.js';
 import { BLANK_SITE_HTML } from './blank-site-html.js';
 
 const edge = (from, to) => ({ source_node_id: from, target_node_id: to });
@@ -141,5 +141,85 @@ describe('sectionRerunWouldOverwrite', () => {
       edges: [],
     };
     expect(sectionRerunWouldOverwrite(section, nodes, edges)).toBe(false);
+  });
+});
+
+describe('chainSignature (re-run gating)', () => {
+  const siteChain = (siteHtml, promptText = 'make a hero') => setup({
+    nodes: [
+      { id: 'p', kind: 'prompt', name: 'brief', pos_x: 0, pos_y: 0, meta: { prompt: promptText } },
+      { id: 'site', kind: 'site', name: 'page', pos_x: 100, pos_y: 0, current_html: siteHtml },
+    ],
+    edges: [edge('p', 'site')],
+  });
+
+  it('is stable across identical content', () => {
+    const a = siteChain('<html>built</html>');
+    const b = siteChain('<html>built</html>');
+    expect(chainSignature(a.section, a.nodes, a.edges))
+      .toBe(chainSignature(b.section, b.nodes, b.edges));
+  });
+
+  it('IGNORES canvas position/size moves (a move must not re-enable the run)', () => {
+    const base = siteChain('<html>built</html>');
+    const moved = setup({
+      nodes: [
+        { id: 'p', kind: 'prompt', name: 'brief', pos_x: 999, pos_y: 480, width: 400, height: 300, meta: { prompt: 'make a hero' } },
+        { id: 'site', kind: 'site', name: 'page', pos_x: -50, pos_y: 700, width: 1280, height: 720, current_html: '<html>built</html>' },
+      ],
+      edges: [edge('p', 'site')],
+    });
+    expect(chainSignature(moved.section, moved.nodes, moved.edges))
+      .toBe(chainSignature(base.section, base.nodes, base.edges));
+  });
+
+  it('CHANGES when a prompt source is edited', () => {
+    const before = siteChain('<html>built</html>', 'make a hero');
+    const after = siteChain('<html>built</html>', 'make a totally different hero');
+    expect(chainSignature(after.section, after.nodes, after.edges))
+      .not.toBe(chainSignature(before.section, before.nodes, before.edges));
+  });
+
+  it('CHANGES when the generated output (terminal html) changes', () => {
+    const before = siteChain('<html>v1</html>');
+    const after = siteChain('<html>v2 — a meaningfully different page body</html>');
+    expect(chainSignature(after.section, after.nodes, after.edges))
+      .not.toBe(chainSignature(before.section, before.nodes, before.edges));
+  });
+
+  it('CHANGES when an image terminal gets a new dataUrl', () => {
+    const before = setup({
+      nodes: [
+        { id: 'ref', kind: 'asset', meta: { dataUrl: 'data:image/png;base64,AAAA' } },
+        { id: 'out', kind: 'asset', meta: { dataUrl: 'data:image/png;base64,BBBB' } },
+      ],
+      edges: [edge('ref', 'out')],
+    });
+    const after = setup({
+      nodes: [
+        { id: 'ref', kind: 'asset', meta: { dataUrl: 'data:image/png;base64,AAAA' } },
+        { id: 'out', kind: 'asset', meta: { dataUrl: 'data:image/png;base64,CCCCdifferent' } },
+      ],
+      edges: [edge('ref', 'out')],
+    });
+    expect(chainSignature(after.section, after.nodes, after.edges))
+      .not.toBe(chainSignature(before.section, before.nodes, before.edges));
+  });
+
+  it('CHANGES when internal wiring (an edge between members) changes', () => {
+    const before = siteChain('<html>built</html>');
+    const rewired = setup({
+      nodes: before.nodes,
+      edges: [edge('site', 'p')], // reversed
+    });
+    expect(chainSignature(rewired.section, rewired.nodes, rewired.edges))
+      .not.toBe(chainSignature(before.section, before.nodes, before.edges));
+  });
+
+  it('is order-independent in member listing', () => {
+    const a = siteChain('<html>built</html>');
+    const b = setup({ nodes: [...a.nodes].reverse(), edges: a.edges });
+    expect(chainSignature(b.section, b.nodes, b.edges))
+      .toBe(chainSignature(a.section, a.nodes, a.edges));
   });
 });

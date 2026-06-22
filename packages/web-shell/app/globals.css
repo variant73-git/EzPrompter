@@ -814,7 +814,11 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
    icon height + hairline border. */
 .canvas-minimap-counts {
   pointer-events: auto;
-  padding: 0 8px;
+  /* Uniform 2px so the full-width hover background (the .canvas-counts row)
+     sits with an EQUAL 2px gap on all four sides — was `0 8px`, which left
+     the hover flush top/bottom but inset 8px on the sides. The hover's 8px
+     radius nests concentrically inside this 10px-radius container. */
+  padding: 2px;
   border-bottom: 1px solid var(--border-frosted);
   border-top-left-radius: 10px;
   border-top-right-radius: 10px;
@@ -1755,6 +1759,12 @@ body.rb-ed-light .popup-overlay {
   from { opacity: 0; transform: translateY(-6px) scale(0.98); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
+/* Scaled variant for menus rendered 15% smaller (transform: scale(0.85)) so
+   their entrance animation settles at the reduced scale, not back to 1. */
+@keyframes popup-card-in-sm {
+  from { opacity: 0; transform: translateY(-6px) scale(0.83); }
+  to   { opacity: 1; transform: translateY(0) scale(0.85); }
+}
 
 .popup-icon {
   width: 44px;
@@ -2032,6 +2042,96 @@ body.rb-ed-light .popup-btn-danger:hover:not(:disabled) { background: #ef4444; b
 .popup-menu-btn svg { flex-shrink: 0; opacity: 0.7; }
 .popup-menu-btn-cancel { color: var(--popup-fg-muted); }
 .popup-menu-input-row { display: flex; gap: 6px; padding: 8px 6px 4px; }
+
+/* Empty-canvas right-click menu — same reference look as the node/section
+   menu: off-black outer card, header/title on the off-black, action rows in
+   a rounded grey panel with hairline dividers. The URL-input mode keeps its
+   own padding so the form stays tidy. */
+/* Canvas right-click menu AND the cord-drop "Connect to…" menu share the
+   same popup-menu structure (title + .popup-menu-btn rows), so they get the
+   same reference look in one rule set. Off-black is rendered as FROSTED GLASS
+   (semi-transparent + backdrop blur), matching the rest of the chrome family. */
+.canvas-context-menu,
+.popup-menu.empty-drop-menu {
+  background: rgba(13, 13, 13, 0.72);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  border-radius: 16px;
+  padding: 3px;
+  gap: 0;
+  /* Whole menu 15% smaller from the top-left anchor. Its entrance animation
+     (popup-card-in) animates transform, so use a scaled variant that settles
+     at scale(0.85) instead of scale(1) — otherwise the menu would snap. */
+  transform: scale(0.85);
+  transform-origin: top left;
+  animation: popup-card-in-sm 160ms ease-out;
+}
+.canvas-context-menu .popup-menu-title,
+.popup-menu.empty-drop-menu .popup-menu-title {
+  padding: 6px 11px 8px;   /* sits on the off-black, above the grey panel */
+}
+.canvas-context-menu .popup-menu-btn,
+.popup-menu.empty-drop-menu .popup-menu-btn {
+  background: #2c2c2c;      /* grey items panel */
+  padding: 12px 16px;
+  border-radius: 0;
+  font-size: 0.85rem;
+  gap: 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+/* First row after the title (or first child when there's no title) rounds
+   the grey panel's top corners. */
+.canvas-context-menu .popup-menu-title + .popup-menu-btn,
+.canvas-context-menu .popup-menu-btn:first-child,
+.popup-menu.empty-drop-menu .popup-menu-title + .popup-menu-btn,
+.popup-menu.empty-drop-menu .popup-menu-btn:first-child {
+  border-top-left-radius: 11px;
+  border-top-right-radius: 11px;
+}
+.canvas-context-menu .popup-menu-btn:last-child,
+.popup-menu.empty-drop-menu .popup-menu-btn:last-child {
+  border-bottom: none;
+  border-bottom-left-radius: 11px;
+  border-bottom-right-radius: 11px;
+}
+.canvas-context-menu .popup-menu-btn:hover,
+.popup-menu.empty-drop-menu .popup-menu-btn:hover { background: #383838; }
+.canvas-context-menu .popup-menu-input-row,
+.popup-menu.empty-drop-menu .popup-menu-input-row { padding: 10px 10px 4px; }
+body.rb-ed-light .canvas-context-menu,
+body.rb-ed-light .popup-menu.empty-drop-menu { background: rgba(196, 200, 205, 0.72); }
+body.rb-ed-light .canvas-context-menu .popup-menu-btn,
+body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn {
+  background: #e9ebee;
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+}
+body.rb-ed-light .canvas-context-menu .popup-menu-btn:hover,
+body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:hover { background: #dde0e4; }
+body.rb-ed-light .canvas-context-menu .popup-menu-btn:last-child,
+body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:last-child { border-bottom: none; }
+
+/* Cord-drop "Connect to…" menu splits into TWO grey panels — the kind items
+   (prompt…image) and the [Extract to + Cancel] group — separated by a 2px gap
+   instead of a divider line. */
+/* Close the kind-items panel: the item right before Extract-to (or before a
+   lone Cancel) rounds its bottom + drops its divider. */
+.popup-menu.empty-drop-menu .popup-menu-btn:has(+ .empty-drop-extract),
+.popup-menu.empty-drop-menu .popup-menu-btn:not(.popup-menu-btn-cancel):has(+ .popup-menu-btn-cancel) {
+  border-bottom: none;
+  border-bottom-left-radius: 11px;
+  border-bottom-right-radius: 11px;
+}
+/* 2px gap before the second panel (Extract-to group, or a lone Cancel). */
+.popup-menu.empty-drop-menu .empty-drop-extract,
+.popup-menu.empty-drop-menu .popup-menu-btn:not(.popup-menu-btn-cancel) + .popup-menu-btn-cancel {
+  margin-top: 2px;
+}
+/* Round the TOP of the second panel: the Extract-to trigger, or a lone Cancel. */
+.popup-menu.empty-drop-menu .empty-drop-submenu-trigger,
+.popup-menu.empty-drop-menu .popup-menu-btn:not(.popup-menu-btn-cancel) + .popup-menu-btn-cancel {
+  border-top-left-radius: 11px;
+  border-top-right-radius: 11px;
+}
 
 /* Toast — minimal floating notification replacing alert(). Bottom-right
    of the canvas, frosted-style consistent with the rest. */
@@ -2349,14 +2449,26 @@ html, body { overscroll-behavior: none; }
      0.15, matching the topbar's --tb) shrinks proportionally as you zoom
      further out — so the rounding doesn't balloon relative to the tiny node. */
   border-radius: calc(10px / max(0.15, var(--canvas-scale, 1)));
-  background: transparent;
-  /* 1px scale-aware border (constant on-screen at any zoom).
-     Per-origin colour set by .cnode.origin-* below. */
-  border: calc(1px / var(--canvas-scale, 1)) solid rgba(255, 255, 255, 0.10);
+  /* Dark chrome fill shows in the 4px inset gap between the content frame
+     (topbar + body) and the node border — see `padding` below. */
+  background: #0f0f0f;
+  /* 2px scale-aware border (constant on-screen at any zoom) — the coloured
+     origin stroke on the unselected node. Per-origin colour set by
+     .cnode.origin-* below. (When selected, the border goes transparent and
+     the 3px box-shadow ring takes over.) */
+  border: calc(2px / var(--canvas-scale, 1)) solid rgba(255, 255, 255, 0.10);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   transition: box-shadow 0.15s, border-color 0.15s;
+  /* 4px (on-screen, floored at 15% zoom like the radius) breathing gap
+     between the inner content frame and the border. Padding insets only the
+     flow children (topbar + body); absolutely-positioned chrome (ports,
+     progress ring) is anchored to the border edge and is unaffected. */
+  padding: calc(4px / max(0.15, var(--canvas-scale, 1)));
   display: flex;
   flex-direction: column;
+  /* Same 4px breathing between the topbar panel and the body panel as around
+     the outside, so both read as separated rounded panels. */
+  gap: calc(4px / max(0.15, var(--canvas-scale, 1)));
   /* overflow:visible so the right-side connector port can stick out beyond
      the node frame. Topbar + body now individually round their own corners
      (top vs bottom) to keep the unified rounded-shape look. */
@@ -2420,7 +2532,10 @@ html, body { overscroll-behavior: none; }
   flex: 0 0 calc(36px / var(--tb));
   height: calc(36px / var(--tb));
   background: #0f0f0f;
-  border-radius: calc(10px / var(--tb)) calc(10px / var(--tb)) 0 0;
+  /* All four corners rounded. Radius = outer 10px − the 6px inset (2px
+     border + 4px gap) so the topbar's corners nest CONCENTRICALLY inside the
+     node's outer radius instead of curving away from it. */
+  border-radius: calc(4px / var(--tb));
   display: flex;
   align-items: center;
   padding: 0 var(--tbgap);
@@ -2570,7 +2685,17 @@ html, body { overscroll-behavior: none; }
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -50%);
+  /* On-screen node width = world width × canvas scale. Once it drops below
+     55px the centered grip starts colliding with the ⋯ More button on the
+     right; push the grip progressively LEFT (in on-screen px, hence the
+     /scale to convert back to world units) so they never overlap. Above
+     55px the shift clamps to 0 and the grip stays centered. */
+  --node-screen-w: calc(var(--cnode-w, 9999) * var(--canvas-scale, 1));
+  /* Gentle progressive shift (0.45×), capped at 20% of the node's on-screen
+     width so the grip centre never moves past ~30% from the left — it stays
+     inside the node edges even on very narrow nodes. */
+  --grip-shift: max(0px, min(calc((55 - var(--node-screen-w)) * 0.45px), calc(var(--node-screen-w) * 0.2px)));
+  transform: translate(calc(-50% - var(--grip-shift) / var(--canvas-scale, 1)), -50%);
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   grid-auto-rows: calc(3px / var(--tb));
@@ -2856,6 +2981,53 @@ body.rb-ed-light .cnode-topbar-menu .cnode-topbar-menu-danger:hover {
   color: #991b1b !important;
 }
 
+/* ── Right-click menu visual (reference-matched) ────────────────────────
+   Off-black OUTER card. The action rows sit inside a rounded GREY panel
+   (inset from the card by the menu's padding), separated by hairline
+   dividers. Any header/title stays on the off-black above the grey panel.
+   First/last rows round to the grey panel's corners. */
+/* Compound .empty-drop-menu.cnode-topbar-menu so these outrank the generic
+   .empty-drop-menu rules that live LATER in the file (same base specificity
+   would otherwise let the generic bg/padding win on source order). */
+.empty-drop-menu.cnode-topbar-menu {
+  background: rgba(13, 13, 13, 0.72);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  border-radius: 16px;
+  padding: 3px;          /* off-black margin around the grey panel */
+  gap: 0;
+  /* Whole menu 15% smaller, scaled from the cursor-anchored top-left so the
+     open point stays put. */
+  transform: scale(0.85);
+  transform-origin: top left;
+}
+.empty-drop-menu.cnode-topbar-menu button {
+  background: #2c2c2c;    /* grey items panel */
+  padding: 12px 16px;
+  border-radius: 0;
+  font-size: 0.85rem;
+  gap: 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.empty-drop-menu.cnode-topbar-menu button:first-child {
+  border-top-left-radius: 11px;
+  border-top-right-radius: 11px;
+}
+.empty-drop-menu.cnode-topbar-menu button:last-child {
+  border-bottom: none;
+  border-bottom-left-radius: 11px;
+  border-bottom-right-radius: 11px;
+}
+.empty-drop-menu.cnode-topbar-menu button:hover { background: #383838; }
+/* Every row carries its own divider, so the explicit separator would double
+   up — fold it away. */
+.cnode-topbar-menu .cnode-topbar-menu-sep { display: none; }
+/* Light mode keeps the same layered structure with theme-appropriate tones. */
+body.rb-ed-light .empty-drop-menu.cnode-topbar-menu { background: rgba(196, 200, 205, 0.72); }
+body.rb-ed-light .empty-drop-menu.cnode-topbar-menu button { background: #e9ebee; border-bottom-color: rgba(0, 0, 0, 0.08); }
+body.rb-ed-light .empty-drop-menu.cnode-topbar-menu button:hover { background: #dde0e4; }
+body.rb-ed-light .empty-drop-menu.cnode-topbar-menu button:last-child { border-bottom: none; }
+
 /* ══════════════ ZOOM CONTROLS (top-right floater) ══════════════ */
 /* When the editor is active in canvas mode, the inspector header hosts
    its own zoom pill — the canvas-side widget would be redundant + stack
@@ -3006,7 +3178,7 @@ body.rb-ed-light .cnode-topbar .kind-pill svg {
   color: #0a0a0a;
   stroke: #0a0a0a;
 }
-body.rb-ed-light .cnode { border-color: rgba(0, 0, 0, 0.10); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10); }
+body.rb-ed-light .cnode { border-color: rgba(0, 0, 0, 0.10); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10); background: var(--bg-frosted-solid); }
 /* Selected ring in light mode. The `body.rb-ed-light .cnode` rule above
    sets box-shadow with higher specificity than `.cnode.selected`
    (0,0,2,1 > 0,0,2,0), which was stripping the color-coded ring on
@@ -3215,8 +3387,14 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
 
      Height is now driven by the inline `style.height = node.height` on
      the JSX side — the body is a fixed viewport into a (potentially much
-     taller) iframe, so we drop `flex:1 1 auto` and clip overflow. */
-  border-radius: 0 0 calc(10px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1));
+     taller) iframe, so we drop `flex:1 1 auto` and clip overflow.
+
+     Radius is floored at 0.15 (matching .cnode and the topbar's --tb) so
+     the inner content frame's corners track the outer card's exactly at
+     extreme zoom-out instead of ballooning. All four corners rounded.
+     Radius = outer 10px − the 6px inset (2px border + 4px gap) so the body's
+     corners nest CONCENTRICALLY inside the node's outer radius. */
+  border-radius: calc(4px / max(0.15, var(--canvas-scale, 1)));
   overflow: hidden;
   flex: 0 0 auto;
   background: #fff;
@@ -3238,9 +3416,9 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
 .cnode-port-right {
   position: absolute;
   top: 50%;
-  right: calc(-9.5px / var(--canvas-scale, 1));
-  width: calc(19px / var(--canvas-scale, 1));
-  height: calc(19px / var(--canvas-scale, 1));
+  right: calc(-7.125px / var(--canvas-scale, 1));
+  width: calc(14.25px / var(--canvas-scale, 1));
+  height: calc(14.25px / var(--canvas-scale, 1));
   transform: translateY(-50%);
   border-radius: 50%;
   background: rgba(26, 26, 26, 0.78);
@@ -3302,7 +3480,7 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
    constants to anchor the cord at each circle. */
 .cnode-port-stack-left {
   position: absolute;
-  left: calc(-9.5px / var(--canvas-scale, 1));
+  left: calc(-7.125px / var(--canvas-scale, 1));
   top: 50%;
   transform: translateY(-50%);
   display: flex;
@@ -3312,8 +3490,8 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
 }
 
 .cnode-port-left {
-  width: calc(19px / var(--canvas-scale, 1));
-  height: calc(19px / var(--canvas-scale, 1));
+  width: calc(14.25px / var(--canvas-scale, 1));
+  height: calc(14.25px / var(--canvas-scale, 1));
   border-radius: 50%;
   background: rgba(26, 26, 26, 0.78);
   backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
@@ -3368,16 +3546,16 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
 
 .cnode-port-right svg,
 .cnode-port-left svg {
-  width: calc(11px / var(--canvas-scale, 1));
-  height: calc(11px / var(--canvas-scale, 1));
+  width: calc(8.25px / var(--canvas-scale, 1));
+  height: calc(8.25px / var(--canvas-scale, 1));
 }
 
 /* Inner dot — uniform off-white across all states (empty/connected,
    right/left). Per-origin colour-coding still lives in the cord stroke
    + node ring; the port itself reads as a neutral dark-mode badge. */
 .cnode-port-dot {
-  width: calc(6px / var(--canvas-scale, 1));
-  height: calc(6px / var(--canvas-scale, 1));
+  width: calc(4.5px / var(--canvas-scale, 1));
+  height: calc(4.5px / var(--canvas-scale, 1));
   border-radius: 50%;
   background: rgba(245, 245, 245, 0.95);
   pointer-events: none;
@@ -3401,19 +3579,19 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
    under a screen pixel and not worth threading the override down. */
 html.canvas-zoom-very-low .cnode-port-right,
 html.canvas-zoom-very-low .cnode-port-left {
-  width: calc(14px / var(--canvas-scale, 1));
-  height: calc(14px / var(--canvas-scale, 1));
+  width: calc(10.5px / var(--canvas-scale, 1));
+  height: calc(10.5px / var(--canvas-scale, 1));
 }
 html.canvas-zoom-very-low .cnode-port-right {
-  right: calc(-7px / var(--canvas-scale, 1));
+  right: calc(-5.25px / var(--canvas-scale, 1));
 }
 html.canvas-zoom-very-low .cnode-port-stack-left {
-  left: calc(-7px / var(--canvas-scale, 1));
+  left: calc(-5.25px / var(--canvas-scale, 1));
   gap: calc(4.5px / var(--canvas-scale, 1));
 }
 html.canvas-zoom-very-low .cnode-port-dot {
-  width: calc(4.5px / var(--canvas-scale, 1));
-  height: calc(4.5px / var(--canvas-scale, 1));
+  width: calc(3.375px / var(--canvas-scale, 1));
+  height: calc(3.375px / var(--canvas-scale, 1));
 }
 
 /* Per-origin tint resolution. Mirrors ORIGIN_COLORS in lib/node-origin.js
@@ -3709,7 +3887,8 @@ body.rb-ed-light .cnode-empty-upload-label { color: rgba(0, 0, 0, 0.5); }
   align-items: center;
   gap: calc(6px / var(--canvas-scale, 1));
   padding: calc(4px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1));
-  border-radius: calc(6px / var(--canvas-scale, 1));
+  /* Fully-rounded pill ends. */
+  border-radius: 999px;
   font: 500 calc(13px / var(--canvas-scale, 1)) / 1 'Aeonik', system-ui, sans-serif;
   color: rgba(241, 245, 249, 0.92);
   background: rgba(10, 10, 10, 0.78);
@@ -3775,7 +3954,8 @@ body.rb-ed-light .cnode-anchor-title {
   justify-content: space-between;
   padding: 28px;
   overflow: hidden;
-  border-radius: 0 0 calc(10px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1));
+  /* Match .cnode-body: concentric inner radius (outer 10px − 6px inset). */
+  border-radius: calc(4px / max(0.15, var(--canvas-scale, 1)));
 }
 .cnode-md-preview-stack {
   display: flex;
@@ -4014,19 +4194,20 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
 }
 
 /* ── Node removal (leaving a section) ───────────────────────────────────
-   A node armed to leave its section: a red ring replaces the category
-   color-coding, and the topbar turns red with a single Cancel action and a
-   "Drag outside" hint in place of the grip. */
+   A node armed to leave its section: a cold off-white ring replaces the
+   category color-coding, and the topbar turns cold off-white with a single
+   Cancel action and a "Drag outside" hint in place of the grip. Off-white
+   (not red) keeps this reading as "detach", not "delete". */
 .cnode.removing {
   border-color: transparent;
   box-shadow:
-    0 0 0 calc(3px / var(--canvas-scale, 1)) #ef4444,
+    0 0 0 calc(3px / var(--canvas-scale, 1)) #e3e7ec,
     0 8px 32px rgba(0, 0, 0, 0.45);
 }
 .cnode-topbar.removing,
 body.rb-ed-light .cnode-topbar.removing {
-  background: #b42318;
-  color: #fff;
+  background: #e3e7ec;
+  color: #1c1f24;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4037,7 +4218,7 @@ body.rb-ed-light .cnode-topbar.removing {
   font-weight: 500;
   font-size: calc(13px / max(0.15, var(--canvas-scale, 1)));
   letter-spacing: -0.01em;
-  color: rgba(255, 255, 255, 0.92);
+  color: rgba(28, 31, 36, 0.66);
   pointer-events: none;
   white-space: nowrap;
   margin-left: calc(3px / max(0.15, var(--canvas-scale, 1)));
@@ -4046,15 +4227,15 @@ body.rb-ed-light .cnode-topbar.removing {
   font-family: 'Aeonik', system-ui, sans-serif;
   font-weight: 500;
   font-size: calc(12px / max(0.15, var(--canvas-scale, 1)));
-  color: #fff;
-  background: rgba(255, 255, 255, 0.18);
+  color: #1c1f24;
+  background: rgba(28, 31, 36, 0.08);
   border: none;
   border-radius: calc(8px / max(0.15, var(--canvas-scale, 1)));
   padding: calc(4px / max(0.15, var(--canvas-scale, 1))) calc(11px / max(0.15, var(--canvas-scale, 1)));
   cursor: pointer;
   white-space: nowrap;
 }
-.btn-remove-cancel:hover { background: rgba(255, 255, 255, 0.30); }
+.btn-remove-cancel:hover { background: rgba(28, 31, 36, 0.15); }
 
 /* Menu separator above the removal / delete danger zone in the node ⋯ menu. */
 .cnode-topbar-menu-sep {
@@ -4218,6 +4399,16 @@ input.canvas-section-name-input::placeholder {
   background: #ffffff;
 }
 .canvas-section-play-btn:active { transform: scale(0.93); }
+/* Up-to-date workflow — nothing changed since the last run, so re-running
+   would just reproduce the same result. Muted + non-interactive until the
+   chain changes. */
+.canvas-section-play-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.canvas-section-play-btn:disabled:hover { background: #f5f5f5; }
+.canvas-section-play-btn:disabled:active { transform: none; }
+body.rb-ed-light .canvas-section-play-btn:disabled:hover { background: rgba(0, 0, 0, 0.08); }
 .canvas-section-play-btn svg {
   width: calc(18px / max(0.25, var(--canvas-scale, 1)));
   height: calc(18px / max(0.25, var(--canvas-scale, 1)));
@@ -4393,7 +4584,7 @@ body.rb-ed-light .canvas-section-handle-se:hover { color: rgba(0, 0, 0, 0.7); }
   padding: 10px 10px 10px 18px;
   margin: 0;
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: none;
   border-radius: 999px;
   font-family: inherit;
   font-size: 14px;
@@ -5227,7 +5418,7 @@ body.rb-ed-active .prompt-dock { display: none !important; }
   height: 56px;
   border-radius: 12px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: none;
 }
 
 .prompt-dock-chip img {
@@ -5470,6 +5661,9 @@ body.rb-ed-active .prompt-dock { display: none !important; }
 }
 
 .prompt-dock-send:disabled {
+  /* Disabled = the EXACT same button (icon + position intact), just dimmed
+     and non-interactive — not a different, faded base state. */
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
@@ -5523,6 +5717,22 @@ body.rb-ed-light .prompt-dock-send.stop:hover {
 .prompt-dock-mic:hover {
   background: rgba(255, 255, 255, 0.10);
   color: rgba(241, 245, 249, 0.85);
+}
+
+/* Side-docked: the mic + send normally hug the dock corner via absolute
+   positioning, which doesn't line up with the in-flow pills/model chip (the
+   actions row is lifted by its padding-bottom). Drop them into the actions
+   flex flow instead — pushed right as a group via margin-left:auto — so
+   `align-items:center` gives PERFECT vertical alignment with the chip. */
+.prompt-dock.dock-left .prompt-dock-mic,
+.prompt-dock.dock-right .prompt-dock-mic,
+.prompt-dock.dock-left .prompt-dock-send,
+.prompt-dock.dock-right .prompt-dock-send {
+  position: static;
+}
+.prompt-dock.dock-left .prompt-dock-mic,
+.prompt-dock.dock-right .prompt-dock-mic {
+  margin-left: auto;
 }
 
 /* Recording — red wash + soft sonar pulse so the live mic is unmissable. */
@@ -5636,6 +5846,23 @@ body.rb-ed-light .prompt-dock-mic.err {
   align-items: center;
   opacity: 0.55;
   margin-left: -2px;
+}
+
+/* Side-docked: the dock is narrow, so the full "Claude 4.6 Opus" model label
+   collides with the corner-hugging mic + send buttons. Collapse the picker to
+   just its provider icon + chevron, split by a thin separator, so it stays a
+   compact chip with room to spare. */
+.prompt-dock.dock-left .prompt-dock-model-name,
+.prompt-dock.dock-right .prompt-dock-model-name { display: none; }
+.prompt-dock.dock-left .prompt-dock-model-chev,
+.prompt-dock.dock-right .prompt-dock-model-chev {
+  margin-left: 0;
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.16);
+}
+body.rb-ed-light .prompt-dock.dock-left .prompt-dock-model-chev,
+body.rb-ed-light .prompt-dock.dock-right .prompt-dock-model-chev {
+  border-left-color: rgba(0, 0, 0, 0.16);
 }
 
 /* Popovers above the dock — share the dock's frosted family. Bumped

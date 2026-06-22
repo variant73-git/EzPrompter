@@ -51,7 +51,10 @@ export async function POST(request, { params }) {
 
   const { x: posX, y: posY } =
     reqX != null && reqY != null
-      ? await resolvePlacement(src.board_id, reqX, reqY, width, height, sql)
+      // Exclude the SOURCE's own section: the derived node belongs to it, so
+      // its frame must not push the node out (was landing far below). It still
+      // avoids overlapping individual nodes + other sections.
+      ? await resolvePlacement(src.board_id, reqX, reqY, width, height, sql, src.id)
       : await placeStackDown(src.board_id, width, height, sql);
 
   const meta = { ...out.meta };

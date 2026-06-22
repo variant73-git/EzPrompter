@@ -799,7 +799,7 @@ export default function CanvasNode({
     <div
       ref={cnodeRef}
       className={`cnode origin-${origin}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}${generating ? ' generating' : ''}${removing ? ' removing' : ''}`}
-      style={{ left: node.pos_x, top: node.pos_y, width: node.width, '--cnode-h': `${node.height}px` }}
+      style={{ left: node.pos_x, top: node.pos_y, width: node.width, '--cnode-h': `${node.height}px`, '--cnode-w': node.width }}
       data-node-id={node.id}
     >
       {/* Generation progress ring — category-coloured outline filling
@@ -1256,7 +1256,7 @@ export default function CanvasNode({
           onReplace={() => { setMenuPos(null); onReplaceContent?.(node.id); }}
           onReset={() => { setMenuPos(null); setShowResetConfirm(true); }}
           onRemoveFromSection={() => { setMenuPos(null); onRemoveFromSection?.(); }}
-          onDelete={() => { setMenuPos(null); if (confirm('Delete this node?')) onDelete(); }}
+          onDelete={() => { setMenuPos(null); onDelete?.(); }}
           onClose={() => setMenuPos(null)}
         />,
         document.body

@@ -90,7 +90,11 @@ const SECTION_TOP_PAD = 260;
 // A "section" is a connected component of the board graph with >= 2 nodes.
 // Returns each section's padded bounding box (an obstacle rect). Rows with
 // no id are treated as standalone — they never form a section.
-function sectionRects(rows, edgeRows) {
+//
+// `excludeNodeId`: skip the section that CONTAINS this node. Used when placing
+// a node that BELONGS to that section (e.g. an extracted/derived node landing
+// next to its source) — its own section's frame must not shove it out.
+function sectionRects(rows, edgeRows, excludeNodeId = null) {
   const byId = new Map();
   for (const r of rows) if (r.id) byId.set(r.id, r);
   const parent = new Map();
@@ -109,6 +113,9 @@ function sectionRects(rows, edgeRows) {
   const rects = [];
   for (const members of groups.values()) {
     if (members.length < 2) continue;
+    // The derived node's own section — don't treat it as an obstacle, so the
+    // node can land inside the section it's joining.
+    if (excludeNodeId && members.some((m) => m.id === excludeNodeId)) continue;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const m of members) {
       const x = m.pos_x ?? 0, y = m.pos_y ?? 0, w = m.width ?? 0, h = m.height ?? 0;
@@ -129,7 +136,8 @@ function sectionRects(rows, edgeRows) {
 
 // Load the board's collision obstacles: every node rect PLUS a padded frame
 // rect for each section (>= 2 connected nodes). Returns { rows, obstacles }.
-async function loadBoardObstacles(boardId, sql) {
+// `excludeSectionOf`: omit the frame of the section containing this node.
+async function loadBoardObstacles(boardId, sql, excludeSectionOf = null) {
   const rows = await sql`
     SELECT id, pos_x, pos_y, width, height FROM nodes WHERE board_id = ${boardId}
   `;
@@ -137,14 +145,17 @@ async function loadBoardObstacles(boardId, sql) {
   const edgeRows = await sql`
     SELECT source_node_id, target_node_id FROM edges WHERE board_id = ${boardId}
   `;
-  return { rows, obstacles: [...rows, ...sectionRects(rows, edgeRows)] };
+  return { rows, obstacles: [...rows, ...sectionRects(rows, edgeRows, excludeSectionOf)] };
 }
 
 // Resolve ANY candidate position against the live board so it never overlaps
 // an existing node OR section frame. Used by paths that already have a target
-// (x, y) — e.g. the agent passing explicit coords.
-export async function resolvePlacement(boardId, x, y, w, h, sql) {
-  const { rows, obstacles } = await loadBoardObstacles(boardId, sql);
+// (x, y) — e.g. the agent passing explicit coords, or a cord-drop extract.
+// `excludeSectionOf`: a node whose section the candidate is JOINING — its
+// frame is not treated as an obstacle (so a derived node lands next to its
+// source instead of being flung out below the section).
+export async function resolvePlacement(boardId, x, y, w, h, sql, excludeSectionOf = null) {
+  const { rows, obstacles } = await loadBoardObstacles(boardId, sql, excludeSectionOf);
   if (!rows.length) return { x, y };
   return resolveDownCollision(x, y, w, h, obstacles, clearGapFor(rows.length));
 }

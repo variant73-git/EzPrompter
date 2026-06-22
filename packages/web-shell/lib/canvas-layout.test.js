@@ -121,4 +121,21 @@ describe('section-aware placement (keep new nodes clear of section frames)', () 
     const p = await resolvePlacement('board', 0, 400, 200, 200, seqSql(nodes, edges));
     expect(p.y).toBeLessThan(700); // stays in the gap; only clears the nodes
   });
+
+  it('excludeSectionOf lets a derived node land inside its source section', async () => {
+    // a→b form a section. Extracting from `a` and dropping to the right (in
+    // empty space inside the section) must KEEP the node there — not shove it
+    // out below the frame.
+    const nodes = [
+      { id: 'a', pos_x: 1000, pos_y: 1000, width: 400, height: 400 },
+      { id: 'b', pos_x: 1000, pos_y: 1700, width: 400, height: 400 },
+    ];
+    const edges = [{ source_node_id: 'a', target_node_id: 'b' }];
+    // Without the exclusion, the source's own frame flings it far down.
+    const flung = await resolvePlacement('board', 1500, 1050, 600, 600, seqSql(nodes, edges));
+    expect(flung.y).toBeGreaterThan(1050);
+    // With the exclusion, it stays at the drop point.
+    const kept = await resolvePlacement('board', 1500, 1050, 600, 600, seqSql(nodes, edges), 'a');
+    expect(kept).toEqual({ x: 1500, y: 1050 });
+  });
 });

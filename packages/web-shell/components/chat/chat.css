@@ -66,7 +66,9 @@ body.rb-ed-light .chat-thinking-dot {
   border-radius: 999px;
   font-family: var(--popup-font-sans, system-ui);
   font-size: 11px;
-  border: 1px solid transparent;
+  /* No outline stroke on any chip state — the per-state `border-color` rules
+     below become inert (no border-style), leaving just the tinted fill. */
+  border: none;
 }
 .tool-chip-pending, .tool-chip-running {
   background: rgba(56, 189, 248, 0.08);
@@ -259,7 +261,7 @@ body.rb-ed-light .chat-panel-collapse:hover { background: rgba(0, 0, 0, 0.08); c
   padding: 12px 16px;
   border-radius: 14px;
   background: rgba(128, 128, 128, 0.16);
-  border: 1px solid rgba(251, 191, 36, 0.85);
+  border: none;
   color: rgba(245, 245, 245, 0.95);
   font-family: var(--popup-font-sans, system-ui);
   font-size: 14px;

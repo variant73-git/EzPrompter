@@ -423,7 +423,7 @@ function chatReducer(state, action) {
   }
 }
 
-const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowError, nodeCount, onAgentMutatedGraph, activeContexts = null, onClearActiveContext }, forwardedRef) {
+const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowDisabled = false, runFlowError, nodeCount, onAgentMutatedGraph, activeContexts = null, onClearActiveContext }, forwardedRef) {
   // Normalise to an array. activeContexts can be: null (no context),
   // an array of {kind:'section'|'node', ...} items.
   const contextList = Array.isArray(activeContexts) ? activeContexts : (activeContexts ? [activeContexts] : []);
@@ -1094,6 +1094,10 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     // from the picker is passed through so the backend can route to
     // OpenAI / Anthropic / Gemini accordingly.
     if (!value && !imageFile) {
+      // Every runnable chain is up to date — a bare re-run would reproduce
+      // the same result. Typing a request (which sets hasContent) is the way
+      // to run something again; this bare path stays inert until then.
+      if (runFlowDisabled) return;
       if (onRunFlow) {
         try { await onRunFlow({ modelId }); } catch (e) { console.warn('runFlow error', e); }
       }
@@ -1518,7 +1522,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           whileHover={chat.streaming || ((hasContent || nodeCount > 0) && !runFlowBusy) ? { scale: 1.06 } : {}}
           whileTap={chat.streaming || ((hasContent || nodeCount > 0) && !runFlowBusy) ? { scale: 0.94 } : {}}
           transition={{ type: 'spring', stiffness: 400, damping: 22 }}
-          disabled={busy || runFlowBusy || (!chat.streaming && chat.softPause !== null) || (!chat.streaming && !hasContent && nodeCount === 0)}
+          disabled={busy || runFlowBusy || (!chat.streaming && chat.softPause !== null) || (!chat.streaming && !hasContent && (nodeCount === 0 || runFlowDisabled))}
           onClick={async () => {
             if (chat.streaming) {
               // Stop the in-flight agent run. The backend cancellation flushes
@@ -1538,7 +1542,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
             submit();
           }}
           aria-label={chat.streaming ? 'Stop' : (hasContent ? 'Send' : 'Run flow')}
-          title={chat.streaming ? 'Stop the agent' : (runFlowBusy ? 'Running…' : (hasContent ? 'Send' : 'Run flow (process connected nodes)'))}
+          title={chat.streaming ? 'Stop the agent' : (runFlowBusy ? 'Running…' : (hasContent ? 'Send' : (runFlowDisabled ? 'Up to date — edit a node or ask in chat to run a workflow again' : 'Run flow (process connected nodes)')))}
         >
           {chat.streaming ? (
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">

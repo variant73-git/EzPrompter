@@ -57,5 +57,7 @@ export function selectGeometricMembersToLatch({ sections, nodeById, edgeTouchedS
 }
 
 // How far past the remaining-core the dragged node's center must travel to
-// detach (world px). Calibrated for a decisive pull, not an accidental nudge.
-export const TEAR_MARGIN = 140;
+// detach (world px). Calibrated for a very decisive pull — the section
+// stretches a long way before it lets a node go, so accidental nudges never
+// tear a node out.
+export const TEAR_MARGIN = 420;

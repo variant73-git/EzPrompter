@@ -19,7 +19,7 @@ import Minimap from './Minimap.jsx';
 import ChallengeModal from './ChallengeModal.jsx';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
-import { findSectionTerminal, sectionRerunWouldOverwrite } from '../lib/section-run.js';
+import { findSectionTerminal, sectionRerunWouldOverwrite, chainSignature } from '../lib/section-run.js';
 import { clampToViewport } from '../lib/menu-position.js';
 import {
   shouldTearOut, nodeCenter, pointInRect,
@@ -94,6 +94,12 @@ const WORLD_HEIGHT = 6000;
 // agree on the SAME core area or nodes get stuck half-released.
 const SECTION_UNIFORM_GAP = 165;
 const SECTION_TOP_GAP = 260;
+// Breathing margin kept between a member node's edge and the section frame.
+// Used both by the live adopt-preview engulf and the committed grow path —
+// they MUST share this value so dropping a node in causes zero snap. Bumped
+// up so a node transported into a section lands with comfortable room around
+// it, not hugging the frame edge.
+const SECTION_MEMBER_CLEARANCE = 72;
 // "Don't ask again" pref for the section re-run confirm modal.
 const RERUN_CONFIRM_SKIP_KEY = 'rb-rerun-confirm-skip';
 // Asset cards draw their dims label below the body — counted in every
@@ -204,6 +210,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Section pending delete confirmation. Same ConfirmModal pattern as
   // playSection — { section, busy }.
   const [sectionDelete, setSectionDelete] = useState(null);
+  // Single-node pending delete confirmation (from the node ⋯ menu). Styled
+  // ConfirmModal in place of the old native confirm() — { id, name }.
+  const [nodeDelete, setNodeDelete] = useState(null);
   // Custom section names — sections are derived from connected components,
   // so the id is stable as long as members don't change. We keep overrides
   // in localStorage keyed by that id; the auto-generated theme name is the
@@ -756,7 +765,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       if (!removingRef.current && shouldTearOut(cx, cy, drag.remainingCore, margin)) {
         const sec = sections.find((s) => s.id === drag.ownSectionId);
         const siblingIds = sec ? sec.memberIds.filter((id) => id !== node.id) : [];
-        setRemovingSync({ nodeId: node.id, sectionId: drag.ownSectionId, rootId: drag.ownRootId, siblingIds });
+        setRemovingSync({ nodeId: node.id, sectionId: drag.ownSectionId, rootId: drag.ownRootId, siblingIds, armX: node.pos_x, armY: node.pos_y });
         if (adoptPreviewRef.current) setAdoptPreviewSync(null);
       }
     }
@@ -766,7 +775,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (removingRef.current && removingRef.current.nodeId === node.id) {
       const { cx, cy } = nodeCenter(node, posX, posY);
       const rect = removalSectionRect(removingRef.current);
-      setRemovingOutside(!pointInRect(cx, cy, rect));
+      const inside = pointInRect(cx, cy, rect);
+      // Dragged BACK inside before releasing → un-arm live so the node
+      // returns to its natural colour immediately (no waiting for the drop).
+      // Re-arms if pulled past the tear margin again. Menu-armed nodes stay
+      // armed until an explicit Cancel/Escape/commit, so they're excluded.
+      if (inside && !removingRef.current.fromMenu) {
+        setRemovingSync(null);
+        setRemovingOutside(false);
+        return;
+      }
+      setRemovingOutside(!inside);
       return;
     }
 
@@ -796,8 +815,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       return;
     }
     // Engulf rect = section frame grown to contain the node with the same
-    // 40px clearance the committed grow path uses ⇒ zero snap on drop.
-    const CLEAR = 40;
+    // clearance the committed grow path uses ⇒ zero snap on drop.
+    const CLEAR = SECTION_MEMBER_CLEARANCE;
     const previewRect = {
       left:   Math.min(best.x, rect.left - CLEAR),
       top:    Math.min(best.y, rect.top - CLEAR),
@@ -923,7 +942,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const own = sections.find((s) => s.memberIds.includes(node.id) && s.memberIds.length > 1);
     if (!own) return;
     const siblingIds = own.memberIds.filter((id) => id !== node.id);
-    setRemovingSync({ nodeId: node.id, sectionId: own.id, rootId: own.rootId, siblingIds, fromMenu: true });
+    setRemovingSync({ nodeId: node.id, sectionId: own.id, rootId: own.rootId, siblingIds, fromMenu: true, armX: node.pos_x, armY: node.pos_y });
     setRemovingOutside(false);
   }
 
@@ -1881,7 +1900,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       if (!e.target_node_id) continue;
       targets.add(e.target_node_id);
     }
-    const runnable = [...targets].filter((id) => {
+    const allRunnable = [...targets].filter((id) => {
       if (String(id).startsWith('temp-')) return false;
       const n = nodes.find((x) => x.id === id);
       if (!n) return false;
@@ -1891,8 +1910,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // page from the connected sources.
       return !!n.current_html || (n.kind === 'site' && !n._loading);
     });
-    if (runnable.length === 0) {
+    if (allRunnable.length === 0) {
       setRunFlowError('Connect at least one source node into a target with a snapshot, then try again.');
+      setTimeout(() => setRunFlowError(null), 4000);
+      return;
+    }
+    // Skip targets whose chain hasn't changed since its last run — re-running
+    // a clean chain would just reproduce the same result and burn credits.
+    // Editing a node or asking again in chat re-enables it.
+    const runnable = allRunnable.filter((id) => !cleanTerminalIds.has(id));
+    if (runnable.length === 0) {
+      setRunFlowError('Nothing changed since the last run — edit a node or ask in chat to run a workflow again.');
       setTimeout(() => setRunFlowError(null), 4000);
       return;
     }
@@ -1906,6 +1934,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         const id = runnable[i];
         if (r.status === 'fulfilled' && r.value?.snapshotId) {
           updates.set(id, { html: r.value.html, snapshotId: r.value.snapshotId });
+          // Ran clean — gate this chain's run buttons until it changes again.
+          const sec = sections.find((s) => s.memberIds.includes(id));
+          if (sec) markSectionPendingClean(sec.id);
         } else if (r.status === 'rejected') {
           firstError = firstError || r.reason?.message || String(r.reason);
           console.warn('run-flow target failed', id, r.reason);
@@ -2151,6 +2182,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 }
               : n
           )));
+          // Ran clean — disable the run buttons until the chain changes.
+          markSectionPendingClean(s.id);
         }
       } catch (e) {
         console.warn('[section-rerun] site compose failed:', e?.message || e);
@@ -2194,6 +2227,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             }
           : n
       )));
+      // Ran clean — disable the run buttons until the chain changes.
+      markSectionPendingClean(s.id);
     } catch (e) {
       console.warn('[section-rerun] failed:', e?.message || e);
       toast.error(e?.message || 'Re-run failed.');
@@ -2844,10 +2879,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           const s = sections.find((x) => x.id === selectedSectionId);
           if (s) {
             e.preventDefault();
-            if (confirm(`Delete the entire "${s.name}" workflow? ${s.memberIds.length} nodes will be removed.`)) {
-              handleDeleteNodes(s.memberIds);
-              setSelectedSectionId(null);
-            }
+            setSectionDelete({ section: s, busy: false });
           }
           return;
         }
@@ -3152,7 +3184,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // to maintain MIN_FRAME_CLEARANCE (40px) from every member edge.
       // First-time sections fall back to the auto-bbox + UNIFORM_GAP /
       // TOP_GAP defaults — captured by the useEffect below on next tick.
-      const MIN_FRAME_CLEARANCE = 40;
+      const MIN_FRAME_CLEARANCE = SECTION_MEMBER_CLEARANCE;
       const stored = sectionFrames[sectionId];
       let frameLeft, frameTop, frameRight, frameBottom;
       if (stored) {
@@ -3181,6 +3213,111 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
     return out;
   }, [nodes, edges, sectionNameOverrides, sectionFrames, canvasScale, dragFreeze, removing]);
+
+  // ── Re-run gating (clean vs dirty) ─────────────────────────────────────
+  // After a workflow runs, its run buttons (section ▶ + the bare chat-arrow
+  // run-flow) go DISABLED until the chain CHANGES — so the user can't burn
+  // credits regenerating an identical result. A chain re-enables when its
+  // content signature changes: editing a prompt, swapping an image, rewiring
+  // an edge, or the user asking for it again in chat (any typed message keeps
+  // the arrow live and the resulting mutation flips the signature). Moving
+  // nodes around the canvas does NOT count — chainSignature ignores position.
+  //
+  // cleanSigs maps a section id → the signature captured the moment its run
+  // completed. The section is "clean" while its live signature still matches.
+  const [cleanSigs, setCleanSigs] = useState({});
+  // Sections whose run just finished and need their post-run signature
+  // captured once React commits the new content. Holds ids until the effect
+  // below snapshots them against settled state.
+  const pendingCleanRef = useRef(new Set());
+  const markSectionPendingClean = useCallback((sectionId) => {
+    if (!sectionId) return;
+    pendingCleanRef.current.add(sectionId);
+  }, []);
+  // Snapshot pending signatures after content commits. Runs on every
+  // nodes/edges/sections change; only does work when something is pending.
+  useEffect(() => {
+    if (pendingCleanRef.current.size === 0) return;
+    const captured = {};
+    let any = false;
+    for (const id of pendingCleanRef.current) {
+      const s = sections.find((x) => x.id === id);
+      if (!s) continue; // section dissolved (members changed) — drop it
+      captured[id] = chainSignature(s, nodes, edges);
+      any = true;
+    }
+    pendingCleanRef.current = new Set();
+    if (any) setCleanSigs((prev) => ({ ...prev, ...captured }));
+  }, [nodes, edges, sections]);
+
+  // Safety net: a node must never get stuck in the white "removing" state once
+  // it settles back INSIDE its section. The drop handler already resolves an
+  // armed removal (cancel inside / commit outside), but if a node ends a drag
+  // still armed while its center sits inside the section, restore it to its
+  // normal colour/state here. Gated on `!dragFreeze` so it never fights an
+  // in-progress tear-out (the frame stretches with the node mid-drag).
+  // Menu-armed nodes (`fromMenu`) are intentionally persistent — they stay
+  // white until the user drags them out, hits Cancel, or presses Escape — so
+  // they're only cleared once they've actually been moved back inside.
+  // Placed AFTER the `sections` memo so its dependency list can reference it.
+  useEffect(() => {
+    if (dragFreeze) return;
+    const arm = removingRef.current;
+    if (!arm) return;
+    const node = nodes.find((n) => n.id === arm.nodeId);
+    if (!node) return;
+    const { cx, cy } = nodeCenter(node, node.pos_x, node.pos_y);
+    const rect = removalSectionRect(arm);
+    if (!rect || !pointInRect(cx, cy, rect)) return;
+    // Inside the section. For elastic arms that's always "back home". For
+    // menu arms, only clear if the node was actually dragged from where it
+    // was armed (a stray re-render shouldn't cancel an idle menu-arm).
+    if (arm.fromMenu && arm.armX != null) {
+      const movedBack = Math.hypot(node.pos_x - arm.armX, node.pos_y - arm.armY) > 4;
+      if (!movedBack) return;
+    }
+    cancelNodeRemoval();
+  }, [dragFreeze, nodes, sections]);
+
+  // Live clean state: a section id is clean when its stored signature still
+  // equals the current one. Recomputed against live nodes/edges so any
+  // content edit (but not a move) re-enables the run on the next render.
+  const cleanSectionIds = useMemo(() => {
+    const out = new Set();
+    for (const s of sections) {
+      if (!s.hasEdges) continue;
+      const stored = cleanSigs[s.id];
+      if (stored && stored === chainSignature(s, nodes, edges)) out.add(s.id);
+    }
+    return out;
+  }, [sections, nodes, edges, cleanSigs]);
+  // Terminal node ids of clean sections — the bare chat-arrow run-flow skips
+  // these (re-running a clean chain produces the same result).
+  const cleanTerminalIds = useMemo(() => {
+    const out = new Set();
+    for (const s of sections) {
+      if (!cleanSectionIds.has(s.id)) continue;
+      const { terminalId } = findSectionTerminal(s, nodes, edges);
+      if (terminalId) out.add(terminalId);
+    }
+    return out;
+  }, [sections, cleanSectionIds, nodes, edges]);
+  // The bare chat-arrow run-flow processes every runnable target on the
+  // board. When they're ALL clean there's nothing new to produce, so the
+  // arrow's run-flow shortcut goes disabled (typing a message keeps it live —
+  // text in the field is a chat request, never a bare re-run).
+  const runFlowAllClean = useMemo(() => {
+    const targets = new Set();
+    for (const e of edges) { if (e.target_node_id) targets.add(e.target_node_id); }
+    const runnable = [...targets].filter((id) => {
+      if (String(id).startsWith('temp-')) return false;
+      const n = nodes.find((x) => x.id === id);
+      if (!n) return false;
+      return !!n.current_html || (n.kind === 'site' && !n._loading);
+    });
+    if (runnable.length === 0) return false;
+    return runnable.every((id) => cleanTerminalIds.has(id));
+  }, [edges, nodes, cleanTerminalIds]);
 
   // Capture / grow sectionFrames after each sections render. New sections
   // initialise their stored frame from the default-padded coords; existing
@@ -3759,7 +3896,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 // resize doesn't cascade — that would feel jittery.
                 if (opts?.cascade) cascadeOverlapShift(n.id, width, patch.height ?? n.height);
               }}
-              onDelete={() => handleDeleteNode(n.id)}
+              onDelete={() => setNodeDelete({ id: n.id, name: (n.name || '').trim() })}
               onReset={() => handleResetNode(n.id)}
               runStatus={runStatus.get(n.id) || null}
               onSaveEdit={(html) => handleSaveNodeEdit(n.id, html)}
@@ -3859,12 +3996,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                     {s.name}
                   </span>
                 )}
-                {s.hasEdges && (
+                {s.hasEdges && (() => {
+                  // Clean = nothing changed since the last run → disabled, so
+                  // the user can't burn credits regenerating the same result.
+                  // Edits to any member, edge rewiring, or a fresh chat request
+                  // re-enable it; moving nodes around does not.
+                  const isClean = cleanSectionIds.has(s.id);
+                  return (
                   <button
                     type="button"
                     className="canvas-section-play-btn"
+                    disabled={isClean}
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (isClean) return;
                       // Confirm only when a generated result would be
                       // OVERWRITTEN; first runs (and opted-out users)
                       // fire straight away.
@@ -3876,13 +4021,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                       }
                       setPlaySection({ section: s, busy: false });
                     }}
-                    aria-label={`Re-run ${s.name}`}
+                    aria-label={isClean ? `${s.name} is up to date — edit a node or ask in chat to run again` : `Re-run ${s.name}`}
+                    data-tooltip={isClean ? 'Up to date — change a node or ask in chat to run again' : undefined}
                   >
                     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <polygon points="6,4 20,12 6,20" />
                     </svg>
                   </button>
-                )}
+                  );
+                })()}
               </div>
               <div
                 className="canvas-section-grip"
@@ -4031,6 +4178,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         onAddBlankSite={() => handleAddBlankSite()}
         onRunFlow={handleRunFlow}
         runFlowBusy={runFlowBusy}
+        runFlowDisabled={runFlowAllClean}
         runFlowError={runFlowError}
         nodeCount={nodes.length}
         onAgentMutatedGraph={async ({ frame = false } = {}) => {
@@ -4203,6 +4351,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           setSectionDelete(null);
         }}
         onCancel={() => { if (!sectionDelete?.busy) setSectionDelete(null); }}
+      />
+
+      <ConfirmModal
+        open={!!nodeDelete}
+        title="Delete node?"
+        message={nodeDelete?.name ? `"${nodeDelete.name}" will be removed from the canvas.` : 'This node will be removed from the canvas.'}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={() => {
+          if (nodeDelete) {
+            handleDeleteNode(nodeDelete.id);
+            if (selectedNodeId === nodeDelete.id) setSelectedNodeId(null);
+          }
+          setNodeDelete(null);
+        }}
+        onCancel={() => setNodeDelete(null)}
       />
 
       <ConfirmModal
