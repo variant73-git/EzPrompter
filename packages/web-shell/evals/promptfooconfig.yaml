@@ -31,6 +31,12 @@ providers:
       # temperature 0 → near-deterministic routing so the gate doesn't flake
       # on ambiguous inputs (a CI gate that fails 1-in-3 runs is worse than none).
       temperature: 0
+  # Second orchestrator candidate — head-to-head on the SAME cases. The agent's
+  # operator model should be best-cost/benefit, not cheapest; this lets us pick
+  # on measured pass-rate, not vibes. Needs OPENAI_API_KEY in env.
+  - id: 'openai:gpt-4o-mini'
+    config:
+      temperature: 0
 
 # Prompt template is GENERATED from the shipping BOARD_AGENT (lib/agent/prompts.js)
 # by evals/gen-prompt.mjs, which runs as the first step of `bun run evals`. That
@@ -102,3 +108,94 @@ tests:
         value: 'replaceAssetId'
       - type: not-icontains
         value: 'createNode'
+
+  # ═══ NODE-CHAIN ORCHESTRATION — canonical shapes + the type-vocabulary trap ═══
+  # These test the OPERATOR's competence: given a request, does it START the
+  # right chain with the right node types? They assert on the FIRST move only
+  # (the harness is single-shot), which is where most "did it understand" signal
+  # lives. Full multi-step sequencing + the no-loop/memory behaviour need the
+  # multi-turn harness (future).
+
+  # ─── 6. Style transfer (Site → .md → Site): extract/apply, not editSite ─────
+  - description: 'Style transfer routes to extract/apply design, not a raw editSite'
+    vars:
+      user: '[Board has 2 nodes: "Site A" (site, has result) id=a1; "Site B" (site, has result) id=b1.]\n\ntransfira o estilo do site A pro site B'
+    assert:
+      - type: icontains-any
+        value: ['extractDesign', 'applyDesign']
+      - type: not-icontains
+        value: 'editSite'
+
+  # ─── 7. Style transfer, colloquial phrasing ─────────────────────────────────
+  - description: 'Colloquial style transfer ("a cara do site A") still routes to design pipeline'
+    vars:
+      user: '[Board has 2 nodes: "Site A" (site, has result) id=a1; "Site B" (site, has result) id=b1.]\n\ndeixa o site B com a cara do site A'
+    assert:
+      - type: icontains-any
+        value: ['extractDesign', 'applyDesign']
+
+  # ─── 8. Type vocabulary: "design system" from a site → design node, NEVER prompt ─
+  - description: 'A design-system request extracts a design node, not a prompt node'
+    vars:
+      user: '[Active node: site "landing" nodeId=s1, has result.]\n\ncrie um design system a partir desse site'
+    assert:
+      - type: icontains-any
+        value: ['extractDesign', 'design-system', 'designmd']
+      - type: not-icontains
+        value: 'type: "prompt"'
+
+  # ─── 9. Type vocabulary: ".md de design" → design node, not prompt ──────────
+  - description: 'A "design .md" request maps to a design-system node, not a prompt'
+    vars:
+      user: '[Active node: site "loja" nodeId=s2, has result.]\n\ngera o .md de design desse site'
+    assert:
+      - type: icontains-any
+        value: ['extractDesign', 'design-system', 'designmd']
+      - type: not-icontains
+        value: 'type: "prompt"'
+
+  # ─── 10. Build from an image: take a build step, don't ask ──────────────────
+  - description: 'Build-a-site-from-this-image takes a building step, does not stall'
+    vars:
+      user: '[Active node: image asset "ref" nodeId=i1 assetId=A1.]\n\ncrie um site a partir dessa imagem'
+    assert:
+      - type: not-icontains
+        value: 'ASK'
+      - type: icontains-any
+        value: ['createNode', 'blank-website', 'runFlow', 'editSite', 'extractDesign', 'applyDesign', 'captureUrl']
+
+  # ─── 11. Qualitative direction → prompt node (variable), not editSite ───────
+  - description: 'Qualitative direction promotes to a prompt node, not a skeleton editSite'
+    vars:
+      user: '[Active node: site "landing" nodeId=l1, has result.]\n\ndeixa a comunicação mais sofisticada e premium'
+    assert:
+      - type: icontains-any
+        value: ['createNode', 'prompt', 'variável']
+      - type: not-icontains
+        value: 'editSite'
+
+  # ─── 12. Ambiguity (nothing selected, several sites, vague) → ASK ───────────
+  - description: 'Vague request with nothing selected + multiple sites → asks which'
+    vars:
+      user: '[Board has 3 nodes: "Loja" (site, has result) id=x1; "Blog" (site, has result) id=x2; "Portfolio" (site, has result) id=x3.]\n\ndeixa mais escura'
+    assert:
+      - type: icontains-any
+        value: ['ASK', 'qual']
+
+  # ─── 13. New-vs-continue trap (selected site + "create a pricing page") → ASK ─
+  - description: 'Build request while a site is selected → asks add-or-new (canonical trap)'
+    vars:
+      user: '[The user SELECTED this node: site "fintech" nodeId=f1, has result.]\n\ncrie uma página de pricing'
+    assert:
+      - type: icontains-any
+        value: ['ASK', 'adiciona', 'nova', 'separ', 'outro']
+
+  # ─── 14. Selected + referential → ACT, don't ask (the no-loop case) ─────────
+  - description: 'Selected node + referential tweak → acts, does not re-ask which'
+    vars:
+      user: '[The user SELECTED this node: site "landing" nodeId=l1, has result.]\n\ndeixa mais escura'
+    assert:
+      - type: not-icontains
+        value: 'ASK'
+      - type: icontains-any
+        value: ['editSite', 'createNode', 'updateNode', 'prompt']

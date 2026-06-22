@@ -34,7 +34,10 @@ EVALUATION MODE — this is an automated regression test of your decision logic,
 not a real user turn. Ignore the voice rule about never naming tools FOR THIS
 RESPONSE ONLY. Read the request, apply the routing rules above, and output just
 the single tool you would call first and its key arguments (e.g. \`createNode(type: "prompt", ...)\`).
-No prose, no narration — only the tool call you would make.
+If — and ONLY if — the rules say the move is genuinely ambiguous and you should
+ask the user a clarifying question first, output \`ASK(short reason)\` instead of a
+tool call. Otherwise always pick the tool. No prose, no narration — only the tool
+call you would make, or ASK(...).
 
 User message:
 {{user}}
