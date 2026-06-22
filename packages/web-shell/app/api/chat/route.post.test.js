@@ -203,6 +203,39 @@ describe('POST /api/chat — Phase 2 wiring', () => {
   });
 });
 
+describe('POST /api/chat — conversation memory', () => {
+  beforeEach(() => {
+    process.env.ANTHROPIC_API_KEY = 'sk-fake';
+    process.env.UNCRAFT_AGENT_MODEL = 'claude-sonnet-4-6';
+  });
+
+  it('replays prior thread turns before the current message (no more amnesia loop)', async () => {
+    driverCalls.length = 0;
+    const { loadMessages } = await import('../../../lib/chat-persistence.js');
+    loadMessages.mockResolvedValueOnce([
+      { role: 'user', content: 'faça esse node em light mode' },
+      { role: 'assistant', content: 'Which node? 1, 2, 3, 4?' },
+      { role: 'user', content: 'Website from image' },
+      { role: 'assistant', content: '', tool_calls: [{ name: 'viewNode' }] }, // tool-only → skipped
+    ]);
+    const req = new Request('http://test/api/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ boardId: 'b1', message: 'faça em light mode' }),
+    });
+    await POST(req);
+    await new Promise((r) => setTimeout(r, 30));
+
+    const msgs = driverCalls[0].messages;
+    // Prior text turns are present, the empty tool-only assistant turn is dropped,
+    // and the current message is LAST.
+    const texts = msgs.map((m) => (typeof m.content === 'string' ? m.content : ''));
+    expect(texts.some((t) => t.includes('faça esse node em light mode'))).toBe(true);
+    expect(texts.some((t) => t.includes('Website from image'))).toBe(true);
+    expect(msgs.filter((m) => m.role === 'assistant').length).toBe(1); // the empty one skipped
+    expect(texts[texts.length - 1]).toContain('faça em light mode'); // current is last
+  });
+});
+
 describe('POST /api/chat — multimodal user content', () => {
   beforeEach(() => {
     process.env.ANTHROPIC_API_KEY = 'sk-fake';

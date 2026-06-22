@@ -32,6 +32,31 @@ describe('buildBoardSummary', () => {
     expect(out).toContain('"Brief" (prompt)');
   });
 
+  it('includes the nodeId so the agent can act without a lookup', async () => {
+    const out = await buildBoardSummary({
+      sql: fakeSql([{ id: 'node-abc', kind: 'site', meta: { name: 'Landing' }, has_snapshot: true }]),
+      boardId: 'b',
+    });
+    expect(out).toContain('id=node-abc');
+  });
+
+  it('includes assetId for asset nodes (for createImage)', async () => {
+    const out = await buildBoardSummary({
+      sql: fakeSql([{ id: 'node-x', kind: 'asset', meta: { name: 'Logo', assetId: 'asset-99' }, has_snapshot: false }]),
+      boardId: 'b',
+    });
+    expect(out).toContain('id=node-x');
+    expect(out).toContain('assetId=asset-99');
+  });
+
+  it('omits assetId for non-asset nodes', async () => {
+    const out = await buildBoardSummary({
+      sql: fakeSql([{ id: 'node-y', kind: 'site', meta: { name: 'Home', assetId: 'should-not-appear' }, has_snapshot: false }]),
+      boardId: 'b',
+    });
+    expect(out).not.toContain('assetId');
+  });
+
   it('singular "node" for one node', async () => {
     const out = await buildBoardSummary({
       sql: fakeSql([{ id: '1', kind: 'asset', meta: { name: 'Logo' }, has_snapshot: false }]),
@@ -71,5 +96,35 @@ describe('buildBoardSummary', () => {
   it('returns "" (best-effort) when the query throws', async () => {
     const throwingSql = () => Promise.reject(new Error('db down'));
     expect(await buildBoardSummary({ sql: throwingSql, boardId: 'b' })).toBe('');
+  });
+});
+
+// historyToLLMMessages lives in the chat route; unit-test it directly.
+import { historyToLLMMessages } from '../../app/api/chat/route.js';
+
+describe('historyToLLMMessages', () => {
+  it('keeps user + assistant text turns in order', () => {
+    const out = historyToLLMMessages([
+      { role: 'user', content: 'a' },
+      { role: 'assistant', content: 'b' },
+    ]);
+    expect(out).toEqual([{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }]);
+  });
+  it('skips empty, tool, and system rows', () => {
+    const out = historyToLLMMessages([
+      { role: 'assistant', content: '' },
+      { role: 'tool', content: 'result' },
+      { role: 'system', content: 'x' },
+      { role: 'user', content: 'keep' },
+    ]);
+    expect(out).toEqual([{ role: 'user', content: 'keep' }]);
+  });
+  it('caps long content', () => {
+    const out = historyToLLMMessages([{ role: 'user', content: 'x'.repeat(5000) }]);
+    expect(out[0].content.length).toBeLessThan(5000);
+    expect(out[0].content.endsWith('…')).toBe(true);
+  });
+  it('returns [] for non-array', () => {
+    expect(historyToLLMMessages(null)).toEqual([]);
   });
 });

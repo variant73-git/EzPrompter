@@ -295,6 +295,35 @@ async function buildWorkflowHint({ activeContexts, sql, userId, boardId }) {
   return lines.join('\n');
 }
 
+// How many prior turns to replay into the agent's context. The thread persists
+// across page loads / sessions, so this is a sliding window — enough for
+// continuity without unbounded token growth.
+const HISTORY_LIMIT = 20;
+const HISTORY_MSG_CAP = 4000; // chars per replayed message
+
+/**
+ * Convert persisted chat_messages rows into LLM message turns. Text-only: we
+ * replay the conversational prose (user asks, assistant answers) so the agent
+ * REMEMBERS the thread — without this each message was an amnesiac fresh start
+ * and the agent re-asked "which node?" even right after the user answered.
+ * Prior tool calls/results are NOT replayed (re-derived on demand). Skips
+ * empty rows (tool-only assistant turns) and non-user/assistant roles.
+ */
+export function historyToLLMMessages(rows) {
+  if (!Array.isArray(rows)) return [];
+  const out = [];
+  for (const m of rows) {
+    if (m.role !== 'user' && m.role !== 'assistant') continue;
+    const text = (m.content ?? '').toString().trim();
+    if (!text) continue;
+    out.push({
+      role: m.role,
+      content: text.length > HISTORY_MSG_CAP ? text.slice(0, HISTORY_MSG_CAP) + '…' : text,
+    });
+  }
+  return out;
+}
+
 export async function POST(request) {
   const { user, error } = await requireUser(request);
   if (error) return error;
@@ -427,6 +456,13 @@ export async function POST(request) {
   }
 
   const thread = await getOrCreateActiveThread({ boardId, userId: user.id, scope: threadScope, assetId });
+
+  // Replay recent conversation so the agent has MEMORY across turns. Loaded
+  // BEFORE we append the current message below, so the current turn isn't
+  // duplicated into the history. This is the fix for the amnesiac loop where
+  // the agent re-asked "which node?" right after the user answered.
+  const priorRows = await loadMessages({ threadId: thread.id, limit: HISTORY_LIMIT });
+  const historyMessages = historyToLLMMessages(priorRows);
 
   // Persist the user message immediately so it's visible on reload even if the run errors out.
   // Attachments are NOT persisted yet — they only travel with this turn so the agent can see
@@ -599,10 +635,10 @@ export async function POST(request) {
     for (const c of contextImages) {
       blocks.push({ type: 'image', dataUrl: c.dataUrl, name: c.name, mimeType: c.mimeType });
     }
-    initialMessages = [{ role: 'user', content: blocks }];
+    initialMessages = [...historyMessages, { role: 'user', content: blocks }];
   } else {
     const text = fullHint ? `${fullHint}\n\n${sanitizedMessage}` : sanitizedMessage;
-    initialMessages = [{ role: 'user', content: text }];
+    initialMessages = [...historyMessages, { role: 'user', content: text }];
   }
 
   const { stream, send, close } = createSseStream();

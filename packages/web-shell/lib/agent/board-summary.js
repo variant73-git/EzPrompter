@@ -12,11 +12,17 @@
  * tool calls for the most common flow"), generalized to the most common
  * reconnaissance call of all.
  *
- * Deliberately minimal: name, kind, and whether the node has a result
- * (snapshot). NEVER the meta blob — a single prompt/design-system node can
- * carry KB of text, which would defeat the whole point. The agent still has
- * `viewNode` / `listBoard` on demand when it needs the actual content or the
- * full list past the cap.
+ * Deliberately minimal: name, kind, whether the node has a result (snapshot),
+ * and the IDs needed to ACT on it (nodeId always; assetId for asset nodes).
+ * The IDs are the whole point — without them the agent knows a "Landing" site
+ * exists but still has to call queryNodes just to learn its id before it can
+ * editSite/updateNode, so the reconnaissance turn isn't actually saved. With
+ * the ids in hand it can act directly.
+ *
+ * NEVER the meta blob — a single prompt/design-system node can carry KB of
+ * text, which would defeat the whole point. The agent still has `viewNode` /
+ * `getNodeOutput` on demand when it needs the actual CONTENT, and listBoard /
+ * queryNodes for positions or the full list past the cap.
  */
 
 // Cap the per-node name so one pathological meta.name can't bloat the hint.
@@ -60,8 +66,13 @@ export async function buildBoardSummary({ sql, boardId, limit = DEFAULT_LIMIT })
       ? (rawName.length > MAX_NAME ? rawName.slice(0, MAX_NAME) + '…' : rawName)
       : kind;
     const tag = n.has_snapshot ? `${kind}, has result` : kind;
-    // Quote the name only when it differs from the kind, to keep it terse.
-    return rawName ? `"${name}" (${tag})` : `(${tag})`;
+    const label = rawName ? `"${name}" (${tag})` : `(${tag})`;
+    // The actionable IDs — without these the agent must call queryNodes just
+    // to map a name to an id before it can act. nodeId for every node;
+    // assetId too for asset nodes (it's what createImage takes).
+    const assetId = kind === 'asset' ? (n.meta?.assetId || null) : null;
+    const ids = assetId ? `id=${n.id} assetId=${assetId}` : `id=${n.id}`;
+    return `${label} ${ids}`;
   });
 
   // When we hit the cap there may be more — say so instead of implying the
