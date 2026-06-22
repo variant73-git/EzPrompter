@@ -227,11 +227,12 @@ describe('POST /api/chat — multimodal user content', () => {
     const userMsg = driverCalls[0].messages[0];
     expect(userMsg.role).toBe('user');
     expect(Array.isArray(userMsg.content)).toBe(true);
-    // First text block carries the user's typed message + the attachment-
-    // inventory line. No board-state preamble — that moved to the on-
-    // demand listBoard() tool in the tools-first architecture.
+    // First text block carries: a compact board-state preamble (so the agent
+    // skips its reflexive listBoard reconnaissance turn — board-scope only),
+    // then the user's typed message + the attachment-inventory line.
     expect(userMsg.content[0].type).toBe('text');
-    expect(userMsg.content[0].text).toMatch(/^what do you see\?/);
+    expect(userMsg.content[0].text).toMatch(/^\[Board has /);   // preamble first
+    expect(userMsg.content[0].text).toMatch(/what do you see\?/); // message present
     expect(userMsg.content[0].text).toMatch(/asset-mock-123/);
     expect(userMsg.content[1]).toEqual({
       type: 'image',

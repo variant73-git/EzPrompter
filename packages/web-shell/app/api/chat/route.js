@@ -11,6 +11,7 @@ import { callOpenAI }    from '../../../lib/agent/llm-openai.js';
 import { callGemini }    from '../../../lib/agent/llm-gemini.js';
 import { breakerFor }    from '../../../lib/agent/circuit.js';
 import { BOARD_AGENT, EDIT_IMAGE_SYSTEM } from '../../../lib/agent/prompts.js';
+import { buildBoardSummary } from '../../../lib/agent/board-summary.js';
 import { createSseStream, SSE_HEADERS } from '../../../lib/agent/sse-bridge.js';
 import { registerRun, unregisterRun } from '../../../lib/agent/run-map.js';
 import { getCaps } from '../../../lib/agent/caps.js';
@@ -550,7 +551,21 @@ export async function POST(request) {
   // active selection ids + workflow terminal info when a section is
   // selected. Everything else (board listings, proximity, viewing
   // other nodes, etc.) is on-demand via the exploration tools.
-  const fullHint = await buildWorkflowHint({ activeContexts, sql, userId: user.id, boardId });
+  // Two cheap, independent context hints, fetched concurrently so the added
+  // latency stays flat:
+  //   - workflow hint: active selection + workflow terminal (always).
+  //   - board summary: a one-line overview of every node, so the agent
+  //     skips its reflexive `listBoard` reconnaissance turn. Board-scope
+  //     only — asset-scoped Smart Edit chats don't reason over the graph.
+  const [workflowHint, boardSummary] = await Promise.all([
+    buildWorkflowHint({ activeContexts, sql, userId: user.id, boardId }),
+    threadScope === 'board'
+      ? buildBoardSummary({ sql, boardId })
+      : Promise.resolve(''),
+  ]);
+  // Broad context first (board shape), then the specific selection/workflow
+  // hint closest to the user's message.
+  const fullHint = [boardSummary, workflowHint].filter(Boolean).join('\n');
   const hasContextImages = contextImages.length > 0;
   const goesMultimodal = hasAttachments || hasContextImages;
   let initialMessages;
