@@ -128,15 +128,22 @@ const BEHAVIOURS = [
     ],
   },
 
-  // ── Build from an image: take a build step, don't stall ──
+  // ── Build from an image WITH stated intent → kick off the build, don't over-ask ──
+  // Ground truth is only clean when the request carries the site's PURPOSE — the
+  // image gives the visual direction, the words give the goal, so a clarifying
+  // question is genuinely over-asking. A bare "faça um site com essa imagem" is
+  // deliberately NOT tested here: asking for direction there is defensible (Rule 4),
+  // so it's contested ground, not an operator competence signal. (This tests the
+  // DECISION to start building — NOT the quality of the result, which is the
+  // user-picked content model's job, out of scope for the operator eval.)
   {
-    id: 'build-from-image',
+    id: 'build-from-image-intent',
     ctx: 'selImg',
-    assert: [not('ASK'), any('createNode', 'blank-website', 'runFlow', 'editSite', 'extractDesign', 'applyDesign', 'captureUrl')],
+    assert: [not('ASK'), any('createNode', 'blank-website', 'runFlow', 'editSite', 'extractDesign', 'applyDesign')],
     phrasings: [
-      'crie um site a partir dessa imagem',
-      'monta um site com essa imagem de referência',
-      'transforma essa imagem num site',
+      'transforma essa imagem numa landing page de produto',
+      'crie a homepage de um site institucional com base nessa imagem',
+      'monta uma página de portfólio a partir dessa imagem de referência',
     ],
   },
 

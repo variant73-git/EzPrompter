@@ -25,17 +25,17 @@ providers:
   - id: 'openai:gpt-4o-mini'
     config: { temperature: 0 }
   # ── Open-weight operators via a Western host (data never goes to China). ──
-  # Uncomment when OPENROUTER_API_KEY is set. Pin the underlying provider to a
-  # Western one (Fireworks/Together/Groq) via `provider.order` so an aggregator
-  # doesn't silently route back to the model's origin API.
-  # - id: 'openrouter:deepseek/deepseek-chat'
-  #   config:
-  #     temperature: 0
-  #     provider: { order: ['Fireworks', 'Together'], allow_fallbacks: false }
-  # - id: 'openrouter:moonshotai/kimi-k2'
-  #   config:
-  #     temperature: 0
-  #     provider: { order: ['Groq', 'Fireworks'], allow_fallbacks: false }   # Groq = lowest latency
+  # `provider.order` prefers a Western host; allow_fallbacks keeps the run from
+  # hard-failing if the top choice doesn't carry the model. For PRODUCTION data
+  # residency, verify the actual serving provider (set allow_fallbacks:false).
+  - id: 'openrouter:deepseek/deepseek-chat'
+    config:
+      temperature: 0
+      provider: { order: ['Fireworks', 'Together'], allow_fallbacks: true }
+  - id: 'openrouter:moonshotai/kimi-k2'
+    config:
+      temperature: 0
+      provider: { order: ['Groq', 'Fireworks'], allow_fallbacks: true }   # Groq = lowest latency
 
 # Prompt template is GENERATED from the shipping BOARD_AGENT (lib/agent/prompts.js)
 # by evals/gen-prompt.mjs (first step of `bun run evals`). A code-side prompt edit
