@@ -1040,26 +1040,23 @@ export default function CanvasNode({
             />
             {versionPreview && (
               <div className="cnode-version-confirm" onMouseDown={(e) => e.stopPropagation()}>
-                <span className="cnode-version-confirm-label">Pré-visualizando uma versão anterior</span>
-                <div className="cnode-version-confirm-actions">
-                  <button
-                    type="button"
-                    className="cnode-version-confirm-cancel"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => { e.stopPropagation(); setVersionPreview(null); }}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="button"
-                    className="cnode-version-confirm-restore"
-                    disabled={restoringVersion}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={(e) => { e.stopPropagation(); confirmRestoreVersion(); }}
-                  >
-                    {restoringVersion ? 'Restaurando…' : 'Restaurar esta versão'}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="cnode-version-confirm-cancel"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); setVersionPreview(null); }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="cnode-version-confirm-restore"
+                  disabled={restoringVersion}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); confirmRestoreVersion(); }}
+                >
+                  {restoringVersion ? 'Restoring…' : 'Restore'}
+                </button>
               </div>
             )}
             {/* Dash resize handles — bottom drags height, right drags
