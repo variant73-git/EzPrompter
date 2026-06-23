@@ -394,10 +394,6 @@ export default function CanvasNode({
   // toward whatever you're aiming at).
   const cnodeRef = useRef(null);
   const portRightRef = useRef(null);
-  // Resting Y (px, in .cnode-local coords) for the connector port = the BODY's
-  // vertical centre. Measured from the DOM so it's right for any body height —
-  // the CSS top:50% lands on the topbar/body seam for short nodes.
-  const portRestYRef = useRef(null);
   const [editorBusy, setEditorBusy] = useState(false);
   // Captures iframe scrollWidth/scrollHeight on load — used by Expand to
   // grow the viewport to fit full content without an extra DOM read.
@@ -556,16 +552,14 @@ export default function CanvasNode({
       const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale'));
       return v > 0 ? v : 1;
     }
-    // Rest the ball at the BODY's vertical centre (measured), not the CSS 50%
-    // which lands on the topbar/body seam for short nodes.
-    const restTop = () => { const r = portRestYRef.current; port.style.top = r != null ? `${r}px` : ''; };
     function onMove(e) {
       const { draftActive: isDrafting, height, hasOutgoingEdges: connected } = cursorTrackAdvisory.current;
       // Once the node is wired as a source of at least one edge, freeze the
-      // emitter ball at its resting (body-centre) position. The cursor-tracks-
-      // port "reach assist" only adds value when there's nothing connected yet.
+      // emitter ball at its default CSS position. The cursor-tracks-port
+      // "reach assist" only adds value when there's nothing connected yet —
+      // after that, the moving ball becomes visual noise without function.
       if (connected) {
-        restTop();
+        if (port.style.top) port.style.top = '';
         return;
       }
       // While a draft cord is being drawn FROM this node, freezing the
@@ -579,22 +573,15 @@ export default function CanvasNode({
       // Screen → node-local CSS coords (.cnode children live in the
       // pre-scale space; only the canvas wrapper applies the transform).
       const localY = (e.clientY - rect.top) / scale;
-      // Keep the ball on the BODY frame — never the topbar or the gap/seam
-      // between the two panels (that's where it used to wander). The body is
-      // the bottom panel, so its top = total node height − body height − the
-      // bottom padding. At rest (no tracking) the ball stays at its CSS
-      // top:50% = the outer frame's vertical centre.
-      const PAD = 4;
-      const cnodeH = rect.height / scale;
-      const bodyH = height || 800;
-      const bodyTop = Math.max(0, cnodeH - bodyH - PAD);
+      // Clamp inside the node body with a small margin so the port can't
+      // slide outside the visible card edges.
       const margin = 14;
-      const clamped = Math.max(bodyTop + margin, Math.min(cnodeH - PAD - margin, localY));
+      const clamped = Math.max(margin, Math.min((height || 800) - margin, localY));
       port.style.top = `${clamped}px`;
     }
     function onLeave() {
-      // Return the ball to its resting position (body centre).
-      restTop();
+      // Clearing the inline `top` restores the CSS default (50%).
+      port.style.top = '';
     }
     cnode.addEventListener('mousemove', onMove);
     cnode.addEventListener('mouseleave', onLeave);
@@ -611,24 +598,9 @@ export default function CanvasNode({
   // ball would freeze at whatever Y the cursor last hovered.
   useEffect(() => {
     if (hasOutgoingEdges && portRightRef.current) {
-      const r = portRestYRef.current;
-      portRightRef.current.style.top = r != null ? `${r}px` : '';
+      portRightRef.current.style.top = '';
     }
   }, [hasOutgoingEdges]);
-
-  // Measure the body's vertical centre and rest the connector port there
-  // (not the node's overall 50%, which sits on the topbar/body seam for short
-  // nodes). Re-runs on size / kind / edit / version changes.
-  useLayoutEffect(() => {
-    const cnode = cnodeRef.current;
-    const port = portRightRef.current;
-    if (!cnode || !port) return;
-    const body = cnode.querySelector('.cnode-body');
-    if (!body) { portRestYRef.current = null; return; }
-    const restY = body.offsetTop + body.offsetHeight / 2;
-    portRestYRef.current = restY;
-    port.style.top = `${restY}px`;
-  }, [node.height, node.kind, editing, hasOutgoingEdges, node._resetTick]);
 
   // Close the topbar context menu on Esc / click outside.
   useEffect(() => {
