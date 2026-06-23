@@ -565,10 +565,17 @@ export default function CanvasNode({
       // Screen → node-local CSS coords (.cnode children live in the
       // pre-scale space; only the canvas wrapper applies the transform).
       const localY = (e.clientY - rect.top) / scale;
-      // Clamp inside the node body with a small margin so the port can't
-      // slide outside the visible card edges.
+      // Keep the ball on the BODY frame — never the topbar or the gap/seam
+      // between the two panels (that's where it used to wander). The body is
+      // the bottom panel, so its top = total node height − body height − the
+      // bottom padding. At rest (no tracking) the ball stays at its CSS
+      // top:50% = the outer frame's vertical centre.
+      const PAD = 4;
+      const cnodeH = rect.height / scale;
+      const bodyH = height || 800;
+      const bodyTop = Math.max(0, cnodeH - bodyH - PAD);
       const margin = 14;
-      const clamped = Math.max(margin, Math.min((height || 800) - margin, localY));
+      const clamped = Math.max(bodyTop + margin, Math.min(cnodeH - PAD - margin, localY));
       port.style.top = `${clamped}px`;
     }
     function onLeave() {

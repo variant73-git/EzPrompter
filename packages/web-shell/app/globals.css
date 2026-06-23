@@ -6611,17 +6611,14 @@ body.rb-ed-light .edge-label-pill {
   position: relative;
   padding: 0;
   border: 0;
-  border-radius: calc(10px / max(0.15, var(--canvas-scale, 1)));   /* same as the node */
+  /* same rounding curve as the node, but the progressive growth stops at 25%
+     zoom (floor 0.25) instead of 15%. */
+  border-radius: calc(10px / max(0.25, var(--canvas-scale, 1)));
   overflow: hidden;
   background: #0f0f0f;
   cursor: pointer;
-  /* fio + gap matching the node's selection ring thickness: a 2px dark gap,
-     then a 3px hairline. Active (previewing) / hover → the hairline takes the
-     node's category colour. */
-  box-shadow:
-    0 0 0 calc(2px / var(--canvas-scale, 1)) #0f0f0f,
-    0 0 0 calc(5px / var(--canvas-scale, 1)) rgba(255, 255, 255, 0.16),
-    0 6px 18px rgba(0, 0, 0, 0.35);
+  /* No outline by default — only the SELECTED (previewing) thumb gets a ring. */
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
   transition: box-shadow 120ms ease, transform 120ms ease;
 }
 /* Floater-row slots: 20% width each, square; space-between makes the gaps. */
@@ -6645,15 +6642,11 @@ body.rb-ed-light .edge-label-pill {
   aspect-ratio: 1 / 1;
   display: inline-flex; align-items: center; justify-content: center;
   border: 0;
-  border-radius: calc(10px / max(0.15, var(--canvas-scale, 1)));
+  border-radius: calc(10px / max(0.25, var(--canvas-scale, 1)));
   background: rgba(40, 40, 46, 0.7);
   color: rgba(255, 255, 255, 0.7);
   cursor: pointer;
-  /* same dark-gap + hairline frame, but NO category colour on hover (excluded). */
-  box-shadow:
-    0 0 0 calc(2px / var(--canvas-scale, 1)) #0f0f0f,
-    0 0 0 calc(5px / var(--canvas-scale, 1)) rgba(255, 255, 255, 0.16),
-    0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);   /* no grey ring */
   transition: background 120ms ease, color 120ms ease;
 }
 .cnode-version-history-btn svg { width: 42%; height: 42%; }
@@ -6662,7 +6655,8 @@ body.rb-ed-light .edge-label-pill {
 .cnode-version-menu {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;            /* anchor under the history button (rightmost slot) */
+  left: auto;
   min-width: 220px;
   max-height: 280px;
   overflow-y: auto;
