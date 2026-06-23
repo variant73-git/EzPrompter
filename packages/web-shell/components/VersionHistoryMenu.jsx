@@ -29,7 +29,7 @@ export default function VersionHistoryMenu({ nodeId, versions, onPick, onClose }
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onPick?.(v.id); }}
         >
-          <VersionThumbnail nodeId={nodeId} snapshotId={v.id} size={40} />
+          <VersionThumbnail nodeId={nodeId} snapshotId={v.id} />
           <span className="cnode-version-menu-date">{new Date(v.created_at).toLocaleString()}</span>
         </button>
       ))}

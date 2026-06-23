@@ -6623,12 +6623,13 @@ body.rb-ed-light .edge-label-pill {
 }
 /* Floater-row slots: 20% width each, square; space-between makes the gaps. */
 .cnode-version-thumb--fill { flex: 0 0 auto; width: 20%; aspect-ratio: 1 / 1; }
-.cnode-version-thumb.is-active,
-.cnode-version-thumb:hover {
-  transform: translateY(-1px);
+.cnode-version-thumb:hover { transform: translateY(-1px); }
+/* Only the version currently shown in the node (being previewed) gets a grey
+   marker ring; every other thumbnail has no outline. */
+.cnode-version-thumb.is-active {
   box-shadow:
     0 0 0 calc(2px / var(--canvas-scale, 1)) #0f0f0f,
-    0 0 0 calc(5px / var(--canvas-scale, 1)) var(--cnode-port-fill, var(--accent)),
+    0 0 0 calc(5px / var(--canvas-scale, 1)) rgba(255, 255, 255, 0.55),
     0 6px 18px rgba(0, 0, 0, 0.35);
 }
 .cnode-version-thumb img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -6657,11 +6658,15 @@ body.rb-ed-light .edge-label-pill {
   top: calc(100% + 6px);
   right: 0;            /* anchor under the history button (rightmost slot) */
   left: auto;
-  min-width: 220px;
+  /* Width as a fraction of the NODE (like the thumbnails) so it's proportional
+     to the node; everything here lives inside the canvas transform, so plain
+     px already scale with zoom. */
+  width: 42%;
+  min-width: 0;
   max-height: 280px;
   overflow-y: auto;
   display: flex; flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   padding: 6px;
   background: rgba(16, 16, 20, 0.78);
   backdrop-filter: blur(28px) saturate(140%);
@@ -6671,6 +6676,8 @@ body.rb-ed-light .edge-label-pill {
   box-shadow: 0 16px 60px rgba(0, 0, 0, 0.55);
   z-index: 20;
 }
+/* Menu thumbnails are proportional to the node too (override the row's 20%). */
+.cnode-version-menu .cnode-version-thumb { width: 26%; }
 .cnode-version-menu-row {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px;
