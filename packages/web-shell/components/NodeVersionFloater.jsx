@@ -23,8 +23,10 @@ export default function NodeVersionFloater({ nodeId, versions, onPreview, active
   if (loading) {
     return (
       <div className="cnode-version-row cnode-version-loading" aria-live="polite">
-        {HISTORY_ICON}
-        <span>loading history</span>
+        <div className="cnode-version-loading-pill">
+          {HISTORY_ICON}
+          <span>loading history</span>
+        </div>
       </div>
     );
   }

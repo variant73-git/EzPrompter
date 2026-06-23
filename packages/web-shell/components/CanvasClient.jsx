@@ -3178,9 +3178,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // bottom = pos_y + topbarWorld + height. Without counting it, nodes
       // bleed past the frame bottom by 36/scale − clearance. The 0.15
       // floor matches the CSS `--tb` cap on .cnode-topbar EXACTLY — below
-      // 15% zoom the rendered chrome stops inflating in world space, so
+      // 30% zoom the rendered chrome stops inflating in world space, so
       // measured and rendered heights agree at every zoom level.
-      const chromeWorld = 36 / Math.max(0.15, canvasScale || 1);
+      const chromeWorld = 36 / Math.max(0.30, canvasScale || 1);
       for (const id of memberIds) {
         const n = nodeById.get(id);
         if (!n) continue;
