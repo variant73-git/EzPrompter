@@ -204,9 +204,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const el = sectionMenuRef.current;
     if (el) setSectionMenuPos(clampToViewport(sectionMenu.x, sectionMenu.y, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight));
   }, [sectionMenu]);
-  // Section being inline-renamed. Opens via double-click on the name
-  // label or the Rename item in the right-click menu.
-  const [editingSectionId, setEditingSectionId] = useState(null);
   // Section pending delete confirmation. Same ConfirmModal pattern as
   // playSection — { section, busy }.
   const [sectionDelete, setSectionDelete] = useState(null);
@@ -3966,10 +3963,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 className="canvas-section-name-tag"
                 role="button"
                 tabIndex={0}
-                data-tooltip={editingSectionId === s.id ? '' : 'Double click to edit'}
-                aria-label={editingSectionId === s.id ? undefined : 'Double click to edit'}
                 onClick={(e) => {
-                  if (editingSectionId === s.id) return;
                   e.stopPropagation();
                   setSelectedSectionId((prev) => (prev === s.id ? null : s.id));
                   setSelectedNodeId(null);
@@ -3981,39 +3975,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   setSectionMenu({ sectionId: s.id, x: e.clientX, y: e.clientY });
                 }}
               >
-                {editingSectionId === s.id ? (
-                  <input
-                    type="text"
-                    className="canvas-section-name-input"
-                    defaultValue=""
-                    placeholder={s.name}
-                    autoFocus
-                    onClick={(e) => e.stopPropagation()}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onBlur={(e) => {
-                      setSectionNameOverride(s.id, e.target.value);
-                      setEditingSectionId(null);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        setSectionNameOverride(s.id, e.target.value);
-                        setEditingSectionId(null);
-                      } else if (e.key === 'Escape') {
-                        setEditingSectionId(null);
-                      }
-                    }}
-                  />
-                ) : (
-                  <span
-                    className="canvas-section-name-label"
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      setEditingSectionId(s.id);
-                    }}
-                  >
-                    {s.name}
-                  </span>
-                )}
+                {/* Fixed "run this flow" label — the pill is a run button now,
+                    not an editable section name (inline rename removed). */}
+                <span className="canvas-section-name-label">run this flow</span>
                 {s.hasEdges && (() => {
                   // Clean = nothing changed since the last run → disabled, so
                   // the user can't burn credits regenerating the same result.
@@ -4342,12 +4306,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               </svg>
             </button>
             <div className="section-context-menu-title" title={s.name}>{title}</div>
-            <button onClick={() => {
-              setEditingSectionId(sectionMenu.sectionId);
-              setSectionMenu(null);
-            }}>
-              <span>Rename…</span>
-            </button>
           </div>,
           document.body
         );
