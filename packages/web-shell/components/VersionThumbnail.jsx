@@ -43,16 +43,24 @@ export default function VersionThumbnail({ nodeId, snapshotId, onClick, title, s
   const scale = (boxW || 56) / BASE;
   const fixed = typeof size === 'number';
 
+  // A <div role=button>, NOT a <button>: in the history menu the thumbnail
+  // sits inside the row's own <button>, and <button> inside <button> is invalid
+  // HTML (hydration error). As a div it's valid both standalone (floater row)
+  // and nested (menu row). Interactive only when an onClick is provided — in the
+  // menu it's decorative and the click bubbles to the row.
+  const interactive = typeof onClick === 'function';
   return (
-    <button
+    <div
       ref={ref}
-      type="button"
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
       className={`cnode-version-thumb${fixed ? '' : ' cnode-version-thumb--fill'}${active ? ' is-active' : ''}`}
       style={fixed ? { width: size, height: size } : undefined}
       title={title}
       aria-label={title || 'version'}
-      onMouseDown={(e) => e.stopPropagation()}
-      onClick={(e) => { e.stopPropagation(); onClick?.(); }}
+      onMouseDown={interactive ? (e) => e.stopPropagation() : undefined}
+      onClick={interactive ? (e) => { e.stopPropagation(); onClick(); } : undefined}
+      onKeyDown={interactive ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
     >
       {content?.screenshot_url ? (
         <img src={content.screenshot_url} alt="" draggable={false} />
@@ -68,6 +76,6 @@ export default function VersionThumbnail({ nodeId, snapshotId, onClick, title, s
       ) : (
         <div className={`cnode-version-thumb-blank${failed ? ' failed' : ''}`} />
       )}
-    </button>
+    </div>
   );
 }
