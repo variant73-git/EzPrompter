@@ -367,7 +367,10 @@ function chatReducer(state, action) {
             : m);
         }
       }
-      return { ...state, messages: nextMessages, streaming: false, activeToolCalls: [], softPause: null };
+      // Clear activeRun too — leaving it at status:'running' kept the "working
+      // on it" indicator cycling forever after the run ended (working =
+      // activeRun?.status === 'running' || streaming).
+      return { ...state, messages: nextMessages, streaming: false, activeToolCalls: [], softPause: null, activeRun: null };
     }
     case 'RUN_ID_RECEIVED':
       return { ...state, activeRun: { runId: action.runId, status: 'running' } };
@@ -417,6 +420,7 @@ function chatReducer(state, action) {
         }],
         streaming: false,
         activeToolCalls: [],
+        activeRun: null,
       };
     default:
       return state;

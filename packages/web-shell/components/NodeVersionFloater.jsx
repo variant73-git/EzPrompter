@@ -17,7 +17,7 @@ const HISTORY_ICON = (
   </svg>
 );
 
-export default function NodeVersionFloater({ nodeId, pastVersions, onPreview }) {
+export default function NodeVersionFloater({ nodeId, pastVersions, onPreview, activeId = null }) {
   const [menuOpen, setMenuOpen] = useState(false);
   if (!pastVersions?.length) return null;
 
@@ -31,6 +31,7 @@ export default function NodeVersionFloater({ nodeId, pastVersions, onPreview }) 
           key={v.id}
           nodeId={nodeId}
           snapshotId={v.id}
+          active={v.id === activeId}
           title={new Date(v.created_at).toLocaleString()}
           onClick={() => onPreview(v.id)}
         />

@@ -215,7 +215,7 @@ export function DraftEdgeLayer({ nodes, draftEdge, scale = 1 }) {
   return (
     <svg
       width={WORLD_WIDTH} height={WORLD_HEIGHT}
-      style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none', zIndex: 50, overflow: 'visible' }}
+      style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none', zIndex: 50, overflow: 'visible', opacity: 0.5 }}
     >
       {/* Solid underlay — keeps the cord continuous even when the
           marching dashes are mid-gap. Slightly translucent so the

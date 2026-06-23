@@ -1182,12 +1182,14 @@ export default function CanvasNode({
         </div>
       ) : null}
       {/* Version-history floater — past versions below a selected site node.
-          Hidden during preview (the confirm bar takes over). */}
-      {isSiteNode && selected && !editing && !versionPreview && pastVersions.length > 0 && (
+          Stays visible during preview; the previewed thumb shows the active
+          (category-colour) ring while the confirm chip sits over the body. */}
+      {isSiteNode && selected && !editing && pastVersions.length > 0 && (
         <NodeVersionFloater
           nodeId={node.id}
           pastVersions={pastVersions}
           onPreview={previewVersion}
+          activeId={versionPreview?.snapshotId || null}
         />
       )}
       <>

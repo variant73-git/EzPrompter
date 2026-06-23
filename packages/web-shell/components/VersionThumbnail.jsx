@@ -12,7 +12,7 @@ import { api } from '../lib/canvas-api.js';
 // scaled by the canvas zoom. The square container clips to the top portion.
 const BASE = 1280;
 
-export default function VersionThumbnail({ nodeId, snapshotId, onClick, title, size = null }) {
+export default function VersionThumbnail({ nodeId, snapshotId, onClick, title, size = null, active = false }) {
   const [content, setContent] = useState(null); // { html, screenshot_url }
   const [failed, setFailed] = useState(false);
   const ref = useRef(null);
@@ -47,7 +47,7 @@ export default function VersionThumbnail({ nodeId, snapshotId, onClick, title, s
     <button
       ref={ref}
       type="button"
-      className={`cnode-version-thumb${fixed ? '' : ' cnode-version-thumb--fill'}`}
+      className={`cnode-version-thumb${fixed ? '' : ' cnode-version-thumb--fill'}${active ? ' is-active' : ''}`}
       style={fixed ? { width: size, height: size } : undefined}
       title={title}
       aria-label={title || 'version'}
