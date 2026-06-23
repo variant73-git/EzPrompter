@@ -1811,6 +1811,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
   }
 
+  // Restore a chosen PAST version (version-history floater). Moves
+  // current_snapshot_id to that snapshot; non-destructive. Mirrors reset:
+  // patch current_html + bump _resetTick so the iframe remounts.
+  async function handleRestoreVersion(id, snapshotId) {
+    if (String(id).startsWith('temp-') || !snapshotId) return;
+    try {
+      const { html, snapshot_id } = await api.restoreVersion(id, snapshotId);
+      setNodes((prev) => prev.map((n) =>
+        n.id === id
+          ? { ...n, current_html: html, current_snapshot_id: snapshot_id, _resetTick: (n._resetTick || 0) + 1 }
+          : n
+      ));
+    } catch (e) {
+      toast.error(`Restore failed: ${e.message}`);
+    }
+  }
+
   // Persist an in-editor edit as a new snapshot. After this fires, the node's
   // current_snapshot_id diverges from original_snapshot_id, which is what
   // unlocks the topbar Reset button (gated on `hasEdits`).
@@ -3898,6 +3915,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }}
               onDelete={() => setNodeDelete({ id: n.id, name: (n.name || '').trim() })}
               onReset={() => handleResetNode(n.id)}
+              onVersionRestore={(snapshotId) => handleRestoreVersion(n.id, snapshotId)}
               runStatus={runStatus.get(n.id) || null}
               onSaveEdit={(html) => handleSaveNodeEdit(n.id, html)}
               onDiscardEdit={() => handleDiscardNodeEdit(n.id)}

@@ -9,6 +9,8 @@ import { estimatedDurationMs } from '../lib/generation-progress.js';
 import MdPreviewBody from './node-bodies/MdPreviewBody.jsx';
 import PromptBody from './node-bodies/PromptBody.jsx';
 import SkillBody from './node-bodies/SkillBody.jsx';
+import NodeVersionFloater from './NodeVersionFloater.jsx';
+import { api } from '../lib/canvas-api.js';
 
 const DRAG_THRESHOLD = 4;
 
@@ -328,7 +330,7 @@ export default function CanvasNode({
   onSelect, onMove, onMoveStart, onMoveEnd, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload,
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
-  onReplaceContent, onRequestUpload, onFrameZoom,
+  onReplaceContent, onRequestUpload, onFrameZoom, onVersionRestore,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
   removing = false, removingOutside = false, removeFromMenu = false, inSection = false,
   onRemoveFromSection, onCancelRemove
@@ -336,6 +338,41 @@ export default function CanvasNode({
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [menuPos, setMenuPos] = useState(null); // {x, y} for topbar context menu
+
+  // ── Version history (site nodes) ──────────────────────────────────────────
+  // Light snapshot list fetched when the node is selected; "past versions" =
+  // everything except the current snapshot. Preview holds a chosen version's
+  // html (rendered in the body) until the user confirms or cancels the restore.
+  const [pastVersions, setPastVersions] = useState([]);
+  const [versionPreview, setVersionPreview] = useState(null); // { snapshotId, html }
+  const [restoringVersion, setRestoringVersion] = useState(false);
+  const isSiteNode = node.kind === 'site' || node.kind === 'template' || node.kind === 'chunk';
+  const isTempNode = String(node.id).startsWith('temp-');
+
+  useEffect(() => {
+    if (!isSiteNode || !selected || editing || isTempNode) { setPastVersions([]); return; }
+    let alive = true;
+    api.listSnapshots(node.id)
+      .then((r) => { if (alive) setPastVersions((r.snapshots || []).filter((s) => !s.isCurrent)); })
+      .catch(() => { if (alive) setPastVersions([]); });
+    return () => { alive = false; };
+  }, [isSiteNode, selected, editing, isTempNode, node.id, node.current_snapshot_id]);
+
+  // Deselecting or entering edit mode cancels any in-progress version preview.
+  useEffect(() => { if (!selected || editing) setVersionPreview(null); }, [selected, editing]);
+
+  async function previewVersion(snapshotId) {
+    try {
+      const r = await api.getSnapshot(node.id, snapshotId);
+      setVersionPreview({ snapshotId, html: r.snapshot?.html ?? '' });
+    } catch { /* best-effort */ }
+  }
+  async function confirmRestoreVersion() {
+    if (!versionPreview) return;
+    setRestoringVersion(true);
+    try { await onVersionRestore?.(versionPreview.snapshotId); setVersionPreview(null); }
+    finally { setRestoringVersion(false); }
+  }
   // Natural dimensions of the asset's image content. Used by the dims label
   // below the card. Non-asset nodes pass a null src so the hook short-circuits.
   const assetNaturalDims = useImageNaturalDims(node.meta?.dataUrl || null);
@@ -989,11 +1026,11 @@ export default function CanvasNode({
             style={{ height: (node.height || 800) + 'px' }}
           >
             <iframe
-              key={node._resetTick || 0}
+              key={`${node._resetTick || 0}:${versionPreview?.snapshotId || 'current'}`}
               ref={iframeRef}
               className="cnode-iframe"
               title={title}
-              srcDoc={html}
+              srcDoc={versionPreview ? versionPreview.html : html}
               sandbox="allow-same-origin allow-scripts"
               onLoad={onIframeLoad}
               style={{
@@ -1001,6 +1038,30 @@ export default function CanvasNode({
                 height: '100%'
               }}
             />
+            {versionPreview && (
+              <div className="cnode-version-confirm" onMouseDown={(e) => e.stopPropagation()}>
+                <span className="cnode-version-confirm-label">Pré-visualizando uma versão anterior</span>
+                <div className="cnode-version-confirm-actions">
+                  <button
+                    type="button"
+                    className="cnode-version-confirm-cancel"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); setVersionPreview(null); }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    className="cnode-version-confirm-restore"
+                    disabled={restoringVersion}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); confirmRestoreVersion(); }}
+                  >
+                    {restoringVersion ? 'Restaurando…' : 'Restaurar esta versão'}
+                  </button>
+                </div>
+              </div>
+            )}
             {/* Dash resize handles — bottom drags height, right drags
                 width. Visible as a thin centred bar; the surrounding
                 hit area is wider so the user doesn't have to aim.
@@ -1123,6 +1184,15 @@ export default function CanvasNode({
           )}
         </div>
       ) : null}
+      {/* Version-history floater — past versions below a selected site node.
+          Hidden during preview (the confirm bar takes over). */}
+      {isSiteNode && selected && !editing && !versionPreview && pastVersions.length > 0 && (
+        <NodeVersionFloater
+          nodeId={node.id}
+          pastVersions={pastVersions}
+          onPreview={previewVersion}
+        />
+      )}
       <>
         {/* Left side = receiver. Stack of circles, one per incoming edge.
             Empty default = single white circle. Each connected circle takes

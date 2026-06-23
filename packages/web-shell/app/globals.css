@@ -6593,3 +6593,115 @@ body.rb-ed-light .edge-label-pill {
 .edge-popup .row .apply { background: var(--accent); color: #fff; }
 .edge-popup .row .delete { background: rgba(248, 113, 113, 0.15); color: #fca5a5; }
 
+
+/* ── Node version-history floater (site nodes) ───────────────────────────── */
+.cnode-version-row {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 12;
+}
+.cnode-version-thumb {
+  position: relative;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(20, 20, 24, 0.6);
+  cursor: pointer;
+  flex: 0 0 auto;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.cnode-version-thumb:hover { border-color: rgba(255, 255, 255, 0.4); transform: translateY(-1px); }
+.cnode-version-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cnode-version-thumb iframe { border: 0; pointer-events: none; background: #fff; }
+.cnode-version-thumb-blank { width: 100%; height: 100%; background: rgba(255, 255, 255, 0.06); }
+.cnode-version-thumb-blank.failed { background: rgba(255, 80, 80, 0.12); }
+
+.cnode-version-history-btn {
+  flex: 0 0 auto;
+  width: 56px; height: 56px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(40, 40, 46, 0.7);
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transition: background 120ms ease, color 120ms ease;
+}
+.cnode-version-history-btn:hover { background: rgba(56, 56, 64, 0.85); color: #fff; }
+
+.cnode-version-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: rgba(16, 16, 20, 0.78);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  box-shadow: 0 16px 60px rgba(0, 0, 0, 0.55);
+  z-index: 20;
+}
+.cnode-version-menu-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border: 0; background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.cnode-version-menu-row:hover { background: rgba(255, 255, 255, 0.08); }
+.cnode-version-menu-date { font-size: 12px; color: rgba(255, 255, 255, 0.55); white-space: nowrap; }
+
+.cnode-version-confirm {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(10, 10, 12, 0.82);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 15;
+}
+.cnode-version-confirm-label { font-size: 13px; color: rgba(255, 255, 255, 0.85); }
+.cnode-version-confirm-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+.cnode-version-confirm-cancel,
+.cnode-version-confirm-restore {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.cnode-version-confirm-cancel { background: transparent; border-color: rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.8); }
+.cnode-version-confirm-cancel:hover { background: rgba(255, 255, 255, 0.08); }
+.cnode-version-confirm-restore { background: var(--accent, #0095ff); color: #fff; }
+.cnode-version-confirm-restore:hover { filter: brightness(1.08); }
+.cnode-version-confirm-restore:disabled { opacity: 0.6; cursor: default; }
+
+/* Light mode */
+body.rb-ed-light .cnode-version-thumb { border-color: rgba(0, 0, 0, 0.12); background: rgba(255, 255, 255, 0.7); }
+body.rb-ed-light .cnode-version-history-btn { border-color: rgba(0, 0, 0, 0.1); background: rgba(235, 235, 238, 0.85); color: rgba(0, 0, 0, 0.6); }
+body.rb-ed-light .cnode-version-history-btn:hover { background: rgba(220, 220, 225, 0.95); color: #000; }
+body.rb-ed-light .cnode-version-menu { background: rgba(248, 248, 250, 0.85); border-color: rgba(0, 0, 0, 0.08); }
+body.rb-ed-light .cnode-version-menu-row:hover { background: rgba(0, 0, 0, 0.05); }
+body.rb-ed-light .cnode-version-menu-date { color: rgba(0, 0, 0, 0.5); }
+body.rb-ed-light .cnode-version-confirm { background: rgba(248, 248, 250, 0.9); border-top-color: rgba(0, 0, 0, 0.08); }
+body.rb-ed-light .cnode-version-confirm-label { color: rgba(0, 0, 0, 0.8); }
+body.rb-ed-light .cnode-version-confirm-cancel { border-color: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.7); }
