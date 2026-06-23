@@ -108,5 +108,12 @@ export const api = {
 
   extractNode: (id, { to, posX, posY }) => fetch(`/api/nodes/${id}/extract`, { ...COMMON, method: 'POST', body: JSON.stringify({ to, posX, posY }) }).then(jsonOrThrow),
 
+  // Version history (site nodes). listSnapshots = light metadata only; getSnapshot
+  // pulls one version's html/screenshot on demand (preview + thumbnail);
+  // restoreVersion moves current_snapshot_id to a chosen version.
+  listSnapshots: (nodeId) => fetch(`/api/nodes/${nodeId}/snapshots`, { ...COMMON, method: 'GET' }).then(jsonOrThrow),
+  getSnapshot: (nodeId, snapId) => fetch(`/api/nodes/${nodeId}/snapshots/${snapId}`, { ...COMMON, method: 'GET' }).then(jsonOrThrow),
+  restoreVersion: (nodeId, snapshotId) => fetch(`/api/nodes/${nodeId}/restore-version`, { ...COMMON, method: 'POST', body: JSON.stringify({ snapshotId }) }).then(jsonOrThrow),
+
   logout: () => fetch('/api/auth/logout', { ...COMMON, method: 'POST' }).then(jsonOrThrow)
 };
