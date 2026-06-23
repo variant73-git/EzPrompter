@@ -27,8 +27,8 @@ describe('buildFullRegistry', () => {
       'addAssetFromUrl', 'addEdge', 'applyDesign', 'captureUrl',
       'createImage', 'createNode', 'deleteNode', 'editSite',
       'extractDesign', 'findNearest', 'getNodeOutput', 'getWorkflow',
-      'listAssets', 'listBoard', 'queryNodes', 'runFlow',
-      'updateNode', 'viewNode',
+      'listAssets', 'listBoard', 'queryNodes', 'removeFromSection',
+      'runFlow', 'updateNode', 'viewNode',
     ]);
   });
 });

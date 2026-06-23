@@ -21,6 +21,7 @@ import { getWorkflowTool }     from './get-workflow.js';
 import { captureUrlTool }      from './capture-url.js';
 import { extractDesignTool }   from './extract-design.js';
 import { applyDesignTool }     from './apply-design.js';
+import { removeFromSectionTool } from './remove-from-section.js';
 
 /** Phase 1 safe tools only — kept for the smoke-test path and for asset-scoped chats. */
 export function buildSafeRegistry() {
@@ -51,6 +52,7 @@ export function buildFullRegistry() {
   r.register(captureUrlTool);
   r.register(extractDesignTool);
   r.register(applyDesignTool);
+  r.register(removeFromSectionTool);
   return r;
 }
 

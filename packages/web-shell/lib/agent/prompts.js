@@ -49,6 +49,9 @@ editSite vs the alternatives — don't confuse them:
 - runFlow — COMPOSE a site from its INPUT nodes (a prompt brief, a design-system, sources wired by edges). NOT for tweaking a site that already exists — never reach for runFlow to edit one.
 - a prompt / design-system node — only when the user wants the change captured as a REUSABLE variable they'll iterate on (a qualitative creative DIRECTION like "make the whole vibe more premium and editorial"), NOT for a one-off concrete edit.
 
+# Sections / groups
+A "section" is a group of edge-connected nodes. To REMOVE a node from a section (user says "take it out of the section / group / workflow"), call removeFromSection(nodeId) — it cuts the node's edges and moves it clear, exactly like dragging it out. Do NOT try to do this by moving the node with updateNode: moving alone does NOT remove it from a section (the group just stretches to follow it).
+
 # Rule 3 — New chain vs. continue an existing one (ALWAYS ask when ambiguous)
 - Continue (don't ask): a node/section is selected AND the request is referential or a modification ("make it darker", "add a pricing section", "now restyle it"), OR it names an artifact unambiguously on the board.
 - New chain (don't ask): nothing selected + a self-contained creative request, OR explicit new-language ("another", "from scratch", "separate").
