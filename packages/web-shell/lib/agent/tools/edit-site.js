@@ -2,6 +2,16 @@ import { sql } from '../../db.js';
 import { runCompose } from '../../run-flow.js';
 import { EDIT_SITE_SYSTEM } from '../prompts.js';
 
+// Guard against the model returning PROSE instead of HTML (e.g. "the element
+// isn't in the source, so I'll return it unchanged" — a refusal). Real HTML has
+// many tags; an explanation has ~none. Without this the prose got saved as the
+// snapshot and rendered as the page.
+function looksLikeHtml(s) {
+  if (typeof s !== 'string') return false;
+  const tags = (s.match(/<[a-z!/][^>]*>/gi) || []).length;
+  return tags >= 3;
+}
+
 export const editSiteTool = {
   name: 'editSite',
   description: `Apply a plain-language edit to a website node, producing a new snapshot.
@@ -51,6 +61,12 @@ This will refuse if the user is currently editing the node in-place (you'll get 
         ],
         systemPromptOverride: EDIT_SITE_SYSTEM,
       });
+      // If the model returned prose (a refusal/explanation) instead of HTML,
+      // do NOT save it — that would replace the page with the explanation
+      // text. Leave the current snapshot untouched and tell the agent.
+      if (!looksLikeHtml(result.html)) {
+        return { error: 'no_change', message: 'the edit could not be applied (the model returned an explanation, not HTML) — the site was left unchanged' };
+      }
       const [newSnap] = await sql`
         INSERT INTO snapshots (node_id, html, source)
         VALUES (${nodeId}, ${result.html}, 'agent-edit')

@@ -74,4 +74,6 @@ Clarify when genuinely unsure (especially new-vs-continue and thin requests). Ot
 
 export const EDIT_IMAGE_SYSTEM = `You are editing a single image asset. Your tools are scoped to image generation and reading node outputs — you cannot create or modify graph nodes in this conversation. Pass the user's plain-language change into \`createImage\`'s prompt argument.`;
 
-export const EDIT_SITE_SYSTEM = `Internal prompt used by the editSite tool's wrapper. Receives current snapshot HTML + the user's plain-language instruction. Produce the modified HTML in full, preserving structure, classes, and unaffected text. Return ONLY the HTML, no prose, no markdown fences.`;
+export const EDIT_SITE_SYSTEM = `Internal prompt used by the editSite tool's wrapper. Receives current snapshot HTML + the user's plain-language instruction. Produce the modified HTML in full, preserving structure, classes, and unaffected text. Return ONLY the HTML, no prose, no markdown fences.
+
+CRITICAL: your ENTIRE response must be the HTML document and nothing else. If the requested change cannot be made (e.g. the element it describes isn't in the source), return the ORIGINAL HTML UNCHANGED. NEVER reply with an explanation, apology, note, or any sentence about what you did or didn't do — that text would be saved and rendered AS the page. No "Looking at the HTML…", no "I will return it unchanged." Just the HTML.`;
