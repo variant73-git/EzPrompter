@@ -34,20 +34,21 @@ describe('NodeVersionFloater', () => {
     expect(onPreview).toHaveBeenCalledWith('s1');
   });
 
-  it('renders up to 3 thumbnails and no history button when ≤3', () => {
+  it('renders up to 3 thumbnails and no +N button when ≤3', () => {
     const { container } = render(<NodeVersionFloater nodeId="n1" versions={mk(3)} onPreview={() => {}} />);
     expect(container.querySelectorAll('.cnode-version-row > .cnode-version-thumb')).toHaveLength(3);
-    expect(container.querySelector('.cnode-version-history-btn')).toBeNull();
+    expect(container.querySelector('.cnode-version-more-btn')).toBeNull();
   });
 
-  it('shows the history button when >3 and opens the full menu', () => {
+  it('shows +N for the excess and opens a menu with only those', () => {
     const { container } = render(<NodeVersionFloater nodeId="n1" versions={mk(5)} onPreview={() => {}} />);
     expect(container.querySelectorAll('.cnode-version-row > .cnode-version-thumb')).toHaveLength(3);
-    const btn = container.querySelector('.cnode-version-history-btn');
+    const btn = container.querySelector('.cnode-version-more-btn');
     expect(btn).not.toBeNull();
+    expect(btn.textContent).toBe('+2');
     fireEvent.click(btn);
     expect(container.querySelector('.cnode-version-menu')).not.toBeNull();
-    expect(container.querySelectorAll('.cnode-version-menu-row')).toHaveLength(5);
+    expect(container.querySelectorAll('.cnode-version-menu-row')).toHaveLength(2); // only the excess
   });
 
   it('calls onPreview with the version id on thumbnail click', () => {

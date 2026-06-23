@@ -31,7 +31,7 @@ export default function NodeVersionFloater({ nodeId, versions, onPreview, active
   if (!versions?.length) return null;
 
   const shown = versions.slice(0, 3);
-  const hasMore = versions.length > 3;
+  const excess = versions.slice(3);   // the versions beyond the 3 shown
   const pick = (id) => { if (id !== activeId) onPreview(id); };
 
   return (
@@ -46,22 +46,22 @@ export default function NodeVersionFloater({ nodeId, versions, onPreview, active
           onClick={() => pick(v.id)}
         />
       ))}
-      {hasMore && (
+      {excess.length > 0 && (
         <button
           type="button"
-          className="cnode-version-history-btn"
-          title="Version history"
-          aria-label="Version history"
+          className="cnode-version-more-btn"
+          title={`${excess.length} more version${excess.length === 1 ? '' : 's'}`}
+          aria-label={`${excess.length} more versions`}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); setMenuOpen((o) => !o); }}
         >
-          {HISTORY_ICON}
+          +{excess.length}
         </button>
       )}
-      {menuOpen && hasMore && (
+      {menuOpen && excess.length > 0 && (
         <VersionHistoryMenu
           nodeId={nodeId}
-          versions={versions}
+          versions={excess}
           activeId={activeId}
           onPick={(id) => { setMenuOpen(false); pick(id); }}
           onClose={() => setMenuOpen(false)}

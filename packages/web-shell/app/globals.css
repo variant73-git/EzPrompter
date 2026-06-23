@@ -6606,6 +6606,9 @@ body.rb-ed-light .edge-label-pill {
   justify-content: space-between;
   align-items: flex-start;
   z-index: 12;
+  /* Query container so the menu can size its text + thumbnails as a fraction of
+     the NODE width (cqw) — keeps it proportional and scaling with zoom. */
+  container-type: inline-size;
 }
 /* Loading placeholder — a compact pill (history icon + "loading history") in
    place of the row while the version list is being fetched. */
@@ -6645,8 +6648,8 @@ body.rb-ed-light .cnode-version-loading { background: rgba(245, 245, 248, 0.92);
    marker ring; every other thumbnail has no outline. */
 .cnode-version-thumb.is-active {
   box-shadow:
-    0 0 0 calc(2px / var(--canvas-scale, 1)) #0f0f0f,
-    0 0 0 calc(5px / var(--canvas-scale, 1)) rgba(255, 255, 255, 0.55),
+    0 0 0 calc(2px / max(0.25, var(--canvas-scale, 1))) #0f0f0f,
+    0 0 0 calc(5px / max(0.25, var(--canvas-scale, 1))) #5e5e5e,
     0 6px 18px rgba(0, 0, 0, 0.35);
 }
 .cnode-version-thumb img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -6654,7 +6657,7 @@ body.rb-ed-light .cnode-version-loading { background: rgba(245, 245, 248, 0.92);
 .cnode-version-thumb-blank { position: absolute; inset: 0; background: rgba(255, 255, 255, 0.06); }
 .cnode-version-thumb-blank.failed { background: rgba(255, 80, 80, 0.12); }
 
-.cnode-version-history-btn {
+.cnode-version-more-btn {
   flex: 0 0 auto;
   width: 20%;
   aspect-ratio: 1 / 1;
@@ -6662,50 +6665,53 @@ body.rb-ed-light .cnode-version-loading { background: rgba(245, 245, 248, 0.92);
   border: 0;
   border-radius: calc(10px / max(0.25, var(--canvas-scale, 1)));
   background: rgba(40, 40, 46, 0.7);
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.85);
   cursor: pointer;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);   /* no grey ring */
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
   transition: background 120ms ease, color 120ms ease;
+  /* "+N" sized to the slot (cqw) so it scales with the node. */
+  font-size: 7cqw;
+  font-weight: 500;
+  line-height: 1;
 }
-.cnode-version-history-btn svg { width: 42%; height: 42%; }
-.cnode-version-history-btn:hover { background: rgba(56, 56, 64, 0.85); color: #fff; }
+.cnode-version-more-btn:hover { background: rgba(56, 56, 64, 0.95); color: #fff; }
 
 .cnode-version-menu {
   position: absolute;
   top: calc(100% + 6px);
-  right: 0;            /* anchor under the history button (rightmost slot) */
+  right: 0;            /* anchor under the +N button (rightmost slot) */
   left: auto;
-  /* Width as a fraction of the NODE (like the thumbnails) so it's proportional
-     to the node; everything here lives inside the canvas transform, so plain
-     px already scale with zoom. */
-  width: 42%;
-  min-width: 0;
-  max-height: 280px;
+  /* Sized in cqw (% of the NODE width) so the menu AND its text scale with the
+     node like the thumbnails. width:max-content fits the rows so nothing crops. */
+  width: max-content;
+  max-width: 100%;
+  max-height: 70cqw;
   overflow-y: auto;
   display: flex; flex-direction: column;
-  gap: 3px;
-  padding: 6px;
-  background: rgba(16, 16, 20, 0.78);
+  gap: 1cqw;
+  padding: 1.6cqw;
+  font-size: 2.6cqw;
+  background: rgba(16, 16, 20, 0.85);
   backdrop-filter: blur(28px) saturate(140%);
   -webkit-backdrop-filter: blur(28px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 14px;
+  border-radius: 2.5cqw;
   box-shadow: 0 16px 60px rgba(0, 0, 0, 0.55);
   z-index: 20;
 }
-/* Menu thumbnails are proportional to the node too (override the row's 20%). */
-.cnode-version-menu .cnode-version-thumb { width: 26%; }
+/* Menu thumbnails proportional to the node (override the row's 20%). */
+.cnode-version-menu .cnode-version-thumb { width: 9cqw; aspect-ratio: 1 / 1; flex: 0 0 auto; }
 .cnode-version-menu-row {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px;
-  padding: 6px 8px;
+  display: flex; align-items: center;
+  gap: 2.5cqw;
+  padding: 1cqw 1.4cqw;
   border: 0; background: transparent;
-  border-radius: 8px;
+  border-radius: 1.6cqw;
   cursor: pointer;
   text-align: left;
 }
 .cnode-version-menu-row:hover { background: rgba(255, 255, 255, 0.08); }
-.cnode-version-menu-date { font-size: 12px; color: rgba(255, 255, 255, 0.55); white-space: nowrap; }
+.cnode-version-menu-date { color: rgba(255, 255, 255, 0.7); white-space: nowrap; }
 
 /* A compact centred pill chip holding just the two buttons (no bar, no label).
    The chip padding is the small gap so the button corners nest in its rounding. */
