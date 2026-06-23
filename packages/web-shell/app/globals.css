@@ -6607,6 +6607,23 @@ body.rb-ed-light .edge-label-pill {
   align-items: flex-start;
   z-index: 12;
 }
+/* Loading placeholder — a compact pill (history icon + "loading history") in
+   place of the row while the version list is being fetched. */
+.cnode-version-loading {
+  right: auto;            /* compact pill at the left, not full-width */
+  width: auto;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(20, 20, 24, 0.85);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.cnode-version-loading svg { opacity: 0.8; flex: 0 0 auto; }
+body.rb-ed-light .cnode-version-loading { background: rgba(245, 245, 248, 0.92); color: rgba(0, 0, 0, 0.6); }
 .cnode-version-thumb {
   position: relative;
   padding: 0;

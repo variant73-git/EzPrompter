@@ -343,20 +343,28 @@ export default function CanvasNode({
   // Light snapshot list fetched when the node is selected; "past versions" =
   // everything except the current snapshot. Preview holds a chosen version's
   // html (rendered in the body) until the user confirms or cancels the restore.
-  const [pastVersions, setPastVersions] = useState([]);
+  const [versions, setVersions] = useState([]);            // ALL versions, newest-first
+  const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionPreview, setVersionPreview] = useState(null); // { snapshotId, html }
   const [restoringVersion, setRestoringVersion] = useState(false);
   const isSiteNode = node.kind === 'site' || node.kind === 'template' || node.kind === 'chunk';
   const isTempNode = String(node.id).startsWith('temp-');
 
   useEffect(() => {
-    if (!isSiteNode || !selected || editing || isTempNode) { setPastVersions([]); return; }
+    if (!isSiteNode || !selected || editing || isTempNode) { setVersions([]); setVersionsLoading(false); return; }
     let alive = true;
+    setVersionsLoading(true);
     api.listSnapshots(node.id)
-      .then((r) => { if (alive) setPastVersions((r.snapshots || []).filter((s) => !s.isCurrent)); })
-      .catch(() => { if (alive) setPastVersions([]); });
+      .then((r) => { if (alive) setVersions(r.snapshots || []); })
+      .catch(() => { if (alive) setVersions([]); })
+      .finally(() => { if (alive) setVersionsLoading(false); });
     return () => { alive = false; };
   }, [isSiteNode, selected, editing, isTempNode, node.id, node.current_snapshot_id]);
+
+  // The version currently SHOWN in the node = the previewed one if previewing,
+  // otherwise the current snapshot. Its thumbnail carries the grey marker.
+  const currentVersionId = versions.find((v) => v.isCurrent)?.id || node.current_snapshot_id || null;
+  const shownVersionId = versionPreview?.snapshotId || currentVersionId;
 
   // Deselecting or entering edit mode cancels any in-progress version preview.
   useEffect(() => { if (!selected || editing) setVersionPreview(null); }, [selected, editing]);
@@ -1209,15 +1217,16 @@ export default function CanvasNode({
           )}
         </div>
       ) : null}
-      {/* Version-history floater — past versions below a selected site node.
-          Stays visible during preview; the previewed thumb shows the active
-          (category-colour) ring while the confirm chip sits over the body. */}
-      {isSiteNode && selected && !editing && pastVersions.length > 0 && (
+      {/* Version-history floater — ALL versions below a selected site node, the
+          one shown in the node marked. While the list loads, a "loading
+          history" placeholder shows in its place. */}
+      {isSiteNode && selected && !editing && (versionsLoading || versions.length > 1) && (
         <NodeVersionFloater
           nodeId={node.id}
-          pastVersions={pastVersions}
+          versions={versions}
           onPreview={previewVersion}
-          activeId={versionPreview?.snapshotId || null}
+          activeId={shownVersionId}
+          loading={versionsLoading}
         />
       )}
       <>
