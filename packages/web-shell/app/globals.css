@@ -4860,8 +4860,9 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
   position: absolute;
   right: 0;
   /* Gap holds a CONSTANT on-screen distance below the node (÷scale), so as the
-     node shrinks at deep zoom-out the label keeps clearing it — no overlap. */
-  bottom: calc(-42px / var(--canvas-scale, 1));
+     node shrinks at deep zoom-out the label keeps clearing it — no overlap.
+     (42→12.6px: 70% smaller margin.) */
+  bottom: calc(-12.6px / var(--canvas-scale, 1));
   /* Font scales naturally until 40% zoom, then LOCKS at the 40% on-screen size
      (doesn't keep shrinking below that). */
   font-size: calc(20px * max(0.40, var(--canvas-scale, 1)) / var(--canvas-scale, 1));
