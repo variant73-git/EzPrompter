@@ -19,9 +19,10 @@ describe('buildPerimeterPath', () => {
 });
 
 describe('NodeProgressRing', () => {
-  it('renders the percentage with a % sign', () => {
-    render(<NodeProgressRing pct={47} width={320} height={180} />);
-    expect(screen.getByText('47%')).toBeInTheDocument();
+  it('does not render a percentage numeral (removed per design)', () => {
+    const { container } = render(<NodeProgressRing pct={47} width={320} height={180} />);
+    expect(container.querySelector('.cnode-progress-num')).toBeNull();
+    expect(screen.queryByText('47%')).toBeNull();
   });
 
   it('sets strokeDashoffset to 100 - pct on the arc', () => {

@@ -23,13 +23,13 @@ export function nodeOrigin(node) {
 // Hex colors (also referenced from globals.css via .cnode.origin-* classes —
 // keep in sync if you change one).
 export const ORIGIN_COLORS = {
-  url:        '#38bdf8',  // sky — matches Add URL pill
-  html:       '#f97316',  // orange
-  md:         '#34d399',  // emerald
-  screenshot: '#a78bfa',  // violet
-  prompt:     '#facc15',  // yellow
+  url:        '#2966EA',  // blue — "site"
+  html:       '#f97316',  // orange — .html (unchanged)
+  md:         '#C2B44A',  // ochre — .md
+  screenshot: '#7951C2',  // violet — image
+  prompt:     '#ECEBF1',  // near-white grey — prompt
   skill:      '#f472b6',  // pink
-  blank:      '#2dd4bf',  // teal — composition target, distinct from imports
+  blank:      '#2966EA',  // blue — merged with URL (same colour code)
   unknown:    '#94a3b8'   // slate fallback
 };
 

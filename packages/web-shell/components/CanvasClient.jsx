@@ -99,7 +99,7 @@ const SECTION_TOP_GAP = 260;
 // they MUST share this value so dropping a node in causes zero snap. Bumped
 // up so a node transported into a section lands with comfortable room around
 // it, not hugging the frame edge.
-const SECTION_MEMBER_CLEARANCE = 72;
+const SECTION_MEMBER_CLEARANCE = 288;   // node↔frame-edge clearance +300% (was 72)
 // "Don't ask again" pref for the section re-run confirm modal.
 const RERUN_CONFIRM_SKIP_KEY = 'rb-rerun-confirm-skip';
 // Asset cards draw their dims label below the body — counted in every
@@ -132,7 +132,7 @@ function sectionCoreRect(memberNodes) {
 // near-white page with a dashed-frame hint so the empty state reads as
 // intentional ("compose here") rather than a broken capture. Designed
 // to work inside our srcDoc iframe — no external resources, no scripts,
-// system font fallback (Aeonik isn't loaded inside iframes).
+// system font fallback (the UI font isn't loaded inside iframes).
 
 export default function CanvasClient({ board, initialNodes, initialEdges, user }) {
   const [nodes, setNodes] = useState(initialNodes || []);
@@ -273,6 +273,29 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // draftEdgeRef).
   const [adoptPreview, setAdoptPreview] = useState(null); // {nodeId, sectionId, rootId, rect:{left,top,right,bottom}}
   const adoptPreviewRef = useRef(null);
+  // Drag-to-place: a freshly-added node (from the + menu) follows the cursor as
+  // a semi-transparent ghost until the user clicks to drop it. Implemented as a
+  // SYNTHETIC loose-drag so it reuses the exact section-adoption machinery
+  // (maybeUpdateAdoptPreview / handleNodeMoveEnd). placingNodeRef mirrors the
+  // node object synchronously for the window listeners; lastPointerRef seeds the
+  // initial position under the cursor.
+  const [placingNodeId, setPlacingNodeId] = useState(null);
+  const placingNodeRef = useRef(null);
+  const lastPointerRef = useRef({ x: 0, y: 0 });
+  // Multi-file placement queue ("Add multiple files"): files are placed one at
+  // a time, each reusing the single-node placement ghost. A cursor-anchored
+  // pill shows "current/total files". placeQueue (state) drives the pill;
+  // placeQueueRef (sync) holds the remaining files for the window listeners.
+  const [placeQueue, setPlaceQueue] = useState(null); // { current, total } | null
+  const placeQueueRef = useRef(null); // { files, index, total } | null
+  const placePillRef = useRef(null);
+  // rAF coalescer + state for the FLOATING "run this flow" button. When a
+  // section's in-place run-pill rises into the top viewport zone, it crossfades
+  // to a button anchored in the canvas UI (left of the zoom widget) instead of
+  // scrolling away / hiding behind other elements.
+  const reanchorRafRef = useRef(0);
+  const [floatingRunSectionId, setFloatingRunSectionId] = useState(null);
+  const lastFloatingSectionRef = useRef(null);
   function setAdoptPreviewSync(v) {
     adoptPreviewRef.current = v;
     setAdoptPreview(v);
@@ -920,6 +943,283 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
   }
 
+  // ── Drag-to-place a freshly added node ─────────────────────────────────
+  // Starts a SYNTHETIC loose-drag of `node` so it tracks the cursor and reuses
+  // the section-adoption preview + commit. Called by the + menu add handlers.
+  function startPlacement(node) {
+    if (!node || String(node.id).startsWith('temp-')) return;
+    // Seed under the cursor (centered) so it appears at the mouse immediately
+    // instead of flashing at its auto-computed slot.
+    const p = lastPointerRef.current;
+    const w = clientToWorld(transformRef, p.x, p.y);
+    const px = w.x - (node.width || 1280) / 2;
+    const py = w.y - (node.height || 720) / 2;
+    placingNodeRef.current = { ...node, pos_x: px, pos_y: py };
+    updateNodeLocal(node.id, { pos_x: px, pos_y: py });
+    setDragFreeze({ id: node.id, startX: px, startY: py });
+    looseDragRef.current = {
+      nodeId: node.id, startX: px, startY: py, lastX: px, lastY: py,
+      isLoose: true, ownSectionId: null, ownRootId: null, remainingCore: null,
+    };
+    setPlacingNodeId(node.id);
+  }
+
+  // ── Multi-file placement queue ────────────────────────────────────────────
+  // Map a picked file to the node kind it becomes on the canvas.
+  function classifyQueueFile(file) {
+    const name = (file.name || '').toLowerCase();
+    const type = file.type || '';
+    if (type.startsWith('image/') || /\.(png|jpe?g|gif|webp|avif|svg|bmp)$/.test(name)) return 'image';
+    if (/\.(md|markdown)$/.test(name) || type === 'text/markdown') return 'md';
+    if (/\.html?$/.test(name) || type === 'text/html') return 'html';
+    return null;
+  }
+
+  // Create one queued file's node on the server and RETURN it WITHOUT mounting
+  // (no setNodes, no undo, no placement). Lets the queue pre-create the next
+  // node in the background while the current one is being placed, so files
+  // 2..N appear instantly instead of each waiting on a fresh round-trip.
+  // Mirrors handleUpload{Screenshot,Md,Html}'s createNode params; kept separate
+  // so those shared handlers stay untouched. Returns null on read/validation
+  // failure (toast already shown).
+  async function createQueueNode(file) {
+    const k = classifyQueueFile(file);
+    try {
+      if (k === 'html') {
+        const html = await file.text();
+        if (!/^<!doctype|<html/i.test(html.trim())) {
+          toast.error(`${file.name}: not a complete HTML document.`);
+          return null;
+        }
+        const width = 1280, height = Math.round(width * 9 / 16);
+        const { posX, posY } = nextNodePosition({ width, height });
+        const created = await api.createNode({
+          boardId: board.id, kind: 'site', posX, posY, width, height,
+          meta: { name: file.name, source: 'upload' }, html,
+        });
+        return { ...created.node, current_html: html };
+      }
+      if (k === 'md') {
+        const text = await file.text();
+        const width = 600, height = 600;
+        const { posX, posY } = nextNodePosition({ width, height });
+        const created = await api.createNode({
+          boardId: board.id, kind: 'designmd', posX, posY, width, height,
+          meta: { name: file.name }, designMd: text,
+        });
+        return { ...created.node, current_design_md: text };
+      }
+      if (k === 'image') {
+        const dataUrl = await new Promise((resolve, reject) => {
+          const fr = new FileReader();
+          fr.onload = () => resolve(fr.result);
+          fr.onerror = () => reject(fr.error || new Error('read failed'));
+          fr.readAsDataURL(file);
+        });
+        const width = 600, height = 600;
+        const { posX, posY } = nextNodePosition({ width, height });
+        const created = await api.createNode({
+          boardId: board.id, kind: 'asset', posX, posY, width, height,
+          meta: { name: file.name, dataUrl, mimeType: file.type || 'image/*' },
+        });
+        return { ...created.node };
+      }
+    } catch (e) {
+      toast.error(`Upload failed: ${e.message}`);
+    }
+    return null;
+  }
+
+  // Mount a pre-created node and start placing it (ghost follows the cursor).
+  // Dedup guard: a board refetch mid-queue could already have pulled the
+  // server-created node into state — don't add it twice (duplicate key).
+  function mountAndPlace(node) {
+    setNodes((prev) => (prev.some((n) => n.id === node.id) ? prev : [...prev, node]));
+    pushCreateUndo(node, null);
+    startPlacement(node);
+  }
+
+  // Enter the queue: stash placeable files and start placing the first.
+  function handleQueueFiles(files) {
+    const placeable = [];
+    let skipped = 0;
+    for (const f of files) { if (classifyQueueFile(f)) placeable.push(f); else skipped += 1; }
+    if (skipped) toast.error(`${skipped} unsupported file${skipped > 1 ? 's' : ''} skipped (use images, .md, or .html).`);
+    if (!placeable.length) return;
+    placeQueueRef.current = { files: placeable, index: 0, total: placeable.length, prefetch: null };
+    startNextQueued();
+  }
+
+  // Place the next queued file. Uses the background-prefetched node when ready;
+  // otherwise creates it now (showing the cursor spinner via placeQueue.loading)
+  // and kicks off prefetch for the file after it. The drop handler advances the
+  // index and calls back here; an empty queue clears the pill.
+  async function startNextQueued() {
+    const q = placeQueueRef.current;
+    if (!q || q.index >= q.total) { placeQueueRef.current = null; setPlaceQueue(null); return; }
+    const i = q.index;
+    setPlaceQueue({ current: i + 1, total: q.total, loading: true });
+    const pending = q.prefetch || createQueueNode(q.files[i]);
+    q.prefetch = null;
+    const node = await pending;
+    // Cancelled (Escape) while awaiting — discard the orphan and stop.
+    if (placeQueueRef.current !== q) {
+      if (node?.id) api.deleteNode(node.id).catch(() => {});
+      return;
+    }
+    // Creation failed/unsupported → skip on, keep the queue moving.
+    if (!node) { q.index += 1; return startNextQueued(); }
+    mountAndPlace(node);
+    setPlaceQueue({ current: i + 1, total: q.total, loading: false });
+    // Pre-create the NEXT file in the background so its ghost is instant.
+    if (i + 1 < q.total) q.prefetch = createQueueNode(q.files[i + 1]);
+  }
+
+  // Tear down the queue: clear pill/state and reap any prefetched-but-unplaced
+  // node (created on the server, never mounted) so it doesn't orphan.
+  function cancelQueue() {
+    const q = placeQueueRef.current;
+    placeQueueRef.current = null;
+    setPlaceQueue(null);
+    if (q?.prefetch) {
+      q.prefetch.then((n) => { if (n?.id) api.deleteNode(n.id).catch(() => {}); }).catch(() => {});
+    }
+  }
+
+  // Run a section's flow — the shared logic behind the in-place run-pill and
+  // the floating run button (confirm only when a result would be overwritten).
+  function runSectionFlow(s) {
+    if (!s || !s.hasEdges) return;
+    let skip = false;
+    try { skip = localStorage.getItem(RERUN_CONFIRM_SKIP_KEY) === '1'; } catch {}
+    if (skip || !sectionRerunWouldOverwrite(s, nodes, edges)) { runSectionRerun(s); return; }
+    setPlaySection({ section: s, busy: false });
+  }
+
+  // ── Floating run button ─────────────────────────────────────────────────
+  // When a section's in-place run-pill leaves the comfortable viewport — off
+  // the TOP (into the chrome zone) OR off either SIDE — float a button anchored
+  // beside the zoom widget. Detection uses the pill's OWN rect (it keeps its
+  // natural layout even while faded out), so it covers every edge, not just the
+  // top. The most-visible section wins; the in-place pill fades out in tandem.
+  function updateFloatingRun() {
+    if (typeof document === 'undefined') return;
+    const ANCHOR_TOP = 70;  // top chrome zone — pill above this counts as "off"
+    const vh = window.innerHeight, vw = window.innerWidth;
+    let best = null, bestArea = -1;
+    const chromes = document.querySelectorAll('.canvas-section-chrome[data-section-id]');
+    chromes.forEach((chrome) => {
+      // Clear any stale inline offsets from older builds (the in-place pill is
+      // no longer repositioned — the floating button owns the off-screen case).
+      const pill = chrome.querySelector('.canvas-section-name-tag');
+      if (pill && (pill.style.top || pill.style.right)) { pill.style.top = ''; pill.style.right = ''; }
+      // Only float RUNNABLE sections (a disabled pill = no cords) so the in-place
+      // pill never fades away without a floating button to replace it.
+      if (!pill || pill.classList.contains('disabled')) return;
+      const cr = chrome.getBoundingClientRect();
+      // Section body must still be on-screen for running it to be relevant.
+      if (cr.bottom <= 0 || cr.top >= vh || cr.right <= 0 || cr.left >= vw) return;
+      // Pill clipped by ANY viewport edge → it's out of reach, so float.
+      const pr = pill.getBoundingClientRect();
+      const clipped = pr.top < ANCHOR_TOP || pr.right > vw || pr.left < 0;
+      if (!clipped) return;
+      const visW = Math.min(cr.right, vw) - Math.max(cr.left, 0);
+      const visH = Math.min(cr.bottom, vh) - Math.max(cr.top, 0);
+      const area = Math.max(0, visW) * Math.max(0, visH);
+      if (area > bestArea) { bestArea = area; best = chrome.getAttribute('data-section-id'); }
+    });
+    setFloatingRunSectionId((cur) => (cur === best ? cur : best));
+  }
+  function scheduleReanchorPills() {
+    if (reanchorRafRef.current) return;
+    reanchorRafRef.current = requestAnimationFrame(() => {
+      reanchorRafRef.current = 0;
+      updateFloatingRun();
+    });
+  }
+
+  // Keep the last cursor position so a placement can seed under the mouse.
+  useEffect(() => {
+    const onMove = (e) => { lastPointerRef.current = { x: e.clientX, y: e.clientY }; };
+    window.addEventListener('pointermove', onMove, { passive: true });
+    return () => window.removeEventListener('pointermove', onMove);
+  }, []);
+
+  // While placing: the ghost node follows the cursor (handleNodeMove drives the
+  // adopt preview + position persistence); the next canvas click drops it
+  // (handleNodeMoveEnd commits adoption + final position); Escape drops it where
+  // it sits. The triggering + menu click is long gone by the time placement
+  // starts (node creation awaits the server), so it never self-drops.
+  useEffect(() => {
+    if (!placingNodeId) return;
+    const onMove = (e) => {
+      const node = placingNodeRef.current;
+      if (!node) return;
+      const w = clientToWorld(transformRef, e.clientX, e.clientY);
+      const px = w.x - (node.width || 1280) / 2;
+      const py = w.y - (node.height || 720) / 2;
+      handleNodeMove(node, px, py);
+    };
+    const drop = () => {
+      const node = placingNodeRef.current;
+      if (node) {
+        const drag = looseDragRef.current;
+        handleNodeMoveEnd(
+          { ...node, pos_x: drag?.lastX ?? node.pos_x, pos_y: drag?.lastY ?? node.pos_y },
+          true,
+        );
+      }
+      placingNodeRef.current = null;
+      setPlacingNodeId(null);
+      // Multi-file queue: this file is placed — advance to the next one. The
+      // pill updates via setPlaceQueue inside startNextQueued.
+      const q = placeQueueRef.current;
+      if (q) { q.index += 1; startNextQueued(); }
+    };
+    const onClick = (e) => {
+      // Drop only on the canvas — ignore clicks that land on chrome.
+      if (e.target?.closest?.('.prompt-dock, .canvas-header, .canvas-toolbars-left, .canvas-toolbars-right, .canvas-toolbar-left, .canvas-toolbar-right, .empty-drop-menu, .canvas-context-menu, .zoom-controls, .zoom-menu, .user-menu, .boards-sidebar, .cnode-version-ctx-menu')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      drop();
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        // Escape cancels the rest of the queue (reaping any prefetched node);
+        // the current ghost still drops where it sits (drop() sees the cleared
+        // queue and stops advancing).
+        if (placeQueueRef.current) cancelQueue();
+        drop();
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('click', onClick, true);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('click', onClick, true);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, [placingNodeId]);
+
+  // While a multi-file queue is active, anchor the "current/total files" pill
+  // to the cursor. Position is written straight to the DOM (no re-render per
+  // mousemove) — the React state only carries the counter text, which changes
+  // once per file, not per frame.
+  useEffect(() => {
+    if (!placeQueue) return;
+    const place = (x, y) => {
+      const el = placePillRef.current;
+      if (el) el.style.transform = `translate(${x + 18}px, ${y + 18}px)`;
+    };
+    const seed = lastPointerRef.current;
+    place(seed.x, seed.y);
+    const move = (e) => place(e.clientX, e.clientY);
+    window.addEventListener('pointermove', move, { passive: true });
+    return () => window.removeEventListener('pointermove', move);
+  }, [placeQueue]);
+
   // The live "inside" region for an armed removal: the section frame derived
   // from the remaining siblings (robust to the section re-rooting when the
   // armed node was its root), falling back to the siblings' core when the
@@ -1183,10 +1483,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         meta,
         html
       });
-      setNodes((prev) => [...prev, { ...created.node, current_html: html }]);
+      const finalNode = { ...created.node, current_html: html };
+      setNodes((prev) => [...prev, finalNode]);
       let linkEdge = null;
       if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
       pushCreateUndo(created.node, linkEdge);
+      if (!opts.linkFromNodeId && opts.worldX == null) startPlacement(finalNode);
     } catch (e) { toast.error(`Upload failed: ${e.message}`); }
   }
 
@@ -1215,7 +1517,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       let linkEdge = null;
       if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
       pushCreateUndo(created.node, linkEdge);
-      setTimeout(() => zoomToNode(finalNode, 350, 1), 80);
+      // + menu add → let the user place it (ghost follows the cursor). Cord/
+      // context-menu adds keep their anchored position + zoom.
+      if (!opts.linkFromNodeId && opts.worldX == null) startPlacement(finalNode);
+      else setTimeout(() => zoomToNode(finalNode, 350, 1), 80);
     } catch (e) { toast.error(`Could not add blank website: ${e.message}`); }
   }
 
@@ -1234,10 +1539,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         meta,
         designMd: text
       });
-      setNodes((prev) => [...prev, { ...created.node, current_design_md: text }]);
+      const finalNode = { ...created.node, current_design_md: text };
+      setNodes((prev) => [...prev, finalNode]);
       let linkEdge = null;
       if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
       pushCreateUndo(created.node, linkEdge);
+      if (!opts.linkFromNodeId && opts.worldX == null) startPlacement(finalNode);
     } catch (e) { toast.error(`Upload failed: ${e.message}`); }
   }
 
@@ -1265,10 +1572,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         posX, posY, width, height,
         meta
       });
-      setNodes((prev) => [...prev, { ...created.node }]);
+      const finalNode = { ...created.node };
+      setNodes((prev) => [...prev, finalNode]);
       let linkEdge = null;
       if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
       pushCreateUndo(created.node, linkEdge);
+      if (!opts.linkFromNodeId && opts.worldX == null) startPlacement(finalNode);
     } catch (e) { toast.error(`Upload failed: ${e.message}`); }
   }
 
@@ -1388,11 +1697,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         posX, posY, width, height,
         meta
       });
-      setNodes((prev) => [...prev, { ...created.node }]);
+      const finalNode = { ...created.node };
+      setNodes((prev) => [...prev, finalNode]);
       let linkEdge = null;
       if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
       pushCreateUndo(created.node, linkEdge);
       setSelectedNodeId(created.node.id);
+      if (!opts.linkFromNodeId && opts.worldX == null) startPlacement(finalNode);
     } catch (e) { toast.error(`Could not add prompt: ${e.message}`); }
   }
 
@@ -1409,10 +1720,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         posX, posY, width, height,
         meta
       });
-      setNodes((prev) => [...prev, { ...created.node }]);
+      const finalNode = { ...created.node };
+      setNodes((prev) => [...prev, finalNode]);
       let linkEdge = null;
       if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
       pushCreateUndo(created.node, linkEdge);
+      if (!opts.linkFromNodeId && opts.worldX == null) startPlacement(finalNode);
     } catch (e) { toast.error(`Could not add skill: ${e.message}`); }
   }
 
@@ -1513,10 +1826,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   async function handleExtractTo(to, { sourceNodeId, worldX, worldY }) {
     const tmpId = `tmp-extract-${sourceNodeId}-${to}`;
     const tmpEdgeId = `tmp-extract-edge-${sourceNodeId}-${to}`;
-    const { posX, posY } = nextNodePosition({ worldX, worldY, width: 600, height: 200 });
+    // The placeholder's KIND must match the node being extracted so its
+    // category colour-coding (border/ring/cord) reads correctly while it loads
+    // — `to` maps: prompt → prompt, screenshot → asset, html → site, the rest
+    // (.md flavours: designmd/content/style/tokens) → designmd. (lib/extract.js.)
+    const kind =
+      to === 'prompt' ? 'prompt' :
+      to === 'screenshot' ? 'asset' :
+      to === 'html' ? 'site' :
+      'designmd';
+    const width = kind === 'site' ? 1280 : 600;
+    const height = kind === 'prompt' ? 200 : kind === 'site' ? Math.round(1280 * 9 / 16) : 600;
+    const { posX, posY } = nextNodePosition({ worldX, worldY, width, height });
     const placeholder = {
-      id: tmpId, board_id: board.id, kind: 'designmd',
-      pos_x: posX, pos_y: posY, width: 600, height: 200,
+      id: tmpId, board_id: board.id, kind,
+      pos_x: posX, pos_y: posY, width, height,
       // _pendingLinkFrom unions the placeholder with its source in the
       // sections memo immediately — no singleton-frame flash while the
       // real edge round-trips.
@@ -2440,6 +2764,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // so the user gets clear visual confirmation that a drop will land.
   const SNAP_RADIUS_SCREEN = 56;
   const SLOT_SIZE = 19, SLOT_GAP = 6;
+  // Receiver ports sit PORT_GAP screen px OUTSIDE the node's left edge — must
+  // match EdgeLayer.PORT_GAP and the .cnode-port-stack-left CSS offset.
+  const PORT_GAP = 11.385;
   function findSnapTarget(clientX, clientY, sourceNodeId) {
     if (!sourceNodeId) return null;
     const w = clientToWorld(transformRef, clientX, clientY);
@@ -2450,6 +2777,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // circles instead of on them.
     const slotSize = SLOT_SIZE / scale;
     const slotGap = SLOT_GAP / scale;
+    const gap = PORT_GAP / scale;   // receiver ports float left of the edge
     let best = null, bestDist = Infinity;
     for (const n of nodes) {
       if (n.id === sourceNodeId) continue;
@@ -2464,11 +2792,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const stackTop = midY - totalH / 2;
       for (let i = 0; i < slotCount; i++) {
         const slotY = stackTop + i * (slotSize + slotGap) + slotSize / 2;
-        const dx = n.pos_x - w.x;
+        const dx = (n.pos_x - gap) - w.x;
         const dy = slotY - w.y;
         const dist = Math.hypot(dx, dy);
         if (dist < radiusWorld && dist < bestDist) {
-          best = { nodeId: n.id, slotIndex: i, slotCount, x: n.pos_x, y: slotY };
+          best = { nodeId: n.id, slotIndex: i, slotCount, x: n.pos_x - gap, y: slotY };
           bestDist = dist;
         }
       }
@@ -2506,6 +2834,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setDraftEdgeSync(null);
 
     if (targetId && targetId !== src) {
+      // Optimistic (temp-) nodes have no DB row yet — the UUID columns reject
+      // them (409). Hint and bail instead of firing a doomed request.
+      if (String(src).startsWith('temp-') || String(targetId).startsWith('temp-')) {
+        toast.error('That node is still being created — try again in a moment.');
+        return;
+      }
       // Dedup: if an edge already exists from this source to this target,
       // don't stack another circle on the receiver — just select the
       // existing edge so the user can act on it.
@@ -2516,14 +2850,31 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         setSelectedEdgeId(existing.id);
         return;
       }
+      // Optimistic: draw the cord INSTANTLY (temp id) instead of waiting on the
+      // createEdge round-trip — the network latency was the "lag" before the
+      // connection showed up. Reconcile to the real edge on success; roll back
+      // on failure.
+      const tempId = `temp-edge-${Date.now()}`;
+      const optimisticEdge = {
+        id: tempId, board_id: board.id,
+        source_node_id: src, target_node_id: targetId,
+        kind: 'transplant', status: 'pending',
+        payload: { sourceSelector: 'body', targetSelector: 'body' },
+      };
+      setEdges((prev) => [...prev, optimisticEdge]);
+      setSelectedEdgeId(tempId);
       try {
         const { edge } = await api.createEdge({
           boardId: board.id, sourceNodeId: src, targetNodeId: targetId,
           kind: 'transplant', payload: { sourceSelector: 'body', targetSelector: 'body' }
         });
-        setEdges((prev) => [...prev, edge]);
-        setSelectedEdgeId(edge.id);
-      } catch (err) { toast.error(`Edge create failed: ${err.message}`); }
+        setEdges((prev) => prev.map((x) => (x.id === tempId ? edge : x)));
+        setSelectedEdgeId((cur) => (cur === tempId ? edge.id : cur));
+      } catch (err) {
+        setEdges((prev) => prev.filter((x) => x.id !== tempId));
+        setSelectedEdgeId((cur) => (cur === tempId ? null : cur));
+        toast.error(`Edge create failed: ${err.message}`);
+      }
       return;
     }
 
@@ -3182,9 +3533,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         const n = nodeById.get(id);
         if (!n) continue;
         const isAsset = n.kind === 'asset' || n.kind === 'image';
-        const bottomOverflow = chromeWorld + (isAsset ? ASSET_BOTTOM_OVERFLOW : 0);
+        // A SELECTED site node sprouts chrome OUTSIDE its frame: the version-
+        // history floater BELOW it (a 22px gap + square thumbnails that are 20%
+        // of the node width) and the device/viewport switcher ABOVE it (a ~32px
+        // gap + ~32px bar). Count BOTH so the frame clears them at its bottom AND
+        // top edges instead of clipping. Extents mirror the CSS (history floored
+        // at 0.35 zoom; switcher tracks 1/scale like `bottom: 100% + 32px/scale`).
+        const selectedSite = n.kind === 'site' &&
+          (n.id === selectedNodeId || (selectedNodeIds && selectedNodeIds.has && selectedNodeIds.has(n.id)));
+        const historyOverflow = selectedSite
+          ? 22 / Math.max(0.35, canvasScale || 1) + 0.20 * (n.width || 0)
+          : 0;
+        const switcherOverflow = selectedSite ? 68 / (canvasScale || 1) : 0;
+        const bottomOverflow = chromeWorld + (isAsset ? ASSET_BOTTOM_OVERFLOW : 0) + historyOverflow;
         minX = Math.min(minX, n.pos_x || 0);
-        minY = Math.min(minY, n.pos_y || 0);
+        minY = Math.min(minY, (n.pos_y || 0) - switcherOverflow);
         maxX = Math.max(maxX, (n.pos_x || 0) + (n.width || 0));
         maxY = Math.max(maxY, (n.pos_y || 0) + (n.height || 0) + bottomOverflow);
       }
@@ -3226,7 +3589,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       });
     }
     return out;
-  }, [nodes, edges, sectionNameOverrides, sectionFrames, canvasScale, dragFreeze, removing]);
+  }, [nodes, edges, sectionNameOverrides, sectionFrames, canvasScale, dragFreeze, removing, selectedNodeId, selectedNodeIds]);
+
+  // Re-anchor section run-pills whenever the sections change (new section,
+  // resized frame, scale tick) or the window resizes — pan/zoom already
+  // triggers this via onTransformed.
+  useEffect(() => {
+    scheduleReanchorPills();
+    const onResize = () => scheduleReanchorPills();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sections, canvasScale]);
 
   // ── Re-run gating (clean vs dirty) ─────────────────────────────────────
   // After a workflow runs, its run buttons (section ▶ + the bare chat-arrow
@@ -3316,6 +3690,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
     return out;
   }, [sections, cleanSectionIds, nodes, edges]);
+
+  // Floating run button: resolve the section, keeping the last one during the
+  // fade-out so the button keeps its label while it collapses out.
+  const floatingSection = floatingRunSectionId ? sections.find((x) => x.id === floatingRunSectionId) : null;
+  if (floatingSection) lastFloatingSectionRef.current = floatingSection;
+  const floatRunSec = floatingSection || lastFloatingSectionRef.current;
+  const floatRunClean = floatRunSec ? (cleanSectionIds.has(floatRunSec.id) && floatRunSec.hasEdges) : false;
+
   // The bare chat-arrow run-flow processes every runnable target on the
   // board. When they're ALL clean there's nothing new to produce, so the
   // arrow's run-flow shortcut goes disabled (typing a message keeps it live —
@@ -3565,19 +3947,36 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       .filter(Boolean);
     if (memberNodes.length === 0) return;
 
-    let memMinX = Infinity, memMinY = Infinity, memMaxX = -Infinity, memMaxY = -Infinity;
-    for (const m of memberNodes) {
-      memMinX = Math.min(memMinX, m.pos_x || 0);
-      memMinY = Math.min(memMinY, m.pos_y || 0);
-      memMaxX = Math.max(memMaxX, (m.pos_x || 0) + (m.width || 0));
-      memMaxY = Math.max(memMaxY, (m.pos_y || 0) + (m.height || 0));
-    }
-    const MIN_CLEARANCE = 40;
-    const startFrame = { left: section.x, top: section.y, right: section.x + section.width, bottom: section.y + section.height };
     const readScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
     const startScale = readScale();
+    // Mirror the rendered-frame bbox overflow (the `sections` useMemo): the
+    // resize must clear the SAME node chrome the frame wraps, not just the raw
+    // member box — the topbar that renders past the body, asset dims, and (for
+    // a SELECTED site node) the history floater BELOW + device switcher ABOVE.
+    // Without this the handle clips an open history when dragged in.
+    const chromeWorld = 36 / Math.max(0.30, startScale);
+    let memMinX = Infinity, memMinY = Infinity, memMaxX = -Infinity, memMaxY = -Infinity;
+    for (const m of memberNodes) {
+      const isAsset = m.kind === 'asset' || m.kind === 'image';
+      const selectedSite = m.kind === 'site' &&
+        (m.id === selectedNodeId || (selectedNodeIds && selectedNodeIds.has && selectedNodeIds.has(m.id)));
+      const historyOverflow = selectedSite ? 22 / Math.max(0.35, startScale) + 0.20 * (m.width || 0) : 0;
+      const switcherOverflow = selectedSite ? 68 / startScale : 0;
+      const bottomOverflow = chromeWorld + (isAsset ? ASSET_BOTTOM_OVERFLOW : 0) + historyOverflow;
+      memMinX = Math.min(memMinX, m.pos_x || 0);
+      memMinY = Math.min(memMinY, (m.pos_y || 0) - switcherOverflow);
+      memMaxX = Math.max(memMaxX, (m.pos_x || 0) + (m.width || 0));
+      memMaxY = Math.max(memMaxY, (m.pos_y || 0) + (m.height || 0) + bottomOverflow);
+    }
+    // Resizing the frame in can't cross the SAME safety margin a node keeps
+    // when dragged toward the section edges (SECTION_MEMBER_CLEARANCE) — so the
+    // frame never hugs a member tighter than a drop would allow.
+    const MIN_CLEARANCE = SECTION_MEMBER_CLEARANCE;
+    const startFrame = { left: section.x, top: section.y, right: section.x + section.width, bottom: section.y + section.height };
     const startMouseX = e.clientX;
     const startMouseY = e.clientY;
+    // Latest clamped frame, committed to React state once on mouseup.
+    let liveFrame = { ...startFrame };
 
     function onMove(ev) {
       const dx = (ev.clientX - startMouseX) / startScale;
@@ -3592,10 +3991,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       newTop    = Math.min(newTop,    memMinY - MIN_CLEARANCE);
       newRight  = Math.max(newRight,  memMaxX + MIN_CLEARANCE);
       newBottom = Math.max(newBottom, memMaxY + MIN_CLEARANCE);
-      // Write the frame + chrome geometry straight to the DOM this frame so
-      // the dragged corner handle tracks the cursor with no lag — the React
-      // state update below is one frame behind and would leave the handle
-      // trailing the section area. React reconciles to the same values.
+      liveFrame = { left: newLeft, top: newTop, right: newRight, bottom: newBottom };
+      // Drive geometry STRAIGHT to the DOM during the gesture and DO NOT touch
+      // React state per-move. Calling setSectionFrames on every mousemove
+      // re-runs the `sections` memo and re-renders the whole canvas (every
+      // node + EdgeLayer) each frame — the resulting frame-drops make the
+      // section area visibly trail the cursor while the handle (driven here)
+      // stays current. Direct writes alone keep frame + chrome pixel-locked to
+      // the cursor; state is committed once on release below.
       const w = newRight - newLeft, h = newBottom - newTop;
       if (typeof document !== 'undefined') {
         document.querySelectorAll(`[data-section-id="${sectionId}"]`).forEach((el) => {
@@ -3605,17 +4008,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           el.style.height = `${h}px`;
         });
       }
-      setSectionFrames((prev) => ({
-        ...prev,
-        [sectionId]: { left: newLeft, top: newTop, right: newRight, bottom: newBottom },
-      }));
     }
     function onUp() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      setSectionFrames((cur) => {
-        try { localStorage.setItem('rb-section-frames', JSON.stringify(cur)); } catch {}
-        return cur;
+      // Commit the final geometry to React state once, then persist.
+      setSectionFrames((prev) => {
+        const next = { ...prev, [sectionId]: liveFrame };
+        // Persist under the BOARD-SCOPED key the loader reads (line ~250) —
+        // the old plain 'rb-section-frames' key was never restored on reload.
+        try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(next)); } catch {}
+        return next;
       });
     }
     window.addEventListener('mousemove', onMove);
@@ -3737,6 +4140,48 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       </div>
 
       <div className="canvas-toolbars-right">
+        {/* Floating run button — anchored left of the zoom widget; crossfades in
+            when a section's in-place run-pill rises into the top chrome zone. */}
+        {floatRunSec && (() => {
+          const runFloat = (e) => {
+            e.stopPropagation();
+            setSelectedSectionId(floatRunSec.id);
+            setSelectedNodeId(null);
+            setSelectedNodeIds(new Set());
+            runSectionFlow(floatRunSec);
+          };
+          // Structure mirrors the in-section run pill EXACTLY (label + black
+          // circular play button) so the two are visually identical.
+          return (
+            <div
+              className={`canvas-floating-run${floatingSection ? ' visible' : ''}`}
+              role="button"
+              tabIndex={0}
+              aria-label={floatRunClean ? 'Reroll this flow' : 'Run this flow'}
+              onClick={runFloat}
+            >
+              <span className="canvas-floating-run-label">{floatRunClean ? 'Reroll' : 'run this flow'}</span>
+              <button
+                type="button"
+                className="canvas-floating-run-play"
+                onClick={runFloat}
+                aria-label={floatRunClean ? 'Reroll this flow' : 'Run this flow'}
+              >
+                {floatRunClean ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polyline points="23 4 23 10 17 10" />
+                    <polyline points="1 20 1 14 7 14" />
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <polygon points="6,4 20,12 6,20" />
+                  </svg>
+                )}
+              </button>
+            </div>
+          );
+        })()}
         <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} />
         <div className="canvas-toolbar-right">
           <UserPill compact name={user?.name} email={user?.email} plan={user?.plan} onSignOut={logout} />
@@ -3778,6 +4223,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // Below ~0.2 the ports start to dominate the tiny node frames —
           // shrink them 30% so the colour-coded squares stay readable.
           document.documentElement.classList.toggle('canvas-zoom-very-low', scale < 0.2);
+          // Beyond 30% zoom-out the node corner radius tightens 20% so the
+          // rounding doesn't read as oversized on the shrinking frames.
+          document.documentElement.classList.toggle('canvas-zoom-below-30', scale < 0.30);
           // Below the 0.15 chrome floor (--tb) the topbar shrinks with the
           // zoom; narrow nodes also compact the grip to 3×2 dots so it
           // never grazes the node's left edge at minimum zoom.
@@ -3789,6 +4237,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             lastAppliedScaleRef.current = scale;
             setCanvasScale(scale);
           }
+          // Keep each section's run-pill pinned within the viewport as the
+          // user pans/zooms (rAF-coalesced; reads layout once per frame).
+          scheduleReanchorPills();
         }}
       >
         <TransformComponent wrapperStyle={{ width: '100vw', height: '100vh' }} contentStyle={{ width: WORLD_WIDTH, height: WORLD_HEIGHT }}>
@@ -3833,13 +4284,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               setSelectedNodeId(null);
             }}
             onEdgeDragStart={(edge, evt) => startEdgeReroute(edge, evt)}
+            onSeverEdge={(edge) => handleDeleteEdge(edge)}
           />
           {nodes.map((n) => (
             <CanvasNode
               key={n.id} node={n}
+              scale={canvasScale}
               incomingEdges={incomingByTarget.get(n.id) || []}
               hasOutgoingEdges={hasOutgoingBySource.has(n.id)}
               selected={selectedNodeId === n.id || selectedNodeIds.has(n.id)}
+              placing={placingNodeId === n.id}
               editing={editingNodeId === n.id}
               onEditingChange={(willEdit) => handleEditingToggle(n.id, willEdit)}
               onSelect={(e) => {
@@ -3947,6 +4401,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           {sections.map((s) => {
             if (adoptPreview && s.memberIds.length === 1 && s.memberIds[0] === adoptPreview.nodeId) return null;
             const pv = adoptPreview?.sectionId === s.id ? adoptPreview.rect : null;
+            // Clean = nothing changed since the last run (node POSITION doesn't
+            // count). The pill stays actionable as a "Reroll" — re-running the
+            // same chain to get a fresh result — instead of going dead. Shared
+            // by the WHOLE pill (click anywhere) and the play button.
+            const isClean = cleanSectionIds.has(s.id);
+            const triggerRun = () => runSectionFlow(s);
             return (
             <div
               key={`chrome-${s.id}`}
@@ -3960,14 +4420,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }}
             >
               <div
-                className="canvas-section-name-tag"
+                className={`canvas-section-name-tag${s.hasEdges ? '' : ' disabled'}${floatingRunSectionId === s.id ? ' floated-away' : ''}`}
                 role="button"
                 tabIndex={0}
+                aria-label={!s.hasEdges ? 'Connect nodes to run this flow' : (isClean ? 'Reroll this flow' : 'Run this flow')}
                 onClick={(e) => {
+                  // Clicking ANYWHERE on the pill runs the flow (not just the
+                  // play icon). Also selects the section so its controls show.
                   e.stopPropagation();
-                  setSelectedSectionId((prev) => (prev === s.id ? null : s.id));
+                  setSelectedSectionId(s.id);
                   setSelectedNodeId(null);
                   setSelectedNodeIds(new Set());
+                  triggerRun();
                 }}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -3975,43 +4439,36 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   setSectionMenu({ sectionId: s.id, x: e.clientX, y: e.clientY });
                 }}
               >
-                {/* Fixed "run this flow" label — the pill is a run button now,
-                    not an editable section name (inline rename removed). */}
-                <span className="canvas-section-name-label">run this flow</span>
-                {s.hasEdges && (() => {
-                  // Clean = nothing changed since the last run → disabled, so
-                  // the user can't burn credits regenerating the same result.
-                  // Edits to any member, edge rewiring, or a fresh chat request
-                  // re-enable it; moving nodes around does not.
-                  const isClean = cleanSectionIds.has(s.id);
-                  return (
-                  <button
-                    type="button"
-                    className="canvas-section-play-btn"
-                    disabled={isClean}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isClean) return;
-                      // Confirm only when a generated result would be
-                      // OVERWRITTEN; first runs (and opted-out users)
-                      // fire straight away.
-                      let skip = false;
-                      try { skip = localStorage.getItem(RERUN_CONFIRM_SKIP_KEY) === '1'; } catch {}
-                      if (skip || !sectionRerunWouldOverwrite(s, nodes, edges)) {
-                        runSectionRerun(s);
-                        return;
-                      }
-                      setPlaySection({ section: s, busy: false });
-                    }}
-                    aria-label={isClean ? `${s.name} is up to date — edit a node or ask in chat to run again` : `Re-run ${s.name}`}
-                    data-tooltip={isClean ? 'Up to date — change a node or ask in chat to run again' : undefined}
-                  >
+                {/* Run label — becomes "Reroll" once the flow has run and
+                    nothing but node positions has changed (isClean). With no
+                    edges the flow can't run, so it reads "run this flow" and
+                    the whole pill renders disabled (dark grey). */}
+                <span className="canvas-section-name-label">{s.hasEdges && isClean ? 'Reroll' : 'run this flow'}</span>
+                {/* Play button ALWAYS renders. Without edges it stays visible
+                    but disabled — the pill goes dark grey, the play icon light
+                    grey — so the affordance never vanishes when nodes get
+                    disconnected. */}
+                <button
+                  type="button"
+                  className={`canvas-section-play-btn${s.hasEdges ? '' : ' disabled'}`}
+                  onClick={(e) => { e.stopPropagation(); triggerRun(); }}
+                  disabled={!s.hasEdges}
+                  aria-label={!s.hasEdges ? 'Connect nodes to run this flow' : (isClean ? 'Reroll this flow' : `Run this flow`)}
+                  data-tooltip={s.hasEdges && isClean ? 'Reroll — regenerate a fresh result' : undefined}
+                >
+                  {s.hasEdges && isClean ? (
+                    // Two arrows looping into each other — "reroll" the chain.
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <polyline points="23 4 23 10 17 10" />
+                      <polyline points="1 20 1 14 7 14" />
+                      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                    </svg>
+                  ) : (
                     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <polygon points="6,4 20,12 6,20" />
                     </svg>
-                  </button>
-                  );
-                })()}
+                  )}
+                </button>
               </div>
               <div
                 className="canvas-section-grip"
@@ -4147,6 +4604,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
       <input ref={fileInputRef} type="file" onChange={onFileInputChange} style={{ display: 'none' }} />
 
+      {/* Multi-file queue pill — anchored to the cursor while placing a batch
+          of dropped files, showing how many are placed vs queued (e.g. 2/5).
+          While the node for the current slot is still being created, a circular
+          spinner shows so the wait reads as "loading", not frozen. */}
+      {placeQueue && typeof document !== 'undefined' && createPortal(
+        <div className="canvas-place-pill" ref={placePillRef} aria-hidden="true">
+          {placeQueue.loading && <span className="canvas-place-pill-spinner" />}
+          <span>{placeQueue.current}/{placeQueue.total} files</span>
+        </div>,
+        document.body,
+      )}
+
       <PromptDock
         ref={promptDockRef}
         activeContexts={activeContexts}
@@ -4155,6 +4624,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         onAddUrl={handleAddUrl}
         onUploadMd={handleUploadMd}
         onUploadHtml={handleUploadHtml}
+        onQueueFiles={handleQueueFiles}
         onAddPrompt={() => handleAddPrompt()}
         onAddSkill={() => handleAddSkill()}
         onAddBlankSite={() => handleAddBlankSite()}
@@ -4485,24 +4955,25 @@ const EMPTY_DROP_ITEMS = [
   { kind: 'asset',    label: 'image',  Icon: MenuIcon.Image },
 ];
 
-const EXTRACT_OPTIONS = {
-  site: [
-    { to: 'designmd',   label: 'Design system (.md)' },
-    { to: 'content',    label: 'Content (.md)' },
-    { to: 'screenshot', label: 'Screenshot' },
-    { to: 'style',      label: 'Style template' },
-    { to: 'prompt',     label: 'Prompt' },
-  ],
-  asset: [
-    { to: 'tokens', label: 'Design tokens (.md)' },
-    { to: 'prompt', label: 'Prompt' },
-  ],
-};
+// Extract-to mirrors Connect-to's four kinds (same icons + labels). Each maps
+// to the backend `to` per SOURCE kind; an absent mapping renders the item
+// DISABLED (faded). `.html` + `image` only make sense FROM a site/URL node
+// (image = a screenshot of the site); `.md` + `prompt` work from site AND asset.
+const EXTRACT_ITEMS = [
+  { key: 'prompt', label: 'prompt', Icon: MenuIcon.Prompt, to: { site: 'prompt',   asset: 'prompt' } },
+  { key: 'html',   label: '.html',  Icon: MenuIcon.Html,   to: { site: 'html' } },
+  { key: 'md',     label: '.md',    Icon: MenuIcon.Md,     to: { site: 'designmd', asset: 'tokens' } },
+  { key: 'image',  label: 'image',  Icon: MenuIcon.Image,  to: { site: 'screenshot' } },
+];
 
 function EmptyDropMenu({ x, y, sourceKind, onClose, onPick, onExtract }) {
   const [extractOpen, setExtractOpen] = useState(false);
   const [menuRef, { left, top }] = useClampedMenuPos(x + 8, y + 8, [extractOpen]);
-  const extractOpts = EXTRACT_OPTIONS[sourceKind === 'image' ? 'asset' : sourceKind] || null;
+  // Normalised source kind for the extract `to` mapping. The Extract-to submenu
+  // exists for site + asset sources (where a generator exists); other kinds
+  // don't show it. Within it, items disable when their `to[srcKind]` is absent.
+  const srcKind = sourceKind === 'image' ? 'asset' : sourceKind;
+  const showExtract = srcKind === 'site' || srcKind === 'asset';
 
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose(); }
@@ -4533,7 +5004,7 @@ function EmptyDropMenu({ x, y, sourceKind, onClose, onPick, onExtract }) {
           <Icon /><span>{label}</span>
         </button>
       ))}
-      {extractOpts && (
+      {showExtract && (
         <div className="empty-drop-extract">
           <button
             type="button"
@@ -4541,16 +5012,29 @@ function EmptyDropMenu({ x, y, sourceKind, onClose, onPick, onExtract }) {
             onMouseEnter={() => setExtractOpen(true)}
             onClick={() => setExtractOpen((v) => !v)}
           >
-            Extract to ▸
+            <span>Extract to</span>
+            <svg className="empty-drop-chevron" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="9 6 15 12 9 18" />
+            </svg>
           </button>
           {extractOpen && (
             <div className="empty-drop-submenu" onMouseLeave={() => setExtractOpen(false)}>
-              {extractOpts.map((o) => (
-                <button key={o.to} type="button" className="popup-menu-btn"
-                  onClick={() => onExtract?.(o.to)}>
-                  {o.label}
-                </button>
-              ))}
+              {EXTRACT_ITEMS.map(({ key, label, Icon, to }) => {
+                const target = to[srcKind];
+                const disabled = !target;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className="popup-menu-btn"
+                    disabled={disabled}
+                    title={disabled ? 'Only available from a website/URL node' : undefined}
+                    onClick={disabled ? undefined : () => onExtract?.(target)}
+                  >
+                    <Icon /><span>{label}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

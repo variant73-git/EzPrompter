@@ -20,7 +20,7 @@ export async function htmlToScreenshotDataUrl(html, { width = 1280, height = 800
 
 // Which `to` targets are valid for which source kind. Keeps the route and
 // the UI honest about combos that actually have a generator.
-const SITE_TARGETS = new Set(['designmd', 'content', 'screenshot', 'style', 'prompt']);
+const SITE_TARGETS = new Set(['designmd', 'content', 'screenshot', 'style', 'prompt', 'html']);
 const ASSET_TARGETS = new Set(['tokens', 'prompt']);
 
 // Normalized result the route persists. Unused fields stay null.
@@ -77,7 +77,7 @@ export async function runExtract({ to, node, model }) {
 
   const allowed = isSite ? SITE_TARGETS : isAsset ? ASSET_TARGETS : null;
   if (!allowed) return { error: 'unsupported_combo', message: `cannot extract from kind "${node.kind}"` };
-  if (!['designmd', 'content', 'screenshot', 'style', 'prompt', 'tokens'].includes(to)) {
+  if (!['designmd', 'content', 'screenshot', 'style', 'prompt', 'tokens', 'html'].includes(to)) {
     return { error: 'invalid_to', message: `unknown extract target "${to}"` };
   }
   if (!allowed.has(to)) return { error: 'unsupported_combo', message: `cannot extract "${to}" from a ${node.kind}` };
@@ -112,6 +112,11 @@ export async function runExtract({ to, node, model }) {
         const text = await describeSiteAsPrompt({ html: node.html, ...(model ? { model } : {}) });
         return result({ kind: 'prompt',
           meta: { name: `${name} — prompt`, prompt: text, source: 'extract', extractTo: 'prompt', sourceNodeId: node.id } });
+      }
+      case 'html': {
+        // No LLM — clone the site's HTML into a fresh editable .html node.
+        return result({ kind: 'site', html: node.html,
+          meta: { name: `${name} — html`, source: 'extract', extractTo: 'html', sourceNodeId: node.id } });
       }
     }
   }

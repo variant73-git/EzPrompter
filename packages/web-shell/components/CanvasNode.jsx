@@ -325,15 +325,41 @@ function EmptyUploadBody({ kind, onRequestUpload }) {
   );
 }
 
+// Hover overlay for populated image / .md / .html nodes: a subtle dark gradient
+// fading up from the base, plus a "Replace content" pill in the bottom-left —
+// vertically aligned with the expand floater on the opposite (bottom-right)
+// corner. Revealed on node hover via CSS.
+function ReplaceOverlay({ nodeId, onReplaceContent }) {
+  return (
+    <>
+      <div className="cnode-replace-grad" aria-hidden="true" />
+      <button
+        type="button"
+        className="cnode-replace-float"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); onReplaceContent?.(nodeId); }}
+        title="Replace content"
+        aria-label="Replace content"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M21 3v5h-5" />
+          <path d="M21 12a9 9 0 0 1-15 6.7L3 16" /><path d="M3 21v-5h5" />
+        </svg>
+        <span>Replace content</span>
+      </button>
+    </>
+  );
+}
+
 export default function CanvasNode({
-  node, selected, editing = false, onEditingChange,
+  node, selected, placing = false, editing = false, onEditingChange,
   onSelect, onMove, onMoveStart, onMoveEnd, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload,
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
   onReplaceContent, onRequestUpload, onFrameZoom, onVersionRestore,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
   removing = false, removingOutside = false, removeFromMenu = false, inSection = false,
-  onRemoveFromSection, onCancelRemove
+  onRemoveFromSection, onCancelRemove, scale = 1
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -380,6 +406,24 @@ export default function CanvasNode({
     setRestoringVersion(true);
     try { await onVersionRestore?.(versionPreview.snapshotId); setVersionPreview(null); }
     finally { setRestoringVersion(false); }
+  }
+  // Right-click → "Restore this version": restore straight away (no preview step).
+  async function restoreVersionDirect(snapshotId) {
+    setRestoringVersion(true);
+    try { await onVersionRestore?.(snapshotId); setVersionPreview(null); }
+    finally { setRestoringVersion(false); }
+  }
+  // Right-click → "Delete from history": drop the snapshot, then sync. If the
+  // deleted version was the one currently shown, the server repointed
+  // current_snapshot_id — restore to that new current so the node re-renders.
+  async function deleteVersion(snapshotId) {
+    const wasShown = snapshotId === shownVersionId;
+    try {
+      const r = await api.deleteSnapshot(node.id, snapshotId);
+      setVersions((prev) => prev.filter((v) => v.id !== snapshotId));
+      if (versionPreview?.snapshotId === snapshotId) setVersionPreview(null);
+      if (wasShown && r?.currentSnapshotId) await onVersionRestore?.(r.currentSnapshotId);
+    } catch (e) { console.warn('[version-delete]', e?.message || e); }
   }
   // Natural dimensions of the asset's image content. Used by the dims label
   // below the card. Non-asset nodes pass a null src so the hook short-circuits.
@@ -511,8 +555,8 @@ export default function CanvasNode({
       const scale = readScale();
       const dx = (ev.clientX - start.x) / scale;
       const dy = (ev.clientY - start.y) / scale;
-      const nextW = axis === 'x' ? Math.max(280, start.w + dx) : start.w;
-      const nextH = axis === 'y' ? Math.max(120, start.h + dy) : start.h;
+      const nextW = (axis === 'x' || axis === 'xy') ? Math.max(280, start.w + dx) : start.w;
+      const nextH = (axis === 'y' || axis === 'xy') ? Math.max(120, start.h + dy) : start.h;
       onResize?.(nextW, nextH);
     }
     function up() {
@@ -727,6 +771,25 @@ export default function CanvasNode({
   // 3 buttons + grip without overlap. Collapse non-essentials.
   const narrowTopbar = (node.width || 0) < 520;
 
+  // Category pill must NEVER render clipped. Measure its natural width against
+  // the topbar-left's cap (≈ 50% of the topbar minus its max-width inset). When
+  // it won't fit whole, the pill is taken OUT OF FLOW (no gap, title reclaims
+  // the room) but stays in the DOM so it's always measurable — so it pops back
+  // in the instant there's room again (zoom-in / wider node). The compare is in
+  // world px: the pill is inverse-scaled, so it grows on zoom-out while the
+  // topbar width stays put — the fit naturally flips with zoom.
+  const [pillFits, setPillFits] = useState(true);
+  const pillRef = useRef(null);
+  const topbarMainRef = useRef(null);
+  useLayoutEffect(() => {
+    const pill = pillRef.current;
+    const main = topbarMainRef.current;
+    if (!pill || !main) return;
+    const needed = pill.offsetWidth;  // natural width — same in-flow or absolute
+    const cap = main.clientWidth * 0.5 - 20 / Math.max(0.30, scale || 1) - 8;
+    setPillFits(needed <= cap);
+  }, [scale, node.width, kindLabel]);
+
   // Body switches on kind — site/template/chunk render the iframe path
   // (existing). designmd/prompt/skill render bespoke bodies and don't
   // need the iframe at all.
@@ -836,14 +899,13 @@ export default function CanvasNode({
   return (
     <div
       ref={cnodeRef}
-      className={`cnode origin-${origin}${selected ? ' selected' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}${generating ? ' generating' : ''}${removing ? ' removing' : ''}`}
+      className={`cnode origin-${origin}${selected ? ' selected' : ''}${placing ? ' placing' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}${generating ? ' generating' : ''}${removing ? ' removing' : ''}`}
       style={{ left: node.pos_x, top: node.pos_y, width: node.width, '--cnode-h': `${node.height}px`, '--cnode-w': node.width }}
       data-node-id={node.id}
     >
       {/* Generation progress ring — category-coloured outline filling
-          clockwise from 12 o'clock + a large grey % in the centre. The
-          percentage is a reassurance estimate; the ring is swapped out
-          for the real content the instant generation finishes. */}
+          clockwise from 12 o'clock. The ring is swapped out for the real
+          content the instant generation finishes. */}
       {generating && (
         <div className={`cnode-gen-overlay${hasContent ? ' has-content' : ''}`} aria-hidden="true">
           <div className="cnode-gen-status">{loadingRequest}</div>
@@ -930,9 +992,12 @@ export default function CanvasNode({
           <span /><span /><span /><span /><span /><span />
           <span /><span /><span /><span /><span /><span />
         </div>
-        <div className="topbar-main">
+        <div className="topbar-main" ref={topbarMainRef}>
           <div className="topbar-left">
-            <span className={`kind-pill kind-${kindLabel === 'site' ? 'site' : 'other'}`}>
+            <span
+              ref={pillRef}
+              className={`kind-pill kind-${kindLabel === 'site' ? 'site' : 'other'}${pillFits ? '' : ' kind-pill-clipped'}`}
+            >
               {KindIcon && <KindIcon />}
               <span className="kind-pill-lbl">{kindLabel}</span>
             </span>
@@ -1101,6 +1166,11 @@ export default function CanvasNode({
             >
               {isExpanded ? <CollapseIcon /> : <ExpandIcon />}
             </button>
+            {/* Replace-content overlay — only for uploaded .html nodes (not
+                URL captures, which are re-captured, not file-replaced). */}
+            {origin === 'html' && onReplaceContent && (
+              <ReplaceOverlay nodeId={node.id} onReplaceContent={onReplaceContent} />
+            )}
           </div>
         ) : node.kind === 'site' && node.meta?.source === 'empty' ? (
           // Unpopulated .html node from the "Connect to" flow — waiting
@@ -1138,7 +1208,10 @@ export default function CanvasNode({
           } : undefined}
         >
           {(node.current_design_md || node.design_md) ? (
-            <MdPreviewBody node={node} />
+            <>
+              <MdPreviewBody node={node} />
+              {onReplaceContent && <ReplaceOverlay nodeId={node.id} onReplaceContent={onReplaceContent} />}
+            </>
           ) : (
             <EmptyUploadBody kind="designmd" onRequestUpload={onRequestUpload} />
           )}
@@ -1149,6 +1222,24 @@ export default function CanvasNode({
             node={node}
             onChange={(value) => onPromptTextChange?.(value)}
           />
+          {/* Corner resize handle (bottom-right of the text field) — same
+              diagonal-lines affordance as the section SE handle; drags the
+              WHOLE node's width + height. */}
+          {onResize && (
+            <button
+              type="button"
+              className="cnode-resize-corner"
+              onMouseDown={startDashResize('xy')}
+              title="Drag to resize node"
+              aria-label="Resize node"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
+                <line x1="8" y1="20" x2="20" y2="8" />
+                <line x1="12" y1="20" x2="20" y2="12" />
+                <line x1="16" y1="20" x2="20" y2="16" />
+              </svg>
+            </button>
+          )}
         </div>
       ) : renderSkillBody ? (
         <div className="cnode-body cnode-body-skill" onMouseDown={onBodyMouseDown}>
@@ -1165,10 +1256,13 @@ export default function CanvasNode({
           style={{ height: (node.height || 600) + 'px' }}
         >
           {node.meta?.dataUrl ? (
-            <AssetNodeImage
-              dataUrl={node.meta.dataUrl}
-              name={node.meta?.name || 'asset'}
-            />
+            <>
+              <AssetNodeImage
+                dataUrl={node.meta.dataUrl}
+                name={node.meta?.name || 'asset'}
+              />
+              {onReplaceContent && <ReplaceOverlay nodeId={node.id} onReplaceContent={onReplaceContent} />}
+            </>
           ) : node.meta?.status === 'generating' ? (
             // The NodeProgressRing overlay is the sole feedback while
             // generating — no inner spinner/label to collide with its %.
@@ -1197,6 +1291,8 @@ export default function CanvasNode({
           nodeId={node.id}
           versions={versions}
           onPreview={previewVersion}
+          onRestore={restoreVersionDirect}
+          onDelete={deleteVersion}
           activeId={shownVersionId}
           loading={versionsLoading}
         />

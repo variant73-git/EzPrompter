@@ -24,7 +24,7 @@ const NODE_TYPES = {
     defaultName: BLANK_SITE_DEFAULTS.name,
     seedHtml: BLANK_SITE_HTML,
   },
-  'prompt':         { kind: 'prompt',   meta: {}, color: 'yellow',  desc: 'A text prompt — give it instructions, then chain it into a website to apply' },
+  'prompt':         { kind: 'prompt',   meta: {}, color: 'yellow',  desc: 'A text prompt — give it instructions, then chain it into a website to apply', width: 600, height: 200 },
   'design-system':  { kind: 'designmd', meta: {}, color: 'green',   desc: 'A design.md spec (colors, fonts, spacing) — connect to a website to restyle it' },
   'asset':          { kind: 'asset',    meta: {}, color: 'violet',  desc: 'An image/asset slot — fill via Smart Edit or by attaching uploads' },
   'skill':          { kind: 'skill',    meta: {}, color: 'pink',    desc: 'A reusable skill node (rarely needed — only ask if user mentions skills)' },
@@ -75,7 +75,21 @@ If the user wants to CAPTURE a real website by URL (snapshot a live site), don't
       : finalMeta;
 
     const w = mapping.width || 1280;
-    const h = mapping.height || 800;
+    let h = mapping.height || 800;
+    // A prompt node GENERATED already populated sizes its height to the brief
+    // text plus a 20% breathing margin below it, so the field isn't cramped or
+    // wastefully tall. Empty prompt nodes keep the compact default.
+    if (mapping.kind === 'prompt' && content) {
+      const CHARS_PER_LINE = 52;   // ~600px field at 18px Instrument Sans
+      const LINE_H = 27;           // 18px × 1.5 line-height
+      const CHROME = 76;           // body padding (28) + textarea padding (48)
+      const lines = String(content).split('\n')
+        .reduce((acc, ln) => acc + Math.max(1, Math.ceil(ln.length / CHARS_PER_LINE)), 0);
+      const textH = lines * LINE_H;
+      // node.height drives the field (body) height only — topbar is separate.
+      h = Math.round(textH * 1.2 + CHROME);          // +20% breathing below text
+      h = Math.max(200, Math.min(h, 900));            // sane bounds
+    }
 
     // Auto-place: if caller didn't pass coords, stack vertically in the
     // rightmost column already in use. Each call in the same agent turn

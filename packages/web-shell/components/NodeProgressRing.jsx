@@ -66,9 +66,9 @@ function readCanvasScale() {
 }
 
 // Pure render: an SVG outline that hugs the node frame and fills clockwise
-// to `pct` from 12 o'clock, plus the corner percentage. Color comes from
-// the parent's --cnode-port-fill via CSS (.cnode-progress-arc); the number
-// + track are solid dark grey.
+// to `pct` from 12 o'clock. Color comes from the parent's --cnode-port-fill
+// via CSS (.cnode-progress-arc); the track is solid dark grey. (The numeric
+// percentage was removed by design — the arc alone signals progress.)
 //
 // `preserveAspectRatio="none"` stretches the viewBox to fill the SVG element
 // box EXACTLY — so the ring always lands on the real rendered card edges no
@@ -102,7 +102,6 @@ export function NodeProgressRing({ pct, width, height }) {
           strokeDashoffset={100 - pct}
         />
       </svg>
-      <span className="cnode-progress-num">{pct}%</span>
     </div>
   );
 }

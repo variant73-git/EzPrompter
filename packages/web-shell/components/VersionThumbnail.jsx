@@ -12,7 +12,7 @@ import { api } from '../lib/canvas-api.js';
 // scaled by the canvas zoom. The square container clips to the top portion.
 const BASE = 1280;
 
-export default function VersionThumbnail({ nodeId, snapshotId, onClick, title, size = null, active = false }) {
+export default function VersionThumbnail({ nodeId, snapshotId, onClick, onContextMenu, hint = null, title, size = null, active = false }) {
   const [content, setContent] = useState(null); // { html, screenshot_url }
   const [failed, setFailed] = useState(false);
   const ref = useRef(null);
@@ -56,10 +56,15 @@ export default function VersionThumbnail({ nodeId, snapshotId, onClick, title, s
       tabIndex={interactive ? 0 : undefined}
       className={`cnode-version-thumb${fixed ? '' : ' cnode-version-thumb--fill'}${active ? ' is-active' : ''}`}
       style={fixed ? { width: size, height: size } : undefined}
-      title={title}
+      // hint drives a delayed "right click for options" tooltip (data-tooltip);
+      // when present it replaces the native date title to avoid a double tooltip.
+      title={hint ? undefined : title}
+      data-tooltip={hint || undefined}
+      data-tooltip-position={hint ? 'bottom' : undefined}
       aria-label={title || 'version'}
       onMouseDown={interactive ? (e) => e.stopPropagation() : undefined}
       onClick={interactive ? (e) => { e.stopPropagation(); onClick(); } : undefined}
+      onContextMenu={onContextMenu ? (e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e); } : undefined}
       onKeyDown={interactive ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
     >
       {content?.screenshot_url ? (

@@ -42,41 +42,14 @@
   --blur-menu: 36px;
   --blur-soft: 24px;
 
-  /* Aeonik wired as the default sans so `font-sans` resolves to it
-     automatically. Instrument Serif is exposed via `font-display`. */
-  --font-sans: 'Aeonik', system-ui, -apple-system, sans-serif;
-  --font-display: 'Instrument Serif', Georgia, serif;
+  /* Instrument Sans (loaded via next/font, exposed as --font-instrument-sans)
+     is now the default sans. --font-display resolves to Instrument Sans too;
+     the popup family keeps Instrument Serif separately (--popup-font-serif).
+     Instrument Sans ships weights 400–700, so any `font-weight:300` clamps to
+     400. */
+  --font-sans: var(--font-instrument-sans), system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-instrument-sans), system-ui, -apple-system, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-/* ─── Aeonik (local) ────────────────────────────────────────────────────── */
-@font-face {
-  font-family: 'Aeonik';
-  src: url('/fonts/aeonik/Aeonik-Light.otf') format('opentype');
-  font-weight: 300;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Aeonik';
-  src: url('/fonts/aeonik/Aeonik-Regular.otf') format('opentype');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Aeonik';
-  src: url('/fonts/aeonik/Aeonik-Medium.otf') format('opentype');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Aeonik';
-  src: url('/fonts/aeonik/Aeonik-Bold.otf') format('opentype');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
 }
 
 :root {
@@ -126,7 +99,7 @@
   --popup-border: rgba(239, 238, 235, 0.12);
   --popup-accent: #EFEEEB;
   --popup-shadow: 0 32px 64px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.06);
-  --popup-radius-card: 40px;
+  --popup-radius-card: 20px;
   --popup-radius-mid: 14px;
   --popup-radius-pill: 999px;
   /* Instrument falls back to system sans before any user CSS — the
@@ -185,7 +158,7 @@ body.rb-ed-light {
 body {
   background: var(--bg-base);
   color: var(--text-primary);
-  font-family: 'Aeonik', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  font-family: var(--font-instrument-sans), -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
   font-feature-settings: 'ss01', 'ss02';
   min-height: 100vh;
   line-height: 1.5;
@@ -547,7 +520,7 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
   border-radius: 12px;
   font-size: 0.85rem;
   box-shadow: var(--shadow-frost);
-  font-family: 'Aeonik', system-ui, sans-serif;
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
 }
 .canvas-toolbar-left {
   /* Now nested inside .canvas-toolbars-left wrapper which owns the
@@ -646,7 +619,7 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
   /* 8px = widget radius (12) − widget padding (4); makes the hover bg
      curve along the toolbar's inner radius perfectly. */
   border-radius: 8px;
-  font: 500 0.82rem 'Aeonik', system-ui, sans-serif;
+  font: 500 0.82rem var(--font-instrument-sans), system-ui, sans-serif;
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -752,7 +725,7 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
   border-radius: 999px;
   border: 1px solid var(--pill-colour);
   color: var(--pill-colour);
-  font: 500 0.72rem/1 'Aeonik', system-ui, sans-serif;
+  font: 500 0.72rem/1 var(--font-instrument-sans), system-ui, sans-serif;
   letter-spacing: 0.02em;
   white-space: nowrap;
   max-width: 140px;
@@ -2123,6 +2096,13 @@ body.rb-ed-light .popup-btn-danger:hover:not(:disabled) { background: #ef4444; b
 }
 .canvas-context-menu .popup-menu-btn:hover,
 .popup-menu.empty-drop-menu .popup-menu-btn:hover { background: #383838; }
+/* Destructive "Delete from history" row in the version context menu — red font
+   (same danger pattern as the user-menu sign-out). */
+.cnode-version-ctx-menu .popup-menu-btn.cnode-version-menu-delete { color: #fca5a5; }
+.cnode-version-ctx-menu .popup-menu-btn.cnode-version-menu-delete:hover {
+  background: rgba(248, 113, 113, 0.14);
+  color: #fca5a5;
+}
 .canvas-context-menu .popup-menu-input-row,
 .popup-menu.empty-drop-menu .popup-menu-input-row { padding: 10px 10px 4px; }
 body.rb-ed-light .canvas-context-menu,
@@ -2158,6 +2138,15 @@ body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:last-child { border
 .popup-menu.empty-drop-menu .popup-menu-btn:not(.popup-menu-btn-cancel) + .popup-menu-btn-cancel {
   border-top-left-radius: 11px;
   border-top-right-radius: 11px;
+}
+/* The Extract-to trigger keeps a SQUARE bottom always. When its submenu is
+   closed it's the last child of .empty-drop-extract, so the generic
+   `popup-menu-btn:last-child` (0,4,0) would round its bottom; opening the
+   submenu un-rounds it. Pin it square at matching specificity so both states
+   read the same (the submenu's own panel rounds the bottom when open). */
+.popup-menu.empty-drop-menu .empty-drop-extract .empty-drop-submenu-trigger {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 /* Toast — minimal floating notification replacing alert(). Bottom-right
@@ -2215,7 +2204,7 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
   border-radius: var(--radius-md, 18px);
   padding: 28px;
   box-shadow: var(--shadow-frost, 0 16px 60px rgba(0, 0, 0, 0.55));
-  font-family: 'Aeonik', inherit;
+  font-family: var(--font-instrument-sans), inherit;
   color: var(--text-primary, #f5f5f5);
   backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
@@ -2349,7 +2338,7 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
   border-radius: calc(10px / var(--canvas-scale, 1));
   padding: calc(14px / var(--canvas-scale, 1));
   box-shadow: 0 calc(12px / var(--canvas-scale, 1)) calc(32px / var(--canvas-scale, 1)) rgba(0, 0, 0, 0.45);
-  font-family: 'Aeonik', inherit;
+  font-family: var(--font-instrument-sans), inherit;
 }
 
 .reset-confirm-title {
@@ -2475,7 +2464,10 @@ html, body { overscroll-behavior: none; }
   /* Corner radius holds ~10px on screen down to 15% zoom, then (floored at
      0.15, matching the topbar's --tb) shrinks proportionally as you zoom
      further out — so the rounding doesn't balloon relative to the tiny node. */
-  border-radius: calc(10px / max(0.15, var(--canvas-scale, 1)));
+  border-radius: calc(11.5px / max(0.15, var(--canvas-scale, 1)));
+  /* Beyond 30% zoom-out, tighten all three concentric node radii by 20%
+     (11.5→9.2, topbar/body 5.5→4.4) so the rounding stays proportional. */
+  /* (overrides defined just below for html.canvas-zoom-below-30) */
   /* Dark chrome fill shows in the 4px inset gap between the content frame
      (topbar + body) and the node border — see `padding` below. */
   background: #0f0f0f;
@@ -2502,13 +2494,25 @@ html, body { overscroll-behavior: none; }
   overflow: visible;
 }
 
+/* Beyond 30% zoom-out: node radii −20% (kept concentric across the three
+   frame layers). Toggled by .canvas-zoom-below-30 on <html>. */
+html.canvas-zoom-below-30 .cnode {
+  border-radius: calc(9.2px / max(0.15, var(--canvas-scale, 1)));
+}
+html.canvas-zoom-below-30 .cnode-topbar {
+  border-radius: calc(4.4px / var(--tb));
+}
+html.canvas-zoom-below-30 .cnode-body {
+  border-radius: calc(4.4px / max(0.15, var(--canvas-scale, 1)));
+}
+
 /* Per-origin node borders. Edge stroke colors live in node-origin.js and
    are applied inline by EdgeLayer.jsx — keep the two in sync. */
-.cnode.origin-url    { border-color: rgba(56, 189, 248, 0.55); }   /* sky */
-.cnode.origin-html   { border-color: rgba(249, 115, 22, 0.55); }   /* orange */
-.cnode.origin-md     { border-color: rgba(52, 211, 153, 0.55); }   /* emerald */
-.cnode.origin-screenshot { border-color: rgba(167, 139, 250, 0.55); } /* violet */
-.cnode.origin-blank  { border-color: rgba(45, 212, 191, 0.55); }   /* teal */
+.cnode.origin-url    { border-color: rgba(41, 102, 234, 0.55); }   /* blue — site */
+.cnode.origin-html   { border-color: rgba(249, 115, 22, 0.55); }   /* orange — .html */
+.cnode.origin-md     { border-color: rgba(194, 180, 74, 0.55); }   /* ochre — .md */
+.cnode.origin-screenshot { border-color: rgba(121, 81, 194, 0.55); } /* violet — image */
+.cnode.origin-blank  { border-color: rgba(41, 102, 234, 0.55); }   /* blue — same as URL */
 
 /* "is-main" — soft outer glow marks the board's anchor URL without
    breaking visual parity with other URLs. Defined BEFORE .selected so
@@ -2516,7 +2520,7 @@ html, body { overscroll-behavior: none; }
    specificity). */
 .cnode.is-main {
   box-shadow:
-    0 0 24px rgba(56, 189, 248, 0.22),
+    0 0 24px rgba(41, 102, 234, 0.22),
     0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
@@ -2526,20 +2530,38 @@ html, body { overscroll-behavior: none; }
    so its box-shadow wins on the URL anchor case (was the bug where
    selecting a URL is-main node "lost the border"). */
 .cnode.selected {
+  /* Outward 3px ring in the node's origin colour, floating just OUTSIDE the
+     node edge (box-shadow spread, no inset). The border itself goes transparent
+     so only the ring reads. */
   border-color: transparent;
-  /* Single outward 3px ring. (A centred ring — half inset — showed a second
-     colored line over the node's 4px inner padding gap; reverted.) */
+  /* Ring inverse-scale FLOORS at 50% zoom (max(0.50, scale)) — past that the
+     ring holds the thickness it has at 50% and shrinks on screen with the node,
+     instead of ballooning into a thick band at far zoom-out. */
   box-shadow:
-    0 0 0 calc(3px / var(--canvas-scale, 1)) var(--cnode-port-fill, var(--accent)),
+    0 0 0 calc(3px / max(0.50, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
     0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
 /* While generating, the progress ring (cnode-progress-arc) traces the frame
-   and serves as the outline. Drop the static selection ring so the two don't
+   and serves as the outline. The node's own coloured origin border is dropped
+   so the ONLY rail behind the filling arc is the ring's grey track
+   (cnode-progress-track) — not the category colour. */
+.cnode.generating {
+  border-color: transparent;
+}
+/* Selected + generating: also drop the static selection ring so the two don't
    stack into a double border — the ring takes the selected outline's place. */
 .cnode.generating.selected {
   border-color: transparent;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* Drag-to-place: a freshly added node tracks the cursor as a translucent ghost
+   until the user clicks to drop it. pointer-events:none so the drop click falls
+   through to the canvas (the window listener commits the placement). */
+.cnode.placing {
+  opacity: 0.62;
+  pointer-events: none;
 }
 
 /* Topbar — offblack frosted, matches the editor panels (#1A1A1A) and the
@@ -2553,18 +2575,24 @@ html, body { overscroll-behavior: none; }
      edges at minimum zoom, and the section bbox (36 / max(0.15, scale))
      matches the rendered chrome exactly (no bottom bleed). */
   --tb: max(0.30, var(--canvas-scale, 1));
+  /* HEIGHT floors EARLIER than the rest of the chrome — at 50% zoom (vs the
+     0.30 content floor). Past 50% zoom-out the bar starts shrinking on screen
+     instead of holding a tall band over increasingly narrow nodes. Content
+     (pill/title/icons) stays comfortably shorter than the bar at every zoom,
+     so the earlier height floor never clips it. */
+  --tbh: max(0.50, var(--canvas-scale, 1));
   /* Horizontal breathing (padding + the gaps flanking the divider/⋯)
      shrinks EARLIER than the rest of the chrome: linear with the zoom
      below 50%. Keeps the right-side zone from marching left into the
      centered grip as the node gets small on screen. */
   --tbgap: calc(10px / max(0.5, var(--canvas-scale, 1)));
-  flex: 0 0 calc(36px / var(--tb));
-  height: calc(36px / var(--tb));
+  flex: 0 0 calc(36px / var(--tbh));
+  height: calc(36px / var(--tbh));
   background: #0f0f0f;
-  /* All four corners rounded. Radius = outer 10px − the 6px inset (2px
+  /* All four corners rounded. Radius = outer 11.5px − the 6px inset (2px
      border + 4px gap) so the topbar's corners nest CONCENTRICALLY inside the
      node's outer radius instead of curving away from it. */
-  border-radius: calc(4px / var(--tb));
+  border-radius: calc(5.5px / var(--tb));
   display: flex;
   align-items: center;
   padding: 0 var(--tbgap);
@@ -2597,16 +2625,25 @@ html, body { overscroll-behavior: none; }
   gap: calc(5px / var(--tb));
   padding: calc(3px / var(--tb)) calc(9px / var(--tb));
   border-radius: calc(999px / var(--tb));
-  /* Filled dark pill (reference "Featured" style) — NO outline; the icon + text
-     carry the node's category colour via --cnode-port-fill. */
-  background: rgba(255, 255, 255, 0.08);
+  /* Filled pill in the node's category colour; icon + text use --cnode-port-ink
+     (black or white, whichever contrasts best on that colour). */
+  background: var(--cnode-port-fill, #38bdf8);
   border: 0;
-  color: var(--cnode-port-fill, #38bdf8);
-  text-transform: capitalize;
+  color: var(--cnode-port-ink, #0a0a0a);
+  text-transform: uppercase;
   font-size: calc(11px / var(--tb));
   font-weight: 500;
-  letter-spacing: 0;
+  letter-spacing: 0.06em;
   flex-shrink: 0;
+  white-space: nowrap;
+}
+/* Won't-fit-whole → taken out of flow (no gap, title reclaims the space) and
+   hidden, but kept in the DOM so its natural width stays measurable for the
+   "does it fit now?" check. */
+.cnode-topbar .kind-pill.kind-pill-clipped {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
 }
 .cnode-topbar .kind-pill svg {
   width: calc(11px / var(--tb));
@@ -2936,6 +2973,79 @@ body.rb-ed-light .cnode-expand-float:hover {
   color: #1f1f1f;
 }
 
+/* ── Replace-content hover overlay (image / .md / .html nodes) ────────────── */
+/* Subtle dark scrim fading up from the base — gives the pill legibility and
+   signals "actionable on hover". Clipped to the body's rounded corners by the
+   body's own overflow. */
+.cnode-replace-grad {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 45%;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0));
+  opacity: 0;
+  pointer-events: none;
+  z-index: 4;
+  transition: opacity 160ms ease;
+}
+/* Pill in the bottom-LEFT, vertically aligned with the expand floater on the
+   bottom-right (same 16px inset + 15% inverse-scale floor). */
+.cnode-replace-float {
+  position: absolute;
+  /* Anchored CENTERED on the node's width, a fixed relative distance from the
+     base. Centering (translateX -50%) makes the pill grow symmetrically as its
+     size changes with zoom — left-anchoring made it appear to drift toward the
+     top-right. Bottom + size share the 0.5 floor so the whole pill scales
+     uniformly and never spills beyond the node. */
+  bottom: calc(16px / max(0.5, var(--canvas-scale, 1)));
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px / max(0.5, var(--canvas-scale, 1)));
+  height: calc(28px / max(0.5, var(--canvas-scale, 1)));
+  padding: 0 calc(12px / max(0.5, var(--canvas-scale, 1)));
+  border-radius: calc(999px / max(0.5, var(--canvas-scale, 1)));
+  /* 20% more transparent than before (0.82 → 0.66). */
+  background: rgba(15, 15, 15, 0.66);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(245, 245, 245, 0.92);
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-size: calc(12.5px / max(0.5, var(--canvas-scale, 1)));
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5;
+  box-shadow: 0 calc(4px / max(0.5, var(--canvas-scale, 1))) calc(12px / max(0.5, var(--canvas-scale, 1))) rgba(0, 0, 0, 0.35);
+  transition: opacity 160ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.cnode-replace-float svg {
+  width: calc(13px / max(0.5, var(--canvas-scale, 1)));
+  height: calc(13px / max(0.5, var(--canvas-scale, 1)));
+  flex-shrink: 0;
+}
+.cnode:hover .cnode-replace-grad { opacity: 1; }
+.cnode:hover .cnode-replace-float { opacity: 1; pointer-events: auto; }
+.cnode-replace-float:hover {
+  background: rgba(20, 20, 20, 0.95);
+  border-color: rgba(255, 255, 255, 0.26);
+  color: #fff;
+}
+body.rb-ed-light .cnode-replace-float {
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #1f1f1f;
+}
+body.rb-ed-light .cnode-replace-float:hover {
+  background: #fff;
+  border-color: rgba(0, 0, 0, 0.2);
+  color: #000;
+}
+
 /* Legacy block kept for downstream callers (PromptBody, etc.) that
    reuse these classes outside the cnode topbar. */
 .cnode-topbar .btn-duplicate,
@@ -3080,7 +3190,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   border: 1px solid var(--border-frosted);
   border-radius: 12px;
   box-shadow: var(--shadow-frost);
-  font-family: 'Aeonik', system-ui, sans-serif;
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
 }
 
 .zoom-pill {
@@ -3095,7 +3205,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   /* Concentric with the 12px zoom widget at its 2px padding (12 − 2). */
   border-radius: 10px;
   color: var(--text-primary);
-  font: 500 12px/1 'Aeonik', system-ui, sans-serif;
+  font: 500 12px/1 var(--font-instrument-sans), system-ui, sans-serif;
   cursor: pointer;
   transition: background 120ms;
 }
@@ -3145,7 +3255,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   display: flex;
   flex-direction: column;
   gap: 1px;
-  font-family: 'Aeonik', system-ui, sans-serif;
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
   animation: rb-fade-in 120ms ease-out;
 }
 .zoom-menu-item {
@@ -3158,7 +3268,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   border: none;
   border-radius: 6px;
   color: var(--text-primary);
-  font: 400 13px/1 'Aeonik', system-ui, sans-serif;
+  font: 400 13px/1 var(--font-instrument-sans), system-ui, sans-serif;
   cursor: pointer;
   text-align: left;
   transition: background 100ms;
@@ -3207,11 +3317,11 @@ body.rb-ed-light .cnode-topbar .title { color: rgba(31, 31, 31, 0.7); }
 body.rb-ed-light .cnode-topbar .kind-pill {
   background: var(--cnode-port-fill, rgba(0, 0, 0, 0.08));
   border-color: transparent;
-  color: #0a0a0a;
+  color: var(--cnode-port-ink, #0a0a0a);
 }
 body.rb-ed-light .cnode-topbar .kind-pill svg {
-  color: #0a0a0a;
-  stroke: #0a0a0a;
+  color: var(--cnode-port-ink, #0a0a0a);
+  stroke: var(--cnode-port-ink, #0a0a0a);
 }
 body.rb-ed-light .cnode { border-color: rgba(0, 0, 0, 0.10); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10); background: var(--bg-frosted-solid); }
 /* Selected ring in light mode. The `body.rb-ed-light .cnode` rule above
@@ -3222,9 +3332,10 @@ body.rb-ed-light .cnode { border-color: rgba(0, 0, 0, 0.10); box-shadow: 0 8px 3
    diffuse shadow (0.18 vs 0.4) so it doesn't read as a dark wash on
    the bright canvas background. */
 body.rb-ed-light .cnode.selected {
+  /* Match dark mode: outward 3px colour-coded ring (box-shadow), not a border. */
   border-color: transparent;
   box-shadow:
-    0 0 0 calc(3px / var(--canvas-scale, 1)) var(--cnode-port-fill, var(--accent)),
+    0 0 0 calc(3px / max(0.50, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
     0 8px 32px rgba(0, 0, 0, 0.18);
 }
 body.rb-ed-light .cnode-topbar button { color: #4a4a4a; }
@@ -3427,9 +3538,9 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
      Radius is floored at 0.15 (matching .cnode and the topbar's --tb) so
      the inner content frame's corners track the outer card's exactly at
      extreme zoom-out instead of ballooning. All four corners rounded.
-     Radius = outer 10px − the 6px inset (2px border + 4px gap) so the body's
+     Radius = outer 11.5px − the 6px inset (2px border + 4px gap) so the body's
      corners nest CONCENTRICALLY inside the node's outer radius. */
-  border-radius: calc(4px / max(0.15, var(--canvas-scale, 1)));
+  border-radius: calc(5.5px / max(0.15, var(--canvas-scale, 1)));
   overflow: hidden;
   flex: 0 0 auto;
   background: #fff;
@@ -3451,10 +3562,10 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
 .cnode-port-right {
   position: absolute;
   top: 50%;
-  /* -9.125 = half the dot (7.125) + the node's 2px border, so the dot CENTRES
-     on the outer border edge (= where the cord origin pos_x+width lands), not
-     the padding-box edge 2px inside it. Fixes the few-px cord↔dot gap. */
-  right: calc(-9.125px / var(--canvas-scale, 1));
+  /* -20.51 = the old -9.125 (dot centred on the border edge) + 11.385px PORT_GAP
+     so the dot floats just OUTSIDE the node. The cord endpoint shifts out by the
+     same 11.385px (EdgeLayer.PORT_GAP) so they still meet. Keep all three in sync. */
+  right: calc(-20.51px / var(--canvas-scale, 1));
   width: calc(14.25px / var(--canvas-scale, 1));
   height: calc(14.25px / var(--canvas-scale, 1));
   transform: translateY(-50%);
@@ -3518,9 +3629,10 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
    constants to anchor the cord at each circle. */
 .cnode-port-stack-left {
   position: absolute;
-  /* -9.125: same border-width correction as the right port, so the left dots
-     centre on the outer border edge (cord origin pos_x), not 2px inside it. */
-  left: calc(-9.125px / var(--canvas-scale, 1));
+  /* -20.51 = -9.125 (border-edge correction) + 11.385px PORT_GAP so the receiver
+     dots float just OUTSIDE the node's left edge; the cord endpoints shift out
+     by the same 11.385px (EdgeLayer + findSnapTarget). Keep all three in sync. */
+  left: calc(-20.51px / var(--canvas-scale, 1));
   top: 50%;
   transform: translateY(-50%);
   display: flex;
@@ -3553,24 +3665,24 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
   box-shadow: none;
 }
 
-/* Connected receiver — same treatment as the connected emitter
-   (.cnode-port-right.is-connected): solid fill in the node's own origin
-   colour + white dot. Both ends of a wired cord read as "plugged". */
+/* Connected receiver — OUTLINE only (not a solid fill): the dark frosted base
+   is kept, the BORDER carries this (destination) node's own origin colour, and
+   the inner dot carries the SENDER node's colour. So a wired receiver shows
+   both ends' identities: ring = where the cord lands, dot = where it came from. */
 .cnode-port-left:not(.is-empty) {
-  background: var(--cnode-port-fill, var(--accent));
+  background: rgba(26, 26, 26, 0.78);
   border-color: var(--cnode-port-fill, var(--accent));
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 .cnode-port-left:not(.is-empty) .cnode-port-dot {
-  background: #fff;
+  /* sender's colour, set inline per slot as --port-source-colour */
+  background: var(--port-source-colour, var(--cnode-port-fill, #fff));
 }
 body.rb-ed-light .cnode-port-left:not(.is-empty) {
-  background: var(--cnode-port-fill, var(--accent));
+  background: rgba(26, 26, 26, 0.78);
   border-color: var(--cnode-port-fill, var(--accent));
 }
 body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
-  background: #fff;
+  background: var(--port-source-colour, var(--cnode-port-fill, #fff));
 }
 
 .cnode-port-left:hover {
@@ -3623,10 +3735,10 @@ html.canvas-zoom-very-low .cnode-port-left {
   height: calc(10.5px / var(--canvas-scale, 1));
 }
 html.canvas-zoom-very-low .cnode-port-right {
-  right: calc(-5.25px / var(--canvas-scale, 1));
+  right: calc(-16.635px / var(--canvas-scale, 1));   /* -5.25 + 11.385px PORT_GAP */
 }
 html.canvas-zoom-very-low .cnode-port-stack-left {
-  left: calc(-5.25px / var(--canvas-scale, 1));
+  left: calc(-16.635px / var(--canvas-scale, 1));    /* -5.25 + 11.385px PORT_GAP */
   gap: calc(4.5px / var(--canvas-scale, 1));
 }
 html.canvas-zoom-very-low .cnode-port-dot {
@@ -3636,13 +3748,15 @@ html.canvas-zoom-very-low .cnode-port-dot {
 
 /* Per-origin tint resolution. Mirrors ORIGIN_COLORS in lib/node-origin.js
    and the .cnode.origin-* border colours above. */
-.cnode.origin-url        { --cnode-port-fill: #38bdf8; --cnode-port-border: rgba(56, 189, 248, 0.55); }
-.cnode.origin-html       { --cnode-port-fill: #f97316; --cnode-port-border: rgba(249, 115, 22, 0.55); }
-.cnode.origin-md         { --cnode-port-fill: #34d399; --cnode-port-border: rgba(52, 211, 153, 0.55); }
-.cnode.origin-screenshot { --cnode-port-fill: #a78bfa; --cnode-port-border: rgba(167, 139, 250, 0.55); }
-.cnode.origin-prompt     { --cnode-port-fill: #facc15; --cnode-port-border: rgba(250, 204, 21, 0.55); }
-.cnode.origin-skill      { --cnode-port-fill: #f472b6; --cnode-port-border: rgba(244, 114, 182, 0.55); }
-.cnode.origin-blank      { --cnode-port-fill: #2dd4bf; --cnode-port-border: rgba(45, 212, 191, 0.55); }
+/* --cnode-port-ink = black or white, whichever has better contrast on the
+   category fill (per-colour luminance). Used by the topbar category pill. */
+.cnode.origin-url        { --cnode-port-fill: #2966EA; --cnode-port-border: rgba(41, 102, 234, 0.55); --cnode-port-ink: #ffffff; }
+.cnode.origin-html       { --cnode-port-fill: #f97316; --cnode-port-border: rgba(249, 115, 22, 0.55); --cnode-port-ink: #0a0a0a; }
+.cnode.origin-md         { --cnode-port-fill: #C2B44A; --cnode-port-border: rgba(194, 180, 74, 0.55); --cnode-port-ink: #0a0a0a; }
+.cnode.origin-screenshot { --cnode-port-fill: #7951C2; --cnode-port-border: rgba(121, 81, 194, 0.55); --cnode-port-ink: #ffffff; }
+.cnode.origin-prompt     { --cnode-port-fill: #ECEBF1; --cnode-port-border: rgba(236, 235, 241, 0.55); --cnode-port-ink: #0a0a0a; }
+.cnode.origin-skill      { --cnode-port-fill: #f472b6; --cnode-port-border: rgba(244, 114, 182, 0.55); --cnode-port-ink: #0a0a0a; }
+.cnode.origin-blank      { --cnode-port-fill: #2966EA; --cnode-port-border: rgba(41, 102, 234, 0.55); --cnode-port-ink: #ffffff; }
 
 .cnode.editing .cnode-body {
   /* Editing-state outline removed — the .cnode.selected ring already
@@ -3655,6 +3769,10 @@ html.canvas-zoom-very-low .cnode-port-dot {
   border: none;
   background: #fff;
   display: block;
+  /* Match the body's rounded corners so the iframe's own edge covers the
+     body's white background — kills the faint white hairline that bled at the
+     rounded corners behind the rectangular iframe (read as edge "noise"). */
+  border-radius: inherit;
 }
 
 /* Dash resize handles — thin centred bars on the bottom edge (height
@@ -3904,7 +4022,7 @@ body.rb-ed-light .cnode-empty-upload-label { color: rgba(0, 0, 0, 0.5); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ─── Per-origin colour additions (prompt + skill) ──────────────────────── */
-.cnode.origin-prompt { border-color: rgba(250, 204, 21, 0.55); }
+.cnode.origin-prompt { border-color: rgba(236, 235, 241, 0.55); }
 .cnode.origin-skill  { border-color: rgba(244, 114, 182, 0.55); }
 /* Per-origin kind-pill colours are now resolved via the --cnode-port-*
    custom properties set on .cnode.origin-* — no per-origin overrides
@@ -3929,7 +4047,7 @@ body.rb-ed-light .cnode-empty-upload-label { color: rgba(0, 0, 0, 0.5); }
   padding: calc(4px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1));
   /* Fully-rounded pill ends. */
   border-radius: 999px;
-  font: 500 calc(13px / var(--canvas-scale, 1)) / 1 'Aeonik', system-ui, sans-serif;
+  font: 500 calc(13px / var(--canvas-scale, 1)) / 1 var(--font-instrument-sans), system-ui, sans-serif;
   color: rgba(241, 245, 249, 0.92);
   background: rgba(10, 10, 10, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.10);
@@ -4041,9 +4159,10 @@ body.rb-ed-light .cnode-anchor-title {
 
 /* ─── prompt body (3:1 textarea) ────────────────────────────────────────── */
 .cnode-body-prompt {
-  /* 3:1 aspect — width is set on the node, height tracks. */
-  aspect-ratio: 3 / 1;
-  height: auto !important;
+  /* Height tracks the node's declared height (--cnode-h), INDEPENDENT of width
+     — so the corner handle resizes X and Y separately (the old aspect-ratio
+     3/1 + height:auto locked them together). */
+  height: var(--cnode-h, 200px);
   /* Outer frame — darker than the inner field in dark mode (and the
      reverse in light mode) so the text input reads as an inset card. */
   background: #0a0a0a;
@@ -4063,11 +4182,14 @@ body.rb-ed-light .cnode-anchor-title {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 14px;
-  padding: 14px 16px;
+  /* Inner margins (text↔frame) — generous breathing room. Order: top right
+     bottom left. The corner resize handle sits flush in the corner and ignores
+     this padding. */
+  padding: 22px 20px 26px 24px;
   resize: none;
   outline: none;
   color: #f5f5f5;
-  font: 500 18px/1.5 'Aeonik', system-ui, sans-serif;
+  font: 500 18px/1.5 var(--font-instrument-sans), system-ui, sans-serif;
   transition: border-color 0.15s, background 0.15s;
 }
 .cnode-prompt-textarea:focus {
@@ -4090,6 +4212,40 @@ body.rb-ed-light .cnode-prompt-textarea:focus {
   border-color: rgba(15, 23, 42, 0.22);
 }
 body.rb-ed-light .cnode-prompt-textarea::placeholder { color: var(--text-muted); }
+
+/* Prompt node corner resize handle — bottom-right of the text field, same
+   diagonal-lines affordance as the section SE handle. Inverse-scaled (15%
+   floor) so it holds a stable on-screen size; drags the whole node. */
+.cnode-body-prompt { position: relative; }
+.cnode-resize-corner {
+  position: absolute;
+  /* Flush in the very bottom-right corner of the field — ignores the textarea
+     padding (small inset just so the icon doesn't touch the rounded edge). */
+  bottom: calc(6px / max(0.15, var(--canvas-scale, 1)));
+  right: calc(6px / max(0.15, var(--canvas-scale, 1)));
+  width: calc(22px / max(0.15, var(--canvas-scale, 1)));
+  height: calc(22px / max(0.15, var(--canvas-scale, 1)));
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: rgba(245, 245, 245, 0.4);
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 120ms, color 120ms;
+  z-index: 6;
+}
+.cnode-body-prompt:hover .cnode-resize-corner,
+.cnode.selected .cnode-resize-corner { opacity: 1; }
+.cnode-resize-corner:hover { color: rgba(245, 245, 245, 0.85); }
+.cnode-resize-corner svg {
+  width: calc(18px / max(0.15, var(--canvas-scale, 1)));
+  height: calc(18px / max(0.15, var(--canvas-scale, 1)));
+}
+body.rb-ed-light .cnode-resize-corner { color: rgba(0, 0, 0, 0.4); }
+body.rb-ed-light .cnode-resize-corner:hover { color: rgba(0, 0, 0, 0.75); }
 
 /* ─── skill body (file glyph + title) ──────────────────────────────────── */
 .cnode-body-skill {
@@ -4114,7 +4270,7 @@ body.rb-ed-light .cnode-prompt-textarea::placeholder { color: var(--text-muted);
   filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.35));
 }
 .cnode-skill-title {
-  font: 500 14px/1 'Aeonik', system-ui, sans-serif;
+  font: 500 14px/1 var(--font-instrument-sans), system-ui, sans-serif;
   color: rgba(241, 245, 249, 0.7);
   letter-spacing: 0.02em;
   max-width: 80%;
@@ -4201,6 +4357,11 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
 .prompt-dock [data-tooltip]:focus-visible:not([data-tooltip=""])::after {
   transition-delay: 300ms, 0s, 300ms;
 }
+/* Version-history thumbnails: surface the "right click for options" hint only
+   after a deliberate 1s dwell, so it doesn't flash while scanning thumbnails. */
+.cnode-version-thumb[data-tooltip]:hover:not([data-tooltip=""])::after {
+  transition-delay: 1s, 1s, 1s;
+}
 /* Section chrome (name tag / play / handles) — slower activation
    (500ms). Hovering across the canvas while panning or selecting
    nodes should NOT surface a tooltip on every section element the
@@ -4232,6 +4393,54 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
   transition: background 140ms ease, border-color 140ms ease;
 }
 
+/* Multi-file queue pill — follows the cursor while dropping a batch of files
+   one at a time, showing "current/total files". Portalled to <body>, so it's
+   positioned fixed and driven by a transform written straight to the DOM.
+   Frosted-glass family, like the other canvas chrome. */
+.canvas-place-pill {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 10000;
+  pointer-events: none;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill, 999px);
+  background: rgba(10, 10, 10, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(28px) saturate(140%);
+  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  color: #f5f5f5;
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+body.rb-ed-light .canvas-place-pill {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #1c1f24;
+}
+/* Circular loader shown while the current file's node is being created. */
+.canvas-place-pill-spinner {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid rgba(245, 245, 245, 0.25);
+  border-top-color: #f5f5f5;
+  animation: spin 0.7s linear infinite;
+}
+body.rb-ed-light .canvas-place-pill-spinner {
+  border-color: rgba(0, 0, 0, 0.18);
+  border-top-color: #1c1f24;
+}
+
 /* ── Node removal (leaving a section) ───────────────────────────────────
    A node armed to leave its section: a cold off-white ring replaces the
    category color-coding, and the topbar turns cold off-white with a single
@@ -4253,7 +4462,7 @@ body.rb-ed-light .cnode-topbar.removing {
   padding: 0 calc(10px / max(0.5, var(--canvas-scale, 1)));
 }
 .topbar-remove-hint {
-  font-family: 'Aeonik', system-ui, sans-serif;
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
   font-weight: 500;
   font-size: calc(13px / max(0.15, var(--canvas-scale, 1)));
   letter-spacing: -0.01em;
@@ -4263,7 +4472,7 @@ body.rb-ed-light .cnode-topbar.removing {
   margin-left: calc(3px / max(0.15, var(--canvas-scale, 1)));
 }
 .btn-remove-cancel {
-  font-family: 'Aeonik', system-ui, sans-serif;
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
   font-weight: 500;
   font-size: calc(12px / max(0.15, var(--canvas-scale, 1)));
   color: #1c1f24;
@@ -4356,13 +4565,119 @@ body.rb-ed-light .canvas-section-frame {
   align-items: center;
   gap: calc(10px / max(0.25, var(--canvas-scale, 1)));
   cursor: pointer;
+  transition: opacity 180ms ease;
 }
 .canvas-section-name-tag:hover { background: #f0f0f0; }
+/* Crossfades out while its section is shown as the floating run button. */
+.canvas-section-name-tag.floated-away {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Floating run button — lives in the right toolbar, LEFT of the zoom widget.
+   HARD RULE: visually IDENTICAL to the in-section run pill (.canvas-section-
+   name-tag + .canvas-section-play-btn), just at a fixed on-screen size (it's in
+   the non-transformed toolbar). Collapses to zero width when idle so it doesn't
+   push the zoom widget; crossfades in when a section's run-pill rises into the
+   top chrome zone. Inherits the toolbar's z-index → sits ABOVE nodes. */
+.canvas-floating-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #0a0a0a;
+  white-space: nowrap;
+  user-select: none;
+  cursor: pointer;
+  /* idle = collapsed + faded out */
+  opacity: 0;
+  max-width: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity 200ms ease, max-width 240ms ease, padding 200ms ease, margin 200ms ease;
+}
+.canvas-floating-run.visible {
+  opacity: 1;
+  max-width: 260px;
+  /* matches the section pill: 4px top/bottom/right, 20px left */
+  padding: 4px 4px 4px 20px;
+  margin-right: 8px;   /* gap before the zoom widget */
+  pointer-events: auto;
+}
+.canvas-floating-run:hover { background: #f0f0f0; }
+body.rb-ed-light .canvas-floating-run {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: var(--text-primary);
+}
+.canvas-floating-run-label {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  padding: 0;
+  white-space: nowrap;
+}
+/* Inverted play chip — identical to .canvas-section-play-btn (40px black circle,
+   offwhite glyph). */
+.canvas-floating-run-play {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: #0a0a0a;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 120ms ease, transform 80ms ease;
+}
+.canvas-floating-run-play:hover { background: #1a1a1a; }
+.canvas-floating-run-play:active { transform: scale(0.93); }
+.canvas-floating-run-play svg { width: 18px; height: 18px; }
+body.rb-ed-light .canvas-floating-run-play { background: #0a0a0a; color: #fff; }
+body.rb-ed-light .canvas-floating-run-play:hover { background: #1a1a1a; }
+/* Label-only pill — a section GROUP with no cords between members renders no
+   play button. The base padding is left-weighted to seat the play button on
+   the right; without it the lone label looks shoved right, so balance the
+   padding symmetrically and centre the text. */
+.canvas-section-name-tag:not(:has(.canvas-section-play-btn)) {
+  padding:
+    calc(9px / max(0.25, var(--canvas-scale, 1)))
+    calc(18px / max(0.25, var(--canvas-scale, 1)));
+  justify-content: center;
+}
 body.rb-ed-light .canvas-section-name-tag {
   background: rgba(255, 255, 255, 0.92);
   border-color: rgba(0, 0, 0, 0.12);
   color: var(--text-primary);
 }
+/* Disabled run-pill — the section has NO cords between its members, so there
+   is no flow to run. The pill never disappears (the play affordance must stay
+   put); instead the WHOLE pill goes dark grey with a light-grey play button.
+   Same treatment in both themes so it always reads as "inactive". */
+.canvas-section-name-tag.disabled,
+.canvas-section-name-tag.disabled:hover,
+body.rb-ed-light .canvas-section-name-tag.disabled,
+body.rb-ed-light .canvas-section-name-tag.disabled:hover {
+  background: #2a2a2a;
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(245, 245, 245, 0.5);
+  cursor: default;
+}
+.canvas-section-name-tag.disabled .canvas-section-name-label { cursor: default; }
 /* Label inside the pill (was a button; the parent div is now the click
    surface). Double-clicking opens the inline rename input. */
 .canvas-section-name-label {
@@ -4438,16 +4753,24 @@ input.canvas-section-name-input::placeholder {
   background: #1a1a1a;
 }
 .canvas-section-play-btn:active { transform: scale(0.93); }
-/* Up-to-date workflow — nothing changed since the last run, so re-running
-   would just reproduce the same result. Muted + non-interactive until the
-   chain changes. */
-.canvas-section-play-btn:disabled {
-  opacity: 0.4;
+/* No-edges state — the section can't run (no cords between members). The play
+   button stays visible but goes LIGHT GREY (vs the active solid black) with a
+   dark triangle for contrast, seated on the dark-grey disabled pill. Same in
+   both themes. Non-interactive: no hover lift, no press scale. */
+.canvas-section-play-btn:disabled,
+.canvas-section-play-btn.disabled,
+.canvas-section-play-btn:disabled:hover,
+.canvas-section-play-btn.disabled:hover,
+body.rb-ed-light .canvas-section-play-btn:disabled,
+body.rb-ed-light .canvas-section-play-btn.disabled,
+body.rb-ed-light .canvas-section-play-btn:disabled:hover,
+body.rb-ed-light .canvas-section-play-btn.disabled:hover {
+  background: #9b9b9b;
+  color: #2a2a2a;
+  opacity: 1;
   cursor: default;
 }
-.canvas-section-play-btn:disabled:hover { background: #0a0a0a; }
 .canvas-section-play-btn:disabled:active { transform: none; }
-body.rb-ed-light .canvas-section-play-btn:disabled:hover { background: rgba(0, 0, 0, 0.08); }
 .canvas-section-play-btn svg {
   width: calc(18px / max(0.25, var(--canvas-scale, 1)));
   height: calc(18px / max(0.25, var(--canvas-scale, 1)));
@@ -4633,10 +4956,26 @@ body.rb-ed-light .canvas-section-handle-se:hover { color: rgba(0, 0, 0, 0.7); }
   white-space: nowrap;
   width: fit-content;
   max-width: calc(100% - 28px);
+  /* Subtle "breathing" pulse — the bg eases lighter and back so the active
+     selection chip reads as live. 2.6s ease-in-out = a calm breath, neither
+     sluggish nor twitchy. */
+  animation: prompt-dock-context-breathe 2.6s ease-in-out infinite;
+}
+@keyframes prompt-dock-context-breathe {
+  0%, 100% { background-color: rgba(255, 255, 255, 0.06); }
+  50%      { background-color: rgba(255, 255, 255, 0.12); }
 }
 body.rb-ed-light .prompt-dock-context-pill {
   background: rgba(0, 0, 0, 0.05);
   border-color: rgba(0, 0, 0, 0.12);
+  animation: prompt-dock-context-breathe-light 2.6s ease-in-out infinite;
+}
+@keyframes prompt-dock-context-breathe-light {
+  0%, 100% { background-color: rgba(0, 0, 0, 0.05); }
+  50%      { background-color: rgba(0, 0, 0, 0.10); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .prompt-dock-context-pill { animation: none; }
 }
 .prompt-dock-context-dot {
   width: 8px;
@@ -4859,13 +5198,19 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
 .cnode-asset-dims {
   position: absolute;
   right: 0;
-  /* Gap holds a CONSTANT on-screen distance below the node (÷scale), so as the
-     node shrinks at deep zoom-out the label keeps clearing it — no overlap.
-     (42→12.6px: 70% smaller margin.) */
-  bottom: calc(-12.6px / var(--canvas-scale, 1));
-  /* Font scales naturally until 40% zoom, then LOCKS at the 40% on-screen size
-     (doesn't keep shrinking below that). */
-  font-size: calc(20px * max(0.40, var(--canvas-scale, 1)) / var(--canvas-scale, 1));
+  /* Anchor the label's TOP to the node's bottom edge + a CONSTANT on-screen
+     gap. Using top+margin (not bottom) makes the gap independent of the text
+     height, so it reads the SAME visual distance at every zoom — it never
+     overlaps the node and never drifts away on zoom-out (the old `bottom`
+     approach grew the gap as the text shrank). line-height:1 keeps the gap
+     predictable. */
+  top: 100%;
+  bottom: auto;
+  margin-top: calc(8px / var(--canvas-scale, 1));
+  line-height: 1;
+  /* Font scales naturally until 15% zoom, then LOCKS at the 15% on-screen size
+     (keeps shrinking with the node down to 15%, then holds). */
+  font-size: calc(20px * max(0.15, var(--canvas-scale, 1)) / var(--canvas-scale, 1));
   font-family: inherit;
   letter-spacing: 0.04em;
   color: var(--text-primary);
@@ -5043,6 +5388,34 @@ body.chat-dock-preview {
 /* During a drag, swap the dark dock chrome for the same near-transparent
    frosted glass the section frames use — the canvas reads through cleanly
    while the dock outline still says "this is the widget". */
+/* Click-to-focus: a cold off-white ring appears when the user clicks the dock,
+   cleared when they click away. Reuses the outline channel (the base transition
+   already eases its colour) so it fades in smoothly. */
+.prompt-dock.is-focused {
+  outline: 1.5px solid rgba(227, 231, 236, 0.72);
+  outline-offset: 2px;
+}
+body.rb-ed-light .prompt-dock.is-focused {
+  outline-color: rgba(40, 44, 52, 0.55);
+}
+/* Add-URL: flash the ring to FULL white with a soft outer glow, then ease it
+   back to the normal focused off-white over 2s (one-shot). */
+.prompt-dock.add-url-flash {
+  outline: 1.5px solid #ffffff;
+  outline-offset: 2px;
+  animation: dock-add-url-flash 2s ease-out;
+}
+@keyframes dock-add-url-flash {
+  0% {
+    outline-color: #ffffff;
+    box-shadow: 0 0 18px 3px rgba(255, 255, 255, 0.55), 0 16px 60px rgba(0, 0, 0, 0.55);
+  }
+  100% {
+    outline-color: rgba(227, 231, 236, 0.72);
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0), 0 16px 60px rgba(0, 0, 0, 0.55);
+  }
+}
+
 .prompt-dock.is-dragging,
 .prompt-dock.is-snapping {
   background: rgba(255, 255, 255, 0.003);
@@ -5355,7 +5728,7 @@ body.rb-ed-light .border-trail-dot {
      is at the top) — per the reference, not centred. */
   right: calc(20px / max(0.2, var(--canvas-scale, 1)));
   bottom: calc(14px / max(0.2, var(--canvas-scale, 1)));
-  font-family: 'Aeonik', system-ui, sans-serif;
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
   font-weight: 500;
   /* Big and proportional to the node so it scales with zoom and always
      fits. Floored so it stays legible on small / zoomed-out nodes. */
@@ -5385,11 +5758,12 @@ body.rb-ed-light .border-trail-dot {
 .cnode-gen-overlay:not(.has-content) {
   background: #0f0f0f;
 }
-/* Node with content: dark frosted blur of the real content behind it. */
+/* Node with content: dark frosted blur of the real content behind it —
+   heavily dimmed so the loading state reads clearly over the old content. */
 .cnode-gen-overlay.has-content {
-  background: rgba(10, 10, 16, 0.5);
-  backdrop-filter: blur(14px) saturate(120%);
-  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  background: rgba(6, 6, 10, 0.86);
+  backdrop-filter: blur(16px) saturate(115%);
+  -webkit-backdrop-filter: blur(16px) saturate(115%);
 }
 .cnode-gen-status {
   position: absolute;
@@ -5397,7 +5771,7 @@ body.rb-ed-light .border-trail-dot {
   left: calc(22px / max(0.2, var(--canvas-scale, 1)));
   /* Leave room on the right so it never runs under the % in the corner. */
   right: 38%;
-  font-family: 'Aeonik', system-ui, sans-serif;
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
   font-weight: 400;
   font-size: clamp(13px, calc(0.052 * var(--cnode-h, 600px)), 30px);
   line-height: 1.32;
@@ -5830,7 +6204,7 @@ body.rb-ed-light .prompt-dock-mic.err {
   padding: 10px 16px;
   border-radius: 10px;
   font-size: 13px;
-  font-family: 'Aeonik', system-ui, sans-serif;
+  font-family: var(--font-instrument-sans), system-ui, sans-serif;
   z-index: 500;
   max-width: 480px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
@@ -6082,7 +6456,20 @@ body.rb-ed-light .prompt-dock-add-btn.open {
 }
 
 .edge-line:hover,
-.edge-line.selected { stroke-width: 6; }
+.edge-line.selected,
+/* Hover feedback now comes from the wide invisible hit path (a sibling), so
+   thicken the visible cord when anything in the edge group is hovered. */
+.edge-group:hover .edge-line { stroke-width: 6; }
+
+/* Cut hotspot — scissors cursor over the middle of a cord; a click severs it.
+   White scissors for the dark canvas; black variant in light mode. The hotspot
+   (12 12) sits at the blade crossing. */
+.edge-cut-zone {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6' cy='6' r='3'/%3E%3Ccircle cx='6' cy='18' r='3'/%3E%3Cline x1='20' y1='4' x2='8.12' y2='15.88'/%3E%3Cline x1='14.47' y1='14.48' x2='20' y2='20'/%3E%3Cline x1='8.12' y1='8.12' x2='12' y2='12'/%3E%3C/svg%3E") 12 12, pointer;
+}
+body.rb-ed-light .edge-cut-zone {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6' cy='6' r='3'/%3E%3Ccircle cx='6' cy='18' r='3'/%3E%3Cline x1='20' y1='4' x2='8.12' y2='15.88'/%3E%3Cline x1='14.47' y1='14.48' x2='20' y2='20'/%3E%3Cline x1='8.12' y1='8.12' x2='12' y2='12'/%3E%3C/svg%3E") 12 12, pointer;
+}
 /* Applied: keep the source→target gradient (set inline) — just settle the
    cord (stop marching, solid line). Overriding the stroke to flat emerald
    here is what was killing the gradient on every run/extract edge. */
@@ -6147,7 +6534,7 @@ body.rb-ed-light .prompt-dock-add-btn.open {
      size at any zoom. */
   stroke: none;
   font-weight: 600;
-  font-family: 'Aeonik', -apple-system, sans-serif;
+  font-family: var(--font-instrument-sans), -apple-system, sans-serif;
   letter-spacing: 0.02em;
   text-transform: lowercase;
   pointer-events: none;
@@ -6564,6 +6951,16 @@ body.rb-ed-light .edge-label-pill {
   z-index: 10;
 }
 .empty-drop-submenu-trigger { display: flex; justify-content: space-between; align-items: center; }
+/* Chevron anchored to the right of the trigger (space-between) — bigger + a
+   touch clearer than the old inline ▸ glyph. */
+.empty-drop-chevron { flex-shrink: 0; opacity: 0.85; }
+/* Disabled extract item (a combo with no generator from this source kind):
+   the row KEEPS the grey panel bg like the others — only the TYPE (icon +
+   label) fades to read as disabled. No hover highlight. */
+.empty-drop-submenu .popup-menu-btn:disabled { cursor: default; }
+.empty-drop-submenu .popup-menu-btn:disabled:hover { background: #2c2c2c; }
+.empty-drop-submenu .popup-menu-btn:disabled svg,
+.empty-drop-submenu .popup-menu-btn:disabled span { opacity: 0.35; }
 
 .edge-popup {
   position: fixed;
@@ -6605,14 +7002,20 @@ body.rb-ed-light .edge-label-pill {
 /* ── Node version-history floater (site nodes) ───────────────────────────── */
 .cnode-version-row {
   position: absolute;
-  /* bigger gap from the node (scale-aware so it holds at any zoom) */
-  top: calc(100% + 22px / max(0.15, var(--canvas-scale, 1)));
+  /* gap from the node — constant on-screen down to 35% zoom, then the gap
+     stops growing (floored at 0.35) so it tracks the shrinking node below that
+     instead of drifting far away on deep zoom-out. */
+  top: calc(100% + 22px / max(0.35, var(--canvas-scale, 1)));
   left: 0;
   right: 0;
   display: flex;
-  /* slots are 20% smaller than a full quarter; space-between spreads the
-     freed room as larger gaps so the set still spans the node width. */
-  justify-content: space-between;
+  /* Slots are 20% wide (20% smaller than a full quarter). Pack them left-to-
+     right with a FIXED gap = the leftover (100% − 4×20%) split three ways. So
+     4 slots fill the row exactly (4×20% + 3×gap = 100%) AND fewer items stay
+     packed on the left at that SAME spacing — instead of space-between shoving
+     2 thumbs to opposite ends with a huge empty middle. */
+  justify-content: flex-start;
+  gap: calc(20% / 3);
   align-items: flex-start;
   z-index: 12;
   /* Query container so the menu can size its text + thumbnails as a fraction of
@@ -6691,72 +7094,107 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
 
 .cnode-version-menu {
   position: absolute;
-  top: calc(100% + 6px);
-  right: 0;            /* anchor under the +N button (rightmost slot) */
-  left: auto;
-  /* Sized in cqw (% of the NODE width) so the menu AND its text scale with the
-     node like the thumbnails. width:max-content fits the rows so nothing crops. */
+  /* Flyout to the RIGHT of the +N trigger (rightmost slot), aligned with the
+     button's top. The row spans the node width (left:0;right:0) and the +N slot
+     sits flush at its top, so left:100% lands just past the button and top:0
+     matches the button's top edge. */
+  top: 0;
+  left: calc(100% + 8px / max(0.40, var(--canvas-scale, 1)));
+  right: auto;
+  /* Lock factor: at zoom ≥ 40% the list sizes naturally with the node (cqw);
+     below 40% it STOPS scaling and holds its 40%-zoom on-screen size. Multiply
+     every cqw dimension by this so the whole list locks together. */
+  --vm-lock: calc(max(0.40, var(--canvas-scale, 1)) / var(--canvas-scale, 1));
+  /* width:max-content fits the rows so nothing crops; no longer capped to the
+     node width since the menu now sits beside the node, not under it. */
+  /* width:max-content fits the rows so nothing crops; no longer capped to the
+     node width since the menu now sits beside the node, not under it. */
   width: max-content;
-  max-width: 100%;
-  max-height: 70cqw;
+  max-width: none;
+  max-height: calc(70cqw * var(--vm-lock));
   overflow-y: auto;
   display: flex; flex-direction: column;
-  gap: 1cqw;
-  padding: 1.6cqw;
-  /* 20% smaller than before (2.6→2.08), and locked at the 40%-zoom on-screen
-     size below 40% (stops shrinking past that). */
-  font-size: calc(2.08cqw * max(0.40, var(--canvas-scale, 1)) / var(--canvas-scale, 1));
-  background: rgba(16, 16, 20, 0.85);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 2.5cqw;
-  box-shadow: 0 16px 60px rgba(0, 0, 0, 0.55);
+  /* gap between rows — 2× tighter than the prior 1cqw */
+  gap: calc(0.5cqw * var(--vm-lock));
+  /* vertical 1.6cqw; side padding matched to the prior row gap (1cqw) so the
+     grey rows' lateral margin stays consistent (was 1.6cqw, which looked
+     larger than the rest now that the rows are filled grey). */
+  padding: calc(1.6cqw * var(--vm-lock)) calc(1cqw * var(--vm-lock));
+  /* ── STYLE ONLY ── off-black frosted card matching the right-click
+     canvas-context-menu. The ORIGINAL cqw sizing system is kept untouched;
+     only the colours/borders/dividers/title were layered on top. */
+  background: rgba(13, 13, 13, 0.72);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  border: 1px solid var(--popup-border, rgba(255, 255, 255, 0.1));
+  border-radius: calc(2.5cqw * var(--vm-lock));
+  box-shadow: var(--popup-shadow, 0 16px 60px rgba(0, 0, 0, 0.55));
   z-index: 20;
 }
-/* Menu thumbnails proportional to the node (override the row's 20%). */
-/* Menu thumbnails: proportional to the node, but LOCKED at the 40%-zoom size
-   below 40% (stop scaling past that). */
+/* "Version history" title — sits on the off-black above the grey rows panel,
+   same uppercase muted label as the context menu's .popup-menu-title. Sized in
+   cqw (the node-proportional system), not px. */
+.cnode-version-menu .popup-menu-title {
+  font-family: var(--popup-font-sans);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--popup-fg-muted, rgba(255, 255, 255, 0.5));
+  font-size: calc(2.08cqw * var(--vm-lock));
+  /* side padding aligns the title text with the row content (card 1cqw +
+     row 1.4cqw); top/bottom keep the title's breathing band. */
+  padding: calc(1.2cqw * var(--vm-lock)) calc(1.4cqw * var(--vm-lock)) calc(1.6cqw * var(--vm-lock));
+}
+/* Menu thumbnails proportional to the node (cqw), locked at the 40%-zoom size
+   below 40% via the inherited --vm-lock factor. */
 .cnode-version-menu .cnode-version-thumb {
-  width: calc(9cqw * max(0.40, var(--canvas-scale, 1)) / var(--canvas-scale, 1));
+  width: calc(9cqw * var(--vm-lock));
   aspect-ratio: 1 / 1;
   flex: 0 0 auto;
 }
+/* Each version = a rounded grey context-menu item (thumbnail + date). Sizing
+   stays 1:1 in cqw — only the grey fill + hover are the new context-menu style. */
 .cnode-version-menu-row {
   display: flex; align-items: center;
-  gap: 2.5cqw;
-  padding: 1cqw 1.4cqw;
-  border: 0; background: transparent;
-  border-radius: 1.6cqw;
+  gap: calc(2.5cqw * var(--vm-lock));
+  padding: calc(1cqw * var(--vm-lock)) calc(1.4cqw * var(--vm-lock));
+  border: 0;
+  border-radius: calc(1.6cqw * var(--vm-lock));
+  background: #2c2c2c;
   cursor: pointer;
   text-align: left;
+  font-size: calc(2.08cqw * var(--vm-lock));
 }
-.cnode-version-menu-row:hover { background: rgba(255, 255, 255, 0.08); }
-.cnode-version-menu-date { color: rgba(255, 255, 255, 0.7); white-space: nowrap; }
+.cnode-version-menu-row:hover { background: #383838; }
+.cnode-version-menu-date { color: rgba(255, 255, 255, 0.85); white-space: nowrap; }
 
 /* A compact centred pill chip holding just the two buttons (no bar, no label).
    The chip padding is the small gap so the button corners nest in its rounding. */
 .cnode-version-confirm {
   position: absolute;
-  bottom: 12px;
+  /* Inverse-scaled (15% floor, matching .cnode-expand-float) so the chip holds
+     a stable on-screen size at any zoom instead of rendering tiny when zoomed
+     out. Centered horizontally at the base of the node. */
+  bottom: calc(16px / max(0.15, var(--canvas-scale, 1)));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 4px;
-  padding: 4px;
+  align-items: center;
+  gap: calc(4px / max(0.15, var(--canvas-scale, 1)));
+  padding: calc(4px / max(0.15, var(--canvas-scale, 1)));
   background: rgba(20, 20, 24, 0.92);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  border-radius: calc(999px / max(0.15, var(--canvas-scale, 1)));
+  box-shadow: 0 calc(8px / max(0.15, var(--canvas-scale, 1))) calc(24px / max(0.15, var(--canvas-scale, 1))) rgba(0, 0, 0, 0.45);
   z-index: 15;
 }
 .cnode-version-confirm-cancel,
 .cnode-version-confirm-restore {
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 13px;
+  padding: calc(6px / max(0.15, var(--canvas-scale, 1))) calc(12px / max(0.15, var(--canvas-scale, 1)));
+  border-radius: calc(999px / max(0.15, var(--canvas-scale, 1)));
+  font-size: calc(13px / max(0.15, var(--canvas-scale, 1)));
   cursor: pointer;
   white-space: nowrap;
   border: 1px solid transparent;
@@ -6771,8 +7209,9 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
 body.rb-ed-light .cnode-version-thumb { border-color: rgba(0, 0, 0, 0.12); background: rgba(255, 255, 255, 0.7); }
 body.rb-ed-light .cnode-version-history-btn { border-color: rgba(0, 0, 0, 0.1); background: rgba(235, 235, 238, 0.85); color: rgba(0, 0, 0, 0.6); }
 body.rb-ed-light .cnode-version-history-btn:hover { background: rgba(220, 220, 225, 0.95); color: #000; }
-body.rb-ed-light .cnode-version-menu { background: rgba(248, 248, 250, 0.85); border-color: rgba(0, 0, 0, 0.08); }
-body.rb-ed-light .cnode-version-menu-row:hover { background: rgba(0, 0, 0, 0.05); }
-body.rb-ed-light .cnode-version-menu-date { color: rgba(0, 0, 0, 0.5); }
+body.rb-ed-light .cnode-version-menu { background: rgba(196, 200, 205, 0.72); border-color: rgba(0, 0, 0, 0.08); }
+body.rb-ed-light .cnode-version-menu-row { background: #e9ebee; }
+body.rb-ed-light .cnode-version-menu-row:hover { background: #dde0e4; }
+body.rb-ed-light .cnode-version-menu-date { color: rgba(0, 0, 0, 0.7); }
 body.rb-ed-light .cnode-version-confirm { background: rgba(245, 245, 248, 0.95); border-color: rgba(0, 0, 0, 0.1); }
 body.rb-ed-light .cnode-version-confirm-cancel { border-color: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.7); }

@@ -114,6 +114,7 @@ export const api = {
   listSnapshots: (nodeId) => fetch(`/api/nodes/${nodeId}/snapshots`, { ...COMMON, method: 'GET' }).then(jsonOrThrow),
   getSnapshot: (nodeId, snapId) => fetch(`/api/nodes/${nodeId}/snapshots/${snapId}`, { ...COMMON, method: 'GET' }).then(jsonOrThrow),
   restoreVersion: (nodeId, snapshotId) => fetch(`/api/nodes/${nodeId}/restore-version`, { ...COMMON, method: 'POST', body: JSON.stringify({ snapshotId }) }).then(jsonOrThrow),
+  deleteSnapshot: (nodeId, snapId) => fetch(`/api/nodes/${nodeId}/snapshots/${snapId}`, { ...COMMON, method: 'DELETE' }).then(jsonOrThrow),
 
   logout: () => fetch('/api/auth/logout', { ...COMMON, method: 'POST' }).then(jsonOrThrow)
 };

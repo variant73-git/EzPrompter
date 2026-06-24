@@ -16,19 +16,25 @@ const WORLD_HEIGHT = 6000;
 // zoom the cord landed between slots instead of in their middles.
 const SLOT_SIZE = 19;
 const SLOT_GAP = 6;
+// Ports sit this many SCREEN px OUTSIDE the node edge (a short gap so the
+// dots float just off the frame). Cord endpoints shift out by the same amount
+// so they meet the dots. MUST match the CSS port offsets (.cnode-port-right /
+// .cnode-port-stack-left) and CanvasClient.findSnapTarget's PORT_GAP.
+const PORT_GAP = 11.385;
 
 function nodePort(n, side, measuredH, slotIndex = 0, slotCount = 1, scale = 1) {
   const h = measuredH ?? n.height ?? 800;
   const midY = n.pos_y + h / 2;
+  const gap = PORT_GAP / scale;   // screen-constant outward offset → world
   if (side === 'right') {
-    return { x: n.pos_x + n.width, y: midY };
+    return { x: n.pos_x + n.width + gap, y: midY };
   }
   const slotSize = SLOT_SIZE / scale;
   const slotGap = SLOT_GAP / scale;
   const totalH = slotCount * slotSize + Math.max(0, slotCount - 1) * slotGap;
   const stackTop = midY - totalH / 2;
   return {
-    x: n.pos_x,
+    x: n.pos_x - gap,
     y: stackTop + slotIndex * (slotSize + slotGap) + slotSize / 2
   };
 }
@@ -114,7 +120,7 @@ function bindEdgeMouseDown(edge, evt, onSelectEdge, onEdgeDragStart) {
   window.addEventListener('mouseup', up);
 }
 
-export default function EdgeLayer({ nodes, edges, incomingByTarget, scale = 1, selectedEdgeId, onSelectEdge, onEdgeDragStart }) {
+export default function EdgeLayer({ nodes, edges, incomingByTarget, scale = 1, selectedEdgeId, onSelectEdge, onEdgeDragStart, onSeverEdge }) {
   const heights = useMeasuredHeights(nodes);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
@@ -148,7 +154,7 @@ export default function EdgeLayer({ nodes, edges, incomingByTarget, scale = 1, s
         const b = byId.get(e.target_node_id);
         if (!a || !b) return null;
         const slot = targetSlot(e.id, b.id);
-        const ca = nodePort(a, 'right', heights.get(a.id));
+        const ca = nodePort(a, 'right', heights.get(a.id), 0, 1, scale);
         const cb = nodePort(b, 'left',  heights.get(b.id), slot.index, slot.count, scale);
         const stagger = (idx % 3 - 1) * 28;
         const mid = { x: (ca.x + cb.x) / 2, y: (ca.y + cb.y) / 2 + stagger };
@@ -165,7 +171,7 @@ export default function EdgeLayer({ nodes, edges, incomingByTarget, scale = 1, s
         const pillW = (labelText.length * charW + padX * 2) / scale;
         const pillH = 22 / scale;
         return (
-          <g key={e.id} pointerEvents="visiblePainted">
+          <g key={e.id} className="edge-group" pointerEvents="visiblePainted">
             <defs>
               <linearGradient id={gradId} x1={ca.x} y1={ca.y} x2={cb.x} y2={cb.y} gradientUnits="userSpaceOnUse">
                 <stop offset="0%" stopColor={sourceColor} />
@@ -179,16 +185,40 @@ export default function EdgeLayer({ nodes, edges, incomingByTarget, scale = 1, s
               stroke={`url(#${gradId})`}
               className={`edge-line-base${isSelected ? ' selected' : ''} ${e.status || ''}`.trim()}
             />
-            {/* Marching-dot overlay — directional indicator. */}
+            {/* Marching-dot overlay — directional indicator (visual only). */}
             <path
               d={d}
               stroke={`url(#${gradId})`}
               className={`edge-line${isSelected ? ' selected' : ''} ${e.status || ''}`.trim()}
+            />
+            {/* Wide invisible hit path — the real grab target for select /
+                re-route. Stroke width is inverse-scaled so it stays a
+                comfortable ~22px on screen at any zoom (the thin visible cord
+                was nearly impossible to grab when zoomed out). */}
+            <path
+              d={d}
+              stroke="transparent"
+              strokeWidth={22 / scale}
+              fill="none"
+              pointerEvents="stroke"
+              style={{ cursor: 'grab' }}
               onMouseDown={(evt) => bindEdgeMouseDown(e, evt, onSelectEdge, onEdgeDragStart)}
             />
-            {/* Edge-kind label pill removed — was visual noise on every cord
-                and conveyed implementation detail the user doesn't reason
-                about. The colour-coded gradient already encodes provenance. */}
+            {/* Cut hotspot — the MIDDLE of the cord shows a scissors cursor and
+                a plain click severs the connection. Sits ON TOP of the hit path
+                so the middle reads as "cut", the rest as "select / re-route".
+                Inverse-scaled so the target stays grabbable when zoomed out. */}
+            <circle
+              /* True bezier midpoint (t=0.5) — sits ON the cord. NOT `mid`,
+                 which carries a legacy `stagger` the cord path doesn't use. */
+              cx={(ca.x + cb.x) / 2} cy={(ca.y + cb.y) / 2}
+              r={48 / scale}
+              fill="transparent"
+              className="edge-cut-zone"
+              pointerEvents="all"
+              onMouseDown={(evt) => evt.stopPropagation()}
+              onClick={(evt) => { evt.stopPropagation(); onSeverEdge?.(e); }}
+            />
           </g>
         );
       })}

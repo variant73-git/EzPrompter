@@ -4,7 +4,7 @@ import VersionThumbnail from './VersionThumbnail.jsx';
 
 // Expanded list of ALL past versions (thumbnail left, date/time right), in the
 // frosted canvas-menu family. Opened from the floater's history button.
-export default function VersionHistoryMenu({ nodeId, versions, activeId = null, onPick, onClose }) {
+export default function VersionHistoryMenu({ nodeId, versions, activeId = null, onPick, onContextMenu, onClose }) {
   const ref = useRef(null);
 
   // Close on outside click / Escape.
@@ -21,6 +21,7 @@ export default function VersionHistoryMenu({ nodeId, versions, activeId = null, 
 
   return (
     <div ref={ref} className="cnode-version-menu" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="popup-menu-title">Version history</div>
       {versions.map((v) => (
         <button
           key={v.id}
@@ -28,6 +29,7 @@ export default function VersionHistoryMenu({ nodeId, versions, activeId = null, 
           className="cnode-version-menu-row"
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onPick?.(v.id); }}
+          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu?.(v.id, e); }}
         >
           <VersionThumbnail nodeId={nodeId} snapshotId={v.id} active={v.id === activeId} />
           <span className="cnode-version-menu-date">{new Date(v.created_at).toLocaleString()}</span>

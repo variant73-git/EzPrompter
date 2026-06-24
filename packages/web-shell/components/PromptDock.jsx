@@ -69,6 +69,12 @@ const ICON_CHECK = (
 
 // Add-menu icons (match the canvas context menu visual language).
 const MENU_ICON = {
+  Url: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+      <path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+    </svg>
+  ),
   Html: () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
@@ -427,7 +433,7 @@ function chatReducer(state, action) {
   }
 }
 
-const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowDisabled = false, runFlowError, nodeCount, onAgentMutatedGraph, activeContexts = null, onClearActiveContext }, forwardedRef) {
+const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onQueueFiles, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowDisabled = false, runFlowError, nodeCount, onAgentMutatedGraph, activeContexts = null, onClearActiveContext }, forwardedRef) {
   // Normalise to an array. activeContexts can be: null (no context),
   // an array of {kind:'section'|'node', ...} items.
   const contextList = Array.isArray(activeContexts) ? activeContexts : (activeContexts ? [activeContexts] : []);
@@ -436,6 +442,9 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   const [imagePreview, setImagePreview] = useState(null);
   const [showAddUrl, setShowAddUrl] = useState(false);
   const [showBrain, setShowBrain] = useState(false);
+  // Click-to-focus ring + the one-shot 2s flash when Add-URL is activated.
+  const [focused, setFocused] = useState(false);
+  const [addUrlFlash, setAddUrlFlash] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
@@ -446,6 +455,9 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   const addBtnRef = useRef(null);
   const modelBtnRef = useRef(null);
   const dockRef = useRef(null);
+  // Tracks the prior context-chip count so we can detect a NEW selection
+  // (0 → >0) appearing — used to drop Add-URL mode when the user clicks a node.
+  const prevContextLenRef = useRef(contextList.length);
 
   // ── Speech-to-text (mic button left of the send arrow) ─────────────
   // MediaRecorder captures a webm/opus clip; stop uploads it as a base64
@@ -967,6 +979,32 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     };
   }, [showAddMenu, showModelMenu]);
 
+  // Drop the focus ring when the user clicks away from the dock (its portaled
+  // popovers count as "inside" so opening a menu doesn't blur it).
+  useEffect(() => {
+    if (!focused) return;
+    function onDown(e) {
+      const t = e.target;
+      if (dockRef.current?.contains(t)) return;
+      if (t?.closest?.('.prompt-dock-popover')) return;
+      setFocused(false);
+    }
+    window.addEventListener('mousedown', onDown, true);
+    return () => window.removeEventListener('mousedown', onDown, true);
+  }, [focused]);
+
+  // Clicking a node on the canvas while Add-URL is active exits Add-URL mode and
+  // lets the selection show as a chip normally. Detected as a 0 → >0 chip-count
+  // transition, so activateAddUrl's own context-clear (>0 → 0) never re-triggers
+  // it and an in-flight clear can't false-fire.
+  useEffect(() => {
+    const prev = prevContextLenRef.current;
+    prevContextLenRef.current = contextList.length;
+    if (showAddUrl && prev === 0 && contextList.length > 0) {
+      setShowAddUrl(false);
+    }
+  }, [contextList.length, showAddUrl]);
+
   function fileKind(file) {
     const name = (file.name || '').toLowerCase();
     if (file.type.startsWith('image/')) return 'image';
@@ -1026,8 +1064,27 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     ta.focus();
   }
 
+  // Enter URL-entry mode (shared by the + menu item and the Add URL pill):
+  // focus the dock (ring), play the one-shot 2s white-glow flash, and DISCARD
+  // any selected nodes/section so the context chips clear (Add URL starts a
+  // fresh capture, unrelated to the current selection).
+  function activateAddUrl() {
+    setShowBrain(false);
+    setShowAddUrl(true);
+    setFocused(true);
+    setAddUrlFlash(false);
+    requestAnimationFrame(() => setAddUrlFlash(true));
+    setTimeout(() => setAddUrlFlash(false), 2000);
+    onClearActiveContext?.();
+    focusComposer();
+  }
+
   function pickAddItem(kind) {
     setShowAddMenu(false);
+    if (kind === 'url') {
+      activateAddUrl();
+      return;
+    }
     if (kind === 'html') return openPicker(ACCEPT_HTML);
     if (kind === 'md') return openPicker(ACCEPT_MD);
     if (kind === 'screenshot') return openPicker(ACCEPT_IMAGE);
@@ -1227,6 +1284,8 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     dockPos === 'right' ? 'dock-right' : '',
     isFloating ? 'dock-floating' : '',
     dragState ? (dragState.snapTarget ? 'is-snapping' : 'is-dragging') : '',
+    focused ? 'is-focused' : '',
+    addUrlFlash ? 'add-url-flash' : '',
   ].filter(Boolean).join(' ');
 
   return (
@@ -1234,6 +1293,9 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
       ref={dockRef}
       className={dockClass}
       style={dockStyle}
+      // Click anywhere on the dock → focus ring. Capture so child handlers that
+      // stopPropagation still light the ring.
+      onMouseDownCapture={() => setFocused(true)}
       onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDrop={handleDrop}
     >
@@ -1429,7 +1491,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           <button
             type="button"
             className={`prompt-dock-pill ${showAddUrl ? 'active add-url' : ''}`}
-            onClick={() => { setShowAddUrl((p) => !p); setShowBrain(false); }}
+            onClick={() => { if (showAddUrl) setShowAddUrl(false); else activateAddUrl(); }}
             disabled={busy}
           >
             <motion.span
@@ -1581,12 +1643,15 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
               role="menu"
             >
               <div className="prompt-dock-popover-title">Add to canvas</div>
+              <button onClick={() => pickAddItem('url')}><MENU_ICON.Url /><span>Add URL</span></button>
               <button onClick={() => pickAddItem('blank')}><MENU_ICON.Blank /><span>Add blank website</span></button>
               <button onClick={() => pickAddItem('html')}><MENU_ICON.Html /><span>Add .html</span></button>
               <button onClick={() => pickAddItem('md')}><MENU_ICON.Md /><span>Add .md</span></button>
               <button onClick={() => pickAddItem('screenshot')}><MENU_ICON.Image /><span>Add screenshot/media</span></button>
               <button onClick={() => pickAddItem('prompt')}><MENU_ICON.Prompt /><span>Add prompt</span></button>
-              <button onClick={() => pickAddItem('skill')}><MENU_ICON.Skill /><span>Add skill</span></button>
+              {/* Skill upload hidden from the menu for now (backend handler in
+                  pickAddItem('skill') is intentionally kept — may resurface). */}
+              {/* <button onClick={() => pickAddItem('skill')}><MENU_ICON.Skill /><span>Add skill</span></button> */}
               <button onClick={() => pickAddItem('multiple')}><MENU_ICON.Files /><span>Add multiple files</span></button>
             </motion.div>
           )}
@@ -1666,11 +1731,16 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
         style={{ display: 'none' }}
         onChange={async (e) => {
           const files = Array.from(e.target.files || []);
+          e.target.value = '';
+          if (!files.length) return;
+          // Hand the whole batch to the canvas, which queues them for
+          // one-at-a-time drop placement with a cursor-anchored counter pill.
+          // Falls back to the old inline loop when no queue handler is wired.
+          if (onQueueFiles) { onQueueFiles(files); return; }
           for (const f of files) {
             // eslint-disable-next-line no-await-in-loop
             await handlePickedFile(f);
           }
-          e.target.value = '';
         }}
       />
       {/* Snap UI — visible for the WHOLE drag, not only when in a snap

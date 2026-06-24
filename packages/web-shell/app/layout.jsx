@@ -1,13 +1,12 @@
 import './globals.css';
 import { Instrument_Sans, Instrument_Serif } from 'next/font/google';
 
-// Instrument family — used by canvas-side popups/modals/menus so the
-// surface visually matches the Uncraft browser extension widget
-// (which is the source-of-truth for the design language). Aeonik
-// stays as the default body font for nodes / dock / toolbars; only
-// the popup family adopts Instrument. Both subsets preloaded;
-// classnames exposed as CSS vars so popup CSS can reference them
-// without ESM imports.
+// Instrument Sans is now the DEFAULT sans for the whole web-shell (body,
+// nodes, dock, toolbars, popups) — globals.css `--font-sans`/`--font-display`
+// resolve to --font-instrument-sans. Instrument Serif stays only as the popup
+// serif accent (--popup-font-serif). Weights 400–700 cover the UI; the design
+// language matches the Uncraft browser-extension widget. Classnames exposed as
+// CSS vars so CSS can reference them without ESM imports.
 const instrumentSans = Instrument_Sans({
   subsets: ['latin'],
   weight: ['400', '500', '600', '700'],
