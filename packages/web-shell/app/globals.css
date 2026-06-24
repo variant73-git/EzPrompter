@@ -2527,12 +2527,10 @@ html, body { overscroll-behavior: none; }
    selecting a URL is-main node "lost the border"). */
 .cnode.selected {
   border-color: transparent;
-  /* Centred 3px stroke: 1.5px outset + 1.5px inset, straddling the border-box
-     edge — so the ring's CENTRE is the edge where the cord origin + connector
-     dot sit (instead of a fully-outward ring that pushes past them). */
+  /* Single outward 3px ring. (A centred ring — half inset — showed a second
+     colored line over the node's 4px inner padding gap; reverted.) */
   box-shadow:
-    0 0 0 calc(1.5px / var(--canvas-scale, 1)) var(--cnode-port-fill, var(--accent)),
-    inset 0 0 0 calc(1.5px / var(--canvas-scale, 1)) var(--cnode-port-fill, var(--accent)),
+    0 0 0 calc(3px / var(--canvas-scale, 1)) var(--cnode-port-fill, var(--accent)),
     0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
