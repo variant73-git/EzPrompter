@@ -95,7 +95,7 @@ export async function reconstructPage(url, opts = {}) {
 
     onProgress('capturing');
     const captured = await captureStops(page, rasterDir, rasterUrlBase);
-    const { stops, assets, colorsByStop, fontsByStop, title, stopsBuffers } = captured;
+    const { stops, assets, colorsByStop, fontsByStop, elevationByStop, title, stopsBuffers } = captured;
 
     onProgress('thumbnailing');
     await renderThumbnails(page, assets);
@@ -103,7 +103,7 @@ export async function reconstructPage(url, opts = {}) {
     onProgress('thinking');
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const rawHtml = await generateHtml({
-      stopsBuffers, assets, colorsByStop, fontsByStop, openai
+      stopsBuffers, assets, colorsByStop, fontsByStop, elevationByStop, openai
     });
     if (!rawHtml || !/<html/i.test(rawHtml)) {
       throw new Error(`Vision call returned no usable HTML (${rawHtml?.length || 0} chars)`);
@@ -178,6 +178,7 @@ async function captureStops(page, rasterDir, rasterUrlBase) {
   const assetsByStop = [];
   const colorsByStop = [];
   const fontsByStop = [];
+  const elevationByStop = [];
   let rasterIdx = 0;
 
   for (let i = 0; i < stops.length; i++) {
@@ -261,6 +262,27 @@ async function captureStops(page, rasterDir, rasterUrlBase) {
       };
     });
     fontsByStop.push(fonts);
+
+    // Elevation ground truth: do card-like containers actually use box-shadow or
+    // borders? Vision models love to add subtle drop-shadows and outlines; this
+    // lets us tell the model verbatim when the real page has none.
+    const elevation = await page.evaluate(() => {
+      let total = 0, withShadow = 0, withBorder = 0;
+      for (const el of document.querySelectorAll('div,section,article,li')) {
+        const r = el.getBoundingClientRect();
+        if (r.width < 140 || r.height < 90) continue;
+        const cs = getComputedStyle(el);
+        const bg = cs.backgroundColor;
+        if (!bg || bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') continue;
+        if (parseFloat(cs.borderRadius) < 2) continue;
+        total++;
+        if (cs.boxShadow && cs.boxShadow !== 'none') withShadow++;
+        if (parseFloat(cs.borderTopWidth) > 0 || parseFloat(cs.borderWidth) > 0) withBorder++;
+        if (total >= 60) break;
+      }
+      return { total, withShadow, withBorder };
+    });
+    elevationByStop.push(elevation);
 
     // Asset manifest at this scroll position (per-stop visibility added later).
     const manifest = await page.evaluate(() => {
@@ -411,7 +433,7 @@ async function captureStops(page, rasterDir, rasterUrlBase) {
 
   const title = (await page.title()) || null;
 
-  return { stops, assets, colorsByStop, fontsByStop, stopsBuffers, title };
+  return { stops, assets, colorsByStop, fontsByStop, elevationByStop, stopsBuffers, title };
 }
 
 // --- step 2: render thumbnails for each manifest entry --------------------
@@ -587,7 +609,23 @@ function buildFontsText(fontsByStop) {
     .join('\n');
 }
 
-async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, openai }) {
+function buildElevationText(elevationByStop) {
+  let total = 0, withShadow = 0, withBorder = 0;
+  for (const e of elevationByStop || []) {
+    if (!e) continue;
+    total += e.total || 0; withShadow += e.withShadow || 0; withBorder += e.withBorder || 0;
+  }
+  if (total === 0) return '(no container data captured)';
+  const shadow = withShadow === 0
+    ? `box-shadow: NONE — ${total} card-like containers sampled, 0 use a drop-shadow. DO NOT add any shadow behind cards/containers.`
+    : `box-shadow: present on ${withShadow}/${total} sampled containers — reproduce shadows only where the screenshots show them, never add extras.`;
+  const border = withBorder === 0
+    ? `borders: NONE — 0/${total} containers have a border. DO NOT add borders/outlines around cards.`
+    : `borders: present on ${withBorder}/${total} containers — reproduce only the borders visible in the screenshots (e.g. a coloured top accent), never invent extra ones.`;
+  return `${shadow}\n${border}`;
+}
+
+async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, elevationByStop, openai }) {
   const stopBlocks = stopsBuffers.map((buf) => ({
     type: 'image_url',
     image_url: { url: `data:image/png;base64,${buf.toString('base64')}` }
@@ -606,6 +644,7 @@ async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, o
     ...thumbBlocks,
     { type: 'text', text: `\nCOLOR PROBES (ground-truth per stop):\n${buildColorsText(colorsByStop)}` },
     { type: 'text', text: `\nTYPOGRAPHY DETECTED (use font-family AND font-style verbatim — ground truth):\n${buildFontsText(fontsByStop)}` },
+    { type: 'text', text: `\nELEVATION DETECTED (ground truth — obey over the screenshot):\n${buildElevationText(elevationByStop)}` },
     { type: 'text', text: `\n${stopsBuffers.length} scroll-stop screenshots follow, in scroll order (top → bottom). Reconstruct.` },
     ...stopBlocks
   ];
