@@ -14,42 +14,15 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
+import { HOUSE_STYLE_GUARDRAILS } from './design/house-style.js';
 
 const DEFAULT_MODEL = process.env.UNCRAFT_LLM_MODEL || 'claude-sonnet-4-6';
 
-const TASTE_PRINCIPLES = `
-TASTE PRINCIPLES (apply with strong influence to every visual decision):
-
-CONTENT AUTHENTICITY
-- Use the target's exact words. Never paraphrase into AI marketing clichés ("Elevate", "Seamless", "Unleash", "Next-Gen", "Empower", "Transform", "Discover", "Revolutionize").
-- Preserve real numbers, prices, percentages, dates, proper nouns. No fake "99%", "50%", "10x", "John Doe", "Sarah Chan", "Acme", "Nexus", "SmartFlow".
-- Zero emojis in any output.
-
-TYPOGRAPHY
-- Use the reference's exact display + body fonts as declared. Never silently substitute "Inter" if the reference uses something else.
-- Control hierarchy with weight and color, not just oversized H1s.
-- Mono fonts ONLY where the reference explicitly uses them — never on body copy.
-
-COLOR
-- Use the reference's exact hex tokens. Don't shift toward "AI purple/blue" gradients or oversaturated accents.
-- Maximum one accent color. Saturation below 80%.
-- Avoid pure #000000 — render as #0a0a0a if needed.
-- No outer/neon glows. Inner shadows or shadows tinted to the background hue only.
-
-LAYOUT
-- Preserve the reference's section count and order verbatim (chassis contract).
-- Avoid generic three-equal-card rows; prefer asymmetric grids, 2-column zig-zag, bento layouts.
-- Constrain outer containers with max-w-7xl mx-auto or max-w-[1400px].
-- Hero sections must use min-h-[100dvh], never h-screen.
-
-MOTION
-- Animate exclusively transform and opacity. Never animate top, left, width, or height.
-- Stagger reveal sequences with 80–120ms cascading delays.
-
-INTERACTIVE STATES
-- Buttons on :active should translate-y-[1px] or scale-[0.98] for tactile feedback.
-- Provide hover feedback on every clickable element.
-`;
+// Reskin/inject preserve the reference's exact design tokens, so only the
+// always-on guardrails apply here (the INVENT directives are for from-scratch
+// generation, gated to "no design source"). The reference's own fonts/colours
+// are honoured by the PRESERVE rules in each prompt below.
+const TASTE_PRINCIPLES = `\nUse the reference's exact display + body fonts and hex tokens as declared; never silently substitute them.\n\n${HOUSE_STYLE_GUARDRAILS}\n`;
 
 const EXTRACT_SYSTEM = `You extract visible content from a website's HTML. Output ONLY a single JSON object — no markdown fences, no preface, no commentary, no surrounding text.
 

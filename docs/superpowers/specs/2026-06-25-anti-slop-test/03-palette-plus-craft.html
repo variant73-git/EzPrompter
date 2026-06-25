@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tern — focused work</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#E4E7E1;          /* greige / grayish-green */
+    --surface:#FCFCFA;     /* container white, tinted off pure */
+    --ink:#16180F;         /* near-black type */
+    --secondary:#2F3A31;   /* dark grayish-green */
+    --muted:#5B6158;
+    --accent:#C8E85A;      /* lime */
+    --line:rgba(22,24,15,0.10);
+    --shadow:0 18px 40px -22px rgba(47,58,49,0.45);
+    --ease:cubic-bezier(0.23,1,0.32,1);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Hanken Grotesk',system-ui,sans-serif;background:var(--bg);color:var(--ink);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 32px;}
+  nav{display:flex;justify-content:space-between;align-items:center;padding:28px 0;}
+  .logo{font-weight:800;font-size:21px;letter-spacing:-0.02em;}
+  .navlinks a{margin-left:30px;text-decoration:none;color:var(--muted);font-size:15px;font-weight:500;}
+  .btn{font-family:inherit;font-weight:600;font-size:15px;border:none;cursor:pointer;background:var(--accent);color:var(--ink);padding:11px 22px;border-radius:12px;transition:transform 160ms var(--ease),filter 160ms var(--ease);}
+  .btn:hover{filter:brightness(1.03);}
+  .btn:active{transform:scale(0.97);}
+  .btn-ghost{background:transparent;color:var(--ink);box-shadow:inset 0 0 0 1px var(--line);}
+
+  /* asymmetric hero: text left, device right */
+  .hero{display:grid;grid-template-columns:1.15fr 0.85fr;gap:48px;align-items:center;padding:64px 0 56px;}
+  .hero h1{font-size:58px;line-height:1.02;font-weight:800;letter-spacing:-0.035em;max-width:11ch;}
+  .hero h1 .lo{color:var(--secondary);font-weight:500;}
+  .hero p{margin:24px 0 30px;color:var(--muted);font-size:18px;line-height:1.55;max-width:46ch;}
+  .hero .actions{display:flex;gap:12px;}
+
+  .device{background:var(--surface);border-radius:26px;box-shadow:var(--shadow);padding:18px;}
+  .device .bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding:4px 6px;}
+  .device .bar b{font-size:15px;font-weight:700;}
+  .device .bar span{font-size:13px;color:var(--muted);}
+  .task{display:flex;align-items:center;gap:12px;padding:14px 12px;border-radius:14px;}
+  .task + .task{border-top:1px solid var(--line);border-radius:0;}
+  .task.hi{background:var(--accent);border-radius:14px;}
+  .dot{width:18px;height:18px;border-radius:6px;box-shadow:inset 0 0 0 2px var(--secondary);flex:none;}
+  .task.hi .dot{box-shadow:inset 0 0 0 2px var(--ink);background:var(--ink);}
+  .task .t{font-size:15px;font-weight:600;flex:1;}
+  .task .time{font-size:13px;color:var(--muted);}
+  .task.hi .time{color:var(--ink);}
+
+  /* stat strip, grouped by hairlines not cards */
+  .strip{display:grid;grid-template-columns:repeat(3,1fr);background:var(--surface);border-radius:20px;box-shadow:var(--shadow);overflow:hidden;margin:8px 0 72px;}
+  .stat{padding:30px 32px;}
+  .stat + .stat{border-left:1px solid var(--line);}
+  .stat .n{font-size:40px;font-weight:800;letter-spacing:-0.03em;}
+  .stat .n em{font-style:normal;color:var(--accent);-webkit-text-stroke:0.5px var(--secondary);}
+  .stat .l{margin-top:6px;color:var(--muted);font-size:14px;}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <div class="logo">Tern</div>
+      <div class="navlinks" style="display:flex;align-items:center;">
+        <a href="#">Product</a><a href="#">Method</a><a href="#">Pricing</a>
+        <button class="btn" style="margin-left:30px;">Open app</button>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <div>
+        <h1>Plan the day, <span class="lo">finish it.</span></h1>
+        <p>Tern turns a messy backlog into a short, ordered list of what actually moves today. No boards, no busywork.</p>
+        <div class="actions">
+          <button class="btn">Start free for 14 days</button>
+          <button class="btn btn-ghost">Watch a 90s tour</button>
+        </div>
+      </div>
+      <div class="device">
+        <div class="bar"><b>Friday, May 16</b><span>4 left</span></div>
+        <div class="task hi"><span class="dot"></span><span class="t">Review Q2 infra plan</span><span class="time">09:30</span></div>
+        <div class="task"><span class="dot"></span><span class="t">Sync with Renata</span><span class="time">11:00</span></div>
+        <div class="task"><span class="dot"></span><span class="t">Ship onboarding copy</span><span class="time">14:20</span></div>
+        <div class="task"><span class="dot"></span><span class="t">Gym session</span><span class="time">18:45</span></div>
+      </div>
+    </section>
+
+    <section class="strip">
+      <div class="stat"><div class="n">47.2<em>%</em></div><div class="l">less time triaging tasks</div></div>
+      <div class="stat"><div class="n">3.1h</div><div class="l">focused work, daily average</div></div>
+      <div class="stat"><div class="n">12,840</div><div class="l">teams planning in Tern</div></div>
+    </section>
+  </div>
+</body>
+</html>

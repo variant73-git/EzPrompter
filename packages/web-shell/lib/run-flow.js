@@ -19,6 +19,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
+import { HOUSE_STYLE } from './design/house-style.js';
+import { extractStyleFromImage } from './design/style-extract.js';
 
 const DEFAULT_MODEL = process.env.UNCRAFT_LLM_MODEL || 'claude-sonnet-4-6';
 
@@ -51,20 +53,11 @@ OPERATION MATRIX (compose, do not pick one)
 - PROMPT + any other source → follow the prompt as the primary directive; use the other sources as material.
 
 PRESERVE EVERY TIME (do not break, do not paraphrase)
-- The target's exact text content (real words, numbers, prices, names, proper nouns). No AI clichés ("Elevate", "Empower", "Seamless", "Next-Gen", "Transform").
+- The target's exact text content (real words, numbers, prices, names, proper nouns).
 - The target's image src attributes unless the prompt explicitly requests change.
-- Real numbers exactly as the target shows them. No fake "99%", "10x".
-- Zero emojis in any output.
+- When a source design is provided, use ITS exact fonts and hex tokens; preserve the chosen chassis's section count + order.
 
-TYPOGRAPHY / COLOUR RULES
-- Use the source's / md's exact fonts and hex colours. Never silently substitute "Inter" or generic AI-purple gradients.
-- One accent colour max. Saturation below 80%. Avoid pure #000000 (render as #0a0a0a).
-- Hierarchy through weight and colour, not just oversized H1s. Mono fonts only where the source explicitly uses them.
-
-LAYOUT
-- Preserve section count + order from the chosen chassis.
-- Constrain outer containers with max-w-7xl mx-auto or similar.
-- Hero sections use min-h-[100dvh], not h-screen.
+${HOUSE_STYLE}
 
 OUTPUT
 - A single complete HTML document. No markdown code fences, no preface, no commentary. Just the HTML.`;
@@ -208,6 +201,28 @@ export async function runCompose({ target, sources, model, modelId, systemPrompt
     buckets.asset.length === 0
   ) {
     throw new Error('No actionable inputs. Connect a site, design.md, screenshot, or prompt source.');
+  }
+
+  // Layer B: convert image sources into clean style briefs up front. The
+  // extraction call isolates the real design (discarding presentation
+  // backdrops, device frames, gutters), so compose receives only text — a
+  // backdrop colour physically cannot leak in — and compose can then run on
+  // the picked text model. Any image whose extraction fails stays a raw
+  // vision source (graceful fallback to the previous behaviour).
+  if (buckets.asset.length > 0) {
+    const remaining = [];
+    for (const a of buckets.asset) {
+      const dataUrl = a.meta?.dataUrl;
+      if (!dataUrl) { remaining.push(a); continue; }
+      try {
+        const { brief } = await extractStyleFromImage({ imageDataUrl: dataUrl });
+        if (brief) buckets.md.push({ kind: 'designmd', source_design_md: brief, _fromImage: true });
+        else remaining.push(a);
+      } catch {
+        remaining.push(a);
+      }
+    }
+    buckets.asset = remaining;
   }
 
   // Routing rule: if any image source is present, force a vision-capable
