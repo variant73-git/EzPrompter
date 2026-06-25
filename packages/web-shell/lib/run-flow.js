@@ -167,8 +167,8 @@ function assemblePrompt({ targetHtml, buckets }) {
   // Reference the images by index so the system prompt can talk about
   // them; the actual image content rides in a separate `images` array.
   buckets.asset.forEach((s, i) => {
-    const label = buckets.asset.length > 1 ? `IMAGE SOURCE ${i + 1}` : 'IMAGE SOURCE';
-    parts.push(`${label}: see attached image #${i + 1} (treat as design / layout reference unless the prompt says otherwise).`);
+    const label = buckets.asset.length > 1 ? `STYLE IMAGE ${i + 1}` : 'STYLE IMAGE';
+    parts.push(`${label}: see attached image #${i + 1}. This is a STYLE SOURCE — absorb EVERY visual characteristic you can see in it. The accompanying DESIGN.MD brief pins the exact tokens and flags any presentation backdrop to ignore; never copy a backdrop the brief calls out, but reproduce the actual design's look fully.`);
   });
   // Extract image data URLs for the vision pipeline.
   const images = buckets.asset
@@ -203,26 +203,24 @@ export async function runCompose({ target, sources, model, modelId, systemPrompt
     throw new Error('No actionable inputs. Connect a site, design.md, screenshot, or prompt source.');
   }
 
-  // Layer B: convert image sources into clean style briefs up front. The
-  // extraction call isolates the real design (discarding presentation
-  // backdrops, device frames, gutters), so compose receives only text — a
-  // backdrop colour physically cannot leak in — and compose can then run on
-  // the picked text model. Any image whose extraction fails stays a raw
-  // vision source (graceful fallback to the previous behaviour).
+  // Layer B: extract a style brief from each image source up front. The brief
+  // isolates the real design (naming any presentation backdrop / device frame
+  // to ignore) and pins exact tokens (palette, radius, spacing, font-style,
+  // shadows, padding). We feed the brief as a design.md guide AND KEEP the
+  // image as a vision source — so compose both READS the precise tokens AND
+  // SEES the actual style. Full absorption of every characteristic, which a
+  // lossy text brief alone cannot convey (spacing, proportions, the exact feel).
+  // The brief + the STYLE ABSORPTION rule keep the backdrop out of the result.
   if (buckets.asset.length > 0) {
-    const remaining = [];
     for (const a of buckets.asset) {
       const dataUrl = a.meta?.dataUrl;
-      if (!dataUrl) { remaining.push(a); continue; }
+      if (!dataUrl) continue;
       try {
         const { brief } = await extractStyleFromImage({ imageDataUrl: dataUrl });
         if (brief) buckets.md.push({ kind: 'designmd', source_design_md: brief, _fromImage: true });
-        else remaining.push(a);
-      } catch {
-        remaining.push(a);
-      }
+      } catch { /* brief failed — the image still rides as a raw vision source */ }
     }
-    buckets.asset = remaining;
+    // assets are KEPT (not consumed) so compose sees the style, guided by the brief.
   }
 
   // Routing rule: if any image source is present, force a vision-capable

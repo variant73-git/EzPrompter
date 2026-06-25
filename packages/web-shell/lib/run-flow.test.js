@@ -51,20 +51,22 @@ beforeEach(() => {
 });
 
 describe('runCompose — Layer B image → style brief', () => {
-  it('extracts a brief from an image and composes on the text model (no vision leak)', async () => {
+  it('keeps the image AND adds the brief so compose absorbs the full style (vision)', async () => {
+    openaiCreate.mockResolvedValue(openaiStreamOf('<html><body>composed</body></html>'));
     const sources = [{ kind: 'asset', meta: { dataUrl: 'data:image/png;base64,AAA' } }];
     const { html } = await runCompose({ target, sources });
 
     expect(extractMock).toHaveBeenCalledTimes(1);
     expect(html).toContain('composed');
-    // Compose ran on Anthropic (text), NOT forced to OpenAI vision.
-    expect(anthropicStream).toHaveBeenCalledTimes(1);
-    expect(openaiCreate).not.toHaveBeenCalled();
-    // The brief reached compose as a DESIGN.MD source; the raw image did not.
-    const userText = anthropicStream.mock.calls[0][0].messages[0].content;
-    expect(userText).toContain('DESIGN.MD SOURCE');
-    expect(userText).toContain('accent: #c8e85a');
-    expect(userText).not.toContain('base64');
+    // Image kept → compose runs on OpenAI vision (sees the style), not the text model.
+    expect(openaiCreate).toHaveBeenCalledTimes(1);
+    expect(anthropicStream).not.toHaveBeenCalled();
+    // Compose receives BOTH the brief (DESIGN.MD) and the actual image.
+    const userContent = openaiCreate.mock.calls[0][0].messages[1].content;
+    const textPart = userContent.find((p) => p.type === 'text').text;
+    expect(textPart).toContain('DESIGN.MD SOURCE');
+    expect(textPart).toContain('accent: #c8e85a');
+    expect(userContent.some((p) => p.type === 'image_url' && p.image_url.url.includes('AAA'))).toBe(true);
   });
 
   it('falls back to a raw vision compose when extraction fails', async () => {
