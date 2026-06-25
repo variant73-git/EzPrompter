@@ -243,7 +243,8 @@ async function captureStops(page, rasterDir, rasterUrlBase) {
             family: cs.fontFamily,
             weight: cs.fontWeight,
             size: cs.fontSize,
-            letterSpacing: cs.letterSpacing
+            letterSpacing: cs.letterSpacing,
+            style: cs.fontStyle
           };
         }
         return null;
@@ -255,7 +256,7 @@ async function captureStops(page, rasterDir, rasterUrlBase) {
         p: visibleSample('p'),
         body: (() => {
           const cs = getComputedStyle(document.body);
-          return { family: cs.fontFamily, weight: cs.fontWeight, size: cs.fontSize };
+          return { family: cs.fontFamily, weight: cs.fontWeight, size: cs.fontSize, style: cs.fontStyle };
         })()
       };
     });
@@ -487,7 +488,7 @@ INPUTS
        • RAS#N — PNGs WE CAPTURED from the live page (canvas, video, oversized SVGs, complex illustrations). Pixel-perfect — PREFER them whenever present.
   3. ASSET THUMBNAILS — a small preview rendered for each manifest entry (labeled with its ID). USE these to visually match a region in a screenshot to the right manifest ID.
   4. COLOR PROBES — ground-truth background colours sampled from the live DOM at five points per stop.
-  5. TYPOGRAPHY DETECTED — exact font-family / weight / size strings sampled from the live DOM. Use verbatim.
+  5. TYPOGRAPHY DETECTED — exact font-family / weight / size / font-style strings sampled from the live DOM. Use verbatim — this is GROUND TRUTH, more reliable than how the screenshot looks.
 
 OUTPUT FORMAT
 - Single self-contained HTML document. Inline <style> + inline styles. No external CSS/JS.
@@ -521,7 +522,7 @@ COLOR FIDELITY:
 
 TYPOGRAPHY FIDELITY:
 - Use the TYPOGRAPHY DETECTED font-family strings VERBATIM. No silent Inter substitution.
-- Match font-style EXACTLY. If text is upright in the screenshots, keep it upright (font-style: normal). NEVER add italic the source does not show — vision models over-italicize titles/labels/numbers; do not. Use italic ONLY where the screenshot text is visibly slanted.
+- font-style comes from TYPOGRAPHY DETECTED (ground truth), NOT from how the screenshot looks. It is almost always 'normal'. If the detected font-style is normal, the element MUST be upright (font-style: normal) even if a heading "looks" slanted to you. NEVER italicize titles, names, labels, or numbers — vision models over-italicize; apply italic ONLY when the detected font-style for that level is literally 'italic'.
 
 BORDER & SHADOW FIDELITY:
 - Only give a card/container a border, outline, or drop-shadow if the screenshot actually shows it. Do NOT add borders or subtle shadows the source lacks (common vision-model tells). When cards are flat (separated by fill alone), reproduce exactly that — no border, no shadow.
@@ -582,7 +583,7 @@ function buildFontsText(fontsByStop) {
   }
   if (seen.size === 0) return '(no font data captured)';
   return [...seen.values()]
-    .map((v) => `${v.level}: family=${v.family} weight=${v.weight} size=${v.size}${v.letterSpacing ? ` letter-spacing=${v.letterSpacing}` : ''} (first seen stop ${v.firstStop})`)
+    .map((v) => `${v.level}: family=${v.family} weight=${v.weight} size=${v.size} font-style=${v.style || 'normal'}${v.letterSpacing ? ` letter-spacing=${v.letterSpacing}` : ''} (first seen stop ${v.firstStop})`)
     .join('\n');
 }
 
@@ -604,7 +605,7 @@ async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, o
     { type: 'text', text: `\nASSET THUMBNAILS (visual preview of each manifest entry):` },
     ...thumbBlocks,
     { type: 'text', text: `\nCOLOR PROBES (ground-truth per stop):\n${buildColorsText(colorsByStop)}` },
-    { type: 'text', text: `\nTYPOGRAPHY DETECTED (use font-family verbatim):\n${buildFontsText(fontsByStop)}` },
+    { type: 'text', text: `\nTYPOGRAPHY DETECTED (use font-family AND font-style verbatim — ground truth):\n${buildFontsText(fontsByStop)}` },
     { type: 'text', text: `\n${stopsBuffers.length} scroll-stop screenshots follow, in scroll order (top → bottom). Reconstruct.` },
     ...stopBlocks
   ];
