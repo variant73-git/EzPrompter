@@ -128,11 +128,12 @@ tight — it rides in the prompt on every generation, so signal density matters.
 
 ---
 
-## Hook: user's own anti-slop recipe (refinement layer)
-The user has a personal anti-slop recipe (fonts to always avoid, typography patterns, etc.).
-Layer A already absorbs strong anti-slop rules from taste-skill + impeccable. Treat the user's
-recipe as a **thin override layer on top** — applied only where the distilled rules don't
-already cover it, so we don't duplicate or contradict. To be captured when we operationalize this.
+## User's anti-slop recipe — CLOSED (already encoded, no separate layer)
+The user confirmed (2026-06-25) their personal recipe IS exactly the rules already captured:
+avoid AI-tell / mono fonts, eyebrows sparingly with default tracking, and the decorative
+container keyline ban — all in §3 and §7 above. Everything else is distilled from taste-skill +
+impeccable. No separate override layer is needed; if the user adds a new rule later, fold it
+into §3/§7 here.
 
 ## Cost / wiring notes (for later)
 - This rides in the generation prompt on every run → keep it lean; consider a short "core"
