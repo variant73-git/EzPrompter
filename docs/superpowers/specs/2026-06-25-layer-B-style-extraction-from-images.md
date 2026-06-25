@@ -94,12 +94,16 @@ Both modes emit the same token list; what differs is the source and the confiden
   - separate **brand** colors from **neutral** colors.
   - sample from UI pixels only (never the discarded backdrop).
 - **Typography** — family class (serif vs sans, geometric vs humanist), weight contrast,
-  scale/hierarchy, case. Approximate is fine.
+  scale/hierarchy, case. Approximate is fine. **Italic:** state explicitly whether the type is
+  upright or italic, and if italic exactly where (e.g. only a highlighted value). Upright source
+  → say "upright, no italic" so the restyler never adds italic (a common AI tell).
 - **Shape / radius** — the radius *scale* (cards vs buttons vs pills/chips often differ), and
   the character (soft / large-radius vs sharp).
 - **Spacing** — express as **density** (airy / balanced / dense) plus approximate rhythm. No
   false-precision px from an image.
-- **Elevation** — shadows and borders; note that shadows are tinted to the surface hue.
+- **Elevation & borders** — shadows (tinted to the surface hue). State explicitly whether
+  cards/containers have an outline/border *at all*; if they are separated only by fill or
+  shadow, say "no container borders" so the restyler does not invent one (AIs force outlines).
 - **Inner UI background** — the canvas color of the *screen* (explicitly NOT the image
   backdrop discarded in Stage 1; name them separately to avoid confusion).
 

@@ -39,10 +39,10 @@ If several screens of the same product are shown, MERGE their tokens (agreement 
 STEP 3 — EXTRACT TOKENS, by ROLE not by area:
 - TONE: one line, the vibe.
 - COLOUR by role: surface (the canvas content sits ON — identify by function even if little of it is visible; a surface can be small in visible pixels if elements cover it, so do NOT equate "largest flat area" with surface), neutrals (text, hairlines, muted), accent (small, saturated, repeated). Separate brand from neutral. Give hex values sampled from UI pixels ONLY, never the discarded backdrop.
-- TYPOGRAPHY: family character (serif/sans, geometric/humanist), weight contrast, scale, case.
+- TYPOGRAPHY: family character (serif/sans, geometric/humanist), weight contrast, scale, case. ITALIC: state explicitly whether the type is upright or italic and, if italic, exactly where it is used (e.g. only on a highlighted value). If the type is upright, say "upright, no italic" so the restyler never introduces italic.
 - SHAPE: corner-radius scale (cards vs buttons vs pills) and character (soft/large vs sharp).
 - SPACING: density (airy / balanced / dense) and rhythm — relative, not exact px.
-- ELEVATION: shadows / borders and their tint.
+- ELEVATION & BORDERS: shadows and their tint. State explicitly whether cards / containers have an outline/border at all; if they do NOT (separated only by fill or shadow), say "no container borders" so the restyler does not add one. Report a border only when the source actually shows it.
 - UI BACKGROUND: the screen's own canvas colour (NOT the discarded image backdrop — name them separately).
 
 INSPIRATION mode instead: read style family (skeuomorphic / flat / brutalist / editorial / glassy / ...), materials & textures, mood, palette, illustration style; THEN translate into concrete UI token suggestions (surface, accent, type, radius, depth). Mark these as invented.

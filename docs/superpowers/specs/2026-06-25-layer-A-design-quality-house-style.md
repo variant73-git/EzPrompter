@@ -58,11 +58,17 @@ tight — it rides in the prompt on every generation, so signal density matters.
   source skill, which recommended mono for data.)*
 - **Eyebrows sparingly.** Small all-caps labels above headings are overused. When used, keep
   **default tracking** — never wider-than-default letter-spacing on an eyebrow.
+- **No italic by default** (a common AI tell — the model italicizes names, labels, headings,
+  numbers). Italic ONLY for genuine emphasis/highlights, or when a source clearly uses it as a
+  system. Source-conditional: upright source → upright output.
 
 ## 4. Layout
 - **Anti-center reflex.** Centered hero/H1 over a dark image is the default trap. Prefer split
   (50/50), left-content/right-asset, or asymmetric whitespace.
 - **Vary spacing for rhythm** — identical padding everywhere is monotony.
+- **No reflexive container outlines** (a common AI tell). Do not border cards/containers by
+  default. Use an outline ONLY when a source actually has one; otherwise separate with fill,
+  spacing, or a soft shadow. Source-conditional: no borders in the source → none in the output.
 - **Cards are the lazy answer.** Use one only when elevation genuinely communicates hierarchy.
   **Nested cards are always wrong.** Don't wrap everything in a container.
 - Group with negative space, hairlines (`border-t`, `divide-y`) before reaching for boxes.

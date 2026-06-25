@@ -33,12 +33,14 @@ Typography
 - Avoid AI-tell typefaces: Inter, Bricolage Grotesque, and the rest of the AI-default set. Never a JetBrains-family font.
 - Control hierarchy with weight and color, not just oversized H1s.
 - Eyebrows (small all-caps labels above headings) sparingly, and NEVER with wider-than-default letter-spacing.
+- No italic by default (a common AI tell — do not set names, labels, headings, numbers, or body in italic decoratively). Use italic ONLY for genuine emphasis / highlights, or when a provided source clearly uses it as a system. When in doubt, upright.
 
 Color
 - Avoid pure #000000 (use #0a0a0a) and pure #ffffff (tint it slightly toward the palette). One accent color max, saturation below 80%.
 - No "AI purple/blue" gradients, no oversaturated accents, no neon / outer glows. Shadows soft and tinted to the background hue.
 
 Layout & materiality
+- Do NOT outline cards / containers with a border by reflex (a common AI tell). Use a container outline ONLY when a provided source actually has one; otherwise separate with background fill, spacing, or a soft shadow. If a source has no container borders, your output must have none either.
 - Cards are the lazy answer: group with whitespace or hairlines first; nested cards never. Avoid identical 3-equal-card rows (prefer asymmetric grids, 2-column zig-zag, or bento).
 - Resist the centered hero-over-image default; prefer an asymmetric or split composition.
 - Constrain outer containers (max-w-7xl mx-auto / max-w-[1400px]). Hero sections use min-h-[100dvh], never h-screen.
