@@ -46,6 +46,7 @@ Layout & materiality
 - Constrain outer containers (max-w-7xl mx-auto / max-w-[1400px]). Hero sections use min-h-[100dvh], never h-screen.
 
 Banned details (rewrite the element if you reach for one)
+- Default / decorative italic. Do NOT italicize titles, names, labels, numbers, or body. font-style is upright unless the change is true emphasis or a provided source already uses italic for that exact element.
 - Side-stripe accent borders (a colored border-left/right > 1px on cards, list items, callouts, alerts).
 - Gradient text (background-clip:text + a gradient) on headings.
 - Glassmorphism as a default decoration.
