@@ -281,6 +281,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // initial position under the cursor.
   const [placingNodeId, setPlacingNodeId] = useState(null);
   const placingNodeRef = useRef(null);
+  // When a URL is added from the "+" toolbar, the temp placeholder is placed
+  // with the ghost first; this stashes the capture to fire once it's dropped.
+  const pendingUrlCaptureRef = useRef(null);
   const lastPointerRef = useRef({ x: 0, y: 0 });
   // Multi-file placement queue ("Add multiple files"): files are placed one at
   // a time, each reusing the single-node placement ghost. A cursor-anchored
@@ -946,8 +949,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // ── Drag-to-place a freshly added node ─────────────────────────────────
   // Starts a SYNTHETIC loose-drag of `node` so it tracks the cursor and reuses
   // the section-adoption preview + commit. Called by the + menu add handlers.
-  function startPlacement(node) {
-    if (!node || String(node.id).startsWith('temp-')) return;
+  function startPlacement(node, { allowTemp = false } = {}) {
+    // Persisted nodes only by default. A URL placeholder is a temp- node that
+    // gets placed BEFORE it's captured/persisted, so it opts in via allowTemp;
+    // handleNodeMove/End already skip the server PATCH for temp- ids.
+    if (!node || (!allowTemp && String(node.id).startsWith('temp-'))) return;
     // Seed under the cursor (centered) so it appears at the mouse immediately
     // instead of flashing at its auto-computed slot.
     const p = lastPointerRef.current;
@@ -1162,6 +1168,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     };
     const drop = () => {
       const node = placingNodeRef.current;
+      // URL placeholder: it was placed BEFORE capture. Commit the dropped
+      // position locally (no server call — it's still a temp- node) and kick
+      // off the capture there instead of the normal move-end persist.
+      const pend = node ? pendingUrlCaptureRef.current : null;
+      if (node && pend && pend.id === node.id) {
+        const drag = looseDragRef.current;
+        const fx = drag?.lastX ?? node.pos_x;
+        const fy = drag?.lastY ?? node.pos_y;
+        updateNodeLocal(node.id, { pos_x: fx, pos_y: fy });
+        pendingUrlCaptureRef.current = null;
+        placingNodeRef.current = null;
+        setPlacingNodeId(null);
+        runUrlCapture(pend.id, pend.url, { posX: fx, posY: fy, width: pend.width, height: pend.height, isMain: pend.isMain }, pend.opts);
+        return;
+      }
       if (node) {
         const drag = looseDragRef.current;
         handleNodeMoveEnd(
@@ -1369,15 +1390,32 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // potentially much taller iframe; the user expands via dash handles or
     // the Expand button.
     const width = 1280, height = Math.round(width * 9 / 16);
+    const isMain = nodes.length === 0;
     const { posX, posY } = nextNodePosition({ ...opts, placeLeftOfUrlNodes: true, width });
     const placeholderNode = {
       id, kind: 'site', origin_url: url,
       pos_x: posX, pos_y: posY, width, height,
-      is_main: nodes.length === 0,
+      is_main: isMain,
       current_html: null, _loading: true
     };
     setNodes((prev) => [...prev, placeholderNode]);
 
+    // "+" toolbar add (no anchored position, no cord) → place the node first,
+    // ghost following the cursor, exactly like blank/md/screenshot adds. The
+    // capture only starts once the user drops it (see the placement drop()).
+    if (opts.worldX == null && !opts.linkFromNodeId) {
+      pendingUrlCaptureRef.current = { id, url, width, height, isMain, opts };
+      startPlacement(placeholderNode, { allowTemp: true });
+      return;
+    }
+    await runUrlCapture(id, url, { posX, posY, width, height, isMain }, opts);
+  }
+
+  // Runs the (2-3 min) capture for a URL placeholder already on the canvas and
+  // swaps it for the real persisted node. Split out of handleAddUrl so the "+"
+  // path can defer it until the ghost is dropped.
+  async function runUrlCapture(id, url, geom, opts = {}) {
+    const { posX, posY, width, height, isMain } = geom;
     try {
       // Stream progress so the placeholder shows stage labels (especially
       // useful for the reconstruction path which can take 2-3 minutes).
@@ -1395,7 +1433,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // and the extension's POST /api/snapshot/handoff fills it in later.
       const placement = {
         boardId: board.id, posX, posY, width, height,
-        isMain: nodes.length === 0
+        isMain
       };
       const cap = await api.captureUrlStream(url, null, (step) => {
         setNodes((prev) => prev.map((n) =>
@@ -1405,7 +1443,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const created = await api.createNode({
         boardId: board.id, kind: 'site', originUrl: url,
         posX, posY, width, height,
-        isMain: nodes.length === 0,
+        isMain,
         html: cap.html
       });
       const finalNode = {

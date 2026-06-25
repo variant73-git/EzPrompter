@@ -4688,7 +4688,9 @@ body.rb-ed-light .canvas-section-name-tag.disabled:hover {
   letter-spacing: inherit;
   padding: 0;
   white-space: nowrap;
-  cursor: text;
+  /* The label is the run/reroll text inside a role="button" pill — it must
+     read as a button, not selectable text. Inherit the pill's pointer. */
+  cursor: inherit;
 }
 /* Inline rename input — sits in the pill slot, inherits typography so
    the swap doesn't shift surrounding layout. */
