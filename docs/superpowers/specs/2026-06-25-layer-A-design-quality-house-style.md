@@ -66,9 +66,14 @@ tight — it rides in the prompt on every generation, so signal density matters.
 - **Anti-center reflex.** Centered hero/H1 over a dark image is the default trap. Prefer split
   (50/50), left-content/right-asset, or asymmetric whitespace.
 - **Vary spacing for rhythm** — identical padding everywhere is monotony.
-- **No reflexive container outlines** (a common AI tell). Do not border cards/containers by
-  default. Use an outline ONLY when a source actually has one; otherwise separate with fill,
-  spacing, or a soft shadow. Source-conditional: no borders in the source → none in the output.
+- **No reflexive container outlines OR drop-shadows** (both common AI tells). Do not border or
+  shadow cards/containers by default. Use a border/shadow ONLY when a source actually has one;
+  otherwise separate with fill and spacing alone. Source-conditional: none in the source → none
+  in the output.
+- **Respect source proportions & internal padding.** When a source is provided, match the size
+  of text relative to its buttons, pills, and containers, and especially the internal padding
+  (gap between content and the container's edges). Reproduce the breathing room; don't tighten
+  or inflate it.
 - **Cards are the lazy answer.** Use one only when elevation genuinely communicates hierarchy.
   **Nested cards are always wrong.** Don't wrap everything in a container.
 - Group with negative space, hairlines (`border-t`, `divide-y`) before reaching for boxes.

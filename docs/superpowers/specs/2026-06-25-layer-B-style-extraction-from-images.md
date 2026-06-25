@@ -101,9 +101,13 @@ Both modes emit the same token list; what differs is the source and the confiden
   the character (soft / large-radius vs sharp).
 - **Spacing** — express as **density** (airy / balanced / dense) plus approximate rhythm. No
   false-precision px from an image.
-- **Elevation & borders** — shadows (tinted to the surface hue). State explicitly whether
-  cards/containers have an outline/border *at all*; if they are separated only by fill or
-  shadow, say "no container borders" so the restyler does not invent one (AIs force outlines).
+- **Proportions & padding** (pay close attention — easy to get wrong) — text size *relative to*
+  buttons, pills, and containers, and the **internal padding** (gap between content and the
+  container's edges, generous vs tight). Capture the ratios so the restyler keeps the breathing room.
+- **Elevation, borders & shadows** — state explicitly whether cards/containers have (a) a
+  border/outline and (b) a drop-shadow *at all*; if flat (separated by fill alone), say "no
+  borders, no shadows" so the restyler invents neither (AIs force both). Report either only when
+  the source shows it, with its tint.
 - **Inner UI background** — the canvas color of the *screen* (explicitly NOT the image
   backdrop discarded in Stage 1; name them separately to avoid confusion).
 

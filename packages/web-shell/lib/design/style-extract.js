@@ -42,7 +42,8 @@ STEP 3 — EXTRACT TOKENS, by ROLE not by area:
 - TYPOGRAPHY: family character (serif/sans, geometric/humanist), weight contrast, scale, case. ITALIC: state explicitly whether the type is upright or italic and, if italic, exactly where it is used (e.g. only on a highlighted value). If the type is upright, say "upright, no italic" so the restyler never introduces italic.
 - SHAPE: corner-radius scale (cards vs buttons vs pills) and character (soft/large vs sharp).
 - SPACING: density (airy / balanced / dense) and rhythm — relative, not exact px.
-- ELEVATION & BORDERS: shadows and their tint. State explicitly whether cards / containers have an outline/border at all; if they do NOT (separated only by fill or shadow), say "no container borders" so the restyler does not add one. Report a border only when the source actually shows it.
+- PROPORTIONS & PADDING (pay close attention — easy to get wrong): the size of text RELATIVE to its buttons, pills, and containers (e.g. "small label inside a tall pill"), and the INTERNAL padding — the gap between content and the container's edges (generous vs tight). Capture these ratios so the restyler keeps the same breathing room.
+- ELEVATION, BORDERS & SHADOWS: state explicitly whether cards / containers have (a) a border/outline at all and (b) a drop-shadow at all. If they are flat (separated by fill alone), say "no borders, no shadows" so the restyler invents NEITHER (AIs force both). Report a border or shadow only when the source actually shows it, and note its tint.
 - UI BACKGROUND: the screen's own canvas colour (NOT the discarded image backdrop — name them separately).
 
 INSPIRATION mode instead: read style family (skeuomorphic / flat / brutalist / editorial / glassy / ...), materials & textures, mood, palette, illustration style; THEN translate into concrete UI token suggestions (surface, accent, type, radius, depth). Mark these as invented.

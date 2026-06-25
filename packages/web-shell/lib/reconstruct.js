@@ -521,6 +521,13 @@ COLOR FIDELITY:
 
 TYPOGRAPHY FIDELITY:
 - Use the TYPOGRAPHY DETECTED font-family strings VERBATIM. No silent Inter substitution.
+- Match font-style EXACTLY. If text is upright in the screenshots, keep it upright (font-style: normal). NEVER add italic the source does not show — vision models over-italicize titles/labels/numbers; do not. Use italic ONLY where the screenshot text is visibly slanted.
+
+BORDER & SHADOW FIDELITY:
+- Only give a card/container a border, outline, or drop-shadow if the screenshot actually shows it. Do NOT add borders or subtle shadows the source lacks (common vision-model tells). When cards are flat (separated by fill alone), reproduce exactly that — no border, no shadow.
+
+PROPORTION & PADDING FIDELITY:
+- Match the size of text RELATIVE to its buttons, pills, and containers as shown. Match the INTERNAL padding — the gap between content and each container's edges. Do not tighten or inflate this breathing room; reproduce the proportions in the screenshots.
 
 TEXT CONTENT FIDELITY:
 - Preserve exact text from the screenshots. No AI clichés.
