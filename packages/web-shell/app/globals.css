@@ -4859,8 +4859,12 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
   cursor: nesw-resize;
 }
 .canvas-section-handle-se {
-  bottom: -10px;
-  right: -10px;
+  /* Offset inverse-scaled to MATCH the inverse-scaled size below. The box is
+     screen-constant; a fixed world-px offset shrinks on screen at zoom-out and
+     drifts the icon off the corner. Scaling the offset keeps the grip glued to
+     the frame's SE corner at every zoom. */
+  bottom: calc(-10px / var(--canvas-scale, 1));
+  right: calc(-10px / var(--canvas-scale, 1));
   /* Hit area inverse-scaled and -50% from prior pass (56 -> 28). Icon
      stays stable on screen at any zoom. */
   width: calc(28px / var(--canvas-scale, 1));
@@ -5743,7 +5747,10 @@ body.rb-ed-light .border-trail-dot {
    progress ring (z-index 3) + its % sit above this. */
 .cnode-gen-overlay {
   position: absolute;
-  top: calc(36px / max(0.30, var(--canvas-scale, 1)));  /* topbar height — clears it */
+  /* MUST match the topbar's real height (--tbh, floor 0.50). The topbar floors
+     its inverse-scale at 0.50; using 0.30 here made the overlay start lower than
+     the topbar bottom below 50% zoom, exposing a sliver of the site above it. */
+  top: calc(36px / max(0.50, var(--canvas-scale, 1)));
   left: 0;
   right: 0;
   bottom: 0;
