@@ -3166,6 +3166,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       '.reset-confirm-overlay',
       '.canvas-context-menu',
       '.empty-drop-menu',
+      '.cnode-version-menu',
+      '.cnode-version-ctx-menu',
       '.prompt-dock',
       '.boards-sidebar',
       'textarea',

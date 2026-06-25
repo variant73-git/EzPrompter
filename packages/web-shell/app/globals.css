@@ -5198,15 +5198,15 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
 .cnode-asset-dims {
   position: absolute;
   right: 0;
-  /* Anchor the label's TOP to the node's bottom edge + a CONSTANT on-screen
-     gap. Using top+margin (not bottom) makes the gap independent of the text
-     height, so it reads the SAME visual distance at every zoom — it never
-     overlaps the node and never drifts away on zoom-out (the old `bottom`
-     approach grew the gap as the text shrank). line-height:1 keeps the gap
-     predictable. */
+  /* Anchor the label's TOP to the node's bottom edge + a gap that SCALES WITH
+     the node (proportional, so it doesn't read too close zoomed in or too far
+     zoomed out) BUT never drops below a ~6px on-screen floor — without the floor
+     the proportional gap shrank to 2-3px far out and the text overlapped the
+     node's base. So: on-screen gap = max(6px, 11.04 × scale), then ÷ scale to
+     express it in the node's world units. line-height:1 keeps it predictable. */
   top: 100%;
   bottom: auto;
-  margin-top: calc(8px / var(--canvas-scale, 1));
+  margin-top: calc(max(10.14px, 18.6576px * max(0.15, var(--canvas-scale, 1))) / var(--canvas-scale, 1));
   line-height: 1;
   /* Font scales naturally until 15% zoom, then LOCKS at the 15% on-screen size
      (keeps shrinking with the node down to 15%, then holds). */
