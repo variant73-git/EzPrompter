@@ -14,7 +14,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
-import { HOUSE_STYLE_GUARDRAILS } from './design/house-style.js';
+import { HOUSE_STYLE_GUARDRAILS, HOUSE_STYLE_ABSORB } from './design/house-style.js';
 
 const DEFAULT_MODEL = process.env.UNCRAFT_LLM_MODEL || 'claude-sonnet-4-6';
 
@@ -22,7 +22,7 @@ const DEFAULT_MODEL = process.env.UNCRAFT_LLM_MODEL || 'claude-sonnet-4-6';
 // always-on guardrails apply here (the INVENT directives are for from-scratch
 // generation, gated to "no design source"). The reference's own fonts/colours
 // are honoured by the PRESERVE rules in each prompt below.
-const TASTE_PRINCIPLES = `\nUse the reference's exact display + body fonts and hex tokens as declared; never silently substitute them.\n\n${HOUSE_STYLE_GUARDRAILS}\n`;
+const TASTE_PRINCIPLES = `\n${HOUSE_STYLE_ABSORB}\n\n${HOUSE_STYLE_GUARDRAILS}\n`;
 
 const EXTRACT_SYSTEM = `You extract visible content from a website's HTML. Output ONLY a single JSON object — no markdown fences, no preface, no commentary, no surrounding text.
 

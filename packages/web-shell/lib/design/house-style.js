@@ -69,4 +69,14 @@ export const HOUSE_STYLE_INVENT = `WHEN INVENTING DESIGN FROM A PROMPT (only whe
 - Reach for a deliberate, characterful typeface outside the AI-default set. Serif only for editorial, never on clean dashboards.
 - Vary spacing for rhythm; lead with an asymmetric or split composition over a centered one.`;
 
-export const HOUSE_STYLE = `${HOUSE_STYLE_GUARDRAILS}\n\n${HOUSE_STYLE_INVENT}`;
+export const HOUSE_STYLE_ABSORB = `STYLE ABSORPTION — when a style source is provided (an HTML reference, a design.md, or an extracted image brief), IT is the SOLE authority for how the result looks. Absorb EVERY visual characteristic from it and take NOTHING from your own defaults:
+- font family, font-STYLE (upright vs italic — match it exactly), weight, case, letter-spacing
+- color: surface, text, and every accent/role — exact values, not approximations
+- corner radius (per element type: cards vs buttons vs pills), and border presence/width/color
+- shadow presence + softness + tint (none if the source has none), and overall elevation
+- spacing rhythm AND internal padding (the gap between content and each container's edges)
+- the size of text RELATIVE to buttons, pills, and containers
+- overall proportions and density
+The CONTENT keeps its own words and numbers; EVERYTHING visual comes from the style source. If the style source does not pin a property, derive it from the style source's own system — NEVER from a generic AI default. A characteristic the style source has must appear in the output; one it lacks must NOT be invented.`;
+
+export const HOUSE_STYLE = `${HOUSE_STYLE_GUARDRAILS}\n\n${HOUSE_STYLE_ABSORB}\n\n${HOUSE_STYLE_INVENT}`;
