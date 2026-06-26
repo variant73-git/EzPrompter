@@ -1532,7 +1532,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
               {ICON_BRAIN}
             </motion.span>
             <AnimatePresence initial={false}>
-              {showBrain && (
+              {showBrain && !isLateral && (
                 <motion.span
                   className="prompt-dock-pill-label"
                   initial={{ width: 0, opacity: 0 }}

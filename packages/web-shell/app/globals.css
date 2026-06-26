@@ -6020,17 +6020,21 @@ body.rb-ed-active .prompt-dock { display: none !important; }
   color: #38bdf8;
 }
 
-/* Lateral docks are narrow: the expanded "Add URL" label stretches the send +
-   mic buttons. Drop the label and collapse the active pill to a 32px blue
-   circle (icon only) when docked left/right. */
-.prompt-dock.dock-left .prompt-dock-pill.active.add-url .prompt-dock-pill-label,
-.prompt-dock.dock-right .prompt-dock-pill.active.add-url .prompt-dock-pill-label {
+/* Lateral docks are narrow: the expanded pill labels (Add URL, Brainstorming)
+   stretch the send + mic. Drop every pill label and collapse the pills to
+   icon-only circles. They are a uniform 34px in EVERY state (idle / hover /
+   active) — same as the mic + send — so the hover background is the exact same
+   size as the selected circle. Only affects .prompt-dock-pill (url + brain);
+   the attach button is .prompt-dock-icon-btn, untouched. */
+.prompt-dock.dock-left .prompt-dock-pill-label,
+.prompt-dock.dock-right .prompt-dock-pill-label {
   display: none;
 }
-.prompt-dock.dock-left .prompt-dock-pill.active.add-url,
-.prompt-dock.dock-right .prompt-dock-pill.active.add-url {
+.prompt-dock.dock-left .prompt-dock-pill,
+.prompt-dock.dock-right .prompt-dock-pill {
   box-sizing: border-box;
-  width: 32px;
+  width: 34px;
+  height: 34px;
   padding: 0;
   gap: 0;
   justify-content: center;
