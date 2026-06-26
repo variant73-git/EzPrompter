@@ -6020,6 +6020,23 @@ body.rb-ed-active .prompt-dock { display: none !important; }
   color: #38bdf8;
 }
 
+/* Lateral docks are narrow: the expanded "Add URL" label stretches the send +
+   mic buttons. Drop the label and collapse the active pill to a 32px blue
+   circle (icon only) when docked left/right. */
+.prompt-dock.dock-left .prompt-dock-pill.active.add-url .prompt-dock-pill-label,
+.prompt-dock.dock-right .prompt-dock-pill.active.add-url .prompt-dock-pill-label {
+  display: none;
+}
+.prompt-dock.dock-left .prompt-dock-pill.active.add-url,
+.prompt-dock.dock-right .prompt-dock-pill.active.add-url {
+  box-sizing: border-box;
+  width: 32px;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
 .prompt-dock-pill.active.brain {
   background: rgba(139, 92, 246, 0.14);
   border-color: rgba(139, 92, 246, 0.55);
