@@ -87,14 +87,10 @@ function resolveDownCollision(x, y, w, h, rows, gap) {
 const SECTION_SIDE_PAD = 165;
 const SECTION_TOP_PAD = 260;
 
-// A "section" is a connected component of the board graph with >= 2 nodes.
-// Returns each section's padded bounding box (an obstacle rect). Rows with
-// no id are treated as standalone — they never form a section.
-//
-// `excludeNodeId`: skip the section that CONTAINS this node. Used when placing
-// a node that BELONGS to that section (e.g. an extracted/derived node landing
-// next to its source) — its own section's frame must not shove it out.
-function sectionRects(rows, edgeRows, excludeNodeId = null) {
+// Connected components of the board graph. Returns an array of member arrays
+// (each member is a node row). Rows without an id are standalone and never
+// joined. Shared by section-frame collision AND the section de-overlap planner.
+function componentMembers(rows, edgeRows) {
   const byId = new Map();
   for (const r of rows) if (r.id) byId.set(r.id, r);
   const parent = new Map();
@@ -110,28 +106,96 @@ function sectionRects(rows, edgeRows, excludeNodeId = null) {
     if (!groups.has(root)) groups.set(root, []);
     groups.get(root).push(byId.get(id));
   }
+  return [...groups.values()];
+}
+
+// The padded bounding box of a set of member nodes — MIRRORS the rendered
+// section footprint (SECTION_TOP_PAD reserves the title-chip band). This is
+// both the collision obstacle and the thing two sections must never overlap.
+function frameRect(members) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const m of members) {
+    const x = m.pos_x ?? 0, y = m.pos_y ?? 0, w = m.width ?? 0, h = m.height ?? 0;
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x + w > maxX) maxX = x + w;
+    if (y + h > maxY) maxY = y + h;
+  }
+  return {
+    pos_x: minX - SECTION_SIDE_PAD,
+    pos_y: minY - SECTION_TOP_PAD,
+    width: (maxX - minX) + SECTION_SIDE_PAD * 2,
+    height: (maxY - minY) + SECTION_TOP_PAD + SECTION_SIDE_PAD,
+  };
+}
+
+// A "section" is a connected component of the board graph with >= 2 nodes.
+// Returns each section's padded bounding box (an obstacle rect).
+//
+// `excludeNodeId`: skip the section that CONTAINS this node. Used when placing
+// a node that BELONGS to that section (e.g. an extracted/derived node landing
+// next to its source) — its own section's frame must not shove it out.
+function sectionRects(rows, edgeRows, excludeNodeId = null) {
   const rects = [];
-  for (const members of groups.values()) {
+  for (const members of componentMembers(rows, edgeRows)) {
     if (members.length < 2) continue;
-    // The derived node's own section — don't treat it as an obstacle, so the
-    // node can land inside the section it's joining.
     if (excludeNodeId && members.some((m) => m.id === excludeNodeId)) continue;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const m of members) {
-      const x = m.pos_x ?? 0, y = m.pos_y ?? 0, w = m.width ?? 0, h = m.height ?? 0;
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x + w > maxX) maxX = x + w;
-      if (y + h > maxY) maxY = y + h;
-    }
-    rects.push({
-      pos_x: minX - SECTION_SIDE_PAD,
-      pos_y: minY - SECTION_TOP_PAD,                       // reserve the title-chip band
-      width: (maxX - minX) + SECTION_SIDE_PAD * 2,
-      height: (maxY - minY) + SECTION_TOP_PAD + SECTION_SIDE_PAD,
-    });
+    rects.push(frameRect(members));
   }
   return rects;
+}
+
+// Gap kept BETWEEN two section frames after a de-overlap shift. The frames
+// already bake in their own pads, so a small gap is plenty of breathing room.
+const SECTION_VS_SECTION_GAP = 24;
+
+// Pure planner for the "a section gets its OWN space" rule. Placement avoids
+// collisions per node, but a section's FRAME is bigger than its member nodes
+// (by the pads above), so a freshly-wired chain — built one node at a time —
+// can form a section whose frame intrudes on a neighbour even though no two
+// nodes touched. When an edge has just joined `activeNodeId` into a section,
+// this computes the minimal DOWNWARD shift (consistent with every other
+// placement path, which only pushes down) that clears the active section's
+// frame from everything it must not cover: every OTHER section's frame AND
+// every loose standalone node. Returns { ids, delta } of member nodes to move
+// as a unit, or null when nothing overlaps.
+export function planSectionDeoverlap(rows, edgeRows, activeNodeId, gap = SECTION_VS_SECTION_GAP) {
+  const comps = componentMembers(rows, edgeRows);
+  const active = comps.find((m) => m.some((n) => n.id === activeNodeId));
+  if (!active || active.length < 2) return null;
+  // Obstacles the active section's frame must clear: other sections become
+  // their padded frame; a loose node (its own 1-node component) is its raw
+  // rect — a section frame must not cover a stray node either.
+  const others = [];
+  for (const m of comps) {
+    if (m === active) continue;
+    others.push(m.length >= 2 ? frameRect(m) : m[0]);
+  }
+  if (!others.length) return null;
+  const af = frameRect(active);
+  const { y: newY } = resolveDownCollision(af.pos_x, af.pos_y, af.width, af.height, others, gap);
+  const delta = newY - af.pos_y;
+  if (delta <= 0) return null;
+  return { ids: active.map((n) => n.id).filter(Boolean), delta };
+}
+
+// DB-applying wrapper: read the board, plan the shift, and move the active
+// section's nodes as a UNIT so its frame no longer overlaps any other section.
+// Safe to call after every edge insert — a no-op when there's nothing to fix,
+// and it never throws into the caller (edge creation must succeed regardless).
+export async function deoverlapSectionForEdge(boardId, sql, activeNodeId) {
+  try {
+    const rows = await sql`SELECT id, pos_x, pos_y, width, height FROM nodes WHERE board_id = ${boardId}`;
+    if (!rows.length) return { moved: 0 };
+    const edgeRows = await sql`SELECT source_node_id, target_node_id FROM edges WHERE board_id = ${boardId}`;
+    const plan = planSectionDeoverlap(rows, edgeRows, activeNodeId);
+    if (!plan) return { moved: 0 };
+    await sql`UPDATE nodes SET pos_y = pos_y + ${plan.delta} WHERE board_id = ${boardId} AND id = ANY(${plan.ids})`;
+    return { moved: plan.ids.length, delta: plan.delta };
+  } catch (e) {
+    console.warn('[canvas-layout] deoverlapSectionForEdge failed', e?.message || e);
+    return { moved: 0 };
+  }
 }
 
 // Load the board's collision obstacles: every node rect PLUS a padded frame

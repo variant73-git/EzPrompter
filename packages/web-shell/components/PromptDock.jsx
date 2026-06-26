@@ -309,6 +309,15 @@ function chatReducer(state, action) {
         streaming: true,
         activeToolCalls: [],
       };
+    // A standalone assistant line NOT produced by an agent run — used to
+    // acknowledge a bare asset drop ("Added X. Want me to do anything with
+    // it?") without invoking the LLM. Its id is 'note-*' so it's never treated
+    // as a transient/streaming bubble that the next token would append to.
+    case 'ASSISTANT_NOTE':
+      return {
+        ...state,
+        messages: [...state.messages, { id: `note-${Date.now()}`, role: 'assistant', content: action.content, tool_calls: null }],
+      };
     case 'ASSISTANT_TOKEN':
       return {
         ...state,
@@ -1211,8 +1220,18 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
     // attach + text still goes to the chat agent (multimodal) below.
     if (imageFile && !value) {
       const file = imageFile;
+      const label = file.name || 'your image';
       clearImage();
       if (onQueueFiles) onQueueFiles([file]);
+      // Confirm in the chat that the asset landed, and offer to act on it —
+      // WITHOUT invoking the agent. A bare drop is just placement; the user
+      // opted in to autonomy only by typing intent. This is the canned
+      // acknowledgment, not an agent turn.
+      dispatchChat({
+        type: 'ASSISTANT_NOTE',
+        content: `Added "${label}" to the canvas. If you'd like me to do something with it — build a site from it, transfer its style onto a site, or anything else — just tell me.`,
+      });
+      setChatCollapsed(false);
       return;
     }
 

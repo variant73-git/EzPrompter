@@ -1,4 +1,5 @@
 import { sql } from '../../db.js';
+import { deoverlapSectionForEdge } from '../../canvas-layout.js';
 
 export const addEdgeTool = {
   name: 'addEdge',
@@ -28,6 +29,14 @@ export const addEdgeTool = {
       VALUES (${ctx.boardId}, ${fromNodeId}, ${toNodeId}, ${kind})
       RETURNING id, source_node_id AS from_node_id, target_node_id AS to_node_id, kind, created_at
     `;
+
+    // Sections must NEVER overlap. This edge may have just formed or extended a
+    // section whose padded FRAME now intrudes on a neighbour — the member nodes
+    // were placed without colliding, but a section frame is larger than its
+    // nodes. Shift the section clear as a unit (no-op when nothing overlaps).
+    // The board is refetched after the run, so the moved positions render.
+    await deoverlapSectionForEdge(ctx.boardId, sql, toNodeId);
+
     return { id: edge.id, fromNodeId: edge.from_node_id, toNodeId: edge.to_node_id, kind: edge.kind };
   },
 };

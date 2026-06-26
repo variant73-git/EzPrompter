@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { placeStackDown, placeRightOfSources, resolvePlacement } from './canvas-layout.js';
+import { placeStackDown, placeRightOfSources, resolvePlacement, planSectionDeoverlap } from './canvas-layout.js';
 
 // The placement helpers call `sql` as a tagged template and return rows.
 // A fake that ignores the template and resolves to a fixed row set is enough.
@@ -137,5 +137,71 @@ describe('section-aware placement (keep new nodes clear of section frames)', () 
     // With the exclusion, it stays at the drop point.
     const kept = await resolvePlacement('board', 1500, 1050, 600, 600, seqSql(nodes, edges), 'a');
     expect(kept).toEqual({ x: 1500, y: 1050 });
+  });
+});
+
+describe('planSectionDeoverlap (#3 — sections must never overlap)', () => {
+  // Section A (existing): a1→a2 stacked at the top.
+  const sectionA = [
+    { id: 'a1', pos_x: 0, pos_y: 0, width: 200, height: 200 },
+    { id: 'a2', pos_x: 0, pos_y: 300, width: 200, height: 200 },
+  ];
+  const edgeA = { source_node_id: 'a1', target_node_id: 'a2' };
+
+  it('shifts the active section down when its frame intrudes on a neighbour', () => {
+    // Section B (just wired) sits only ~100px below A's nodes — no node
+    // collides, but B's frame (260px title band on top) overlaps A's frame.
+    const nodes = [
+      ...sectionA,
+      { id: 'b1', pos_x: 0, pos_y: 600, width: 200, height: 200 },
+      { id: 'b2', pos_x: 0, pos_y: 900, width: 200, height: 200 },
+    ];
+    const edges = [edgeA, { source_node_id: 'b1', target_node_id: 'b2' }];
+    const plan = planSectionDeoverlap(nodes, edges, 'b2');
+    expect(plan).not.toBeNull();
+    expect([...plan.ids].sort()).toEqual(['b1', 'b2']);
+    // A's frame bottom is y=665 (maxY 500 + SIDE_PAD 165); B's frame top is
+    // y=340 (minY 600 − TOP_PAD 260). Clearing with the 24px gap pushes B's
+    // frame top to 689 → delta 349.
+    expect(plan.delta).toBe(349);
+  });
+
+  it('returns null when the two sections are already clear of each other', () => {
+    const nodes = [
+      ...sectionA,
+      { id: 'b1', pos_x: 0, pos_y: 2000, width: 200, height: 200 },
+      { id: 'b2', pos_x: 0, pos_y: 2300, width: 200, height: 200 },
+    ];
+    const edges = [edgeA, { source_node_id: 'b1', target_node_id: 'b2' }];
+    expect(planSectionDeoverlap(nodes, edges, 'b2')).toBeNull();
+  });
+
+  it('returns null when there is only one section (nothing to clear against)', () => {
+    const edges = [edgeA];
+    expect(planSectionDeoverlap(sectionA, edges, 'a2')).toBeNull();
+  });
+
+  it('returns null when the active node is standalone (no section formed)', () => {
+    const nodes = [...sectionA, { id: 'loner', pos_x: 0, pos_y: 5000, width: 200, height: 200 }];
+    const edges = [edgeA];
+    expect(planSectionDeoverlap(nodes, edges, 'loner')).toBeNull();
+  });
+
+  it('shifts the active section down when its frame would cover a LOOSE node', () => {
+    // A stray node `L` sits just above where section B forms. No edge touches
+    // L, but B's frame (260px title band on top) would cover it. The section
+    // must clear the loose node too, not just other sections.
+    const nodes = [
+      { id: 'L', pos_x: 0, pos_y: 0, width: 200, height: 200 },
+      { id: 'b1', pos_x: 0, pos_y: 400, width: 200, height: 200 },
+      { id: 'b2', pos_x: 0, pos_y: 700, width: 200, height: 200 },
+    ];
+    const edges = [{ source_node_id: 'b1', target_node_id: 'b2' }];
+    const plan = planSectionDeoverlap(nodes, edges, 'b2');
+    expect(plan).not.toBeNull();
+    expect([...plan.ids].sort()).toEqual(['b1', 'b2']);
+    // B's frame top is y=140 (minY 400 − TOP_PAD 260); L's bottom is y=200.
+    // Clearing with the 24px gap pushes B's frame top to 224 → delta 84.
+    expect(plan.delta).toBe(84);
   });
 });
