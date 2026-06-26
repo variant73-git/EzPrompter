@@ -1205,12 +1205,20 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
       }
     }
 
+    // Image attached with NO text → place it on the canvas with the ghost
+    // (the manual-upload behaviour: node follows the cursor, click to drop),
+    // NOT a chat message. A bare image is an asset, not a build/chat request.
+    // attach + text still goes to the chat agent (multimodal) below.
+    if (imageFile && !value) {
+      const file = imageFile;
+      clearImage();
+      if (onQueueFiles) onQueueFiles([file]);
+      return;
+    }
+
     // Free-text path → chat agent. If an image is attached, forward it as a
     // multimodal user message so the agent can SEE the reference and decide
     // what to do (ingest as asset, edit it, describe its style, etc.).
-    // Image-only submits pass an empty text — the server side handles that
-    // case by displaying a clean "[image attachment: file.png]" in the
-    // chat history, without putting words in the user's mouth.
     if (value || imageFile) {
       const text = value;
       const attachment = imageFile ? await fileToAttachment(imageFile) : null;
