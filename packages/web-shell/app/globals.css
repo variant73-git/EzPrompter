@@ -5743,6 +5743,15 @@ body.rb-ed-light .border-trail-dot {
   filter: drop-shadow(0 0 3px var(--cnode-port-fill, var(--accent)));
   transition: stroke-dashoffset 0.12s linear;  /* smooth between ticks */
 }
+/* White head — a gradient contained WITHIN the stroke at the leading tip.
+   Overlays the arc exactly (same width + round cap, no glow), stroke is the
+   userSpaceOnUse gradient from the component. */
+.cnode-progress-head {
+  fill: none;
+  stroke-width: 4px;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
 .cnode-progress-num {
   position: absolute;
   /* Bottom-right of the frame (= bottom-right of the body, since the topbar

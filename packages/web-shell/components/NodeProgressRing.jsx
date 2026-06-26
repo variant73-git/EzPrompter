@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { progressAt } from '../lib/generation-progress.js';
 
 // How often the estimate advances. 120ms is smooth to the eye and cheap.
@@ -87,21 +87,28 @@ export function NodeProgressRing({ pct, width, height }) {
   const r = Math.min(CORNER_PX / Math.max(0.15, scale), width / 2, height / 2);
   const d = buildPerimeterPath(width, height, r);
 
-  // Tip glow: a soft white radial fade at the LEADING edge of the filling
-  // stroke. We read the point at pct% along the live path (same coordinate
-  // space as the stroke, so it stays glued to the tip through the stretch).
+  // White head: a gradient CONTAINED within the stroke at its leading tip —
+  // a short segment (HEAD_LEN units of the 100 perimeter) overlaid on the arc,
+  // same width/linecap, fading from transparent into white (0.4) at the very
+  // tip. We read the tip + a point behind it to orient the gradient along the
+  // stroke direction (same coordinate space as the path, so it stays aligned
+  // through the preserveAspectRatio=none stretch).
+  const HEAD_LEN = 12;
+  // Unique per instance so multiple generating nodes don't share one gradient
+  // (each head's orientation differs) — url(#id) resolves to the first match.
+  const gradId = `cnode-head-grad-${useId().replace(/:/g, '')}`;
   const arcRef = useRef(null);
-  const [tip, setTip] = useState(null);
+  const [head, setHead] = useState(null);
   useEffect(() => {
     const p = arcRef.current;
-    if (!p || pct <= 0) { setTip(null); return; }
+    if (!p || pct <= 0) { setHead(null); return; }
     try {
       const total = p.getTotalLength();
-      const pt = p.getPointAtLength(total * (pct / 100));
-      setTip({ x: pt.x, y: pt.y });
-    } catch { setTip(null); }
+      const tip = p.getPointAtLength(total * (pct / 100));
+      const behind = p.getPointAtLength(total * (Math.max(0, pct - HEAD_LEN) / 100));
+      setHead({ tx: tip.x, ty: tip.y, bx: behind.x, by: behind.y });
+    } catch { setHead(null); }
   }, [pct, width, height, d]);
-  const tipR = Math.max(width, height) * 0.06;
 
   return (
     <div className="cnode-progress" aria-hidden="true">
@@ -110,12 +117,21 @@ export function NodeProgressRing({ pct, width, height }) {
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="none"
       >
-        <defs>
-          <radialGradient id="cnode-progress-tip-grad">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.4" />
-            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
-          </radialGradient>
-        </defs>
+        {head && (
+          <defs>
+            <linearGradient
+              id={gradId}
+              gradientUnits="userSpaceOnUse"
+              x1={head.bx}
+              y1={head.by}
+              x2={head.tx}
+              y2={head.ty}
+            >
+              <stop offset="0%" stopColor="#ffffff" stopOpacity="0" />
+              <stop offset="100%" stopColor="#ffffff" stopOpacity="0.4" />
+            </linearGradient>
+          </defs>
+        )}
         <path className="cnode-progress-track" d={d} pathLength="100" />
         <path
           ref={arcRef}
@@ -125,13 +141,13 @@ export function NodeProgressRing({ pct, width, height }) {
           strokeDasharray="100"
           strokeDashoffset={100 - pct}
         />
-        {tip && (
-          <circle
-            className="cnode-progress-tip"
-            cx={tip.x}
-            cy={tip.y}
-            r={tipR}
-            fill="url(#cnode-progress-tip-grad)"
+        {head && (
+          <path
+            className="cnode-progress-head"
+            d={d}
+            pathLength="100"
+            stroke={`url(#${gradId})`}
+            strokeDasharray={`0 ${Math.max(0, pct - HEAD_LEN)} ${Math.min(HEAD_LEN, pct)} 100`}
           />
         )}
       </svg>
