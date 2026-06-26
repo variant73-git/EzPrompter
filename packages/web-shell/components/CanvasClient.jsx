@@ -4303,7 +4303,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             return (
               <div
                 key={`bg-${s.id}`}
-                className={`canvas-section-frame${selectedSectionId === s.id ? ' selected' : ''}${pv ? ' adopt-preview' : ''}`}
+                className={`canvas-section-frame${(selectedSectionId === s.id || floatingRunSectionId === s.id) ? ' selected' : ''}${pv ? ' adopt-preview' : ''}`}
                 style={{
                   left: pv ? pv.left : s.x,
                   top: pv ? pv.top : s.y,

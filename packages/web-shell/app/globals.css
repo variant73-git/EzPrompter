@@ -4861,12 +4861,14 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
   cursor: nesw-resize;
 }
 .canvas-section-handle-se {
-  /* Offset inverse-scaled to MATCH the inverse-scaled size below. The box is
-     screen-constant; a fixed world-px offset shrinks on screen at zoom-out and
-     drifts the icon off the corner. Scaling the offset keeps the grip glued to
-     the frame's SE corner at every zoom. */
-  bottom: calc(-10px / var(--canvas-scale, 1));
-  right: calc(-10px / var(--canvas-scale, 1));
+  /* Anchor the grip a margin INSIDE the frame's rounded SE corner at every zoom.
+     The corner radius is world-fixed (24px), so the visible corner moves inward
+     as you zoom IN — a screen-constant offset then drifts the grip outside it,
+     and a world-constant offset overlaps the border when zoomed OUT.
+     max(world, screen) fixes both: the world term (12px) tracks the corner on
+     zoom-in; the screen floor (7px) keeps a small inside-margin on zoom-out. */
+  bottom: max(12px, calc(7px / var(--canvas-scale, 1)));
+  right: max(12px, calc(7px / var(--canvas-scale, 1)));
   /* Hit area inverse-scaled and -50% from prior pass (56 -> 28). Icon
      stays stable on screen at any zoom. */
   width: calc(28px / var(--canvas-scale, 1));
@@ -4877,7 +4879,7 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;
-  padding: calc(3px / var(--canvas-scale, 1));
+  padding: 0;
 }
 /* Section context menu separator — hairline between groups of items.
    Inherits the frosted-menu hairline token used elsewhere. */
@@ -6030,8 +6032,8 @@ body.rb-ed-active .prompt-dock { display: none !important; }
 .prompt-dock.dock-right .prompt-dock-pill-label {
   display: none;
 }
-.prompt-dock.dock-left .prompt-dock-pill,
-.prompt-dock.dock-right .prompt-dock-pill {
+.prompt-dock.dock-left .prompt-dock-pill:not(.prompt-dock-model-btn),
+.prompt-dock.dock-right .prompt-dock-pill:not(.prompt-dock-model-btn) {
   box-sizing: border-box;
   width: 34px;
   height: 34px;
