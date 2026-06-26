@@ -24,8 +24,11 @@ const CYCLE_MS = 1500;
 export function colorStyle(colors) {
   const uniq = [...new Set((colors || []).filter(Boolean))];
   if (uniq.length > 1) {
+    // Repeat the first colour at the end + 200% background so the gradient can
+    // scroll seamlessly (the .is-gradient class animates background-position).
     return {
-      backgroundImage: `linear-gradient(90deg, ${uniq.join(', ')})`,
+      backgroundImage: `linear-gradient(90deg, ${[...uniq, uniq[0]].join(', ')})`,
+      backgroundSize: '200% auto',
       WebkitBackgroundClip: 'text',
       backgroundClip: 'text',
       color: 'transparent',
@@ -46,10 +49,13 @@ export default function WorkingIndicator({ colors = [], dots = false, className 
     return () => clearInterval(id);
   }, []);
   const style = colorStyle(colors);
+  // More than one distinct node colour → animate the gradient (is-gradient).
+  const isGradient = [...new Set((colors || []).filter(Boolean))].length > 1;
+  const g = isGradient ? ' is-gradient' : '';
   return (
     <span className={`working-indicator ${className}`.trim()} aria-live="polite">
-      <span key={i} className="working-indicator-text" style={style}>{WORKING_PHRASES[i]}</span>
-      {dots && <span className="working-indicator-dots" style={style}>…</span>}
+      <span key={i} className={`working-indicator-text${g}`} style={style}>{WORKING_PHRASES[i]}</span>
+      {dots && <span className={`working-indicator-dots${g}`} style={style}>…</span>}
     </span>
   );
 }

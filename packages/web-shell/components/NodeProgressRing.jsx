@@ -86,6 +86,23 @@ export function NodeProgressRing({ pct, width, height }) {
   // so the ring corners track the node's corners at every zoom level.
   const r = Math.min(CORNER_PX / Math.max(0.15, scale), width / 2, height / 2);
   const d = buildPerimeterPath(width, height, r);
+
+  // Tip glow: a soft white radial fade at the LEADING edge of the filling
+  // stroke. We read the point at pct% along the live path (same coordinate
+  // space as the stroke, so it stays glued to the tip through the stretch).
+  const arcRef = useRef(null);
+  const [tip, setTip] = useState(null);
+  useEffect(() => {
+    const p = arcRef.current;
+    if (!p || pct <= 0) { setTip(null); return; }
+    try {
+      const total = p.getTotalLength();
+      const pt = p.getPointAtLength(total * (pct / 100));
+      setTip({ x: pt.x, y: pt.y });
+    } catch { setTip(null); }
+  }, [pct, width, height, d]);
+  const tipR = Math.max(width, height) * 0.06;
+
   return (
     <div className="cnode-progress" aria-hidden="true">
       <svg
@@ -93,14 +110,30 @@ export function NodeProgressRing({ pct, width, height }) {
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="none"
       >
+        <defs>
+          <radialGradient id="cnode-progress-tip-grad">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.4" />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+          </radialGradient>
+        </defs>
         <path className="cnode-progress-track" d={d} pathLength="100" />
         <path
+          ref={arcRef}
           className="cnode-progress-arc"
           d={d}
           pathLength="100"
           strokeDasharray="100"
           strokeDashoffset={100 - pct}
         />
+        {tip && (
+          <circle
+            className="cnode-progress-tip"
+            cx={tip.x}
+            cy={tip.y}
+            r={tipR}
+            fill="url(#cnode-progress-tip-grad)"
+          />
+        )}
       </svg>
     </div>
   );

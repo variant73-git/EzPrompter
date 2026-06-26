@@ -5943,6 +5943,16 @@ body.rb-ed-active .prompt-dock { display: none !important; }
   animation: working-in 360ms ease-out;
 }
 .working-indicator-dots { letter-spacing: 1px; }
+/* Multi-category chain → the text gradient flows through all node colours. */
+.working-indicator-text.is-gradient {
+  animation: working-in 360ms ease-out, working-gradient-shift 3s linear infinite;
+}
+.working-indicator-dots.is-gradient {
+  animation: working-gradient-shift 3s linear infinite;
+}
+@keyframes working-gradient-shift {
+  to { background-position: 200% center; }
+}
 @keyframes working-in {
   from { opacity: 0; transform: translateY(2px); }
   to   { opacity: 1; transform: none; }
