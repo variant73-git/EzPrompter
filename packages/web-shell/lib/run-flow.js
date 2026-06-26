@@ -21,6 +21,7 @@ import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import { HOUSE_STYLE } from './design/house-style.js';
 import { extractStyleFromImage } from './design/style-extract.js';
+import { stripCardBorders } from './design/strip-borders.js';
 
 const DEFAULT_MODEL = process.env.UNCRAFT_LLM_MODEL || 'claude-sonnet-4-6';
 
@@ -241,7 +242,10 @@ export async function runCompose({ target, sources, model, modelId, systemPrompt
     maxTokens: 32000,
     temperature: 0.4
   });
-  const html = stripCodeFences(text);
+  // Hardcoded "no border by default": strip the reflexive thin card outline the
+  // model adds (image sources have no DOM to read as ground truth — prompt bias
+  // alone can't guarantee it). Conservative — only inline card-signature borders.
+  const html = stripCardBorders(stripCodeFences(text));
   if (!html || !/<html/i.test(html)) {
     throw new Error('Model returned no usable HTML.');
   }
