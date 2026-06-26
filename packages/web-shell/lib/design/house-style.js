@@ -40,7 +40,7 @@ Color
 - No "AI purple/blue" gradients, no oversaturated accents, no neon / outer glows. Shadows soft and tinted to the background hue.
 
 Layout & materiality
-- Do NOT add a border/outline OR a drop-shadow behind cards/containers by reflex (both are common AI tells). Use a container border or shadow ONLY when a provided source actually has one; otherwise separate with background fill and spacing alone. Source has none → output has none.
+- Do NOT add a border/outline OR a drop-shadow behind cards/containers by reflex (both are common AI tells). Use a container border or shadow ONLY when a provided source actually has one; otherwise separate with background fill and spacing alone. Source has none → output has none. STRONG BIAS: a thin 1px card outline is the single most common thing you hallucinate — most modern UIs separate cards with fill/shadow/spacing, NOT a border. When you are not CERTAIN the source shows a distinct outline, assume there is NONE and emit no border.
 - Respect the source's proportions: the size of text relative to its buttons, pills, and containers, and especially the internal padding (the gap between content and the container's edges). When a source is provided, reproduce these; never tighten or inflate them.
 - Cards are the lazy answer: group with whitespace or hairlines first; nested cards never. Avoid identical 3-equal-card rows (prefer asymmetric grids, 2-column zig-zag, or bento).
 - Resist the centered hero-over-image default; prefer an asymmetric or split composition.
