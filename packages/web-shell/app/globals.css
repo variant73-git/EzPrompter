@@ -4548,11 +4548,13 @@ body.rb-ed-light .canvas-section-frame {
      the chip stops growing in world space. Otherwise the chip would
      keep multiplying by 1/scale (1/0.1 = 10x at extreme zoom-out) and
      dominate the entire canvas overview. */
+  /* play circle on the LEFT, label on the right: hug the play with 4px-left,
+     text gets the 20px-right. (row-reverse flips the [label, play] DOM order.) */
   padding:
     calc(4px / max(0.25, var(--canvas-scale, 1)))
+    calc(20px / max(0.25, var(--canvas-scale, 1)))
     calc(4px / max(0.25, var(--canvas-scale, 1)))
-    calc(4px / max(0.25, var(--canvas-scale, 1)))
-    calc(20px / max(0.25, var(--canvas-scale, 1)));
+    calc(4px / max(0.25, var(--canvas-scale, 1)));
   font-family: inherit;
   font-size: calc(14px / max(0.25, var(--canvas-scale, 1)));
   font-weight: 500;
@@ -4562,6 +4564,7 @@ body.rb-ed-light .canvas-section-frame {
   user-select: none;
   white-space: nowrap;
   display: inline-flex;
+  flex-direction: row-reverse;
   align-items: center;
   gap: calc(10px / max(0.25, var(--canvas-scale, 1)));
   cursor: pointer;
@@ -4582,6 +4585,7 @@ body.rb-ed-light .canvas-section-frame {
    top chrome zone. Inherits the toolbar's z-index → sits ABOVE nodes. */
 .canvas-floating-run {
   display: inline-flex;
+  flex-direction: row-reverse;
   align-items: center;
   gap: 10px;
   background: #ffffff;
@@ -4607,8 +4611,8 @@ body.rb-ed-light .canvas-section-frame {
 .canvas-floating-run.visible {
   opacity: 1;
   max-width: 260px;
-  /* matches the section pill: 4px top/bottom/right, 20px left */
-  padding: 4px 4px 4px 20px;
+  /* matches the section pill: play on the LEFT (4px), label right (20px) */
+  padding: 4px 20px 4px 4px;
   margin-right: 8px;   /* gap before the zoom widget */
   pointer-events: auto;
 }
