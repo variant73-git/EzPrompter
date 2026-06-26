@@ -4086,6 +4086,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (selectedSectionId) {
       const s = sections.find((x) => x.id === selectedSectionId);
       if (s) {
+        // Distinct category colours of the section's members — the "chain"
+        // colours the working-text gradient flows through during a run.
+        const memberColors = [...new Set(
+          s.memberIds
+            .map((mid) => nodes.find((x) => x.id === mid))
+            .filter(Boolean)
+            .map((n) => originColor(n))
+            .filter(Boolean)
+        )];
         return [{
           kind: 'section',
           id: s.id,
@@ -4093,6 +4102,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           theme: s.theme,
           memberIds: s.memberIds,
           memberCount: s.memberIds.length,
+          memberColors,
         }];
       }
     }

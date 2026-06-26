@@ -5953,11 +5953,13 @@ body.rb-ed-active .prompt-dock { display: none !important; }
 }
 .working-indicator-dots { letter-spacing: 1px; }
 /* Multi-category chain → the text gradient flows through all node colours. */
+/* Duration = the language cycle (1500ms): the text span remounts each cycle
+   (for the fade), and a full-loop gradient means the reset lands seamlessly. */
 .working-indicator-text.is-gradient {
-  animation: working-in 360ms ease-out, working-gradient-shift 3s linear infinite;
+  animation: working-in 360ms ease-out, working-gradient-shift 1500ms linear infinite;
 }
 .working-indicator-dots.is-gradient {
-  animation: working-gradient-shift 3s linear infinite;
+  animation: working-gradient-shift 1500ms linear infinite;
 }
 @keyframes working-gradient-shift {
   to { background-position: 200% center; }

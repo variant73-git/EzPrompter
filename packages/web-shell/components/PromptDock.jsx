@@ -1283,8 +1283,16 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   // the involved node's category (gradient across categories). Distinct
   // colors come from the active-context node chips (each carries .color).
   const working = chat.activeRun?.status === 'running' || chat.streaming;
+  // Chain colours for the animated working-text gradient: a node context
+  // contributes its own colour; a section context contributes its members'
+  // distinct colours. Same-colour chain → solid; mixed → animated gradient.
   const workingColors = [...new Set(
-    contextList.filter((c) => c && c.kind === 'node' && c.color).map((c) => c.color)
+    contextList.flatMap((c) => {
+      if (!c) return [];
+      if (c.kind === 'node' && c.color) return [c.color];
+      if (c.kind === 'section' && Array.isArray(c.memberColors)) return c.memberColors;
+      return [];
+    }).filter(Boolean)
   )];
   const chatPanelVisible = !effectivelyCollapsed && (chat.messages.length > 0 || chat.activeToolCalls.length > 0);
   const showTopResize = chatPanelVisible && dockPos === 'bottom';
