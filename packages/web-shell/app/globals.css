@@ -4617,6 +4617,15 @@ body.rb-ed-light .canvas-section-frame {
   pointer-events: auto;
 }
 .canvas-floating-run:hover { background: #f0f0f0; }
+
+/* Section is producing (run-flow or agent run): the run button is disabled +
+   dimmed while its nodes fill. The work feedback lives on the node ring. */
+.canvas-section-name-tag.running,
+.canvas-floating-run.visible.running {
+  pointer-events: none;
+  cursor: default;
+  opacity: 0.5;
+}
 body.rb-ed-light .canvas-floating-run {
   background: rgba(255, 255, 255, 0.92);
   border-color: rgba(0, 0, 0, 0.12);

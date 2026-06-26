@@ -433,7 +433,7 @@ function chatReducer(state, action) {
   }
 }
 
-const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onQueueFiles, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowDisabled = false, runFlowError, nodeCount, onAgentMutatedGraph, activeContexts = null, onClearActiveContext }, forwardedRef) {
+const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onQueueFiles, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowDisabled = false, runFlowError, nodeCount, onAgentMutatedGraph, onAgentNodeRunStart, onAgentNodeRunEnd, activeContexts = null, onClearActiveContext }, forwardedRef) {
   // Normalise to an array. activeContexts can be: null (no context),
   // an array of {kind:'section'|'node', ...} items.
   const contextList = Array.isArray(activeContexts) ? activeContexts : (activeContexts ? [activeContexts] : []);
@@ -458,6 +458,9 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   // Tracks the prior context-chip count so we can detect a NEW selection
   // (0 → >0) appearing — used to drop Add-URL mode when the user clicks a node.
   const prevContextLenRef = useRef(contextList.length);
+  // Maps an agent tool-call id → the node it runs on, so we can flip that node
+  // into the filling state for the duration of the run (and clear it on done).
+  const toolNodeMapRef = useRef(new Map());
 
   // ── Speech-to-text (mic button left of the send arrow) ─────────────
   // MediaRecorder captures a webm/opus clip; stop uploads it as a base64
@@ -793,11 +796,23 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
       case 'assistant_token':
         dispatchChat({ type: 'ASSISTANT_TOKEN', delta: payload.delta });
         break;
-      case 'tool_call':
+      case 'tool_call': {
         dispatchChat({ type: 'TOOL_CALL_STARTED', id: payload.id, name: payload.name, args: payload.args });
+        // runFlow / editSite operate on an existing node — flip it into the
+        // filling state (and disable its section's run button) for the run.
+        if ((payload.name === 'runFlow' || payload.name === 'editSite') && payload.args?.nodeId) {
+          toolNodeMapRef.current.set(payload.id, payload.args.nodeId);
+          onAgentNodeRunStart?.(payload.args.nodeId);
+        }
         break;
+      }
       case 'tool_status':
         dispatchChat({ type: 'TOOL_CALL_STATUS', id: payload.id, status: payload.status, result: payload.result, error: payload.error });
+        // Terminal status → stop filling the node this tool was running on.
+        if (payload.status === 'done' || payload.status === 'error' || payload.status === 'skipped') {
+          const nid = toolNodeMapRef.current.get(payload.id);
+          if (nid) { onAgentNodeRunEnd?.(nid); toolNodeMapRef.current.delete(payload.id); }
+        }
         // (Refetch moved to end-of-run in sendChatMessage — refetching on
         // every tool caused setNodes/setEdges to fire 5+ times per turn,
         // tearing down TransformWrapper's zoom/pan state and locking the
@@ -924,6 +939,10 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
       }
     }
     latestRunIdRef.current = null;
+    // Safety: clear any node still marked running (a tool whose terminal status
+    // never arrived before the stream closed) so it doesn't fill forever.
+    for (const nid of toolNodeMapRef.current.values()) onAgentNodeRunEnd?.(nid);
+    toolNodeMapRef.current.clear();
     dispatchChat({ type: 'RUN_FINISHED' });
     // End-of-run refetch + workflow framing. frame:true tells the canvas
     // to zoom out and centre everything the agent created across this

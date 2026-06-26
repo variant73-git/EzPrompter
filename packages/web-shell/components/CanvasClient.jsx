@@ -1096,6 +1096,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // the floating run button (confirm only when a result would be overwritten).
   function runSectionFlow(s) {
     if (!s || !s.hasEdges) return;
+    // Already producing → ignore. Button runs and agent runs both register the
+    // target in runStatus, so this blocks a second run on a busy section.
+    if ((s.memberIds || []).some((mid) => runStatus.has(mid))) return;
     let skip = false;
     try { skip = localStorage.getItem(RERUN_CONFIRM_SKIP_KEY) === '1'; } catch {}
     if (skip || !sectionRerunWouldOverwrite(s, nodes, edges)) { runSectionRerun(s); return; }
@@ -3737,6 +3740,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   if (floatingSection) lastFloatingSectionRef.current = floatingSection;
   const floatRunSec = floatingSection || lastFloatingSectionRef.current;
   const floatRunClean = floatRunSec ? (cleanSectionIds.has(floatRunSec.id) && floatRunSec.hasEdges) : false;
+  // Nodes currently producing content (run-flow status, agent run, capture, or
+  // image gen) — drives the filling ring (CanvasNode mirrors this) AND disables
+  // the run button of any section whose member is busy.
+  const runningNodeIds = new Set(
+    nodes
+      .filter((n) => runStatus.has(n.id) || n.meta?.status === 'generating' || (n._loading && !n._challenge))
+      .map((n) => n.id)
+  );
+  const floatRunRunning = floatRunSec ? (floatRunSec.memberIds || []).some((mid) => runningNodeIds.has(mid)) : false;
 
   // The bare chat-arrow run-flow processes every runnable target on the
   // board. When they're ALL clean there's nothing new to produce, so the
@@ -4194,7 +4206,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // circular play button) so the two are visually identical.
           return (
             <div
-              className={`canvas-floating-run${floatingSection ? ' visible' : ''}`}
+              className={`canvas-floating-run${floatingSection ? ' visible' : ''}${floatRunRunning ? ' running' : ''}`}
               role="button"
               tabIndex={0}
               aria-label={floatRunClean ? 'Reroll this flow' : 'Run this flow'}
@@ -4446,7 +4458,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             // same chain to get a fresh result — instead of going dead. Shared
             // by the WHOLE pill (click anywhere) and the play button.
             const isClean = cleanSectionIds.has(s.id);
-            const triggerRun = () => runSectionFlow(s);
+            const sectionRunning = (s.memberIds || []).some((mid) => runningNodeIds.has(mid));
+            const triggerRun = () => { if (sectionRunning) return; runSectionFlow(s); };
             return (
             <div
               key={`chrome-${s.id}`}
@@ -4460,7 +4473,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }}
             >
               <div
-                className={`canvas-section-name-tag${s.hasEdges ? '' : ' disabled'}${floatingRunSectionId === s.id ? ' floated-away' : ''}`}
+                className={`canvas-section-name-tag${s.hasEdges && !sectionRunning ? '' : ' disabled'}${sectionRunning ? ' running' : ''}${floatingRunSectionId === s.id ? ' floated-away' : ''}`}
                 role="button"
                 tabIndex={0}
                 aria-label={!s.hasEdges ? 'Connect nodes to run this flow' : (isClean ? 'Reroll this flow' : 'Run this flow')}
@@ -4490,9 +4503,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                     disconnected. */}
                 <button
                   type="button"
-                  className={`canvas-section-play-btn${s.hasEdges ? '' : ' disabled'}`}
+                  className={`canvas-section-play-btn${s.hasEdges && !sectionRunning ? '' : ' disabled'}`}
                   onClick={(e) => { e.stopPropagation(); triggerRun(); }}
-                  disabled={!s.hasEdges}
+                  disabled={!s.hasEdges || sectionRunning}
                   aria-label={!s.hasEdges ? 'Connect nodes to run this flow' : (isClean ? 'Reroll this flow' : `Run this flow`)}
                   data-tooltip={s.hasEdges && isClean ? 'Reroll — regenerate a fresh result' : undefined}
                 >
@@ -4660,6 +4673,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         ref={promptDockRef}
         activeContexts={activeContexts}
         onClearActiveContext={handleClearActiveContext}
+        onAgentNodeRunStart={(nid) => setNodeRunStatus(nid, { step: 2, label: 'Generating…', request: requestTextForTarget(nid) })}
+        onAgentNodeRunEnd={(nid) => setNodeRunStatus(nid, null)}
         boardId={board.id}
         onAddUrl={handleAddUrl}
         onUploadMd={handleUploadMd}
