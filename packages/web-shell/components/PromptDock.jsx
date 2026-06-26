@@ -1278,6 +1278,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
   if (chatPanelHeight) {
     dockStyle = { ...(dockStyle || {}), '--chat-panel-max-height': `${chatPanelHeight}px` };
   }
+  const isLateral = dockPos === 'left' || dockPos === 'right';
   const dockClass = [
     'prompt-dock',
     dockPos === 'left' ? 'dock-left' : '',
@@ -1502,7 +1503,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
               {ICON_GLOBE}
             </motion.span>
             <AnimatePresence initial={false}>
-              {showAddUrl && (
+              {showAddUrl && !isLateral && (
                 <motion.span
                   className="prompt-dock-pill-label"
                   initial={{ width: 0, opacity: 0 }}
