@@ -15,6 +15,9 @@ export function nodeOrigin(node) {
   // identity from a captured URL or an HTML upload — distinct border
   // colour signals "this is where you compose, not where you imported."
   if (node.kind === 'site' && node.meta?.source === 'blank') return 'blank';
+  // A site CLONED from an image is a generated "site", not an imported .html
+  // file — it reads BLUE like a URL/blank site, never orange. (extract 'clone'.)
+  if (node.kind === 'site' && node.meta?.extractTo === 'clone') return 'url';
   if (node.kind === 'site' && node.origin_url) return 'url';
   if (node.kind === 'site') return 'html';
   return 'unknown';

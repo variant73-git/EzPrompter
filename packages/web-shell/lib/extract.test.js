@@ -6,6 +6,7 @@ vi.mock('./extract-llm.js', () => ({
   describeSiteAsPrompt: vi.fn(async () => 'A bold fintech landing page, navy + lime, tight grotesk headlines.'),
   describeImageAsTokens: vi.fn(async () => '# Tokens\n- navy #0b1f3a'),
   describeImageAsPrompt: vi.fn(async () => 'Editorial product shot, soft daylight, muted palette.'),
+  cloneImageToHtml: vi.fn(async () => '<!doctype html><html><body><h1>Clone</h1></body></html>'),
 }));
 vi.mock('playwright-core', () => ({
   chromium: { launch: vi.fn(async () => ({
@@ -106,5 +107,28 @@ describe('runExtract — asset→prompt', () => {
     const r = await runExtract({ to: 'prompt', node: assetNode });
     expect(r.kind).toBe('prompt');
     expect(r.meta.prompt).toMatch(/editorial/i);
+  });
+});
+
+describe('runExtract — asset→clone (clone website)', () => {
+  it('returns a site node with the cloned html', async () => {
+    const r = await runExtract({ to: 'clone', node: assetNode });
+    expect(r.kind).toBe('site');
+    expect(r.html).toMatch(/Clone/);
+    expect(r.meta.extractTo).toBe('clone');
+  });
+  it('rejects an asset with no image data', async () => {
+    const r = await runExtract({ to: 'clone', node: { id: 'a3', kind: 'asset', meta: {} } });
+    expect(r.error).toBe('no_source');
+  });
+});
+
+describe('runExtract — asset→styleclone (.md via background clone)', () => {
+  it('clones in the background then derives a design.md from it', async () => {
+    const r = await runExtract({ to: 'styleclone', node: assetNode });
+    expect(r.kind).toBe('designmd');
+    expect(r.designMd).toMatch(/Design/);       // from generateDesignMd(cloneHtml)
+    expect(r.meta.extractTo).toBe('styleclone');
+    expect(r.meta.cloneHtml).toMatch(/Clone/);   // clone html carried in meta
   });
 });

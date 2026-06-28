@@ -75,8 +75,12 @@ export const HOUSE_STYLE_ABSORB = `STYLE ABSORPTION — when a style source is p
 - corner radius (per element type: cards vs buttons vs pills), and border presence/width/color
 - shadow presence + softness + tint (none if the source has none), and overall elevation
 - spacing rhythm AND internal padding (the gap between content and each container's edges)
+- the OUTER spacing between sibling containers vs the INNER padding — reproduce the source's exact density; if it packs containers TIGHT, keep them tight (never loosen)
+- WHERE each fill/gradient lives — a background gradient stays on the BACKGROUND, never relocated onto a card/container; flat container fills stay flat
+- the distinct container VARIANTS/STATES (opaque vs translucent "glass" vs tinted) — reproduce EACH, do not flatten them to one surface
+- the heading↔subheading relationship (size ratio, weight, colour, margin to the container's edges)
 - the size of text RELATIVE to buttons, pills, and containers
 - overall proportions and density
-The CONTENT keeps its own words and numbers; EVERYTHING visual comes from the style source. If the style source does not pin a property, derive it from the style source's own system — NEVER from a generic AI default. A characteristic the style source has must appear in the output; one it lacks must NOT be invented.`;
+These STRUCTURAL relationships ARE part of the style — the source's brief carries them like a "DOM", and you reproduce them on the target's CONTENT. Do NOT re-derive spacing, layering, or treatment placement from the target's own structure or your defaults. The CONTENT keeps its own words and numbers; EVERYTHING visual — tokens AND structure — comes from the style source. If the style source does not pin a property, derive it from the style source's own system — NEVER from a generic AI default. A characteristic the style source has must appear in the output; one it lacks must NOT be invented.`;
 
 export const HOUSE_STYLE = `${HOUSE_STYLE_GUARDRAILS}\n\n${HOUSE_STYLE_ABSORB}\n\n${HOUSE_STYLE_INVENT}`;

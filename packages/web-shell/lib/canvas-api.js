@@ -95,7 +95,11 @@ export const api = {
   // Same route, content-shaped body — used by the unpopulated-node upload
   // flow to seed { html } or { designMd } into an existing node.
   saveNodeContent: (nodeId, body) => fetch(`/api/nodes/${nodeId}/save-edit`, { ...COMMON, method: 'POST', body: JSON.stringify(body) }).then(jsonOrThrow),
-  runNode: (nodeId, opts = {}) => fetch(`/api/nodes/${nodeId}/run`, { ...COMMON, method: 'POST', body: JSON.stringify(opts) }).then(jsonOrThrow),
+  // `signal` lets the caller abort an in-flight run (the Stop button). The
+  // client stops waiting immediately and never applies the result, so the
+  // node keeps its pre-run state. (The server may still finish the compose;
+  // true server-side cancellation is a separate backend concern.)
+  runNode: (nodeId, opts = {}, signal) => fetch(`/api/nodes/${nodeId}/run`, { ...COMMON, method: 'POST', body: JSON.stringify(opts), signal }).then(jsonOrThrow),
   // Default: node row + current snapshot html (one round-trip when caller
   // actually wants content). `readyCheck:true`: tiny `{ready, snapshotId}`
   // probe used by the handoff poller — avoids transferring snapshot.html

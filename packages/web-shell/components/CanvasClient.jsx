@@ -281,6 +281,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // initial position under the cursor.
   const [placingNodeId, setPlacingNodeId] = useState(null);
   const placingNodeRef = useRef(null);
+  // Alt+drag duplicate: the optimistic local ghost copy that follows the cursor
+  // during the gesture (rendered translucent like a placing node) until the
+  // mouse is released, at which point it's persisted. Separate from
+  // placingNodeId so it doesn't trip the click-to-drop placement effect.
+  const [altDupGhostId, setAltDupGhostId] = useState(null);
   // When a URL is added from the "+" toolbar, the temp placeholder is placed
   // with the ghost first; this stashes the capture to fire once it's dropped.
   const pendingUrlCaptureRef = useRef(null);
@@ -426,6 +431,56 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
+  }, []);
+
+  // Paste clipboard content onto the canvas → nodes. Images / .md / .html (real
+  // files OR a copied image blob) become ghost-placed nodes via the upload
+  // queue; a pasted URL becomes a site node. Unsupported payloads are left
+  // alone. The window listener is bound once and reads the latest handlers
+  // through a ref so it never closes over stale `nodes`/state.
+  const pasteFnsRef = useRef(null);
+  pasteFnsRef.current = { handleQueueFiles, handleAddUrl };
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    function onPaste(e) {
+      // Don't hijack paste meant for a text field, the chat dock, or an
+      // element being edited — only the bare canvas turns a clipboard payload
+      // into nodes.
+      const t = e.target;
+      if (t && t.closest && t.closest('input, textarea, select, .prompt-dock')) return;
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+      const cd = e.clipboardData;
+      if (!cd) return;
+      const fns = pasteFnsRef.current || {};
+
+      // 1) Real files copied from the OS (images, .md, .html).
+      const files = cd.files && cd.files.length ? [...cd.files] : [];
+      // 2) Image blobs not exposed as files (a copied screenshot, "copy image"
+      //    from another page). getAsFile yields a nameless blob — give it a
+      //    name so it classifies + displays.
+      if (!files.length && cd.items) {
+        for (const it of cd.items) {
+          if (it.kind === 'file' && it.type.startsWith('image/')) {
+            const blob = it.getAsFile();
+            if (blob) {
+              const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+              files.push(new File([blob], `pasted-image.${ext}`, { type: blob.type }));
+            }
+          }
+        }
+      }
+      if (files.length) { e.preventDefault(); fns.handleQueueFiles?.(files); return; }
+
+      // 3) A pasted URL → site node. Arbitrary text is left for normal paste.
+      const text = ((cd.getData && cd.getData('text/plain')) || '').trim();
+      if (text && looksLikeUrl(text)) {
+        const url = normalizeUrl(text);
+        if (url) { e.preventDefault(); fns.handleAddUrl?.(url); }
+      }
+    }
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
   }, []);
 
   // Mirror spaceDown to a <body> class so CSS can swap the cursor
@@ -1090,6 +1145,49 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (q?.prefetch) {
       q.prefetch.then((n) => { if (n?.id) api.deleteNode(n.id).catch(() => {}); }).catch(() => {});
     }
+  }
+
+  // Read the SUPPORTED payloads the async Clipboard API exposes — an image
+  // and/or a URL in the clipboard text. (Arbitrary OS files like .md/.html are
+  // NOT reachable here; those paste via Cmd+V only.) Used by the context-menu
+  // "Paste from clipboard" item for both its enabled state and the action.
+  async function readClipboardSupported() {
+    const out = { image: null, url: null };
+    try {
+      if (!navigator.clipboard) return out;
+      if (navigator.clipboard.read) {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          const imgType = item.types.find((t) => t.startsWith('image/'));
+          if (imgType && !out.image) {
+            const blob = await item.getType(imgType);
+            const ext = (imgType.split('/')[1] || 'png').replace('jpeg', 'jpg');
+            out.image = new File([blob], `pasted-image.${ext}`, { type: imgType });
+          }
+          if (item.types.includes('text/plain') && !out.url) {
+            const txt = (await (await item.getType('text/plain')).text()).trim();
+            if (txt && looksLikeUrl(txt)) out.url = normalizeUrl(txt);
+          }
+        }
+      }
+      if (!out.image && !out.url && navigator.clipboard.readText) {
+        const txt = (await navigator.clipboard.readText()).trim();
+        if (txt && looksLikeUrl(txt)) out.url = normalizeUrl(txt);
+      }
+    } catch { /* permission denied / not focused → treat as empty */ }
+    return out;
+  }
+
+  async function clipboardHasSupported() {
+    const { image, url } = await readClipboardSupported();
+    return !!(image || url);
+  }
+
+  async function pasteFromClipboard(opts = {}) {
+    const { image, url } = await readClipboardSupported();
+    if (image) { handleQueueFiles([image]); return; }
+    if (url) { await handleAddUrl(url, opts); return; }
+    toast.error('Nothing supported on the clipboard (copy an image or a URL).');
   }
 
   // Run a section's flow — the shared logic behind the in-place run-pill and
@@ -1867,14 +1965,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   async function handleExtractTo(to, { sourceNodeId, worldX, worldY }) {
     const tmpId = `tmp-extract-${sourceNodeId}-${to}`;
     const tmpEdgeId = `tmp-extract-edge-${sourceNodeId}-${to}`;
-    // The placeholder's KIND must match the node being extracted so its
-    // category colour-coding (border/ring/cord) reads correctly while it loads
-    // — `to` maps: prompt → prompt, screenshot → asset, html → site, the rest
-    // (.md flavours: designmd/content/style/tokens) → designmd. (lib/extract.js.)
+    // The placeholder's KIND must match the FINAL node kind so it never appears
+    // to "morph" (a .md that becomes .html) when the real node arrives — and so
+    // its category colour-coding (border/ring/cord) reads correctly while it
+    // loads. `to` maps: prompt → prompt, screenshot → asset, html/clone → site
+    // (a clone produces a full site node), the rest (.md flavours:
+    // designmd/content/style/tokens/styleclone) → designmd. (lib/extract.js.)
     const kind =
       to === 'prompt' ? 'prompt' :
       to === 'screenshot' ? 'asset' :
-      to === 'html' ? 'site' :
+      to === 'html' || to === 'clone' ? 'site' :
       'designmd';
     const width = kind === 'site' ? 1280 : 600;
     const height = kind === 'prompt' ? 200 : kind === 'site' ? Math.round(1280 * 9 / 16) : 600;
@@ -1886,7 +1986,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // sections memo immediately — no singleton-frame flash while the
       // real edge round-trips.
       _pendingLinkFrom: sourceNodeId,
-      meta: { name: `Extracting ${to}…` }, current_html: null, _loading: true,
+      // extractTo lets nodeOrigin colour the placeholder like its FINAL node
+      // (e.g. a clone reads blue, not the orange .html fallback) — no flash.
+      meta: { name: `Extracting ${to}…`, extractTo: to }, current_html: null, _loading: true,
       _loadingLabel: 'Extracting…',
     };
     // Optimistic cord source → placeholder so the derived node reads as
@@ -2243,9 +2345,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       .filter(Boolean);
     return texts.join(' ');
   }
+  // In-flight run AbortControllers, keyed by target node id. The Stop button
+  // (section pill / floating / chat arrow) aborts these so the run halts and
+  // the node keeps its pre-run state — runOneTarget only applies a result
+  // AFTER the await resolves, so an aborted run never mutates the node.
+  const runAbortRef = useRef(new Map());
+
   async function runOneTarget(id, opts = {}) {
     const request = requestTextForTarget(id);
     setNodeRunStatus(id, { step: 1, label: 'Reading inputs…', request });
+    const controller = new AbortController();
+    runAbortRef.current.set(id, controller);
     const advanceToStep2 = setTimeout(() => {
       setRunStatus((prev) => {
         const cur = prev.get(id);
@@ -2256,7 +2366,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       });
     }, 1500);
     try {
-      const result = await api.runNode(id, opts);
+      const result = await api.runNode(id, opts, controller.signal);
       clearTimeout(advanceToStep2);
       setNodeRunStatus(id, { step: 3, label: 'Saving…', request });
       // Hold the saving label briefly so the transition reads as a
@@ -2267,8 +2377,36 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     } catch (e) {
       clearTimeout(advanceToStep2);
       setNodeRunStatus(id, null);
+      // User pressed Stop → swallow so no error toast fires; the node was
+      // never mutated (result not applied), so it shows its original state.
+      if (e?.name === 'AbortError') return null;
       throw e;
+    } finally {
+      runAbortRef.current.delete(id);
     }
+  }
+
+  // Abort a single target's in-flight run and clear its status chip. The node
+  // reverts to its pre-run state because runOneTarget never applied a result.
+  function stopTarget(id) {
+    const c = runAbortRef.current.get(id);
+    if (c) { try { c.abort(); } catch {} }
+    setNodeRunStatus(id, null);
+  }
+
+  // Stop a section's run: abort whichever member is the active terminal.
+  function stopSection(s) {
+    if (!s) return;
+    for (const mid of (s.memberIds || [])) {
+      if (runAbortRef.current.has(mid)) stopTarget(mid);
+    }
+  }
+
+  // Stop ALL in-flight flow runs (the chat arrow's bare run-flow Stop). Aborts
+  // every controller and drops the busy state so the arrow returns to idle.
+  function stopFlowRun() {
+    for (const id of [...runAbortRef.current.keys()]) stopTarget(id);
+    setRunFlowBusy(false);
   }
   async function handleRunFlow(opts = {}) {
     if (runFlowBusy) return;
@@ -2422,36 +2560,102 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   async function handleDuplicateNode(id) {
     const n = nodes.find((x) => x.id === id);
     if (!n) return;
-    // Anti-overlap: nextNodePosition slides the duplicate off any
-    // collision (defaults at +offset of the original).
-    const { posX, posY } = nextNodePosition({
-      worldX: n.pos_x + 80,
-      worldY: n.pos_y + 80,
-      width: n.width,
-      height: n.height || 800
-    });
     try {
+      // Create the copy server-side at the original's spot, then hand it to
+      // mountAndPlace — the duplicate becomes a ghost the user drops where
+      // they want (same as an upload/paste), instead of auto-landing at an
+      // offset. mountAndPlace also registers the create on the undo stack.
       const created = await api.createNode({
         boardId: board.id,
         kind: n.kind,
         originUrl: n.origin_url,
         templateSlug: n.template_slug,
-        posX, posY,
+        posX: n.pos_x, posY: n.pos_y,
         width: n.width,
         height: n.height || 800,
         meta: n.meta || {},
         html: n.current_html,
         designMd: n.current_design_md
       });
-      setNodes((prev) => [...prev, {
+      mountAndPlace({
         ...created.node,
         current_html: n.current_html,
         current_design_md: n.current_design_md
-      }]);
-      setSelectedNodeId(created.node.id);
+      });
     } catch (err) {
       toast.error(`Duplicate failed: ${err.message}`);
     }
+  }
+
+  // Alt + drag on a node → duplicate it. An optimistic local ghost copy follows
+  // the cursor (translucent) from the first real drag movement until the mouse
+  // is released, where it's persisted at the drop spot. Escape cancels. The
+  // ghost is local-only during the gesture (no server round-trip → no lag); the
+  // duplicate is created on release. Never duplicates on a bare alt-click (the
+  // ghost only spawns once the drag passes the threshold).
+  function startAltDuplicateDrag(srcNode, e) {
+    if (!srcNode) return;
+    const readScale = () => {
+      const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale'));
+      return v > 0 ? v : 1;
+    };
+    const start = { x: e.clientX, y: e.clientY, ox: srcNode.pos_x, oy: srcNode.pos_y, lastX: srcNode.pos_x, lastY: srcNode.pos_y };
+    let tempId = null;
+    document.body.classList.add('alt-dup-dragging');
+    const cleanup = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      window.removeEventListener('keydown', onKey, true);
+      document.body.classList.remove('alt-dup-dragging');
+    };
+    const move = (ev) => {
+      const scale = readScale();
+      const dx = (ev.clientX - start.x) / scale;
+      const dy = (ev.clientY - start.y) / scale;
+      if (!tempId) {
+        if (Math.hypot(dx, dy) * scale < 4) return;   // wait for a real drag
+        tempId = `temp-altdup-${Date.now()}`;
+        setNodes((prev) => [...prev, { ...srcNode, id: tempId, is_main: false }]);
+        setAltDupGhostId(tempId);
+      }
+      const nx = start.ox + dx, ny = start.oy + dy;
+      start.lastX = nx; start.lastY = ny;
+      updateNodeLocal(tempId, { pos_x: nx, pos_y: ny });
+    };
+    const finalize = async (commit) => {
+      cleanup();
+      setAltDupGhostId(null);
+      const id = tempId;
+      if (!id) return;                       // never dragged → no duplicate
+      if (!commit) { setNodes((prev) => prev.filter((n) => n.id !== id)); return; }
+      const fx = start.lastX, fy = start.lastY;
+      try {
+        const created = await api.createNode({
+          boardId: board.id,
+          kind: srcNode.kind,
+          originUrl: srcNode.origin_url,
+          templateSlug: srcNode.template_slug,
+          posX: fx, posY: fy,
+          width: srcNode.width,
+          height: srcNode.height || 800,
+          meta: srcNode.meta || {},
+          html: srcNode.current_html,
+          designMd: srcNode.current_design_md,
+        });
+        setNodes((prev) => prev.map((n) => (n.id === id
+          ? { ...created.node, current_html: srcNode.current_html, current_design_md: srcNode.current_design_md }
+          : n)));
+        pushCreateUndo(created.node, null);
+      } catch (err) {
+        setNodes((prev) => prev.filter((n) => n.id !== id));
+        toast.error(`Duplicate failed: ${err.message}`);
+      }
+    };
+    const up = () => finalize(true);
+    const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); finalize(false); } };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    window.addEventListener('keydown', onKey, true);
   }
 
   function handleDownloadNode(id) {
@@ -3214,22 +3418,34 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       'textarea',
     ].join(', ');
     function onWheelCapture(e) {
-      if (e.target?.closest?.(NATIVE_WHEEL_SELECTOR)) return;
+      const overNative = e.target?.closest?.(NATIVE_WHEEL_SELECTOR);
+      // Ctrl/Cmd + wheel (incl. trackpad PINCH, which fires as ctrlKey+wheel)
+      // must NEVER reach the browser — that's the page-zoom that blows the whole
+      // UI up. Block it EVERYWHERE on the canvas page, including over the chat
+      // dock / sidebar / menus (where we otherwise hand wheel to native scroll).
+      // Only translate it into a canvas zoom when NOT over a native-scroll zone.
+      if (e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        if (!overNative) {
+          e.stopPropagation();
+          if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+          window.__uncraftZoom?.zoomAtPoint?.(e.deltaY || 0, e.clientX, e.clientY);
+        }
+        return;
+      }
+      // Plain wheel over a native-scroll region → let it scroll natively.
+      if (overNative) return;
       e.preventDefault();
       // Kill TransformWrapper's own wheel listener (attached on the wrapper
       // in bubble phase). Defensive — wheel.disabled:true should already
       // short-circuit it, but HMR can leave stale listeners around.
       e.stopPropagation();
       if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-      const z = window.__uncraftZoom;
-      if (!z) return;
-      if (e.metaKey || e.ctrlKey) {
-        z.zoomAtPoint?.(e.deltaY || 0, e.clientX, e.clientY);
-      } else {
-        z.panBy?.(-(e.deltaX || 0), -(e.deltaY || 0));
-      }
+      window.__uncraftZoom?.panBy?.(-(e.deltaX || 0), -(e.deltaY || 0));
     }
     function onKeyZoom(e) {
+      // Block browser page-zoom keys (Ctrl/Cmd +, -, =). Leave Ctrl/Cmd+0
+      // (reset) alone so the user can always undo an accidental zoom.
       if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '_')) {
         e.preventDefault();
       }
@@ -4205,13 +4421,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         {/* Floating run button — anchored left of the zoom widget; crossfades in
             when a section's in-place run-pill rises into the top chrome zone. */}
         {floatRunSec && (() => {
+          // While running, the button becomes a STOP control — click aborts the
+          // section's run and the node drops back to its pre-run state.
           const runFloat = (e) => {
             e.stopPropagation();
+            if (floatRunRunning) { stopSection(floatRunSec); return; }
             setSelectedSectionId(floatRunSec.id);
             setSelectedNodeId(null);
             setSelectedNodeIds(new Set());
             runSectionFlow(floatRunSec);
           };
+          const floatLabel = floatRunRunning ? 'stop' : (floatRunClean ? 'Reroll' : 'run this flow');
+          const floatAria = floatRunRunning ? 'Stop this flow' : (floatRunClean ? 'Reroll this flow' : 'Run this flow');
           // Structure mirrors the in-section run pill EXACTLY (label + black
           // circular play button) so the two are visually identical.
           return (
@@ -4219,17 +4440,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               className={`canvas-floating-run${floatingSection ? ' visible' : ''}${floatRunRunning ? ' running' : ''}`}
               role="button"
               tabIndex={0}
-              aria-label={floatRunClean ? 'Reroll this flow' : 'Run this flow'}
+              aria-label={floatAria}
               onClick={runFloat}
             >
-              <span className="canvas-floating-run-label">{floatRunClean ? 'Reroll' : 'run this flow'}</span>
+              <span className="canvas-floating-run-label">{floatLabel}</span>
               <button
                 type="button"
                 className="canvas-floating-run-play"
                 onClick={runFloat}
-                aria-label={floatRunClean ? 'Reroll this flow' : 'Run this flow'}
+                aria-label={floatAria}
               >
-                {floatRunClean ? (
+                {floatRunRunning ? (
+                  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                  </svg>
+                ) : floatRunClean ? (
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <polyline points="23 4 23 10 17 10" />
                     <polyline points="1 20 1 14 7 14" />
@@ -4355,7 +4580,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               incomingEdges={incomingByTarget.get(n.id) || []}
               hasOutgoingEdges={hasOutgoingBySource.has(n.id)}
               selected={selectedNodeId === n.id || selectedNodeIds.has(n.id)}
-              placing={placingNodeId === n.id}
+              placing={placingNodeId === n.id || altDupGhostId === n.id}
               editing={editingNodeId === n.id}
               onEditingChange={(willEdit) => handleEditingToggle(n.id, willEdit)}
               onSelect={(e) => {
@@ -4413,6 +4638,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               onMove={(posX, posY) => handleNodeMove(n, posX, posY)}
               onMoveStart={() => handleNodeMoveStart(n)}
               onMoveEnd={(moved) => handleNodeMoveEnd(n, moved)}
+              onAltDuplicateDrag={(e) => startAltDuplicateDrag(n, e)}
               onResize={(width, height, opts) => {
                 const patch = { width };
                 if (typeof height === 'number' && height > 0) patch.height = height;
@@ -4469,7 +4695,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             // by the WHOLE pill (click anywhere) and the play button.
             const isClean = cleanSectionIds.has(s.id);
             const sectionRunning = (s.memberIds || []).some((mid) => runningNodeIds.has(mid));
-            const triggerRun = () => { if (sectionRunning) return; runSectionFlow(s); };
+            // Running → the pill is a STOP control: click aborts the run and
+            // the node falls back to its pre-run state.
+            const triggerRun = () => { if (sectionRunning) { stopSection(s); return; } runSectionFlow(s); };
             return (
             <div
               key={`chrome-${s.id}`}
@@ -4483,10 +4711,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }}
             >
               <div
-                className={`canvas-section-name-tag${s.hasEdges && !sectionRunning ? '' : ' disabled'}${sectionRunning ? ' running' : ''}${floatingRunSectionId === s.id ? ' floated-away' : ''}`}
+                className={`canvas-section-name-tag${s.hasEdges ? '' : ' disabled'}${sectionRunning ? ' running' : ''}${floatingRunSectionId === s.id ? ' floated-away' : ''}`}
                 role="button"
                 tabIndex={0}
-                aria-label={!s.hasEdges ? 'Connect nodes to run this flow' : (isClean ? 'Reroll this flow' : 'Run this flow')}
+                aria-label={!s.hasEdges ? 'Connect nodes to run this flow' : (sectionRunning ? 'Stop this flow' : (isClean ? 'Reroll this flow' : 'Run this flow'))}
                 onClick={(e) => {
                   // Clicking ANYWHERE on the pill runs the flow (not just the
                   // play icon). Also selects the section so its controls show.
@@ -4506,20 +4734,24 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                     nothing but node positions has changed (isClean). With no
                     edges the flow can't run, so it reads "run this flow" and
                     the whole pill renders disabled (dark grey). */}
-                <span className="canvas-section-name-label">{s.hasEdges && isClean ? 'Reroll' : 'run this flow'}</span>
+                <span className="canvas-section-name-label">{sectionRunning ? 'stop' : (s.hasEdges && isClean ? 'Reroll' : 'run this flow')}</span>
                 {/* Play button ALWAYS renders. Without edges it stays visible
                     but disabled — the pill goes dark grey, the play icon light
                     grey — so the affordance never vanishes when nodes get
                     disconnected. */}
                 <button
                   type="button"
-                  className={`canvas-section-play-btn${s.hasEdges && !sectionRunning ? '' : ' disabled'}`}
+                  className={`canvas-section-play-btn${s.hasEdges ? '' : ' disabled'}`}
                   onClick={(e) => { e.stopPropagation(); triggerRun(); }}
-                  disabled={!s.hasEdges || sectionRunning}
-                  aria-label={!s.hasEdges ? 'Connect nodes to run this flow' : (isClean ? 'Reroll this flow' : `Run this flow`)}
-                  data-tooltip={s.hasEdges && isClean ? 'Reroll — regenerate a fresh result' : undefined}
+                  disabled={!s.hasEdges}
+                  aria-label={!s.hasEdges ? 'Connect nodes to run this flow' : (sectionRunning ? 'Stop this flow' : (isClean ? 'Reroll this flow' : `Run this flow`))}
+                  data-tooltip={!sectionRunning && s.hasEdges && isClean ? 'Reroll — regenerate a fresh result' : undefined}
                 >
-                  {s.hasEdges && isClean ? (
+                  {sectionRunning ? (
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                    </svg>
+                  ) : s.hasEdges && isClean ? (
                     // Two arrows looping into each other — "reroll" the chain.
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                       <polyline points="23 4 23 10 17 10" />
@@ -4626,6 +4858,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           x={contextMenu.x}
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
+          checkClipboard={clipboardHasSupported}
+          onPickPaste={async () => {
+            const m = contextMenu;
+            setContextMenu(null);
+            await pasteFromClipboard({ worldX: m.worldX, worldY: m.worldY });
+          }}
           onPickUrl={async (url) => {
             const m = contextMenu;
             setContextMenu(null);
@@ -4694,6 +4932,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         onAddSkill={() => handleAddSkill()}
         onAddBlankSite={() => handleAddBlankSite()}
         onRunFlow={handleRunFlow}
+        onStopFlow={stopFlowRun}
         runFlowBusy={runFlowBusy}
         runFlowDisabled={runFlowAllClean}
         runFlowError={runFlowError}
@@ -4939,10 +5178,22 @@ function useClampedMenuPos(x, y, deps = []) {
   return [ref, pos];
 }
 
-function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onPickScreenshot, onPickPrompt, onPickCode, onPickBlankSite }) {
+function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onPickScreenshot, onPickPrompt, onPickCode, onPickBlankSite, onPickPaste, checkClipboard }) {
   const [mode, setMode] = useState('choices');
   const [url, setUrl] = useState('');
+  // null = still probing the clipboard; true/false = supported payload present.
+  // Stays clickable while probing (the probe is fast and the click re-reads).
+  const [pasteEnabled, setPasteEnabled] = useState(null);
   const [menuRef, { left, top }] = useClampedMenuPos(x + 8, y + 8, [mode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!checkClipboard) { setPasteEnabled(false); return; }
+    checkClipboard()
+      .then((ok) => { if (!cancelled) setPasteEnabled(!!ok); })
+      .catch(() => { if (!cancelled) setPasteEnabled(false); });
+    return () => { cancelled = true; };
+  }, [checkClipboard]);
 
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose(); }
@@ -4975,6 +5226,21 @@ function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onP
           <button className="popup-menu-btn" onClick={onPickScreenshot}><MenuIcon.Image /><span>Add Screenshot</span></button>
           <button className="popup-menu-btn" onClick={onPickPrompt}><MenuIcon.Prompt /><span>Add Prompt</span></button>
           <button className="popup-menu-btn" onClick={onPickCode}><MenuIcon.Code /><span>Add Code</span></button>
+          {/* Paste from clipboard — enabled only when the clipboard holds a
+              supported payload (an image or a URL the async Clipboard API can
+              read). Files like .md/.html paste via Cmd+V only. */}
+          <button
+            className="popup-menu-btn"
+            onClick={onPickPaste}
+            disabled={pasteEnabled === false}
+            title={pasteEnabled === false ? 'No supported content on the clipboard' : 'Paste an image or URL from the clipboard'}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="8" y="2" width="8" height="4" rx="1" />
+              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+            </svg>
+            <span>Paste from clipboard</span>
+          </button>
           <button className="popup-menu-btn popup-menu-btn-cancel" onClick={onClose}>Cancel (Esc)</button>
         </>
       ) : (
@@ -5025,18 +5291,23 @@ const EMPTY_DROP_ITEMS = [
 // DISABLED (faded). `.html` + `image` only make sense FROM a site/URL node
 // (image = a screenshot of the site); `.md` + `prompt` work from site AND asset.
 const EXTRACT_ITEMS = [
+  // "clone website" (asset only): the image is reproduced as a full site node.
+  { key: 'clone',  label: 'clone website', Icon: MenuIcon.Blank, to: { asset: 'clone' } },
   { key: 'prompt', label: 'prompt', Icon: MenuIcon.Prompt, to: { site: 'prompt',   asset: 'prompt' } },
   { key: 'html',   label: '.html',  Icon: MenuIcon.Html,   to: { site: 'html' } },
-  { key: 'md',     label: '.md',    Icon: MenuIcon.Md,     to: { site: 'designmd', asset: 'tokens' } },
+  // From an asset, .md runs the clone in the background and derives the style
+  // spec from it (extract-to 'styleclone'); from a site it's the design.md.
+  { key: 'md',     label: '.md',    Icon: MenuIcon.Md,     to: { site: 'designmd', asset: 'styleclone' } },
   { key: 'image',  label: 'image',  Icon: MenuIcon.Image,  to: { site: 'screenshot' } },
 ];
 
 function EmptyDropMenu({ x, y, sourceKind, onClose, onPick, onExtract }) {
-  const [extractOpen, setExtractOpen] = useState(false);
-  const [menuRef, { left, top }] = useClampedMenuPos(x + 8, y + 8, [extractOpen]);
-  // Normalised source kind for the extract `to` mapping. The Extract-to submenu
-  // exists for site + asset sources (where a generator exists); other kinds
-  // don't show it. Within it, items disable when their `to[srcKind]` is absent.
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [menuRef, { left, top }] = useClampedMenuPos(x + 8, y + 8, [connectOpen]);
+  // Normalised source kind for the extract `to` mapping. Extract is the PRIMARY
+  // action for site + asset sources (where a generator exists), with Connect-to
+  // tucked into a submenu. Other source kinds have no extract → Connect-to stays
+  // the primary (and only) list.
   const srcKind = sourceKind === 'image' ? 'asset' : sourceKind;
   const showExtract = srcKind === 'site' || srcKind === 'asset';
 
@@ -5063,46 +5334,60 @@ function EmptyDropMenu({ x, y, sourceKind, onClose, onPick, onExtract }) {
 
   return (
     <div ref={menuRef} className="popup-menu empty-drop-menu" style={{ left, top }} onMouseDown={(e) => e.stopPropagation()}>
-      <div className="popup-menu-title">Connect to…</div>
-      {EMPTY_DROP_ITEMS.map(({ kind, label, Icon }) => (
-        <button key={kind} className="popup-menu-btn" onClick={() => onPick(kind)}>
-          <Icon /><span>{label}</span>
-        </button>
-      ))}
-      {showExtract && (
-        <div className="empty-drop-extract">
-          <button
-            type="button"
-            className="popup-menu-btn empty-drop-submenu-trigger"
-            onMouseEnter={() => setExtractOpen(true)}
-            onClick={() => setExtractOpen((v) => !v)}
-          >
-            <span>Extract to</span>
-            <svg className="empty-drop-chevron" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="9 6 15 12 9 18" />
-            </svg>
-          </button>
-          {extractOpen && (
-            <div className="empty-drop-submenu" onMouseLeave={() => setExtractOpen(false)}>
-              {EXTRACT_ITEMS.map(({ key, label, Icon, to }) => {
-                const target = to[srcKind];
-                const disabled = !target;
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    className="popup-menu-btn"
-                    disabled={disabled}
-                    title={disabled ? 'Only available from a website/URL node' : undefined}
-                    onClick={disabled ? undefined : () => onExtract?.(target)}
-                  >
+      {showExtract ? (
+        <>
+          {/* Extract-to is the PRIMARY action for site/asset sources. */}
+          <div className="popup-menu-title">Extract to…</div>
+          {EXTRACT_ITEMS.map(({ key, label, Icon, to }) => {
+            const target = to[srcKind];
+            const disabled = !target;
+            return (
+              <button
+                key={key}
+                type="button"
+                className="popup-menu-btn"
+                disabled={disabled}
+                title={disabled ? `Not available from a ${srcKind === 'asset' ? 'image' : srcKind} node` : undefined}
+                onClick={disabled ? undefined : () => onExtract?.(target)}
+              >
+                <Icon /><span>{label}</span>
+              </button>
+            );
+          })}
+          {/* Connect-to moves into a submenu. */}
+          <div className="empty-drop-extract">
+            <button
+              type="button"
+              className="popup-menu-btn empty-drop-submenu-trigger"
+              onMouseEnter={() => setConnectOpen(true)}
+              onClick={() => setConnectOpen((v) => !v)}
+            >
+              <span>Connect to</span>
+              <svg className="empty-drop-chevron" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="9 6 15 12 9 18" />
+              </svg>
+            </button>
+            {connectOpen && (
+              <div className="empty-drop-submenu" onMouseLeave={() => setConnectOpen(false)}>
+                {EMPTY_DROP_ITEMS.map(({ kind, label, Icon }) => (
+                  <button key={kind} type="button" className="popup-menu-btn" onClick={() => onPick(kind)}>
                     <Icon /><span>{label}</span>
                   </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          {/* No extract generator for this source kind → Connect-to stays primary. */}
+          <div className="popup-menu-title">Connect to…</div>
+          {EMPTY_DROP_ITEMS.map(({ kind, label, Icon }) => (
+            <button key={kind} className="popup-menu-btn" onClick={() => onPick(kind)}>
+              <Icon /><span>{label}</span>
+            </button>
+          ))}
+        </>
       )}
       <button className="popup-menu-btn popup-menu-btn-cancel" onClick={onClose}>Cancel (Esc)</button>
     </div>

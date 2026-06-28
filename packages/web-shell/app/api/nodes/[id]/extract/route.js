@@ -46,7 +46,7 @@ export async function POST(request, { params }) {
     return NextResponse.json(out, { status });
   }
 
-  const DIMS = { designmd: { width: 600, height: 600 }, asset: { width: 600, height: 600 }, prompt: { width: 600, height: 200 } };
+  const DIMS = { designmd: { width: 600, height: 600 }, asset: { width: 600, height: 600 }, prompt: { width: 600, height: 200 }, site: { width: 1280, height: 720 } };
   const { width, height } = DIMS[out.kind] || DIMS.designmd;
 
   const { x: posX, y: posY } =

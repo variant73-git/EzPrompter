@@ -442,7 +442,7 @@ function chatReducer(state, action) {
   }
 }
 
-const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onQueueFiles, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, runFlowBusy, runFlowDisabled = false, runFlowError, nodeCount, onAgentMutatedGraph, onAgentNodeRunStart, onAgentNodeRunEnd, activeContexts = null, onClearActiveContext }, forwardedRef) {
+const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadMd, onUploadHtml, onQueueFiles, onAddPrompt, onAddSkill, onAddBlankSite, onRunFlow, onStopFlow, runFlowBusy, runFlowDisabled = false, runFlowError, nodeCount, onAgentMutatedGraph, onAgentNodeRunStart, onAgentNodeRunEnd, activeContexts = null, onClearActiveContext }, forwardedRef) {
   // Normalise to an array. activeContexts can be: null (no context),
   // an array of {kind:'section'|'node', ...} items.
   const contextList = Array.isArray(activeContexts) ? activeContexts : (activeContexts ? [activeContexts] : []);
@@ -1639,11 +1639,11 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
 
         <motion.button
           type="button"
-          className={`prompt-dock-send ${chat.streaming ? 'stop active' : (hasContent || (nodeCount > 0) ? 'active' : '')}${runFlowBusy ? ' busy' : ''}`}
-          whileHover={chat.streaming || ((hasContent || nodeCount > 0) && !runFlowBusy) ? { scale: 1.06 } : {}}
-          whileTap={chat.streaming || ((hasContent || nodeCount > 0) && !runFlowBusy) ? { scale: 0.94 } : {}}
+          className={`prompt-dock-send ${(chat.streaming || runFlowBusy) ? 'stop active' : (hasContent || (nodeCount > 0) ? 'active' : '')}`}
+          whileHover={chat.streaming || runFlowBusy || (hasContent || nodeCount > 0) ? { scale: 1.06 } : {}}
+          whileTap={chat.streaming || runFlowBusy || (hasContent || nodeCount > 0) ? { scale: 0.94 } : {}}
           transition={{ type: 'spring', stiffness: 400, damping: 22 }}
-          disabled={busy || runFlowBusy || (!chat.streaming && chat.softPause !== null) || (!chat.streaming && !hasContent && (nodeCount === 0 || runFlowDisabled))}
+          disabled={busy || (!chat.streaming && !runFlowBusy && chat.softPause !== null) || (!chat.streaming && !runFlowBusy && !hasContent && (nodeCount === 0 || runFlowDisabled))}
           onClick={async () => {
             if (chat.streaming) {
               // Stop the in-flight agent run. The backend cancellation flushes
@@ -1660,19 +1660,20 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
               dispatchChat({ type: 'RUN_FINISHED' });
               return;
             }
+            if (runFlowBusy) {
+              // Stop a bare run-flow run: abort the in-flight target fetches so
+              // the nodes drop back to their pre-run state (no result applied).
+              onStopFlow?.();
+              return;
+            }
             submit();
           }}
-          aria-label={chat.streaming ? 'Stop' : (hasContent ? 'Send' : 'Run flow')}
-          title={chat.streaming ? 'Stop the agent' : (runFlowBusy ? 'Running…' : (hasContent ? 'Send' : (runFlowDisabled ? 'Up to date — edit a node or ask in chat to run a workflow again' : 'Run flow (process connected nodes)')))}
+          aria-label={(chat.streaming || runFlowBusy) ? 'Stop' : (hasContent ? 'Send' : 'Run flow')}
+          title={chat.streaming ? 'Stop the agent' : (runFlowBusy ? 'Stop the run' : (hasContent ? 'Send' : (runFlowDisabled ? 'Up to date — edit a node or ask in chat to run a workflow again' : 'Run flow (process connected nodes)')))}
         >
-          {chat.streaming ? (
+          {(chat.streaming || runFlowBusy) ? (
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
               <rect x="6" y="6" width="12" height="12" rx="1.5"/>
-            </svg>
-          ) : runFlowBusy ? (
-            <svg className="prompt-dock-spin" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-              <circle cx="12" cy="12" r="9" opacity="0.25"/>
-              <path d="M21 12a9 9 0 0 1-9 9"/>
             </svg>
           ) : ICON_ARROW_UP}
         </motion.button>

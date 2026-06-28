@@ -1,6 +1,7 @@
 import { generateDesignMd } from './design-md.js';
 import { extractContent } from './demarcelize.js';
-import { describeSiteAsPrompt, describeImageAsTokens, describeImageAsPrompt } from './extract-llm.js';
+import { describeSiteAsPrompt, describeImageAsTokens, describeImageAsPrompt, cloneImageToHtml } from './extract-llm.js';
+import { embedClonedImageRegions } from './clone-images.js';
 
 // Render a standalone HTML string to a PNG data URL via headless Chromium.
 // Used for site→Screenshot extraction (the node's snapshot HTML, not a URL).
@@ -21,7 +22,9 @@ export async function htmlToScreenshotDataUrl(html, { width = 1280, height = 800
 // Which `to` targets are valid for which source kind. Keeps the route and
 // the UI honest about combos that actually have a generator.
 const SITE_TARGETS = new Set(['designmd', 'content', 'screenshot', 'style', 'prompt', 'html']);
-const ASSET_TARGETS = new Set(['tokens', 'prompt']);
+// 'clone' = full faithful site from the image; 'styleclone' = clone in the
+// background, then a design.md derived from that real clone (high precision).
+const ASSET_TARGETS = new Set(['tokens', 'prompt', 'clone', 'styleclone']);
 
 // Normalized result the route persists. Unused fields stay null.
 function result({ kind, meta, html = null, designMd = null, dataUrl = null, truncated = false }) {
@@ -77,7 +80,7 @@ export async function runExtract({ to, node, model }) {
 
   const allowed = isSite ? SITE_TARGETS : isAsset ? ASSET_TARGETS : null;
   if (!allowed) return { error: 'unsupported_combo', message: `cannot extract from kind "${node.kind}"` };
-  if (!['designmd', 'content', 'screenshot', 'style', 'prompt', 'tokens', 'html'].includes(to)) {
+  if (!['designmd', 'content', 'screenshot', 'style', 'prompt', 'tokens', 'html', 'clone', 'styleclone'].includes(to)) {
     return { error: 'invalid_to', message: `unknown extract target "${to}"` };
   }
   if (!allowed.has(to)) return { error: 'unsupported_combo', message: `cannot extract "${to}" from a ${node.kind}` };
@@ -133,6 +136,26 @@ export async function runExtract({ to, node, model }) {
         const text = await describeImageAsPrompt({ dataUrl, ...(model ? { model } : {}) });
         return result({ kind: 'prompt',
           meta: { name: `${name} — prompt`, prompt: text, source: 'extract', extractTo: 'prompt', sourceNodeId: node.id } });
+      }
+      case 'clone': {
+        // Clone the website shown in the image into a full site node (blue),
+        // then embed the REAL images (hero/render/logo) cropped from the
+        // screenshot pixels — placeholders become pixel-identical.
+        const raw = await cloneImageToHtml({ dataUrl, ...(model ? { model } : {}) });
+        const html = await embedClonedImageRegions(raw, dataUrl);
+        return result({ kind: 'site', html,
+          meta: { name: `${name} — clone`, source: 'extract', extractTo: 'clone', sourceNodeId: node.id } });
+      }
+      case 'styleclone': {
+        // Run the faithful clone (with real images embedded) in the background,
+        // then derive the design.md FROM that generated clone — an extreme-
+        // precision style spec, not a shallow token guess. The clone html rides
+        // along in meta for reuse.
+        const raw = await cloneImageToHtml({ dataUrl, ...(model ? { model } : {}) });
+        const html = await embedClonedImageRegions(raw, dataUrl);
+        const gen = await generateDesignMd({ html, ...(model ? { model } : {}) });
+        return result({ kind: 'designmd', html, designMd: gen.md, truncated: gen.truncated,
+          meta: { name: `${name} — style`, source: 'extract', extractTo: 'styleclone', sourceNodeId: node.id, cloneHtml: html } });
       }
     }
   }

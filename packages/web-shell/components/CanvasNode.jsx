@@ -354,7 +354,7 @@ function ReplaceOverlay({ nodeId, onReplaceContent }) {
 export default function CanvasNode({
   node, selected, placing = false, editing = false, onEditingChange,
   onSelect, onMove, onMoveStart, onMoveEnd, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
-  onDuplicate, onDownload,
+  onDuplicate, onDownload, onAltDuplicateDrag,
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
   onReplaceContent, onRequestUpload, onFrameZoom, onVersionRestore,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
@@ -663,6 +663,14 @@ export default function CanvasNode({
 
   const onTopbarMouseDown = useCallback((e) => {
     if (e.target?.closest?.('button')) return;
+    // Alt + drag → duplicate this node (a ghost copy follows the cursor until
+    // release). Intercept before the normal move so the original stays put.
+    if (e.altKey && onAltDuplicateDrag) {
+      e.stopPropagation();
+      e.preventDefault();
+      onAltDuplicateDrag(e);
+      return;
+    }
     e.stopPropagation();
     e.preventDefault();
     onSelect(e);
@@ -694,12 +702,19 @@ export default function CanvasNode({
     }
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
-  }, [node.pos_x, node.pos_y, onMove, onMoveStart, onMoveEnd, onSelect]);
+  }, [node.pos_x, node.pos_y, onMove, onMoveStart, onMoveEnd, onSelect, onAltDuplicateDrag]);
 
   const onBodyMouseDown = useCallback((e) => {
     if (editing) return;
     if (e.target?.closest?.('.cnode-topbar')) return;
     if (e.target?.closest?.('.cnode-port-right')) return;
+    // Alt + drag on the body → duplicate (instead of starting an edge).
+    if (e.altKey && onAltDuplicateDrag) {
+      e.stopPropagation();
+      e.preventDefault();
+      onAltDuplicateDrag(e);
+      return;
+    }
     e.stopPropagation();
     e.preventDefault();
     onSelect(e);
@@ -718,7 +733,7 @@ export default function CanvasNode({
     }
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
-  }, [editing, onStartEdge, onSelect]);
+  }, [editing, onStartEdge, onSelect, onAltDuplicateDrag]);
 
   const onPortMouseDown = useCallback((e, side = 'right') => {
     if (editing) return;

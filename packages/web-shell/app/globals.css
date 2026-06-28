@@ -448,6 +448,13 @@ body.canvas-pan-mode .react-transform-wrapper:active,
 body.canvas-pan-mode .react-transform-component:active {
   cursor: grabbing;
 }
+/* Alt+drag duplicate in progress — the copy cursor signals "duplicating" the
+   whole time the ghost follows the pointer. !important so it wins over node /
+   shell cursors during the gesture. */
+body.alt-dup-dragging,
+body.alt-dup-dragging * {
+  cursor: copy !important;
+}
 
 /* In canvas + edit mode, editor.css line 30 forces `cursor: auto
    !important` on every host-doc element so the editor's own cursor
@@ -2096,6 +2103,12 @@ body.rb-ed-light .popup-btn-danger:hover:not(:disabled) { background: #ef4444; b
 }
 .canvas-context-menu .popup-menu-btn:hover,
 .popup-menu.empty-drop-menu .popup-menu-btn:hover { background: #383838; }
+/* Disabled item (e.g. "Paste from clipboard" with nothing supported on the
+   clipboard) — dimmed, no hover highlight, default cursor. */
+.canvas-context-menu .popup-menu-btn:disabled,
+.popup-menu.empty-drop-menu .popup-menu-btn:disabled { opacity: 0.4; cursor: default; }
+.canvas-context-menu .popup-menu-btn:disabled:hover,
+.popup-menu.empty-drop-menu .popup-menu-btn:disabled:hover { background: transparent; }
 /* Destructive "Delete from history" row in the version context menu — red font
    (same danger pattern as the user-menu sign-out). */
 .cnode-version-ctx-menu .popup-menu-btn.cnode-version-menu-delete { color: #fca5a5; }
@@ -2534,11 +2547,19 @@ html.canvas-zoom-below-30 .cnode-body {
      node edge (box-shadow spread, no inset). The border itself goes transparent
      so only the ring reads. */
   border-color: transparent;
-  /* Ring inverse-scale FLOORS at 50% zoom (max(0.50, scale)) — past that the
-     ring holds the thickness it has at 50% and shrinks on screen with the node,
-     instead of ballooning into a thick band at far zoom-out. */
+  /* Ring inverse-scale FLOORS at 62% zoom (max(0.62, scale)) — slightly
+     thicker at far zoom than the old 0.50 floor so the selection reads on
+     small-on-screen nodes. Past the floor the ring holds that thickness and
+     shrinks on screen with the node, instead of ballooning at far zoom-out.
+     Two stacked rings: the origin colour (identity) PLUS a thin white hairline
+     just outside it. The white halo is the "prompt pattern" applied to every
+     node — prompt's ring already reads because its colour is near-white, while
+     saturated origin colours (blue/violet) washed out against the dark canvas
+     when thin. The hairline guarantees every selection pops regardless of
+     origin colour, while the origin ring stays on top as the primary read. */
   box-shadow:
-    0 0 0 calc(3px / max(0.50, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
+    0 0 0 calc(3px / max(0.62, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
+    0 0 0 calc(4.5px / max(0.62, var(--canvas-scale, 1))) rgba(255, 255, 255, 0.82),
     0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
@@ -4618,13 +4639,15 @@ body.rb-ed-light .canvas-section-frame {
 }
 .canvas-floating-run:hover { background: #f0f0f0; }
 
-/* Section is producing (run-flow or agent run): the run button is disabled +
-   dimmed while its nodes fill. The work feedback lives on the node ring. */
+/* Section is producing (run-flow or agent run): the button becomes a STOP
+   control — fully interactive, the play glyph swaps to a square, and a click
+   aborts the run (the node drops back to its pre-run state). The work feedback
+   itself still lives on the node ring. */
 .canvas-section-name-tag.running,
 .canvas-floating-run.visible.running {
-  pointer-events: none;
-  cursor: default;
-  opacity: 0.5;
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 1;
 }
 body.rb-ed-light .canvas-floating-run {
   background: rgba(255, 255, 255, 0.92);

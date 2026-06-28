@@ -8,6 +8,9 @@ vi.mock('openai', () => ({
     }
   },
 }));
+// Don't launch a browser in unit tests — the deterministic colour sampler has
+// its own suite (sample-palette.test.js).
+vi.mock('./sample-palette.js', () => ({ samplePalette: vi.fn(async () => '') }));
 
 const { extractStyleFromImage } = await import('./style-extract.js');
 

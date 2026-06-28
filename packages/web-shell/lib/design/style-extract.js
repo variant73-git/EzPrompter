@@ -20,10 +20,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
+import { samplePalette } from './sample-palette.js';
 
 const DEFAULT_VISION_MODEL = process.env.UNCRAFT_VISION_MODEL || 'gpt-5.5';
 
-const EXTRACT_SYSTEM = `You analyze ONE image and output a structured STYLE BRIEF describing only its real design, as markdown the restyler of a website can apply. The brief carries DESIGN TOKENS, not a description of the picture.
+const EXTRACT_SYSTEM = `You analyze ONE image and output a structured STYLE BRIEF describing only its real design, as markdown the restyler of a website can apply. The brief carries the source's full DESIGN SYSTEM — both its TOKENS (colour, type, radius) AND its STRUCTURAL / RELATIONAL rules (outer vs inner spacing, container layering/states, WHERE each fill or gradient lives, heading↔subheading relationships) — not a description of the picture. Think of it as the source's "DOM": the restyler must REPRODUCE these relationships on the destination, NOT re-derive its own from the destination's structure. A brief of colours alone is a failure — the structure is half the style.
 
 STEP 1 — CLASSIFY
 - layout: the image contains a real UI screen (website / mobile app / tablet). Cues: a bounded rectangular region with a screen aspect ratio (16:9, 16:10, 4:3 = desktop; 9:16, 9:19.5 = mobile; 4:3, 3:4 = tablet), rounded screen corners, a device frame, or internal UI (nav, buttons, cards, text).
@@ -41,10 +42,12 @@ STEP 3 — EXTRACT TOKENS, by ROLE not by area:
 - COLOUR by role: surface (the canvas content sits ON — identify by function even if little of it is visible; a surface can be small in visible pixels if elements cover it, so do NOT equate "largest flat area" with surface), neutrals (text, hairlines, muted), accent (small, saturated, repeated). Separate brand from neutral. Give hex values sampled from UI pixels ONLY, never the discarded backdrop.
 - TYPOGRAPHY: family character (serif/sans, geometric/humanist), weight contrast, scale, case. ITALIC: state explicitly whether the type is upright or italic and, if italic, exactly where it is used (e.g. only on a highlighted value). If the type is upright, say "upright, no italic" so the restyler never introduces italic.
 - SHAPE: corner-radius scale (cards vs buttons vs pills) and character (soft/large vs sharp).
-- SPACING: density (airy / balanced / dense) and rhythm — relative, not exact px.
+- SPACING — OUTER vs INNER (capture BOTH; they differ): the GAP BETWEEN sibling containers (cards/sections next to each other) AND the PADDING INSIDE each container. State the density of each (tight / balanced / airy). The most common miss is loosening the OUTER gaps — if the source packs its containers TIGHT together, say so explicitly so the restyler does not space them out.
 - PROPORTIONS & PADDING (pay close attention — easy to get wrong): the size of text RELATIVE to its buttons, pills, and containers (e.g. "small label inside a tall pill"), and the INTERNAL padding — the gap between content and the container's edges (generous vs tight). Capture these ratios so the restyler keeps the same breathing room.
 - ELEVATION, BORDERS & SHADOWS: state explicitly whether cards / containers have (a) a border/outline at all and (b) a drop-shadow at all. If they are flat (separated by fill alone), say "no borders, no shadows" so the restyler invents NEITHER (AIs force both). Report a border or shadow only when the source actually shows it, and note its tint. STRONG BIAS AGAINST BORDERS: only report a container border when you can see an UNMISTAKABLE distinct contrasting line tracing the container edge. A change of fill, a soft shadow, or whitespace between cards is NOT a border. When unsure, say "no borders" — do not deduce a 1px outline that isn't clearly there.
-- UI BACKGROUND: the screen's own canvas colour (NOT the discarded image backdrop — name them separately).
+- BACKGROUND & WHERE TREATMENTS LIVE (placement is critical — a frequent, ruinous error): the screen's own page background — is it a SOLID or a GRADIENT? If a gradient, give its direction and stops as hex (e.g. "cool grey → warm cream, top-left to bottom-right"). State EXPLICITLY which element each fill/gradient sits on. A gradient on the PAGE BACKGROUND must be reported AS the background — never attributed to a card/container. Do not read a background gradient and hand it to a container. (Name the page background separately from the discarded image backdrop.)
+- CONTAINER VARIANTS / STATES: enumerate the DISTINCT container treatments — do NOT collapse them into one surface. A layout usually has several, e.g. (1) an opaque card, (2) a translucent / frosted "glass" card (semi-transparent white sitting OVER the background so it shows through), (3) a tint slightly lighter or darker than the page. For each, give its fill, opacity, and how it layers over the background.
+- HEADING ↔ SUBHEADING relationship: for a title + subtitle pair, capture the size RATIO, the weight contrast, the colour relationship (e.g. near-black title with a muted-grey subtitle), and the MARGIN from the container's edges to the heading block. Preserve the pairing so the restyler keeps the same hierarchy and breathing room.
 
 INSPIRATION mode instead: read style family (skeuomorphic / flat / brutalist / editorial / glassy / ...), materials & textures, mood, palette, illustration style; THEN translate into concrete UI token suggestions (surface, accent, type, radius, depth). Mark these as invented.
 
@@ -131,7 +134,18 @@ export async function extractStyleFromImage({ imageDataUrl, model = DEFAULT_VISI
   if (!imageDataUrl) throw new Error('style-extract: no image provided');
   const instruction = 'Analyze the attached image and produce its style brief.';
   const raw = await callVision({ model, system: EXTRACT_SYSTEM, instruction, dataUrl: imageDataUrl });
-  const brief = (raw || '').replace(/^```[a-z]*\n/, '').replace(/```\s*$/, '').trim();
+  let brief = (raw || '').replace(/^```[a-z]*\n/, '').replace(/```\s*$/, '').trim();
   if (!brief) throw new Error('style-extract: model returned an empty brief');
-  return { brief, ...parseModeConfidence(brief) };
+  const { mode, confidence } = parseModeConfidence(brief);
+  // Deterministic colour ground-truth: measure the real source pixels and pin
+  // the exact background grey / gradient + dominant palette, so the restyler
+  // never drifts them. Best-effort — sampling failure leaves the brief as-is.
+  // Skipped in inspiration mode (no real screen to sample faithfully).
+  if (mode === 'layout') {
+    try {
+      const truth = await samplePalette({ imageDataUrl });
+      if (truth) brief += truth;
+    } catch { /* best-effort */ }
+  }
+  return { brief, mode, confidence };
 }
