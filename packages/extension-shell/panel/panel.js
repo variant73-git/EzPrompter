@@ -2145,22 +2145,34 @@
       if (!overlay) { resolve('cancel'); return; }
       if (body) $('#rb-unsavedBody').textContent = body;
       overlay.hidden = false;
-      const cleanup = () => { overlay.hidden = true; };
-      const onDiscard = () => { cleanup(); resolve('discard'); };
-      const onCancel = () => { cleanup(); resolve('cancel'); };
-      const onSave = async () => {
-        cleanup();
-        try { await saveSelectedAssets(); resolve('save'); }
-        catch { resolve('save'); }
-      };
-      $('#rb-unsavedDiscard').onclick = onDiscard;
-      $('#rb-unsavedCancel').onclick = onCancel;
-      $('#rb-unsavedSave').onclick = onSave;
       // Esc → Cancel (the safest default for a "you have unsaved work"
       // dialog — Discard would lose data on a misclick).
       const onKey = (e) => {
-        if (e.key === 'Escape') { e.preventDefault(); document.removeEventListener('keydown', onKey, true); onCancel(); }
+        if (e.key === 'Escape') { e.preventDefault(); finish('cancel'); }
       };
+      // Backdrop click (on the overlay itself, NOT the card) → Cancel. A
+      // belt-and-braces escape so the modal can never trap the widget even
+      // if a button handler somehow doesn't bind (this dialog has a history
+      // of getting stuck — see panel.css note).
+      const onOverlay = (e) => { if (e.target === overlay) finish('cancel'); };
+      function cleanup() {
+        overlay.hidden = true;
+        document.removeEventListener('keydown', onKey, true);
+        overlay.removeEventListener('click', onOverlay);
+        $('#rb-unsavedDiscard').onclick = null;
+        $('#rb-unsavedCancel').onclick = null;
+        $('#rb-unsavedSave').onclick = null;
+      }
+      let done = false;
+      function finish(decision) { if (done) return; done = true; cleanup(); resolve(decision); }
+      $('#rb-unsavedDiscard').onclick = () => finish('discard');
+      $('#rb-unsavedCancel').onclick = () => finish('cancel');
+      $('#rb-unsavedSave').onclick = async () => {
+        cleanup(); done = true;
+        try { await saveSelectedAssets(); } catch {}
+        resolve('save');
+      };
+      overlay.addEventListener('click', onOverlay);
       document.addEventListener('keydown', onKey, true);
     });
   }
@@ -2174,10 +2186,12 @@
     // Mark stage cleared on discard so subsequent beforeunload doesn't
     // re-warn.
     if (decision === 'discard') {
-      for (const it of collectState.items) removeItemOutline(it);
+      // Clear unconditionally — a single bad outline removal must never leave
+      // items behind (which would re-trigger the dialog and feel "stuck").
+      try { for (const it of collectState.items) removeItemOutline(it); } catch {}
       collectState.items = [];
       collectState.selected.clear();
-      renderCollectStage();
+      try { renderCollectStage(); } catch {}
     }
     action();
   }
