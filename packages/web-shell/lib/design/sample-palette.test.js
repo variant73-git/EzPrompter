@@ -23,12 +23,24 @@ describe('formatPaletteBrief', () => {
     expect(out).toContain('#f0f0f5'); // top
     expect(out).toContain('#e6ded2'); // bottom
     expect(out).toContain('#ffffff'); // palette
-    expect(out).toMatch(/EXACT/);
+    expect(out).toMatch(/exact/i);
   });
-  it('reports a flat colour when top ≈ bottom', () => {
+  it('labels the dominant background and the saturated accent by role', () => {
+    const out = formatPaletteBrief({
+      top: [245, 245, 245], bottom: [245, 245, 245], palette: [],
+      background: [243, 243, 240], accent: [245, 160, 40],
+    });
+    expect(out).toMatch(/background colour: #f3f3f0/i);
+    expect(out).toMatch(/accent.*#f5a028/i);
+  });
+  it('does not call it a gradient when top ≈ bottom', () => {
     const out = formatPaletteBrief({ top: [245, 245, 245], bottom: [245, 245, 245], palette: [] });
-    expect(out).toMatch(/flat #f5f5f5/);
+    expect(out).toContain('#f5f5f5');
     expect(out).not.toMatch(/GRADIENT/);
+  });
+  it('caveats that edge colours may be a presentation backdrop', () => {
+    const out = formatPaletteBrief({ top: [240, 240, 245], bottom: [230, 222, 210], palette: [] });
+    expect(out).toMatch(/backdrop/i);
   });
 });
 

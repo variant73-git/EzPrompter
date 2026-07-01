@@ -1355,14 +1355,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     return sectionCoreRect(sibs);
   }
 
-  // Arm a node for removal from its section (menu action). The node enters the
-  // red removal state; the user then drags it outside to commit (or Cancel).
+  // Remove a node from its section (menu action). IMMEDIATE — no drag-to-place
+  // (that re-adopted the node the moment it dropped back inside the frame).
+  // We cut its edges and drop it just BELOW the section's frame, near its
+  // current x, so it lands clearly outside and can't be re-latched.
   function armNodeRemoval(node) {
     const own = sections.find((s) => s.memberIds.includes(node.id) && s.memberIds.length > 1);
     if (!own) return;
     const siblingIds = own.memberIds.filter((id) => id !== node.id);
-    setRemovingSync({ nodeId: node.id, sectionId: own.id, rootId: own.rootId, siblingIds, fromMenu: true, armX: node.pos_x, armY: node.pos_y });
-    setRemovingOutside(false);
+    const sibs = nodes.filter((n) => siblingIds.includes(n.id));
+    const frame = sectionCoreRect(sibs);   // padded bbox of the REMAINING members
+    const GAP = 80;
+    const finalX = Math.max(frame.left, node.pos_x);
+    const finalY = frame.bottom + GAP;     // clear below the (shrunken) frame
+    commitNodeRemoval(node, finalX, finalY, { sectionId: own.id });
   }
 
   // Cancel an armed removal — the node stays a member, edges + adoption intact.

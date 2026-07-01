@@ -5396,7 +5396,16 @@ body.chat-dock-preview {
 .prompt-dock.dock-left .prompt-dock-chat-divider,
 .prompt-dock.dock-right .prompt-dock-chat-divider { order: 2; }
 .prompt-dock.dock-left .prompt-dock-chips-wrap,
-.prompt-dock.dock-right .prompt-dock-chips-wrap   { order: 3; }
+.prompt-dock.dock-right .prompt-dock-chips-wrap   {
+  order: 3;
+  /* Side-docked the dock is a flex COLUMN; without this the column squished
+     the attachment preview (and framer's measured-in-a-squeezed-state inline
+     height locked it) → the thumbnail showed as a clipped sliver. Never shrink
+     it, and override the locked height so the full 56px chip is visible. */
+  flex: 0 0 auto;
+  height: auto !important;
+  overflow: visible;
+}
 .prompt-dock.dock-left .prompt-dock-context-wrap,
 .prompt-dock.dock-right .prompt-dock-context-wrap { order: 4; }
 .prompt-dock.dock-left .prompt-dock-textarea,

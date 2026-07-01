@@ -26,15 +26,19 @@ export function formatPaletteBrief(sampled) {
   const top = toHex(sampled.top);
   const bottom = toHex(sampled.bottom);
   const gradient = colorDist(sampled.top, sampled.bottom) > 10;
-  const bg = gradient
-    ? `a GRADIENT from ${top} (top) to ${bottom} (bottom) — it is NOT a flat colour`
-    : `a flat ${top}`;
   const palette = (sampled.palette || []).map(toHex);
-  const paletteLine = palette.length ? `\n- Dominant colours measured in the image: ${palette.join(', ')}` : '';
+  const lines = [];
+  if (sampled.background) lines.push(`- Dominant surface / background colour: ${toHex(sampled.background)}.`);
+  if (sampled.accent) lines.push(`- Accent (the small, saturated, repeated colour — buttons / highlights): ${toHex(sampled.accent)}.`);
+  if (palette.length) lines.push(`- Other dominant colours present: ${palette.join(', ')}.`);
+  lines.push(
+    `- Measured top edge ${top}, bottom edge ${bottom}.` +
+    (gradient ? ' They differ → the background reads as a vertical GRADIENT, not flat.' : '') +
+    " NOTE: if the design floats on a presentation backdrop (see ISOLATE), these edge colours are that BACKDROP — do NOT use them as the page background; use the UI's own surface. If the UI is full-bleed, they ARE the page background.",
+  );
   return (
-    '\n\nSAMPLED GROUND-TRUTH COLOURS (measured from the source pixels — use these EXACT values, never approximate or drift them):\n' +
-    `- Page background is ${bg}.` +
-    paletteLine
+    '\n\nSAMPLED COLOURS (exact, measured from the source pixels — use THESE hexes verbatim, never approximate or drift them):\n' +
+    lines.join('\n')
   );
 }
 
@@ -74,14 +78,30 @@ export async function sampleImagePixels(imageDataUrl) {
         };
         const top = bandAvg(0, Math.max(1, Math.round(ch * 0.12)));
         const bottom = bandAvg(Math.round(ch * 0.88), ch);
-        const hist = new Map();
+        // Cluster by coarse buckets, but keep the EXACT rgb sums so each colour
+        // we report is the real average of its pixels — not the rounded bucket
+        // key (which made the palette approximate, never exact).
+        const buckets = new Map();
         for (let i = 0; i < px.length; i += 16) {
-          const key = ((px[i] & 0xf0) << 16) | ((px[i + 1] & 0xf0) << 8) | (px[i + 2] & 0xf0);
-          hist.set(key, (hist.get(key) || 0) + 1);
+          if (px[i + 3] < 200) continue; // skip transparent
+          const key = ((px[i] & 0xe0) << 16) | ((px[i + 1] & 0xe0) << 8) | (px[i + 2] & 0xe0);
+          const cur = buckets.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+          cur.n++; cur.r += px[i]; cur.g += px[i + 1]; cur.b += px[i + 2];
+          buckets.set(key, cur);
         }
-        const palette = [...hist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
-          .map(([k]) => [(k >> 16) & 255, (k >> 8) & 255, k & 255]);
-        return { top, bottom, palette };
+        const list = [...buckets.values()]
+          .map((c) => ({ n: c.n, rgb: [c.r / c.n, c.g / c.n, c.b / c.n] }))
+          .sort((a, b) => b.n - a.n);
+        const sat = (rgb) => { const mx = Math.max(...rgb), mn = Math.min(...rgb); return mx === 0 ? 0 : (mx - mn) / mx; };
+        const palette = list.slice(0, 8).map((c) => c.rgb);
+        // Most frequent = the dominant surface/background. Accent = the most
+        // SATURATED colour among the frequent-enough buckets (the small, repeated
+        // brand colour the frequency sort alone would bury under the greys).
+        const background = list.length ? list[0].rgb : null;
+        const minFreq = list.length ? list[0].n * 0.01 : 0;
+        const accent = list.filter((c) => c.n >= minFreq && sat(c.rgb) > 0.35)
+          .sort((a, b) => sat(b.rgb) - sat(a.rgb))[0]?.rgb || null;
+        return { top, bottom, palette, background, accent };
       });
     } finally {
       await browser.close();
@@ -95,5 +115,9 @@ export async function sampleImagePixels(imageDataUrl) {
 // block to append (''  when sampling is unavailable). `_sampler` injectable.
 export async function samplePalette({ imageDataUrl, _sampler = sampleImagePixels } = {}) {
   const sampled = await _sampler(imageDataUrl);
+  // Surface a sampling miss in dev logs — a silent failure here is exactly why
+  // "the colours still aren't exact": no ground-truth gets pinned and the model
+  // falls back to eyeballing.
+  if (!sampled) console.warn('[sample-palette] no colours measured (browser/canvas sampling failed) — colour falls back to the model');
   return formatPaletteBrief(sampled);
 }
