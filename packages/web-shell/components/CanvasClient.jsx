@@ -1969,8 +1969,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // and lands a populated node. Shows a loading placeholder while the
   // generator runs (LLM / screenshot can take a few seconds).
   async function handleExtractTo(to, { sourceNodeId, worldX, worldY }) {
-    const tmpId = `tmp-extract-${sourceNodeId}-${to}`;
-    const tmpEdgeId = `tmp-extract-edge-${sourceNodeId}-${to}`;
+    // MUST use the `temp-` prefix (not `tmp-`): every server-persist guard in
+    // this file checks `startsWith('temp-')`, so a `tmp-extract-` id slipped
+    // through and got PATCHed to the DB → 500 (invalid uuid) in a loop.
+    const tmpId = `temp-extract-${sourceNodeId}-${to}`;
+    const tmpEdgeId = `temp-extract-edge-${sourceNodeId}-${to}`;
     // The placeholder's KIND must match the FINAL node kind so it never appears
     // to "morph" (a .md that becomes .html) when the real node arrives — and so
     // its category colour-coding (border/ring/cord) reads correctly while it
@@ -4193,6 +4196,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     function onUp() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      setDragFreeze(null);   // release — lets the latch/frame effects settle once
       setNodes((cur) => {
         for (const m of startMembers) {
           const node = cur.find((n) => n.id === m.id);
@@ -4203,6 +4207,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         return cur;
       });
     }
+    // Freeze membership/frame effects for the duration of the section drag —
+    // mirrors the node drag. Without this the geometric-latch effect ran on
+    // every mousemove's setNodes and re-set state in a loop → "Maximum update
+    // depth exceeded". id = sectionId matches no node, so no member is pinned.
+    setDragFreeze({ id: sectionId, startX: 0, startY: 0 });
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   }
