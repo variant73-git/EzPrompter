@@ -4093,7 +4093,14 @@ body.rb-ed-light .cnode-empty-upload-label { color: rgba(0, 0, 0, 0.5); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-html.canvas-zoom-low .cnode-anchor-title { display: inline-flex; }
+html.canvas-zoom-low .cnode-anchor-title {
+  display: inline-flex;
+  opacity: 1;
+  transition: opacity 160ms ease-out;
+}
+/* Below 15% zoom the caption fades out — at that distance the labels
+   crowd the tiny frames and read as noise, not identification. */
+html.canvas-zoom-min .cnode-anchor-title { opacity: 0; }
 /* Asset / image nodes mirror URL/site behaviour: at NORMAL zoom the
    topbar shows the kind-pill + title (overriding the .cnode.narrow
    rule that hides them for other narrow kinds); at zoom-low the topbar
