@@ -179,6 +179,123 @@ export function planSectionDeoverlap(rows, edgeRows, activeNodeId, gap = SECTION
   return { ids: active.map((n) => n.id).filter(Boolean), delta };
 }
 
+// Wall rule for a section frame being resized by hand: the candidate frame
+// must never invade a neighbouring section's frame. Clamps the candidate's
+// edges back to SECTION_VS_SECTION_GAP short of each obstacle it would
+// otherwise overlap — and never further out than the gesture's start edge,
+// so a frame that already sat INSIDE the gap band (legacy persisted frames,
+// tight layouts committed by the member-containment override) is frozen at
+// its start position instead of silently losing the wall. Only an axis that
+// was CLEAR of the obstacle at gesture start can be its wall — the other
+// axis already shared a range (side-by-side frames always share an x- or
+// y-band) and clamping it would teleport the frame. When both axes were
+// clear (diagonal approach), the smaller intrusion is corrected, and
+// `wallMemory` (an optional per-gesture Map keyed by obstacle index) keeps
+// the first chosen wall while the obstacle is still hit so the clamped axis
+// never flips mid-drag. Frames truly overlapping the obstacle on both axes
+// at gesture start have no wall to hold and pass through unchanged. Rects
+// are {left, top, right, bottom}; returns a new rect, never mutates.
+// Clamping only shrinks toward startFrame, so resolving one obstacle can
+// never create overlap with another.
+export function clampFrameToNeighbors(candidate, startFrame, obstacles, gap = SECTION_VS_SECTION_GAP, wallMemory = null) {
+  let { left, top, right, bottom } = candidate;
+  const list = obstacles || [];
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
+    if (!r) continue;
+    const xHit = left < r.right + gap && right > r.left - gap;
+    const yHit = top < r.bottom + gap && bottom > r.top - gap;
+    if (!xHit || !yHit) { wallMemory?.delete(i); continue; }
+    const walls = [];
+    if (startFrame.right <= r.left) { const v = Math.max(startFrame.right, r.left - gap); walls.push({ edge: 'right', v, cost: right - v }); }
+    if (startFrame.left >= r.right) { const v = Math.min(startFrame.left, r.right + gap); walls.push({ edge: 'left', v, cost: v - left }); }
+    if (startFrame.bottom <= r.top) { const v = Math.max(startFrame.bottom, r.top - gap); walls.push({ edge: 'bottom', v, cost: bottom - v }); }
+    if (startFrame.top >= r.bottom) { const v = Math.min(startFrame.top, r.bottom + gap); walls.push({ edge: 'top', v, cost: v - top }); }
+    if (!walls.length) continue;
+    walls.sort((a, b) => a.cost - b.cost);
+    let w = walls[0];
+    const sticky = wallMemory?.get(i);
+    if (sticky) w = walls.find((x) => x.edge === sticky) || w;
+    wallMemory?.set(i, w.edge);
+    if (w.edge === 'right') right = Math.min(right, w.v);
+    else if (w.edge === 'left') left = Math.max(left, w.v);
+    else if (w.edge === 'bottom') bottom = Math.min(bottom, w.v);
+    else top = Math.max(top, w.v);
+  }
+  return { left, top, right, bottom };
+}
+
+// Wall rule for a section frame being MOVED by hand (grip drag): the frame
+// translates rigidly, so instead of clamping edges we clamp the translation
+// deltas — the dragged section slides along a neighbour's wall and stops
+// SECTION_VS_SECTION_GAP short of it, never on top of it (and never pushes
+// it: the DRAGGED frame is the one that yields). Same wall qualification as
+// clampFrameToNeighbors: only an axis that was clear of the obstacle at
+// gesture start can be its wall, gap-band starts are frozen at their start
+// offset on that axis (still free to move away), truly-overlapping starts
+// pass through, and `wallMemory` (optional per-gesture Map keyed by obstacle
+// index) keeps a diagonal obstacle's first chosen wall so the clamped axis
+// never flips mid-drag. Obstacles are {left, top, right, bottom} rects —
+// neighbouring section frames AND loose node rects (a section must not cover
+// a stray node either). Returns clamped { dx, dy }.
+export function clampMoveToNeighbors(startFrame, dx, dy, obstacles, gap = SECTION_VS_SECTION_GAP, wallMemory = null) {
+  let cdx = dx, cdy = dy;
+  const list = obstacles || [];
+  // Clamping one axis against obstacle A can slide the frame back into
+  // obstacle B's band — re-run until stable. Bounded: every clamp only
+  // shrinks a delta toward the start position, which was valid (or frozen).
+  for (let pass = 0; pass < 4; pass++) {
+    let changed = false;
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
+      if (!r) continue;
+      const left = startFrame.left + cdx, right = startFrame.right + cdx;
+      const top = startFrame.top + cdy, bottom = startFrame.bottom + cdy;
+      const xHit = left < r.right + gap && right > r.left - gap;
+      const yHit = top < r.bottom + gap && bottom > r.top - gap;
+      if (!xHit || !yHit) {
+        // Only the RAW deltas (pass 0) decide whether the obstacle was left
+        // behind — later passes see post-clamp positions sitting exactly at
+        // the wall, which would wrongly reset the hysteresis every call.
+        if (pass === 0) wallMemory?.delete(i);
+        continue;
+      }
+      const walls = [];
+      if (startFrame.right <= r.left) {
+        const lim = Math.max(startFrame.right, r.left - gap) - startFrame.right;
+        walls.push({ axis: 'x', dir: 1, lim, cost: cdx - lim });
+      }
+      if (startFrame.left >= r.right) {
+        const lim = Math.min(startFrame.left, r.right + gap) - startFrame.left;
+        walls.push({ axis: 'x', dir: -1, lim, cost: lim - cdx });
+      }
+      if (startFrame.bottom <= r.top) {
+        const lim = Math.max(startFrame.bottom, r.top - gap) - startFrame.bottom;
+        walls.push({ axis: 'y', dir: 1, lim, cost: cdy - lim });
+      }
+      if (startFrame.top >= r.bottom) {
+        const lim = Math.min(startFrame.top, r.bottom + gap) - startFrame.top;
+        walls.push({ axis: 'y', dir: -1, lim, cost: lim - cdy });
+      }
+      if (!walls.length) continue;
+      walls.sort((a, b) => a.cost - b.cost);
+      let w = walls[0];
+      const sticky = wallMemory?.get(i);
+      if (sticky) w = walls.find((x) => x.axis === sticky.axis && x.dir === sticky.dir) || w;
+      wallMemory?.set(i, { axis: w.axis, dir: w.dir });
+      if (w.axis === 'x') {
+        const next = w.dir === 1 ? Math.min(cdx, w.lim) : Math.max(cdx, w.lim);
+        if (next !== cdx) { cdx = next; changed = true; }
+      } else {
+        const next = w.dir === 1 ? Math.min(cdy, w.lim) : Math.max(cdy, w.lim);
+        if (next !== cdy) { cdy = next; changed = true; }
+      }
+    }
+    if (!changed) break;
+  }
+  return { dx: cdx, dy: cdy };
+}
+
 // DB-applying wrapper: read the board, plan the shift, and move the active
 // section's nodes as a UNIT so its frame no longer overlaps any other section.
 // Safe to call after every edge insert — a no-op when there's nothing to fix,

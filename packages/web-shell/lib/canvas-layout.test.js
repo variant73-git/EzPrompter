@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { placeStackDown, placeRightOfSources, resolvePlacement, planSectionDeoverlap } from './canvas-layout.js';
+import { placeStackDown, placeRightOfSources, resolvePlacement, planSectionDeoverlap, clampFrameToNeighbors, clampMoveToNeighbors } from './canvas-layout.js';
 
 // The placement helpers call `sql` as a tagged template and return rows.
 // A fake that ignores the template and resolves to a fixed row set is enough.
@@ -203,5 +203,183 @@ describe('planSectionDeoverlap (#3 — sections must never overlap)', () => {
     // B's frame top is y=140 (minY 400 − TOP_PAD 260); L's bottom is y=200.
     // Clearing with the 24px gap pushes B's frame top to 224 → delta 84.
     expect(plan.delta).toBe(84);
+  });
+});
+
+describe('clampFrameToNeighbors (#5 — resize never invades another section)', () => {
+  // Frames as the client passes them: {left, top, right, bottom}. Gap = 24.
+  const start = { left: 0, top: 0, right: 400, bottom: 400 };
+
+  it('leaves a frame alone when it stays clear of every neighbour', () => {
+    const neighbor = { left: 1000, top: 0, right: 1400, bottom: 400 };
+    const candidate = { ...start, right: 700 };
+    expect(clampFrameToNeighbors(candidate, start, [neighbor])).toEqual(candidate);
+  });
+
+  it('holds the right edge at the wall when growing into a neighbour on the right', () => {
+    const neighbor = { left: 600, top: 0, right: 1000, bottom: 400 };
+    const candidate = { ...start, right: 800 }; // dragged well past the neighbour's left
+    const out = clampFrameToNeighbors(candidate, start, [neighbor]);
+    expect(out.right).toBe(600 - 24); // neighbour.left − gap
+    expect(out.left).toBe(start.left);
+    expect(out.top).toBe(start.top);
+    expect(out.bottom).toBe(start.bottom);
+  });
+
+  it('holds the left edge when growing into a neighbour on the left', () => {
+    const neighbor = { left: -1000, top: 0, right: -200, bottom: 400 };
+    const candidate = { ...start, left: -500 };
+    const out = clampFrameToNeighbors(candidate, start, [neighbor]);
+    expect(out.left).toBe(-200 + 24); // neighbour.right + gap
+  });
+
+  it('holds the bottom edge when growing into a neighbour below', () => {
+    const neighbor = { left: 0, top: 600, right: 400, bottom: 1000 };
+    const candidate = { ...start, bottom: 900 };
+    const out = clampFrameToNeighbors(candidate, start, [neighbor]);
+    expect(out.bottom).toBe(600 - 24); // neighbour.top − gap
+  });
+
+  it('holds the top edge when growing into a neighbour above', () => {
+    const neighbor = { left: 0, top: -1000, right: 400, bottom: -200 };
+    const candidate = { ...start, top: -500 };
+    const out = clampFrameToNeighbors(candidate, start, [neighbor]);
+    expect(out.top).toBe(-200 + 24); // neighbour.bottom + gap
+  });
+
+  it('corrects the smaller intrusion on a diagonal approach (both axes were clear)', () => {
+    // Neighbour sits diagonally down-right; SE drag intrudes 76px in x and
+    // 176px in y → the x correction is cheaper, so only `right` is clamped.
+    const neighbor = { left: 600, top: 600, right: 1000, bottom: 1000 };
+    const candidate = { ...start, right: 652, bottom: 752 };
+    const out = clampFrameToNeighbors(candidate, start, [neighbor]);
+    expect(out.right).toBe(600 - 24);
+    expect(out.bottom).toBe(752); // untouched — x clamp alone clears the overlap
+  });
+
+  it('passes through frames that already overlapped at gesture start (no wall to hold)', () => {
+    const neighbor = { left: 200, top: 200, right: 800, bottom: 800 }; // overlaps `start` on both axes
+    const candidate = { ...start, right: 500, bottom: 500 };
+    expect(clampFrameToNeighbors(candidate, start, [neighbor])).toEqual(candidate);
+  });
+
+  it('clamps against several neighbours independently', () => {
+    const rightWall = { left: 700, top: 0, right: 1100, bottom: 400 };
+    const bottomWall = { left: 0, top: 900, right: 400, bottom: 1300 };
+    const candidate = { ...start, right: 900, bottom: 1100 }; // SE drag into both
+    const out = clampFrameToNeighbors(candidate, start, [rightWall, bottomWall]);
+    expect(out.right).toBe(700 - 24);
+    expect(out.bottom).toBe(900 - 24);
+  });
+
+  it('never clamps past the start frame (a resting frame at the gap boundary stays put)', () => {
+    // Start frame already exactly 24px from the neighbour; dragging further
+    // right is fully rejected, back to the start edge.
+    const neighbor = { left: 424, top: 0, right: 800, bottom: 400 };
+    const candidate = { ...start, right: 500 };
+    const out = clampFrameToNeighbors(candidate, start, [neighbor]);
+    expect(out.right).toBe(400);
+  });
+
+  it('still holds the wall when the start frame sits INSIDE the gap band (legacy tight frames)', () => {
+    // Frames only 20px apart (violating the 24px gap) but NOT overlapping —
+    // e.g. persisted pre-wall layouts. The wall must freeze the edge at its
+    // start position, not silently vanish and allow a full invasion.
+    const tightStart = { left: 0, top: 0, right: 480, bottom: 400 };
+    const neighbor = { left: 500, top: 0, right: 900, bottom: 400 };
+    const out = clampFrameToNeighbors({ ...tightStart, right: 800 }, tightStart, [neighbor]);
+    expect(out.right).toBe(480); // frozen at the start edge — no pass-through
+  });
+
+  it('wallMemory keeps the first chosen wall for the whole gesture (no mid-drag axis flip)', () => {
+    const neighbor = { left: 600, top: 600, right: 1000, bottom: 1000 };
+    const memory = new Map();
+    // First move: x-intrusion (76) cheaper than y (176) → right clamped.
+    const first = clampFrameToNeighbors({ ...start, right: 652, bottom: 752 }, start, [neighbor], undefined, memory);
+    expect(first.right).toBe(576);
+    expect(first.bottom).toBe(752);
+    // Later move: y-intrusion (76) is now cheaper than x (324), but the
+    // remembered wall sticks — still the right edge, bottom stays free.
+    const second = clampFrameToNeighbors({ ...start, right: 900, bottom: 652 }, start, [neighbor], undefined, memory);
+    expect(second.right).toBe(576);
+    expect(second.bottom).toBe(652);
+  });
+});
+
+describe('clampMoveToNeighbors (section drag never lands on other elements)', () => {
+  // The dragged section's frame at gesture start; obstacles are neighbour
+  // frames or loose node rects. Gap = 24.
+  const start = { left: 0, top: 0, right: 400, bottom: 400 };
+
+  it('leaves the deltas alone when the path is clear', () => {
+    const neighbor = { left: 1000, top: 0, right: 1400, bottom: 400 };
+    expect(clampMoveToNeighbors(start, 300, 50, [neighbor])).toEqual({ dx: 300, dy: 50 });
+    expect(clampMoveToNeighbors(start, 300, 50, [])).toEqual({ dx: 300, dy: 50 });
+  });
+
+  it('stops the drag at the gap before a neighbour frame on the right', () => {
+    const neighbor = { left: 600, top: 0, right: 1000, bottom: 400 };
+    const out = clampMoveToNeighbors(start, 300, 0, [neighbor]);
+    expect(out).toEqual({ dx: 176, dy: 0 }); // frame right lands at 576 = 600 − 24
+  });
+
+  it('slides along the wall — the blocked axis clamps, the free axis keeps moving', () => {
+    const neighbor = { left: 600, top: 0, right: 1000, bottom: 400 };
+    const out = clampMoveToNeighbors(start, 300, 100, [neighbor]);
+    expect(out).toEqual({ dx: 176, dy: 100 });
+  });
+
+  it('lets the frame pass once it has cleared the neighbour band', () => {
+    const neighbor = { left: 600, top: 0, right: 1000, bottom: 400 };
+    // Dropped low enough that the y-bands no longer overlap — x is free.
+    const out = clampMoveToNeighbors(start, 300, 500, [neighbor]);
+    expect(out).toEqual({ dx: 300, dy: 500 });
+  });
+
+  it('stops the drag before an obstacle below', () => {
+    const neighbor = { left: 0, top: 600, right: 400, bottom: 1000 };
+    const out = clampMoveToNeighbors(start, 0, 300, [neighbor]);
+    expect(out).toEqual({ dx: 0, dy: 176 }); // frame bottom lands at 576 = 600 − 24
+  });
+
+  it('a loose node rect is a wall too — the frame can never cover it', () => {
+    const looseNode = { left: 500, top: 100, right: 700, bottom: 300 };
+    const out = clampMoveToNeighbors(start, 200, 0, [looseNode]);
+    expect(out).toEqual({ dx: 76, dy: 0 }); // frame right lands at 476 = 500 − 24
+  });
+
+  it('freezes a gap-violating start toward the obstacle but stays free moving away', () => {
+    const tightStart = { left: 0, top: 0, right: 480, bottom: 400 };
+    const neighbor = { left: 500, top: 0, right: 900, bottom: 400 }; // only 20px away
+    expect(clampMoveToNeighbors(tightStart, 100, 0, [neighbor])).toEqual({ dx: 0, dy: 0 });
+    expect(clampMoveToNeighbors(tightStart, -100, 0, [neighbor])).toEqual({ dx: -100, dy: 0 });
+  });
+
+  it('wallMemory keeps the first chosen wall across moves (no mid-drag axis flip)', () => {
+    const neighbor = { left: 600, top: 600, right: 1000, bottom: 1000 };
+    const memory = new Map();
+    // First move: x-intrusion (76) cheaper than y (176) → x clamps.
+    expect(clampMoveToNeighbors(start, 252, 352, [neighbor], undefined, memory)).toEqual({ dx: 176, dy: 352 });
+    // Later move: y-intrusion is now cheaper, but the remembered x-wall sticks.
+    expect(clampMoveToNeighbors(start, 500, 252, [neighbor], undefined, memory)).toEqual({ dx: 176, dy: 252 });
+  });
+
+  it('a zero-size point obstacle walls the frame (foreign node centers vs the moved core)', () => {
+    // The core wall in startSectionMove: each non-member node's CENTER is a
+    // point obstacle for the section's core rect, gap 1 — the center must
+    // never end inside the core (that's what geometric absorption tests).
+    const core = { left: 0, top: 0, right: 400, bottom: 400 };
+    const center = { left: 500, top: 200, right: 500, bottom: 200 };
+    const out = clampMoveToNeighbors(core, 200, 0, [center], 1);
+    expect(out).toEqual({ dx: 99, dy: 0 }); // core right stops at 499 — center stays strictly outside
+  });
+
+  it('clamps against several obstacles independently (corner pocket drop)', () => {
+    // Tall wall on the right + wide wall below form a corner pocket. A
+    // diagonal drag into the corner stops at BOTH gaps.
+    const rightWall = { left: 700, top: 0, right: 1100, bottom: 1300 };
+    const bottomWall = { left: 0, top: 900, right: 1100, bottom: 1300 };
+    const out = clampMoveToNeighbors(start, 500, 700, [rightWall, bottomWall]);
+    expect(out).toEqual({ dx: 276, dy: 476 }); // right at 676 = 700−24, bottom at 876 = 900−24
   });
 });

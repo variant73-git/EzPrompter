@@ -25,6 +25,7 @@ import {
   shouldTearOut, nodeCenter, pointInRect,
   selectGeometricMembersToLatch, TEAR_MARGIN,
 } from '../lib/section-membership.js';
+import { clampFrameToNeighbors, clampMoveToNeighbors } from '../lib/canvas-layout.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -210,6 +211,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Single-node pending delete confirmation (from the node ⋯ menu). Styled
   // ConfirmModal in place of the old native confirm() — { id, name }.
   const [nodeDelete, setNodeDelete] = useState(null);
+  // Cross-section cord pending merge confirmation. A manual cord between two
+  // DISTINCT sections fuses them into one — a big layout change for a small
+  // drop, so it asks first. { src, targetId } holds the drop until the user
+  // confirms; Cancel creates nothing.
+  const [mergeConfirm, setMergeConfirm] = useState(null);
   // Custom section names — sections are derived from connected components,
   // so the id is stable as long as members don't change. We keep overrides
   // in localStorage keyed by that id; the auto-generated theme name is the
@@ -2999,6 +3005,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // removed from the local list (the API delete fires here too). Drop on
   // another node → re-target. Drop on empty → stay disconnected.
   function startEdgeReroute(edge, mouseEvent) {
+    // Snapshot node→section membership BEFORE the edge is removed — deleting
+    // it can split one section into two, and the merge-confirm gate on drop
+    // must judge against the PRE-gesture layout (re-attaching within what was
+    // one section is a restore, not a merge).
+    const sectionAtStart = new Map();
+    for (const s of sections) for (const id of s.memberIds) sectionAtStart.set(id, s.id);
     // Locally remove the edge so the re-routing draft cord is the only
     // thing visible. Server delete fires async — if the user drops on a
     // new target, we'll create a fresh edge for that pair.
@@ -3008,7 +3020,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       sourceNodeId: edge.source_node_id,
       sourceSide: 'right',
       mouseX: mouseEvent.clientX, mouseY: mouseEvent.clientY,
-      rerouteEdgeId: edge.id
+      rerouteEdgeId: edge.id,
+      sectionAtStart
     });
   }
 
@@ -3104,31 +3117,50 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         setSelectedEdgeId(existing.id);
         return;
       }
-      // Optimistic: draw the cord INSTANTLY (temp id) instead of waiting on the
-      // createEdge round-trip — the network latency was the "lag" before the
-      // connection showed up. Reconcile to the real edge on success; roll back
-      // on failure.
-      const tempId = `temp-edge-${Date.now()}`;
-      const optimisticEdge = {
-        id: tempId, board_id: board.id,
-        source_node_id: src, target_node_id: targetId,
-        kind: 'transplant', status: 'pending',
-        payload: { sourceSelector: 'body', targetSelector: 'body' },
+      // A cord between two DISTINCT sections fuses them into one — hold the
+      // drop in the merge-confirm modal instead of wiring it straight away.
+      // The optimistic cord is deliberately NOT drawn yet: confirm draws it,
+      // cancel leaves both sections untouched. Reroutes judge against the
+      // PRE-gesture membership snapshot (the drag already deleted the edge,
+      // which can split one section into two — re-attaching inside what was
+      // one section is a restore, not a merge).
+      const secOf = (nodeId) => {
+        if (draft.sectionAtStart) return draft.sectionAtStart.get(nodeId) || null;
+        const s = sections.find((x) => x.memberIds.includes(nodeId));
+        return s ? s.id : null;
       };
-      setEdges((prev) => [...prev, optimisticEdge]);
-      setSelectedEdgeId(tempId);
-      try {
-        const { edge } = await api.createEdge({
-          boardId: board.id, sourceNodeId: src, targetNodeId: targetId,
-          kind: 'transplant', payload: { sourceSelector: 'body', targetSelector: 'body' }
-        });
-        setEdges((prev) => prev.map((x) => (x.id === tempId ? edge : x)));
-        setSelectedEdgeId((cur) => (cur === tempId ? edge.id : cur));
-      } catch (err) {
-        setEdges((prev) => prev.filter((x) => x.id !== tempId));
-        setSelectedEdgeId((cur) => (cur === tempId ? null : cur));
-        toast.error(`Edge create failed: ${err.message}`);
+      // Real-edge component size on the CURRENT edge list. A cord only MERGES
+      // sections when both endpoints sit in real chains of >= 2 — adopted or
+      // geometrically-absorbed (virtual) members and severed reroute ends are
+      // singletons that simply re-parent, no fusion, so no confirm.
+      const realComponentSize = (nodeId) => {
+        const adj = new Map();
+        const link = (a, b) => {
+          if (!adj.has(a)) adj.set(a, []);
+          adj.get(a).push(b);
+        };
+        for (const ed of edges) {
+          link(ed.source_node_id, ed.target_node_id);
+          link(ed.target_node_id, ed.source_node_id);
+        }
+        const seen = new Set([nodeId]);
+        const queue = [nodeId];
+        while (queue.length) {
+          const cur = queue.shift();
+          for (const nb of adj.get(cur) || []) {
+            if (!seen.has(nb)) { seen.add(nb); queue.push(nb); }
+          }
+        }
+        return seen.size;
+      };
+      const srcSecId = secOf(src);
+      const tgtSecId = secOf(targetId);
+      if (srcSecId && tgtSecId && srcSecId !== tgtSecId &&
+          realComponentSize(src) >= 2 && realComponentSize(targetId) >= 2) {
+        setMergeConfirm({ src, targetId });
+        return;
       }
+      await commitEdgeCreate(src, targetId);
       return;
     }
 
@@ -3139,6 +3171,50 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // Fresh port drag → empty drop opens the creation menu.
       const w = clientToWorld(transformRef, e.clientX, e.clientY);
       setEmptyDropMenu({ sourceNodeId: src, x: e.clientX, y: e.clientY, worldX: w.x, worldY: w.y });
+    }
+  }
+
+  // Shared tail of the manual cord drop — optimistic temp edge, create on the
+  // server, reconcile or roll back. Called straight from the drop, or from the
+  // merge-confirm modal's Yes.
+  async function commitEdgeCreate(src, targetId) {
+    // Re-validate at commit time — the merge-confirm modal can sit open while
+    // background mutations (agent addEdge, board refetch, deletes) land under
+    // it. A duplicate pair just selects the existing edge; a vanished node
+    // aborts instead of firing a doomed POST.
+    if (!nodes.some((n) => n.id === src) || !nodes.some((n) => n.id === targetId)) {
+      toast.error('One of the connected nodes no longer exists.');
+      return;
+    }
+    const dup = edges.find((x) => x.source_node_id === src && x.target_node_id === targetId);
+    if (dup) {
+      setSelectedEdgeId(dup.id);
+      return;
+    }
+    // Optimistic: draw the cord INSTANTLY (temp id) instead of waiting on the
+    // createEdge round-trip — the network latency was the "lag" before the
+    // connection showed up. Reconcile to the real edge on success; roll back
+    // on failure.
+    const tempId = `temp-edge-${Date.now()}`;
+    const optimisticEdge = {
+      id: tempId, board_id: board.id,
+      source_node_id: src, target_node_id: targetId,
+      kind: 'transplant', status: 'pending',
+      payload: { sourceSelector: 'body', targetSelector: 'body' },
+    };
+    setEdges((prev) => [...prev, optimisticEdge]);
+    setSelectedEdgeId(tempId);
+    try {
+      const { edge } = await api.createEdge({
+        boardId: board.id, sourceNodeId: src, targetNodeId: targetId,
+        kind: 'transplant', payload: { sourceSelector: 'body', targetSelector: 'body' }
+      });
+      setEdges((prev) => prev.map((x) => (x.id === tempId ? edge : x)));
+      setSelectedEdgeId((cur) => (cur === tempId ? edge.id : cur));
+    } catch (err) {
+      setEdges((prev) => prev.filter((x) => x.id !== tempId));
+      setSelectedEdgeId((cur) => (cur === tempId ? null : cur));
+      toast.error(`Edge create failed: ${err.message}`);
     }
   }
 
@@ -3482,6 +3558,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const tag = e.target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.target?.isContentEditable) return;
+      // A ConfirmModal owns the keyboard while open — without this, Delete
+      // nukes the selected node BEHIND the frosted overlay, and Esc/Enter
+      // double-fire (canvas handler + modal handler on the same keypress).
+      if (mergeConfirm || nodeDelete || sectionDelete || playSection) return;
       if (e.key === 'Escape') {
         // Cancel an armed node removal first — Esc is the keyboard twin of the
         // red topbar's Cancel button.
@@ -3552,7 +3632,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [nodes, edges, draftEdge, selectedNodeId, selectedNodeIds, selectedEdgeId, editingNodeId, emptyDropMenu, contextMenu]);
+  }, [nodes, edges, draftEdge, selectedNodeId, selectedNodeIds, selectedEdgeId, editingNodeId, emptyDropMenu, contextMenu, mergeConfirm, nodeDelete, sectionDelete, playSection]);
 
   // Force-blur the project name input when the user clicks anywhere
   // outside the toolbar. react-zoom-pan-pinch calls preventDefault on
@@ -4137,27 +4217,50 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     e.preventDefault();
     const section = sections.find((x) => x.id === sectionId);
     if (!section) return;
-    // Move set = graph members UNION every node whose center sits inside the
-    // section's rendered frame. Rule: "everything within a section's
-    // demarcation belongs to the section" — so an image (or any) node that
-    // visually lives inside the frame travels with it even if it isn't a
-    // graph member yet (e.g. dropped in, or created from a member but not
-    // edge-linked). Without this, the purple image nodes were left behind
-    // while the connected (teal) ones moved.
-    const fL = section.x, fT = section.y;
-    const fR = section.x + section.width, fB = section.y + section.height;
+    // Move set = the section's REAL members only. A section move must never
+    // carry a foreign element that merely sits inside its frame — a loose
+    // node or another section is its own thing, not cargo. Intentionally
+    // adopted nodes (dropped INTO the section by their own drag) are already
+    // in memberIds via meta.adoptedInto / absorption, so they still travel.
     const moveIds = new Set(section.memberIds);
-    for (const n of nodes) {
-      if (moveIds.has(n.id)) continue;
-      if (String(n.id).startsWith('temp-')) continue;
-      const cx = (n.pos_x || 0) + (n.width || 0) / 2;
-      const cy = (n.pos_y || 0) + (n.height || 0) / 2;
-      if (cx >= fL && cx <= fR && cy >= fT && cy <= fB) moveIds.add(n.id);
-    }
     const memberNodes = [...moveIds]
       .map((id) => nodes.find((n) => n.id === id))
       .filter(Boolean);
     if (memberNodes.length === 0) return;
+    // Walls for the drag: neighbouring sections' frames and every non-member
+    // node that isn't inside one of those frames. The dragged frame slides
+    // along them and stops at the gap — it can never end ON TOP of another
+    // element, so dropping a section over things can't absorb them.
+    const moveObstacles = [
+      ...sections.filter((s) => s.id !== sectionId)
+        .map((s) => ({ left: s.x, top: s.y, right: s.x + s.width, bottom: s.y + s.height })),
+      ...nodes.filter((n) => !moveIds.has(n.id) &&
+          !sections.some((s) => s.id !== sectionId && s.memberIds.includes(n.id)))
+        .map((n) => ({
+          left: n.pos_x || 0,
+          top: n.pos_y || 0,
+          right: (n.pos_x || 0) + (n.width || 0),
+          bottom: (n.pos_y || 0) + (n.height || 0),
+        })),
+    ];
+    // Per-gesture wall hysteresis — same pattern as the resize wall.
+    const wallMemory = new Map();
+    // Second, tighter wall: geometric absorption adopts a foreign node when
+    // its CENTER ends inside the moved section's CORE — and the frame wall
+    // passes through obstacles that already overlapped the frame at gesture
+    // start (legacy layouts). So every non-member center is a point obstacle
+    // for the CORE rect. A center already inside the core would have been
+    // absorbed into memberIds, so this wall always qualifies: no pass-through,
+    // rule "a section never absorbs by being dropped over things" holds even
+    // from overlapping starts.
+    const foreignCenters = nodes
+      .filter((n) => !moveIds.has(n.id))
+      .map((n) => {
+        const cx = (n.pos_x || 0) + (n.width || 0) / 2;
+        const cy = (n.pos_y || 0) + (n.height || 0) / 2;
+        return { left: cx, top: cy, right: cx, bottom: cy };
+      });
+    const coreWallMemory = new Map();
     const startMembers = memberNodes.map((m) => ({ id: m.id, pos_x: m.pos_x, pos_y: m.pos_y }));
     // Snapshot the section's current frame so we can translate it
     // alongside its members. Without this, the stored frame (when
@@ -4169,13 +4272,25 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       right:  section.x + section.width,
       bottom: section.y + section.height,
     };
+    // The absorption core at gesture start — translates rigidly with the
+    // members, mirroring what the sections memo will test after the drop.
+    const startCore = sectionCoreRect(memberNodes);
     const readScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
     const startScale = readScale();
     const startMouseX = e.clientX;
     const startMouseY = e.clientY;
     function onMove(ev) {
-      const dx = (ev.clientX - startMouseX) / startScale;
-      const dy = (ev.clientY - startMouseY) / startScale;
+      let dx = (ev.clientX - startMouseX) / startScale;
+      let dy = (ev.clientY - startMouseY) / startScale;
+      // Hold the walls: the frame slides along neighbours, never onto them.
+      if (moveObstacles.length) {
+        ({ dx, dy } = clampMoveToNeighbors(startFrame, dx, dy, moveObstacles, undefined, wallMemory));
+      }
+      // Core wall: no foreign center may end inside the moved core (gap 1 —
+      // the absorption test is inclusive at the boundary).
+      if (startCore && foreignCenters.length) {
+        ({ dx, dy } = clampMoveToNeighbors(startCore, dx, dy, foreignCenters, 1, coreWallMemory));
+      }
       setNodes((prev) => prev.map((n) => {
         const orig = startMembers.find((m) => m.id === n.id);
         if (!orig) return n;
@@ -4256,6 +4371,26 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // frame never hugs a member tighter than a drop would allow.
     const MIN_CLEARANCE = SECTION_MEMBER_CLEARANCE;
     const startFrame = { left: section.x, top: section.y, right: section.x + section.width, bottom: section.y + section.height };
+    // Other sections' frames AND loose nodes are hard WALLS — the resize can
+    // grow this frame up to a small gap short of them, never over them. Loose
+    // nodes matter: a frame resized over a loose node sets up the overlapping
+    // start that would let a later section MOVE swallow it.
+    const resizeMemberIds = new Set(section.memberIds);
+    const neighborFrames = [
+      ...sections.filter((s) => s.id !== sectionId)
+        .map((s) => ({ left: s.x, top: s.y, right: s.x + s.width, bottom: s.y + s.height })),
+      ...nodes.filter((n) => !resizeMemberIds.has(n.id) &&
+          !sections.some((s) => s.id !== sectionId && s.memberIds.includes(n.id)))
+        .map((n) => ({
+          left: n.pos_x || 0,
+          top: n.pos_y || 0,
+          right: (n.pos_x || 0) + (n.width || 0),
+          bottom: (n.pos_y || 0) + (n.height || 0),
+        })),
+    ];
+    // Per-gesture wall hysteresis: once a diagonal neighbour picks its wall
+    // axis, it keeps it for the rest of the drag (no mid-gesture flip).
+    const wallMemory = new Map();
     const startMouseX = e.clientX;
     const startMouseY = e.clientY;
     // Latest clamped frame, committed to React state once on mouseup.
@@ -4269,6 +4404,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       else if (corner === 'ne') { newRight = startFrame.right + dx; newTop = startFrame.top + dy; }
       else if (corner === 'sw') { newLeft = startFrame.left + dx; newBottom = startFrame.bottom + dy; }
       else if (corner === 'se') { newRight = startFrame.right + dx; newBottom = startFrame.bottom + dy; }
+      // Hold the wall against neighbouring sections FIRST; the member-
+      // containment clamp below runs last so it outranks the wall (a frame
+      // must always contain its members even when the layout is tight).
+      if (neighborFrames.length) {
+        ({ left: newLeft, top: newTop, right: newRight, bottom: newBottom } = clampFrameToNeighbors(
+          { left: newLeft, top: newTop, right: newRight, bottom: newBottom },
+          startFrame, neighborFrames, undefined, wallMemory
+        ));
+      }
       // Clamp so frame always contains members + 40px clearance.
       newLeft   = Math.min(newLeft,   memMinX - MIN_CLEARANCE);
       newTop    = Math.min(newTop,    memMinY - MIN_CLEARANCE);
@@ -5145,6 +5289,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         checkboxLabel="Don't ask again"
         onConfirm={(skipFuture) => handleConfirmPlaySection(skipFuture)}
         onCancel={() => { if (!playSection?.busy) setPlaySection(null); }}
+      />
+
+      <ConfirmModal
+        open={!!mergeConfirm}
+        title="Merge sections?"
+        message="The node position will blend different sections. Proceed?"
+        confirmLabel="Yes"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          const mc = mergeConfirm;
+          setMergeConfirm(null);
+          if (mc) commitEdgeCreate(mc.src, mc.targetId);
+        }}
+        onCancel={() => setMergeConfirm(null)}
       />
 
       {challenge && (
