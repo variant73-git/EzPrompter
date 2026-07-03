@@ -106,6 +106,10 @@ const SECTION_TOP_GAP = 260;
 const SECTION_MEMBER_CLEARANCE = 288;   // node↔frame-edge clearance +300% (was 72)
 // "Don't ask again" pref for the section re-run confirm modal.
 const RERUN_CONFIRM_SKIP_KEY = 'rb-rerun-confirm-skip';
+// Floating "run this flow" (canvas-level clone shown when a section's pill
+// leaves the viewport) — HIDDEN for now per user call 2026-07-03; only the
+// in-section pills stay. Flip to true to bring it back (all wiring intact).
+const SHOW_FLOATING_RUN = false;
 // Coin glyph for pre-flight cost tags — same convention as the CreditsPill
 // (placeholder icon, to be swapped for the final credits glyph later).
 // Order convention: icon BEFORE the numeral, no unit text, no "≈".
@@ -4625,7 +4629,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       <div className="canvas-toolbars-right">
         {/* Floating run button — anchored left of the zoom widget; crossfades in
             when a section's in-place run-pill rises into the top chrome zone. */}
-        {floatRunSec && (() => {
+        {SHOW_FLOATING_RUN && floatRunSec && (() => {
           // While running, the button becomes a STOP control — click aborts the
           // section's run and the node drops back to its pre-run state.
           const runFloat = (e) => {
@@ -4923,7 +4927,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }}
             >
               <div
-                className={`canvas-section-name-tag${s.hasEdges ? '' : ' disabled'}${sectionRunning ? ' running' : ''}${floatingRunSectionId === s.id ? ' floated-away' : ''}`}
+                className={`canvas-section-name-tag${s.hasEdges ? '' : ' disabled'}${sectionRunning ? ' running' : ''}${SHOW_FLOATING_RUN && floatingRunSectionId === s.id ? ' floated-away' : ''}`}
                 role="button"
                 tabIndex={0}
                 title={s.hasEdges ? `${estimateChain(sectionOps(s, nodes, edges))} credits` : undefined}
