@@ -130,6 +130,7 @@ Solid (no blur), high contrast, large radii, Instrument type. Dark default, ligh
   2. Chip: `height: 100%;` + `border-radius` concentric with the frame (frame radius − frame padding, e.g. `12 − 2 = 10px`).
   3. Hover: `background: var(--hover-bg)` ONLY — no outline/border change. The token remaps in light mode by itself.
   - References: `.user-pill.compact`, `.credits-pill`, zoom pill.
+- **Inline icons next to text (STANDARD, 2026-07-03):** an icon that sits in sequence with text (before or after a label — cost tags, kind glyphs, affordance hints) must match the FONT height: size it `width: 1em; height: 1em` in CSS (never fixed px). `1em` tracks the text through inverse-scaled canvas chrome, so icon and numeral stay proportional at any zoom. Gap to the text: `0.25em`.
 - **Click-opened widget dropdowns (STANDARD, 2026-07-03):** menus that open on click from a chrome widget use a SOLID background — `var(--bg-frosted-solid)` (`#0f0f0f` offblack dark / `#D4D7DC` light), **no transparency, no backdrop blur** — plus `--border-frosted` hairline + `--shadow-frost`. Canvas content must never bleed through a data menu. (The translucent frosted treatment stays for large passive chrome: bars, docks, modals.)
   - Reference: `.credits-pill-menu`.
 

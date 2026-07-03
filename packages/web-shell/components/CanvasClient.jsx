@@ -110,7 +110,7 @@ const RERUN_CONFIRM_SKIP_KEY = 'rb-rerun-confirm-skip';
 // (placeholder icon, to be swapped for the final credits glyph later).
 // Order convention: icon BEFORE the numeral, no unit text, no "≈".
 const CREDIT_COST_ICON = (
-  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
     <circle cx="12" cy="12" r="9" />
     <path d="M9 12h6" />
   </svg>
@@ -4648,11 +4648,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               aria-label={floatAria}
               onClick={runFloat}
             >
-              <span className="canvas-floating-run-label">{floatLabel}</span>
+              {/* row-reverse: DOM-before-label = visually right of the label. */}
               {!floatRunRunning && floatRunSec.hasEdges && (() => {
                 const est = estimateChain(sectionOps(floatRunSec, nodes, edges));
                 return est > 0 ? <span className="canvas-section-est">{CREDIT_COST_ICON}{est}</span> : null;
               })()}
+              <span className="canvas-floating-run-label">{floatLabel}</span>
               <button
                 type="button"
                 className="canvas-floating-run-play"
@@ -4946,13 +4947,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                     nothing but node positions has changed (isClean). With no
                     edges the flow can't run, so it reads "run this flow" and
                     the whole pill renders disabled (dark grey). */}
-                <span className="canvas-section-name-label">{sectionRunning ? 'stop' : (s.hasEdges && isClean ? 'Reroll' : 'run this flow')}</span>
                 {/* Pre-flight cost — sum of the CONNECTED chain's ops (the
-                    terminal reached by edges; loose nodes don't count). */}
+                    terminal reached by edges; loose nodes don't count).
+                    NOTE: the pill is flex row-reverse (play circle LEFT),
+                    so DOM-before-label renders VISUALLY RIGHT of the label. */}
                 {!sectionRunning && s.hasEdges && (() => {
                   const est = estimateChain(sectionOps(s, nodes, edges));
                   return est > 0 ? <span className="canvas-section-est">{CREDIT_COST_ICON}{est}</span> : null;
                 })()}
+                <span className="canvas-section-name-label">{sectionRunning ? 'stop' : (s.hasEdges && isClean ? 'Reroll' : 'run this flow')}</span>
                 {/* Play button ALWAYS renders. Without edges it stays visible
                     but disabled — the pill goes dark grey, the play icon light
                     grey — so the affordance never vanishes when nodes get

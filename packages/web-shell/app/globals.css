@@ -4098,9 +4098,9 @@ html.canvas-zoom-low .cnode-anchor-title {
   opacity: 1;
   transition: opacity 160ms ease-out;
 }
-/* Below 15% zoom the caption fades out — at that distance the labels
+/* Below 20% zoom the caption fades out — at that distance the labels
    crowd the tiny frames and read as noise, not identification. */
-html.canvas-zoom-min .cnode-anchor-title { opacity: 0; }
+html.canvas-zoom-very-low .cnode-anchor-title { opacity: 0; }
 /* Asset / image nodes mirror URL/site behaviour: at NORMAL zoom the
    topbar shows the kind-pill + title (overriding the .cnode.narrow
    rule that hides them for other narrow kinds); at zoom-low the topbar
@@ -7533,12 +7533,15 @@ body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
 .canvas-section-est {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  margin-left: 7px;
+  gap: 0.25em;
+  /* row-reverse parent: margin-left here = visual gap AFTER the label. */
+  margin-left: 0.55em;
   font-size: 0.85em;
   opacity: 0.55;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
-.canvas-section-est svg { flex: 0 0 auto; }
+/* Inline icon rule (DESIGN.md): icons in sequence with text match the
+   font height — 1em tracks the inverse-scaled pill font at any zoom. */
+.canvas-section-est svg { width: 1em; height: 1em; flex: 0 0 auto; }
