@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { placeStackDown, placeRightOfSources, resolvePlacement, planSectionDeoverlap, clampFrameToNeighbors, clampMoveToNeighbors } from './canvas-layout.js';
+import { placeStackDown, placeRightOfSources, resolvePlacement, planSectionDeoverlap, clampFrameToNeighbors, clampMoveToNeighbors, planChainLayout, placeChainOnBoard } from './canvas-layout.js';
 
 // The placement helpers call `sql` as a tagged template and return rows.
 // A fake that ignores the template and resolves to a fixed row set is enough.
@@ -381,5 +381,84 @@ describe('clampMoveToNeighbors (section drag never lands on other elements)', ()
     const bottomWall = { left: 0, top: 900, right: 1100, bottom: 1300 };
     const out = clampMoveToNeighbors(start, 500, 700, [rightWall, bottomWall]);
     expect(out).toEqual({ dx: 276, dy: 476 }); // right at 676 = 700−24, bottom at 876 = 900−24
+  });
+});
+
+describe('planChainLayout (agent chains: horizontal sequence, vertical variants)', () => {
+  it('lays a dependency sequence out horizontally (columns advance rightward)', () => {
+    const specs = [
+      { key: 'brief', width: 600, height: 200 },
+      { key: 'site',  width: 1280, height: 720 },
+    ];
+    const plan = planChainLayout(specs, [{ from: 'brief', to: 'site' }]);
+    expect(plan.positions.site.x).toBeGreaterThan(plan.positions.brief.x + 600);
+    expect(plan.width).toBeGreaterThanOrEqual(600 + 1280);
+  });
+
+  it('stacks variants (same depth) vertically in the same column', () => {
+    const specs = [
+      { key: 'brief', width: 600, height: 200 },
+      { key: 'v1', width: 1280, height: 720 },
+      { key: 'v2', width: 1280, height: 720 },
+    ];
+    const plan = planChainLayout(specs, [
+      { from: 'brief', to: 'v1' },
+      { from: 'brief', to: 'v2' },
+    ]);
+    expect(plan.positions.v1.x).toBe(plan.positions.v2.x);
+    expect(Math.abs(plan.positions.v1.y - plan.positions.v2.y)).toBeGreaterThanOrEqual(720);
+  });
+
+  it('normalizes to a (0,0) origin and reports the true bbox', () => {
+    const specs = [
+      { key: 'a', width: 600, height: 200 },
+      { key: 'b', width: 1280, height: 720 },
+      { key: 'c', width: 1280, height: 720 },
+    ];
+    const plan = planChainLayout(specs, [{ from: 'a', to: 'b' }, { from: 'a', to: 'c' }]);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const s of specs) {
+      const p = plan.positions[s.key];
+      minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x + s.width); maxY = Math.max(maxY, p.y + s.height);
+    }
+    expect(minX).toBe(0);
+    expect(minY).toBe(0);
+    expect(plan.width).toBe(maxX);
+    expect(plan.height).toBe(maxY);
+  });
+
+  it('survives a cycle without hanging (bounded relaxation)', () => {
+    const specs = [
+      { key: 'a', width: 100, height: 100 },
+      { key: 'b', width: 100, height: 100 },
+    ];
+    const plan = planChainLayout(specs, [{ from: 'a', to: 'b' }, { from: 'b', to: 'a' }]);
+    expect(plan.width).toBeGreaterThan(0);
+  });
+});
+
+describe('placeChainOnBoard (whole-chain area reserved before insert)', () => {
+  it('lands the chain clear to the RIGHT of everything, frame included', async () => {
+    // Existing section: two connected nodes (frame extends 165/260 beyond).
+    const nodes = [
+      { id: 'a', pos_x: 0, pos_y: 0, width: 1280, height: 720 },
+      { id: 'b', pos_x: 1600, pos_y: 0, width: 1280, height: 720 },
+    ];
+    const edges = [{ source_node_id: 'a', target_node_id: 'b' }];
+    const pos = await placeChainOnBoard('board-1', 2000, 900, seqSql(nodes, edges));
+    // Frame right edge of the existing section = 1600+1280+165 = 3045; the
+    // chain's own frame extends 165 left of its first node — must clear it.
+    expect(pos.x - 165).toBeGreaterThan(3045);
+    // Chain frame (x-165, y-260, w+330, h+425) must not overlap the section
+    // frame (-165, -260, 2610x1240).
+    const fx = pos.x - 165, fy = pos.y - 260;
+    expect(fx).toBeGreaterThanOrEqual(3045);
+    expect(typeof fy).toBe('number');
+  });
+
+  it('returns (0,0) on an empty board', async () => {
+    const pos = await placeChainOnBoard('board-1', 2000, 900, seqSql([], []));
+    expect(pos).toEqual({ x: 0, y: 0 });
   });
 });

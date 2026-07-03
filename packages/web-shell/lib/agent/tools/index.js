@@ -1,5 +1,6 @@
 import { Registry } from '../registry.js';
 import { createNodeTool }      from './create-node.js';
+import { createWorkflowTool }  from './create-workflow.js';
 import { addEdgeTool }         from './add-edge.js';
 import { updateNodeTool }      from './update-node.js';
 import { queryNodesTool }      from './query-nodes.js';
@@ -27,6 +28,7 @@ import { removeFromSectionTool } from './remove-from-section.js';
 export function buildSafeRegistry() {
   const r = new Registry();
   r.register(createNodeTool);
+  r.register(createWorkflowTool);
   r.register(addEdgeTool);
   r.register(updateNodeTool);
   r.register(queryNodesTool);

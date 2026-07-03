@@ -499,10 +499,15 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
   position: absolute;
   inset: 0;
   /* Dot color follows the theme — picks up the right contrast against
-     the canvas bg in either dark or light mode. */
+     the canvas bg in either dark or light mode.
+     The grid is WORLD-LOCKED (2026-07-03): spacing + dot size scale with
+     the zoom (28px / 1.4px at 100%) and the pattern pans with the canvas
+     via --canvas-tx/--canvas-ty (written in onTransformed) — dots behave
+     as features of the canvas surface, not of the screen. */
   background-image:
-    radial-gradient(circle at 1px 1px, var(--canvas-dot) 1.4px, transparent 0);
-  background-size: 28px 28px;
+    radial-gradient(circle at calc(1px * var(--canvas-scale, 1)) calc(1px * var(--canvas-scale, 1)), var(--canvas-dot) calc(1.4px * var(--canvas-scale, 1)), transparent 0);
+  background-size: calc(28px * var(--canvas-scale, 1)) calc(28px * var(--canvas-scale, 1));
+  background-position: var(--canvas-tx, 0px) var(--canvas-ty, 0px);
   pointer-events: none;
 }
 
@@ -2706,8 +2711,24 @@ html.canvas-zoom-below-30 .cnode-body {
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: calc(8px / var(--canvas-scale, 1));
   box-shadow: 0 calc(8px / var(--canvas-scale, 1)) calc(20px / var(--canvas-scale, 1)) rgba(0, 0, 0, 0.4);
-  z-index: 30;
+  /* BELOW the section chrome (z 5): the switcher must never paint over the
+     section's move grip / run pill when a node sits near the frame top.
+     Still above the node's own z-auto children (body, iframe). */
+  z-index: 4;
   pointer-events: auto;
+}
+
+/* Low zoom: the floating tag (kind pill + title) hides — the switcher drops
+   into ITS spot (left corner, hugging the node) instead of floating high
+   with dead space under it. The centered anchor title lifts above the
+   switcher so the two never stack on the same band. */
+html.canvas-zoom-low .cnode-viewport-switcher {
+  bottom: calc(100% + 8px / var(--canvas-scale, 1));
+  left: 0;
+  transform: none;
+}
+html.canvas-zoom-low .cnode:has(.cnode-viewport-switcher) .cnode-anchor-title {
+  bottom: calc(100% + 52px / var(--canvas-scale, 1));
 }
 
 .cnode-vp-btn {
@@ -3014,6 +3035,10 @@ body.rb-ed-light .cnode-expand-float:hover {
   pointer-events: none;
   z-index: 4;
   transition: opacity 160ms ease;
+  /* Follows the content's rounded bottom corners (asset bodies don't clip —
+     overflow:visible — so the overlay must round itself like the image). */
+  border-bottom-left-radius: calc(5.5px / max(0.15, var(--canvas-scale, 1)));
+  border-bottom-right-radius: calc(5.5px / max(0.15, var(--canvas-scale, 1)));
 }
 /* Pill in the bottom-LEFT, vertically aligned with the expand floater on the
    bottom-right (same 16px inset + 15% inverse-scale floor). */
@@ -3328,7 +3353,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
    couldn't be reached via vars without churning every selector. */
 
 body.rb-ed-light .canvas-shell .canvas-bg {
-  background-image: radial-gradient(circle at 1px 1px, var(--canvas-dot) 1.4px, transparent 0);
+  background-image: radial-gradient(circle at calc(1px * var(--canvas-scale, 1)) calc(1px * var(--canvas-scale, 1)), var(--canvas-dot) calc(1.4px * var(--canvas-scale, 1)), transparent 0);
 }
 
 /* Node frame — offblack topbar + reset-confirm + viewport switcher all
@@ -5294,14 +5319,24 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
   white-space: nowrap;
 }
 .cnode-asset-img {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
-  object-fit: contain;
+  /* The node's aspect is synced to the image content (CanvasNode aspect
+     effect, 2026-07-03), so the image FILLS the whole rounded inner frame —
+     no letterbox bands. cover (not contain) keeps it band-free during the
+     one frame before the sync lands. */
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* The asset body is overflow:visible (dims label + Smart Edit button hang
+     outside it), so the body's rounded corners can't clip the image — round
+     the image ITSELF with the same radius as .cnode-body. Keep in sync with
+     the body radius (5.5px, 4.4px below 30% zoom). */
+  border-radius: calc(5.5px / max(0.15, var(--canvas-scale, 1)));
   display: block;
   user-select: none;
   -webkit-user-drag: none;
+}
+html.canvas-zoom-below-30 .cnode-asset-img {
+  border-radius: calc(4.4px / max(0.15, var(--canvas-scale, 1)));
 }
 body.rb-ed-light .cnode-body-asset { background: #ECECF0; }
 
@@ -5998,37 +6033,52 @@ body.rb-ed-active .prompt-dock { display: none !important; }
   pointer-events: none;
 }
 
-/* Animated "working on it" feedback (10 languages, 1.5s cycle), colored by
-   the involved node category (gradient across categories). Shared by the
-   collapsed field overlay and the expanded thinking row. */
+/* Working indicator — IDE-style fake code typed char-by-char while the
+   agent runs (WorkingIndicator.jsx). Constant width (lines padded to
+   MAX_LEN); each line OVERWRITES the previous one, terminal-style. The
+   text is painted with an animated gradient through the five pastel
+   syntax colors (blue / light green / yellow / pink / white — no red).
+   Shared by the collapsed field overlay and the expanded thinking row.
+   System mono stack (deliberately not a named mono family). */
 .working-indicator {
   display: inline-flex;
-  align-items: baseline;
-  gap: 3px;
-  font-size: 0.9rem;
-  font-weight: 500;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.82rem;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-weight: 400;
   white-space: nowrap;
 }
-.working-indicator-text {
+.working-indicator-code {
   display: inline-block;
-  animation: working-in 360ms ease-out;
+  white-space: pre; /* padded spaces ARE the fixed width — keep them */
+  /* Animated gradient through all five pastels, looping seamlessly (first
+     stop repeated at the end + 200% size, same trick as the old chain
+     gradient). background-clip:text paints the glyphs with it. */
+  background-image: linear-gradient(90deg, #93c5fd, #86efac, #fde68a, #f9a8d4, #f5f5f5, #93c5fd);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: wi-gradient-shift 3s linear infinite;
 }
-.working-indicator-dots { letter-spacing: 1px; }
-/* Multi-category chain → the text gradient flows through all node colours. */
-/* Duration = the language cycle (1500ms): the text span remounts each cycle
-   (for the fade), and a full-loop gradient means the reset lands seamlessly. */
-.working-indicator-text.is-gradient {
-  animation: working-in 360ms ease-out, working-gradient-shift 1500ms linear infinite;
-}
-.working-indicator-dots.is-gradient {
-  animation: working-gradient-shift 1500ms linear infinite;
-}
-@keyframes working-gradient-shift {
+@keyframes wi-gradient-shift {
   to { background-position: 200% center; }
 }
-@keyframes working-in {
-  from { opacity: 0; transform: translateY(2px); }
-  to   { opacity: 1; transform: none; }
+/* The old line awaiting overwrite — dimmed so the write head reads as
+   "decrypting" fresh code over stale code. */
+.wi-old { opacity: 0.4; }
+/* Write head: a block cursor carrying the scramble glyph, background =
+   the involved node's category color (inline style), dark glyph on top.
+   Exactly one character wide so the total width never changes. */
+.wi-head {
+  color: #0a0a0a;
+  border-radius: 2px;
+}
+/* Light mode: pastel gradient washes out on light surfaces — deeper tones. */
+body.rb-ed-light .working-indicator-code {
+  background-image: linear-gradient(90deg, #2563eb, #15803d, #b45309, #be185d, #1f1f1f, #2563eb);
 }
 
 .prompt-dock-textarea::placeholder {
@@ -7579,3 +7629,195 @@ body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
 /* Inline icon rule (DESIGN.md): icons in sequence with text match the
    font height — 1em tracks the inverse-scaled pill font at any zoom. */
 .canvas-section-est svg { width: 1em; height: 1em; flex: 0 0 auto; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Node topbar HIDDEN (2026-07-03) — hidden, NOT removed. All topbar code
+   (markup, handlers, styles above) is intact; delete this override block
+   to bring it back. Its jobs moved to floating chrome OUTSIDE the node:
+     • .cnode-float-tag      — kind pill + title, above top-LEFT; also the
+                               node's MOVE handle (grab-hand cursor).
+     • .cnode-float-actions  — Edit/Done/Cancel, above top-RIGHT, shown on
+                               selection; blue primary.
+     • Right-click anywhere on the node — opens the ⋯ actions menu.
+   Both floats share the chrome scale rule: screen-constant size that stops
+   inflating at 30% zoom-out (--fs), matching the rest of the node chrome.
+   At low zoom the centered .cnode-anchor-title takes over identity AND
+   becomes the drag handle (pointer-events enabled below).
+   ══════════════════════════════════════════════════════════════════════ */
+.cnode-topbar { display: none !important; }
+
+.cnode-float-tag {
+  --fs: max(0.30, var(--canvas-scale, 1));
+  position: absolute;
+  bottom: calc(100% + 8px / var(--fs));
+  left: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(7px / var(--fs));
+  cursor: grab;
+  user-select: none;
+  z-index: 30;
+  pointer-events: auto;
+}
+.cnode-float-tag:active { cursor: grabbing; }
+.cnode-float-tag .kind-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px / var(--fs));
+  padding: calc(3px / var(--fs)) calc(9px / var(--fs));
+  border-radius: 999px;
+  /* Filled pill in the node's category colour; icon + text use
+     --cnode-port-ink (black or white, whichever contrasts best). */
+  background: var(--cnode-port-fill, #38bdf8);
+  color: var(--cnode-port-ink, #0a0a0a);
+  text-transform: uppercase;
+  font: 500 calc(11px / var(--fs)) / 1 var(--font-instrument-sans), system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.cnode-float-tag .kind-pill svg {
+  width: calc(11px / var(--fs));
+  height: calc(11px / var(--fs));
+  flex-shrink: 0;
+}
+.cnode-float-title {
+  font: 500 calc(12px / var(--fs)) / 1.2 var(--font-instrument-sans), system-ui, sans-serif;
+  color: rgba(241, 245, 249, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+body.rb-ed-light .cnode-float-title { color: rgba(31, 31, 31, 0.9); }
+
+/* Low-zoom handoff — same as the topbar used to do: the corner tag hides
+   and the centered anchor title carries the node's identity. The anchor
+   becomes the MOVE handle so nodes stay draggable at any zoom. */
+html.canvas-zoom-low .cnode-float-tag { display: none; }
+html.canvas-zoom-low .cnode-anchor-title {
+  pointer-events: auto;
+  cursor: grab;
+  user-select: none;
+}
+html.canvas-zoom-low .cnode-anchor-title:active { cursor: grabbing; }
+
+.cnode-float-actions {
+  --fs: max(0.30, var(--canvas-scale, 1));
+  position: absolute;
+  bottom: calc(100% + 8px / var(--fs));
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px / var(--fs));
+  z-index: 31;
+  pointer-events: auto;
+}
+.cnode-float-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(5px / var(--fs));
+  padding: calc(5px / var(--fs)) calc(12px / var(--fs));
+  border-radius: 999px;
+  border: none;
+  font: 500 calc(12px / var(--fs)) / 1 var(--font-instrument-sans), system-ui, sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cnode-float-btn svg {
+  width: calc(13px / var(--fs));
+  height: calc(13px / var(--fs));
+  flex-shrink: 0;
+}
+.cnode-float-btn:disabled { opacity: 0.6; cursor: default; }
+.cnode-float-edit {
+  background: #2966EA;
+  color: #ffffff;
+}
+.cnode-float-edit:hover:not(:disabled) { background: #3B76F0; }
+.cnode-float-cancel {
+  background: rgba(15, 15, 15, 0.9);
+  color: #f5f5f5;
+  border: calc(1px / var(--fs)) solid rgba(255, 255, 255, 0.14);
+}
+.cnode-float-cancel:hover:not(:disabled) { background: rgba(35, 35, 35, 0.95); }
+body.rb-ed-light .cnode-float-cancel {
+  background: rgba(255, 255, 255, 0.92);
+  color: #1f1f1f;
+  border-color: rgba(0, 0, 0, 0.14);
+}
+
+/* Edit mode: the width-fit edit frame puts the node's TOP edge at the
+   viewport top — chrome above the node would be off-screen. Anchor the
+   Edit/Done/Cancel cluster INSIDE the top-right corner instead. */
+.cnode.editing .cnode-float-actions {
+  bottom: auto;
+  top: calc(10px / var(--fs));
+  right: calc(10px / var(--fs));
+}
+
+/* ── Node interaction model (2026-07-03) ────────────────────────────────
+   Body drag = MOVE the node (grab hand on hover). The old invisible
+   drag-to-connect surface over the whole node is gone — cords start ONLY
+   from the port ball, which gets an enlarged invisible hit area below. */
+.cnode-body { cursor: grab; }
+.cnode-body:active { cursor: grabbing; }
+/* Edit mode: the editor owns the body (iframe interactive). */
+.cnode.editing .cnode-body { cursor: auto; }
+
+/* Port ball hit area — comfortably larger than the visible ball (14px →
+   ~40px on screen) so grabbing a cord doesn't demand pixel aim. The
+   pseudo-element is part of the button, so clicks/hover in the halo hit
+   the port, not the body-move handler. */
+.cnode-port-right { cursor: crosshair; }
+.cnode-port-right::before {
+  content: '';
+  position: absolute;
+  inset: calc(-13px / var(--canvas-scale, 1));
+  border-radius: 50%;
+}
+
+/* ── Prompt node: move-first interaction (2026-07-03) ───────────────────
+   The whole prompt node drags with the grab hand like every other node;
+   DOUBLE-CLICK enters edit mode. In move mode the textarea is inert
+   (pointer-events none, readOnly) so mousedown reaches the body-move
+   handler; a small tag follows the cursor advertising the double-click. */
+.cnode-prompt-body { position: relative; }
+/* The cursor-follow hint must not be cropped by the node frame — the body's
+   overflow:hidden clipped it at the edges. Nothing else in a prompt body
+   bleeds outside (the field chip is inset 14px), so visible is safe. */
+.cnode-body-prompt { overflow: visible; }
+.cnode-prompt-body:not(.editing) .cnode-prompt-textarea {
+  pointer-events: none;
+  cursor: inherit;
+}
+.cnode-prompt-body.editing .cnode-prompt-textarea {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.09);
+}
+.cnode-prompt-hint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Positioned via transform from JS (cursor-follow, direct DOM writes). */
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+  pointer-events: none;
+  white-space: nowrap;
+  /* Screen-constant size — inflates inversely with the zoom (scales UP in
+     world terms as you zoom out), same pattern as the anchor title. */
+  padding: calc(5px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1));
+  border-radius: 999px;
+  background: rgba(10, 10, 10, 0.82);
+  border: calc(1px / var(--canvas-scale, 1)) solid rgba(255, 255, 255, 0.12);
+  color: rgba(241, 245, 249, 0.92);
+  font: 500 calc(12px / var(--canvas-scale, 1)) / 1 var(--font-instrument-sans), system-ui, sans-serif;
+  z-index: 5;
+}
+.cnode-prompt-body:hover .cnode-prompt-hint { opacity: 1; }
+body.rb-ed-light .cnode-prompt-hint {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #1f1f1f;
+}

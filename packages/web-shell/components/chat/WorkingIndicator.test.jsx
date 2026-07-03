@@ -1,37 +1,62 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
-import WorkingIndicator, { WORKING_PHRASES, colorStyle } from './WorkingIndicator.jsx';
+import { render, act } from '@testing-library/react';
+import WorkingIndicator, { CODE_LINES, CHAR_MS, HOLD_TICKS, MAX_LEN } from './WorkingIndicator.jsx';
 
 afterEach(() => { vi.useRealTimers(); });
 
-describe('colorStyle', () => {
-  it('uses the accent fallback when no colors', () => {
-    expect(colorStyle([]).color).toBe('var(--accent)');
-  });
-  it('uses a solid color for one category', () => {
-    expect(colorStyle(['#38bdf8']).color).toBe('#38bdf8');
-  });
-  it('builds a gradient for multiple distinct categories', () => {
-    const s = colorStyle(['#38bdf8', '#a78bfa']);
-    expect(s.backgroundImage).toContain('#38bdf8');
-    expect(s.backgroundImage).toContain('#a78bfa');
-    expect(s.color).toBe('transparent');
-  });
-  it('dedups identical colors (no spurious gradient)', () => {
-    expect(colorStyle(['#38bdf8', '#38bdf8']).color).toBe('#38bdf8');
-  });
-});
+const codeText = (container) => container.querySelector('.working-indicator-code').textContent;
 
 describe('WorkingIndicator', () => {
-  it('renders the first phrase and cycles language every 1.5s', () => {
+  it('is ALWAYS exactly MAX_LEN characters wide (typing, holding, and at mount)', () => {
     vi.useFakeTimers();
-    render(<WorkingIndicator colors={['#38bdf8']} />);
-    expect(screen.getByText(WORKING_PHRASES[0])).toBeInTheDocument();
-    act(() => { vi.advanceTimersByTime(1500); });
-    expect(screen.getByText(WORKING_PHRASES[1])).toBeInTheDocument();
+    const { container } = render(<WorkingIndicator colors={['#38bdf8']} />);
+    expect(codeText(container).length).toBe(MAX_LEN);
+    act(() => { vi.advanceTimersByTime(CHAR_MS * 7); });          // mid-typing
+    expect(codeText(container).length).toBe(MAX_LEN);
+    act(() => { vi.advanceTimersByTime(CHAR_MS * (MAX_LEN + 2) ); }); // holding
+    expect(codeText(container).length).toBe(MAX_LEN);
   });
-  it('renders the dots suffix when dots=true', () => {
-    render(<WorkingIndicator colors={['#38bdf8']} dots />);
-    expect(screen.getByText('…')).toBeInTheDocument();
+
+  it('types the current line character by character', () => {
+    vi.useFakeTimers();
+    const { container } = render(<WorkingIndicator />);
+    act(() => { vi.advanceTimersByTime(CHAR_MS * 5); });
+    const typed = container.querySelector('.wi-new').textContent;
+    expect(typed.length).toBe(5);
+    expect(CODE_LINES[0].startsWith(typed)).toBe(true);
+  });
+
+  it('shows the full line during the hold (no write head)', () => {
+    vi.useFakeTimers();
+    const { container } = render(<WorkingIndicator />);
+    act(() => { vi.advanceTimersByTime(CHAR_MS * (MAX_LEN + 1)); });
+    expect(container.querySelector('.wi-new').textContent.trimEnd()).toBe(CODE_LINES[0]);
+    expect(container.querySelector('.wi-head')).toBeNull();
+    expect(container.querySelector('.wi-old')).toBeNull();
+  });
+
+  it('OVERWRITES the previous line: the untyped tail still shows line 0 while line 1 types', () => {
+    vi.useFakeTimers();
+    const { container } = render(<WorkingIndicator />);
+    const k = 6;
+    act(() => { vi.advanceTimersByTime(CHAR_MS * (MAX_LEN + HOLD_TICKS + 1 + k)); });
+    const fresh = container.querySelector('.wi-new').textContent;
+    const stale = container.querySelector('.wi-old').textContent;
+    expect(CODE_LINES[1].startsWith(fresh)).toBe(true);
+    expect(fresh.length).toBe(k);
+    // The stale tail is the rest of line 0 (padded), starting past the head.
+    expect(CODE_LINES[0].padEnd(MAX_LEN, ' ').endsWith(stale)).toBe(true);
+  });
+
+  it('colors the write head with the involved node category (accent fallback)', () => {
+    const { container, rerender } = render(<WorkingIndicator colors={['#a78bfa']} />);
+    expect(container.querySelector('.wi-head').style.background).toBe('rgb(167, 139, 250)');
+    rerender(<WorkingIndicator colors={[]} />);
+    expect(container.querySelector('.wi-head').style.background).toBe('var(--accent)');
+  });
+
+  it('uses only fake illustrative lines (defense: no obvious real-code markers)', () => {
+    const all = CODE_LINES.join('\n');
+    expect(all).not.toMatch(/process\.env|api[_-]?key|secret|http|\/Users\//i);
   });
 });

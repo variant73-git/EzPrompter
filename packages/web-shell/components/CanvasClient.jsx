@@ -3923,33 +3923,33 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // counting that overflow in the bbox keeps the chain centered in
       // the frame instead of pushing it to the top.
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      // The topbar renders ABOVE the declared body height and inflates
-      // inversely with zoom (36px on screen), so the node's true visual
-      // bottom = pos_y + topbarWorld + height. Without counting it, nodes
-      // bleed past the frame bottom by 36/scale − clearance. The 0.15
-      // floor matches the CSS `--tb` cap on .cnode-topbar EXACTLY — below
-      // 30% zoom the rendered chrome stops inflating in world space, so
-      // measured and rendered heights agree at every zoom level.
-      const chromeWorld = 36 / Math.max(0.30, canvasScale || 1);
+      // Topbar HIDDEN (2026-07-03): the node renders as body-only, so there
+      // is no in-flow chrome band above the body anymore and the visual
+      // bottom = pos_y + height. If the topbar ever comes back, restore:
+      //   const chromeWorld = 36 / Math.max(0.30, canvasScale || 1);
+      // (the 0.30 floor matched the CSS `--tb` cap on .cnode-topbar).
+      const chromeWorld = 0;
       for (const id of memberIds) {
         const n = nodeById.get(id);
         if (!n) continue;
         const isAsset = n.kind === 'asset' || n.kind === 'image';
-        // A SELECTED site node sprouts chrome OUTSIDE its frame: the version-
-        // history floater BELOW it (a 22px gap + square thumbnails that are 20%
-        // of the node width) and the device/viewport switcher ABOVE it (a ~32px
-        // gap + ~32px bar). Count BOTH so the frame clears them at its bottom AND
-        // top edges instead of clipping. Extents mirror the CSS (history floored
-        // at 0.35 zoom; switcher tracks 1/scale like `bottom: 100% + 32px/scale`).
+        // A SELECTED site node sprouts a version-history floater BELOW it
+        // (a 22px gap + square thumbnails that are 20% of the node width);
+        // count it so the frame clears it at its bottom edge. The device/
+        // viewport switcher ABOVE the node is deliberately NOT counted: the
+        // stored frame is grow-only, so expanding the top on selection
+        // permanently pushed the section's top edge — and near a neighbour
+        // it made sections INTERSECT, which is forbidden. The switcher just
+        // renders over the frame edge while the node is selected (transient
+        // chrome, acceptable overlap).
         const selectedSite = n.kind === 'site' &&
           (n.id === selectedNodeId || (selectedNodeIds && selectedNodeIds.has && selectedNodeIds.has(n.id)));
         const historyOverflow = selectedSite
           ? 22 / Math.max(0.35, canvasScale || 1) + 0.20 * (n.width || 0)
           : 0;
-        const switcherOverflow = selectedSite ? 68 / (canvasScale || 1) : 0;
         const bottomOverflow = chromeWorld + (isAsset ? ASSET_BOTTOM_OVERFLOW : 0) + historyOverflow;
         minX = Math.min(minX, n.pos_x || 0);
-        minY = Math.min(minY, (n.pos_y || 0) - switcherOverflow);
+        minY = Math.min(minY, n.pos_y || 0);
         maxX = Math.max(maxX, (n.pos_x || 0) + (n.width || 0));
         maxY = Math.max(maxY, (n.pos_y || 0) + (n.height || 0) + bottomOverflow);
       }
@@ -4432,21 +4432,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const readScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
     const startScale = readScale();
     // Mirror the rendered-frame bbox overflow (the `sections` useMemo): the
-    // resize must clear the SAME node chrome the frame wraps, not just the raw
-    // member box — the topbar that renders past the body, asset dims, and (for
-    // a SELECTED site node) the history floater BELOW + device switcher ABOVE.
-    // Without this the handle clips an open history when dragged in.
-    const chromeWorld = 36 / Math.max(0.30, startScale);
+    // resize must clear the SAME node chrome the frame wraps, not just the
+    // raw member box — asset dims, and (for a SELECTED site node) the
+    // history floater BELOW. Without this the handle clips an open history
+    // when dragged in. Keep in SYNC with the memo: topbar hidden
+    // (chromeWorld 0) and the device switcher deliberately not counted.
+    const chromeWorld = 0;
     let memMinX = Infinity, memMinY = Infinity, memMaxX = -Infinity, memMaxY = -Infinity;
     for (const m of memberNodes) {
       const isAsset = m.kind === 'asset' || m.kind === 'image';
       const selectedSite = m.kind === 'site' &&
         (m.id === selectedNodeId || (selectedNodeIds && selectedNodeIds.has && selectedNodeIds.has(m.id)));
       const historyOverflow = selectedSite ? 22 / Math.max(0.35, startScale) + 0.20 * (m.width || 0) : 0;
-      const switcherOverflow = selectedSite ? 68 / startScale : 0;
       const bottomOverflow = chromeWorld + (isAsset ? ASSET_BOTTOM_OVERFLOW : 0) + historyOverflow;
       memMinX = Math.min(memMinX, m.pos_x || 0);
-      memMinY = Math.min(memMinY, (m.pos_y || 0) - switcherOverflow);
+      memMinY = Math.min(memMinY, m.pos_y || 0);
       memMaxX = Math.max(memMaxX, (m.pos_x || 0) + (m.width || 0));
       memMaxY = Math.max(memMaxY, (m.pos_y || 0) + (m.height || 0) + bottomOverflow);
     }
@@ -4750,6 +4750,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // viewport-readable via inverse-scale in CSS.
           const scale = state.scale || 1;
           document.documentElement.style.setProperty('--canvas-scale', String(scale));
+          // Pan offsets for the dot-grid backdrop: .canvas-bg sits OUTSIDE
+          // the transform (it must cover the whole viewport at any world
+          // coord), so it tracks the world by scaling background-size and
+          // shifting background-position with the translation.
+          document.documentElement.style.setProperty('--canvas-tx', `${state.positionX || 0}px`);
+          document.documentElement.style.setProperty('--canvas-ty', `${state.positionY || 0}px`);
           // Below ~0.5 the topbar items overlap the centered grip; collapse
           // chrome so only the grip stays visible.
           document.documentElement.classList.toggle('canvas-zoom-low', scale < 0.5);

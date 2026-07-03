@@ -385,3 +385,107 @@ export async function placeRightOfSources(boardId, sourceNodeIds, w, h, sql) {
   // of the sources — push down until clear.
   return resolveDownCollision(x, candidateY, w, h, obstacles, clearGapFor(rows.length));
 }
+
+// ── Agent chain layout (2026-07-03) ─────────────────────────────────────
+// Layout planner for agent-built node chains (createWorkflow tool). The
+// user's rule: a chain flows HORIZONTALLY — every dependency step (edge
+// from → to) advances one column to the right; VARIANTS of the same thing
+// (nodes at the same dependency depth) stack VERTICALLY within the column.
+// Single-node columns take a gentle alternating vertical offset so the
+// flow undulates instead of reading as a ruler line — pretty but organized,
+// and the section stays horizontal.
+//
+// Pure: takes node dimensions + links, returns positions relative to a
+// (0,0) top-left origin plus the total bbox — so the caller can measure
+// the chain's full area BEFORE choosing a spot on the board.
+const CHAIN_GAP_X = 360;   // between dependency columns (mirrors GAP_X)
+const CHAIN_GAP_Y = 140;   // between stacked variants in a column
+const CHAIN_ZIGZAG = 60;   // alternating vertical offset for 1-node columns
+
+export function planChainLayout(specs, links) {
+  const byKey = new Map(specs.map((s) => [s.key, s]));
+  // Longest-path depth from the roots. Bounded relaxation — a cycle simply
+  // stops advancing instead of hanging.
+  const depth = new Map(specs.map((s) => [s.key, 0]));
+  for (let pass = 0; pass < specs.length; pass++) {
+    let changed = false;
+    for (const l of links || []) {
+      if (!byKey.has(l.from) || !byKey.has(l.to)) continue;
+      const d = depth.get(l.from) + 1;
+      if (d > depth.get(l.to) && d <= specs.length) { depth.set(l.to, d); changed = true; }
+    }
+    if (!changed) break;
+  }
+  // Columns by depth (input order preserved within a column).
+  const colDepths = [...new Set([...depth.values()])].sort((a, b) => a - b);
+  const columns = colDepths.map((d) => specs.filter((s) => depth.get(s.key) === d));
+  let x = 0;
+  const colX = [];
+  for (const col of columns) {
+    colX.push(x);
+    x += Math.max(...col.map((s) => s.width || 0)) + CHAIN_GAP_X;
+  }
+  // Stack each column centered on a shared midline; single-node columns
+  // zigzag around it.
+  const positions = {};
+  for (let c = 0; c < columns.length; c++) {
+    const col = columns[c];
+    const stackH = col.reduce((h, s) => h + (s.height || 0), 0) + CHAIN_GAP_Y * (col.length - 1);
+    let y = -stackH / 2;
+    if (col.length === 1) y += (c % 2 === 0 ? -1 : 1) * CHAIN_ZIGZAG;
+    for (const s of col) {
+      positions[s.key] = { x: colX[c], y };
+      y += (s.height || 0) + CHAIN_GAP_Y;
+    }
+  }
+  // Normalize to (0,0) and measure the bbox.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of specs) {
+    const p = positions[s.key];
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x + (s.width || 0) > maxX) maxX = p.x + (s.width || 0);
+    if (p.y + (s.height || 0) > maxY) maxY = p.y + (s.height || 0);
+  }
+  for (const s of specs) { positions[s.key].x -= minX; positions[s.key].y -= minY; }
+  return { positions, width: maxX - minX, height: maxY - minY };
+}
+
+// Find a top-left origin for a w×h chain such that its future SECTION FRAME
+// (side/top pads baked in) cannot overlap ANY existing node or section
+// frame — the whole area is reserved BEFORE the first insert, so an
+// agent-built chain always gets a spot of its own (sections never overlap).
+// Strategy: to the RIGHT of all existing content (infinite canvas — always
+// fits), frame top-aligned with the topmost existing content.
+export async function placeChainOnBoard(boardId, w, h, sql) {
+  const { rows, obstacles } = await loadBoardObstacles(boardId, sql);
+  if (!rows.length) return { x: 0, y: 0 };
+  let maxRight = -Infinity, minY = Infinity;
+  for (const o of obstacles) {
+    const r = (o.pos_x ?? 0) + (o.width ?? 0);
+    if (r > maxRight) maxRight = r;
+    if ((o.pos_y ?? 0) < minY) minY = o.pos_y ?? 0;
+  }
+  // Obstacle rects already include section frames; our own frame extends
+  // SECTION_SIDE_PAD left of the first node — clear both plus breathing room.
+  const x = maxRight + SECTION_SIDE_PAD + SECTION_VS_SECTION_GAP + BASE_CLEAR_GAP;
+  const y = minY + SECTION_TOP_PAD;
+  // Belt-and-suspenders: verify the padded frame against every obstacle and
+  // push down if a stray rect still intersects (shouldn't, but boards drift).
+  const fx = x - SECTION_SIDE_PAD;
+  const fw = w + SECTION_SIDE_PAD * 2;
+  const fh = h + SECTION_TOP_PAD + SECTION_SIDE_PAD;
+  let fy = y - SECTION_TOP_PAD;
+  for (let guard = 0; guard < 200; guard++) {
+    let pushed = null;
+    for (const o of obstacles) {
+      if (rectsOverlap(fx, fy, fw, fh, o.pos_x ?? 0, o.pos_y ?? 0, o.width ?? 0, o.height ?? 0, SECTION_VS_SECTION_GAP)) {
+        const below = (o.pos_y ?? 0) + (o.height ?? 0) + SECTION_VS_SECTION_GAP;
+        if (pushed == null || below > pushed) pushed = below;
+      }
+    }
+    if (pushed == null) break;
+    fy = pushed;
+  }
+  return { x, y: fy + SECTION_TOP_PAD };
+}

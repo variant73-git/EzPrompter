@@ -2,60 +2,71 @@
 
 import { useEffect, useState } from 'react';
 
-// "working on it" in 10 languages — cycled while the agent works.
-export const WORKING_PHRASES = [
-  'working on it',
-  'trabalhando nisso',
-  'trabajando en ello',
-  "j'y travaille",
-  'ich arbeite daran',
-  'ci sto lavorando',
-  '作業中です',
-  '正在处理',
-  'работаю над этим',
-  'جاري العمل',
+// IDE-style "code being written" indicator shown while the agent works.
+// Fake, ILLUSTRATIVE code lines — deliberately not real project code, so
+// nothing sensitive can ever leak into the UI.
+//
+// Terminal-overwrite model: the indicator is ALWAYS exactly MAX_LEN chars
+// wide (lines padded with spaces). Each new line overwrites the previous
+// one character by character — a block write-head with a scramble glyph
+// advances over the old text, "decrypting" the new line in real time.
+// The whole text is painted with an animated gradient built from the five
+// pastel syntax colors (blue, light green, yellow, pink, white — no red).
+export const CODE_LINES = [
+  "const node = canvas.createNode('site')",
+  'await layout.place(node, { gap: 40 })',
+  'const brief = extractStyle(image)',
+  'edges.connect(prompt, node).run()',
+  'const palette = samplePixels(hero)',
+  'render(snapshot, { width: 1280 })',
+  'applyTokens({ radius: 12, blur: 28 })',
+  'await compose(sources, { model })',
 ];
 
-const CYCLE_MS = 1500;
+export const CHAR_MS = 16;      // typing speed per character (2× the original)
+export const HOLD_TICKS = 34;   // ~550ms rest on the finished line
+export const MAX_LEN = Math.max(...CODE_LINES.map((l) => l.length));
 
-// Build the inline style for the text: solid node color for one category,
-// a gradient across categories when more than one distinct node color is
-// involved, accent fallback when none.
-export function colorStyle(colors) {
-  const uniq = [...new Set((colors || []).filter(Boolean))];
-  if (uniq.length > 1) {
-    // Repeat the first colour at the end + 200% background so the gradient can
-    // scroll seamlessly (the .is-gradient class animates background-position).
-    return {
-      backgroundImage: `linear-gradient(90deg, ${[...uniq, uniq[0]].join(', ')})`,
-      backgroundSize: '200% auto',
-      WebkitBackgroundClip: 'text',
-      backgroundClip: 'text',
-      color: 'transparent',
-    };
-  }
-  return { color: uniq[0] || 'var(--accent)' };
-}
+const PADDED = CODE_LINES.map((l) => l.padEnd(MAX_LEN, ' '));
+const BLANK = ' '.repeat(MAX_LEN);
+
+// Glyph pool for the scramble character inside the write head.
+const GLYPHS = '{}[]()<>=+*/$#@%&;:';
 
 /**
- * Animated "working on it" feedback shown while the agent runs. The phrase
- * changes language every 1.5s with a fade. Colored by the involved node's
- * category (or a gradient of categories). `dots` appends an animated "…".
+ * Animated code-typing feedback shown while the agent runs. Constant-width;
+ * each line overwrites the previous one char-by-char. The write-head block
+ * picks up the involved node's category color (accent fallback).
  */
-export default function WorkingIndicator({ colors = [], dots = false, className = '' }) {
-  const [i, setI] = useState(0);
+export default function WorkingIndicator({ colors = [], className = '' }) {
+  const [pos, setPos] = useState({ line: 0, prev: null, chars: 0 });
   useEffect(() => {
-    const id = setInterval(() => setI((v) => (v + 1) % WORKING_PHRASES.length), CYCLE_MS);
+    const id = setInterval(() => {
+      setPos(({ line, prev, chars }) => {
+        if (chars < MAX_LEN + HOLD_TICKS) return { line, prev, chars: chars + 1 };
+        return { line: (line + 1) % CODE_LINES.length, prev: line, chars: 0 };
+      });
+    }, CHAR_MS);
     return () => clearInterval(id);
   }, []);
-  const style = colorStyle(colors);
-  // More than one distinct node colour → animate the gradient (is-gradient).
-  const isGradient = [...new Set((colors || []).filter(Boolean))].length > 1;
-  const g = isGradient ? ' is-gradient' : '';
+
+  const typed = Math.min(pos.chars, MAX_LEN);
+  const isTyping = typed < MAX_LEN;
+  // What the write head hasn't reached yet still shows the PREVIOUS line
+  // (blank on the very first sweep) — the overwrite effect.
+  const oldBase = pos.prev == null ? BLANK : PADDED[pos.prev];
+  const headGlyph = isTyping ? GLYPHS[Math.floor(Math.random() * GLYPHS.length)] : null;
+  const caretColor = (colors || []).filter(Boolean)[0] || 'var(--accent)';
+
   return (
-    <span className={`working-indicator ${className}`.trim()} aria-live="polite">
-      <span key={i} className={`working-indicator-text${g}`} style={style}>{WORKING_PHRASES[i]}</span>
-      {dots && <span className={`working-indicator-dots${g}`} style={style}>…</span>}
+    <span className={`working-indicator ${className}`.trim()} role="status" aria-label="working">
+      <span className="working-indicator-code" aria-hidden="true">
+        <span className="wi-new">{PADDED[pos.line].slice(0, typed)}</span>
+        {isTyping && (
+          <span className="wi-head" style={{ background: caretColor }}>{headGlyph}</span>
+        )}
+        {isTyping && <span className="wi-old">{oldBase.slice(typed + 1)}</span>}
+      </span>
     </span>
   );
 }

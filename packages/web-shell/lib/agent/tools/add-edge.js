@@ -37,6 +37,9 @@ export const addEdgeTool = {
     // The board is refetched after the run, so the moved positions render.
     await deoverlapSectionForEdge(ctx.boardId, sql, toNodeId);
 
+    // Real-time: show the cord (and any de-overlap shift) immediately.
+    if (ctx?.emit) { try { ctx.emit('graph_mutated', { reason: 'addEdge' }); } catch (_) {} }
+
     return { id: edge.id, fromNodeId: edge.from_node_id, toNodeId: edge.to_node_id, kind: edge.kind };
   },
 };

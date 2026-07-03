@@ -25,7 +25,7 @@ describe('buildFullRegistry', () => {
     const names = r.all().map((t) => t.name).sort();
     expect(names).toEqual([
       'addAssetFromUrl', 'addEdge', 'applyDesign', 'captureUrl',
-      'createImage', 'createNode', 'deleteNode', 'editSite',
+      'createImage', 'createNode', 'createWorkflow', 'deleteNode', 'editSite',
       'extractDesign', 'findNearest', 'getNodeOutput', 'getWorkflow',
       'listAssets', 'listBoard', 'queryNodes', 'removeFromSection',
       'runFlow', 'updateNode', 'viewNode',
@@ -39,8 +39,8 @@ describe('buildAssetRegistry', () => {
     const names = r.all().map((t) => t.name).sort();
     expect(names).toEqual([
       'addAssetFromUrl', 'addEdge', 'createImage', 'createNode',
-      'findNearest', 'getNodeOutput', 'getWorkflow', 'listAssets',
-      'listBoard', 'queryNodes', 'updateNode', 'viewNode',
+      'createWorkflow', 'findNearest', 'getNodeOutput', 'getWorkflow',
+      'listAssets', 'listBoard', 'queryNodes', 'updateNode', 'viewNode',
     ]);
   });
 

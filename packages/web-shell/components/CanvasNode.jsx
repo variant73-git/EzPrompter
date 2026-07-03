@@ -428,6 +428,18 @@ export default function CanvasNode({
   // Natural dimensions of the asset's image content. Used by the dims label
   // below the card. Non-asset nodes pass a null src so the hook short-circuits.
   const assetNaturalDims = useImageNaturalDims(node.meta?.dataUrl || null);
+  // Asset nodes take the CONTENT's aspect ratio (2026-07-03, user spec): the
+  // image fills the whole rounded inner frame — no letterbox bands above/
+  // below. When the decoded natural dims disagree with the stored node
+  // aspect, correct the height once (persisted via onResize). The 2px
+  // tolerance makes the effect converge instead of ping-ponging on rounding.
+  useEffect(() => {
+    if (node.kind !== 'asset' || !node.meta?.dataUrl) return;
+    if (!assetNaturalDims?.w || !assetNaturalDims?.h) return;
+    if (!onResize || !node.width) return;
+    const desired = Math.max(40, Math.round(node.width * (assetNaturalDims.h / assetNaturalDims.w)));
+    if (Math.abs((node.height || 0) - desired) > 2) onResize(node.width, desired);
+  }, [node.kind, node.meta?.dataUrl, assetNaturalDims, node.width, node.height, onResize]);
   // Cancel-with-unsaved-edits prompt. Shown when user clicks Cancel from
   // edit mode; offers Save / Discard / Continue editing.
   const [showCancelPrompt, setShowCancelPrompt] = useState(false);
@@ -708,32 +720,17 @@ export default function CanvasNode({
     if (editing) return;
     if (e.target?.closest?.('.cnode-topbar')) return;
     if (e.target?.closest?.('.cnode-port-right')) return;
-    // Alt + drag on the body → duplicate (instead of starting an edge).
-    if (e.altKey && onAltDuplicateDrag) {
-      e.stopPropagation();
-      e.preventDefault();
-      onAltDuplicateDrag(e);
-      return;
-    }
-    e.stopPropagation();
-    e.preventDefault();
-    onSelect(e);
-    const start = { x: e.clientX, y: e.clientY, started: false };
-    function move(ev) {
-      if (start.started) return;
-      const dx = ev.clientX - start.x;
-      const dy = ev.clientY - start.y;
-      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
-      start.started = true;
-      onStartEdge(ev);
-    }
-    function up() {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
-    }
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-  }, [editing, onStartEdge, onSelect, onAltDuplicateDrag]);
+    // Interactive children keep their own behavior (upload/replace/expand
+    // buttons, prompt textarea — most already stopPropagation, this is the
+    // backstop).
+    if (e.target?.closest?.('button, textarea, input, [contenteditable="true"]')) return;
+    // Body drag now MOVES the node (grab-hand cursor on hover) — same logic
+    // as the floating tag. The old behavior (an invisible drag-to-connect
+    // surface covering the whole node) is gone: cords start ONLY from the
+    // port ball on the edge (which has an enlarged hit area in CSS).
+    // Alt + drag duplicate is handled inside onTopbarMouseDown.
+    onTopbarMouseDown(e);
+  }, [editing, onTopbarMouseDown]);
 
   const onPortMouseDown = useCallback((e, side = 'right') => {
     if (editing) return;
@@ -917,6 +914,15 @@ export default function CanvasNode({
       className={`cnode origin-${origin}${selected ? ' selected' : ''}${placing ? ' placing' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}${generating ? ' generating' : ''}${removing ? ' removing' : ''}`}
       style={{ left: node.pos_x, top: node.pos_y, width: node.width, '--cnode-h': `${node.height}px`, '--cnode-w': node.width }}
       data-node-id={node.id}
+      onContextMenu={(e) => {
+        // Right-click ANYWHERE on the node opens the ⋯ actions menu — the
+        // topbar (and its ⋯ button) is hidden, so this is the entry point.
+        if (editing) return; // the editor owns interactions in edit mode
+        e.preventDefault();
+        e.stopPropagation();
+        if (removing) return;
+        setMenuPos({ x: e.clientX, y: e.clientY });
+      }}
     >
       {/* Generation progress ring — category-coloured outline filling
           clockwise from 12 o'clock. The ring is swapped out for the real
@@ -941,10 +947,77 @@ export default function CanvasNode({
       {/* Anchored title — only visible when the canvas is zoomed-out enough
           that the topbar collapses (`body.canvas-zoom-low`). Sits above the
           node at top-left so the user can still tell what each node is. */}
-      <div className="cnode-anchor-title" aria-hidden={!selected} title={title}>
+      <div
+        className="cnode-anchor-title"
+        aria-hidden={!selected}
+        title={title}
+        onMouseDown={onTopbarMouseDown}
+      >
         {KindIcon && <KindIcon />}
         <span className="cnode-anchor-title-text">{truncateWithExtension(title, 15)}</span>
       </div>
+
+      {/* Floating node tag (2026-07-03, topbar hidden) — the kind pill +
+          title moved OUTSIDE the node, above its top-left corner. This tag
+          is also the node's MOVE handle (grab-hand cursor), replacing the
+          topbar grip. Chrome scale floors at 30% zoom (--fs in CSS); at low
+          zoom the centered .cnode-anchor-title takes over (and becomes the
+          drag handle — see its onMouseDown above). Hidden in edit mode:
+          the edit frame puts the node's top at the viewport top, so chrome
+          above the node would be off-screen anyway. */}
+      {!editing && (
+        <div className="cnode-float-tag" onMouseDown={onTopbarMouseDown} title={title}>
+          <span className={`kind-pill kind-${kindLabel === 'site' ? 'site' : 'other'}`}>
+            {KindIcon && <KindIcon />}
+            <span className="kind-pill-lbl">{kindLabel}</span>
+          </span>
+          {node.kind !== 'prompt' && (
+            <span className="cnode-float-title">{title}</span>
+          )}
+        </div>
+      )}
+
+      {/* Floating Edit cluster (2026-07-03, topbar hidden) — Edit/Done (+
+          Cancel while editing) moved OUTSIDE the node, above its top-right
+          corner, shown on selection. Blue primary, same 30%-floor scale rule
+          as the tag. In edit mode the cluster anchors INSIDE the top-right
+          (the node's top edge sits at the viewport top in the edit frame). */}
+      {renderIframeBody && html && (selected || editing) && !removing && (
+        <div className="cnode-float-actions" onMouseDown={(e) => e.stopPropagation()}>
+          {editing && (
+            <button
+              type="button"
+              className="cnode-float-btn cnode-float-cancel"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (editorBusy) return;
+                setShowCancelPrompt(true);
+              }}
+              title="Cancel — exit edit mode (you'll be asked to save)"
+              aria-label="Cancel edit"
+              disabled={editorBusy}
+            >
+              <CloseIcon />
+              <span>Cancel</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className={`cnode-float-btn cnode-float-edit${editing ? ' active' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (editorBusy) return;
+              if (editing) saveAndExit();
+              else onEditingChange?.(true);
+            }}
+            title={editing ? 'Save and exit edit mode' : 'Open editor (layers + inspector + guides)'}
+            disabled={editorBusy}
+          >
+            {editing ? <CheckIcon /> : <EditIcon />}
+            <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : 'Edit'}</span>
+          </button>
+        </div>
+      )}
 
       {selected && onResize && node.kind === 'site' && (
         <div
@@ -1242,24 +1315,9 @@ export default function CanvasNode({
             node={node}
             onChange={(value) => onPromptTextChange?.(value)}
           />
-          {/* Corner resize handle (bottom-right of the text field) — same
-              diagonal-lines affordance as the section SE handle; drags the
-              WHOLE node's width + height. */}
-          {onResize && (
-            <button
-              type="button"
-              className="cnode-resize-corner"
-              onMouseDown={startDashResize('xy')}
-              title="Drag to resize node"
-              aria-label="Resize node"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
-                <line x1="8" y1="20" x2="20" y2="8" />
-                <line x1="12" y1="20" x2="20" y2="12" />
-                <line x1="16" y1="20" x2="20" y2="16" />
-              </svg>
-            </button>
-          )}
+          {/* Corner resize handle removed (2026-07-03, user spec): only
+              site/URL/html nodes keep resize handlers — prompt nodes size
+              themselves to their content. */}
         </div>
       ) : renderSkillBody ? (
         <div className="cnode-body cnode-body-skill" onMouseDown={onBodyMouseDown}>
