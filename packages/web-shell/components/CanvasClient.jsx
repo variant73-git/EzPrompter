@@ -106,6 +106,15 @@ const SECTION_TOP_GAP = 260;
 const SECTION_MEMBER_CLEARANCE = 288;   // node↔frame-edge clearance +300% (was 72)
 // "Don't ask again" pref for the section re-run confirm modal.
 const RERUN_CONFIRM_SKIP_KEY = 'rb-rerun-confirm-skip';
+// Coin glyph for pre-flight cost tags — same convention as the CreditsPill
+// (placeholder icon, to be swapped for the final credits glyph later).
+// Order convention: icon BEFORE the numeral, no unit text, no "≈".
+const CREDIT_COST_ICON = (
+  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+    <circle cx="12" cy="12" r="9" />
+    <path d="M9 12h6" />
+  </svg>
+);
 // Asset cards draw their dims label below the body — counted in every
 // section bbox so frames wrap the full visual footprint.
 const ASSET_BOTTOM_OVERFLOW = 80;
@@ -4642,7 +4651,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               <span className="canvas-floating-run-label">{floatLabel}</span>
               {!floatRunRunning && floatRunSec.hasEdges && (() => {
                 const est = estimateChain(sectionOps(floatRunSec, nodes, edges));
-                return est > 0 ? <span className="canvas-section-est">≈{est} cr</span> : null;
+                return est > 0 ? <span className="canvas-section-est">{CREDIT_COST_ICON}{est}</span> : null;
               })()}
               <button
                 type="button"
@@ -4916,7 +4925,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 className={`canvas-section-name-tag${s.hasEdges ? '' : ' disabled'}${sectionRunning ? ' running' : ''}${floatingRunSectionId === s.id ? ' floated-away' : ''}`}
                 role="button"
                 tabIndex={0}
-                title={s.hasEdges ? `≈ ${estimateChain(sectionOps(s, nodes, edges))} cr` : undefined}
+                title={s.hasEdges ? `${estimateChain(sectionOps(s, nodes, edges))} credits` : undefined}
                 aria-label={!s.hasEdges ? 'Connect nodes to run this flow' : (sectionRunning ? 'Stop this flow' : (isClean ? 'Reroll this flow' : 'Run this flow'))}
                 onClick={(e) => {
                   // Clicking ANYWHERE on the pill runs the flow (not just the
@@ -4942,7 +4951,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                     terminal reached by edges; loose nodes don't count). */}
                 {!sectionRunning && s.hasEdges && (() => {
                   const est = estimateChain(sectionOps(s, nodes, edges));
-                  return est > 0 ? <span className="canvas-section-est">≈{est} cr</span> : null;
+                  return est > 0 ? <span className="canvas-section-est">{CREDIT_COST_ICON}{est}</span> : null;
                 })()}
                 {/* Play button ALWAYS renders. Without edges it stays visible
                     but disabled — the pill goes dark grey, the play icon light
