@@ -7351,10 +7351,10 @@ body.rb-ed-light .cnode-version-confirm-cancel { border-color: rgba(0, 0, 0, 0.1
   min-width: 210px;
   padding: 8px;
   border-radius: var(--radius-md, 18px);
-  background: var(--bg-frosted);
+  /* Solid offblack (no transparency/blur) — the standard for click-opened
+     widget dropdowns; content behind must never bleed through. */
+  background: var(--bg-frosted-solid);
   border: 1px solid var(--border-frosted);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   box-shadow: var(--shadow-frost);
   z-index: 300;
 }

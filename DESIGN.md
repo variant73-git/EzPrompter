@@ -124,6 +124,15 @@ Solid (no blur), high contrast, large radii, Instrument type. Dark default, ligh
 - **Floating chrome:** `--shadow-frost`.
 - **House blur:** `blur(28px) saturate(140%)`. Heavier menus use `blur(36px)`. Backgrounds/board cards use `blur(24px)`. **9 blur values exist — not tokenized** (backlog).
 
+## Interaction patterns (standard — apply to every new widget)
+- **Toolbar widget hover (STANDARD, 2026-07-03):** any interactive chip living inside a chrome bar (`.canvas-toolbar-left/right`, zoom widget, etc.) must fill the bar's full content height with a uniform 2px gap on every side:
+  1. Wrapper: `align-self: stretch; display: flex;` (the bar centers children at natural height by default — the wrapper must stretch so `height:100%` has something to fill).
+  2. Chip: `height: 100%;` + `border-radius` concentric with the frame (frame radius − frame padding, e.g. `12 − 2 = 10px`).
+  3. Hover: `background: var(--hover-bg)` ONLY — no outline/border change. The token remaps in light mode by itself.
+  - References: `.user-pill.compact`, `.credits-pill`, zoom pill.
+- **Click-opened widget dropdowns (STANDARD, 2026-07-03):** menus that open on click from a chrome widget use a SOLID background — `var(--bg-frosted-solid)` (`#0f0f0f` offblack dark / `#D4D7DC` light), **no transparency, no backdrop blur** — plus `--border-frosted` hairline + `--shadow-frost`. Canvas content must never bleed through a data menu. (The translucent frosted treatment stays for large passive chrome: bars, docks, modals.)
+  - Reference: `.credits-pill-menu`.
+
 ## Motion
 - **Transitions:** 120–200ms, `ease` / `ease-out`. Color/background hovers ~120–150ms; layout shifts (dock dodge) ~180ms; theme swap 200ms.
 - **Press feedback:** `translateY(1px)` on buttons; `scale(0.95–0.97)` on icon toggles.
@@ -147,3 +156,4 @@ The token system is sound; adoption was partial. This pass fixed the highest-val
 | Date | Decision | Rationale |
 |---|---|---|
 | 2026-06-09 | Consolidated design docs into this DESIGN.md; retired the two stale RepixBridge `*-SYSTEM.md` copies | Docs described the old extension popup under the old name; the real system is the frosted-glass web-shell. Captured both surfaces + an audit backlog. |
+| 2026-07-03 | Toolbar widget hover standardized (stretch wrapper + full-height fill + 2px gap + `--hover-bg`); click-opened widget dropdowns are SOLID `--bg-frosted-solid`, no blur | User call during the credits pill build: hover must fill the whole slot like its neighbours, and data menus must not let canvas content bleed through. See "Interaction patterns". |
