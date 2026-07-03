@@ -21,6 +21,7 @@ import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import { HOUSE_STYLE } from './design/house-style.js';
 import { extractStyleFromImage } from './design/style-extract.js';
+import { recordUsage } from './billing/context.js';
 
 const DEFAULT_MODEL = process.env.UNCRAFT_LLM_MODEL || 'claude-sonnet-4-6';
 
@@ -83,6 +84,13 @@ async function callLLM({ model, system, user, images = [], maxTokens = 32000, te
       messages: [{ role: 'user', content: user }]
     });
     const final = await stream.finalMessage();
+    recordUsage({
+      provider: 'anthropic', model,
+      tokensIn: final.usage?.input_tokens || 0,
+      tokensOut: final.usage?.output_tokens || 0,
+      cachedIn: final.usage?.cache_read_input_tokens || 0,
+      cacheWrite: final.usage?.cache_creation_input_tokens || 0,
+    });
     const text = final.content?.map((b) => b.text || '').join('') || '';
     return { text };
   }
@@ -109,13 +117,22 @@ async function callLLM({ model, system, user, images = [], maxTokens = 32000, te
         { role: 'user', content: userContent }
       ],
       max_completion_tokens: maxTokens,
-      stream: true
+      stream: true,
+      stream_options: { include_usage: true }
     });
     let text = '';
+    let usage = null;
     for await (const chunk of stream) {
       const delta = chunk?.choices?.[0]?.delta?.content;
       if (typeof delta === 'string') text += delta;
+      if (chunk?.usage) usage = chunk.usage;
     }
+    recordUsage({
+      provider: 'openai', model,
+      tokensIn: usage?.prompt_tokens || 0,
+      tokensOut: usage?.completion_tokens || 0,
+      cachedIn: usage?.prompt_tokens_details?.cached_tokens || 0,
+    });
     return { text };
   }
   // Gemini (default fallback)
@@ -128,6 +145,8 @@ async function callLLM({ model, system, user, images = [], maxTokens = 32000, te
     contents: [{ role: 'user', parts: [{ text: user }] }],
     config: { systemInstruction: system, maxOutputTokens: maxTokens, temperature }
   });
+  const gu = resp.usageMetadata || {};
+  recordUsage({ provider: 'gemini', model, tokensIn: gu.promptTokenCount || 0, tokensOut: gu.candidatesTokenCount || 0, cachedIn: gu.cachedContentTokenCount || 0 });
   const text =
     resp.text ||
     resp.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') ||

@@ -18,6 +18,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
+import { recordUsage } from './billing/context.js';
 
 const DEFAULT_MODEL = process.env.UNCRAFT_LLM_MODEL || 'claude-sonnet-4-6';
 
@@ -84,6 +85,13 @@ async function callLLM({ model, system, user, maxTokens = 8000, temperature = 0.
       messages: [{ role: 'user', content: user }]
     });
     const final = await stream.finalMessage();
+    recordUsage({
+      provider: 'anthropic', model,
+      tokensIn: final.usage?.input_tokens || 0,
+      tokensOut: final.usage?.output_tokens || 0,
+      cachedIn: final.usage?.cache_read_input_tokens || 0,
+      cacheWrite: final.usage?.cache_creation_input_tokens || 0,
+    });
     const text = final.content?.map((b) => b.text || '').join('') || '';
     return { text };
   }
@@ -95,6 +103,8 @@ async function callLLM({ model, system, user, maxTokens = 8000, temperature = 0.
     contents: [{ role: 'user', parts: [{ text: user }] }],
     config: { systemInstruction: system, maxOutputTokens: maxTokens, temperature }
   });
+  const gu = resp.usageMetadata || {};
+  recordUsage({ provider: 'gemini', model, tokensIn: gu.promptTokenCount || 0, tokensOut: gu.candidatesTokenCount || 0, cachedIn: gu.cachedContentTokenCount || 0 });
   const text =
     resp.text ||
     resp.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') ||
