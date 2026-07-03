@@ -7377,3 +7377,110 @@ body.rb-ed-light .credits-pill-empty { color: rgba(0, 0, 0, 0.45); }
 body.rb-ed-light .credits-pill-row { color: rgba(0, 0, 0, 0.7); }
 body.rb-ed-light .credits-pill-row:hover { background: rgba(0, 0, 0, 0.05); }
 body.rb-ed-light .credits-pill-row-delta.neg { color: rgba(0, 0, 0, 0.55); }
+
+/* ── Plans modal (billing v1 waitlist) ──────────────────────────────────── */
+.plans-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 4100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: confirm-modal-fade 140ms ease-out;
+}
+.plans-modal {
+  position: relative;
+  width: min(680px, calc(100vw - 48px));
+  padding: 28px;
+  border-radius: var(--radius-lg, 22px);
+  background: var(--bg-frosted);
+  border: 1px solid var(--border-frosted-strong);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  box-shadow: var(--shadow-frost);
+  color: var(--text-primary, #f5f5f5);
+}
+.plans-modal-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, rgba(245, 245, 245, 0.45));
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.plans-modal-close:hover { color: var(--text-primary, #f5f5f5); background: rgba(255, 255, 255, 0.06); }
+.plans-modal-title {
+  font-family: var(--popup-font-serif);
+  font-size: 26px;
+  font-weight: 400;
+  line-height: 1.15;
+  margin-bottom: 20px;
+}
+.plans-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.plans-modal-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 16px;
+  border-radius: var(--radius-md, 18px);
+  border: 1px solid var(--border-frosted);
+  background: rgba(255, 255, 255, 0.03);
+}
+.plans-modal-card.current { border-color: var(--border-frosted-strong); }
+.plans-modal-badge {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--text-secondary, rgba(245, 245, 245, 0.7));
+  margin-bottom: 4px;
+}
+.plans-modal-name { font-size: 14px; font-weight: 500; }
+.plans-modal-price { font-size: 24px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.plans-modal-period { font-size: 12px; color: var(--text-muted, rgba(245, 245, 245, 0.45)); }
+.plans-modal-blurb { font-size: 12px; line-height: 1.45; color: var(--text-secondary, rgba(245, 245, 245, 0.7)); flex: 1; }
+.plans-modal-cta {
+  margin-top: 10px;
+  padding: 7px 0;
+  border-radius: 999px;
+  border: 1px solid var(--border-frosted-strong);
+  background: transparent;
+  color: var(--text-secondary, rgba(245, 245, 245, 0.7));
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.plans-modal-cta:hover { background: rgba(255, 255, 255, 0.06); color: var(--text-primary, #f5f5f5); }
+.plans-modal-toast {
+  margin-top: 16px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid rgba(52, 211, 153, 0.25);
+  color: #34d399;
+  font-size: 12px;
+  text-align: center;
+}
+body.rb-ed-light .plans-modal { color: rgba(0, 0, 0, 0.85); }
+body.rb-ed-light .plans-modal-card { background: rgba(0, 0, 0, 0.03); border-color: rgba(0, 0, 0, 0.1); }
+body.rb-ed-light .plans-modal-badge { background: rgba(0, 0, 0, 0.07); color: rgba(0, 0, 0, 0.65); }
+body.rb-ed-light .plans-modal-blurb { color: rgba(0, 0, 0, 0.6); }
+body.rb-ed-light .plans-modal-period { color: rgba(0, 0, 0, 0.45); }
+body.rb-ed-light .plans-modal-cta { border-color: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.7); }
+body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }

@@ -11,6 +11,7 @@ import EdgeLayer, { DraftEdgeLayer } from './EdgeLayer.jsx';
 import ZoomControls from './ZoomControls.jsx';
 import UserPill from './UserPill.jsx';
 import CreditsPill from './CreditsPill.jsx';
+import PlansModal from './PlansModal.jsx';
 import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
 // EdgePopup removed — the per-edge config widget was the legacy "manual mode".
 // Edges are now selected by click and deleted with the keyboard.
@@ -217,6 +218,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // drop, so it asks first. { src, targetId } holds the drop until the user
   // confirms; Cancel creates nothing.
   const [mergeConfirm, setMergeConfirm] = useState(null);
+  // Billing block — set when any api.* call throws code 'insufficient_credits'
+  // ({ estimate, balance }); renders the "Not enough credits" modal. "Buy
+  // credits" opens the PlansModal (v1 waitlist).
+  const [insufficientCredits, setInsufficientCredits] = useState(null);
+  const [plansOpen, setPlansOpen] = useState(false);
+  // Returns true when the error was a billing block (and the modal is now up).
+  function handleBillingError(e) {
+    if (e?.code !== 'insufficient_credits') return false;
+    setInsufficientCredits({ estimate: e.estimate ?? 0, balance: e.balance ?? 0 });
+    return true;
+  }
   // Custom section names — sections are derived from connected components,
   // so the id is stable as long as members don't change. We keep overrides
   // in localStorage keyed by that id; the auto-generated theme name is the
@@ -2033,7 +2045,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     } catch (e) {
       setNodes((prev) => prev.filter((n) => n.id !== tmpId));
       setEdges((prev) => prev.filter((e) => e.id !== tmpEdgeId));
-      toast.error(`Could not extract: ${e.message}`);
+      if (!handleBillingError(e)) toast.error(`Could not extract: ${e.message}`);
     }
   }
 
@@ -2396,6 +2408,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // User pressed Stop → swallow so no error toast fires; the node was
       // never mutated (result not applied), so it shows its original state.
       if (e?.name === 'AbortError') return null;
+      // Billing block → modal instead of an error toast; nothing ran.
+      if (handleBillingError(e)) return null;
       throw e;
     } finally {
       runAbortRef.current.delete(id);
@@ -5263,6 +5277,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         }}
         onCancel={() => { if (!sectionDelete?.busy) setSectionDelete(null); }}
       />
+
+      <ConfirmModal
+        open={!!insufficientCredits}
+        title="Not enough credits"
+        message={insufficientCredits ? `This run needs ~${insufficientCredits.estimate} credits — you have ${insufficientCredits.balance}.` : ''}
+        confirmLabel="Buy credits"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          setInsufficientCredits(null);
+          setPlansOpen(true);
+        }}
+        onCancel={() => setInsufficientCredits(null)}
+      />
+      <PlansModal open={plansOpen} onClose={() => setPlansOpen(false)} />
 
       <ConfirmModal
         open={!!nodeDelete}
