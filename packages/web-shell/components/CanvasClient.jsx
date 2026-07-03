@@ -4640,6 +4640,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               onClick={runFloat}
             >
               <span className="canvas-floating-run-label">{floatLabel}</span>
+              {!floatRunRunning && floatRunSec.hasEdges && (() => {
+                const est = estimateChain(sectionOps(floatRunSec, nodes, edges));
+                return est > 0 ? <span className="canvas-section-est">≈{est} cr</span> : null;
+              })()}
               <button
                 type="button"
                 className="canvas-floating-run-play"
@@ -4934,6 +4938,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                     edges the flow can't run, so it reads "run this flow" and
                     the whole pill renders disabled (dark grey). */}
                 <span className="canvas-section-name-label">{sectionRunning ? 'stop' : (s.hasEdges && isClean ? 'Reroll' : 'run this flow')}</span>
+                {/* Pre-flight cost — sum of the CONNECTED chain's ops (the
+                    terminal reached by edges; loose nodes don't count). */}
+                {!sectionRunning && s.hasEdges && (() => {
+                  const est = estimateChain(sectionOps(s, nodes, edges));
+                  return est > 0 ? <span className="canvas-section-est">≈{est} cr</span> : null;
+                })()}
                 {/* Play button ALWAYS renders. Without edges it stays visible
                     but disabled — the pill goes dark grey, the play icon light
                     grey — so the affordance never vanishes when nodes get

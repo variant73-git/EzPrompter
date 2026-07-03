@@ -7510,3 +7510,14 @@ body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
   70%  { opacity: 1; }
   100% { opacity: 0; transform: translateY(-6px); }
 }
+
+/* Pre-flight cost estimate inside the run pill / floating run button.
+   Lighter than the label so it reads as metadata, not the action. */
+.canvas-section-est {
+  margin-left: 7px;
+  font-size: 0.85em;
+  opacity: 0.55;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
