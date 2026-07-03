@@ -16,7 +16,6 @@
 
 import { chromium } from 'playwright-core';
 import { inflateSync, inflateRawSync } from 'node:zlib';
-import { reconstructPage } from './reconstruct.js';
 
 const NAV_TIMEOUT_MS = 25000;
 const RENDER_WAIT_MS = 2000;
@@ -383,22 +382,15 @@ export async function captureSnapshot(url, opts = {}) {
       throw new ChallengeRequiredError(challenge.kind, url, challenge.signals);
     }
 
-    // Detect JS-driven scroll narrative sites and route to reconstruction.
-    // The static capture path produces a broken render for these (only
-    // hero shows, sticky sections collapse). reconstructPage does a
-    // proper vision-based linear HTML rebuild.
+    // Detect JS-driven scroll narrative sites — but do NOT auto-route to
+    // reconstruction anymore (billing spec: capture is ALWAYS free; the
+    // 10×-priced vision reconstruct is a deliberate user choice). We flag
+    // the result so the client can offer "Rebuild live with AI?" and hit
+    // POST /api/nodes/[id]/reconstruct when the user opts in.
     const detection = await detectAnimatedBuilder(page);
     if (detection.detected) {
       // eslint-disable-next-line no-console
-      console.log(`[snapshot] animated-builder detected (score=${detection.score}, ${JSON.stringify(detection.signals)}) — routing to reconstructPage`);
-      // Close current browser resources — reconstructPage launches its own
-      // since it needs different scroll behaviour (scroll-stops vs
-      // scroll-to-bottom). Cost: ~3-5s extra launch time.
-      await page.close().catch(() => {});
-      await context.close().catch(() => {});
-      await browser.close().catch(() => {});
-      browser = context = page = null;
-      return await reconstructPage(url, { onProgress });
+      console.log(`[snapshot] animated-builder detected (score=${detection.score}, ${JSON.stringify(detection.signals)}) — static capture + animatedDetected flag`);
     }
 
     // Scroll-to-bottom (no reset) — lets Webflow IX3 / Framer Motion / GSAP
@@ -540,7 +532,7 @@ export async function captureSnapshot(url, opts = {}) {
     html = pinViewportUnits(html, viewport.width, viewport.height);
     html = ensureBaseTag(html, url);
 
-    return { html, screenshotDataUrl, title, baseUrl: url };
+    return { html, screenshotDataUrl, title, baseUrl: url, animatedDetected: detection.detected };
   } finally {
     if (page) await page.close().catch(() => {});
     if (context) await context.close().catch(() => {});

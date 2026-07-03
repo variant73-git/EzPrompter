@@ -19,8 +19,16 @@ const refundMock = vi.fn(async () => ({ balance: 500 }));
 const settleMock = vi.fn(async ({ chargeCredits }) => ({ balanceAfter: 500 - chargeCredits }));
 
 vi.mock('../../lib/db.js', () => ({ db: async () => currentSql, sql: (...a) => currentSql(...a) }));
-vi.mock('../../lib/auth.js', () => ({ requireUser: async () => ({ user: { id: 1 }, error: null }) }));
+vi.mock('../../lib/auth.js', () => ({
+  requireUser: async () => ({ user: { id: 1 }, error: null }),
+  hashPassword: async () => 'hashed',
+  createToken: () => 'tok',
+  sessionCookieHeader: () => 'uncraft_session=tok; Path=/',
+}));
 vi.mock('../../lib/run-flow.js', () => ({ runCompose: vi.fn(async () => ({ html: '<html>composed</html>' })) }));
+vi.mock('../../lib/reconstruct.js', () => ({
+  reconstructPage: vi.fn(async () => ({ html: '<html>rebuilt</html>', screenshotDataUrl: null })),
+}));
 vi.mock('../../lib/billing/ledger.js', () => ({
   holdCredits: (...a) => holdMock(...a),
   refundHold: (...a) => refundMock(...a),
@@ -35,6 +43,9 @@ vi.mock('../../lib/billing/rate-limit.js', () => ({
 }));
 
 const { POST: runPost } = await import('./nodes/[id]/run/route.js');
+const { POST: reconstructPost } = await import('./nodes/[id]/reconstruct/route.js');
+const { POST: signupPost } = await import('./auth/signup/route.js');
+const { grantCredits: grantMock } = await import('../../lib/billing/ledger.js');
 
 const makeRequest = (body = {}) => ({ json: async () => body, headers: { get: () => null } });
 const runParams = { params: Promise.resolve({ id: 'node-1' }) };
@@ -74,5 +85,51 @@ describe('POST /api/nodes/[id]/run billing wrapper', () => {
     expect(res.status).toBe(402);
     expect(json).toMatchObject({ error: 'insufficient_credits', estimate: 75, balance: 10 });
     expect(settleMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/nodes/[id]/reconstruct billing wrapper (Task 15)', () => {
+  it('bills the reconstruct and returns credits', async () => {
+    currentSql = fakeSql([
+      [{ id: 'node-1', board_id: 'b1', origin_url: 'https://example.com' }],
+      [{ id: 'snap-1' }], // snapshot INSERT RETURNING
+      [],                 // UPDATE nodes
+    ]);
+    const res = await reconstructPost(makeRequest(), runParams);
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(holdMock).toHaveBeenCalledWith(expect.objectContaining({ credits: 200 })); // reconstruct estimate
+  });
+
+  it('returns 402 when the hold fails', async () => {
+    holdMock.mockImplementation(async () => ({ held: false, balance: 5 }));
+    currentSql = fakeSql([
+      [{ id: 'node-1', board_id: 'b1', origin_url: 'https://example.com' }],
+    ]);
+    const res = await reconstructPost(makeRequest(), runParams);
+    const json = await res.json();
+    expect(res.status).toBe(402);
+    expect(json).toMatchObject({ error: 'insufficient_credits', estimate: 200, balance: 5 });
+  });
+});
+
+describe('POST /api/auth/signup welcome pack (Task 15)', () => {
+  it('grants the welcome pack to a clean signup', async () => {
+    currentSql = fakeSql([
+      [{ id: 7, email: 'novo@gmail.com', name: null, plan: 'free' }], // users INSERT RETURNING
+      [],           // welcome: prior email grant → none
+      [],           // welcome: ip/device window → none
+      // budget env unset → skipped
+    ]);
+    const req = {
+      json: async () => ({ email: 'novo@gmail.com', password: 'longenough1', deviceHash: 'd1' }),
+      headers: { get: (h) => (h === 'x-forwarded-for' ? '9.9.9.9' : null) },
+    };
+    const res = await signupPost(req);
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.welcome).toEqual({ granted: true, credits: 500 });
+    expect(grantMock).toHaveBeenCalledWith(expect.objectContaining({ credits: 500, reason: 'welcome' }));
   });
 });

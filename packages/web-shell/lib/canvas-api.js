@@ -111,6 +111,9 @@ export const api = {
   // node keeps its pre-run state. (The server may still finish the compose;
   // true server-side cancellation is a separate backend concern.)
   runNode: (nodeId, opts = {}, signal) => fetch(`/api/nodes/${nodeId}/run`, { ...COMMON, method: 'POST', body: JSON.stringify(opts), signal }).then(jsonOrThrow),
+  // Deliberate billed vision rebuild of an animated site (reconstruct 10× /
+  // floor 150). Offered by the client when capture flags animatedDetected.
+  reconstructNode: (nodeId) => fetch(`/api/nodes/${nodeId}/reconstruct`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
   // Default: node row + current snapshot html (one round-trip when caller
   // actually wants content). `readyCheck:true`: tiny `{ready, snapshotId}`
   // probe used by the handoff poller — avoids transferring snapshot.html

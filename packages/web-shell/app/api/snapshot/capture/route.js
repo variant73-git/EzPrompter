@@ -157,6 +157,9 @@ export async function POST(request) {
               RETURNING id, created_at
             `;
             await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${nodeId}`;
+            if (cap.animatedDetected) {
+              await sql`UPDATE nodes SET meta = meta || '{"animatedDetected":true}'::jsonb WHERE id = ${nodeId}`;
+            }
             snapshotId = snap.id;
           }
           send('done', {
@@ -166,7 +169,8 @@ export async function POST(request) {
             screenshotDataUrl: cap.screenshotDataUrl,
             title: cap.title,
             baseUrl: cap.baseUrl,
-            stats: cap.stats || null
+            stats: cap.stats || null,
+            animatedDetected: cap.animatedDetected || false
           });
         } catch (e) {
           if (e instanceof ChallengeRequiredError) {
@@ -281,7 +285,10 @@ export async function POST(request) {
       RETURNING id, created_at
     `;
     await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${nodeId}`;
-    return NextResponse.json({ ok: true, snapshotId: snap.id, title: cap.title });
+    if (cap.animatedDetected) {
+      await sql`UPDATE nodes SET meta = meta || '{"animatedDetected":true}'::jsonb WHERE id = ${nodeId}`;
+    }
+    return NextResponse.json({ ok: true, snapshotId: snap.id, title: cap.title, animatedDetected: cap.animatedDetected || false });
   }
 
   return NextResponse.json({
@@ -289,6 +296,7 @@ export async function POST(request) {
     html: cap.html,
     screenshotDataUrl: cap.screenshotDataUrl,
     title: cap.title,
-    baseUrl: cap.baseUrl
+    baseUrl: cap.baseUrl,
+    animatedDetected: cap.animatedDetected || false
   });
 }
