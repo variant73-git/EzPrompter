@@ -17,6 +17,7 @@
  * - GPT-5 / o-series reject custom temperature — omit it entirely.
  */
 import OpenAI from 'openai';
+import { recordUsage } from '../billing/context.js';
 
 const MAX_TOKENS = 8000;
 
@@ -153,6 +154,11 @@ export async function callOpenAI({ model, system, messages, tools, apiKey, onEve
   else if (stopReason === 'length') normalizedStop = 'max_tokens';
   else normalizedStop = stopReason || 'end_turn';
 
+  recordUsage({
+    provider: 'openai', model,
+    tokensIn: usage.input_tokens, tokensOut: usage.output_tokens,
+    cachedIn: usage.cached_input_tokens || 0,
+  });
   onEvent({ type: 'message_complete', stop_reason: normalizedStop, usage });
 
   return { content, stop_reason: normalizedStop, usage };

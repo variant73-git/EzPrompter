@@ -21,6 +21,7 @@
  * - usage is on the last chunk as `usageMetadata.{promptTokenCount, candidatesTokenCount}`.
  */
 import { GoogleGenAI } from '@google/genai';
+import { recordUsage } from '../billing/context.js';
 
 const MAX_TOKENS = 8000;
 
@@ -136,6 +137,11 @@ export async function callGemini({ model, system, messages, tools, apiKey, onEve
   else if (stopReason === 'SAFETY') normalizedStop = 'safety';
   else normalizedStop = stopReason || 'end_turn';
 
+  recordUsage({
+    provider: 'gemini', model,
+    tokensIn: usage.input_tokens, tokensOut: usage.output_tokens,
+    cachedIn: usage.cached_input_tokens || 0,
+  });
   onEvent({ type: 'message_complete', stop_reason: normalizedStop, usage });
 
   return { content, stop_reason: normalizedStop, usage };

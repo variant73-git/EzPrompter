@@ -6,6 +6,7 @@
  *   { type: 'message_complete', stop_reason, usage }
  */
 import Anthropic from '@anthropic-ai/sdk';
+import { recordUsage } from '../billing/context.js';
 
 const MAX_TOKENS = 8000;
 
@@ -121,6 +122,11 @@ export async function callAnthropic({ model, system, messages, tools, apiKey, on
     cached_input_tokens:    final.usage?.cache_read_input_tokens || 0,
     cache_write_tokens:     final.usage?.cache_creation_input_tokens || 0,
   };
+  recordUsage({
+    provider: 'anthropic', model,
+    tokensIn: usage.input_tokens, tokensOut: usage.output_tokens,
+    cachedIn: usage.cached_input_tokens, cacheWrite: usage.cache_write_tokens,
+  });
   onEvent({ type: 'message_complete', stop_reason: final.stop_reason, usage });
 
   return { ...final, usage };
