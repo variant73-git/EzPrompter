@@ -232,6 +232,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // drop, so it asks first. { src, targetId } holds the drop until the user
   // confirms; Cancel creates nothing.
   const [mergeConfirm, setMergeConfirm] = useState(null);
+  // Section under the cursor — drives the show-on-hover run pill. Tracked via
+  // a global mousemove (world coords) because the section frame/chrome are
+  // pointer-events:none and can't :hover themselves.
+  const [hoveredSectionId, setHoveredSectionId] = useState(null);
   // Billing block — set when any api.* call throws code 'insufficient_credits'
   // ({ estimate, balance }); renders the "Not enough credits" modal. "Buy
   // credits" opens the PlansModal (v1 waitlist).
@@ -3989,6 +3993,36 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     return out;
   }, [nodes, edges, sectionNameOverrides, sectionFrames, canvasScale, dragFreeze, removing, selectedNodeId, selectedNodeIds]);
 
+  // Track which section the cursor is inside (world coords) — the frame and
+  // chrome are pointer-events:none, so :hover can't do it. Drives the
+  // show-on-hover run pill. rAF-coalesced; setState only fires on change.
+  const hoverSectionsRef = useRef(sections);
+  hoverSectionsRef.current = sections;
+  useEffect(() => {
+    let raf = 0;
+    let lastEvt = null;
+    const resolve = () => {
+      raf = 0;
+      if (!lastEvt) return;
+      const { x, y } = clientToWorld(transformRef, lastEvt.clientX, lastEvt.clientY);
+      let hit = null;
+      for (const s of hoverSectionsRef.current) {
+        if (x >= s.x && x <= s.x + s.width && y >= s.y && y <= s.y + s.height) { hit = s.id; break; }
+      }
+      setHoveredSectionId((prev) => (prev === hit ? prev : hit));
+    };
+    const onMove = (e) => {
+      lastEvt = e;
+      if (!raf) raf = requestAnimationFrame(resolve);
+    };
+    document.addEventListener('mousemove', onMove, { passive: true });
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      if (raf) cancelAnimationFrame(raf);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Re-anchor section run-pills whenever the sections change (new section,
   // resized frame, scale tick) or the window resizes — pan/zoom already
   // triggers this via onTransformed.
@@ -4640,7 +4674,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             setSelectedNodeIds(new Set());
             runSectionFlow(floatRunSec);
           };
-          const floatLabel = floatRunRunning ? 'stop' : (floatRunClean ? 'Reroll' : 'run this flow');
+          const floatLabel = floatRunRunning ? 'stop' : (floatRunClean ? 'Reroll' : 'Run this flow');
           const floatAria = floatRunRunning ? 'Stop this flow' : (floatRunClean ? 'Reroll this flow' : 'Run this flow');
           // Structure mirrors the in-section run pill EXACTLY (label + black
           // circular play button) so the two are visually identical.
@@ -4765,7 +4799,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             return (
               <div
                 key={`bg-${s.id}`}
-                className={`canvas-section-frame${(selectedSectionId === s.id || floatingRunSectionId === s.id) ? ' selected' : ''}${pv ? ' adopt-preview' : ''}`}
+                className={`canvas-section-frame${(selectedSectionId === s.id || (SHOW_FLOATING_RUN && floatingRunSectionId === s.id)) ? ' selected' : ''}${pv ? ' adopt-preview' : ''}`}
                 style={{
                   left: pv ? pv.left : s.x,
                   top: pv ? pv.top : s.y,
@@ -4917,7 +4951,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             return (
             <div
               key={`chrome-${s.id}`}
-              className="canvas-section-chrome"
+              className={`canvas-section-chrome${hoveredSectionId === s.id ? ' sec-hovered' : ''}`}
               data-section-id={s.id}
               style={{
                 left: pv ? pv.left : s.x,
@@ -4959,7 +4993,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   const est = estimateChain(sectionOps(s, nodes, edges));
                   return est > 0 ? <span className="canvas-section-est">{CREDIT_COST_ICON}{est}</span> : null;
                 })()}
-                <span className="canvas-section-name-label">{sectionRunning ? 'stop' : (s.hasEdges && isClean ? 'Reroll' : 'run this flow')}</span>
+                <span className="canvas-section-name-label">{sectionRunning ? 'stop' : (s.hasEdges && isClean ? 'Reroll' : 'Run this flow')}</span>
                 {/* Play button ALWAYS renders. Without edges it stays visible
                     but disabled — the pill goes dark grey, the play icon light
                     grey — so the affordance never vanishes when nodes get

@@ -2104,11 +2104,23 @@ body.rb-ed-light .popup-btn-danger:hover:not(:disabled) { background: #ef4444; b
 .canvas-context-menu .popup-menu-btn:hover,
 .popup-menu.empty-drop-menu .popup-menu-btn:hover { background: #383838; }
 /* Disabled item (e.g. "Paste from clipboard" with nothing supported on the
-   clipboard) — dimmed, no hover highlight, default cursor. */
+   clipboard) — SAME panel bg as the other rows (dimming the whole button
+   made it translucent over the frosted menu bg); only the CONTENT dims. */
 .canvas-context-menu .popup-menu-btn:disabled,
-.popup-menu.empty-drop-menu .popup-menu-btn:disabled { opacity: 0.4; cursor: default; }
+.popup-menu.empty-drop-menu .popup-menu-btn:disabled {
+  background: #2c2c2c;
+  color: rgba(245, 245, 245, 0.35);
+  cursor: default;
+}
 .canvas-context-menu .popup-menu-btn:disabled:hover,
-.popup-menu.empty-drop-menu .popup-menu-btn:disabled:hover { background: transparent; }
+.popup-menu.empty-drop-menu .popup-menu-btn:disabled:hover { background: #2c2c2c; }
+body.rb-ed-light .canvas-context-menu .popup-menu-btn:disabled,
+body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:disabled {
+  background: #e9ebee;
+  color: rgba(0, 0, 0, 0.35);
+}
+body.rb-ed-light .canvas-context-menu .popup-menu-btn:disabled:hover,
+body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:disabled:hover { background: #e9ebee; }
 /* Destructive "Delete from history" row in the version context menu — red font
    (same danger pattern as the user-menu sign-out). */
 .cnode-version-ctx-menu .popup-menu-btn.cnode-version-menu-delete { color: #fca5a5; }
@@ -2551,15 +2563,10 @@ html.canvas-zoom-below-30 .cnode-body {
      thicker at far zoom than the old 0.50 floor so the selection reads on
      small-on-screen nodes. Past the floor the ring holds that thickness and
      shrinks on screen with the node, instead of ballooning at far zoom-out.
-     Two stacked rings: the origin colour (identity) PLUS a thin white hairline
-     just outside it. The white halo is the "prompt pattern" applied to every
-     node — prompt's ring already reads because its colour is near-white, while
-     saturated origin colours (blue/violet) washed out against the dark canvas
-     when thin. The hairline guarantees every selection pops regardless of
-     origin colour, while the origin ring stays on top as the primary read. */
+     White hairline halo REMOVED (2026-07-03 — read as an outline artifact);
+     the origin-colour ring alone is the selection read. */
   box-shadow:
     0 0 0 calc(3px / max(0.62, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
-    0 0 0 calc(4.5px / max(0.62, var(--canvas-scale, 1))) rgba(255, 255, 255, 0.82),
     0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
@@ -3564,7 +3571,11 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
   border-radius: calc(5.5px / max(0.15, var(--canvas-scale, 1)));
   overflow: hidden;
   flex: 0 0 auto;
-  background: #fff;
+  /* Offblack, NOT white: at fractional zoom the iframe/img can miss the
+     body edge by a subpixel, and a white bg leaked as a hairline outline
+     around the content frame (2026-07-03 artifact report). A dark bg makes
+     that sliver invisible against the card. */
+  background: var(--bg-frosted-solid, #0f0f0f);
   /* Same custom arrow cursor the editor uses inside the iframe — gives
      a consistent "you're working with a node" affordance even when the
      editor isn't active. Matches editor-core/src/editor.css :44. */
@@ -4411,9 +4422,9 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
 /* ── Section frames (auto-derived workflow groups) ──────────────── */
 .canvas-section-frame {
   position: absolute;
-  /* #181818 tint, translucent so the dot grid shows through. No frosted-glass
-     blur (removed per design) — a flat translucent fill, not a frosted panel. */
-  background: rgba(24, 24, 24, 0.5);
+  /* SOLID #181818 — no translucency (frosted/washed look removed per user
+     call 2026-07-03; the dot grid no longer shows through the panel). */
+  background: #181818;
   border: 1.5px solid rgba(255, 255, 255, 0.127);
   border-radius: 24px;
   pointer-events: none;
@@ -4553,7 +4564,8 @@ body.rb-ed-light .canvas-section-frame.adopt-preview {
   z-index: 5;
 }
 body.rb-ed-light .canvas-section-frame {
-  background: rgba(255, 255, 255, 0.035);
+  /* Solid composite of the old 3.5% white wash over the light canvas. */
+  background: #DFE1E5;
   border-color: rgba(0, 0, 0, 0.062);
 }
 
@@ -4599,6 +4611,17 @@ body.rb-ed-light .canvas-section-frame {
   transition: opacity 180ms ease;
 }
 .canvas-section-name-tag:hover { background: #f0f0f0; }
+/* Hidden at rest (2026-07-03) — the pill only shows while the cursor is
+   inside its section (sec-hovered, tracked in world coords) or while the
+   flow RUNS (the pill is the STOP control then — must stay reachable). */
+.canvas-section-name-tag:not(.running) {
+  opacity: 0;
+  pointer-events: none;
+}
+.canvas-section-chrome.sec-hovered .canvas-section-name-tag {
+  opacity: 1;
+  pointer-events: auto;
+}
 /* Crossfades out while its section is shown as the floating run button. */
 .canvas-section-name-tag.floated-away {
   opacity: 0;
@@ -7528,19 +7551,30 @@ body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
 }
 
 /* Pre-flight cost inside the run pill / floating run button — coin icon
-   BEFORE the numeral (CreditsPill convention), no unit text. Lighter than
-   the label so it reads as metadata, not the action. */
+   BEFORE the numeral (CreditsPill convention), no unit text. Hidden at
+   rest; hovering the pill expands it laterally to reveal the tag (the
+   pill grows to the full label + cost width). */
 .canvas-section-est {
   display: inline-flex;
   align-items: center;
   gap: 0.25em;
-  /* row-reverse parent: margin-left here = visual gap AFTER the label. */
-  margin-left: 0.55em;
+  /* Collapsed rest state — the pill hugs just the label + play. */
+  max-width: 0;
+  opacity: 0;
+  margin-left: 0;
+  overflow: hidden;
   font-size: 0.85em;
-  opacity: 0.55;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
+  transition: max-width 180ms ease, opacity 150ms ease, margin-left 180ms ease;
+}
+/* row-reverse parent: margin-left here = visual gap AFTER the label. */
+.canvas-section-name-tag:hover .canvas-section-est,
+.canvas-floating-run:hover .canvas-section-est {
+  max-width: 5em;
+  opacity: 0.55;
+  margin-left: 0.55em;
 }
 /* Inline icon rule (DESIGN.md): icons in sequence with text match the
    font height — 1em tracks the inverse-scaled pill font at any zoom. */
