@@ -15,8 +15,8 @@ import { buildBoardSummary } from '../../../lib/agent/board-summary.js';
 import { createSseStream, SSE_HEADERS } from '../../../lib/agent/sse-bridge.js';
 import { registerRun, unregisterRun } from '../../../lib/agent/run-map.js';
 import { getCaps } from '../../../lib/agent/caps.js';
-import { computeCost } from '../../../lib/agent/cost.js';
-import { hasEnoughCredits } from '../../../lib/credits.js';
+import { runMeteredOperation } from '../../../lib/billing/context.js';
+import { checkChatRate } from '../../../lib/billing/rate-limit.js';
 import { checkRateLimit, CHAT_POLICY } from '../../../lib/rate-limit.js';
 import { moderateText, flaggedCategories } from '../../../lib/moderation.js';
 import { scanPrompt } from '../../../lib/llm-guard.js';
@@ -442,11 +442,14 @@ export async function POST(request) {
     return NextResponse.json({ error: `unsupported model: ${resolvedModel}` }, { status: 500 });
   }
 
-  // Phase 5c credit gate — currently permissive (lib/credits.js stub always returns true).
-  // Flipping enforcement on requires only lib/credits.js changing.
-  const enough = await hasEnoughCredits({ userId: user.id, cents: 100 }); // pre-check notional budget
-  if (!enough) {
-    return NextResponse.json({ error: 'insufficient_credits' }, { status: 402 });
+  // Chat is FREE but fenced (spec §5): burst + daily light-turn windows read
+  // straight from usage_events, so no extra infrastructure.
+  const chatRate = await checkChatRate({ sql, userId: user.id });
+  if (!chatRate.allowed) {
+    const detail = chatRate.reason === 'daily_light_turns'
+      ? 'Daily free chat limit reached — paid operations are still available.'
+      : 'Slow down a little — too many messages in the last minute.';
+    return NextResponse.json({ error: 'rate_limited', reason: chatRate.reason, detail }, { status: 429 });
   }
 
   // Route to the correct provider adapter based on the resolved model.
@@ -658,6 +661,11 @@ export async function POST(request) {
     let runId = null;
     let loopResult = null;
     try {
+      // Meter-only wrapper (spec §5): the conversation is FREE but every
+      // provider call the adapters make records usage into this context.
+      // Billable tools (runFlow/createImage/editSite) open their OWN billed
+      // context inside — innermost wins, so their usage never lands here.
+      await runMeteredOperation({ sql, userId: user.id, op: 'chat', boardId }, async () => {
       const run = await startAgentRun({ threadId: thread.id });
       runId = run.id;
       registerRun(runId);
@@ -795,14 +803,8 @@ export async function POST(request) {
         loopResult = { stop_reason: 'failed', iterations: 0, usage: { input_tokens: 0, output_tokens: 0 }, toolCounts: {} };
       }
 
-      const tokensIn         = loopResult.usage?.input_tokens         || 0;
-      const tokensOut        = loopResult.usage?.output_tokens        || 0;
-      const cachedInTokens   = loopResult.usage?.cached_input_tokens  || 0;
-      const cacheWriteTokens = loopResult.usage?.cache_write_tokens   || 0;
-      const costCents = computeCost({
-        model: resolvedModel,
-        tokensIn, tokensOut, cachedInTokens, cacheWriteTokens,
-      });
+      const tokensIn  = loopResult.usage?.input_tokens  || 0;
+      const tokensOut = loopResult.usage?.output_tokens || 0;
 
       const finalStatus = mapLoopResultToRunStatus(loopResult.stop_reason);
       await finishAgentRun({
@@ -812,7 +814,6 @@ export async function POST(request) {
         toolCallCounts: loopResult.toolCounts || {},
         tokensIn,
         tokensOut,
-        costCents,
       });
       const toolCallsForPersistence = Array.from(toolCallMap.values());
       await appendMessage({
@@ -822,6 +823,7 @@ export async function POST(request) {
         toolCalls: toolCallsForPersistence.length > 0 ? toolCallsForPersistence : null,
         model: resolvedModel,
         agentRunId: runId,
+      });
       });
     } catch (e) {
       console.error('[POST /api/chat] agent error', e);

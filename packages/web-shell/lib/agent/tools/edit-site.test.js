@@ -10,6 +10,17 @@ vi.mock('../../run-flow.js', () => ({
   runCompose: vi.fn(async () => ({ html: '<html><body>edited</body></html>' })),
 }));
 
+// Billing (Task 14): the tool wraps its work in runBilledOperation — mock the
+// ledger so hold/settle don't consume the scripted sql sequences above.
+vi.mock('../../billing/ledger.js', () => ({
+  holdCredits: vi.fn(async () => ({ held: true, balance: 500 })),
+  refundHold: vi.fn(async () => ({ balance: 500 })),
+  settleOperation: vi.fn(async ({ chargeCredits }) => ({ balanceAfter: 500 - chargeCredits })),
+  grantCredits: vi.fn(async () => ({ balanceAfter: 500 })),
+  getBalance: vi.fn(async () => 500),
+  recentLedger: vi.fn(async () => []),
+}));
+
 const { sql } = await import('../../db.js');
 const { runCompose } = await import('../../run-flow.js');
 const { editSiteTool } = await import('./edit-site.js');
@@ -45,6 +56,6 @@ describe('editSiteTool', () => {
     runCompose.mockResolvedValueOnce({ html: 'Looking at the HTML, there is no such element, so I will return the HTML unchanged.' });
     const r = await editSiteTool.execute({ nodeId: 'n1', instruction: 'swap the logo' }, { boardId: 'b1', userId: 42 });
     expect(r.error).toBe('no_change');
-    expect(call).toBe(1); // ownership query only — no INSERT/UPDATE ran
+    expect(call).toBe(1); // ownership query only — no snapshot INSERT/UPDATE ran (ledger is mocked)
   });
 });

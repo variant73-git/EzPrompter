@@ -1,6 +1,7 @@
 import { sql } from '../../db.js';
 import { generateGeminiImage } from '../../image-gen/gemini-imagen.js';
 import { generateOpenAIImage } from '../../image-gen/openai-image.js';
+import { runBilledOperation, InsufficientCreditsError } from '../../billing/context.js';
 import { placeRightOfSources, placeStackDown } from '../../canvas-layout.js';
 import { decodeImageDimsFromDataUrl, pickAspectForDims } from '../../image-dims.js';
 
@@ -352,38 +353,50 @@ Costs money. Pauses for confirmation when the conversation model is Claude (so t
 
     // of a stuck spinner.
     let result;
+    let genCredits = 0;
+    let genBalanceAfter = null;
     try {
-      // Belt-and-suspenders: even if the underlying SDK timeout / driver
-      // 3-min cap don't fire (observed in field), this explicit Promise.race
-      // guarantees the await resolves within 90s.
-      const GEN_TIMEOUT_MS = 90_000;
-      const genPromise = effective === 'gemini'
-        ? (async () => {
-            const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-            if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
-            // Gemini Imagen has no equivalent of gpt-image-1's size:'auto';
-            // it requires a concrete aspectRatio string. Fall back to 1:1
-            // when null (text-to-image with no explicit aspect from agent).
-            return generateGeminiImage({ prompt: finalPrompt, aspectRatio: aspectRatio || '1:1', apiKey });
-          })()
-        : (async () => {
-            const apiKey = process.env.OPENAI_API_KEY;
-            if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
-            return generateOpenAIImage({
-              prompt: finalPrompt,
-              aspectRatio,
-              apiKey,
-              baseImageDataUrl,
-              styleReferenceDataUrls,
-            });
-          })();
-      result = await Promise.race([
-        genPromise,
-        new Promise((_, reject) => setTimeout(
-          () => reject(new Error(`${effective} gen exceeded ${GEN_TIMEOUT_MS / 1000}s`)),
-          GEN_TIMEOUT_MS,
-        )),
-      ]);
+      // The generation bills as its OWN operation (the surrounding chat
+      // context stays free — innermost billing context wins).
+      const billed = await runBilledOperation(
+        { sql, userId: ctx.userId, op: `image.generate.${effective}`, boardId: ctx.boardId, nodeId: nodeId || null },
+        async () => {
+          // Belt-and-suspenders: even if the underlying SDK timeout / driver
+          // 3-min cap don't fire (observed in field), this explicit Promise.race
+          // guarantees the await resolves within 90s.
+          const GEN_TIMEOUT_MS = 90_000;
+          const genPromise = effective === 'gemini'
+            ? (async () => {
+                const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+                if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+                // Gemini Imagen has no equivalent of gpt-image-1's size:'auto';
+                // it requires a concrete aspectRatio string. Fall back to 1:1
+                // when null (text-to-image with no explicit aspect from agent).
+                return generateGeminiImage({ prompt: finalPrompt, aspectRatio: aspectRatio || '1:1', apiKey });
+              })()
+            : (async () => {
+                const apiKey = process.env.OPENAI_API_KEY;
+                if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
+                return generateOpenAIImage({
+                  prompt: finalPrompt,
+                  aspectRatio,
+                  apiKey,
+                  baseImageDataUrl,
+                  styleReferenceDataUrls,
+                });
+              })();
+          return Promise.race([
+            genPromise,
+            new Promise((_, reject) => setTimeout(
+              () => reject(new Error(`${effective} gen exceeded ${GEN_TIMEOUT_MS / 1000}s`)),
+              GEN_TIMEOUT_MS,
+            )),
+          ]);
+        },
+      );
+      result = billed.result;
+      genCredits = billed.credits;
+      genBalanceAfter = billed.balanceAfter;
       // Normalize shape so downstream code has result.provider.
       result.provider = effective;
     } catch (e) {
@@ -397,6 +410,9 @@ Costs money. Pauses for confirmation when the conversation model is Claude (so t
       } catch (_) {}
       if (ctx?.emit) {
         try { ctx.emit('graph_mutated', { reason: 'createImage:error' }); } catch (_) {}
+      }
+      if (e instanceof InsufficientCreditsError) {
+        return { error: 'insufficient_credits', estimate: e.estimate, balance: e.balance };
       }
       return { error: 'image_gen_failed', message: String(e?.message || e) };
     }
@@ -457,6 +473,8 @@ Costs money. Pauses for confirmation when the conversation model is Claude (so t
       posX: placedX,
       posY: placedY,
       edges: edgesCreated,
+      credits: genCredits,
+      balanceAfter: genBalanceAfter,
     };
   },
 };

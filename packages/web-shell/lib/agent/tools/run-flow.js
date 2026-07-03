@@ -1,5 +1,6 @@
 import { sql } from '../../db.js';
 import { runCompose } from '../../run-flow.js';
+import { runBilledOperation, InsufficientCreditsError } from '../../billing/context.js';
 
 export const runFlowTool = {
   name: 'runFlow',
@@ -53,20 +54,31 @@ Use after you've created and connected the right nodes — don't call runFlow be
     const sources = incoming;
 
     try {
-      const result = await runCompose({ target, sources, modelId });
-      const [newSnap] = await sql`
-        INSERT INTO snapshots (node_id, html, source)
-        VALUES (${nodeId}, ${result.html}, 'agent-run')
-        RETURNING id
-      `;
-      await sql`UPDATE nodes SET current_snapshot_id = ${newSnap.id} WHERE id = ${nodeId}`;
-      return {
-        ran: true,
-        nodeId,
-        snapshotId: newSnap.id,
-        bytes: result.html?.length || 0,
-      };
+      // The tool bills as its OWN compose operation — the surrounding chat
+      // context stays free (innermost context wins).
+      const { result: payload, credits, balanceAfter } = await runBilledOperation(
+        { sql, userId: ctx.userId, op: 'compose', boardId: ctx.boardId, nodeId },
+        async () => {
+          const result = await runCompose({ target, sources, modelId });
+          const [newSnap] = await sql`
+            INSERT INTO snapshots (node_id, html, source)
+            VALUES (${nodeId}, ${result.html}, 'agent-run')
+            RETURNING id
+          `;
+          await sql`UPDATE nodes SET current_snapshot_id = ${newSnap.id} WHERE id = ${nodeId}`;
+          return {
+            ran: true,
+            nodeId,
+            snapshotId: newSnap.id,
+            bytes: result.html?.length || 0,
+          };
+        },
+      );
+      return { ...payload, credits, balanceAfter };
     } catch (e) {
+      if (e instanceof InsufficientCreditsError) {
+        return { error: 'insufficient_credits', estimate: e.estimate, balance: e.balance };
+      }
       return { error: 'run_failed', message: String(e?.message || e) };
     }
   },

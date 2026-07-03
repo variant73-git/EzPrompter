@@ -1,6 +1,7 @@
 import { sql } from '../../db.js';
 import { runCompose } from '../../run-flow.js';
 import { EDIT_SITE_SYSTEM } from '../prompts.js';
+import { runBilledOperation, InsufficientCreditsError } from '../../billing/context.js';
 
 // Guard against the model returning PROSE instead of HTML (e.g. "the element
 // isn't in the source, so I'll return it unchanged" — a refusal). Real HTML has
@@ -53,28 +54,43 @@ This will refuse if the user is currently editing the node in-place (you'll get 
     }
 
     try {
-      const result = await runCompose({
-        target,
-        sources: [
-          { kind: 'site', source_html: target.current_html },
-          { kind: 'prompt', meta: { prompt: instruction } },
-        ],
-        systemPromptOverride: EDIT_SITE_SYSTEM,
-      });
-      // If the model returned prose (a refusal/explanation) instead of HTML,
-      // do NOT save it — that would replace the page with the explanation
-      // text. Leave the current snapshot untouched and tell the agent.
-      if (!looksLikeHtml(result.html)) {
+      const { result: payload, credits, balanceAfter } = await runBilledOperation(
+        { sql, userId: ctx.userId, op: 'edit', boardId: ctx.boardId, nodeId },
+        async () => {
+          const result = await runCompose({
+            target,
+            sources: [
+              { kind: 'site', source_html: target.current_html },
+              { kind: 'prompt', meta: { prompt: instruction } },
+            ],
+            systemPromptOverride: EDIT_SITE_SYSTEM,
+          });
+          // If the model returned prose (a refusal/explanation) instead of HTML,
+          // do NOT save it — that would replace the page with the explanation
+          // text. Throw so the hold refunds (no-change edits never charge) and
+          // map the structured error back below.
+          if (!looksLikeHtml(result.html)) {
+            const err = new Error('no_change');
+            err.code = 'no_change';
+            throw err;
+          }
+          const [newSnap] = await sql`
+            INSERT INTO snapshots (node_id, html, source)
+            VALUES (${nodeId}, ${result.html}, 'agent-edit')
+            RETURNING id
+          `;
+          await sql`UPDATE nodes SET current_snapshot_id = ${newSnap.id} WHERE id = ${nodeId}`;
+          return { edited: true, nodeId, snapshotId: newSnap.id, bytes: result.html?.length || 0 };
+        },
+      );
+      return { ...payload, credits, balanceAfter };
+    } catch (e) {
+      if (e instanceof InsufficientCreditsError) {
+        return { error: 'insufficient_credits', estimate: e.estimate, balance: e.balance };
+      }
+      if (e?.code === 'no_change') {
         return { error: 'no_change', message: 'the edit could not be applied (the model returned an explanation, not HTML) — the site was left unchanged' };
       }
-      const [newSnap] = await sql`
-        INSERT INTO snapshots (node_id, html, source)
-        VALUES (${nodeId}, ${result.html}, 'agent-edit')
-        RETURNING id
-      `;
-      await sql`UPDATE nodes SET current_snapshot_id = ${newSnap.id} WHERE id = ${nodeId}`;
-      return { edited: true, nodeId, snapshotId: newSnap.id, bytes: result.html?.length || 0 };
-    } catch (e) {
       return { error: 'edit_failed', message: String(e?.message || e) };
     }
   },

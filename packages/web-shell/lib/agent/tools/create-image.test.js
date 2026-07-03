@@ -8,6 +8,17 @@ vi.mock('../../db.js', () => {
   return { sql };
 });
 
+// Billing (Task 14): the tool wraps the generation step in runBilledOperation —
+// mock the ledger so hold/settle don't consume the scripted sql sequences.
+vi.mock('../../billing/ledger.js', () => ({
+  holdCredits: vi.fn(async () => ({ held: true, balance: 500 })),
+  refundHold: vi.fn(async () => ({ balance: 500 })),
+  settleOperation: vi.fn(async ({ chargeCredits }) => ({ balanceAfter: 500 - chargeCredits })),
+  grantCredits: vi.fn(async () => ({ balanceAfter: 500 })),
+  getBalance: vi.fn(async () => 500),
+  recentLedger: vi.fn(async () => []),
+}));
+
 vi.mock('../../image-gen/gemini-imagen.js', () => ({
   generateGeminiImage: vi.fn(async () => ({
     base64: 'B64',
