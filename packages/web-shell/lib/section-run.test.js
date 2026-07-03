@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findSectionTerminal, sectionRerunWouldOverwrite, chainSignature } from './section-run.js';
+import { findSectionTerminal, sectionRerunWouldOverwrite, chainSignature, sectionOps } from './section-run.js';
 import { BLANK_SITE_HTML } from './blank-site-html.js';
 
 const edge = (from, to) => ({ source_node_id: from, target_node_id: to });
@@ -221,5 +221,30 @@ describe('chainSignature (re-run gating)', () => {
     const b = setup({ nodes: [...a.nodes].reverse(), edges: a.edges });
     expect(chainSignature(b.section, b.nodes, b.edges))
       .toBe(chainSignature(a.section, a.nodes, a.edges));
+  });
+});
+
+describe('sectionOps (billing estimates — Task 18)', () => {
+  const edge2 = (from, to) => ({ source_node_id: from, target_node_id: to });
+  it('site terminal maps to a compose op', () => {
+    const nodes = [
+      { id: 'p', kind: 'prompt' },
+      { id: 'site', kind: 'site', current_html: '<html>x</html>' },
+    ];
+    const section = { memberIds: ['p', 'site'] };
+    expect(sectionOps(section, nodes, [edge2('p', 'site')])).toEqual(['compose']);
+  });
+  it('asset terminal maps to an image.generate op', () => {
+    const nodes = [
+      { id: 'ref', kind: 'asset', meta: {} },
+      { id: 'out', kind: 'asset', meta: {} },
+    ];
+    const section = { memberIds: ['ref', 'out'] };
+    expect(sectionOps(section, nodes, [edge2('ref', 'out')])).toEqual(['image.generate']);
+  });
+  it('no runnable terminal → empty ops', () => {
+    const nodes = [{ id: 'a', kind: 'prompt' }, { id: 'b', kind: 'designmd' }];
+    const section = { memberIds: ['a', 'b'] };
+    expect(sectionOps(section, nodes, [edge2('a', 'b')])).toEqual([]);
   });
 });

@@ -359,7 +359,7 @@ export default function CanvasNode({
   onReplaceContent, onRequestUpload, onFrameZoom, onVersionRestore,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
   removing = false, removingOutside = false, removeFromMenu = false, inSection = false,
-  onRemoveFromSection, onCancelRemove, scale = 1
+  onRemoveFromSection, onCancelRemove, scale = 1, debit = null
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -932,6 +932,11 @@ export default function CanvasNode({
           width={ringFrame?.w || node.width}
           height={ringFrame?.h || node.height || Math.round(node.width * 9 / 16)}
         />
+      )}
+      {/* Transient billing debit — flashes the charged credits for a beat
+          after a billed run completes, then fades out (CSS animation). */}
+      {debit != null && debit > 0 && (
+        <div className="cnode-debit" aria-hidden="true">−{debit}</div>
       )}
       {/* Anchored title — only visible when the canvas is zoomed-out enough
           that the topbar collapses (`body.canvas-zoom-low`). Sits above the

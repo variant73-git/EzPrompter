@@ -21,7 +21,8 @@ import Minimap from './Minimap.jsx';
 import ChallengeModal from './ChallengeModal.jsx';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
-import { findSectionTerminal, sectionRerunWouldOverwrite, chainSignature } from '../lib/section-run.js';
+import { findSectionTerminal, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
+import { estimateChain, estimateOp } from '../lib/billing/pricing.js';
 import { clampToViewport } from '../lib/menu-position.js';
 import {
   shouldTearOut, nodeCenter, pointInRect,
@@ -223,6 +224,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // credits" opens the PlansModal (v1 waitlist).
   const [insufficientCredits, setInsufficientCredits] = useState(null);
   const [plansOpen, setPlansOpen] = useState(false);
+  // Animated-site choice — set when a free capture flags animatedDetected;
+  // { nodeId, busy } drives the "Rebuild live with AI?" ConfirmModal.
+  const [animatedChoice, setAnimatedChoice] = useState(null);
+  // Transient per-node debit chips — nodeId → credits, cleared after 2.5s.
+  const [nodeDebits, setNodeDebits] = useState(new Map());
+  function flashNodeDebit(nodeId, credits) {
+    if (!credits || credits <= 0 || !nodeId) return;
+    setNodeDebits((prev) => new Map(prev).set(nodeId, credits));
+    setTimeout(() => {
+      setNodeDebits((prev) => {
+        if (!prev.has(nodeId)) return prev;
+        const next = new Map(prev);
+        next.delete(nodeId);
+        return next;
+      });
+    }, 2500);
+  }
   // Returns true when the error was a billing block (and the modal is now up).
   function handleBillingError(e) {
     if (e?.code !== 'insufficient_credits') return false;
@@ -1586,6 +1604,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       pushCreateUndo(created.node, linkEdge);
       // Frame the new node at 100% so it's the immediate focus.
       setTimeout(() => zoomToNode(finalNode, 350, 1), 80);
+      // Animated builder detected — the free static capture is saved with
+      // animations frozen; offer the deliberate billed vision rebuild.
+      if (cap.animatedDetected) setAnimatedChoice({ nodeId: created.node.id, busy: false });
     } catch (e) {
       // Bot-protection interstitial — captureUrlStream tags the thrown
       // error with `.challenge` and (when placement was passed) the
@@ -2396,6 +2417,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     try {
       const result = await api.runNode(id, opts, controller.signal);
       clearTimeout(advanceToStep2);
+      flashNodeDebit(id, result?.credits);
       setNodeRunStatus(id, { step: 3, label: 'Saving…', request });
       // Hold the saving label briefly so the transition reads as a
       // resolved step rather than a flash.
@@ -4752,6 +4774,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             <CanvasNode
               key={n.id} node={n}
               scale={canvasScale}
+              debit={nodeDebits.get(n.id)}
               incomingEdges={incomingByTarget.get(n.id) || []}
               hasOutgoingEdges={hasOutgoingBySource.has(n.id)}
               selected={selectedNodeId === n.id || selectedNodeIds.has(n.id)}
@@ -4889,6 +4912,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 className={`canvas-section-name-tag${s.hasEdges ? '' : ' disabled'}${sectionRunning ? ' running' : ''}${floatingRunSectionId === s.id ? ' floated-away' : ''}`}
                 role="button"
                 tabIndex={0}
+                title={s.hasEdges ? `≈ ${estimateChain(sectionOps(s, nodes, edges))} cr` : undefined}
                 aria-label={!s.hasEdges ? 'Connect nodes to run this flow' : (sectionRunning ? 'Stop this flow' : (isClean ? 'Reroll this flow' : 'Run this flow'))}
                 onClick={(e) => {
                   // Clicking ANYWHERE on the pill runs the flow (not just the
@@ -5293,6 +5317,34 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       <PlansModal open={plansOpen} onClose={() => setPlansOpen(false)} />
 
       <ConfirmModal
+        open={!!animatedChoice}
+        title="Animated site detected"
+        message="Quick capture saved (free) — animations are frozen. Rebuild it live with AI for ≈ 150-250 credits?"
+        confirmLabel={`Reconstruct (~${estimateOp('reconstruct')} cr)`}
+        cancelLabel="Keep free capture"
+        busy={!!animatedChoice?.busy}
+        onConfirm={async () => {
+          if (!animatedChoice || animatedChoice.busy) return;
+          const nodeId = animatedChoice.nodeId;
+          setAnimatedChoice((c) => (c ? { ...c, busy: true } : c));
+          try {
+            const r = await api.reconstructNode(nodeId);
+            flashNodeDebit(nodeId, r?.credits);
+            setNodes((prev) => prev.map((n) => (
+              n.id === nodeId
+                ? { ...n, current_html: r.html, current_snapshot_id: r.snapshotId, _resetTick: (n._resetTick || 0) + 1 }
+                : n
+            )));
+            setAnimatedChoice(null);
+          } catch (e) {
+            setAnimatedChoice(null);
+            if (!handleBillingError(e)) toast.error(`Reconstruction failed: ${e.message}`);
+          }
+        }}
+        onCancel={() => { if (!animatedChoice?.busy) setAnimatedChoice(null); }}
+      />
+
+      <ConfirmModal
         open={!!nodeDelete}
         title="Delete node?"
         message={nodeDelete?.name ? `"${nodeDelete.name}" will be removed from the canvas.` : 'This node will be removed from the canvas.'}
@@ -5312,7 +5364,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       <ConfirmModal
         open={!!playSection}
         title="Re-run workflow?"
-        message={playSection ? `Re-execute "${playSection.section.name}" with the same inputs. The new result will replace the current one and consumes credits.` : ''}
+        message={playSection ? `Re-execute "${playSection.section.name}" with the same inputs. The new result will replace the current one and consumes ≈ ${estimateChain(sectionOps(playSection.section, nodes, edges))} credits.` : ''}
         confirmLabel="Run"
         cancelLabel="Cancel"
         busy={!!playSection?.busy}

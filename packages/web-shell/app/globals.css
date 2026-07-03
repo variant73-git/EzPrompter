@@ -7484,3 +7484,29 @@ body.rb-ed-light .plans-modal-blurb { color: rgba(0, 0, 0, 0.6); }
 body.rb-ed-light .plans-modal-period { color: rgba(0, 0, 0, 0.45); }
 body.rb-ed-light .plans-modal-cta { border-color: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.7); }
 body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
+
+/* ── Transient node debit chip (billing) ────────────────────────────────── */
+.cnode-debit {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 30;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--bg-frosted);
+  border: 1px solid var(--border-frosted);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: var(--cnode-port-fill, #f5f5f5);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  animation: cnode-debit-fade 2.5s ease-out forwards;
+}
+@keyframes cnode-debit-fade {
+  0%   { opacity: 0; transform: translateY(4px); }
+  10%  { opacity: 1; transform: translateY(0); }
+  70%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-6px); }
+}

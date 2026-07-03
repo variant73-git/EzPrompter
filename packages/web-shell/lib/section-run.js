@@ -134,3 +134,13 @@ export function sectionRerunWouldOverwrite(section, nodes, edges) {
   }
   return false;
 }
+
+// ── Billing estimates (Task 18) ─────────────────────────────────────────
+// Map a section's runnable chain to billing op ids so the UI can show a
+// pre-flight `≈ N cr` estimate (lib/billing/pricing.js estimateChain).
+// One terminal = one operation: site → compose, asset → image regen.
+export function sectionOps(section, nodes, edges) {
+  const { terminal } = findSectionTerminal(section, nodes, edges);
+  if (!terminal) return [];
+  return terminal.kind === 'asset' ? ['image.generate'] : ['compose'];
+}
