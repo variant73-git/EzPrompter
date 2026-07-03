@@ -7313,3 +7313,67 @@ body.rb-ed-light .cnode-version-menu-row:hover { background: #dde0e4; }
 body.rb-ed-light .cnode-version-menu-date { color: rgba(0, 0, 0, 0.7); }
 body.rb-ed-light .cnode-version-confirm { background: rgba(245, 245, 248, 0.95); border-color: rgba(0, 0, 0, 0.1); }
 body.rb-ed-light .cnode-version-confirm-cancel { border-color: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.7); }
+
+/* ── Credits pill (billing) ─────────────────────────────────────────────────
+   Lives in .canvas-toolbar-right, left of the UserPill. Same chip sizing as
+   the toolbar family (inner pills radius 10 inside the 44px frame). */
+.credits-pill-root { position: relative; display: flex; align-items: center; }
+.credits-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 12px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary, rgba(245, 245, 245, 0.7));
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.credits-pill:hover { background: rgba(255, 255, 255, 0.06); color: var(--text-primary, #f5f5f5); }
+.credits-pill-value { font-variant-numeric: tabular-nums; }
+.credits-pill-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 210px;
+  padding: 8px;
+  border-radius: var(--radius-md, 18px);
+  background: var(--bg-frosted);
+  border: 1px solid var(--border-frosted);
+  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  box-shadow: var(--shadow-frost);
+  z-index: 300;
+}
+.credits-pill-menu-header {
+  padding: 4px 8px 8px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted, rgba(245, 245, 245, 0.45));
+}
+.credits-pill-empty { padding: 6px 8px 8px; font-size: 12px; color: var(--text-muted, rgba(245, 245, 245, 0.45)); }
+.credits-pill-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-secondary, rgba(245, 245, 245, 0.7));
+}
+.credits-pill-row:hover { background: rgba(255, 255, 255, 0.05); }
+.credits-pill-row-delta { font-variant-numeric: tabular-nums; }
+.credits-pill-row-delta.neg { color: rgba(245, 245, 245, 0.55); }
+.credits-pill-row-delta.pos { color: #34d399; }
+body.rb-ed-light .credits-pill { color: rgba(0, 0, 0, 0.65); }
+body.rb-ed-light .credits-pill:hover { background: rgba(0, 0, 0, 0.06); color: rgba(0, 0, 0, 0.9); }
+body.rb-ed-light .credits-pill-menu-header,
+body.rb-ed-light .credits-pill-empty { color: rgba(0, 0, 0, 0.45); }
+body.rb-ed-light .credits-pill-row { color: rgba(0, 0, 0, 0.7); }
+body.rb-ed-light .credits-pill-row:hover { background: rgba(0, 0, 0, 0.05); }
+body.rb-ed-light .credits-pill-row-delta.neg { color: rgba(0, 0, 0, 0.55); }

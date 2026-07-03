@@ -10,6 +10,7 @@ import ConfirmModal from './ConfirmModal.jsx';
 import EdgeLayer, { DraftEdgeLayer } from './EdgeLayer.jsx';
 import ZoomControls from './ZoomControls.jsx';
 import UserPill from './UserPill.jsx';
+import CreditsPill from './CreditsPill.jsx';
 import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
 // EdgePopup removed — the per-edge config widget was the legacy "manual mode".
 // Edges are now selected by click and deleted with the keyboard.
@@ -4630,6 +4631,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         })()}
         <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} />
         <div className="canvas-toolbar-right">
+          <CreditsPill />
           <UserPill compact name={user?.name} email={user?.email} plan={user?.plan} onSignOut={logout} />
         </div>
       </div>
