@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { nodeOrigin, originColor } from '../lib/node-origin.js';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
-import CanvasNode from './CanvasNode.jsx';
+import CanvasNodeItem from './CanvasNodeItem.jsx';
 import ConfirmModal from './ConfirmModal.jsx';
 import EdgeLayer, { DraftEdgeLayer } from './EdgeLayer.jsx';
 import ZoomControls from './ZoomControls.jsx';
@@ -151,6 +151,10 @@ function sectionCoreRect(memberNodes) {
 // intentional ("compose here") rather than a broken capture. Designed
 // to work inside our srcDoc iframe — no external resources, no scripts,
 // system font fallback (the UI font isn't loaded inside iframes).
+
+// Stable empty array for nodes without incoming edges — a fresh [] per
+// render would defeat CanvasNodeItem's memo for every edge-less node.
+const EMPTY_EDGES = [];
 
 export default function CanvasClient({ board, initialNodes, initialEdges, user }) {
   const [nodes, setNodes] = useState(initialNodes || []);
@@ -712,6 +716,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   const onEdgeDragStartStable = useCallback((edge, evt) => edgeHandlersRef.current.edgeDragStart(edge, evt), []);
   const onSeverEdgeStable = useCallback((edge) => edgeHandlersRef.current.severEdge(edge), []);
 
+  // Handler table for the memoized CanvasNodeItem wrappers. Re-pointed on
+  // every render (assignment lives right before the JSX return, after all
+  // handler consts are initialized); items resolve handlers through it at
+  // event time, so memoized nodes never hold stale logic.
+  const nodeHandlersRef = useRef({});
+
   const dragNodeServer = useRef(new Map());
   function persistNodePosition(id, posX, posY) {
     clearTimeout(dragNodeServer.current.get(id));
@@ -978,6 +988,83 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         cur.rect.left === previewRect.left && cur.rect.top === previewRect.top &&
         cur.rect.right === previewRect.right && cur.rect.bottom === previewRect.bottom) return;
     setAdoptPreviewSync({ nodeId: node.id, sectionId: best.id, rootId: best.rootId, rect: previewRect });
+  }
+
+  function handleNodeSelect(n, e) {
+    const shift = !!e?.shiftKey;
+    if (shift) {
+      // Shift-click toggles this node in the multi-select set —
+      // add if absent, remove if already there. Matches Figma /
+      // Linear additive selection convention.
+      //
+      // Important: when toggling OFF, do NOT promote this node
+      // to selectedNodeId. The `selected` prop on CanvasNode
+      // is the OR of (selectedNodeId === id, selectedNodeIds
+      // has id), so setting selectedNodeId to a node we just
+      // removed from the set keeps it visually selected on
+      // half the clicks. Only set selectedNodeId when adding.
+      const alreadyIn = selectedNodeIds.has(n.id) || selectedNodeId === n.id;
+      if (alreadyIn) {
+        setSelectedNodeIds((s) => {
+          if (!s.has(n.id)) return s;
+          const next = new Set(s);
+          next.delete(n.id);
+          return next;
+        });
+        if (selectedNodeId === n.id) setSelectedNodeId(null);
+      } else {
+        setSelectedNodeIds((s) => {
+          const next = new Set(s);
+          next.add(n.id);
+          return next;
+        });
+        setSelectedNodeId(n.id);
+      }
+    } else {
+      setSelectedNodeId(n.id);
+      // Single-click clears any prior marquee selection so the
+      // click is unambiguous.
+      setSelectedNodeIds((s) => (s.size ? new Set() : s));
+    }
+    setSelectedEdgeId(null);
+    setSelectedSectionId(null);
+    setPopupPos(null);
+    // Steal focus from any text input (notably the PromptDock
+    // textarea) so a follow-up Delete keypress reaches the
+    // canvas keydown handler instead of falling through to a
+    // character delete inside the input. Matches Figma /
+    // Linear behaviour where clicking a node moves keyboard
+    // focus to the canvas.
+    if (typeof document !== 'undefined') {
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT') && typeof ae.blur === 'function') {
+        ae.blur();
+      }
+    }
+  }
+
+  function handleNodeResize(n, width, height, opts) {
+    const patch = { width };
+    if (typeof height === 'number' && height > 0) patch.height = height;
+    updateNodeLocal(n.id, patch);
+    if (!String(n.id).startsWith('temp-')) {
+      api.updateNode(n.id, patch).catch(console.warn);
+    }
+    // Cascade flag is set by the Expand floater so that
+    // expanding a node into another node's space pushes the
+    // neighbour out (donors → left, receivers → right). Drag
+    // resize doesn't cascade — that would feel jittery.
+    if (opts?.cascade) cascadeOverlapShift(n.id, width, patch.height ?? n.height);
+  }
+
+  function handleNodeDeleteRequest(n) {
+    setNodeDelete({ id: n.id, name: (n.name || '').trim() });
+  }
+
+  function handleNodeMetaPatch(id, metaPatch) {
+    setNodes((prev) => prev.map((nn) => (
+      nn.id === id ? { ...nn, meta: { ...(nn.meta || {}), ...metaPatch } } : nn
+    )));
   }
 
   function handleNodeMove(node, posX, posY) {
@@ -4600,6 +4687,32 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     return out.length ? out : null;
   }, [selectedSectionId, selectedNodeId, selectedNodeIds, sections, nodes]);
 
+  nodeHandlersRef.current = {
+    handleEditingToggle,
+    handleNodeSelect,
+    handleNodeMove,
+    handleNodeMoveStart,
+    handleNodeMoveEnd,
+    startAltDuplicateDrag,
+    handleNodeResize,
+    handleNodeDeleteRequest,
+    handleResetNode,
+    handleRestoreVersion,
+    handleSaveNodeEdit,
+    handleDiscardNodeEdit,
+    handleDuplicateNode,
+    handleDownloadNode,
+    startEdgeFromNode,
+    onSlotMouseDown,
+    handlePromptTextChange,
+    handleNodeMetaPatch,
+    handleReplaceContent,
+    handlePopulateNode,
+    zoomToNode,
+    armNodeRemoval,
+    cancelNodeRemoval,
+  };
+
   return (
     <div
       className={`canvas-shell${removingOutside ? ' removing-outside' : ''}`}
@@ -4839,111 +4952,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             onSeverEdge={onSeverEdgeStable}
           />
           {nodes.map((n) => (
-            <CanvasNode
-              key={n.id} node={n}
+            <CanvasNodeItem
+              key={n.id}
+              node={n}
               scale={canvasScale}
               debit={nodeDebits.get(n.id)}
-              incomingEdges={incomingByTarget.get(n.id) || []}
+              incomingEdges={incomingByTarget.get(n.id) || EMPTY_EDGES}
               hasOutgoingEdges={hasOutgoingBySource.has(n.id)}
               selected={selectedNodeId === n.id || selectedNodeIds.has(n.id)}
               placing={placingNodeId === n.id || altDupGhostId === n.id}
               editing={editingNodeId === n.id}
-              onEditingChange={(willEdit) => handleEditingToggle(n.id, willEdit)}
-              onSelect={(e) => {
-                const shift = !!e?.shiftKey;
-                if (shift) {
-                  // Shift-click toggles this node in the multi-select set —
-                  // add if absent, remove if already there. Matches Figma /
-                  // Linear additive selection convention.
-                  //
-                  // Important: when toggling OFF, do NOT promote this node
-                  // to selectedNodeId. The `selected` prop on CanvasNode
-                  // is the OR of (selectedNodeId === id, selectedNodeIds
-                  // has id), so setting selectedNodeId to a node we just
-                  // removed from the set keeps it visually selected on
-                  // half the clicks. Only set selectedNodeId when adding.
-                  const alreadyIn = selectedNodeIds.has(n.id) || selectedNodeId === n.id;
-                  if (alreadyIn) {
-                    setSelectedNodeIds((s) => {
-                      if (!s.has(n.id)) return s;
-                      const next = new Set(s);
-                      next.delete(n.id);
-                      return next;
-                    });
-                    if (selectedNodeId === n.id) setSelectedNodeId(null);
-                  } else {
-                    setSelectedNodeIds((s) => {
-                      const next = new Set(s);
-                      next.add(n.id);
-                      return next;
-                    });
-                    setSelectedNodeId(n.id);
-                  }
-                } else {
-                  setSelectedNodeId(n.id);
-                  // Single-click clears any prior marquee selection so the
-                  // click is unambiguous.
-                  setSelectedNodeIds((s) => (s.size ? new Set() : s));
-                }
-                setSelectedEdgeId(null);
-                setSelectedSectionId(null);
-                setPopupPos(null);
-                // Steal focus from any text input (notably the PromptDock
-                // textarea) so a follow-up Delete keypress reaches the
-                // canvas keydown handler instead of falling through to a
-                // character delete inside the input. Matches Figma /
-                // Linear behaviour where clicking a node moves keyboard
-                // focus to the canvas.
-                if (typeof document !== 'undefined') {
-                  const ae = document.activeElement;
-                  if (ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT') && typeof ae.blur === 'function') {
-                    ae.blur();
-                  }
-                }
-              }}
-              onMove={(posX, posY) => handleNodeMove(n, posX, posY)}
-              onMoveStart={() => handleNodeMoveStart(n)}
-              onMoveEnd={(moved) => handleNodeMoveEnd(n, moved)}
-              onAltDuplicateDrag={(e) => startAltDuplicateDrag(n, e)}
-              onResize={(width, height, opts) => {
-                const patch = { width };
-                if (typeof height === 'number' && height > 0) patch.height = height;
-                updateNodeLocal(n.id, patch);
-                if (!String(n.id).startsWith('temp-')) {
-                  api.updateNode(n.id, patch).catch(console.warn);
-                }
-                // Cascade flag is set by the Expand floater so that
-                // expanding a node into another node's space pushes the
-                // neighbour out (donors → left, receivers → right). Drag
-                // resize doesn't cascade — that would feel jittery.
-                if (opts?.cascade) cascadeOverlapShift(n.id, width, patch.height ?? n.height);
-              }}
-              onDelete={() => setNodeDelete({ id: n.id, name: (n.name || '').trim() })}
-              onReset={() => handleResetNode(n.id)}
-              onVersionRestore={(snapshotId) => handleRestoreVersion(n.id, snapshotId)}
               runStatus={runStatus.get(n.id) || null}
-              onSaveEdit={(html) => handleSaveNodeEdit(n.id, html)}
-              onDiscardEdit={() => handleDiscardNodeEdit(n.id)}
-              onDuplicate={() => handleDuplicateNode(n.id)}
-              onDownload={() => handleDownloadNode(n.id)}
-              onStartEdge={(e, side) => startEdgeFromNode(n.id, e, side)}
-              onSlotMouseDown={onSlotMouseDown}
-              onPromptTextChange={(value) => handlePromptTextChange(n.id, value)}
-              onMetaPatch={(metaPatch) => {
-                setNodes((prev) => prev.map((nn) => (
-                  nn.id === n.id ? { ...nn, meta: { ...(nn.meta || {}), ...metaPatch } } : nn
-                )));
-              }}
-              onReplaceContent={handleReplaceContent}
-              onRequestUpload={() => handlePopulateNode(n)}
-              onFrameZoom={() => zoomToNode(n, 350, 1)}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
               removing={removing?.nodeId === n.id}
               removingOutside={removing?.nodeId === n.id && removingOutside}
               removeFromMenu={removing?.nodeId === n.id && !!removing.fromMenu}
               inSection={sectionMemberIds.has(n.id)}
-              onRemoveFromSection={() => armNodeRemoval(n)}
-              onCancelRemove={cancelNodeRemoval}
+              handlersRef={nodeHandlersRef}
             />
           ))}
           {/* Section CHROME pass — name tag, grip, corner handles.
