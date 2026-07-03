@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeCost, getCostPerImage, MODEL_PRICES } from './cost.js';
+import { computeCost, getCostPerImage, MODEL_PRICES, computeCostMicrocents, imageCostMicrocents } from './cost.js';
 
 describe('cost — chat models', () => {
   it('returns 0 cents for unknown model', () => {
@@ -87,5 +87,31 @@ describe('cost — image generation', () => {
 
   it('returns 0 for unknown provider', () => {
     expect(getCostPerImage('unknown')).toBe(0);
+  });
+});
+
+describe('computeCostMicrocents', () => {
+  it('keeps sub-cent costs exact (the 0.02¢ Flash call)', () => {
+    // gemini-2.5-flash: in $0.10/M, out $0.40/M → 12k in + 800 out
+    // = $0.0012 + $0.00032 = $0.00152 = 0.152¢ = 1520 µ¢
+    expect(computeCostMicrocents({ model: 'gemini-2.5-flash', tokensIn: 12000, tokensOut: 800 })).toBe(1520);
+  });
+  it('returns 0 for unknown models (conservative)', () => {
+    expect(computeCostMicrocents({ model: 'nope', tokensIn: 1e6, tokensOut: 1e6 })).toBe(0);
+  });
+  it('computeCost derives from µ¢ (integer cents, unchanged behaviour)', () => {
+    // gpt-5.5: 100k in + 10k out = $0.50 + $0.15 = 65¢
+    expect(computeCost({ model: 'gpt-5.5', tokensIn: 100000, tokensOut: 10000 })).toBe(65);
+  });
+});
+
+describe('imageCostMicrocents', () => {
+  it('prices gpt-image-1 by quality', () => {
+    expect(imageCostMicrocents({ provider: 'openai', quality: 'high' })).toBe(250000);   // $0.25
+    expect(imageCostMicrocents({ provider: 'openai', quality: 'medium' })).toBe(60000);  // $0.06
+  });
+  it('prices Imagen fast flat and unknown providers at 0', () => {
+    expect(imageCostMicrocents({ provider: 'gemini' })).toBe(40000);                     // $0.04
+    expect(imageCostMicrocents({ provider: 'other' })).toBe(0);
   });
 });

@@ -35,13 +35,10 @@ export const MODEL_PRICES = {
   'deepseek-chat':             { inPerM:  0.27, outPerM:  1.10 },
 };
 
-const IMAGE_PRICES = {
-  gemini: 4,   // Imagen 3.0 fast ~$0.04/image → 4 cents
-  openai: 6,   // gpt-image-1 medium quality ~$0.06/image → 6 cents
-};
-
 /**
- * Compute total cost in CENTS (integer) for a chat run.
+ * Exact cost in MICRO-CENTS (1¢ = 10,000 µ¢), integer. This is the metering
+ * unit — computeCost (integer cents) derives from it. Sub-cent calls (a
+ * 0.02¢ Flash turn) stay exact instead of rounding to 0.
  *
  * `tokensIn` from provider usage ALREADY INCLUDES `cachedInTokens` — they're
  * not additive. We subtract to find the fresh-rate portion, then bill the
@@ -50,23 +47,36 @@ const IMAGE_PRICES = {
  *
  * Returns 0 for unknown models (defensive default).
  */
-export function computeCost({ model, tokensIn = 0, tokensOut = 0, cachedInTokens = 0, cacheWriteTokens = 0 }) {
+export function computeCostMicrocents({ model, tokensIn = 0, tokensOut = 0, cachedInTokens = 0, cacheWriteTokens = 0 }) {
   const price = MODEL_PRICES[model];
   if (!price) return 0;
   const freshIn = Math.max(0, tokensIn - cachedInTokens);
-  const cachedInRate    = price.cachedInPerM    != null ? price.cachedInPerM    : price.inPerM;
-  const cacheWriteRate  = price.cacheWritePerM  != null ? price.cacheWritePerM  : price.inPerM;
+  const cachedInRate   = price.cachedInPerM   != null ? price.cachedInPerM   : price.inPerM;
+  const cacheWriteRate = price.cacheWritePerM != null ? price.cacheWritePerM : price.inPerM;
   const usd = (freshIn          / 1_000_000) * price.inPerM
             + (cachedInTokens   / 1_000_000) * cachedInRate
             + (cacheWriteTokens / 1_000_000) * cacheWriteRate
             + (tokensOut        / 1_000_000) * price.outPerM;
-  return Math.round(usd * 100);
+  return Math.round(usd * 1_000_000); // $ → µ¢ (100¢ × 10,000)
 }
 
-/**
- * Per-image cost in cents for a given provider id.
- * Returns 0 for unknown providers.
- */
+export function computeCost(args) {
+  return Math.round(computeCostMicrocents(args) / 10_000);
+}
+
+// Per-image µ¢ by provider + quality. gpt-image-1's old flat 6¢ was the
+// MEDIUM price while the adapter runs HIGH (~25¢) — quality is now explicit.
+const IMAGE_PRICES_MICRO = {
+  openai: { high: 250_000, medium: 60_000, low: 20_000 },
+  gemini: { default: 40_000 }, // Imagen 3.0 fast
+};
+
+export function imageCostMicrocents({ provider, quality } = {}) {
+  const p = IMAGE_PRICES_MICRO[provider];
+  if (!p) return 0;
+  return p[quality] ?? p.high ?? p.default ?? 0;
+}
+
 export function getCostPerImage(provider) {
-  return IMAGE_PRICES[provider] || 0;
+  return Math.round(imageCostMicrocents({ provider }) / 10_000);
 }
