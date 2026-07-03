@@ -12,6 +12,7 @@
  */
 import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
+import { recordImage } from '../billing/context.js';
 
 const DEFAULT_MODEL = 'gpt-image-1';
 
@@ -118,6 +119,7 @@ export async function generateOpenAIImage({
   if (!first?.b64_json) {
     throw new Error('gpt-image-1 returned no image');
   }
+  recordImage({ provider: 'openai', model, quality: 'high', meta: { mode: baseImageDataUrl ? 'edit' : 'generate' } });
 
   const base64 = first.b64_json;
   const mimeType = 'image/png';

@@ -3,6 +3,7 @@
  * Returns { base64, mimeType, dataUrl, prompt, model }.
  */
 import { GoogleGenAI } from '@google/genai';
+import { recordImage } from '../billing/context.js';
 
 const DEFAULT_MODEL = 'imagen-3.0-fast-generate-001';
 
@@ -42,6 +43,7 @@ export async function generateGeminiImage({
   if (!first?.image?.imageBytes) {
     throw new Error('Imagen returned no image');
   }
+  recordImage({ provider: 'gemini', model, meta: { mode: 'generate' } });
 
   const base64 = first.image.imageBytes;
   const mimeType = first.image.mimeType || 'image/png';
