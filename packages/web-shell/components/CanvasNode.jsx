@@ -11,6 +11,7 @@ import PromptBody from './node-bodies/PromptBody.jsx';
 import SkillBody from './node-bodies/SkillBody.jsx';
 import NodeVersionFloater from './NodeVersionFloater.jsx';
 import { api } from '../lib/canvas-api.js';
+import { readCanvasScale } from '../lib/canvas-scale.js';
 
 const DRAG_THRESHOLD = 4;
 
@@ -554,17 +555,13 @@ export default function CanvasNode({
   const startDashResize = useCallback((axis) => (e) => {
     e.stopPropagation();
     e.preventDefault();
-    const readScale = () => {
-      const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale'));
-      return v > 0 ? v : 1;
-    };
     const start = {
       x: e.clientX, y: e.clientY,
       w: node.width || 1280,
       h: node.height || 800
     };
     function move(ev) {
-      const scale = readScale();
+      const scale = readCanvasScale();
       const dx = (ev.clientX - start.x) / scale;
       const dy = (ev.clientY - start.y) / scale;
       const nextW = (axis === 'x' || axis === 'xy') ? Math.max(280, start.w + dx) : start.w;
@@ -604,10 +601,6 @@ export default function CanvasNode({
     const port = portRightRef.current;
     if (!cnode || !port || editing) return;
 
-    function readScale() {
-      const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale'));
-      return v > 0 ? v : 1;
-    }
     function onMove(e) {
       const { draftActive: isDrafting, height, hasOutgoingEdges: connected } = cursorTrackAdvisory.current;
       // Once the node is wired as a source of at least one edge, freeze the
@@ -625,7 +618,7 @@ export default function CanvasNode({
       // Hands off while cursor is over the port — let CSS hover take over.
       if (e.target === port || port.contains(e.target)) return;
       const rect = cnode.getBoundingClientRect();
-      const scale = readScale();
+      const scale = readCanvasScale();
       // Screen → node-local CSS coords (.cnode children live in the
       // pre-scale space; only the canvas wrapper applies the transform).
       const localY = (e.clientY - rect.top) / scale;
@@ -689,13 +682,9 @@ export default function CanvasNode({
     // Pos lives in world coords, but mouse moves in screen coords. At
     // canvas scale 0.5, moving the mouse 1px must shift the node by 2px in
     // world space, otherwise the node lags behind the cursor.
-    const readScale = () => {
-      const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale'));
-      return v > 0 ? v : 1;
-    };
     const start = { x: e.clientX, y: e.clientY, ox: node.pos_x, oy: node.pos_y, moved: false };
     function move(ev) {
-      const scale = readScale();
+      const scale = readCanvasScale();
       const dx = (ev.clientX - start.x) / scale;
       const dy = (ev.clientY - start.y) / scale;
       if (!start.moved && Math.hypot(dx, dy) * scale < DRAG_THRESHOLD) return;

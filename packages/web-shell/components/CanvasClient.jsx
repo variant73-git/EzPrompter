@@ -24,6 +24,7 @@ import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
 import { findSectionTerminal, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
 import { estimateChain, estimateOp } from '../lib/billing/pricing.js';
 import { clampToViewport } from '../lib/menu-position.js';
+import { readCanvasScale } from '../lib/canvas-scale.js';
 import {
   shouldTearOut, nodeCenter, pointInRect,
   selectGeometricMembersToLatch, TEAR_MARGIN,
@@ -892,7 +893,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // Scale the tear threshold inversely with zoom so it takes the SAME
       // on-screen pull to detach at any zoom — the further out (smaller
       // scale), the larger the world-space margin.
-      const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
+      const scale = readCanvasScale();
       const margin = TEAR_MARGIN / (scale > 0 ? scale : 1);
       if (!removingRef.current && shouldTearOut(cx, cy, drag.remainingCore, margin)) {
         const sec = sections.find((s) => s.id === drag.ownSectionId);
@@ -2664,10 +2665,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // ghost only spawns once the drag passes the threshold).
   function startAltDuplicateDrag(srcNode, e) {
     if (!srcNode) return;
-    const readScale = () => {
-      const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale'));
-      return v > 0 ? v : 1;
-    };
+    const readScale = readCanvasScale;
     const start = { x: e.clientX, y: e.clientY, ox: srcNode.pos_x, oy: srcNode.pos_y, lastX: srcNode.pos_x, lastY: srcNode.pos_y };
     let tempId = null;
     document.body.classList.add('alt-dup-dragging');
@@ -4359,8 +4357,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // The absorption core at gesture start — translates rigidly with the
     // members, mirroring what the sections memo will test after the drop.
     const startCore = sectionCoreRect(memberNodes);
-    const readScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
-    const startScale = readScale();
+    const startScale = readCanvasScale();
     const startMouseX = e.clientX;
     const startMouseY = e.clientY;
     function onMove(ev) {
@@ -4429,8 +4426,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       .filter(Boolean);
     if (memberNodes.length === 0) return;
 
-    const readScale = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
-    const startScale = readScale();
+    const startScale = readCanvasScale();
     // Mirror the rendered-frame bbox overflow (the `sections` useMemo): the
     // resize must clear the SAME node chrome the frame wraps, not just the
     // raw member box — asset dims, and (for a SELECTED site node) the
