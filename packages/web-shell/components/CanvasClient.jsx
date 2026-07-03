@@ -695,6 +695,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch } : n)));
   }, []);
 
+  // EdgeLayer is memoized — its callback props must keep a stable identity
+  // or the memo never hits. Latest-ref idiom: the stable wrappers resolve
+  // the CURRENT implementation off edgeHandlersRef at event time (the ref
+  // is re-pointed every render), so there are no stale closures.
+  const edgeHandlersRef = useRef({});
+  edgeHandlersRef.current = {
+    selectEdge: (edge) => {
+      setSelectedEdgeId(edge.id);
+      setSelectedNodeId(null);
+    },
+    edgeDragStart: (edge, evt) => startEdgeReroute(edge, evt),
+    severEdge: (edge) => handleDeleteEdge(edge),
+  };
+  const onSelectEdgeStable = useCallback((edge) => edgeHandlersRef.current.selectEdge(edge), []);
+  const onEdgeDragStartStable = useCallback((edge, evt) => edgeHandlersRef.current.edgeDragStart(edge, evt), []);
+  const onSeverEdgeStable = useCallback((edge) => edgeHandlersRef.current.severEdge(edge), []);
+
   const dragNodeServer = useRef(new Map());
   function persistNodePosition(id, posX, posY) {
     clearTimeout(dragNodeServer.current.get(id));
@@ -4817,12 +4834,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             incomingByTarget={incomingByTarget}
             scale={canvasScale}
             selectedEdgeId={selectedEdgeId}
-            onSelectEdge={(edge) => {
-              setSelectedEdgeId(edge.id);
-              setSelectedNodeId(null);
-            }}
-            onEdgeDragStart={(edge, evt) => startEdgeReroute(edge, evt)}
-            onSeverEdge={(edge) => handleDeleteEdge(edge)}
+            onSelectEdge={onSelectEdgeStable}
+            onEdgeDragStart={onEdgeDragStartStable}
+            onSeverEdge={onSeverEdgeStable}
           />
           {nodes.map((n) => (
             <CanvasNode

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, memo } from 'react';
 import { originColor } from '../lib/node-origin.js';
 
 const WORLD_WIDTH = 8000;
@@ -56,19 +56,27 @@ function edgePath(a, b, scale = 1) {
   return `M ${a.x} ${a.y} C ${cp1x} ${a.y}, ${cp2x} ${b.y}, ${b.x} ${b.y}`;
 }
 
-// Hook: tracks the live offsetHeight of every node by polling on the next
-// frame and again on a ResizeObserver tick. Returns a Map<id, height>.
+// Hook: tracks the live offsetHeight of every node, re-measuring on
+// ResizeObserver ticks. Returns a Map<id, height>.
+//
+// Keyed on node MEMBERSHIP (ids), NOT the nodes array identity: during a
+// drag the array is recreated on every frame, and re-running this effect
+// then would disconnect + recreate N ResizeObservers and force a layout
+// read (offsetHeight) per node per frame. Position changes don't affect
+// offsetHeight — the observers report real height changes in between.
 // Skipping during SSR (typeof document === 'undefined') keeps the first
 // render deterministic.
 function useMeasuredHeights(nodes) {
   const [heights, setHeights] = useState(() => new Map());
+  const idsKey = nodes.map((n) => n.id).join('|');
   useEffect(() => {
     if (typeof document === 'undefined') return;
+    const ids = idsKey ? idsKey.split('|') : [];
     function measure() {
       const next = new Map();
-      for (const n of nodes) {
-        const el = document.querySelector(`[data-node-id="${n.id}"]`);
-        if (el && el.offsetHeight) next.set(n.id, el.offsetHeight);
+      for (const id of ids) {
+        const el = document.querySelector(`[data-node-id="${id}"]`);
+        if (el && el.offsetHeight) next.set(id, el.offsetHeight);
       }
       setHeights((prev) => {
         if (prev.size !== next.size) return next;
@@ -78,15 +86,15 @@ function useMeasuredHeights(nodes) {
     }
     measure();
     const observers = [];
-    for (const n of nodes) {
-      const el = document.querySelector(`[data-node-id="${n.id}"]`);
+    for (const id of ids) {
+      const el = document.querySelector(`[data-node-id="${id}"]`);
       if (!el) continue;
       const ro = new ResizeObserver(measure);
       ro.observe(el);
       observers.push(ro);
     }
     return () => observers.forEach((ro) => ro.disconnect());
-  }, [nodes]);
+  }, [idsKey]);
   return heights;
 }
 
@@ -120,7 +128,7 @@ function bindEdgeMouseDown(edge, evt, onSelectEdge, onEdgeDragStart) {
   window.addEventListener('mouseup', up);
 }
 
-export default function EdgeLayer({ nodes, edges, incomingByTarget, scale = 1, selectedEdgeId, onSelectEdge, onEdgeDragStart, onSeverEdge }) {
+function EdgeLayer({ nodes, edges, incomingByTarget, scale = 1, selectedEdgeId, onSelectEdge, onEdgeDragStart, onSeverEdge }) {
   const heights = useMeasuredHeights(nodes);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
@@ -225,6 +233,8 @@ export default function EdgeLayer({ nodes, edges, incomingByTarget, scale = 1, s
     </svg>
   );
 }
+
+export default memo(EdgeLayer);
 
 // Separate top-layer SVG so the draft edge renders ABOVE node iframes (which
 // otherwise would visually cover the dashed line during drag).
