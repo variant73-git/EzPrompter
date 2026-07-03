@@ -3,6 +3,8 @@ import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
 import { runCompose } from '../../../../../lib/run-flow.js';
 import { BLANK_SITE_HTML } from '../../../../../lib/blank-site-html.js';
+import { runBilledOperation, InsufficientCreditsError } from '../../../../../lib/billing/context.js';
+import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -59,26 +61,42 @@ export async function POST(request, { params }) {
     );
   }
 
-  try {
-    const result = await runCompose({ target, sources, modelId });
-    if (!result?.html) return NextResponse.json({ error: 'no_output' }, { status: 502 });
+  const rate = await checkOpsRate({ sql, userId: user.id });
+  if (!rate.allowed) return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
 
-    const [snap] = await sql`
-      INSERT INTO snapshots (node_id, html, source, parent_snapshot_id)
-      VALUES (${id}, ${result.html}, 'run-flow',
-              (SELECT current_snapshot_id FROM nodes WHERE id = ${id}))
-      RETURNING id
-    `;
-    await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${id}`;
-    // Mark all incoming edges as applied so the UI can paint them
-    // differently after a successful run.
-    await sql`
-      UPDATE edges
-         SET status = 'applied', applied_at = NOW(), last_error = NULL
-       WHERE target_node_id = ${id}
-    `;
-    return NextResponse.json({ ok: true, snapshotId: snap.id, html: result.html });
+  try {
+    const { result, credits, balanceAfter } = await runBilledOperation(
+      { sql, userId: user.id, op: 'compose', boardId: target.board_id, nodeId: target.id },
+      async () => {
+        const composed = await runCompose({ target, sources, modelId });
+        if (!composed?.html) {
+          const err = new Error('no_output');
+          err.code = 'no_output';
+          throw err;
+        }
+        const [snap] = await sql`
+          INSERT INTO snapshots (node_id, html, source, parent_snapshot_id)
+          VALUES (${id}, ${composed.html}, 'run-flow',
+                  (SELECT current_snapshot_id FROM nodes WHERE id = ${id}))
+          RETURNING id
+        `;
+        await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${id}`;
+        // Mark all incoming edges as applied so the UI can paint them
+        // differently after a successful run.
+        await sql`
+          UPDATE edges
+             SET status = 'applied', applied_at = NOW(), last_error = NULL
+           WHERE target_node_id = ${id}
+        `;
+        return { ok: true, snapshotId: snap.id, html: composed.html };
+      },
+    );
+    return NextResponse.json({ ...result, credits, balanceAfter });
   } catch (e) {
+    if (e instanceof InsufficientCreditsError) {
+      return NextResponse.json({ error: 'insufficient_credits', estimate: e.estimate, balance: e.balance }, { status: 402 });
+    }
+    if (e?.code === 'no_output') return NextResponse.json({ error: 'no_output' }, { status: 502 });
     const msg = String(e?.message || e);
     console.error('run-flow error', msg);
     await sql`

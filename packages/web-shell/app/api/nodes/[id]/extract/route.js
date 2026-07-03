@@ -3,6 +3,8 @@ import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
 import { runExtract } from '../../../../../lib/extract.js';
 import { placeStackDown, resolvePlacement } from '../../../../../lib/canvas-layout.js';
+import { runBilledOperation, InsufficientCreditsError } from '../../../../../lib/billing/context.js';
+import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
 
 export const runtime = 'nodejs';
 
@@ -35,15 +37,38 @@ export async function POST(request, { params }) {
   if (!rows.length) return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   const src = rows[0];
 
-  let out;
+  const rate = await checkOpsRate({ sql, userId: user.id });
+  if (!rate.allowed) return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
+
+  let out, credits = 0, balanceAfter = null;
   try {
-    out = await runExtract({ to, node: { id: src.id, kind: src.kind, html: src.html, meta: src.meta } });
+    const billed = await runBilledOperation(
+      { sql, userId: user.id, op: `extract.${to}`, boardId: src.board_id, nodeId: src.id },
+      async () => {
+        const result = await runExtract({ to, node: { id: src.id, kind: src.kind, html: src.html, meta: src.meta } });
+        if (result?.error) {
+          // Structured extract errors must not charge — throw so the hold
+          // refunds, then map the payload back to its response below.
+          const err = new Error(result.error);
+          err.extractError = result;
+          throw err;
+        }
+        return result;
+      },
+    );
+    out = billed.result;
+    credits = billed.credits;
+    balanceAfter = billed.balanceAfter;
   } catch (e) {
+    if (e instanceof InsufficientCreditsError) {
+      return NextResponse.json({ error: 'insufficient_credits', estimate: e.estimate, balance: e.balance }, { status: 402 });
+    }
+    if (e?.extractError) {
+      const payload = e.extractError;
+      const status = payload.error === 'unsupported_combo' || payload.error === 'invalid_to' ? 400 : 409;
+      return NextResponse.json(payload, { status });
+    }
     return NextResponse.json({ error: 'extract_failed', message: String(e?.message || e) }, { status: 502 });
-  }
-  if (out.error) {
-    const status = out.error === 'unsupported_combo' || out.error === 'invalid_to' ? 400 : 409;
-    return NextResponse.json(out, { status });
   }
 
   const DIMS = { designmd: { width: 600, height: 600 }, asset: { width: 600, height: 600 }, prompt: { width: 600, height: 200 }, site: { width: 1280, height: 720 } };
@@ -85,5 +110,5 @@ export async function POST(request, { params }) {
               VALUES (${src.board_id}, ${src.id}, ${node.id}, 'generic')`;
   } catch (_) { /* dup edge — ignore */ }
 
-  return NextResponse.json({ node, truncated: out.truncated });
+  return NextResponse.json({ node, truncated: out.truncated, credits, balanceAfter });
 }

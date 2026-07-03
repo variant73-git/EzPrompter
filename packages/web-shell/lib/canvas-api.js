@@ -4,7 +4,18 @@ const COMMON = { credentials: 'include', headers: { 'content-type': 'application
 
 async function jsonOrThrow(r) {
   const j = await r.json().catch(() => ({}));
+  if (r.status === 402) {
+    // Billing block — typed so callers can open the insufficient-credits modal.
+    const err = new Error(j?.error || 'insufficient_credits');
+    err.code = 'insufficient_credits';
+    err.estimate = j?.estimate;
+    err.balance = j?.balance;
+    throw err;
+  }
   if (!r.ok) throw new Error(j?.detail || j?.error || `${r.status} ${r.statusText}`);
+  if (j?.balanceAfter != null && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('uncraft:balance', { detail: { balance: j.balanceAfter } }));
+  }
   return j;
 }
 

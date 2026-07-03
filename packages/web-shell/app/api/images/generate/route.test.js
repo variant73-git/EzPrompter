@@ -15,6 +15,20 @@ vi.mock('../../../../lib/image-gen/openai-image.js', () => ({
     prompt: 'cat', model: 'gpt-image-1',
   })),
 }));
+// Billing wiring (Task 13): the route opens a db handle + billed operation.
+vi.mock('../../../../lib/db.js', () => ({ db: async () => (() => Promise.resolve([])) }));
+vi.mock('../../../../lib/billing/ledger.js', () => ({
+  holdCredits: vi.fn(async () => ({ held: true, balance: 500 })),
+  refundHold: vi.fn(async () => ({ balance: 500 })),
+  settleOperation: vi.fn(async ({ chargeCredits }) => ({ balanceAfter: 500 - chargeCredits })),
+  grantCredits: vi.fn(async () => ({ balanceAfter: 500 })),
+  getBalance: vi.fn(async () => 500),
+  recentLedger: vi.fn(async () => []),
+}));
+vi.mock('../../../../lib/billing/rate-limit.js', () => ({
+  checkOpsRate: vi.fn(async () => ({ allowed: true })),
+  checkChatRate: vi.fn(async () => ({ allowed: true })),
+}));
 
 beforeEach(() => {
   process.env.GEMINI_API_KEY = 'gem';
