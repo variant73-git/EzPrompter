@@ -12,6 +12,7 @@ import SkillBody from './node-bodies/SkillBody.jsx';
 import NodeVersionFloater from './NodeVersionFloater.jsx';
 import { api } from '../lib/canvas-api.js';
 import { readCanvasScale } from '../lib/canvas-scale.js';
+import { createRafCoalescer } from '../lib/raf-coalesce.js';
 
 const DRAG_THRESHOLD = 4;
 
@@ -560,17 +561,22 @@ export default function CanvasNode({
       w: node.width || 1280,
       h: node.height || 800
     };
+    // Coalesce to one onResize per frame — every call lands a setNodes()
+    // in CanvasClient, and mousemove outpaces the display refresh.
+    const emit = createRafCoalescer((w, h) => onResize?.(w, h));
     function move(ev) {
       const scale = readCanvasScale();
       const dx = (ev.clientX - start.x) / scale;
       const dy = (ev.clientY - start.y) / scale;
       const nextW = (axis === 'x' || axis === 'xy') ? Math.max(280, start.w + dx) : start.w;
       const nextH = (axis === 'y' || axis === 'xy') ? Math.max(120, start.h + dy) : start.h;
-      onResize?.(nextW, nextH);
+      emit.push(nextW, nextH);
     }
     function up() {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
+      // Final size must land before any post-gesture logic reads it.
+      emit.flush();
       // Manual resize means the user moved away from the
       // "expanded" state — drop the toggle so the icon flips back
       // to Expand.
@@ -683,6 +689,11 @@ export default function CanvasNode({
     // canvas scale 0.5, moving the mouse 1px must shift the node by 2px in
     // world space, otherwise the node lags behind the cursor.
     const start = { x: e.clientX, y: e.clientY, ox: node.pos_x, oy: node.pos_y, moved: false };
+    // Coalesce to one onMove per frame (each one is a full setNodes pass in
+    // CanvasClient). onMoveStart still fires synchronously at threshold-
+    // crossing; flush() on mouseup guarantees onMoveEnd sees the final
+    // position (adopt/tear-out commit reads drag.lastX/lastY).
+    const emit = createRafCoalescer((x, y) => onMove(x, y));
     function move(ev) {
       const scale = readCanvasScale();
       const dx = (ev.clientX - start.x) / scale;
@@ -694,11 +705,13 @@ export default function CanvasNode({
         // pre-drag state (section frame carry + adoption preview baseline).
         onMoveStart?.();
       }
-      onMove(start.ox + dx, start.oy + dy);
+      emit.push(start.ox + dx, start.oy + dy);
     }
     function up() {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
+      // Final position must land before onMoveEnd's commit logic reads it.
+      emit.flush();
       onMoveEnd?.(start.moved);
     }
     window.addEventListener('mousemove', move);
