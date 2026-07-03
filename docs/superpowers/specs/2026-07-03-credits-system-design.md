@@ -147,9 +147,11 @@ Cada conta nova vale ~$1,50 de inferência — farm de cadastros é extração d
 6. Funis: formato de usage dos 3 SDKs (Anthropic/OpenAI/Gemini) + eventos de imagem por qualidade.
 7. Anti-farm: pack único por identidade; blocklist; orçamento global estourado → pack reduzido; rate limits.
 
-## 14. Decisões em aberto para a revisão (defaults marcados)
+## 14. Decisões em aberto para a revisão (defaults marcados) — ✅ SHIPPED 2026-07-03 com estes valores
 
-- Clone estático fixo: **25** créditos.
-- Planos placeholder: Pro **$12/1.500** · Ultimate **$39/6.000**.
-- Cercas: **10 msg/min**, **150 turnos leves/dia**, **6 ops cobráveis/min**, teto free **$2/mês**, orçamento global de boas-vindas (número a definir).
-- Grant retroativo para contas existentes: **sim**.
+Todos os defaults abaixo foram implementados como estão (plano `docs/superpowers/plans/2026-07-03-credits-system.md`, 19 tasks):
+
+- Clone estático fixo: **25** créditos. *(shipped: `OP_PRICING['extract.html'] = { flat: 25 }`)*
+- Planos placeholder: Pro **$12/1.500** · Ultimate **$39/6.000**. *(shipped: `PlansModal.jsx`, waitlist v1)*
+- Cercas: **10 msg/min**, **150 turnos leves/dia**, **6 ops cobráveis/min**, teto free **$2/mês**, orçamento global de boas-vindas via env `WELCOME_BUDGET_MONTHLY_CREDITS` (0 = sem teto até definir). *(shipped: `lib/billing/rate-limit.js` + `welcome.js`; envs `UNCRAFT_CHAT_PER_MIN`, `UNCRAFT_LIGHT_TURNS_PER_DAY`, `UNCRAFT_OPS_PER_MIN`)*
+- Grant retroativo para contas existentes: **sim**. *(executado 2026-07-03 — 1 conta, +500, ledger `{"retroactive":true}`)*
