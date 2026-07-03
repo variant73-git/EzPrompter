@@ -4422,9 +4422,9 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
 /* ── Section frames (auto-derived workflow groups) ──────────────── */
 .canvas-section-frame {
   position: absolute;
-  /* SOLID #181818 — no translucency (frosted/washed look removed per user
-     call 2026-07-03; the dot grid no longer shows through the panel). */
-  background: #181818;
+  /* #181818 tint, translucent so the dot grid shows through — restored per
+     user call (2026-07-03, second pass): flat translucent fill, no blur. */
+  background: rgba(24, 24, 24, 0.5);
   border: 1.5px solid rgba(255, 255, 255, 0.127);
   border-radius: 24px;
   pointer-events: none;
@@ -4564,8 +4564,7 @@ body.rb-ed-light .canvas-section-frame.adopt-preview {
   z-index: 5;
 }
 body.rb-ed-light .canvas-section-frame {
-  /* Solid composite of the old 3.5% white wash over the light canvas. */
-  background: #DFE1E5;
+  background: rgba(255, 255, 255, 0.035);
   border-color: rgba(0, 0, 0, 0.062);
 }
 
@@ -4591,12 +4590,12 @@ body.rb-ed-light .canvas-section-frame {
   /* play circle on the LEFT, label on the right: hug the play with 4px-left,
      text gets the 20px-right. (row-reverse flips the [label, play] DOM order.) */
   padding:
-    calc(4px / max(0.25, var(--canvas-scale, 1)))
-    calc(20px / max(0.25, var(--canvas-scale, 1)))
-    calc(4px / max(0.25, var(--canvas-scale, 1)))
-    calc(4px / max(0.25, var(--canvas-scale, 1)));
+    calc(3.2px / max(0.25, var(--canvas-scale, 1)))
+    calc(16px / max(0.25, var(--canvas-scale, 1)))
+    calc(3.2px / max(0.25, var(--canvas-scale, 1)))
+    calc(3.2px / max(0.25, var(--canvas-scale, 1)));
   font-family: inherit;
-  font-size: calc(14px / max(0.25, var(--canvas-scale, 1)));
+  font-size: calc(11.2px / max(0.25, var(--canvas-scale, 1)));
   font-weight: 500;
   letter-spacing: 0.01em;
   color: #0a0a0a;
@@ -4606,7 +4605,7 @@ body.rb-ed-light .canvas-section-frame {
   display: inline-flex;
   flex-direction: row-reverse;
   align-items: center;
-  gap: calc(10px / max(0.25, var(--canvas-scale, 1)));
+  gap: calc(8px / max(0.25, var(--canvas-scale, 1)));
   cursor: pointer;
   transition: opacity 180ms ease;
 }
@@ -4638,12 +4637,12 @@ body.rb-ed-light .canvas-section-frame {
   display: inline-flex;
   flex-direction: row-reverse;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   background: #ffffff;
   border: 1px solid rgba(0, 0, 0, 0.12);
   border-radius: 999px;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 11.2px;
   font-weight: 500;
   letter-spacing: 0.01em;
   color: #0a0a0a;
@@ -4662,8 +4661,8 @@ body.rb-ed-light .canvas-section-frame {
 .canvas-floating-run.visible {
   opacity: 1;
   max-width: 260px;
-  /* matches the section pill: play on the LEFT (4px), label right (20px) */
-  padding: 4px 20px 4px 4px;
+  /* matches the section pill: play on the LEFT (3.2px), label right (16px) */
+  padding: 3.2px 16px 3.2px 3.2px;
   margin-right: 8px;   /* gap before the zoom widget */
   pointer-events: auto;
 }
@@ -4696,8 +4695,8 @@ body.rb-ed-light .canvas-floating-run {
 /* Inverted play chip — identical to .canvas-section-play-btn (40px black circle,
    offwhite glyph). */
 .canvas-floating-run-play {
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
   background: #0a0a0a;
   border: none;
@@ -4712,7 +4711,7 @@ body.rb-ed-light .canvas-floating-run {
 }
 .canvas-floating-run-play:hover { background: #1a1a1a; }
 .canvas-floating-run-play:active { transform: scale(0.93); }
-.canvas-floating-run-play svg { width: 18px; height: 18px; }
+.canvas-floating-run-play svg { width: 14.4px; height: 14.4px; }
 body.rb-ed-light .canvas-floating-run-play { background: #0a0a0a; color: #fff; }
 body.rb-ed-light .canvas-floating-run-play:hover { background: #1a1a1a; }
 /* Label-only pill — a section GROUP with no cords between members renders no
@@ -4801,10 +4800,11 @@ input.canvas-section-name-input::placeholder {
   opacity: 0.15;
 }
 .canvas-section-play-btn {
-  /* Circle, stable on-screen size — ~40x40 with the same 0.25 floor
-     as the surrounding pill so play btn + label stay proportional. */
-  width: calc(40px / max(0.25, var(--canvas-scale, 1)));
-  height: calc(40px / max(0.25, var(--canvas-scale, 1)));
+  /* Circle, stable on-screen size — 32x32 (20% smaller, 2026-07-03) with
+     the same 0.25 floor as the surrounding pill so play btn + label stay
+     proportional. */
+  width: calc(32px / max(0.25, var(--canvas-scale, 1)));
+  height: calc(32px / max(0.25, var(--canvas-scale, 1)));
   border-radius: 999px;
   /* Solid offblack chip with an offwhite triangle inside (inverted pill). */
   background: #0a0a0a;
@@ -4840,8 +4840,8 @@ body.rb-ed-light .canvas-section-play-btn.disabled:hover {
 }
 .canvas-section-play-btn:disabled:active { transform: none; }
 .canvas-section-play-btn svg {
-  width: calc(18px / max(0.25, var(--canvas-scale, 1)));
-  height: calc(18px / max(0.25, var(--canvas-scale, 1)));
+  width: calc(14.4px / max(0.25, var(--canvas-scale, 1)));
+  height: calc(14.4px / max(0.25, var(--canvas-scale, 1)));
 }
 body.rb-ed-light .canvas-section-play-btn { background: #0a0a0a; color: #fff; }
 body.rb-ed-light .canvas-section-play-btn:hover { background: #1a1a1a; }
