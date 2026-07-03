@@ -10,6 +10,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import { samplePalette } from './design/sample-palette.js';
+import { recordUsage } from './billing/context.js';
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 // Image → site clone / reconstruction brief is a HARD vision task: a weak model
@@ -36,6 +37,13 @@ async function callText({ model = DEFAULT_MODEL, system, user, maxTokens = 1200 
       system,
       messages: [{ role: 'user', content: user }],
     }).finalMessage();
+    recordUsage({
+      provider: 'anthropic', model,
+      tokensIn: final.usage?.input_tokens || 0,
+      tokensOut: final.usage?.output_tokens || 0,
+      cachedIn: final.usage?.cache_read_input_tokens || 0,
+      cacheWrite: final.usage?.cache_creation_input_tokens || 0,
+    });
     return (final.content?.map((b) => b.text || '').join('') || '').trim();
   }
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
@@ -46,6 +54,8 @@ async function callText({ model = DEFAULT_MODEL, system, user, maxTokens = 1200 
     contents: [{ role: 'user', parts: [{ text: user }] }],
     config: { systemInstruction: system, maxOutputTokens: maxTokens },
   });
+  const u = resp.usageMetadata || {};
+  recordUsage({ provider: 'gemini', model, tokensIn: u.promptTokenCount || 0, tokensOut: u.candidatesTokenCount || 0, cachedIn: u.cachedContentTokenCount || 0 });
   return (
     resp.text ||
     resp.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') ||
@@ -75,6 +85,13 @@ async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTok
         },
       ],
     }).finalMessage();
+    recordUsage({
+      provider: 'anthropic', model,
+      tokensIn: final.usage?.input_tokens || 0,
+      tokensOut: final.usage?.output_tokens || 0,
+      cachedIn: final.usage?.cache_read_input_tokens || 0,
+      cacheWrite: final.usage?.cache_creation_input_tokens || 0,
+    });
     return (final.content?.map((b) => b.text || '').join('') || '').trim();
   }
 
@@ -92,12 +109,21 @@ async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTok
       ],
       max_completion_tokens: maxTokens,
       stream: true,
+      stream_options: { include_usage: true },
     });
     let text = '';
+    let usage = null;
     for await (const chunk of stream) {
       const delta = chunk?.choices?.[0]?.delta?.content;
       if (typeof delta === 'string') text += delta;
+      if (chunk?.usage) usage = chunk.usage;
     }
+    recordUsage({
+      provider: 'openai', model,
+      tokensIn: usage?.prompt_tokens || 0,
+      tokensOut: usage?.completion_tokens || 0,
+      cachedIn: usage?.prompt_tokens_details?.cached_tokens || 0,
+    });
     return text.trim();
   }
 
@@ -117,6 +143,8 @@ async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTok
     ],
     config: { systemInstruction: system, maxOutputTokens: maxTokens },
   });
+  const u = resp.usageMetadata || {};
+  recordUsage({ provider: 'gemini', model, tokensIn: u.promptTokenCount || 0, tokensOut: u.candidatesTokenCount || 0, cachedIn: u.cachedContentTokenCount || 0 });
   return (
     resp.text ||
     resp.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') ||
