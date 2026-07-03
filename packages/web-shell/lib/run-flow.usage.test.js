@@ -58,3 +58,16 @@ describe('run-flow usage metering', () => {
     expect(events[0]).toMatchObject({ provider: 'anthropic', tokensIn: 2000, tokensOut: 500 });
   });
 });
+
+describe('demarcelize usage metering (Task 10)', () => {
+  it('records the Anthropic reskin call into the ambient billing context', async () => {
+    const { reskin } = await import('./demarcelize.js');
+    const settle = vi.fn(async () => ({ balanceAfter: 0 }));
+    await runMeteredOperation({ sql: () => Promise.resolve([]), userId: 'u1', op: 'transplant' }, async () => {
+      await reskin({ targetHtml: '<html>t</html>', referenceHtml: '<html>r</html>' });
+    }, { ...noDb, settleOperation: settle });
+    const events = settle.mock.calls[0][0].events;
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(events[0]).toMatchObject({ provider: 'anthropic', tokensIn: 2000, tokensOut: 500 });
+  });
+});

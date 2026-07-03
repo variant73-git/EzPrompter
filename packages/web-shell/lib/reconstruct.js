@@ -32,6 +32,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
 import { pinViewportUnits } from './snapshot.js';
+import { recordUsage } from './billing/context.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_RASTERS_DIR = join(__dirname, '..', 'public', 'rasters');
@@ -656,14 +657,23 @@ async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, e
       { role: 'user', content: userContent }
     ],
     max_completion_tokens: 32000,
-    stream: true
+    stream: true,
+    stream_options: { include_usage: true }
   });
 
   let text = '';
+  let usage = null;
   for await (const chunk of stream) {
     const delta = chunk?.choices?.[0]?.delta?.content;
     if (typeof delta === 'string') text += delta;
+    if (chunk?.usage) usage = chunk.usage;
   }
+  recordUsage({
+    provider: 'openai', model: 'gpt-5.5',
+    tokensIn: usage?.prompt_tokens || 0,
+    tokensOut: usage?.completion_tokens || 0,
+    cachedIn: usage?.prompt_tokens_details?.cached_tokens || 0,
+  });
   return text.replace(/^```[a-z]*\n/, '').replace(/```\s*$/, '').trim();
 }
 
