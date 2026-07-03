@@ -7318,6 +7318,13 @@ body.rb-ed-light .cnode-version-confirm-cancel { border-color: rgba(0, 0, 0, 0.1
    Lives in .canvas-toolbar-right, left of the UserPill. Same chip sizing as
    the toolbar family (inner pills radius 10 inside the 44px frame). */
 .credits-pill-root { position: relative; display: flex; align-items: center; }
+/* In the canvas top-right toolbar the root must stretch to the widget's
+   content height so the pill (height:100%) fills it and its hover keeps a
+   uniform 2px gap on every side — same treatment as .user-pill-wrap. */
+.canvas-toolbar-right .credits-pill-root {
+  align-self: stretch;
+  display: flex;
+}
 .credits-pill {
   display: flex;
   align-items: center;
@@ -7325,6 +7332,7 @@ body.rb-ed-light .cnode-version-confirm-cancel { border-color: rgba(0, 0, 0, 0.1
   height: 100%;
   padding: 0 12px;
   border: none;
+  /* Concentric with the 12px toolbar at the 2px padding (12 − 2). */
   border-radius: 10px;
   background: transparent;
   color: var(--text-secondary, rgba(245, 245, 245, 0.7));
@@ -7333,7 +7341,8 @@ body.rb-ed-light .cnode-version-confirm-cancel { border-color: rgba(0, 0, 0, 0.1
   cursor: pointer;
   white-space: nowrap;
 }
-.credits-pill:hover { background: rgba(255, 255, 255, 0.06); color: var(--text-primary, #f5f5f5); }
+/* Hover = bg only (no outline), consistent with the zoom / user pills. */
+.credits-pill:hover { background: var(--hover-bg); color: var(--text-primary, #f5f5f5); }
 .credits-pill-value { font-variant-numeric: tabular-nums; }
 .credits-pill-menu {
   position: absolute;
@@ -7371,7 +7380,7 @@ body.rb-ed-light .cnode-version-confirm-cancel { border-color: rgba(0, 0, 0, 0.1
 .credits-pill-row-delta.neg { color: rgba(245, 245, 245, 0.55); }
 .credits-pill-row-delta.pos { color: #34d399; }
 body.rb-ed-light .credits-pill { color: rgba(0, 0, 0, 0.65); }
-body.rb-ed-light .credits-pill:hover { background: rgba(0, 0, 0, 0.06); color: rgba(0, 0, 0, 0.9); }
+body.rb-ed-light .credits-pill:hover { color: rgba(0, 0, 0, 0.9); } /* bg comes from --hover-bg (light-remapped) */
 body.rb-ed-light .credits-pill-menu-header,
 body.rb-ed-light .credits-pill-empty { color: rgba(0, 0, 0, 0.45); }
 body.rb-ed-light .credits-pill-row { color: rgba(0, 0, 0, 0.7); }
