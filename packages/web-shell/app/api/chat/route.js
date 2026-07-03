@@ -21,6 +21,7 @@ import { checkRateLimit, CHAT_POLICY } from '../../../lib/rate-limit.js';
 import { moderateText, flaggedCategories } from '../../../lib/moderation.js';
 import { scanPrompt } from '../../../lib/llm-guard.js';
 import { flushLangfuse } from '../../../lib/agent/trace.js';
+import { renderHtmlScreenshot } from '../../../lib/site-screenshot.js';
 
 export const runtime = 'nodejs';
 
@@ -575,7 +576,67 @@ export async function POST(request) {
           || (/^data:([^;]+);/.exec(dataUrl)?.[1])
           || 'image/png';
         const name = r.node_meta?.name || 'active';
-        contextImages.push({ kind: 'image', dataUrl, mimeType, name, nodeId: r.node_id, assetId: r.asset_id });
+        let assetId = r.asset_id;
+        // Orphan backfill: image nodes dropped straight on the canvas (ghost
+        // placement / uploads) carry the dataUrl in node meta but have NO
+        // assets row — so the agent could SEE the image yet couldn't use it
+        // as createImage base ("assetId=null"). Create the asset row on the
+        // fly and link it, so a selected image is always actionable.
+        if (!assetId) {
+          try {
+            const backfillMeta = { dataUrl, mimeType, source: 'canvas-upload-backfill' };
+            const [assetRow] = await sql`
+              INSERT INTO assets (user_id, project_id, type, name, meta)
+              VALUES (${user.id}, ${boardId}, 'image', ${name}, ${JSON.stringify(backfillMeta)}::jsonb)
+              RETURNING id
+            `;
+            assetId = assetRow.id;
+            await sql`UPDATE nodes SET meta = meta || ${JSON.stringify({ assetId })}::jsonb WHERE id = ${r.node_id}`;
+          } catch (e) {
+            console.warn('[chat] orphan asset backfill failed', e?.message || e);
+          }
+        }
+        contextImages.push({ kind: 'image', dataUrl, mimeType, name, nodeId: r.node_id, assetId });
+      }
+
+      // SITE nodes: the agent can't "see" a site from truncated HTML the way
+      // it sees an image from its dataUrl — that's what made it blind to a
+      // selected clone ("preciso enxergar o conteúdo — o snapshot foi
+      // truncado"). Attach a rendered screenshot of the node's current
+      // snapshot as a context image. Capture-sourced snapshots already carry
+      // one in screenshot_url; everything else is rendered headless once and
+      // cached back on the snapshot row.
+      const SITE_CONTEXT_CAP = 2;
+      let sitesAttached = 0;
+      const siteRows = await sql`
+        SELECT n.id AS node_id, n.meta AS node_meta,
+               s.id AS snapshot_id, s.html, s.screenshot_url
+        FROM nodes n
+        JOIN snapshots s ON s.id = n.current_snapshot_id
+        WHERE n.id = ANY(${activeNodeIds})
+          AND n.board_id = ${boardId}
+          AND n.kind = 'site'
+      `;
+      for (const r of siteRows) {
+        if (sitesAttached >= SITE_CONTEXT_CAP || contextImages.length >= CONTEXT_IMAGE_CAP) break;
+        const name = r.node_meta?.name || 'site';
+        let shot = (typeof r.screenshot_url === 'string' && r.screenshot_url.startsWith('data:'))
+          ? r.screenshot_url
+          : null;
+        if (!shot && typeof r.html === 'string' && r.html.trim()) {
+          try {
+            shot = await renderHtmlScreenshot(r.html);
+            await sql`UPDATE snapshots SET screenshot_url = ${shot} WHERE id = ${r.snapshot_id}`;
+          } catch (e) {
+            console.warn('[chat] site context render failed', e?.message || e);
+          }
+        }
+        if (!shot) continue;
+        contextImages.push({
+          kind: 'image', dataUrl: shot, mimeType: 'image/png', name,
+          nodeId: r.node_id, assetId: null, isSiteRender: true,
+        });
+        sitesAttached++;
       }
     }
   }
@@ -622,9 +683,11 @@ export async function POST(request) {
     }
     if (hasContextImages) {
       const inv = contextImages
-        .map((c) => `assetId=${c.assetId} nodeId=${c.nodeId} ("${c.name}")`)
+        .map((c) => c.isSiteRender
+          ? `nodeId=${c.nodeId} ("${c.name}") — RENDERED SCREENSHOT of this site node's current HTML`
+          : `assetId=${c.assetId} nodeId=${c.nodeId} ("${c.name}")`)
         .join('; ');
-      textPart += `\n\n[The image(s) below this text are the user's ACTIVE CONTEXT — already on the canvas. You can SEE them now. Inventory: ${inv}. Refer to them by their assetId for createImage calls.]`;
+      textPart += `\n\n[The image(s) below this text are the user's ACTIVE CONTEXT — already on the canvas. You can SEE them now. Inventory: ${inv}. Image assets: use the assetId in createImage calls. Site renders: this is what the site node currently LOOKS like — describe/act on it from the render, and use getNodeOutput/runFlow/editSite on the nodeId to work with its HTML.]`;
     }
     if (fullHint) textPart = `${fullHint}\n\n${textPart}`;
     const blocks = [{ type: 'text', text: textPart }];
@@ -709,7 +772,11 @@ export async function POST(request) {
         apiKey: resolved.apiKey,
         providerLabel: resolved.providerLabel,
         fallbacks: agentFallbacks,
-        ctx: { boardId, userId: user.id, conversationModel: resolvedModel },
+        // pickerModel = the user's EXPLICIT dock selection (raw, un-aliased).
+        // Tools that route to a provider (createImage) assume it instead of
+        // asking — the conversation model can diverge from the picker (clone
+        // requests force Opus) and must not resurface the provider question.
+        ctx: { boardId, userId: user.id, conversationModel: resolvedModel, pickerModel: modelId || null },
         toolAllowlist,
         tools,
         runId,

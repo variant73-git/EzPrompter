@@ -15,7 +15,7 @@ import { decodeImageDimsFromDataUrl } from '../../image-dims.js';
  */
 export const viewNodeTool = {
   name: 'viewNode',
-  description: 'Return the full record of a single node on the current board: kind, name, position, size, and — for asset nodes — the linked assetId, prompt/mode/refs from the asset meta, and the source image\'s decoded pixel dimensions. Use this when you need to know what a node IS before deciding what to do with it. Does NOT return the dataUrl bytes (those would blow the LLM history); for visual inspection, ask the user to select the node so the next turn arrives with its image.',
+  description: 'Return the full record of a single node on the current board: kind, name, position, size, and — for asset nodes — the linked assetId, prompt/mode/refs from the asset meta, and the source image\'s decoded pixel dimensions. Use this when you need to know what a node IS before deciding what to do with it. Does NOT return the dataUrl bytes (those would blow the LLM history); for visual inspection, ask the user to select the node — the next turn then arrives with its image (asset nodes) or a rendered screenshot of its HTML (site nodes).',
   classification: 'safe',
   inputSchema: {
     type: 'object',

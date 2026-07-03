@@ -61,6 +61,11 @@ body.rb-ed-light .chat-thinking-dot {
 .tool-chip {
   display: inline-flex;
   align-items: center;
+  /* Long content (full prompts in confirm chips) wraps to new lines inside
+     the chip instead of pushing the panel wider — the chat NEVER scrolls
+     horizontally and text is NEVER clipped. */
+  flex-wrap: wrap;
+  max-width: 100%;
   gap: 6px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -70,6 +75,10 @@ body.rb-ed-light .chat-thinking-dot {
      below become inert (no border-style), leaving just the tinted fill. */
   border: none;
 }
+/* Wrapped chip = rounded RECTANGLE, not a pill. A 999px radius hugging a
+   multi-line block looks broken; 14px matches .soft-pause-chip. Applied by
+   ToolChip via ResizeObserver the moment content exceeds one line. */
+.tool-chip-multiline { border-radius: 14px; }
 .tool-chip-pending, .tool-chip-running {
   background: rgba(56, 189, 248, 0.08);
   border-color: rgba(56, 189, 248, 0.18);
@@ -89,10 +98,13 @@ body.rb-ed-light .chat-thinking-dot {
   color: rgba(252, 165, 165, 0.95);
 }
 .tool-chip-name { font-weight: 500; }
-/* Confirm/choice chips read as a plain human question — the sentence never
-   wraps to a second line (buttons sit after it). */
-.tool-chip-prompt { font-weight: 500; white-space: nowrap; }
+/* Confirm/choice chips read as a plain human question. The full sentence is
+   always shown — it wraps to as many lines as it needs (buttons flow after
+   it). Never nowrap, never ellipsis: clipped text in a question the user
+   must answer is unacceptable. */
+.tool-chip-prompt { font-weight: 500; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
 .tool-chip-summary { opacity: 0.75; }
+.tool-chip-summary-text { overflow-wrap: anywhere; }
 .tool-chip-icon { display: inline-flex; }
 .tool-chip-spinner {
   width: 10px; height: 10px;
@@ -114,6 +126,10 @@ body.rb-ed-light .chat-thinking-dot {
   max-height: var(--chat-panel-max-height, 28vh);
   min-height: 0;
   overflow-y: auto;
+  /* Hard guarantee: the chat widget never scrolls horizontally. Anything
+     wider than the panel must wrap (chips/bubbles handle their own
+     overflow-wrap); this is the backstop. */
+  overflow-x: hidden;
   scroll-behavior: smooth;
   font-family: var(--popup-font-sans, system-ui);
   /* No own background/border — chat-panel sits INSIDE .prompt-dock which

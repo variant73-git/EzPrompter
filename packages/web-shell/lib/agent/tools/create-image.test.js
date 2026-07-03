@@ -93,6 +93,36 @@ describe('createImageTool', () => {
     expect(cs).toHaveLength(1);
   });
 
+  it('choices() never asks when the dock picker has an explicit model — even on Claude conversation', () => {
+    // Clone requests force the conversation onto Opus; the picker (gpt-5.5)
+    // must still win silently instead of resurfacing the Gemini/GPT menu.
+    const cs = createImageTool.choices(
+      { prompt: 'x', provider: 'auto' },
+      { conversationModel: 'claude-opus-4-7', pickerModel: 'gpt-5.5' }
+    );
+    expect(cs).toHaveLength(1);
+  });
+
+  it('uses the picker model family as provider when conversation model diverges', async () => {
+    sql._nextResult = [{ id: 'asset-1' }];
+    await createImageTool.execute(
+      { prompt: 'cat', provider: 'auto' },
+      { boardId: 'b1', userId: 42, conversationModel: 'claude-opus-4-7', pickerModel: 'gpt-5.5' }
+    );
+    expect(generateOpenAIImage).toHaveBeenCalled();
+    expect(generateGeminiImage).not.toHaveBeenCalled();
+  });
+
+  it('falls back to gemini when picker model has no image provider (claude picked)', async () => {
+    sql._nextResult = [{ id: 'asset-1' }];
+    await createImageTool.execute(
+      { prompt: 'cat', provider: 'auto' },
+      { boardId: 'b1', userId: 42, conversationModel: 'claude-opus-4-7', pickerModel: 'claude-4.6-opus' }
+    );
+    expect(generateGeminiImage).toHaveBeenCalled();
+    expect(generateOpenAIImage).not.toHaveBeenCalled();
+  });
+
   it('returns error when prompt missing', async () => {
     const r = await createImageTool.execute({}, { boardId: 'b1', userId: 42 });
     expect(r.error).toBe('invalid_args');

@@ -29,6 +29,16 @@ const AUTO_CHOICES_CLAUDE = [
 ];
 const AUTO_SINGLE = [{ id: 'auto', label: 'Generate' }];
 
+// Map a model id (dock picker or conversation model) to the image-gen
+// provider of the same family. Models with no image endpoint (Claude, Kimi)
+// return null so the caller can fall through to the next signal.
+function providerFromModel(m) {
+  if (!m || typeof m !== 'string') return null;
+  if (/^(gpt|openai|o[1-9])/i.test(m)) return 'openai';
+  if (/^gemini/i.test(m)) return 'gemini';
+  return null;
+}
+
 export const createImageTool = {
   name: 'createImage',
   description: `Generate or edit an image. Optionally adds the result to the canvas as an asset node connected to its inputs.
@@ -65,8 +75,13 @@ Costs money. Pauses for confirmation when the conversation model is Claude (so t
 
   choices(args, ctx) {
     const provider = args?.provider || 'auto';
-    const model = ctx?.conversationModel || '';
     if (provider !== 'auto') return AUTO_SINGLE;
+    // The dock picker is an EXPLICIT model selection — assume it, never ask.
+    // (The conversation model can differ from the picker: clone requests
+    // force the chat onto Opus, which used to trigger the Gemini/GPT menu
+    // even though the user had GPT-5.5 selected in the dock.)
+    if (ctx?.pickerModel) return AUTO_SINGLE;
+    const model = ctx?.conversationModel || '';
     if (/^(claude|opus|sonnet|haiku)/i.test(model)) return AUTO_CHOICES_CLAUDE;
     return AUTO_SINGLE;
   },
@@ -164,16 +179,16 @@ Costs money. Pauses for confirmation when the conversation model is Claude (so t
     //   0. baseImageAssetId present → forces openai (only adapter with images.edit)
     //   1. ctx.choice (user picked in needs_choice flow) wins next
     //   2. provider !== 'auto' wins next
-    //   3. conversation model dictates family (gpt → openai; gemini → gemini; default gemini)
+    //   3. dock picker model dictates family (the user's explicit selection)
+    //   4. conversation model dictates family (gpt → openai; gemini → gemini; default gemini)
     let effective;
     if (baseImageDataUrl) effective = 'openai';
     else if (ctx?.choice && ctx.choice !== 'auto') effective = ctx.choice;
     else if (provider !== 'auto') effective = provider;
     else {
-      const m = ctx?.conversationModel || '';
-      if (/^(gpt|openai|o[1-9])/i.test(m)) effective = 'openai';
-      else if (/^gemini/i.test(m))           effective = 'gemini';
-      else                                    effective = 'gemini';
+      effective = providerFromModel(ctx?.pickerModel)
+        || providerFromModel(ctx?.conversationModel)
+        || 'gemini';
     }
 
     // ── Skeleton flow ───────────────────────────────────────────────────

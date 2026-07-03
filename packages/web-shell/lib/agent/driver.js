@@ -577,13 +577,15 @@ function isRetriableProviderError(e) {
   return false;
 }
 
-/** Short human-readable summary shown in confirm chips. Per-tool overrides preferred. */
+/** Human-readable summary shown in confirm chips. Per-tool overrides preferred.
+ *  Node ids are abbreviated (they're opaque UUIDs), but user-authored text
+ *  (prompt/instruction) is NEVER truncated — the chip wraps instead. */
 function summarizeDestructiveCall(name, args) {
   switch (name) {
     case 'deleteNode': return `Delete node ${String(args?.id || '').slice(0, 8)}`;
     case 'runFlow':    return `Run flow on node ${String(args?.nodeId || '').slice(0, 8)}${args?.modelId ? ` with ${args.modelId}` : ''}`;
-    case 'editSite':   return `Edit site ${String(args?.nodeId || '').slice(0, 8)} — "${(args?.instruction || '').slice(0, 60)}"`;
-    case 'createImage': return `Generate image — "${(args?.prompt || '').slice(0, 60)}"`;
+    case 'editSite':   return `Edit site ${String(args?.nodeId || '').slice(0, 8)} — "${args?.instruction || ''}"`;
+    case 'createImage': return `Generate image — "${args?.prompt || ''}"`;
     default:           return `${name}(...)`;
   }
 }

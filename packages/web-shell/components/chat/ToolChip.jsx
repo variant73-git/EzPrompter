@@ -1,11 +1,35 @@
 'use client';
 
+import { useLayoutEffect, useRef, useState } from 'react';
+
+// A chip is a PILL only while its content fits on one line. The moment the
+// text wraps (full prompts are never truncated), the 999px pill radius reads
+// broken — so wrapped chips become rounded rectangles instead. Measured via
+// ResizeObserver because CSS alone can't detect line wrapping.
+const SINGLE_LINE_MAX_PX = 40;
+
+function useMultiline() {
+  const ref = useRef(null);
+  const [multiline, setMultiline] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const check = () => setMultiline(el.offsetHeight > SINGLE_LINE_MAX_PX);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, multiline];
+}
+
 export default function ToolChip({
   toolName, status, args, result, error,
   summary, choices,
   onConfirm, onSkip, onChoose,
 }) {
-  const cls = `tool-chip tool-chip-${status}`;
+  const [chipRef, multiline] = useMultiline();
+  const cls = `tool-chip tool-chip-${status}${multiline ? ' tool-chip-multiline' : ''}`;
   const icon = (
     status === 'done'             ? '✓'
     : status === 'error'          ? '✕'
@@ -23,12 +47,13 @@ export default function ToolChip({
   );
 
   // When asking the user a question (confirm / choice), the chip is a plain
-  // human sentence — no code-y tool name prefix, never wraps. Status chips
-  // (running / done / error) keep the tool name as a label.
+  // human sentence — no code-y tool name prefix, shown in FULL (wraps to as
+  // many lines as needed, never clipped). Status chips (running / done /
+  // error) keep the tool name as a label.
   const isPrompt = status === 'awaiting_confirm' || status === 'awaiting_choice';
 
   return (
-    <div className={cls} data-tool={toolName} data-status={status}>
+    <div ref={chipRef} className={cls} data-tool={toolName} data-status={status}>
       <span className="tool-chip-icon">
         {icon || <span role="status" className="tool-chip-spinner" aria-label="working" />}
       </span>
