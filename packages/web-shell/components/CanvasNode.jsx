@@ -669,17 +669,18 @@ export default function CanvasNode({
     return () => io.disconnect();
   }, []);
 
-  // Static stand-in below LOW_ZOOM (perf phase 3b): at that distance a
-  // site is an unreadable stamp — an <img> costs nothing to keep on the
-  // canvas, while a live iframe keeps a whole document, its layout and
-  // scripts alive and re-rasterizing. The thumbnail comes from
-  // /api/nodes/[id]/thumbnail (cached per snapshot in
-  // snapshots.screenshot_url; fetches capped at 2 concurrent by
-  // thumb-queue). The swap keys on the settle-time `scale` prop so it
-  // never flips mid-gesture; while the thumb hasn't arrived the live
-  // iframe stays (no blank frame). Editing/version-preview always live.
-  const LOW_ZOOM_THUMB = 0.4;
-  const wantThumb = scale < LOW_ZOOM_THUMB && !editing && !versionPreview;
+  // Static-by-default site display (perf phase 3b v2, user-directed): the
+  // node is a VISUALIZATION of the site's current state — a snapshot image
+  // at every zoom. The live iframe (whole document + layout + scripts)
+  // mounts ONLY while editing or previewing a history version; Done/reset/
+  // run produce a new snapshot → new thumbKey → fresh thumbnail. The
+  // thumbnail comes from /api/nodes/[id]/thumbnail (full content height,
+  // cached per snapshot in snapshots.screenshot_url; fetches deduped and
+  // capped at 2 concurrent by thumb-queue). While a thumb hasn't arrived
+  // yet (brand-new snapshot) the live iframe covers — no blank frame.
+  // Entering edit keeps the thumb OVERLAID until the iframe's onLoad so
+  // the swap never flashes.
+  const wantThumb = !editing && !versionPreview;
   const thumbKey = `${node.id}:${node.current_snapshot_id || 'none'}`;
   const [thumb, setThumb] = useState(null);
   const thumbKeyRef = useRef(null);
@@ -696,6 +697,25 @@ export default function CanvasNode({
     return () => { alive = false; };
   }, [wantThumb, thumbKey, node.id]);
   const showThumb = wantThumb && thumb?.key === thumbKey;
+  // Anti-flash hand-off: while the live iframe is still parsing its srcDoc
+  // (edit entry, version preview), the last thumb stays painted on top.
+  const [iframeReady, setIframeReady] = useState(false);
+  useEffect(() => {
+    if (showThumb) setIframeReady(false);
+  }, [showThumb]);
+  // Without a live iframe there's no onIframeLoad to measure the site's
+  // natural size for the Expand floater — the thumb's intrinsic
+  // dimensions carry the same information.
+  const onThumbLoad = useCallback((e) => {
+    const img = e.currentTarget;
+    if (!img?.naturalWidth || !img?.naturalHeight) return;
+    if (contentSizeRef.current) return;
+    const w = node.width || 1280;
+    contentSizeRef.current = {
+      w,
+      h: Math.min(Math.round(img.naturalHeight * (w / img.naturalWidth)), 12000),
+    };
+  }, [node.width]);
 
   // When a node BECOMES connected (first outgoing edge), reset the port's
   // inline top immediately so the ball snaps back to its CSS-default
@@ -1244,29 +1264,25 @@ export default function CanvasNode({
             style={{ height: (node.height || 800) + 'px' }}
           >
             {showThumb ? (
-              /* Low-zoom static stand-in — see the wantThumb note above.
-                 Reuses .cnode-iframe so radius/bg match; object-position
-                 top mirrors what the live iframe shows unscrolled. */
+              /* Static site visualization — see the wantThumb note above.
+                 Reuses .cnode-iframe so radius/bg match. Width-mapped,
+                 top-aligned (live parity); a node taller than the capture
+                 shows the body's dark tail below. */
               <img
                 className="cnode-iframe cnode-thumb"
                 src={thumb.url}
                 alt=""
                 draggable={false}
+                onLoad={onThumbLoad}
                 style={{
                   display: 'block',
-                  // Width-mapped, top-aligned — the live iframe shows the
-                  // site at full node width from the top, so the thumb
-                  // must too. object-fit:cover was WRONG here: on tall/
-                  // expanded nodes it scaled by HEIGHT and cropped the
-                  // site to a narrow center strip. Nodes taller than the
-                  // capture show the body's dark tail below — correct at
-                  // stamp distance.
                   width: '100%',
                   height: 'auto',
                   pointerEvents: 'none'
                 }}
               />
             ) : (
+            <>
             <iframe
               key={`${node._resetTick || 0}:${versionPreview?.snapshotId || 'current'}`}
               ref={iframeRef}
@@ -1274,7 +1290,7 @@ export default function CanvasNode({
               title={title}
               srcDoc={versionPreview ? versionPreview.html : html}
               sandbox="allow-same-origin allow-scripts"
-              onLoad={onIframeLoad}
+              onLoad={(e) => { setIframeReady(true); onIframeLoad(e); }}
               style={{
                 pointerEvents: editing ? 'auto' : 'none',
                 height: '100%',
@@ -1282,6 +1298,29 @@ export default function CanvasNode({
                 visibility: offscreenParked && !editing ? 'hidden' : undefined
               }}
             />
+            {/* Anti-flash: last thumb stays painted over the iframe until
+                its srcDoc finishes loading (offblack→white→content flash
+                otherwise). Skipped for version preview — the old version's
+                content differs from the thumb, covering it would lie. */}
+            {!iframeReady && !versionPreview && thumb?.key === thumbKey && (
+              <img
+                className="cnode-iframe cnode-thumb"
+                src={thumb.url}
+                alt=""
+                draggable={false}
+                style={{
+                  display: 'block',
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: 'auto',
+                  pointerEvents: 'none',
+                  zIndex: 2
+                }}
+              />
+            )}
+            </>
             )}
             {versionPreview && (
               <div className="cnode-version-confirm" onMouseDown={(e) => e.stopPropagation()}>

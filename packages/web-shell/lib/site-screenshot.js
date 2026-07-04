@@ -12,7 +12,7 @@ import { launchBrowser } from './browser.js';
 const SETCONTENT_TIMEOUT_MS = 20_000;
 const TOTAL_TIMEOUT_MS = 35_000;
 
-export async function renderHtmlScreenshot(html, { width = 1280, maxHeight = 2400, baseUrl = null } = {}) {
+export async function renderHtmlScreenshot(html, { width = 1280, maxHeight = 2400, baseUrl = null, type = 'png', quality } = {}) {
   // setContent loads the document at about:blank — RELATIVE asset URLs
   // (e.g. the reconstruct pipeline's /rasters/<hash>/raster-N.png) resolve
   // against nothing and every one of them 404s, rendering broken-image
@@ -43,8 +43,13 @@ export async function renderHtmlScreenshot(html, { width = 1280, maxHeight = 240
         .catch(() => 800);
       const height = Math.max(400, Math.min(contentHeight || 800, maxHeight));
       await page.setViewportSize({ width, height });
-      const buf = await page.screenshot({ type: 'png', fullPage: false });
-      return `data:image/png;base64,${buf.toString('base64')}`;
+      const fmt = type === 'jpeg' ? 'jpeg' : 'png';
+      const buf = await page.screenshot({
+        type: fmt,
+        fullPage: false,
+        ...(fmt === 'jpeg' ? { quality: quality || 82 } : {}),
+      });
+      return `data:image/${fmt};base64,${buf.toString('base64')}`;
     } finally {
       if (browser) await browser.close().catch(() => {});
     }

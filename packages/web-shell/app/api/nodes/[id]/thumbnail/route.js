@@ -47,10 +47,14 @@ export async function GET(request, { params }) {
 
   try {
     const dataUrl = await renderHtmlScreenshot(snap.html, {
-      // Base origin so relative assets (reconstruct /rasters/…) resolve;
-      // taller cap so long pages keep more of their body in the thumb.
+      // Base origin so relative assets (reconstruct /rasters/…) resolve.
       baseUrl: new URL(request.url).origin,
-      maxHeight: 4000,
+      // FULL content height (same 12000 clamp the Expand floater uses) —
+      // the node shows the thumbnail at EVERY zoom now, so a cut-short
+      // capture reads as a broken site. JPEG keeps the tall render small.
+      maxHeight: 12000,
+      type: 'jpeg',
+      quality: 82,
     });
     await sql`UPDATE snapshots SET screenshot_url = ${dataUrl} WHERE id = ${snap.id}`;
     return NextResponse.json({ dataUrl, snapshotId: snap.id });
