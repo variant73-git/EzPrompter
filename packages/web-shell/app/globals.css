@@ -498,16 +498,14 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
 .canvas-shell .canvas-bg {
   position: absolute;
   inset: 0;
-  /* Dot color follows the theme — picks up the right contrast against
-     the canvas bg in either dark or light mode.
-     The grid is WORLD-LOCKED (2026-07-03): spacing + dot size scale with
-     the zoom (28px / 1.4px at 100%) and the pattern pans with the canvas
-     via --canvas-tx/--canvas-ty (written in onTransformed) — dots behave
-     as features of the canvas surface, not of the screen. */
-  background-image:
-    radial-gradient(circle at calc(1px * var(--canvas-scale, 1)) calc(1px * var(--canvas-scale, 1)), var(--canvas-dot) calc(1.4px * var(--canvas-scale, 1)), transparent 0);
-  background-size: calc(28px * var(--canvas-scale, 1)) calc(28px * var(--canvas-scale, 1));
-  background-position: var(--canvas-tx, 0px) var(--canvas-ty, 0px);
+  width: 100%;
+  height: 100%;
+  /* The world-locked dot grid is now DRAWN on this element — it's a
+     <canvas> (see CanvasDotGrid.jsx). The old CSS radial-gradient with
+     scale-dependent background-size/-position repainted the entire
+     viewport on every zoom/pan tick and planted dots on fractional
+     pixels (the "grid micro-trembling" artifact). Dot look/spacing and
+     the theme-aware --canvas-dot colour are preserved in the drawer. */
   pointer-events: none;
 }
 
@@ -3360,9 +3358,8 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
    below cover the leftover hardcoded offblack/white-alpha colors that
    couldn't be reached via vars without churning every selector. */
 
-body.rb-ed-light .canvas-shell .canvas-bg {
-  background-image: radial-gradient(circle at calc(1px * var(--canvas-scale, 1)) calc(1px * var(--canvas-scale, 1)), var(--canvas-dot) calc(1.4px * var(--canvas-scale, 1)), transparent 0);
-}
+/* Light-mode grid colour comes from --canvas-dot, read by CanvasDotGrid
+   at draw time — no CSS background override needed anymore. */
 
 /* Node frame — offblack topbar + reset-confirm + viewport switcher all
    reuse the same dark surface in dark mode. Flip them to the light

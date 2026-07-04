@@ -6,6 +6,7 @@ import { nodeOrigin, originColor } from '../lib/node-origin.js';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
 import CanvasNodeItem from './CanvasNodeItem.jsx';
+import CanvasDotGrid from './CanvasDotGrid.jsx';
 import ConfirmModal from './ConfirmModal.jsx';
 import EdgeLayer, { DraftEdgeLayer } from './EdgeLayer.jsx';
 import ZoomControls from './ZoomControls.jsx';
@@ -182,6 +183,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Time-gate for React scale pushes during a zoom gesture (Task 3, Phase 2).
   const scalePushTimeRef = useRef(0);
   const scaleTrailingRef = useRef(null);
+  // Canvas-drawn dot grid (replaces the CSS-gradient .canvas-bg — see
+  // CanvasDotGrid.jsx). onTransformed feeds it the live transform.
+  const dotGridRef = useRef(null);
   const [lightMode, setLightMode] = useState(false);
   // Pan-on-space mode. Default cursor is the arrow + drag = marquee select.
   // Holding Space switches to grab cursor + drag = pan canvas (Figma /
@@ -4729,7 +4733,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         setContextMenu({ x: e.clientX, y: e.clientY, worldX: w.x, worldY: w.y });
       }}
     >
-      <div className="canvas-bg" />
+      <CanvasDotGrid ref={dotGridRef} />
 
       <div className="canvas-toolbars-left">
         <div className="canvas-toolbar-left">
@@ -4873,12 +4877,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             html.classList.remove('canvas-interacting');
           }, 180);
           document.documentElement.style.setProperty('--canvas-scale', String(scale));
-          // Pan offsets for the dot-grid backdrop: .canvas-bg sits OUTSIDE
-          // the transform (it must cover the whole viewport at any world
-          // coord), so it tracks the world by scaling background-size and
-          // shifting background-position with the translation.
-          document.documentElement.style.setProperty('--canvas-tx', `${state.positionX || 0}px`);
-          document.documentElement.style.setProperty('--canvas-ty', `${state.positionY || 0}px`);
+          // Dot-grid backdrop: canvas-drawn OUTSIDE the transform (it must
+          // cover the whole viewport at any world coord). Feeding it the
+          // transform directly replaces the old --canvas-tx/-ty CSS-var
+          // writes, whose background-position/-size mutations repainted the
+          // entire viewport gradient on every tick.
+          dotGridRef.current?.update(scale, state.positionX || 0, state.positionY || 0);
           // Below ~0.5 the topbar items overlap the centered grip; collapse
           // chrome so only the grip stays visible.
           document.documentElement.classList.toggle('canvas-zoom-low', scale < 0.5);
