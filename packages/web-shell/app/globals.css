@@ -7851,3 +7851,26 @@ html.canvas-interacting .cnode-prompt-hint { opacity: 0 !important; }
     transform-origin: top left;
   }
 }
+
+/* Severed cord retract (feel phase 4 follow-up) — the dying path is
+   normalized to pathLength=1; sliding the dash window off the path reads
+   as the cord being pulled back into its source port. Width/linecap match
+   .edge-line-base so the hand-off from live cord to dying cord is
+   seamless. Reduced motion: no lingering ghost, vanish instantly. */
+.edge-dying-line {
+  stroke-width: 4;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 0;
+  /* Same resting opacity as .edge-line-base — the live→dying hand-off
+     must not pop. */
+  opacity: 0.55;
+  animation: edge-retract 230ms ease-in forwards;
+}
+@keyframes edge-retract {
+  to { stroke-dashoffset: 1; opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .edge-dying-line { display: none; }
+}

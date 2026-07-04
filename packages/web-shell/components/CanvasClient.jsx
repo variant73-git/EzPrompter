@@ -237,6 +237,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Section pending delete confirmation. Same ConfirmModal pattern as
   // playSection — { section, busy }.
   const [sectionDelete, setSectionDelete] = useState(null);
+  // Severed cords linger briefly for the retract animation — see
+  // handleDeleteEdge. Array of full edge objects (they're already gone
+  // from `edges` when EdgeLayer draws them).
+  const [dyingEdges, setDyingEdges] = useState([]);
   // Single-node pending delete confirmation (from the node ⋯ menu). Styled
   // ConfirmModal in place of the old native confirm() — { id, name }.
   const [nodeDelete, setNodeDelete] = useState(null);
@@ -3423,6 +3427,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     setEdges((prev) => prev.filter((x) => x.id !== edge.id));
     setSelectedEdgeId(null);
     setPopupPos(null);
+    // Retract animation: the severed cord lingers ~240ms as a "dying" edge
+    // (rendered by EdgeLayer with the retract keyframes) instead of
+    // vanishing on the spot. Local-only — the server delete runs now.
+    setDyingEdges((prev) => [...prev, edge]);
+    setTimeout(() => {
+      setDyingEdges((prev) => prev.filter((e) => e.id !== edge.id));
+    }, 260);
     await api.deleteEdge(edge.id).catch(console.warn);
   }
 
@@ -4996,6 +5007,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           })}
           <EdgeLayer
             nodes={nodes} edges={edges}
+            dyingEdges={dyingEdges}
             incomingByTarget={incomingByTarget}
             scale={canvasScale}
             selectedEdgeId={selectedEdgeId}

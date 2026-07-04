@@ -158,7 +158,7 @@ function bindEdgeMouseDown(edge, evt, onSelectEdge, onEdgeDragStart) {
   window.addEventListener('mouseup', up);
 }
 
-function EdgeLayer({ nodes, edges, incomingByTarget, scale: scaleProp = 1, selectedEdgeId, onSelectEdge, onEdgeDragStart, onSeverEdge }) {
+function EdgeLayer({ nodes, edges, dyingEdges, incomingByTarget, scale: scaleProp = 1, selectedEdgeId, onSelectEdge, onEdgeDragStart, onSeverEdge }) {
   const scale = useLiveCanvasScale(scaleProp);
   const heights = useMeasuredHeights(nodes);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
@@ -260,6 +260,31 @@ function EdgeLayer({ nodes, edges, incomingByTarget, scale: scaleProp = 1, selec
               onClick={(evt) => { evt.stopPropagation(); onSeverEdge?.(e); }}
             />
           </g>
+        );
+      })}
+      {/* Severed cords retracting — rendered from CanvasClient's transient
+          dyingEdges list (they're already gone from `edges`). A single
+          normalized path (pathLength=1) retracts INTO the source port via
+          the stroke-dash keyframes in globals.css, then the list entry
+          expires (~260ms) and the element unmounts. Flat source colour —
+          the live gradient defs died with the real edge. */}
+      {(dyingEdges || []).map((e) => {
+        const a = byId.get(e.source_node_id);
+        const b = byId.get(e.target_node_id);
+        if (!a || !b) return null;
+        const slot = targetSlot(e.id, b.id);
+        const ca = nodePort(a, 'right', heights.get(a.id), 0, 1, scale);
+        const cb = nodePort(b, 'left', heights.get(b.id), slot.index, slot.count, scale);
+        return (
+          <path
+            key={`dying-${e.id}`}
+            d={edgePath(ca, cb, scale)}
+            stroke={originColor(a)}
+            fill="none"
+            pathLength="1"
+            className="edge-dying-line"
+            pointerEvents="none"
+          />
         );
       })}
     </svg>

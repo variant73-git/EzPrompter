@@ -1273,6 +1273,16 @@ export default function CanvasNode({
               style={{
                 pointerEvents: editing ? 'auto' : 'none',
                 height: '100%',
+                // FIXED world width (not 100%): the node frame's border/
+                // padding are screen-constant and step on quantized zoom
+                // writes — a percentage width made the iframe's layout
+                // width follow those steps, visibly RE-FLOWING the site
+                // inside on every zoom ("sites resizing in real time").
+                // Fixed to the node's world width, the site's layout never
+                // changes; the few stepping px difference clip under the
+                // frame (body has overflow:hidden).
+                width: (node.width || 1280) + 'px',
+                maxWidth: 'none',
                 // Off-viewport parking — see offscreenParked note above.
                 visibility: offscreenParked && !editing ? 'hidden' : undefined
               }}
