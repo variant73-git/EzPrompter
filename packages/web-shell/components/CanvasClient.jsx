@@ -3210,13 +3210,19 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (!sourceNodeId) return null;
     const w = clientToWorld(transformRef, clientX, clientY);
     const scale = transformRef.current?.instance?.transformState?.scale || 1;
-    const radiusWorld = SNAP_RADIUS_SCREEN / scale;
-    // CSS sizes the circles in 1/scale world units (constant on screen).
-    // Slot Y math has to do the same or the snap target lands between
-    // circles instead of on them.
-    const slotSize = SLOT_SIZE / scale;
-    const slotGap = SLOT_GAP / scale;
-    const gap = PORT_GAP / scale;   // receiver ports float left of the edge
+    // 0.4 floor (2026-07-03 rule): mirrors the CSS counter-scale clamp so
+    // the snap target lands exactly on the clamped circles — AND caps the
+    // snap reach at low zoom (unfloored, 56/scale ballooned to hundreds of
+    // world px below 30%, auto-connecting cords from far away and making
+    // nodes hard to manipulate when zoomed out).
+    const s = Math.max(0.4, scale);
+    const radiusWorld = SNAP_RADIUS_SCREEN / s;
+    // CSS sizes the circles in 1/scale world units (constant on screen,
+    // clamped at 0.4). Slot Y math has to do the same or the snap target
+    // lands between circles instead of on them.
+    const slotSize = SLOT_SIZE / s;
+    const slotGap = SLOT_GAP / s;
+    const gap = PORT_GAP / s;   // receiver ports float left of the edge
     let best = null, bestDist = Infinity;
     for (const n of nodes) {
       if (n.id === sourceNodeId) continue;
