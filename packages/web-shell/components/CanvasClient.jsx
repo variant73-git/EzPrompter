@@ -25,6 +25,7 @@ import { findSectionTerminal, sectionRerunWouldOverwrite, chainSignature, sectio
 import { estimateChain, estimateOp } from '../lib/billing/pricing.js';
 import { clampToViewport } from '../lib/menu-position.js';
 import { readCanvasScale } from '../lib/canvas-scale.js';
+import { createWheelBatcher } from '../lib/wheel-batch.js';
 import {
   shouldTearOut, nodeCenter, pointInRect,
   selectGeometricMembersToLatch, TEAR_MARGIN,
@@ -3631,6 +3632,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       '.boards-sidebar',
       'textarea',
     ].join(', ');
+    // Wheel events outpace the display — batch zoom/pan input and apply at
+    // most one transform update per animation frame (see lib/wheel-batch.js).
+    const batcher = createWheelBatcher({
+      onPan: (dx, dy) => window.__uncraftZoom?.panBy?.(dx, dy),
+      onZoom: (dz, cx, cy) => window.__uncraftZoom?.zoomAtPoint?.(dz, cx, cy),
+    });
     function onWheelCapture(e) {
       const overNative = e.target?.closest?.(NATIVE_WHEEL_SELECTOR);
       // Ctrl/Cmd + wheel (incl. trackpad PINCH, which fires as ctrlKey+wheel)
@@ -3643,7 +3650,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         if (!overNative) {
           e.stopPropagation();
           if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-          window.__uncraftZoom?.zoomAtPoint?.(e.deltaY || 0, e.clientX, e.clientY);
+          batcher.addZoom(e.deltaY || 0, e.clientX, e.clientY);
         }
         return;
       }
@@ -3655,7 +3662,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // short-circuit it, but HMR can leave stale listeners around.
       e.stopPropagation();
       if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-      window.__uncraftZoom?.panBy?.(-(e.deltaX || 0), -(e.deltaY || 0));
+      batcher.addPan(-(e.deltaX || 0), -(e.deltaY || 0));
     }
     function onKeyZoom(e) {
       // Block browser page-zoom keys (Ctrl/Cmd +, -, =). Leave Ctrl/Cmd+0
@@ -3667,6 +3674,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     document.addEventListener('wheel', onWheelCapture, { passive: false, capture: true });
     document.addEventListener('keydown', onKeyZoom);
     return () => {
+      batcher.cancel();
       document.removeEventListener('wheel', onWheelCapture, { capture: true });
       document.removeEventListener('keydown', onKeyZoom);
     };
