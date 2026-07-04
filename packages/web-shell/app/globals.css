@@ -2493,7 +2493,7 @@ html, body { overscroll-behavior: none; }
   /* Corner radius holds ~10px on screen down to 15% zoom, then (floored at
      0.15, matching the topbar's --tb) shrinks proportionally as you zoom
      further out — so the rounding doesn't balloon relative to the tiny node. */
-  border-radius: calc(11.5px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(17.25px / max(0.4, var(--canvas-scale, 1)));
   /* Beyond 30% zoom-out, tighten all three concentric node radii by 20%
      (11.5→9.2, topbar/body 5.5→4.4) so the rounding stays proportional. */
   /* (overrides defined just below for html.canvas-zoom-below-30) */
@@ -2530,13 +2530,13 @@ html, body { overscroll-behavior: none; }
 /* Beyond 30% zoom-out: node radii −20% (kept concentric across the three
    frame layers). Toggled by .canvas-zoom-below-30 on <html>. */
 html.canvas-zoom-below-30 .cnode {
-  border-radius: calc(9.2px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(13.8px / max(0.4, var(--canvas-scale, 1)));
 }
 html.canvas-zoom-below-30 .cnode-topbar {
-  border-radius: calc(4.4px / var(--tb));
+  border-radius: calc(9px / var(--tb));
 }
 html.canvas-zoom-below-30 .cnode-body {
-  border-radius: calc(4.4px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(9px / max(0.4, var(--canvas-scale, 1)));
 }
 
 /* Per-origin node borders. Edge stroke colors live in node-origin.js and
@@ -2625,10 +2625,10 @@ html.canvas-zoom-below-30 .cnode-body {
   flex: 0 0 calc(36px / var(--tbh));
   height: calc(36px / var(--tbh));
   background: #0f0f0f;
-  /* All four corners rounded. Radius = outer 11.5px − the 6px inset (2px
+  /* All four corners rounded. Radius = outer 17.25px − the 6px inset (2px
      border + 4px gap) so the topbar's corners nest CONCENTRICALLY inside the
      node's outer radius instead of curving away from it. */
-  border-radius: calc(5.5px / var(--tb));
+  border-radius: calc(11.25px / var(--tb));
   display: flex;
   align-items: center;
   padding: 0 var(--tbgap);
@@ -3038,8 +3038,8 @@ body.rb-ed-light .cnode-expand-float:hover {
   transition: opacity 160ms ease;
   /* Follows the content's rounded bottom corners (asset bodies don't clip —
      overflow:visible — so the overlay must round itself like the image). */
-  border-bottom-left-radius: calc(5.5px / max(0.4, var(--canvas-scale, 1)));
-  border-bottom-right-radius: calc(5.5px / max(0.4, var(--canvas-scale, 1)));
+  border-bottom-left-radius: calc(11.25px / max(0.4, var(--canvas-scale, 1)));
+  border-bottom-right-radius: calc(11.25px / max(0.4, var(--canvas-scale, 1)));
 }
 /* Pill in the bottom-LEFT, vertically aligned with the expand floater on the
    bottom-right (same 16px inset + 15% inverse-scale floor). */
@@ -3591,9 +3591,9 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
      Radius is floored at 0.15 (matching .cnode and the topbar's --tb) so
      the inner content frame's corners track the outer card's exactly at
      extreme zoom-out instead of ballooning. All four corners rounded.
-     Radius = outer 11.5px − the 6px inset (2px border + 4px gap) so the body's
+     Radius = outer 17.25px − the 6px inset (2px border + 4px gap) so the body's
      corners nest CONCENTRICALLY inside the node's outer radius. */
-  border-radius: calc(5.5px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(11.25px / max(0.4, var(--canvas-scale, 1)));
   overflow: hidden;
   flex: 0 0 auto;
   /* Offblack, NOT white: at fractional zoom the iframe/img can miss the
@@ -5293,13 +5293,13 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
      outside it), so the body's rounded corners can't clip the image — round
      the image ITSELF with the same radius as .cnode-body. Keep in sync with
      the body radius (5.5px, 4.4px below 30% zoom). */
-  border-radius: calc(5.5px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(11.25px / max(0.4, var(--canvas-scale, 1)));
   display: block;
   user-select: none;
   -webkit-user-drag: none;
 }
 html.canvas-zoom-below-30 .cnode-asset-img {
-  border-radius: calc(4.4px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(9px / max(0.4, var(--canvas-scale, 1)));
 }
 body.rb-ed-light .cnode-body-asset { background: #ECECF0; }
 
