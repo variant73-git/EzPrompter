@@ -45,11 +45,14 @@ function edgePath(a, b, scale = 1) {
   // cord exits past the port circle and hooks back into the other one,
   // even when the target sits LEFT of the source. (The old sign-following
   // control points flipped inward in that case and the cord dove "behind"
-  // both nodes, surfacing only at the port.) Minimum bow is screen-stable
-  // so the hook reads at any zoom; large spans get a proportional but
+  // both nodes, surfacing only at the port.) Minimum bow is WORLD-fixed
+  // (2026-07-03): the old screen-stable 48/scale made the curve's SHAPE a
+  // function of the zoom, so every zoom gesture visibly re-bent the cords.
+  // 80 world px ≈ the previous look at the 0.6 default zoom; the shape now
+  // never changes as you zoom. Large spans still get a proportional,
   // capped bow to avoid balloon loops.
   const dx = Math.abs(b.x - a.x);
-  const minBow = 48 / scale;
+  const minBow = 80;
   const k = Math.max(minBow, Math.min(420, dx * 0.35));
   const cp1x = a.x + k;
   const cp2x = b.x - k;
@@ -98,6 +101,29 @@ function useMeasuredHeights(nodes) {
   return heights;
 }
 
+// Live canvas scale at the QUANTIZED cadence (the same ~90ms/1% steps the
+// CSS chrome follows). CanvasClient dispatches `uncraft:canvas-scale` on
+// every quantized --canvas-scale write and at gesture settle. Port balls
+// are sized/offset by that CSS var, and cord endpoints must move in
+// LOCKSTEP with them — driving edges from the React scale prop (which now
+// only updates at settle) left the cord frozen mid-gesture while the balls
+// stepped away, then visibly "re-attaching" on release. Falls back to the
+// prop between events. Only this layer re-renders on the event — the rest
+// of the board stays untouched mid-gesture.
+function useLiveCanvasScale(propScale) {
+  const [scale, setScale] = useState(propScale);
+  useEffect(() => { setScale(propScale); }, [propScale]);
+  useEffect(() => {
+    function onScale(e) {
+      const s = e?.detail;
+      if (typeof s === 'number' && s > 0) setScale(s);
+    }
+    window.addEventListener('uncraft:canvas-scale', onScale);
+    return () => window.removeEventListener('uncraft:canvas-scale', onScale);
+  }, []);
+  return scale;
+}
+
 // Mousedown on an edge starts a click-vs-drag race. If the cursor moves
 // more than DRAG_THRESHOLD before mouseup, treat the gesture as a drag and
 // hand off to onEdgeDragStart (re-routing). Otherwise it's a plain click
@@ -128,7 +154,8 @@ function bindEdgeMouseDown(edge, evt, onSelectEdge, onEdgeDragStart) {
   window.addEventListener('mouseup', up);
 }
 
-function EdgeLayer({ nodes, edges, incomingByTarget, scale = 1, selectedEdgeId, onSelectEdge, onEdgeDragStart, onSeverEdge }) {
+function EdgeLayer({ nodes, edges, incomingByTarget, scale: scaleProp = 1, selectedEdgeId, onSelectEdge, onEdgeDragStart, onSeverEdge }) {
+  const scale = useLiveCanvasScale(scaleProp);
   const heights = useMeasuredHeights(nodes);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
@@ -238,7 +265,8 @@ export default memo(EdgeLayer);
 
 // Separate top-layer SVG so the draft edge renders ABOVE node iframes (which
 // otherwise would visually cover the dashed line during drag).
-export function DraftEdgeLayer({ nodes, draftEdge, scale = 1 }) {
+export function DraftEdgeLayer({ nodes, draftEdge, scale: scaleProp = 1 }) {
+  const scale = useLiveCanvasScale(scaleProp);
   const heights = useMeasuredHeights(nodes);
   if (!draftEdge) return null;
   const src = nodes.find((n) => n.id === draftEdge.sourceNodeId);

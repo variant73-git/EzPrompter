@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { readCanvasScale } from '../../lib/canvas-scale.js';
 
 // Prompt node body — move-first interaction (2026-07-03, user spec):
 // the WHOLE node area drags the node (grab hand, same as every other
@@ -42,13 +43,18 @@ export default function PromptBody({ node, onChange }) {
     if (!el) return;
     const r = e.currentTarget.getBoundingClientRect();
     // Client px → node-local world px (the node is scaled by the canvas).
-    const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
+    // readCanvasScale reads the LIVE transform (no reflow, not the
+    // quantized CSS var), so the tag tracks the zoom smoothly.
+    const scale = readCanvasScale();
     const x = (e.clientX - r.left) / scale;
     const y = (e.clientY - r.top) / scale;
-    // The gap from the cursor is screen-constant too (the tag itself
-    // inflates 1/scale in CSS — a fixed world gap would tuck the inflated
-    // tag under the pointer at low zoom).
-    el.style.transform = `translate(${x + 14 / scale}px, ${y + 16 / scale}px)`;
+    // Screen-constant size via transform: the tag is styled at its natural
+    // px size and counter-scaled here (composite-only, no layout steps —
+    // the old CSS padding/font ÷ scale re-laid it out on every quantized
+    // scale write). The cursor gap stays screen-constant for the same
+    // reason (a fixed world gap would tuck the tag under the pointer at
+    // low zoom).
+    el.style.transform = `translate(${x + 14 / scale}px, ${y + 16 / scale}px) scale(${1 / scale})`;
   }
 
   return (

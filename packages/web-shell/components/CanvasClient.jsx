@@ -4915,6 +4915,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               lastVarScaleRef.current = t.scale;
               html.style.setProperty('--canvas-scale', String(t.scale));
               applyZoomThresholds(html, t.scale);
+              // Keep the edge layer in lockstep with the CSS chrome — see
+              // useLiveCanvasScale in EdgeLayer.jsx.
+              window.dispatchEvent(new CustomEvent('uncraft:canvas-scale', { detail: t.scale }));
               if (Math.abs(t.scale - lastAppliedScaleRef.current) > 0.0005) {
                 lastAppliedScaleRef.current = t.scale;
                 setCanvasScale(t.scale);
@@ -4934,6 +4937,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               lastVarWriteTimeRef.current = nowT;
               html.style.setProperty('--canvas-scale', String(scale));
               applyZoomThresholds(html, scale);
+              // Edge layer moves in the SAME step as the CSS port balls.
+              window.dispatchEvent(new CustomEvent('uncraft:canvas-scale', { detail: scale }));
             }
           }
           // Dot-grid backdrop: canvas-drawn OUTSIDE the transform (it must

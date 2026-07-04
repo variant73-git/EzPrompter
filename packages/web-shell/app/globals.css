@@ -7813,16 +7813,18 @@ body.rb-ed-light .cnode-float-cancel {
   transition: opacity 120ms ease-out;
   pointer-events: none;
   white-space: nowrap;
-  /* Screen-constant size — inflates inversely with the zoom (scales UP in
-     world terms as you zoom out), same pattern as the anchor title. */
-  padding: calc(5px / var(--canvas-scale, 1)) calc(10px / var(--canvas-scale, 1));
+  /* Screen-constant size via TRANSFORM (PromptBody appends scale(1/zoom)
+     to the cursor-follow translate). The old layout-based counter-scale
+     (padding/border/font divided by --canvas-scale) re-laid the tag out on
+     every quantized scale write — the text visibly "re-adjusted" during
+     zoom. Transform counter-scaling is composite-only and step-free. */
+  transform-origin: top left;
+  padding: 5px 10px;
   border-radius: 999px;
   background: rgba(10, 10, 10, 0.82);
-  border: calc(1px / var(--canvas-scale, 1)) solid rgba(255, 255, 255, 0.12);
-  /* Pixel-snap — see .cnode border note. */
-  border-width: round(nearest, calc(1px / var(--canvas-scale, 1)), 1px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   color: rgba(241, 245, 249, 0.92);
-  font: 500 calc(12px / var(--canvas-scale, 1)) / 1 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 12px / 1 var(--font-instrument-sans), system-ui, sans-serif;
   z-index: 5;
 }
 .cnode-prompt-body:hover .cnode-prompt-hint { opacity: 1; }
