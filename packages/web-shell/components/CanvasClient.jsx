@@ -186,6 +186,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Canvas-drawn dot grid (replaces the CSS-gradient .canvas-bg — see
   // CanvasDotGrid.jsx). onTransformed feeds it the live transform.
   const dotGridRef = useRef(null);
+  // Quantized --canvas-scale writes: setting the var on <html> invalidates
+  // style + LAYOUT for every calc(--canvas-scale) consumer (≈220 rules
+  // across all nodes). Per-tick writes made every zoom frame relayout the
+  // whole board. The var now updates only on ≥1% scale change with ≥90ms
+  // spacing; the gesture-end settle writes the exact value.
+  const lastVarScaleRef = useRef(0.6);
+  const lastVarWriteTimeRef = useRef(0);
+  const lastTransformRef = useRef(null);
   const [lightMode, setLightMode] = useState(false);
   // Pan-on-space mode. Default cursor is the arrow + drag = marquee select.
   // Holding Space switches to grab cursor + drag = pan canvas (Figma /
@@ -4867,16 +4875,38 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // Expose current scale so node chrome (handle/buttons/edges) can stay
           // viewport-readable via inverse-scale in CSS.
           const scale = state.scale || 1;
+          lastTransformRef.current = { scale, x: state.positionX || 0, y: state.positionY || 0 };
           // Gesture window: while the transform is actively changing, CSS
           // pauses in-world animations/transitions (see canvas-interacting
-          // rules in globals.css). Cleared 180ms after the last tick.
+          // rules in globals.css). Cleared 180ms after the last tick; the
+          // settle callback also lands the EXACT --canvas-scale value and
+          // re-anchors the floating run pill (both deferred off the hot
+          // path — see the quantized-write note on lastVarScaleRef).
           const html = document.documentElement;
           html.classList.add('canvas-interacting');
           clearTimeout(interactingTimerRef.current);
           interactingTimerRef.current = setTimeout(() => {
             html.classList.remove('canvas-interacting');
+            const t = lastTransformRef.current;
+            if (t) {
+              lastVarScaleRef.current = t.scale;
+              html.style.setProperty('--canvas-scale', String(t.scale));
+            }
+            scheduleReanchorPills();
           }, 180);
-          document.documentElement.style.setProperty('--canvas-scale', String(scale));
+          // Quantized var write during the gesture: counter-scaled chrome
+          // (borders, ports, pills) drifts at most ~1%/90ms from its ideal
+          // constant-screen size mid-motion — imperceptible — instead of
+          // forcing a whole-board relayout on every tick.
+          {
+            const nowT = performance.now();
+            const rel = Math.abs(scale - lastVarScaleRef.current) / (lastVarScaleRef.current || 1);
+            if (rel > 0.01 && nowT - lastVarWriteTimeRef.current > 90) {
+              lastVarScaleRef.current = scale;
+              lastVarWriteTimeRef.current = nowT;
+              html.style.setProperty('--canvas-scale', String(scale));
+            }
+          }
           // Dot-grid backdrop: canvas-drawn OUTSIDE the transform (it must
           // cover the whole viewport at any world coord). Feeding it the
           // transform directly replaces the old --canvas-tx/-ty CSS-var
@@ -4922,9 +4952,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }, 140);
             }
           }
-          // Keep each section's run-pill pinned within the viewport as the
-          // user pans/zooms (rAF-coalesced; reads layout once per frame).
-          scheduleReanchorPills();
+          // Floating-run re-anchor happens at gesture END (settle callback
+          // above): updateFloatingRun reads getBoundingClientRect on every
+          // section, and doing that right after a --canvas-scale write was
+          // a write-then-read forced reflow on every frame.
         }}
       >
         <TransformComponent wrapperStyle={{ width: '100vw', height: '100vh' }} contentStyle={{ width: WORLD_WIDTH, height: WORLD_HEIGHT }}>
