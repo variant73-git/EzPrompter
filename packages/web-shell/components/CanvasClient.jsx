@@ -631,9 +631,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         if (!t) return;
         const inst = t.instance || t;
         const state = inst?.transformState || t.state || { positionX: 0, positionY: 0, scale: 1 };
-        // Wheel-zoom sensitivity — raised from 0.0015 (2026-07-03, user
-        // request): more zoom travel per wheel notch / pinch distance.
-        const factor = Math.exp(-deltaY * 0.0025);
+        // Wheel-zoom sensitivity — raised from 0.0015 → 0.0025 → 0.004
+        // (2026-07-03, user request ×2): more zoom travel per wheel notch /
+        // pinch distance.
+        const factor = Math.exp(-deltaY * 0.004);
         const newScale = Math.max(MIN, Math.min(MAX, state.scale * factor));
         if (newScale === state.scale) return;
         const ratio = newScale / state.scale;
