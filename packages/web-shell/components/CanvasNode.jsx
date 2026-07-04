@@ -821,7 +821,7 @@ export default function CanvasNode({
     const main = topbarMainRef.current;
     if (!pill || !main) return;
     const needed = pill.offsetWidth;  // natural width — same in-flow or absolute
-    const cap = main.clientWidth * 0.5 - 20 / Math.max(0.30, scale || 1) - 8;
+    const cap = main.clientWidth * 0.5 - 20 / Math.max(0.4, scale || 1) - 8;
     setPillFits(needed <= cap);
   }, [scale, node.width, kindLabel]);
 

@@ -38,16 +38,20 @@ export default function PromptBody({ node, onChange }) {
 
   // Cursor-follow hint — direct DOM writes (mousemove fires at 60+Hz;
   // setState here would re-render the node every frame for nothing).
-  function moveHint(e) {
+  // lastClientRef remembers the cursor so the zoom listener below can
+  // re-sync the tag when the scale changes WITHOUT a mousemove.
+  const lastClientRef = useRef(null);
+  function applyHint(clientX, clientY) {
     const el = hintRef.current;
-    if (!el) return;
-    const r = e.currentTarget.getBoundingClientRect();
+    if (!el || !el.parentElement) return;
+    const r = el.parentElement.getBoundingClientRect();
     // Client px → node-local world px (the node is scaled by the canvas).
     // readCanvasScale reads the LIVE transform (no reflow, not the
-    // quantized CSS var), so the tag tracks the zoom smoothly.
-    const scale = readCanvasScale();
-    const x = (e.clientX - r.left) / scale;
-    const y = (e.clientY - r.top) / scale;
+    // quantized CSS var). Counter-scaling clamps at 0.4 — below 40% zoom
+    // the chrome stops compensating (2026-07-03 rule), matching the CSS.
+    const scale = Math.max(0.4, readCanvasScale());
+    const x = (clientX - r.left) / scale;
+    const y = (clientY - r.top) / scale;
     // Screen-constant size via transform: the tag is styled at its natural
     // px size and counter-scaled here (composite-only, no layout steps —
     // the old CSS padding/font ÷ scale re-laid it out on every quantized
@@ -56,6 +60,21 @@ export default function PromptBody({ node, onChange }) {
     // low zoom).
     el.style.transform = `translate(${x + 14 / scale}px, ${y + 16 / scale}px) scale(${1 / scale})`;
   }
+  function moveHint(e) {
+    lastClientRef.current = { x: e.clientX, y: e.clientY };
+    applyHint(e.clientX, e.clientY);
+  }
+  // Zoom without mousemove: re-sync the tag on the quantized scale steps
+  // (same event the edge layer follows) so it never rides the world scale.
+  useEffect(() => {
+    function onScale() {
+      const p = lastClientRef.current;
+      if (p) applyHint(p.x, p.y);
+    }
+    window.addEventListener('uncraft:canvas-scale', onScale);
+    return () => window.removeEventListener('uncraft:canvas-scale', onScale);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div
