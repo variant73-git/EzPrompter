@@ -647,6 +647,26 @@ export default function CanvasNode({
     };
   }, [editing]);
 
+  // Park off-viewport iframes (perf phase 3): a live srcDoc iframe keeps
+  // rendering, rasterizing and running rAF loops even when its node sits
+  // far outside the visible screen — on busy boards that multiplies into
+  // the dominant zoom/pan cost. display:none freezes the iframe's
+  // rendering (rAF stops for non-rendered documents) WITHOUT unloading its
+  // document: scrolling back re-activates it in place — no reload, no
+  // flash (the 256px margin re-arms it just before it enters the
+  // viewport). Never parked while editing.
+  const [offscreenParked, setOffscreenParked] = useState(false);
+  useEffect(() => {
+    const el = cnodeRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((entries) => {
+      const last = entries[entries.length - 1];
+      setOffscreenParked(!last.isIntersecting);
+    }, { rootMargin: '256px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   // When a node BECOMES connected (first outgoing edge), reset the port's
   // inline top immediately so the ball snaps back to its CSS-default
   // center position without waiting for the next mousemove. Otherwise the
@@ -1203,7 +1223,9 @@ export default function CanvasNode({
               onLoad={onIframeLoad}
               style={{
                 pointerEvents: editing ? 'auto' : 'none',
-                height: '100%'
+                height: '100%',
+                // Off-viewport parking — see offscreenParked note above.
+                display: offscreenParked && !editing ? 'none' : undefined
               }}
             />
             {versionPreview && (
