@@ -213,19 +213,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Play-section confirm modal: holds the section being re-executed while
   // the user confirms in the modal.
   const [playSection, setPlaySection] = useState(null); // { section, busy }
-  // Right-click context menu over a section. Holds the section id + the
-  // viewport coords where the menu should anchor.
-  const [sectionMenu, setSectionMenu] = useState(null); // { sectionId, x, y }
-  // Measured viewport-clamp for the (inline) section context menu — same
-  // robustness as the EmptyDropMenu / CanvasContextMenu hook, but the menu
-  // is rendered inline via a portal so it can't use the hook directly.
-  const sectionMenuRef = useRef(null);
-  const [sectionMenuPos, setSectionMenuPos] = useState(null);
-  useLayoutEffect(() => {
-    if (!sectionMenu) { setSectionMenuPos(null); return; }
-    const el = sectionMenuRef.current;
-    if (el) setSectionMenuPos(clampToViewport(sectionMenu.x, sectionMenu.y, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight));
-  }, [sectionMenu]);
   // Section pending delete confirmation. Same ConfirmModal pattern as
   // playSection — { section, busy }.
   const [sectionDelete, setSectionDelete] = useState(null);
@@ -391,20 +378,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // True while an armed node is currently dragged outside its section — drives
   // the subtle canvas lighten.
   const [removingOutside, setRemovingOutside] = useState(false);
-  // Close the section context menu on outside click or Escape.
-  useEffect(() => {
-    if (!sectionMenu) return;
-    function onDown(e) {
-      if (!e.target?.closest?.('.section-context-menu')) setSectionMenu(null);
-    }
-    function onKey(e) { if (e.key === 'Escape') setSectionMenu(null); }
-    window.addEventListener('mousedown', onDown, true);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('mousedown', onDown, true);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [sectionMenu]);
   // Imperative ref to the PromptDock so the canvas can fire chat sends
   // from the section play button without round-tripping through props.
   const promptDockRef = useRef(null);
@@ -5016,11 +4989,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   setSelectedNodeIds(new Set());
                   triggerRun();
                 }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setSectionMenu({ sectionId: s.id, x: e.clientX, y: e.clientY });
-                }}
               >
                 {/* Run label — becomes "Reroll" once the flow has run and
                     nothing but node positions has changed (isClean). With no
@@ -5346,44 +5314,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       )}
 
       <ToastRoot />
-
-      {sectionMenu && typeof document !== 'undefined' && (() => {
-        const s = sections.find((x) => x.id === sectionMenu.sectionId);
-        if (!s) return null;
-        const title = s.name.length > 15 ? s.name.slice(0, 12) + '...' : s.name;
-        return createPortal(
-          <div
-            ref={sectionMenuRef}
-            className="empty-drop-menu cnode-topbar-menu section-context-menu"
-            style={sectionMenuPos || { left: sectionMenu.x, top: sectionMenu.y }}
-            onMouseDown={(e) => e.stopPropagation()}
-            onContextMenu={(e) => e.preventDefault()}
-          >
-            {/* Trash button in the top-left corner — quick-delete affordance
-                with a confirmation modal. Sits absolutely above the title /
-                items so it doesn't shift their layout. */}
-            <button
-              type="button"
-              className="section-context-menu-trash"
-              data-tooltip="Delete workflow"
-              aria-label="Delete workflow"
-              onClick={() => {
-                setSectionMenu(null);
-                setSectionDelete({ section: s, busy: false });
-              }}
-            >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                <path d="M10 11v6M14 11v6" />
-                <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
-              </svg>
-            </button>
-            <div className="section-context-menu-title" title={s.name}>{title}</div>
-          </div>,
-          document.body
-        );
-      })()}
 
       <ConfirmModal
         open={!!sectionDelete}
