@@ -178,11 +178,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   const lastAppliedScaleRef = useRef(0.6);
   // Trailing timer for the `canvas-interacting` gesture class — set on every
   // transform tick, cleared 180ms after the last one. CSS uses it to pause
-  // in-world cosmetic motion while zoom/pan is actively changing.
+  // in-world cosmetic motion while zoom/pan is actively changing. The same
+  // settle callback owns EVERYTHING deferred off the gesture hot path:
+  // exact --canvas-scale write, threshold classes, the single React scale
+  // push (re-renders all nodes ONCE per gesture, not mid-flight), and the
+  // floating-run reanchor.
   const interactingTimerRef = useRef(null);
-  // Time-gate for React scale pushes during a zoom gesture (Task 3, Phase 2).
-  const scalePushTimeRef = useRef(0);
-  const scaleTrailingRef = useRef(null);
   // Canvas-drawn dot grid (replaces the CSS-gradient .canvas-bg — see
   // CanvasDotGrid.jsx). onTransformed feeds it the live transform.
   const dotGridRef = useRef(null);
@@ -4914,6 +4915,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               lastVarScaleRef.current = t.scale;
               html.style.setProperty('--canvas-scale', String(t.scale));
               applyZoomThresholds(html, t.scale);
+              if (Math.abs(t.scale - lastAppliedScaleRef.current) > 0.0005) {
+                lastAppliedScaleRef.current = t.scale;
+                setCanvasScale(t.scale);
+              }
             }
             scheduleReanchorPills();
           }, 180);
@@ -4937,36 +4942,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // writes, whose background-position/-size mutations repainted the
           // entire viewport gradient on every tick.
           dotGridRef.current?.update(scale, state.positionX || 0, state.positionY || 0);
-          // Zoom-threshold chrome classes now flip inside the quantized
+          // Zoom-threshold chrome classes flip inside the quantized
           // var-write block + at settle (applyZoomThresholds) so class
           // state and --canvas-scale are always mutually consistent.
-          // Only push React state when the scale truly moved — see
-          // lastAppliedScaleRef note. Idempotent DOM writes above stay
-          // unguarded so chrome sizing always tracks the live transform.
-          // Time-gated during a gesture: the CSS var (set every tick) drives
-          // all visual chrome; the React value only feeds JS-computed
-          // geometry (edge hit paths, pill fit, zoom %, minimap), which can
-          // update at ~8fps mid-gesture. The trailing commit guarantees the
-          // FINAL scale always lands exactly.
-          if (Math.abs(scale - lastAppliedScaleRef.current) > 0.0005) {
-            const now = performance.now();
-            clearTimeout(scaleTrailingRef.current);
-            if (now - scalePushTimeRef.current > 120) {
-              scalePushTimeRef.current = now;
-              lastAppliedScaleRef.current = scale;
-              setCanvasScale(scale);
-            } else {
-              scaleTrailingRef.current = setTimeout(() => {
-                scalePushTimeRef.current = performance.now();
-                lastAppliedScaleRef.current = scale;
-                setCanvasScale(scale);
-              }, 140);
-            }
-          }
-          // Floating-run re-anchor happens at gesture END (settle callback
-          // above): updateFloatingRun reads getBoundingClientRect on every
-          // section, and doing that right after a --canvas-scale write was
-          // a write-then-read forced reflow on every frame.
+          // The React scale push (setCanvasScale → re-render of the whole
+          // board) and the floating-run reanchor (getBoundingClientRect
+          // over every section) BOTH happen only in the settle callback —
+          // during the gesture the canvas moves on transform + CSS alone.
         }}
       >
         <TransformComponent wrapperStyle={{ width: '100vw', height: '100vh' }} contentStyle={{ width: WORLD_WIDTH, height: WORLD_HEIGHT }}>

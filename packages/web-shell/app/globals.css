@@ -7845,12 +7845,7 @@ html.canvas-interacting .react-transform-component * {
   animation-play-state: paused !important;
   transition: none !important;
 }
-/* While the gesture is live, hint the compositor to keep the world's
-   raster at a FIXED scale and bitmap-scale it (fast, momentarily soft)
-   instead of re-rasterizing every node/iframe on each zoom tick. The
-   class clears 180ms after the last tick → will-change drops → the
-   browser re-rasterizes once, crisp. Same behavior as Figma-class
-   canvas tools: slight softness DURING the pinch, sharp on release. */
-html.canvas-interacting .react-transform-component {
-  will-change: transform;
-}
+/* NOTE (2026-07-03): a gesture-scoped `will-change: transform` on the
+   world container was tried here and REMOVED — toggling it promoted/
+   demoted the compositor layer at every gesture boundary, re-rasterizing
+   the whole world (nodes, sections, handles flashed on each pause). */
