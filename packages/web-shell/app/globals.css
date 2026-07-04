@@ -3181,9 +3181,9 @@ body.rb-ed-light .cnode-topbar-menu .cnode-topbar-menu-danger:hover {
    .empty-drop-menu rules that live LATER in the file (same base specificity
    would otherwise let the generic bg/padding win on source order). */
 .empty-drop-menu.cnode-topbar-menu {
-  background: rgba(13, 13, 13, 0.72);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  /* SOLID per DESIGN.md click-dropdown standard (canvas never leaks behind
+     a data menu) — also removes a backdrop-filter from the zoom hot path. */
+  background: var(--bg-frosted-solid, #0d0d0d);
   border-radius: 16px;
   padding: 3px;          /* off-black margin around the grey panel */
   gap: 0;
@@ -3214,7 +3214,7 @@ body.rb-ed-light .cnode-topbar-menu .cnode-topbar-menu-danger:hover {
    up — fold it away. */
 .cnode-topbar-menu .cnode-topbar-menu-sep { display: none; }
 /* Light mode keeps the same layered structure with theme-appropriate tones. */
-body.rb-ed-light .empty-drop-menu.cnode-topbar-menu { background: rgba(196, 200, 205, 0.72); }
+body.rb-ed-light .empty-drop-menu.cnode-topbar-menu { background: var(--bg-frosted-solid, #D4D7DC); }
 body.rb-ed-light .empty-drop-menu.cnode-topbar-menu button { background: #e9ebee; border-bottom-color: rgba(0, 0, 0, 0.08); }
 body.rb-ed-light .empty-drop-menu.cnode-topbar-menu button:hover { background: #dde0e4; }
 body.rb-ed-light .empty-drop-menu.cnode-topbar-menu button:last-child { border-bottom: none; }
@@ -3443,11 +3443,10 @@ body.rb-ed-light .cnode-viewport-switcher.disabled .cnode-vp-btn.active {
    frosted bg + off-white outline + off-white inner dot. Reads as a
    unified node-graph language across themes. */
 body.rb-ed-light .cnode-port-right {
-  background: rgba(26, 26, 26, 0.78);
+  /* No backdrop-filter (parity with the dark rule — see note there). */
+  background: rgba(26, 26, 26, 0.9);
   border-color: rgba(245, 245, 245, 0.85);
   color: rgba(241, 245, 249, 0.85);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
 }
 body.rb-ed-light .cnode-port-left {
   background: rgba(26, 26, 26, 0.78);
@@ -3627,9 +3626,10 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
   height: calc(14.25px / var(--canvas-scale, 1));
   transform: translateY(-50%);
   border-radius: 50%;
-  background: rgba(26, 26, 26, 0.78);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  /* No backdrop-filter here: this dot exists on EVERY node inside the
+     zoomed world — blurring N backdrops re-rasterized on every zoom tick.
+     Plain translucency blends the same at 14px without the filter cost. */
+  background: rgba(26, 26, 26, 0.9);
   border: 1px solid rgba(245, 245, 245, 0.85);
   color: rgba(241, 245, 249, 0.85);
   display: flex;
@@ -4004,12 +4004,11 @@ body.rb-ed-light .cnode-empty.cnode-empty-neutral {
   width: 100%;
   height: 100%;
   min-height: 320px;
-  /* Frosted glass — same family as the section frames / dock chrome, so
-     the unpopulated node reads as Uncraft chrome with the dot grid
-     blurring through rather than a flat hole in the canvas. */
-  background: rgba(16, 16, 18, 0.55);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
+  /* Frosted family look WITHOUT backdrop-filter: this overlay lives inside
+     the zoomed world, and a 28px blur there re-rasterizes the backdrop on
+     every zoom tick (one of the most expensive per-frame browser ops).
+     Higher-alpha translucency keeps the dot grid ghosting through subtly. */
+  background: rgba(16, 16, 18, 0.85);
   border-radius: 10px;
 }
 body.rb-ed-light .cnode-empty-upload {
@@ -4106,10 +4105,10 @@ body.rb-ed-light .cnode-empty-upload-label { color: rgba(0, 0, 0, 0.5); }
   border-radius: 999px;
   font: 500 calc(13px / var(--canvas-scale, 1)) / 1 var(--font-instrument-sans), system-ui, sans-serif;
   color: rgba(241, 245, 249, 0.92);
-  background: rgba(10, 10, 10, 0.78);
+  /* In-world pill: no backdrop-filter (zoom would re-rasterize its backdrop
+     per tick) — slightly higher alpha covers the loss of the blur. */
+  background: rgba(10, 10, 10, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.10);
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
   white-space: nowrap;
   max-width: calc(420px / var(--canvas-scale, 1));
   pointer-events: none;
