@@ -2368,6 +2368,7 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
   border-radius: calc(10px / var(--canvas-scale, 1));
   padding: calc(14px / var(--canvas-scale, 1));
   box-shadow: 0 calc(12px / var(--canvas-scale, 1)) calc(32px / var(--canvas-scale, 1)) rgba(0, 0, 0, 0.45);
+  box-shadow: 0 round(nearest, calc(12px / var(--canvas-scale, 1)), 1px) round(nearest, calc(32px / var(--canvas-scale, 1)), 1px) rgba(0, 0, 0, 0.45);
   font-family: var(--font-instrument-sans), inherit;
 }
 
@@ -2506,6 +2507,10 @@ html, body { overscroll-behavior: none; }
      .cnode.origin-* below. (When selected, the border goes transparent and
      the 3px box-shadow ring takes over.) */
   border: calc(2px / var(--canvas-scale, 1)) solid rgba(255, 255, 255, 0.10);
+  /* Pixel-snap (perf phase 2): fractional widths flip between pixel grids
+     on every zoom tick — the "shimmering border" artifact. round() makes
+     the used value change only at whole-px crossings. Fallback above. */
+  border-width: round(nearest, calc(2px / var(--canvas-scale, 1)), 1px);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   transition: box-shadow 0.15s, border-color 0.15s;
   /* 4px (on-screen, floored at 15% zoom like the radius) breathing gap
@@ -2711,6 +2716,7 @@ html.canvas-zoom-below-30 .cnode-body {
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: calc(8px / var(--canvas-scale, 1));
   box-shadow: 0 calc(8px / var(--canvas-scale, 1)) calc(20px / var(--canvas-scale, 1)) rgba(0, 0, 0, 0.4);
+  box-shadow: 0 round(nearest, calc(8px / var(--canvas-scale, 1)), 1px) round(nearest, calc(20px / var(--canvas-scale, 1)), 1px) rgba(0, 0, 0, 0.4);
   /* BELOW the section chrome (z 5): the switcher must never paint over the
      section's move grip / run pill when a node sits near the frame top.
      Still above the node's own z-auto children (body, iframe). */
@@ -2997,6 +3003,7 @@ body.rb-ed-light .cnode-topbar .topbar-sep { background: rgba(0, 0, 0, 0.10); }
   opacity: 0.55;
   transition: opacity 120ms, background 120ms, color 120ms, border-color 120ms, transform 120ms;
   box-shadow: 0 calc(4px / var(--canvas-scale, 1)) calc(12px / var(--canvas-scale, 1)) rgba(0, 0, 0, 0.35);
+  box-shadow: 0 round(nearest, calc(4px / var(--canvas-scale, 1)), 1px) round(nearest, calc(12px / var(--canvas-scale, 1)), 1px) rgba(0, 0, 0, 0.35);
 }
 .cnode-expand-float svg {
   width: calc(13px / max(0.15, var(--canvas-scale, 1)));
@@ -3074,6 +3081,7 @@ body.rb-ed-light .cnode-expand-float:hover {
   pointer-events: none;
   z-index: 5;
   box-shadow: 0 calc(4px / max(0.5, var(--canvas-scale, 1))) calc(12px / max(0.5, var(--canvas-scale, 1))) rgba(0, 0, 0, 0.35);
+  box-shadow: 0 round(nearest, calc(4px / max(0.5, var(--canvas-scale, 1))), 1px) round(nearest, calc(12px / max(0.5, var(--canvas-scale, 1))), 1px) rgba(0, 0, 0, 0.35);
   transition: opacity 160ms ease, background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 .cnode-replace-float svg {
@@ -3706,6 +3714,8 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
   backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: calc(1.5px / var(--canvas-scale, 1)) solid rgba(245, 245, 245, 0.85);
+  /* Pixel-snap — see .cnode border note. */
+  border-width: round(nearest, calc(1.5px / var(--canvas-scale, 1)), 1px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3745,6 +3755,7 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
 .cnode-port-left:hover {
   transform: scale(1.15);
   box-shadow: 0 0 0 calc(2px / var(--canvas-scale, 1)) rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 0 round(nearest, calc(2px / var(--canvas-scale, 1)), 1px) rgba(255, 255, 255, 0.25);
 }
 
 .cnode-port-left.disabled,
@@ -7365,6 +7376,7 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: calc(999px / max(0.15, var(--canvas-scale, 1)));
   box-shadow: 0 calc(8px / max(0.15, var(--canvas-scale, 1))) calc(24px / max(0.15, var(--canvas-scale, 1))) rgba(0, 0, 0, 0.45);
+  box-shadow: 0 round(nearest, calc(8px / max(0.15, var(--canvas-scale, 1))), 1px) round(nearest, calc(24px / max(0.15, var(--canvas-scale, 1))), 1px) rgba(0, 0, 0, 0.45);
   z-index: 15;
 }
 .cnode-version-confirm-cancel,
@@ -7810,6 +7822,8 @@ body.rb-ed-light .cnode-float-cancel {
   border-radius: 999px;
   background: rgba(10, 10, 10, 0.82);
   border: calc(1px / var(--canvas-scale, 1)) solid rgba(255, 255, 255, 0.12);
+  /* Pixel-snap — see .cnode border note. */
+  border-width: round(nearest, calc(1px / var(--canvas-scale, 1)), 1px);
   color: rgba(241, 245, 249, 0.92);
   font: 500 calc(12px / var(--canvas-scale, 1)) / 1 var(--font-instrument-sans), system-ui, sans-serif;
   z-index: 5;
