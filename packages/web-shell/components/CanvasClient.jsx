@@ -175,6 +175,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // transform → "Maximum update depth exceeded". We only setState when the
   // scale actually moved (epsilon), which breaks that feedback.
   const lastAppliedScaleRef = useRef(0.6);
+  // Trailing timer for the `canvas-interacting` gesture class — set on every
+  // transform tick, cleared 180ms after the last one. CSS uses it to pause
+  // in-world cosmetic motion while zoom/pan is actively changing.
+  const interactingTimerRef = useRef(null);
+  // Time-gate for React scale pushes during a zoom gesture (Task 3, Phase 2).
+  const scalePushTimeRef = useRef(0);
+  const scaleTrailingRef = useRef(null);
   const [lightMode, setLightMode] = useState(false);
   // Pan-on-space mode. Default cursor is the arrow + drag = marquee select.
   // Holding Space switches to grab cursor + drag = pan canvas (Figma /
@@ -4856,6 +4863,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // Expose current scale so node chrome (handle/buttons/edges) can stay
           // viewport-readable via inverse-scale in CSS.
           const scale = state.scale || 1;
+          // Gesture window: while the transform is actively changing, CSS
+          // pauses in-world animations/transitions (see canvas-interacting
+          // rules in globals.css). Cleared 180ms after the last tick.
+          const html = document.documentElement;
+          html.classList.add('canvas-interacting');
+          clearTimeout(interactingTimerRef.current);
+          interactingTimerRef.current = setTimeout(() => {
+            html.classList.remove('canvas-interacting');
+          }, 180);
           document.documentElement.style.setProperty('--canvas-scale', String(scale));
           // Pan offsets for the dot-grid backdrop: .canvas-bg sits OUTSIDE
           // the transform (it must cover the whole viewport at any world

@@ -7821,3 +7821,17 @@ body.rb-ed-light .cnode-prompt-hint {
   border-color: rgba(0, 0, 0, 0.12);
   color: #1f1f1f;
 }
+
+/* ── Canvas gesture window (perf phase 2) ─────────────────────────────────
+   While the canvas transform is actively changing (wheel zoom / pan /
+   programmatic frame animations), pause in-world cosmetic motion: the
+   marching-ant edges repaint every frame, and any transitioned property
+   whose value depends on --canvas-scale would re-animate on every tick.
+   CanvasClient adds `canvas-interacting` on each transform tick and clears
+   it 180ms after the last one — steady-state visuals are untouched. Scoped
+   to the transformed world only; fixed chrome (dock, toolbars, modals)
+   keeps its motion. NodeProgressRing is JS-driven and unaffected. */
+html.canvas-interacting .react-transform-component * {
+  animation-play-state: paused !important;
+  transition: none !important;
+}
