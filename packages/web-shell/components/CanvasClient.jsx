@@ -1392,6 +1392,25 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     });
     setFloatingRunSectionId((cur) => (cur === best ? cur : best));
   }
+  // Zoom-threshold chrome classes. Applied together with each quantized
+  // --canvas-scale write (and at gesture settle) so the class state and
+  // the var are ALWAYS mutually consistent — flipping them per-tick with
+  // the live scale while the var lagged produced a one-frame mismatched
+  // layout right at each threshold crossing (read as a glitch/blink).
+  function applyZoomThresholds(html, s) {
+    // Below ~0.5 the topbar items overlap the centered grip; collapse
+    // chrome so only the grip stays visible.
+    html.classList.toggle('canvas-zoom-low', s < 0.5);
+    // At/below 25% the topbar grip compacts from 6 to 4 dots per row.
+    html.classList.toggle('canvas-zoom-mid', s < 0.25);
+    // Below ~0.2 ports shrink 30% so they don't dominate tiny frames.
+    html.classList.toggle('canvas-zoom-very-low', s < 0.2);
+    // Beyond 30% zoom-out the node corner radius tightens 20%.
+    html.classList.toggle('canvas-zoom-below-30', s < 0.30);
+    // Below the 0.15 chrome floor the grip compacts to 3×2 dots.
+    html.classList.toggle('canvas-zoom-min', s < 0.15);
+  }
+
   function scheduleReanchorPills() {
     if (reanchorRafRef.current) return;
     reanchorRafRef.current = requestAnimationFrame(() => {
@@ -4894,6 +4913,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             if (t) {
               lastVarScaleRef.current = t.scale;
               html.style.setProperty('--canvas-scale', String(t.scale));
+              applyZoomThresholds(html, t.scale);
             }
             scheduleReanchorPills();
           }, 180);
@@ -4908,6 +4928,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               lastVarScaleRef.current = scale;
               lastVarWriteTimeRef.current = nowT;
               html.style.setProperty('--canvas-scale', String(scale));
+              applyZoomThresholds(html, scale);
             }
           }
           // Dot-grid backdrop: canvas-drawn OUTSIDE the transform (it must
@@ -4916,22 +4937,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // writes, whose background-position/-size mutations repainted the
           // entire viewport gradient on every tick.
           dotGridRef.current?.update(scale, state.positionX || 0, state.positionY || 0);
-          // Below ~0.5 the topbar items overlap the centered grip; collapse
-          // chrome so only the grip stays visible.
-          document.documentElement.classList.toggle('canvas-zoom-low', scale < 0.5);
-          // At/below 25% the topbar grip compacts from 6 to 4 dots per row so
-          // it doesn't crowd the shrinking node.
-          document.documentElement.classList.toggle('canvas-zoom-mid', scale < 0.25);
-          // Below ~0.2 the ports start to dominate the tiny node frames —
-          // shrink them 30% so the colour-coded squares stay readable.
-          document.documentElement.classList.toggle('canvas-zoom-very-low', scale < 0.2);
-          // Beyond 30% zoom-out the node corner radius tightens 20% so the
-          // rounding doesn't read as oversized on the shrinking frames.
-          document.documentElement.classList.toggle('canvas-zoom-below-30', scale < 0.30);
-          // Below the 0.15 chrome floor (--tb) the topbar shrinks with the
-          // zoom; narrow nodes also compact the grip to 3×2 dots so it
-          // never grazes the node's left edge at minimum zoom.
-          document.documentElement.classList.toggle('canvas-zoom-min', scale < 0.15);
+          // Zoom-threshold chrome classes now flip inside the quantized
+          // var-write block + at settle (applyZoomThresholds) so class
+          // state and --canvas-scale are always mutually consistent.
           // Only push React state when the scale truly moved — see
           // lastAppliedScaleRef note. Idempotent DOM writes above stay
           // unguarded so chrome sizing always tracks the live transform.
