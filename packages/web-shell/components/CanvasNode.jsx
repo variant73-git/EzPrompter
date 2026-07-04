@@ -13,6 +13,7 @@ import NodeVersionFloater from './NodeVersionFloater.jsx';
 import { api } from '../lib/canvas-api.js';
 import { readCanvasScale } from '../lib/canvas-scale.js';
 import { createRafCoalescer } from '../lib/raf-coalesce.js';
+import { fetchThumb } from '../lib/thumb-queue.js';
 
 const DRAG_THRESHOLD = 4;
 
@@ -668,6 +669,34 @@ export default function CanvasNode({
     return () => io.disconnect();
   }, []);
 
+  // Static stand-in below LOW_ZOOM (perf phase 3b): at that distance a
+  // site is an unreadable stamp — an <img> costs nothing to keep on the
+  // canvas, while a live iframe keeps a whole document, its layout and
+  // scripts alive and re-rasterizing. The thumbnail comes from
+  // /api/nodes/[id]/thumbnail (cached per snapshot in
+  // snapshots.screenshot_url; fetches capped at 2 concurrent by
+  // thumb-queue). The swap keys on the settle-time `scale` prop so it
+  // never flips mid-gesture; while the thumb hasn't arrived the live
+  // iframe stays (no blank frame). Editing/version-preview always live.
+  const LOW_ZOOM_THUMB = 0.4;
+  const wantThumb = scale < LOW_ZOOM_THUMB && !editing && !versionPreview;
+  const thumbKey = `${node.id}:${node.current_snapshot_id || 'none'}`;
+  const [thumb, setThumb] = useState(null);
+  const thumbKeyRef = useRef(null);
+  useEffect(() => {
+    if (!wantThumb) return;
+    if (String(node.id).startsWith('temp-')) return;
+    if (thumbKeyRef.current === thumbKey) return;
+    let alive = true;
+    fetchThumb(thumbKey, `/api/nodes/${node.id}/thumbnail`).then((url) => {
+      if (!alive || !url) return;
+      thumbKeyRef.current = thumbKey;
+      setThumb({ key: thumbKey, url });
+    });
+    return () => { alive = false; };
+  }, [wantThumb, thumbKey, node.id]);
+  const showThumb = wantThumb && thumb?.key === thumbKey;
+
   // When a node BECOMES connected (first outgoing edge), reset the port's
   // inline top immediately so the ball snaps back to its CSS-default
   // center position without waiting for the next mousemove. Otherwise the
@@ -1214,6 +1243,25 @@ export default function CanvasNode({
             }}
             style={{ height: (node.height || 800) + 'px' }}
           >
+            {showThumb ? (
+              /* Low-zoom static stand-in — see the wantThumb note above.
+                 Reuses .cnode-iframe so radius/bg match; object-position
+                 top mirrors what the live iframe shows unscrolled. */
+              <img
+                className="cnode-iframe cnode-thumb"
+                src={thumb.url}
+                alt=""
+                draggable={false}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  objectPosition: 'top',
+                  pointerEvents: 'none'
+                }}
+              />
+            ) : (
             <iframe
               key={`${node._resetTick || 0}:${versionPreview?.snapshotId || 'current'}`}
               ref={iframeRef}
@@ -1229,6 +1277,7 @@ export default function CanvasNode({
                 visibility: offscreenParked && !editing ? 'hidden' : undefined
               }}
             />
+            )}
             {versionPreview && (
               <div className="cnode-version-confirm" onMouseDown={(e) => e.stopPropagation()}>
                 <button
