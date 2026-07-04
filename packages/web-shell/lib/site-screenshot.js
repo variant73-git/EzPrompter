@@ -12,7 +12,18 @@ import { launchBrowser } from './browser.js';
 const SETCONTENT_TIMEOUT_MS = 20_000;
 const TOTAL_TIMEOUT_MS = 35_000;
 
-export async function renderHtmlScreenshot(html, { width = 1280, maxHeight = 2400 } = {}) {
+export async function renderHtmlScreenshot(html, { width = 1280, maxHeight = 2400, baseUrl = null } = {}) {
+  // setContent loads the document at about:blank — RELATIVE asset URLs
+  // (e.g. the reconstruct pipeline's /rasters/<hash>/raster-N.png) resolve
+  // against nothing and every one of them 404s, rendering broken-image
+  // icons into the screenshot. Injecting <base href> re-anchors them to
+  // the app origin. Skipped when the document already declares a <base>.
+  let doc = html;
+  if (baseUrl && typeof doc === 'string' && !/<base\s/i.test(doc)) {
+    const tag = `<base href="${baseUrl.replace(/"/g, '')}/">`;
+    if (/<head[^>]*>/i.test(doc)) doc = doc.replace(/<head[^>]*>/i, (m) => `${m}${tag}`);
+    else doc = tag + doc;
+  }
   const work = (async () => {
     let browser;
     try {
@@ -22,7 +33,7 @@ export async function renderHtmlScreenshot(html, { width = 1280, maxHeight = 240
       // networkidle can hang on pages with long-polling/analytics; fall
       // through and screenshot whatever has rendered by then.
       await page
-        .setContent(html, { waitUntil: 'networkidle', timeout: SETCONTENT_TIMEOUT_MS })
+        .setContent(doc, { waitUntil: 'networkidle', timeout: SETCONTENT_TIMEOUT_MS })
         .catch(() => {});
       const contentHeight = await page
         .evaluate(() => Math.max(

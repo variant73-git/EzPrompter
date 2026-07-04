@@ -625,7 +625,9 @@ export async function POST(request) {
           : null;
         if (!shot && typeof r.html === 'string' && r.html.trim()) {
           try {
-            shot = await renderHtmlScreenshot(r.html);
+            // baseUrl so relative assets (reconstruct /rasters/…) resolve —
+            // without it the agent "saw" broken-image icons.
+            shot = await renderHtmlScreenshot(r.html, { baseUrl: new URL(request.url).origin });
             await sql`UPDATE snapshots SET screenshot_url = ${shot} WHERE id = ${r.snapshot_id}`;
           } catch (e) {
             console.warn('[chat] site context render failed', e?.message || e);

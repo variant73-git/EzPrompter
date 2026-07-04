@@ -46,7 +46,12 @@ export async function GET(request, { params }) {
   }
 
   try {
-    const dataUrl = await renderHtmlScreenshot(snap.html);
+    const dataUrl = await renderHtmlScreenshot(snap.html, {
+      // Base origin so relative assets (reconstruct /rasters/…) resolve;
+      // taller cap so long pages keep more of their body in the thumb.
+      baseUrl: new URL(request.url).origin,
+      maxHeight: 4000,
+    });
     await sql`UPDATE snapshots SET screenshot_url = ${dataUrl} WHERE id = ${snap.id}`;
     return NextResponse.json({ dataUrl, snapshotId: snap.id });
   } catch (e) {

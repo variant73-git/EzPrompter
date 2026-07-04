@@ -1254,10 +1254,15 @@ export default function CanvasNode({
                 draggable={false}
                 style={{
                   display: 'block',
+                  // Width-mapped, top-aligned — the live iframe shows the
+                  // site at full node width from the top, so the thumb
+                  // must too. object-fit:cover was WRONG here: on tall/
+                  // expanded nodes it scaled by HEIGHT and cropped the
+                  // site to a narrow center strip. Nodes taller than the
+                  // capture show the body's dark tail below — correct at
+                  // stamp distance.
                   width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  objectPosition: 'top',
+                  height: 'auto',
                   pointerEvents: 'none'
                 }}
               />
@@ -1273,16 +1278,6 @@ export default function CanvasNode({
               style={{
                 pointerEvents: editing ? 'auto' : 'none',
                 height: '100%',
-                // FIXED world width (not 100%): the node frame's border/
-                // padding are screen-constant and step on quantized zoom
-                // writes — a percentage width made the iframe's layout
-                // width follow those steps, visibly RE-FLOWING the site
-                // inside on every zoom ("sites resizing in real time").
-                // Fixed to the node's world width, the site's layout never
-                // changes; the few stepping px difference clip under the
-                // frame (body has overflow:hidden).
-                width: (node.width || 1280) + 'px',
-                maxWidth: 'none',
                 // Off-viewport parking — see offscreenParked note above.
                 visibility: offscreenParked && !editing ? 'hidden' : undefined
               }}

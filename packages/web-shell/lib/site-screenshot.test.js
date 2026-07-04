@@ -42,4 +42,25 @@ describe('renderHtmlScreenshot', () => {
     await expect(renderHtmlScreenshot('<html></html>')).rejects.toThrow('boom');
     expect(browser.close).toHaveBeenCalled();
   });
+
+  it('injects <base href> into <head> when baseUrl is given', async () => {
+    await renderHtmlScreenshot('<html><head><title>x</title></head><body><img src="/rasters/a/r-1.png"></body></html>', {
+      baseUrl: 'http://localhost:3030',
+    });
+    const doc = page.setContent.mock.calls[0][0];
+    expect(doc).toContain('<head><base href="http://localhost:3030/">');
+  });
+
+  it('does not inject a second <base> when one exists', async () => {
+    await renderHtmlScreenshot('<html><head><base href="https://x.dev/"></head></html>', {
+      baseUrl: 'http://localhost:3030',
+    });
+    const doc = page.setContent.mock.calls[0][0];
+    expect(doc.match(/<base\s/gi)).toHaveLength(1);
+  });
+
+  it('leaves the document untouched without baseUrl', async () => {
+    await renderHtmlScreenshot('<html><head></head></html>');
+    expect(page.setContent.mock.calls[0][0]).toBe('<html><head></head></html>');
+  });
 });
