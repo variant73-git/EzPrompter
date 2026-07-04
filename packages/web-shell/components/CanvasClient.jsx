@@ -4898,9 +4898,25 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // Only push React state when the scale truly moved — see
           // lastAppliedScaleRef note. Idempotent DOM writes above stay
           // unguarded so chrome sizing always tracks the live transform.
+          // Time-gated during a gesture: the CSS var (set every tick) drives
+          // all visual chrome; the React value only feeds JS-computed
+          // geometry (edge hit paths, pill fit, zoom %, minimap), which can
+          // update at ~8fps mid-gesture. The trailing commit guarantees the
+          // FINAL scale always lands exactly.
           if (Math.abs(scale - lastAppliedScaleRef.current) > 0.0005) {
-            lastAppliedScaleRef.current = scale;
-            setCanvasScale(scale);
+            const now = performance.now();
+            clearTimeout(scaleTrailingRef.current);
+            if (now - scalePushTimeRef.current > 120) {
+              scalePushTimeRef.current = now;
+              lastAppliedScaleRef.current = scale;
+              setCanvasScale(scale);
+            } else {
+              scaleTrailingRef.current = setTimeout(() => {
+                scalePushTimeRef.current = performance.now();
+                lastAppliedScaleRef.current = scale;
+                setCanvasScale(scale);
+              }, 140);
+            }
           }
           // Keep each section's run-pill pinned within the viewport as the
           // user pans/zooms (rAF-coalesced; reads layout once per frame).
