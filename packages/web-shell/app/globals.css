@@ -7653,7 +7653,8 @@ body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
 .cnode-float-tag {
   --fs: max(0.4, var(--canvas-scale, 1));
   position: absolute;
-  bottom: calc(100% + 8px / var(--fs));
+  /* 16px breathing room (was 8 — read as glued to the frame). */
+  bottom: calc(100% + 16px / var(--fs));
   left: 0;
   max-width: 100%;
   display: inline-flex;
@@ -7710,7 +7711,8 @@ html.canvas-zoom-low .cnode-anchor-title:active { cursor: grabbing; }
 .cnode-float-actions {
   --fs: max(0.4, var(--canvas-scale, 1));
   position: absolute;
-  bottom: calc(100% + 8px / var(--fs));
+  /* 16px breathing room (was 8 — read as glued to the frame). */
+  bottom: calc(100% + 16px / var(--fs));
   right: 0;
   display: inline-flex;
   align-items: center;
