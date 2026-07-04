@@ -7854,3 +7854,40 @@ html.canvas-interacting .cnode-prompt-hint { opacity: 0 !important; }
    world container was tried here and REMOVED — toggling it promoted/
    demoted the compositor layer at every gesture boundary, re-rasterizing
    the whole world (nodes, sections, handles flashed on each pause). */
+
+/* ── Micro-animations (perf/feel phase 4) ─────────────────────────────────
+   The Magnifik recipe: transform/opacity only (GPU-composited, no layout,
+   no paint storms), short and consistent (140–200ms), and every in-world
+   animation freezes during zoom/pan via the canvas-interacting rules
+   above (an element mid-entrance simply completes on settle). Keyframes
+   deliberately omit `to` — they interpolate to each element's OWN computed
+   values, so ghosts (opacity 0.5) and other stateful styles land exactly
+   where their CSS says, not where the animation guesses. */
+@media (prefers-reduced-motion: no-preference) {
+  /* New node materializes — barely-there scale + fade. */
+  @keyframes cnode-in {
+    from { opacity: 0; transform: scale(0.985); }
+  }
+  .cnode { animation: cnode-in 200ms ease-out; }
+
+  /* New cord fades in (also covers board load — cords appear as a calm
+     wash instead of popping fully-formed). */
+  @keyframes edge-in {
+    from { opacity: 0; }
+  }
+  .edge-group { animation: edge-in 220ms ease-out; }
+
+  /* Click-menus of the canvas family — quick settle from 98% scale.
+     Portaled to <body>, so gesture pausing doesn't apply (correct: they
+     only exist while the canvas is at rest). */
+  @keyframes menu-in {
+    from { opacity: 0; transform: scale(0.98); }
+  }
+  .empty-drop-menu,
+  .canvas-context-menu,
+  .cnode-version-menu,
+  .cnode-version-ctx-menu {
+    animation: menu-in 140ms ease-out;
+    transform-origin: top left;
+  }
+}
