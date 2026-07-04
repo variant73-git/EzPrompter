@@ -4939,6 +4939,35 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
   pointer-events: auto;
   z-index: 2;
 }
+/* Edge resize strips (2026-07-04): the four frame sides are single-axis
+   resize bands — lateral edges show ↔ (ew-resize), top/bottom show ↕
+   (ns-resize). Invisible hit areas straddling the border (half in, half
+   out), width counter-scaled with the standard 0.4 floor so they stay
+   grabbable at any zoom. z-index 1 keeps them UNDER the corner handles
+   (z 2), so the diagonal cursors win where they overlap. */
+.canvas-section-edge {
+  position: absolute;
+  pointer-events: auto;
+  z-index: 1;
+}
+.canvas-section-edge-n,
+.canvas-section-edge-s {
+  left: 24px;
+  right: 24px;
+  height: calc(12px / max(0.4, var(--canvas-scale, 1)));
+  cursor: ns-resize;
+}
+.canvas-section-edge-n { top: calc(-6px / max(0.4, var(--canvas-scale, 1))); }
+.canvas-section-edge-s { bottom: calc(-6px / max(0.4, var(--canvas-scale, 1))); }
+.canvas-section-edge-w,
+.canvas-section-edge-e {
+  top: 24px;
+  bottom: 24px;
+  width: calc(12px / max(0.4, var(--canvas-scale, 1)));
+  cursor: ew-resize;
+}
+.canvas-section-edge-w { left: calc(-6px / max(0.4, var(--canvas-scale, 1))); }
+.canvas-section-edge-e { right: calc(-6px / max(0.4, var(--canvas-scale, 1))); }
 .canvas-section-handle-nw {
   top: -10px;
   left: -10px;

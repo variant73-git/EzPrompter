@@ -4628,6 +4628,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       else if (corner === 'ne') { newRight = startFrame.right + dx; newTop = startFrame.top + dy; }
       else if (corner === 'sw') { newLeft = startFrame.left + dx; newBottom = startFrame.bottom + dy; }
       else if (corner === 'se') { newRight = startFrame.right + dx; newBottom = startFrame.bottom + dy; }
+      // Single-axis edge handles (2026-07-04): the four frame edges resize
+      // too — lateral edges move only X, top/bottom only Y. Same member-
+      // containment + neighbor-wall clamps as the corners below.
+      else if (corner === 'n') { newTop = startFrame.top + dy; }
+      else if (corner === 's') { newBottom = startFrame.bottom + dy; }
+      else if (corner === 'w') { newLeft = startFrame.left + dx; }
+      else if (corner === 'e') { newRight = startFrame.right + dx; }
       // Hold the wall against neighbouring sections FIRST; the member-
       // containment clamp below runs last so it outranks the wall (a frame
       // must always contain its members even when the layout is tight).
@@ -5133,6 +5140,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 <span /><span /><span /><span /><span /><span />
                 <span /><span /><span /><span /><span /><span />
               </div>
+              {/* Edge strips — full-side resize bands (single axis). DOM-
+                  before the corner handles and z-index below them, so the
+                  diagonal cursors win where they overlap at the corners. */}
+              {['n', 's', 'w', 'e'].map((edge) => (
+                <div
+                  key={edge}
+                  className={`canvas-section-edge canvas-section-edge-${edge}`}
+                  onMouseDown={(e) => startSectionResize(s.id, edge, e)}
+                  aria-hidden="true"
+                />
+              ))}
               {['nw', 'ne', 'sw', 'se'].map((corner) => (
                 <div
                   key={corner}
