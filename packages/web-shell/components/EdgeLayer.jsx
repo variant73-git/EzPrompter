@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, memo } from 'react';
 import { originColor } from '../lib/node-origin.js';
+import { chromeScale } from '../lib/canvas-scale.js';
 
 const WORLD_WIDTH = 8000;
 const WORLD_HEIGHT = 6000;
@@ -25,10 +26,10 @@ const PORT_GAP = 11.385;
 function nodePort(n, side, measuredH, slotIndex = 0, slotCount = 1, scale = 1) {
   const h = measuredH ?? n.height ?? 800;
   const midY = n.pos_y + h / 2;
-  // 0.4 floor mirrors the CSS counter-scale clamp (2026-07-03 rule:
-  // below 40% zoom the chrome stops compensating and scales with the
-  // world) — endpoints must land where the CSS-positioned circles are.
-  const s = Math.max(0.4, scale);
+  // chromeScale mirrors the CSS `--chrome-scale` divisor (0.4-floored
+  // zoom, or 1 under the world-lock experiment) — endpoints must land
+  // where the CSS-positioned circles are.
+  const s = chromeScale(scale);
   const gap = PORT_GAP / s;   // screen-constant outward offset → world
   if (side === 'right') {
     return { x: n.pos_x + n.width + gap, y: midY };
@@ -207,7 +208,7 @@ function EdgeLayer({ nodes, edges, dyingEdges, incomingByTarget, scale: scalePro
         // 1/scale world units so it renders at constant on-screen size.
         // Width is a char-count estimate (good enough for short labels).
         const charW = 6.4, padX = 12, fontSize = 11;
-        const sClamped = Math.max(0.4, scale);
+        const sClamped = chromeScale(scale);
         const pillW = (labelText.length * charW + padX * 2) / sClamped;
         const pillH = 22 / sClamped;
         return (
@@ -238,7 +239,7 @@ function EdgeLayer({ nodes, edges, dyingEdges, incomingByTarget, scale: scalePro
             <path
               d={d}
               stroke="transparent"
-              strokeWidth={22 / Math.max(0.4, scale)}
+              strokeWidth={22 / chromeScale(scale)}
               fill="none"
               pointerEvents="stroke"
               style={{ cursor: 'grab' }}
@@ -252,7 +253,7 @@ function EdgeLayer({ nodes, edges, dyingEdges, incomingByTarget, scale: scalePro
               /* True bezier midpoint (t=0.5) — sits ON the cord. NOT `mid`,
                  which carries a legacy `stagger` the cord path doesn't use. */
               cx={(ca.x + cb.x) / 2} cy={(ca.y + cb.y) / 2}
-              r={48 / Math.max(0.4, scale)}
+              r={48 / chromeScale(scale)}
               fill="transparent"
               className="edge-cut-zone"
               pointerEvents="all"

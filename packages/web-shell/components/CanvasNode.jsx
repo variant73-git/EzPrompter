@@ -11,7 +11,7 @@ import PromptBody from './node-bodies/PromptBody.jsx';
 import SkillBody from './node-bodies/SkillBody.jsx';
 import NodeVersionFloater from './NodeVersionFloater.jsx';
 import { api } from '../lib/canvas-api.js';
-import { readCanvasScale } from '../lib/canvas-scale.js';
+import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
 import { createRafCoalescer } from '../lib/raf-coalesce.js';
 import { fetchThumb } from '../lib/thumb-queue.js';
 
@@ -870,7 +870,7 @@ export default function CanvasNode({
     const main = topbarMainRef.current;
     if (!pill || !main) return;
     const needed = pill.offsetWidth;  // natural width — same in-flow or absolute
-    const cap = main.clientWidth * 0.5 - 20 / Math.max(0.4, scale || 1) - 8;
+    const cap = main.clientWidth * 0.5 - 20 / chromeScale(scale) - 8;
     setPillFits(needed <= cap);
   }, [scale, node.width, kindLabel]);
 

@@ -11,6 +11,24 @@
 // no layout involvement, updated synchronously before onTransformed fires.
 // The CSS-variable read stays as a fallback for contexts where the zoom
 // API isn't mounted (SSR, tests, canvas unmounted).
+// Is the world-lock chrome experiment active? (html.canvas-worldlock,
+// toggled with Alt/⌥+W in CanvasClient, persisted in localStorage.)
+export function isWorldlockChrome() {
+  return typeof document !== 'undefined' &&
+    document.documentElement.classList.contains('canvas-worldlock');
+}
+
+// The JS mirror of the CSS `--chrome-scale` divisor: what screen-constant
+// chrome divides its px values by. Normally the zoom floored at 0.4 (the
+// 2026-07-03 rule); 1 under the world-lock experiment (chrome scales with
+// the world). Anything computing geometry that must land on CSS-positioned
+// chrome (edge ports/slots, snap radii, pill fitting, hint transforms)
+// MUST use this — never a bare Math.max(0.4, scale).
+export function chromeScale(scale) {
+  if (isWorldlockChrome()) return 1;
+  return Math.max(0.4, scale || 1);
+}
+
 export function readCanvasScale() {
   if (typeof window !== 'undefined') {
     const api = window.__uncraftZoom;

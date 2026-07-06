@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { readCanvasScale } from '../../lib/canvas-scale.js';
+import { readCanvasScale, chromeScale } from '../../lib/canvas-scale.js';
 
 // Prompt node body — move-first interaction (2026-07-03, user spec):
 // the WHOLE node area drags the node (grab hand, same as every other
@@ -47,11 +47,12 @@ export default function PromptBody({ node, onChange }) {
     const r = el.parentElement.getBoundingClientRect();
     // Client px → node-local world px (the node is scaled by the canvas).
     // readCanvasScale reads the LIVE transform (no reflow, not the
-    // quantized CSS var). Counter-scaling clamps at 0.4 — below 40% zoom
-    // the chrome stops compensating (2026-07-03 rule), matching the CSS.
-    const scale = Math.max(0.4, readCanvasScale());
-    const x = (clientX - r.left) / scale;
-    const y = (clientY - r.top) / scale;
+    // quantized CSS var). The COUNTER-SCALE divisor comes from
+    // chromeScale (0.4-floored, or 1 under world-lock) to match the CSS.
+    const live = readCanvasScale();
+    const x = (clientX - r.left) / live;
+    const y = (clientY - r.top) / live;
+    const scale = chromeScale(live);
     // Screen-constant size via transform: the tag is styled at its natural
     // px size and counter-scaled here (composite-only, no layout steps —
     // the old CSS padding/font ÷ scale re-laid it out on every quantized

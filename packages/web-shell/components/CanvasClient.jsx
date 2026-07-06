@@ -22,10 +22,10 @@ import Minimap from './Minimap.jsx';
 import ChallengeModal from './ChallengeModal.jsx';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
-import { findSectionTerminal, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
+import { findSectionTerminals, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
 import { estimateChain, estimateOp } from '../lib/billing/pricing.js';
 import { clampToViewport } from '../lib/menu-position.js';
-import { readCanvasScale } from '../lib/canvas-scale.js';
+import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
 import { createWheelBatcher } from '../lib/wheel-batch.js';
 import {
   shouldTearOut, nodeCenter, pointInRect,
@@ -2938,42 +2938,52 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // the play button is hidden for them, this is the backstop.
     if (s.hasEdges === false) return;
 
-    const { terminal, terminalId, count, unsupportedKind } = findSectionTerminal(s, nodes, edges);
-    if (!terminal) {
+    const { terminals, unsupportedKind } = findSectionTerminals(s, nodes, edges);
+    if (!terminals.length) {
       if (unsupportedKind) {
         toast.info(`This workflow ends in a ${unsupportedKind === 'designmd' ? '.md' : unsupportedKind} node — re-running it isn't supported yet.`);
       } else {
-        toast.error(count === 0
-          ? 'Could not find a terminal node to re-run in this workflow.'
-          : 'This workflow has multiple terminal nodes; ambiguous re-run.');
+        toast.error('Could not find a result node to run in this workflow.');
       }
       return;
     }
+
+    // A section may fan out into SEVERAL results (one source → N derived
+    // terminals — first-class since anchored chains). Run every runnable
+    // terminal concurrently, each with its own progress affordance. The
+    // section only goes "clean" when ALL of them succeeded — a partial
+    // failure leaves the run buttons live so the user can retry.
+    const outcomes = await Promise.all(terminals.map((t) => runSectionTerminal(t)));
+    if (outcomes.length && outcomes.every(Boolean)) markSectionPendingClean(s.id);
+  }
+
+  // Execute ONE terminal of a section run. Returns true on success; failures
+  // toast individually and return false (the section stays dirty).
+  async function runSectionTerminal(terminal) {
+    const terminalId = terminal.id;
 
     // Site terminal → compose engine. runOneTarget drives the 3-step
     // status chip below the node, exactly like the PromptDock arrow.
     if (terminal.kind === 'site') {
       try {
         const result = await runOneTarget(terminalId);
-        if (result?.snapshotId) {
-          setNodes((prev) => prev.map((n) => (
-            n.id === terminalId
-              ? {
-                  ...n,
-                  current_html: result.html,
-                  current_snapshot_id: result.snapshotId,
-                  _resetTick: (n._resetTick || 0) + 1,
-                }
-              : n
-          )));
-          // Ran clean — disable the run buttons until the chain changes.
-          markSectionPendingClean(s.id);
-        }
+        if (!result?.snapshotId) return false;
+        setNodes((prev) => prev.map((n) => (
+          n.id === terminalId
+            ? {
+                ...n,
+                current_html: result.html,
+                current_snapshot_id: result.snapshotId,
+                _resetTick: (n._resetTick || 0) + 1,
+              }
+            : n
+        )));
+        return true;
       } catch (e) {
         console.warn('[section-rerun] site compose failed:', e?.message || e);
         toast.error(e?.message || 'Re-run failed.');
+        return false;
       }
-      return;
     }
 
     // Asset terminal → deterministic image re-run.
@@ -3011,8 +3021,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             }
           : n
       )));
-      // Ran clean — disable the run buttons until the chain changes.
-      markSectionPendingClean(s.id);
+      return true;
     } catch (e) {
       console.warn('[section-rerun] failed:', e?.message || e);
       toast.error(e?.message || 'Re-run failed.');
@@ -3022,6 +3031,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           ? { ...n, meta: { ...(n.meta || {}), status: 'done' } }
           : n
       )));
+      return false;
     }
   }
 
@@ -3224,12 +3234,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (!sourceNodeId) return null;
     const w = clientToWorld(transformRef, clientX, clientY);
     const scale = transformRef.current?.instance?.transformState?.scale || 1;
-    // 0.4 floor (2026-07-03 rule): mirrors the CSS counter-scale clamp so
-    // the snap target lands exactly on the clamped circles — AND caps the
-    // snap reach at low zoom (unfloored, 56/scale ballooned to hundreds of
-    // world px below 30%, auto-connecting cords from far away and making
-    // nodes hard to manipulate when zoomed out).
-    const s = Math.max(0.4, scale);
+    // chromeScale mirrors the CSS `--chrome-scale` divisor (0.4-floored
+    // zoom, or 1 under world-lock) so the snap target lands exactly on the
+    // CSS-positioned circles — AND caps the snap reach at low zoom
+    // (unfloored, 56/scale ballooned to hundreds of world px below 30%,
+    // auto-connecting cords from far away).
+    const s = chromeScale(scale);
     const radiusWorld = SNAP_RADIUS_SCREEN / s;
     // CSS sizes the circles in 1/scale world units (constant on screen,
     // clamped at 0.4). Slot Y math has to do the same or the snap target
@@ -3760,7 +3770,27 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '_')) {
         e.preventDefault();
       }
+      // ⌥W — world-lock chrome EXPERIMENT toggle (2026-07-06): pins the
+      // --chrome-scale divisor to 1 so ALL canvas chrome scales with the
+      // world (see :root note in globals.css). e.code because macOS Alt+W
+      // types "∑" as e.key. Persisted so a reload keeps the mode.
+      if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === 'KeyW') {
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        e.preventDefault();
+        const on = document.documentElement.classList.toggle('canvas-worldlock');
+        try { localStorage.setItem('uncraft-worldlock', on ? '1' : '0'); } catch {}
+        toast(on
+          ? 'World-lock experiment: ON — chrome scales with the world (⌥W to revert)'
+          : 'World-lock experiment: OFF — chrome back to screen-constant');
+      }
     }
+    // Restore the world-lock experiment mode across reloads.
+    try {
+      if (localStorage.getItem('uncraft-worldlock') === '1') {
+        document.documentElement.classList.add('canvas-worldlock');
+      }
+    } catch {}
     document.addEventListener('wheel', onWheelCapture, { passive: false, capture: true });
     document.addEventListener('keydown', onKeyZoom);
     return () => {
@@ -4299,8 +4329,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const out = new Set();
     for (const s of sections) {
       if (!cleanSectionIds.has(s.id)) continue;
-      const { terminalId } = findSectionTerminal(s, nodes, edges);
-      if (terminalId) out.add(terminalId);
+      const { terminals } = findSectionTerminals(s, nodes, edges);
+      for (const t of terminals) out.add(t.id);
     }
     return out;
   }, [sections, cleanSectionIds, nodes, edges]);
@@ -5127,6 +5157,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   setSelectedNodeIds(new Set());
                   triggerRun();
                 }}
+                onMouseMove={!s.hasEdges ? (e) => {
+                  // Cursor-follow "No connected nodes" hint on the disabled
+                  // pill — same transform recipe as the prompt node's
+                  // double-click tag (screen-constant, direct DOM writes).
+                  const el = e.currentTarget.querySelector('.canvas-noconn-hint');
+                  if (!el) return;
+                  const r = e.currentTarget.getBoundingClientRect();
+                  const scale = Math.max(0.4, readCanvasScale());
+                  el.style.transform = `translate(${(e.clientX - r.left + 14) / scale}px, ${(e.clientY - r.top + 16) / scale}px) scale(${1 / scale})`;
+                } : undefined}
               >
                 {/* Run label — becomes "Reroll" once the flow has run and
                     nothing but node positions has changed (isClean). With no
@@ -5170,6 +5210,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                     </svg>
                   )}
                 </button>
+                {/* Disabled pill (no cords between members): cursor-follow
+                    hint explaining WHY it can't run. */}
+                {!s.hasEdges && (
+                  <span className="canvas-noconn-hint" aria-hidden="true">No connected nodes</span>
+                )}
               </div>
               <div
                 className="canvas-section-grip"

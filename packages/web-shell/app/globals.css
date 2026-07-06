@@ -53,6 +53,15 @@
 }
 
 :root {
+  /* Chrome counter-scale divisor. Every screen-constant canvas chrome
+     value divides by THIS (186 declarations) instead of the raw zoom:
+     normally it's the zoom floored at 0.4 (the 2026-07-03 rule — below
+     40% chrome scales with the world). The world-lock experiment
+     (Alt/⌥+W, html.canvas-worldlock) pins it to 1: ALL chrome keeps its
+     natural world size and scales with the zoom like node content —
+     the Magnifik model. JS mirrors via chromeScale() in
+     lib/canvas-scale.js so cords/snap/hit stay glued to the CSS. */
+  --chrome-scale: max(0.4, var(--canvas-scale, 1));
   --bg-base: #0a0a0a;
   --bg-frosted: rgba(10, 10, 10, 0.72);
   --bg-frosted-solid: #0f0f0f;
@@ -1681,7 +1690,7 @@ body.rb-ed-light .minimap-node-stroke {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: calc(5px / max(0.4, var(--canvas-scale, 1))) calc(7px / max(0.4, var(--canvas-scale, 1)));
+  padding: calc(5px / var(--chrome-scale, 1)) calc(7px / var(--chrome-scale, 1));
   line-height: 1;
   background: transparent;
   border: 1px solid transparent;
@@ -1700,8 +1709,8 @@ body.rb-ed-light .minimap-node-stroke {
 }
 
 .cnode-topbar .btn-reset svg {
-  width: calc(14px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(14px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(14px / var(--chrome-scale, 1));
+  height: calc(14px / var(--chrome-scale, 1));
 }
 
 /* ─── Popup family — port of the Uncraft extension widget's design
@@ -1997,15 +2006,15 @@ body.rb-ed-light .popup-btn-danger:hover:not(:disabled) { background: #ef4444; b
    layout, palette, and typography come from .popup-card above. */
 .popup-card-anchored {
   position: absolute;
-  width: calc(280px / max(0.4, var(--canvas-scale, 1)));
-  padding: calc(18px / max(0.4, var(--canvas-scale, 1))) calc(22px / max(0.4, var(--canvas-scale, 1)));
-  border-radius: calc(28px / max(0.4, var(--canvas-scale, 1)));
-  font-size: calc(13px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(280px / var(--chrome-scale, 1));
+  padding: calc(18px / var(--chrome-scale, 1)) calc(22px / var(--chrome-scale, 1));
+  border-radius: calc(28px / var(--chrome-scale, 1));
+  font-size: calc(13px / var(--chrome-scale, 1));
 }
-.popup-card-anchored .popup-title { font-size: calc(14px / max(0.4, var(--canvas-scale, 1))); margin-bottom: calc(6px / max(0.4, var(--canvas-scale, 1))); }
-.popup-card-anchored .popup-text { font-size: calc(12px / max(0.4, var(--canvas-scale, 1))); margin-bottom: calc(14px / max(0.4, var(--canvas-scale, 1))); }
-.popup-card-anchored .popup-btn { padding: calc(7px / max(0.4, var(--canvas-scale, 1))) calc(14px / max(0.4, var(--canvas-scale, 1))); font-size: calc(12px / max(0.4, var(--canvas-scale, 1))); }
-.popup-card-anchored .popup-actions { gap: calc(6px / max(0.4, var(--canvas-scale, 1))); }
+.popup-card-anchored .popup-title { font-size: calc(14px / var(--chrome-scale, 1)); margin-bottom: calc(6px / var(--chrome-scale, 1)); }
+.popup-card-anchored .popup-text { font-size: calc(12px / var(--chrome-scale, 1)); margin-bottom: calc(14px / var(--chrome-scale, 1)); }
+.popup-card-anchored .popup-btn { padding: calc(7px / var(--chrome-scale, 1)) calc(14px / var(--chrome-scale, 1)); font-size: calc(12px / var(--chrome-scale, 1)); }
+.popup-card-anchored .popup-actions { gap: calc(6px / var(--chrome-scale, 1)); }
 
 /* Floating menu variant — used by CanvasContextMenu / EmptyDropMenu.
    Compact rounded card with one row per option. Hover invokes the
@@ -2347,9 +2356,9 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
    --canvas-scale so it reads consistently across zoom levels. */
 .reset-confirm-overlay {
   position: absolute;
-  top: calc(36px / max(0.4, var(--canvas-scale, 1)));
+  top: calc(36px / var(--chrome-scale, 1));
   right: 0;
-  margin-top: calc(6px / max(0.4, var(--canvas-scale, 1)));
+  margin-top: calc(6px / var(--chrome-scale, 1));
   z-index: 50;
   animation: rb-fade-in 140ms ease-out;
 }
@@ -2360,30 +2369,30 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
 }
 
 .reset-confirm-card {
-  width: calc(280px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(280px / var(--chrome-scale, 1));
   background: #0f0f0f;
   border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: calc(10px / max(0.4, var(--canvas-scale, 1)));
-  padding: calc(14px / max(0.4, var(--canvas-scale, 1)));
-  box-shadow: 0 calc(12px / max(0.4, var(--canvas-scale, 1))) calc(32px / max(0.4, var(--canvas-scale, 1))) rgba(0, 0, 0, 0.45);
-  box-shadow: 0 round(nearest, calc(12px / max(0.4, var(--canvas-scale, 1))), 1px) round(nearest, calc(32px / max(0.4, var(--canvas-scale, 1))), 1px) rgba(0, 0, 0, 0.45);
+  border-radius: calc(10px / var(--chrome-scale, 1));
+  padding: calc(14px / var(--chrome-scale, 1));
+  box-shadow: 0 calc(12px / var(--chrome-scale, 1)) calc(32px / var(--chrome-scale, 1)) rgba(0, 0, 0, 0.45);
+  box-shadow: 0 round(nearest, calc(12px / var(--chrome-scale, 1)), 1px) round(nearest, calc(32px / var(--chrome-scale, 1)), 1px) rgba(0, 0, 0, 0.45);
   font-family: var(--font-instrument-sans), inherit;
 }
 
 .reset-confirm-title {
-  font-size: calc(13px / max(0.4, var(--canvas-scale, 1)));
+  font-size: calc(13px / var(--chrome-scale, 1));
   font-weight: 500;
   letter-spacing: -0.015em;
   color: var(--text-primary);
-  margin: 0 0 calc(6px / max(0.4, var(--canvas-scale, 1)));
+  margin: 0 0 calc(6px / var(--chrome-scale, 1));
 }
 
 .reset-confirm-body {
-  font-size: calc(12px / max(0.4, var(--canvas-scale, 1)));
+  font-size: calc(12px / var(--chrome-scale, 1));
   color: var(--text-secondary);
   line-height: 1.45;
   font-weight: 300;
-  margin: 0 0 calc(12px / max(0.4, var(--canvas-scale, 1)));
+  margin: 0 0 calc(12px / var(--chrome-scale, 1));
 }
 
 .reset-confirm-body strong {
@@ -2393,15 +2402,15 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
 
 .reset-confirm-actions {
   display: flex;
-  gap: calc(6px / max(0.4, var(--canvas-scale, 1)));
+  gap: calc(6px / var(--chrome-scale, 1));
   justify-content: center;
 }
 
 .reset-confirm-btn {
   width: auto;
-  padding: calc(6px / max(0.4, var(--canvas-scale, 1))) calc(12px / max(0.4, var(--canvas-scale, 1)));
-  font-size: calc(12px / max(0.4, var(--canvas-scale, 1)));
-  border-radius: calc(6px / max(0.4, var(--canvas-scale, 1)));
+  padding: calc(6px / var(--chrome-scale, 1)) calc(12px / var(--chrome-scale, 1));
+  font-size: calc(12px / var(--chrome-scale, 1));
+  border-radius: calc(6px / var(--chrome-scale, 1));
 }
 
 /* Cancel-edit prompt — minimal variant of the reset-confirm card. The
@@ -2493,7 +2502,7 @@ html, body { overscroll-behavior: none; }
   /* Corner radius holds ~10px on screen down to 15% zoom, then (floored at
      0.15, matching the topbar's --tb) shrinks proportionally as you zoom
      further out — so the rounding doesn't balloon relative to the tiny node. */
-  border-radius: calc(17.25px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(17.25px / var(--chrome-scale, 1));
   /* Beyond 30% zoom-out, tighten all three concentric node radii by 20%
      (11.5→9.2, topbar/body 5.5→4.4) so the rounding stays proportional. */
   /* (overrides defined just below for html.canvas-zoom-below-30) */
@@ -2504,23 +2513,23 @@ html, body { overscroll-behavior: none; }
      origin stroke on the unselected node. Per-origin colour set by
      .cnode.origin-* below. (When selected, the border goes transparent and
      the 3px box-shadow ring takes over.) */
-  border: calc(2px / max(0.4, var(--canvas-scale, 1))) solid rgba(255, 255, 255, 0.10);
+  border: calc(2px / var(--chrome-scale, 1)) solid rgba(255, 255, 255, 0.10);
   /* Pixel-snap (perf phase 2): fractional widths flip between pixel grids
      on every zoom tick — the "shimmering border" artifact. round() makes
      the used value change only at whole-px crossings. Fallback above. */
-  border-width: round(nearest, calc(2px / max(0.4, var(--canvas-scale, 1))), 1px);
+  border-width: round(nearest, calc(2px / var(--chrome-scale, 1)), 1px);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   transition: box-shadow 0.15s, border-color 0.15s;
   /* 4px (on-screen, floored at 15% zoom like the radius) breathing gap
      between the inner content frame and the border. Padding insets only the
      flow children (topbar + body); absolutely-positioned chrome (ports,
      progress ring) is anchored to the border edge and is unaffected. */
-  padding: calc(4px / max(0.4, var(--canvas-scale, 1)));
+  padding: calc(4px / var(--chrome-scale, 1));
   display: flex;
   flex-direction: column;
   /* Same 4px breathing between the topbar panel and the body panel as around
      the outside, so both read as separated rounded panels. */
-  gap: calc(4px / max(0.4, var(--canvas-scale, 1)));
+  gap: calc(4px / var(--chrome-scale, 1));
   /* overflow:visible so the right-side connector port can stick out beyond
      the node frame. Topbar + body now individually round their own corners
      (top vs bottom) to keep the unified rounded-shape look. */
@@ -2530,13 +2539,13 @@ html, body { overscroll-behavior: none; }
 /* Beyond 30% zoom-out: node radii −20% (kept concentric across the three
    frame layers). Toggled by .canvas-zoom-below-30 on <html>. */
 html.canvas-zoom-below-30 .cnode {
-  border-radius: calc(13.8px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(13.8px / var(--chrome-scale, 1));
 }
 html.canvas-zoom-below-30 .cnode-topbar {
   border-radius: calc(9px / var(--tb));
 }
 html.canvas-zoom-below-30 .cnode-body {
-  border-radius: calc(9px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(9px / var(--chrome-scale, 1));
 }
 
 /* Per-origin node borders. Edge stroke colors live in node-origin.js and
@@ -2610,7 +2619,7 @@ html.canvas-zoom-below-30 .cnode-body {
      proportionally with the zoom — so nothing inflates into the node's
      edges at minimum zoom, and the section bbox (36 / max(0.15, scale))
      matches the rendered chrome exactly (no bottom bleed). */
-  --tb: max(0.4, var(--canvas-scale, 1));
+  --tb: var(--chrome-scale, 1);
   /* HEIGHT floors EARLIER than the rest of the chrome — at 50% zoom (vs the
      0.30 content floor). Past 50% zoom-out the bar starts shrinking on screen
      instead of holding a tall band over increasingly narrow nodes. Content
@@ -2704,17 +2713,17 @@ html.canvas-zoom-below-30 .cnode-body {
   /* Extra breathing room so the guide's "Add feedback" tab (which sticks
      out the top of the topbar's spacing guide) doesn't crowd the
      switcher when both are visible. */
-  bottom: calc(100% + (32px / max(0.4, var(--canvas-scale, 1))));
+  bottom: calc(100% + (32px / var(--chrome-scale, 1)));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: calc(2px / max(0.4, var(--canvas-scale, 1)));
-  padding: calc(4px / max(0.4, var(--canvas-scale, 1)));
+  gap: calc(2px / var(--chrome-scale, 1));
+  padding: calc(4px / var(--chrome-scale, 1));
   background: #0f0f0f;
   border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: calc(8px / max(0.4, var(--canvas-scale, 1)));
-  box-shadow: 0 calc(8px / max(0.4, var(--canvas-scale, 1))) calc(20px / max(0.4, var(--canvas-scale, 1))) rgba(0, 0, 0, 0.4);
-  box-shadow: 0 round(nearest, calc(8px / max(0.4, var(--canvas-scale, 1))), 1px) round(nearest, calc(20px / max(0.4, var(--canvas-scale, 1))), 1px) rgba(0, 0, 0, 0.4);
+  border-radius: calc(8px / var(--chrome-scale, 1));
+  box-shadow: 0 calc(8px / var(--chrome-scale, 1)) calc(20px / var(--chrome-scale, 1)) rgba(0, 0, 0, 0.4);
+  box-shadow: 0 round(nearest, calc(8px / var(--chrome-scale, 1)), 1px) round(nearest, calc(20px / var(--chrome-scale, 1)), 1px) rgba(0, 0, 0, 0.4);
   /* BELOW the section chrome (z 5): the switcher must never paint over the
      section's move grip / run pill when a node sits near the frame top.
      Still above the node's own z-auto children (body, iframe). */
@@ -2732,20 +2741,20 @@ html.canvas-zoom-below-30 .cnode-body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(28px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(24px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(28px / var(--chrome-scale, 1));
+  height: calc(24px / var(--chrome-scale, 1));
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: calc(5px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(5px / var(--chrome-scale, 1));
   color: rgba(203, 213, 225, 0.65);
   cursor: pointer;
   transition: color 120ms, background 120ms;
 }
 
 .cnode-vp-btn svg {
-  width: calc(14px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(14px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(14px / var(--chrome-scale, 1));
+  height: calc(14px / var(--chrome-scale, 1));
 }
 
 .cnode-vp-btn:hover {
@@ -2806,7 +2815,7 @@ html.canvas-zoom-below-30 .cnode-body {
      width so the grip centre never moves past ~30% from the left — it stays
      inside the node edges even on very narrow nodes. */
   --grip-shift: max(0px, min(calc((55 - var(--node-screen-w)) * 0.45px), calc(var(--node-screen-w) * 0.2px)));
-  transform: translate(calc(-50% - var(--grip-shift) / max(0.4, var(--canvas-scale, 1))), -50%);
+  transform: translate(calc(-50% - var(--grip-shift) / var(--chrome-scale, 1)), -50%);
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   grid-auto-rows: calc(3px / var(--tb));
@@ -2927,12 +2936,12 @@ html.canvas-zoom-very-low .cnode.narrow .cnode-topbar .topbar-sep {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: calc(5px / max(0.4, var(--canvas-scale, 1))) calc(7px / max(0.4, var(--canvas-scale, 1)));
+  padding: calc(5px / var(--chrome-scale, 1)) calc(7px / var(--chrome-scale, 1));
   line-height: 1;
 }
 .cnode-topbar .btn-delete svg {
-  width: calc(14px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(14px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(14px / var(--chrome-scale, 1));
+  height: calc(14px / var(--chrome-scale, 1));
 }
 .cnode-topbar .btn-delete:hover {
   background: #F67293;
@@ -2975,10 +2984,10 @@ body.rb-ed-light .cnode-topbar .topbar-sep { background: rgba(0, 0, 0, 0.10); }
   position: absolute;
   /* Same 15% inverse-scale floor as the topbar chrome — below it the
      floater shrinks with the zoom instead of crowding the tiny body. */
-  bottom: calc(16px / max(0.4, var(--canvas-scale, 1)));
-  right: calc(16px / max(0.4, var(--canvas-scale, 1)));
-  width: calc(28px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(28px / max(0.4, var(--canvas-scale, 1)));
+  bottom: calc(16px / var(--chrome-scale, 1));
+  right: calc(16px / var(--chrome-scale, 1));
+  width: calc(28px / var(--chrome-scale, 1));
+  height: calc(28px / var(--chrome-scale, 1));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2987,7 +2996,7 @@ body.rb-ed-light .cnode-topbar .topbar-sep { background: rgba(0, 0, 0, 0.10); }
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: calc(8px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(8px / var(--chrome-scale, 1));
   color: rgba(241, 245, 249, 0.78);
   cursor: pointer;
   z-index: 5;
@@ -2997,12 +3006,12 @@ body.rb-ed-light .cnode-topbar .topbar-sep { background: rgba(0, 0, 0, 0.10); }
   opacity: 0;
   pointer-events: none;
   transition: opacity 120ms, background 120ms, color 120ms, border-color 120ms, transform 120ms;
-  box-shadow: 0 calc(4px / max(0.4, var(--canvas-scale, 1))) calc(12px / max(0.4, var(--canvas-scale, 1))) rgba(0, 0, 0, 0.35);
-  box-shadow: 0 round(nearest, calc(4px / max(0.4, var(--canvas-scale, 1))), 1px) round(nearest, calc(12px / max(0.4, var(--canvas-scale, 1))), 1px) rgba(0, 0, 0, 0.35);
+  box-shadow: 0 calc(4px / var(--chrome-scale, 1)) calc(12px / var(--chrome-scale, 1)) rgba(0, 0, 0, 0.35);
+  box-shadow: 0 round(nearest, calc(4px / var(--chrome-scale, 1)), 1px) round(nearest, calc(12px / var(--chrome-scale, 1)), 1px) rgba(0, 0, 0, 0.35);
 }
 .cnode-expand-float svg {
-  width: calc(13px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(13px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(13px / var(--chrome-scale, 1));
+  height: calc(13px / var(--chrome-scale, 1));
 }
 .cnode:hover .cnode-expand-float { opacity: 1; pointer-events: auto; }
 .cnode-expand-float:hover {
@@ -3010,7 +3019,7 @@ body.rb-ed-light .cnode-topbar .topbar-sep { background: rgba(0, 0, 0, 0.10); }
   background: rgba(20, 20, 20, 0.92);
   border-color: rgba(255, 255, 255, 0.22);
   color: #fff;
-  transform: translateY(calc(-1px / max(0.4, var(--canvas-scale, 1))));
+  transform: translateY(calc(-1px / var(--chrome-scale, 1)));
 }
 body.rb-ed-light .cnode-expand-float {
   background: rgba(255, 255, 255, 0.86);
@@ -3038,8 +3047,8 @@ body.rb-ed-light .cnode-expand-float:hover {
   transition: opacity 160ms ease;
   /* Follows the content's rounded bottom corners (asset bodies don't clip —
      overflow:visible — so the overlay must round itself like the image). */
-  border-bottom-left-radius: calc(11.25px / max(0.4, var(--canvas-scale, 1)));
-  border-bottom-right-radius: calc(11.25px / max(0.4, var(--canvas-scale, 1)));
+  border-bottom-left-radius: calc(11.25px / var(--chrome-scale, 1));
+  border-bottom-right-radius: calc(11.25px / var(--chrome-scale, 1));
 }
 /* Pill in the bottom-LEFT, vertically aligned with the expand floater on the
    bottom-right (same 16px inset + 15% inverse-scale floor). */
@@ -3593,7 +3602,7 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
      extreme zoom-out instead of ballooning. All four corners rounded.
      Radius = outer 17.25px − the 6px inset (2px border + 4px gap) so the body's
      corners nest CONCENTRICALLY inside the node's outer radius. */
-  border-radius: calc(11.25px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(11.25px / var(--chrome-scale, 1));
   overflow: hidden;
   flex: 0 0 auto;
   /* Offblack, NOT white: at fractional zoom the iframe/img can miss the
@@ -3622,9 +3631,9 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
   /* -20.51 = the old -9.125 (dot centred on the border edge) + 11.385px PORT_GAP
      so the dot floats just OUTSIDE the node. The cord endpoint shifts out by the
      same 11.385px (EdgeLayer.PORT_GAP) so they still meet. Keep all three in sync. */
-  right: calc(-20.51px / max(0.4, var(--canvas-scale, 1)));
-  width: calc(14.25px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(14.25px / max(0.4, var(--canvas-scale, 1)));
+  right: calc(-20.51px / var(--chrome-scale, 1));
+  width: calc(14.25px / var(--chrome-scale, 1));
+  height: calc(14.25px / var(--chrome-scale, 1));
   transform: translateY(-50%);
   border-radius: 50%;
   /* No backdrop-filter here: this dot exists on EVERY node inside the
@@ -3690,25 +3699,25 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
   /* -20.51 = -9.125 (border-edge correction) + 11.385px PORT_GAP so the receiver
      dots float just OUTSIDE the node's left edge; the cord endpoints shift out
      by the same 11.385px (EdgeLayer + findSnapTarget). Keep all three in sync. */
-  left: calc(-20.51px / max(0.4, var(--canvas-scale, 1)));
+  left: calc(-20.51px / var(--chrome-scale, 1));
   top: 50%;
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
-  gap: calc(6px / max(0.4, var(--canvas-scale, 1)));
+  gap: calc(6px / var(--chrome-scale, 1));
   z-index: 5;
 }
 
 .cnode-port-left {
-  width: calc(14.25px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(14.25px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(14.25px / var(--chrome-scale, 1));
+  height: calc(14.25px / var(--chrome-scale, 1));
   border-radius: 50%;
   background: rgba(26, 26, 26, 0.78);
   backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  border: calc(1.5px / max(0.4, var(--canvas-scale, 1))) solid rgba(245, 245, 245, 0.85);
+  border: calc(1.5px / var(--chrome-scale, 1)) solid rgba(245, 245, 245, 0.85);
   /* Pixel-snap — see .cnode border note. */
-  border-width: round(nearest, calc(1.5px / max(0.4, var(--canvas-scale, 1))), 1px);
+  border-width: round(nearest, calc(1.5px / var(--chrome-scale, 1)), 1px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3747,8 +3756,8 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
 
 .cnode-port-left:hover {
   transform: scale(1.15);
-  box-shadow: 0 0 0 calc(2px / max(0.4, var(--canvas-scale, 1))) rgba(255, 255, 255, 0.25);
-  box-shadow: 0 0 0 round(nearest, calc(2px / max(0.4, var(--canvas-scale, 1))), 1px) rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 0 calc(2px / var(--chrome-scale, 1)) rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 0 round(nearest, calc(2px / var(--chrome-scale, 1)), 1px) rgba(255, 255, 255, 0.25);
 }
 
 .cnode-port-left.disabled,
@@ -3759,16 +3768,16 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
 
 .cnode-port-right svg,
 .cnode-port-left svg {
-  width: calc(8.25px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(8.25px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(8.25px / var(--chrome-scale, 1));
+  height: calc(8.25px / var(--chrome-scale, 1));
 }
 
 /* Inner dot — uniform off-white across all states (empty/connected,
    right/left). Per-origin colour-coding still lives in the cord stroke
    + node ring; the port itself reads as a neutral dark-mode badge. */
 .cnode-port-dot {
-  width: calc(4.5px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(4.5px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(4.5px / var(--chrome-scale, 1));
+  height: calc(4.5px / var(--chrome-scale, 1));
   border-radius: 50%;
   background: rgba(245, 245, 245, 0.95);
   pointer-events: none;
@@ -3792,19 +3801,19 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
    under a screen pixel and not worth threading the override down. */
 html.canvas-zoom-very-low .cnode-port-right,
 html.canvas-zoom-very-low .cnode-port-left {
-  width: calc(10.5px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(10.5px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(10.5px / var(--chrome-scale, 1));
+  height: calc(10.5px / var(--chrome-scale, 1));
 }
 html.canvas-zoom-very-low .cnode-port-right {
-  right: calc(-16.635px / max(0.4, var(--canvas-scale, 1)));   /* -5.25 + 11.385px PORT_GAP */
+  right: calc(-16.635px / var(--chrome-scale, 1));   /* -5.25 + 11.385px PORT_GAP */
 }
 html.canvas-zoom-very-low .cnode-port-stack-left {
-  left: calc(-16.635px / max(0.4, var(--canvas-scale, 1)));    /* -5.25 + 11.385px PORT_GAP */
-  gap: calc(4.5px / max(0.4, var(--canvas-scale, 1)));
+  left: calc(-16.635px / var(--chrome-scale, 1));    /* -5.25 + 11.385px PORT_GAP */
+  gap: calc(4.5px / var(--chrome-scale, 1));
 }
 html.canvas-zoom-very-low .cnode-port-dot {
-  width: calc(3.375px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(3.375px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(3.375px / var(--chrome-scale, 1));
+  height: calc(3.375px / var(--chrome-scale, 1));
 }
 
 /* Per-origin tint resolution. Mirrors ORIGIN_COLORS in lib/node-origin.js
@@ -3867,35 +3876,35 @@ html.canvas-zoom-very-low .cnode-port-dot {
 }
 .cnode-resize-dash-bottom {
   left: 0; right: 0; bottom: 0;
-  height: calc(10px / max(0.4, var(--canvas-scale, 1)));
+  height: calc(10px / var(--chrome-scale, 1));
   cursor: ns-resize;
 }
 .cnode-resize-dash-bottom::after {
-  width: calc(40px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(3px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(40px / var(--chrome-scale, 1));
+  height: calc(3px / var(--chrome-scale, 1));
 }
 .cnode-resize-dash-right {
   top: 0; bottom: 0; right: 0;
-  width: calc(10px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(10px / var(--chrome-scale, 1));
   cursor: ew-resize;
 }
 .cnode-resize-dash-right::after {
-  width: calc(3px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(40px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(3px / var(--chrome-scale, 1));
+  height: calc(40px / var(--chrome-scale, 1));
 }
 body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.45); }
 
 .cnode-edge-hint {
   position: absolute;
-  bottom: calc(10px / max(0.4, var(--canvas-scale, 1)));
+  bottom: calc(10px / var(--chrome-scale, 1));
   left: 50%;
   transform: translateX(-50%);
   background: rgba(20, 20, 42, 0.85);
   backdrop-filter: blur(8px);
   color: #94a3b8;
-  font-size: calc(11px / max(0.4, var(--canvas-scale, 1)));
-  padding: calc(4px / max(0.4, var(--canvas-scale, 1))) calc(10px / max(0.4, var(--canvas-scale, 1)));
-  border-radius: calc(999px / max(0.4, var(--canvas-scale, 1)));
+  font-size: calc(11px / var(--chrome-scale, 1));
+  padding: calc(4px / var(--chrome-scale, 1)) calc(10px / var(--chrome-scale, 1));
+  border-radius: calc(999px / var(--chrome-scale, 1));
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s;
@@ -3965,19 +3974,19 @@ body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.4
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: calc(10px / max(0.4, var(--canvas-scale, 1)));
+  gap: calc(10px / var(--chrome-scale, 1));
   color: rgba(45, 212, 191, 0.85);
   background: rgba(45, 212, 191, 0.03);
   /* Inverse-scaled with the name-tag cap so the hint stays legible at
      zoom-out instead of collapsing into unreadable specks. */
-  font: 500 calc(12.5px / max(0.4, var(--canvas-scale, 1))) var(--popup-font-sans, system-ui);
+  font: 500 calc(12.5px / var(--chrome-scale, 1)) var(--popup-font-sans, system-ui);
   letter-spacing: 0.01em;
   border-radius: 10px;
 }
 .cnode-empty svg {
   opacity: 0.75;
-  width: calc(22px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(22px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(22px / var(--chrome-scale, 1));
+  height: calc(22px / var(--chrome-scale, 1));
 }
 body.rb-ed-light .cnode-empty {
   color: rgba(13, 148, 136, 0.95);
@@ -4004,7 +4013,7 @@ body.rb-ed-light .cnode-empty.cnode-empty-neutral {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(12px / max(0.4, var(--canvas-scale, 1)));
+  gap: calc(12px / var(--chrome-scale, 1));
   width: 100%;
   height: 100%;
   min-height: 320px;
@@ -4019,8 +4028,8 @@ body.rb-ed-light .cnode-empty-upload {
   background: rgba(255, 255, 255, 0.55);
 }
 .cnode-upload-btn {
-  width: calc(52px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(52px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(52px / var(--chrome-scale, 1));
+  height: calc(52px / var(--chrome-scale, 1));
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -4034,8 +4043,8 @@ body.rb-ed-light .cnode-empty-upload {
   transition: background 0.15s, border-color 0.15s, transform 0.12s;
 }
 .cnode-upload-btn svg {
-  width: calc(20px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(20px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(20px / var(--chrome-scale, 1));
+  height: calc(20px / var(--chrome-scale, 1));
 }
 .cnode-upload-btn:hover {
   background: rgba(255, 255, 255, 0.12);
@@ -4044,7 +4053,7 @@ body.rb-ed-light .cnode-empty-upload {
 }
 .cnode-upload-btn:active { transform: scale(0.96); }
 .cnode-empty-upload-label {
-  font: 500 calc(12px / max(0.4, var(--canvas-scale, 1))) var(--popup-font-sans, system-ui);
+  font: 500 calc(12px / var(--chrome-scale, 1)) var(--popup-font-sans, system-ui);
   color: var(--text-muted);
   letter-spacing: 0.01em;
 }
@@ -4095,7 +4104,7 @@ body.rb-ed-light .cnode-empty-upload-label { color: rgba(0, 0, 0, 0.5); }
    constant on-screen size regardless of zoom. */
 .cnode-anchor-title {
   position: absolute;
-  bottom: calc(100% + 6px / max(0.4, var(--canvas-scale, 1)));
+  bottom: calc(100% + 6px / var(--chrome-scale, 1));
   /* Centred horizontally over the node so the label reads as a caption,
      not a corner badge. translateX(-50%) puts the chip's centre at the
      node's centre regardless of node width. */
@@ -4103,24 +4112,24 @@ body.rb-ed-light .cnode-empty-upload-label { color: rgba(0, 0, 0, 0.5); }
   transform: translateX(-50%);
   display: none;
   align-items: center;
-  gap: calc(6px / max(0.4, var(--canvas-scale, 1)));
-  padding: calc(4px / max(0.4, var(--canvas-scale, 1))) calc(10px / max(0.4, var(--canvas-scale, 1)));
+  gap: calc(6px / var(--chrome-scale, 1));
+  padding: calc(4px / var(--chrome-scale, 1)) calc(10px / var(--chrome-scale, 1));
   /* Fully-rounded pill ends. */
   border-radius: 999px;
-  font: 500 calc(13px / max(0.4, var(--canvas-scale, 1))) / 1 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 calc(13px / var(--chrome-scale, 1)) / 1 var(--font-instrument-sans), system-ui, sans-serif;
   color: rgba(241, 245, 249, 0.92);
   /* In-world pill: no backdrop-filter (zoom would re-rasterize its backdrop
      per tick) — slightly higher alpha covers the loss of the blur. */
   background: rgba(10, 10, 10, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.10);
   white-space: nowrap;
-  max-width: calc(420px / max(0.4, var(--canvas-scale, 1)));
+  max-width: calc(420px / var(--chrome-scale, 1));
   pointer-events: none;
   z-index: 4;
 }
 .cnode-anchor-title svg {
-  width: calc(13px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(13px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(13px / var(--chrome-scale, 1));
+  height: calc(13px / var(--chrome-scale, 1));
   flex-shrink: 0;
   /* Inherit the node's origin colour via the same custom property
      used by the ports + selection ring. Full opacity at this size
@@ -4180,7 +4189,7 @@ body.rb-ed-light .cnode-anchor-title {
   padding: 28px;
   overflow: hidden;
   /* Match .cnode-body: concentric inner radius (outer 10px − 6px inset). */
-  border-radius: calc(4px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(4px / var(--chrome-scale, 1));
 }
 .cnode-md-preview-stack {
   display: flex;
@@ -4288,10 +4297,10 @@ body.rb-ed-light .cnode-prompt-textarea::placeholder { color: var(--text-muted);
   position: absolute;
   /* Flush in the very bottom-right corner of the field — ignores the textarea
      padding (small inset just so the icon doesn't touch the rounded edge). */
-  bottom: calc(6px / max(0.4, var(--canvas-scale, 1)));
-  right: calc(6px / max(0.4, var(--canvas-scale, 1)));
-  width: calc(22px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(22px / max(0.4, var(--canvas-scale, 1)));
+  bottom: calc(6px / var(--chrome-scale, 1));
+  right: calc(6px / var(--chrome-scale, 1));
+  width: calc(22px / var(--chrome-scale, 1));
+  height: calc(22px / var(--chrome-scale, 1));
   display: inline-flex;
   align-items: flex-end;
   justify-content: flex-end;
@@ -4308,8 +4317,8 @@ body.rb-ed-light .cnode-prompt-textarea::placeholder { color: var(--text-muted);
 .cnode.selected .cnode-resize-corner { opacity: 1; }
 .cnode-resize-corner:hover { color: rgba(245, 245, 245, 0.85); }
 .cnode-resize-corner svg {
-  width: calc(18px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(18px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(18px / var(--chrome-scale, 1));
+  height: calc(18px / var(--chrome-scale, 1));
 }
 body.rb-ed-light .cnode-resize-corner { color: rgba(0, 0, 0, 0.4); }
 body.rb-ed-light .cnode-resize-corner:hover { color: rgba(0, 0, 0, 0.75); }
@@ -4403,12 +4412,12 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
    on-screen size across the whole zoom range. */
 .canvas-section-chrome [data-tooltip]:not([data-tooltip=""])::after,
 .canvas-section-name-tag[data-tooltip]:not([data-tooltip=""])::after {
-  font-size: calc(11.5px / max(0.4, var(--canvas-scale, 1)));
+  font-size: calc(11.5px / var(--chrome-scale, 1));
   padding:
-    calc(5px / max(0.4, var(--canvas-scale, 1)))
-    calc(9px / max(0.4, var(--canvas-scale, 1)));
-  border-radius: calc(7px / max(0.4, var(--canvas-scale, 1)));
-  bottom: calc(100% + calc(6px / max(0.4, var(--canvas-scale, 1))));
+    calc(5px / var(--chrome-scale, 1))
+    calc(9px / var(--chrome-scale, 1));
+  border-radius: calc(7px / var(--chrome-scale, 1));
+  bottom: calc(100% + calc(6px / var(--chrome-scale, 1)));
 }
 [data-tooltip]:hover:not([data-tooltip=""])::after,
 [data-tooltip]:focus-visible:not([data-tooltip=""])::after {
@@ -4516,7 +4525,7 @@ body.rb-ed-light .canvas-place-pill-spinner {
 .cnode.removing {
   border-color: transparent;
   box-shadow:
-    0 0 0 calc(3px / max(0.4, var(--canvas-scale, 1))) #e3e7ec,
+    0 0 0 calc(3px / var(--chrome-scale, 1)) #e3e7ec,
     0 8px 32px rgba(0, 0, 0, 0.45);
 }
 .cnode-topbar.removing,
@@ -4531,22 +4540,22 @@ body.rb-ed-light .cnode-topbar.removing {
 .topbar-remove-hint {
   font-family: var(--font-instrument-sans), system-ui, sans-serif;
   font-weight: 500;
-  font-size: calc(13px / max(0.4, var(--canvas-scale, 1)));
+  font-size: calc(13px / var(--chrome-scale, 1));
   letter-spacing: -0.01em;
   color: rgba(28, 31, 36, 0.66);
   pointer-events: none;
   white-space: nowrap;
-  margin-left: calc(3px / max(0.4, var(--canvas-scale, 1)));
+  margin-left: calc(3px / var(--chrome-scale, 1));
 }
 .btn-remove-cancel {
   font-family: var(--font-instrument-sans), system-ui, sans-serif;
   font-weight: 500;
-  font-size: calc(12px / max(0.4, var(--canvas-scale, 1)));
+  font-size: calc(12px / var(--chrome-scale, 1));
   color: #1c1f24;
   background: rgba(28, 31, 36, 0.08);
   border: none;
-  border-radius: calc(8px / max(0.4, var(--canvas-scale, 1)));
-  padding: calc(4px / max(0.4, var(--canvas-scale, 1))) calc(11px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(8px / var(--chrome-scale, 1));
+  padding: calc(4px / var(--chrome-scale, 1)) calc(11px / var(--chrome-scale, 1));
   cursor: pointer;
   white-space: nowrap;
 }
@@ -4618,12 +4627,12 @@ body.rb-ed-light .canvas-section-frame {
   /* play circle on the LEFT, label on the right: hug the play with 4px-left,
      text gets the 20px-right. (row-reverse flips the [label, play] DOM order.) */
   padding:
-    calc(3.2px / max(0.4, var(--canvas-scale, 1)))
-    calc(16px / max(0.4, var(--canvas-scale, 1)))
-    calc(3.2px / max(0.4, var(--canvas-scale, 1)))
-    calc(3.2px / max(0.4, var(--canvas-scale, 1)));
+    calc(3.2px / var(--chrome-scale, 1))
+    calc(16px / var(--chrome-scale, 1))
+    calc(3.2px / var(--chrome-scale, 1))
+    calc(3.2px / var(--chrome-scale, 1));
   font-family: inherit;
-  font-size: calc(11.2px / max(0.4, var(--canvas-scale, 1)));
+  font-size: calc(11.2px / var(--chrome-scale, 1));
   font-weight: 500;
   letter-spacing: 0.01em;
   color: #0a0a0a;
@@ -4633,7 +4642,7 @@ body.rb-ed-light .canvas-section-frame {
   display: inline-flex;
   flex-direction: row-reverse;
   align-items: center;
-  gap: calc(8px / max(0.4, var(--canvas-scale, 1)));
+  gap: calc(8px / var(--chrome-scale, 1));
   cursor: pointer;
   transition: opacity 180ms ease;
 }
@@ -4648,6 +4657,34 @@ body.rb-ed-light .canvas-section-frame {
 .canvas-section-chrome.sec-hovered .canvas-section-name-tag {
   opacity: 1;
   pointer-events: auto;
+}
+/* Disabled run pill (no cords between the section's members): cursor-follow
+   "No connected nodes" hint — same recipe as .cnode-prompt-hint: styled at
+   natural px, screen-constant via the transform the JS mousemove writes
+   (translate + scale(1/zoom), composite-only). 2026-07-06. */
+.canvas-noconn-hint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+  pointer-events: none;
+  white-space: nowrap;
+  transform-origin: top left;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(10, 10, 10, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(241, 245, 249, 0.92);
+  font: 500 12px / 1 var(--font-instrument-sans), system-ui, sans-serif;
+  z-index: 10001;
+}
+.canvas-section-name-tag.disabled:hover .canvas-noconn-hint { opacity: 1; }
+html.canvas-interacting .canvas-noconn-hint { opacity: 0 !important; }
+body.rb-ed-light .canvas-noconn-hint {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #0a0a0a;
 }
 /* Crossfades out while its section is shown as the floating run button. */
 .canvas-section-name-tag.floated-away {
@@ -4748,8 +4785,8 @@ body.rb-ed-light .canvas-floating-run-play:hover { background: #1a1a1a; }
    padding symmetrically and centre the text. */
 .canvas-section-name-tag:not(:has(.canvas-section-play-btn)) {
   padding:
-    calc(9px / max(0.4, var(--canvas-scale, 1)))
-    calc(18px / max(0.4, var(--canvas-scale, 1)));
+    calc(9px / var(--chrome-scale, 1))
+    calc(18px / var(--chrome-scale, 1));
   justify-content: center;
 }
 body.rb-ed-light .canvas-section-name-tag {
@@ -4814,8 +4851,8 @@ input.canvas-section-name-input:focus {
   padding: 0;
   margin: 0;
   white-space: nowrap;
-  min-width: calc(60px / max(0.4, var(--canvas-scale, 1)));
-  max-width: calc(280px / max(0.4, var(--canvas-scale, 1)));
+  min-width: calc(60px / var(--chrome-scale, 1));
+  max-width: calc(280px / var(--chrome-scale, 1));
   border-radius: 0;
   transition: none;
 }
@@ -4831,8 +4868,8 @@ input.canvas-section-name-input::placeholder {
   /* Circle, stable on-screen size — 32x32 (20% smaller, 2026-07-03) with
      the same 0.25 floor as the surrounding pill so play btn + label stay
      proportional. */
-  width: calc(32px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(32px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(32px / var(--chrome-scale, 1));
+  height: calc(32px / var(--chrome-scale, 1));
   border-radius: 999px;
   /* Solid offblack chip with an offwhite triangle inside (inverted pill). */
   background: #0a0a0a;
@@ -4868,8 +4905,8 @@ body.rb-ed-light .canvas-section-play-btn.disabled:hover {
 }
 .canvas-section-play-btn:disabled:active { transform: none; }
 .canvas-section-play-btn svg {
-  width: calc(14.4px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(14.4px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(14.4px / var(--chrome-scale, 1));
+  height: calc(14.4px / var(--chrome-scale, 1));
 }
 body.rb-ed-light .canvas-section-play-btn { background: #0a0a0a; color: #fff; }
 body.rb-ed-light .canvas-section-play-btn:hover { background: #1a1a1a; }
@@ -4901,12 +4938,12 @@ body.rb-ed-light .canvas-section-frame.selected {
   transform: translateX(-50%);
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  grid-auto-rows: calc(3px / max(0.4, var(--canvas-scale, 1)));
-  gap: calc(2px / max(0.4, var(--canvas-scale, 1)));
+  grid-auto-rows: calc(3px / var(--chrome-scale, 1));
+  gap: calc(2px / var(--chrome-scale, 1));
   padding:
-    calc(4px / max(0.4, var(--canvas-scale, 1)))
-    calc(6px / max(0.4, var(--canvas-scale, 1)));
-  border-radius: calc(7px / max(0.4, var(--canvas-scale, 1)));
+    calc(4px / var(--chrome-scale, 1))
+    calc(6px / var(--chrome-scale, 1));
+  border-radius: calc(7px / var(--chrome-scale, 1));
   background: transparent;
   cursor: grab;
   pointer-events: auto;
@@ -4919,8 +4956,8 @@ body.rb-ed-light .canvas-section-frame.selected {
   background: rgba(255, 255, 255, 0.1);
 }
 .canvas-section-grip span {
-  width: calc(3px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(3px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(3px / var(--chrome-scale, 1));
+  height: calc(3px / var(--chrome-scale, 1));
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.55);
 }
@@ -4954,20 +4991,20 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
 .canvas-section-edge-s {
   left: 24px;
   right: 24px;
-  height: calc(12px / max(0.4, var(--canvas-scale, 1)));
+  height: calc(12px / var(--chrome-scale, 1));
   cursor: ns-resize;
 }
-.canvas-section-edge-n { top: calc(-6px / max(0.4, var(--canvas-scale, 1))); }
-.canvas-section-edge-s { bottom: calc(-6px / max(0.4, var(--canvas-scale, 1))); }
+.canvas-section-edge-n { top: calc(-6px / var(--chrome-scale, 1)); }
+.canvas-section-edge-s { bottom: calc(-6px / var(--chrome-scale, 1)); }
 .canvas-section-edge-w,
 .canvas-section-edge-e {
   top: 24px;
   bottom: 24px;
-  width: calc(12px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(12px / var(--chrome-scale, 1));
   cursor: ew-resize;
 }
-.canvas-section-edge-w { left: calc(-6px / max(0.4, var(--canvas-scale, 1))); }
-.canvas-section-edge-e { right: calc(-6px / max(0.4, var(--canvas-scale, 1))); }
+.canvas-section-edge-w { left: calc(-6px / var(--chrome-scale, 1)); }
+.canvas-section-edge-e { right: calc(-6px / var(--chrome-scale, 1)); }
 .canvas-section-handle-nw {
   top: -10px;
   left: -10px;
@@ -4990,12 +5027,12 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
      and a world-constant offset overlaps the border when zoomed OUT.
      max(world, screen) fixes both: the world term (12px) tracks the corner on
      zoom-in; the screen floor (7px) keeps a small inside-margin on zoom-out. */
-  bottom: max(12px, calc(7px / max(0.4, var(--canvas-scale, 1))));
-  right: max(12px, calc(7px / max(0.4, var(--canvas-scale, 1))));
+  bottom: max(12px, calc(7px / var(--chrome-scale, 1)));
+  right: max(12px, calc(7px / var(--chrome-scale, 1)));
   /* Hit area inverse-scaled and -50% from prior pass (56 -> 28). Icon
      stays stable on screen at any zoom. */
-  width: calc(28px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(28px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(28px / var(--chrome-scale, 1));
+  height: calc(28px / var(--chrome-scale, 1));
   cursor: nwse-resize;
   /* -30% opacity from .45 -> .315 — discreet affordance, not a CTA. */
   color: rgba(255, 255, 255, 0.315);
@@ -5020,8 +5057,8 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
 /* Resize icon -50% from prior pass (48 -> 24), still inverse-scaled
    so it reads as a stable ~24px on screen across the zoom range. */
 .canvas-section-handle-se svg {
-  width: calc(24px / max(0.4, var(--canvas-scale, 1)));
-  height: calc(24px / max(0.4, var(--canvas-scale, 1)));
+  width: calc(24px / var(--chrome-scale, 1));
+  height: calc(24px / var(--chrome-scale, 1));
 }
 body.rb-ed-light .canvas-section-handle-se { color: rgba(0, 0, 0, 0.35); }
 body.rb-ed-light .canvas-section-handle-se:hover { color: rgba(0, 0, 0, 0.7); }
@@ -5297,11 +5334,11 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
      express it in the node's world units. line-height:1 keeps it predictable. */
   top: 100%;
   bottom: auto;
-  margin-top: calc(max(10.14px, 18.6576px * max(0.15, var(--canvas-scale, 1))) / max(0.4, var(--canvas-scale, 1)));
+  margin-top: calc(max(10.14px, 18.6576px * max(0.15, var(--canvas-scale, 1))) / var(--chrome-scale, 1));
   line-height: 1;
   /* Font scales naturally until 15% zoom, then LOCKS at the 15% on-screen size
      (keeps shrinking with the node down to 15%, then holds). */
-  font-size: calc(20px * max(0.15, var(--canvas-scale, 1)) / max(0.4, var(--canvas-scale, 1)));
+  font-size: calc(20px * max(0.15, var(--canvas-scale, 1)) / var(--chrome-scale, 1));
   font-family: inherit;
   letter-spacing: 0.04em;
   color: var(--text-primary);
@@ -5322,13 +5359,13 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
      outside it), so the body's rounded corners can't clip the image — round
      the image ITSELF with the same radius as .cnode-body. Keep in sync with
      the body radius (5.5px, 4.4px below 30% zoom). */
-  border-radius: calc(11.25px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(11.25px / var(--chrome-scale, 1));
   display: block;
   user-select: none;
   -webkit-user-drag: none;
 }
 html.canvas-zoom-below-30 .cnode-asset-img {
-  border-radius: calc(9px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(9px / var(--chrome-scale, 1));
 }
 body.rb-ed-light .cnode-body-asset { background: #ECECF0; }
 
@@ -5805,7 +5842,7 @@ body.rb-ed-light .border-trail-dot {
      node's OUTER edge — `inset: 0` would sit it inside the border, making
      the ring read slightly narrower than the card. Combined with the SVG's
      viewBox = node offset dimensions, the ring traces the true frame. */
-  inset: calc(-1px / max(0.4, var(--canvas-scale, 1)));
+  inset: calc(-1px / var(--chrome-scale, 1));
   pointer-events: none;
   z-index: 3;                            /* above the loading overlay (z-index 2) */
 }
@@ -5873,7 +5910,7 @@ body.rb-ed-light .border-trail-dot {
   pointer-events: none;
   overflow: hidden;
   border-radius: 0 0
-    calc(10px / max(0.4, var(--canvas-scale, 1))) calc(10px / max(0.4, var(--canvas-scale, 1)));
+    calc(10px / var(--chrome-scale, 1)) calc(10px / var(--chrome-scale, 1));
 }
 /* Empty node: nothing behind to blur — match the topbar offblack so the
    whole generating node reads as one continuous surface (no blue card). */
@@ -7175,7 +7212,7 @@ body.rb-ed-light .edge-label-pill {
   /* gap from the node — constant on-screen down to 35% zoom, then the gap
      stops growing (floored at 0.35) so it tracks the shrinking node below that
      instead of drifting far away on deep zoom-out. */
-  top: calc(100% + 22px / max(0.4, var(--canvas-scale, 1)));
+  top: calc(100% + 22px / var(--chrome-scale, 1));
   left: 0;
   right: 0;
   display: flex;
@@ -7219,7 +7256,7 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
   border: 0;
   /* same rounding curve as the node, but the progressive growth stops at 25%
      zoom (floor 0.25) instead of 15%. */
-  border-radius: calc(10px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(10px / var(--chrome-scale, 1));
   overflow: hidden;
   background: #0f0f0f;
   cursor: pointer;
@@ -7234,8 +7271,8 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
    marker ring; every other thumbnail has no outline. */
 .cnode-version-thumb.is-active {
   box-shadow:
-    0 0 0 calc(2px / max(0.4, var(--canvas-scale, 1))) #0f0f0f,
-    0 0 0 calc(5px / max(0.4, var(--canvas-scale, 1))) #5e5e5e,
+    0 0 0 calc(2px / var(--chrome-scale, 1)) #0f0f0f,
+    0 0 0 calc(5px / var(--chrome-scale, 1)) #5e5e5e,
     0 6px 18px rgba(0, 0, 0, 0.35);
 }
 .cnode-version-thumb img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -7249,7 +7286,7 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
   aspect-ratio: 1 / 1;
   display: inline-flex; align-items: center; justify-content: center;
   border: 0;
-  border-radius: calc(10px / max(0.4, var(--canvas-scale, 1)));
+  border-radius: calc(10px / var(--chrome-scale, 1));
   background: rgba(40, 40, 46, 0.7);
   color: rgba(255, 255, 255, 0.49);   /* 30% more transparent than the prior 0.7 */
   cursor: pointer;
@@ -7274,7 +7311,7 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
   /* Lock factor: at zoom ≥ 40% the list sizes naturally with the node (cqw);
      below 40% it STOPS scaling and holds its 40%-zoom on-screen size. Multiply
      every cqw dimension by this so the whole list locks together. */
-  --vm-lock: calc(max(0.40, var(--canvas-scale, 1)) / max(0.4, var(--canvas-scale, 1)));
+  --vm-lock: calc(max(0.40, var(--canvas-scale, 1)) / var(--chrome-scale, 1));
   /* width:max-content fits the rows so nothing crops; no longer capped to the
      node width since the menu now sits beside the node, not under it. */
   /* width:max-content fits the rows so nothing crops; no longer capped to the
@@ -7345,27 +7382,27 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
   /* Inverse-scaled (15% floor, matching .cnode-expand-float) so the chip holds
      a stable on-screen size at any zoom instead of rendering tiny when zoomed
      out. Centered horizontally at the base of the node. */
-  bottom: calc(16px / max(0.4, var(--canvas-scale, 1)));
+  bottom: calc(16px / var(--chrome-scale, 1));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: calc(4px / max(0.4, var(--canvas-scale, 1)));
-  padding: calc(4px / max(0.4, var(--canvas-scale, 1)));
+  gap: calc(4px / var(--chrome-scale, 1));
+  padding: calc(4px / var(--chrome-scale, 1));
   background: rgba(20, 20, 24, 0.92);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: calc(999px / max(0.4, var(--canvas-scale, 1)));
-  box-shadow: 0 calc(8px / max(0.4, var(--canvas-scale, 1))) calc(24px / max(0.4, var(--canvas-scale, 1))) rgba(0, 0, 0, 0.45);
-  box-shadow: 0 round(nearest, calc(8px / max(0.4, var(--canvas-scale, 1))), 1px) round(nearest, calc(24px / max(0.4, var(--canvas-scale, 1))), 1px) rgba(0, 0, 0, 0.45);
+  border-radius: calc(999px / var(--chrome-scale, 1));
+  box-shadow: 0 calc(8px / var(--chrome-scale, 1)) calc(24px / var(--chrome-scale, 1)) rgba(0, 0, 0, 0.45);
+  box-shadow: 0 round(nearest, calc(8px / var(--chrome-scale, 1)), 1px) round(nearest, calc(24px / var(--chrome-scale, 1)), 1px) rgba(0, 0, 0, 0.45);
   z-index: 15;
 }
 .cnode-version-confirm-cancel,
 .cnode-version-confirm-restore {
-  padding: calc(6px / max(0.4, var(--canvas-scale, 1))) calc(12px / max(0.4, var(--canvas-scale, 1)));
-  border-radius: calc(999px / max(0.4, var(--canvas-scale, 1)));
-  font-size: calc(13px / max(0.4, var(--canvas-scale, 1)));
+  padding: calc(6px / var(--chrome-scale, 1)) calc(12px / var(--chrome-scale, 1));
+  border-radius: calc(999px / var(--chrome-scale, 1));
+  font-size: calc(13px / var(--chrome-scale, 1));
   cursor: pointer;
   white-space: nowrap;
   border: 1px solid transparent;
@@ -7640,7 +7677,7 @@ body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
 .cnode-topbar { display: none !important; }
 
 .cnode-float-tag {
-  --fs: max(0.4, var(--canvas-scale, 1));
+  --fs: var(--chrome-scale, 1);
   position: absolute;
   /* 16px breathing room (was 8 — read as glued to the frame). */
   bottom: calc(100% + 16px / var(--fs));
@@ -7698,7 +7735,7 @@ html.canvas-zoom-low .cnode-anchor-title {
 html.canvas-zoom-low .cnode-anchor-title:active { cursor: grabbing; }
 
 .cnode-float-actions {
-  --fs: max(0.4, var(--canvas-scale, 1));
+  --fs: var(--chrome-scale, 1);
   position: absolute;
   /* 16px breathing room (was 8 — read as glued to the frame). */
   bottom: calc(100% + 16px / var(--fs));
@@ -7769,7 +7806,7 @@ body.rb-ed-light .cnode-float-cancel {
 .cnode-port-right::before {
   content: '';
   position: absolute;
-  inset: calc(-13px / max(0.4, var(--canvas-scale, 1)));
+  inset: calc(-13px / var(--chrome-scale, 1));
   border-radius: 50%;
 }
 
@@ -7906,4 +7943,14 @@ html.canvas-interacting .cnode-prompt-hint { opacity: 0 !important; }
 }
 @media (prefers-reduced-motion: reduce) {
   .edge-dying-line { display: none; }
+}
+
+/* World-lock experiment (2026-07-06): pin the chrome divisor to 1 — all
+   canvas chrome scales with the world (no counter-scaling anywhere).
+   Toggled with Alt/⌥+W on the canvas (persisted in localStorage). Known
+   caveats while experimenting: the 2-3 rules floored at 0.5 (anchor-title
+   font, selected progress-ring shadow) and the SVG cord strokes
+   (vector-effect: non-scaling-stroke) stay screen-constant. */
+html.canvas-worldlock {
+  --chrome-scale: 1;
 }

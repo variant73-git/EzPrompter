@@ -1,10 +1,27 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { readCanvasScale } from './canvas-scale.js';
+import { readCanvasScale, chromeScale, isWorldlockChrome } from './canvas-scale.js';
 
 afterEach(() => {
   delete window.__uncraftZoom;
+  document.documentElement.classList.remove('canvas-worldlock');
   vi.restoreAllMocks();
+});
+
+describe('chromeScale', () => {
+  it('floors the zoom at 0.4 normally', () => {
+    expect(chromeScale(0.8)).toBe(0.8);
+    expect(chromeScale(0.2)).toBe(0.4);
+    expect(chromeScale(undefined)).toBe(1);
+  });
+
+  it('pins to 1 under the world-lock experiment', () => {
+    document.documentElement.classList.add('canvas-worldlock');
+    expect(isWorldlockChrome()).toBe(true);
+    expect(chromeScale(0.8)).toBe(1);
+    expect(chromeScale(0.2)).toBe(1);
+    expect(chromeScale(2.5)).toBe(1);
+  });
 });
 
 describe('readCanvasScale', () => {
