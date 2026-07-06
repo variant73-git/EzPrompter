@@ -22,7 +22,7 @@ import Minimap from './Minimap.jsx';
 import ChallengeModal from './ChallengeModal.jsx';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
-import { findSectionTerminals, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
+import { findSectionTerminals, planSectionRun, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
 import { estimateChain, estimateOp } from '../lib/billing/pricing.js';
 import { clampToViewport } from '../lib/menu-position.js';
 import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
@@ -2938,8 +2938,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // the play button is hidden for them, this is the backstop.
     if (s.hasEdges === false) return;
 
-    const { terminals, unsupportedKind } = findSectionTerminals(s, nodes, edges);
-    if (!terminals.length) {
+    const { stages, unsupportedKind } = planSectionRun(s, nodes, edges);
+    if (!stages.length) {
       if (unsupportedKind) {
         toast.info(`This workflow ends in a ${unsupportedKind === 'designmd' ? '.md' : unsupportedKind} node — re-running it isn't supported yet.`);
       } else {
@@ -2948,18 +2948,22 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       return;
     }
 
-    // A section may fan out into SEVERAL results (one source → N derived
-    // terminals — first-class since anchored chains). Run every runnable
-    // terminal concurrently, each with its own progress affordance. The
-    // section only goes "clean" when ALL of them succeeded — a partial
-    // failure leaves the run buttons live so the user can retry.
-    const outcomes = await Promise.all(terminals.map((t) => runSectionTerminal(t)));
-    if (outcomes.length && outcomes.every(Boolean)) markSectionPendingClean(s.id);
+    // Cascade executor: the whole graph runs, whatever its shape. Stages
+    // are dependency-ordered (sources produce before their derivations
+    // compose); nodes within a stage are independent and run in parallel,
+    // each with its own progress affordance. A failed stage ABORTS the
+    // cascade — downstream nodes would compose from stale/failed inputs —
+    // and the section stays dirty so the user can retry.
+    for (const stage of stages) {
+      const outcomes = await Promise.all(stage.map((n) => runSectionNode(n)));
+      if (!outcomes.every(Boolean)) return;
+    }
+    markSectionPendingClean(s.id);
   }
 
-  // Execute ONE terminal of a section run. Returns true on success; failures
+  // Execute ONE node of a section run. Returns true on success; failures
   // toast individually and return false (the section stays dirty).
-  async function runSectionTerminal(terminal) {
+  async function runSectionNode(terminal) {
     const terminalId = terminal.id;
 
     // Site terminal → compose engine. runOneTarget drives the 3-step
@@ -3780,7 +3784,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         e.preventDefault();
         const on = document.documentElement.classList.toggle('canvas-worldlock');
         try { localStorage.setItem('uncraft-worldlock', on ? '1' : '0'); } catch {}
-        toast(on
+        toast.info(on
           ? 'World-lock experiment: ON — chrome scales with the world (⌥W to revert)'
           : 'World-lock experiment: OFF — chrome back to screen-constant');
       }
