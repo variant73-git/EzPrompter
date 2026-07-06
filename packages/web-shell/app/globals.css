@@ -7895,10 +7895,14 @@ html.canvas-interacting .cnode-prompt-hint { opacity: 0 !important; }
   /* Same resting opacity as .edge-line-base — the live→dying hand-off
      must not pop. */
   opacity: 0.55;
-  animation: edge-retract 230ms ease-in forwards;
+  /* 300ms with the fade held until the tail end (2026-07-04 tune): the
+     RETRACTION is the effect — an early fade read as a plain vanish. */
+  animation: edge-retract 300ms ease-in forwards;
 }
 @keyframes edge-retract {
-  to { stroke-dashoffset: 1; opacity: 0; }
+  0%   { stroke-dashoffset: 0; opacity: 0.55; }
+  70%  { opacity: 0.5; }
+  100% { stroke-dashoffset: 1; opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .edge-dying-line { display: none; }

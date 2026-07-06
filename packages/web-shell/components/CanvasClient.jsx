@@ -1111,9 +1111,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       await api.updateNode(node.id, { posX: finalX, posY: finalY, meta });
     };
 
-    // Adopt — dropped while a section preview was active.
+    // Adopt — dropped while a section preview was active. Re-joining
+    // explicitly clears a previous removal opt-out.
     if (preview && preview.nodeId === node.id) {
       const meta = { ...(node.meta || {}), adoptedInto: preview.rootId };
+      delete meta.sectionOptOut;
       setSectionFrames((prev) => {
         const next = { ...prev, [preview.sectionId]: preview.rect };
         // Retire the node's singleton frame; if it came from ANOTHER
@@ -1544,10 +1546,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const siblingIds = own.memberIds.filter((id) => id !== node.id);
     const sibs = nodes.filter((n) => siblingIds.includes(n.id));
     const frame = sectionCoreRect(sibs);   // padded bbox of the REMAINING members
-    const GAP = 80;
+    // Land CLEAR of the geometric-absorption zone: the sections memo
+    // re-swallows any component sitting within the core + default gaps
+    // (SECTION_UNIFORM_GAP) — the old 80px drop was INSIDE that zone, so
+    // the removed node re-joined on the next derive ("can't remove" bug).
+    const GAP = SECTION_UNIFORM_GAP + 40;
     const finalX = Math.max(frame.left, node.pos_x);
     const finalY = frame.bottom + GAP;     // clear below the (shrunken) frame
-    commitNodeRemoval(node, finalX, finalY, { sectionId: own.id });
+    commitNodeRemoval(node, finalX, finalY, { sectionId: own.id, rootId: own.rootId });
   }
 
   // Cancel an armed removal — the node stays a member, edges + adoption intact.
@@ -1571,9 +1577,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         if (!String(e.id).startsWith('temp-')) api.deleteEdge(e.id).catch(console.warn);
       }
     }
-    // Clear adoption + persist final position.
+    // Clear adoption + persist final position. The opt-out marker keeps the
+    // geometric absorption in the sections memo from re-swallowing a node
+    // the user EXPLICITLY removed (dropping near the frame lands inside the
+    // default-gap absorption zone). Cleared on drag re-adoption / re-wire.
     const meta = { ...(node.meta || {}) };
     delete meta.adoptedInto;
+    if (arm?.rootId && !String(arm.rootId).startsWith('temp-')) meta.sectionOptOut = arm.rootId;
     clearTimeout(dragNodeServer.current.get(node.id));
     dragNodeServer.current.delete(node.id);
     setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, pos_x: finalX, pos_y: finalY, meta } : n)));
@@ -3424,16 +3434,37 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   }
 
   async function handleDeleteEdge(edge) {
+    // Membership survives the scissors (2026-07-06, user rule): cutting a
+    // cord must NOT expel anyone from the section. An endpoint left with
+    // ZERO real edges would fall out of the connected component on the
+    // next derive — latch it with meta.adoptedInto = the section's root
+    // (the same virtual link drag-adoption uses) BEFORE the edge goes.
+    const own = sections.find((s) =>
+      s.memberIds.includes(edge.source_node_id) && s.memberIds.includes(edge.target_node_id));
+    const remaining = edges.filter((x) => x.id !== edge.id);
+    if (own && own.rootId && !String(own.rootId).startsWith('temp-')) {
+      for (const endId of [edge.source_node_id, edge.target_node_id]) {
+        if (endId === own.rootId || String(endId).startsWith('temp-')) continue;
+        const stillWired = remaining.some((x) => x.source_node_id === endId || x.target_node_id === endId);
+        if (stillWired) continue;
+        const n = nodes.find((nn) => nn.id === endId);
+        if (!n || n.meta?.adoptedInto === own.rootId) continue;
+        const meta = { ...(n.meta || {}), adoptedInto: own.rootId };
+        delete meta.sectionOptOut;
+        setNodes((prev) => prev.map((nn) => (nn.id === endId ? { ...nn, meta } : nn)));
+        api.updateNode(endId, { meta }).catch(console.warn);
+      }
+    }
     setEdges((prev) => prev.filter((x) => x.id !== edge.id));
     setSelectedEdgeId(null);
     setPopupPos(null);
-    // Retract animation: the severed cord lingers ~240ms as a "dying" edge
+    // Retract animation: the severed cord lingers ~300ms as a "dying" edge
     // (rendered by EdgeLayer with the retract keyframes) instead of
     // vanishing on the spot. Local-only — the server delete runs now.
     setDyingEdges((prev) => [...prev, edge]);
     setTimeout(() => {
       setDyingEdges((prev) => prev.filter((e) => e.id !== edge.id));
-    }, 260);
+    }, 330);
     await api.deleteEdge(edge.id).catch(console.warn);
   }
 
@@ -3986,6 +4017,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             // Every member of i must sit inside host j's core.
             const allIn = components[i].every((id) => centerInside(geomNode(id), r));
             if (!allIn) continue;
+            // Explicit-removal opt-out: a node the user pulled OUT of this
+            // section must not be geometrically re-absorbed by it. The
+            // marker stores the host's root (a member id); re-adoption by
+            // drag or a new cord clears it.
+            const optedOut = components[i].some((id) => {
+              const oo = nodeById.get(id)?.meta?.sectionOptOut;
+              return oo && components[j].includes(oo);
+            });
+            if (optedOut) continue;
             // Smallest containing core = the most specific host.
             const area = (r.right - r.left) * (r.bottom - r.top);
             if (area < bestArea) { bestArea = area; bestJ = j; }
