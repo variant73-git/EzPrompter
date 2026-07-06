@@ -10,14 +10,12 @@ const WORLD_HEIGHT = 6000;
 // Port positions match the .cnode-port-right / .cnode-port-stack-left CSS:
 // the right port sits on the node's vertical mid-line. The left side is a
 // vertical stack of input slots — slotIndex picks WHICH slot in the stack.
-// SLOT_SIZE/SLOT_GAP mirror the globals.css numbers but in *screen* px;
-// the CSS divides by --canvas-scale so the rendered circles stay the same
-// on-screen size at any zoom. nodePort applies the same inverse-scale to
-// place its endpoint at the actual circle centre — without this, at low
-// zoom the cord landed between slots instead of in their middles.
+// Since the 2026-07-06 hybrid, ports are WORLD-LOCKED (fixed world px in
+// the CSS — part of the node's body), so these constants are plain world
+// units with no inverse-scaling on either side.
 const SLOT_SIZE = 19;
 const SLOT_GAP = 6;
-// Ports sit this many SCREEN px OUTSIDE the node edge (a short gap so the
+// Ports sit this many WORLD px OUTSIDE the node edge (a short gap so the
 // dots float just off the frame). Cord endpoints shift out by the same amount
 // so they meet the dots. MUST match the CSS port offsets (.cnode-port-right /
 // .cnode-port-stack-left) and CanvasClient.findSnapTarget's PORT_GAP.
@@ -26,16 +24,17 @@ const PORT_GAP = 11.385;
 function nodePort(n, side, measuredH, slotIndex = 0, slotCount = 1, scale = 1) {
   const h = measuredH ?? n.height ?? 800;
   const midY = n.pos_y + h / 2;
-  // chromeScale mirrors the CSS `--chrome-scale` divisor (0.4-floored
-  // zoom, or 1 under the world-lock experiment) — endpoints must land
-  // where the CSS-positioned circles are.
-  const s = chromeScale(scale);
-  const gap = PORT_GAP / s;   // screen-constant outward offset → world
+  // HYBRID (2026-07-06): ports are part of the node BODY and world-locked —
+  // the CSS positions/sizes them in fixed world px now, so the endpoint
+  // math uses the same fixed values (no scale division). `scale` stays in
+  // the signature for the callers; only screen-constant chrome still
+  // divides (see chromeScale usages below).
+  const gap = PORT_GAP;
   if (side === 'right') {
     return { x: n.pos_x + n.width + gap, y: midY };
   }
-  const slotSize = SLOT_SIZE / s;
-  const slotGap = SLOT_GAP / s;
+  const slotSize = SLOT_SIZE;
+  const slotGap = SLOT_GAP;
   const totalH = slotCount * slotSize + Math.max(0, slotCount - 1) * slotGap;
   const stackTop = midY - totalH / 2;
   return {

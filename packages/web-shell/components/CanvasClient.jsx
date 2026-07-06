@@ -3238,19 +3238,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (!sourceNodeId) return null;
     const w = clientToWorld(transformRef, clientX, clientY);
     const scale = transformRef.current?.instance?.transformState?.scale || 1;
-    // chromeScale mirrors the CSS `--chrome-scale` divisor (0.4-floored
-    // zoom, or 1 under world-lock) so the snap target lands exactly on the
-    // CSS-positioned circles — AND caps the snap reach at low zoom
-    // (unfloored, 56/scale ballooned to hundreds of world px below 30%,
-    // auto-connecting cords from far away).
-    const s = chromeScale(scale);
-    const radiusWorld = SNAP_RADIUS_SCREEN / s;
-    // CSS sizes the circles in 1/scale world units (constant on screen,
-    // clamped at 0.4). Slot Y math has to do the same or the snap target
-    // lands between circles instead of on them.
-    const slotSize = SLOT_SIZE / s;
-    const slotGap = SLOT_GAP / s;
-    const gap = PORT_GAP / s;   // receiver ports float left of the edge
+    // Snap REACH stays screen-constant-with-floor (interaction feel);
+    // the slot GEOMETRY is world-locked since the 2026-07-06 hybrid —
+    // CSS positions the circles in fixed world px, so the target math
+    // uses the same fixed values or the snap lands between circles.
+    const radiusWorld = SNAP_RADIUS_SCREEN / chromeScale(scale);
+    const slotSize = SLOT_SIZE;
+    const slotGap = SLOT_GAP;
+    const gap = PORT_GAP;   // receiver ports float left of the edge
     let best = null, bestDist = Infinity;
     for (const n of nodes) {
       if (n.id === sourceNodeId) continue;

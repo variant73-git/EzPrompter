@@ -2502,7 +2502,11 @@ html, body { overscroll-behavior: none; }
   /* Corner radius holds ~10px on screen down to 15% zoom, then (floored at
      0.15, matching the topbar's --tb) shrinks proportionally as you zoom
      further out — so the rounding doesn't balloon relative to the tiny node. */
-  border-radius: calc(17.25px / var(--chrome-scale, 1));
+  /* HYBRID (2026-07-06): the node BODY is world-locked — frame radius,
+     border, breathing and ports are physical parts of the node and scale
+     with the world (fixed px). Labels/tools/hit-areas stay screen-
+     constant via --chrome-scale. */
+  border-radius: 17.25px;
   /* Beyond 30% zoom-out, tighten all three concentric node radii by 20%
      (11.5→9.2, topbar/body 5.5→4.4) so the rounding stays proportional. */
   /* (overrides defined just below for html.canvas-zoom-below-30) */
@@ -2513,23 +2517,19 @@ html, body { overscroll-behavior: none; }
      origin stroke on the unselected node. Per-origin colour set by
      .cnode.origin-* below. (When selected, the border goes transparent and
      the 3px box-shadow ring takes over.) */
-  border: calc(2px / var(--chrome-scale, 1)) solid rgba(255, 255, 255, 0.10);
-  /* Pixel-snap (perf phase 2): fractional widths flip between pixel grids
-     on every zoom tick — the "shimmering border" artifact. round() makes
-     the used value change only at whole-px crossings. Fallback above. */
-  border-width: round(nearest, calc(2px / var(--chrome-scale, 1)), 1px);
+  border: 2px solid rgba(255, 255, 255, 0.10);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   transition: box-shadow 0.15s, border-color 0.15s;
   /* 4px (on-screen, floored at 15% zoom like the radius) breathing gap
      between the inner content frame and the border. Padding insets only the
      flow children (topbar + body); absolutely-positioned chrome (ports,
      progress ring) is anchored to the border edge and is unaffected. */
-  padding: calc(4px / var(--chrome-scale, 1));
+  padding: 4px;
   display: flex;
   flex-direction: column;
   /* Same 4px breathing between the topbar panel and the body panel as around
      the outside, so both read as separated rounded panels. */
-  gap: calc(4px / var(--chrome-scale, 1));
+  gap: 4px;
   /* overflow:visible so the right-side connector port can stick out beyond
      the node frame. Topbar + body now individually round their own corners
      (top vs bottom) to keep the unified rounded-shape look. */
@@ -2539,13 +2539,13 @@ html, body { overscroll-behavior: none; }
 /* Beyond 30% zoom-out: node radii −20% (kept concentric across the three
    frame layers). Toggled by .canvas-zoom-below-30 on <html>. */
 html.canvas-zoom-below-30 .cnode {
-  border-radius: calc(13.8px / var(--chrome-scale, 1));
+  border-radius: 13.8px;
 }
 html.canvas-zoom-below-30 .cnode-topbar {
-  border-radius: calc(9px / var(--tb));
+  border-radius: 9px;
 }
 html.canvas-zoom-below-30 .cnode-body {
-  border-radius: calc(9px / var(--chrome-scale, 1));
+  border-radius: 9px;
 }
 
 /* Per-origin node borders. Edge stroke colors live in node-origin.js and
@@ -2637,7 +2637,7 @@ html.canvas-zoom-below-30 .cnode-body {
   /* All four corners rounded. Radius = outer 17.25px − the 6px inset (2px
      border + 4px gap) so the topbar's corners nest CONCENTRICALLY inside the
      node's outer radius instead of curving away from it. */
-  border-radius: calc(11.25px / var(--tb));
+  border-radius: 11.25px;
   display: flex;
   align-items: center;
   padding: 0 var(--tbgap);
@@ -3047,8 +3047,8 @@ body.rb-ed-light .cnode-expand-float:hover {
   transition: opacity 160ms ease;
   /* Follows the content's rounded bottom corners (asset bodies don't clip —
      overflow:visible — so the overlay must round itself like the image). */
-  border-bottom-left-radius: calc(11.25px / var(--chrome-scale, 1));
-  border-bottom-right-radius: calc(11.25px / var(--chrome-scale, 1));
+  border-bottom-left-radius: 11.25px;
+  border-bottom-right-radius: 11.25px;
 }
 /* Pill in the bottom-LEFT, vertically aligned with the expand floater on the
    bottom-right (same 16px inset + 15% inverse-scale floor). */
@@ -3602,7 +3602,7 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
      extreme zoom-out instead of ballooning. All four corners rounded.
      Radius = outer 17.25px − the 6px inset (2px border + 4px gap) so the body's
      corners nest CONCENTRICALLY inside the node's outer radius. */
-  border-radius: calc(11.25px / var(--chrome-scale, 1));
+  border-radius: 11.25px;
   overflow: hidden;
   flex: 0 0 auto;
   /* Offblack, NOT white: at fractional zoom the iframe/img can miss the
@@ -3631,9 +3631,9 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
   /* -20.51 = the old -9.125 (dot centred on the border edge) + 11.385px PORT_GAP
      so the dot floats just OUTSIDE the node. The cord endpoint shifts out by the
      same 11.385px (EdgeLayer.PORT_GAP) so they still meet. Keep all three in sync. */
-  right: calc(-20.51px / var(--chrome-scale, 1));
-  width: calc(14.25px / var(--chrome-scale, 1));
-  height: calc(14.25px / var(--chrome-scale, 1));
+  right: -20.51px;
+  width: 14.25px;
+  height: 14.25px;
   transform: translateY(-50%);
   border-radius: 50%;
   /* No backdrop-filter here: this dot exists on EVERY node inside the
@@ -3699,25 +3699,23 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
   /* -20.51 = -9.125 (border-edge correction) + 11.385px PORT_GAP so the receiver
      dots float just OUTSIDE the node's left edge; the cord endpoints shift out
      by the same 11.385px (EdgeLayer + findSnapTarget). Keep all three in sync. */
-  left: calc(-20.51px / var(--chrome-scale, 1));
+  left: -20.51px;
   top: 50%;
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
-  gap: calc(6px / var(--chrome-scale, 1));
+  gap: 6px;
   z-index: 5;
 }
 
 .cnode-port-left {
-  width: calc(14.25px / var(--chrome-scale, 1));
-  height: calc(14.25px / var(--chrome-scale, 1));
+  width: 14.25px;
+  height: 14.25px;
   border-radius: 50%;
-  background: rgba(26, 26, 26, 0.78);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  border: calc(1.5px / var(--chrome-scale, 1)) solid rgba(245, 245, 245, 0.85);
-  /* Pixel-snap — see .cnode border note. */
-  border-width: round(nearest, calc(1.5px / var(--chrome-scale, 1)), 1px);
+  /* No backdrop-filter (in-world rule — this slot exists on every node;
+     see the port-right note). Slightly higher alpha covers the blur. */
+  background: rgba(26, 26, 26, 0.9);
+  border: 1.5px solid rgba(245, 245, 245, 0.85);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3776,8 +3774,8 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
    right/left). Per-origin colour-coding still lives in the cord stroke
    + node ring; the port itself reads as a neutral dark-mode badge. */
 .cnode-port-dot {
-  width: calc(4.5px / var(--chrome-scale, 1));
-  height: calc(4.5px / var(--chrome-scale, 1));
+  width: 4.5px;
+  height: 4.5px;
   border-radius: 50%;
   background: rgba(245, 245, 245, 0.95);
   pointer-events: none;
@@ -3791,30 +3789,10 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
 .cnode-port-right:hover .cnode-port-dot,
 .cnode-port-left:hover  .cnode-port-dot { background: #fff; }
 
-/* Below 20% canvas zoom the ports were starting to swallow the
-   shrinking node frames. 30% smaller (24 → 16.8 ≈ 17px on screen),
-   with the inner dot, the gap between stacked left ports, and the
-   ±12px offset all scaled to match. Constants in JS (EdgeLayer
-   nodePort + CanvasClient findSnapTarget) read SLOT_SIZE/SLOT_GAP =
-   24/8 unconditionally — those still produce slightly off-target
-   anchor positions at this zoom, but the visual mismatch is well
-   under a screen pixel and not worth threading the override down. */
-html.canvas-zoom-very-low .cnode-port-right,
-html.canvas-zoom-very-low .cnode-port-left {
-  width: calc(10.5px / var(--chrome-scale, 1));
-  height: calc(10.5px / var(--chrome-scale, 1));
-}
-html.canvas-zoom-very-low .cnode-port-right {
-  right: calc(-16.635px / var(--chrome-scale, 1));   /* -5.25 + 11.385px PORT_GAP */
-}
-html.canvas-zoom-very-low .cnode-port-stack-left {
-  left: calc(-16.635px / var(--chrome-scale, 1));    /* -5.25 + 11.385px PORT_GAP */
-  gap: calc(4.5px / var(--chrome-scale, 1));
-}
-html.canvas-zoom-very-low .cnode-port-dot {
-  width: calc(3.375px / var(--chrome-scale, 1));
-  height: calc(3.375px / var(--chrome-scale, 1));
-}
+/* (The canvas-zoom-very-low port overrides were removed in the 2026-07-06
+   hybrid: ports are world-locked now, so they shrink with the frames
+   naturally — the special-case shrink (and its documented JS anchor
+   mismatch) became redundant.) */
 
 /* Per-origin tint resolution. Mirrors ORIGIN_COLORS in lib/node-origin.js
    and the .cnode.origin-* border colours above. */
@@ -5359,13 +5337,13 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
      outside it), so the body's rounded corners can't clip the image — round
      the image ITSELF with the same radius as .cnode-body. Keep in sync with
      the body radius (5.5px, 4.4px below 30% zoom). */
-  border-radius: calc(11.25px / var(--chrome-scale, 1));
+  border-radius: 11.25px;
   display: block;
   user-select: none;
   -webkit-user-drag: none;
 }
 html.canvas-zoom-below-30 .cnode-asset-img {
-  border-radius: calc(9px / var(--chrome-scale, 1));
+  border-radius: 9px;
 }
 body.rb-ed-light .cnode-body-asset { background: #ECECF0; }
 
@@ -7945,12 +7923,10 @@ html.canvas-interacting .cnode-prompt-hint { opacity: 0 !important; }
   .edge-dying-line { display: none; }
 }
 
-/* World-lock experiment (2026-07-06): pin the chrome divisor to 1 — all
-   canvas chrome scales with the world (no counter-scaling anywhere).
-   Toggled with Alt/⌥+W on the canvas (persisted in localStorage). Known
-   caveats while experimenting: the 2-3 rules floored at 0.5 (anchor-title
-   font, selected progress-ring shadow) and the SVG cord strokes
-   (vector-effect: non-scaling-stroke) stay screen-constant. */
+/* World-lock experiment toggle (2026-07-06): pin the chrome divisor to 1.
+   After the HYBRID landed (node body world-locked with fixed px), this
+   flag only affects the remaining screen-constant chrome — labels, pills,
+   tooltips, handles, halos. Kept as a debug lever (Alt/⌥+W, persisted). */
 html.canvas-worldlock {
   --chrome-scale: 1;
 }
