@@ -22,7 +22,8 @@ import Minimap from './Minimap.jsx';
 import ChallengeModal from './ChallengeModal.jsx';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
-import { findSectionTerminals, planSectionRun, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
+import { findSectionTerminals, planIncrementalRun, planRunFromNode, nodeInputSignature, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
+import { buildNodesClipboardPayload, parseNodesClipboardText, payloadToPasteItems } from '../lib/node-clipboard.js';
 import { estimateChain, estimateOp } from '../lib/billing/pricing.js';
 import { clampToViewport } from '../lib/menu-position.js';
 import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
@@ -31,7 +32,7 @@ import {
   shouldTearOut, nodeCenter, pointInRect,
   selectGeometricMembersToLatch, TEAR_MARGIN,
 } from '../lib/section-membership.js';
-import { clampFrameToNeighbors, clampMoveToNeighbors } from '../lib/canvas-layout.js';
+import { clampFrameToNeighbors, clampMoveToNeighbors, planChainLayout, planSectionDeoverlap } from '../lib/canvas-layout.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -356,7 +357,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // during the gesture (rendered translucent like a placing node) until the
   // mouse is released, at which point it's persisted. Separate from
   // placingNodeId so it doesn't trip the click-to-drop placement effect.
-  const [altDupGhostId, setAltDupGhostId] = useState(null);
+  const [altDupGhostIds, setAltDupGhostIds] = useState(null); // Set<tempId> during an Alt+drag gesture
+  // Multi-selection group drag — anchor node + followers' start offsets.
+  const groupDragRef = useRef(null);
   // When a URL is added from the "+" toolbar, the temp placeholder is placed
   // with the ghost first; this stashes the capture to fire once it's dropped.
   const pendingUrlCaptureRef = useRef(null);
@@ -496,7 +499,51 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // alone. The window listener is bound once and reads the latest handlers
   // through a ref so it never closes over stale `nodes`/state.
   const pasteFnsRef = useRef(null);
-  pasteFnsRef.current = { handleQueueFiles, handleAddUrl };
+  pasteFnsRef.current = { handleQueueFiles, handleAddUrl, handlePasteNodes };
+  // Consecutive pastes of the same payload step further out each time so
+  // copies never stack invisibly. Reset on every fresh Cmd+C.
+  const pasteSeqRef = useRef(0);
+
+  // Cmd+C: copy the current selection — nodes AND the cords between them —
+  // as an internal JSON payload on the SYSTEM clipboard. Riding the system
+  // clipboard (instead of an app-local buffer) makes last-copy-wins natural
+  // against external content and lets a chain paste into another board.
+  const copyFnsRef = useRef(null);
+  copyFnsRef.current = {
+    buildSelectionClipboardPayload() {
+      let ids = null;
+      if (selectedNodeIds.size) ids = [...selectedNodeIds];
+      else if (selectedNodeId) ids = [selectedNodeId];
+      else if (selectedSectionId) {
+        const s = sections.find((x) => x.id === selectedSectionId);
+        ids = s ? [...s.memberIds] : null;
+      }
+      if (!ids || !ids.length) return null;
+      return buildNodesClipboardPayload(nodes.filter((n) => ids.includes(n.id)), edges);
+    },
+  };
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    function onCopy(e) {
+      // Never hijack a copy meant for text: focused fields, the chat dock,
+      // or an actual text selection on the page keep native behavior.
+      const t = e.target;
+      if (t && t.closest && t.closest('input, textarea, select, .prompt-dock')) return;
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+      const sel = window.getSelection && window.getSelection();
+      if (sel && String(sel).length) return;
+      const payload = copyFnsRef.current?.buildSelectionClipboardPayload?.();
+      if (!payload || !e.clipboardData) return;
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', JSON.stringify(payload));
+      pasteSeqRef.current = 0;
+      toast.info(`Copied ${payload.nodes.length} node${payload.nodes.length > 1 ? 's' : ''}.`);
+    }
+    window.addEventListener('copy', onCopy);
+    return () => window.removeEventListener('copy', onCopy);
+  }, []);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     function onPaste(e) {
@@ -529,8 +576,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       }
       if (files.length) { e.preventDefault(); fns.handleQueueFiles?.(files); return; }
 
-      // 3) A pasted URL → site node. Arbitrary text is left for normal paste.
       const text = ((cd.getData && cd.getData('text/plain')) || '').trim();
+
+      // 3) An internal Uncraft payload (Cmd+C on a selection) → re-create
+      //    the copied nodes + their cords, offset from the originals.
+      const nodesPayload = parseNodesClipboardText(text);
+      if (nodesPayload) {
+        e.preventDefault();
+        fns.handlePasteNodes?.(nodesPayload);
+        return;
+      }
+
+      // 4) A pasted URL → site node. Arbitrary text is left for normal paste.
       if (text && looksLikeUrl(text)) {
         const url = normalizeUrl(text);
         if (url) { e.preventDefault(); fns.handleAddUrl?.(url); }
@@ -877,6 +934,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
   function handleNodeMoveStart(node) {
     if (String(node.id).startsWith('temp-')) return;
+    // Multi-selection drag: capture the followers' offsets relative to the
+    // anchor at drag start; handleNodeMove applies the same delta to all.
+    groupDragRef.current = (selectedNodeIds.size > 1 && selectedNodeIds.has(node.id))
+      ? {
+          anchorId: node.id,
+          members: nodes
+            .filter((n) => selectedNodeIds.has(n.id) && n.id !== node.id && !String(n.id).startsWith('temp-'))
+            .map((n) => ({ id: n.id, dx: n.pos_x - node.pos_x, dy: n.pos_y - node.pos_y })),
+        }
+      : null;
     // Freeze this node's absorption geometry for the whole drag so a member's
     // live movement never reshapes its section's core (which would expel/absorb
     // other nodes mid-drag).
@@ -916,43 +983,126 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // the remaining-members core by TEAR_MARGIN. Until then the frame just
     // stretches (grow-only). Once armed, it stays armed for the rest of the
     // drag; the drop decides commit (outside) vs cancel (inside).
-    if (drag.ownSectionId && drag.remainingCore) {
+    //
+    // SECOND trigger — frame touch (2026-07-07, user spec): sections must
+    // never invade each other, so the MOMENT the stretch (own frame grown
+    // to follow the dragged node) would touch ANOTHER section, the node
+    // changes hands right there, mid-drag: it leaves A (which snaps back to
+    // its without-the-node size, clearing the intersection) and is swallowed
+    // by B (live engulf preview; the drop commits the hand-off).
+    if (drag.ownSectionId && drag.remainingCore && !removingRef.current) {
       const { cx, cy } = nodeCenter(node, posX, posY);
       // Scale the tear threshold inversely with zoom so it takes the SAME
       // on-screen pull to detach at any zoom — the further out (smaller
       // scale), the larger the world-space margin.
       const scale = readCanvasScale();
       const margin = TEAR_MARGIN / (scale > 0 ? scale : 1);
-      if (!removingRef.current && shouldTearOut(cx, cy, drag.remainingCore, margin)) {
+      const tearOut = shouldTearOut(cx, cy, drag.remainingCore, margin);
+      const touched = tearOut ? null : findFrameTouch(drag.ownSectionId, rect);
+      if (tearOut || touched) {
         const sec = sections.find((s) => s.id === drag.ownSectionId);
         const siblingIds = sec ? sec.memberIds.filter((id) => id !== node.id) : [];
         setRemovingSync({ nodeId: node.id, sectionId: drag.ownSectionId, rootId: drag.ownRootId, siblingIds, armX: node.pos_x, armY: node.pos_y });
-        if (adoptPreviewRef.current) setAdoptPreviewSync(null);
+        if (touched) {
+          // Swallowed at contact: B's engulf preview reaches out to the node
+          // where it is (same clearance the committed grow path uses).
+          setAdoptPreviewSync({ nodeId: node.id, sectionId: touched.id, rootId: touched.rootId, rect: engulfRect(touched, rect) });
+        } else if (adoptPreviewRef.current) {
+          setAdoptPreviewSync(null);
+        }
       }
     }
     // While a removal is armed for THIS node, drive the canvas-lighten by
-    // whether it's currently outside its (now member-fitted) section frame,
-    // and skip the join-another-section preview entirely.
+    // whether it's currently outside its (now member-fitted) section frame.
     if (removingRef.current && removingRef.current.nodeId === node.id) {
       const { cx, cy } = nodeCenter(node, posX, posY);
-      const rect = removalSectionRect(removingRef.current);
-      const inside = pointInRect(cx, cy, rect);
+      const ownRect = removalSectionRect(removingRef.current);
+      const inside = pointInRect(cx, cy, ownRect);
       // Dragged BACK inside before releasing → un-arm live so the node
       // returns to its natural colour immediately (no waiting for the drop).
       // Re-arms if pulled past the tear margin again. Menu-armed nodes stay
       // armed until an explicit Cancel/Escape/commit, so they're excluded.
+      // CRITICAL (2026-07-07): a frame-touch hand-off arms while the node
+      // centre is often STILL inside A's refitted frame — un-arming on
+      // `inside` alone made the arm oscillate every mousemove (net effect:
+      // nothing ever happened and A kept invading B). Only un-arm when
+      // re-adopting the node into A would no longer touch another section.
       if (inside && !removingRef.current.fromMenu) {
-        setRemovingSync(null);
+        const stillTouches = drag.ownSectionId ? findFrameTouch(drag.ownSectionId, rect) : null;
+        if (!stillTouches) {
+          setRemovingSync(null);
+          setRemovingOutside(false);
+          if (adoptPreviewRef.current) setAdoptPreviewSync(null);
+          return;
+        }
+        // Still in hand-off territory: stay armed, keep the receiving
+        // section's engulf latched on the node.
         setRemovingOutside(false);
+        updateAdoptCandidate(node, rect, { sticky: true, fallback: stillTouches });
         return;
       }
       setRemovingOutside(!inside);
+      // Cross-section hand-off (2026-07-07, user spec): an armed member
+      // dragged over ANOTHER section is swallowed by it DURING the drag —
+      // section A has already let go (the arm re-fitted its frame), so
+      // section B shows the live engulf preview and the drop commits the
+      // hand-off (cut cords from A + adopt into B). Sticky: once swallowed,
+      // B keeps the node (the engulf follows it) until it re-enters A or
+      // overlaps a different section.
+      if (!inside) updateAdoptCandidate(node, rect, { sticky: true });
+      else if (adoptPreviewRef.current) setAdoptPreviewSync(null);
       return;
     }
 
     // Only loose nodes (no real edge) can be ADOPTED into another section by
-    // dragging — edge-connected members already belong to their workflow.
+    // dragging — edge-connected members already belong to their workflow
+    // (an armed tear-out is the exception, handled above).
     if (!drag.isLoose) return;
+    updateAdoptCandidate(node, rect);
+  }
+
+  // Frame-touch test (2026-07-07): would the OWN section's frame, stretched
+  // to follow the dragged node (union + clearance), intersect ANOTHER
+  // section? Returns the touched section or null. While the node is armed
+  // for removal, the sections memo already excludes it from A, so `own`
+  // here is A's REFITTED rect — the test stays stable across the arm.
+  function findFrameTouch(ownSectionId, rect) {
+    const own = sections.find((s) => s.id === ownSectionId);
+    if (!own) return null;
+    const CLEAR = SECTION_MEMBER_CLEARANCE;
+    const stretched = {
+      left:   Math.min(own.x, rect.left - CLEAR),
+      top:    Math.min(own.y, rect.top - CLEAR),
+      right:  Math.max(own.x + own.width, rect.right + CLEAR),
+      bottom: Math.max(own.y + own.height, rect.bottom + CLEAR),
+    };
+    for (const s of sections) {
+      if (s.id === ownSectionId) continue;
+      if (String(s.rootId || '').startsWith('temp-')) continue;
+      if (stretched.left < s.x + s.width && stretched.right > s.x &&
+          stretched.top < s.y + s.height && stretched.bottom > s.y) return s;
+    }
+    return null;
+  }
+
+  // Engulf rect: section frame grown to contain the node with the same
+  // clearance the committed grow path uses ⇒ zero snap on drop.
+  function engulfRect(s, rect) {
+    const CLEAR = SECTION_MEMBER_CLEARANCE;
+    return {
+      left:   Math.min(s.x, rect.left - CLEAR),
+      top:    Math.min(s.y, rect.top - CLEAR),
+      right:  Math.max(s.x + s.width, rect.right + CLEAR),
+      bottom: Math.max(s.y + s.height, rect.bottom + CLEAR),
+    };
+  }
+
+  // Scan for the section a dragged node would join and drive the live
+  // engulf preview. Shared by the loose-node path and the armed cross-
+  // section hand-off. `sticky`: when nothing overlaps but a preview is
+  // already latched (the frame-touch hand-off), keep it and let its engulf
+  // follow the node instead of dropping it.
+  function updateAdoptCandidate(node, rect, opts = {}) {
     // NOTE: a node drag must NEVER translate a section frame. The frame only
     // expands/retracts to fit its members (grow-only derivation + shrink on
     // membership change) — moving the WHOLE section is a separate gesture via
@@ -972,18 +1122,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       if (area > bestArea) { best = s; bestArea = area; }
     }
     if (!best) {
-      if (adoptPreviewRef.current) setAdoptPreviewSync(null);
-      return;
+      const latched = adoptPreviewRef.current;
+      if (opts.sticky && latched && latched.nodeId === node.id) {
+        // Frame-touch hand-off latched → the receiving section's engulf
+        // keeps following the node even while it isn't overlapping it.
+        const s = sections.find((x) => x.id === latched.sectionId);
+        if (s) best = s;
+      }
+      // No overlap and nothing latched → the frame-touch target itself.
+      if (!best && opts.fallback) best = opts.fallback;
+      if (!best) {
+        if (latched) setAdoptPreviewSync(null);
+        return;
+      }
     }
-    // Engulf rect = section frame grown to contain the node with the same
-    // clearance the committed grow path uses ⇒ zero snap on drop.
-    const CLEAR = SECTION_MEMBER_CLEARANCE;
-    const previewRect = {
-      left:   Math.min(best.x, rect.left - CLEAR),
-      top:    Math.min(best.y, rect.top - CLEAR),
-      right:  Math.max(best.x + best.width, rect.right + CLEAR),
-      bottom: Math.max(best.y + best.height, rect.bottom + CLEAR),
-    };
+    const previewRect = engulfRect(best, rect);
     const cur = adoptPreviewRef.current;
     if (cur && cur.sectionId === best.id &&
         cur.rect.left === previewRect.left && cur.rect.top === previewRect.top &&
@@ -1071,10 +1224,22 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   function handleNodeMove(node, posX, posY) {
     updateNodeLocal(node.id, { pos_x: posX, pos_y: posY });
     if (!String(node.id).startsWith('temp-')) persistNodePosition(node.id, posX, posY);
+    // Group drag: dragging a node that's part of a multi-selection moves
+    // every selected node by the same delta (design-tool standard). The
+    // followers move rigidly with the anchor; adoption preview / removal
+    // arming stay anchor-only.
+    const g = groupDragRef.current;
+    if (g && g.anchorId === node.id) {
+      for (const m of g.members) {
+        updateNodeLocal(m.id, { pos_x: posX + m.dx, pos_y: posY + m.dy });
+        if (!String(m.id).startsWith('temp-')) persistNodePosition(m.id, posX + m.dx, posY + m.dy);
+      }
+    }
     maybeUpdateAdoptPreview(node, posX, posY);
   }
 
   async function handleNodeMoveEnd(node, moved) {
+    groupDragRef.current = null;
     // Unfreeze membership — from here the next render re-derives sections from
     // live positions (the node has settled), so adoption/release lands once.
     setDragFreeze(null);
@@ -1085,14 +1250,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
     // Armed removal — decide on drop: outside the section commits the removal
     // (break all edges + clear adoption); inside cancels (stays a member).
+    // Dropped over ANOTHER section (cross-section hand-off, live preview
+    // during the drag): commit the removal AND adopt into it in one gesture.
     const arm = removingRef.current;
     if (arm && arm.nodeId === node.id && moved) {
       const fx = drag ? drag.lastX : node.pos_x;
       const fy = drag ? drag.lastY : node.pos_y;
       const { cx, cy } = nodeCenter(node, fx, fy);
+      // A latched hand-off WINS over the inside-cancel: a frame-touch
+      // transfer often drops while the node centre is still technically
+      // inside A's old area — the node already belongs to B at that point.
+      const handOff = preview && preview.nodeId === node.id ? preview : null;
+      if (handOff) { await commitNodeRemoval(node, fx, fy, arm, handOff); return; }
       const inside = pointInRect(cx, cy, removalSectionRect(arm));
-      if (inside) cancelNodeRemoval();
-      else await commitNodeRemoval(node, fx, fy, arm);
+      if (inside) { cancelNodeRemoval(); return; }
+      await commitNodeRemoval(node, fx, fy, arm, null);
       return;
     }
 
@@ -1361,7 +1533,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if ((s.memberIds || []).some((mid) => runStatus.has(mid))) return;
     let skip = false;
     try { skip = localStorage.getItem(RERUN_CONFIRM_SKIP_KEY) === '1'; } catch {}
-    if (skip || !sectionRerunWouldOverwrite(s, nodes, edges)) { runSectionRerun(s); return; }
+    // Overwrite check mirrors the incremental plan: only nodes that will
+    // actually RUN count (skipped nodes keep their result untouched).
+    const sigs = cleanSectionIds.has(s.id) ? null : nodeRunSigs;
+    if (skip || !sectionRerunWouldOverwrite(s, nodes, edges, sigs)) { runSectionRerun(s); return; }
     setPlaySection({ section: s, busy: false });
   }
 
@@ -1566,7 +1741,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // its adoption marker cleared, so it becomes a free standalone node at its
   // dropped position. The abandoned section's stored frame is reset so it
   // re-fits its remaining members.
-  async function commitNodeRemoval(node, finalX, finalY, arm) {
+  // `handOff` (optional, 2026-07-07): the adopt-preview of ANOTHER section
+  // the node was dropped over — cross-section drag. The removal from its
+  // old section and the adoption into the new one commit as ONE gesture.
+  async function commitNodeRemoval(node, finalX, finalY, arm, handOff = null) {
     setRemovingSync(null);
     setRemovingOutside(false);
     // Cut every edge touching this node.
@@ -1584,6 +1762,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const meta = { ...(node.meta || {}) };
     delete meta.adoptedInto;
     if (arm?.rootId && !String(arm.rootId).startsWith('temp-')) meta.sectionOptOut = arm.rootId;
+    if (handOff?.rootId && !String(handOff.rootId).startsWith('temp-')) meta.adoptedInto = handOff.rootId;
     clearTimeout(dragNodeServer.current.get(node.id));
     dragNodeServer.current.delete(node.id);
     setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, pos_x: finalX, pos_y: finalY, meta } : n)));
@@ -1595,6 +1774,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       setSectionFrames((prev) => {
         const next = { ...prev };
         delete next[arm.sectionId];
+        try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(next)); } catch {}
+        return next;
+      });
+    }
+    // Hand-off: the receiving section keeps the engulf rect the preview
+    // showed, so the drop lands with zero snap (same as the adopt path).
+    if (handOff?.sectionId) {
+      setSectionFrames((prev) => {
+        const next = { ...prev, [handOff.sectionId]: handOff.rect };
+        delete next[`section-${node.id}`];
         try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(next)); } catch {}
         return next;
       });
@@ -2761,7 +2950,87 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     });
   }
 
+  // Materialize copies of a group of node-like objects on the board:
+  // creates every node server-side at its given position, then re-creates
+  // the cords BETWEEN copies (links reference item indexes — edges to nodes
+  // outside the group are deliberately not copied). Selects the copies so
+  // the user can immediately drag them as a unit. Shared by group duplicate
+  // (right-click / Alt+drag on a multi-selection) and Cmd+V paste.
+  async function materializeCopies(items, links) {
+    const createdNodes = [];
+    for (const { data, x, y } of items) {
+      const created = await api.createNode({
+        boardId: board.id,
+        kind: data.kind,
+        originUrl: data.origin_url || null,
+        templateSlug: data.template_slug || null,
+        posX: x, posY: y,
+        width: data.width || 1280,
+        height: data.height || 800,
+        meta: data.meta || {},
+        html: data.current_html || null,
+        designMd: data.current_design_md || null,
+      });
+      createdNodes.push({
+        ...created.node,
+        current_html: data.current_html || null,
+        current_design_md: data.current_design_md || null,
+      });
+    }
+    const createdEdges = [];
+    for (const l of links || []) {
+      const s = createdNodes[l.from];
+      const t = createdNodes[l.to];
+      if (!s || !t) continue;
+      try {
+        const { edge } = await api.createEdge({
+          boardId: board.id, sourceNodeId: s.id, targetNodeId: t.id, kind: l.kind || 'generic',
+        });
+        if (edge) createdEdges.push(edge);
+      } catch { /* one failed cord must not sink the whole copy */ }
+    }
+    setNodes((prev) => [...prev, ...createdNodes]);
+    if (createdEdges.length) setEdges((prev) => [...prev, ...createdEdges]);
+    for (const n of createdNodes) pushCreateUndo(n, null);
+    setSelectedNodeId(null);
+    setSelectedNodeIds(new Set(createdNodes.map((n) => n.id)));
+    return createdNodes;
+  }
+
+  // Group form of duplicate: the full node list + the cords among them,
+  // offset so the copy lands beside the original (design-tool convention).
+  async function duplicateGroup(groupNodes, { dx = 60, dy = 60 } = {}) {
+    const group = groupNodes.filter((n) => !String(n.id).startsWith('temp-'));
+    if (!group.length) return;
+    const idx = new Map(group.map((n, i) => [n.id, i]));
+    const links = edges
+      .filter((e) => idx.has(e.source_node_id) && idx.has(e.target_node_id))
+      .map((e) => ({ from: idx.get(e.source_node_id), to: idx.get(e.target_node_id), kind: e.kind || 'generic' }));
+    try {
+      await materializeCopies(group.map((n) => ({ data: n, x: n.pos_x + dx, y: n.pos_y + dy })), links);
+    } catch (err) {
+      toast.error(`Duplicate failed: ${err.message}`);
+    }
+  }
+
+  // Cmd+V of an internal payload: re-create the copied nodes + cords. Each
+  // consecutive paste of the same copy steps a bit further out.
+  async function handlePasteNodes(payload) {
+    const { items, links } = payloadToPasteItems(payload, ++pasteSeqRef.current);
+    try {
+      await materializeCopies(items, links);
+    } catch (err) {
+      toast.error(`Paste failed: ${err.message}`);
+    }
+  }
+
   async function handleDuplicateNode(id) {
+    // Node inside a multi-selection → duplicate the WHOLE selection (nodes +
+    // internal cords) as a unit; the copies land offset beside the originals.
+    if (selectedNodeIds.size > 1 && selectedNodeIds.has(id)) {
+      await duplicateGroup(nodes.filter((n) => selectedNodeIds.has(n.id)));
+      return;
+    }
     const n = nodes.find((x) => x.id === id);
     if (!n) return;
     try {
@@ -2797,11 +3066,19 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // ghost is local-only during the gesture (no server round-trip → no lag); the
   // duplicate is created on release. Never duplicates on a bare alt-click (the
   // ghost only spawns once the drag passes the threshold).
+  //
+  // Alt+drag on a node that's part of a MULTI-SELECTION duplicates the whole
+  // selection as a unit: every selected node ghosts along with the cursor,
+  // and on release the copies are persisted WITH the cords between them.
   function startAltDuplicateDrag(srcNode, e) {
     if (!srcNode) return;
+    const group = (selectedNodeIds.size > 1 && selectedNodeIds.has(srcNode.id))
+      ? nodes.filter((n) => selectedNodeIds.has(n.id) && !String(n.id).startsWith('temp-'))
+      : [srcNode];
+    if (!group.length) return;
     const readScale = readCanvasScale;
-    const start = { x: e.clientX, y: e.clientY, ox: srcNode.pos_x, oy: srcNode.pos_y, lastX: srcNode.pos_x, lastY: srcNode.pos_y };
-    let tempId = null;
+    const start = { x: e.clientX, y: e.clientY, dx: 0, dy: 0 };
+    let tempIds = null; // array parallel to `group`, set once the drag is real
     document.body.classList.add('alt-dup-dragging');
     const cleanup = () => {
       window.removeEventListener('mousemove', move);
@@ -2813,42 +3090,39 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const scale = readScale();
       const dx = (ev.clientX - start.x) / scale;
       const dy = (ev.clientY - start.y) / scale;
-      if (!tempId) {
+      if (!tempIds) {
         if (Math.hypot(dx, dy) * scale < 4) return;   // wait for a real drag
-        tempId = `temp-altdup-${Date.now()}`;
-        setNodes((prev) => [...prev, { ...srcNode, id: tempId, is_main: false }]);
-        setAltDupGhostId(tempId);
+        tempIds = group.map((n, i) => `temp-altdup-${Date.now()}-${i}`);
+        setNodes((prev) => [
+          ...prev,
+          ...group.map((n, i) => ({ ...n, id: tempIds[i], is_main: false })),
+        ]);
+        setAltDupGhostIds(new Set(tempIds));
       }
-      const nx = start.ox + dx, ny = start.oy + dy;
-      start.lastX = nx; start.lastY = ny;
-      updateNodeLocal(tempId, { pos_x: nx, pos_y: ny });
+      start.dx = dx; start.dy = dy;
+      setNodes((prev) => prev.map((n) => {
+        const i = tempIds.indexOf(n.id);
+        if (i === -1) return n;
+        return { ...n, pos_x: group[i].pos_x + dx, pos_y: group[i].pos_y + dy };
+      }));
     };
     const finalize = async (commit) => {
       cleanup();
-      setAltDupGhostId(null);
-      const id = tempId;
-      if (!id) return;                       // never dragged → no duplicate
-      if (!commit) { setNodes((prev) => prev.filter((n) => n.id !== id)); return; }
-      const fx = start.lastX, fy = start.lastY;
+      setAltDupGhostIds(null);
+      const ids = tempIds;
+      if (!ids) return;                      // never dragged → no duplicate
+      setNodes((prev) => prev.filter((n) => !ids.includes(n.id)));
+      if (!commit) return;
+      const idx = new Map(group.map((n, i) => [n.id, i]));
+      const links = edges
+        .filter((ed) => idx.has(ed.source_node_id) && idx.has(ed.target_node_id))
+        .map((ed) => ({ from: idx.get(ed.source_node_id), to: idx.get(ed.target_node_id), kind: ed.kind || 'generic' }));
       try {
-        const created = await api.createNode({
-          boardId: board.id,
-          kind: srcNode.kind,
-          originUrl: srcNode.origin_url,
-          templateSlug: srcNode.template_slug,
-          posX: fx, posY: fy,
-          width: srcNode.width,
-          height: srcNode.height || 800,
-          meta: srcNode.meta || {},
-          html: srcNode.current_html,
-          designMd: srcNode.current_design_md,
-        });
-        setNodes((prev) => prev.map((n) => (n.id === id
-          ? { ...created.node, current_html: srcNode.current_html, current_design_md: srcNode.current_design_md }
-          : n)));
-        pushCreateUndo(created.node, null);
+        await materializeCopies(
+          group.map((n) => ({ data: n, x: n.pos_x + start.dx, y: n.pos_y + start.dy })),
+          links,
+        );
       } catch (err) {
-        setNodes((prev) => prev.filter((n) => n.id !== id));
         toast.error(`Duplicate failed: ${err.message}`);
       }
     };
@@ -2938,31 +3212,145 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // the play button is hidden for them, this is the backstop.
     if (s.hasEdges === false) return;
 
-    const { stages, unsupportedKind } = planSectionRun(s, nodes, edges);
+    // Incremental by default: nodes whose inputs haven't changed since
+    // their last run are SKIPPED (their current result is reused — no
+    // credits burnt). A clean section's button reads "Reroll" and means
+    // force: the whole cascade regenerates fresh.
+    const force = cleanSectionIds.has(s.id);
+    const { stages, skipped, unsupportedKind } = planIncrementalRun(
+      s, nodes, edges, force ? null : nodeRunSigs
+    );
     if (!stages.length) {
       if (unsupportedKind) {
         toast.info(`This workflow ends in a ${unsupportedKind === 'designmd' ? '.md' : unsupportedKind} node — re-running it isn't supported yet.`);
+      } else if (skipped.length) {
+        // All nodes reused → the section IS clean; flip the pill to Reroll
+        // so the user's next click means "force a fresh generation".
+        toast.info('Everything is up to date — nothing to run.');
+        markSectionPendingClean(s.id);
       } else {
         toast.error('Could not find a result node to run in this workflow.');
       }
       return;
     }
 
-    // Cascade executor: the whole graph runs, whatever its shape. Stages
-    // are dependency-ordered (sources produce before their derivations
-    // compose); nodes within a stage are independent and run in parallel,
-    // each with its own progress affordance. A failed stage ABORTS the
-    // cascade — downstream nodes would compose from stale/failed inputs —
-    // and the section stays dirty so the user can retry.
-    for (const stage of stages) {
-      const outcomes = await Promise.all(stage.map((n) => runSectionNode(n)));
-      if (!outcomes.every(Boolean)) return;
-    }
-    markSectionPendingClean(s.id);
+    const allOk = await cascadeStages(stages);
+    if (allOk) markSectionPendingClean(s.id);
   }
 
-  // Execute ONE node of a section run. Returns true on success; failures
-  // toast individually and return false (the section stays dirty).
+  // Cascade executor: dependency-ordered stages run in sequence, nodes
+  // within a stage in parallel (each with its own progress affordance). A
+  // failed stage ABORTS the cascade — downstream nodes would compose from
+  // stale/failed inputs. Returns true when every node succeeded.
+  //
+  // `overlay` carries the content produced DURING this cascade (React
+  // state commits async, so the `nodes` binding is stale mid-loop): each
+  // node's input signature is captured against its sources' FRESH
+  // content, so the next incremental run skips correctly. Signatures of
+  // what DID run persist even on abort — a retry skips those stages.
+  async function cascadeStages(stages) {
+    const overlay = new Map();
+    const newSigs = {};
+    try {
+      for (const stage of stages) {
+        const outcomes = await Promise.all(stage.map(async (n) => {
+          const effNodes = nodes.map((x) => overlay.get(x.id) || x);
+          const sig = nodeInputSignature(n.id, effNodes, edges);
+          const r = await runSectionNode(overlay.get(n.id) || n);
+          if (r.ok) {
+            newSigs[n.id] = sig;
+            if (r.patch) overlay.set(n.id, { ...(overlay.get(n.id) || n), ...r.patch });
+          }
+          return r.ok;
+        }));
+        if (!outcomes.every(Boolean)) return false;
+      }
+      return true;
+    } finally {
+      if (Object.keys(newSigs).length) setNodeRunSigs((prev) => ({ ...prev, ...newSigs }));
+    }
+  }
+
+  // "Run from here": force-run the pointed node and cascade ONLY through
+  // its descendants — upstream and sibling branches untouched (and never
+  // charged). Triggered by the hover pill above the node's right corner.
+  async function runFromNode(nodeId) {
+    const s = sections.find((x) => x.memberIds.includes(nodeId));
+    if (!s) return;
+    if ((s.memberIds || []).some((mid) => runStatus.has(mid))) return;
+    const { stages } = planRunFromNode(nodeId, s, nodes, edges);
+    if (!stages.length) { toast.info('Nothing runnable from this node.'); return; }
+    await cascadeStages(stages);
+  }
+
+  // Pre-flight estimate for the "Run from here" pill (computed on hover).
+  function getRunFromHereEst(nodeId) {
+    const s = sections.find((x) => x.memberIds.includes(nodeId));
+    if (!s) return 0;
+    const { runnable } = planRunFromNode(nodeId, s, nodes, edges);
+    return estimateChain(runnable.map((t) => (t.kind === 'asset' ? 'image.generate' : 'compose')));
+  }
+
+  // ── Section layout actions (2026-07-06) ─────────────────────────────────
+  // Fit to content: nothing moves — only the FRAME forgets its manually
+  // stretched size and re-hugs the members (the stored frame is the
+  // grow-only wall memory from resize gestures).
+  function fitSectionToContent(s) {
+    setSectionFrames((prev) => {
+      if (!(s.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[s.id];
+      try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
+
+  // Auto-layout: re-arrange the members with the same dependency algorithm
+  // that lays out agent-built chains (columns advance rightward, variants
+  // stack), anchored at the group's current top-left corner. Best-effort
+  // de-overlap shoves the re-shaped section down if it would now touch a
+  // neighbour. The frame re-fits (stored stretch would lie about the new
+  // shape).
+  function autoLayoutSection(s) {
+    const members = nodes.filter((n) => s.memberIds.includes(n.id) && !String(n.id).startsWith('temp-'));
+    if (members.length < 2) return;
+    const memberSet = new Set(members.map((n) => n.id));
+    const specs = members.map((n) => ({ key: n.id, width: n.width || 1280, height: n.height || 800 }));
+    const links = edges
+      .filter((e) => memberSet.has(e.source_node_id) && memberSet.has(e.target_node_id))
+      .map((e) => ({ from: e.source_node_id, to: e.target_node_id }));
+    const plan = planChainLayout(specs, links);
+    let minX = Infinity, minY = Infinity;
+    for (const n of members) { minX = Math.min(minX, n.pos_x); minY = Math.min(minY, n.pos_y); }
+    const pos = new Map(members.map((n) => {
+      const p = plan.positions[n.id] || { x: n.pos_x - minX, y: n.pos_y - minY };
+      return [n.id, { x: minX + p.x, y: minY + p.y }];
+    }));
+    // Sections never overlap: check the re-shaped section against the rest
+    // of the board and push it down as a unit if it now intrudes.
+    const rows = nodes.map((n) => {
+      const p = pos.get(n.id);
+      return { id: n.id, pos_x: p ? p.x : n.pos_x, pos_y: p ? p.y : n.pos_y, width: n.width, height: n.height };
+    });
+    const edgeRows = edges.map((e) => ({ source_node_id: e.source_node_id, target_node_id: e.target_node_id }));
+    const shift = planSectionDeoverlap(rows, edgeRows, members[0].id);
+    if (shift) {
+      for (const id of shift.ids) {
+        const p = pos.get(id);
+        if (p) p.y += shift.delta;
+      }
+    }
+    for (const [id, p] of pos) {
+      updateNodeLocal(id, { pos_x: p.x, pos_y: p.y });
+      persistNodePosition(id, p.x, p.y);
+    }
+    fitSectionToContent(s);
+  }
+
+  // Execute ONE node of a section run. Returns { ok, patch } — patch is the
+  // freshly produced content (the cascade needs it to fingerprint downstream
+  // inputs before React commits). Failures toast individually and return
+  // { ok: false } (the section stays dirty).
   async function runSectionNode(terminal) {
     const terminalId = terminal.id;
 
@@ -2971,7 +3359,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (terminal.kind === 'site') {
       try {
         const result = await runOneTarget(terminalId);
-        if (!result?.snapshotId) return false;
+        if (!result?.snapshotId) return { ok: false };
         setNodes((prev) => prev.map((n) => (
           n.id === terminalId
             ? {
@@ -2982,11 +3370,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               }
             : n
         )));
-        return true;
+        return { ok: true, patch: { current_html: result.html, current_snapshot_id: result.snapshotId } };
       } catch (e) {
         console.warn('[section-rerun] site compose failed:', e?.message || e);
         toast.error(e?.message || 'Re-run failed.');
-        return false;
+        return { ok: false };
       }
     }
 
@@ -3025,7 +3413,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             }
           : n
       )));
-      return true;
+      return { ok: true, patch: { meta: { ...(terminal.meta || {}), dataUrl: body.dataUrl, mimeType: body.mimeType, status: 'done' } } };
     } catch (e) {
       console.warn('[section-rerun] failed:', e?.message || e);
       toast.error(e?.message || 'Re-run failed.');
@@ -3035,7 +3423,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           ? { ...n, meta: { ...(n.meta || {}), status: 'done' } }
           : n
       )));
-      return false;
+      return { ok: false };
     }
   }
 
@@ -3230,22 +3618,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // the cursor. The draft cord endpoint snaps to that slot's world coord
   // so the user gets clear visual confirmation that a drop will land.
   const SNAP_RADIUS_SCREEN = 56;
-  const SLOT_SIZE = 19, SLOT_GAP = 6;
+  const SLOT_SIZE = 24.05, SLOT_GAP = 9;
   // Receiver ports sit PORT_GAP screen px OUTSIDE the node's left edge — must
   // match EdgeLayer.PORT_GAP and the .cnode-port-stack-left CSS offset.
-  const PORT_GAP = 11.385;
+  const PORT_GAP = 17.08;
   function findSnapTarget(clientX, clientY, sourceNodeId) {
     if (!sourceNodeId) return null;
     const w = clientToWorld(transformRef, clientX, clientY);
     const scale = transformRef.current?.instance?.transformState?.scale || 1;
-    // Snap REACH stays screen-constant-with-floor (interaction feel);
-    // the slot GEOMETRY is world-locked since the 2026-07-06 hybrid —
-    // CSS positions the circles in fixed world px, so the target math
-    // uses the same fixed values or the snap lands between circles.
-    const radiusWorld = SNAP_RADIUS_SCREEN / chromeScale(scale);
-    const slotSize = SLOT_SIZE;
-    const slotGap = SLOT_GAP;
-    const gap = PORT_GAP;   // receiver ports float left of the edge
+    // Snap REACH stays screen-constant-with-floor (interaction feel), and
+    // since 2026-07-07 the slot GEOMETRY is screen-constant again too (CSS
+    // counter-scales the circles by --chrome-scale, floor 0.4) — divide by
+    // the same chromeScale or the snap lands between circles.
+    const cs = chromeScale(scale);
+    const radiusWorld = SNAP_RADIUS_SCREEN / cs;
+    const slotSize = SLOT_SIZE / cs;
+    const slotGap = SLOT_GAP / cs;
+    const gap = PORT_GAP / cs;   // receiver ports float left of the edge
     let best = null, bestDist = Infinity;
     for (const n of nodes) {
       if (n.id === sourceNodeId) continue;
@@ -3746,7 +4135,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // Only translate it into a canvas zoom when NOT over a native-scroll zone.
       if (e.metaKey || e.ctrlKey) {
         e.preventDefault();
-        if (!overNative) {
+        // Anywhere over the WORLD — bare canvas or any node, including
+        // native-scroll zones like the prompt body (which owns only the
+        // PLAIN wheel) — Ctrl/Cmd+wheel IS the canvas zoom. Only UI chrome
+        // (dock / sidebar / menus) keeps it inert.
+        const overWorld = !overNative || e.target?.closest?.('.cnode');
+        if (overWorld) {
           e.stopPropagation();
           if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
           batcher.addZoom(e.deltaY || 0, e.clientX, e.clientY);
@@ -4257,6 +4651,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // cleanSigs maps a section id → the signature captured the moment its run
   // completed. The section is "clean" while its live signature still matches.
   const [cleanSigs, setCleanSigs] = useState({});
+  // nodeRunSigs maps a node id → the fingerprint of its INPUTS at its last
+  // successful run (incremental cascade: matching inputs + existing result
+  // → the node is skipped and its result reused, no credits burnt).
+  // Persisted per board so the savings survive reloads.
+  const [nodeRunSigs, setNodeRunSigs] = useState(() => {
+    if (typeof window === 'undefined') return {};
+    try { return JSON.parse(localStorage.getItem(`rb-node-run-sigs-${board.id}`) || '{}'); } catch { return {}; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(`rb-node-run-sigs-${board.id}`, JSON.stringify(nodeRunSigs)); } catch {}
+  }, [nodeRunSigs, board.id]);
   // Sections whose run just finished and need their post-run signature
   // captured once React commits the new content. Holds ids until the effect
   // below snapshots them against settled state.
@@ -4322,6 +4727,55 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
     return out;
   }, [sections, nodes, edges, cleanSigs]);
+  // Ops a section's run would ACTUALLY execute right now: incremental
+  // (skipped-clean nodes cost nothing) unless the section is fully clean —
+  // there the button is "Reroll" = force-everything, so estimate the lot.
+  const opsFor = (sec) => sectionOps(sec, nodes, edges, cleanSectionIds.has(sec.id) ? null : nodeRunSigs);
+  // Section layout button states (2026-07-07): each button disables when
+  // its result is already in effect and re-enables the moment something
+  // moves out of place. "Fitted" = no stored manual frame (the frame
+  // naturally hugs the members — resize gestures and engulf commits store
+  // one). "Laid out" = every member sits where planChainLayout would put
+  // it (±1px, anchored at the group's bbox corner — shift-invariant, so
+  // moving the whole section doesn't re-enable it).
+  const sectionLayoutState = useMemo(() => {
+    const out = new Map();
+    for (const s of sections) {
+      const fitted = !(s.id in sectionFrames);
+      let laidOut = false;
+      const members = nodes.filter((n) => s.memberIds.includes(n.id) && !String(n.id).startsWith('temp-'));
+      if (members.length >= 2) {
+        const memberSet = new Set(members.map((n) => n.id));
+        const specs = members.map((n) => ({ key: n.id, width: n.width || 1280, height: n.height || 800 }));
+        const links = edges
+          .filter((e) => memberSet.has(e.source_node_id) && memberSet.has(e.target_node_id))
+          .map((e) => ({ from: e.source_node_id, to: e.target_node_id }));
+        const plan = planChainLayout(specs, links);
+        let minX = Infinity, minY = Infinity;
+        for (const n of members) { minX = Math.min(minX, n.pos_x); minY = Math.min(minY, n.pos_y); }
+        laidOut = members.every((n) => {
+          const p = plan.positions[n.id];
+          return p && Math.abs(minX + p.x - n.pos_x) <= 1 && Math.abs(minY + p.y - n.pos_y) <= 1;
+        });
+      }
+      out.set(s.id, { fitted, laidOut });
+    }
+    return out;
+  }, [sections, nodes, edges, sectionFrames]);
+
+  // Nodes that show the "Run from here" hover pill: section members with
+  // something DOWNSTREAM of them (an outgoing cord to another member).
+  // Terminals don't need it — the section pill already covers them.
+  const runFromHereIds = useMemo(() => {
+    const memberOf = new Map();
+    for (const s of sections) for (const id of s.memberIds) memberOf.set(id, s.id);
+    const out = new Set();
+    for (const e of edges) {
+      const sid = memberOf.get(e.source_node_id);
+      if (sid && memberOf.get(e.target_node_id) === sid) out.add(e.source_node_id);
+    }
+    return out;
+  }, [sections, edges]);
   // Terminal node ids of clean sections — the bare chat-arrow run-flow skips
   // these (re-running a clean chain produces the same result).
   const cleanTerminalIds = useMemo(() => {
@@ -4810,6 +5264,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     handleNodeMoveStart,
     handleNodeMoveEnd,
     startAltDuplicateDrag,
+    runFromNode,
+    getRunFromHereEst,
     handleNodeResize,
     handleNodeDeleteRequest,
     handleResetNode,
@@ -4930,7 +5386,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             >
               {/* row-reverse: DOM-before-label = visually right of the label. */}
               {!floatRunRunning && floatRunSec.hasEdges && (() => {
-                const est = estimateChain(sectionOps(floatRunSec, nodes, edges));
+                const est = estimateChain(opsFor(floatRunSec));
                 return est > 0 ? <span className="canvas-section-est">{CREDIT_COST_ICON}{est}</span> : null;
               })()}
               <span className="canvas-floating-run-label">{floatLabel}</span>
@@ -5100,7 +5556,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               incomingEdges={incomingByTarget.get(n.id) || EMPTY_EDGES}
               hasOutgoingEdges={hasOutgoingBySource.has(n.id)}
               selected={selectedNodeId === n.id || selectedNodeIds.has(n.id)}
-              placing={placingNodeId === n.id || altDupGhostId === n.id}
+              placing={placingNodeId === n.id || (altDupGhostIds?.has(n.id) ?? false)}
               editing={editingNodeId === n.id}
               runStatus={runStatus.get(n.id) || null}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
@@ -5108,6 +5564,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               removingOutside={removing?.nodeId === n.id && removingOutside}
               removeFromMenu={removing?.nodeId === n.id && !!removing.fromMenu}
               inSection={sectionMemberIds.has(n.id)}
+              canRunFromHere={runFromHereIds.has(n.id)}
               handlersRef={nodeHandlersRef}
             />
           ))}
@@ -5145,7 +5602,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 className={`canvas-section-name-tag${s.hasEdges ? '' : ' disabled'}${sectionRunning ? ' running' : ''}${SHOW_FLOATING_RUN && floatingRunSectionId === s.id ? ' floated-away' : ''}`}
                 role="button"
                 tabIndex={0}
-                title={s.hasEdges ? `${estimateChain(sectionOps(s, nodes, edges))} credits` : undefined}
+                title={s.hasEdges ? `${estimateChain(opsFor(s))} credits` : undefined}
                 aria-label={!s.hasEdges ? 'Connect nodes to run this flow' : (sectionRunning ? 'Stop this flow' : (isClean ? 'Reroll this flow' : 'Run this flow'))}
                 onClick={(e) => {
                   // Clicking ANYWHERE on the pill runs the flow (not just the
@@ -5176,7 +5633,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                     NOTE: the pill is flex row-reverse (play circle LEFT),
                     so DOM-before-label renders VISUALLY RIGHT of the label. */}
                 {!sectionRunning && s.hasEdges && (() => {
-                  const est = estimateChain(sectionOps(s, nodes, edges));
+                  const est = estimateChain(opsFor(s));
                   return est > 0 ? <span className="canvas-section-est">{CREDIT_COST_ICON}{est}</span> : null;
                 })()}
                 <span className="canvas-section-name-label">{sectionRunning ? 'stop' : (s.hasEdges && isClean ? 'Reroll' : 'Run this flow')}</span>
@@ -5235,6 +5692,47 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   aria-hidden="true"
                 />
               ))}
+              {/* Section layout actions (2026-07-06) — bottom-right icon
+                  cluster in the expand-floater visual family. The SE handle
+                  ICON was removed so the corner doesn't crowd (the resize
+                  hit area itself still works). */}
+              <div className="canvas-section-layout-btns" onMouseDown={(e) => e.stopPropagation()}>
+                {(() => {
+                  const ls = sectionLayoutState.get(s.id) || {};
+                  return (<>
+                    <button
+                      type="button"
+                      className={`canvas-section-layout-btn${ls.laidOut ? ' disabled' : ''}`}
+                      disabled={!!ls.laidOut}
+                      data-tooltip={ls.laidOut ? 'Already auto-laid out' : 'Auto-layout'}
+                      aria-label="Auto-layout this section"
+                      onClick={(e) => { e.stopPropagation(); if (!ls.laidOut) autoLayoutSection(s); }}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect x="3" y="4" width="6" height="7" rx="1.5" />
+                        <rect x="15" y="4" width="6" height="7" rx="1.5" />
+                        <rect x="9" y="15" width="6" height="6" rx="1.5" />
+                        <path d="M6 11v2.5h12V11" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      className={`canvas-section-layout-btn${ls.fitted ? ' disabled' : ''}`}
+                      disabled={!!ls.fitted}
+                      data-tooltip={ls.fitted ? 'Already fits its content' : 'Fit to content'}
+                      aria-label="Fit section frame to its content"
+                      onClick={(e) => { e.stopPropagation(); if (!ls.fitted) fitSectionToContent(s); }}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="9 3 9 9 3 9" />
+                        <polyline points="15 3 15 9 21 9" />
+                        <polyline points="9 21 9 15 3 15" />
+                        <polyline points="15 21 15 15 21 15" />
+                      </svg>
+                    </button>
+                  </>);
+                })()}
+              </div>
               {['nw', 'ne', 'sw', 'se'].map((corner) => (
                 <div
                   key={corner}
@@ -5242,13 +5740,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   onMouseDown={(e) => startSectionResize(s.id, corner, e)}
                   aria-hidden="true"
                 >
-                  {corner === 'se' && (
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
-                      <line x1="8" y1="20" x2="20" y2="8" />
-                      <line x1="12" y1="20" x2="20" y2="12" />
-                      <line x1="16" y1="20" x2="20" y2="16" />
-                    </svg>
-                  )}
                 </div>
               ))}
             </div>
@@ -5588,7 +6079,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       <ConfirmModal
         open={!!playSection}
         title="Re-run workflow?"
-        message={playSection ? `Re-execute "${playSection.section.name}" with the same inputs. The new result will replace the current one and consumes ≈ ${estimateChain(sectionOps(playSection.section, nodes, edges))} credits.` : ''}
+        message={playSection ? `Re-execute "${playSection.section.name}" with the same inputs. The new result will replace the current one and consumes ≈ ${estimateChain(opsFor(playSection.section))} credits.` : ''}
         confirmLabel="Run"
         cancelLabel="Cancel"
         busy={!!playSection?.busy}

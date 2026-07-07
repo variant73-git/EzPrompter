@@ -10,31 +10,28 @@ const WORLD_HEIGHT = 6000;
 // Port positions match the .cnode-port-right / .cnode-port-stack-left CSS:
 // the right port sits on the node's vertical mid-line. The left side is a
 // vertical stack of input slots — slotIndex picks WHICH slot in the stack.
-// Since the 2026-07-06 hybrid, ports are WORLD-LOCKED (fixed world px in
-// the CSS — part of the node's body), so these constants are plain world
-// units with no inverse-scaling on either side.
-const SLOT_SIZE = 19;
-const SLOT_GAP = 6;
-// Ports sit this many WORLD px OUTSIDE the node edge (a short gap so the
+// SCREEN-CONSTANT ports (2026-07-07, floor 0.4): the CSS counter-scales the
+// dots by --chrome-scale, so they hold their on-screen size on zoom-out and
+// stop growing at 40% zoom (below it they scale with the world). The anchor
+// math here divides by the SAME chromeScale so cords keep meeting the dots.
+const SLOT_SIZE = 24.05; // = the receiver dot's size (keeps cord anchors ON the circles)
+const SLOT_GAP = 9;      // = the CSS stack gap
+// Ports sit this many SCREEN px OUTSIDE the node edge (a short gap so the
 // dots float just off the frame). Cord endpoints shift out by the same amount
 // so they meet the dots. MUST match the CSS port offsets (.cnode-port-right /
 // .cnode-port-stack-left) and CanvasClient.findSnapTarget's PORT_GAP.
-const PORT_GAP = 11.385;
+const PORT_GAP = 17.08;
 
 function nodePort(n, side, measuredH, slotIndex = 0, slotCount = 1, scale = 1) {
   const h = measuredH ?? n.height ?? 800;
   const midY = n.pos_y + h / 2;
-  // HYBRID (2026-07-06): ports are part of the node BODY and world-locked —
-  // the CSS positions/sizes them in fixed world px now, so the endpoint
-  // math uses the same fixed values (no scale division). `scale` stays in
-  // the signature for the callers; only screen-constant chrome still
-  // divides (see chromeScale usages below).
-  const gap = PORT_GAP;
+  const cs = chromeScale(scale);
+  const gap = PORT_GAP / cs;
   if (side === 'right') {
     return { x: n.pos_x + n.width + gap, y: midY };
   }
-  const slotSize = SLOT_SIZE;
-  const slotGap = SLOT_GAP;
+  const slotSize = SLOT_SIZE / cs;
+  const slotGap = SLOT_GAP / cs;
   const totalH = slotCount * slotSize + Math.max(0, slotCount - 1) * slotGap;
   const stackTop = midY - totalH / 2;
   return {

@@ -64,6 +64,8 @@ This will refuse if the user is currently editing the node in-place (you'll get 
               { kind: 'prompt', meta: { prompt: instruction } },
             ],
             systemPromptOverride: EDIT_SITE_SYSTEM,
+            // Honor the user's dock picker (same rule as runFlow/createImage).
+            modelId: ctx?.pickerModel || null,
           });
           // If the model returned prose (a refusal/explanation) instead of HTML,
           // do NOT save it — that would replace the page with the explanation

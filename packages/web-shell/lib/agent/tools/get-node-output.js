@@ -2,20 +2,20 @@ import { sql } from '../../db.js';
 
 export const getNodeOutputTool = {
   name: 'getNodeOutput',
-  description: 'Read the current snapshot content (HTML and/or design.md) of a node. The content is truncated to maxChars (default 4000) so the LLM context window doesn\'t blow up. Use this to inspect what a node actually contains before making decisions.',
+  description: 'Read the current snapshot content (HTML and/or design.md) of a node. Default reads are truncated to maxChars (4000) for cheap inspection. When you need the WHOLE document — e.g. to carve/split a site\'s HTML into derived nodes deterministically — pass a high maxChars (up to 200000): a full site fits, so "the HTML is too big to read" is never a reason to fall back to regeneration.',
   classification: 'safe',
   inputSchema: {
     type: 'object',
     properties: {
       nodeId:   { type: 'string', description: 'Node id to read' },
-      maxChars: { type: 'number', description: 'Truncate combined output to this many chars (default 4000, cap 16000)' },
+      maxChars: { type: 'number', description: 'Truncate combined output to this many chars (default 4000 for inspection; pass up to 200000 to read a full site HTML for deterministic splitting/derivation)' },
     },
     required: ['nodeId'],
   },
   async execute(args, ctx) {
     const { nodeId } = args || {};
     if (!nodeId) return { error: 'invalid_args', message: 'nodeId required' };
-    const maxChars = Math.min(Math.max(parseInt(args?.maxChars ?? 4000, 10) || 4000, 100), 16000);
+    const maxChars = Math.min(Math.max(parseInt(args?.maxChars ?? 4000, 10) || 4000, 100), 200000);
 
     const rows = await sql`
       SELECT s.id, s.html, s.design_md

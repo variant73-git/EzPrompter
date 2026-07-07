@@ -92,6 +92,81 @@ describe('createWorkflow tool', () => {
     expect(reasons.filter((x) => x === 'createWorkflow:edges')).toHaveLength(1);
   });
 
+  it('rejects the reserved "anchor" node key', async () => {
+    const r = await createWorkflowTool.execute(
+      { nodes: [{ key: 'anchor', type: 'prompt' }] },
+      { boardId: 'b', userId: 1 },
+    );
+    expect(r.error).toBe('invalid_args');
+  });
+
+  it('rejects edges using "anchor" without anchorNodeId', async () => {
+    const r = await createWorkflowTool.execute(
+      { nodes: [{ key: 'a', type: 'prompt' }], edges: [{ from: 'anchor', to: 'a' }] },
+      { boardId: 'b', userId: 1 },
+    );
+    expect(r.error).toBe('invalid_args');
+    expect(r.message).toContain('anchorNodeId');
+  });
+
+  it('returns anchor_not_found when anchorNodeId is not on the board', async () => {
+    sql.mockImplementation((strings) => {
+      const q = Array.isArray(strings) ? strings.join('?') : String(strings);
+      if (/FROM boards/.test(q)) return Promise.resolve([{ id: 'board-1' }]);
+      return Promise.resolve([]); // anchor validation SELECT → empty
+    });
+    const r = await createWorkflowTool.execute(
+      { nodes: [{ key: 'a', type: 'prompt' }], anchorNodeId: 'ghost-node' },
+      { boardId: 'board-1', userId: 1 },
+    );
+    expect(r.error).toBe('anchor_not_found');
+  });
+
+  it('anchored chain: places nodes right of the anchor and wires "anchor" edges from the existing node', async () => {
+    const anchor = { id: 'anchor-1', pos_x: 100, pos_y: 50, width: 400, height: 300 };
+    const nodeInserts = [];
+    const edgeInserts = [];
+    sql.mockImplementation((strings, ...vals) => {
+      const q = Array.isArray(strings) ? strings.join('?') : String(strings);
+      if (/FROM boards/.test(q)) return Promise.resolve([{ id: 'board-1' }]);
+      if (/SELECT id FROM nodes WHERE id =/.test(q)) return Promise.resolve([{ id: 'anchor-1' }]); // anchor validation
+      if (/INSERT INTO nodes/.test(q)) {
+        nodeInserts.push(vals); // (boardId, kind, x, y, w, h, meta)
+        return Promise.resolve([{ id: `n-${nodeInserts.length}`, pos_x: vals[2], pos_y: vals[3] }]);
+      }
+      if (/INSERT INTO snapshots/.test(q)) return Promise.resolve([{ id: 'snap-x' }]);
+      if (/INSERT INTO edges/.test(q)) { edgeInserts.push(vals); return Promise.resolve([{ id: `e-${edgeInserts.length}` }]); }
+      if (/FROM nodes WHERE board_id/.test(q)) return Promise.resolve([anchor]); // obstacles + deoverlap
+      return Promise.resolve([]); // edges SELECTs
+    });
+    const r = await createWorkflowTool.execute(
+      {
+        nodes: [
+          { key: 'crop-1', type: 'blank-website', content: '<html>mockup 1</html>' },
+          { key: 'crop-2', type: 'blank-website', content: '<html>mockup 2</html>' },
+        ],
+        edges: [
+          { from: 'anchor', to: 'crop-1' },
+          { from: 'anchor', to: 'crop-2' },
+        ],
+        anchorNodeId: 'anchor-1',
+      },
+      { boardId: 'board-1', userId: 42 },
+    );
+    expect(r.error).toBeUndefined();
+    expect(r.anchored).toBe(true);
+    expect(r.created).toHaveLength(2);
+    expect(r.edges).toBe(2);
+    // Both edges originate at the EXISTING anchor node.
+    expect(edgeInserts[0][1]).toBe('anchor-1');
+    expect(edgeInserts[1][1]).toBe('anchor-1');
+    expect(edgeInserts[0][2]).toBe('n-1');
+    expect(edgeInserts[1][2]).toBe('n-2');
+    // The chain starts to the RIGHT of the anchor (anchor right edge = 500).
+    expect(nodeInserts[0][2]).toBeGreaterThan(500);
+    expect(nodeInserts[1][2]).toBeGreaterThan(500);
+  });
+
   it('measures the chain area before inserting (positions come from the plan, horizontal flow)', async () => {
     const captured = [];
     sql.mockImplementation((strings, ...vals) => {

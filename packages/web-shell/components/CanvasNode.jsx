@@ -362,9 +362,15 @@ export default function CanvasNode({
   onReplaceContent, onRequestUpload, onFrameZoom, onVersionRestore,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
   removing = false, removingOutside = false, removeFromMenu = false, inSection = false,
-  onRemoveFromSection, onCancelRemove, scale = 1, debit = null
+  onRemoveFromSection, onCancelRemove, scale = 1, debit = null,
+  canRunFromHere = false, onRunFromHere, getRunFromHereEst
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  // "Run from here" pre-flight cost — fetched lazily when the pill is hovered.
+  const [runHereEst, setRunHereEst] = useState(0);
+  // True while the prompt corner-grip drag is in flight — gates the
+  // auto-grow so the two height writers never flash against each other.
+  const promptResizingRef = useRef(false);
   const [resetting, setResetting] = useState(false);
   const [menuPos, setMenuPos] = useState(null); // {x, y} for topbar context menu
 
@@ -883,6 +889,15 @@ export default function CanvasNode({
   const renderSkillBody = node.kind === 'skill';
   const renderAssetBody = node.kind === 'asset' || node.kind === 'image';
 
+  // Floating tag title budget (2026-07-07): the label must never run under
+  // the top-right actions cluster. Chrome is screen-constant while the node
+  // is world-sized, so the budget = the node's SCREEN width minus the
+  // screen-constant chrome (kind pill ≈110px; Run-from-here + Edit ≈210px
+  // when the cluster shows). Truncation keeps the extension ("base...jpg").
+  const actionsVisible = (selected || editing) && !removing && ((renderIframeBody && html) || canRunFromHere);
+  const floatTitleBudgetPx = (node.width || 1280) * Math.max(0.05, scale) - 110 - (actionsVisible ? 210 : 0);
+  const floatTitleText = truncateWithExtension(title, Math.max(8, Math.floor(floatTitleBudgetPx / 6.5)));
+
   // Wheel routing when the mouse is over the iframe (edit-mode only — in
   // rest mode the iframe has pointer-events:none so wheel hits .cnode-body
   // in the host doc and the canvas-level capture handler takes it).
@@ -1044,7 +1059,7 @@ export default function CanvasNode({
             <span className="kind-pill-lbl">{kindLabel}</span>
           </span>
           {node.kind !== 'prompt' && (
-            <span className="cnode-float-title">{title}</span>
+            <span className="cnode-float-title">{floatTitleText}</span>
           )}
         </div>
       )}
@@ -1053,9 +1068,26 @@ export default function CanvasNode({
           Cancel while editing) moved OUTSIDE the node, above its top-right
           corner, shown on selection. Blue primary, same 30%-floor scale rule
           as the tag. In edit mode the cluster anchors INSIDE the top-right
-          (the node's top edge sits at the viewport top in the edit frame). */}
-      {renderIframeBody && html && (selected || editing) && !removing && (
+          (the node's top edge sits at the viewport top in the edit frame).
+          "Run from here" (2026-07-06) lives in the SAME cluster, same size,
+          left of Edit — selection-only, like the rest of the cluster. */}
+      {(selected || editing) && !removing && ((renderIframeBody && html) || canRunFromHere) && (
         <div className="cnode-float-actions" onMouseDown={(e) => e.stopPropagation()}>
+          {canRunFromHere && !editing && !runStatus && (
+            <button
+              type="button"
+              className="cnode-float-btn cnode-float-runhere"
+              onMouseEnter={() => setRunHereEst(getRunFromHereEst ? (getRunFromHereEst() || 0) : 0)}
+              onClick={(e) => { e.stopPropagation(); onRunFromHere?.(); }}
+              title="Run from this node — regenerates it and everything downstream; the rest is untouched"
+              aria-label="Run from this node"
+            >
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <polygon points="6,4 20,12 6,20" />
+              </svg>
+              <span>Run from here{runHereEst > 0 ? ` · ${runHereEst}` : ''}</span>
+            </button>
+          )}
           {editing && (
             <button
               type="button"
@@ -1073,21 +1105,23 @@ export default function CanvasNode({
               <span>Cancel</span>
             </button>
           )}
-          <button
-            type="button"
-            className={`cnode-float-btn cnode-float-edit${editing ? ' active' : ''}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (editorBusy) return;
-              if (editing) saveAndExit();
-              else onEditingChange?.(true);
-            }}
-            title={editing ? 'Save and exit edit mode' : 'Open editor (layers + inspector + guides)'}
-            disabled={editorBusy}
-          >
-            {editing ? <CheckIcon /> : <EditIcon />}
-            <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : 'Edit'}</span>
-          </button>
+          {renderIframeBody && html && (
+            <button
+              type="button"
+              className={`cnode-float-btn cnode-float-edit${editing ? ' active' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (editorBusy) return;
+                if (editing) saveAndExit();
+                else onEditingChange?.(true);
+              }}
+              title={editing ? 'Save and exit edit mode' : 'Open editor (layers + inspector + guides)'}
+              disabled={editorBusy}
+            >
+              {editing ? <CheckIcon /> : <EditIcon />}
+              <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : 'Edit'}</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -1432,10 +1466,50 @@ export default function CanvasNode({
           <PromptBody
             node={node}
             onChange={(value) => onPromptTextChange?.(value)}
+            onContentHeight={(textH) => {
+              // Auto-grow (2026-07-07, user spec): the inner frame keeps
+              // 20% breathing height over the text body — as the text
+              // grows/shrinks, the node follows, CAPPED at 800px. Past the
+              // cap the field scrolls instead. 28 = body padding (14×2).
+              // SUSPENDED during a corner-drag (the two writers flashing
+              // between heights was the glitch) and permanently off once
+              // the user has sized the node by hand — their size wins,
+              // overflowing text scrolls.
+              if (promptResizingRef.current || node.meta?.promptAutoGrow === false) return;
+              const desired = Math.min(800, Math.max(200, Math.round(textH * 1.2) + 28));
+              if (onResize && Math.abs((node.height || 0) - desired) > 6) {
+                onResize(node.width || 600, desired);
+              }
+            }}
           />
-          {/* Corner resize handle removed (2026-07-03, user spec): only
-              site/URL/html nodes keep resize handlers — prompt nodes size
-              themselves to their content. */}
+          {/* Corner resize (2026-07-07, user spec): the diagonal-lines SE
+              grip (the one sections used) resizes BOTH axes. Height set
+              below the text just scrolls the field. */}
+          {onResize && (
+            <div
+              className="cnode-prompt-corner-resize"
+              onMouseDown={(e) => {
+                // Gate the auto-grow for the whole gesture and hand the
+                // node over to manual sizing on release.
+                promptResizingRef.current = true;
+                const off = () => {
+                  window.removeEventListener('mouseup', off, true);
+                  promptResizingRef.current = false;
+                  onMetaPatch?.({ promptAutoGrow: false });
+                };
+                window.addEventListener('mouseup', off, true);
+                startDashResize('xy')(e);
+              }}
+              title="Drag to resize"
+              aria-label="Resize node"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden="true">
+                <line x1="8" y1="20" x2="20" y2="8" />
+                <line x1="12" y1="20" x2="20" y2="12" />
+                <line x1="16" y1="20" x2="20" y2="16" />
+              </svg>
+            </div>
+          )}
         </div>
       ) : renderSkillBody ? (
         <div className="cnode-body cnode-body-skill" onMouseDown={onBodyMouseDown}>

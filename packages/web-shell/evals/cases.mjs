@@ -23,6 +23,8 @@ const CTX = {
   threeSites:  '[Board has 3 nodes: "Loja" (site, has result) id=x1; "Blog" (site, has result) id=x2; "Portfolio" (site, has result) id=x3.]',
   twoImgs:     '[Board has 2 nodes: image "base" nodeId=i1 assetId=A1; image "ref" nodeId=i2 assetId=A2.]',
   workflowTerm:'[Active workflow: "img flow" — 3 nodes.]\n[Terminal of this workflow: nodeId=t1 assetId=AX prompt="warmer palette".]',
+  selClone:    '[The user SELECTED this node: site "image.png — clone" nodeId=c1, has result. Its page shows two distinct app mockups side by side.]',
+  cloneRead:   '[The user SELECTED this node: site "image.png — clone" nodeId=c1, has result.]\n[You already read its FULL HTML this turn: it contains two self-contained mockup sections — "Grocery Shopping" and "Tasks Boards" — each carveable as standalone HTML.]',
   empty:       '',
 };
 
@@ -205,6 +207,47 @@ const BEHAVIOURS = [
     ctx: 'workflowTerm',
     assert: [has('replaceAssetId'), not('createNode')],
     phrasings: ['refaz com o mesmo prompt', 'roda de novo igual', 'gera de novo nesse mesmo node'],
+  },
+
+  // ── Derive from selection: read the REAL content first (mockup-split
+  //     canonical case, 2026-07-06). Splitting/extracting from an existing
+  //     site is deterministic — first move is reading its full HTML, never
+  //     a generative rebuild, never an image call, never a question. ──
+  {
+    id: 'derive-read-first',
+    ctx: 'selClone',
+    assert: [any('getNodeOutput', 'viewNode'), not('ASK('), not('runFlow'), not('createImage')],
+    phrasings: [
+      'extract each mockup in a single node with a clone of each',
+      'separa cada mockup desse site em um node próprio',
+      'divide esse site em um node por seção',
+    ],
+  },
+
+  // ── Content already read → the chain is ANCHORED to the source and
+  //     carries the carved HTML (content arg present, not blank slots).
+  //     `not('runFlow')` was dropped: models legitimately narrate follow-up
+  //     steps, and the first-move signal here is anchor + seeded content. ──
+  {
+    id: 'derive-anchored-chain',
+    ctx: 'cloneRead',
+    assert: [has('createWorkflow'), has('anchor'), has('content'), not('ASK(')],
+    phrasings: [
+      'agora cria os dois nodes, um pra cada mockup',
+      'now create the two nodes, one per mockup',
+    ],
+  },
+
+  // ── Selection is the origin: derivative builds attach to the selected
+  //     node (anchored chain), never ask "which one". ──
+  {
+    id: 'selection-is-origin',
+    ctx: 'selSite',
+    assert: [not('ASK'), any('anchor', 'createWorkflow')],
+    phrasings: [
+      'crie 3 variações desse site',
+      'faz duas versões alternativas desse site',
+    ],
   },
 ];
 

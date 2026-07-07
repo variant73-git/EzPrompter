@@ -90,6 +90,25 @@ describe('createNode tool', () => {
     expect(JSON.stringify(insertCall)).toContain('a fintech website');
   });
 
+  it('seeds a site node snapshot with the provided content HTML (derived/split page)', async () => {
+    sql.mockResolvedValueOnce([{ id: 'board-1' }]);                                  // SELECT board
+    sql.mockResolvedValueOnce([]);                                                   // placeStackDown
+    sql.mockResolvedValueOnce([{ id: 'node-12', kind: 'site', pos_x: 0, pos_y: 0, width: 1280, height: 720, meta: { source: 'blank', name: 'Mockup 1' } }]); // INSERT node
+    sql.mockResolvedValueOnce([{ id: 'snap-7' }]);                                   // INSERT snapshot
+    sql.mockResolvedValueOnce([]);                                                   // UPDATE current_snapshot_id
+    const html = '<html><body><section class="mockup-one">Grocery Shopping</section></body></html>';
+    const result = await createNodeTool.execute(
+      { type: 'blank-website', name: 'Mockup 1', content: html },
+      { boardId: 'board-1', userId: 42 },
+    );
+    expect(result.id).toBe('node-12');
+    const snapCall = sql.mock.calls.find((c) => String(c[0].join('')).includes('INSERT INTO snapshots'));
+    expect(snapCall).toBeTruthy();
+    // The seeded snapshot carries the caller's HTML, not the blank-site seed.
+    expect(JSON.stringify(snapCall)).toContain('mockup-one');
+    expect(JSON.stringify(snapCall)).not.toContain('Blank website');
+  });
+
   it('seeds a design_md snapshot for a design-system node with content', async () => {
     sql.mockResolvedValueOnce([{ id: 'board-1' }]);                                  // SELECT board
     sql.mockResolvedValueOnce([]);                                                   // placeStackDown

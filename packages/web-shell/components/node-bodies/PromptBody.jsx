@@ -8,7 +8,7 @@ import { readCanvasScale, chromeScale } from '../../lib/canvas-scale.js';
 // node); DOUBLE-CLICK enters edit mode to type the prompt. While hovering
 // in move mode, a small tag follows the cursor: "Double-click to edit".
 // Edit mode exits on blur (click anywhere outside the field).
-export default function PromptBody({ node, onChange }) {
+export default function PromptBody({ node, onChange, onContentHeight }) {
   const initial = node.meta?.prompt || '';
   const [text, setText] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -25,6 +25,23 @@ export default function PromptBody({ node, onChange }) {
     }, 400);
     return () => clearTimeout(flushTimer.current);
   }, [text, initial, onChange]);
+
+  // Auto-grow: report the text's PURE content height so the node keeps its
+  // 20% breathing room as the user types (and re-measure on width changes —
+  // the text reflows). The textarea is height:100%, so a plain scrollHeight
+  // read floors at the box height and the node could only ever GROW;
+  // collapsing it for the measurement returns the real content height, so
+  // shrinking works too.
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta || !onContentHeight) return;
+    const prev = ta.style.height;
+    ta.style.height = '0px';
+    const contentH = ta.scrollHeight; // includes the field's own padding
+    ta.style.height = prev || '';
+    onContentHeight(contentH);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, node.width]);
 
   // Stop drag/select propagation so typing doesn't move the node.
   function stop(e) { e.stopPropagation(); }

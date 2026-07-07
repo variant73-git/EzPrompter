@@ -46,6 +46,22 @@ describe('editSiteTool', () => {
     expect(r.error).toBe('node_open_in_edit');
   });
 
+  it('forwards the dock picker model to runCompose (agent edits honor the picker)', async () => {
+    let call = 0;
+    sql.mockImplementation(() => {
+      call++;
+      if (call === 1) return Promise.resolve([{ id: 'n1', kind: 'site', meta: {}, board_id: 'b1', current_html: '<div>page</div>', current_design_md: null }]);
+      return Promise.resolve([{ id: 'snap-new' }]);
+    });
+    runCompose.mockResolvedValueOnce({ html: '<html><body>edited</body></html>' });
+    const r = await editSiteTool.execute(
+      { nodeId: 'n1', instruction: 'make it red' },
+      { boardId: 'b1', userId: 42, pickerModel: 'gpt-5.5' },
+    );
+    expect(r.error).toBeUndefined();
+    expect(runCompose).toHaveBeenLastCalledWith(expect.objectContaining({ modelId: 'gpt-5.5' }));
+  });
+
   it('rejects prose output — no_change, no snapshot saved', async () => {
     let call = 0;
     sql.mockImplementation(() => {

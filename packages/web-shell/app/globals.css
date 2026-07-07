@@ -3628,12 +3628,14 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
 .cnode-port-right {
   position: absolute;
   top: 50%;
-  /* -20.51 = the old -9.125 (dot centred on the border edge) + 11.385px PORT_GAP
-     so the dot floats just OUTSIDE the node. The cord endpoint shifts out by the
-     same 11.385px (EdgeLayer.PORT_GAP) so they still meet. Keep all three in sync. */
-  right: -20.51px;
-  width: 14.25px;
-  height: 14.25px;
+  /* -31.1 = -(dot/2 = 12.02 + border corr 2) + 17.08px PORT_GAP. The cord
+     endpoint shifts out by the same 17.08px (EdgeLayer.PORT_GAP) so they meet.
+     Keep all three in sync (this rule + EdgeLayer + findSnapTarget).
+     SCREEN-CONSTANT sizing (counter-scaled by --chrome-scale, floor 0.4):
+     the dots hold their on-screen size on zoom-out, stop growing at 40%. */
+  right: calc(-31.1px / var(--chrome-scale, 1));
+  width: calc(24.05px / var(--chrome-scale, 1));
+  height: calc(24.05px / var(--chrome-scale, 1));
   transform: translateY(-50%);
   border-radius: 50%;
   /* No backdrop-filter here: this dot exists on EVERY node inside the
@@ -3696,21 +3698,21 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
    constants to anchor the cord at each circle. */
 .cnode-port-stack-left {
   position: absolute;
-  /* -20.51 = -9.125 (border-edge correction) + 11.385px PORT_GAP so the receiver
-     dots float just OUTSIDE the node's left edge; the cord endpoints shift out
-     by the same 11.385px (EdgeLayer + findSnapTarget). Keep all three in sync. */
-  left: -20.51px;
+  /* Mirror of .cnode-port-right's offset math (see the note there) —
+     counter-scaled with the same 0.4 floor. */
+  left: calc(-31.1px / var(--chrome-scale, 1));
   top: 50%;
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: calc(9px / var(--chrome-scale, 1));
   z-index: 5;
 }
 
 .cnode-port-left {
-  width: 14.25px;
-  height: 14.25px;
+  position: relative; /* anchor for the transform-centred inner dot */
+  width: calc(24.05px / var(--chrome-scale, 1));
+  height: calc(24.05px / var(--chrome-scale, 1));
   border-radius: 50%;
   /* No backdrop-filter (in-world rule — this slot exists on every node;
      see the port-right note). Slightly higher alpha covers the blur. */
@@ -3774,12 +3776,20 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
    right/left). Per-origin colour-coding still lives in the cord stroke
    + node ring; the port itself reads as a neutral dark-mode badge. */
 .cnode-port-dot {
-  width: 4.5px;
-  height: 4.5px;
+  width: calc(7.6px / var(--chrome-scale, 1));
+  height: calc(7.6px / var(--chrome-scale, 1));
   border-radius: 50%;
   background: rgba(245, 245, 245, 0.95);
   pointer-events: none;
-  transition: background 0.15s, transform 0.15s;
+  transition: background 0.15s;
+  /* Transform-centred on the ring (2026-07-07): flex centring resolved the
+     fractional 14.25/4.5 sizes to whole device pixels and the inner dot
+     drifted off-centre at most zoom levels. translate(-50%,-50%) centring
+     is subpixel-exact regardless of the sizes. */
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 .cnode-port-left .cnode-port-dot,
 .cnode-port-left.is-empty .cnode-port-dot {
@@ -4235,17 +4245,45 @@ body.rb-ed-light .cnode-anchor-title {
      borders + comfortable padding so it visually sits as a chip. */
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
+  /* Concentric nesting (2026-07-07): the chip sits 14px inside the node
+     body (radius 11.25) — a nested radius must be SMALLER than the outer
+     minus the gap or the corner visibly pokes past the frame's curve.
+     The math floors at 0 here; 4px keeps a minimal soften. */
+  border-radius: 4px;
   /* Inner margins (text↔frame) — generous breathing room. Order: top right
      bottom left. The corner resize handle sits flush in the corner and ignores
      this padding. */
   padding: 22px 20px 26px 24px;
   resize: none;
   outline: none;
+  /* Text taller than the box (auto-grow caps at 800px; manual resize can
+     go smaller) → the field scrolls vertically. */
+  overflow-y: auto;
   color: #f5f5f5;
   font: 500 18px/1.5 var(--font-instrument-sans), system-ui, sans-serif;
   transition: border-color 0.15s, background 0.15s;
 }
+/* Corner resize grip for prompt nodes (2026-07-07) — the diagonal-lines
+   SE icon sections used, flush in the body's bottom-right corner. */
+.cnode-prompt-corner-resize {
+  position: absolute;
+  /* Margins referenced to the INNER frame (the 14px-inset chip), not the
+     outer body: 14 + 8 = 22px from the body edge (2026-07-07). */
+  right: 22px;
+  bottom: 22px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(245, 245, 249, 0.35);
+  cursor: nwse-resize;
+  z-index: 6;
+}
+.cnode-prompt-corner-resize:hover { color: rgba(255, 255, 255, 0.75); }
+.cnode-prompt-corner-resize svg { width: 100%; height: 100%; }
+body.rb-ed-light .cnode-prompt-corner-resize { color: rgba(0, 0, 0, 0.3); }
+body.rb-ed-light .cnode-prompt-corner-resize:hover { color: rgba(0, 0, 0, 0.65); }
 .cnode-prompt-textarea:focus {
   border-color: rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.08);
@@ -4584,6 +4622,11 @@ body.rb-ed-light .canvas-section-frame {
 }
 
 .canvas-section-name-tag {
+  /* Deeper counter-scale floor (2026-07-07, user request): the section's
+     action chips (run pill + layout buttons) keep their on-screen size
+     down to 25% zoom (the global chrome floor is 0.4). Local --chrome-scale
+     override — every child calc() picks it up automatically. */
+  --chrome-scale: max(0.25, var(--canvas-scale, 1));
   position: absolute;
   top: 24px;
   right: 30px;
@@ -5040,6 +5083,64 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
 }
 body.rb-ed-light .canvas-section-handle-se { color: rgba(0, 0, 0, 0.35); }
 body.rb-ed-light .canvas-section-handle-se:hover { color: rgba(0, 0, 0, 0.7); }
+
+/* ── Section layout buttons (2026-07-06) ─────────────────────────────────
+   Auto-layout + Fit-to-content icon cluster at the section's bottom-right,
+   in the .cnode-expand-float visual family. Hover-revealed with the rest
+   of the section chrome. The SE resize handle lost its diagonal-lines ICON
+   (the hit area still resizes) so this corner doesn't crowd. */
+.canvas-section-layout-btns {
+  /* Same 25% counter-scale floor as the run pill (see the note there). */
+  --chrome-scale: max(0.25, var(--canvas-scale, 1));
+  position: absolute;
+  /* Same edge margins as the run pill (.canvas-section-name-tag: 24/30
+     world px) and the same size measure so both chips read identically
+     at every zoom. */
+  bottom: 24px;
+  right: 30px;
+  display: inline-flex;
+  gap: calc(8px / var(--chrome-scale, 1));
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+.canvas-section-chrome.sec-hovered .canvas-section-layout-btns { opacity: 1; pointer-events: auto; }
+.canvas-section-layout-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* +20% over the expand-floater base (28 → 34) per user request. */
+  width: calc(34px / var(--chrome-scale, 1));
+  height: calc(34px / var(--chrome-scale, 1));
+  padding: 0;
+  background: rgba(15, 15, 15, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: calc(10px / var(--chrome-scale, 1));
+  color: rgba(241, 245, 249, 0.78);
+  cursor: pointer;
+}
+.canvas-section-layout-btn svg { width: calc(18px / var(--chrome-scale, 1)); height: calc(18px / var(--chrome-scale, 1)); }
+.canvas-section-layout-btn:hover {
+  background: rgba(20, 20, 20, 0.92);
+  color: #ffffff;
+}
+/* Already in the target state → dimmed until something moves out of place. */
+.canvas-section-layout-btn.disabled,
+.canvas-section-layout-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.canvas-section-layout-btn.disabled:hover {
+  background: rgba(15, 15, 15, 0.78);
+  color: rgba(241, 245, 249, 0.78);
+}
+body.rb-ed-light .canvas-section-layout-btn {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(0, 0, 0, 0.12);
+  color: rgba(10, 10, 10, 0.7);
+}
+body.rb-ed-light .canvas-section-layout-btn:hover { background: #ffffff; color: #0a0a0a; }
 
 /* ── Active context pill in PromptDock ──────────────────────────── */
 .prompt-dock-context-wrap {
@@ -7705,6 +7806,17 @@ body.rb-ed-light .cnode-float-title { color: rgba(31, 31, 31, 0.9); }
    and the centered anchor title carries the node's identity. The anchor
    becomes the MOVE handle so nodes stay draggable at any zoom. */
 html.canvas-zoom-low .cnode-float-tag { display: none; }
+
+/* ── "Run from here" (2026-07-06) ────────────────────────────────────────
+   Lives INSIDE .cnode-float-actions, same .cnode-float-btn dimensions as
+   Edit, side by side at the node's top-right — selection-only like the
+   rest of the cluster. White (Edit stays the blue primary). */
+.cnode-float-btn.cnode-float-runhere {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  color: #0a0a0a;
+}
+.cnode-float-btn.cnode-float-runhere:hover { background: #f0f0f0; }
 html.canvas-zoom-low .cnode-anchor-title {
   pointer-events: auto;
   cursor: grab;
@@ -7928,5 +8040,11 @@ html.canvas-interacting .cnode-prompt-hint { opacity: 0 !important; }
    flag only affects the remaining screen-constant chrome — labels, pills,
    tooltips, handles, halos. Kept as a debug lever (Alt/⌥+W, persisted). */
 html.canvas-worldlock {
+  --chrome-scale: 1;
+}
+/* The section action chips define a LOCAL --chrome-scale (0.25 floor) —
+   re-pin them too so the ⌥W experiment stays all-or-nothing. */
+html.canvas-worldlock .canvas-section-name-tag,
+html.canvas-worldlock .canvas-section-layout-btns {
   --chrome-scale: 1;
 }

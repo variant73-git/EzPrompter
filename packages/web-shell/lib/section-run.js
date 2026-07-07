@@ -9,18 +9,19 @@
  *             PromptDock arrow makes — works even on a blank scaffold
  *   - designmd / others → not supported yet, surfaced honestly
  *
- * Terminal node of a section's chain — the member that receives edges
- * from other members and doesn't fan out to another member. For typical
- * workflows (sources → result) there is exactly one; zero/multiple
- * runnable terminals means the chain shape isn't re-runnable.
+ * Terminal nodes of a section's chain — the members that receive edges
+ * from other members and don't fan out to another member. A chain may
+ * legitimately end in SEVERAL results (one source → N derived terminals,
+ * first-class since anchored chains, 2026-07-06): the section run
+ * executes every runnable terminal, not just a unique one.
  */
 import { BLANK_SITE_HTML } from './blank-site-html.js';
 
 export const RERUNNABLE_TERMINAL_KINDS = new Set(['asset', 'site']);
 
-export function findSectionTerminal(section, nodes, edges) {
+export function findSectionTerminals(section, nodes, edges) {
   const memberSet = new Set(section.memberIds);
-  const terminals = section.memberIds
+  const endpoints = section.memberIds
     .map((id) => nodes.find((n) => n.id === id))
     .filter(Boolean)
     .filter((node) => {
@@ -30,18 +31,91 @@ export function findSectionTerminal(section, nodes, edges) {
     });
 
   // Temp nodes only live in local state — the server can't run them.
-  const runnable = terminals.filter(
+  const terminals = endpoints.filter(
     (n) => RERUNNABLE_TERMINAL_KINDS.has(n.kind) && !String(n.id).startsWith('temp-')
   );
 
   return {
-    terminal: runnable.length === 1 ? runnable[0] : null,
-    terminalId: runnable.length === 1 ? runnable[0].id : null,
-    count: runnable.length,
+    terminals,
+    count: terminals.length,
     // When the chain DOES end somewhere but that kind can't be re-run
     // (a .md or prompt terminal), report it so the caller can say
     // "not supported yet" instead of "no terminal found".
-    unsupportedKind: runnable.length === 0 && terminals.length > 0 ? terminals[0].kind : null,
+    unsupportedKind: terminals.length === 0 && endpoints.length > 0 ? endpoints[0].kind : null,
+  };
+}
+
+// Legacy single-terminal view — kept for call sites that only make sense
+// with a unique result. Multiple runnable terminals → null (ambiguous).
+export function findSectionTerminal(section, nodes, edges) {
+  const { terminals, count, unsupportedKind } = findSectionTerminals(section, nodes, edges);
+  return {
+    terminal: count === 1 ? terminals[0] : null,
+    terminalId: count === 1 ? terminals[0].id : null,
+    count,
+    unsupportedKind,
+  };
+}
+
+// ── Whole-graph run plan (cascade executor, 2026-07-06) ─────────────────
+// The section ▶ executes the ENTIRE graph, whatever its shape — no
+// assumptions about chain form. Every member with at least one incoming
+// member-edge is PRODUCIBLE (it composes from its sources); this orders
+// them into dependency stages (Kahn over the member subgraph, longest-path
+// depth): sources first, derivations after, so results CASCADE — a
+// multi-stage chain (prompt → site A → site B) re-produces A before B
+// composes from it. Nodes in the same stage are independent → run in
+// parallel. Only runnable kinds (asset/site, non-temp) execute; members
+// caught in a cycle never resolve a depth and are left out (never run).
+export function planSectionRun(section, nodes, edges) {
+  const memberSet = new Set(section.memberIds);
+  const memberEdges = (edges || []).filter(
+    (e) => memberSet.has(e.source_node_id) && memberSet.has(e.target_node_id)
+  );
+  const members = section.memberIds
+    .map((id) => nodes.find((n) => n.id === id))
+    .filter(Boolean);
+
+  // Depth via Kahn: a node's stage is 1 past its deepest source.
+  const indegree = new Map(members.map((n) => [n.id, 0]));
+  for (const e of memberEdges) indegree.set(e.target_node_id, (indegree.get(e.target_node_id) || 0) + 1);
+  const depth = new Map();
+  const remaining = new Map(indegree);
+  const queue = members.filter((n) => (indegree.get(n.id) || 0) === 0).map((n) => n.id);
+  queue.forEach((id) => depth.set(id, 0));
+  while (queue.length) {
+    const id = queue.shift();
+    for (const e of memberEdges) {
+      if (e.source_node_id !== id) continue;
+      const t = e.target_node_id;
+      depth.set(t, Math.max(depth.get(t) ?? 0, (depth.get(id) ?? 0) + 1));
+      remaining.set(t, remaining.get(t) - 1);
+      if (remaining.get(t) === 0) queue.push(t);
+    }
+  }
+
+  const producible = members.filter((n) => memberEdges.some((e) => e.target_node_id === n.id));
+  const staged = producible.filter(
+    (n) => depth.has(n.id) && RERUNNABLE_TERMINAL_KINDS.has(n.kind) && !String(n.id).startsWith('temp-')
+  );
+  const byDepth = new Map();
+  for (const n of staged) {
+    const d = depth.get(n.id);
+    if (!byDepth.has(d)) byDepth.set(d, []);
+    byDepth.get(d).push(n);
+  }
+  const stages = [...byDepth.keys()].sort((a, b) => a - b).map((d) => byDepth.get(d));
+
+  return {
+    stages,
+    runnable: stages.flat(),
+    // The graph ends somewhere we can't produce (a .md or prompt with
+    // inputs and nothing runnable at all) → report the kind so the caller
+    // says "not supported yet" instead of "nothing to run".
+    unsupportedKind:
+      stages.length === 0 && producible.length > 0 && producible.every((n) => !RERUNNABLE_TERMINAL_KINDS.has(n.kind))
+        ? producible[0].kind
+        : null,
   };
 }
 
@@ -124,23 +198,105 @@ export function chainSignature(section, nodes, edges) {
 // GENERATED RESULT about to be overwritten. First runs (image terminal
 // still empty, site terminal still on the blank scaffold) fire straight
 // away.
-export function sectionRerunWouldOverwrite(section, nodes, edges) {
-  const { terminal } = findSectionTerminal(section, nodes, edges);
-  if (!terminal) return false;
-  if (terminal.kind === 'asset') return !!terminal.meta?.dataUrl;
-  if (terminal.kind === 'site') {
-    const html = terminal.current_html || '';
+// A node's produced result exists (asset: image data; site: real html
+// beyond the blank scaffold).
+export function nodeHasResult(node) {
+  if (!node) return false;
+  if (node.kind === 'asset') return !!node.meta?.dataUrl;
+  if (node.kind === 'site') {
+    const html = node.current_html || '';
     return !!html && html !== BLANK_SITE_HTML;
   }
   return false;
 }
 
+// Fingerprint of everything a node composes FROM: the content of every
+// incoming edge's source, ordered by id. If this matches the signature
+// captured when the node last ran, its inputs haven't changed — re-running
+// it would burn credits to produce the same thing.
+export function nodeInputSignature(nodeId, nodes, edges) {
+  const sources = (edges || [])
+    .filter((e) => e.target_node_id === nodeId)
+    .map((e) => e.source_node_id)
+    .sort();
+  return sources
+    .map((sid) => `${sid}=${nodeContentFingerprint(nodes.find((n) => n.id === sid))}`)
+    .join(';');
+}
+
+// ── Incremental cascade (2026-07-06) ────────────────────────────────────
+// Filter the full run plan down to what actually NEEDS to run. A node runs
+// when: it has no result yet, OR its input signature no longer matches the
+// stored one (something upstream was edited), OR any of its direct sources
+// is itself going to run (its inputs are ABOUT to change — propagates down
+// the stages). Everything else is skipped and its current result reused.
+// storedSigs = null/undefined → force mode (Reroll): the full plan runs.
+export function planIncrementalRun(section, nodes, edges, storedSigs = null) {
+  const base = planSectionRun(section, nodes, edges);
+  if (!storedSigs) return { ...base, skipped: [] };
+
+  const willRun = new Set();
+  const stages = [];
+  const skipped = [];
+  for (const stage of base.stages) {
+    const runStage = [];
+    for (const n of stage) {
+      const upstreamRuns = (edges || []).some(
+        (e) => e.target_node_id === n.id && willRun.has(e.source_node_id)
+      );
+      const dirty =
+        upstreamRuns ||
+        !nodeHasResult(n) ||
+        storedSigs[n.id] !== nodeInputSignature(n.id, nodes, edges);
+      if (dirty) { willRun.add(n.id); runStage.push(n); }
+      else skipped.push(n);
+    }
+    if (runStage.length) stages.push(runStage);
+  }
+  return { stages, runnable: stages.flat(), skipped, unsupportedKind: base.unsupportedKind };
+}
+
+// ── Run from here (2026-07-06) ──────────────────────────────────────────
+// Surgical scope: the pointed node runs FORCED (the user explicitly chose
+// it) and the cascade continues only through its descendants — everything
+// upstream and in sibling branches is untouched and costs nothing. The
+// node itself is included only when it's producible (a source prompt/asset
+// can't run, but its descendants can).
+export function planRunFromNode(nodeId, section, nodes, edges) {
+  const memberSet = new Set(section.memberIds);
+  const memberEdges = (edges || []).filter(
+    (e) => memberSet.has(e.source_node_id) && memberSet.has(e.target_node_id)
+  );
+  // Descendant closure of the pointed node (BFS over member edges).
+  const targets = new Set([nodeId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const e of memberEdges) {
+      if (targets.has(e.source_node_id) && !targets.has(e.target_node_id)) {
+        targets.add(e.target_node_id);
+        grew = true;
+      }
+    }
+  }
+  const base = planSectionRun(section, nodes, edges);
+  const stages = base.stages
+    .map((st) => st.filter((n) => targets.has(n.id)))
+    .filter((st) => st.length);
+  return { stages, runnable: stages.flat() };
+}
+
+export function sectionRerunWouldOverwrite(section, nodes, edges, storedSigs = null) {
+  const { runnable } = planIncrementalRun(section, nodes, edges, storedSigs);
+  return runnable.some(nodeHasResult);
+}
+
 // ── Billing estimates (Task 18) ─────────────────────────────────────────
-// Map a section's runnable chain to billing op ids so the UI can show a
+// Map a section's runnable graph to billing op ids so the UI can show a
 // pre-flight `≈ N cr` estimate (lib/billing/pricing.js estimateChain).
-// One terminal = one operation: site → compose, asset → image regen.
-export function sectionOps(section, nodes, edges) {
-  const { terminal } = findSectionTerminal(section, nodes, edges);
-  if (!terminal) return [];
-  return terminal.kind === 'asset' ? ['image.generate'] : ['compose'];
+// One op per node that will ACTUALLY run: with storedSigs the estimate is
+// incremental (skipped nodes cost nothing); without, the full cascade.
+export function sectionOps(section, nodes, edges, storedSigs = null) {
+  const { runnable } = planIncrementalRun(section, nodes, edges, storedSigs);
+  return runnable.map((t) => (t.kind === 'asset' ? 'image.generate' : 'compose'));
 }

@@ -59,7 +59,10 @@ Use after you've created and connected the right nodes — don't call runFlow be
       const { result: payload, credits, balanceAfter } = await runBilledOperation(
         { sql, userId: ctx.userId, op: 'compose', boardId: ctx.boardId, nodeId },
         async () => {
-          const result = await runCompose({ target, sources, modelId });
+          // Model priority: explicit tool arg > the user's dock picker >
+          // runCompose's default. The picker is the user's standing choice —
+          // an agent-initiated run must honor it (same rule as createImage).
+          const result = await runCompose({ target, sources, modelId: modelId || ctx?.pickerModel || null });
           const [newSnap] = await sql`
             INSERT INTO snapshots (node_id, html, source)
             VALUES (${nodeId}, ${result.html}, 'agent-run')

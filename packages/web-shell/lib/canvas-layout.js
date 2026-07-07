@@ -489,3 +489,20 @@ export async function placeChainOnBoard(boardId, w, h, sql) {
   }
   return { x, y: fy + SECTION_TOP_PAD };
 }
+
+// Anchored variant: place a w×h chain NEXT TO an existing node (the anchor)
+// so the chain grows out of it instead of landing as a detached island. The
+// anchor acts as column 0 — the chain starts one dependency gap to its right,
+// vertically centered on it. The anchor's own section frame is NOT an
+// obstacle (the chain is JOINING that section); its member nodes still are,
+// and so is every other node/section — push down to clear. The section-level
+// de-overlap backstop (deoverlapSectionForEdge) runs after wiring, keeping
+// the grown section clear of neighbours as a unit.
+export async function placeChainAtAnchor(boardId, anchorNodeId, w, h, sql) {
+  const { rows, obstacles } = await loadBoardObstacles(boardId, sql, anchorNodeId);
+  const anchor = rows.find((r) => r.id === anchorNodeId);
+  if (!anchor) return placeChainOnBoard(boardId, w, h, sql);
+  const x = (anchor.pos_x ?? 0) + (anchor.width ?? 0) + CHAIN_GAP_X;
+  const candidateY = Math.round((anchor.pos_y ?? 0) + (anchor.height ?? 0) / 2 - h / 2);
+  return resolveDownCollision(x, candidateY, w, h, obstacles, clearGapFor(rows.length));
+}

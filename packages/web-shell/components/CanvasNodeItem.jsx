@@ -20,7 +20,7 @@ import CanvasNode from './CanvasNode.jsx';
 function CanvasNodeItem({
   node, scale, debit, incomingEdges, hasOutgoingEdges, selected, placing,
   editing, runStatus, draftActive, removing, removingOutside, removeFromMenu,
-  inSection, handlersRef,
+  inSection, canRunFromHere, handlersRef,
 }) {
   const h = () => handlersRef.current;
   return (
@@ -39,6 +39,9 @@ function CanvasNodeItem({
       removingOutside={removingOutside}
       removeFromMenu={removeFromMenu}
       inSection={inSection}
+      canRunFromHere={canRunFromHere}
+      onRunFromHere={() => h().runFromNode(node.id)}
+      getRunFromHereEst={() => h().getRunFromHereEst(node.id)}
       onEditingChange={(willEdit) => h().handleEditingToggle(node.id, willEdit)}
       onSelect={(e) => h().handleNodeSelect(node, e)}
       onMove={(posX, posY) => h().handleNodeMove(node, posX, posY)}

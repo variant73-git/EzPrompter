@@ -47,7 +47,7 @@ export function computeNodeSize(mapping, content) {
       .reduce((acc, ln) => acc + Math.max(1, Math.ceil(ln.length / CHARS_PER_LINE)), 0);
     const textH = lines * LINE_H;
     h = Math.round(textH * 1.2 + CHROME);          // +20% breathing below text
-    h = Math.max(200, Math.min(h, 900));            // sane bounds
+    h = Math.max(200, Math.min(h, 800));            // 800 cap (2026-07-07): taller text scrolls
   }
   return { w, h };
 }
@@ -70,12 +70,15 @@ export async function insertTypedNode({ boardId, mapping, name, content, x, y, w
     RETURNING id, kind, pos_x, pos_y, width, height, meta, created_at
   `;
 
-  // Seed an initial snapshot when the type defines one (currently only
-  // blank-website) so the iframe has content to render.
-  if (mapping.seedHtml) {
+  // Seed an initial snapshot when the type defines one (blank-website) so
+  // the iframe has content to render. A site node with explicit content
+  // seeds THAT html instead — the deterministic path for derived/split
+  // pages (e.g. "each mockup in its own node" from an existing site).
+  const seedHtml = (mapping.kind === 'site' && content) ? content : mapping.seedHtml;
+  if (seedHtml) {
     const [snap] = await sql`
       INSERT INTO snapshots (node_id, html, source)
-      VALUES (${node.id}, ${mapping.seedHtml}, 'seed')
+      VALUES (${node.id}, ${seedHtml}, 'seed')
       RETURNING id
     `;
     await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${node.id}`;
@@ -113,7 +116,7 @@ If the user wants to CAPTURE a real website by URL (snapshot a live site), don't
         description: 'What KIND of node to add. See description for the full meaning of each type.',
       },
       name: { type: 'string', description: 'Optional display name shown on the node' },
-      content: { type: 'string', description: 'Optional body for the node. For a "prompt" node: the brief/instruction text (becomes the prompt the node feeds into a site). For a "design-system" node: the DESIGN.md spec text. Omit to leave the node a blank slot the user fills later.' },
+      content: { type: 'string', description: 'Optional body for the node. For a "prompt" node: the brief/instruction text (becomes the prompt the node feeds into a site). For a "design-system" node: the DESIGN.md spec text. For a "blank-website" node: initial HTML — use when deriving/splitting a page from existing content, so the node renders it immediately without an AI call. Omit to leave the node a blank slot the user fills later.' },
       posX: { type: 'number', description: 'Canvas X (optional)' },
       posY: { type: 'number', description: 'Canvas Y (optional)' },
     },
