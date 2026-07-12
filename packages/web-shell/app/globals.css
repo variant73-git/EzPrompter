@@ -7,48 +7,44 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg-base: #0a0a0a;
-  --color-bg-frosted: rgba(10, 10, 10, 0.72);
-  --color-text-primary: #f5f5f5;
-  --color-text-secondary: rgba(245, 245, 245, 0.62);
-  --color-text-muted: rgba(245, 245, 245, 0.42);
-  --color-text-faint: rgba(245, 245, 245, 0.22);
-  --color-border-frosted: rgba(255, 255, 255, 0.08);
-  --color-border-frosted-strong: rgba(255, 255, 255, 0.12);
-  --color-hover-bg: rgba(255, 255, 255, 0.06);
-  --color-hover-bg-strong: rgba(255, 255, 255, 0.12);
+  /* ── "The Working Table" palette (unspirit import, 2026-07-12) ──
+     Warm charcoal surfaces, near-neutral chrome, ink slightly off-white.
+     The canvas is a calm physical surface; COLOR lives in the graph
+     (origin colors), never in the chrome. Solid surfaces — no frosted
+     blur anywhere (backdrop-filter retired product-wide). */
+  --color-bg-base: #191917;
+  --color-bg-frosted: rgba(34, 34, 32, 0.97);
+  --color-text-primary: #F1F0EB;
+  --color-text-secondary: #B5B3AC;
+  --color-text-muted: #96948D;
+  --color-text-faint: rgba(241, 240, 235, 0.30);
+  --color-border-frosted: #3A3935;
+  --color-border-frosted-strong: #45443F;
+  --color-hover-bg: rgba(241, 240, 235, 0.07);
+  --color-hover-bg-strong: rgba(241, 240, 235, 0.12);
 
-  /* Product accent (canonical blue) + common surface fill. Added in the
-     2026-06-09 token cleanup so utilities and plain CSS share one source
-     instead of ~38 hardcoded var(--accent) / scattered white-alpha fills. */
-  --color-accent: #0095FF;
-  --color-accent-hover: #0086e6;
-  --color-accent-weak: rgba(0, 149, 255, 0.18);
-  --color-surface: rgba(255, 255, 255, 0.04);
-  --color-surface-strong: rgba(255, 255, 255, 0.06);
+  /* Product accent = the site blue (color grammar's anchor). Focus rings,
+     primary highlights. Buttons are ink-inverted, not accent-filled. */
+  --color-accent: #2966EA;
+  --color-accent-hover: #2258C9;
+  --color-accent-weak: rgba(41, 102, 234, 0.20);
+  --color-surface: rgba(241, 240, 235, 0.05);
+  --color-surface-strong: rgba(241, 240, 235, 0.08);
 
-  --shadow-frost: 0 16px 60px rgba(0, 0, 0, 0.55);
+  /* Ambient, small. Chrome earns elevation only when crossing content. */
+  --shadow-frost: 0 8px 28px rgba(0, 0, 0, 0.28);
 
   --radius-pill: 999px;
-  --radius-sm: 12px;
-  --radius-md: 18px;
-  --radius-lg: 22px;
-  --radius-xs: 8px;
-  --radius-2xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 16px;
+  --radius-xs: 7px;
+  --radius-2xs: 5px;
 
-  /* Chrome blur amounts — 28px house value, 36px heavy menus, 24px soft
-     backgrounds. Were 9 different literals before the cleanup. */
-  --blur-chrome: 28px;
-  --blur-menu: 36px;
-  --blur-soft: 24px;
-
-  /* Instrument Sans (loaded via next/font, exposed as --font-instrument-sans)
-     is now the default sans. --font-display resolves to Instrument Sans too;
-     the popup family keeps Instrument Serif separately (--popup-font-serif).
-     Instrument Sans ships weights 400–700, so any `font-weight:300` clamps to
-     400. */
-  --font-sans: var(--font-instrument-sans), system-ui, -apple-system, sans-serif;
-  --font-display: var(--font-instrument-sans), system-ui, -apple-system, sans-serif;
+  /* Inter (variable, via next/font) is the single UI face — hierarchy by
+     weight (450 body / 550 labels), no display serif. */
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-inter), system-ui, -apple-system, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -62,61 +58,57 @@
      the Magnifik model. JS mirrors via chromeScale() in
      lib/canvas-scale.js so cords/snap/hit stay glued to the CSS. */
   --chrome-scale: max(0.4, var(--canvas-scale, 1));
-  --bg-base: #0a0a0a;
-  --bg-frosted: rgba(10, 10, 10, 0.72);
-  --bg-frosted-solid: #0f0f0f;
-  --border-frosted: rgba(255, 255, 255, 0.08);
-  --border-frosted-strong: rgba(255, 255, 255, 0.12);
-  --text-primary: #f5f5f5;
-  --text-secondary: rgba(245, 245, 245, 0.62);
-  --text-muted: rgba(245, 245, 245, 0.42);
-  --text-faint: rgba(245, 245, 245, 0.28);
-  --shadow-frost: 0 16px 60px rgba(0, 0, 0, 0.55);
-  /* Canvas dot grid — bumped from 0.18 → 0.20 for ~10% extra contrast
-     on the dark canvas surface. */
-  --canvas-dot: rgba(255, 255, 255, 0.20);
-  --hover-bg: rgba(255, 255, 255, 0.06);
-  --hover-bg-strong: rgba(255, 255, 255, 0.10);
-  /* Accent + surface — see @theme note. Accent stays blue in both themes;
-     surface flips dark-on-light in body.rb-ed-light below. */
-  --accent: #0095FF;
-  --accent-hover: #0086e6;
-  --accent-weak: rgba(0, 149, 255, 0.18);
-  --surface: rgba(255, 255, 255, 0.04);
-  --surface-strong: rgba(255, 255, 255, 0.06);
+  /* ── "The Working Table" palette (unspirit import, 2026-07-12).
+     Warm charcoal, solid surfaces, ambient shadows. Values mirror the
+     @theme block above — keep both in sync. */
+  --bg-base: #191917;
+  --bg-frosted: rgba(34, 34, 32, 0.97);
+  --bg-frosted-solid: #292926;
+  --border-frosted: #3A3935;
+  --border-frosted-strong: #45443F;
+  --text-primary: #F1F0EB;
+  --text-secondary: #B5B3AC;
+  --text-muted: #96948D;
+  --text-faint: rgba(241, 240, 235, 0.30);
+  --shadow-frost: 0 8px 28px rgba(0, 0, 0, 0.28);
+  /* Canvas dot grid — warm graphite dots on the charcoal surface. */
+  --canvas-dot: #393833;
+  --hover-bg: rgba(241, 240, 235, 0.07);
+  --hover-bg-strong: rgba(241, 240, 235, 0.12);
+  /* Accent = the site blue (anchor of the color grammar). Primary
+     buttons are ink-inverted (--ink-invert on --text-primary), not
+     accent-filled — accent marks focus and live selection only. */
+  --accent: #2966EA;
+  --accent-hover: #2258C9;
+  --accent-weak: rgba(41, 102, 234, 0.20);
+  --surface: rgba(241, 240, 235, 0.05);
+  --surface-strong: rgba(241, 240, 235, 0.08);
+  /* Ink-inverted pair for primary actions (Unspirit: #efeee8 on #20201e). */
+  --ink-invert-bg: #EFEEE8;
+  --ink-invert-fg: #20201E;
   --radius-pill: 999px;
-  --radius-sm: 12px;
-  --radius-md: 18px;
-  --radius-lg: 22px;
-  --radius-xs: 8px;
-  --radius-2xs: 6px;
-  --blur-chrome: 28px;
-  --blur-menu: 36px;
-  --blur-soft: 24px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 16px;
+  --radius-xs: 7px;
+  --radius-2xs: 5px;
 
-  /* ── Popup design tokens — ported from the Uncraft extension widget
-        (panel.css's #repixbridge-panel block). The canvas popups
-        adopt these so the user sees the same visual language when a
-        modal/menu fires on canvas as they do when the widget injects
-        on a page. Solid surfaces (no frosted blur), high contrast,
-        large radii, Instrument typography. Light-theme overrides
-        live in the body.rb-ed-light block far below. */
-  --popup-bg: #000000;
-  --popup-fg: #EFEEEB;
-  --popup-fg-muted: rgba(239, 238, 235, 0.50);
-  --popup-surface: rgba(239, 238, 235, 0.06);
-  --popup-border: rgba(239, 238, 235, 0.12);
-  --popup-accent: #EFEEEB;
-  --popup-shadow: 0 32px 64px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.06);
-  --popup-radius-card: 20px;
-  --popup-radius-mid: 14px;
+  /* ── Popup design tokens — solid warm-charcoal menus/cards ("dropdowns
+        are solid" standard; canvas must never bleed through data menus).
+        Inter typography; the old serif accent var now resolves to Inter
+        so legacy markup renders as italic Inter until markup migrates. */
+  --popup-bg: #292926;
+  --popup-fg: #F1F0EB;
+  --popup-fg-muted: rgba(241, 240, 235, 0.55);
+  --popup-surface: rgba(241, 240, 235, 0.06);
+  --popup-border: #494842;
+  --popup-accent: #EFEEE8;
+  --popup-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --popup-radius-card: 14px;
+  --popup-radius-mid: 10px;
   --popup-radius-pill: 999px;
-  /* Instrument falls back to system sans before any user CSS — the
-     `--font-instrument-*` vars are populated by next/font in
-     layout.jsx and end up on <html>. Fallbacks let the popups render
-     during the brief font-load window without a layout shift. */
-  --popup-font-sans: var(--font-instrument-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --popup-font-serif: var(--font-instrument-serif), "Georgia", "Times New Roman", serif;
+  --popup-font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --popup-font-serif: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 /* Light theme — toggled by the canvas theme button (and by the editor's
@@ -167,10 +159,13 @@ body.rb-ed-light {
 body {
   background: var(--bg-base);
   color: var(--text-primary);
-  font-family: var(--font-instrument-sans), -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-  font-feature-settings: 'ss01', 'ss02';
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  /* Working Table type rhythm: 13px/450 body, hierarchy by weight. */
+  font-size: 13px;
+  font-weight: 450;
+  font-synthesis: none;
   min-height: 100vh;
-  line-height: 1.5;
+  line-height: 1.4;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -341,7 +336,7 @@ input:focus {
 }
 
 .badge-pro {
-  background: rgba(0, 149, 255, 0.2);
+  background: rgba(41, 102, 234, 0.2);
   color: #38bdf8;
   border: 1px solid var(--accent);
 }
@@ -533,13 +528,11 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
      highlight sits 2px off the frame with a concentric corner. */
   padding: 2px;
   background: var(--bg-frosted);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: 12px;
   font-size: 0.85rem;
   box-shadow: var(--shadow-frost);
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-family: var(--font-inter), system-ui, sans-serif;
 }
 .canvas-toolbar-left {
   /* Now nested inside .canvas-toolbars-left wrapper which owns the
@@ -568,8 +561,6 @@ body.rb-ed-active.rb-ed-canvas.canvas-pan-mode .react-transform-component:active
   height: 44px;
   padding: 0;
   background: var(--bg-frosted);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: 12px;
   box-shadow: var(--shadow-frost);
@@ -638,7 +629,7 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
   /* 8px = widget radius (12) − widget padding (4); makes the hover bg
      curve along the toolbar's inner radius perfectly. */
   border-radius: 8px;
-  font: 500 0.82rem var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 0.82rem var(--font-inter), system-ui, sans-serif;
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -690,8 +681,6 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
   border-radius: 18px;
   padding: 6px;
   box-shadow: 0 16px 60px rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(var(--blur-menu)) saturate(160%);
-  -webkit-backdrop-filter: blur(var(--blur-menu)) saturate(160%);
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -744,7 +733,7 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
   border-radius: 999px;
   border: 1px solid var(--pill-colour);
   color: var(--pill-colour);
-  font: 500 0.72rem/1 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 0.72rem/1 var(--font-inter), system-ui, sans-serif;
   letter-spacing: 0.02em;
   white-space: nowrap;
   max-width: 140px;
@@ -793,8 +782,6 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
   background: rgba(18, 18, 18, 0.55);
   border: 1px solid var(--border-frosted);
   box-shadow: var(--shadow-frost);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   pointer-events: none;
   transition: right 180ms ease;
 }
@@ -877,8 +864,8 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-minimap { right: 18px; }
   opacity: 0.7;
 }
 .minimap-frame-toggle:hover {
-  background: rgba(0, 149, 255, 0.18);
-  border-color: rgba(0, 149, 255, 0.55);
+  background: rgba(41, 102, 234, 0.18);
+  border-color: rgba(41, 102, 234, 0.55);
   color: #f5f5f5;
   opacity: 1;
 }
@@ -891,9 +878,9 @@ body.rb-ed-light .minimap-frame-toggle {
   color: rgba(31, 31, 31, 0.60);
 }
 body.rb-ed-light .minimap-frame-toggle:hover {
-  background: rgba(0, 149, 255, 0.12);
-  border-color: rgba(0, 149, 255, 0.45);
-  color: #0a0a0a;
+  background: rgba(41, 102, 234, 0.12);
+  border-color: rgba(41, 102, 234, 0.45);
+  color: #20201E;
 }
 .minimap-world {
   fill: rgba(255, 255, 255, 0.04);
@@ -1063,8 +1050,6 @@ body.rb-ed-light .minimap-node-stroke {
   width: 100%;
   max-width: 380px;
   background: rgba(15, 15, 15, 0.55);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: var(--radius-lg);
   padding: 1.75rem;
@@ -1180,8 +1165,6 @@ body.rb-ed-light .minimap-node-stroke {
   flex-direction: column;
   padding: 1.5rem 1rem;
   background: rgba(8, 8, 8, 0.65);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border-right: 1px solid var(--border-frosted);
 }
 
@@ -1316,8 +1299,6 @@ body.rb-ed-light .minimap-node-stroke {
   display: flex;
   flex-direction: column;
   background: rgba(20, 20, 20, 0.55);
-  backdrop-filter: blur(var(--blur-soft)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-soft)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: var(--radius-lg);
   overflow: hidden;
@@ -1561,8 +1542,6 @@ body.rb-ed-light .minimap-node-stroke {
      0.97 opacity reads as a near-solid card while the blur keeps the
      glass character; canvas content underneath barely shows through. */
   background: rgba(18, 18, 18, 0.97);
-  backdrop-filter: blur(40px) saturate(170%);
-  -webkit-backdrop-filter: blur(40px) saturate(170%);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-md);
   padding: 6px;
@@ -2073,8 +2052,6 @@ body.rb-ed-light .popup-btn-danger:hover:not(:disabled) { background: #ef4444; b
 .canvas-context-menu,
 .popup-menu.empty-drop-menu {
   background: rgba(13, 13, 13, 0.72);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border-radius: 16px;
   padding: 3px;
   gap: 0;
@@ -2232,8 +2209,6 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
   animation: rb-fade-in 160ms ease-out;
   padding: 24px;
 }
@@ -2241,15 +2216,13 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
 .challenge-modal-card {
   width: 100%;
   max-width: 440px;
-  background: var(--bg-frosted, rgba(10, 10, 10, 0.78));
+  background: var(--bg-frosted, rgba(25, 25, 23, 0.78));
   border: 1px solid var(--border-frosted, rgba(255, 255, 255, 0.10));
   border-radius: var(--radius-md, 18px);
   padding: 28px;
   box-shadow: var(--shadow-frost, 0 16px 60px rgba(0, 0, 0, 0.55));
-  font-family: var(--font-instrument-sans), inherit;
+  font-family: var(--font-inter), inherit;
   color: var(--text-primary, #f5f5f5);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
 }
 
 .challenge-modal-icon {
@@ -2375,13 +2348,13 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
 
 .reset-confirm-card {
   width: calc(280px / var(--chrome-scale, 1));
-  background: #0f0f0f;
+  background: #252522;
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: calc(10px / var(--chrome-scale, 1));
   padding: calc(14px / var(--chrome-scale, 1));
   box-shadow: 0 calc(12px / var(--chrome-scale, 1)) calc(32px / var(--chrome-scale, 1)) rgba(0, 0, 0, 0.45);
   box-shadow: 0 round(nearest, calc(12px / var(--chrome-scale, 1)), 1px) round(nearest, calc(32px / var(--chrome-scale, 1)), 1px) rgba(0, 0, 0, 0.45);
-  font-family: var(--font-instrument-sans), inherit;
+  font-family: var(--font-inter), inherit;
 }
 
 .reset-confirm-title {
@@ -2517,7 +2490,7 @@ html, body { overscroll-behavior: none; }
   /* (overrides defined just below for html.canvas-zoom-below-30) */
   /* Dark chrome fill shows in the 4px inset gap between the content frame
      (topbar + body) and the node border — see `padding` below. */
-  background: #0f0f0f;
+  background: #252522;
   /* 2px scale-aware border (constant on-screen at any zoom) — the coloured
      origin stroke on the unselected node. Per-origin colour set by
      .cnode.origin-* below. (When selected, the border goes transparent and
@@ -2638,7 +2611,7 @@ html.canvas-zoom-below-30 .cnode-body {
   --tbgap: calc(10px / max(0.5, var(--canvas-scale, 1)));
   flex: 0 0 calc(36px / var(--tbh));
   height: calc(36px / var(--tbh));
-  background: #0f0f0f;
+  background: #252522;
   /* All four corners rounded. Radius = outer 17.25px − the 6px inset (2px
      border + 4px gap) so the topbar's corners nest CONCENTRICALLY inside the
      node's outer radius instead of curving away from it. */
@@ -2679,7 +2652,7 @@ html.canvas-zoom-below-30 .cnode-body {
      (black or white, whichever contrasts best on that colour). */
   background: var(--cnode-port-fill, #38bdf8);
   border: 0;
-  color: var(--cnode-port-ink, #0a0a0a);
+  color: var(--cnode-port-ink, #20201E);
   text-transform: uppercase;
   font-size: calc(11px / var(--tb));
   font-weight: 500;
@@ -2724,7 +2697,7 @@ html.canvas-zoom-below-30 .cnode-body {
   display: flex;
   gap: calc(2px / var(--chrome-scale, 1));
   padding: calc(4px / var(--chrome-scale, 1));
-  background: #0f0f0f;
+  background: #252522;
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: calc(8px / var(--chrome-scale, 1));
   box-shadow: 0 calc(8px / var(--chrome-scale, 1)) calc(20px / var(--chrome-scale, 1)) rgba(0, 0, 0, 0.4);
@@ -2902,7 +2875,7 @@ html.canvas-zoom-very-low .cnode.narrow .cnode-topbar .topbar-sep {
 .cnode-topbar .btn-edit:hover {
   background: #ffffff;
   border-color: #ffffff;
-  color: #0f0f0f;
+  color: #252522;
 }
 
 .cnode-topbar .btn-edit.active {
@@ -2930,7 +2903,7 @@ html.canvas-zoom-very-low .cnode.narrow .cnode-topbar .topbar-sep {
 .cnode-topbar .btn-cancel:hover {
   background: #ffffff;
   border-color: #ffffff;
-  color: #0f0f0f;
+  color: #252522;
 }
 .cnode-topbar .btn-cancel:disabled {
   opacity: 0.4;
@@ -2998,8 +2971,6 @@ body.rb-ed-light .cnode-topbar .topbar-sep { background: rgba(0, 0, 0, 0.10); }
   justify-content: center;
   padding: 0;
   background: rgba(15, 15, 15, 0.78);
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: calc(8px / var(--chrome-scale, 1));
   color: rgba(241, 245, 249, 0.78);
@@ -3075,11 +3046,9 @@ body.rb-ed-light .cnode-expand-float:hover {
   border-radius: calc(999px / max(0.5, var(--canvas-scale, 1)));
   /* 20% more transparent than before (0.82 → 0.66). */
   background: rgba(15, 15, 15, 0.66);
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.14);
   color: rgba(245, 245, 245, 0.92);
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-family: var(--font-inter), system-ui, sans-serif;
   font-size: calc(12.5px / max(0.5, var(--canvas-scale, 1)));
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -3254,12 +3223,10 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   /* 2px hover-bg gap, concentric with inner pills at radius 10 (12 − 2). */
   padding: 2px;
   background: var(--bg-frosted);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: 12px;
   box-shadow: var(--shadow-frost);
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-family: var(--font-inter), system-ui, sans-serif;
 }
 
 .zoom-pill {
@@ -3274,7 +3241,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   /* Concentric with the 12px zoom widget at its 2px padding (12 − 2). */
   border-radius: 10px;
   color: var(--text-primary);
-  font: 500 12px/1 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 12px/1 var(--font-inter), system-ui, sans-serif;
   cursor: pointer;
   transition: background 120ms;
 }
@@ -3324,7 +3291,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   display: flex;
   flex-direction: column;
   gap: 1px;
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-family: var(--font-inter), system-ui, sans-serif;
   animation: rb-fade-in 120ms ease-out;
 }
 .zoom-menu-item {
@@ -3337,7 +3304,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   border: none;
   border-radius: 6px;
   color: var(--text-primary);
-  font: 400 13px/1 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 400 13px/1 var(--font-inter), system-ui, sans-serif;
   cursor: pointer;
   text-align: left;
   transition: background 100ms;
@@ -3385,11 +3352,11 @@ body.rb-ed-light .cnode-topbar .title { color: rgba(31, 31, 31, 0.7); }
 body.rb-ed-light .cnode-topbar .kind-pill {
   background: var(--cnode-port-fill, rgba(0, 0, 0, 0.08));
   border-color: transparent;
-  color: var(--cnode-port-ink, #0a0a0a);
+  color: var(--cnode-port-ink, #20201E);
 }
 body.rb-ed-light .cnode-topbar .kind-pill svg {
-  color: var(--cnode-port-ink, #0a0a0a);
-  stroke: var(--cnode-port-ink, #0a0a0a);
+  color: var(--cnode-port-ink, #20201E);
+  stroke: var(--cnode-port-ink, #20201E);
 }
 body.rb-ed-light .cnode { border-color: rgba(0, 0, 0, 0.10); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10); background: var(--bg-frosted-solid); }
 /* Selected ring in light mode. The `body.rb-ed-light .cnode` rule above
@@ -3436,7 +3403,7 @@ body.rb-ed-light .reset-confirm-card { background: var(--bg-frosted-solid); bord
 body.rb-ed-light .cnode-viewport-switcher { background: var(--bg-frosted-solid); border-color: var(--border-frosted); }
 body.rb-ed-light .cnode-vp-btn { color: rgba(31, 31, 31, 0.65); }
 body.rb-ed-light .cnode-vp-btn:hover { color: #1f1f1f; background: var(--hover-bg); }
-body.rb-ed-light .cnode-vp-btn.active { color: #007ad6; background: rgba(0, 149, 255, 0.14); }
+body.rb-ed-light .cnode-vp-btn.active { color: #2258C9; background: rgba(41, 102, 234, 0.14); }
 /* In edit mode the switcher is `.disabled` and its hover defaults to a
    pale slate that vanishes on the cream surface — re-bind to dark text. */
 body.rb-ed-light .cnode-viewport-switcher.disabled .cnode-vp-btn:hover {
@@ -3445,7 +3412,7 @@ body.rb-ed-light .cnode-viewport-switcher.disabled .cnode-vp-btn:hover {
 }
 body.rb-ed-light .cnode-viewport-switcher.disabled .cnode-vp-btn.active {
   color: rgba(0, 122, 214, 0.7);
-  background: rgba(0, 149, 255, 0.08);
+  background: rgba(41, 102, 234, 0.08);
 }
 
 /* Connector ports — light mode. The right port stays neutral white-ish
@@ -3614,7 +3581,7 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
      body edge by a subpixel, and a white bg leaked as a hairline outline
      around the content frame (2026-07-03 artifact report). A dark bg makes
      that sliver invisible against the card. */
-  background: var(--bg-frosted-solid, #0f0f0f);
+  background: var(--bg-frosted-solid, #252522);
   /* Same custom arrow cursor the editor uses inside the iframe — gives
      a consistent "you're working with a node" affordance even when the
      editor isn't active. Matches editor-core/src/editor.css :44. */
@@ -3672,8 +3639,6 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
 .cnode-port-right.is-connected {
   background: var(--cnode-port-fill, var(--accent));
   border-color: var(--cnode-port-fill, var(--accent));
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 .cnode-port-right.is-connected .cnode-port-dot {
   background: #fff;
@@ -3814,11 +3779,11 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
 /* --cnode-port-ink = black or white, whichever has better contrast on the
    category fill (per-colour luminance). Used by the topbar category pill. */
 .cnode.origin-url        { --cnode-port-fill: #2966EA; --cnode-port-border: rgba(41, 102, 234, 0.55); --cnode-port-ink: #ffffff; }
-.cnode.origin-html       { --cnode-port-fill: #f97316; --cnode-port-border: rgba(249, 115, 22, 0.55); --cnode-port-ink: #0a0a0a; }
-.cnode.origin-md         { --cnode-port-fill: #C2B44A; --cnode-port-border: rgba(194, 180, 74, 0.55); --cnode-port-ink: #0a0a0a; }
+.cnode.origin-html       { --cnode-port-fill: #f97316; --cnode-port-border: rgba(249, 115, 22, 0.55); --cnode-port-ink: #20201E; }
+.cnode.origin-md         { --cnode-port-fill: #C2B44A; --cnode-port-border: rgba(194, 180, 74, 0.55); --cnode-port-ink: #20201E; }
 .cnode.origin-screenshot { --cnode-port-fill: #7951C2; --cnode-port-border: rgba(121, 81, 194, 0.55); --cnode-port-ink: #ffffff; }
-.cnode.origin-prompt     { --cnode-port-fill: #ECEBF1; --cnode-port-border: rgba(236, 235, 241, 0.55); --cnode-port-ink: #0a0a0a; }
-.cnode.origin-skill      { --cnode-port-fill: #f472b6; --cnode-port-border: rgba(244, 114, 182, 0.55); --cnode-port-ink: #0a0a0a; }
+.cnode.origin-prompt     { --cnode-port-fill: #ECEBF1; --cnode-port-border: rgba(236, 235, 241, 0.55); --cnode-port-ink: #20201E; }
+.cnode.origin-skill      { --cnode-port-fill: #f472b6; --cnode-port-border: rgba(244, 114, 182, 0.55); --cnode-port-ink: #20201E; }
 .cnode.origin-blank      { --cnode-port-fill: #2966EA; --cnode-port-border: rgba(41, 102, 234, 0.55); --cnode-port-ink: #ffffff; }
 
 .cnode.editing .cnode-body {
@@ -3893,7 +3858,6 @@ body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.4
   left: 50%;
   transform: translateX(-50%);
   background: rgba(20, 20, 42, 0.85);
-  backdrop-filter: blur(8px);
   color: #94a3b8;
   font-size: calc(11px / var(--chrome-scale, 1));
   padding: calc(4px / var(--chrome-scale, 1)) calc(10px / var(--chrome-scale, 1));
@@ -3922,7 +3886,7 @@ body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.4
   font-size: 0.85rem;
   /* Same offblack as the topbar (.cnode-topbar) so the generating node
      reads as ONE surface (topbar + body), not a topbar over a blue card. */
-  background: #0f0f0f;
+  background: #252522;
   flex-direction: column;
   gap: 0.5rem;
   border-radius: 0 0 10px 10px;
@@ -3931,7 +3895,7 @@ body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.4
 /* Generating state for agent-created result nodes — pulses subtly so the
    user knows the canvas isn't frozen while image gen runs (30–120s). */
 .cnode-loading-gen {
-  background: #0f0f0f;                    /* topbar offblack — one surface */
+  background: #252522;                    /* topbar offblack — one surface */
   color: rgba(255, 255, 255, 0.55);
   animation: cnode-gen-pulse 2.2s ease-in-out infinite;
 }
@@ -4109,11 +4073,11 @@ body.rb-ed-light .cnode-empty-upload-label { color: rgba(0, 0, 0, 0.5); }
   padding: calc(4px / var(--chrome-scale, 1)) calc(10px / var(--chrome-scale, 1));
   /* Fully-rounded pill ends. */
   border-radius: 999px;
-  font: 500 calc(13px / var(--chrome-scale, 1)) / 1 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 calc(13px / var(--chrome-scale, 1)) / 1 var(--font-inter), system-ui, sans-serif;
   color: rgba(241, 245, 249, 0.92);
   /* In-world pill: no backdrop-filter (zoom would re-rasterize its backdrop
      per tick) — slightly higher alpha covers the loss of the blur. */
-  background: rgba(10, 10, 10, 0.9);
+  background: rgba(25, 25, 23, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.10);
   white-space: nowrap;
   max-width: calc(420px / var(--chrome-scale, 1));
@@ -4234,7 +4198,7 @@ body.rb-ed-light .cnode-anchor-title {
   height: var(--cnode-h, 200px);
   /* Outer frame — darker than the inner field in dark mode (and the
      reverse in light mode) so the text input reads as an inset card. */
-  background: #0a0a0a;
+  background: #20201E;
   cursor: text;
 }
 .cnode-prompt-body {
@@ -4265,7 +4229,7 @@ body.rb-ed-light .cnode-anchor-title {
      go smaller) → the field scrolls vertically. */
   overflow-y: auto;
   color: #f5f5f5;
-  font: 500 18px/1.5 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 18px/1.5 var(--font-inter), system-ui, sans-serif;
   transition: border-color 0.15s, background 0.15s;
 }
 /* Corner resize grip for prompt nodes (2026-07-07) — the diagonal-lines
@@ -4367,7 +4331,7 @@ body.rb-ed-light .cnode-resize-corner:hover { color: rgba(0, 0, 0, 0.75); }
   filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.35));
 }
 .cnode-skill-title {
-  font: 500 14px/1 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 14px/1 var(--font-inter), system-ui, sans-serif;
   color: rgba(241, 245, 249, 0.7);
   letter-spacing: 0.02em;
   max-width: 80%;
@@ -4384,7 +4348,7 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
    read against a consistent surface. overflow:visible so the aspect
    pill that sits half-outside the bottom edge isn't clipped. */
 .cnode-body-asset {
-  background: #0a0a0a;
+  background: #20201E;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4410,7 +4374,7 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
   padding: 5px 9px;
   border-radius: 7px;
   background: #ffffff;
-  color: #0a0a0a;
+  color: #20201E;
   font: 500 11.5px/1.2 var(--popup-font-sans, system-ui), sans-serif;
   letter-spacing: 0;
   white-space: nowrap;
@@ -4502,13 +4466,11 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
   pointer-events: none;
   padding: 6px 12px;
   border-radius: var(--radius-pill, 999px);
-  background: rgba(10, 10, 10, 0.72);
+  background: rgba(25, 25, 23, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(28px) saturate(140%);
-  -webkit-backdrop-filter: blur(28px) saturate(140%);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
   color: #f5f5f5;
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-family: var(--font-inter), system-ui, sans-serif;
   font-size: 12.5px;
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -4559,7 +4521,7 @@ body.rb-ed-light .cnode-topbar.removing {
   padding: 0 calc(10px / max(0.5, var(--canvas-scale, 1)));
 }
 .topbar-remove-hint {
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-family: var(--font-inter), system-ui, sans-serif;
   font-weight: 500;
   font-size: calc(13px / var(--chrome-scale, 1));
   letter-spacing: -0.01em;
@@ -4569,7 +4531,7 @@ body.rb-ed-light .cnode-topbar.removing {
   margin-left: calc(3px / var(--chrome-scale, 1));
 }
 .btn-remove-cancel {
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-family: var(--font-inter), system-ui, sans-serif;
   font-weight: 500;
   font-size: calc(12px / var(--chrome-scale, 1));
   color: #1c1f24;
@@ -4637,8 +4599,6 @@ body.rb-ed-light .canvas-section-frame {
   right: 30px;
   /* Inverted run-pill: white fill, black play + label. */
   background: #ffffff;
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid rgba(0, 0, 0, 0.12);
   border-radius: 999px;
   /* Chip-scale design: play button (40px stable) is the visual anchor;
@@ -4661,7 +4621,7 @@ body.rb-ed-light .canvas-section-frame {
   font-size: calc(11.2px / var(--chrome-scale, 1));
   font-weight: 500;
   letter-spacing: 0.01em;
-  color: #0a0a0a;
+  color: #20201E;
   pointer-events: auto;
   user-select: none;
   white-space: nowrap;
@@ -4699,10 +4659,10 @@ body.rb-ed-light .canvas-section-frame {
   transform-origin: top left;
   padding: 5px 10px;
   border-radius: 999px;
-  background: rgba(10, 10, 10, 0.82);
+  background: rgba(25, 25, 23, 0.82);
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: rgba(241, 245, 249, 0.92);
-  font: 500 12px / 1 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 12px / 1 var(--font-inter), system-ui, sans-serif;
   z-index: 10001;
 }
 .canvas-section-name-tag.disabled:hover .canvas-noconn-hint { opacity: 1; }
@@ -4710,7 +4670,7 @@ html.canvas-interacting .canvas-noconn-hint { opacity: 0 !important; }
 body.rb-ed-light .canvas-noconn-hint {
   background: rgba(255, 255, 255, 0.92);
   border-color: rgba(0, 0, 0, 0.12);
-  color: #0a0a0a;
+  color: #20201E;
 }
 /* Crossfades out while its section is shown as the floating run button. */
 .canvas-section-name-tag.floated-away {
@@ -4736,7 +4696,7 @@ body.rb-ed-light .canvas-noconn-hint {
   font-size: 11.2px;
   font-weight: 500;
   letter-spacing: 0.01em;
-  color: #0a0a0a;
+  color: #20201E;
   white-space: nowrap;
   user-select: none;
   cursor: pointer;
@@ -4789,7 +4749,7 @@ body.rb-ed-light .canvas-floating-run {
   width: 32px;
   height: 32px;
   border-radius: 999px;
-  background: #0a0a0a;
+  background: #20201E;
   border: none;
   color: #fff;
   cursor: pointer;
@@ -4803,7 +4763,7 @@ body.rb-ed-light .canvas-floating-run {
 .canvas-floating-run-play:hover { background: #1a1a1a; }
 .canvas-floating-run-play:active { transform: scale(0.93); }
 .canvas-floating-run-play svg { width: 14.4px; height: 14.4px; }
-body.rb-ed-light .canvas-floating-run-play { background: #0a0a0a; color: #fff; }
+body.rb-ed-light .canvas-floating-run-play { background: #20201E; color: #fff; }
 body.rb-ed-light .canvas-floating-run-play:hover { background: #1a1a1a; }
 /* Label-only pill — a section GROUP with no cords between members renders no
    play button. The base padding is left-weighted to seat the play button on
@@ -4898,7 +4858,7 @@ input.canvas-section-name-input::placeholder {
   height: calc(32px / var(--chrome-scale, 1));
   border-radius: 999px;
   /* Solid offblack chip with an offwhite triangle inside (inverted pill). */
-  background: #0a0a0a;
+  background: #20201E;
   border: none;
   color: #fff;
   cursor: pointer;
@@ -4934,7 +4894,7 @@ body.rb-ed-light .canvas-section-play-btn.disabled:hover {
   width: calc(14.4px / var(--chrome-scale, 1));
   height: calc(14.4px / var(--chrome-scale, 1));
 }
-body.rb-ed-light .canvas-section-play-btn { background: #0a0a0a; color: #fff; }
+body.rb-ed-light .canvas-section-play-btn { background: #20201E; color: #fff; }
 body.rb-ed-light .canvas-section-play-btn:hover { background: #1a1a1a; }
 body.rb-ed-light .canvas-section-play-btn {
   background: rgba(0, 0, 0, 0.08);
@@ -5143,9 +5103,9 @@ body.rb-ed-light .canvas-section-handle-se:hover { color: rgba(0, 0, 0, 0.7); }
 body.rb-ed-light .canvas-section-layout-btn {
   background: rgba(255, 255, 255, 0.85);
   border-color: rgba(0, 0, 0, 0.12);
-  color: rgba(10, 10, 10, 0.7);
+  color: rgba(25, 25, 23, 0.7);
 }
-body.rb-ed-light .canvas-section-layout-btn:hover { background: #ffffff; color: #0a0a0a; }
+body.rb-ed-light .canvas-section-layout-btn:hover { background: #ffffff; color: #20201E; }
 
 /* ── Active context pill in PromptDock ──────────────────────────── */
 .prompt-dock-context-wrap {
@@ -5275,8 +5235,6 @@ body.rb-ed-light .prompt-dock-context-x:hover {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
   z-index: 4000;
   display: flex;
   align-items: center;
@@ -5289,8 +5247,6 @@ body.rb-ed-light .prompt-dock-context-x:hover {
 }
 .confirm-modal-card {
   background: rgba(20, 20, 22, 0.92);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid var(--border-frosted);
   border-radius: 18px;
   padding: 22px 24px;
@@ -5371,7 +5327,7 @@ body.rb-ed-light .prompt-dock-context-x:hover {
 }
 .confirm-modal-btn-primary {
   background: #f5f5f5;
-  color: #0a0a0a;
+  color: #20201E;
 }
 .confirm-modal-btn-primary:hover:not(:disabled) {
   background: #fff;
@@ -5396,7 +5352,7 @@ body.rb-ed-light .confirm-modal-card {
   background: rgba(255, 255, 255, 0.96);
 }
 body.rb-ed-light .confirm-modal-btn-primary {
-  background: #0a0a0a;
+  background: #20201E;
   color: #fff;
 }
 body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
@@ -5461,9 +5417,7 @@ body.rb-ed-light .cnode-body-asset { background: #ECECF0; }
   width: 28px;
   height: 28px;
   border-radius: 999px;
-  background: rgba(10, 10, 10, 0.6);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(25, 25, 23, 0.6);
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: rgba(245, 245, 245, 0.9);
   cursor: pointer;
@@ -5479,7 +5433,7 @@ body.rb-ed-light .cnode-body-asset { background: #ECECF0; }
   opacity: 1;
 }
 .cnode-smart-edit-btn:hover {
-  background: rgba(10, 10, 10, 0.8);
+  background: rgba(25, 25, 23, 0.8);
   border-color: rgba(255, 255, 255, 0.20);
 }
 
@@ -5514,10 +5468,8 @@ body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
   padding: 10px;
   padding-top: 38px;       /* space for drag handle + collapse chevron */
   border-radius: 22px;
-  background: rgba(10, 10, 10, 0.88);
+  background: rgba(25, 25, 23, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   box-shadow: 0 16px 60px rgba(0, 0, 0, 0.55);
   display: flex;
   flex-direction: column;
@@ -5650,8 +5602,6 @@ body.rb-ed-light .prompt-dock.is-focused {
 .prompt-dock.is-dragging,
 .prompt-dock.is-snapping {
   background: rgba(255, 255, 255, 0.003);
-  backdrop-filter: blur(10px) saturate(118%);
-  -webkit-backdrop-filter: blur(10px) saturate(118%);
   border-color: rgba(255, 255, 255, 0.127);
   box-shadow: none;
   pointer-events: none;
@@ -5753,7 +5703,7 @@ body.rb-ed-light .prompt-dock-resize:active::after {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.18);
   border: none;
-  color: #0a0a0a;
+  color: #20201E;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -5766,7 +5716,7 @@ body.rb-ed-light .prompt-dock-resize:active::after {
 .prompt-dock-collapse-btn:active { transform: scale(0.92); }
 body.rb-ed-light .prompt-dock-collapse-btn {
   background: rgba(0, 0, 0, 0.12);
-  color: #0a0a0a;
+  color: #20201E;
 }
 
 /* Snap indicator family. THREE white bars (left edge, right edge,
@@ -5837,9 +5787,7 @@ body.rb-ed-light .prompt-dock-collapse-btn {
   border: 1.5px solid rgba(255, 255, 255, 0.14);
   /* Dark frosted glass — same dark surface as the real docked sidebar
      so the preview previews. */
-  background: rgba(10, 10, 10, 0.55);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
+  background: rgba(25, 25, 23, 0.55);
   border-radius: 22px;
   pointer-events: none;
   z-index: 9999;
@@ -5867,7 +5815,7 @@ body.rb-ed-light .prompt-dock-collapse-btn {
 .prompt-dock-ghost.active {
   opacity: 1;
   border-color: rgba(255, 255, 255, 0.45);
-  background: rgba(10, 10, 10, 0.78);
+  background: rgba(25, 25, 23, 0.78);
 }
 body.rb-ed-light .prompt-dock-ghost {
   background: rgba(245, 245, 245, 0.55);
@@ -5968,7 +5916,7 @@ body.rb-ed-light .border-trail-dot {
      is at the top) — per the reference, not centred. */
   right: calc(20px / max(0.2, var(--canvas-scale, 1)));
   bottom: calc(14px / max(0.2, var(--canvas-scale, 1)));
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-family: var(--font-inter), system-ui, sans-serif;
   font-weight: 500;
   /* Big and proportional to the node so it scales with zoom and always
      fits. Floored so it stays legible on small / zoomed-out nodes. */
@@ -5999,14 +5947,12 @@ body.rb-ed-light .border-trail-dot {
 /* Empty node: nothing behind to blur — match the topbar offblack so the
    whole generating node reads as one continuous surface (no blue card). */
 .cnode-gen-overlay:not(.has-content) {
-  background: #0f0f0f;
+  background: #252522;
 }
 /* Node with content: dark frosted blur of the real content behind it —
    heavily dimmed so the loading state reads clearly over the old content. */
 .cnode-gen-overlay.has-content {
   background: rgba(6, 6, 10, 0.86);
-  backdrop-filter: blur(16px) saturate(115%);
-  -webkit-backdrop-filter: blur(16px) saturate(115%);
 }
 .cnode-gen-status {
   position: absolute;
@@ -6014,7 +5960,7 @@ body.rb-ed-light .border-trail-dot {
   left: calc(22px / max(0.2, var(--canvas-scale, 1)));
   /* Leave room on the right so it never runs under the % in the corner. */
   right: 38%;
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-family: var(--font-inter), system-ui, sans-serif;
   font-weight: 400;
   font-size: clamp(13px, calc(0.052 * var(--cnode-h, 600px)), 30px);
   line-height: 1.32;
@@ -6186,7 +6132,7 @@ body.rb-ed-active .prompt-dock { display: none !important; }
    the involved node's category color (inline style), dark glyph on top.
    Exactly one character wide so the total width never changes. */
 .wi-head {
-  color: #0a0a0a;
+  color: #20201E;
   border-radius: 2px;
 }
 /* Light mode: pastel gradient washes out on light surfaces — deeper tones. */
@@ -6387,7 +6333,7 @@ body.rb-ed-light .working-indicator-code {
   border: 1px solid rgba(255, 255, 255, 0.18);
 }
 .prompt-dock-send.stop:hover {
-  background: #0a0a0a;
+  background: #20201E;
   border-color: rgba(255, 255, 255, 0.32);
 }
 body.rb-ed-light .prompt-dock-send.stop {
@@ -6495,7 +6441,7 @@ body.rb-ed-light .prompt-dock-mic.err {
   padding: 10px 16px;
   border-radius: 10px;
   font-size: 13px;
-  font-family: var(--font-instrument-sans), system-ui, sans-serif;
+  font-family: var(--font-inter), system-ui, sans-serif;
   z-index: 500;
   max-width: 480px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
@@ -6587,8 +6533,6 @@ body.rb-ed-light .prompt-dock.dock-right .prompt-dock-model-chev {
   border-radius: 18px;
   padding: 6px;
   box-shadow: 0 18px 64px rgba(0, 0, 0, 0.70);
-  backdrop-filter: blur(40px) saturate(170%);
-  -webkit-backdrop-filter: blur(40px) saturate(170%);
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -6825,7 +6769,7 @@ body.rb-ed-light .edge-cut-zone {
      size at any zoom. */
   stroke: none;
   font-weight: 600;
-  font-family: var(--font-instrument-sans), -apple-system, sans-serif;
+  font-family: var(--font-inter), -apple-system, sans-serif;
   letter-spacing: 0.02em;
   text-transform: lowercase;
   pointer-events: none;
@@ -6837,7 +6781,7 @@ body.rb-ed-light .edge-cut-zone {
      gradient outline readable. Pure SVG can't do real backdrop-filter
      on a <rect>, so a dark semi-transparent fill is the pragmatic
      "frosted mask". stroke + text stay as the inline gradient. */
-  fill: rgba(10, 10, 10, 0.62);
+  fill: rgba(25, 25, 23, 0.62);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
@@ -6853,9 +6797,7 @@ body.rb-ed-light .edge-label-pill {
 .editor-panel {
   position: fixed;
   background: rgba(20, 20, 42, 0.85);
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(0, 149, 255, 0.25);
+  border: 1px solid rgba(41, 102, 234, 0.25);
   border-radius: 12px;
   z-index: 320;
   color: #e2e8f0;
@@ -6872,7 +6814,7 @@ body.rb-ed-light .edge-label-pill {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(0, 149, 255, 0.2);
+  border-bottom: 1px solid rgba(41, 102, 234, 0.2);
   cursor: grab;
   user-select: none;
 }
@@ -6934,8 +6876,8 @@ body.rb-ed-light .edge-label-pill {
   color: #cbd5e1;
 }
 
-.layer-row:hover { background: rgba(0, 149, 255, 0.1); }
-.layer-row.selected { background: rgba(0, 149, 255, 0.3); color: #fff; }
+.layer-row:hover { background: rgba(41, 102, 234, 0.1); }
+.layer-row.selected { background: rgba(41, 102, 234, 0.3); color: #fff; }
 
 .layer-toggle {
   background: transparent;
@@ -6985,7 +6927,7 @@ body.rb-ed-light .edge-label-pill {
 }
 
 .ins-class-chip {
-  background: rgba(0, 149, 255, 0.18);
+  background: rgba(41, 102, 234, 0.18);
   color: #38bdf8;
   padding: 2px 6px;
   border-radius: 4px;
@@ -7058,8 +7000,7 @@ body.rb-ed-light .edge-label-pill {
   top: 64px;
   transform: translateX(-50%);
   background: rgba(20, 20, 42, 0.85);
-  backdrop-filter: blur(20px) saturate(140%);
-  border: 1px solid rgba(0, 149, 255, 0.25);
+  border: 1px solid rgba(41, 102, 234, 0.25);
   border-radius: 999px;
   padding: 6px 10px;
   display: flex;
@@ -7077,8 +7018,8 @@ body.rb-ed-light .edge-label-pill {
 }
 
 .editor-btn {
-  background: rgba(0, 149, 255, 0.2);
-  border: 1px solid rgba(0, 149, 255, 0.4);
+  background: rgba(41, 102, 234, 0.2);
+  border: 1px solid rgba(41, 102, 234, 0.4);
   color: #38bdf8;
   padding: 5px 14px;
   border-radius: 999px;
@@ -7089,7 +7030,7 @@ body.rb-ed-light .edge-label-pill {
 }
 
 .editor-btn:hover:not(:disabled) {
-  background: rgba(0, 149, 255, 0.35);
+  background: rgba(41, 102, 234, 0.35);
   color: #fff;
 }
 
@@ -7120,8 +7061,6 @@ body.rb-ed-light .edge-label-pill {
 .empty-drop-menu {
   position: fixed;
   background: rgba(20, 20, 20, 0.78);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 22px;
   padding: 8px;
@@ -7188,7 +7127,7 @@ body.rb-ed-light .edge-label-pill {
 
 .empty-drop-menu button.edm-primary {
   background: rgba(255, 255, 255, 0.92);
-  color: #0a0a0a;
+  color: #20201E;
   text-align: center;
   font-weight: 500;
 }
@@ -7233,8 +7172,6 @@ body.rb-ed-light .edge-label-pill {
   margin-left: 4px;
   min-width: 180px;
   background: rgba(20, 20, 20, 0.78);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
   box-shadow: 0 16px 60px rgba(0, 0, 0, 0.55);
@@ -7256,7 +7193,6 @@ body.rb-ed-light .edge-label-pill {
 .edge-popup {
   position: fixed;
   background: rgba(20, 20, 42, 0.95);
-  backdrop-filter: blur(20px);
   border: 1px solid var(--border-frosted-strong);
   border-radius: 12px;
   padding: 1rem;
@@ -7342,7 +7278,7 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
      zoom (floor 0.25) instead of 15%. */
   border-radius: calc(10px / var(--chrome-scale, 1));
   overflow: hidden;
-  background: #0f0f0f;
+  background: #252522;
   cursor: pointer;
   /* No outline by default — only the SELECTED (previewing) thumb gets a ring. */
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
@@ -7355,7 +7291,7 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
    marker ring; every other thumbnail has no outline. */
 .cnode-version-thumb.is-active {
   box-shadow:
-    0 0 0 calc(2px / var(--chrome-scale, 1)) #0f0f0f,
+    0 0 0 calc(2px / var(--chrome-scale, 1)) #252522,
     0 0 0 calc(5px / var(--chrome-scale, 1)) #5e5e5e,
     0 6px 18px rgba(0, 0, 0, 0.35);
 }
@@ -7415,8 +7351,6 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
      canvas-context-menu. The ORIGINAL cqw sizing system is kept untouched;
      only the colours/borders/dividers/title were layered on top. */
   background: rgba(13, 13, 13, 0.72);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   border: 1px solid var(--popup-border, rgba(255, 255, 255, 0.1));
   border-radius: calc(2.5cqw * var(--vm-lock));
   box-shadow: var(--popup-shadow, 0 16px 60px rgba(0, 0, 0, 0.55));
@@ -7474,8 +7408,6 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
   gap: calc(4px / var(--chrome-scale, 1));
   padding: calc(4px / var(--chrome-scale, 1));
   background: rgba(20, 20, 24, 0.92);
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: calc(999px / var(--chrome-scale, 1));
   box-shadow: 0 calc(8px / var(--chrome-scale, 1)) calc(24px / var(--chrome-scale, 1)) rgba(0, 0, 0, 0.45);
@@ -7493,7 +7425,7 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
 }
 .cnode-version-confirm-cancel { background: transparent; border-color: rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.8); }
 .cnode-version-confirm-cancel:hover { background: rgba(255, 255, 255, 0.08); }
-.cnode-version-confirm-restore { background: var(--accent, #0095ff); color: #fff; }
+.cnode-version-confirm-restore { background: var(--accent, #2966EA); color: #fff; }
 .cnode-version-confirm-restore:hover { filter: brightness(1.08); }
 .cnode-version-confirm-restore:disabled { opacity: 0.6; cursor: default; }
 
@@ -7586,8 +7518,6 @@ body.rb-ed-light .credits-pill-row-delta.neg { color: rgba(0, 0, 0, 0.55); }
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
   z-index: 4100;
   display: flex;
   align-items: center;
@@ -7601,8 +7531,6 @@ body.rb-ed-light .credits-pill-row-delta.neg { color: rgba(0, 0, 0, 0.55); }
   border-radius: var(--radius-lg, 22px);
   background: var(--bg-frosted);
   border: 1px solid var(--border-frosted-strong);
-  backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
-  -webkit-backdrop-filter: blur(var(--blur-chrome)) saturate(140%);
   box-shadow: var(--shadow-frost);
   color: var(--text-primary, #f5f5f5);
 }
@@ -7698,8 +7626,6 @@ body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
   border-radius: 999px;
   background: var(--bg-frosted);
   border: 1px solid var(--border-frosted);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   color: var(--cnode-port-fill, #f5f5f5);
   font-size: 12px;
   font-weight: 600;
@@ -7785,9 +7711,9 @@ body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
   /* Filled pill in the node's category colour; icon + text use
      --cnode-port-ink (black or white, whichever contrasts best). */
   background: var(--cnode-port-fill, #38bdf8);
-  color: var(--cnode-port-ink, #0a0a0a);
+  color: var(--cnode-port-ink, #20201E);
   text-transform: uppercase;
-  font: 500 calc(11px / var(--fs)) / 1 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 calc(11px / var(--fs)) / 1 var(--font-inter), system-ui, sans-serif;
   letter-spacing: 0.06em;
   flex-shrink: 0;
   white-space: nowrap;
@@ -7798,7 +7724,7 @@ body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
   flex-shrink: 0;
 }
 .cnode-float-title {
-  font: 500 calc(12px / var(--fs)) / 1.2 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 calc(12px / var(--fs)) / 1.2 var(--font-inter), system-ui, sans-serif;
   color: rgba(241, 245, 249, 0.9);
   white-space: nowrap;
   overflow: hidden;
@@ -7819,7 +7745,7 @@ html.canvas-zoom-low .cnode-float-tag { display: none; }
 .cnode-float-btn.cnode-float-runhere {
   background: #ffffff;
   border: 1px solid rgba(0, 0, 0, 0.12);
-  color: #0a0a0a;
+  color: #20201E;
 }
 .cnode-float-btn.cnode-float-runhere:hover { background: #f0f0f0; }
 html.canvas-zoom-low .cnode-anchor-title {
@@ -7848,7 +7774,7 @@ html.canvas-zoom-low .cnode-anchor-title:active { cursor: grabbing; }
   padding: calc(5px / var(--fs)) calc(12px / var(--fs));
   border-radius: 999px;
   border: none;
-  font: 500 calc(12px / var(--fs)) / 1 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 calc(12px / var(--fs)) / 1 var(--font-inter), system-ui, sans-serif;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -7940,10 +7866,10 @@ body.rb-ed-light .cnode-float-cancel {
   transform-origin: top left;
   padding: 5px 10px;
   border-radius: 999px;
-  background: rgba(10, 10, 10, 0.82);
+  background: rgba(25, 25, 23, 0.82);
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: rgba(241, 245, 249, 0.92);
-  font: 500 12px / 1 var(--font-instrument-sans), system-ui, sans-serif;
+  font: 500 12px / 1 var(--font-inter), system-ui, sans-serif;
   z-index: 5;
 }
 .cnode-prompt-body:hover .cnode-prompt-hint { opacity: 1; }

@@ -1,24 +1,15 @@
 import './globals.css';
-import { Instrument_Sans, Instrument_Serif } from 'next/font/google';
+import { Inter } from 'next/font/google';
 
-// Instrument Sans is now the DEFAULT sans for the whole web-shell (body,
-// nodes, dock, toolbars, popups) — globals.css `--font-sans`/`--font-display`
-// resolve to --font-instrument-sans. Instrument Serif stays only as the popup
-// serif accent (--popup-font-serif). Weights 400–700 cover the UI; the design
-// language matches the Uncraft browser-extension widget. Classnames exposed as
-// CSS vars so CSS can reference them without ESM imports.
-const instrumentSans = Instrument_Sans({
+// Inter (variable) is the single UI face for the whole web-shell — the
+// "Working Table" design system (unspirit import, 2026-07-12): compact,
+// highly legible, hierarchy by weight (450 body / 550 labels), no display
+// serif. Replaces Instrument Sans/Serif. Variable axis covers the in-between
+// weights the system leans on. Classname exposed as a CSS var so CSS can
+// reference it without ESM imports.
+const inter = Inter({
   subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-instrument-sans',
-  display: 'swap'
-});
-
-const instrumentSerif = Instrument_Serif({
-  subsets: ['latin'],
-  weight: ['400'],
-  style: ['normal', 'italic'],
-  variable: '--font-instrument-serif',
+  variable: '--font-inter',
   display: 'swap'
 });
 
@@ -40,7 +31,7 @@ export default function RootLayout({ children }) {
   // extensions installed. It does NOT suppress real React errors —
   // only the attribute-mismatch hydration warning.
   return (
-    <html lang="en" suppressHydrationWarning className={`${instrumentSans.variable} ${instrumentSerif.variable}`}>
+    <html lang="en" suppressHydrationWarning className={inter.variable}>
       <body suppressHydrationWarning>{children}</body>
     </html>
   );
