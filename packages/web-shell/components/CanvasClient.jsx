@@ -21,6 +21,7 @@ import CategoryCounts from './CategoryCounts.jsx';
 import Minimap from './Minimap.jsx';
 import CanvasSidebar from './CanvasSidebar.jsx';
 import CanvasTools from './CanvasTools.jsx';
+import CanvasInspector from './CanvasInspector.jsx';
 import ChallengeModal from './ChallengeModal.jsx';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
@@ -1664,7 +1665,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     };
     const onClick = (e) => {
       // Drop only on the canvas — ignore clicks that land on chrome.
-      if (e.target?.closest?.('.prompt-dock, .canvas-header, .canvas-sidebar, .canvas-topbar, .canvas-tools, .canvas-zoomdock, .canvas-toolbars-left, .canvas-toolbars-right, .canvas-toolbar-left, .canvas-toolbar-right, .empty-drop-menu, .canvas-context-menu, .zoom-controls, .zoom-menu, .user-menu, .boards-sidebar, .cnode-version-ctx-menu')) return;
+      if (e.target?.closest?.('.prompt-dock, .canvas-header, .canvas-sidebar, .canvas-topbar, .canvas-tools, .canvas-zoomdock, .canvas-inspector, .canvas-toolbars-left, .canvas-toolbars-right, .canvas-toolbar-left, .canvas-toolbar-right, .empty-drop-menu, .canvas-context-menu, .zoom-controls, .zoom-menu, .user-menu, .boards-sidebar, .cnode-version-ctx-menu')) return;
       e.preventDefault();
       e.stopPropagation();
       drop();
@@ -2715,7 +2716,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (draftEdge) return;
     const t = ev.target;
     if (!t || typeof t.closest !== 'function') return;
-    if (t.closest('.cnode, .edge-line, .edge-popup, .canvas-sidebar, .canvas-topbar, .canvas-tools, .canvas-zoomdock, .canvas-toolbar-left, .canvas-toolbar-right, .canvas-toolbars-left, .canvas-toolbars-right, .canvas-theme-floater, .prompt-dock, .empty-drop-menu, .canvas-context-menu, .canvas-header, .zoom-controls, .zoom-menu, .user-menu, .reset-confirm-card, .reset-confirm-overlay, .superwidget')) return;
+    if (t.closest('.cnode, .edge-line, .edge-popup, .canvas-sidebar, .canvas-topbar, .canvas-tools, .canvas-zoomdock, .canvas-inspector, .canvas-toolbar-left, .canvas-toolbar-right, .canvas-toolbars-left, .canvas-toolbars-right, .canvas-theme-floater, .prompt-dock, .empty-drop-menu, .canvas-context-menu, .canvas-header, .zoom-controls, .zoom-menu, .user-menu, .reset-confirm-card, .reset-confirm-overlay, .superwidget')) return;
     startMarquee(ev);
   }
 
@@ -4217,6 +4218,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       '.canvas-topbar',
       '.canvas-tools',
       '.canvas-zoomdock',
+      '.canvas-inspector',
       '.canvas-theme-floater',
       '.zoom-controls',
       '.zoom-menu',
@@ -5437,7 +5439,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         // context menu is suppressed only for the bare canvas.
         const t = e.target;
         if (!t || typeof t.closest !== 'function') return;
-        if (t.closest('.cnode, .prompt-dock, .empty-drop-menu, .canvas-context-menu, .edge-popup, .canvas-header, .canvas-sidebar, .canvas-topbar, .canvas-tools, .canvas-zoomdock')) return;
+        if (t.closest('.cnode, .prompt-dock, .empty-drop-menu, .canvas-context-menu, .edge-popup, .canvas-header, .canvas-sidebar, .canvas-topbar, .canvas-tools, .canvas-zoomdock, .canvas-inspector')) return;
         e.preventDefault();
         const w = clientToWorld(transformRef, e.clientX, e.clientY);
         setContextMenu({ x: e.clientX, y: e.clientY, worldX: w.x, worldY: w.y });
@@ -5501,6 +5503,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       <div className="canvas-zoomdock">
         <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} />
       </div>
+
+      <CanvasInspector
+        node={nodes.find((n) => n.id === selectedNodeId) || null}
+        onFrameChange={(id, patch) => {
+          // Same path a drag/resize commit takes: optimistic local update +
+          // debounced-enough single PATCH (field commits are discrete).
+          const local = {};
+          if (patch.posX != null) local.pos_x = patch.posX;
+          if (patch.posY != null) local.pos_y = patch.posY;
+          if (patch.width != null) local.width = patch.width;
+          if (patch.height != null) local.height = patch.height;
+          updateNodeLocal(id, local);
+          api.updateNode(id, patch).catch(console.warn);
+        }}
+      />
 
       <div className="canvas-toolbars-right">
         {/* Floating run button — anchored left of the zoom widget; crossfades in
@@ -5579,7 +5596,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         initialPositionY={-WORLD_HEIGHT * 0.25}
         limitToBounds={false}
         wheel={{ disabled: true }}
-        panning={{ disabled: !spaceDown, excluded: ['cnode', 'cnode-topbar', 'cnode-body', 'cnode-iframe', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'cnode-handle', 'cnode-viewport-switcher', 'cnode-vp-btn', 'cnode-port-right', 'cnode-port-left', 'edge-line', 'edge-popup', 'reset-confirm-card', 'reset-confirm-overlay', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-sidebar', 'canvas-topbar', 'canvas-tools', 'canvas-zoomdock', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu', 'user-menu'] }}
+        panning={{ disabled: !spaceDown, excluded: ['cnode', 'cnode-topbar', 'cnode-body', 'cnode-iframe', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'cnode-handle', 'cnode-viewport-switcher', 'cnode-vp-btn', 'cnode-port-right', 'cnode-port-left', 'edge-line', 'edge-popup', 'reset-confirm-card', 'reset-confirm-overlay', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-sidebar', 'canvas-topbar', 'canvas-tools', 'canvas-zoomdock', 'canvas-inspector', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu', 'user-menu'] }}
         doubleClick={{ disabled: true }}
         onPanningStart={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setPopupPos(null); }}
         onTransformed={(_ref, state) => {

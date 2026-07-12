@@ -8296,3 +8296,214 @@ body.rb-ed-active.rb-ed-canvas .canvas-zoomdock {
   white-space: nowrap;
   user-select: none;
 }
+
+/* ── Canvas inspector (right panel) — unspirit 2026-07-12 ────────────── */
+:root { --inspector-w: 248px; }
+
+.canvas-inspector {
+  position: fixed;
+  right: 0;
+  top: var(--topbar-h);
+  bottom: 0;
+  width: 248px;
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  background: #222220;
+  border-left: 1px solid var(--border-frosted);
+  overflow-y: auto;
+}
+/* Collapsed → a detached 42px control under the topbar. */
+.canvas-inspector.collapsed {
+  top: calc(var(--topbar-h) + 15px);
+  right: 15px;
+  bottom: auto;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #45443F;
+  border-radius: var(--radius-sm);
+  background: #252522;
+  color: var(--text-primary);
+  cursor: pointer;
+  box-shadow: var(--shadow-frost);
+  overflow: hidden;
+  padding: 0;
+}
+.canvas-inspector.collapsed:hover { background: #2C2C29; }
+
+.cinsp-head {
+  height: 42px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 9px;
+  border-bottom: 1px solid var(--border-frosted);
+}
+.cinsp-tabs { display: flex; height: 100%; }
+.cinsp-tabs button {
+  padding: 0 9px;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.cinsp-tabs button.active {
+  color: var(--text-primary);
+  font-weight: 650;
+  box-shadow: inset 0 -2px var(--ink-invert-bg);
+}
+.cinsp-tabs button:disabled { color: var(--text-muted); cursor: default; }
+.cinsp-collapse {
+  width: 28px; height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.cinsp-collapse:hover { background: var(--hover-bg); color: var(--text-primary); }
+
+.cinsp-selection {
+  height: 43px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-frosted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.cinsp-type-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.cinsp-selection-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.cinsp-selection > button {
+  margin-left: auto;
+  width: 24px; height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.cinsp-panel {
+  border-bottom: 1px solid var(--border-frosted);
+  padding: 10px 12px;
+}
+.cinsp-panel header {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+.cinsp-panel header b { font-weight: 600; }
+.cinsp-panel header button {
+  width: 24px; height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.cinsp-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+.cinsp-field {
+  height: 29px;
+  background: #2F2F2C;
+  border-radius: var(--radius-2xs);
+  display: flex;
+  align-items: center;
+}
+.cinsp-field span {
+  width: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 10px;
+  pointer-events: none;
+  user-select: none;
+}
+.cinsp-field input {
+  width: calc(100% - 24px);
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  outline: 0;
+  padding: 0 6px 0 0;
+}
+
+.cinsp-row {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  font-size: 11px;
+}
+.cinsp-row span { flex: 1; color: var(--text-secondary); }
+.cinsp-row button {
+  background: #2F2F2C;
+  border: 0;
+  border-radius: var(--radius-2xs);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  padding: 5px 8px;
+  cursor: default;
+}
+.cinsp-row button:disabled { color: var(--text-secondary); }
+
+.cinsp-fill {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: #2F2F2C;
+  padding: 3px 6px;
+  border-radius: var(--radius-2xs);
+  font-size: 11px;
+  margin-top: 6px;
+}
+.cinsp-fill i {
+  width: 19px; height: 19px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  flex: none;
+}
+.cinsp-fill span:nth-child(2) { flex: 1; }
+.cinsp-fill span:last-child { color: var(--text-muted); }
+
+.cinsp-empty {
+  padding: 25px 16px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* Minimap steps left of the inspector; smooth follow on collapse. */
+.canvas-minimap {
+  right: calc(16px + var(--inspector-w, 0px)) !important;
+  transition: right 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Edit mode: inspector steps aside with the rest of the Working Table
+   chrome (the editor mounts its own inspector). */
+body.rb-ed-active.rb-ed-canvas .canvas-inspector { display: none; }
