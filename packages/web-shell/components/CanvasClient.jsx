@@ -33,6 +33,7 @@ import {
   selectGeometricMembersToLatch, TEAR_MARGIN,
 } from '../lib/section-membership.js';
 import { clampFrameToNeighbors, clampMoveToNeighbors, planChainLayout, planSectionDeoverlap } from '../lib/canvas-layout.js';
+import { classifyDropFile, formatDropRejectMessage } from '../lib/drop-files.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -254,6 +255,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // a global mousemove (world coords) because the section frame/chrome are
   // pointer-events:none and can't :hover themselves.
   const [hoveredSectionId, setHoveredSectionId] = useState(null);
+  // Files dragged in from the OS (Finder/Explorer) that have no node
+  // representation — array of filenames driving the unsupported-format
+  // error modal. Null when closed.
+  const [dropRejects, setDropRejects] = useState(null);
   // Billing block — set when any api.* call throws code 'insufficient_credits'
   // ({ estimate, balance }); renders the "Not enough credits" modal. "Buy
   // credits" opens the PlansModal (v1 waitlist).
@@ -1361,14 +1366,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
   // ── Multi-file placement queue ────────────────────────────────────────────
   // Map a picked file to the node kind it becomes on the canvas.
-  function classifyQueueFile(file) {
-    const name = (file.name || '').toLowerCase();
-    const type = file.type || '';
-    if (type.startsWith('image/') || /\.(png|jpe?g|gif|webp|avif|svg|bmp)$/.test(name)) return 'image';
-    if (/\.(md|markdown)$/.test(name) || type === 'text/markdown') return 'md';
-    if (/\.html?$/.test(name) || type === 'text/html') return 'html';
-    return null;
-  }
+  // Lives in lib/drop-files.js (pure, shared with the OS-drop path).
+  const classifyQueueFile = classifyDropFile;
 
   // Create one queued file's node on the server and RETURN it WITHOUT mounting
   // (no setNodes, no undo, no placement). Lets the queue pre-create the next
@@ -1377,8 +1376,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Mirrors handleUpload{Screenshot,Md,Html}'s createNode params; kept separate
   // so those shared handlers stay untouched. Returns null on read/validation
   // failure (toast already shown).
-  async function createQueueNode(file) {
+  // `at` (optional): { x, y, adoptedInto } — world point to center the node
+  // on (OS drag-and-drop already knows where it goes; the queue path passes
+  // nothing and keeps the ghost-placement flow).
+  async function createQueueNode(file, at = null) {
     const k = classifyQueueFile(file);
+    const placeAt = (width, height) => (at
+      ? { posX: at.x - width / 2, posY: at.y - height / 2 }
+      : nextNodePosition({ width, height }));
+    const adoptMeta = at?.adoptedInto ? { adoptedInto: at.adoptedInto } : {};
     try {
       if (k === 'html') {
         const html = await file.text();
@@ -1387,20 +1393,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           return null;
         }
         const width = 1280, height = Math.round(width * 9 / 16);
-        const { posX, posY } = nextNodePosition({ width, height });
+        const { posX, posY } = placeAt(width, height);
         const created = await api.createNode({
           boardId: board.id, kind: 'site', posX, posY, width, height,
-          meta: { name: file.name, source: 'upload' }, html,
+          meta: { name: file.name, source: 'upload', ...adoptMeta }, html,
         });
         return { ...created.node, current_html: html };
       }
       if (k === 'md') {
         const text = await file.text();
         const width = 600, height = 600;
-        const { posX, posY } = nextNodePosition({ width, height });
+        const { posX, posY } = placeAt(width, height);
         const created = await api.createNode({
           boardId: board.id, kind: 'designmd', posX, posY, width, height,
-          meta: { name: file.name }, designMd: text,
+          meta: { name: file.name, ...adoptMeta }, designMd: text,
         });
         return { ...created.node, current_design_md: text };
       }
@@ -1412,10 +1418,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           fr.readAsDataURL(file);
         });
         const width = 600, height = 600;
-        const { posX, posY } = nextNodePosition({ width, height });
+        const { posX, posY } = placeAt(width, height);
         const created = await api.createNode({
           boardId: board.id, kind: 'asset', posX, posY, width, height,
-          meta: { name: file.name, dataUrl, mimeType: file.type || 'image/*' },
+          meta: { name: file.name, dataUrl, mimeType: file.type || 'image/*', ...adoptMeta },
         });
         return { ...created.node };
       }
@@ -2176,6 +2182,67 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
   }
 
+  // OS file drop (drag from Finder/Explorer). Reuses the queue's
+  // classify/create logic but places each node AT the drop point — the drop
+  // gesture already said where it goes, so no ghost placement. Multiple files
+  // fan out with a small progressive offset (same idea as paste). A drop
+  // point inside a section frame adopts the node into that section, matching
+  // the library-asset drop. Unsupported formats collect into an error modal
+  // that names each rejected file and the accepted formats.
+  async function handleOsFilesDrop(e) {
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (!files.length) return;
+    e.preventDefault();
+    const w = clientToWorld(transformRef, e.clientX, e.clientY);
+    const hit = sections.find((s) =>
+      w.x >= s.x && w.x <= s.x + s.width && w.y >= s.y && w.y <= s.y + s.height);
+    const adoptedInto = hit && !String(hit.rootId || '').startsWith('temp-') ? hit.rootId : null;
+    const rejects = [];
+    const jobs = [];
+    const KIND = { image: 'asset', md: 'designmd', html: 'site' };
+    for (const f of files) {
+      const k = classifyQueueFile(f);
+      if (!k) { rejects.push(f.name || 'untitled'); continue; }
+      const i = jobs.length;
+      const width = k === 'html' ? 1280 : 600;
+      const height = k === 'html' ? Math.round(width * 9 / 16) : 600;
+      const at = { x: w.x + i * 32, y: w.y + i * 32, adoptedInto };
+      const tempId = `temp-drop-${Date.now()}-${i}`;
+      jobs.push({
+        file: f, at, tempId,
+        // Instant placeholder so the drop point reacts immediately — the
+        // FileReader + createNode round-trip takes a beat and the canvas
+        // shouldn't sit inert meanwhile. `_loading` drives the node
+        // progress ring; meta.status keeps the asset body in its
+        // generating state instead of the empty-upload prompt.
+        ph: {
+          id: tempId, kind: KIND[k],
+          pos_x: at.x - width / 2, pos_y: at.y - height / 2, width, height,
+          current_html: null, _loading: true,
+          meta: { name: f.name, status: 'generating' },
+        },
+      });
+    }
+    if (jobs.length) {
+      setNodes((prev) => [...prev, ...jobs.map((j) => j.ph)]);
+      await Promise.all(jobs.map(async (j) => {
+        const node = await createQueueNode(j.file, j.at);
+        // Swap placeholder → real node. Dedup guard: a board refetch could
+        // have pulled the created node into state already — then just drop
+        // the placeholder instead of mounting a duplicate key.
+        setNodes((prev) => {
+          if (!node) return prev.filter((n) => n.id !== j.tempId);
+          const exists = prev.some((n) => n.id === node.id);
+          return prev
+            .map((n) => (n.id === j.tempId ? (exists ? null : { ...node }) : n))
+            .filter(Boolean);
+        });
+        if (node) pushCreateUndo(node, null);
+      }));
+    }
+    if (rejects.length) setDropRejects(rejects);
+  }
+
   // Two-tier inline: direct browser fetch first (CORS-friendly hosts —
   // fast, no server hop), then server-side proxy (handles hotlink
   // protection / strict CORS by synthesizing a same-origin Referer).
@@ -2741,6 +2808,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // AFTER the await resolves, so an aborted run never mutates the node.
   const runAbortRef = useRef(new Map());
 
+  // The dock's model picker persists in localStorage (PromptDock owns the
+  // state; MODEL_STORAGE_KEY there). Read it here so button-triggered runs
+  // (section ▶ / Run from here) compose with the SAME model the user picked.
+  function currentPickerModelId() {
+    try { return localStorage.getItem('uncraft-model') || null; } catch { return null; }
+  }
+
   async function runOneTarget(id, opts = {}) {
     const request = requestTextForTarget(id);
     setNodeRunStatus(id, { step: 1, label: 'Reading inputs…', request });
@@ -3283,6 +3357,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     await cascadeStages(stages);
   }
 
+  // Stop control for the "Run from here" button while its cascade runs —
+  // same semantics as the section pill's stop (aborts every member's run;
+  // only one run at a time per section, so section-wide stop is exact).
+  function stopFlowForNode(nodeId) {
+    const s = sections.find((x) => x.memberIds.includes(nodeId));
+    if (s) stopSection(s);
+    else stopTarget(nodeId);
+  }
+
   // Pre-flight estimate for the "Run from here" pill (computed on hover).
   function getRunFromHereEst(nodeId) {
     const s = sections.find((x) => x.memberIds.includes(nodeId));
@@ -3356,9 +3439,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
     // Site terminal → compose engine. runOneTarget drives the 3-step
     // status chip below the node, exactly like the PromptDock arrow.
+    // The user's dock picker rides along (same rule as the agent's
+    // runFlow/editSite tools) — without it the server fell back to its
+    // Claude default and billed the unfunded Anthropic account.
     if (terminal.kind === 'site') {
       try {
-        const result = await runOneTarget(terminalId);
+        const result = await runOneTarget(terminalId, { modelId: currentPickerModelId() || undefined });
         if (!result?.snapshotId) return { ok: false };
         setNodes((prev) => prev.map((n) => (
           n.id === terminalId
@@ -4803,6 +4889,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       .map((n) => n.id)
   );
   const floatRunRunning = floatRunSec ? (floatRunSec.memberIds || []).some((mid) => runningNodeIds.has(mid)) : false;
+  // Nodes whose SECTION has a running member — flips their "Run from here"
+  // button into its Stop state (mirrors the section pill's stop).
+  const flowRunningNodeIds = new Set();
+  for (const s of sections) {
+    if ((s.memberIds || []).some((mid) => runningNodeIds.has(mid))) {
+      for (const id of s.memberIds) flowRunningNodeIds.add(id);
+    }
+  }
 
   // The bare chat-arrow run-flow processes every runnable target on the
   // board. When they're ALL clean there's nothing new to produce, so the
@@ -5266,6 +5360,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     startAltDuplicateDrag,
     runFromNode,
     getRunFromHereEst,
+    stopFlowForNode,
     handleNodeResize,
     handleNodeDeleteRequest,
     handleResetNode,
@@ -5292,15 +5387,25 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       onMouseMove={moveDraftEdge}
       onMouseUp={handleGlobalMouseUp}
       onDragOver={(e) => {
-        // Accept drags carrying our custom MIME — editor.js sets this on
-        // asset-thumb dragstart. preventDefault is required to allow drop.
+        // Accept drags carrying our custom MIME (editor.js sets this on
+        // asset-thumb dragstart) AND real files dragged in from the OS.
+        // preventDefault is required to allow drop — and, for OS files,
+        // stops the browser from navigating to the dropped file.
         const types = e.dataTransfer.types;
-        if (types && (types.includes ? types.includes('application/x-uncraft-asset') : Array.prototype.indexOf.call(types, 'application/x-uncraft-asset') >= 0)) {
+        const has = (t) => !!types && (types.includes ? types.includes(t) : Array.prototype.indexOf.call(types, t) >= 0);
+        if (has('application/x-uncraft-asset') || has('Files')) {
           e.preventDefault();
           e.dataTransfer.dropEffect = 'copy';
         }
       }}
-      onDrop={handleAssetDrop}
+      onDrop={(e) => {
+        // Internal asset-thumb drags carry our MIME; anything else with
+        // real files is an OS drag (Finder/Explorer).
+        let raw = '';
+        try { raw = e.dataTransfer.getData('application/x-uncraft-asset'); } catch {}
+        if (raw) { handleAssetDrop(e); return; }
+        handleOsFilesDrop(e);
+      }}
       onContextMenu={(e) => {
         // Ignore right-clicks landed on a node, the prompt dock, edge popups,
         // header, or the existing empty-drop menu. The browser's default
@@ -5565,6 +5670,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               removeFromMenu={removing?.nodeId === n.id && !!removing.fromMenu}
               inSection={sectionMemberIds.has(n.id)}
               canRunFromHere={runFromHereIds.has(n.id)}
+              flowRunning={flowRunningNodeIds.has(n.id)}
               handlersRef={nodeHandlersRef}
             />
           ))}
@@ -6057,6 +6163,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           }
         }}
         onCancel={() => { if (!animatedChoice?.busy) setAnimatedChoice(null); }}
+      />
+
+      <ConfirmModal
+        open={!!dropRejects}
+        title={dropRejects?.length > 1 ? 'Unsupported files' : 'Unsupported file'}
+        message={dropRejects ? formatDropRejectMessage(dropRejects) : ''}
+        confirmLabel="OK"
+        cancelLabel={null}
+        onConfirm={() => setDropRejects(null)}
+        onCancel={() => setDropRejects(null)}
       />
 
       <ConfirmModal

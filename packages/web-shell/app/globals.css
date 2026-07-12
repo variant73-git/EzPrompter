@@ -2186,12 +2186,16 @@ body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:last-child { border
   border-bottom-right-radius: 0;
 }
 
-/* Toast — minimal floating notification replacing alert(). Bottom-right
-   of the canvas, frosted-style consistent with the rest. */
+/* Toast — minimal floating notification replacing alert(). Bottom-CENTER
+   (2026-07-07, user standard: transient feedback anchors centred at the
+   base, like the restore-version chip — not the bottom-right corner),
+   popup-family visuals consistent with the rest. */
 .popup-toast {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
+  /* Clears the prompt dock (fixed at the same centre, bottom 24px,
+     ~100px tall when collapsed) — the toast floats just above it. */
+  bottom: 136px;
+  left: 50%;
   z-index: 3000;
   background: var(--popup-bg);
   color: var(--popup-fg);
@@ -2200,17 +2204,18 @@ body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:last-child { border
   padding: 12px 16px;
   border-radius: 14px;
   box-shadow: var(--popup-shadow);
-  max-width: 360px;
+  max-width: 420px;
   display: flex;
   align-items: center;
   gap: 10px;
+  transform: translateX(-50%);
   animation: popup-toast-in 200ms ease-out;
 }
 .popup-toast-error { border: 1px solid rgba(248, 113, 113, 0.30); color: #fca5a5; }
 body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28, 28, 0.30); }
 @keyframes popup-toast-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
 }
 
 /* ─── Challenge (bot-protection) modal ─────────────────────────────────────

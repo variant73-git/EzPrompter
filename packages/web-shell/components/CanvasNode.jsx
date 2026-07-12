@@ -363,7 +363,7 @@ export default function CanvasNode({
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
   removing = false, removingOutside = false, removeFromMenu = false, inSection = false,
   onRemoveFromSection, onCancelRemove, scale = 1, debit = null,
-  canRunFromHere = false, onRunFromHere, getRunFromHereEst
+  canRunFromHere = false, flowRunning = false, onRunFromHere, onStopFlow, getRunFromHereEst
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   // "Run from here" pre-flight cost — fetched lazily when the pill is hovered.
@@ -1073,19 +1073,31 @@ export default function CanvasNode({
           left of Edit — selection-only, like the rest of the cluster. */}
       {(selected || editing) && !removing && ((renderIframeBody && html) || canRunFromHere) && (
         <div className="cnode-float-actions" onMouseDown={(e) => e.stopPropagation()}>
-          {canRunFromHere && !editing && !runStatus && (
+          {canRunFromHere && !editing && (
             <button
               type="button"
-              className="cnode-float-btn cnode-float-runhere"
-              onMouseEnter={() => setRunHereEst(getRunFromHereEst ? (getRunFromHereEst() || 0) : 0)}
-              onClick={(e) => { e.stopPropagation(); onRunFromHere?.(); }}
-              title="Run from this node — regenerates it and everything downstream; the rest is untouched"
-              aria-label="Run from this node"
+              className={`cnode-float-btn cnode-float-runhere${flowRunning ? ' running' : ''}`}
+              onMouseEnter={() => { if (!flowRunning) setRunHereEst(getRunFromHereEst ? (getRunFromHereEst() || 0) : 0); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (flowRunning) onStopFlow?.();
+                else onRunFromHere?.();
+              }}
+              title={flowRunning
+                ? 'Stop this run'
+                : 'Run from this node — regenerates it and everything downstream; the rest is untouched'}
+              aria-label={flowRunning ? 'Stop this run' : 'Run from this node'}
             >
-              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <polygon points="6,4 20,12 6,20" />
-              </svg>
-              <span>Run from here{runHereEst > 0 ? ` · ${runHereEst}` : ''}</span>
+              {flowRunning ? (
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <polygon points="6,4 20,12 6,20" />
+                </svg>
+              )}
+              <span>{flowRunning ? 'Stop' : `Run from here${runHereEst > 0 ? ` · ${runHereEst}` : ''}`}</span>
             </button>
           )}
           {editing && (

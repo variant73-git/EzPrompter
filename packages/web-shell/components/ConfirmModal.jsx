@@ -11,7 +11,8 @@ import { useEffect, useState } from 'react';
 //   open        — render gate
 //   title       — string headline
 //   message     — string body (or ReactNode)
-//   confirmLabel / cancelLabel — button text
+//   confirmLabel / cancelLabel — button text; cancelLabel={null} hides the
+//                   cancel button (single-button notice, e.g. error feedback)
 //   destructive — when true, confirm button uses red accent
 //   busy        — while running the confirm action, disables buttons + shows spinner
 //   checkboxLabel — optional; renders a checkbox ("don't ask again" etc).
@@ -63,14 +64,16 @@ export default function ConfirmModal({
           </label>
         ) : null}
         <div className="confirm-modal-actions">
-          <button
-            type="button"
-            className="confirm-modal-btn confirm-modal-btn-cancel"
-            disabled={busy}
-            onClick={onCancel}
-          >
-            {cancelLabel}
-          </button>
+          {cancelLabel !== null ? (
+            <button
+              type="button"
+              className="confirm-modal-btn confirm-modal-btn-cancel"
+              disabled={busy}
+              onClick={onCancel}
+            >
+              {cancelLabel}
+            </button>
+          ) : null}
           <button
             type="button"
             className={`confirm-modal-btn ${destructive ? 'confirm-modal-btn-destructive' : 'confirm-modal-btn-primary'}`}
