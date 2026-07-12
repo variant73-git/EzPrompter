@@ -31,10 +31,25 @@ describe('renderHtmlScreenshot', () => {
     expect(browser.close).toHaveBeenCalled();
   });
 
-  it('clamps viewport height to maxHeight for very tall pages', async () => {
+  it('captures fullPage with a clip capped at maxHeight — never resizes the viewport', async () => {
+    // Growing the viewport to the content height re-lays-out vh-based
+    // designs (100vh chapters inflate to the page height → stretched
+    // thumbnails). The render must keep the 800px viewport and cap via clip.
     page.evaluate.mockResolvedValue(99999);
     await renderHtmlScreenshot('<html></html>', { maxHeight: 2400 });
-    expect(page.setViewportSize).toHaveBeenCalledWith({ width: 1280, height: 2400 });
+    expect(page.setViewportSize).not.toHaveBeenCalled();
+    expect(page.screenshot).toHaveBeenCalledWith(expect.objectContaining({
+      fullPage: true,
+      clip: { x: 0, y: 0, width: 1280, height: 2400 },
+    }));
+  });
+
+  it('clips to the measured content height when below maxHeight', async () => {
+    page.evaluate.mockResolvedValue(1234);
+    await renderHtmlScreenshot('<html></html>', { maxHeight: 12000 });
+    expect(page.screenshot).toHaveBeenCalledWith(expect.objectContaining({
+      clip: { x: 0, y: 0, width: 1280, height: 1234 },
+    }));
   });
 
   it('closes the browser even when the screenshot fails', async () => {

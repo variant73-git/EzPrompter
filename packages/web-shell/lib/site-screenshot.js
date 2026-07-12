@@ -35,6 +35,26 @@ export async function renderHtmlScreenshot(html, { width = 1280, maxHeight = 240
       await page
         .setContent(doc, { waitUntil: 'networkidle', timeout: SETCONTENT_TIMEOUT_MS })
         .catch(() => {});
+      // Walk the page once before shooting so scroll-reveal animations
+      // (IntersectionObserver fade/slide entries) fire for below-fold
+      // sections — otherwise they'd be captured at opacity 0. Step count
+      // capped so a pathological infinite-scroll page can't stall.
+      await page
+        .evaluate(async () => {
+          const total = Math.max(
+            document.documentElement.scrollHeight,
+            document.body ? document.body.scrollHeight : 0,
+          );
+          const step = window.innerHeight || 800;
+          const maxSteps = 40;
+          for (let i = 0, y = 0; i < maxSteps && y <= total; i++, y += step) {
+            window.scrollTo(0, y);
+            await new Promise((r) => setTimeout(r, 60));
+          }
+          window.scrollTo(0, 0);
+          await new Promise((r) => setTimeout(r, 250));
+        })
+        .catch(() => {});
       const contentHeight = await page
         .evaluate(() => Math.max(
           document.documentElement.scrollHeight,
@@ -42,11 +62,18 @@ export async function renderHtmlScreenshot(html, { width = 1280, maxHeight = 240
         ))
         .catch(() => 800);
       const height = Math.max(400, Math.min(contentHeight || 800, maxHeight));
-      await page.setViewportSize({ width, height });
+      // fullPage capture with a page-coordinate clip capping the height —
+      // instead of growing the viewport to the content height. Growing the
+      // viewport re-laid-out vh-based designs against the giant viewport:
+      // every 100vh "full-screen chapter" inflated to the whole page height
+      // and the thumbnail came out as stretched bars. fullPage keeps layout
+      // exactly as a visitor sees it at 1280×800 (a bare clip without
+      // fullPage gets intersected with the viewport and comes back 800 tall).
       const fmt = type === 'jpeg' ? 'jpeg' : 'png';
       const buf = await page.screenshot({
         type: fmt,
-        fullPage: false,
+        fullPage: true,
+        clip: { x: 0, y: 0, width, height },
         ...(fmt === 'jpeg' ? { quality: quality || 82 } : {}),
       });
       return `data:image/${fmt};base64,${buf.toString('base64')}`;
