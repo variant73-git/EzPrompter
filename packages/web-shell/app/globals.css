@@ -2528,11 +2528,11 @@ html.canvas-zoom-below-30 .cnode-body {
 
 /* Per-origin node borders. Edge stroke colors live in node-origin.js and
    are applied inline by EdgeLayer.jsx — keep the two in sync. */
-.cnode.origin-url    { border-color: rgba(41, 102, 234, 0.55); }   /* blue — site */
-.cnode.origin-html   { border-color: rgba(249, 115, 22, 0.55); }   /* orange — .html */
-.cnode.origin-md     { border-color: rgba(194, 180, 74, 0.55); }   /* ochre — .md */
-.cnode.origin-screenshot { border-color: rgba(121, 81, 194, 0.55); } /* violet — image */
-.cnode.origin-blank  { border-color: rgba(41, 102, 234, 0.55); }   /* blue — same as URL */
+.cnode.origin-url    { border-color: color-mix(in oklab, #2966EA 72%, #4A4944); }   /* blue — site */
+.cnode.origin-html   { border-color: color-mix(in oklab, #F97316 72%, #4A4944); }   /* orange — .html */
+.cnode.origin-md     { border-color: color-mix(in oklab, #C2B44A 72%, #4A4944); }   /* ochre — .md */
+.cnode.origin-screenshot { border-color: color-mix(in oklab, #7951C2 72%, #4A4944); } /* violet — image */
+.cnode.origin-blank  { border-color: color-mix(in oklab, #2966EA 72%, #4A4944); }   /* blue — same as URL */
 
 /* "is-main" — soft outer glow marks the board's anchor URL without
    breaking visual parity with other URLs. Defined BEFORE .selected so
@@ -2560,9 +2560,22 @@ html.canvas-zoom-below-30 .cnode-body {
      shrinks on screen with the node, instead of ballooning at far zoom-out.
      White hairline halo REMOVED (2026-07-03 — read as an outline artifact);
      the origin-colour ring alone is the selection read. */
+  /* Working Table double ring (unspirit 2026-07-12): a canvas-coloured gap
+     ring under the category ring — the selection reads as a floating halo
+     detached from the frame, Figma-style. */
   box-shadow:
-    0 0 0 calc(3px / max(0.62, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
-    0 8px 32px rgba(0, 0, 0, 0.4);
+    0 0 0 calc(3px / max(0.62, var(--canvas-scale, 1))) var(--bg-base),
+    0 0 0 calc(5px / max(0.62, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
+    0 14px 38px rgba(0, 0, 0, 0.3);
+}
+
+/* Editing: the ring steps up (5px gap / 8px ring) — the strongest state
+   in the chrome, matching the mock's editing emphasis. */
+.cnode.selected.editing {
+  box-shadow:
+    0 0 0 calc(5px / max(0.62, var(--canvas-scale, 1))) var(--bg-base),
+    0 0 0 calc(8px / max(0.62, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
+    0 20px 50px rgba(0, 0, 0, 0.42);
 }
 
 /* While generating, the progress ring (cnode-progress-arc) traces the frame
@@ -3613,9 +3626,10 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
   /* No backdrop-filter here: this dot exists on EVERY node inside the
      zoomed world — blurring N backdrops re-rasterized on every zoom tick.
      Plain translucency blends the same at 14px without the filter cost. */
-  background: rgba(26, 26, 26, 0.9);
-  border: 1px solid rgba(245, 245, 245, 0.85);
-  color: rgba(241, 245, 249, 0.85);
+  background: var(--cnode-port-fill, var(--accent));
+  border: 2px solid var(--bg-base);
+  box-shadow: 0 0 0 1px var(--cnode-port-fill, var(--accent));
+  color: var(--cnode-port-ink, #20201E);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3686,8 +3700,9 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
   border-radius: 50%;
   /* No backdrop-filter (in-world rule — this slot exists on every node;
      see the port-right note). Slightly higher alpha covers the blur. */
-  background: rgba(26, 26, 26, 0.9);
-  border: 1.5px solid rgba(245, 245, 245, 0.85);
+  background: var(--cnode-port-fill, var(--accent));
+  border: 2px solid var(--bg-base);
+  box-shadow: 0 0 0 1px var(--cnode-port-fill, var(--accent));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3696,12 +3711,14 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
   transition: background 0.15s, border-color 0.15s, transform 0.15s, box-shadow 0.15s;
 }
 
-/* Empty (no incoming edges) — same dark frosted look as connected slots
-   so all dots read as one consistent dark-mode family. */
+/* Empty (no incoming edges) — filled in the node's own category colour,
+   same family as the emitter (unspirit 2026-07-12). Connected receivers
+   below keep the dual-identity read (own-colour ring + sender-colour dot),
+   which carries real information — don't flatten it. */
 .cnode-port-left.is-empty {
-  background: rgba(26, 26, 26, 0.78);
-  border-color: rgba(245, 245, 245, 0.85);
-  box-shadow: none;
+  background: var(--cnode-port-fill, var(--accent));
+  border-color: var(--bg-base);
+  box-shadow: 0 0 0 1px var(--cnode-port-fill, var(--accent));
 }
 
 /* Connected receiver — OUTLINE only (not a solid fill): the dark frosted base
@@ -3761,10 +3778,16 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
   left: 50%;
   transform: translate(-50%, -50%);
 }
-.cnode-port-left .cnode-port-dot,
-.cnode-port-left.is-empty .cnode-port-dot {
+.cnode-port-left .cnode-port-dot {
   background: rgba(245, 245, 245, 0.95);
   mix-blend-mode: normal;
+}
+/* Idle states read as SOLID category dots (unspirit 2026-07-12): the core
+   vanishes into the fill. Connected states keep their informative cores
+   (white on a wired emitter, sender-colour on a wired receiver). */
+.cnode-port-right:not(.is-connected) .cnode-port-dot,
+.cnode-port-left.is-empty .cnode-port-dot {
+  background: transparent;
 }
 .cnode-port-right:hover .cnode-port-dot,
 .cnode-port-left:hover  .cnode-port-dot { background: #fff; }
@@ -4196,9 +4219,10 @@ body.rb-ed-light .cnode-anchor-title {
      — so the corner handle resizes X and Y separately (the old aspect-ratio
      3/1 + height:auto locked them together). */
   height: var(--cnode-h, 200px);
-  /* Outer frame — darker than the inner field in dark mode (and the
-     reverse in light mode) so the text input reads as an inset card. */
-  background: #20201E;
+  /* PAPER NOTE (unspirit 2026-07-12): the prompt body is the category's
+     near-white — prompt nodes read as physical paper notes on the dark
+     table, with dark ink. */
+  background: #ECEBF1;
   cursor: text;
 }
 .cnode-prompt-body {
@@ -4212,8 +4236,8 @@ body.rb-ed-light .cnode-anchor-title {
   height: 100%;
   /* Inner field — 1 step lighter than the body frame, with rounded
      borders + comfortable padding so it visually sits as a chip. */
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(32, 32, 30, 0.04);
+  border: 1px solid rgba(32, 32, 30, 0.08);
   /* Concentric nesting (2026-07-07): the chip sits 14px inside the node
      body (radius 11.25) — a nested radius must be SMALLER than the outer
      minus the gap or the corner visibly pokes past the frame's curve.
@@ -4228,7 +4252,7 @@ body.rb-ed-light .cnode-anchor-title {
   /* Text taller than the box (auto-grow caps at 800px; manual resize can
      go smaller) → the field scrolls vertically. */
   overflow-y: auto;
-  color: #f5f5f5;
+  color: #25231F;
   font: 500 18px/1.5 var(--font-inter), system-ui, sans-serif;
   transition: border-color 0.15s, background 0.15s;
 }
@@ -4254,11 +4278,11 @@ body.rb-ed-light .cnode-anchor-title {
 body.rb-ed-light .cnode-prompt-corner-resize { color: rgba(0, 0, 0, 0.3); }
 body.rb-ed-light .cnode-prompt-corner-resize:hover { color: rgba(0, 0, 0, 0.65); }
 .cnode-prompt-textarea:focus {
-  border-color: rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(32, 32, 30, 0.20);
+  background: rgba(32, 32, 30, 0.06);
 }
 .cnode-prompt-textarea::placeholder {
-  color: rgba(245, 245, 245, 0.35);
+  color: rgba(37, 35, 31, 0.40);
 }
 /* Light mode — INVERTED: outer is the lighter cool grey, inner field
    is a darker grey to keep the inset-card hierarchy. */
@@ -6665,18 +6689,18 @@ body.rb-ed-light .prompt-dock-add-btn.open {
    top so the user reads direction without the cord appearing broken. */
 .edge-line-base {
   fill: none;
-  stroke-width: 4;
+  stroke-width: 3;
   opacity: 0.55;
   vector-effect: non-scaling-stroke;
   stroke-linecap: round;
   pointer-events: none;
 }
-.edge-line-base.selected { opacity: 0.85; stroke-width: 6; }
+.edge-line-base.selected { opacity: 0.85; stroke-width: 5; }
 
 .edge-line {
   fill: none;
   /* Stroke is set inline as a per-edge gradient (source→target colour). */
-  stroke-width: 4;
+  stroke-width: 2;
   opacity: 1;
   pointer-events: stroke;
   cursor: pointer;
@@ -6684,17 +6708,18 @@ body.rb-ed-light .prompt-dock-add-btn.open {
      in screen pixels regardless of canvas zoom — without it, at low zoom
      the dashes shrunk below 1px and the cord effectively disappeared. */
   vector-effect: non-scaling-stroke;
-  /* Long dash, short gap — reads as a flowing rope, not chopped pieces. */
-  stroke-dasharray: 16 7;
+  /* Round marching DOTS (1 on / 10 off) — quiet directional flow, the
+     Working Table cord (unspirit 2026-07-12). */
+  stroke-dasharray: 1 10;
   stroke-linecap: round;
-  animation: edge-march 1.4s linear infinite;
+  animation: edge-march 1.1s linear infinite;
 }
 
 .edge-line:hover,
 .edge-line.selected,
 /* Hover feedback now comes from the wide invisible hit path (a sibling), so
    thicken the visible cord when anything in the edge group is hovered. */
-.edge-group:hover .edge-line { stroke-width: 6; }
+.edge-group:hover .edge-line { stroke-width: 4; }
 
 /* Cut hotspot — scissors cursor over the middle of a cord; a click severs it.
    White scissors for the dark canvas; black variant in light mode. The hotspot
@@ -6735,7 +6760,8 @@ body.rb-ed-light .edge-cut-zone {
 }
 
 @keyframes edge-march {
-  to { stroke-dashoffset: -44; }
+  /* Offset = multiple of the 11px dash pattern so the loop is seamless. */
+  to { stroke-dashoffset: -22; }
 }
 
 /* Snapped state — cord endpoint locks to a target port. The march pauses
@@ -7743,11 +7769,11 @@ html.canvas-zoom-low .cnode-float-tag { display: none; }
    Edit, side by side at the node's top-right — selection-only like the
    rest of the cluster. White (Edit stays the blue primary). */
 .cnode-float-btn.cnode-float-runhere {
-  background: #ffffff;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  color: #20201E;
+  background: #292926;
+  border: 1px solid #4B4A44;
+  color: #F2F1EC;
 }
-.cnode-float-btn.cnode-float-runhere:hover { background: #f0f0f0; }
+.cnode-float-btn.cnode-float-runhere:hover { background: #34332F; }
 html.canvas-zoom-low .cnode-anchor-title {
   pointer-events: auto;
   cursor: grab;
@@ -7785,10 +7811,10 @@ html.canvas-zoom-low .cnode-anchor-title:active { cursor: grabbing; }
 }
 .cnode-float-btn:disabled { opacity: 0.6; cursor: default; }
 .cnode-float-edit {
-  background: #2966EA;
-  color: #ffffff;
+  background: var(--ink-invert-bg, #EFEEE8);
+  color: var(--ink-invert-fg, #20201E);
 }
-.cnode-float-edit:hover:not(:disabled) { background: #3B76F0; }
+.cnode-float-edit:hover:not(:disabled) { background: #FFFFFF; }
 .cnode-float-cancel {
   background: rgba(15, 15, 15, 0.9);
   color: #f5f5f5;
@@ -7846,8 +7872,8 @@ body.rb-ed-light .cnode-float-cancel {
   cursor: inherit;
 }
 .cnode-prompt-body.editing .cnode-prompt-textarea {
-  border-color: rgba(255, 255, 255, 0.22);
-  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(32, 32, 30, 0.24);
+  background: rgba(32, 32, 30, 0.06);
 }
 .cnode-prompt-hint {
   position: absolute;
