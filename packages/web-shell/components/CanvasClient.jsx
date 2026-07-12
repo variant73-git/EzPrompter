@@ -19,6 +19,8 @@ import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
 import PromptDock from './PromptDock.jsx';
 import CategoryCounts from './CategoryCounts.jsx';
 import Minimap from './Minimap.jsx';
+import CanvasSidebar from './CanvasSidebar.jsx';
+import CanvasTools from './CanvasTools.jsx';
 import ChallengeModal from './ChallengeModal.jsx';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
@@ -1662,7 +1664,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     };
     const onClick = (e) => {
       // Drop only on the canvas — ignore clicks that land on chrome.
-      if (e.target?.closest?.('.prompt-dock, .canvas-header, .canvas-toolbars-left, .canvas-toolbars-right, .canvas-toolbar-left, .canvas-toolbar-right, .empty-drop-menu, .canvas-context-menu, .zoom-controls, .zoom-menu, .user-menu, .boards-sidebar, .cnode-version-ctx-menu')) return;
+      if (e.target?.closest?.('.prompt-dock, .canvas-header, .canvas-sidebar, .canvas-topbar, .canvas-tools, .canvas-zoomdock, .canvas-toolbars-left, .canvas-toolbars-right, .canvas-toolbar-left, .canvas-toolbar-right, .empty-drop-menu, .canvas-context-menu, .zoom-controls, .zoom-menu, .user-menu, .boards-sidebar, .cnode-version-ctx-menu')) return;
       e.preventDefault();
       e.stopPropagation();
       drop();
@@ -2713,7 +2715,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (draftEdge) return;
     const t = ev.target;
     if (!t || typeof t.closest !== 'function') return;
-    if (t.closest('.cnode, .edge-line, .edge-popup, .canvas-toolbar-left, .canvas-toolbar-right, .canvas-toolbars-left, .canvas-toolbars-right, .canvas-theme-floater, .prompt-dock, .empty-drop-menu, .canvas-context-menu, .canvas-header, .zoom-controls, .zoom-menu, .user-menu, .reset-confirm-card, .reset-confirm-overlay, .superwidget')) return;
+    if (t.closest('.cnode, .edge-line, .edge-popup, .canvas-sidebar, .canvas-topbar, .canvas-tools, .canvas-zoomdock, .canvas-toolbar-left, .canvas-toolbar-right, .canvas-toolbars-left, .canvas-toolbars-right, .canvas-theme-floater, .prompt-dock, .empty-drop-menu, .canvas-context-menu, .canvas-header, .zoom-controls, .zoom-menu, .user-menu, .reset-confirm-card, .reset-confirm-overlay, .superwidget')) return;
     startMarquee(ev);
   }
 
@@ -3967,12 +3969,28 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     window.location.href = '/';
   }
 
+  // Usable viewport region for framing math — the Working Table chrome
+  // (sidebar + topbar) overlays the full-viewport canvas, so optical
+  // centering must happen in the region it leaves free. Read live so the
+  // sidebar collapse (224 → 52) is respected; chrome is hidden in edit
+  // mode but the edit path uses computeEditFrame, never this.
+  function chromeInsets() {
+    let left = 224;
+    try {
+      const raw = getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w');
+      const n = parseFloat(raw);
+      if (!Number.isNaN(n)) left = n;
+    } catch { /* SSR */ }
+    return { left, top: 46 };
+  }
+
   function zoomToNode(node, animationTime = 350, forcedScale = null) {
     const t = transformRef.current;
     if (!t || !node) return;
     const PAD = 80;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight - 48;
+    const ins = chromeInsets();
+    const vw = window.innerWidth - ins.left;
+    const vh = window.innerHeight - ins.top;
     let scale;
     if (forcedScale != null) {
       scale = forcedScale;
@@ -3983,8 +4001,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
     const centerX = node.pos_x + node.width / 2;
     const centerY = node.pos_y + (node.height || 800) / 2;
-    const posX = vw / 2 - centerX * scale;
-    const posY = (vh / 2 + 48) - centerY * scale;
+    const posX = ins.left + vw / 2 - centerX * scale;
+    const posY = ins.top + vh / 2 - centerY * scale;
     t.setTransform(posX, posY, scale, animationTime);
   }
 
@@ -4051,13 +4069,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const PADDING = 80;
     const bboxW = (maxX - minX) + PADDING * 2;
     const bboxH = (maxY - minY) + PADDING * 2;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight - 48;
+    const ins = chromeInsets();
+    const vw = window.innerWidth - ins.left;
+    const vh = window.innerHeight - ins.top;
     const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
-    const posX = vw / 2 - centerX * scale;
-    const posY = (vh / 2 + 48) - centerY * scale;
+    const posX = ins.left + vw / 2 - centerX * scale;
+    const posY = ins.top + vh / 2 - centerY * scale;
     t.setTransform(posX, posY, scale, animationTime);
   }
 
@@ -4133,14 +4152,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const PADDING = 80;
     const bboxW = (maxX - minX) + PADDING * 2;
     const bboxH = (maxY - minY) + PADDING * 2;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight - 48; // header offset
+    const insFit = chromeInsets();
+    const vw = window.innerWidth - insFit.left;
+    const vh = window.innerHeight - insFit.top;
     const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
     // setTransform expects positionX/Y of the TransformComponent content.
-    const posX = vw / 2 - centerX * scale;
-    const posY = (vh / 2 + 48) - centerY * scale;
+    const posX = insFit.left + vw / 2 - centerX * scale;
+    const posY = insFit.top + vh / 2 - centerY * scale;
     t.setTransform(posX, posY, scale, animationTime);
   }
 
@@ -4162,13 +4182,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const PADDING = 120;
     const bboxW = (maxX - minX) + PADDING * 2;
     const bboxH = (maxY - minY) + PADDING * 2;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight - 48;
+    const insCon = chromeInsets();
+    const vw = window.innerWidth - insCon.left;
+    const vh = window.innerHeight - insCon.top;
     const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
-    const posX = vw / 2 - centerX * scale;
-    const posY = (vh / 2 + 48) - centerY * scale;
+    const posX = insCon.left + vw / 2 - centerX * scale;
+    const posY = insCon.top + vh / 2 - centerY * scale;
     t.setTransform(posX, posY, scale, animationTime);
   }
 
@@ -4192,6 +4213,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       '.canvas-toolbar-right',
       '.canvas-toolbars-left',
       '.canvas-toolbars-right',
+      '.canvas-sidebar',
+      '.canvas-topbar',
+      '.canvas-tools',
+      '.canvas-zoomdock',
       '.canvas-theme-floater',
       '.zoom-controls',
       '.zoom-menu',
@@ -5412,7 +5437,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         // context menu is suppressed only for the bare canvas.
         const t = e.target;
         if (!t || typeof t.closest !== 'function') return;
-        if (t.closest('.cnode, .prompt-dock, .empty-drop-menu, .canvas-context-menu, .edge-popup, .canvas-header')) return;
+        if (t.closest('.cnode, .prompt-dock, .empty-drop-menu, .canvas-context-menu, .edge-popup, .canvas-header, .canvas-sidebar, .canvas-topbar, .canvas-tools, .canvas-zoomdock')) return;
         e.preventDefault();
         const w = clientToWorld(transformRef, e.clientX, e.clientY);
         setContextMenu({ x: e.clientX, y: e.clientY, worldX: w.x, worldY: w.y });
@@ -5420,12 +5445,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     >
       <CanvasDotGrid ref={dotGridRef} />
 
-      <div className="canvas-toolbars-left">
-        <div className="canvas-toolbar-left">
-          <a href="/canvas" className="uncraft-mark" title="Boards">
-            <span className="un">Un</span><span className="craft">craft</span>
-          </a>
-          <span className="canvas-toolbar-sep" aria-hidden="true" />
+      {/* ── Working Table fixed chrome (unspirit import, 2026-07-12) ──
+          Sidebar + topbar + tool rail OVERLAY the full-viewport canvas
+          world (never inset it — all client↔world math assumes the
+          transform wrapper starts at viewport 0,0). All of it hides in
+          edit mode via CSS (the editor brings its own panels). */}
+      <CanvasSidebar
+        activeBoardId={board?.id}
+        boardName={boardName}
+        user={user}
+        onSignOut={logout}
+      />
+
+      <header className="canvas-topbar">
+        <div className="canvas-topbar-crumb">
           <input
             className="canvas-board-name"
             value={boardName}
@@ -5443,24 +5476,30 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             size={Math.max(8, (boardName || '').length + 1)}
           />
         </div>
-        <button
-          type="button"
-          className="canvas-theme-floater"
-          onClick={() => setLightMode((v) => !v)}
-          title={lightMode ? 'Switch to dark mode' : 'Switch to light mode'}
-          aria-label="Toggle theme"
-        >
-          {lightMode ? (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-            </svg>
-          ) : (
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="4"/>
-              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
-            </svg>
-          )}
-        </button>
+        <div className="canvas-topbar-actions">
+          <CreditsPill />
+          {/* Placeholders — disabled until the features exist. */}
+          <button type="button" className="canvas-topbar-btn" disabled title="Preview — coming soon">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><polygon points="6,4 20,12 6,20" /></svg>
+            Preview
+          </button>
+          <button type="button" className="canvas-topbar-btn canvas-topbar-share" disabled title="Share — coming soon">
+            Share
+          </button>
+        </div>
+      </header>
+
+      <CanvasTools
+        onAdd={() => {
+          // Open the add-to-canvas menu anchored under the rail, placing
+          // new content at the viewport center in world coords.
+          const w = clientToWorld(transformRef, window.innerWidth / 2, window.innerHeight / 2);
+          setContextMenu({ x: window.innerWidth / 2 - 105, y: 108, worldX: w.x, worldY: w.y });
+        }}
+      />
+
+      <div className="canvas-zoomdock">
+        <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} />
       </div>
 
       <div className="canvas-toolbars-right">
@@ -5520,11 +5559,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             </div>
           );
         })()}
-        <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} />
-        <div className="canvas-toolbar-right">
-          <CreditsPill />
-          <UserPill compact name={user?.name} email={user?.email} plan={user?.plan} onSignOut={logout} />
-        </div>
       </div>
       <Minimap
         nodes={nodes}
@@ -5545,7 +5579,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         initialPositionY={-WORLD_HEIGHT * 0.25}
         limitToBounds={false}
         wheel={{ disabled: true }}
-        panning={{ disabled: !spaceDown, excluded: ['cnode', 'cnode-topbar', 'cnode-body', 'cnode-iframe', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'cnode-handle', 'cnode-viewport-switcher', 'cnode-vp-btn', 'cnode-port-right', 'cnode-port-left', 'edge-line', 'edge-popup', 'reset-confirm-card', 'reset-confirm-overlay', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu', 'user-menu'] }}
+        panning={{ disabled: !spaceDown, excluded: ['cnode', 'cnode-topbar', 'cnode-body', 'cnode-iframe', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'cnode-handle', 'cnode-viewport-switcher', 'cnode-vp-btn', 'cnode-port-right', 'cnode-port-left', 'edge-line', 'edge-popup', 'reset-confirm-card', 'reset-confirm-overlay', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-sidebar', 'canvas-topbar', 'canvas-tools', 'canvas-zoomdock', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu', 'user-menu'] }}
         doubleClick={{ disabled: true }}
         onPanningStart={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setPopupPos(null); }}
         onTransformed={(_ref, state) => {
@@ -6086,11 +6120,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               const maxY = Math.max(...accumulated.map((n) => n.pos_y + (n.height || 800)));
               const cx = (minX + maxX) / 2;
               const cy = (minY + maxY) / 2;
-              const vw = window.innerWidth;
-              const vh = window.innerHeight - 48;
+              const ins = chromeInsets();
+              const vw = window.innerWidth - ins.left;
+              const vh = window.innerHeight - ins.top;
               const scale = Math.min(vw / (maxX - minX + PAD * 2), vh / (maxY - minY + PAD * 2), 1.0);
-              const posX = vw / 2 - cx * scale;
-              const posY = (vh / 2 + 48) - cy * scale;
+              const posX = ins.left + vw / 2 - cx * scale;
+              const posY = ins.top + vh / 2 - cy * scale;
               transformRef.current?.setTransform(posX, posY, scale, frame ? 500 : 420);
             }, 80);
           } catch (e) { console.warn('[CanvasClient] agent-mutation refetch failed', e); }

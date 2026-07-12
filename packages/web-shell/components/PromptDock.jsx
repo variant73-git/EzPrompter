@@ -1618,6 +1618,9 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
           </button>
         </div>
 
+        {/* Working Table dock footer hint (unspirit import, 2026-07-12). */}
+        <span className="prompt-dock-kbd-hint" aria-hidden="true">⌘ ↵ to run</span>
+
         <motion.button
           type="button"
           className={`prompt-dock-mic ${micState === 'rec' ? 'rec' : ''}${micState === 'busy' ? ' busy' : ''}${micState === 'err' ? ' err' : ''}`}
