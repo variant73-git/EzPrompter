@@ -200,7 +200,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   const lastVarScaleRef = useRef(0.6);
   const lastVarWriteTimeRef = useRef(0);
   const lastTransformRef = useRef(null);
-  const [lightMode, setLightMode] = useState(false);
   // Pan-on-space mode. Default cursor is the arrow + drag = marquee select.
   // Holding Space switches to grab cursor + drag = pan canvas (Figma /
   // Linear convention). `spaceDown` toggles TransformWrapper panning.disabled
@@ -454,19 +453,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     };
   }, []);
 
-  // Light/dark theme — toggling sets `body.rb-ed-light` so the editor
-  // (when active) inherits the same setting. Persisted under the SAME
-  // localStorage key the editor uses (`rb-ed-theme`) so editor + canvas
-  // stay in sync — without this, the editor's boot-time applyTheme()
-  // overrides whatever the canvas just set.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const saved = localStorage.getItem('rb-ed-theme') === 'light';
-    if (saved) {
-      setLightMode(true);
-      document.body.classList.add('rb-ed-light');
-    }
-  }, []);
+  // Canvas theme is DARK-ONLY (Working Table, unspirit 2026-07-12). The
+  // canvas light mode was retired with its ~195 CSS overrides; the editor
+  // keeps its own light mode for its panels while editing (editor-core CSS,
+  // untouched) — the canvas chrome hides in edit mode anyway.
 
   // Space-to-pan: while the user holds Space, switch from marquee-select
   // mode (default) to drag-to-pan mode. Skip when the focus is inside an
@@ -636,12 +626,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       api.deleteEdge(id).catch(console.warn);
     }
   }, [edges]);
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    document.body.classList.toggle('rb-ed-light', lightMode);
-    try { localStorage.setItem('rb-ed-theme', lightMode ? 'light' : 'dark'); } catch (e) {}
-  }, [lightMode]);
-
   // Expose a tiny zoom API so the in-editor inspector header can drive
   // the canvas TransformWrapper without React-bridging. Editor-core is
   // vanilla JS and lives inside the host doc — it picks this up off
@@ -3977,12 +3961,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // mode but the edit path uses computeEditFrame, never this.
   function chromeInsets() {
     let left = 224;
+    let right = 248;
     try {
-      const raw = getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w');
-      const n = parseFloat(raw);
-      if (!Number.isNaN(n)) left = n;
+      const cs = getComputedStyle(document.documentElement);
+      const l = parseFloat(cs.getPropertyValue('--sidebar-w'));
+      if (!Number.isNaN(l)) left = l;
+      const r = parseFloat(cs.getPropertyValue('--inspector-w'));
+      if (!Number.isNaN(r)) right = r;
     } catch { /* SSR */ }
-    return { left, top: 46 };
+    return { left, right, top: 46 };
   }
 
   function zoomToNode(node, animationTime = 350, forcedScale = null) {
@@ -3990,7 +3977,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (!t || !node) return;
     const PAD = 80;
     const ins = chromeInsets();
-    const vw = window.innerWidth - ins.left;
+    const vw = window.innerWidth - ins.left - ins.right;
     const vh = window.innerHeight - ins.top;
     let scale;
     if (forcedScale != null) {
@@ -4071,7 +4058,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const bboxW = (maxX - minX) + PADDING * 2;
     const bboxH = (maxY - minY) + PADDING * 2;
     const ins = chromeInsets();
-    const vw = window.innerWidth - ins.left;
+    const vw = window.innerWidth - ins.left - ins.right;
     const vh = window.innerHeight - ins.top;
     const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
     const centerX = (minX + maxX) / 2;
@@ -4154,7 +4141,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const bboxW = (maxX - minX) + PADDING * 2;
     const bboxH = (maxY - minY) + PADDING * 2;
     const insFit = chromeInsets();
-    const vw = window.innerWidth - insFit.left;
+    const vw = window.innerWidth - insFit.left - insFit.right;
     const vh = window.innerHeight - insFit.top;
     const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
     const centerX = (minX + maxX) / 2;
@@ -4184,7 +4171,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const bboxW = (maxX - minX) + PADDING * 2;
     const bboxH = (maxY - minY) + PADDING * 2;
     const insCon = chromeInsets();
-    const vw = window.innerWidth - insCon.left;
+    const vw = window.innerWidth - insCon.left - insCon.right;
     const vh = window.innerHeight - insCon.top;
     const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
     const centerX = (minX + maxX) / 2;
@@ -6138,7 +6125,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               const cx = (minX + maxX) / 2;
               const cy = (minY + maxY) / 2;
               const ins = chromeInsets();
-              const vw = window.innerWidth - ins.left;
+              const vw = window.innerWidth - ins.left - ins.right;
               const vh = window.innerHeight - ins.top;
               const scale = Math.min(vw / (maxX - minX + PAD * 2), vh / (maxY - minY + PAD * 2), 1.0);
               const posX = ins.left + vw / 2 - cx * scale;

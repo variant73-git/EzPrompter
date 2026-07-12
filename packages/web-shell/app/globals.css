@@ -111,43 +111,6 @@
   --popup-font-serif: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
-/* Light theme — toggled by the canvas theme button (and by the editor's
-   sun/moon when present). All canvas chrome reads from these variables
-   so the swap is one-line per element. Editor-core has its own
-   body.rb-ed-light overrides for its panels — sharing the same class
-   keeps both surfaces in sync.
-   Palette: cool light grey (slight blue undertone, ~hsl(220, 8%)) — was
-   warm cream (#F4F2EE / #ECEAE5). The cool grey reads as a "neutral
-   slate" against saturated origin colours. */
-body.rb-ed-light {
-  --bg-base: #DEE0E4;
-  --bg-frosted: rgba(228, 230, 234, 0.78);
-  --bg-frosted-solid: #D4D7DC;
-  --border-frosted: rgba(15, 23, 42, 0.12);
-  --border-frosted-strong: rgba(15, 23, 42, 0.18);
-  --text-primary: #1a1d24;
-  --text-secondary: rgba(26, 29, 36, 0.66);
-  --text-muted: rgba(26, 29, 36, 0.46);
-  --text-faint: rgba(26, 29, 36, 0.30);
-  --shadow-frost: 0 16px 48px rgba(15, 23, 42, 0.14);
-  /* Slightly stronger dot grid in light mode too — 0.16 → 0.18. */
-  --canvas-dot: rgba(15, 23, 42, 0.18);
-  --hover-bg: rgba(15, 23, 42, 0.06);
-  --hover-bg-strong: rgba(15, 23, 42, 0.10);
-  /* Accent keeps the blue; surface flips to dark-on-light. */
-  --surface: rgba(15, 23, 42, 0.04);
-  --surface-strong: rgba(15, 23, 42, 0.06);
-
-  /* Popup light-theme overrides — mirrors the widget's .rb-light. */
-  --popup-bg: #EFEEEB;
-  --popup-fg: #000000;
-  --popup-fg-muted: rgba(0, 0, 0, 0.50);
-  --popup-surface: rgba(0, 0, 0, 0.04);
-  --popup-border: rgba(0, 0, 0, 0.10);
-  --popup-accent: #000000;
-  --popup-shadow: 0 32px 64px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.08);
-}
-
 *,
 *::before,
 *::after {
@@ -434,10 +397,6 @@ input:focus {
   border: 1px solid rgba(255, 255, 255, 0.32);
   border-radius: 2px;
   z-index: 200;
-}
-body.rb-ed-light .canvas-marquee {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: rgba(0, 0, 0, 0.32);
 }
 
 /* Space-held → pan mode. Cursor becomes grab everywhere on the canvas
@@ -748,14 +707,6 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
   text-overflow: ellipsis;
 }
 
-body.rb-ed-light .cat-counts-menu {
-  background: var(--bg-frosted-solid);
-  border-color: var(--border-frosted);
-  box-shadow: var(--shadow-frost);
-}
-body.rb-ed-light .cat-counts-chain { color: var(--text-primary); }
-body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
-
 /* Minimap — top-right under the toolbar. Shows the world (8000×6000)
    scaled into a 180×135 widget with each node as a coloured rect, and
    the current viewport as a brighter outlined rectangle. Updates per
@@ -829,9 +780,6 @@ body.rb-ed-light .cat-counts-chain:hover { background: var(--hover-bg); }
      unless we clip. Use overflow on the SVG itself; its viewBox does
      the clipping. */
 }
-body.rb-ed-light .canvas-minimap {
-  background: rgba(228, 230, 234, 0.55);
-}
 body.rb-ed-active.rb-ed-canvas .canvas-minimap {
   right: calc(var(--rb-insp-width, 260px) + 12px);
 }
@@ -872,16 +820,6 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-minimap { right: 18px; }
 .minimap-frame-toggle:active {
   transform: scale(0.95);
 }
-body.rb-ed-light .minimap-frame-toggle {
-  background: rgba(255, 255, 255, 0.65);
-  border-color: rgba(15, 15, 15, 0.10);
-  color: rgba(31, 31, 31, 0.60);
-}
-body.rb-ed-light .minimap-frame-toggle:hover {
-  background: rgba(41, 102, 234, 0.12);
-  border-color: rgba(41, 102, 234, 0.45);
-  color: #20201E;
-}
 .minimap-world {
   fill: rgba(255, 255, 255, 0.04);
 }
@@ -897,14 +835,6 @@ body.rb-ed-light .minimap-frame-toggle:hover {
 .minimap-node-stroke {
   stroke: rgba(0, 0, 0, 0.35);
   stroke-width: 0.5;
-}
-body.rb-ed-light .minimap-world { fill: rgba(15, 23, 42, 0.06); }
-body.rb-ed-light .minimap-viewport {
-  fill: rgba(71, 85, 105, 0.16);
-  stroke: rgba(71, 85, 105, 0.75);
-}
-body.rb-ed-light .minimap-node-stroke {
-  stroke: rgba(15, 23, 42, 0.30);
 }
 
 .canvas-theme-btn {
@@ -1729,9 +1659,6 @@ body.rb-ed-light .minimap-node-stroke {
   padding: 24px;
   animation: popup-overlay-in 160ms ease-out;
 }
-body.rb-ed-light .popup-overlay {
-  background: rgba(15, 23, 42, 0.18);
-}
 @keyframes popup-overlay-in {
   from { opacity: 0; }
   to   { opacity: 1; }
@@ -1782,9 +1709,6 @@ body.rb-ed-light .popup-overlay {
 .popup-icon-danger {
   background: rgba(248, 113, 113, 0.10);
   color: #fca5a5;
-}
-body.rb-ed-light .popup-icon-danger {
-  color: #b91c1c;
 }
 
 .popup-title {
@@ -1927,8 +1851,6 @@ body.rb-ed-light .popup-icon-danger {
   border-color: #ef4444;
   color: #fff;
 }
-body.rb-ed-light .popup-btn-danger { color: #b91c1c; border-color: rgba(185, 28, 28, 0.35); }
-body.rb-ed-light .popup-btn-danger:hover:not(:disabled) { background: #ef4444; border-color: #ef4444; color: #fff; }
 .popup-btn-pill {
   padding: 6px 12px;
   font-size: 11.5px;
@@ -2103,13 +2025,6 @@ body.rb-ed-light .popup-btn-danger:hover:not(:disabled) { background: #ef4444; b
 }
 .canvas-context-menu .popup-menu-btn:disabled:hover,
 .popup-menu.empty-drop-menu .popup-menu-btn:disabled:hover { background: #2c2c2c; }
-body.rb-ed-light .canvas-context-menu .popup-menu-btn:disabled,
-body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:disabled {
-  background: #e9ebee;
-  color: rgba(0, 0, 0, 0.35);
-}
-body.rb-ed-light .canvas-context-menu .popup-menu-btn:disabled:hover,
-body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:disabled:hover { background: #e9ebee; }
 /* Destructive "Delete from history" row in the version context menu — red font
    (same danger pattern as the user-menu sign-out). */
 .cnode-version-ctx-menu .popup-menu-btn.cnode-version-menu-delete { color: #fca5a5; }
@@ -2119,17 +2034,6 @@ body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:disabled:hover { ba
 }
 .canvas-context-menu .popup-menu-input-row,
 .popup-menu.empty-drop-menu .popup-menu-input-row { padding: 10px 10px 4px; }
-body.rb-ed-light .canvas-context-menu,
-body.rb-ed-light .popup-menu.empty-drop-menu { background: rgba(196, 200, 205, 0.72); }
-body.rb-ed-light .canvas-context-menu .popup-menu-btn,
-body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn {
-  background: #e9ebee;
-  border-bottom-color: rgba(0, 0, 0, 0.08);
-}
-body.rb-ed-light .canvas-context-menu .popup-menu-btn:hover,
-body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:hover { background: #dde0e4; }
-body.rb-ed-light .canvas-context-menu .popup-menu-btn:last-child,
-body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:last-child { border-bottom: none; }
 
 /* Cord-drop "Connect to…" menu splits into TWO grey panels — the kind items
    (prompt…image) and the [Extract to + Cancel] group — separated by a 2px gap
@@ -2189,7 +2093,6 @@ body.rb-ed-light .popup-menu.empty-drop-menu .popup-menu-btn:last-child { border
   animation: popup-toast-in 200ms ease-out;
 }
 .popup-toast-error { border: 1px solid rgba(248, 113, 113, 0.30); color: #fca5a5; }
-body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28, 28, 0.30); }
 @keyframes popup-toast-in {
   from { opacity: 0; transform: translate(-50%, 8px); }
   to   { opacity: 1; transform: translate(-50%, 0); }
@@ -2458,8 +2361,6 @@ body.rb-ed-light .popup-toast-error { color: #b91c1c; border-color: rgba(185, 28
   color: var(--text-primary);
 }
 .cancel-edit-close:disabled { opacity: 0.4; cursor: not-allowed; }
-body.rb-ed-light .cancel-edit-close { color: rgba(31, 31, 31, 0.55); }
-body.rb-ed-light .cancel-edit-close:hover { background: rgba(0, 0, 0, 0.08); color: #1f1f1f; }
 
 /* Block browser-level pinch/keyboard zoom on the canvas page. The TransformWrapper
  * owns its own wheel zoom; we prevent the browser from also zooming. */
@@ -2964,7 +2865,6 @@ html.canvas-zoom-very-low .cnode.narrow .cnode-topbar .topbar-sep {
   margin: 0;
   pointer-events: none;
 }
-body.rb-ed-light .cnode-topbar .topbar-sep { background: rgba(0, 0, 0, 0.10); }
 
 /* Expand/Collapse floater — bottom-right corner of the body. Same
    frosted-glass language as the connector ports / minidock so it reads
@@ -3009,16 +2909,6 @@ body.rb-ed-light .cnode-topbar .topbar-sep { background: rgba(0, 0, 0, 0.10); }
   border-color: rgba(255, 255, 255, 0.22);
   color: #fff;
   transform: translateY(calc(-1px / var(--chrome-scale, 1)));
-}
-body.rb-ed-light .cnode-expand-float {
-  background: rgba(255, 255, 255, 0.86);
-  border-color: rgba(0, 0, 0, 0.10);
-  color: rgba(31, 31, 31, 0.72);
-}
-body.rb-ed-light .cnode-expand-float:hover {
-  background: rgba(255, 255, 255, 0.96);
-  border-color: rgba(0, 0, 0, 0.18);
-  color: #1f1f1f;
 }
 
 /* ── Replace-content hover overlay (image / .md / .html nodes) ────────────── */
@@ -3086,16 +2976,6 @@ body.rb-ed-light .cnode-expand-float:hover {
   border-color: rgba(255, 255, 255, 0.26);
   color: #fff;
 }
-body.rb-ed-light .cnode-replace-float {
-  background: rgba(255, 255, 255, 0.72);
-  border-color: rgba(0, 0, 0, 0.12);
-  color: #1f1f1f;
-}
-body.rb-ed-light .cnode-replace-float:hover {
-  background: #fff;
-  border-color: rgba(0, 0, 0, 0.2);
-  color: #000;
-}
 
 /* Legacy block kept for downstream callers (PromptBody, etc.) that
    reuse these classes outside the cnode topbar. */
@@ -3142,18 +3022,6 @@ body.rb-ed-light .cnode-replace-float:hover {
    so it sits next to btn-expand on the right edge of the topbar. */
 .cnode-topbar .btn-more { display: inline-flex; }
 
-body.rb-ed-light .cnode-topbar .btn-duplicate,
-body.rb-ed-light .cnode-topbar .btn-download,
-body.rb-ed-light .cnode-topbar .btn-more {
-  color: rgba(31, 31, 31, 0.55);
-}
-body.rb-ed-light .cnode-topbar .btn-duplicate:hover,
-body.rb-ed-light .cnode-topbar .btn-download:hover,
-body.rb-ed-light .cnode-topbar .btn-more:hover {
-  background: rgba(31, 31, 31, 0.08);
-  color: #1f1f1f;
-}
-
 /* Topbar context menu — reuses the .empty-drop-menu container styling
    for visual parity with the canvas right-click menu. The only thing
    we add here is the danger (Delete) variant. The menu is rendered
@@ -3163,11 +3031,6 @@ body.rb-ed-light .cnode-topbar .btn-more:hover {
 .cnode-topbar-menu .cnode-topbar-menu-danger:hover {
   background: rgba(248, 113, 113, 0.12) !important;
   color: #fca5a5 !important;
-}
-body.rb-ed-light .cnode-topbar-menu .cnode-topbar-menu-danger { color: #b91c1c; }
-body.rb-ed-light .cnode-topbar-menu .cnode-topbar-menu-danger:hover {
-  background: rgba(220, 38, 38, 0.10) !important;
-  color: #991b1b !important;
 }
 
 /* ── Right-click menu visual (reference-matched) ────────────────────────
@@ -3211,11 +3074,6 @@ body.rb-ed-light .cnode-topbar-menu .cnode-topbar-menu-danger:hover {
 /* Every row carries its own divider, so the explicit separator would double
    up — fold it away. */
 .cnode-topbar-menu .cnode-topbar-menu-sep { display: none; }
-/* Light mode keeps the same layered structure with theme-appropriate tones. */
-body.rb-ed-light .empty-drop-menu.cnode-topbar-menu { background: var(--bg-frosted-solid, #D4D7DC); }
-body.rb-ed-light .empty-drop-menu.cnode-topbar-menu button { background: #e9ebee; border-bottom-color: rgba(0, 0, 0, 0.08); }
-body.rb-ed-light .empty-drop-menu.cnode-topbar-menu button:hover { background: #dde0e4; }
-body.rb-ed-light .empty-drop-menu.cnode-topbar-menu button:last-child { border-bottom: none; }
 
 /* ══════════════ ZOOM CONTROLS (top-right floater) ══════════════ */
 /* When the editor is active in canvas mode, the inspector header hosts
@@ -3341,184 +3199,6 @@ body.rb-ed-active.rb-ed-canvas .canvas-toolbars-right .zoom-controls { display: 
   height: 1px;
   background: var(--border-frosted);
   margin: 4px 0;
-}
-
-/* ═══════════════ LIGHT-MODE OVERRIDES ═══════════════
-   Variables flip in :root → body.rb-ed-light (top of file). The rules
-   below cover the leftover hardcoded offblack/white-alpha colors that
-   couldn't be reached via vars without churning every selector. */
-
-/* Light-mode grid colour comes from --canvas-dot, read by CanvasDotGrid
-   at draw time — no CSS background override needed anymore. */
-
-/* Node frame — offblack topbar + reset-confirm + viewport switcher all
-   reuse the same dark surface in dark mode. Flip them to the light
-   solid frosted color so the canvas reads as one coherent palette. */
-body.rb-ed-light .cnode-topbar { background: var(--bg-frosted-solid); color: #333; }
-body.rb-ed-light .cnode-topbar .topbar-grip span { background: rgba(0, 0, 0, 0.35); }
-body.rb-ed-light .cnode-topbar .title { color: rgba(31, 31, 31, 0.7); }
-
-/* Light-mode kind-pill becomes a FILLED chip — origin colour as
-   background, black icon + text on top. Reads as a confident
-   category badge rather than a faint outlined token. Only in light
-   mode; dark mode keeps the outline-style pill. */
-body.rb-ed-light .cnode-topbar .kind-pill {
-  background: var(--cnode-port-fill, rgba(0, 0, 0, 0.08));
-  border-color: transparent;
-  color: var(--cnode-port-ink, #20201E);
-}
-body.rb-ed-light .cnode-topbar .kind-pill svg {
-  color: var(--cnode-port-ink, #20201E);
-  stroke: var(--cnode-port-ink, #20201E);
-}
-body.rb-ed-light .cnode { border-color: rgba(0, 0, 0, 0.10); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10); background: var(--bg-frosted-solid); }
-/* Selected ring in light mode. The `body.rb-ed-light .cnode` rule above
-   sets box-shadow with higher specificity than `.cnode.selected`
-   (0,0,2,1 > 0,0,2,0), which was stripping the color-coded ring on
-   selected nodes — they ended up looking identical to unselected.
-   Re-apply the colour-coded ring at matching specificity. Softer
-   diffuse shadow (0.18 vs 0.4) so it doesn't read as a dark wash on
-   the bright canvas background. */
-body.rb-ed-light .cnode.selected {
-  /* Match dark mode: outward 3px colour-coded ring (box-shadow), not a border. */
-  border-color: transparent;
-  box-shadow:
-    0 0 0 calc(3px / max(0.50, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
-    0 8px 32px rgba(0, 0, 0, 0.18);
-}
-body.rb-ed-light .cnode-topbar button { color: #4a4a4a; }
-body.rb-ed-light .cnode-topbar .btn-edit { background: rgba(31, 31, 31, 0.06); border-color: rgba(31, 31, 31, 0.16); color: #1f1f1f; }
-body.rb-ed-light .cnode-topbar .btn-edit:hover { background: #1f1f1f; border-color: #1f1f1f; color: #fafafa; }
-body.rb-ed-light .cnode-topbar .btn-edit.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-body.rb-ed-light .cnode-topbar .btn-delete:hover { background: #F67293; color: #fff; border-color: #F67293; }
-
-/* Reset button — in dark mode it inherits a faint slate icon on offblack
-   topbar. In light mode the topbar flips to #ECEAE5 and the same faint
-   slate disappears against it; explicit override → light grey surface
-   matching the right-click dropdown, black icon, black hover. */
-body.rb-ed-light .cnode-topbar .btn-reset {
-  background: var(--bg-frosted-solid);
-  color: #1f1f1f;
-  border-color: var(--border-frosted);
-}
-body.rb-ed-light .cnode-topbar .btn-reset:hover:not(:disabled) {
-  background: #1f1f1f;
-  color: #fff;
-  border-color: #1f1f1f;
-}
-body.rb-ed-light .cnode-topbar .btn-reset:disabled {
-  background: var(--bg-frosted-solid);
-  color: rgba(31, 31, 31, 0.30);
-}
-
-body.rb-ed-light .reset-confirm-card { background: var(--bg-frosted-solid); border-color: var(--border-frosted); color: var(--text-primary); }
-
-body.rb-ed-light .cnode-viewport-switcher { background: var(--bg-frosted-solid); border-color: var(--border-frosted); }
-body.rb-ed-light .cnode-vp-btn { color: rgba(31, 31, 31, 0.65); }
-body.rb-ed-light .cnode-vp-btn:hover { color: #1f1f1f; background: var(--hover-bg); }
-body.rb-ed-light .cnode-vp-btn.active { color: #2258C9; background: rgba(41, 102, 234, 0.14); }
-/* In edit mode the switcher is `.disabled` and its hover defaults to a
-   pale slate that vanishes on the cream surface — re-bind to dark text. */
-body.rb-ed-light .cnode-viewport-switcher.disabled .cnode-vp-btn:hover {
-  color: rgba(31, 31, 31, 0.4);
-  background: transparent;
-}
-body.rb-ed-light .cnode-viewport-switcher.disabled .cnode-vp-btn.active {
-  color: rgba(0, 122, 214, 0.7);
-  background: rgba(41, 102, 234, 0.08);
-}
-
-/* Connector ports — light mode. The right port stays neutral white-ish
-   (it's the emitter, only reveals origin colour on hover). The left
-   ports KEEP their --cnode-port-fill so connected slots remain
-   colour-coded — only the empty placeholder gets the white frosted
-   look. The earlier blanket `background: rgba(255,255,255,0.85)` on
-   both ports was killing the colour-coding on connected receivers. */
-/* Ports stay in dark-mode visual family even in light theme — dark
-   frosted bg + off-white outline + off-white inner dot. Reads as a
-   unified node-graph language across themes. */
-body.rb-ed-light .cnode-port-right {
-  /* No backdrop-filter (parity with the dark rule — see note there). */
-  background: rgba(26, 26, 26, 0.9);
-  border-color: rgba(245, 245, 245, 0.85);
-  color: rgba(241, 245, 249, 0.85);
-}
-body.rb-ed-light .cnode-port-left {
-  background: rgba(26, 26, 26, 0.78);
-  border-color: rgba(245, 245, 245, 0.85);
-  color: rgba(241, 245, 249, 0.85);
-}
-body.rb-ed-light .cnode-port-left.is-empty {
-  background: rgba(26, 26, 26, 0.78);
-  border-color: rgba(245, 245, 245, 0.85);
-  box-shadow: none;
-}
-body.rb-ed-light .cnode-port-left.is-empty .cnode-port-dot,
-body.rb-ed-light .cnode-port-left .cnode-port-dot,
-body.rb-ed-light .cnode-port-right .cnode-port-dot {
-  background: rgba(245, 245, 245, 0.95);
-  mix-blend-mode: normal;
-}
-body.rb-ed-light .cnode-port-right:hover .cnode-port-dot,
-body.rb-ed-light .cnode-port-left:hover  .cnode-port-dot {
-  background: #fff;
-}
-
-/* Most light-mode floating chrome reads as frosted-solid (#D4D7DC) so
-   the dropdowns and popups stay legible against the canvas dot grid. */
-body.rb-ed-light .empty-drop-menu,
-body.rb-ed-light .canvas-context-menu,
-body.rb-ed-light .edge-popup,
-body.rb-ed-light .user-menu {
-  background: var(--bg-frosted-solid);
-  color: var(--text-primary);
-  border-color: var(--border-frosted);
-}
-
-/* The prompt-dock specifically reads better as TRANSLUCENT frosted
-   glass — same vibe as dark mode (rgba bg @ 0.72 + backdrop-filter)
-   so the canvas behind shows through with a soft tint. The base rule
-   already provides the blur/shadow; we only swap the colour. */
-body.rb-ed-light .prompt-dock {
-  background: rgba(228, 230, 234, 0.72);
-  color: var(--text-primary);
-  border-color: var(--border-frosted);
-}
-body.rb-ed-light .user-menu-item { color: var(--text-primary); }
-body.rb-ed-light .user-menu-item:hover { background: var(--hover-bg); }
-
-/* Prompt dock — every text/icon colour was hardcoded white-alpha so
-   nothing reads on the light surface. Re-bind to text vars + dark
-   hover-bg. */
-body.rb-ed-light .prompt-dock-textarea { color: var(--text-primary); }
-body.rb-ed-light .prompt-dock-textarea::placeholder { color: var(--text-muted); }
-body.rb-ed-light .prompt-dock-textarea::-webkit-scrollbar-thumb { background-color: rgba(0, 0, 0, 0.18); }
-body.rb-ed-light .prompt-dock-icon-btn { color: var(--text-secondary); }
-body.rb-ed-light .prompt-dock-icon-btn:hover { background: var(--hover-bg); color: var(--text-primary); }
-body.rb-ed-light .prompt-dock-pill { color: var(--text-secondary); }
-body.rb-ed-light .prompt-dock-pill:hover { background: var(--hover-bg); color: var(--text-primary); }
-body.rb-ed-light .prompt-dock-send {
-  background: var(--hover-bg);
-  color: var(--text-muted);
-}
-body.rb-ed-light .prompt-dock-send.active { background: #1f1f1f; color: #fafafa; }
-body.rb-ed-light .prompt-dock-send.active:hover { background: #000; }
-body.rb-ed-light .prompt-dock-chip { background: var(--hover-bg); color: var(--text-primary); }
-body.rb-ed-light .prompt-dock-chip-x { color: var(--text-muted); }
-body.rb-ed-light .prompt-dock-chip-x:hover { color: var(--text-primary); background: var(--hover-bg-strong); }
-
-/* EmptyDropMenu / CanvasContextMenu — same family, same fix. */
-body.rb-ed-light .empty-drop-menu .edm-title { color: var(--text-muted); }
-body.rb-ed-light .empty-drop-menu button { color: var(--text-primary); }
-body.rb-ed-light .empty-drop-menu button:hover { background: var(--hover-bg); color: var(--text-primary); }
-body.rb-ed-light .empty-drop-menu button.edm-cancel { color: var(--text-muted); }
-body.rb-ed-light .empty-drop-menu button.edm-cancel:hover { color: var(--text-primary); background: var(--hover-bg); }
-body.rb-ed-light .empty-drop-menu button.edm-primary { background: #1f1f1f; color: #fafafa; }
-body.rb-ed-light .empty-drop-menu button.edm-primary:hover { background: #000; }
-body.rb-ed-light .empty-drop-menu input {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: var(--border-frosted);
-  color: var(--text-primary);
 }
 
 /* Below ~0.5 zoom the topbar pills + buttons get cramped against the
@@ -3657,13 +3337,6 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
 .cnode-port-right.is-connected .cnode-port-dot {
   background: #fff;
 }
-body.rb-ed-light .cnode-port-right.is-connected {
-  background: var(--cnode-port-fill, var(--accent));
-  border-color: var(--cnode-port-fill, var(--accent));
-}
-body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
-  background: #fff;
-}
 
 .cnode-port-right.disabled {
   cursor: not-allowed;
@@ -3731,13 +3404,6 @@ body.rb-ed-light .cnode-port-right.is-connected .cnode-port-dot {
 }
 .cnode-port-left:not(.is-empty) .cnode-port-dot {
   /* sender's colour, set inline per slot as --port-source-colour */
-  background: var(--port-source-colour, var(--cnode-port-fill, #fff));
-}
-body.rb-ed-light .cnode-port-left:not(.is-empty) {
-  background: rgba(26, 26, 26, 0.78);
-  border-color: var(--cnode-port-fill, var(--accent));
-}
-body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
   background: var(--port-source-colour, var(--cnode-port-fill, #fff));
 }
 
@@ -3873,7 +3539,6 @@ body.rb-ed-light .cnode-port-left:not(.is-empty) .cnode-port-dot {
   width: calc(3px / var(--chrome-scale, 1));
   height: calc(40px / var(--chrome-scale, 1));
 }
-body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.45); }
 
 .cnode-edge-hint {
   position: absolute;
@@ -3968,20 +3633,12 @@ body.rb-ed-light .cnode-resize-dash::after { background: rgba(120, 130, 140, 0.4
   width: calc(22px / var(--chrome-scale, 1));
   height: calc(22px / var(--chrome-scale, 1));
 }
-body.rb-ed-light .cnode-empty {
-  color: rgba(13, 148, 136, 0.95);
-  background: rgba(13, 148, 136, 0.04);
-}
 
 /* Neutral variant of the empty body — unpopulated "Connect to" nodes.
    The teal default stays reserved for blank-website composition nodes. */
 .cnode-empty.cnode-empty-neutral {
   color: var(--text-secondary);
   background: rgba(255, 255, 255, 0.02);
-}
-body.rb-ed-light .cnode-empty.cnode-empty-neutral {
-  color: rgba(0, 0, 0, 0.55);
-  background: rgba(0, 0, 0, 0.02);
 }
 
 /* Center upload affordance on unpopulated nodes (site/.md/image).
@@ -4003,9 +3660,6 @@ body.rb-ed-light .cnode-empty.cnode-empty-neutral {
      Higher-alpha translucency keeps the dot grid ghosting through subtly. */
   background: rgba(16, 16, 18, 0.85);
   border-radius: 10px;
-}
-body.rb-ed-light .cnode-empty-upload {
-  background: rgba(255, 255, 255, 0.55);
 }
 .cnode-upload-btn {
   width: calc(52px / var(--chrome-scale, 1));
@@ -4037,13 +3691,6 @@ body.rb-ed-light .cnode-empty-upload {
   color: var(--text-muted);
   letter-spacing: 0.01em;
 }
-body.rb-ed-light .cnode-upload-btn {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: rgba(0, 0, 0, 0.12);
-  color: #1a1a1a;
-}
-body.rb-ed-light .cnode-upload-btn:hover { background: rgba(0, 0, 0, 0.08); }
-body.rb-ed-light .cnode-empty-upload-label { color: rgba(0, 0, 0, 0.5); }
 
 .cnode-spinner {
   width: 22px;
@@ -4144,11 +3791,6 @@ html:not(.canvas-zoom-low) .cnode.narrow.origin-screenshot .cnode-topbar .kind-p
 }
 html:not(.canvas-zoom-low) .cnode.narrow.origin-screenshot .cnode-topbar .kind-pill-lbl {
   display: inline;
-}
-body.rb-ed-light .cnode-anchor-title {
-  background: var(--bg-frosted-solid);
-  color: var(--text-primary);
-  border-color: var(--border-frosted);
 }
 
 /* ─── design.md preview body (square node) ─────────────────────────────── */
@@ -4275,8 +3917,6 @@ body.rb-ed-light .cnode-anchor-title {
 }
 .cnode-prompt-corner-resize:hover { color: rgba(255, 255, 255, 0.75); }
 .cnode-prompt-corner-resize svg { width: 100%; height: 100%; }
-body.rb-ed-light .cnode-prompt-corner-resize { color: rgba(0, 0, 0, 0.3); }
-body.rb-ed-light .cnode-prompt-corner-resize:hover { color: rgba(0, 0, 0, 0.65); }
 .cnode-prompt-textarea:focus {
   border-color: rgba(32, 32, 30, 0.20);
   background: rgba(32, 32, 30, 0.06);
@@ -4284,19 +3924,6 @@ body.rb-ed-light .cnode-prompt-corner-resize:hover { color: rgba(0, 0, 0, 0.65);
 .cnode-prompt-textarea::placeholder {
   color: rgba(37, 35, 31, 0.40);
 }
-/* Light mode — INVERTED: outer is the lighter cool grey, inner field
-   is a darker grey to keep the inset-card hierarchy. */
-body.rb-ed-light .cnode-body-prompt { background: #ECECF0; }
-body.rb-ed-light .cnode-prompt-textarea {
-  background: rgba(15, 23, 42, 0.06);
-  border-color: rgba(15, 23, 42, 0.12);
-  color: var(--text-primary);
-}
-body.rb-ed-light .cnode-prompt-textarea:focus {
-  background: rgba(15, 23, 42, 0.10);
-  border-color: rgba(15, 23, 42, 0.22);
-}
-body.rb-ed-light .cnode-prompt-textarea::placeholder { color: var(--text-muted); }
 
 /* Prompt node corner resize handle — bottom-right of the text field, same
    diagonal-lines affordance as the section SE handle. Inverse-scaled (15%
@@ -4329,8 +3956,6 @@ body.rb-ed-light .cnode-prompt-textarea::placeholder { color: var(--text-muted);
   width: calc(18px / var(--chrome-scale, 1));
   height: calc(18px / var(--chrome-scale, 1));
 }
-body.rb-ed-light .cnode-resize-corner { color: rgba(0, 0, 0, 0.4); }
-body.rb-ed-light .cnode-resize-corner:hover { color: rgba(0, 0, 0, 0.75); }
 
 /* ─── skill body (file glyph + title) ──────────────────────────────────── */
 .cnode-body-skill {
@@ -4363,9 +3988,6 @@ body.rb-ed-light .cnode-resize-corner:hover { color: rgba(0, 0, 0, 0.75); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-body.rb-ed-light .cnode-body-skill { background: var(--bg-frosted-solid); }
-body.rb-ed-light .cnode-skill-glyph { color: var(--text-primary); }
-body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
 
 /* Asset / screenshot body — contain the image so the whole frame
    shows it without crop. Background is dark so transparent assets
@@ -4504,11 +4126,6 @@ body.rb-ed-light .cnode-skill-title { color: var(--text-secondary); }
   align-items: center;
   gap: 7px;
 }
-body.rb-ed-light .canvas-place-pill {
-  background: rgba(255, 255, 255, 0.82);
-  border-color: rgba(0, 0, 0, 0.12);
-  color: #1c1f24;
-}
 /* Circular loader shown while the current file's node is being created. */
 .canvas-place-pill-spinner {
   width: 12px;
@@ -4518,10 +4135,6 @@ body.rb-ed-light .canvas-place-pill {
   border: 2px solid rgba(245, 245, 245, 0.25);
   border-top-color: #f5f5f5;
   animation: spin 0.7s linear infinite;
-}
-body.rb-ed-light .canvas-place-pill-spinner {
-  border-color: rgba(0, 0, 0, 0.18);
-  border-top-color: #1c1f24;
 }
 
 /* ── Node removal (leaving a section) ───────────────────────────────────
@@ -4536,14 +4149,6 @@ body.rb-ed-light .canvas-place-pill-spinner {
     0 8px 32px rgba(0, 0, 0, 0.45);
 }
 .cnode-topbar.removing,
-body.rb-ed-light .cnode-topbar.removing {
-  background: #e3e7ec;
-  color: #1c1f24;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 calc(10px / max(0.5, var(--canvas-scale, 1)));
-}
 .topbar-remove-hint {
   font-family: var(--font-inter), system-ui, sans-serif;
   font-weight: 500;
@@ -4574,7 +4179,6 @@ body.rb-ed-light .cnode-topbar.removing {
   margin: 6px 4px;
   background: rgba(255, 255, 255, 0.10);
 }
-body.rb-ed-light .cnode-topbar-menu-sep { background: rgba(0, 0, 0, 0.10); }
 
 /* Canvas lightens subtly while an armed node is dragged outside its section —
    never lighter than the section surface, just enough to read "you're leaving". */
@@ -4592,10 +4196,6 @@ body.rb-ed-light .cnode-topbar-menu-sep { background: rgba(0, 0, 0, 0.10); }
   transition: background 140ms ease, border-color 140ms ease,
     left 90ms ease, top 90ms ease, width 90ms ease, height 90ms ease;
 }
-body.rb-ed-light .canvas-section-frame.adopt-preview {
-  border-color: rgba(0, 0, 0, 0.32);
-  background: rgba(255, 255, 255, 0.06);
-}
 
 /* Section CHROME wrapper — renders AFTER nodes (separate pass in
    CanvasClient JSX) so hit-testing on grip / name tag / corner handles
@@ -4606,10 +4206,6 @@ body.rb-ed-light .canvas-section-frame.adopt-preview {
   position: absolute;
   pointer-events: none;
   z-index: 5;
-}
-body.rb-ed-light .canvas-section-frame {
-  background: rgba(255, 255, 255, 0.035);
-  border-color: rgba(0, 0, 0, 0.062);
 }
 
 .canvas-section-name-tag {
@@ -4691,11 +4287,6 @@ body.rb-ed-light .canvas-section-frame {
 }
 .canvas-section-name-tag.disabled:hover .canvas-noconn-hint { opacity: 1; }
 html.canvas-interacting .canvas-noconn-hint { opacity: 0 !important; }
-body.rb-ed-light .canvas-noconn-hint {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(0, 0, 0, 0.12);
-  color: #20201E;
-}
 /* Crossfades out while its section is shown as the floating run button. */
 .canvas-section-name-tag.floated-away {
   opacity: 0;
@@ -4753,11 +4344,6 @@ body.rb-ed-light .canvas-noconn-hint {
   cursor: pointer;
   opacity: 1;
 }
-body.rb-ed-light .canvas-floating-run {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(0, 0, 0, 0.12);
-  color: var(--text-primary);
-}
 .canvas-floating-run-label {
   background: transparent;
   border: none;
@@ -4787,8 +4373,6 @@ body.rb-ed-light .canvas-floating-run {
 .canvas-floating-run-play:hover { background: #1a1a1a; }
 .canvas-floating-run-play:active { transform: scale(0.93); }
 .canvas-floating-run-play svg { width: 14.4px; height: 14.4px; }
-body.rb-ed-light .canvas-floating-run-play { background: #20201E; color: #fff; }
-body.rb-ed-light .canvas-floating-run-play:hover { background: #1a1a1a; }
 /* Label-only pill — a section GROUP with no cords between members renders no
    play button. The base padding is left-weighted to seat the play button on
    the right; without it the lone label looks shoved right, so balance the
@@ -4799,24 +4383,12 @@ body.rb-ed-light .canvas-floating-run-play:hover { background: #1a1a1a; }
     calc(18px / var(--chrome-scale, 1));
   justify-content: center;
 }
-body.rb-ed-light .canvas-section-name-tag {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(0, 0, 0, 0.12);
-  color: var(--text-primary);
-}
 /* Disabled run-pill — the section has NO cords between its members, so there
    is no flow to run. The pill never disappears (the play affordance must stay
    put); instead the WHOLE pill goes dark grey with a light-grey play button.
    Same treatment in both themes so it always reads as "inactive". */
 .canvas-section-name-tag.disabled,
 .canvas-section-name-tag.disabled:hover,
-body.rb-ed-light .canvas-section-name-tag.disabled,
-body.rb-ed-light .canvas-section-name-tag.disabled:hover {
-  background: #2a2a2a;
-  border-color: rgba(255, 255, 255, 0.08);
-  color: rgba(245, 245, 245, 0.5);
-  cursor: default;
-}
 .canvas-section-name-tag.disabled .canvas-section-name-label { cursor: default; }
 /* Label inside the pill (was a button; the parent div is now the click
    surface). Double-clicking opens the inline rename input. */
@@ -4904,27 +4476,10 @@ input.canvas-section-name-input::placeholder {
 .canvas-section-play-btn.disabled,
 .canvas-section-play-btn:disabled:hover,
 .canvas-section-play-btn.disabled:hover,
-body.rb-ed-light .canvas-section-play-btn:disabled,
-body.rb-ed-light .canvas-section-play-btn.disabled,
-body.rb-ed-light .canvas-section-play-btn:disabled:hover,
-body.rb-ed-light .canvas-section-play-btn.disabled:hover {
-  background: #9b9b9b;
-  color: #2a2a2a;
-  opacity: 1;
-  cursor: default;
-}
 .canvas-section-play-btn:disabled:active { transform: none; }
 .canvas-section-play-btn svg {
   width: calc(14.4px / var(--chrome-scale, 1));
   height: calc(14.4px / var(--chrome-scale, 1));
-}
-body.rb-ed-light .canvas-section-play-btn { background: #20201E; color: #fff; }
-body.rb-ed-light .canvas-section-play-btn:hover { background: #1a1a1a; }
-body.rb-ed-light .canvas-section-play-btn {
-  background: rgba(0, 0, 0, 0.08);
-}
-body.rb-ed-light .canvas-section-play-btn:hover {
-  background: rgba(0, 0, 0, 0.15);
 }
 
 .canvas-section-frame.selected {
@@ -4932,9 +4487,6 @@ body.rb-ed-light .canvas-section-play-btn:hover {
      bg/border. outline-offset 0 keeps it flush against the frame edge. */
   outline: 2px solid rgba(255, 255, 255, 0.7);
   outline-offset: 0;
-}
-body.rb-ed-light .canvas-section-frame.selected {
-  outline-color: rgba(0, 0, 0, 0.55);
 }
 
 /* Drag grip — dot grid centered at the top of the section. Inverse-
@@ -4971,7 +4523,6 @@ body.rb-ed-light .canvas-section-frame.selected {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.55);
 }
-body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
 
 /* Corner resize handles — invisible 28px hit areas extending slightly
    outside the frame for easy grabbing. Cursor change is the affordance
@@ -5070,8 +4621,6 @@ body.rb-ed-light .canvas-section-grip span { background: rgba(0, 0, 0, 0.4); }
   width: calc(24px / var(--chrome-scale, 1));
   height: calc(24px / var(--chrome-scale, 1));
 }
-body.rb-ed-light .canvas-section-handle-se { color: rgba(0, 0, 0, 0.35); }
-body.rb-ed-light .canvas-section-handle-se:hover { color: rgba(0, 0, 0, 0.7); }
 
 /* ── Section layout buttons (2026-07-06) ─────────────────────────────────
    Auto-layout + Fit-to-content icon cluster at the section's bottom-right,
@@ -5124,12 +4673,6 @@ body.rb-ed-light .canvas-section-handle-se:hover { color: rgba(0, 0, 0, 0.7); }
   background: rgba(15, 15, 15, 0.78);
   color: rgba(241, 245, 249, 0.78);
 }
-body.rb-ed-light .canvas-section-layout-btn {
-  background: rgba(255, 255, 255, 0.85);
-  border-color: rgba(0, 0, 0, 0.12);
-  color: rgba(25, 25, 23, 0.7);
-}
-body.rb-ed-light .canvas-section-layout-btn:hover { background: #ffffff; color: #20201E; }
 
 /* ── Active context pill in PromptDock ──────────────────────────── */
 .prompt-dock-context-wrap {
@@ -5160,11 +4703,6 @@ body.rb-ed-light .canvas-section-layout-btn:hover { background: #ffffff; color: 
 @keyframes prompt-dock-context-breathe {
   0%, 100% { background-color: rgba(255, 255, 255, 0.06); }
   50%      { background-color: rgba(255, 255, 255, 0.12); }
-}
-body.rb-ed-light .prompt-dock-context-pill {
-  background: rgba(0, 0, 0, 0.05);
-  border-color: rgba(0, 0, 0, 0.12);
-  animation: prompt-dock-context-breathe-light 2.6s ease-in-out infinite;
 }
 @keyframes prompt-dock-context-breathe-light {
   0%, 100% { background-color: rgba(0, 0, 0, 0.05); }
@@ -5207,9 +4745,6 @@ body.rb-ed-light .prompt-dock-context-pill {
 .prompt-dock-context-x:hover {
   background: rgba(255, 255, 255, 0.1);
   color: var(--text-primary);
-}
-body.rb-ed-light .prompt-dock-context-x:hover {
-  background: rgba(0, 0, 0, 0.08);
 }
 
 /* Pills container — wraps multiple pills onto rows when the user
@@ -5372,16 +4907,6 @@ body.rb-ed-light .prompt-dock-context-x:hover {
   animation: confirm-modal-spin 0.7s linear infinite;
 }
 @keyframes confirm-modal-spin { to { transform: rotate(360deg); } }
-body.rb-ed-light .confirm-modal-card {
-  background: rgba(255, 255, 255, 0.96);
-}
-body.rb-ed-light .confirm-modal-btn-primary {
-  background: #20201E;
-  color: #fff;
-}
-body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
-  background: #1a1a1a;
-}
 
 /* Output dimensions label — anchored to the bottom-right CORNER of the
    asset node, sits OUTSIDE the card (slightly below + flush right).
@@ -5431,7 +4956,6 @@ body.rb-ed-light .confirm-modal-btn-primary:hover:not(:disabled) {
 html.canvas-zoom-below-30 .cnode-asset-img {
   border-radius: 9px;
 }
-body.rb-ed-light .cnode-body-asset { background: #ECECF0; }
 
 /* Smart Edit button — appears on hover or when node is selected */
 .cnode-smart-edit-btn {
@@ -5478,7 +5002,6 @@ body.rb-ed-light .cnode-body-asset { background: #ECECF0; }
   user-select: none;
 }
 .cnode-asset-broken svg { opacity: 0.75; }
-body.rb-ed-light .cnode-asset-broken { color: rgba(51, 51, 51, 0.4); }
 
 /* Prompt dock — frosted-glass widget at the base of the canvas viewport. */
 
@@ -5602,9 +5125,6 @@ body.chat-dock-preview {
   outline: 1.5px solid rgba(227, 231, 236, 0.72);
   outline-offset: 2px;
 }
-body.rb-ed-light .prompt-dock.is-focused {
-  outline-color: rgba(40, 44, 52, 0.55);
-}
 /* Add-URL: flash the ring to FULL white with a soft outer glow, then ease it
    back to the normal focused off-white over 2s (one-shot). */
 .prompt-dock.add-url-flash {
@@ -5635,14 +5155,6 @@ body.rb-ed-light .prompt-dock.is-focused {
 .prompt-dock.is-snapping {
   outline: 1px solid rgba(255, 255, 255, 0.85);
   outline-offset: 2px;
-}
-body.rb-ed-light .prompt-dock.is-dragging,
-body.rb-ed-light .prompt-dock.is-snapping {
-  background: rgba(255, 255, 255, 0.035);
-  border-color: rgba(0, 0, 0, 0.10);
-}
-body.rb-ed-light .prompt-dock.is-snapping {
-  outline-color: rgba(0, 0, 0, 0.55);
 }
 
 /* Drag handle — dark pill with 6 light dots, centred at the top of
@@ -5711,10 +5223,6 @@ body.rb-ed-light .prompt-dock.is-snapping {
   background: rgba(255, 255, 255, 0.32);
   width: 52px;
 }
-body.rb-ed-light .prompt-dock-resize:hover::after,
-body.rb-ed-light .prompt-dock-resize:active::after {
-  background: rgba(0, 0, 0, 0.28);
-}
 
 /* Top-right collapse / expand chevron — black chevron in a gray
    circular bg. Stands out against the dark dock chrome. */
@@ -5738,10 +5246,6 @@ body.rb-ed-light .prompt-dock-resize:active::after {
 }
 .prompt-dock-collapse-btn:hover { background: rgba(255, 255, 255, 0.28); }
 .prompt-dock-collapse-btn:active { transform: scale(0.92); }
-body.rb-ed-light .prompt-dock-collapse-btn {
-  background: rgba(0, 0, 0, 0.12);
-  color: #20201E;
-}
 
 /* Snap indicator family. THREE white bars (left edge, right edge,
    bottom centre) all render together for the WHOLE duration of a
@@ -5841,14 +5345,6 @@ body.rb-ed-light .prompt-dock-collapse-btn {
   border-color: rgba(255, 255, 255, 0.45);
   background: rgba(25, 25, 23, 0.78);
 }
-body.rb-ed-light .prompt-dock-ghost {
-  background: rgba(245, 245, 245, 0.55);
-  border-color: rgba(0, 0, 0, 0.14);
-}
-body.rb-ed-light .prompt-dock-ghost.active {
-  background: rgba(245, 245, 245, 0.78);
-  border-color: rgba(0, 0, 0, 0.35);
-}
 
 /* ── BorderTrail — traveling border light (motion-primitives port) ──
    Ring div clips to a thin band along the parent's border via the
@@ -5873,12 +5369,6 @@ body.rb-ed-light .prompt-dock-ghost.active {
   box-shadow:
     0 0 40px 14px rgba(255, 255, 255, 0.45),
     0 0 90px 40px rgba(255, 255, 255, 0.12);
-}
-body.rb-ed-light .border-trail-dot {
-  background: rgba(17, 17, 17, 0.9);
-  box-shadow:
-    0 0 40px 14px rgba(0, 0, 0, 0.25),
-    0 0 90px 40px rgba(0, 0, 0, 0.08);
 }
 /* Active snap zone — the lap brightens. */
 .prompt-dock-ghost.active .border-trail-dot {
@@ -6159,10 +5649,6 @@ body.rb-ed-active .prompt-dock { display: none !important; }
   color: #20201E;
   border-radius: 2px;
 }
-/* Light mode: pastel gradient washes out on light surfaces — deeper tones. */
-body.rb-ed-light .working-indicator-code {
-  background-image: linear-gradient(90deg, #2563eb, #15803d, #b45309, #be185d, #1f1f1f, #2563eb);
-}
 
 .prompt-dock-textarea::placeholder {
   color: rgba(241, 245, 249, 0.42);
@@ -6360,14 +5846,6 @@ body.rb-ed-light .working-indicator-code {
   background: #20201E;
   border-color: rgba(255, 255, 255, 0.32);
 }
-body.rb-ed-light .prompt-dock-send.stop {
-  background: #1f1f1f;
-  color: #fafafa;
-  border-color: rgba(0, 0, 0, 0.18);
-}
-body.rb-ed-light .prompt-dock-send.stop:hover {
-  background: #000;
-}
 
 /* Mic (speech-to-text) — sibling of .prompt-dock-send, same corner-hugging
    absolute trick. Offset = send inset (6) + send width (34) + 11px gap so
@@ -6436,22 +5914,6 @@ body.rb-ed-light .prompt-dock-send.stop:hover {
 @keyframes prompt-dock-mic-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35); }
   50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
-}
-
-body.rb-ed-light .prompt-dock-mic {
-  background: rgba(0, 0, 0, 0.05);
-  color: rgba(0, 0, 0, 0.45);
-}
-body.rb-ed-light .prompt-dock-mic:hover {
-  background: rgba(0, 0, 0, 0.09);
-  color: rgba(0, 0, 0, 0.8);
-}
-body.rb-ed-light .prompt-dock-mic.rec {
-  background: rgba(239, 68, 68, 0.12);
-  color: #dc2626;
-}
-body.rb-ed-light .prompt-dock-mic.err {
-  color: #dc2626;
 }
 
 .run-flow-toast {
@@ -6536,10 +5998,6 @@ body.rb-ed-light .prompt-dock-mic.err {
   margin-left: 0;
   padding-left: 8px;
   border-left: 1px solid rgba(255, 255, 255, 0.16);
-}
-body.rb-ed-light .prompt-dock.dock-left .prompt-dock-model-chev,
-body.rb-ed-light .prompt-dock.dock-right .prompt-dock-model-chev {
-  border-left-color: rgba(0, 0, 0, 0.16);
 }
 
 /* Popovers above the dock — share the dock's frosted family. Bumped
@@ -6646,33 +6104,6 @@ body.rb-ed-light .prompt-dock.dock-right .prompt-dock-model-chev {
   border-radius: 3px;
 }
 
-/* Light mode adaptations — match dock + canvas-context-menu family. */
-body.rb-ed-light .prompt-dock-popover {
-  background: var(--bg-frosted-solid);
-  border-color: var(--border-frosted);
-}
-body.rb-ed-light .prompt-dock-popover-title { color: var(--text-muted); }
-body.rb-ed-light .prompt-dock-popover button { color: var(--text-primary); }
-body.rb-ed-light .prompt-dock-popover button:hover { background: var(--hover-bg); color: var(--text-primary); }
-body.rb-ed-light .prompt-dock-popover button.selected { background: var(--hover-bg); }
-body.rb-ed-light .prompt-dock-model-group + .prompt-dock-model-group {
-  border-top-color: rgba(0, 0, 0, 0.08);
-}
-body.rb-ed-light .prompt-dock-model-btn {
-  background: rgba(0, 0, 0, 0.03);
-  border-color: rgba(0, 0, 0, 0.06);
-}
-body.rb-ed-light .prompt-dock-model-btn:hover,
-body.rb-ed-light .prompt-dock-model-btn.open {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-  border-color: rgba(0, 0, 0, 0.08);
-}
-body.rb-ed-light .prompt-dock-add-btn.open {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-}
-
 .canvas-empty {
   position: absolute;
   inset: 0;
@@ -6726,9 +6157,6 @@ body.rb-ed-light .prompt-dock-add-btn.open {
    (12 12) sits at the blade crossing. */
 .edge-cut-zone {
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6' cy='6' r='3'/%3E%3Ccircle cx='6' cy='18' r='3'/%3E%3Cline x1='20' y1='4' x2='8.12' y2='15.88'/%3E%3Cline x1='14.47' y1='14.48' x2='20' y2='20'/%3E%3Cline x1='8.12' y1='8.12' x2='12' y2='12'/%3E%3C/svg%3E") 12 12, pointer;
-}
-body.rb-ed-light .edge-cut-zone {
-  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6' cy='6' r='3'/%3E%3Ccircle cx='6' cy='18' r='3'/%3E%3Cline x1='20' y1='4' x2='8.12' y2='15.88'/%3E%3Cline x1='14.47' y1='14.48' x2='20' y2='20'/%3E%3Cline x1='8.12' y1='8.12' x2='12' y2='12'/%3E%3C/svg%3E") 12 12, pointer;
 }
 /* Applied: keep the source→target gradient (set inline) — just settle the
    cord (stop marching, solid line). Overriding the stroke to flat emerald
@@ -6811,11 +6239,6 @@ body.rb-ed-light .edge-cut-zone {
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
-}
-body.rb-ed-light .edge-label-pill {
-  /* Light mode keeps the dark mask but slightly less opaque so it
-     reads as a frosted slate against the cool grey canvas. */
-  fill: rgba(15, 23, 42, 0.55);
 }
 
 /* ─── editor panels (in canvas viewport, not inside iframe) ───────────────── */
@@ -7295,7 +6718,6 @@ body.rb-ed-light .edge-label-pill {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 .cnode-version-loading-pill svg { width: 3.4cqw; height: 3.4cqw; opacity: 0.8; flex: 0 0 auto; }
-body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0.92); color: rgba(0, 0, 0, 0.6); }
 .cnode-version-thumb {
   position: relative;
   padding: 0;
@@ -7455,17 +6877,6 @@ body.rb-ed-light .cnode-version-loading-pill { background: rgba(245, 245, 248, 0
 .cnode-version-confirm-restore:hover { filter: brightness(1.08); }
 .cnode-version-confirm-restore:disabled { opacity: 0.6; cursor: default; }
 
-/* Light mode */
-body.rb-ed-light .cnode-version-thumb { border-color: rgba(0, 0, 0, 0.12); background: rgba(255, 255, 255, 0.7); }
-body.rb-ed-light .cnode-version-history-btn { border-color: rgba(0, 0, 0, 0.1); background: rgba(235, 235, 238, 0.85); color: rgba(0, 0, 0, 0.6); }
-body.rb-ed-light .cnode-version-history-btn:hover { background: rgba(220, 220, 225, 0.95); color: #000; }
-body.rb-ed-light .cnode-version-menu { background: rgba(196, 200, 205, 0.72); border-color: rgba(0, 0, 0, 0.08); }
-body.rb-ed-light .cnode-version-menu-row { background: #e9ebee; }
-body.rb-ed-light .cnode-version-menu-row:hover { background: #dde0e4; }
-body.rb-ed-light .cnode-version-menu-date { color: rgba(0, 0, 0, 0.7); }
-body.rb-ed-light .cnode-version-confirm { background: rgba(245, 245, 248, 0.95); border-color: rgba(0, 0, 0, 0.1); }
-body.rb-ed-light .cnode-version-confirm-cancel { border-color: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.7); }
-
 /* ── Credits pill (billing) ─────────────────────────────────────────────────
    Lives in .canvas-toolbar-right, left of the UserPill. Same chip sizing as
    the toolbar family (inner pills radius 10 inside the 44px frame). */
@@ -7531,13 +6942,6 @@ body.rb-ed-light .cnode-version-confirm-cancel { border-color: rgba(0, 0, 0, 0.1
 .credits-pill-row-delta { font-variant-numeric: tabular-nums; }
 .credits-pill-row-delta.neg { color: rgba(245, 245, 245, 0.55); }
 .credits-pill-row-delta.pos { color: #34d399; }
-body.rb-ed-light .credits-pill { color: rgba(0, 0, 0, 0.65); }
-body.rb-ed-light .credits-pill:hover { color: rgba(0, 0, 0, 0.9); } /* bg comes from --hover-bg (light-remapped) */
-body.rb-ed-light .credits-pill-menu-header,
-body.rb-ed-light .credits-pill-empty { color: rgba(0, 0, 0, 0.45); }
-body.rb-ed-light .credits-pill-row { color: rgba(0, 0, 0, 0.7); }
-body.rb-ed-light .credits-pill-row:hover { background: rgba(0, 0, 0, 0.05); }
-body.rb-ed-light .credits-pill-row-delta.neg { color: rgba(0, 0, 0, 0.55); }
 
 /* ── Plans modal (billing v1 waitlist) ──────────────────────────────────── */
 .plans-modal-overlay {
@@ -7634,13 +7038,6 @@ body.rb-ed-light .credits-pill-row-delta.neg { color: rgba(0, 0, 0, 0.55); }
   font-size: 12px;
   text-align: center;
 }
-body.rb-ed-light .plans-modal { color: rgba(0, 0, 0, 0.85); }
-body.rb-ed-light .plans-modal-card { background: rgba(0, 0, 0, 0.03); border-color: rgba(0, 0, 0, 0.1); }
-body.rb-ed-light .plans-modal-badge { background: rgba(0, 0, 0, 0.07); color: rgba(0, 0, 0, 0.65); }
-body.rb-ed-light .plans-modal-blurb { color: rgba(0, 0, 0, 0.6); }
-body.rb-ed-light .plans-modal-period { color: rgba(0, 0, 0, 0.45); }
-body.rb-ed-light .plans-modal-cta { border-color: rgba(0, 0, 0, 0.18); color: rgba(0, 0, 0, 0.7); }
-body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
 
 /* ── Transient node debit chip (billing) ────────────────────────────────── */
 .cnode-debit {
@@ -7757,7 +7154,6 @@ body.rb-ed-light .plans-modal-close { color: rgba(0, 0, 0, 0.45); }
   text-overflow: ellipsis;
   min-width: 0;
 }
-body.rb-ed-light .cnode-float-title { color: rgba(31, 31, 31, 0.9); }
 
 /* Low-zoom handoff — same as the topbar used to do: the corner tag hides
    and the centered anchor title carries the node's identity. The anchor
@@ -7821,11 +7217,6 @@ html.canvas-zoom-low .cnode-anchor-title:active { cursor: grabbing; }
   border: calc(1px / var(--fs)) solid rgba(255, 255, 255, 0.14);
 }
 .cnode-float-cancel:hover:not(:disabled) { background: rgba(35, 35, 35, 0.95); }
-body.rb-ed-light .cnode-float-cancel {
-  background: rgba(255, 255, 255, 0.92);
-  color: #1f1f1f;
-  border-color: rgba(0, 0, 0, 0.14);
-}
 
 /* Edit mode: the width-fit edit frame puts the node's TOP edge at the
    viewport top — chrome above the node would be off-screen. Anchor the
@@ -7899,11 +7290,6 @@ body.rb-ed-light .cnode-float-cancel {
   z-index: 5;
 }
 .cnode-prompt-body:hover .cnode-prompt-hint { opacity: 1; }
-body.rb-ed-light .cnode-prompt-hint {
-  background: rgba(255, 255, 255, 0.92);
-  border-color: rgba(0, 0, 0, 0.12);
-  color: #1f1f1f;
-}
 
 /* ── Canvas gesture window (perf phase 2) ─────────────────────────────────
    While the canvas transform is actively changing (wheel zoom / pan /

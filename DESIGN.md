@@ -1,165 +1,232 @@
-# Uncraft — Design System
+# Uncraft — Design System: "The Working Table"
 
-> Single source of truth for Uncraft's visual language. Supersedes the old
-> `DESIGN-SYSTEM.md` / `design-system.md` (both were stale "RepixBridge"-era
-> copies describing only the extension popup). Renamed RepixBridge → Uncraft
-> on 2026-04-27.
+> Single source of truth for Uncraft's visual language. Imported wholesale
+> from the Unspirit design study on 2026-07-12 (branch `unspirit`) — a
+> flagship-model reinterpretation of the product seeded by
+> `docs/superpowers/handoffs/2026-07-11-uncraft-recreation-prompt-fable-sol.md`.
+> Supersedes the frosted-glass system documented here before that date.
 >
 > The live system is defined in code at
 > [`packages/web-shell/app/globals.css`](packages/web-shell/app/globals.css)
-> (`@theme` + `:root` + `body.rb-ed-light`) and the extension's `panel/panel.css`.
-> When code and this doc disagree, code wins — update this doc to match.
+> (`@theme` + `:root`) and the extension's `panel/panel.css` (not yet ported —
+> see "Surface status"). When code and this doc disagree, code wins — update
+> this doc to match.
+
+## Creative North Star — "The Working Table"
+
+The interface is a calm, warm-charcoal surface covered with real work. Fixed
+chrome is compact and nearly neutral; **the graph carries the color and the
+meaning**. Familiar Figma-like controls reduce learning cost; distinctiveness
+comes from exceptionally legible spatial chains and tactile motion.
+
+Principles (from PRODUCT/DESIGN of the study, adopted):
+1. The canvas disappears behind the work.
+2. **Color is grammar** — provenance colors communicate what flows where.
+3. Every gesture responds immediately and physically.
+4. Familiar designer affordances beat novelty.
+5. Honest states, readable chains, deterministic evidence build trust.
+
+Anti-references (do NOT build): generic AI-workflow dashboards, neon-on-black
+node editors, decorative glassmorphism, gradient text, excessive cards,
+developer-first terminology, theatrical motion, any interaction that stutters
+or lies about its state.
 
 ## Brand
 - **Name:** Uncraft. **Slogan:** "Design without borders."
-- **Wordmark:** "Un" Medium (500) + "craft" Light (300) at 0.62 opacity. Tight tracking (`-0.02em`).
-- **Internal namespace stays `rb-*` / `__rb*`** (RepixBridge legacy) on purpose — renaming it would be invasive with no functional gain.
+- Sidebar mark: 26px rounded square, ink-inverted "U".
+- **Internal namespace stays `rb-*` / `__rb*`** (RepixBridge legacy) on purpose.
 
-## Two surfaces, one language
-Uncraft renders in two places that share the same dark, frosted, type-forward feel but use different primitives:
+## Surface status
+1. **Web-shell (canvas SaaS)** — FULLY on the Working Table system (this doc).
+2. **Extension (in-page widget + editor panels)** — still on the previous
+   Instrument-based solid design; port pending user validation of the canvas.
+   Canvas modals already read the new `--popup-*` tokens.
 
-1. **Web-shell (canvas SaaS)** — the dominant surface. Dark frosted-glass chrome over a dot-grid canvas. Fonts: **Aeonik** (sans) + **Instrument Serif** (display). Tokens below under "Web-shell tokens".
-2. **Extension (in-page widget + editor)** — injected over arbitrary sites. Higher-contrast solid surfaces, **Instrument Sans + Instrument Serif**, larger radii. Captured under "Popup tokens" (these are also reused by canvas modals so a modal on the canvas matches the widget).
-
-## The frosted-glass signature
-The recipe that makes a surface read as "Uncraft chrome." Every floater, card, menu, dock uses it:
+## The solid-surface signature (replaces the frosted-glass signature)
+**No `backdrop-filter` anywhere, product-wide.** Chrome is solid or
+near-opaque warm charcoal:
 
 ```
-background: var(--bg-frosted);                 /* rgba(10,10,10,0.72) dark */
-backdrop-filter: blur(28px) saturate(140%);    /* 28px is the house blur */
-border: 1px solid var(--border-frosted);       /* 1px hairline */
-box-shadow: var(--shadow-frost);               /* 0 16px 60px rgba(0,0,0,0.55) */
-border-radius: 12–22px;                         /* per element, see Radii */
+background: rgba(34,34,32,0.97);        /* fixed chrome — --bg-frosted */
+background: #292926;                    /* menus/cards — --bg-frosted-solid */
+border: 1px solid var(--border-frosted);/* #3A3935 warm hairline */
+box-shadow: var(--shadow-frost);        /* 0 8px 28px rgba(0,0,0,0.28) — ambient, small */
+border-radius: 7–16px;                  /* per element, see Radii */
 ```
 
-## Web-shell tokens (globals.css `:root`)
+**The Flat Canvas Rule:** surfaces are flat by default. Small ambient shadows
+appear only on viewport-fixed chrome, selected floating controls, and menus.
+In-world depth comes from outlines and overlap, never blur.
 
-### Color — dark (default)
+## Web-shell tokens (globals.css `:root` — DARK ONLY)
+
+The canvas light mode was retired 2026-07-12 (its ~195 CSS overrides deleted).
+The editor keeps its own light mode for its panels while editing.
+
 | Token | Value | Usage |
 |---|---|---|
-| `--bg-base` | `#0a0a0a` | Page / canvas background |
-| `--bg-frosted` | `rgba(10,10,10,0.72)` | Frosted chrome surfaces |
-| `--bg-frosted-solid` | `#0f0f0f` | Non-translucent fallback surface |
-| `--text-primary` | `#f5f5f5` | Primary text, primary-button fill |
-| `--text-secondary` | `rgba(245,245,245,0.62)` | Secondary text |
-| `--text-muted` | `rgba(245,245,245,0.42)` | Muted labels |
-| `--text-faint` | `rgba(245,245,245,0.28)` | Placeholders, fine print |
-| `--border-frosted` | `rgba(255,255,255,0.08)` | Hairline borders |
-| `--border-frosted-strong` | `rgba(255,255,255,0.12)` | Stronger borders |
-| `--hover-bg` | `rgba(255,255,255,0.06)` | Hover wash |
-| `--hover-bg-strong` | `rgba(255,255,255,0.10)` | Stronger hover |
-| `--shadow-frost` | `0 16px 60px rgba(0,0,0,0.55)` | Frosted elevation |
-| `--canvas-dot` | `rgba(255,255,255,0.20)` | Dot-grid on canvas |
+| `--bg-base` | `#191917` | Page / canvas background (warm charcoal) |
+| `--bg-frosted` | `rgba(34,34,32,0.97)` | Fixed chrome surfaces (near-opaque, NO blur) |
+| `--bg-frosted-solid` | `#292926` | Menus, dropdowns, solid cards |
+| `--text-primary` | `#F1F0EB` | Ink |
+| `--text-secondary` | `#B5B3AC` | Secondary text |
+| `--text-muted` | `#96948D` | Muted labels |
+| `--text-faint` | `rgba(241,240,235,0.30)` | Placeholders, fine print |
+| `--border-frosted` | `#3A3935` | Hairline borders (warm) |
+| `--border-frosted-strong` | `#45443F` | Stronger borders |
+| `--hover-bg` | `rgba(241,240,235,0.07)` | Hover wash |
+| `--hover-bg-strong` | `rgba(241,240,235,0.12)` | Stronger hover |
+| `--shadow-frost` | `0 8px 28px rgba(0,0,0,0.28)` | Ambient elevation |
+| `--canvas-dot` | `#393833` | Dot-grid on canvas |
+| `--ink-invert-bg` / `--ink-invert-fg` | `#EFEEE8` / `#20201E` | PRIMARY ACTIONS (ink-inverted buttons) |
+| `--accent` | `#2966EA` | Focus rings, live selection — the site blue |
+| `--accent-hover` | `#2258C9` | Accent hover |
+| `--accent-weak` | `rgba(41,102,234,0.20)` | Tinted accent backgrounds |
 
-### Color — light (`body.rb-ed-light`)
-Cool light slate (slight blue undertone, ~`hsl(220,8%)`), NOT warm cream. One-line swap per element since all chrome reads the vars.
-| Token | Value |
-|---|---|
-| `--bg-base` | `#DEE0E4` |
-| `--bg-frosted` | `rgba(228,230,234,0.78)` |
-| `--bg-frosted-solid` | `#D4D7DC` |
-| `--text-primary` | `#1a1d24` |
-| `--text-secondary` | `rgba(26,29,36,0.66)` |
-| `--text-muted` | `rgba(26,29,36,0.46)` |
-| `--border-frosted` | `rgba(15,23,42,0.12)` |
-| `--shadow-frost` | `0 16px 48px rgba(15,23,42,0.14)` |
-| `--canvas-dot` | `rgba(15,23,42,0.18)` |
-
-### Accent (tokenized 2026-06-09)
-| Token | Value | Usage |
-|---|---|---|
-| `--accent` | `#0095FF` | Primary buttons, selection ring, active states |
-| `--accent-hover` | `#0086e6` | Accent hover |
-| `--accent-weak` | `rgba(0,149,255,0.18)` | Tinted accent backgrounds |
-- Accent stays blue in both themes (does not invert).
-- `#38bdf8` ("sky") is still used directly in a few places AND is the URL node-origin color — overloaded, left as backlog item #6.
+**Primary buttons are ink-inverted (`--ink-invert-*`), never accent-filled.**
+Accent = the site blue, anchoring the color grammar; it marks focus and
+selection, not calls-to-action.
 
 ### Origin colors (node-graph semantics, `lib/node-origin.js`)
-Edge/border color encodes a node's source kind:
-| Kind | Hex |
-|---|---|
-| URL / website | `#38bdf8` |
-| HTML | `#f97316` |
-| Markdown / design | `#34d399` |
-| Screenshot / asset | `#a78bfa` |
-
-## Popup tokens (extension-derived; used by canvas modals too)
-Solid (no blur), high contrast, large radii, Instrument type. Dark default, light via `body.rb-ed-light`.
-| Token | Dark | Light |
+Fixed product semantics — frames, ports, kind pills, and cord gradients all
+read these. **Color is grammar; do not repurpose.**
+| Kind | Hex | Ink on it |
 |---|---|---|
-| `--popup-bg` | `#000000` | `#EFEEEB` |
-| `--popup-fg` | `#EFEEEB` | `#000000` |
-| `--popup-fg-muted` | `rgba(239,238,235,0.50)` | `rgba(0,0,0,0.50)` |
-| `--popup-surface` | `rgba(239,238,235,0.06)` | `rgba(0,0,0,0.04)` |
-| `--popup-border` | `rgba(239,238,235,0.12)` | `rgba(0,0,0,0.10)` |
-| `--popup-accent` | `#EFEEEB` | `#000000` |
-| `--popup-radius-card` | `40px` | — |
-| `--popup-radius-mid` | `14px` | — |
-| `--popup-font-sans` | Instrument Sans → system | |
-| `--popup-font-serif` | Instrument Serif → Georgia | |
+| site (URL / blank / clone) | `#2966EA` | white |
+| .html upload | `#F97316` | dark |
+| .md / design-system | `#C2B44A` | dark (kept over Unspirit's `#EEA665` — too close to .html orange) |
+| image / asset | `#7951C2` | white |
+| prompt | `#ECEBF1` | dark |
+| skill | `#F472B6` | dark |
+
+## Node chrome (unspirit 2026-07-12)
+- **Rest border:** 2px `color-mix(in oklab, <origin> 72%, #4A4944)` — softened
+  category. Full saturation is reserved for selection.
+- **Selection:** DOUBLE ring — `0 0 0 3px var(--bg-base)` gap +
+  `0 0 0 5px <origin>` + ambient shadow (floored inverse-scale, 0.62).
+  Editing steps up to 5px gap / 8px ring.
+- **Kind pill (float tag):** filled origin color, uppercase 9–11px 700,
+  ink by luminance (`--cnode-port-ink`); title beside it. The tag IS the
+  move handle.
+- **Edit cluster:** ink-inverted primary Edit + dark secondary (`#292926` +
+  `#4B4A44` border) for the second action.
+- **Ports:** idle = SOLID origin dot with `--bg-base` ring + origin hairline;
+  connected emitter keeps a white core, connected receiver keeps the
+  dual-identity read (own-color ring + sender-color core) — informative,
+  don't flatten. Geometry lives in THREE places (CSS + EdgeLayer +
+  findSnapTarget) — always change together.
+- **Prompt nodes are paper notes:** body `#ECEBF1`, dark ink `#25231F`,
+  dark-tinted inner field.
+- **Cords:** gradient (source-origin → target-origin, world-anchored),
+  3px solid underlay + 2px round marching dots (`stroke-dasharray: 1 10`,
+  1.1s), screen-constant via `vector-effect: non-scaling-stroke`.
+
+## Fixed chrome layout (unspirit 2026-07-12)
+- **Sidebar** 224px left (collapsible to 52px, exposes `--sidebar-w`):
+  brand, New board, BOARDS, LIBRARY (placeholders), user pill.
+- **Topbar** 46px (`--topbar-h`): board-name crumb left; credits +
+  Preview/Share (placeholders) right.
+- **Tool rail** top-center: select/hand/frame/text/draw placeholders + live "+".
+- **Zoom dock** bottom-left (clears the sidebar). **Minimap** top-right,
+  steps left of the inspector via `--inspector-w`.
+- **Inspector** right 248px: Design/Prototype tabs, selection title with
+  origin dot, Frame (LIVE X/Y/W/H), Appearance/Fill/Export placeholders;
+  collapses to a detached 42px control.
+- ALL of it **overlays** the full-viewport canvas world (never insets it —
+  client↔world math assumes origin 0,0) and **hides in edit mode** (the
+  editor brings its own panels). Framing math centers in the free region
+  via `chromeInsets()`.
+- Placeholder rule: features that don't exist render DISABLED with honest
+  tooltips — never fake-interactive.
+
+## Popup tokens (canvas modals/menus)
+Solid warm charcoal, Inter, no serif accent.
+| Token | Value |
+|---|---|
+| `--popup-bg` | `#292926` |
+| `--popup-fg` | `#F1F0EB` |
+| `--popup-fg-muted` | `rgba(241,240,235,0.55)` |
+| `--popup-surface` | `rgba(241,240,235,0.06)` |
+| `--popup-border` | `#494842` |
+| `--popup-accent` | `#EFEEE8` |
+| `--popup-radius-card` / `-mid` | `14px` / `10px` |
+| `--popup-font-sans` / `-serif` | both → Inter (serif accent retired) |
 
 ## Typography
-- **Web-shell display:** Instrument Serif 400 — wordmark, large titles (`--font-display`).
-- **Web-shell body/UI:** Aeonik — Light 300 / Regular 400 / Medium 500 / Bold 700, local `.otf` at `public/fonts/aeonik/` (`--font-sans`). `font-feature-settings: 'ss01','ss02'`.
-- **Extension:** Instrument Sans (body/UI) + Instrument Serif (display).
-- **Mono:** `ui-monospace, SFMono-Regular, Menlo` (`--font-mono`).
-- **Scale (extension reference):** 10 / 11 / 12 / 14 / 16 / 20 / 24. Web-shell uses `rem` + `clamp()` for fluid headings (e.g. wordmark `clamp(3.5rem, 8vw, 6.5rem)`).
-- **Tracking:** tight on display (`-0.02em` to `-0.045em`); near-zero on body.
+- **Single UI face: Inter (variable)**, loaded via `next/font`
+  (`--font-inter`). No display serif. `font-synthesis: none`.
+- **Rhythm:** 13px/450 body (1.4), 11px/550 labels (1.2). Section headings in
+  chrome: 9px/700, `0.1em` tracking, uppercase.
+- **Hierarchy comes from weight and contrast, not display typography.**
+- Tracking: `-0.02em` on titles; near-zero on body.
+- **Mono:** `ui-monospace, SFMono-Regular, Menlo` — data only; never JetBrains.
+- Note: Inter is banned in GENERATED sites (anti-slop house style); the tool's
+  own UI uses it by explicit user decision (2026-07-12).
 
 ## Spacing
-- **Base unit:** 4px. Toolbar padding 4px, content padding 16px, section gap 20px, element gap 8/12px.
+- Base unit 4px. Control rhythm **30px** (buttons/fields in chrome), 34px
+  sidebar rows, toolbar padding 4px, panel padding 10–12px.
 
 ## Radii
 | Token | Value | Usage |
 |---|---|---|
-| `--radius-pill` | `999px` | Pills, tags, primary buttons, avatars |
-| `--radius-sm` | `12px` | Inputs, small cards, toolbars |
-| `--radius-md` | `18px` | Menus, dropdowns |
-| `--radius-lg` | `22px` | Large cards (signin, board cards) |
-| (popup) `--popup-radius-card` | `40px` | Extension/canvas modal cards |
-- Small chrome (minimap, 36px buttons, count chips) uses ad-hoc `6/8/10px` — **not yet tokenized** (backlog).
+| `--radius-pill` | `999px` | Pills, tags, avatars |
+| `--radius-2xs` | `5px` | Tiny fields |
+| `--radius-xs` | `7px` | Buttons, sidebar rows |
+| `--radius-sm` | `10px` | Toolbars, menus, collapsed inspector |
+| `--radius-md` | `14px` | Cards, dock, popup cards |
+| `--radius-lg` | `16px` | Large cards |
+- Node frame radii are WORLD-LOCKED px (17.25 outer / 11.25 body, below-30 ×0.8)
+  — part of the hybrid chrome scaling decision (2026-07-06), untouched.
 
-## Elevation & blur
-- **Cards:** border only, no shadow.
-- **Floating chrome:** `--shadow-frost`.
-- **House blur:** `blur(28px) saturate(140%)`. Heavier menus use `blur(36px)`. Backgrounds/board cards use `blur(24px)`. **9 blur values exist — not tokenized** (backlog).
+## Elevation
+- Flat by default. `--shadow-frost` (ambient, small) only on viewport-fixed
+  chrome, menus, and selected floating controls. NO backdrop-filter anywhere.
+- In-world depth = outlines + overlap.
 
 ## Interaction patterns (standard — apply to every new widget)
-- **Toolbar widget hover (STANDARD, 2026-07-03):** any interactive chip living inside a chrome bar (`.canvas-toolbar-left/right`, zoom widget, etc.) must fill the bar's full content height with a uniform 2px gap on every side:
-  1. Wrapper: `align-self: stretch; display: flex;` (the bar centers children at natural height by default — the wrapper must stretch so `height:100%` has something to fill).
-  2. Chip: `height: 100%;` + `border-radius` concentric with the frame (frame radius − frame padding, e.g. `12 − 2 = 10px`).
-  3. Hover: `background: var(--hover-bg)` ONLY — no outline/border change. The token remaps in light mode by itself.
-  - References: `.user-pill.compact`, `.credits-pill`, zoom pill.
-- **Inline icons next to text (STANDARD, 2026-07-03):** an icon that sits in sequence with text (before or after a label — cost tags, kind glyphs, affordance hints) must match the FONT height: size it `width: 1em; height: 1em` in CSS (never fixed px). `1em` tracks the text through inverse-scaled canvas chrome, so icon and numeral stay proportional at any zoom. Gap to the text: `0.25em`.
-- **Click-opened widget dropdowns (STANDARD, 2026-07-03):** menus that open on click from a chrome widget use a SOLID background — `var(--bg-frosted-solid)` (`#0f0f0f` offblack dark / `#D4D7DC` light), **no transparency, no backdrop blur** — plus `--border-frosted` hairline + `--shadow-frost`. Canvas content must never bleed through a data menu. (The translucent frosted treatment stays for large passive chrome: bars, docks, modals.)
-  - Reference: `.credits-pill-menu`.
-- **Counter-scale floor at 40% (STANDARD, 2026-07-03):** every screen-constant canvas chrome value divides by `max(0.4, var(--canvas-scale, 1))` — NEVER by the raw var. Below 40% zoom chrome stops compensating and scales with the world. JS geometry that must land on CSS-positioned chrome (edge ports/slots, snap radii, pill fitting) clamps with the same `Math.max(0.4, scale)`.
-- **Counter-scale via transform, not layout (STANDARD, 2026-07-03):** NEW screen-constant chrome keeps natural px styling and counter-scales with `transform: scale(1/zoom)` (+ explicit `transform-origin`) — composite-only, step-free. Dividing layout properties (padding/font/border/size) by the scale re-lays the board out on every scale write and visibly steps during zoom. Reference: `.cnode-prompt-hint` + PromptBody's transform write. (The legacy `calc(Npx / max(0.4, …))` chrome predates this rule — migrate opportunistically, don't add more.)
-- **No backdrop-filter inside the zoomed world (STANDARD, 2026-07-03):** `backdrop-filter` is only for viewport-FIXED chrome (dock, toolbars, modals, place-pill). Anything positioned inside the canvas transform re-rasterizes its backdrop on zoom — use `--bg-frosted-solid` or higher-alpha translucency instead.
+- **Toolbar widget hover (STANDARD, 2026-07-03):** chips inside a chrome bar
+  fill the bar's full content height with a uniform 2px gap: stretch wrapper +
+  `height:100%` + concentric radius + `--hover-bg` only (no outline change).
+- **Inline icons next to text (STANDARD, 2026-07-03):** `width/height: 1em`
+  (never fixed px), gap `0.25em`.
+- **Click-opened widget dropdowns (STANDARD, 2026-07-03, extended 2026-07-12):**
+  SOLID background — `var(--bg-frosted-solid)` — no transparency, no blur.
+  Canvas content must never bleed through a data menu. (Now true of ALL
+  chrome: the translucent-frosted large-chrome exception is retired.)
+- **Counter-scale floor at 40% (STANDARD, 2026-07-03):** every screen-constant
+  canvas chrome value divides by `max(0.4, var(--canvas-scale, 1))` — never the
+  raw var. JS mirrors with `chromeScale()`.
+- **Hybrid chrome scaling (DECIDED 2026-07-06):** node BODY world-locked
+  (fixed px, scales with world); labels/pills/tooltips/handles screen-constant
+  via `--chrome-scale`. ⌥W world-lock toggle remains a debug lever.
+- **Counter-scale via transform, not layout (STANDARD, 2026-07-03):** new
+  screen-constant chrome uses `transform: scale(1/zoom)`, never layout-prop
+  division.
+- **No backdrop-filter (STANDARD, extended 2026-07-12):** banned product-wide
+  (was: only inside the zoomed world).
+- **Wrap/truncate rule (standing):** never horizontal scroll, never clipped
+  text; a pill that must wrap becomes a rounded rectangle (~14px).
+- **Focus:** visible focus rings (`2px solid var(--accent)`, offset 2px) on
+  every keyboard-reachable control. Target WCAG 2.2 AA.
 
 ## Motion
-- **Transitions:** 120–200ms, `ease` / `ease-out`. Color/background hovers ~120–150ms; layout shifts (dock dodge) ~180ms; theme swap 200ms.
-- **Press feedback:** `translateY(1px)` on buttons; `scale(0.95–0.97)` on icon toggles.
-- **Icon flourish:** theme toggle rotates SVG `15deg` on hover.
-- **Canvas micro-animations (STANDARD, 2026-07-03):** in-world entrances animate **transform + opacity ONLY** (GPU-composited; width/height/box-shadow/filter are banned from animation). Durations: menus 140ms, nodes 200ms, cords 220ms, all `ease-out`. Keyframes omit the `to` frame so elements settle on their OWN computed values (ghost opacity etc.). Everything wraps in `@media (prefers-reduced-motion: no-preference)`. In-world animations pause during zoom/pan via `html.canvas-interacting` and complete on settle — never fight the gesture.
-- **Gesture hot path is sacred:** nothing re-renders React, reads layout, or toggles `will-change` during an active zoom/pan gesture. Deferred work (scale pushes, pill reanchors, threshold classes) lands in the 180ms settle callback in `CanvasClient.onTransformed`. `will-change` toggles around gestures re-rasterize the whole subtree — never do it.
-
-## Cleanup status (token-hygiene pass 2026-06-09)
-The token system is sound; adoption was partial. This pass fixed the highest-value, value-preserving items (look unchanged except the navy removal, which was an off-system bug):
-
-**Done:**
-1. ✅ **`--accent` / `--accent-hover` / `--accent-weak` added** and the ~38 hardcoded `#0095FF` / `#0086e6` swapped to the token.
-2. ✅ **Navy removed** — the 9 `#2a2a4a` / `#0f0f23` leftovers in auth/billing/token-box now read `--border-frosted-strong` / `--bg-frosted-solid` (neutral, theme-aware).
-3. ✅ **Blur tokenized** — `--blur-chrome:28px` / `--blur-menu:36px` / `--blur-soft:24px`; the 28/36/24 chrome blurs swapped.
-4. ✅ **`--surface` / `--surface-strong` + `--radius-xs:8px` / `--radius-2xs:6px` added** (defined + ready to use).
-
-**Remaining backlog (deferred — low value / regression risk for a "no visual change" pass):**
-- **~142 `rgba(255,255,255,…)` one-off fills** — NOT blanket-swapped to `--surface` on purpose: 7 distinct alpha levels carry intentional elevation, and `--surface` flips in light mode, so a blind swap would change light-mode gradients. Migrate per-element when touched.
-- **Small-radius literals** (`6/8/10px`) — tokens now exist (`--radius-xs/2xs`); swap usages opportunistically.
-- **`#38bdf8` overloaded** — both "sky accent" and the URL origin color. Pick one meaning per token before reusing.
+- **Transitions:** 120–200ms, `ease` / `ease-out`; chrome position shifts
+  (sidebar collapse, minimap follow) 180ms `cubic-bezier(0.16,1,0.3,1)`.
+- **Press feedback:** `translateY(1px)` buttons; `scale(0.95–0.97)` icon toggles.
+- **Canvas micro-animations (STANDARD, 2026-07-03):** in-world entrances =
+  transform + opacity ONLY; menus 140ms, nodes 200ms, cords 220ms, ease-out;
+  keyframes omit `to`; `prefers-reduced-motion` gated; paused during gestures
+  via `html.canvas-interacting`.
+- **Gesture hot path is sacred:** nothing re-renders React, reads layout, or
+  toggles `will-change` during an active zoom/pan gesture. Deferred work lands
+  in the 180ms settle callback.
+- **Cord retract on sever:** ~300ms ease-in into the source port, fade held to ~70%.
 
 ## Decisions Log
 | Date | Decision | Rationale |
 |---|---|---|
-| 2026-06-09 | Consolidated design docs into this DESIGN.md; retired the two stale RepixBridge `*-SYSTEM.md` copies | Docs described the old extension popup under the old name; the real system is the frosted-glass web-shell. Captured both surfaces + an audit backlog. |
-| 2026-07-03 | Toolbar widget hover standardized (stretch wrapper + full-height fill + 2px gap + `--hover-bg`); click-opened widget dropdowns are SOLID `--bg-frosted-solid`, no blur | User call during the credits pill build: hover must fill the whole slot like its neighbours, and data menus must not let canvas content bleed through. See "Interaction patterns". |
+| 2026-06-09 | Consolidated design docs into this DESIGN.md | Previous copies were stale RepixBridge-era popup docs. |
+| 2026-07-03 | Toolbar hover standard; solid click-dropdowns | Hover fills the slot; data menus must not bleed canvas. |
+| 2026-07-03→06 | Perf doctrine: 40% floor, hybrid chrome scaling, no in-world blur, gesture hot path | Canvas fluidity arc (CLAUDE.md 148–150). |
+| 2026-07-12 | **"Working Table" system imported from the Unspirit study** — warm charcoal palette, Inter single-face, solid surfaces (blur retired product-wide), ink-inverted primaries, accent = site blue `#2966EA`, double selection ring, solid category ports, paper prompt nodes, quiet dotted cords, sidebar+topbar+tool-rail+inspector chrome, canvas DARK-ONLY | User decisions: Inter literal; import everything (placeholders disabled where no feature); `.md` keeps `#C2B44A`; light mode removed. Extension port pending canvas validation. |
