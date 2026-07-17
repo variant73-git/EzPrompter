@@ -271,6 +271,7 @@ function nativeMotionRuntimeBridge() {
         textTransform: computed.textTransform,
         textDecoration: computed.textDecorationLine,
         fontStyle: computed.fontStyle,
+        borderRadius: computed.borderRadius,
         opacity: computed.opacity,
         display: computed.display,
         position: computed.position,

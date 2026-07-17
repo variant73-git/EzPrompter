@@ -49,7 +49,7 @@ const DEVICES = {
 function Field({ label, defaultValue, suffix, onCommit, type = 'text', disabled = false }) {
   return (
     <label className={styles.field}>
-      <span>{label}</span>
+      <span className={styles.controlLabel}>{label}</span>
       <span className={styles.fieldControl}>
         <input
           key={`${label}:${defaultValue}`}
@@ -67,11 +67,24 @@ function Field({ label, defaultValue, suffix, onCommit, type = 'text', disabled 
   );
 }
 
+function SelectField({ label, value, onCommit, children }) {
+  return (
+    <label className={styles.field}>
+      <span className={styles.controlLabel}>{label}</span>
+      <span className={styles.fieldControl}>
+        <select value={value} onChange={(event) => onCommit(event.currentTarget.value)}>
+          {children}
+        </select>
+      </span>
+    </label>
+  );
+}
+
 function ColorField({ label, value, onCommit }) {
   const safeValue = /^#[0-9a-f]{6}$/i.test(value || '') ? value : '#292926';
   return (
     <label className={styles.field}>
-      <span>{label}</span>
+      <span className={styles.controlLabel}>{label}</span>
       <span className={styles.colorControl}>
         <input
           key={`${label}:${safeValue}`}
@@ -98,12 +111,33 @@ function TextContentField({ selected, onCommit }) {
   const changed = value !== (selected.text || '');
   return (
     <label className={styles.textField}>
-      <span>Text</span>
+      <span className={styles.controlLabel}>Text</span>
       <span className={styles.textEditorControl}>
         <textarea value={value} onChange={(event) => setValue(event.currentTarget.value)} />
         <button type="button" disabled={!changed} onClick={() => onCommit(value)}>Apply text</button>
       </span>
     </label>
+  );
+}
+
+function InspectorSection({ title, meta, children, defaultOpen = true }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className={`${styles.inspectorSection} ${open ? '' : styles.sectionCollapsed}`}>
+      <button
+        type="button"
+        className={styles.sectionHeading}
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{title}</span>
+        <span className={styles.sectionHeadingEnd}>
+          {meta != null && <small>{meta}</small>}
+          <ChevronDown aria-hidden="true" />
+        </span>
+      </button>
+      <div className={styles.sectionBody}>{children}</div>
+    </section>
   );
 }
 
@@ -116,8 +150,7 @@ function DocumentProperties({ runtime }) {
         <strong>Document properties</strong>
         <p>Hover to inspect. Click to select. Switch to Move to place an element freely.</p>
       </section>
-      <section className={styles.inspectorSection}>
-        <div className={styles.sectionHeading}><span>Document colors</span><small>{profile?.colors?.length || 0}</small></div>
+      <InspectorSection title="Document colors" meta={profile?.colors?.length || 0}>
         <div className={styles.documentColors}>
           {(profile?.colors || []).map((color) => (
             <div key={color.value} title={`${color.value} · ${color.count} uses`}>
@@ -126,13 +159,12 @@ function DocumentProperties({ runtime }) {
             </div>
           ))}
         </div>
-      </section>
-      <section className={styles.inspectorSection}>
-        <div className={styles.sectionHeading}><span>Typefaces</span><small>{profile?.fonts?.length || 0}</small></div>
+      </InspectorSection>
+      <InspectorSection title="Typefaces" meta={profile?.fonts?.length || 0}>
         <div className={styles.fontList}>
           {(profile?.fonts || []).map((font) => <div key={font.value}><span style={{ fontFamily: font.value }}>Ag</span><strong>{font.value}</strong><small>{font.count}</small></div>)}
         </div>
-      </section>
+      </InspectorSection>
     </div>
   );
 }
@@ -151,14 +183,11 @@ function PropertiesPanel({ selected, runtime, onStyle, onText, onAttribute }) {
   if (!selected) return <DocumentProperties runtime={runtime} />;
   const stylesValue = selected.styles || {};
   const canEditText = selected.canEditText !== false && !['img', 'video', 'canvas', 'svg', 'section'].includes(selected.tag);
+  const supportsTypography = canEditText || Boolean(selected.text);
 
   return (
     <div className={styles.panelBody}>
-      <section className={styles.inspectorSection}>
-        <div className={styles.sectionHeading}>
-          <span>Content</span>
-          <small>{selected.tag}</small>
-        </div>
+      <InspectorSection title="Content" meta={selected.tag}>
         {canEditText && (
           <TextContentField selected={selected} onCommit={onText} />
         )}
@@ -169,24 +198,38 @@ function PropertiesPanel({ selected, runtime, onStyle, onText, onAttribute }) {
             onCommit={(value) => onAttribute('src', value, selected.imageSrc)}
           />
         )}
-      </section>
+        {!canEditText && selected.tag !== 'img' && <p className={styles.mutedCopy}>This element has no directly editable content.</p>}
+      </InspectorSection>
 
-      <section className={styles.inspectorSection}>
-        <div className={styles.sectionHeading}><span>Appearance</span></div>
+      <InspectorSection title="Layout">
+        <div className={styles.metricGrid}>
+          {Object.entries(selected.rect || {}).map(([key, value]) => (
+            <div key={key}><span>{key.toUpperCase()}</span><strong>{value}</strong></div>
+          ))}
+        </div>
+      </InspectorSection>
+
+      <InspectorSection title="Appearance">
         <ColorField label="Text" value={stylesValue.colorHex} onCommit={(value) => onStyle('color', value, stylesValue.color)} />
         <ColorField label="Fill" value={stylesValue.backgroundColorHex} onCommit={(value) => onStyle('background-color', value, stylesValue.backgroundColor)} />
-        <Field label="Opacity" defaultValue={stylesValue.opacity} onCommit={(value) => onStyle('opacity', value, stylesValue.opacity)} />
-      </section>
+        <div className={styles.controlGrid}>
+          <Field label="Opacity" defaultValue={stylesValue.opacity} onCommit={(value) => onStyle('opacity', value, stylesValue.opacity)} />
+          <Field label="Radius" defaultValue={stylesValue.borderRadius} onCommit={(value) => onStyle('border-radius', value, stylesValue.borderRadius)} />
+        </div>
+      </InspectorSection>
 
-      <section className={styles.inspectorSection}>
-        <div className={styles.sectionHeading}><span>Typography</span></div>
+      {supportsTypography && <InspectorSection title="Typography">
         <Field label="Font" defaultValue={stylesValue.fontFamily} onCommit={(value) => onStyle('font-family', value, stylesValue.fontFamily)} />
-        <Field label="Size" defaultValue={stylesValue.fontSize} onCommit={(value) => onStyle('font-size', value, stylesValue.fontSize)} />
-        <Field label="Weight" defaultValue={stylesValue.fontWeight} onCommit={(value) => onStyle('font-weight', value, stylesValue.fontWeight)} />
-        <Field label="Line height" defaultValue={stylesValue.lineHeight} onCommit={(value) => onStyle('line-height', value, stylesValue.lineHeight)} />
-        <Field label="Kerning" defaultValue={stylesValue.letterSpacing} onCommit={(value) => onStyle('letter-spacing', value, stylesValue.letterSpacing)} />
+        <div className={styles.controlGrid}>
+          <Field label="Weight" defaultValue={stylesValue.fontWeight} onCommit={(value) => onStyle('font-weight', value, stylesValue.fontWeight)} />
+          <Field label="Size" defaultValue={stylesValue.fontSize} onCommit={(value) => onStyle('font-size', value, stylesValue.fontSize)} />
+        </div>
+        <div className={styles.controlGrid}>
+          <Field label="Line height" defaultValue={stylesValue.lineHeight} onCommit={(value) => onStyle('line-height', value, stylesValue.lineHeight)} />
+          <Field label="Letter spacing" defaultValue={stylesValue.letterSpacing} onCommit={(value) => onStyle('letter-spacing', value, stylesValue.letterSpacing)} />
+        </div>
         <div className={styles.field}>
-          <span>Align</span>
+          <span className={styles.controlLabel}>Alignment</span>
           <div className={styles.alignControl}>
             {[
               ['left', AlignLeft], ['center', AlignCenter], ['right', AlignRight], ['justify', AlignJustify],
@@ -195,28 +238,15 @@ function PropertiesPanel({ selected, runtime, onStyle, onText, onAttribute }) {
             ))}
           </div>
         </div>
-        <label className={styles.field}>
-          <span>Case</span>
-          <select key={`${selected.id}:${stylesValue.textTransform}`} defaultValue={stylesValue.textTransform || 'none'} onChange={(event) => onStyle('text-transform', event.currentTarget.value, stylesValue.textTransform)}>
+        <div className={styles.controlGrid}>
+          <SelectField label="Case" value={stylesValue.textTransform || 'none'} onCommit={(value) => onStyle('text-transform', value, stylesValue.textTransform)}>
             <option value="none">Original</option><option value="uppercase">Uppercase</option><option value="lowercase">Lowercase</option><option value="capitalize">Title case</option>
-          </select>
-        </label>
-        <label className={styles.field}>
-          <span>Style</span>
-          <select key={`${selected.id}:${stylesValue.fontStyle}`} defaultValue={stylesValue.fontStyle || 'normal'} onChange={(event) => onStyle('font-style', event.currentTarget.value, stylesValue.fontStyle)}>
+          </SelectField>
+          <SelectField label="Style" value={stylesValue.fontStyle || 'normal'} onCommit={(value) => onStyle('font-style', value, stylesValue.fontStyle)}>
             <option value="normal">Normal</option><option value="italic">Italic</option><option value="oblique">Oblique</option>
-          </select>
-        </label>
-      </section>
-
-      <section className={styles.inspectorSection}>
-        <div className={styles.sectionHeading}><span>Frame</span></div>
-        <div className={styles.metricGrid}>
-          {Object.entries(selected.rect || {}).map(([key, value]) => (
-            <div key={key}><span>{key.toUpperCase()}</span><strong>{value}</strong></div>
-          ))}
+          </SelectField>
         </div>
-      </section>
+      </InspectorSection>}
     </div>
   );
 }
@@ -227,8 +257,7 @@ function MotionPanel({ selected, runtime, speed, onPlayback, onSpeed }) {
   const originLabel = origin === 'webflow' ? 'Webflow interactions' : origin === 'framer' ? 'Framer effects' : 'Motion';
   return (
     <div className={styles.panelBody}>
-      <section className={styles.inspectorSection}>
-        <div className={styles.sectionHeading}><span>Playback</span><small>{speed}×</small></div>
+      <InspectorSection title="Playback" meta={`${speed}×`}>
         <div className={styles.playbackControls}>
           <button type="button" onClick={() => onPlayback('restart')} title="Restart"><RotateCcw /></button>
           <button type="button" onClick={() => onPlayback('pause')} title="Pause"><Pause /></button>
@@ -243,13 +272,9 @@ function MotionPanel({ selected, runtime, speed, onPlayback, onSpeed }) {
             </select>
           </label>
         </div>
-      </section>
+      </InspectorSection>
 
-      <section className={styles.inspectorSection}>
-        <div className={styles.sectionHeading}>
-          <span>{originLabel}</span>
-          <small>{motion.length} linked</small>
-        </div>
+      <InspectorSection title={originLabel} meta={`${motion.length} linked`}>
         {!selected && <p className={styles.mutedCopy}>Select an element to see its triggers and animation actions.</p>}
         {selected && !motion.length && <p className={styles.mutedCopy}>No interaction is attached directly. Check the parent or create a new interaction.</p>}
         <div className={styles.motionList}>
@@ -266,7 +291,7 @@ function MotionPanel({ selected, runtime, speed, onPlayback, onSpeed }) {
           ))}
         </div>
         {(selected?.warnings || []).map((warning) => <p className={styles.warning} key={warning}>{warning}</p>)}
-      </section>
+      </InspectorSection>
     </div>
   );
 }
@@ -319,8 +344,7 @@ function CodePanel({ selected }) {
   if (!selected) return <InspectorEmpty />;
   return (
     <div className={styles.panelBody}>
-      <section className={styles.inspectorSection}>
-        <div className={styles.sectionHeading}><span>Runtime locator</span></div>
+      <InspectorSection title="Runtime locator">
         <pre className={styles.codeBlock}>{`[data-uncraft-id="${selected.id}"]`}</pre>
         <div className={styles.codeFacts}>
           <div><span>Tag</span><code>{selected.tag}</code></div>
@@ -330,13 +354,12 @@ function CodePanel({ selected }) {
           <div><span>Position</span><code>{selected.styles?.position}</code></div>
           <div><span>Transform</span><code>{selected.styles?.transform}</code></div>
         </div>
-      </section>
-      <section className={styles.inspectorSection}>
-        <div className={styles.sectionHeading}><span>Classes</span><small>{selected.classes?.length || 0}</small></div>
+      </InspectorSection>
+      <InspectorSection title="Classes" meta={selected.classes?.length || 0}>
         <div className={styles.classList}>
           {(selected.classes || []).map((className) => <code key={className}>.{className}</code>)}
         </div>
-      </section>
+      </InspectorSection>
     </div>
   );
 }
