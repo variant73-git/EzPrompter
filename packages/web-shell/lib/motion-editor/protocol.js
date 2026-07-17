@@ -1,6 +1,6 @@
 export const MOTION_EDITOR_PROTOCOL = 'uncraft-motion-editor/v1';
 
-const PATCH_KINDS = new Set(['style', 'text', 'attribute']);
+const PATCH_KINDS = new Set(['style', 'text', 'attribute', 'svg']);
 
 export function isRuntimeMessage(value) {
   return Boolean(
@@ -15,7 +15,7 @@ export function isRuntimeMessage(value) {
 export function createPatch({ elementId, kind, property = null, before = '', value = '' }) {
   if (!elementId || typeof elementId !== 'string') throw new Error('elementId is required');
   if (!PATCH_KINDS.has(kind)) throw new Error(`Unsupported patch kind: ${kind}`);
-  if (kind !== 'text' && (!property || typeof property !== 'string')) {
+  if (!['text', 'svg'].includes(kind) && (!property || typeof property !== 'string')) {
     throw new Error('property is required for style and attribute patches');
   }
 
@@ -23,7 +23,7 @@ export function createPatch({ elementId, kind, property = null, before = '', val
     id: globalThis.crypto?.randomUUID?.() || `patch-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     elementId,
     kind,
-    property: kind === 'text' ? null : property,
+    property: ['text', 'svg'].includes(kind) ? null : property,
     before: before ?? '',
     value: value ?? '',
     createdAt: new Date().toISOString(),

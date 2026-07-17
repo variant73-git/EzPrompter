@@ -40,6 +40,16 @@ describe('motion editor protocol', () => {
     expect(() => createPatch({ elementId: 'x', kind: 'script' })).toThrow('Unsupported');
   });
 
+  it('supports replacing inline SVG markup without a property name', () => {
+    const patch = createPatch({
+      elementId: 'logo',
+      kind: 'svg',
+      before: '<svg />',
+      value: '<svg viewBox="0 0 10 10" />',
+    });
+    expect(patch.property).toBeNull();
+  });
+
   it('creates host commands and source-scoped storage keys', () => {
     expect(command('set-mode', { mode: 'edit' })).toEqual({
       protocol: MOTION_EDITOR_PROTOCOL,

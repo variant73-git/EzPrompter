@@ -1,6 +1,6 @@
 # Native Motion Editor
 
-**Status:** first implementation slice
+**Status:** second interactive implementation slice
 
 **Branch:** `feat/native-motion-editor`
 
@@ -44,7 +44,7 @@ Production will serve each bundle from a dedicated runtime origin. The local
 prototype uses the same URL host plus an opaque sandbox origin so the protocol
 and trust boundary are already representative.
 
-## First vertical slice
+## Interactive vertical slice
 
 1. Serve an existing offline native bundle through a path-contained asset
    gateway.
@@ -54,11 +54,16 @@ and trust boundary are already representative.
 4. Toggle between Edit and Preview without unloading the runtime.
 5. Select real elements inside the animated document.
 6. Inspect element identity, typography, color, size, and detected motion.
-7. Edit text, image source, color, background, type size, alignment, and
-   opacity as patches.
-8. Pause, play, restart, and change the speed of discoverable motion.
-9. Undo and redo patches from the host.
-10. Save the patch manifest locally for the prototype.
+7. Show document-level colors and typefaces before an element is selected.
+8. Highlight the prospective selection on hover, then select it on click.
+9. Edit text explicitly and control type family, size, weight, line height,
+   kerning, alignment, case, style, color, background, and opacity as patches.
+10. Inventory images, inline SVGs, video, Lottie sources, and background images
+    in an Assets tab and replace the underlying source.
+11. Move an element freely as a non-destructive visual layout intent.
+12. Pause, play, restart, and change the speed of discoverable motion.
+13. Undo and redo patches from the host.
+14. Save the patch manifest locally for the prototype.
 
 ## Editor layout
 
@@ -66,16 +71,20 @@ and trust boundary are already representative.
   switcher, Edit/Preview state, undo/redo, save.
 - Dark working surface around the real website viewport.
 - Website renders with its own colors untouched.
-- One contextual panel with `Properties`, `Motion`, and `Code`.
+- One contextual panel with `Properties`, `Assets`, origin-aware `Motion`, and
+  `Code`.
 - Selection is represented inside the runtime by a screen-constant blue
   outline, never by modifying layout.
+- Motion language follows the source system: Webflow clones expose Webflow-like
+  interactions and Framer clones expose Framer-like effects. Runtime engine
+  diagnostics do not belong in the primary editing experience.
 
 ## Patch contract
 
 Every patch contains:
 
 - stable element identifier;
-- operation (`style`, `text`, or `attribute`);
+- operation (`style`, `text`, `attribute`, or sanitized inline `svg`);
 - property when applicable;
 - previous value;
 - next value;
@@ -95,6 +104,35 @@ motion engine. Later slices will introduce explicit ownership choices:
 - change the animated state;
 - detach that property from the animation;
 - create a breakpoint-specific override.
+
+## Free movement and layout adaptation
+
+Dragging initially writes to the independent CSS `translate` property so it
+does not overwrite a runtime-owned `transform`. This is the immediate visual
+draft, not the final production layout.
+
+Each drag also records a layout intent with the source rectangle and x/y delta.
+A later layout compiler will resolve that intent against the element's parent,
+siblings, constraints, breakpoints, and motion ownership. It may choose grid or
+flex alignment, margins, inset/positioning, section resizing, sibling reflow, or
+an intentional absolute layer. The compiler must then validate desktop, tablet,
+and mobile screenshots and motion checkpoints before replacing the temporary
+translation. This is how the model can adapt the surrounding site without
+pretending that arbitrary absolute positioning is responsive by itself.
+
+## Framer export direction
+
+The editor's normalized document, asset, patch, and interaction manifests are
+the source of truth. A Framer adapter can map supported elements to native
+Framer pages, layers, styles, assets, and components. Simple appear, scroll,
+hover, and transform interactions should map to native Framer effects; complex
+GSAP, WebGL, canvas, and source-specific runtimes should be packaged as Framer
+Code Components rather than flattened.
+
+During research and prototyping, Framer Agent can teach and validate the mapping
+on a real project. The productized exporter should use the Framer Plugin or
+Server API so users do not need to operate an external coding agent. Template
+distribution remains a Framer project/remix workflow after export.
 
 ## Runtime adapters
 
@@ -123,11 +161,16 @@ tablet, and mobile sizes.
 
 1. Persist manifests per node and bundle version in the Uncraft database.
 2. Apply patches before animation initialization during preview/export.
-3. Build SplitText, Webflow IX2, GSAP, and ScrollTrigger property adapters.
-4. Add a timeline and scroll-trigger visualization.
-5. Add structural operations: insert, delete, reorder, and section rebuild.
-6. Add multi-breakpoint visual regression and motion checkpoints.
-7. Connect native clone creation and storage to a site node on the canvas.
+3. Compile free-move intents into responsive layout changes and validate them.
+4. Build SplitText, Webflow IX2, GSAP, ScrollTrigger, and Framer adapters.
+5. Replace the generic motion list with Webflow-like interactions or
+   Framer-like effects according to clone origin.
+6. Add a timeline and scroll-trigger visualization where the source model needs
+   one.
+7. Add structural operations: insert, delete, reorder, and section rebuild.
+8. Add multi-breakpoint visual regression and motion checkpoints.
+9. Connect native clone creation and storage to a site node on the canvas.
+10. Prototype export with Framer Agent, then productize it with the Framer API.
 
 ## Acceptance criteria for this slice
 

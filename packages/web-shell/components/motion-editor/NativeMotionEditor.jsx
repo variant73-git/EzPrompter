@@ -3,14 +3,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
   ArrowLeft,
   Check,
   ChevronDown,
   Code2,
   Eye,
+  Film,
   Gauge,
+  ImageIcon,
   Inspect,
   Monitor,
+  Move,
   MousePointer2,
   Pause,
   Play,
@@ -20,6 +27,7 @@ import {
   Smartphone,
   Tablet,
   Undo2,
+  Upload,
 } from 'lucide-react';
 import {
   command,
@@ -37,20 +45,6 @@ const DEVICES = {
   tablet: { label: 'Tablet', width: 768, height: 900, Icon: Tablet },
   mobile: { label: 'Mobile', width: 390, height: 844, Icon: Smartphone },
 };
-
-function readableEngineEntries(engines) {
-  if (!engines) return [];
-  return [
-    engines.gsap && ['GSAP', 'active'],
-    engines.scrollTrigger > 0 && ['ScrollTrigger', engines.scrollTrigger],
-    engines.webflow && ['Webflow', 'IX'],
-    engines.lottie && ['Lottie', 'active'],
-    engines.browserAnimations > 0 && ['Browser', engines.browserAnimations],
-    engines.lenis && ['Lenis', 'active'],
-    engines.canvas > 0 && ['Canvas', engines.canvas],
-    engines.video > 0 && ['Video', engines.video],
-  ].filter(Boolean);
-}
 
 function Field({ label, defaultValue, suffix, onCommit, type = 'text', disabled = false }) {
   return (
@@ -98,6 +92,51 @@ function ColorField({ label, value, onCommit }) {
   );
 }
 
+function TextContentField({ selected, onCommit }) {
+  const [value, setValue] = useState(selected.text || '');
+  useEffect(() => setValue(selected.text || ''), [selected.id, selected.text]);
+  const changed = value !== (selected.text || '');
+  return (
+    <label className={styles.textField}>
+      <span>Text</span>
+      <span className={styles.textEditorControl}>
+        <textarea value={value} onChange={(event) => setValue(event.currentTarget.value)} />
+        <button type="button" disabled={!changed} onClick={() => onCommit(value)}>Apply text</button>
+      </span>
+    </label>
+  );
+}
+
+function DocumentProperties({ runtime }) {
+  const profile = runtime?.profile;
+  return (
+    <div className={styles.panelBody}>
+      <section className={styles.documentOverview}>
+        <span className={styles.emptyIcon}><Inspect aria-hidden="true" /></span>
+        <strong>Document properties</strong>
+        <p>Hover to inspect. Click to select. Switch to Move to place an element freely.</p>
+      </section>
+      <section className={styles.inspectorSection}>
+        <div className={styles.sectionHeading}><span>Document colors</span><small>{profile?.colors?.length || 0}</small></div>
+        <div className={styles.documentColors}>
+          {(profile?.colors || []).map((color) => (
+            <div key={color.value} title={`${color.value} · ${color.count} uses`}>
+              <i style={{ background: color.value }} />
+              <span>{color.value}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className={styles.inspectorSection}>
+        <div className={styles.sectionHeading}><span>Typefaces</span><small>{profile?.fonts?.length || 0}</small></div>
+        <div className={styles.fontList}>
+          {(profile?.fonts || []).map((font) => <div key={font.value}><span style={{ fontFamily: font.value }}>Ag</span><strong>{font.value}</strong><small>{font.count}</small></div>)}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function InspectorEmpty() {
   return (
     <div className={styles.emptyInspector}>
@@ -108,10 +147,10 @@ function InspectorEmpty() {
   );
 }
 
-function PropertiesPanel({ selected, onStyle, onText, onAttribute }) {
-  if (!selected) return <InspectorEmpty />;
+function PropertiesPanel({ selected, runtime, onStyle, onText, onAttribute }) {
+  if (!selected) return <DocumentProperties runtime={runtime} />;
   const stylesValue = selected.styles || {};
-  const canEditText = !['img', 'video', 'canvas', 'svg', 'section', 'div'].includes(selected.tag);
+  const canEditText = selected.canEditText !== false && !['img', 'video', 'canvas', 'svg', 'section'].includes(selected.tag);
 
   return (
     <div className={styles.panelBody}>
@@ -121,14 +160,7 @@ function PropertiesPanel({ selected, onStyle, onText, onAttribute }) {
           <small>{selected.tag}</small>
         </div>
         {canEditText && (
-          <label className={styles.textField}>
-            <span>Text</span>
-            <textarea
-              key={`${selected.id}:${selected.text}`}
-              defaultValue={selected.text || ''}
-              onBlur={(event) => onText(event.currentTarget.value)}
-            />
-          </label>
+          <TextContentField selected={selected} onCommit={onText} />
         )}
         {selected.tag === 'img' && (
           <Field
@@ -152,18 +184,27 @@ function PropertiesPanel({ selected, onStyle, onText, onAttribute }) {
         <Field label="Size" defaultValue={stylesValue.fontSize} onCommit={(value) => onStyle('font-size', value, stylesValue.fontSize)} />
         <Field label="Weight" defaultValue={stylesValue.fontWeight} onCommit={(value) => onStyle('font-weight', value, stylesValue.fontWeight)} />
         <Field label="Line height" defaultValue={stylesValue.lineHeight} onCommit={(value) => onStyle('line-height', value, stylesValue.lineHeight)} />
-        <label className={styles.field}>
+        <Field label="Kerning" defaultValue={stylesValue.letterSpacing} onCommit={(value) => onStyle('letter-spacing', value, stylesValue.letterSpacing)} />
+        <div className={styles.field}>
           <span>Align</span>
-          <select
-            key={`${selected.id}:${stylesValue.textAlign}`}
-            defaultValue={stylesValue.textAlign || 'start'}
-            onChange={(event) => onStyle('text-align', event.currentTarget.value, stylesValue.textAlign)}
-          >
-            <option value="start">Start</option>
-            <option value="left">Left</option>
-            <option value="center">Center</option>
-            <option value="right">Right</option>
-            <option value="justify">Justify</option>
+          <div className={styles.alignControl}>
+            {[
+              ['left', AlignLeft], ['center', AlignCenter], ['right', AlignRight], ['justify', AlignJustify],
+            ].map(([value, Icon]) => (
+              <button key={value} type="button" aria-label={`Align ${value}`} aria-pressed={stylesValue.textAlign === value} onClick={() => onStyle('text-align', value, stylesValue.textAlign)}><Icon /></button>
+            ))}
+          </div>
+        </div>
+        <label className={styles.field}>
+          <span>Case</span>
+          <select key={`${selected.id}:${stylesValue.textTransform}`} defaultValue={stylesValue.textTransform || 'none'} onChange={(event) => onStyle('text-transform', event.currentTarget.value, stylesValue.textTransform)}>
+            <option value="none">Original</option><option value="uppercase">Uppercase</option><option value="lowercase">Lowercase</option><option value="capitalize">Title case</option>
+          </select>
+        </label>
+        <label className={styles.field}>
+          <span>Style</span>
+          <select key={`${selected.id}:${stylesValue.fontStyle}`} defaultValue={stylesValue.fontStyle || 'normal'} onChange={(event) => onStyle('font-style', event.currentTarget.value, stylesValue.fontStyle)}>
+            <option value="normal">Normal</option><option value="italic">Italic</option><option value="oblique">Oblique</option>
           </select>
         </label>
       </section>
@@ -182,7 +223,8 @@ function PropertiesPanel({ selected, onStyle, onText, onAttribute }) {
 
 function MotionPanel({ selected, runtime, speed, onPlayback, onSpeed }) {
   const motion = selected?.motion || [];
-  const engines = readableEngineEntries(runtime?.engines);
+  const origin = runtime?.profile?.origin || 'native';
+  const originLabel = origin === 'webflow' ? 'Webflow interactions' : origin === 'framer' ? 'Framer effects' : 'Motion';
   return (
     <div className={styles.panelBody}>
       <section className={styles.inspectorSection}>
@@ -204,27 +246,17 @@ function MotionPanel({ selected, runtime, speed, onPlayback, onSpeed }) {
       </section>
 
       <section className={styles.inspectorSection}>
-        <div className={styles.sectionHeading}><span>Runtime</span><small>{engines.length} engines</small></div>
-        <div className={styles.engineList}>
-          {engines.map(([name, value]) => (
-            <div key={name}><span className={styles.engineSignal} /><strong>{name}</strong><small>{value}</small></div>
-          ))}
-          {!engines.length && <p className={styles.mutedCopy}>No supported motion engine reported yet.</p>}
-        </div>
-      </section>
-
-      <section className={styles.inspectorSection}>
         <div className={styles.sectionHeading}>
-          <span>Selected element</span>
-          <small>{motion.length} detected</small>
+          <span>{originLabel}</span>
+          <small>{motion.length} linked</small>
         </div>
-        {!selected && <p className={styles.mutedCopy}>Select an element to trace the motion that owns it.</p>}
-        {selected && !motion.length && <p className={styles.mutedCopy}>No discoverable animation owns this element. Its parent may still be animated.</p>}
+        {!selected && <p className={styles.mutedCopy}>Select an element to see its triggers and animation actions.</p>}
+        {selected && !motion.length && <p className={styles.mutedCopy}>No interaction is attached directly. Check the parent or create a new interaction.</p>}
         <div className={styles.motionList}>
           {motion.map((item) => (
             <article key={`${item.engine}:${item.id}`}>
               <span className={styles.motionEngine}>{item.engine}</span>
-              <strong>{item.name}</strong>
+              <strong>{item.trigger ? 'Scroll into view' : item.name}</strong>
               <dl>
                 <div><dt>State</dt><dd>{item.playState || 'linked'}</dd></div>
                 {item.duration != null && <div><dt>Duration</dt><dd>{item.duration} ms</dd></div>}
@@ -235,6 +267,50 @@ function MotionPanel({ selected, runtime, speed, onPlayback, onSpeed }) {
         </div>
         {(selected?.warnings || []).map((warning) => <p className={styles.warning} key={warning}>{warning}</p>)}
       </section>
+    </div>
+  );
+}
+
+function assetPreview(asset) {
+  if (asset.kind === 'svg' && asset.markup) return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(asset.markup)}`;
+  if (asset.kind === 'video') return asset.poster || '';
+  if (asset.kind === 'image' || asset.kind === 'background') return asset.source;
+  return '';
+}
+
+function AssetsPanel({ assets, onSelect, onReplace }) {
+  const [query, setQuery] = useState('');
+  const filtered = assets.filter((asset) => `${asset.label} ${asset.kind}`.toLowerCase().includes(query.toLowerCase()));
+  return (
+    <div className={styles.assetsPanel}>
+      <div className={styles.assetSearch}><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search assets" /></div>
+      <div className={styles.assetSummary}>{filtered.length} images, SVGs, videos and motion assets</div>
+      <div className={styles.assetList}>
+        {filtered.map((asset, index) => {
+          const preview = assetPreview(asset);
+          return (
+            <article key={`${asset.elementId}:${asset.kind}:${index}`} onClick={() => onSelect(asset.elementId)}>
+              <div className={styles.assetThumb}>
+                {preview ? <img src={preview} alt="" /> : asset.kind === 'video' ? <Film /> : <ImageIcon />}
+                <span>{asset.kind}</span>
+              </div>
+              <div className={styles.assetMeta}><strong>{asset.label}</strong><small>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : asset.kind}</small></div>
+              <label className={styles.assetReplace} title={`Replace ${asset.label}`} onClick={(event) => event.stopPropagation()}>
+                <Upload />
+                <input
+                  type="file"
+                  accept={asset.kind === 'svg' ? 'image/svg+xml' : asset.kind === 'video' ? 'video/*' : asset.kind === 'lottie' ? 'application/json' : 'image/*'}
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0];
+                    if (file) onReplace(asset, file);
+                    event.currentTarget.value = '';
+                  }}
+                />
+              </label>
+            </article>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -271,6 +347,7 @@ export default function NativeMotionEditor() {
   const [status, setStatus] = useState('loading');
   const [runtime, setRuntime] = useState(null);
   const [mode, setMode] = useState('edit');
+  const [tool, setTool] = useState('select');
   const [device, setDevice] = useState('desktop');
   const [selected, setSelected] = useState(null);
   const [activeTab, setActiveTab] = useState('properties');
@@ -319,6 +396,19 @@ export default function NativeMotionEditor() {
       if (type === 'selection-changed' || type === 'patch-applied') {
         setSelected(payload.element || null);
       }
+      if (type === 'inventory-changed') {
+        setRuntime((current) => current ? { ...current, assets: payload.assets || [], profile: payload.profile || current.profile } : current);
+      }
+      if (type === 'layout-intent-committed') {
+        const patch = {
+          ...createPatch({ elementId: payload.elementId, kind: 'style', property: 'translate', before: payload.before, value: payload.value }),
+          layoutIntent: { delta: payload.delta, originalRect: payload.originalRect },
+        };
+        setHistory((current) => [...current, patch]);
+        setRedo([]);
+        setSelected(payload.element || null);
+        setSaveState('idle');
+      }
       if (type === 'patches-applied' && payload.element) setSelected(payload.element);
       if (type === 'playback-changed' && payload.speed) setSpeed(payload.speed);
     }
@@ -330,12 +420,17 @@ export default function NativeMotionEditor() {
     if (status === 'ready') send('set-mode', { mode });
   }, [mode, send, status]);
 
+  useEffect(() => {
+    if (status === 'ready') send('set-tool', { tool });
+  }, [send, status, tool]);
+
   function applyNewPatch(patch) {
     if (String(patch.before ?? '') === String(patch.value ?? '')) return;
     send('apply-patch', { patch });
     setHistory((current) => [...current, patch]);
     setRedo([]);
     setSaveState('idle');
+    window.setTimeout(() => send('refresh-inventory'), 80);
   }
 
   function applyStyle(property, value, before) {
@@ -351,6 +446,25 @@ export default function NativeMotionEditor() {
   function applyAttribute(property, value, before) {
     if (!selected) return;
     applyNewPatch(createPatch({ elementId: selected.id, kind: 'attribute', property, before, value }));
+  }
+
+  async function replaceAsset(asset, file) {
+    if (asset.kind === 'svg') {
+      const markup = await file.text();
+      applyNewPatch(createPatch({ elementId: asset.elementId, kind: 'svg', before: asset.markup || '', value: markup }));
+      return;
+    }
+    const value = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    if (asset.kind === 'background') {
+      applyNewPatch(createPatch({ elementId: asset.elementId, kind: 'style', property: 'background-image', before: `url("${asset.source}")`, value: `url("${value}")` }));
+    } else {
+      applyNewPatch(createPatch({ elementId: asset.elementId, kind: 'attribute', property: asset.property || 'src', before: asset.source, value }));
+    }
   }
 
   function undo() {
@@ -432,7 +546,8 @@ export default function NativeMotionEditor() {
       <section className={styles.workspace}>
         <div className={styles.stage} ref={stageRef}>
           <div className={styles.toolRail}>
-            <button type="button" aria-pressed={mode === 'edit'} onClick={() => setMode('edit')} title="Select elements"><MousePointer2 /></button>
+            <button type="button" aria-pressed={mode === 'edit' && tool === 'select'} onClick={() => { setMode('edit'); setTool('select'); }} title="Select elements"><MousePointer2 /></button>
+            <button type="button" aria-pressed={mode === 'edit' && tool === 'move'} onClick={() => { setMode('edit'); setTool('move'); }} title="Move freely"><Move /></button>
             <span />
             <button type="button" onClick={() => setActiveTab('motion')} title="Inspect motion"><Gauge /></button>
           </div>
@@ -482,13 +597,14 @@ export default function NativeMotionEditor() {
             <button type="button" aria-label="Selection menu" disabled><ChevronDown /></button>
           </div>
           <nav className={styles.inspectorTabs} aria-label="Inspector tabs">
-            {['properties', 'motion', 'code'].map((tab) => (
+            {['properties', 'assets', 'motion', 'code'].map((tab) => (
               <button key={tab} type="button" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)}>
                 {tab[0].toUpperCase() + tab.slice(1)}
               </button>
             ))}
           </nav>
-          {activeTab === 'properties' && <PropertiesPanel selected={selected} onStyle={applyStyle} onText={applyText} onAttribute={applyAttribute} />}
+          {activeTab === 'properties' && <PropertiesPanel selected={selected} runtime={runtime} onStyle={applyStyle} onText={applyText} onAttribute={applyAttribute} />}
+          {activeTab === 'assets' && <AssetsPanel assets={runtime?.assets || []} onSelect={(elementId) => send('select-element', { elementId })} onReplace={replaceAsset} />}
           {activeTab === 'motion' && <MotionPanel selected={selected} runtime={runtime} speed={speed} onPlayback={playback} onSpeed={changeSpeed} />}
           {activeTab === 'code' && <CodePanel selected={selected} />}
         </aside>
