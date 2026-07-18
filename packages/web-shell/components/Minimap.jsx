@@ -1,13 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { originColor } from '../lib/node-origin.js';
-import CategoryCounts from './CategoryCounts.jsx';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ListTree, Search } from 'lucide-react';
+import { nodeOrigin, originColor } from '../lib/node-origin.js';
 
-const WORLD_WIDTH = 8000;
-const WORLD_HEIGHT = 6000;
-const MAP_W = 180;
-const MAP_H = 135;
+// The 5173 reference card was 145×95. This version keeps the same nested
+// rounded-frame construction at 85% scale: 123px outer card, 115×53 map.
+const CARD_W = 123;
+const MAP_W = 115;
+const MAP_H = 53;
 
 // Icons for the frame-toggle button. `next` icon = what'll happen on
 // the NEXT click (matches the frameMode state in CanvasClient). Phosphor-
@@ -39,9 +40,27 @@ const FrameIcon = {
   )
 };
 
-export default function Minimap({ nodes, edges = [], transformRef, frameMode = 'all', hasSelection = false, onToggleFrame, onZoomToConnection }) {
+const ORIGIN_LABELS = {
+  url: 'Site',
+  html: 'HTML',
+  md: 'design.md',
+  screenshot: 'Image',
+  prompt: 'Prompt',
+  skill: 'Code',
+  blank: 'Site',
+  unknown: 'Node',
+};
+
+function nodeLabel(node) {
+  return node?.meta?.name || node?.origin_url || `${ORIGIN_LABELS[nodeOrigin(node)] || 'Node'} node`;
+}
+
+export default function Minimap({ nodes, transformRef, frameMode = 'all', hasSelection = false, onToggleFrame, onSelectNode }) {
   const [tick, setTick] = useState(0);
   const [heights, setHeights] = useState(() => new Map());
+  const [nodeMenuOpen, setNodeMenuOpen] = useState(false);
+  const [nodeQuery, setNodeQuery] = useState('');
+  const rootRef = useRef(null);
   // The minimap's bbox depends on `window.innerWidth/Height`,
   // `transformRef.current.transformState`, AND live-measured node
   // heights — none of which exist on the server. Rather than guarding
@@ -51,6 +70,31 @@ export default function Minimap({ nodes, edges = [], transformRef, frameMode = '
   // mismatch by construction.
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+
+  useEffect(() => {
+    if (!nodeMenuOpen) return;
+    function closeOnOutside(event) {
+      if (!rootRef.current?.contains(event.target)) setNodeMenuOpen(false);
+    }
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') setNodeMenuOpen(false);
+    }
+    document.addEventListener('mousedown', closeOnOutside, true);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutside, true);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [nodeMenuOpen]);
+
+  const filteredNodes = useMemo(() => {
+    const query = nodeQuery.trim().toLowerCase();
+    if (!query) return nodes;
+    return nodes.filter((node) => {
+      const origin = nodeOrigin(node);
+      return `${nodeLabel(node)} ${ORIGIN_LABELS[origin] || origin}`.toLowerCase().includes(query);
+    });
+  }, [nodeQuery, nodes]);
 
   // Poll the transform state on each animation frame so the viewport
   // rect stays in sync with pan/zoom. react-zoom-pan-pinch's
@@ -152,21 +196,7 @@ export default function Minimap({ nodes, edges = [], transformRef, frameMode = '
   const vRectH = Math.max(0, vy1 - vy0);
 
   return (
-    <div className="canvas-minimap" style={{ width: MAP_W }}>
-      {/* Category counts strip — merged from the old top-right widget.
-          Collapsed form is the row of icons + counts; expanded form
-          opens the connections dropdown anchored under the strip.
-          When the canvas is empty we hide this row entirely so the
-          minimap doesn't reserve space for nothing. */}
-      {nodes.length > 0 && onZoomToConnection && (
-        <div className="canvas-minimap-counts">
-          <CategoryCounts
-            nodes={nodes}
-            edges={edges}
-            onZoomToConnection={onZoomToConnection}
-          />
-        </div>
-      )}
+    <div ref={rootRef} className="canvas-minimap" style={{ width: CARD_W }}>
       <svg width={MAP_W} height={MAP_H} viewBox={`0 0 ${MAP_W} ${MAP_H}`} className="canvas-minimap-svg">
         {/* World background — same dot grid feel as the canvas. */}
         <rect x={0} y={0} width={MAP_W} height={MAP_H} className="minimap-world" />
@@ -204,31 +234,90 @@ export default function Minimap({ nodes, edges = [], transformRef, frameMode = '
           className="minimap-viewport"
         />
       </svg>
-      {/* Bottom-right frame toggle. Without a selection the button
-          always frames all (icon stays on the "all" variant). With one,
-          clicks alternate between framing the selected node and
-          framing every node — the icon shows what'll happen next. */}
-      {onToggleFrame && (
+      <div className="canvas-minimap-footer">
         <button
           type="button"
-          className="minimap-frame-toggle"
+          className={`minimap-node-toggle${nodeMenuOpen ? ' active' : ''}`}
           onMouseDown={(e) => { e.stopPropagation(); }}
-          onClick={(e) => { e.stopPropagation(); onToggleFrame(); }}
-          aria-label={
-            !hasSelection ? 'Fit all nodes to view'
-              : frameMode === 'selected' ? 'Frame the selected node'
-              : 'Fit all nodes to view'
-          }
-          title={
-            !hasSelection ? 'Fit all nodes'
-              : frameMode === 'selected' ? 'Frame selected node'
-              : 'Fit all nodes'
-          }
+          onClick={(e) => {
+            e.stopPropagation();
+            setNodeMenuOpen((open) => !open);
+          }}
+          aria-label="Browse nodes"
+          aria-expanded={nodeMenuOpen}
+          title="Browse nodes"
         >
-          {(!hasSelection || frameMode === 'all')
-            ? <FrameIcon.all />
-            : <FrameIcon.selected />}
+          <ListTree aria-hidden="true" />
+          <span>Nodes</span>
         </button>
+        {/* Framing lives in its own aligned footer row, matching the compact
+            reference instead of floating over the map. */}
+        {onToggleFrame && (
+          <button
+            type="button"
+            className="minimap-frame-toggle"
+            onMouseDown={(e) => { e.stopPropagation(); }}
+            onClick={(e) => { e.stopPropagation(); onToggleFrame(); }}
+            aria-label={
+              !hasSelection ? 'Fit all nodes to view'
+                : frameMode === 'selected' ? 'Frame the selected node'
+                : 'Fit all nodes to view'
+            }
+            title={
+              !hasSelection ? 'Fit all nodes'
+                : frameMode === 'selected' ? 'Frame selected node'
+                : 'Fit all nodes'
+            }
+          >
+            {(!hasSelection || frameMode === 'all')
+              ? <FrameIcon.all />
+              : <FrameIcon.selected />}
+            <span>{hasSelection && frameMode === 'selected' ? 'Selected' : 'All'}</span>
+          </button>
+        )}
+      </div>
+      {nodeMenuOpen && (
+        <div className="minimap-node-menu" role="dialog" aria-label="Canvas nodes">
+          <div className="minimap-node-menu-head">
+            <b>Nodes</b>
+            <span>{nodes.length}</span>
+          </div>
+          {nodes.length > 7 && (
+            <label className="minimap-node-search">
+              <Search aria-hidden="true" />
+              <input
+                value={nodeQuery}
+                onChange={(event) => setNodeQuery(event.target.value)}
+                placeholder="Find a node"
+                autoFocus
+              />
+            </label>
+          )}
+          <div className="minimap-node-list">
+            {filteredNodes.length ? filteredNodes.map((node) => {
+              const origin = nodeOrigin(node);
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  className="minimap-node-row"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelectNode?.(node.id);
+                    setNodeMenuOpen(false);
+                    setNodeQuery('');
+                  }}
+                >
+                  <i style={{ background: originColor(node) }} aria-hidden="true" />
+                  <span className="minimap-node-row-name">{nodeLabel(node)}</span>
+                  <small>{ORIGIN_LABELS[origin] || 'Node'}</small>
+                </button>
+              );
+            }) : (
+              <div className="minimap-node-empty">No matching nodes</div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

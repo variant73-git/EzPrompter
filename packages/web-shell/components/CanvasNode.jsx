@@ -227,7 +227,7 @@ function captureCleanHtml(iframe) {
   });
   const body = clone.querySelector('body');
   if (body) body.classList.remove('rb-ed-active');
-  clone.querySelectorAll('#rb-hover-kill, #rb-override-sheet, #rb-cursor-style').forEach((el) => el.remove());
+  clone.querySelectorAll('#rb-hover-kill, #rb-override-sheet, #rb-cursor-style, #uncraft-edit-viewport-lock').forEach((el) => el.remove());
   return '<!DOCTYPE html>\n' + clone.outerHTML;
 }
 
@@ -272,33 +272,6 @@ const CollapseIcon = () => (
     <line x1="3" y1="21" x2="10" y2="14"/>
   </svg>
 );
-
-const VIEWPORTS = [
-  { id: 'mobile',  label: 'Mobile',  width: 390,  icon: (
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>
-    </svg>
-  )},
-  { id: 'tablet',  label: 'Tablet',  width: 768,  icon: (
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="4" y="3" width="16" height="18" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/>
-    </svg>
-  )},
-  { id: 'desktop', label: 'Desktop', width: 1280, icon: (
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="2" y="4" width="20" height="13" rx="2"/><line x1="9" y1="21" x2="15" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
-    </svg>
-  )}
-];
-
-function activeViewportId(width) {
-  let best = null, bestDiff = Infinity;
-  for (const v of VIEWPORTS) {
-    const diff = Math.abs(v.width - width);
-    if (diff < bestDiff && diff <= 24) { best = v.id; bestDiff = diff; }
-  }
-  return best;
-}
 
 // Centered upload affordance for UNPOPULATED nodes (created via the
 // "Connect to" cord-drop menu, or any asset node without image data).
@@ -468,13 +441,15 @@ export default function CanvasNode({
   // first toggle so an instant expand→collapse round-trips correctly.
   const preExpandRef = useRef({ w: null, h: null });
   const [isExpanded, setIsExpanded] = useState(false);
+  const editViewportRef = useRef(null);
+  const expandedEditWidthRef = useRef(null);
 
   // Save the current iframe state as a snapshot, then exit edit mode.
   // Used by the Done button and by "Save and exit" inside the cancel
   // prompt. We capture BEFORE unmounting the editor — the editor's
   // teardown is async (50ms StrictMode grace), so capturing first gives
   // us the user's edits while the iframe DOM is still authoritative.
-  async function saveAndExit() {
+  const saveAndExit = useCallback(async () => {
     if (!onSaveEdit || !iframeRef.current) {
       onEditingChange?.(false);
       return;
@@ -492,7 +467,34 @@ export default function CanvasNode({
     onEditingChange?.(false);
     // Editor unmounts asynchronously; clear the busy spinner once the
     // editing flag flips back via the parent prop.
-  }
+  }, [onEditingChange, onSaveEdit]);
+
+  // The canvas owns edit-mode chrome. Its fixed topbar forwards Done/Cancel
+  // to the active node so saving still captures the live iframe before the
+  // editor unmounts. Busy state travels back the other way for honest button
+  // feedback and to prevent double submits.
+  useEffect(() => {
+    if (!editing) return undefined;
+    function handleEditorAction(event) {
+      if (event.detail?.nodeId !== node.id || editorBusy) return;
+      if (event.detail.action === 'save') void saveAndExit();
+      if (event.detail.action === 'cancel') setShowCancelPrompt(true);
+    }
+    window.addEventListener('uncraft:editor-action', handleEditorAction);
+    return () => window.removeEventListener('uncraft:editor-action', handleEditorAction);
+  }, [editing, editorBusy, node.id, saveAndExit]);
+
+  useEffect(() => {
+    if (!editing) return undefined;
+    window.dispatchEvent(new CustomEvent('uncraft:editor-busy', {
+      detail: { nodeId: node.id, busy: editorBusy },
+    }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('uncraft:editor-busy', {
+        detail: { nodeId: node.id, busy: false },
+      }));
+    };
+  }, [editing, editorBusy, node.id]);
 
   // Discard: exit edit mode WITHOUT saving, then ask the parent to bump
   // _resetTick so the iframe remounts with the unmodified server html.
@@ -533,6 +535,86 @@ export default function CanvasNode({
     } catch (e) { /* cross-origin */ }
     return null;
   }
+
+  // Edit mode works on the entire page, not a cropped viewport. Measure the
+  // document at the current device size, expand the node once per width, and
+  // ask the canvas to fit the complete result between the editor panels.
+  // The resting viewport is restored on exit so opening the editor does not
+  // permanently turn a tidy canvas card into a multi-thousand-pixel column.
+  useLayoutEffect(() => {
+    if (node.kind !== 'site' || !onResize) return undefined;
+
+    if (!editing) {
+      const initial = editViewportRef.current;
+      expandedEditWidthRef.current = null;
+      if (!initial) return undefined;
+      editViewportRef.current = null;
+      const presets = new Map([[1280, 800], [768, 920], [390, 844]]);
+      const widthChanged = Math.abs(node.width - initial.width) > 4;
+      const restoredHeight = widthChanged
+        ? (presets.get(Math.round(node.width)) || Math.max(60, Math.round(node.width * initial.height / initial.width)))
+        : initial.height;
+      onResize(node.width, restoredHeight, { restoreAfterEditing: true });
+      return undefined;
+    }
+
+    if (!editViewportRef.current) {
+      editViewportRef.current = { width: node.width, height: node.height || 800 };
+    }
+    if (expandedEditWidthRef.current === node.width) return undefined;
+    expandedEditWidthRef.current = node.width;
+
+    const timer = window.setTimeout(() => {
+      try {
+        const doc = iframeRef.current?.contentDocument;
+        if (!doc?.documentElement) return;
+        const root = doc.documentElement;
+        const body = doc.body;
+        const measuredHeight = Math.max(
+          root.scrollHeight,
+          root.offsetHeight,
+          root.clientHeight,
+          body?.scrollHeight || 0,
+          body?.offsetHeight || 0,
+          body?.clientHeight || 0,
+          800
+        );
+        // The node body contributes a few pixels of chrome/border around the
+        // iframe. Keep a small safety allowance so the last row of the page is
+        // never clipped by that wrapper geometry.
+        const fullHeight = Math.min(12000, measuredHeight + 8);
+        contentSizeRef.current = { w: node.width, h: fullHeight };
+        onResize(node.width, fullHeight, { fitEditing: true });
+      } catch { /* same-origin iframe can still be briefly unavailable during reload */ }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [editing, node.height, node.kind, node.width, onResize]);
+
+  // Prevent wide site internals from creating a second horizontal navigation
+  // axis while editing. The temporary style is stripped from saved snapshots.
+  useEffect(() => {
+    if (!editing || node.kind !== 'site') return undefined;
+    const iframe = iframeRef.current;
+    function lockOverflow() {
+      try {
+        const doc = iframe?.contentDocument;
+        if (!doc?.head) return;
+        let style = doc.getElementById('uncraft-edit-viewport-lock');
+        if (!style) {
+          style = doc.createElement('style');
+          style.id = 'uncraft-edit-viewport-lock';
+          style.textContent = 'html,body{max-width:100%!important;overflow-x:hidden!important}';
+          doc.head.appendChild(style);
+        }
+      } catch { /* iframe reload */ }
+    }
+    lockOverflow();
+    iframe?.addEventListener('load', lockOverflow);
+    return () => {
+      iframe?.removeEventListener('load', lockOverflow);
+      try { iframe?.contentDocument?.getElementById('uncraft-edit-viewport-lock')?.remove(); } catch {}
+    };
+  }, [editing, node.kind]);
 
   // Expand toggle — grow the body to fit the full iframe content
   // (scrollWidth × scrollHeight) on first click, restore the
@@ -856,7 +938,6 @@ export default function CanvasNode({
     'chunk';
   const title = node.origin_url || node.meta?.name || node.template_slug || 'untitled';
   const hasEdits = !!(node.current_snapshot_id && node.original_snapshot_id && node.current_snapshot_id !== node.original_snapshot_id);
-  const activeVp = activeViewportId(node.width);
   // Below ~520px even at 1× zoom the topbar can't fit pill + title +
   // 3 buttons + grip without overlap. Collapse non-essentials.
   const narrowTopbar = (node.width || 0) < 520;
@@ -901,8 +982,7 @@ export default function CanvasNode({
   // Wheel routing when the mouse is over the iframe (edit-mode only — in
   // rest mode the iframe has pointer-events:none so wheel hits .cnode-body
   // in the host doc and the canvas-level capture handler takes it).
-  //   • plain wheel → pan canvas (deltaX/deltaY in screen px). Same Figma
-  //     feel everywhere, including over the captured site.
+  //   • plain wheel is consumed in edit mode; the canvas stays locked.
   //   • Cmd/Ctrl + wheel → cursor-anchored canvas zoom. Iframe-local
   //     coords (e.clientX/Y) are translated to host viewport coords via
   //     the iframe's bounding rect.
@@ -937,7 +1017,7 @@ export default function CanvasNode({
             const cx = rect.left + (e.clientX || 0) * s;
             const cy = rect.top + (e.clientY || 0) * s;
             z.zoomAtPoint?.(e.deltaY || 0, cx, cy);
-          } else {
+          } else if (!editing) {
             z.panBy?.(-(e.deltaX || 0), -(e.deltaY || 0));
           }
         };
@@ -1031,16 +1111,14 @@ export default function CanvasNode({
       {debit != null && debit > 0 && (
         <div className="cnode-debit" aria-hidden="true">−{debit}</div>
       )}
-      {/* Anchored title — only visible when the canvas is zoomed-out enough
-          that the topbar collapses (`body.canvas-zoom-low`). Sits above the
-          node at top-left so the user can still tell what each node is. */}
+      {/* Legacy anchor retained for markup compatibility. Identity now stays
+          in the same top-left floating tag at every zoom level. */}
       <div
         className="cnode-anchor-title"
         aria-hidden={!selected}
         title={title}
         onMouseDown={onTopbarMouseDown}
       >
-        {KindIcon && <KindIcon />}
         <span className="cnode-anchor-title-text">{truncateWithExtension(title, 15)}</span>
       </div>
 
@@ -1048,14 +1126,12 @@ export default function CanvasNode({
           title moved OUTSIDE the node, above its top-left corner. This tag
           is also the node's MOVE handle (grab-hand cursor), replacing the
           topbar grip. Chrome scale floors at 30% zoom (--fs in CSS); at low
-          zoom the centered .cnode-anchor-title takes over (and becomes the
-          drag handle — see its onMouseDown above). Hidden in edit mode:
+          zoom it remains in the same top-left position. Hidden in edit mode:
           the edit frame puts the node's top at the viewport top, so chrome
           above the node would be off-screen anyway. */}
       {!editing && (
         <div className="cnode-float-tag" onMouseDown={onTopbarMouseDown} title={title}>
           <span className={`kind-pill kind-${kindLabel === 'site' ? 'site' : 'other'}`}>
-            {KindIcon && <KindIcon />}
             <span className="kind-pill-lbl">{kindLabel}</span>
           </span>
           {node.kind !== 'prompt' && (
@@ -1137,32 +1213,6 @@ export default function CanvasNode({
         </div>
       )}
 
-      {selected && onResize && node.kind === 'site' && (
-        <div
-          className={`cnode-viewport-switcher${editing ? ' disabled' : ''}`}
-          onMouseDown={(e) => e.stopPropagation()}
-          title={editing ? 'disabled on edit mode' : undefined}
-        >
-          {VIEWPORTS.map((v) => (
-            <button
-              key={v.id}
-              type="button"
-              className={`cnode-vp-btn${activeVp === v.id ? ' active' : ''}`}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                if (editing) return;
-                e.stopPropagation();
-                onResize(v.width);
-              }}
-              disabled={editing}
-              title={editing ? 'disabled on edit mode' : `${v.label} — ${v.width}px`}
-              aria-label={`Resize to ${v.label} (${v.width}px)`}
-            >
-              {v.icon}
-            </button>
-          ))}
-        </div>
-      )}
       <div
         className={`cnode-topbar${removing ? ' removing' : ''}`}
         onMouseDown={onTopbarMouseDown}
@@ -1209,7 +1259,6 @@ export default function CanvasNode({
               ref={pillRef}
               className={`kind-pill kind-${kindLabel === 'site' ? 'site' : 'other'}${pillFits ? '' : ' kind-pill-clipped'}`}
             >
-              {KindIcon && <KindIcon />}
               <span className="kind-pill-lbl">{kindLabel}</span>
             </span>
             {node.kind !== 'prompt' && (

@@ -30,6 +30,13 @@ export const api = {
   renameBoard: (id, name) => fetch(`/api/boards/${id}`, { ...COMMON, method: 'PATCH', body: JSON.stringify({ name }) }).then(jsonOrThrow),
   deleteBoard: (id) => fetch(`/api/boards/${id}`, { ...COMMON, method: 'DELETE' }).then(jsonOrThrow),
 
+  listWorkflows: () => fetch('/api/workflows', COMMON).then(jsonOrThrow),
+  saveWorkflow: (boardId, name, description) => fetch('/api/workflows', {
+    ...COMMON,
+    method: 'POST',
+    body: JSON.stringify({ boardId, name, description })
+  }).then(jsonOrThrow),
+
   createNode: (body) => fetch('/api/nodes', { ...COMMON, method: 'POST', body: JSON.stringify(body) }).then(jsonOrThrow),
   updateNode: (id, body) => fetch(`/api/nodes/${id}`, { ...COMMON, method: 'PATCH', body: JSON.stringify(body) }).then(jsonOrThrow),
   resetNode: (id) => fetch(`/api/nodes/${id}/reset`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),

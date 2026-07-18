@@ -1,62 +1,47 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { nodeOrigin, originColor } from '../lib/node-origin.js';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ChevronUp,
+  Code2,
+  ExternalLink,
+  FileText,
+  Image as ImageIcon,
+  Monitor,
+  Palette,
+  PanelRightClose,
+  PanelRightOpen,
+  Pencil,
+  Sparkles,
+} from 'lucide-react';
+import { originColor } from '../lib/node-origin.js';
 
-// Right-side canvas inspector — "Working Table" chrome (unspirit import,
-// 2026-07-12). Figma-familiar geometry: Design/Prototype tabs, selection
-// title with the node's category dot, then panels. Frame X/Y/W/H are LIVE
-// (read from the selected node, editable — commits move/resize through the
-// same path as dragging). Everything else is an honest placeholder
-// (disabled) until the feature exists. Collapses to a detached 42px button
-// under the topbar; the minimap follows via --inspector-w.
-
+// The canvas inspector is intentionally contextual. With no selection it
+// disappears and returns the space to the canvas. With a selection it offers
+// a useful overview first; the mature editor-core remains the place for deep
+// website editing.
 const COLLAPSE_KEY = 'uncraft-inspector-collapsed';
 
-const PanelIcon = {
-  Collapse: () => (
-    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/><path d="m10 9 2.5 3L10 15"/>
-    </svg>
-  ),
-  Chevron: () => (
-    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="m6 15 6-6 6 6"/>
-    </svg>
-  ),
-  Plus: () => (
-    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 5v14"/><path d="M5 12h14"/>
-    </svg>
-  ),
-  More: () => (
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
-      <circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>
-    </svg>
-  )
-};
-
-// One numeric frame field. Commits on Enter/blur; empty or NaN restores
-// the previous value (fields can never be blanked — house editing rule).
-function FrameField({ label, value, onCommit, disabled }) {
+function FrameField({ label, value, onCommit }) {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => { setDraft(String(value)); }, [value]);
+
   function commit() {
-    const n = Math.round(parseFloat(draft));
-    if (Number.isNaN(n)) { setDraft(String(value)); return; }
-    if (n !== value) onCommit(n);
+    const next = Math.round(parseFloat(draft));
+    if (Number.isNaN(next)) { setDraft(String(value)); return; }
+    if (next !== value) onCommit(next);
   }
+
   return (
     <label className="cinsp-field">
       <span>{label}</span>
       <input
         value={draft}
-        disabled={disabled}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
-          if (e.key === 'Escape') { setDraft(String(value)); e.currentTarget.blur(); }
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); }
+          if (event.key === 'Escape') { setDraft(String(value)); event.currentTarget.blur(); }
         }}
         inputMode="numeric"
         spellCheck={false}
@@ -65,107 +50,247 @@ function FrameField({ label, value, onCommit, disabled }) {
   );
 }
 
-function Panel({ title, children, collapsed }) {
+function Panel({ title, icon: Icon, children, defaultCollapsed = false }) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   return (
-    <section className="cinsp-panel">
+    <section className={`cinsp-panel${collapsed ? ' collapsed' : ''}`}>
       <header>
-        <b>{title}</b>
-        <button type="button" disabled title={collapsed ? `${title} — coming soon` : undefined}>
-          {collapsed ? <PanelIcon.Plus /> : <PanelIcon.Chevron />}
+        <button
+          type="button"
+          className="cinsp-panel-toggle"
+          onClick={() => setCollapsed((value) => !value)}
+          aria-expanded={!collapsed}
+        >
+          <span className="cinsp-panel-title">{Icon && <Icon aria-hidden="true" />}<b>{title}</b></span>
+          <ChevronUp aria-hidden="true" />
         </button>
       </header>
-      {!collapsed && children}
+      {!collapsed && <div className="cinsp-panel-body">{children}</div>}
     </section>
   );
 }
 
-export default function CanvasInspector({ node, onFrameChange }) {
+function Detail({ label, value, mono = false }) {
+  if (value == null || value === '') return null;
+  return (
+    <div className="cinsp-detail">
+      <span>{label}</span>
+      <b className={mono ? 'mono' : undefined}>{value}</b>
+    </div>
+  );
+}
+
+function sourceLabel(node) {
+  if (!node?.origin_url) return node?.meta?.source || 'Created in Uncraft';
+  try { return new URL(node.origin_url).hostname.replace(/^www\./, ''); }
+  catch { return node.origin_url; }
+}
+
+function nodeLabel(node) {
+  return node?.meta?.name || node?.name || node?.origin_url || `${node?.kind || 'unknown'} node`;
+}
+
+function readableKind(node) {
+  const kind = node?.kind;
+  if (kind === 'designmd') return 'Design system';
+  if (kind === 'chunk') return 'HTML snippet';
+  if (kind === 'skill' && node?.meta?.subtype === 'shader') return 'React shader';
+  if (kind === 'skill') return 'Code / skill';
+  if (kind === 'asset') return node?.meta?.mediaType === 'video' ? 'Video' : 'Image';
+  if (kind === 'site') return 'Website';
+  if (kind === 'prompt') return 'Prompt';
+  return kind ? `${kind.charAt(0).toUpperCase()}${kind.slice(1)}` : 'Node';
+}
+
+function paletteFrom(node) {
+  const sources = [
+    node?.current_design_md,
+    node?.design_md,
+    node?.meta?.designMd,
+    JSON.stringify(node?.meta?.palette || []),
+  ].filter(Boolean).join(' ');
+  const colors = sources.match(/#[0-9a-fA-F]{6}\b/g) || [];
+  return [...new Set(colors.map((color) => color.toUpperCase()))].slice(0, 8);
+}
+
+function codeFrom(node) {
+  return node?.meta?.code || node?.current_html || node?.html || node?.meta?.snippet || '';
+}
+
+function Overview({ node }) {
+  const kind = node.kind;
+  const palette = useMemo(() => paletteFrom(node), [node]);
+  const prompt = node?.meta?.prompt || node?.meta?.text || node?.prompt || node?.current_prompt || '';
+  const isSite = kind === 'site';
+  const isAsset = kind === 'asset';
+  const isDesign = kind === 'designmd';
+  const isCode = kind === 'skill' || kind === 'chunk';
+
+  return (
+    <>
+      <Panel title="Overview" icon={isAsset ? ImageIcon : isDesign ? Palette : isCode ? Code2 : FileText}>
+        <div className="cinsp-details">
+          <Detail label="Type" value={readableKind(node)} />
+          <Detail label="Source" value={sourceLabel(node)} />
+          {node?.meta?.status && <Detail label="Status" value={node.meta.status} />}
+          {isSite && <Detail label="Viewport" value={`${Math.round(node.width)} × ${Math.round(node.height)}`} mono />}
+          {isAsset && <Detail label="Dimensions" value={node?.meta?.dimensions || `${Math.round(node.width)} × ${Math.round(node.height)}`} mono />}
+          {isCode && <Detail label="Runtime" value={node?.meta?.runtime || node?.meta?.language || 'React / JavaScript'} />}
+        </div>
+      </Panel>
+
+      {kind === 'prompt' && (
+        <Panel title="Prompt" icon={Sparkles}>
+          <p className="cinsp-copy-preview">{prompt || 'This prompt has no text yet.'}</p>
+          <p className="cinsp-help">Edit the prompt directly in its node. Connected nodes use it as transformation context.</p>
+        </Panel>
+      )}
+
+      {isAsset && (
+        <Panel title="Image tools" icon={Sparkles}>
+          {(node?.current_screenshot || node?.meta?.dataUrl || node?.meta?.url) && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img className="cinsp-asset-preview" src={node.current_screenshot || node.meta.dataUrl || node.meta.url} alt="Selected asset preview" />
+          )}
+          <p className="cinsp-help">Smart Edit remains available on the selected image node, preserving the original as context.</p>
+        </Panel>
+      )}
+
+      {isDesign && (
+        <Panel title="Design language" icon={Palette}>
+          {palette.length ? (
+            <div className="cinsp-palette" aria-label="Extracted color palette">
+              {palette.map((color) => <span key={color} title={color} style={{ background: color }} />)}
+            </div>
+          ) : <p className="cinsp-help">Run or connect this node to extract its color and type scales.</p>}
+          <Detail label="Type scale" value={node?.meta?.typeScale || 'Modular scale'} />
+          <Detail label="Format" value="design.md" mono />
+        </Panel>
+      )}
+
+      {isCode && (
+        <Panel title={node?.meta?.subtype === 'shader' ? 'Shader controls' : 'Code behavior'} icon={Code2}>
+          {node?.meta?.subtype === 'shader' ? (
+            <>
+              <Detail label="Uniforms" value={node?.meta?.uniforms?.length || 'Detected from code'} />
+              <Detail label="Render" value={node?.meta?.renderer || 'React / WebGL'} />
+              <p className="cinsp-help">Shaders stay inside the Code category, with subtype-specific controls surfaced here.</p>
+            </>
+          ) : (
+            <p className="cinsp-help">Code snippets, skills, and shaders share one reusable category. Runtime-specific controls appear when detected.</p>
+          )}
+        </Panel>
+      )}
+
+      <Panel title="Frame" icon={Monitor}>
+        <div className="cinsp-field-grid">
+          <FrameField label="X" value={Math.round(node.pos_x)} onCommit={(value) => node.onFrameChange({ posX: value })} />
+          <FrameField label="Y" value={Math.round(node.pos_y)} onCommit={(value) => node.onFrameChange({ posY: value })} />
+          <FrameField label="W" value={Math.round(node.width)} onCommit={(value) => node.onFrameChange({ width: Math.max(80, value) })} />
+          <FrameField label="H" value={Math.round(node.height)} onCommit={(value) => node.onFrameChange({ height: Math.max(60, value) })} />
+        </div>
+      </Panel>
+    </>
+  );
+}
+
+function CodePreview({ node }) {
+  const value = codeFrom(node);
+  return (
+    <div className="cinsp-code-view">
+      <div className="cinsp-code-meta">
+        <span>{node?.meta?.language || (node.kind === 'site' ? 'HTML' : 'JavaScript')}</span>
+        <span>Read-only preview</span>
+      </div>
+      <pre>{value ? value.slice(0, 1800) : 'No code snapshot is available for this node yet.'}</pre>
+    </div>
+  );
+}
+
+function WebsiteActions({ node, onEditSite }) {
+  return (
+    <div className="cinsp-primary-action">
+      <div>
+        <span>Website</span>
+        <p>Open the visual editor or inspect the current result in a clean browser tab.</p>
+      </div>
+      <button type="button" onClick={onEditSite}>
+        <Pencil aria-hidden="true" />
+        Edit website
+      </button>
+      <a href={`/preview/${node.id}`} target="_blank" rel="noopener noreferrer">
+        <ExternalLink aria-hidden="true" />
+        Open in Browser
+      </a>
+    </div>
+  );
+}
+
+export default function CanvasInspector({ node, onEditSite, onFrameChange }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [tab, setTab] = useState('properties');
 
   useEffect(() => {
     try { setCollapsed(localStorage.getItem(COLLAPSE_KEY) === '1'); } catch { /* SSR */ }
   }, []);
 
-  // The minimap anchors off this var so it never sits under the panel.
+  useEffect(() => { setTab('properties'); }, [node?.id]);
+
+  // The minimap follows the actual visible panel, not a remembered preference.
   useEffect(() => {
-    document.documentElement.style.setProperty('--inspector-w', collapsed ? '0px' : '248px');
-    return () => { document.documentElement.style.removeProperty('--inspector-w'); };
-  }, [collapsed]);
+    const inspectorVisible = Boolean(node) && !collapsed;
+    document.documentElement.style.setProperty('--inspector-w', inspectorVisible ? '248px' : '0px');
+    document.documentElement.style.setProperty('--minimap-top', collapsed && node ? '72px' : '62px');
+    document.documentElement.style.setProperty('--minimap-right', inspectorVisible ? '264px' : '15px');
+    return () => {
+      document.documentElement.style.removeProperty('--inspector-w');
+      document.documentElement.style.removeProperty('--minimap-top');
+      document.documentElement.style.removeProperty('--minimap-right');
+    };
+  }, [collapsed, node]);
 
   function toggle() {
-    setCollapsed((v) => {
-      try { localStorage.setItem(COLLAPSE_KEY, v ? '0' : '1'); } catch { /* ignore */ }
-      return !v;
+    setCollapsed((value) => {
+      try { localStorage.setItem(COLLAPSE_KEY, value ? '0' : '1'); } catch { /* ignore */ }
+      return !value;
     });
   }
 
-  const color = node ? originColor(node) : null;
-  const kind = node ? nodeOrigin(node) : null;
-  const title = node?.meta?.name || node?.origin_url || (node ? `${kind} node` : '');
+  if (!node) return null;
 
   if (collapsed) {
     return (
-      <button
-        type="button"
-        className="canvas-inspector collapsed"
-        onClick={toggle}
-        title="Expand inspector"
-        aria-label="Expand inspector"
-      >
-        <PanelIcon.Collapse />
+      <button type="button" className="canvas-inspector collapsed" onClick={toggle} title="Expand inspector" aria-label="Expand inspector">
+        <PanelRightOpen aria-hidden="true" />
       </button>
     );
   }
 
+  const color = originColor(node);
+  const framedNode = { ...node, onFrameChange: (patch) => onFrameChange(node.id, patch) };
+
   return (
-    <aside className="canvas-inspector">
+    <aside className="canvas-inspector" aria-label="Selected node inspector">
       <div className="cinsp-head">
-        <div className="cinsp-tabs">
-          <button type="button" className="active">Design</button>
-          <button type="button" disabled title="Prototype — coming soon">Prototype</button>
+        <div className="cinsp-tabs" role="tablist" aria-label="Inspector views">
+          <button type="button" className={tab === 'properties' ? 'active' : ''} onClick={() => setTab('properties')} role="tab" aria-selected={tab === 'properties'}>Properties</button>
+          <button type="button" className={tab === 'code' ? 'active' : ''} onClick={() => setTab('code')} role="tab" aria-selected={tab === 'code'}>Code</button>
         </div>
         <button type="button" className="cinsp-collapse" onClick={toggle} title="Collapse inspector" aria-label="Collapse inspector">
-          <PanelIcon.Collapse />
+          <PanelRightClose aria-hidden="true" />
         </button>
       </div>
 
-      {node ? (
-        <>
-          <div className="cinsp-selection">
-            <span className="cinsp-type-dot" style={{ background: color }} />
-            <span className="cinsp-selection-name">{title}</span>
-            <button type="button" disabled title="More — right-click the node for actions">
-              <PanelIcon.More />
-            </button>
-          </div>
+      <div className="cinsp-selection">
+        <span className="cinsp-type-chip" style={{ color, borderColor: `${color}66`, background: `${color}18` }}>{readableKind(node)}</span>
+        <span className="cinsp-selection-name" title={nodeLabel(node)}>{nodeLabel(node)}</span>
+      </div>
 
-          <Panel title="Frame">
-            <div className="cinsp-field-grid">
-              <FrameField label="X" value={Math.round(node.pos_x)} onCommit={(v) => onFrameChange(node.id, { posX: v })} />
-              <FrameField label="Y" value={Math.round(node.pos_y)} onCommit={(v) => onFrameChange(node.id, { posY: v })} />
-              <FrameField label="W" value={Math.round(node.width)} onCommit={(v) => onFrameChange(node.id, { width: Math.max(80, v) })} />
-              <FrameField label="H" value={Math.round(node.height)} onCommit={(v) => onFrameChange(node.id, { height: Math.max(60, v) })} />
-            </div>
-          </Panel>
+      {node.kind === 'site' && <WebsiteActions node={node} onEditSite={onEditSite} />}
 
-          <Panel title="Appearance">
-            <div className="cinsp-row"><span>Opacity</span><button type="button" disabled title="Coming soon">100%</button></div>
-            <div className="cinsp-row"><span>Corner</span><button type="button" disabled title="Coming soon">12</button></div>
-          </Panel>
-
-          <Panel title="Fill">
-            <div className="cinsp-fill">
-              <i style={{ background: color }} />
-              <span>{(color || '').replace('#', '').toUpperCase()}</span>
-              <span>100%</span>
-            </div>
-          </Panel>
-
-          <Panel title="Export" collapsed />
-        </>
-      ) : (
-        <div className="cinsp-empty">Select a node to inspect it.</div>
-      )}
+      {tab === 'properties'
+        ? <Overview node={framedNode} />
+        : <CodePreview node={node} />}
     </aside>
   );
 }

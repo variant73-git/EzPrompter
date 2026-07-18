@@ -94,7 +94,7 @@ read these. **Color is grammar; do not repurpose.**
 |---|---|---|
 | site (URL / blank / clone) | `#2966EA` | white |
 | .html upload | `#F97316` | dark |
-| .md / design-system | `#C2B44A` | dark (kept over Unspirit's `#EEA665` — too close to .html orange) |
+| .md / design-system | `#EEA665` | dark |
 | image / asset | `#7951C2` | white |
 | prompt | `#ECEBF1` | dark |
 | skill | `#F472B6` | dark |
@@ -126,10 +126,13 @@ read these. **Color is grammar; do not repurpose.**
   brand, New board, BOARDS, LIBRARY (placeholders), user pill.
 - **Topbar** 46px (`--topbar-h`): board-name crumb left; credits +
   Preview/Share (placeholders) right.
-- **Tool rail** top-center: select/hand/frame/text/draw placeholders + live "+".
+- **Tool rail** vertical and centered along the canvas left edge: cursor, momentary Space-to-pan
+  hand toggle, Notes, Feedback, then a subtle divider and Undo/Redo. The
+  horizontal cursor/hand switch expands on hover and reflects Space while it
+  is held; Hand never persists.
 - **Zoom dock** bottom-left (clears the sidebar). **Minimap** top-right,
   steps left of the inspector via `--inspector-w`.
-- **Inspector** right 248px: Design/Prototype tabs, selection title with
+- **Inspector** right 248px: Properties/Code tabs, selection title with
   origin dot, Frame (LIVE X/Y/W/H), Appearance/Fill/Export placeholders;
   collapses to a detached 42px control.
 - ALL of it **overlays** the full-viewport canvas world (never insets it —
@@ -229,4 +232,4 @@ Solid warm charcoal, Inter, no serif accent.
 | 2026-06-09 | Consolidated design docs into this DESIGN.md | Previous copies were stale RepixBridge-era popup docs. |
 | 2026-07-03 | Toolbar hover standard; solid click-dropdowns | Hover fills the slot; data menus must not bleed canvas. |
 | 2026-07-03→06 | Perf doctrine: 40% floor, hybrid chrome scaling, no in-world blur, gesture hot path | Canvas fluidity arc (CLAUDE.md 148–150). |
-| 2026-07-12 | **"Working Table" system imported from the Unspirit study** — warm charcoal palette, Inter single-face, solid surfaces (blur retired product-wide), ink-inverted primaries, accent = site blue `#2966EA`, double selection ring, solid category ports, paper prompt nodes, quiet dotted cords, sidebar+topbar+tool-rail+inspector chrome, canvas DARK-ONLY | User decisions: Inter literal; import everything (placeholders disabled where no feature); `.md` keeps `#C2B44A`; light mode removed. Extension port pending canvas validation. |
+| 2026-07-12 | **"Working Table" system imported from the Unspirit study** — warm charcoal palette, Inter single-face, solid surfaces (blur retired product-wide), ink-inverted primaries, accent = site blue `#2966EA`, double selection ring, solid category ports, paper prompt nodes, quiet dotted cords, sidebar+topbar+tool-rail+inspector chrome, canvas DARK-ONLY | User decisions: Inter literal; import everything (placeholders disabled where no feature); `.md` uses `#EEA665`; light mode removed. Extension port pending canvas validation. |

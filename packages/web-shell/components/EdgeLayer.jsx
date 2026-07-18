@@ -14,13 +14,12 @@ const WORLD_HEIGHT = 6000;
 // dots by --chrome-scale, so they hold their on-screen size on zoom-out and
 // stop growing at 40% zoom (below it they scale with the world). The anchor
 // math here divides by the SAME chromeScale so cords keep meeting the dots.
-const SLOT_SIZE = 24.05; // = the receiver dot's size (keeps cord anchors ON the circles)
+const SLOT_SIZE = 14;    // = the receiver dot's size (keeps cord anchors ON the circles)
 const SLOT_GAP = 9;      // = the CSS stack gap
-// Ports sit this many SCREEN px OUTSIDE the node edge (a short gap so the
-// dots float just off the frame). Cord endpoints shift out by the same amount
-// so they meet the dots. MUST match the CSS port offsets (.cnode-port-right /
-// .cnode-port-stack-left) and CanvasClient.findSnapTarget's PORT_GAP.
-const PORT_GAP = 17.08;
+// Ports are centered on the node edge. MUST match the CSS port offsets
+// (.cnode-port-right / .cnode-port-stack-left) and
+// CanvasClient.findSnapTarget's PORT_GAP.
+const PORT_GAP = 0;
 
 function nodePort(n, side, measuredH, slotIndex = 0, slotCount = 1, scale = 1) {
   const h = measuredH ?? n.height ?? 800;

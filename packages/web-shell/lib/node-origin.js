@@ -28,7 +28,7 @@ export function nodeOrigin(node) {
 export const ORIGIN_COLORS = {
   url:        '#2966EA',  // blue — "site"
   html:       '#f97316',  // orange — .html (unchanged)
-  md:         '#C2B44A',  // ochre — .md
+  md:         '#EEA665',  // warm ochre — design.md
   screenshot: '#7951C2',  // violet — image
   prompt:     '#ECEBF1',  // near-white grey — prompt
   skill:      '#f472b6',  // pink

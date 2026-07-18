@@ -1826,4 +1826,3 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
 });
 
 export default PromptDock;
-

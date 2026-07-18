@@ -11,6 +11,8 @@ import {
   Check,
   ChevronDown,
   Code2,
+  Copy,
+  Diamond,
   Eye,
   Film,
   Gauge,
@@ -24,10 +26,13 @@ import {
   Redo2,
   RotateCcw,
   Save,
+  ScrollText,
   Smartphone,
   Tablet,
+  Trash2,
   Undo2,
   Upload,
+  X,
 } from 'lucide-react';
 import {
   command,
@@ -36,6 +41,13 @@ import {
   isRuntimeMessage,
   storageKey,
 } from '../../lib/motion-editor/protocol.js';
+import {
+  coerceMotionValue,
+  motionCapabilityLabel,
+  motionDriverLabel,
+  motionPlaybackMode,
+  normalizeMotionClip,
+} from '../../lib/motion-editor/motion-ir.js';
 import styles from './native-motion-editor.module.css';
 
 const SOURCE = '/api/native-clone/index.html';
@@ -46,10 +58,165 @@ const DEVICES = {
   mobile: { label: 'Mobile', width: 390, height: 844, Icon: Smartphone },
 };
 
-function Field({ label, defaultValue, suffix, onCommit, type = 'text', disabled = false }) {
+const AUTO_KEYFRAME_PROPERTIES = new Set([
+  'backgroundColor', 'borderRadius', 'color', 'filter', 'fontSize', 'fontWeight',
+  'letterSpacing', 'lineHeight', 'opacity', 'transform', 'translate',
+]);
+
+function animationProperty(property) {
+  return String(property || '').replace(/-([a-z])/g, (_, character) => character.toUpperCase());
+}
+
+function patchValuesEqual(first, second) {
+  if (typeof first === 'object' || typeof second === 'object') {
+    try { return JSON.stringify(first) === JSON.stringify(second); } catch (_) { return false; }
+  }
+  return String(first ?? '') === String(second ?? '');
+}
+
+const EASING_PRESETS = {
+  linear: [0, 0, 1, 1],
+  ease: [0.25, 0.1, 0.25, 1],
+  'ease-in': [0.42, 0, 1, 1],
+  'ease-out': [0, 0, 0.58, 1],
+  'ease-in-out': [0.42, 0, 0.58, 1],
+};
+
+function parseEasing(value) {
+  if (EASING_PRESETS[value]) return [...EASING_PRESETS[value]];
+  const match = String(value || '').match(/cubic-bezier\(\s*(-?\d*\.?\d+)\s*,\s*(-?\d*\.?\d+)\s*,\s*(-?\d*\.?\d+)\s*,\s*(-?\d*\.?\d+)\s*\)/i);
+  return match ? match.slice(1).map(Number) : [...EASING_PRESETS.ease];
+}
+
+function formatBezier(values) {
+  return `cubic-bezier(${values.map((value) => Number(value).toFixed(2).replace(/\.00$/, '')).join(', ')})`;
+}
+
+function keyframeDescriptor(keyframe, offset = keyframe?.offset) {
+  if (!keyframe) return { offset: Number(offset) || 0, exists: false };
+  return {
+    offset: Number(offset) || 0,
+    value: String(keyframe.value ?? ''),
+    ...(keyframe.easing ? { easing: keyframe.easing } : {}),
+    exists: true,
+  };
+}
+
+function CubicBezierEditor({ keyframe, nextKeyframe, onCommit, onClose }) {
+  const svgRef = useRef(null);
+  const activeHandle = useRef(null);
+  const easing = keyframe?.easing || 'ease';
+  const [curve, setCurve] = useState(() => parseEasing(easing));
+
+  useEffect(() => setCurve(parseEasing(easing)), [easing, keyframe?.offset]);
+
+  function updateHandle(event, commit = false) {
+    if (activeHandle.current == null || !svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, 1 - ((event.clientY - rect.top) / rect.height)));
+    const next = [...curve];
+    const start = activeHandle.current * 2;
+    next[start] = x;
+    next[start + 1] = y;
+    setCurve(next);
+    if (commit) onCommit(formatBezier(next));
+  }
+
+  function nudgeHandle(event, index) {
+    const direction = {
+      ArrowLeft: [-0.02, 0], ArrowRight: [0.02, 0],
+      ArrowDown: [0, -0.02], ArrowUp: [0, 0.02],
+    }[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    const next = [...curve];
+    const start = index * 2;
+    next[start] = Math.max(0, Math.min(1, next[start] + direction[0]));
+    next[start + 1] = Math.max(0, Math.min(1, next[start + 1] + direction[1]));
+    setCurve(next);
+    onCommit(formatBezier(next));
+  }
+
+  const width = 184;
+  const height = 76;
+  const first = { x: curve[0] * width, y: (1 - curve[1]) * height };
+  const second = { x: curve[2] * width, y: (1 - curve[3]) * height };
+
+  return (
+    <div className={styles.curveEditor} role="dialog" aria-label="Segment easing editor">
+      <header>
+        <span><strong>Segment curve</strong><small>{Number(keyframe.offset).toFixed(2)} → {Number(nextKeyframe.offset).toFixed(2)}</small></span>
+        <button type="button" onClick={onClose} aria-label="Close curve editor"><X /></button>
+      </header>
+      <select
+        aria-label="Easing preset"
+        value={Object.keys(EASING_PRESETS).includes(easing) ? easing : 'custom'}
+        onChange={(event) => {
+          const preset = event.currentTarget.value;
+          if (preset === 'custom') return;
+          setCurve([...EASING_PRESETS[preset]]);
+          onCommit(preset);
+        }}
+      >
+        <option value="linear">Linear</option>
+        <option value="ease">Ease</option>
+        <option value="ease-in">Ease in</option>
+        <option value="ease-out">Ease out</option>
+        <option value="ease-in-out">Ease in out</option>
+        <option value="custom">Custom cubic</option>
+      </select>
+      <svg
+        ref={svgRef}
+        className={styles.curveGraph}
+        viewBox={`0 0 ${width} ${height}`}
+        onPointerMove={(event) => updateHandle(event, false)}
+        onPointerUp={(event) => {
+          updateHandle(event, true);
+          activeHandle.current = null;
+          event.currentTarget.releasePointerCapture?.(event.pointerId);
+        }}
+        onPointerCancel={() => { activeHandle.current = null; }}
+      >
+        <path className={styles.curveGridLine} d={`M0 ${height} L${width} 0`} />
+        <path className={styles.curveHandleLine} d={`M0 ${height} L${first.x} ${first.y} M${width} 0 L${second.x} ${second.y}`} />
+        <path className={styles.curvePath} d={`M0 ${height} C${first.x} ${first.y}, ${second.x} ${second.y}, ${width} 0`} />
+        {[first, second].map((point, index) => (
+          <circle
+            key={index}
+            className={styles.curveHandle}
+            cx={point.x}
+            cy={point.y}
+            r="5"
+            tabIndex="0"
+            role="slider"
+            aria-label={`Bezier handle ${index + 1}`}
+            aria-valuetext={`${curve[index * 2].toFixed(2)}, ${curve[index * 2 + 1].toFixed(2)}`}
+            onPointerDown={(event) => {
+              activeHandle.current = index;
+              event.currentTarget.ownerSVGElement?.setPointerCapture?.(event.pointerId);
+              event.preventDefault();
+            }}
+            onKeyDown={(event) => nudgeHandle(event, index)}
+          />
+        ))}
+      </svg>
+      <div className={styles.curveValues}>
+        {curve.map((value, index) => <code key={index}>{value.toFixed(2)}</code>)}
+      </div>
+    </div>
+  );
+}
+
+function KeyframeMarker({ state }) {
+  if (!state) return null;
+  return <Diamond className={styles.fieldKeyframe} data-state={state} aria-label={state === 'current' ? 'Keyframe at current time' : 'Animated property'} />;
+}
+
+function Field({ label, defaultValue, suffix, onCommit, type = 'text', disabled = false, keyframeState = null }) {
   return (
     <label className={styles.field}>
-      <span className={styles.controlLabel}>{label}</span>
+      <span className={styles.controlLabel}>{label}<KeyframeMarker state={keyframeState} /></span>
       <span className={styles.fieldControl}>
         <input
           key={`${label}:${defaultValue}`}
@@ -67,12 +234,12 @@ function Field({ label, defaultValue, suffix, onCommit, type = 'text', disabled 
   );
 }
 
-function SelectField({ label, value, onCommit, children }) {
+function SelectField({ label, value, onCommit, children, disabled = false, keyframeState = null }) {
   return (
     <label className={styles.field}>
-      <span className={styles.controlLabel}>{label}</span>
+      <span className={styles.controlLabel}>{label}<KeyframeMarker state={keyframeState} /></span>
       <span className={styles.fieldControl}>
-        <select value={value} onChange={(event) => onCommit(event.currentTarget.value)}>
+        <select disabled={disabled} value={value} onChange={(event) => onCommit(event.currentTarget.value)}>
           {children}
         </select>
       </span>
@@ -80,11 +247,26 @@ function SelectField({ label, value, onCommit, children }) {
   );
 }
 
-function ColorField({ label, value, onCommit }) {
+function ToggleField({ label, checked, onCommit, disabled = false }) {
+  return (
+    <div className={styles.toggleField}>
+      <span>{label}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={() => onCommit(!checked)}
+      ><i /></button>
+    </div>
+  );
+}
+
+function ColorField({ label, value, onCommit, keyframeState = null }) {
   const safeValue = /^#[0-9a-f]{6}$/i.test(value || '') ? value : '#292926';
   return (
     <label className={styles.field}>
-      <span className={styles.controlLabel}>{label}</span>
+      <span className={styles.controlLabel}>{label}<KeyframeMarker state={keyframeState} /></span>
       <span className={styles.colorControl}>
         <input
           key={`${label}:${safeValue}`}
@@ -179,11 +361,17 @@ function InspectorEmpty() {
   );
 }
 
-function PropertiesPanel({ selected, runtime, onStyle, onText, onAttribute }) {
+function PropertiesPanel({ selected, runtime, activeMotion, timelineOffset, onStyle, onText, onAttribute }) {
   if (!selected) return <DocumentProperties runtime={runtime} />;
   const stylesValue = selected.styles || {};
   const canEditText = selected.canEditText !== false && !['img', 'video', 'canvas', 'svg', 'section'].includes(selected.tag);
   const supportsTypography = canEditText || Boolean(selected.text);
+  const keyframeState = (property) => {
+    const normalized = animationProperty(property);
+    const track = activeMotion?.tracks?.find((item) => animationProperty(item.property) === normalized);
+    if (!track) return null;
+    return track.keyframes?.some((keyframe) => Math.abs(Number(keyframe.offset) - timelineOffset) < 0.0005) ? 'current' : 'track';
+  };
 
   return (
     <div className={styles.panelBody}>
@@ -210,23 +398,23 @@ function PropertiesPanel({ selected, runtime, onStyle, onText, onAttribute }) {
       </InspectorSection>
 
       <InspectorSection title="Appearance">
-        <ColorField label="Text" value={stylesValue.colorHex} onCommit={(value) => onStyle('color', value, stylesValue.color)} />
-        <ColorField label="Fill" value={stylesValue.backgroundColorHex} onCommit={(value) => onStyle('background-color', value, stylesValue.backgroundColor)} />
+        <ColorField label="Text" value={stylesValue.colorHex} keyframeState={keyframeState('color')} onCommit={(value) => onStyle('color', value, stylesValue.color)} />
+        <ColorField label="Fill" value={stylesValue.backgroundColorHex} keyframeState={keyframeState('background-color')} onCommit={(value) => onStyle('background-color', value, stylesValue.backgroundColor)} />
         <div className={styles.controlGrid}>
-          <Field label="Opacity" defaultValue={stylesValue.opacity} onCommit={(value) => onStyle('opacity', value, stylesValue.opacity)} />
-          <Field label="Radius" defaultValue={stylesValue.borderRadius} onCommit={(value) => onStyle('border-radius', value, stylesValue.borderRadius)} />
+          <Field label="Opacity" defaultValue={stylesValue.opacity} keyframeState={keyframeState('opacity')} onCommit={(value) => onStyle('opacity', value, stylesValue.opacity)} />
+          <Field label="Radius" defaultValue={stylesValue.borderRadius} keyframeState={keyframeState('border-radius')} onCommit={(value) => onStyle('border-radius', value, stylesValue.borderRadius)} />
         </div>
       </InspectorSection>
 
       {supportsTypography && <InspectorSection title="Typography">
         <Field label="Font" defaultValue={stylesValue.fontFamily} onCommit={(value) => onStyle('font-family', value, stylesValue.fontFamily)} />
         <div className={styles.controlGrid}>
-          <Field label="Weight" defaultValue={stylesValue.fontWeight} onCommit={(value) => onStyle('font-weight', value, stylesValue.fontWeight)} />
-          <Field label="Size" defaultValue={stylesValue.fontSize} onCommit={(value) => onStyle('font-size', value, stylesValue.fontSize)} />
+          <Field label="Weight" defaultValue={stylesValue.fontWeight} keyframeState={keyframeState('font-weight')} onCommit={(value) => onStyle('font-weight', value, stylesValue.fontWeight)} />
+          <Field label="Size" defaultValue={stylesValue.fontSize} keyframeState={keyframeState('font-size')} onCommit={(value) => onStyle('font-size', value, stylesValue.fontSize)} />
         </div>
         <div className={styles.controlGrid}>
-          <Field label="Line height" defaultValue={stylesValue.lineHeight} onCommit={(value) => onStyle('line-height', value, stylesValue.lineHeight)} />
-          <Field label="Letter spacing" defaultValue={stylesValue.letterSpacing} onCommit={(value) => onStyle('letter-spacing', value, stylesValue.letterSpacing)} />
+          <Field label="Line height" defaultValue={stylesValue.lineHeight} keyframeState={keyframeState('line-height')} onCommit={(value) => onStyle('line-height', value, stylesValue.lineHeight)} />
+          <Field label="Letter spacing" defaultValue={stylesValue.letterSpacing} keyframeState={keyframeState('letter-spacing')} onCommit={(value) => onStyle('letter-spacing', value, stylesValue.letterSpacing)} />
         </div>
         <div className={styles.field}>
           <span className={styles.controlLabel}>Alignment</span>
@@ -251,48 +439,365 @@ function PropertiesPanel({ selected, runtime, onStyle, onText, onAttribute }) {
   );
 }
 
-function MotionPanel({ selected, runtime, speed, onPlayback, onSpeed }) {
-  const motion = selected?.motion || [];
-  const origin = runtime?.profile?.origin || 'native';
-  const originLabel = origin === 'webflow' ? 'Webflow interactions' : origin === 'framer' ? 'Framer effects' : 'Motion';
+function MotionPanel({ selected, motion, activeMotionId, onActiveMotion, speed, onPlayback, onSpeed, onMotion }) {
+  const activeMotion = motion.find((item) => item.id === activeMotionId) || null;
+
+  const commit = (property, value, before) => {
+    if (!activeMotion) return;
+    onMotion(activeMotion, property, coerceMotionValue(property, value), before);
+  };
+
   return (
     <div className={styles.panelBody}>
-      <InspectorSection title="Playback" meta={`${speed}×`}>
-        <div className={styles.playbackControls}>
-          <button type="button" onClick={() => onPlayback('restart')} title="Restart"><RotateCcw /></button>
-          <button type="button" onClick={() => onPlayback('pause')} title="Pause"><Pause /></button>
-          <button type="button" className={styles.playPrimary} onClick={() => onPlayback('play')} title="Play"><Play /></button>
-          <label>
-            <Gauge aria-hidden="true" />
-            <select value={speed} onChange={(event) => onSpeed(Number(event.currentTarget.value))}>
-              <option value="0.25">0.25×</option>
-              <option value="0.5">0.5×</option>
-              <option value="1">1×</option>
-              <option value="2">2×</option>
-            </select>
-          </label>
-        </div>
-      </InspectorSection>
+      <div className={styles.motionTransport}>
+        <button type="button" onClick={() => onPlayback('restart')} title="Restart"><RotateCcw /></button>
+        <button type="button" onClick={() => onPlayback('pause')} title="Pause"><Pause /></button>
+        <button type="button" className={styles.playPrimary} onClick={() => onPlayback('play')} title="Play"><Play /></button>
+        <span />
+        <select aria-label="Playback speed" value={speed} onChange={(event) => onSpeed(Number(event.currentTarget.value))}>
+          <option value="0.25">0.25×</option>
+          <option value="0.5">0.5×</option>
+          <option value="1">1×</option>
+          <option value="2">2×</option>
+        </select>
+      </div>
 
-      <InspectorSection title={originLabel} meta={`${motion.length} linked`}>
+      <InspectorSection title="Animations" meta={motion.length}>
         {!selected && <p className={styles.mutedCopy}>Select an element to see its triggers and animation actions.</p>}
         {selected && !motion.length && <p className={styles.mutedCopy}>No interaction is attached directly. Check the parent or create a new interaction.</p>}
         <div className={styles.motionList}>
           {motion.map((item) => (
-            <article key={`${item.engine}:${item.id}`}>
-              <span className={styles.motionEngine}>{item.engine}</span>
-              <strong>{item.trigger ? 'Scroll into view' : item.name}</strong>
-              <dl>
-                <div><dt>State</dt><dd>{item.playState || 'linked'}</dd></div>
-                {item.duration != null && <div><dt>Duration</dt><dd>{item.duration} ms</dd></div>}
-                {item.trigger && <div><dt>Trigger</dt><dd>{String(item.trigger)}</dd></div>}
-              </dl>
-            </article>
+            <button
+              type="button"
+              key={`${item.engine}:${item.id}`}
+              aria-pressed={item.id === activeMotionId}
+              onClick={() => onActiveMotion(item.id)}
+            >
+              <span className={styles.motionGlyph}>{item.driver?.type === 'scroll' ? <ScrollText /> : <Diamond />}</span>
+              <span className={styles.motionSummary}>
+                <strong>{item.name}</strong>
+                <small>{motionDriverLabel(item.driver)} · {item.engine}</small>
+              </span>
+              <span className={styles.motionCapability} data-editability={item.editability}>{motionCapabilityLabel(item.editability)}</span>
+            </button>
           ))}
         </div>
-        {(selected?.warnings || []).map((warning) => <p className={styles.warning} key={warning}>{warning}</p>)}
       </InspectorSection>
+
+      {activeMotion && <>
+        <InspectorSection title="Trigger" meta={motionDriverLabel(activeMotion.driver)}>
+          <SelectField label="Driver" value={activeMotion.driver?.type || 'time'} disabled>
+            <option value="time">Time</option>
+            <option value="scroll">Scroll</option>
+            <option value="pointer">Pointer</option>
+            <option value="event">Event</option>
+          </SelectField>
+          <div className={styles.motionFactRow}>
+            <span>Trigger</span>
+            <strong>{activeMotion.trigger?.type || 'Runtime'}</strong>
+          </div>
+          {activeMotion.trigger?.target && <div className={styles.motionFactRow}><span>Target</span><strong>{String(activeMotion.trigger.target)}</strong></div>}
+        </InspectorSection>
+
+        <InspectorSection title="Timing">
+          <div className={styles.controlGrid}>
+            <Field label="Delay" type="number" defaultValue={activeMotion.timing.delay} suffix="ms" disabled={!activeMotion.capabilities.timing} onCommit={(value) => commit('timing.delay', value, activeMotion.timing.delay)} />
+            <Field label="Duration" type="number" defaultValue={activeMotion.timing.duration} suffix="ms" disabled={!activeMotion.capabilities.timing} onCommit={(value) => commit('timing.duration', value, activeMotion.timing.duration)} />
+          </div>
+          <div className={styles.controlGrid}>
+            <Field label="Iterations" type="number" defaultValue={activeMotion.timing.iterations} disabled={!activeMotion.capabilities.timing} onCommit={(value) => commit('timing.iterations', value, activeMotion.timing.iterations)} />
+            <Field label="Repeat delay" type="number" defaultValue={activeMotion.timing.repeatDelay} suffix="ms" disabled={activeMotion.editability !== 'adapter'} onCommit={(value) => commit('timing.repeatDelay', value, activeMotion.timing.repeatDelay)} />
+          </div>
+          <ToggleField label="Alternate direction" checked={activeMotion.timing.yoyo} disabled={activeMotion.editability !== 'adapter'} onCommit={(value) => commit('timing.yoyo', value, activeMotion.timing.yoyo)} />
+        </InspectorSection>
+
+        <InspectorSection title="Easing">
+          <SelectField label="Curve" value={activeMotion.timing.easing} disabled={!activeMotion.capabilities.easing} onCommit={(value) => commit('timing.easing', value, activeMotion.timing.easing)}>
+            <option value={activeMotion.timing.easing}>{activeMotion.timing.easing}</option>
+            <option value="linear">Linear</option>
+            <option value="ease">Ease</option>
+            <option value="ease-in">Ease in</option>
+            <option value="ease-out">Ease out</option>
+            <option value="ease-in-out">Ease in out</option>
+            {activeMotion.editability === 'adapter' && <><option value="power2.out">Power out</option><option value="power2.inOut">Power in out</option></>}
+          </SelectField>
+          <div className={styles.curvePreview} aria-hidden="true"><i /><span /></div>
+        </InspectorSection>
+
+        {activeMotion.scroll && <InspectorSection title="Scroll" meta="Linked">
+          <div className={styles.motionFactRow}><span>Start</span><strong>{activeMotion.scroll.start}</strong></div>
+          <div className={styles.motionFactRow}><span>End</span><strong>{activeMotion.scroll.end}</strong></div>
+          <div className={styles.toggleStack}>
+            <ToggleField label="Scrub" checked={activeMotion.scroll.scrub} disabled />
+            <ToggleField label="Pin" checked={activeMotion.scroll.pin} disabled />
+            <ToggleField label="Snap" checked={activeMotion.scroll.snap} disabled />
+          </div>
+        </InspectorSection>}
+
+        <InspectorSection title="Animated properties" meta={activeMotion.tracks.length}>
+          <div className={styles.trackList}>
+            {activeMotion.tracks.map((track) => (
+              <div key={track.property}>
+                <Diamond />
+                <span>{track.property}</span>
+                <small>{track.keyframes?.length || 0} keyframes</small>
+              </div>
+            ))}
+            {!activeMotion.tracks.length && <p className={styles.mutedCopy}>The runtime owns these values. Timing remains editable through its adapter.</p>}
+          </div>
+        </InspectorSection>
+      </>}
+      {(selected?.warnings || []).map((warning) => <p className={styles.warning} key={warning}>{warning}</p>)}
     </div>
+  );
+}
+
+function formatTimelineTime(milliseconds) {
+  const seconds = Math.max(0, Number(milliseconds) || 0) / 1000;
+  return `${seconds.toFixed(seconds >= 10 ? 1 : 2)}s`;
+}
+
+export function TimelinePanel({
+  open,
+  motion,
+  state,
+  speed,
+  zoom,
+  autoKeyframe,
+  selectedKeyframe,
+  onToggle,
+  onPlayback,
+  onSpeed,
+  onSeek,
+  onZoom,
+  onPlaybackMode,
+  onAutoKeyframe,
+  onSelectKeyframe,
+  onMoveKeyframe,
+  onDuplicateKeyframe,
+  onDeleteKeyframe,
+  onChangeKeyframeEasing,
+}) {
+  const [draggingKeyframe, setDraggingKeyframe] = useState(null);
+  const [curveOpen, setCurveOpen] = useState(false);
+  const suppressKeyframeClick = useRef(false);
+  const duration = Math.max(1, state.duration || (motion ? motion.timing.delay + motion.timing.duration + motion.timing.endDelay : 1000));
+  const currentTime = Math.max(0, Math.min(duration, state.currentTime || 0));
+  const currentPercent = (currentTime / duration) * 100;
+  const delay = Math.max(0, motion?.timing.delay || 0);
+  const clipDuration = Math.max(1, motion?.timing.duration || duration);
+  const clipStart = Math.min(100, (delay / duration) * 100);
+  const clipWidth = Math.max(0.8, Math.min(100 - clipStart, (clipDuration / duration) * 100));
+  const timelineWidth = Math.round(Math.max(720, duration * 0.42) * zoom);
+  const ticks = Array.from({ length: 11 }, (_, index) => ({
+    left: index * 10,
+    label: formatTimelineTime((duration * index) / 10),
+  }));
+  const playbackMode = motion ? motionPlaybackMode(motion.timing) : 'once';
+  const isPlaying = state.playState === 'running';
+  const canAutoKeyframe = Boolean(motion?.capabilities?.keyframes && motion?.editability === 'direct');
+  const selectedTrack = motion && selectedKeyframe && motion.id === selectedKeyframe.motionId
+    ? motion.tracks.find((track) => track.property === selectedKeyframe.property)
+    : null;
+  const orderedFrames = [...(selectedTrack?.keyframes || [])].sort((first, second) => Number(first.offset) - Number(second.offset));
+  const selectedFrameIndex = orderedFrames.findIndex((keyframe) => Math.abs(Number(keyframe.offset) - Number(selectedKeyframe?.offset)) < 0.0005);
+  const selectedFrame = selectedFrameIndex >= 0 ? orderedFrames[selectedFrameIndex] : null;
+  const nextFrame = selectedFrameIndex >= 0 ? orderedFrames[selectedFrameIndex + 1] || null : null;
+
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (!selectedFrame) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.matches('input,select,textarea') || (target.matches('button') && !target.classList.contains(styles.timelineKeyframe)) || target.isContentEditable)) return;
+      if (event.key === 'Backspace' || event.key === 'Delete') {
+        event.preventDefault();
+        onDeleteKeyframe(selectedKeyframe);
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd') {
+        event.preventDefault();
+        onDuplicateKeyframe(selectedKeyframe);
+      } else if (event.key === 'Escape') {
+        setCurveOpen(false);
+        onSelectKeyframe(null);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onDeleteKeyframe, onDuplicateKeyframe, onSelectKeyframe, selectedFrame, selectedKeyframe]);
+
+  useEffect(() => setCurveOpen(false), [selectedKeyframe?.motionId, selectedKeyframe?.property, selectedKeyframe?.offset]);
+
+  function offsetAtPointer(event, rect) {
+    const timelineTime = Math.max(0, Math.min(duration, ((event.clientX - rect.left) / rect.width) * duration));
+    return Math.max(0, Math.min(1, (timelineTime - delay) / clipDuration));
+  }
+
+  function beginKeyframeDrag(event, track, keyframe) {
+    if (!canAutoKeyframe || event.button !== 0) return;
+    const canvas = event.currentTarget.closest(`.${styles.timelineCanvas}`);
+    if (!canvas) return;
+    const offset = Number(keyframe.offset) || 0;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    onSelectKeyframe({ motionId: motion.id, property: track.property, offset });
+    onSeek(delay + offset * clipDuration);
+    setDraggingKeyframe({
+      pointerId: event.pointerId,
+      property: track.property,
+      originalOffset: offset,
+      offset,
+      rect: canvas.getBoundingClientRect(),
+      duplicate: event.altKey,
+      moved: false,
+    });
+  }
+
+  function updateKeyframeDrag(event) {
+    if (!draggingKeyframe || event.pointerId !== draggingKeyframe.pointerId) return;
+    const offset = offsetAtPointer(event, draggingKeyframe.rect);
+    setDraggingKeyframe((current) => current ? {
+      ...current,
+      offset,
+      moved: current.moved || Math.abs(offset - current.originalOffset) > 0.001,
+    } : current);
+    onSeek(delay + offset * clipDuration);
+  }
+
+  function finishKeyframeDrag(event) {
+    if (!draggingKeyframe || event.pointerId !== draggingKeyframe.pointerId) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    const selection = { motionId: motion.id, property: draggingKeyframe.property, offset: draggingKeyframe.originalOffset };
+    if (draggingKeyframe.moved) {
+      suppressKeyframeClick.current = true;
+      if (draggingKeyframe.duplicate) onDuplicateKeyframe(selection, draggingKeyframe.offset);
+      else onMoveKeyframe(selection, draggingKeyframe.offset);
+      window.setTimeout(() => { suppressKeyframeClick.current = false; }, 0);
+    }
+    setDraggingKeyframe(null);
+  }
+
+  return (
+    <section className={`${styles.timeline} ${open ? styles.timelineOpen : styles.timelineClosed}`} aria-label="Animation timeline">
+      <header className={styles.timelineHeader}>
+        <button type="button" className={styles.timelineDisclosure} onClick={onToggle} aria-expanded={open} title={open ? 'Collapse timeline' : 'Open timeline'}>
+          <ChevronDown />
+          <strong>Timeline</strong>
+        </button>
+        <span className={styles.timelineMotionName}>{motion ? `${motion.name} · ${motion.engine}` : 'Select an animation in Motion'}</span>
+        <div className={styles.timelineTransport}>
+          <button type="button" disabled={!motion} onClick={() => onPlayback('restart')} title="Restart"><RotateCcw /></button>
+          <button type="button" disabled={!motion} onClick={() => onPlayback(isPlaying ? 'pause' : 'play')} title={isPlaying ? 'Pause' : 'Play'}>
+            {isPlaying ? <Pause /> : <Play />}
+          </button>
+          <button
+            type="button"
+            className={styles.autoKeyframe}
+            aria-pressed={autoKeyframe}
+            disabled={!canAutoKeyframe}
+            onClick={() => onAutoKeyframe(!autoKeyframe)}
+            title={canAutoKeyframe ? 'Create keyframes when animated properties change' : 'Auto keyframe requires an editable CSS or WAAPI animation'}
+          ><Diamond /><span>Auto</span></button>
+          <span className={styles.keyframeActions} aria-label="Selected keyframe actions">
+            <button type="button" disabled={!selectedFrame} onClick={() => onDuplicateKeyframe(selectedKeyframe)} title="Duplicate keyframe (⌘D)"><Copy /></button>
+            <button type="button" disabled={!selectedFrame} onClick={() => onDeleteKeyframe(selectedKeyframe)} title="Delete keyframe"><Trash2 /></button>
+            <button type="button" aria-pressed={curveOpen} disabled={!nextFrame} onClick={() => setCurveOpen((current) => !current)} title={nextFrame ? 'Edit curve to next keyframe' : 'Select a keyframe with a following frame'}><Gauge /></button>
+          </span>
+          <code>{formatTimelineTime(currentTime)} / {formatTimelineTime(duration)}</code>
+          <select aria-label="Playback mode" disabled={!motion} value={playbackMode} onChange={(event) => onPlaybackMode(event.currentTarget.value)}>
+            <option value="once">Once</option>
+            <option value="loop">Loop</option>
+            <option value="ping-pong">Ping-pong</option>
+          </select>
+          <select aria-label="Playback speed" disabled={!motion} value={speed} onChange={(event) => onSpeed(Number(event.currentTarget.value))}>
+            <option value="0.25">0.25×</option>
+            <option value="0.5">0.5×</option>
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+          </select>
+          <label className={styles.timelineZoom} title="Timeline zoom">
+            <span>Zoom</span>
+            <input type="range" min="1" max="4" step="0.25" value={zoom} onChange={(event) => onZoom(Number(event.currentTarget.value))} />
+          </label>
+        </div>
+      </header>
+
+      {open && <div className={styles.timelineBody}>
+        <div className={styles.timelineLabels}>
+          <div className={styles.timelineLabelRuler}>Property</div>
+          <div className={styles.timelineClipLabel}><Diamond /><span>{motion?.name || 'Animation'}</span></div>
+          {(motion?.tracks || []).map((track) => <div key={track.property} className={styles.timelineTrackLabel} data-selected={selectedTrack?.property === track.property}>{track.property}</div>)}
+          {motion && !motion.tracks.length && <div className={styles.timelineTrackLabel}>Runtime values</div>}
+        </div>
+        <div className={styles.timelineScroller}>
+          <div className={styles.timelineCanvas} style={{ width: timelineWidth }}>
+            <div className={styles.timelineRuler}>
+              {ticks.map((tick) => <span key={tick.left} style={{ left: `${tick.left}%` }}><i />{tick.label}</span>)}
+            </div>
+            <div className={styles.timelineClipRow}>
+              {motion && <i className={styles.timelineClip} style={{ left: `${clipStart}%`, width: `${clipWidth}%` }} />}
+            </div>
+            {(motion?.tracks || []).map((track) => (
+              <div key={track.property} className={styles.timelineTrackRow}>
+                {(track.keyframes || []).map((keyframe, index) => {
+                  const offset = Number.isFinite(Number(keyframe.offset)) ? Number(keyframe.offset) : 0;
+                  const isDragging = draggingKeyframe?.property === track.property && Math.abs(draggingKeyframe.originalOffset - offset) < 0.0005;
+                  const displayOffset = isDragging ? draggingKeyframe.offset : offset;
+                  const left = Math.min(100, ((delay + displayOffset * clipDuration) / duration) * 100);
+                  const isSelected = selectedKeyframe?.motionId === motion.id && selectedKeyframe.property === track.property && Math.abs(Number(selectedKeyframe.offset) - offset) < 0.0005;
+                  return (
+                    <button
+                      type="button"
+                      key={`${track.property}:${offset}:${index}`}
+                      className={styles.timelineKeyframe}
+                      data-selected={isSelected || isDragging}
+                      data-duplicate={isDragging && draggingKeyframe.duplicate}
+                      style={{ left: `${left}%` }}
+                      title={canAutoKeyframe
+                        ? `${track.property}: ${keyframe.value}. Drag to move, Option-drag to duplicate.`
+                        : `${track.property}: ${keyframe.value}. This adapter track is read-only.`}
+                      aria-label={`${track.property} keyframe at ${Math.round(offset * 100)} percent`}
+                      aria-pressed={isSelected}
+                      disabled={!canAutoKeyframe}
+                      onClick={() => {
+                        if (suppressKeyframeClick.current) return;
+                        onSelectKeyframe({ motionId: motion.id, property: track.property, offset });
+                        onSeek(delay + offset * clipDuration);
+                      }}
+                      onDoubleClick={() => { if (isSelected && nextFrame) setCurveOpen(true); }}
+                      onPointerDown={(event) => beginKeyframeDrag(event, track, keyframe)}
+                      onPointerMove={updateKeyframeDrag}
+                      onPointerUp={finishKeyframeDrag}
+                      onPointerCancel={() => setDraggingKeyframe(null)}
+                    />
+                  );
+                })}
+              </div>
+            ))}
+            {motion && !motion.tracks.length && <div className={styles.timelineTrackRow} />}
+            <i className={styles.timelinePlayhead} style={{ left: `${currentPercent}%` }}><span /></i>
+            <input
+              className={styles.timelineScrubber}
+              aria-label="Current animation time"
+              type="range"
+              min="0"
+              max={duration}
+              step="1"
+              value={currentTime}
+              disabled={!motion}
+              onChange={(event) => onSeek(Number(event.currentTarget.value))}
+            />
+          </div>
+        </div>
+      </div>}
+      {open && curveOpen && selectedFrame && nextFrame && (
+        <CubicBezierEditor
+          keyframe={selectedFrame}
+          nextKeyframe={nextFrame}
+          onCommit={(easing) => onChangeKeyframeEasing(selectedKeyframe, easing)}
+          onClose={() => setCurveOpen(false)}
+        />
+      )}
+    </section>
   );
 }
 
@@ -379,6 +884,33 @@ export default function NativeMotionEditor() {
   const [speed, setSpeed] = useState(1);
   const [saveState, setSaveState] = useState('idle');
   const [stageSize, setStageSize] = useState({ width: 1000, height: 800 });
+  const [activeMotionId, setActiveMotionId] = useState(null);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [timelineZoom, setTimelineZoom] = useState(1);
+  const [timelineState, setTimelineState] = useState({ currentTime: 0, duration: 1000, playState: 'idle' });
+  const [autoKeyframe, setAutoKeyframe] = useState(false);
+  const [selectedKeyframe, setSelectedKeyframe] = useState(null);
+
+  const motion = useMemo(() => (selected?.motion || []).map(normalizeMotionClip), [selected]);
+  const activeMotion = motion.find((item) => item.id === activeMotionId) || null;
+  const timelineOffset = useMemo(() => {
+    if (!activeMotion) return 0;
+    const delay = Math.max(0, activeMotion.timing.delay || 0);
+    const duration = Math.max(1, activeMotion.timing.duration || 1);
+    return Math.max(0, Math.min(1, (timelineState.currentTime - delay) / duration));
+  }, [activeMotion, timelineState.currentTime]);
+
+  useEffect(() => {
+    setActiveMotionId((current) => motion.some((item) => item.id === current) ? current : motion[0]?.id || null);
+  }, [motion]);
+
+  useEffect(() => setSelectedKeyframe(null), [activeMotionId, selected?.id]);
+
+  useEffect(() => {
+    if (autoKeyframe && !(activeMotion?.capabilities?.keyframes && activeMotion?.editability === 'direct')) {
+      setAutoKeyframe(false);
+    }
+  }, [activeMotion, autoKeyframe]);
 
   const deviceConfig = DEVICES[device];
   const viewportScale = useMemo(() => {
@@ -416,8 +948,20 @@ export default function NativeMotionEditor() {
           }
         } catch (_) {}
       }
-      if (type === 'selection-changed' || type === 'patch-applied') {
+      if (type === 'selection-changed' || type === 'patch-applied' || type === 'inline-text-edit-started') {
         setSelected(payload.element || null);
+      }
+      if (type === 'inline-text-committed') {
+        const patch = createPatch({
+          elementId: payload.elementId,
+          kind: 'text',
+          before: payload.before,
+          value: payload.value,
+        });
+        setHistory((current) => [...current, patch]);
+        setRedo([]);
+        setSelected(payload.element || null);
+        setSaveState('idle');
       }
       if (type === 'inventory-changed') {
         setRuntime((current) => current ? { ...current, assets: payload.assets || [], profile: payload.profile || current.profile } : current);
@@ -434,6 +978,13 @@ export default function NativeMotionEditor() {
       }
       if (type === 'patches-applied' && payload.element) setSelected(payload.element);
       if (type === 'playback-changed' && payload.speed) setSpeed(payload.speed);
+      if (type === 'timeline-changed') {
+        setTimelineState({
+          currentTime: Number(payload.currentTime) || 0,
+          duration: Math.max(1, Number(payload.duration) || 1),
+          playState: payload.playState || 'idle',
+        });
+      }
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -447,18 +998,58 @@ export default function NativeMotionEditor() {
     if (status === 'ready') send('set-tool', { tool });
   }, [send, status, tool]);
 
-  function applyNewPatch(patch) {
-    if (String(patch.before ?? '') === String(patch.value ?? '')) return;
-    send('apply-patch', { patch });
-    setHistory((current) => [...current, patch]);
+  useEffect(() => {
+    if (status !== 'ready') return undefined;
+    send('set-timeline-active', { motionId: timelineOpen ? activeMotionId : null });
+    return () => send('set-timeline-active', { motionId: null });
+  }, [activeMotionId, send, status, timelineOpen]);
+
+  function applyNewPatches(patches) {
+    const changed = patches.filter((patch) => !patchValuesEqual(patch.before, patch.value));
+    if (!changed.length) return;
+    const groupId = changed.length > 1
+      ? (globalThis.crypto?.randomUUID?.() || `group-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+      : null;
+    const grouped = changed.map((patch) => groupId ? { ...patch, groupId } : patch);
+    if (grouped.length === 1) send('apply-patch', { patch: grouped[0] });
+    else send('apply-patches', { patches: grouped });
+    setHistory((current) => [...current, ...grouped]);
     setRedo([]);
     setSaveState('idle');
     window.setTimeout(() => send('refresh-inventory'), 80);
   }
 
+  function applyNewPatch(patch) {
+    applyNewPatches([patch]);
+  }
+
   function applyStyle(property, value, before) {
     if (!selected) return;
-    applyNewPatch(createPatch({ elementId: selected.id, kind: 'style', property, before, value }));
+    const stylePatch = createPatch({ elementId: selected.id, kind: 'style', property, before, value });
+    const normalized = animationProperty(property);
+    const canKeyframe = autoKeyframe && activeMotion?.capabilities?.keyframes && activeMotion?.editability === 'direct' && AUTO_KEYFRAME_PROPERTIES.has(normalized);
+    if (!canKeyframe) {
+      applyNewPatch(stylePatch);
+      return;
+    }
+    const track = activeMotion.tracks.find((item) => animationProperty(item.property) === normalized);
+    const existing = track?.keyframes?.find((keyframe) => Math.abs(Number(keyframe.offset) - timelineOffset) < 0.0005);
+    const keyframePatch = createPatch({
+      elementId: selected.id,
+      kind: 'motion',
+      motionId: activeMotion.id,
+      property: `keyframe.${normalized}`,
+      before: existing
+        ? keyframeDescriptor(existing, timelineOffset)
+        : { offset: timelineOffset, exists: false },
+      value: {
+        offset: timelineOffset,
+        value: String(value),
+        ...(existing?.easing ? { easing: existing.easing } : {}),
+        exists: true,
+      },
+    });
+    applyNewPatches([stylePatch, keyframePatch]);
   }
 
   function applyText(value) {
@@ -469,6 +1060,18 @@ export default function NativeMotionEditor() {
   function applyAttribute(property, value, before) {
     if (!selected) return;
     applyNewPatch(createPatch({ elementId: selected.id, kind: 'attribute', property, before, value }));
+  }
+
+  function applyMotion(motion, property, value, before) {
+    if (!selected || !motion?.id) return;
+    applyNewPatch(createPatch({
+      elementId: selected.id,
+      kind: 'motion',
+      motionId: motion.id,
+      property,
+      before,
+      value,
+    }));
   }
 
   async function replaceAsset(asset, file) {
@@ -493,18 +1096,24 @@ export default function NativeMotionEditor() {
   function undo() {
     const patch = history.at(-1);
     if (!patch) return;
-    send('apply-patch', { patch: invertPatch(patch) });
-    setHistory((current) => current.slice(0, -1));
-    setRedo((current) => [...current, patch]);
+    let groupStart = history.length - 1;
+    if (patch.groupId) {
+      while (groupStart > 0 && history[groupStart - 1].groupId === patch.groupId) groupStart -= 1;
+    }
+    const group = history.slice(groupStart);
+    send('apply-patches', { patches: group.slice().reverse().map(invertPatch) });
+    setHistory((current) => current.slice(0, groupStart));
+    setRedo((current) => [...current, group]);
     setSaveState('idle');
   }
 
   function redoPatch() {
-    const patch = redo.at(-1);
-    if (!patch) return;
-    send('apply-patch', { patch });
+    const entry = redo.at(-1);
+    if (!entry) return;
+    const group = Array.isArray(entry) ? entry : [entry];
+    send('apply-patches', { patches: group });
     setRedo((current) => current.slice(0, -1));
-    setHistory((current) => [...current, patch]);
+    setHistory((current) => [...current, ...group]);
     setSaveState('idle');
   }
 
@@ -521,6 +1130,130 @@ export default function NativeMotionEditor() {
   function changeSpeed(nextSpeed) {
     setSpeed(nextSpeed);
     send('playback', { action: 'play', speed: nextSpeed });
+  }
+
+  function selectMotion(motionId) {
+    setActiveMotionId(motionId);
+    setTimelineOpen(true);
+  }
+
+  function seekMotion(currentTime) {
+    if (!activeMotionId) return;
+    setTimelineState((current) => ({ ...current, currentTime, playState: 'paused' }));
+    send('seek-motion', { motionId: activeMotionId, currentTime });
+  }
+
+  function changePlaybackMode(nextMode) {
+    if (!activeMotion) return;
+    applyMotion(activeMotion, 'timing.playbackMode', nextMode, motionPlaybackMode(activeMotion.timing));
+  }
+
+  function toggleAutoKeyframe(nextValue) {
+    if (nextValue) {
+      playback('pause');
+      setTimelineOpen(true);
+    }
+    setAutoKeyframe(nextValue);
+  }
+
+  function resolveKeyframe(selection) {
+    if (!selection || !activeMotion || selection.motionId !== activeMotion.id) return null;
+    const track = activeMotion.tracks.find((item) => item.property === selection.property);
+    const keyframe = track?.keyframes?.find((item) => Math.abs(Number(item.offset) - Number(selection.offset)) < 0.0005);
+    return track && keyframe ? { track, keyframe } : null;
+  }
+
+  function availableKeyframeOffset(track, desiredOffset, ignoredOffset = null) {
+    const desired = Math.max(0, Math.min(1, Number(desiredOffset) || 0));
+    const occupied = (offset) => track.keyframes.some((keyframe) => (
+      Math.abs(Number(keyframe.offset) - offset) < 0.004
+      && (ignoredOffset == null || Math.abs(Number(keyframe.offset) - Number(ignoredOffset)) >= 0.0005)
+    ));
+    if (!occupied(desired)) return desired;
+    for (let step = 1; step <= 100; step += 1) {
+      const distance = step * 0.01;
+      const forward = desired + distance;
+      const backward = desired - distance;
+      if (forward <= 1 && !occupied(forward)) return forward;
+      if (backward >= 0 && !occupied(backward)) return backward;
+    }
+    return desired;
+  }
+
+  function deleteKeyframe(selection) {
+    const resolved = resolveKeyframe(selection);
+    if (!resolved || !selected) return;
+    applyNewPatch(createPatch({
+      elementId: selected.id,
+      kind: 'motion',
+      motionId: activeMotion.id,
+      property: `keyframe.${resolved.track.property}`,
+      before: keyframeDescriptor(resolved.keyframe),
+      value: keyframeDescriptor(null, resolved.keyframe.offset),
+    }));
+    setSelectedKeyframe(null);
+  }
+
+  function duplicateKeyframe(selection, requestedOffset = null) {
+    const resolved = resolveKeyframe(selection);
+    if (!resolved || !selected) return;
+    const defaultStep = Math.max(0.02, Math.min(0.12, 80 / Math.max(1, activeMotion.timing.duration)));
+    const preferred = requestedOffset == null
+      ? (Number(resolved.keyframe.offset) + defaultStep <= 1 ? Number(resolved.keyframe.offset) + defaultStep : Number(resolved.keyframe.offset) - defaultStep)
+      : requestedOffset;
+    const offset = availableKeyframeOffset(resolved.track, preferred);
+    const existing = resolved.track.keyframes.find((keyframe) => Math.abs(Number(keyframe.offset) - offset) < 0.0005);
+    applyNewPatch(createPatch({
+      elementId: selected.id,
+      kind: 'motion',
+      motionId: activeMotion.id,
+      property: `keyframe.${resolved.track.property}`,
+      before: keyframeDescriptor(existing, offset),
+      value: keyframeDescriptor(resolved.keyframe, offset),
+    }));
+    setSelectedKeyframe({ motionId: activeMotion.id, property: resolved.track.property, offset });
+    seekMotion((activeMotion.timing.delay || 0) + offset * Math.max(1, activeMotion.timing.duration));
+  }
+
+  function moveKeyframe(selection, requestedOffset) {
+    const resolved = resolveKeyframe(selection);
+    if (!resolved || !selected) return;
+    const sourceOffset = Number(resolved.keyframe.offset) || 0;
+    const offset = availableKeyframeOffset(resolved.track, requestedOffset, sourceOffset);
+    if (Math.abs(offset - sourceOffset) < 0.0005) return;
+    const existing = resolved.track.keyframes.find((keyframe) => Math.abs(Number(keyframe.offset) - offset) < 0.0005);
+    const removeSource = createPatch({
+      elementId: selected.id,
+      kind: 'motion',
+      motionId: activeMotion.id,
+      property: `keyframe.${resolved.track.property}`,
+      before: keyframeDescriptor(resolved.keyframe),
+      value: keyframeDescriptor(null, sourceOffset),
+    });
+    const addDestination = createPatch({
+      elementId: selected.id,
+      kind: 'motion',
+      motionId: activeMotion.id,
+      property: `keyframe.${resolved.track.property}`,
+      before: keyframeDescriptor(existing, offset),
+      value: keyframeDescriptor(resolved.keyframe, offset),
+    });
+    applyNewPatches([removeSource, addDestination]);
+    setSelectedKeyframe({ motionId: activeMotion.id, property: resolved.track.property, offset });
+    seekMotion((activeMotion.timing.delay || 0) + offset * Math.max(1, activeMotion.timing.duration));
+  }
+
+  function changeKeyframeEasing(selection, easing) {
+    const resolved = resolveKeyframe(selection);
+    if (!resolved || !selected || resolved.keyframe.easing === easing) return;
+    applyNewPatch(createPatch({
+      elementId: selected.id,
+      kind: 'motion',
+      motionId: activeMotion.id,
+      property: `keyframe.${resolved.track.property}`,
+      before: { ...keyframeDescriptor(resolved.keyframe), easing: resolved.keyframe.easing || null },
+      value: { ...keyframeDescriptor(resolved.keyframe), easing },
+    }));
   }
 
   return (
@@ -572,7 +1305,7 @@ export default function NativeMotionEditor() {
             <button type="button" aria-pressed={mode === 'edit' && tool === 'select'} onClick={() => { setMode('edit'); setTool('select'); }} title="Select elements"><MousePointer2 /></button>
             <button type="button" aria-pressed={mode === 'edit' && tool === 'move'} onClick={() => { setMode('edit'); setTool('move'); }} title="Move freely"><Move /></button>
             <span />
-            <button type="button" onClick={() => setActiveTab('motion')} title="Inspect motion"><Gauge /></button>
+            <button type="button" onClick={() => { setActiveTab('motion'); setTimelineOpen(true); }} title="Inspect motion"><Gauge /></button>
           </div>
 
           <div
@@ -620,17 +1353,39 @@ export default function NativeMotionEditor() {
             <button type="button" aria-label="Selection menu" disabled><ChevronDown /></button>
           </div>
           <nav className={styles.inspectorTabs} aria-label="Inspector tabs">
-            {['properties', 'assets', 'motion', 'code'].map((tab) => (
-              <button key={tab} type="button" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)}>
+            {['properties', 'motion', 'code', 'assets'].map((tab) => (
+              <button key={tab} type="button" aria-selected={activeTab === tab} onClick={() => { setActiveTab(tab); if (tab === 'motion') setTimelineOpen(true); }}>
                 {tab[0].toUpperCase() + tab.slice(1)}
               </button>
             ))}
           </nav>
-          {activeTab === 'properties' && <PropertiesPanel selected={selected} runtime={runtime} onStyle={applyStyle} onText={applyText} onAttribute={applyAttribute} />}
+          {activeTab === 'properties' && <PropertiesPanel selected={selected} runtime={runtime} activeMotion={activeMotion} timelineOffset={timelineOffset} onStyle={applyStyle} onText={applyText} onAttribute={applyAttribute} />}
           {activeTab === 'assets' && <AssetsPanel assets={runtime?.assets || []} onSelect={(elementId) => send('select-element', { elementId })} onReplace={replaceAsset} />}
-          {activeTab === 'motion' && <MotionPanel selected={selected} runtime={runtime} speed={speed} onPlayback={playback} onSpeed={changeSpeed} />}
+          {activeTab === 'motion' && <MotionPanel selected={selected} motion={motion} activeMotionId={activeMotionId} onActiveMotion={selectMotion} speed={speed} onPlayback={playback} onSpeed={changeSpeed} onMotion={applyMotion} />}
           {activeTab === 'code' && <CodePanel selected={selected} />}
         </aside>
+
+        <TimelinePanel
+          open={timelineOpen}
+          motion={activeMotion}
+          state={timelineState}
+          speed={speed}
+          zoom={timelineZoom}
+          autoKeyframe={autoKeyframe}
+          selectedKeyframe={selectedKeyframe}
+          onToggle={() => setTimelineOpen((current) => !current)}
+          onPlayback={playback}
+          onSpeed={changeSpeed}
+          onSeek={seekMotion}
+          onZoom={setTimelineZoom}
+          onPlaybackMode={changePlaybackMode}
+          onAutoKeyframe={toggleAutoKeyframe}
+          onSelectKeyframe={setSelectedKeyframe}
+          onMoveKeyframe={moveKeyframe}
+          onDuplicateKeyframe={duplicateKeyframe}
+          onDeleteKeyframe={deleteKeyframe}
+          onChangeKeyframeEasing={changeKeyframeEasing}
+        />
       </section>
     </main>
   );

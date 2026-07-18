@@ -19,5 +19,29 @@ export default async function CanvasIndex() {
      WHERE user_id = ${user.id}
      ORDER BY updated_at DESC
   `;
-  return <BoardsList boards={boards} userName={user.name} userEmail={user.email} />;
+  const savedWorkflows = await sql`
+    SELECT id, source_board_id, name, description, definition, created_at, updated_at
+      FROM workflow_templates
+     WHERE user_id = ${user.id}
+     ORDER BY updated_at DESC
+     LIMIT 24
+  `;
+  const assets = await sql`
+    SELECT id, type, name, source_url, blob_url, thumb_url, created_at
+      FROM assets
+     WHERE user_id = ${user.id}
+     ORDER BY created_at DESC
+     LIMIT 24
+  `;
+  return (
+    <BoardsList
+      boards={boards}
+      savedWorkflows={savedWorkflows}
+      assets={assets}
+      userName={user.name}
+      userEmail={user.email}
+      userPlan={user.plan}
+      view="home"
+    />
+  );
 }

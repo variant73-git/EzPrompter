@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { Check, CloudCheck, Monitor, Smartphone, Tablet, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { nodeOrigin, originColor } from '../lib/node-origin.js';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
@@ -17,7 +18,6 @@ import { normalizeUrl, looksLikeUrl } from '../lib/url.js';
 // EdgePopup removed — the per-edge config widget was the legacy "manual mode".
 // Edges are now selected by click and deleted with the keyboard.
 import PromptDock from './PromptDock.jsx';
-import CategoryCounts from './CategoryCounts.jsx';
 import Minimap from './Minimap.jsx';
 import CanvasSidebar from './CanvasSidebar.jsx';
 import CanvasTools from './CanvasTools.jsx';
@@ -37,6 +37,14 @@ import {
 } from '../lib/section-membership.js';
 import { clampFrameToNeighbors, clampMoveToNeighbors, planChainLayout, planSectionDeoverlap } from '../lib/canvas-layout.js';
 import { classifyDropFile, formatDropRejectMessage } from '../lib/drop-files.js';
+import { captureMoveUndo, restoreMissingEdges, restoreMovedNodes } from '../lib/canvas-undo.js';
+import {
+  CANVAS_DEFAULT_SCALE,
+  CANVAS_MAX_SCALE,
+  CANVAS_MIN_SCALE,
+  clampCanvasScale,
+  parseCanvasView,
+} from '../lib/canvas-view.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -174,13 +182,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   const [emptyDropMenu, setEmptyDropMenu] = useState(null);  // {sourceNodeId, x, y, worldX, worldY}
   const [contextMenu, setContextMenu] = useState(null);  // {x, y, worldX, worldY} — right-click on empty canvas
   const [editingNodeId, setEditingNodeId] = useState(null);
-  const [canvasScale, setCanvasScale] = useState(0.6);
+  const [editorActionBusy, setEditorActionBusy] = useState(false);
+  const [workflowSaveState, setWorkflowSaveState] = useState('idle');
+  const [showFirstNodeCoachmark, setShowFirstNodeCoachmark] = useState(false);
+  const [canvasScale, setCanvasScale] = useState(CANVAS_DEFAULT_SCALE);
   // Last scale we pushed into React state. onTransformed fires repeatedly as
   // TransformWrapper settles (and setTransform with anim=0 fires it inline);
   // pushing setCanvasScale on every fire re-renders → can re-enter the
   // transform → "Maximum update depth exceeded". We only setState when the
   // scale actually moved (epsilon), which breaks that feedback.
-  const lastAppliedScaleRef = useRef(0.6);
+  const lastAppliedScaleRef = useRef(CANVAS_DEFAULT_SCALE);
   // Trailing timer for the `canvas-interacting` gesture class — set on every
   // transform tick, cleared 180ms after the last one. CSS uses it to pause
   // in-world cosmetic motion while zoom/pan is actively changing. The same
@@ -197,13 +208,26 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // across all nodes). Per-tick writes made every zoom frame relayout the
   // whole board. The var now updates only on ≥1% scale change with ≥90ms
   // spacing; the gesture-end settle writes the exact value.
-  const lastVarScaleRef = useRef(0.6);
+  const lastVarScaleRef = useRef(CANVAS_DEFAULT_SCALE);
   const lastVarWriteTimeRef = useRef(0);
   const lastTransformRef = useRef(null);
-  // Pan-on-space mode. Default cursor is the arrow + drag = marquee select.
-  // Holding Space switches to grab cursor + drag = pan canvas (Figma /
-  // Linear convention). `spaceDown` toggles TransformWrapper panning.disabled
-  // and adds a `canvas-pan-mode` class to <body> for cursor + UX hints.
+  const canvasViewReadyRef = useRef(false);
+  const canvasViewSaveTimerRef = useRef(null);
+  const CANVAS_VIEW_KEY = `uncraft-canvas-view:v2:${board.id}`;
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setShowFirstNodeCoachmark(params.get('onboarding') === 'create-workflow' && nodes.length === 0);
+  }, [nodes.length]);
+
+  function dismissFirstNodeCoachmark() {
+    setShowFirstNodeCoachmark(false);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('onboarding');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+  // Cursor is the permanent resting mode. Holding Space temporarily activates
+  // pan; there is deliberately no persistent Hand state to get stuck in.
   const [spaceDown, setSpaceDown] = useState(false);
   // Marquee selection rect — viewport coords while drawing, set to null when
   // not active. Drawn as a fixed overlay; on mouseup we convert to world
@@ -215,10 +239,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // multi-move). When non-empty AND no single selection, render highlights
   // on every member.
   const [selectedNodeIds, setSelectedNodeIds] = useState(() => new Set());
-  // Undo stack for destructive canvas actions. Each entry is one operation
+  // Undo stack for structural canvas actions. Each entry is one operation
   // the user can reverse with Cmd+Z. Keep this in a ref (not state) so the
   // keyboard handler always sees the latest stack without re-binding.
-  // Entry shape: { type: 'deleteNodes', nodes: [...rows], edges: [...rows] }.
   const undoStackRef = useRef([]);
   // Accumulator of nodes the agent created across a single run. Each
   // graph_mutated refetch appends new node IDs/rows here. RUN_FINISHED
@@ -425,7 +448,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // cleared. That leaves three failure modes:
   //   (1) Next.js Fast Refresh swaps the component but leaves the previous
   //       inline style on <html>. The new TransformWrapper mounts at
-  //       initialScale=0.6 but onTransformed doesn't fire until the user
+  //       initialScale=0.72 but onTransformed doesn't fire until the user
   //       interacts, so the stale value (e.g. 0.1 from a zoomed-out session)
   //       is what CSS reads — inverse-scaled chrome becomes 10× bigger.
   //   (2) React StrictMode double-invokes effects in dev; if the previous
@@ -443,7 +466,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // Pin the baseline to match `initialScale` below so the chrome
       // doesn't flash native-sized between mount and the first
       // onTransformed fire. If you change initialScale, update this too.
-      document.documentElement.style.setProperty('--canvas-scale', '0.6');
+      document.documentElement.style.setProperty('--canvas-scale', String(CANVAS_DEFAULT_SCALE));
       document.documentElement.classList.remove('canvas-zoom-low', 'canvas-zoom-mid', 'canvas-zoom-very-low', 'canvas-zoom-min');
     };
     reset();
@@ -595,7 +618,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     return () => window.removeEventListener('paste', onPaste);
   }, []);
 
-  // Mirror spaceDown to a <body> class so CSS can swap the cursor
+  // Mirror the temporary pan mode to <body> so CSS can swap the cursor
   // (default arrow ↔ grab) without prop-drilling.
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -631,7 +654,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // vanilla JS and lives inside the host doc — it picks this up off
   // window.__uncraftZoom on demand.
   useEffect(() => {
-    const ZOOM_STEP = 1.2, MIN = 0.1, MAX = 2.5;
+    const ZOOM_STEP = 1.2, MIN = editingNodeId ? 0.04 : 0.1, MAX = 2.5;
     // Snapshot the previously-stored edit frame so we can restore it
     // after replacing the __uncraftZoom object (this effect re-runs on
     // every canvas-scale tick, otherwise the frame would be wiped).
@@ -643,7 +666,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const wrapper = inst?.wrapperComponent;
       if (!wrapper) { t.setTransform?.(0, 0, target, 200); return; }
       const rect = wrapper.getBoundingClientRect();
-      const cx = rect.width / 2, cy = rect.height / 2;
+      let cx = rect.width / 2, cy = rect.height / 2;
+      if (editingNodeId) {
+        const left = document.getElementById('rb-editor-layers')?.getBoundingClientRect().width || 224;
+        const right = document.getElementById('rb-editor-inspector')?.getBoundingClientRect().width || 248;
+        cx = left + Math.max(320, rect.width - left - right) / 2;
+        cy = 46 + Math.max(240, rect.height - 64) / 2;
+      }
       const state = inst.transformState || t.state || { positionX: 0, positionY: 0, scale: 1 };
       const wx = (cx - state.positionX) / state.scale;
       const wy = (cy - state.positionY) / state.scale;
@@ -669,6 +698,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // an iframe — TransformWrapper otherwise ignores wheel inside the
       // node iframe (it's in `wheel.excluded`).
       panBy: (dx, dy) => {
+        if (editingNodeId) return;
         const t = transformRef.current;
         if (!t) return;
         const inst = t.instance || t;
@@ -685,6 +715,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         if (!t) return;
         const inst = t.instance || t;
         const state = inst?.transformState || t.state || { positionX: 0, positionY: 0, scale: 1 };
+        if (editingNodeId) {
+          const left = document.getElementById('rb-editor-layers')?.getBoundingClientRect().width || 224;
+          const right = document.getElementById('rb-editor-inspector')?.getBoundingClientRect().width || 248;
+          cx = left + Math.max(320, window.innerWidth - left - right) / 2;
+          cy = 46 + Math.max(240, window.innerHeight - 64) / 2;
+        }
         // Wheel-zoom sensitivity — raised from 0.0015 → 0.0025 → 0.004
         // (2026-07-03, user request ×2): more zoom travel per wheel notch /
         // pinch distance.
@@ -730,7 +766,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         if (!t?.setTransform) return;
         t.setTransform(f.positionX, f.positionY, f.scale, animMs);
       },
-      fit: () => fitToContent()
+      fit: () => {
+        if (editingNodeId) {
+          const node = nodes.find((candidate) => candidate.id === editingNodeId);
+          if (node) window.__uncraftZoom.frameNode(editingNodeId, 280);
+          return;
+        }
+        fitToContent();
+      }
     };
     // CRITICAL: this effect re-runs every time `canvasScale` or `nodes`
     // change (which is constantly — every pan/zoom updates canvasScale).
@@ -739,7 +782,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (prevEditFrame !== undefined) window.__uncraftZoom._editFrame = prevEditFrame;
     return () => { try { delete window.__uncraftZoom; } catch (e) {} };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canvasScale, nodes]);
+  }, [canvasScale, nodes, editingNodeId]);
 
   const fileInputRef = useRef(null);
   const fileInputAcceptRef = useRef('');
@@ -777,6 +820,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     clearTimeout(dragNodeServer.current.get(id));
     const t = setTimeout(() => api.updateNode(id, { posX, posY }).catch(console.warn), 250);
     dragNodeServer.current.set(id, t);
+  }
+
+  // Bound the in-memory history so long design sessions do not retain an
+  // unlimited number of node/edge snapshots.
+  function pushUndoEntry(entry) {
+    if (!entry) return;
+    undoStackRef.current.push(entry);
+    if (undoStackRef.current.length > 100) undoStackRef.current.splice(0, undoStackRef.current.length - 100);
   }
 
   function nextNodePosition(opts = {}) {
@@ -936,6 +987,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             .map((n) => ({ id: n.id, dx: n.pos_x - node.pos_x, dy: n.pos_y - node.pos_y })),
         }
       : null;
+    // onMoveStart fires only after CanvasNode crosses the drag threshold, so
+    // a plain click never consumes an undo slot. Capture the whole selected
+    // group and the structural state a section hand-off may mutate.
+    const movingIds = new Set([
+      node.id,
+      ...(groupDragRef.current?.members || []).map((member) => member.id),
+    ]);
+    pushUndoEntry(captureMoveUndo(nodes, edges, movingIds, sectionFrames));
     // Freeze this node's absorption geometry for the whole drag so a member's
     // live movement never reshapes its section's core (which would expel/absorb
     // other nodes mid-drag).
@@ -1201,6 +1260,19 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // neighbour out (donors → left, receivers → right). Drag
     // resize doesn't cascade — that would feel jittery.
     if (opts?.cascade) cascadeOverlapShift(n.id, width, patch.height ?? n.height);
+    if (opts?.fitEditing && editingNodeId === n.id) {
+      const expandedNode = { ...n, width, height: patch.height ?? n.height };
+      window.requestAnimationFrame(() => {
+        const frame = computeEditFrame(expandedNode);
+        if (!window.__uncraftZoom) return;
+        window.__uncraftZoom._editFrame = frame;
+        window.__uncraftZoom.setState?.(frame, 280);
+      });
+    }
+    if (opts?.restoreAfterEditing) {
+      const restoredNode = { ...n, width, height: patch.height ?? n.height };
+      window.requestAnimationFrame(() => zoomToNode(restoredNode, 260));
+    }
   }
 
   function handleNodeDeleteRequest(n) {
@@ -2363,7 +2435,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // (plus its auto-link edge when the creation came from a connector).
   function pushCreateUndo(node, edge) {
     if (!node) return;
-    undoStackRef.current.push({ type: 'createNodes', nodes: [node], edges: edge ? [edge] : [] });
+    pushUndoEntry({ type: 'createNodes', nodes: [node], edges: edge ? [edge] : [] });
   }
 
   // "Connect to" flow (plan B): create an UNPOPULATED node of the picked
@@ -2524,7 +2596,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
   async function handleDeleteNode(id) {
     const entry = captureForUndo(new Set([id]));
-    if (entry) undoStackRef.current.push(entry);
+    pushUndoEntry(entry);
     setNodes((prev) => prev.filter((n) => n.id !== id));
     setEdges((prev) => prev.filter((e) => e.source_node_id !== id && e.target_node_id !== id));
     if (id.startsWith?.('temp-')) return;
@@ -2538,7 +2610,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (!ids?.length) return;
     const idSet = new Set(ids);
     const entry = captureForUndo(idSet);
-    if (entry) undoStackRef.current.push(entry);
+    pushUndoEntry(entry);
     setNodes((prev) => prev.filter((n) => !idSet.has(n.id)));
     setEdges((prev) => prev.filter((e) => !idSet.has(e.source_node_id) && !idSet.has(e.target_node_id)));
     await Promise.all(
@@ -2548,10 +2620,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     );
   }
 
-  // Pop the latest undo entry and reverse it. Only deleteNodes is supported
-  // right now — restores both the nodes and any incident edges via the
-  // /api/nodes/restore endpoint (uses ON CONFLICT DO NOTHING so it's safe
-  // to invoke multiple times if the user spams Cmd+Z).
+  // Pop the latest undo entry and reverse it. Structural restores use the
+  // /api/nodes/restore endpoint (ON CONFLICT DO NOTHING, safe under retries).
   async function handleUndo() {
     const entry = undoStackRef.current.pop();
     if (!entry) return;
@@ -2566,6 +2636,44 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       for (const n of entry.nodes) {
         if (String(n.id).startsWith('temp-')) continue;
         api.deleteNode(n.id).catch(console.warn);
+      }
+      return;
+    }
+
+    if (entry.type === 'moveNodes') {
+      // Stop queued drag PATCHes first; otherwise a trailing 250ms position
+      // write can land after the undo and move the node forward again.
+      for (const saved of entry.nodes) {
+        clearTimeout(dragNodeServer.current.get(saved.id));
+        dragNodeServer.current.delete(saved.id);
+      }
+
+      setNodes((prev) => restoreMovedNodes(prev, entry));
+      setEdges((prev) => restoreMissingEdges(prev, entry.edges));
+      const restoredFrames = entry.sectionFrames || {};
+      setSectionFrames(restoredFrames);
+      try { localStorage.setItem(SECTION_FRAMES_KEY, JSON.stringify(restoredFrames)); } catch {}
+
+      // Positions and membership metadata live on the node row. Missing
+      // incident cords (e.g. after tearing out of a section) are restored by
+      // the same idempotent endpoint used by delete undo.
+      await Promise.all(entry.nodes.map((saved) => (
+        api.updateNode(saved.id, { posX: saved.pos_x, posY: saved.pos_y, meta: saved.meta }).catch((error) => {
+          console.warn('[undo] move restore failed', saved.id, error);
+        })
+      )));
+      const persistedEdges = (entry.edges || []).filter((edge) => !String(edge.id || '').startsWith('temp-'));
+      if (persistedEdges.length) {
+        try {
+          await fetch('/api/nodes/restore', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ boardId: board.id, nodes: [], edges: persistedEdges }),
+          });
+        } catch (error) {
+          console.warn('[undo] cord restore failed', error);
+        }
       }
       return;
     }
@@ -2693,7 +2801,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // call startMarquee with the event.
   function maybeStartMarquee(ev) {
     if (ev.button !== 0) return;            // left click only
-    if (spaceDown) return;                  // pan mode owns the gesture
+    if (spaceDown) return; // temporary pan mode owns the gesture
     if (editingNodeId) return;
     if (challenge) return;
     if (emptyDropMenu || contextMenu) return;
@@ -3691,10 +3799,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // the cursor. The draft cord endpoint snaps to that slot's world coord
   // so the user gets clear visual confirmation that a drop will land.
   const SNAP_RADIUS_SCREEN = 56;
-  const SLOT_SIZE = 24.05, SLOT_GAP = 9;
-  // Receiver ports sit PORT_GAP screen px OUTSIDE the node's left edge — must
-  // match EdgeLayer.PORT_GAP and the .cnode-port-stack-left CSS offset.
-  const PORT_GAP = 17.08;
+  const SLOT_SIZE = 14, SLOT_GAP = 9;
+  // Receiver ports are centered on the node edge. Keep this in sync with
+  // EdgeLayer.PORT_GAP and the .cnode-port-stack-left CSS offset.
+  const PORT_GAP = 0;
   function findSnapTarget(clientX, clientY, sourceNodeId) {
     if (!sourceNodeId) return null;
     const w = clientToWorld(transformRef, clientX, clientY);
@@ -3707,7 +3815,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const radiusWorld = SNAP_RADIUS_SCREEN / cs;
     const slotSize = SLOT_SIZE / cs;
     const slotGap = SLOT_GAP / cs;
-    const gap = PORT_GAP / cs;   // receiver ports float left of the edge
+    const gap = PORT_GAP / cs;
     let best = null, bestDist = Infinity;
     for (const n of nodes) {
       if (n.id === sourceNodeId) continue;
@@ -3954,6 +4062,24 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     window.location.href = '/';
   }
 
+  async function handleSaveWorkflow() {
+    if (!nodes.length || workflowSaveState === 'saving') return;
+    setWorkflowSaveState('saving');
+    try {
+      await api.saveWorkflow(
+        board.id,
+        boardName || 'Untitled workflow',
+        `${nodes.length} reusable ${nodes.length === 1 ? 'node' : 'nodes'} with ${edges.length} ${edges.length === 1 ? 'connection' : 'connections'}.`
+      );
+      setWorkflowSaveState('saved');
+      toast.success('Workflow saved without node content.');
+      window.setTimeout(() => setWorkflowSaveState('idle'), 2200);
+    } catch (error) {
+      setWorkflowSaveState('idle');
+      toast.error(error.message || 'Could not save workflow');
+    }
+  }
+
   // Usable viewport region for framing math — the Working Table chrome
   // (sidebar + topbar) overlays the full-viewport canvas, so optical
   // centering must happen in the region it leaves free. Read live so the
@@ -3981,11 +4107,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const vh = window.innerHeight - ins.top;
     let scale;
     if (forcedScale != null) {
-      scale = forcedScale;
+      scale = clampCanvasScale(forcedScale);
     } else {
       const nodeW = node.width + PAD * 2;
       const nodeH = (node.height || 800) + PAD * 2 + 60;
-      scale = Math.min(vw / nodeW, vh / nodeH, 1.0);
+      scale = clampCanvasScale(Math.min(vw / nodeW, vh / nodeH, 1.0));
     }
     const centerX = node.pos_x + node.width / 2;
     const centerY = node.pos_y + (node.height || 800) / 2;
@@ -3994,14 +4120,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     t.setTransform(posX, posY, scale, animationTime);
   }
 
-  // Width-fit framing for a node — used by edit-entry, frame-back, and
-  // fit-to-view while editing. We deliberately ignore node height in the
-  // scale math: in edit mode the user pans vertically via the scroll
-  // wheel, so a tall (expanded) node should not collapse the zoom.
+  // Full-site framing for edit mode. The node expands to the document's
+  // complete height, then both axes fit between the editor panels. Editing
+  // intentionally has no canvas pan, so the whole page must remain visible
+  // and zoomable without requiring navigation through the world.
   function computeEditFrame(node) {
-    const PAD = 40;
-    const TOP_OFFSET = 30;
-    const HEADER = 48;
+    const PAD = 26;
+    const HEADER = 46;
+    const BOTTOM_PAD = 18;
     const vw = window.innerWidth;
     // Editor mounts layers panel (left) + inspector panel (right) into this
     // host doc; reserve their widths so the node frames between them
@@ -4010,14 +4136,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // panels haven't mounted yet (first entry into edit).
     const layersEl = document.getElementById('rb-editor-layers');
     const inspEl = document.getElementById('rb-editor-inspector');
-    const leftReserve = layersEl ? layersEl.getBoundingClientRect().width : 240;
-    const rightReserve = inspEl ? inspEl.getBoundingClientRect().width : 260;
+    const leftReserve = layersEl ? layersEl.getBoundingClientRect().width : 224;
+    const rightReserve = inspEl ? inspEl.getBoundingClientRect().width : 248;
     const usableW = Math.max(320, vw - leftReserve - rightReserve);
+    const usableH = Math.max(240, window.innerHeight - HEADER - BOTTOM_PAD);
     const nodeW = node.width + PAD * 2;
-    const scale = Math.min(usableW / nodeW, 1.0);
+    const nodeH = (node.height || 800) + PAD * 2;
+    const scale = Math.max(0.04, Math.min(usableW / nodeW, usableH / nodeH, 1.0));
     const centerX = node.pos_x + node.width / 2;
+    const centerY = node.pos_y + (node.height || 800) / 2;
     const positionX = (leftReserve + usableW / 2) - centerX * scale;
-    const positionY = (HEADER + TOP_OFFSET) - node.pos_y * scale;
+    const positionY = (HEADER + usableH / 2) - centerY * scale;
     return { positionX, positionY, scale };
   }
 
@@ -4041,6 +4170,35 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
   }
 
+  function applySiteViewport(node, width, height) {
+    handleNodeResize(node, width, height);
+    if (editingNodeId !== node.id) return;
+    const resizedNode = { ...node, width, height };
+    window.requestAnimationFrame(() => {
+      const frame = computeEditFrame(resizedNode);
+      if (!window.__uncraftZoom) return;
+      window.__uncraftZoom._editFrame = frame;
+      window.__uncraftZoom.setState?.(frame, 280);
+    });
+  }
+
+  function sendEditorAction(action) {
+    if (!editingNodeId || editorActionBusy) return;
+    window.dispatchEvent(new CustomEvent('uncraft:editor-action', {
+      detail: { nodeId: editingNodeId, action },
+    }));
+  }
+
+  useEffect(() => {
+    setEditorActionBusy(false);
+    if (!editingNodeId) return undefined;
+    function handleEditorBusy(event) {
+      if (event.detail?.nodeId === editingNodeId) setEditorActionBusy(Boolean(event.detail.busy));
+    }
+    window.addEventListener('uncraft:editor-busy', handleEditorBusy);
+    return () => window.removeEventListener('uncraft:editor-busy', handleEditorBusy);
+  }, [editingNodeId]);
+
   // Frame ALL nodes into the viewport. Pure version — no
   // editing/selection branching, used by both fitToContent (smart
   // default) and the minimap's frame toggle (explicit user intent).
@@ -4060,7 +4218,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const ins = chromeInsets();
     const vw = window.innerWidth - ins.left - ins.right;
     const vh = window.innerHeight - ins.top;
-    const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
+    const scale = clampCanvasScale(Math.min(vw / bboxW, vh / bboxH, CANVAS_MAX_SCALE));
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
     const posX = ins.left + vw / 2 - centerX * scale;
@@ -4143,7 +4301,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const insFit = chromeInsets();
     const vw = window.innerWidth - insFit.left - insFit.right;
     const vh = window.innerHeight - insFit.top;
-    const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
+    const scale = clampCanvasScale(Math.min(vw / bboxW, vh / bboxH, CANVAS_MAX_SCALE));
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
     // setTransform expects positionX/Y of the TransformComponent content.
@@ -4173,7 +4331,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const insCon = chromeInsets();
     const vw = window.innerWidth - insCon.left - insCon.right;
     const vh = window.innerHeight - insCon.top;
-    const scale = Math.min(vw / bboxW, vh / bboxH, 1.5);
+    const scale = clampCanvasScale(Math.min(vw / bboxW, vh / bboxH, CANVAS_MAX_SCALE));
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
     const posX = insCon.left + vw / 2 - centerX * scale;
@@ -4214,6 +4372,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       '.reset-confirm-overlay',
       '.canvas-context-menu',
       '.empty-drop-menu',
+      '#rb-editor-inspector',
+      '#rb-editor-layers',
+      '#rb-ed-insp-body',
+      '#rb-ed-layers-body',
+      '#rb-ed-sections-body',
+      '#rb-ed-assets-body',
       '.cnode-version-menu',
       '.cnode-version-ctx-menu',
       '.prompt-dock',
@@ -4255,6 +4419,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       // short-circuit it, but HMR can leave stale listeners around.
       e.stopPropagation();
       if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      if (editingNodeId) return;
       batcher.addPan(-(e.deltaX || 0), -(e.deltaY || 0));
     }
     function onKeyZoom(e) {
@@ -4291,17 +4456,41 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       document.removeEventListener('wheel', onWheelCapture, { capture: true });
       document.removeEventListener('keydown', onKeyZoom);
     };
-  }, []);
+  }, [editingNodeId]);
 
-  // Auto-fit when initial nodes are present (e.g. revisiting a board).
+  // Restore a board-scoped viewport. A new board opens at the Working Table
+  // reference scale (72%) around its main/first node instead of shrinking an
+  // entire large project to unreadable thumbnails. Subsequent pan/zoom state
+  // is saved below from onTransformed.
   useEffect(() => {
-    if (initialNodes && initialNodes.length > 0) {
-      const t = setTimeout(() => fitToContent(0), 50);
-      return () => clearTimeout(t);
-    }
-  }, []); // intentional: only on first mount
+    canvasViewReadyRef.current = false;
+    const timer = setTimeout(() => {
+      const transform = transformRef.current;
+      if (!transform?.setTransform) return;
 
-  // Keyboard shortcuts: Esc clears selection. F fits all nodes. 0 resets to 1:1 center.
+      let saved = null;
+      try { saved = parseCanvasView(localStorage.getItem(CANVAS_VIEW_KEY)); } catch {}
+      if (saved) {
+        transform.setTransform(saved.positionX, saved.positionY, saved.scale, 0);
+      } else if (initialNodes?.length) {
+        const focusNode = initialNodes.find((node) => node.is_main) || initialNodes[0];
+        // Normal website nodes are much larger than the illustrative nodes in
+        // the prototype. Fit the focused node to the same visible footprint;
+        // the 72% default still applies to empty/new boards.
+        zoomToNode(focusNode, 0);
+      }
+
+      requestAnimationFrame(() => { canvasViewReadyRef.current = true; });
+    }, 80);
+
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(canvasViewSaveTimerRef.current);
+    };
+  }, [CANVAS_VIEW_KEY]);
+
+  // Keyboard shortcuts: Esc clears selection. F fits all nodes. 0 resets to
+  // 1:1 center. Pan is handled separately and exists only while Space is held.
   // Delete/Backspace removes the selected node (or selected edge).
   useEffect(() => {
     function onKey(e) {
@@ -5365,6 +5554,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     return out.length ? out : null;
   }, [selectedSectionId, selectedNodeId, selectedNodeIds, sections, nodes]);
 
+  const selectedNode = nodes.find((node) => node.id === selectedNodeId) || null;
+  const selectedSiteNode = selectedNode?.kind === 'site' ? selectedNode : null;
+  const editingNode = nodes.find((node) => node.id === editingNodeId) || null;
+
   nodeHandlersRef.current = {
     handleEditingToggle,
     handleNodeSelect,
@@ -5440,13 +5633,67 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           transform wrapper starts at viewport 0,0). All of it hides in
           edit mode via CSS (the editor brings its own panels). */}
       <CanvasSidebar
-        activeBoardId={board?.id}
-        boardName={boardName}
         user={user}
         onSignOut={logout}
+        newNodeOpen={Boolean(contextMenu)}
+        showFirstNodeCoachmark={showFirstNodeCoachmark}
+        onNewNode={(event) => {
+          dismissFirstNodeCoachmark();
+          const rect = event.currentTarget.getBoundingClientRect();
+          const clientX = (rect.right + window.innerWidth - 248) / 2;
+          const clientY = window.innerHeight / 2;
+          const world = clientToWorld(transformRef, clientX, clientY);
+          setContextMenu({
+            x: rect.right,
+            y: rect.top,
+            worldX: world.x,
+            worldY: world.y,
+          });
+        }}
       />
 
-      <header className="canvas-topbar">
+      <header className={`canvas-topbar${editingNode ? ' editing' : ''}`}>
+        {editingNode ? (
+          <>
+            <div className="canvas-edit-context">
+              <span>Editing website</span>
+              <b title={editingNode.meta?.name || editingNode.origin_url || 'Untitled website'}>
+                {editingNode.meta?.name || editingNode.origin_url || 'Untitled website'}
+              </b>
+            </div>
+            <div className="canvas-topbar-viewports canvas-edit-viewports" role="group" aria-label="Editing viewport">
+              {[
+                { label: 'Desktop', width: 1280, height: 800, Icon: Monitor },
+                { label: 'Tablet', width: 768, height: 920, Icon: Tablet },
+                { label: 'Mobile', width: 390, height: 844, Icon: Smartphone },
+              ].map(({ label, width, height, Icon }) => (
+                <button
+                  key={label}
+                  type="button"
+                  className={Math.abs(editingNode.width - width) < 4 ? 'active' : ''}
+                  onClick={() => applySiteViewport(editingNode, width, height)}
+                  title={`${label} · ${width}px`}
+                  aria-label={`${label} editing viewport`}
+                  aria-pressed={Math.abs(editingNode.width - width) < 4}
+                  disabled={editorActionBusy}
+                >
+                  <Icon aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+            <div className="canvas-edit-actions">
+              <button type="button" className="canvas-edit-cancel" onClick={() => sendEditorAction('cancel')} disabled={editorActionBusy}>
+                <X aria-hidden="true" />
+                Cancel
+              </button>
+              <button type="button" className="canvas-edit-done" onClick={() => sendEditorAction('save')} disabled={editorActionBusy}>
+                <Check aria-hidden="true" />
+                {editorActionBusy ? 'Saving…' : 'Done'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
         <div className="canvas-topbar-crumb">
           <input
             className="canvas-board-name"
@@ -5464,27 +5711,71 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             spellCheck={false}
             size={Math.max(8, (boardName || '').length + 1)}
           />
+          <span className="canvas-topbar-separator">/</span>
+          <span className="canvas-topbar-location">Canvas</span>
+          <span className="canvas-topbar-save" title="Changes are persisted as you work">
+            <CloudCheck aria-hidden="true" />
+            Saved
+          </span>
         </div>
+        {selectedSiteNode && (
+          <div className="canvas-topbar-viewports canvas-resting-viewports" role="group" aria-label="Website viewport">
+            {[
+              { label: 'Desktop', width: 1280, height: 800, Icon: Monitor },
+              { label: 'Tablet', width: 768, height: 920, Icon: Tablet },
+              { label: 'Mobile', width: 390, height: 844, Icon: Smartphone },
+            ].map(({ label, width, height, Icon }) => (
+              <button
+                key={label}
+                type="button"
+                className={Math.abs(selectedSiteNode.width - width) < 4 ? 'active' : ''}
+                onClick={() => applySiteViewport(selectedSiteNode, width, height)}
+                title={`${label} · ${width}px`}
+                aria-label={`${label} viewport`}
+                aria-pressed={Math.abs(selectedSiteNode.width - width) < 4}
+              >
+                <Icon aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+        )}
         <div className="canvas-topbar-actions">
-          <CreditsPill />
-          {/* Placeholders — disabled until the features exist. */}
-          <button type="button" className="canvas-topbar-btn" disabled title="Preview — coming soon">
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><polygon points="6,4 20,12 6,20" /></svg>
-            Preview
+          <button
+            type="button"
+            className="canvas-topbar-btn canvas-save-workflow"
+            onClick={handleSaveWorkflow}
+            disabled={!nodes.length || workflowSaveState === 'saving'}
+            title={nodes.length ? 'Save this node structure as a reusable workflow' : 'Add a node before saving a workflow'}
+          >
+            {workflowSaveState === 'saved' ? <Check aria-hidden="true" /> : <WorkflowIcon aria-hidden="true" />}
+            {workflowSaveState === 'saving' ? 'Saving…' : workflowSaveState === 'saved' ? 'Workflow saved' : 'Save workflow'}
           </button>
+          <CreditsPill />
           <button type="button" className="canvas-topbar-btn canvas-topbar-share" disabled title="Share — coming soon">
             Share
           </button>
         </div>
+          </>
+        )}
       </header>
 
+      {editingNode && typeof document !== 'undefined' && createPortal(
+        <div className="canvas-sidebar-user canvas-editor-user">
+          <UserPill
+            name={user?.name}
+            email={user?.email}
+            plan={user?.plan}
+            onSignOut={logout}
+            workspaceMode
+          />
+        </div>,
+        document.body
+      )}
+
       <CanvasTools
-        onAdd={() => {
-          // Open the add-to-canvas menu anchored under the rail, placing
-          // new content at the viewport center in world coords.
-          const w = clientToWorld(transformRef, window.innerWidth / 2, window.innerHeight / 2);
-          setContextMenu({ x: window.innerWidth / 2 - 105, y: 108, worldX: w.x, worldY: w.y });
-        }}
+        panActive={spaceDown}
+        onUndo={handleUndo}
+        canUndo={undoStackRef.current.length > 0}
       />
 
       <div className="canvas-zoomdock">
@@ -5492,7 +5783,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       </div>
 
       <CanvasInspector
-        node={nodes.find((n) => n.id === selectedNodeId) || null}
+        node={selectedNode}
+        onEditSite={() => selectedSiteNode && handleEditingToggle(selectedSiteNode.id, true)}
         onFrameChange={(id, patch) => {
           // Same path a drag/resize commit takes: optimistic local update +
           // debounced-enough single PATCH (field commits are discrete).
@@ -5566,24 +5858,32 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       </div>
       <Minimap
         nodes={nodes}
-        edges={edges}
         transformRef={transformRef}
         frameMode={frameMode}
         hasSelection={!!selectedNodeId}
         onToggleFrame={toggleFrame}
-        onZoomToConnection={(ids) => zoomToConnection(ids)}
+        onSelectNode={(nodeId) => {
+          const node = nodes.find((candidate) => candidate.id === nodeId);
+          if (!node) return;
+          setSelectedSectionId(null);
+          setSelectedNodeIds(new Set());
+          setSelectedNodeId(nodeId);
+          setSelectedEdgeId(null);
+          setPopupPos(null);
+          zoomToNode(node, 280);
+        }}
       />
 
       <TransformWrapper
         ref={transformRef}
-        minScale={0.1}
-        maxScale={2.5}
-        initialScale={0.6}
+        minScale={editingNodeId ? 0.04 : CANVAS_MIN_SCALE}
+        maxScale={CANVAS_MAX_SCALE}
+        initialScale={CANVAS_DEFAULT_SCALE}
         initialPositionX={-WORLD_WIDTH * 0.25}
         initialPositionY={-WORLD_HEIGHT * 0.25}
         limitToBounds={false}
         wheel={{ disabled: true }}
-        panning={{ disabled: !spaceDown, excluded: ['cnode', 'cnode-topbar', 'cnode-body', 'cnode-iframe', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'cnode-handle', 'cnode-viewport-switcher', 'cnode-vp-btn', 'cnode-port-right', 'cnode-port-left', 'edge-line', 'edge-popup', 'reset-confirm-card', 'reset-confirm-overlay', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-sidebar', 'canvas-topbar', 'canvas-tools', 'canvas-zoomdock', 'canvas-inspector', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu', 'user-menu'] }}
+        panning={{ disabled: Boolean(editingNodeId) || !spaceDown, excluded: ['cnode', 'cnode-topbar', 'cnode-body', 'cnode-iframe', 'cnode-prompt-textarea', 'cnode-prompt-body', 'cnode-body-prompt', 'cnode-handle', 'cnode-viewport-switcher', 'cnode-vp-btn', 'cnode-port-right', 'cnode-port-left', 'edge-line', 'edge-popup', 'reset-confirm-card', 'reset-confirm-overlay', 'superwidget', 'canvas-toolbar-left', 'canvas-toolbar-right', 'canvas-toolbars-left', 'canvas-toolbars-right', 'canvas-sidebar', 'canvas-topbar', 'canvas-tools', 'canvas-zoomdock', 'canvas-inspector', 'canvas-theme-floater', 'zoom-controls', 'zoom-menu', 'user-menu'] }}
         doubleClick={{ disabled: true }}
         onPanningStart={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setPopupPos(null); }}
         onTransformed={(_ref, state) => {
@@ -5591,6 +5891,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           // viewport-readable via inverse-scale in CSS.
           const scale = state.scale || 1;
           lastTransformRef.current = { scale, x: state.positionX || 0, y: state.positionY || 0 };
+          if (canvasViewReadyRef.current) {
+            clearTimeout(canvasViewSaveTimerRef.current);
+            const view = {
+              positionX: state.positionX || 0,
+              positionY: state.positionY || 0,
+              scale: clampCanvasScale(scale),
+            };
+            canvasViewSaveTimerRef.current = setTimeout(() => {
+              try { localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(view)); } catch {}
+            }, 220);
+          }
           // Gesture window: while the transform is actively changing, CSS
           // pauses in-world animations/transitions (see canvas-interacting
           // rules in globals.css). Cleared 180ms after the last tick; the

@@ -1,6 +1,6 @@
 # Uncraft
 
-> Design without borders.
+> The whole web is a template.
 
 Visual design tool for the web. Edit any site directly in the browser with layers, inspector, guides, and AI rebuild. Two products:
 

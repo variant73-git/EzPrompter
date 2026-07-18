@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { ChevronsUpDown } from 'lucide-react';
 
 // Circular initial-letter avatar with a dropdown menu. Header shows
 // user name + plan badge; "Manage Account" sits underneath in a smaller
@@ -10,12 +11,16 @@ import { motion, AnimatePresence } from 'framer-motion';
 // non-free string) so we never have to update this component when the
 // user upgrades.
 
-export default function UserPill({ name, email, plan = 'free', onSignOut, compact = false }) {
+export default function UserPill({ name, email, plan = 'free', onSignOut, compact = false, workspaceMode = false }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
-  const initial = (name || email || '?').trim().charAt(0).toUpperCase();
+  const parts = (name || email || '?').trim().split(/\s+/).filter(Boolean);
+  const initial = workspaceMode
+    ? parts.slice(0, 2).map((part) => part.charAt(0).toUpperCase()).join('')
+    : parts[0].charAt(0).toUpperCase();
   const display = name || email;
+  const visibleName = workspaceMode ? (parts[0] || display) : display;
 
   useEffect(() => {
     if (!open) return;
@@ -44,13 +49,17 @@ export default function UserPill({ name, email, plan = 'free', onSignOut, compac
         <span className="user-pill-avatar">{initial}</span>
         {!compact && (
           <span className="user-pill-label">
-            <span className="user-pill-name">{display}</span>
-            <span className="user-pill-sub">Account</span>
+            <span className="user-pill-name">{visibleName}</span>
+            <span className="user-pill-sub">{workspaceMode ? 'Local workspace' : 'Account'}</span>
           </span>
         )}
-        <svg className="user-pill-chevron" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-          {compact ? <path d="m3 4.5 3 3 3-3"/> : <path d="m3 7.5 3-3 3 3"/>}
-        </svg>
+        {workspaceMode ? (
+          <ChevronsUpDown className="user-pill-chevron" aria-hidden="true" />
+        ) : (
+          <svg className="user-pill-chevron" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            {compact ? <path d="m3 4.5 3 3 3-3"/> : <path d="m3 7.5 3-3 3 3"/>}
+          </svg>
+        )}
       </button>
 
       <AnimatePresence>

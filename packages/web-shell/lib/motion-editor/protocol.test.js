@@ -50,6 +50,35 @@ describe('motion editor protocol', () => {
     expect(patch.property).toBeNull();
   });
 
+  it('creates reversible motion patches with an animation identity', () => {
+    const patch = createPatch({
+      elementId: 'hero-title',
+      kind: 'motion',
+      motionId: 'gsap-intro',
+      property: 'timing.duration',
+      before: 800,
+      value: 1200,
+    });
+    expect(patch.motionId).toBe('gsap-intro');
+    expect(invertPatch(patch)).toMatchObject({ before: 1200, value: 800, motionId: 'gsap-intro' });
+    expect(() => createPatch({ elementId: 'hero-title', kind: 'motion', property: 'timing.duration' })).toThrow('motionId');
+  });
+
+  it('preserves keyframe descriptors when a motion patch is inverted', () => {
+    const patch = createPatch({
+      elementId: 'hero-title',
+      kind: 'motion',
+      motionId: 'css-reveal',
+      property: 'keyframe.opacity',
+      before: { offset: 0.5, exists: false },
+      value: { offset: 0.5, value: '0.6', exists: true },
+    });
+    expect(invertPatch(patch)).toMatchObject({
+      before: { offset: 0.5, value: '0.6', exists: true },
+      value: { offset: 0.5, exists: false },
+    });
+  });
+
   it('creates host commands and source-scoped storage keys', () => {
     expect(command('set-mode', { mode: 'edit' })).toEqual({
       protocol: MOTION_EDITOR_PROTOCOL,

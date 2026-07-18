@@ -2,6 +2,12 @@
 
 > **Renomeado em 2026-04-27** — antes era "RepixBridge". A pasta foi movida pra `~/Desktop/IA/Uncraft/`. Namespace de código (`__rb*`, `rb-*` classes) preservado intencionalmente — rename interno seria muito invasivo sem benefício funcional.
 
+## 🧠 Cérebro do projeto (vault Obsidian)
+O cérebro do projeto vive em **`~/Desktop/IA/Brain`** — um vault Obsidian versionado com git próprio (separado deste repo). Porta de entrada: `Uncraft/🏠 Uncraft Home.md`. Estrutura: `Estratégia/`, `Produto/`, `Pesquisa/`, `Sessões/` (histórico de checkpoints), `Ideias/`.
+- **Consultar** o vault ao precisar de contexto de estratégia, pricing, competidores ou histórico de decisões.
+- **Atualizar** no ritual **[SALVAR]**: escrever/atualizar a nota da sessão em `Sessões/`, atualizar notas afetadas + a Home, e commitar o vault (`git -C ~/Desktop/IA/Brain add -A && git commit`).
+- Notas em Markdown com links `[[wiki]]` — criar links liberalmente entre notas relacionadas.
+
 ## O que é
 **Uncraft** é uma extensão Chrome que funciona como um **design tool para a web** — o designer edita qualquer site visualmente, sem sair do browser. Slogan: "Design without borders".
 

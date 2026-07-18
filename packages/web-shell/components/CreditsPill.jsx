@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { Coins } from 'lucide-react';
 
 // Human labels for ledger rows. `meta.op` gives the operation for charges;
 // `reason` covers grants (welcome / grant / purchase / refund).
@@ -79,16 +80,12 @@ export default function CreditsPill() {
     <div className="credits-pill-root" ref={rootRef}>
       <button
         type="button"
-        className="credits-pill"
+        className="credits-pill canvas-topbar-credits"
         onClick={toggle}
-        title="Credits"
+        title={credits == null ? 'Credits' : `${credits.toLocaleString('en-US')} credits`}
         aria-label="Credits balance"
       >
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 7v10M8.5 9.5h5a2 2 0 0 1 0 4h-3a2 2 0 0 0 0 4h5" strokeWidth="0" />
-          <path d="M9 12h6" />
-        </svg>
+        <Coins aria-hidden="true" />
         <span className="credits-pill-value">{credits == null ? '—' : credits.toLocaleString('en-US')}</span>
       </button>
       {open && (

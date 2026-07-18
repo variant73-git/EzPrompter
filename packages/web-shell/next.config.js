@@ -53,6 +53,9 @@ const SECURITY_HEADERS = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Allow the isolated motion-editor dev server to run beside the main shell
+  // without both Next processes invalidating the same development cache.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   // Force the workspace root to the monorepo root so Next doesn't pick up
   // a stray lockfile in $HOME and trace the whole home directory (which
   // hangs the dev server for minutes on first compile).

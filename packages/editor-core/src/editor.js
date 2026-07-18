@@ -118,8 +118,8 @@
     hostDoc.body.classList.add('rb-ed-canvas');
   }
   hostDoc.documentElement.classList.add('rb-ed-docked');
-  hostDoc.documentElement.style.setProperty('--rb-insp-width', '260px');
-  hostDoc.documentElement.style.setProperty('--rb-layers-width', '240px');
+  hostDoc.documentElement.style.setProperty('--rb-insp-width', '248px');
+  hostDoc.documentElement.style.setProperty('--rb-layers-width', '224px');
 
   // Font isolation: inline <style> injected LAST to beat any site CSS
   var rbFontStyle = hostDoc.createElement('style');
@@ -4812,7 +4812,9 @@
     userAvatar.addEventListener('mousedown', function(e) { userChev.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true})); }, {capture: true, signal: sig});
     userWrap.appendChild(userAvatar);
     userWrap.appendChild(userChev);
-    hd.appendChild(userWrap);
+    // The canvas shell owns account UI and renders the real UserPill in the
+    // left panel footer. Keep this legacy avatar only for extension mode.
+    if (!hostWin.__uncraftZoom) hd.appendChild(userWrap);
 
     // Canvas zoom pill — only meaningful when running inside the canvas
     // shell (host page exposes window.__uncraftZoom). In the extension
@@ -5074,10 +5076,12 @@
         {label: 'Text', disabled: true},
         {divider: true},
         {label: 'Help', disabled: true},
-        {label: 'Account', disabled: true},
-        {divider: true},
-        {label: 'Exit Editor', action: function() { deactivate(); }}
+        {label: 'Account', disabled: true}
       ];
+      if (!hostWin.__uncraftZoom) {
+        items.push({divider: true});
+        items.push({label: 'Exit Editor', action: function() { deactivate(); }});
+      }
 
       items.forEach(function(item) {
         if (item.divider) {
@@ -5123,7 +5127,7 @@
     // Minimize → small floating widget
     var panelMinBtn = mk('button', 'rb-ed-minmax-btn');
     panelMinBtn.innerHTML = '<span class="rb-ed-icon-minimize"></span>';
-    panelMinBtn.title = 'Minimize panels';
+    panelMinBtn.title = hostWin.__uncraftZoom ? 'Collapse layers panel' : 'Minimize panels';
     var panelsMinimized = false;
     var miniWidgetL = null, miniWidgetR = null;
     var DRAG_HANDLE = '<div class="rb-mini-handle"><div class="rb-mini-dots"><span></span><span></span><span></span><span></span></div><div class="rb-mini-dots"><span></span><span></span><span></span><span></span></div></div>';
@@ -5162,6 +5166,23 @@
 
     panelMinBtn.addEventListener('mousedown', function(e) {
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      // Canvas mode collapses only the left panel into a slim rail. The
+      // contextual inspector remains visible and the React-owned user pill
+      // follows the rail through the shared body class.
+      if (hostWin.__uncraftZoom) {
+        var leftCollapsed = layersPanel.classList.toggle('rb-layers-collapsed');
+        hostDoc.body.classList.toggle('rb-ed-left-collapsed', leftCollapsed);
+        hostDoc.documentElement.style.setProperty('--rb-layers-width', leftCollapsed ? '52px' : '224px');
+        panelMinBtn.innerHTML = leftCollapsed
+          ? '<span class="rb-ed-icon-maximize"></span>'
+          : '<span class="rb-ed-icon-minimize"></span>';
+        panelMinBtn.title = leftCollapsed ? 'Expand layers panel' : 'Collapse layers panel';
+        var currentNode = hostWin.__uncraftMountOptions && hostWin.__uncraftMountOptions.nodeId;
+        if (currentNode) {
+          setTimeout(function() { hostWin.__uncraftZoom.frameNode(currentNode, 220); }, 0);
+        }
+        return;
+      }
       panelsMinimized = true;
       layersPanel.style.display = 'none';
       inspector.style.display = 'none';
@@ -5239,20 +5260,20 @@
 
     var savedTheme = null;
     try { savedTheme = localStorage.getItem('rb-ed-theme'); } catch(e) {}
-    applyTheme(savedTheme === 'light');
+    // The canvas shell is dark-only. This class lives in the host document,
+    // so forcing dark chrome here never changes the website inside its iframe.
+    applyTheme(!hostWin.__uncraftZoom && savedTheme === 'light');
 
     themeBtn.addEventListener('mousedown', function(e) {
       e.preventDefault(); e.stopImmediatePropagation();
       applyTheme(!isLight());
     }, {capture: true, signal: sig});
 
-    // Minimize / theme buttons are no longer surfaced in the layers panel
-    // header — minimize was removed at user request and theme moved to the
-    // canvas toolbar (web-shell). Their elements + handlers stay declared
-    // above so the rest of the code (mini-widget restore, applyTheme on
-    // boot) keeps working without churn.
-    //
-    // Undock IS surfaced — but only in the extension. On the canvas, panels
+    // The collapse control is shared: it becomes a left-rail toggle in the
+    // canvas and retains the older floating-panel behaviour in the extension.
+    logoActions.appendChild(panelMinBtn);
+
+    // Undock is surfaced only in the extension. On the canvas, panels
     // are sized to the editing node and undocking them would put them out
     // of the user's viewport context. `__uncraftZoom` is the canvas-only
     // API stamped by CanvasClient, so its absence = extension context.
@@ -5289,6 +5310,7 @@
 
     // Tab bar: Layers | Sections | Assets | 🔍
     var tabBar = mk('div');
+    tabBar.id = 'rb-ed-layer-tabs';
     tabBar.style.cssText = 'display:flex;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0;';
     var tabLayers = mk('button', 'rb-layer-tab rb-layer-tab-active');
     tabLayers.textContent = 'Layers';
@@ -5342,7 +5364,7 @@
       deactivate();
     }, {capture: true, signal: sig});
     exitFooter.appendChild(exitBtn);
-    layersPanel.appendChild(exitFooter);
+    if (!hostWin.__uncraftZoom) layersPanel.appendChild(exitFooter);
 
     function switchLeftTab(active) {
       layersBody.style.display = active === 'layers' ? '' : 'none';
@@ -5390,15 +5412,14 @@
 
     populateLayers();
 
-    // Canvas mode default: undocked / floating panels. The host body in
-    // canvas isn't the edited site, so the docked layout (which carves
-    // 240px+260px out of body width) just compresses canvas chrome. The
-    // user prefers floating panels here. Toggle button stays interactive.
+    // Canvas mode uses the same flush, full-height panel geometry as the
+    // resting canvas shell. The panels still overlay the world, while the
+    // canvas framing logic reserves their measured widths for the site.
     if (hostDoc !== targetDoc) {
-      layersPanel.classList.add('rb-layers-floating');
-      inspector.classList.add('rb-insp-floating');
-      hostDoc.body.classList.add('rb-ed-floating');
-      hostDoc.documentElement.classList.remove('rb-ed-docked');
+      layersPanel.classList.remove('rb-layers-floating');
+      inspector.classList.remove('rb-insp-floating');
+      hostDoc.body.classList.remove('rb-ed-floating');
+      hostDoc.documentElement.classList.add('rb-ed-docked');
     }
   }
 
@@ -10400,7 +10421,7 @@
     hostWin.__rbEditorActive = false;
     ac.abort();
     root.remove();
-    hostDoc.body.classList.remove('rb-ed-active', 'rb-ed-dragging', 'rb-ed-floating', 'rb-ed-canvas');
+    hostDoc.body.classList.remove('rb-ed-active', 'rb-ed-dragging', 'rb-ed-floating', 'rb-ed-canvas', 'rb-ed-left-collapsed');
     hostDoc.documentElement.classList.remove('rb-scroll-locked', 'rb-ed-docked');
     hostDoc.body.style.paddingTop = '';
 

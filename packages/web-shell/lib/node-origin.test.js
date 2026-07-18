@@ -25,4 +25,7 @@ describe('nodeOrigin', () => {
   it('blue identities share the same colour code', () => {
     expect(ORIGIN_COLORS.url).toBe(ORIGIN_COLORS.blank);
   });
+  it('design.md uses the approved warm ochre', () => {
+    expect(ORIGIN_COLORS.md).toBe('#EEA665');
+  });
 });
