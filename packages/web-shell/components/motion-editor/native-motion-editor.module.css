@@ -228,6 +228,38 @@
   background: rgba(241, 240, 235, 0.12);
 }
 
+.exportButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  color: var(--motion-secondary);
+  border: 1px solid var(--motion-line);
+  border-radius: 7px;
+  background: transparent;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+.exportButton svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.7;
+}
+
+.exportButton:not(:disabled):hover {
+  color: var(--motion-text);
+  background: var(--motion-hover);
+}
+
+.exportButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .saveButton {
   display: inline-flex;
   align-items: center;
@@ -317,6 +349,22 @@
   height: 1px;
   margin: 3px auto;
   background: var(--motion-line);
+}
+
+.patchError {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  z-index: 5;
+  max-width: 480px;
+  padding: 7px 14px;
+  color: #f3d9d6;
+  border: 1px solid rgba(238, 118, 101, 0.4);
+  border-radius: 8px;
+  background: rgba(64, 26, 22, 0.92);
+  box-shadow: 0 8px 24px rgba(8, 8, 7, 0.3);
+  font-size: 10px;
+  transform: translateX(-50%);
 }
 
 .stageStatus {
@@ -1651,6 +1699,45 @@
   background: rgba(41, 102, 234, 0.16);
 }
 
+.motionGroup {
+  display: grid;
+  gap: 4px;
+}
+
+.motionGroupRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.motionList .motionGroupToggle {
+  display: grid;
+  min-height: 0;
+  padding: 0;
+  place-items: center;
+  grid-template-columns: none;
+  color: var(--motion-muted);
+}
+
+.motionList .motionGroupToggle svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 120ms ease;
+}
+
+.motionList .motionGroupToggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.motionGroupChildren {
+  display: grid;
+  gap: 4px;
+  margin-left: 10px;
+  padding-left: 12px;
+  border-left: 1px solid rgba(241, 240, 235, 0.08);
+}
+
 .motionGlyph {
   display: grid;
   width: 24px;
@@ -1907,3 +1994,220 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Viewport-scoped motion rows — what is animated on screen right now. */
+.viewportScope {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(12, 12, 14, 0.6);
+  max-height: 200px;
+  display: flex;
+  flex-direction: column;
+}
+.viewportScope > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 12px 6px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.62);
+}
+.viewportScope > header small {
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: rgba(255, 255, 255, 0.38);
+}
+.viewportEmpty {
+  margin: 0;
+  padding: 4px 12px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.38);
+}
+.viewportRows {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 8px;
+  overflow-y: auto;
+}
+.viewportRows button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.viewportRows button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.viewportRows button[aria-pressed='true'] {
+  background: rgba(41, 102, 234, 0.22);
+  color: #fff;
+}
+.viewportKind {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #8eaff4;
+}
+.viewportKind svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 1.7;
+}
+.viewportLabel {
+  flex: 0 0 auto;
+  max-width: 150px;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewportCount {
+  flex: 0 0 auto;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 10px;
+  text-align: center;
+}
+
+.motionScrollHint {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 9px 12px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.55);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.motionScrollHint svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  stroke-width: 1.7;
+  color: #8eaff4;
+}
+
+/* The strip fills the horizontal space of each row — label left, track right. */
+.viewportStrip {
+  position: relative;
+  flex: 1 1 auto;
+  height: 14px;
+  min-width: 120px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.045);
+  overflow: hidden;
+}
+.viewportBar {
+  position: absolute;
+  top: 3px;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(142, 175, 244, 0.45);
+}
+.viewportBar[data-driver='scroll'] {
+  background: linear-gradient(90deg, rgba(142, 175, 244, 0.18), rgba(142, 175, 244, 0.5));
+}
+.viewportMark {
+  position: absolute;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: #dbe6ff;
+}
+
+/* Layers: one row per element on screen, expanding into its property tracks. */
+.timelineLayerGroup { display: flex; flex-direction: column; }
+.timelineCanvasGroup { display: flex; flex-direction: column; }
+
+.keyframeValueField {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+}
+
+.keyframeValueField span {
+  color: var(--motion-muted);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.keyframeValueField input {
+  width: 74px;
+  height: 24px;
+  padding: 0 7px;
+  color: var(--motion-text);
+  border: 1px solid var(--motion-line);
+  border-radius: 6px;
+  background: var(--motion-panel);
+  font-size: 10px;
+}
+
+.timelineStripHandle {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  width: 9px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--motion-line-strong);
+  border-radius: 4px;
+  background: var(--motion-text);
+  cursor: ew-resize;
+  transform: translate(-50%, -50%);
+  touch-action: none;
+}
+
+.timelineStripHandle:hover {
+  background: #fff;
+  border-color: var(--motion-accent);
+}
+.timelineLayerLabel {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.timelineLayerLabel:hover { background: rgba(255, 255, 255, 0.06); }
+.timelineLayerLabel[data-selected='true'] { background: rgba(41, 102, 234, 0.22); color: #fff; }
+.timelineClip[data-driver='scroll'] {
+  background: linear-gradient(90deg, rgba(142, 175, 244, 0.18), rgba(142, 175, 244, 0.5));
+}
+
+.timelineScrollHint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+}
+.timelineScrollHint svg { width: 12px; height: 12px; stroke-width: 1.7; color: #8eaff4; }

@@ -51,6 +51,28 @@ export function motionPlaybackMode(timing = {}) {
   return 'once';
 }
 
+// Patches for a strip-edge drag. The timeline strip is the min/max ENVELOPE of
+// every scroll tween on the element, but the patch retargets ONE motion — the
+// undo `before` must therefore come from that motion's own resolved range, or
+// undo writes the neighbour tween's pixels into it.
+export function buildStripEditPatches({ motion, row, next = {} }) {
+  if (!motion || motion.driver?.type !== 'scroll') return [];
+  const resolved = (value, fallback) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.round(numeric) : fallback;
+  };
+  const beforeStart = resolved(motion.scroll?.start, row?.scrollStart ?? 0);
+  const beforeEnd = resolved(motion.scroll?.end, row?.scrollEnd ?? 0);
+  const patches = [];
+  if (next.start != null && Math.round(next.start) !== beforeStart) {
+    patches.push({ property: 'scroll.start', before: beforeStart, value: Math.round(next.start) });
+  }
+  if (next.end != null && Math.round(next.end) !== beforeEnd) {
+    patches.push({ property: 'scroll.end', before: beforeEnd, value: Math.round(next.end) });
+  }
+  return patches;
+}
+
 export function normalizeMotionClip(input = {}) {
   const timing = input.timing || {};
   return {
@@ -72,6 +94,7 @@ export function normalizeMotionClip(input = {}) {
       repeatDelay: Number.isFinite(timing.repeatDelay) ? timing.repeatDelay : 0,
     },
     tracks: Array.isArray(input.tracks) ? input.tracks : [],
+    group: input.group || null,
     scroll: input.scroll || null,
     capabilities: input.capabilities || {},
     source: input.source || {},

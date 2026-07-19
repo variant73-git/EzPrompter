@@ -29,6 +29,15 @@ function nativeMotionRuntimeBridge() {
   let lastTimelineEmit = 0;
   const animationIds = new WeakMap();
   const motionRegistry = new Map();
+  // Every listener this instance installs hangs off one controller, so a
+  // re-injected bridge can remove ALL of them at once. Leaving even the DOM
+  // listeners behind makes a stale instance keep emitting selections with ids
+  // the live instance does not know.
+  const listeners = new AbortController();
+  const on = (target, type, handler, options) => {
+    const base = options === true ? { capture: true } : (options || {});
+    target.addEventListener(type, handler, { ...base, signal: listeners.signal });
+  };
 
   function emit(type, payload) {
     window.parent.postMessage({ protocol: PROTOCOL, source: 'runtime', type, payload }, '*');
@@ -161,6 +170,52 @@ function nativeMotionRuntimeBridge() {
     }));
   }
 
+  // Grouping facts only the runtime can see: which split-text root a per-char
+  // tween belongs to, which GSAP timeline parents a tween, who the DOM parent is.
+  // The host collapses the flat motion list into semantic rows from this alone.
+  function clipGroupMeta(animation, primaryTarget, targets) {
+    const meta = {
+      targetId: null,
+      parentId: null,
+      splitRootId: null,
+      splitRootLabel: null,
+      timelineId: null,
+      timelineLabel: null,
+      timelineScroll: false,
+      targetCount: 1,
+    };
+    // Metadata is a bonus — a throw anywhere here must never escape into
+    // describe() and kill selection on an exotic page.
+    try {
+      if (primaryTarget instanceof Element) {
+        meta.targetId = ensureElementId(primaryTarget);
+        if (primaryTarget.parentElement) meta.parentId = ensureElementId(primaryTarget.parentElement);
+      }
+      meta.targetCount = Math.max(1, (targets || []).filter((item) => item instanceof Element).length);
+    } catch (_) {}
+    try {
+      if (primaryTarget instanceof Element && primaryTarget.matches(SPLIT_TOKEN)) {
+        const root = textRoot(primaryTarget);
+        if (root && root !== primaryTarget) {
+          meta.splitRootId = ensureElementId(root);
+          meta.splitRootLabel = directText(root).slice(0, 60) || null;
+        }
+      }
+    } catch (_) {}
+    try {
+      const parent = animation.parent;
+      if (parent && parent !== window.gsap?.globalTimeline) {
+        // Seed from the authored timeline id when present: the host keys UI state
+        // (expanded groups) by this, and it must survive a bridge re-injection.
+        const authored = parent.vars?.id || parent.scrollTrigger?.vars?.id || null;
+        meta.timelineId = motionIdFor(parent, 'timeline', authored ? `tl:${authored}` : null);
+        meta.timelineLabel = authored;
+        meta.timelineScroll = Boolean(parent.scrollTrigger || parent.vars?.scrollTrigger);
+      }
+    } catch (_) {}
+    return meta;
+  }
+
   function browserMotionClip(animation, index, selectedElement) {
     const effect = animation.effect;
     const rawTiming = effect && typeof effect.getTiming === 'function' ? effect.getTiming() : {};
@@ -174,7 +229,9 @@ function nativeMotionRuntimeBridge() {
     const clip = {
       id,
       engine,
-      name: keyframeName || animation.id || `Animation ${index + 1}`,
+      // Name the clip after the thing on the page. "Animation 105" is an engine
+      // fact and means nothing to whoever is editing.
+      name: elementLabel(target) || keyframeName || animation.id || `Animation ${index + 1}`,
       editability: 'direct',
       driver: { type: driverType },
       trigger: { type: keyframeName ? 'css-rule' : 'runtime' },
@@ -192,6 +249,7 @@ function nativeMotionRuntimeBridge() {
         repeatDelay: 0,
       },
       tracks: keyframeTracks(effect),
+      group: clipGroupMeta(animation, target, [target]),
       scroll: driverType === 'scroll' ? { start: 'timeline start', end: 'timeline end', scrub: true, pin: false, snap: false } : null,
       capabilities: { timing: true, easing: true, keyframes: true, trigger: false, scroll: driverType === 'scroll' },
       source: { engine, animationName: keyframeName || null, timeline: timelineName || null, writeback: 'native' },
@@ -213,6 +271,22 @@ function nativeMotionRuntimeBridge() {
     if (!gsap || typeof gsap.getProperty !== 'function' || typeof animation.progress !== 'function') {
       return endOnly();
     }
+    // Sampling RENDERS the tween. suppressEvents silences callbacks, not plugin
+    // side effects: a `clearProps` tween wipes style.cssText when it completes, and
+    // restoring progress cannot rebuild unrelated inline styles. So snapshot every
+    // target's inline style and put it back — inspection must never mutate the page.
+    const touched = [];
+    try {
+      const list = typeof animation.targets === 'function' ? animation.targets() : [];
+      list.forEach((item) => { if (item instanceof Element) touched.push([item, item.style.cssText]); });
+    } catch (_) {}
+    if (target instanceof Element && !touched.some(([item]) => item === target)) {
+      touched.push([target, target.style.cssText]);
+    }
+    const restoreInlineStyles = () => {
+      touched.forEach(([item, cssText]) => { try { item.style.cssText = cssText; } catch (_) {} });
+    };
+
     let restore = null;
     try {
       const current = animation.progress();
@@ -222,6 +296,7 @@ function nativeMotionRuntimeBridge() {
       animation.progress(1, true);
       const endValues = animatedProps.map((property) => String(gsap.getProperty(target, property)));
       animation.progress(restore, true);
+      restoreInlineStyles();
       return {
         keyframes: true,
         tracks: animatedProps.map((property, index) => ({
@@ -234,6 +309,7 @@ function nativeMotionRuntimeBridge() {
       };
     } catch (_) {
       if (restore != null) { try { animation.progress(restore, true); } catch (_) {} }
+      restoreInlineStyles();
       return endOnly();
     }
   }
@@ -259,7 +335,7 @@ function nativeMotionRuntimeBridge() {
           'stagger', 'immediateRender', 'startAt', 'overwrite', 'runBackwards', 'lazy', 'paused', 'reversed',
           'callbackScope', 'onComplete', 'onInterrupt', 'onRepeat', 'onReverseComplete', 'onStart', 'onUpdate',
           // GSAP internal/config vars — never real animatable properties
-          'force3D', 'data', 'autoRound', 'inherit', 'defaults', 'smoothChildTiming', 'keyframes',
+          'force3D', 'data', 'autoRound', 'inherit', 'defaults', 'smoothChildTiming', 'keyframes', 'clearProps',
         ]);
         const animatedProps = Object.keys(vars)
           .filter((property) => !ignored.has(property) && typeof vars[property] !== 'function');
@@ -268,9 +344,16 @@ function nativeMotionRuntimeBridge() {
         const clip = {
           id,
           engine,
-          name: vars.id || scrollTrigger?.vars?.id || scrollTrigger?.id || `Animation ${index + 1}`,
+          name: elementLabel(primaryTarget) || vars.id || scrollTrigger?.vars?.id || scrollTrigger?.id || `Animation ${index + 1}`,
           editability: 'adapter',
-          driver: { type: scrollTrigger ? 'scroll' : 'time' },
+          // A scroll-SCRUBBED video is the cleanest case of the whole model:
+          // one track whose value is currentTime, driven by scroll → MEDIA.
+          // Without a trigger it is just a timed seek — a plain time clip.
+          driver: {
+            type: scrollTrigger && primaryTarget instanceof HTMLMediaElement && animatedProps.includes('currentTime')
+              ? 'media'
+              : scrollTrigger ? 'scroll' : 'time',
+          },
           trigger: {
             type: scrollTrigger ? 'scroll' : 'runtime',
             target: scrollTrigger?.trigger?.className || scrollTrigger?.trigger?.id || vars.scrollTrigger?.trigger?.className || vars.scrollTrigger?.trigger?.id || null,
@@ -288,6 +371,7 @@ function nativeMotionRuntimeBridge() {
             repeatDelay: Math.round((animation.repeatDelay?.() || 0) * 1000),
           },
           tracks,
+          group: clipGroupMeta(animation, primaryTarget, targets),
           scroll: scrollTrigger ? {
             start: String(scrollTrigger.start ?? scrollTrigger.vars?.start ?? 'top bottom'),
             end: String(scrollTrigger.end ?? scrollTrigger.vars?.end ?? 'bottom top'),
@@ -295,7 +379,10 @@ function nativeMotionRuntimeBridge() {
             pin: Boolean(scrollTrigger.pin || (scrollTrigger.vars?.pin ?? vars.scrollTrigger?.pin)),
             snap: Boolean(scrollTrigger.vars?.snap ?? vars.scrollTrigger?.snap),
           } : null,
-          capabilities: { timing: true, easing: true, keyframes: sampled.keyframes, trigger: false, scroll: Boolean(scrollTrigger) },
+          // gsap.from(): vars hold the FROM, not the end — a keyframe write
+          // labelled "end" would silently retarget the start. Read-only until
+          // the writeback understands runBackwards.
+          capabilities: { timing: true, easing: true, keyframes: sampled.keyframes && !vars.runBackwards, trigger: false, scroll: Boolean(scrollTrigger) },
           source: { engine, writeback: 'adapter' },
         };
         motionRegistry.set(id, { type: 'gsap', animation, scrollTrigger });
@@ -304,6 +391,239 @@ function nativeMotionRuntimeBridge() {
     } catch (_) {
       return [];
     }
+  }
+
+  // ---- Viewport-scoped motion rows -------------------------------------------------
+  // The timeline lists what is ON SCREEN, identified by element (name + type), not
+  // every animation object on the page. Scrolling the site changes the list, which is
+  // what turns the site frame into a control surface rather than a viewer.
+
+  function elementKind(element) {
+    if (!(element instanceof Element)) return 'container';
+    if (element.matches('img,picture')) return 'image';
+    if (element.matches('video')) return 'video';
+    if (element.matches('canvas')) return 'canvas';
+    if (element.matches('svg')) return 'svg';
+    if (element.matches(TEXT_BLOCK)) return 'text';
+    return directText(element) ? 'text' : 'container';
+  }
+
+  function elementLabel(element) {
+    // A row must read as a THING ON THE PAGE. For unnamed containers the first
+    // meaningful class ("croptab-lottie") beats a bare tag ("div").
+    const namedClass = Array.from(element.classList || [])
+      .find((name) => !/^(w-|uncraft-|is-|has-)/.test(name) && name.length > 2);
+    return element.getAttribute('aria-label')
+      || element.getAttribute('alt')
+      || directText(element).slice(0, 60)
+      || element.id
+      || namedClass
+      || element.tagName.toLowerCase();
+  }
+
+  function intersectsViewport(element) {
+    let rect = null;
+    try { rect = element.getBoundingClientRect(); } catch (_) { return false; }
+    if (!rect || (!rect.width && !rect.height)) return false;
+    const height = window.innerHeight || document.documentElement.clientHeight || 0;
+    const width = window.innerWidth || document.documentElement.clientWidth || 0;
+    return rect.bottom > 0 && rect.top < height && rect.right > 0 && rect.left < width;
+  }
+
+  function pageMetrics() {
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const scrollHeight = Math.max(viewportHeight, document.documentElement.scrollHeight || 0);
+    return {
+      scrollY: Math.max(0, Math.round(window.scrollY || 0)),
+      viewportHeight,
+      scrollHeight,
+      maxScroll: Math.max(0, scrollHeight - viewportHeight),
+    };
+  }
+
+  // Split-text runtimes animate every letter/word as its own element — often
+  // with NO class at all (real Webflow: unnamed letter divs inside
+  // gsap_split_word wrappers). A fragment is recognised structurally: it has a
+  // split-ish class, or it is a short piece of text sitting among short
+  // siblings. The row host is the first non-fragment ancestor (the text block).
+  function splitFragmentHost(element) {
+    const splitClassed = (node) => {
+      try { return node.matches(SPLIT_TOKEN) || /(^|[\s_-])split/i.test(String(node.className || '')); } catch (_) { return false; }
+    };
+    const shortText = (node) => {
+      // Cheap reject before serializing text: a real fragment is a tiny node —
+      // never a container with many children (textContent walks the subtree).
+      if (node.childElementCount > 8) return false;
+      const text = (node.textContent || '').trim();
+      return text.length > 0 && text.length < 12;
+    };
+    const isFragment = (node) => {
+      if (!(node instanceof Element) || node.matches('section,article,main,body,html')) return false;
+      // A text ROOT is never a fragment, even when the split marker sits ON it
+      // ([text-split] on the heading is the common Webflow pattern). Climbing
+      // past it would fuse neighbouring text blocks into one row.
+      if (node.matches(TEXT_BLOCK) || node.matches('[text-split],[data-split-text],[text-split-delay],[aria-label]')) return false;
+      if (splitClassed(node)) return true;
+      const parent = node.parentElement;
+      if (!parent) return false;
+      // An unnamed piece INSIDE a split wrapper is a fragment regardless of
+      // siblings — a one-letter word has a single child in its wrapper.
+      if (splitClassed(parent)) return true;
+      if (!shortText(node)) return false;
+      const kids = Array.from(parent.children);
+      return kids.length >= 2 && kids.filter(shortText).length >= Math.ceil(kids.length * 0.6);
+    };
+    let host = element;
+    let depth = 0;
+    while (depth < 8 && isFragment(host) && host.parentElement && host.parentElement !== document.body) {
+      host = host.parentElement;
+      depth += 1;
+    }
+    return host;
+  }
+
+  // ONE pass over both engines per emit. Per-member timeline walks are
+  // quadratic — with hundreds of animated fragments (345 on farmminerals) a
+  // single debounced emit would re-scan every tween hundreds of times inside
+  // the third-party page.
+  function buildMotionSummaryIndex() {
+    const index = new Map();
+    const entryFor = (element) => {
+      if (!index.has(element)) {
+        index.set(element, {
+          count: 0, engines: [], scrollDriven: false, scrollExotic: false,
+          delayMs: Infinity, endMs: 0, marks: new Set(),
+          scrollStart: Infinity, scrollEnd: -Infinity,
+        });
+      }
+      return index.get(element);
+    };
+    const addEngine = (record, name) => { if (!record.engines.includes(name)) record.engines.push(name); };
+    const envelope = (record, delay, duration) => {
+      record.delayMs = Math.min(record.delayMs, Math.max(0, delay));
+      record.endMs = Math.max(record.endMs, Math.max(0, delay) + Math.max(0, duration));
+    };
+    try {
+      (typeof document.getAnimations === 'function' ? document.getAnimations() : []).forEach((animation) => {
+        const target = animation?.effect?.target;
+        if (!(target instanceof Element)) return;
+        const record = entryFor(target);
+        record.count += 1;
+        addEngine(record, 'CSS');
+        const timing = animation.effect?.getTiming?.() || {};
+        const computed = animation.effect?.getComputedTiming?.() || {};
+        envelope(record, finite(timing.delay), finite(computed.duration, finite(timing.duration)));
+        try {
+          (animation.effect?.getKeyframes?.() || []).forEach((frame) => {
+            record.marks.add(Number(finite(frame.computedOffset, finite(frame.offset, 0)).toFixed(3)));
+          });
+        } catch (_) {}
+      });
+    } catch (_) {}
+    try {
+      (window.gsap?.globalTimeline?.getChildren?.(true, true, true) || []).forEach((tween) => {
+        const targets = typeof tween.targets === 'function' ? tween.targets() : [];
+        targets.forEach((target) => {
+          if (!(target instanceof Element)) return;
+          const record = entryFor(target);
+          record.count += 1;
+          const trigger = tween.scrollTrigger || tween.vars?.scrollTrigger || null;
+          if (trigger) {
+            record.scrollDriven = true;
+            // A horizontal or custom-scroller trigger's pixels belong to another
+            // axis/domain — never plot or edit them against the page's vertical ruler.
+            const exotic = Boolean(trigger.vars?.horizontal || trigger.horizontal)
+              || (trigger.scroller != null && trigger.scroller !== window
+                && trigger.scroller !== document.documentElement && trigger.scroller !== document.body);
+            if (exotic) record.scrollExotic = true;
+            else {
+              if (Number.isFinite(trigger.start)) record.scrollStart = Math.min(record.scrollStart, trigger.start);
+              if (Number.isFinite(trigger.end)) record.scrollEnd = Math.max(record.scrollEnd, trigger.end);
+            }
+          }
+          addEngine(record, trigger ? 'ScrollTrigger' : 'GSAP');
+          envelope(record, finite(tween.delay?.()) * 1000, finite(tween.duration?.()) * 1000);
+          record.marks.add(0);
+          record.marks.add(1);
+        });
+      });
+    } catch (_) {}
+    return index;
+  }
+
+  function viewportMotionRows(page) {
+    // One row per letter is unreadable — attribute each animated fragment to
+    // its text root and merge the members' summaries into one legible row.
+    // Visibility is decided by the HOST: an offscreen letter of a visible
+    // headline still belongs to the headline's row.
+    const index = buildMotionSummaryIndex();
+    const hosts = new Map();
+    index.forEach((memberSummary, element) => {
+      let host = element;
+      try { host = splitFragmentHost(element); } catch (_) {}
+      if (!hosts.has(host)) hosts.set(host, []);
+      hosts.get(host).push(memberSummary);
+    });
+
+    const rows = [];
+    hosts.forEach((members, element) => {
+      if (!intersectsViewport(element)) return;
+      const merged = members.reduce((accumulator, item) => accumulator ? {
+        count: accumulator.count + item.count,
+        engines: Array.from(new Set([...accumulator.engines, ...item.engines])),
+        scrollDriven: accumulator.scrollDriven || item.scrollDriven,
+        scrollExotic: accumulator.scrollExotic || item.scrollExotic,
+        delayMs: Math.min(accumulator.delayMs, item.delayMs),
+        endMs: Math.max(accumulator.endMs, item.endMs),
+        marks: new Set([...accumulator.marks, ...item.marks]),
+        scrollStart: Math.min(accumulator.scrollStart, item.scrollStart),
+        scrollEnd: Math.max(accumulator.scrollEnd, item.scrollEnd),
+      } : item, null);
+      if (!merged || !merged.count) return;
+      const summary = {
+        count: merged.count,
+        engines: merged.engines,
+        driver: merged.scrollDriven ? 'scroll' : 'time',
+        delayMs: Number.isFinite(merged.delayMs) ? merged.delayMs : 0,
+        durationMs: Math.max(0, merged.endMs - (Number.isFinite(merged.delayMs) ? merged.delayMs : 0)),
+        marks: Array.from(merged.marks).sort((a, b) => a - b),
+        scrollStart: Number.isFinite(merged.scrollStart) ? Math.round(merged.scrollStart) : null,
+        scrollEnd: Number.isFinite(merged.scrollEnd) ? Math.round(merged.scrollEnd) : null,
+        scrollEditable: merged.scrollDriven && !merged.scrollExotic
+          && Number.isFinite(merged.scrollStart) && Number.isFinite(merged.scrollEnd),
+      };
+      let top = 0;
+      try { top = Math.round(element.getBoundingClientRect().top); } catch (_) {}
+      // Where the strip lives on the page-scroll ruler. Scroll-driven rows use
+      // the trigger's own pixels; time-driven rows are placed at the scroll
+      // point where the element enters the viewport (a point, not a range).
+      const revealAt = Math.max(0, Math.min(page.maxScroll, top + page.scrollY - page.viewportHeight));
+      const scrollStart = summary.driver === 'scroll' && summary.scrollStart != null ? summary.scrollStart : revealAt;
+      const scrollEnd = summary.driver === 'scroll'
+        ? (summary.scrollEnd != null ? summary.scrollEnd : Math.min(page.maxScroll, scrollStart + page.viewportHeight))
+        : null;
+      rows.push({
+        elementId: ensureElementId(element),
+        label: elementLabel(element),
+        kind: elementKind(element),
+        top,
+        count: summary.count,
+        engines: summary.engines,
+        driver: summary.driver,
+        delayMs: summary.delayMs,
+        durationMs: summary.durationMs,
+        marks: summary.marks,
+        scrollStart,
+        scrollEnd,
+        scrollEditable: summary.scrollEditable === true,
+      });
+    });
+    return rows.sort((a, b) => a.top - b.top);
+  }
+
+  function emitViewportMotion() {
+    const page = pageMetrics();
+    emit('viewport-motion-changed', { page, rows: viewportMotionRows(page) });
   }
 
   function inspectMotion(element) {
@@ -350,12 +670,35 @@ function nativeMotionRuntimeBridge() {
     effect.setKeyframes(frames);
   }
 
+  // invalidate() clears the tween's recorded values; the NEXT render re-records
+  // the implicit from-value from whatever the DOM currently shows. For a tween
+  // parked mid-animation that silently shifts the start to the parked value
+  // (probe-verified on GSAP 3.15: start 10 became 55). Render the true start
+  // BEFORE invalidating, then restore the parked position.
+  function invalidatePreservingStart(animation) {
+    let parked = null;
+    try {
+      const current = animation.progress?.();
+      if (Number.isFinite(current) && current > 0) {
+        parked = current;
+        animation.progress(0, true);
+      }
+    } catch (_) {}
+    animation.invalidate?.();
+    if (parked != null) {
+      try { animation.progress(parked, true); } catch (_) {}
+    }
+  }
+
   function applyGsapKeyframe(animation, property, descriptor) {
     const vars = animation.vars || (animation.vars = {});
+    if (vars.runBackwards) {
+      throw new Error('gsap.from() keyframes are read-only — vars hold the start, not the end.');
+    }
     const offset = Math.max(0, Math.min(1, Number(descriptor?.offset) || 0));
     if (descriptor?.exists === false) {
       if (offset <= 0.001 && vars.startAt) delete vars.startAt[property];
-      animation.invalidate?.();
+      invalidatePreservingStart(animation);
       return;
     }
     const value = String(descriptor?.value ?? '');
@@ -366,7 +709,7 @@ function nativeMotionRuntimeBridge() {
     } else {
       throw new Error('Intermediate GSAP keyframes are not editable on this tween yet.');
     }
-    animation.invalidate?.();
+    invalidatePreservingStart(animation);
   }
 
   function applyMotionPatch(patch, element) {
@@ -413,9 +756,26 @@ function nativeMotionRuntimeBridge() {
     else if (patch.property === 'timing.iterations') animation.repeat?.(Math.max(0, Number(value) - 1));
     else if (patch.property === 'timing.repeatDelay') animation.repeatDelay?.(Math.max(0, Number(value)) / 1000);
     else if (patch.property === 'timing.yoyo') animation.yoyo?.(Boolean(value));
-    else if (patch.property === 'timing.easing') {
+    else if (patch.property === 'scroll.start' || patch.property === 'scroll.end') {
+      // Verified on real GSAP 3.15 (probe-scrolltrigger-range.mjs): numeric px in
+      // vars.start/end + refresh() retargets the trigger and the tween tracks the
+      // new range exactly. Only a LIVE ScrollTrigger instance can refresh — a
+      // config object cannot, and the edit must fail loudly, not silently.
+      const trigger = record.scrollTrigger;
+      if (!trigger || typeof trigger.refresh !== 'function') {
+        throw new Error('This animation has no live scroll trigger to adjust.');
+      }
+      trigger.vars[patch.property === 'scroll.start' ? 'start' : 'end'] = Math.max(0, Number(value) || 0);
+    } else if (patch.property === 'timing.easing') {
+      // Setting vars.ease alone does NOT change the curve — GSAP resolved the ease
+      // when the tween was built. Parse it and install the resolved function.
+      // Deliberately no invalidate(): it re-bases the tween's start onto whatever
+      // value happens to be on screen, silently corrupting the animation.
       animation.vars.ease = value;
-      animation.invalidate?.();
+      try {
+        const parsed = window.gsap?.parseEase?.(value);
+        if (parsed) animation._ease = parsed;
+      } catch (_) {}
     } else {
       throw new Error(`Unsupported GSAP motion property: ${patch.property}`);
     }
@@ -820,8 +1180,33 @@ function nativeMotionRuntimeBridge() {
     };
   }
 
-  function controlPlayback(action, nextSpeed) {
+  function controlPlayback(action, nextSpeed, motionId) {
     if (Number.isFinite(nextSpeed)) speed = Math.max(0.1, Math.min(4, nextSpeed));
+
+    // Scoped transport: act ONLY on the selected motion. A scroll-driven page must keep
+    // living — pausing the whole document (plus every video and the smooth-scroll lib)
+    // is never what "pause this animation" means. `speed` only re-rates, never plays.
+    const scoped = motionId ? motionRegistry.get(motionId) : null;
+    if (scoped) {
+      try {
+        const animation = scoped.animation;
+        if (scoped.type === 'browser') {
+          animation.playbackRate = speed;
+          if (action === 'pause') animation.pause();
+          if (action === 'play') animation.play();
+          if (action === 'restart') { animation.currentTime = 0; animation.play(); }
+        } else {
+          animation.timeScale?.(speed);
+          if (action === 'pause') animation.pause?.();
+          if (action === 'play') animation.play?.();
+          if (action === 'restart') animation.restart?.();
+        }
+      } catch (_) {}
+      emit('playback-changed', { action, speed, motionId });
+      emitTimelineState(true);
+      return;
+    }
+
     const animations = typeof document.getAnimations === 'function' ? document.getAnimations() : [];
     animations.forEach((animation) => {
       try {
@@ -965,11 +1350,17 @@ function nativeMotionRuntimeBridge() {
       const selected = findElement(selectedId);
       emit('patches-applied', { count: (payload.patches || []).length, element: selected ? describe(selected) : null });
     } else if (message.type === 'playback') {
-      controlPlayback(payload.action, payload.speed);
+      controlPlayback(payload.action, payload.speed, payload.motionId);
     } else if (message.type === 'set-timeline-active') {
       setTimelineActive(payload.motionId);
     } else if (message.type === 'seek-motion') {
       seekTimeline(payload.motionId, payload.currentTime);
+    } else if (message.type === 'inspect-viewport') {
+      emitViewportMotion();
+    } else if (message.type === 'scroll-to') {
+      // The timeline ruler drives the site: the page's own scroll IS the playhead.
+      const target = Math.max(0, Number(payload.scrollY) || 0);
+      try { window.scrollTo(0, target); } catch (_) {}
     } else if (message.type === 'refresh') {
       refreshRuntime();
       emit('runtime-refreshed', { engines: detectedEngines() });
@@ -1032,7 +1423,7 @@ function nativeMotionRuntimeBridge() {
     installStyles();
     document.documentElement.dataset.uncraftEditorMode = mode;
     document.documentElement.dataset.uncraftEditorTool = tool;
-    document.addEventListener('pointermove', (event) => {
+    on(document, 'pointermove', (event) => {
       if (dragState) {
         const dx = Math.round(event.clientX - dragState.startX);
         const dy = Math.round(event.clientY - dragState.startY);
@@ -1048,8 +1439,8 @@ function nativeMotionRuntimeBridge() {
       if (hoverFrame) cancelAnimationFrame(hoverFrame);
       hoverFrame = requestAnimationFrame(() => hover(chooseElement(event.target)));
     }, true);
-    document.addEventListener('pointerleave', () => hover(null), true);
-    document.addEventListener('pointerdown', (event) => {
+    on(document, 'pointerleave', () => hover(null), true);
+    on(document, 'pointerdown', (event) => {
       if (mode !== 'edit' || tool !== 'move' || event.button !== 0) return;
       const element = chooseElement(event.target);
       if (!element) return;
@@ -1070,7 +1461,7 @@ function nativeMotionRuntimeBridge() {
       };
       element.setPointerCapture?.(event.pointerId);
     }, true);
-    document.addEventListener('pointerup', (event) => {
+    on(document, 'pointerup', (event) => {
       if (!dragState) return;
       const finished = dragState;
       dragState = null;
@@ -1090,7 +1481,7 @@ function nativeMotionRuntimeBridge() {
         });
       }
     }, true);
-    document.addEventListener('click', (event) => {
+    on(document, 'click', (event) => {
       if (mode !== 'edit') return;
       if (textEditState) {
         if (textEditState.element.contains(event.target) || textEditState.editable?.contains(event.target)) return;
@@ -1108,7 +1499,7 @@ function nativeMotionRuntimeBridge() {
       event.stopImmediatePropagation();
       select(element);
     }, true);
-    document.addEventListener('dblclick', (event) => {
+    on(document, 'dblclick', (event) => {
       if (mode !== 'edit' || tool !== 'select') return;
       const element = chooseElement(event.target);
       if (!element || !isEditableText(element)) return;
@@ -1117,7 +1508,7 @@ function nativeMotionRuntimeBridge() {
       event.stopImmediatePropagation();
       enterInlineTextEdit(element);
     }, true);
-    document.addEventListener('keydown', (event) => {
+    on(document, 'keydown', (event) => {
       if (!textEditState) return;
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -1129,16 +1520,42 @@ function nativeMotionRuntimeBridge() {
         finishInlineTextEdit(true);
       }
     }, true);
-    document.addEventListener('focusout', () => {
+    on(document, 'focusout', () => {
       if (!textEditState) return;
       queueMicrotask(() => {
         if (textEditState && !textEditState.editable.contains(document.activeElement)) finishInlineTextEdit(true);
       });
     }, true);
-    document.addEventListener('submit', (event) => {
+    on(document, 'submit', (event) => {
       if (mode === 'edit') event.preventDefault();
     }, true);
-    window.addEventListener('message', handleCommand);
+    // Single live instance per document. Re-injecting the bridge (iframe reload,
+    // double gateway injection) must REPLACE the previous one — two live bridges
+    // handle every command twice: duplicated patches, duplicated playback.
+    try { window.__uncraftMotionBridge?.teardown?.(); } catch (_) {}
+    // Scrolling the site re-scopes the timeline. Debounced to the scroll settling:
+    // the list is cheap to build, but rebuilding it on every scroll event is waste.
+    let viewportTimer = null;
+    const scheduleViewportMotion = () => {
+      if (viewportTimer) clearTimeout(viewportTimer);
+      viewportTimer = setTimeout(() => { viewportTimer = null; emitViewportMotion(); }, 120);
+    };
+    on(window, 'scroll', scheduleViewportMotion, { passive: true });
+    on(window, 'resize', scheduleViewportMotion);
+
+    on(window, 'message', handleCommand);
+    window.__uncraftMotionBridge = {
+      teardown() {
+        try { listeners.abort(); } catch (_) {}
+        try {
+          if (timelineFrame != null && typeof window.cancelAnimationFrame === 'function') {
+            window.cancelAnimationFrame(timelineFrame);
+            timelineFrame = null;
+          }
+        } catch (_) {}
+        activeTimelineId = null;
+      },
+    };
     emit('runtime-ready', {
       title: document.title || 'Animated website',
       elementCount: document.querySelectorAll('*').length,

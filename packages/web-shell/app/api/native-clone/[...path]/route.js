@@ -1,6 +1,17 @@
 import path from 'node:path';
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { injectRuntimeBridge, rewriteRuntimePaths } from '../../../../lib/motion-editor/native-clone-gateway.js';
+
+// Top-level directory names of a bundle root — these are the root-absolute
+// prefixes its pages may reference and the gateway must translate.
+const bundlePrefixCache = new Map();
+async function bundlePrefixes(root) {
+  if (bundlePrefixCache.has(root)) return bundlePrefixCache.get(root);
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const prefixes = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  bundlePrefixCache.set(root, prefixes.length ? prefixes : ['assets']);
+  return bundlePrefixCache.get(root);
+}
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -48,15 +59,27 @@ export async function GET(_request, { params }) {
   const resolvedParams = await params;
   const segments = Array.isArray(resolvedParams?.path) ? resolvedParams.path : [];
   const relativePath = segments.length ? segments.join('/') : 'index.html';
-  const candidate = path.resolve(root, relativePath);
-  if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
-    return notAvailable('Invalid bundle path.', 400);
+  // Clone savers keep URL-encoded file names verbatim on disk ("logo%20icon.svg");
+  // the request arrives DECODED, so fall back to re-encoded spellings of the
+  // same path before giving up.
+  const attempts = [...new Set([
+    relativePath,
+    relativePath.replaceAll(' ', '%20'),
+    relativePath.split('/').map((segment) => encodeURIComponent(segment)).join('/'),
+  ])];
+  let filePath = null;
+  for (const attempt of attempts) {
+    const candidate = path.resolve(root, attempt);
+    if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
+      return notAvailable('Invalid bundle path.', 400);
+    }
+    const real = await realpath(candidate).catch(() => null);
+    if (real && (real === root || real.startsWith(`${root}${path.sep}`))) {
+      filePath = real;
+      break;
+    }
   }
-
-  const filePath = await realpath(candidate).catch(() => null);
-  if (!filePath || (filePath !== root && !filePath.startsWith(`${root}${path.sep}`))) {
-    return notAvailable('Bundle asset not found.');
-  }
+  if (!filePath) return notAvailable('Bundle asset not found.');
 
   const info = await stat(filePath).catch(() => null);
   if (!info?.isFile()) return notAvailable('Bundle asset not found.');
@@ -73,7 +96,7 @@ export async function GET(_request, { params }) {
   const bytes = await readFile(filePath);
   if (!TEXT_EXTENSIONS.has(extension)) return new Response(bytes, { headers });
 
-  let body = rewriteRuntimePaths(bytes.toString('utf8'));
+  let body = rewriteRuntimePaths(bytes.toString('utf8'), await bundlePrefixes(root));
   if (extension === '.html') {
     body = injectRuntimeBridge(body);
     headers.set('Content-Security-Policy', [
@@ -83,7 +106,7 @@ export async function GET(_request, { params }) {
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
       "media-src 'self' data: blob:",
-      "connect-src 'none'",
+      "connect-src 'self'",
       "frame-ancestors 'self'",
       "form-action 'none'",
       "object-src 'none'",

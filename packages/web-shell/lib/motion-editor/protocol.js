@@ -56,3 +56,10 @@ export function command(type, payload = {}) {
 export function storageKey(source) {
   return `uncraft:native-motion-patches:v1:${source || 'default'}`;
 }
+
+// A patch the runtime refused must leave history: undo and save would replay a
+// write that is known to fail, silently, on every reload.
+export function removeRejectedPatch(history, rejected) {
+  if (!rejected?.id) return history;
+  return history.filter((patch) => patch.id !== rejected.id);
+}

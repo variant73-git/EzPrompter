@@ -5,6 +5,7 @@ import {
   createPatch,
   invertPatch,
   isRuntimeMessage,
+  removeRejectedPatch,
   storageKey,
 } from './protocol.js';
 
@@ -77,6 +78,15 @@ describe('motion editor protocol', () => {
       before: { offset: 0.5, value: '0.6', exists: true },
       value: { offset: 0.5, exists: false },
     });
+  });
+
+  it('drops a rejected patch from history so undo/save never replay a write the runtime refused', () => {
+    const kept = createPatch({ elementId: 'a', kind: 'style', property: 'color', before: 'red', value: 'blue' });
+    const rejected = createPatch({ elementId: 'b', kind: 'motion', motionId: 'scroll-1', property: 'scroll.start', before: 400, value: 300 });
+    expect(removeRejectedPatch([kept, rejected], rejected)).toEqual([kept]);
+    // Unknown or id-less rejections leave history untouched.
+    expect(removeRejectedPatch([kept], { ...rejected, id: 'other' })).toEqual([kept]);
+    expect(removeRejectedPatch([kept], null)).toEqual([kept]);
   });
 
   it('creates host commands and source-scoped storage keys', () => {

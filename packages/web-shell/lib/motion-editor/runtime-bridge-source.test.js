@@ -354,6 +354,840 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('lists only animated elements framed in the viewport, named and typed', () => {
+    document.body.innerHTML = `
+      <main>
+        <h2 id="headline">Fertilizer, reinvented</h2>
+        <img id="pack" alt="CropTab packaging" />
+        <div id="below">offscreen</div>
+      </main>`;
+    const headline = document.getElementById('headline');
+    const pack = document.getElementById('pack');
+    const below = document.getElementById('below');
+
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    headline.getBoundingClientRect = rect(120, 60);
+    pack.getBoundingClientRect = rect(300, 200);
+    below.getBoundingClientRect = rect(2400, 100); // far below the fold
+
+    const anim = (target) => ({
+      effect: {
+        target,
+        getTiming: () => ({ delay: 0, duration: 500, iterations: 1, direction: 'normal', fill: 'both', easing: 'linear' }),
+        getComputedTiming: () => ({ duration: 500 }),
+        getKeyframes: () => [{ computedOffset: 0, opacity: '0' }, { computedOffset: 1, opacity: '1' }],
+        setKeyframes: vi.fn(), updateTiming: vi.fn(),
+      },
+      playState: 'running', currentTime: 0, playbackRate: 1, pause: vi.fn(), play: vi.fn(),
+    });
+    const headlineAnim = anim(headline);
+    const packAnim = anim(pack);
+    const belowAnim = anim(below);
+    document.getAnimations = () => [headlineAnim, packAnim, belowAnim];
+    [headline, pack, below].forEach((el) => { el.getAnimations = () => []; });
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+
+    const view = messages.filter((message) => message.type === 'viewport-motion-changed').pop();
+    expect(view).toBeTruthy();
+    const rows = view.payload.rows;
+
+    // Offscreen element is excluded; visible ones are ordered top-down.
+    expect(rows.map((row) => row.elementId)).toEqual([headline.dataset.uncraftId, pack.dataset.uncraftId]);
+    // Each row is identified as a thing on the page, not as an engine object.
+    expect(rows[0]).toMatchObject({ label: 'Fertilizer, reinvented', kind: 'text', count: 1 });
+    expect(rows[1]).toMatchObject({ label: 'CropTab packaging', kind: 'image', count: 1 });
+
+    // Each row carries the envelope needed to DRAW its strip — read cheaply from
+    // timing, never by sampling (which would drive every tween on each scroll).
+    expect(rows[0]).toMatchObject({ driver: 'time', delayMs: 0, durationMs: 500 });
+    expect(rows[0].marks).toEqual([0, 1]);
+
+    window.postMessage = originalPostMessage;
+  });
+
+  it('emits page metrics and scroll-space geometry so one ruler can hold every strip', () => {
+    document.body.innerHTML = `
+      <main>
+        <h2 id="headline">Fertilizer, reinvented</h2>
+        <div id="vista"></div>
+        <div id="slider"></div>
+      </main>`;
+    const headline = document.getElementById('headline');
+    const vista = document.getElementById('vista');
+    const slider = document.getElementById('slider');
+
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    window.scrollY = 1000;
+    Object.defineProperty(document.documentElement, 'scrollHeight', { value: 5000, configurable: true });
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    headline.getBoundingClientRect = rect(120, 60);
+    vista.getBoundingClientRect = rect(300, 400);
+    slider.getBoundingClientRect = rect(500, 200);
+
+    const timeAnim = {
+      effect: {
+        target: headline,
+        getTiming: () => ({ delay: 0, duration: 500, iterations: 1, direction: 'normal', fill: 'both', easing: 'linear' }),
+        getComputedTiming: () => ({ duration: 500 }),
+        getKeyframes: () => [{ computedOffset: 0, opacity: '0' }, { computedOffset: 1, opacity: '1' }],
+        setKeyframes: vi.fn(), updateTiming: vi.fn(),
+      },
+      playState: 'running', currentTime: 0, playbackRate: 1, pause: vi.fn(), play: vi.fn(),
+    };
+    document.getAnimations = () => [timeAnim];
+    [headline, vista].forEach((el) => { el.getAnimations = () => []; });
+
+    // A live ScrollTrigger instance carries numeric page-scroll start/end.
+    const scrollTween = {
+      targets: () => [vista],
+      vars: { yPercent: -20 },
+      parent: null,
+      duration: () => 1, delay: () => 0, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false,
+      scrollTrigger: { start: 400, end: 900, vars: {}, refresh: vi.fn() },
+      progress: vi.fn((p) => (p === undefined ? 0 : scrollTween)),
+      invalidate: vi.fn(),
+    };
+    // A HORIZONTAL trigger's pixels live on another axis — plotting or editing
+    // them against the page's vertical ruler would target the wrong domain.
+    const horizontalTween = {
+      ...scrollTween,
+      targets: () => [slider],
+      scrollTrigger: { start: 100, end: 700, vars: { horizontal: true }, refresh: vi.fn() },
+    };
+    window.gsap = { globalTimeline: { getChildren: () => [scrollTween, horizontalTween] }, getProperty: () => '0' };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+
+    const view = messages.filter((message) => message.type === 'viewport-motion-changed').pop();
+    expect(view.payload.page).toMatchObject({ scrollY: 1000, viewportHeight: 800, scrollHeight: 5000, maxScroll: 4200 });
+
+    const rows = Object.fromEntries(view.payload.rows.map((row) => [row.elementId, row]));
+    // Scroll-driven strip sits exactly where its trigger says, in page pixels.
+    expect(rows[vista.dataset.uncraftId]).toMatchObject({ driver: 'scroll', scrollStart: 400, scrollEnd: 900, scrollEditable: true });
+    // Horizontal/custom-scroller triggers are shown but never strip-editable.
+    expect(rows[slider.dataset.uncraftId]).toMatchObject({ driver: 'scroll', scrollEditable: false });
+    // An unnamed div reads by its class, never as a bare tag — the row must be
+    // recognisable as a thing on the page.
+    vista.className = 'croptab-lottie w-embed';
+    vista.removeAttribute('id');
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+    const relisted = messages.filter((message) => message.type === 'viewport-motion-changed').pop();
+    expect(relisted.payload.rows.find((row) => row.elementId === vista.dataset.uncraftId).label).toBe('croptab-lottie');
+    // Time-driven strip is placed at the scroll point where it comes into view
+    // (document top minus one viewport), clamped to the scrollable range.
+    expect(rows[headline.dataset.uncraftId]).toMatchObject({ driver: 'time', scrollStart: 320, scrollEnd: null });
+
+    // The ruler drives the site: scrubbing sends scroll-to.
+    window.scrollTo = vi.fn();
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'scroll-to', payload: { scrollY: 1234 } },
+    }));
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 1234);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('collapses split-text characters into ONE viewport row named after their root', () => {
+    document.body.innerHTML = '<main><h2 id="reveal" aria-label="We found a way"><span class="char">W</span><span class="char">e</span><span class="char">f</span></h2></main>';
+    const reveal = document.getElementById('reveal');
+    const chars = Array.from(document.querySelectorAll('#reveal .char'));
+
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    window.scrollY = 0;
+    Object.defineProperty(document.documentElement, 'scrollHeight', { value: 3000, configurable: true });
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    reveal.getBoundingClientRect = rect(200, 80);
+    chars.forEach((char) => { char.getBoundingClientRect = rect(200, 80); });
+    document.getAnimations = () => [];
+
+    const globalTimeline = { getChildren: () => tweens };
+    const mkTween = (target, delay) => ({
+      targets: () => [target],
+      vars: { opacity: 1, delay },
+      parent: globalTimeline,
+      duration: () => 0.6, delay: () => delay, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false, scrollTrigger: null,
+      progress: vi.fn((p) => (p === undefined ? 0 : undefined)),
+      invalidate: vi.fn(),
+    });
+    const tweens = chars.map((char, index) => mkTween(char, index * 0.05));
+    window.gsap = { globalTimeline, getProperty: () => '0' };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+
+    const view = messages.filter((message) => message.type === 'viewport-motion-changed').pop();
+    // One legible row — never one row per character.
+    expect(view.payload.rows).toHaveLength(1);
+    expect(view.payload.rows[0]).toMatchObject({
+      elementId: reveal.dataset.uncraftId,
+      label: 'We found a way',
+      kind: 'text',
+      count: 3,
+    });
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('collapses Webflow-style split words (classed masks + unnamed letter divs) into their text block', () => {
+    // Real farmminerals structure: div.text-16-regular-caps > div.gsap_split_wordN-mask
+    // > div.gsap_split_word > unnamed letter divs. Neither letters nor words match
+    // .char/.word — attribution must be structural, not class-list-based.
+    document.body.innerHTML = `
+      <main><section>
+        <div id="block" class="text-16-regular-caps green">
+          <div class="gsap_split_word1-mask"><div class="gsap_split_word gsap_split_word1"><div>C</div><div>a</div></div></div>
+          <div class="gsap_split_word2-mask"><div class="gsap_split_word gsap_split_word2"><div>r</div><div>b</div></div></div>
+          <div class="gsap_split_word3-mask"><div class="gsap_split_word gsap_split_word3"><div>o</div><div>n</div></div></div>
+          <div class="gsap_split_word4-mask"><div class="gsap_split_word gsap_split_word4"><div>a</div></div></div>
+        </div>
+      </section></main>`;
+    const block = document.getElementById('block');
+    const letters = Array.from(document.querySelectorAll('.gsap_split_word > div'));
+    // One letter is mid-animation far off screen — the ROW is the block, which
+    // is visible, so the member must still count.
+    const offscreenLetter = letters[0];
+
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    window.scrollY = 0;
+    Object.defineProperty(document.documentElement, 'scrollHeight', { value: 3000, configurable: true });
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    block.getBoundingClientRect = rect(200, 40);
+    letters.forEach((letter) => { letter.getBoundingClientRect = rect(200, 40); });
+    offscreenLetter.getBoundingClientRect = rect(4000, 40);
+    document.getAnimations = () => [];
+
+    const globalTimeline = { getChildren: () => tweens };
+    const mkTween = (target, delay) => ({
+      targets: () => [target],
+      vars: { yPercent: 0, delay },
+      parent: globalTimeline,
+      duration: () => 0.6, delay: () => delay, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false, scrollTrigger: null,
+      progress: vi.fn((p) => (p === undefined ? 0 : undefined)),
+      invalidate: vi.fn(),
+    });
+    const tweens = letters.map((letter, index) => mkTween(letter, index * 0.02));
+    window.gsap = { globalTimeline, getProperty: () => '0' };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+
+    const view = messages.filter((message) => message.type === 'viewport-motion-changed').pop();
+    expect(view.payload.rows).toHaveLength(1);
+    expect(view.payload.rows[0]).toMatchObject({
+      elementId: block.dataset.uncraftId,
+      count: 7,
+    });
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('never merges two split text blocks: the climb stops AT the text root, even when the root carries the split marker', () => {
+    // Webflow/Timothy-Ricks pattern: [text-split] sits ON the heading itself.
+    // The heading is the ROW — climbing past it would fuse title and subtitle.
+    document.body.innerHTML = `
+      <main><div class="hero-copy">
+        <h1 text-split id="title"><span class="char">T</span><span class="char">i</span></h1>
+        <p text-split id="subtitle"><span class="char">S</span><span class="char">u</span></p>
+      </div></main>`;
+    const title = document.getElementById('title');
+    const subtitle = document.getElementById('subtitle');
+    const chars = Array.from(document.querySelectorAll('.char'));
+
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    window.scrollY = 0;
+    Object.defineProperty(document.documentElement, 'scrollHeight', { value: 3000, configurable: true });
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    [title, subtitle, ...chars].forEach((el) => { el.getBoundingClientRect = rect(200, 40); });
+    document.getAnimations = () => [];
+
+    const globalTimeline = { getChildren: () => tweens };
+    const mkTween = (target) => ({
+      targets: () => [target],
+      vars: { opacity: 1 },
+      parent: globalTimeline,
+      duration: () => 0.6, delay: () => 0, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false, scrollTrigger: null,
+      progress: vi.fn((p) => (p === undefined ? 0 : undefined)),
+      invalidate: vi.fn(),
+    });
+    const tweens = chars.map(mkTween);
+    window.gsap = { globalTimeline, getProperty: () => '0' };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+
+    const view = messages.filter((message) => message.type === 'viewport-motion-changed').pop();
+    expect(view.payload.rows.map((row) => row.elementId).sort()).toEqual(
+      [title.dataset.uncraftId, subtitle.dataset.uncraftId].sort(),
+    );
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('retargets a live ScrollTrigger range through vars + refresh, and rejects config-only triggers', () => {
+    document.body.innerHTML = '<main><div id="vista"></div><div id="frozen"></div></main>';
+    const vista = document.getElementById('vista');
+    const frozen = document.getElementById('frozen');
+
+    const liveTrigger = { start: 400, end: 900, vars: { start: 'top bottom', end: 'bottom top' }, refresh: vi.fn() };
+    const mkTween = (target, scrollTrigger) => ({
+      targets: () => [target],
+      vars: { yPercent: -20, scrollTrigger: scrollTrigger === undefined ? undefined : scrollTrigger },
+      parent: null,
+      duration: () => 1, delay: () => 0, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false,
+      scrollTrigger,
+      progress: vi.fn((p) => (p === undefined ? 0 : undefined)),
+      invalidate: vi.fn(),
+    });
+    const liveTween = mkTween(vista, liveTrigger);
+    // A tween whose scrollTrigger is still a CONFIG object (no instance yet).
+    const configTween = mkTween(frozen, { trigger: frozen, start: 'top bottom' });
+    window.gsap = { globalTimeline: { getChildren: () => [liveTween, configTween] }, getProperty: () => '0' };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    vista.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    let selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const liveMotion = selection.payload.element.motion.find((clip) => clip.engine === 'ScrollTrigger');
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: liveMotion.id,
+            property: 'scroll.start',
+            before: 400,
+            value: 500,
+          },
+        },
+      },
+    }));
+    expect(liveTrigger.vars.start).toBe(500);
+    expect(liveTrigger.refresh).toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: liveMotion.id,
+            property: 'scroll.end',
+            before: 900,
+            value: 1500,
+          },
+        },
+      },
+    }));
+    expect(liveTrigger.vars.end).toBe(1500);
+
+    // Config-only trigger cannot be retargeted — the edit must be rejected, not lost.
+    frozen.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const configMotion = selection.payload.element.motion.find((clip) => clip.engine === 'ScrollTrigger');
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: configMotion.id,
+            property: 'scroll.start',
+            before: 0,
+            value: 250,
+          },
+        },
+      },
+    }));
+    const rejected = messages.filter((message) => message.type === 'patch-rejected').pop();
+    expect(rejected?.payload?.patch?.property).toBe('scroll.start');
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('editing a keyframe of a tween parked MID-animation never shifts its true start', () => {
+    // Probe-verified on real GSAP 3.15 (probe-invalidate-rebase.mjs): a gsap.to
+    // tween has an IMPLICIT from — invalidate() while parked re-records the
+    // start from the PARKED rendered value (10 became 55). The writeback must
+    // render progress(0) first so the re-record captures the true start.
+    document.body.innerHTML = '<main><div id="chip"></div></main>';
+    const chip = document.getElementById('chip');
+
+    const vars = { x: 100, duration: 1, ease: 'none' };
+    let recordedStart = 10;      // implicit from, already recorded
+    let progress = 0.5;
+    const rendered = { x: 55 };  // parked mid-way
+    const tween = {
+      targets: () => [chip],
+      vars,
+      parent: null,
+      duration: () => 1, delay: () => 0, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false, scrollTrigger: null,
+      progress: vi.fn((p) => {
+        if (p === undefined) return progress;
+        // GSAP semantics: first render after invalidate re-records the start
+        // from whatever is currently rendered.
+        if (recordedStart === null) recordedStart = rendered.x;
+        progress = p;
+        rendered.x = recordedStart + (Number(vars.x) - recordedStart) * p;
+        return tween;
+      }),
+      invalidate: vi.fn(() => { recordedStart = null; return tween; }),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    chip.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    let selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(motion.tracks[0].keyframes[0].value).toBe('10');
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '100', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+
+    // The re-described track must still start at the TRUE from-value.
+    const applied = messages.filter((message) => message.type === 'patch-applied').pop();
+    const edited = applied.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    const xTrack = edited.tracks.find((track) => track.property === 'x');
+    expect(xTrack.keyframes[0].value).toBe('10');
+    expect(xTrack.keyframes[1].value).toBe('200');
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('classifies a scroll-scrubbed video as a MEDIA-driven clip — one currentTime track driven by scroll', () => {
+    document.body.innerHTML = '<main><video id="reel"></video></main>';
+    const reel = document.getElementById('reel');
+    reel.getAnimations = () => [];
+
+    const scrubTween = {
+      targets: () => [reel],
+      vars: { currentTime: 6.4 },
+      parent: null,
+      duration: () => 1, delay: () => 0, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false,
+      scrollTrigger: { start: 1200, end: 2600, vars: { scrub: true }, refresh: vi.fn() },
+      progress: vi.fn((p) => (p === undefined ? 0 : scrubTween)),
+      invalidate: vi.fn(),
+    };
+    const seekTween = {
+      ...scrubTween,
+      vars: { currentTime: 5 },
+      scrollTrigger: null,
+      progress: vi.fn((p) => (p === undefined ? 0 : seekTween)),
+    };
+    window.gsap = { globalTimeline: { getChildren: () => [scrubTween, seekTween] }, getProperty: () => '0' };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    reel.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const clip = selection.payload.element.motion.find((item) => item.engine === 'ScrollTrigger');
+    // The cleanest case of the model: value = currentTime, clock = scroll.
+    expect(clip.driver).toEqual({ type: 'media' });
+    expect(clip.tracks.map((track) => track.property)).toEqual(['currentTime']);
+    expect(clip.scroll).toMatchObject({ scrub: true });
+    // A plain currentTime tween WITHOUT a scroll trigger is a timed seek, not
+    // a media scrub — classifying it as media would export it as scroll-bound.
+    const timedSeek = selection.payload.element.motion.find((item) => item.engine === 'GSAP');
+    expect(timedSeek.driver).toEqual({ type: 'time' });
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('marks gsap.from() tweens as keyframe-read-only — vars hold the FROM, not the end', () => {
+    // For a from() tween, writing vars[prop] would silently retarget the START
+    // while the UI says "end". Until the writeback understands runBackwards,
+    // the honest contract is: tracks visible, keyframes not editable.
+    document.body.innerHTML = '<main><div id="intro"></div></main>';
+    const intro = document.getElementById('intro');
+    const fromTween = {
+      targets: () => [intro],
+      vars: { opacity: 0, runBackwards: true, duration: 1 },
+      parent: null,
+      duration: () => 1, delay: () => 0, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false, scrollTrigger: null,
+      progress: vi.fn((p) => (p === undefined ? 0 : fromTween)),
+      invalidate: vi.fn(),
+    };
+    window.gsap = { globalTimeline: { getChildren: () => [fromTween] }, getProperty: () => '0' };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    intro.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const clip = selection.payload.element.motion.find((item) => item.engine === 'GSAP');
+    expect(clip.capabilities.keyframes).toBe(false);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('applies a new GSAP ease through parseEase, not vars alone', () => {
+    document.body.innerHTML = '<main><div id="dot"></div></main>';
+    const dot = document.getElementById('dot');
+    const parsedEase = () => 0.42;
+    const vars = { x: 100, duration: 1, ease: 'none' };
+    const tween = {
+      targets: () => [dot],
+      vars,
+      duration: () => 1, delay: () => 0, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false, scrollTrigger: null,
+      progress: vi.fn((p) => (p === undefined ? 0 : tween)),
+      invalidate: vi.fn(() => tween),
+    };
+    const parseEase = vi.fn(() => parsedEase);
+    window.gsap = { globalTimeline: { getChildren: () => [tween] }, getProperty: () => '0', parseEase };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    dot.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.find((message) => message.type === 'selection-changed');
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    tween.invalidate.mockClear();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'timing.easing',
+            before: 'none',
+            value: 'power4.in',
+          },
+        },
+      },
+    }));
+
+    // The curve must actually be resolved and installed…
+    expect(parseEase).toHaveBeenCalledWith('power4.in');
+    expect(tween._ease).toBe(parsedEase);
+    expect(vars.ease).toBe('power4.in');
+    // …without invalidate(), which would re-base the tween's start onto whatever
+    // value is on screen right now.
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.postMessage = originalPostMessage;
+  });
+
+  it('scopes playback to the selected motion instead of the whole page', () => {
+    document.body.innerHTML = '<main><h2 id="tag">Tag</h2><video id="clip"></video></main>';
+    const tag = document.getElementById('tag');
+    const clip = document.getElementById('clip');
+    clip.pause = vi.fn();
+    clip.play = vi.fn(() => Promise.resolve());
+    window.lenis = { stop: vi.fn(), start: vi.fn() };
+
+    const selectedAnimation = {
+      id: 'tag-in', animationName: 'tag-in', currentTime: 0, playState: 'running', playbackRate: 1,
+      effect: {
+        target: tag,
+        getTiming: () => ({ delay: 0, duration: 400, iterations: 1, direction: 'normal', fill: 'both', easing: 'linear' }),
+        getComputedTiming: () => ({ duration: 400 }),
+        getKeyframes: () => [{ computedOffset: 0, opacity: '0' }, { computedOffset: 1, opacity: '1' }],
+        setKeyframes: vi.fn(), updateTiming: vi.fn(),
+      },
+      pause: vi.fn(), play: vi.fn(),
+    };
+    const otherAnimation = { ...selectedAnimation, id: 'other', pause: vi.fn(), play: vi.fn() };
+    tag.getAnimations = () => [selectedAnimation];
+    document.getAnimations = () => [selectedAnimation, otherAnimation];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    tag.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.find((message) => message.type === 'selection-changed');
+    const motionId = selection.payload.element.motion[0].id;
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'playback',
+        payload: { action: 'pause', speed: 1, motionId },
+      },
+    }));
+
+    // The scoped path must have handled it (global path omits motionId).
+    const ack = messages.filter((message) => message.type === 'playback-changed').pop();
+    expect(ack.payload).toMatchObject({ action: 'pause', motionId });
+
+    // Only the selected animation is touched — the page keeps living.
+    expect(selectedAnimation.pause).toHaveBeenCalled();
+    expect(otherAnimation.pause).not.toHaveBeenCalled();
+    expect(clip.pause).not.toHaveBeenCalled();
+    expect(window.lenis.stop).not.toHaveBeenCalled();
+
+    // Changing speed must never start playback.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'playback',
+        payload: { action: 'speed', speed: 2, motionId },
+      },
+    }));
+    expect(selectedAnimation.play).not.toHaveBeenCalled();
+    expect(selectedAnimation.playbackRate).toBe(2);
+
+    delete window.lenis;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('restores inline styles that a clearProps tween wipes while being sampled', () => {
+    document.body.innerHTML = '<main><div id="card" style="opacity: 0.5; color: red;"></div></main>';
+    const card = document.getElementById('card');
+
+    // GSAP's CSSPlugin runs clearProps at completion, wiping style.cssText.
+    // suppressEvents silences callbacks, NOT plugin/render side effects — so merely
+    // sampling to progress 1 would permanently destroy unrelated inline styles.
+    const vars = { x: 100, clearProps: 'all', duration: 1, ease: 'none' };
+    let progress = 0.4;
+    const tween = {
+      targets: () => [card],
+      vars,
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn((p) => {
+        if (p === undefined) return progress;
+        progress = p;
+        if (p === 1) card.style.cssText = ''; // clearProps fires on completion
+        return tween;
+      }),
+      invalidate: vi.fn(() => tween),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: () => '0',
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    card.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    // Inspecting must never mutate the page.
+    expect(card.style.opacity).toBe('0.5');
+    expect(card.style.color).toBe('red');
+    // clearProps is config, not an animatable track.
+    const selection = messages.find((message) => message.type === 'selection-changed');
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(motion.tracks.map((track) => track.property)).toEqual(['x']);
+
+    window.postMessage = originalPostMessage;
+  });
+
+  it('emits grouping metadata: split-text tweens point at their root, timeline children at their parent', () => {
+    document.body.innerHTML = [
+      '<main>',
+      '<h1 id="headline" aria-label="Motion"><span class="char">M</span><span class="char">o</span><span class="char">t</span></h1>',
+      '<div id="panel"><div id="panel-a"></div><div id="panel-b"></div></div>',
+      '</main>',
+    ].join('');
+    const chars = Array.from(document.querySelectorAll('#headline .char'));
+    const headline = document.getElementById('headline');
+    const panel = document.getElementById('panel');
+    const panelA = document.getElementById('panel-a');
+    const panelB = document.getElementById('panel-b');
+
+    const makeTween = (target, vars, parent) => ({
+      targets: () => [target],
+      vars,
+      parent,
+      duration: () => 1, delay: () => (vars.delay || 0), repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false, scrollTrigger: null,
+      progress: vi.fn((p) => (p === undefined ? 0 : undefined)),
+      invalidate: vi.fn(),
+    });
+
+    const globalTimeline = { getChildren: () => children };
+    // A ScrollTrigger-driven timeline whose children are two tweens on the panel.
+    const introTimeline = { vars: { id: 'intro' }, scrollTrigger: { vars: {} } };
+    const charTweens = chars.map((char, index) => makeTween(char, { opacity: 1, delay: index * 0.05 }, globalTimeline));
+    const panelTweens = [
+      makeTween(panelA, { y: 0 }, introTimeline),
+      makeTween(panelB, { y: 0 }, introTimeline),
+    ];
+    const children = [...charTweens, ...panelTweens];
+    window.gsap = { globalTimeline, getProperty: () => '0' };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    // Selecting the headline lists the three char tweens, each linked to the split root.
+    headline.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    let selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const charClips = selection.payload.element.motion.filter((item) => item.engine === 'GSAP');
+    expect(charClips).toHaveLength(3);
+    const headlineId = headline.dataset.uncraftId;
+    charClips.forEach((item, index) => {
+      expect(item.group).toMatchObject({
+        targetId: chars[index].dataset.uncraftId,
+        parentId: headlineId,
+        splitRootId: headlineId,
+        splitRootLabel: 'Motion',
+        timelineId: null,
+        targetCount: 1,
+      });
+    });
+
+    // Selecting the panel lists the two timeline children sharing their parent's id.
+    panel.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const panelClips = selection.payload.element.motion.filter((item) => item.engine === 'GSAP');
+    expect(panelClips).toHaveLength(2);
+    expect(panelClips[0].group.timelineId).toBeTruthy();
+    expect(panelClips[1].group.timelineId).toBe(panelClips[0].group.timelineId);
+    expect(panelClips[0].group).toMatchObject({
+      splitRootId: null,
+      timelineLabel: 'intro',
+      timelineScroll: true,
+    });
+    expect(panelClips[0].group.parentId).toBe(panel.dataset.uncraftId);
+
+    // Re-injecting the bridge resets its WeakMap — the timeline id must survive
+    // because it is seeded from the timeline's authored id, not an instance counter
+    // (the host may hold expanded-group state keyed by it across iframe reloads).
+    const firstTimelineId = panelClips[0].group.timelineId;
+    window.eval(getRuntimeBridgeSource());
+    panel.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const reinjectedClips = selection.payload.element.motion.filter((item) => item.engine === 'GSAP');
+    expect(reinjectedClips[0].group.timelineId).toBe(firstTimelineId);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('re-renders a completed non-scroll GSAP tween after editing its end keyframe', () => {
     document.body.innerHTML = '<main><div id="mark"></div></main>';
     const mark = document.getElementById('mark');
