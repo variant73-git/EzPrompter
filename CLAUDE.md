@@ -6,6 +6,7 @@
 O cérebro do projeto vive em **`~/Desktop/IA/Brain`** — um vault Obsidian versionado com git próprio (separado deste repo). Porta de entrada: `Uncraft/🏠 Uncraft Home.md`. Estrutura: `Estratégia/`, `Produto/`, `Pesquisa/`, `Sessões/` (histórico de checkpoints), `Ideias/`.
 - **Consultar** o vault ao precisar de contexto de estratégia, pricing, competidores ou histórico de decisões.
 - **Atualizar** no ritual **[SALVAR]**: escrever/atualizar a nota da sessão em `Sessões/`, atualizar notas afetadas + a Home, e commitar o vault (`git -C ~/Desktop/IA/Brain add -A && git commit`).
+- **Findings (parte do [SALVAR], adicionado 2026-07-19)**: revisar a sessão procurando TODO momento em que o user sugeriu uma ideia CONTRARIANDO a proposta inicial do agente e a dele venceu → registrar em `Findings/🔍 Findings — quando a ideia do Adilson venceu.md` (formato: contexto → proposta do agente → contra-ideia → por que venceu → princípio). Sem momento qualificado = dizer explicitamente, nunca inventar.
 - Notas em Markdown com links `[[wiki]]` — criar links liberalmente entre notas relacionadas.
 
 ## O que é
