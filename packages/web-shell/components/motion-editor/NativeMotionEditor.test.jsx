@@ -390,7 +390,10 @@ describe('figma-style timeline rows', () => {
         detailByRow={{ 'el-b': [gsapClip('slide-in'), gsapClip('fade-out')] }}
       />,
     );
-    fireEvent.click(screen.getByTitle('Edit fade-out'));
+    // Both the left label and the strip carry the affordance — either activates.
+    const affordances = screen.getAllByTitle('Edit fade-out');
+    expect(affordances.length).toBe(2);
+    fireEvent.click(affordances[0]);
     expect(onActiveMotion).toHaveBeenCalledWith('fade-out');
   });
 

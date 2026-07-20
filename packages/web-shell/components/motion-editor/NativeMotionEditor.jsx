@@ -1326,7 +1326,14 @@ export function TimelinePanel({
                     return (
                       <div key={clip.id} className={styles.timelineRow} data-row-kind="clip">
                         <div className={styles.rowLabel} data-cell="clip" data-selected={isActiveClip}>
-                          <span className={styles.viewportLabel}>{clipName}</span>
+                          <button
+                            type="button"
+                            className={styles.layerName}
+                            title={isActive ? `Edit ${clipName}` : `Select ${row.label}`}
+                            onClick={() => { if (isActive) onActiveMotion?.(clip.id); else onSelectElement?.(row.elementId); }}
+                          >
+                            <span className={styles.viewportLabel}>{clipName}</span>
+                          </button>
                         </div>
                         <div className={styles.rowTrack} data-clip-row={clip.id}>
                           <button

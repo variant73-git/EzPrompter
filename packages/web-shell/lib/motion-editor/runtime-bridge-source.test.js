@@ -1176,13 +1176,18 @@ describe('native motion runtime bridge', () => {
       });
     });
 
-    // Selecting the panel lists the two timeline children sharing their parent's id.
+    // OWNERSHIP (2026-07-20): a container wrapper absorbs NOTHING — each
+    // timeline child belongs to its own element's row/panel.
     panel.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    expect(selection.payload.element.motion.filter((item) => item.engine === 'GSAP')).toHaveLength(0);
+
+    // Selecting a child directly lists ITS tween, linked to the shared timeline.
+    panelA.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
     const panelClips = selection.payload.element.motion.filter((item) => item.engine === 'GSAP');
-    expect(panelClips).toHaveLength(2);
+    expect(panelClips).toHaveLength(1);
     expect(panelClips[0].group.timelineId).toBeTruthy();
-    expect(panelClips[1].group.timelineId).toBe(panelClips[0].group.timelineId);
     expect(panelClips[0].group).toMatchObject({
       splitRootId: null,
       timelineLabel: 'intro',
@@ -1195,7 +1200,7 @@ describe('native motion runtime bridge', () => {
     // (the host may hold expanded-group state keyed by it across iframe reloads).
     const firstTimelineId = panelClips[0].group.timelineId;
     window.eval(getRuntimeBridgeSource());
-    panel.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    panelA.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     selection = messages.filter((message) => message.type === 'selection-changed').pop();
     const reinjectedClips = selection.payload.element.motion.filter((item) => item.engine === 'GSAP');
     expect(reinjectedClips[0].group.timelineId).toBe(firstTimelineId);
@@ -1372,6 +1377,189 @@ describe('native motion runtime bridge', () => {
     inspect();
     const second = messages.filter((m) => m.type === 'viewport-motion-changed').pop().payload.rows[0];
     expect(second.scrollStart).toBe(320);
+
+    window.postMessage = originalPostMessage;
+  });
+
+  it('classless split chars inside a heading collapse into ONE row: the heading itself', () => {
+    // Live fixture had one-letter rows ("a", "&", "0") — SplitText chars as
+    // BARE divs inside an h2, no class dialect at all. The text block is the host.
+    document.body.innerHTML = `
+      <main><div class="capsule-heading"><h2 id="head" class="h2-style">
+        <div><div id="c1">a</div></div>
+        <div><div id="c2">b</div></div>
+      </h2></div></main>`;
+    const head = document.getElementById('head');
+    const c1 = document.getElementById('c1');
+    const c2 = document.getElementById('c2');
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    [head, c1, c2].forEach((el, i) => { el.getBoundingClientRect = rect(100 + i, 40); el.getAnimations = () => []; });
+    document.getAnimations = () => [timeAnimationFor(c1), timeAnimationFor(c2)];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+    const rows = messages.filter((m) => m.type === 'viewport-motion-changed').pop().payload.rows;
+    expect(rows.length).toBe(1);
+    expect(rows[0].elementId).toBe(head.dataset.uncraftId);
+    expect(rows[0].count).toBe(2);
+
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a container row never absorbs its children\'s clips: each tween belongs to its own host', () => {
+    // Live fixture: an icon layer listed the neighbouring text's tween as a
+    // sub-row. Ownership = host of the CLIP's target.
+    document.body.innerHTML = `
+      <main><div id="chunk" class="meet-tablet">
+        <img id="icon" alt="meet-icon-1" />
+        <h3 id="phrase" aria-label="Just drop it">Just drop it</h3>
+      </div></main>`;
+    const chunk = document.getElementById('chunk');
+    const icon = document.getElementById('icon');
+    const phrase = document.getElementById('phrase');
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    [chunk, icon, phrase].forEach((el, i) => { el.getBoundingClientRect = rect(100 + i * 50, 40); });
+    const iconAnim = timeAnimationFor(icon);
+    const phraseAnim = timeAnimationFor(phrase);
+    document.getAnimations = () => [iconAnim, phraseAnim];
+    chunk.getAnimations = ({ subtree } = {}) => (subtree ? [iconAnim, phraseAnim] : []);
+    icon.getAnimations = ({ subtree } = {}) => (subtree ? [iconAnim] : []);
+    phrase.getAnimations = ({ subtree } = {}) => (subtree ? [phraseAnim] : []);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+    const rows = messages.filter((m) => m.type === 'viewport-motion-changed').pop().payload.rows;
+    // Icon and phrase are TWO layers — the chunk wrapper is none (no own tween).
+    expect(rows.map((row) => row.elementId).sort()).toEqual([icon.dataset.uncraftId, phrase.dataset.uncraftId].sort());
+
+    // Describing the WRAPPER lists nothing (its subtree's clips belong to
+    // their own rows).
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'describe-element', payload: { elementId: (chunk.dataset.uncraftId = chunk.dataset.uncraftId || 'el-chunk-x', chunk.dataset.uncraftId) } },
+    }));
+    const described = messages.filter((m) => m.type === 'element-described').pop();
+    expect(described.payload.element.motion.length).toBe(0);
+
+    window.postMessage = originalPostMessage;
+  });
+
+  it('EDIT mode replays a time animation every time the scroll crosses its strip; preview does not', () => {
+    document.body.innerHTML = '<main><div id="deep" class="promo-panel">Deep content</div></main>';
+    const deep = document.getElementById('deep');
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    window.scrollY = 0;
+    Object.defineProperty(document.documentElement, 'scrollHeight', { value: 5000, configurable: true });
+    deep.getBoundingClientRect = () => ({ top: 2400, bottom: 2500, left: 0, right: 400, width: 400, height: 100, x: 0, y: 2400 });
+    const animation = timeAnimationFor(deep);
+    document.getAnimations = () => [animation];
+    deep.getAnimations = ({ subtree } = {}) => [animation];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+    const row = messages.filter((m) => m.type === 'viewport-motion-changed').pop().payload.rows[0];
+    expect(row.scrollStart).toBe(1600); // latched reveal point (2400 - 800)
+
+    const playsBefore = animation.play.mock.calls.length;
+    window.scrollY = 2000; // crosses 1600
+    window.dispatchEvent(new Event('scroll'));
+    expect(animation.play.mock.calls.length).toBeGreaterThan(playsBefore);
+
+    // Passing back over it replays again.
+    const playsMid = animation.play.mock.calls.length;
+    window.scrollY = 800;
+    window.dispatchEvent(new Event('scroll'));
+    expect(animation.play.mock.calls.length).toBeGreaterThan(playsMid);
+
+    // Preview mode = the site's own behaviour; no re-triggering.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'set-mode', payload: { mode: 'preview' } },
+    }));
+    const playsPreview = animation.play.mock.calls.length;
+    window.scrollY = 2000;
+    window.dispatchEvent(new Event('scroll'));
+    expect(animation.play.mock.calls.length).toBe(playsPreview);
+
+    window.postMessage = originalPostMessage;
+  });
+
+  it('edit mode parks completed GSAP tweens (autoRemoveChildren off); preview restores the site default', () => {
+    // GSAP gc-kills one-shot tweens on completion — measured live: after one
+    // scroll-through there was nothing left to replay. Editing needs them parked.
+    document.body.innerHTML = '<main><h2 id="headline">Fertilizer, reinvented</h2></main>';
+    document.getAnimations = () => [];
+    window.gsap = { globalTimeline: { autoRemoveChildren: true, getChildren: () => [] }, getProperty: () => '0' };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+    expect(window.gsap.globalTimeline.autoRemoveChildren).toBe(false);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'set-mode', payload: { mode: 'preview' } },
+    }));
+    expect(window.gsap.globalTimeline.autoRemoveChildren).toBe(true);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'set-mode', payload: { mode: 'edit' } },
+    }));
+    expect(window.gsap.globalTimeline.autoRemoveChildren).toBe(false);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('EVERYTHING is selectable: a node with no selectable ancestor still selects itself', () => {
+    document.body.innerHTML = '';
+    const widget = document.createElement('x-widget');
+    widget.textContent = '';
+    document.body.appendChild(widget);
+    document.getAnimations = () => [];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    widget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((m) => m.type === 'selection-changed').pop();
+    expect(selection).toBeTruthy();
+    expect(selection.payload.element.id).toBe(widget.dataset.uncraftId);
 
     window.postMessage = originalPostMessage;
   });
