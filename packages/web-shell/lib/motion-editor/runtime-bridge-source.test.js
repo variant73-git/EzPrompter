@@ -1314,6 +1314,34 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('hostRowId of an element that IS a row host is its own id, even inside another animated ancestor', () => {
+    // Live-fixture regression: resolveHostRowId used to start the walk at
+    // splitFragmentHost(), which could jump OVER the clicked element — a row
+    // host itself — and resolve an ancestor's id, so no row ever lit up.
+    document.body.innerHTML = '<main><div id="outer"><h2 id="inner">Fertilizer, reinvented</h2></div></main>';
+    const outer = document.getElementById('outer');
+    const inner = document.getElementById('inner');
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    outer.getBoundingClientRect = rect(80, 400);
+    inner.getBoundingClientRect = rect(120, 60);
+    document.getAnimations = () => [timeAnimationFor(outer), timeAnimationFor(inner)];
+    [outer, inner].forEach((el) => { el.getAnimations = () => []; });
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    inner.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    expect(selection.payload.element.hostRowId).toBeTruthy();
+    expect(selection.payload.element.hostRowId).toBe(inner.dataset.uncraftId);
+
+    window.postMessage = originalPostMessage;
+  });
+
   it('describe-element returns full detail for a row WITHOUT touching the selection', () => {
     document.body.innerHTML = '<main><h2 id="headline">Fertilizer, reinvented</h2></main>';
     const headline = document.getElementById('headline');

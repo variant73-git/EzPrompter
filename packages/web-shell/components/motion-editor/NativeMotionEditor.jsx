@@ -1248,6 +1248,10 @@ export function TimelinePanel({
                   {expanded && clips && clips.length > 1 && clips.map((clip) => {
                     const clipGeo = clipGeometry(row, clip);
                     const isActiveClip = isActive && clip.id === activeMotionId;
+                    // A time-driven clip is a POINT on the scroll axis — when its
+                    // strip is too narrow to hold text, the name sits beside it.
+                    const stripPx = (clipGeo.width / 100) * timelineWidth;
+                    const labelInside = stripPx >= 56;
                     return (
                       <div key={clip.id} className={styles.timelineRow} data-row-kind="clip">
                         <div className={styles.rowLabel} data-cell="clip" data-selected={isActiveClip}>
@@ -1262,7 +1266,14 @@ export function TimelinePanel({
                             style={{ left: `${clipGeo.left}%`, width: `${clipGeo.width}%` }}
                             title={isActive ? `Edit ${clip.name}` : `Select ${row.label}`}
                             onClick={() => { if (isActive) onActiveMotion?.(clip.id); else onSelectElement?.(row.elementId); }}
-                          ><span>{clip.name}</span></button>
+                          >{labelInside && <span>{clip.name}</span>}</button>
+                          {!labelInside && (
+                            <span
+                              className={styles.clipStripTag}
+                              data-selected={isActiveClip}
+                              style={{ left: `calc(${clipGeo.left + clipGeo.width}% + 6px)` }}
+                            >{clip.name}</span>
+                          )}
                         </div>
                       </div>
                     );
@@ -1431,21 +1442,6 @@ export default function NativeMotionEditor() {
   const selectedRowId = selected ? (selected.hostRowId || selected.id) : null;
   const motionDetailRef = useRef(motionDetail);
   useEffect(() => { motionDetailRef.current = motionDetail; }, [motionDetail]);
-
-  useEffect(() => {
-    if (!selected?.id) return;
-    setMotionDetail((current) => ({ ...current, [selected.id]: (selected.motion || []).map(normalizeMotionClip) }));
-    const rowId = selected.hostRowId || selected.id;
-    setExpandedLayers((current) => {
-      if (current.has(rowId)) return current;
-      const next = new Set(current);
-      next.add(rowId);
-      return next;
-    });
-    if (rowId !== selected.id && !motionDetailRef.current[rowId] && status === 'ready') {
-      send('describe-element', { elementId: rowId });
-    }
-  }, [selected, send, status]);
   const timelineOffset = useMemo(() => {
     if (!activeMotion) return 0;
     const delay = Math.max(0, activeMotion.timing.delay || 0);
@@ -1481,6 +1477,24 @@ export default function NativeMotionEditor() {
   const send = useCallback((type, payload) => {
     iframeRef.current?.contentWindow?.postMessage(command(type, payload), '*');
   }, []);
+
+  // Selections feed the timeline: cache the element's clips for its row,
+  // auto-expand the row that owns it, and fetch the host row's detail when
+  // the click resolved to a child of the animated host.
+  useEffect(() => {
+    if (!selected?.id) return;
+    setMotionDetail((current) => ({ ...current, [selected.id]: (selected.motion || []).map(normalizeMotionClip) }));
+    const rowId = selected.hostRowId || selected.id;
+    setExpandedLayers((current) => {
+      if (current.has(rowId)) return current;
+      const next = new Set(current);
+      next.add(rowId);
+      return next;
+    });
+    if (rowId !== selected.id && !motionDetailRef.current[rowId] && status === 'ready') {
+      send('describe-element', { elementId: rowId });
+    }
+  }, [selected, send, status]);
 
   useEffect(() => {
     if (!stageRef.current) return undefined;

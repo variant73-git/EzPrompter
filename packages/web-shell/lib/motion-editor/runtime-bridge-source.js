@@ -19,6 +19,9 @@ function nativeMotionRuntimeBridge() {
   let selectedId = null;
   let speed = 1;
   let hoveredElement = null;
+  // Hosts of the LAST emitted timeline rows — selection resolves against what
+  // the UI is actually showing, not a freshly re-derived (drift-prone) index.
+  let lastRowHosts = new Set();
   let hoverFrame = null;
   let dragState = null;
   let suppressClickUntil = 0;
@@ -570,18 +573,28 @@ function nativeMotionRuntimeBridge() {
     // (splitFragmentHost) can land on DIFFERENT nodes of the same widget.
     // Resolve here, where the DOM is reachable — the UI only compares ids.
     try {
+      // FIRST match against the rows the UI is actually displaying: host
+      // attribution can DRIFT between emits (runtimes add split markers
+      // lazily), so a fresh index may name a host the timeline never listed —
+      // verified live on the fixture, where that mismatch kept every row dark.
+      for (let node = element; node && node !== document.documentElement; node = node.parentElement) {
+        if (lastRowHosts.has(node)) return ensureElementId(node);
+      }
       const hosts = motionHosts();
-      if (!hosts.size) return null;
-      let candidate = element;
-      try { candidate = splitFragmentHost(element); } catch (_) {}
-      for (let node = candidate; node && node !== document.documentElement; node = node.parentElement) {
+      if (!hosts.size && !lastRowHosts.size) return null;
+      // Walk from the element ITSELF: a split fragment reaches its host by
+      // ancestry anyway, and starting from splitFragmentHost() could jump OVER
+      // an element that is already a row host.
+      for (let node = element; node && node !== document.documentElement; node = node.parentElement) {
         if (hosts.has(node)) return ensureElementId(node);
       }
       let found = null;
-      hosts.forEach((_members, host) => {
+      const consider = (host) => {
         if (!element.contains(host)) return;
         if (!found || (found.compareDocumentPosition(host) & Node.DOCUMENT_POSITION_PRECEDING)) found = host;
-      });
+      };
+      lastRowHosts.forEach(consider);
+      hosts.forEach((_members, host) => consider(host));
       return found ? ensureElementId(found) : null;
     } catch (_) { return null; }
   }
@@ -592,6 +605,7 @@ function nativeMotionRuntimeBridge() {
     // hiding them re-scoped the list on every scrub, which made strips appear
     // to move with the playhead.
     const hosts = motionHosts();
+    const emittedHosts = new Set();
     const rows = [];
     hosts.forEach((members, element) => {
       // A row is a PLACE on the page. Detached or laid-out-to-nothing targets
@@ -636,6 +650,7 @@ function nativeMotionRuntimeBridge() {
       const scrollEnd = summary.driver === 'scroll'
         ? (summary.scrollEnd != null ? summary.scrollEnd : Math.min(page.maxScroll, scrollStart + page.viewportHeight))
         : null;
+      emittedHosts.add(element);
       rows.push({
         elementId: ensureElementId(element),
         label: elementLabel(element),
@@ -653,6 +668,7 @@ function nativeMotionRuntimeBridge() {
         scrollEditable: summary.scrollEditable === true,
       });
     });
+    lastRowHosts = emittedHosts;
     return rows.sort((a, b) => a.top - b.top);
   }
 

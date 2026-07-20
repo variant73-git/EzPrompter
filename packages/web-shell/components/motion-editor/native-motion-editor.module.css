@@ -791,6 +791,25 @@
   color: #fff;
 }
 
+.clipStripTag {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  max-width: 180px;
+  color: var(--motion-muted);
+  font-size: 8px;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clipStripTag[data-selected='true'] {
+  color: var(--motion-secondary);
+}
+
 /* Property rows: name + `< ◇ >` steppers + value at the playhead. */
 .rowLabel[data-cell='property'] {
   padding-left: 27px;
@@ -896,14 +915,41 @@
   background: rgba(41, 102, 234, 0.28);
 }
 
+/* Layer strip (Figma Motion anatomy): solid rounded bar covering the union of
+   the element's animations. Accent when selected, neutral when not; the inner
+   "I" brackets mark the trim ends. */
 .timelineClip {
   position: absolute;
-  top: 8px;
-  height: 11px;
-  min-width: 4px;
-  border: 1px solid rgba(142, 175, 244, 0.56);
-  border-radius: 3px;
-  background: rgba(41, 102, 234, 0.34);
+  top: 6px;
+  height: 15px;
+  min-width: 5px;
+  border: 1px solid rgba(241, 240, 235, 0.14);
+  border-radius: 8px;
+  background: rgba(241, 240, 235, 0.22);
+}
+
+.timelineClip::before,
+.timelineClip::after {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  content: '';
+  border-radius: 1px;
+  background: rgba(32, 32, 30, 0.55);
+}
+
+.timelineClip::before { left: 4px; }
+.timelineClip::after { right: 4px; }
+
+.timelineClip[data-selected='true'] {
+  border-color: rgba(142, 175, 244, 0.7);
+  background: var(--motion-accent);
+}
+
+.timelineClip[data-selected='true']::before,
+.timelineClip[data-selected='true']::after {
+  background: rgba(255, 255, 255, 0.55);
 }
 
 .timelineKeyframe {
@@ -946,19 +992,19 @@
   z-index: 6; /* over strips and ruler, under the sticky label column */
   top: 0;
   bottom: 0;
-  width: 1px;
+  width: 1.5px;
   pointer-events: none;
-  background: #eea665;
+  background: #6f95ea;
 }
 
 .timelinePlayhead span {
   position: absolute;
   top: 0;
-  left: -4px;
-  width: 9px;
-  height: 7px;
-  border-radius: 2px 2px 4px 4px;
-  background: #eea665;
+  left: -4.5px;
+  width: 10px;
+  height: 8px;
+  border-radius: 2px 2px 5px 5px;
+  background: #6f95ea;
 }
 
 /* (The invisible range-input scrubber is gone — the surface itself scrubs:
