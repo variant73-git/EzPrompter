@@ -578,72 +578,17 @@
   accent-color: var(--motion-accent);
 }
 
+/* ---- Timeline body (2026-07-20 redesign): ONE scroller holds labels AND
+   tracks. Label cells stick to the left edge, the ruler row sticks to the
+   top — vertical scroll can never desynchronize the two columns again. */
 .timelineBody {
-  display: grid;
-  height: 166px;
+  position: relative;
   min-width: 0;
-  grid-template-columns: 136px minmax(0, 1fr);
   border-top: 1px solid var(--motion-line);
 }
 
-.timelineLabels {
-  min-width: 0;
-  overflow: hidden;
-  border-right: 1px solid var(--motion-line);
-  background: var(--motion-panel);
-}
-
-.timelineLabelRuler,
-.timelineClipLabel,
-.timelineTrackLabel {
-  display: flex;
-  height: 28px;
-  min-width: 0;
-  align-items: center;
-  padding: 0 10px;
-  border-bottom: 1px solid rgba(56, 55, 51, 0.72);
-  color: var(--motion-muted);
-  font-size: 9px;
-}
-
-.timelineLabelRuler {
-  height: 26px;
-  font-size: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.timelineClipLabel {
-  gap: 7px;
-  color: var(--motion-secondary);
-  font-weight: 560;
-}
-
-.timelineClipLabel svg {
-  width: 10px;
-  height: 10px;
-  flex: 0 0 auto;
-  color: #8eaff4;
-  fill: rgba(142, 175, 244, 0.2);
-}
-
-.timelineClipLabel span,
-.timelineTrackLabel {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.timelineTrackLabel {
-  padding-left: 27px;
-}
-
-.timelineTrackLabel[data-selected='true'] {
-  color: var(--motion-secondary);
-  background: rgba(241, 240, 235, 0.04);
-}
-
 .timelineScroller {
+  height: 100%;
   min-width: 0;
   overflow: auto;
   overscroll-behavior: contain;
@@ -651,27 +596,66 @@
   scrollbar-width: thin;
 }
 
-.timelineCanvas {
+.timelineSurface {
   position: relative;
   min-height: 100%;
+}
+
+.timelineRow {
+  display: flex;
+  min-width: 100%;
+  align-items: stretch;
+}
+
+.rowLabel {
+  position: sticky;
+  z-index: 7;
+  left: 0;
+  display: flex;
+  height: 28px;
+  min-width: 0;
+  flex: 0 0 var(--labels-w, 152px);
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-right: 1px solid var(--motion-line);
+  border-bottom: 1px solid rgba(56, 55, 51, 0.72);
+  background: var(--motion-panel);
+  color: var(--motion-muted);
+  font-size: 9px;
+}
+
+.rowTrack {
+  position: relative;
+  height: 28px;
+  flex: 0 0 var(--track-w, 720px);
+  border-bottom: 1px solid rgba(56, 55, 51, 0.72);
   background-image: linear-gradient(90deg, rgba(56, 55, 51, 0.54) 1px, transparent 1px);
   background-size: 10% 100%;
 }
 
-.timelineRuler,
-.timelineClipRow,
-.timelineTrackRow {
-  position: relative;
-  height: 28px;
-  border-bottom: 1px solid rgba(56, 55, 51, 0.72);
+/* Ruler row sticks to the top; its label cell (the corner) sticks both ways. */
+.timelineRow[data-row-kind='ruler'] {
+  position: sticky;
+  z-index: 5;
+  top: 0;
 }
 
-.timelineRuler {
+.timelineRow[data-row-kind='ruler'] .rowLabel {
+  z-index: 8;
+  height: 26px;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.rulerTrack {
   height: 26px;
   color: var(--motion-muted);
+  background-color: var(--motion-panel);
 }
 
-.timelineRuler > span {
+.rulerTrack > span {
   position: absolute;
   top: 0;
   display: grid;
@@ -684,10 +668,232 @@
   transform: translateX(4px);
 }
 
-.timelineRuler > span > i {
+.rulerTrack > span > i {
   width: 1px;
   height: 4px;
   background: var(--motion-line-strong);
+}
+
+/* Layer rows */
+.rowLabel[data-cell='layer'] {
+  padding-left: 4px;
+  gap: 3px;
+}
+
+.rowLabel[data-cell='layer'][data-selected='true'] {
+  background: rgba(41, 102, 234, 0.22);
+  color: #fff;
+}
+
+.rowTrack[data-selected='true'] {
+  background-color: rgba(41, 102, 234, 0.08);
+}
+
+.layerChevron {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.layerChevron svg {
+  width: 9px;
+  height: 9px;
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+}
+
+.layerChevron[aria-expanded='true'] svg {
+  transform: rotate(0deg);
+}
+
+.layerChevron:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.layerName {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.offscreenMark {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: rgba(241, 240, 235, 0.32);
+}
+
+/* Clip sub-rows: outlined strip with the animation name centered inside. */
+.rowLabel[data-cell='clip'] {
+  padding-left: 27px;
+  color: var(--motion-secondary);
+}
+
+.rowLabel[data-cell='clip'] span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowLabel[data-cell='clip'][data-selected='true'] {
+  color: #fff;
+}
+
+.timelineClipStrip {
+  position: absolute;
+  top: 5px;
+  display: flex;
+  height: 17px;
+  min-width: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border: 1px solid rgba(142, 175, 244, 0.62);
+  border-radius: 9px;
+  background: rgba(41, 102, 234, 0.08);
+  color: #b8c9ed;
+  font-size: 8px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.timelineClipStrip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timelineClipStrip:hover {
+  border-color: #b8c9ed;
+}
+
+.timelineClipStrip[data-selected='true'] {
+  border-color: var(--motion-accent);
+  background: rgba(41, 102, 234, 0.2);
+  color: #fff;
+}
+
+/* Property rows: name + `< ◇ >` steppers + value at the playhead. */
+.rowLabel[data-cell='property'] {
+  padding-left: 27px;
+  gap: 4px;
+}
+
+.rowLabel[data-cell='property'][data-selected='true'] {
+  color: var(--motion-secondary);
+  background: rgba(241, 240, 235, 0.04);
+}
+
+.propertyName {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.keyframeSteppers {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+}
+
+.keyframeSteppers button {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--motion-muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.keyframeSteppers button:hover:not(:disabled) {
+  color: var(--motion-text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.keyframeSteppers button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.keyframeSteppers svg {
+  width: 7px;
+  height: 7px;
+}
+
+.keyframeSteppers button[data-on-keyframe='true'] {
+  color: var(--motion-accent);
+  opacity: 1;
+}
+
+.propertyValue {
+  max-width: 46px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: var(--motion-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowLabel[data-cell='empty'] {
+  color: var(--motion-muted);
+}
+
+/* Resize affordances: discreet, hit-area only until hovered. */
+.timelineHeightHandle {
+  position: absolute;
+  z-index: 9;
+  top: -3px;
+  right: 0;
+  left: 0;
+  height: 6px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.timelineHeightHandle:hover {
+  background: rgba(41, 102, 234, 0.28);
+}
+
+.labelsResizeHandle {
+  position: absolute;
+  z-index: 9;
+  top: 26px;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.labelsResizeHandle:hover {
+  background: rgba(41, 102, 234, 0.28);
 }
 
 .timelineClip {
@@ -737,7 +943,7 @@
 
 .timelinePlayhead {
   position: absolute;
-  z-index: 2;
+  z-index: 6; /* over strips and ruler, under the sticky label column */
   top: 0;
   bottom: 0;
   width: 1px;
@@ -755,20 +961,8 @@
   background: #eea665;
 }
 
-.timelineScrubber {
-  position: absolute;
-  z-index: 3;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  cursor: ew-resize;
-  opacity: 0;
-}
-
-.timelineScrubber:disabled {
-  cursor: default;
-}
+/* (The invisible range-input scrubber is gone — the surface itself scrubs:
+   pointer-drag over empty track area moves the playhead over FIXED strips.) */
 
 .curveEditor {
   position: absolute;

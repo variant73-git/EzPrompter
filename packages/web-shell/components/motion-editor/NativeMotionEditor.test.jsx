@@ -19,7 +19,7 @@ const motion = {
   }],
 };
 
-function TimelineHarness({ onMove = vi.fn(), onDuplicate = vi.fn(), onDelete = vi.fn(), onEasing = vi.fn(), ...rest }) {
+function TimelineHarness({ onMove = vi.fn(), onDuplicate = vi.fn(), onDelete = vi.fn(), onEasing = vi.fn(), onSeek = vi.fn(), ...rest }) {
   const [selected, setSelected] = useState(null);
   return (
     <TimelinePanel
@@ -34,7 +34,7 @@ function TimelineHarness({ onMove = vi.fn(), onDuplicate = vi.fn(), onDelete = v
       onToggle={vi.fn()}
       onPlayback={vi.fn()}
       onSpeed={vi.fn()}
-      onSeek={vi.fn()}
+      onSeek={onSeek}
       onZoom={vi.fn()}
       onPlaybackMode={vi.fn()}
       onAutoKeyframe={vi.fn()}
@@ -94,34 +94,28 @@ function renderMotionPanel(props = {}) {
   );
 }
 
-describe('motion panel grouped list', () => {
-  it('collapses split-text characters into one text-reveal row', () => {
-    renderMotionPanel();
-    expect(screen.getByText('CropTab')).toBeTruthy();
-    expect(screen.getByText(/3 animations/)).toBeTruthy();
+describe('motion panel — properties of the active animation', () => {
+  it('renders no transport and no animations list: the timeline owns the list', () => {
+    renderMotionPanel({ activeMotionId: 'char-1' });
+    expect(screen.queryByTitle('Play this animation')).toBeNull();
+    expect(screen.queryByTitle('Pause this animation')).toBeNull();
+    expect(screen.queryByTitle('Restart this animation')).toBeNull();
+    expect(screen.queryByText('Animations')).toBeNull();
+    // The active clip's properties are all still here.
+    expect(screen.getAllByText('Trigger').length).toBeGreaterThan(0);
+    expect(screen.getByText('Timing')).toBeTruthy();
+    expect(screen.getByText('Easing')).toBeTruthy();
+  });
+
+  it('shows the group context of a split-text clip without listing its members', () => {
+    renderMotionPanel({ activeMotionId: 'char-1' });
+    expect(screen.getByText(/CropTab · Text reveal · 3 animations/)).toBeTruthy();
     expect(screen.queryByText('char-2')).toBeNull();
-    expect(screen.getByText('solo')).toBeTruthy();
   });
 
-  it('activates the representative clip when the group row is clicked', () => {
-    const onActiveMotion = vi.fn();
-    renderMotionPanel({ onActiveMotion });
-    fireEvent.click(screen.getByText('CropTab'));
-    expect(onActiveMotion).toHaveBeenCalledWith('char-1');
-  });
-
-  it('expands the group to reveal and select individual members', () => {
-    const onActiveMotion = vi.fn();
-    renderMotionPanel({ onActiveMotion });
-    fireEvent.click(screen.getByRole('button', { name: 'Show 3 grouped animations' }));
-    fireEvent.click(screen.getByText('char-2'));
-    expect(onActiveMotion).toHaveBeenCalledWith('char-2');
-  });
-
-  it('re-spaces the whole group through the stagger control', () => {
+  it('re-spaces the whole group through the stagger control in Timing', () => {
     const onStagger = vi.fn();
-    renderMotionPanel({ onStagger });
-    fireEvent.click(screen.getByRole('button', { name: 'Show 3 grouped animations' }));
+    renderMotionPanel({ onStagger, activeMotionId: 'char-1' });
     const field = screen.getByLabelText(/Stagger/);
     fireEvent.change(field, { target: { value: '60' } });
     fireEvent.blur(field);
@@ -135,10 +129,8 @@ describe('motion panel grouped list', () => {
     // The displayed value is a MEDIAN of the real deltas — committing it blindly
     // on blur would silently "regularize" non-uniform delays with zero user intent.
     const onStagger = vi.fn();
-    renderMotionPanel({ onStagger });
-    fireEvent.click(screen.getByRole('button', { name: 'Show 3 grouped animations' }));
-    const field = screen.getByLabelText(/Stagger/);
-    fireEvent.blur(field);
+    renderMotionPanel({ onStagger, activeMotionId: 'char-1' });
+    fireEvent.blur(screen.getByLabelText(/Stagger/));
     expect(onStagger).not.toHaveBeenCalled();
   });
 
@@ -147,13 +139,13 @@ describe('motion panel grouped list', () => {
     const group = { splitRootId: 'el-title', splitRootLabel: 'CropTab', parentId: 'el-title' };
     renderMotionPanel({
       onStagger,
+      activeMotionId: 'char-1',
       motion: [
         gsapClip('char-1', { timing: { delay: 0 }, group }),
         gsapClip('char-2', { timing: { delay: 0 }, group }),
         gsapClip('char-3', { timing: { delay: 1000 }, group }),
       ],
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Show 3 grouped animations' }));
     const field = screen.getByLabelText(/Stagger/);
     expect(field.value).toBe('');
     fireEvent.blur(field);
@@ -172,13 +164,13 @@ describe('motion panel grouped list', () => {
     const onStagger = vi.fn();
     renderMotionPanel({
       onStagger,
+      activeMotionId: 'char-1',
       motion: [
         gsapClip('char-1', { timing: { delay: 0 }, group: timelineGroup }),
         gsapClip('char-2', { timing: { delay: 40 }, group: timelineGroup }),
         gsapClip('char-3', { timing: { delay: 80 }, group: timelineGroup }),
       ],
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Show 3 grouped animations' }));
     expect(screen.queryByLabelText(/Stagger/)).toBeNull();
   });
 });
@@ -225,12 +217,17 @@ describe('timeline canvas layout', () => {
     // The ruler reads in page pixels, not seconds.
     expect(screen.getByText('4200px')).toBeTruthy();
 
-    // The scrubber IS the page scroll: range 0..maxScroll, dragging scrolls the site.
-    const scrubber = screen.getByLabelText('Page scroll position');
-    expect(scrubber.max).toBe('4200');
-    expect(Number(scrubber.value)).toBe(1000);
-    fireEvent.change(scrubber, { target: { value: '2100' } });
+    // Scrubbing = pointer-dragging anywhere on empty track area: the playhead
+    // moves and the SITE scrolls, while strips stay exactly where they were.
+    const surface = container.querySelector('[data-timeline-surface]');
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 872, bottom: 166, width: 872, height: 166, toJSON: () => ({}),
+    });
+    // labels column (152) + half of the 720px track = pct 0.5 → scrollY 2100.
+    fireEvent.pointerDown(surface, { pointerId: 5, button: 0, clientX: 152 + 360 });
     expect(onScrollTo).toHaveBeenCalledWith(2100);
+    rect.mockRestore();
+    expect(parseFloat(container.querySelector('[data-element-row="el-a"] i').style.left)).toBeCloseTo((400 / 4200) * 100, 1);
   });
 
   it('never plots time-math keyframes on the scroll axis when the selected element is offscreen', () => {
@@ -244,10 +241,19 @@ describe('timeline canvas layout', () => {
     expect(screen.queryByRole('button', { name: 'opacity keyframe at 0 percent' })).toBeNull();
   });
 
-  it('keeps the page-scroll scrubber alive in stretches with nothing animated on screen', () => {
+  it('keeps the page-scroll scrub alive in stretches with nothing animated on screen', () => {
+    const onScrollTo = vi.fn();
     const page = { scrollY: 2000, viewportHeight: 800, scrollHeight: 5000, maxScroll: 4200 };
-    render(<TimelineHarness rows={[]} selectedElementId={null} onSelectElement={vi.fn()} page={page} />);
-    expect(screen.getByLabelText('Page scroll position')).toBeTruthy();
+    const { container } = render(<TimelineHarness rows={[]} selectedElementId={null} onSelectElement={vi.fn()} page={page} onScrollTo={onScrollTo} />);
+    const surface = container.querySelector('[data-timeline-surface]');
+    expect(surface).toBeTruthy();
+    expect(container.querySelector('[data-timeline-playhead]')).toBeTruthy();
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 872, bottom: 166, width: 872, height: 166, toJSON: () => ({}),
+    });
+    fireEvent.pointerDown(surface, { pointerId: 6, button: 0, clientX: 152 + 720 });
+    expect(onScrollTo).toHaveBeenCalledWith(4200);
+    rect.mockRestore();
   });
 
   it('drags the active scroll strip edge to retarget its scroll range', () => {
@@ -284,6 +290,108 @@ describe('timeline canvas layout', () => {
     expect(next.end).toBeLessThan(1350);
     expect(next.start).toBeUndefined();
     rect.mockRestore();
+  });
+});
+
+describe('figma-style timeline rows', () => {
+  it('keeps labels and strips in ONE scroller so vertical scroll can never desynchronize them', () => {
+    const { container } = render(
+      <TimelineHarness rows={viewportRows} selectedElementId="el-a" onSelectElement={vi.fn()} />,
+    );
+    const surface = container.querySelector('[data-timeline-surface]');
+    // Label cell and strip cell live inside the SAME scrollable surface.
+    expect(surface.querySelector('[data-cell="layer"]')).toBeTruthy();
+    expect(surface.querySelector('[data-element-row="el-a"]')).toBeTruthy();
+  });
+
+  it('expands a layer through its chevron', () => {
+    const onToggleLayer = vi.fn();
+    render(
+      <TimelineHarness rows={viewportRows} selectedElementId={null} onSelectElement={vi.fn()} onToggleLayer={onToggleLayer} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Card image' }));
+    expect(onToggleLayer).toHaveBeenCalledWith('el-b');
+  });
+
+  it('lists an expanded layer’s animations as named strips and activates one on click', () => {
+    const onActiveMotion = vi.fn();
+    render(
+      <TimelineHarness
+        rows={viewportRows}
+        selectedElementId="el-b"
+        onSelectElement={vi.fn()}
+        onActiveMotion={onActiveMotion}
+        activeMotionId="slide-in"
+        expandedLayers={new Set(['el-b'])}
+        detailByRow={{ 'el-b': [gsapClip('slide-in'), gsapClip('fade-out')] }}
+      />,
+    );
+    fireEvent.click(screen.getByTitle('Edit fade-out'));
+    expect(onActiveMotion).toHaveBeenCalledWith('fade-out');
+  });
+
+  it('clicking an animation strip of a NON-selected layer selects that layer first', () => {
+    const onSelectElement = vi.fn();
+    render(
+      <TimelineHarness
+        rows={viewportRows}
+        selectedElementId="el-a"
+        onSelectElement={onSelectElement}
+        expandedLayers={new Set(['el-b'])}
+        detailByRow={{ 'el-b': [gsapClip('slide-in'), gsapClip('fade-out')] }}
+      />,
+    );
+    fireEvent.click(screen.getAllByTitle('Select Card image')[0]);
+    expect(onSelectElement).toHaveBeenCalledWith('el-b');
+  });
+
+  it('navigates keyframes through the property-row steppers', () => {
+    const onSeek = vi.fn();
+    render(<TimelineHarness rows={viewportRows} selectedElementId="el-a" onSelectElement={vi.fn()} onSeek={onSeek} />);
+    // Playhead at 0: the previous stepper has nowhere to go, the next one seeks
+    // to the 100% keyframe (delay 0 + 1 × 1000ms clip).
+    expect(screen.getByRole('button', { name: 'Previous opacity keyframe' }).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Next opacity keyframe' }));
+    expect(onSeek).toHaveBeenCalledWith(1000);
+  });
+
+  it('adds a keyframe at the playhead through the ◇ stepper', () => {
+    const onDuplicate = vi.fn();
+    render(
+      <TimelineHarness
+        onDuplicate={onDuplicate}
+        rows={viewportRows}
+        selectedElementId="el-a"
+        onSelectElement={vi.fn()}
+        state={{ currentTime: 500, duration: 1000, playState: 'paused' }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Add opacity keyframe' }));
+    expect(onDuplicate).toHaveBeenCalledOnce();
+    expect(onDuplicate.mock.calls[0][0]).toEqual({ motionId: 'waapi-fade', property: 'opacity', offset: 0 });
+    expect(onDuplicate.mock.calls[0][1]).toBeCloseTo(0.5, 2);
+  });
+
+  it('clamps the timeline height handle between 1× and 2×', () => {
+    const onBodyHeight = vi.fn();
+    render(<TimelineHarness rows={[]} onBodyHeight={onBodyHeight} bodyHeight={166} />);
+    const handle = screen.getByRole('separator', { name: 'Resize the timeline' });
+    fireEvent.pointerDown(handle, { pointerId: 3, button: 0, clientY: 500 });
+    fireEvent.pointerMove(handle, { pointerId: 3, clientY: 100 });
+    expect(onBodyHeight).toHaveBeenLastCalledWith(332);
+    fireEvent.pointerMove(handle, { pointerId: 3, clientY: 900 });
+    expect(onBodyHeight).toHaveBeenLastCalledWith(166);
+  });
+
+  it('clamps the labels column resize between its min and max widths', () => {
+    const onLabelsWidth = vi.fn();
+    render(<TimelineHarness rows={[]} onLabelsWidth={onLabelsWidth} labelsWidth={152} />);
+    const handle = screen.getByRole('separator', { name: 'Resize the labels column' });
+    fireEvent.pointerDown(handle, { pointerId: 4, button: 0, clientX: 152 });
+    fireEvent.pointerMove(handle, { pointerId: 4, clientX: 900 });
+    expect(onLabelsWidth).toHaveBeenLastCalledWith(340);
+    fireEvent.pointerMove(handle, { pointerId: 4, clientX: -400 });
+    expect(onLabelsWidth).toHaveBeenLastCalledWith(110);
   });
 });
 

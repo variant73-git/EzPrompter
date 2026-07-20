@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   AlignCenter,
@@ -461,132 +461,51 @@ const EDITABILITY_EXPLAINED = {
   code: 'Code-driven — this animation is controlled by site scripts and is read-only here',
 };
 
-export function MotionPanel({ selected, motion, activeMotionId, onActiveMotion, speed, onPlayback, onSpeed, onMotion, onStagger }) {
+export function MotionPanel({ selected, motion, activeMotionId, onMotion, onStagger }) {
   const activeMotion = motion.find((item) => item.id === activeMotionId) || null;
   const motionRows = useMemo(() => groupMotionClips(motion), [motion]);
-  const [expandedGroups, setExpandedGroups] = useState(() => new Set());
+  // The timeline owns the LIST of animations (Figma Motion model) — this panel
+  // inspects the active one. Group context surfaces here only as the Stagger
+  // control, because stagger is a property of the group, not a list entry.
+  const activeGroup = motionRows.find((row) => row.kind !== 'single' && row.clips.some((item) => item.id === activeMotionId)) || null;
+  // Verified on real GSAP 3.15: delay() on a timeline child updates the
+  // reported value but never moves startTime, and delay is meaningless on
+  // a scroll-scrubbed clip — offering the control there would record
+  // phantom edits that visually do nothing.
+  const staggerable = Boolean(activeGroup)
+    && activeGroup.type !== 'timeline'
+    && activeGroup.driver?.type !== 'scroll'
+    && activeGroup.clips.every((item) => !item.group?.timelineId);
 
   const commit = (property, value, before) => {
     if (!activeMotion) return;
     onMotion(activeMotion, property, coerceMotionValue(property, value), before);
   };
 
-  const toggleGroup = (rowId) => {
-    setExpandedGroups((current) => {
-      const next = new Set(current);
-      if (next.has(rowId)) next.delete(rowId);
-      else next.add(rowId);
-      return next;
-    });
-  };
-
-  const renderClip = (item) => (
-    <button
-      type="button"
-      key={`${item.engine}:${item.id}`}
-      aria-pressed={item.id === activeMotionId}
-      onClick={() => onActiveMotion(item.id)}
-    >
-      <span className={styles.motionGlyph}>{item.driver?.type === 'scroll' ? <ScrollText /> : <Diamond />}</span>
-      <span className={styles.motionSummary}>
-        <strong>{item.name}</strong>
-        <small>{motionDriverLabel(item.driver)} · {item.engine}</small>
-      </span>
-      <span className={styles.motionCapability} data-editability={item.editability} title={EDITABILITY_EXPLAINED[item.editability] || EDITABILITY_EXPLAINED.code}>{motionCapabilityLabel(item.editability)}</span>
-    </button>
-  );
-
   return (
     <div className={styles.panelBody}>
-      {/* Scroll-driven motion has no "play": scrolling the site IS playing it. The
-          transport only appears for time-driven clips (loop, on-load, video, Lottie),
-          where there is nothing to scrub with. */}
-      {['scroll', 'media'].includes(activeMotion?.driver?.type) ? (
+      {!selected && <p className={styles.mutedCopy}>Select an element to see its animation properties.</p>}
+      {selected && !motion.length && <p className={styles.mutedCopy}>No animation is attached directly. Check the parent, or pick a row in the timeline.</p>}
+      {['scroll', 'media'].includes(activeMotion?.driver?.type) && (
         <p className={styles.motionScrollHint}>
           <ScrollText /> Driven by scroll — scroll the site to play this animation.
         </p>
-      ) : (
-        <div className={styles.motionTransport}>
-          <button type="button" onClick={() => onPlayback('restart')} title="Restart this animation"><RotateCcw /></button>
-          <button type="button" onClick={() => onPlayback('pause')} title="Pause this animation"><Pause /></button>
-          <button type="button" className={styles.playPrimary} onClick={() => onPlayback('play')} title="Play this animation"><Play /></button>
-          <span />
-          <select aria-label="Playback speed" value={speed} onChange={(event) => onSpeed(Number(event.currentTarget.value))}>
-            <option value="0.25">0.25×</option>
-            <option value="0.5">0.5×</option>
-            <option value="1">1×</option>
-            <option value="2">2×</option>
-          </select>
-        </div>
       )}
 
-      <InspectorSection title="Animations" meta={motionRows.length}>
-        {!selected && <p className={styles.mutedCopy}>Select an element to see its triggers and animation actions.</p>}
-        {selected && !motion.length && <p className={styles.mutedCopy}>No interaction is attached directly. Check the parent or create a new interaction.</p>}
-        <div className={styles.motionList}>
-          {motionRows.map((row) => {
-            if (row.kind === 'single') return renderClip(row.clip);
-            const expanded = expandedGroups.has(row.id);
-            // Verified on real GSAP 3.15: delay() on a timeline child updates the
-            // reported value but never moves startTime, and delay is meaningless on
-            // a scroll-scrubbed clip — offering the control there would record
-            // phantom edits that visually do nothing.
-            const staggerable = row.type !== 'timeline'
-              && row.driver?.type !== 'scroll'
-              && row.clips.every((item) => !item.group?.timelineId);
-            return (
-              <div key={row.id} className={styles.motionGroup}>
-                <div className={styles.motionGroupRow}>
-                  <button
-                    type="button"
-                    aria-pressed={row.clips.some((item) => item.id === activeMotionId)}
-                    onClick={() => onActiveMotion(row.clip.id)}
-                  >
-                    <span className={styles.motionGlyph}>{row.driver?.type === 'scroll' ? <ScrollText /> : <Layers />}</span>
-                    <span className={styles.motionSummary}>
-                      <strong>{row.label}</strong>
-                      <small>{MOTION_GROUP_LABELS[row.type]} · {motionDriverLabel(row.driver)} · {row.count} animations</small>
-                    </span>
-                    <span className={styles.motionCapability} data-editability={row.clip.editability} title={EDITABILITY_EXPLAINED[row.clip.editability] || EDITABILITY_EXPLAINED.code}>{motionCapabilityLabel(row.clip.editability)}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.motionGroupToggle}
-                    aria-expanded={expanded}
-                    aria-label={`${expanded ? 'Hide' : 'Show'} ${row.count} grouped animations`}
-                    onClick={() => toggleGroup(row.id)}
-                  ><ChevronDown /></button>
-                </div>
-                {expanded && (
-                  <div className={styles.motionGroupChildren}>
-                    {staggerable && (
-                      <Field
-                        label="Stagger"
-                        type="number"
-                        suffix="ms"
-                        defaultValue={row.stagger ?? ''}
-                        onCommit={(value) => {
-                          // The shown value is a detected uniform spacing (empty when
-                          // the group has none) — an untouched blur must never
-                          // rewrite the group.
-                          const raw = String(value).trim();
-                          if (!raw) return;
-                          const next = Number(raw);
-                          if (!Number.isFinite(next) || next === row.stagger) return;
-                          onStagger?.(row.clips, next);
-                        }}
-                      />
-                    )}
-                    {row.clips.map(renderClip)}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </InspectorSection>
-
       {activeMotion && <>
+        <InspectorSection title="Animation" meta={motionCapabilityLabel(activeMotion.editability)}>
+          <div className={styles.motionFactRow}>
+            <span>{activeMotion.name}</span>
+            <strong>{activeMotion.engine}</strong>
+          </div>
+          {activeGroup && (
+            <div className={styles.motionFactRow}>
+              <span>Group</span>
+              <strong>{activeGroup.label} · {MOTION_GROUP_LABELS[activeGroup.type]} · {activeGroup.count} animations</strong>
+            </div>
+          )}
+          <p className={styles.mutedCopy} data-editability={activeMotion.editability}>{EDITABILITY_EXPLAINED[activeMotion.editability] || EDITABILITY_EXPLAINED.code}</p>
+        </InspectorSection>
         <InspectorSection title="Trigger" meta={motionDriverLabel(activeMotion.driver)}>
           <SelectField label="Driver" value={activeMotion.driver?.type || 'time'} disabled>
             <option value="time">Time</option>
@@ -612,6 +531,23 @@ export function MotionPanel({ selected, motion, activeMotionId, onActiveMotion, 
             <Field label="Repeat delay" type="number" defaultValue={activeMotion.timing.repeatDelay} suffix="ms" disabled={activeMotion.editability !== 'adapter'} onCommit={(value) => commit('timing.repeatDelay', value, activeMotion.timing.repeatDelay)} />
           </div>
           <ToggleField label="Alternate direction" checked={activeMotion.timing.yoyo} disabled={activeMotion.editability !== 'adapter'} onCommit={(value) => commit('timing.yoyo', value, activeMotion.timing.yoyo)} />
+          {staggerable && (
+            <Field
+              label="Stagger"
+              type="number"
+              suffix="ms"
+              defaultValue={activeGroup.stagger ?? ''}
+              onCommit={(value) => {
+                // The shown value is a detected uniform spacing (empty when the
+                // group has none) — an untouched blur must never rewrite the group.
+                const raw = String(value).trim();
+                if (!raw) return;
+                const next = Number(raw);
+                if (!Number.isFinite(next) || next === activeGroup.stagger) return;
+                onStagger?.(activeGroup.clips, next);
+              }}
+            />
+          )}
         </InspectorSection>
 
         <InspectorSection title="Easing">
@@ -663,52 +599,27 @@ function formatTimelineTime(milliseconds) {
 const KIND_ICON = { image: ImageIcon, text: Type, svg: Shapes, video: Film, canvas: Square, container: Layers };
 const KIND_LABEL = { image: 'Image', text: 'Text', svg: 'Vector', video: 'Video', canvas: 'Canvas', container: 'Container' };
 
-// What is animated ON SCREEN right now, one row per element. Scrolling the site
-// re-scopes this list — the site frame is the control surface, not just a preview.
-export function ViewportPanel({ rows, selectedId, onSelectElement }) {
-  if (!rows.length) {
-    return <p className={styles.viewportEmpty}>Nothing animated is on screen. Scroll the site to bring animations into view.</p>;
-  }
-  // One shared time scale so strips are comparable across rows.
-  const scale = Math.max(1, ...rows.map((row) => (row.delayMs || 0) + (row.durationMs || 0)));
-  return (
-    <ul className={styles.viewportRows}>
-      {rows.map((row) => {
-        const Icon = KIND_ICON[row.kind] || Layers;
-        const isScroll = row.driver === 'scroll';
-        // Scroll-driven clips have no wall-clock extent — they span their whole
-        // scroll range, so the strip fills the lane.
-        const left = isScroll ? 0 : ((row.delayMs || 0) / scale) * 100;
-        const width = isScroll ? 100 : Math.max(1.5, ((row.durationMs || 0) / scale) * 100);
-        return (
-          <li key={row.elementId}>
-            <button
-              type="button"
-              aria-pressed={row.elementId === selectedId}
-              onClick={() => onSelectElement(row.elementId)}
-              title={`${row.label} · ${row.count} animation${row.count === 1 ? '' : 's'} · ${row.engines.join(', ')}`}
-            >
-              <span className={styles.viewportKind} title={KIND_LABEL[row.kind] || 'Element'}><Icon /></span>
-              <span className={styles.viewportLabel}>{row.label}</span>
-              <span className={styles.viewportStrip}>
-                <span className={styles.viewportBar} data-driver={row.driver} style={{ left: `${left}%`, width: `${width}%` }}>
-                  {(row.marks || []).map((mark) => (
-                    <i key={mark} className={styles.viewportMark} style={{ left: `${mark * 100}%` }} />
-                  ))}
-                </span>
-              </span>
-            </button>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
+// (The old ViewportPanel lived here — dead code once the timeline became the
+// full-page inventory. Its semantics moved into TimelinePanel's layer rows.)
+
+// Figma Motion proportions: the collapsed timeline is 166px tall; the top-edge
+// handle can grow it to double that. The labels column trades width with the
+// track area through the vertical divider.
+const TIMELINE_MIN_HEIGHT = 166;
+const TIMELINE_MAX_HEIGHT = 332;
+const LABELS_MIN_WIDTH = 110;
+const LABELS_MAX_WIDTH = 340;
+const LABELS_DEFAULT_WIDTH = 152;
 
 export function TimelinePanel({
   open,
   motion,
   rows = [],
+  detailByRow = null,
+  expandedLayers = null,
+  onToggleLayer,
+  activeMotionId = null,
+  onActiveMotion,
   selectedElementId = null,
   onSelectElement,
   page = null,
@@ -719,6 +630,10 @@ export function TimelinePanel({
   zoom,
   autoKeyframe,
   selectedKeyframe,
+  labelsWidth = LABELS_DEFAULT_WIDTH,
+  onLabelsWidth,
+  bodyHeight = TIMELINE_MIN_HEIGHT,
+  onBodyHeight,
   onToggle,
   onPlayback,
   onSpeed,
@@ -736,6 +651,9 @@ export function TimelinePanel({
   const [draggingKeyframe, setDraggingKeyframe] = useState(null);
   const [draggingStrip, setDraggingStrip] = useState(null);
   const [curveOpen, setCurveOpen] = useState(false);
+  const [scrubbing, setScrubbing] = useState(null);
+  const [resizingHeight, setResizingHeight] = useState(null);
+  const [resizingLabels, setResizingLabels] = useState(null);
   const suppressKeyframeClick = useRef(false);
   const duration = Math.max(1, state.duration || (motion ? motion.timing.delay + motion.timing.duration + motion.timing.endDelay : 1000));
   const currentTime = Math.max(0, Math.min(duration, state.currentTime || 0));
@@ -835,7 +753,7 @@ export function TimelinePanel({
 
   function beginKeyframeDrag(event, track, keyframe) {
     if (!canAutoKeyframe || event.button !== 0) return;
-    const canvas = event.currentTarget.closest(`.${styles.timelineCanvas}`);
+    const canvas = event.currentTarget.closest(`.${styles.rowTrack}`);
     if (!canvas) return;
     const offset = Number(keyframe.offset) || 0;
     event.preventDefault();
@@ -883,7 +801,7 @@ export function TimelinePanel({
   // a time strip is a trigger point here; its extent is edited as duration.
   function beginStripDrag(event, row, edge) {
     if (event.button !== 0) return;
-    const canvas = event.currentTarget.closest(`.${styles.timelineCanvas}`);
+    const canvas = event.currentTarget.closest(`.${styles.rowTrack}`);
     if (!canvas) return;
     event.preventDefault();
     event.stopPropagation();
@@ -925,9 +843,123 @@ export function TimelinePanel({
     onStripEdit?.(row, finished.edge === 'start' ? { start: finished.start } : { end: finished.end });
   }
 
-  function renderMotionTrackRows() {
-    return (motion?.tracks || []).map((track) => (
-      <div key={track.property} className={styles.timelineTrackRow} data-track-row={track.property}>
+  // ---- Scrub: the playhead is DRAGGED OVER fixed strips. Clicking or dragging
+  // anywhere on empty track area moves the page scroll (or the clip time),
+  // never the strips themselves.
+  function applyScrub(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = event.clientX - rect.left - labelsWidth;
+    const pct = Math.max(0, Math.min(1, x / Math.max(1, timelineWidth)));
+    if (scrollRuler) onScrollTo?.(Math.round(pct * axisMax));
+    else if (motion) onSeek?.(pct * duration);
+  }
+
+  function beginScrub(event) {
+    if (event.button !== 0) return;
+    if (event.target.closest('button,input,select,textarea')) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (event.clientX - rect.left < labelsWidth) return; // labels gutter is not scrubbable
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setScrubbing({ pointerId: event.pointerId });
+    applyScrub(event);
+  }
+
+  function moveScrub(event) {
+    if (scrubbing && event.pointerId === scrubbing.pointerId) applyScrub(event);
+  }
+
+  function endScrub(event) {
+    if (!scrubbing || event.pointerId !== scrubbing.pointerId) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    setScrubbing(null);
+  }
+
+  // ---- Panel resizes: top edge grows the timeline (up to 2×), the vertical
+  // divider trades label width for track width.
+  function beginHeightResize(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setResizingHeight({ pointerId: event.pointerId, startY: event.clientY, startHeight: bodyHeight });
+  }
+
+  function moveHeightResize(event) {
+    if (!resizingHeight || event.pointerId !== resizingHeight.pointerId) return;
+    const next = resizingHeight.startHeight + (resizingHeight.startY - event.clientY);
+    onBodyHeight?.(Math.max(TIMELINE_MIN_HEIGHT, Math.min(TIMELINE_MAX_HEIGHT, Math.round(next))));
+  }
+
+  function endHeightResize(event) {
+    if (!resizingHeight || event.pointerId !== resizingHeight.pointerId) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    setResizingHeight(null);
+  }
+
+  function beginLabelsResize(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setResizingLabels({ pointerId: event.pointerId, startX: event.clientX, startWidth: labelsWidth });
+  }
+
+  function moveLabelsResize(event) {
+    if (!resizingLabels || event.pointerId !== resizingLabels.pointerId) return;
+    const next = resizingLabels.startWidth + (event.clientX - resizingLabels.startX);
+    onLabelsWidth?.(Math.max(LABELS_MIN_WIDTH, Math.min(LABELS_MAX_WIDTH, Math.round(next))));
+  }
+
+  function endLabelsResize(event) {
+    if (!resizingLabels || event.pointerId !== resizingLabels.pointerId) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    setResizingLabels(null);
+  }
+
+  // Where the playhead currently sits INSIDE the active clip, 0..1 — feeds the
+  // property-row steppers and the current-value readout.
+  function currentClipOffset() {
+    if (scrollRuler && activeRow) {
+      const start = Number(activeRow.scrollStart) || 0;
+      const end = Number(activeRow.scrollEnd);
+      const span = Number.isFinite(end) ? Math.max(1, end - start) : Math.max(1, page.viewportHeight || 1);
+      return Math.max(0, Math.min(1, ((page.scrollY || 0) - start) / span));
+    }
+    return Math.max(0, Math.min(1, (currentTime - delay) / clipDuration));
+  }
+
+  function seekToOffset(offset) {
+    if (scrollRuler && activeRow) {
+      const start = Number(activeRow.scrollStart) || 0;
+      const end = Number(activeRow.scrollEnd);
+      const span = Number.isFinite(end) ? Math.max(1, end - start) : Math.max(1, page.viewportHeight || 1);
+      onScrollTo?.(Math.round(start + offset * span));
+      return;
+    }
+    onSeek?.(delay + offset * clipDuration);
+  }
+
+  // A sub-row clip strip sits at its own scroll pixels when it has them,
+  // otherwise it inherits the layer strip (same widget, same place).
+  function clipGeometry(row, clip) {
+    if (scrollRuler) {
+      const start = Number(clip?.scroll?.start);
+      const end = Number(clip?.scroll?.end);
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        const left = (Math.max(0, Math.min(axisMax, start)) / axisMax) * 100;
+        const width = Math.max(0.8, ((Math.min(axisMax, end) - Math.max(0, start)) / axisMax) * 100);
+        return { left, width };
+      }
+      return stripGeometry(row);
+    }
+    const scale = Math.max(1, (clip?.timing?.delay || 0) + (clip?.timing?.duration || 0), duration);
+    return {
+      left: ((clip?.timing?.delay || 0) / scale) * 100,
+      width: Math.max(1.5, ((clip?.timing?.duration || 0) / scale) * 100),
+    };
+  }
+
+  function renderTrackCell(track) {
+    return (
+      <div className={styles.rowTrack} data-track-row={track.property}>
         {(track.keyframes || []).map((keyframe, index) => {
           const offset = Number.isFinite(Number(keyframe.offset)) ? Number(keyframe.offset) : 0;
           const isDragging = draggingKeyframe?.property === track.property && Math.abs(draggingKeyframe.originalOffset - offset) < 0.0005;
@@ -964,11 +996,70 @@ export function TimelinePanel({
           );
         })}
       </div>
-    ));
+    );
+  }
+
+  // Property row: Figma-style label cell — name, `< ◇ >` steppers and the
+  // value at the playhead — paired with its diamonds track cell.
+  function renderPropertyRow(track) {
+    const frames = [...(track.keyframes || [])].sort((first, second) => Number(first.offset) - Number(second.offset));
+    const current = currentClipOffset();
+    const epsilon = 0.0005;
+    const previous = [...frames].reverse().find((keyframe) => Number(keyframe.offset) < current - epsilon) || null;
+    const following = frames.find((keyframe) => Number(keyframe.offset) > current + epsilon) || null;
+    const atPlayhead = frames.find((keyframe) => Math.abs(Number(keyframe.offset) - current) <= epsilon) || null;
+    const valueSource = atPlayhead || previous || frames[0] || null;
+    const nearest = atPlayhead || previous || following;
+    const jumpTo = (keyframe) => {
+      const offset = Number(keyframe.offset) || 0;
+      onSelectKeyframe?.({ motionId: motion.id, property: track.property, offset });
+      seekToOffset(offset);
+    };
+    return (
+      <div key={track.property} className={styles.timelineRow} data-row-kind="property">
+        <div className={styles.rowLabel} data-cell="property" data-selected={selectedTrack?.property === track.property}>
+          <span className={styles.propertyName}>{track.property}</span>
+          <span className={styles.keyframeSteppers}>
+            <button type="button" aria-label={`Previous ${track.property} keyframe`} disabled={!previous} onClick={() => previous && jumpTo(previous)}>‹</button>
+            <button
+              type="button"
+              aria-label={`Add ${track.property} keyframe`}
+              data-on-keyframe={Boolean(atPlayhead)}
+              disabled={!canAutoKeyframe || isAdapterKeyframes || Boolean(atPlayhead) || !nearest}
+              title={canAutoKeyframe && !isAdapterKeyframes
+                ? (atPlayhead ? 'The playhead is on a keyframe' : 'Add a keyframe at the playhead')
+                : 'Adding keyframes requires an editable CSS or WAAPI animation'}
+              onClick={() => {
+                if (!nearest) return;
+                onDuplicateKeyframe?.({ motionId: motion.id, property: track.property, offset: Number(nearest.offset) || 0 }, current);
+              }}
+            ><Diamond /></button>
+            <button type="button" aria-label={`Next ${track.property} keyframe`} disabled={!following} onClick={() => following && jumpTo(following)}>›</button>
+          </span>
+          <span className={styles.propertyValue} title={valueSource ? String(valueSource.value) : ''}>
+            {valueSource ? String(valueSource.value).slice(0, 14) : ''}
+          </span>
+        </div>
+        {renderTrackCell(track)}
+      </div>
+    );
   }
 
   return (
     <section className={`${styles.timeline} ${open ? styles.timelineOpen : styles.timelineClosed}`} aria-label="Animation timeline">
+      {open && (
+        <div
+          className={styles.timelineHeightHandle}
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize the timeline"
+          title="Drag to resize the timeline"
+          onPointerDown={beginHeightResize}
+          onPointerMove={moveHeightResize}
+          onPointerUp={endHeightResize}
+          onPointerCancel={endHeightResize}
+        />
+      )}
       <header className={styles.timelineHeader}>
         <button type="button" className={styles.timelineDisclosure} onClick={onToggle} aria-expanded={open} title={open ? 'Collapse timeline' : 'Open timeline'}>
           <ChevronDown />
@@ -1059,40 +1150,36 @@ export function TimelinePanel({
         </div>
       </header>
 
-      {open && <div className={styles.timelineBody}>
-        <div className={styles.timelineLabels}>
-          <div className={styles.timelineLabelRuler}>On screen</div>
-          {!rows.length && <div className={styles.timelineTrackLabel}>scroll to scope</div>}
-          {rows.map((row) => {
-            const Icon = KIND_ICON[row.kind] || Layers;
-            const isActive = row.elementId === selectedElementId;
-            return (
-              <div key={row.elementId} className={styles.timelineLayerGroup}>
-                <button
-                  type="button"
-                  className={styles.timelineLayerLabel}
-                  data-selected={isActive}
-                  title={`${row.label} · ${row.count} animation${row.count === 1 ? '' : 's'} · ${row.engines.join(', ')}`}
-                  onClick={() => onSelectElement?.(row.elementId)}
-                >
-                  <span className={styles.viewportKind}><Icon /></span>
-                  <span className={styles.viewportLabel}>{row.label}</span>
-                </button>
-                {isActive && (motion?.tracks || []).map((track) => (
-                  <div key={track.property} className={styles.timelineTrackLabel} data-selected={selectedTrack?.property === track.property}>{track.property}</div>
-                ))}
-                {isActive && motion && !motion.tracks.length && <div className={styles.timelineTrackLabel}>Runtime values</div>}
-              </div>
-            );
-          })}
-        </div>
+      {open && <div className={styles.timelineBody} style={{ height: bodyHeight }}>
         <div className={styles.timelineScroller}>
-          <div className={styles.timelineCanvas} style={{ width: timelineWidth }}>
-            <div className={styles.timelineRuler}>
-              {ticks.map((tick) => <span key={tick.left} style={{ left: `${tick.left}%` }}><i />{tick.label}</span>)}
+          <div
+            className={styles.timelineSurface}
+            data-timeline-surface
+            style={{ width: labelsWidth + timelineWidth, '--labels-w': `${labelsWidth}px`, '--track-w': `${timelineWidth}px` }}
+            onPointerDown={beginScrub}
+            onPointerMove={moveScrub}
+            onPointerUp={endScrub}
+            onPointerCancel={endScrub}
+          >
+            <div className={styles.timelineRow} data-row-kind="ruler">
+              <div className={styles.rowLabel} data-cell="ruler">Page</div>
+              <div className={`${styles.rowTrack} ${styles.rulerTrack}`}>
+                {ticks.map((tick) => <span key={tick.left} style={{ left: `${tick.left}%` }}><i />{tick.label}</span>)}
+              </div>
             </div>
+
+            {!rows.length && !motion && (
+              <div className={styles.timelineRow} data-row-kind="empty">
+                <div className={styles.rowLabel} data-cell="empty">No animations detected</div>
+                <div className={styles.rowTrack} />
+              </div>
+            )}
+
             {rows.map((row) => {
+              const Icon = KIND_ICON[row.kind] || Layers;
               const isActive = row.elementId === selectedElementId;
+              const expanded = Boolean(expandedLayers?.has?.(row.elementId)) || isActive;
+              const clips = detailByRow?.[row.elementId] || null;
               const isStripDragging = draggingStrip?.elementId === row.elementId;
               const geometry = isStripDragging
                 ? {
@@ -1106,78 +1193,116 @@ export function TimelinePanel({
               const editableStrip = isActive && scrollRuler && row.driver === 'scroll'
                 && row.scrollEditable !== false && row.scrollEnd != null && ['scroll', 'media'].includes(motion?.driver?.type);
               return (
-                // The canvas must mirror the label column exactly: the active
-                // element's property tracks nest INSIDE its group, or strips and
-                // keyframes drift apart vertically.
-                <div key={row.elementId} className={styles.timelineCanvasGroup}>
-                  <div className={styles.timelineClipRow} data-selected={isActive} data-element-row={row.elementId}>
-                    <i
-                      className={styles.timelineClip}
-                      data-driver={row.driver}
-                      style={{ left: `${left}%`, width: `${width}%` }}
-                    />
-                    {(row.marks || []).map((mark) => (
-                      <i
-                        key={mark}
-                        className={styles.viewportMark}
-                        style={{ left: `${left + (mark * width)}%` }}
-                      />
-                    ))}
-                    {editableStrip && ['start', 'end'].map((edge) => (
+                <Fragment key={row.elementId}>
+                  <div className={styles.timelineRow} data-row-kind="layer">
+                    <div className={styles.rowLabel} data-cell="layer" data-selected={isActive}>
                       <button
-                        key={edge}
                         type="button"
-                        className={styles.timelineStripHandle}
-                        data-edge={edge}
-                        aria-label={`Adjust scroll ${edge}`}
-                        title={`Drag to change where this animation ${edge === 'start' ? 'starts' : 'ends'} in the page scroll`}
-                        style={{ left: `${edge === 'start' ? left : left + width}%` }}
-                        onPointerDown={(event) => beginStripDrag(event, row, edge)}
-                        onPointerMove={updateStripDrag}
-                        onPointerUp={(event) => finishStripDrag(event, row)}
-                        onPointerCancel={() => setDraggingStrip(null)}
+                        className={styles.layerChevron}
+                        aria-expanded={expanded}
+                        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${row.label}`}
+                        onClick={() => onToggleLayer?.(row.elementId)}
+                      ><ChevronDown /></button>
+                      <button
+                        type="button"
+                        className={styles.layerName}
+                        title={`${row.label} · ${row.count} animation${row.count === 1 ? '' : 's'} · ${row.engines.join(', ')}`}
+                        onClick={() => onSelectElement?.(row.elementId)}
+                      >
+                        <span className={styles.viewportKind}><Icon /></span>
+                        <span className={styles.viewportLabel}>{row.label}</span>
+                        {row.inViewport === false && <span className={styles.offscreenMark} title="Outside the current viewport — click to scroll there" />}
+                      </button>
+                    </div>
+                    <div className={styles.rowTrack} data-element-row={row.elementId} data-selected={isActive}>
+                      <i
+                        className={styles.timelineClip}
+                        data-driver={row.driver}
+                        data-selected={isActive}
+                        style={{ left: `${left}%`, width: `${width}%` }}
                       />
-                    ))}
+                      {(row.marks || []).map((mark) => (
+                        <i
+                          key={mark}
+                          className={styles.viewportMark}
+                          style={{ left: `${left + (mark * width)}%` }}
+                        />
+                      ))}
+                      {editableStrip && ['start', 'end'].map((edge) => (
+                        <button
+                          key={edge}
+                          type="button"
+                          className={styles.timelineStripHandle}
+                          data-edge={edge}
+                          aria-label={`Adjust scroll ${edge}`}
+                          title={`Drag to change where this animation ${edge === 'start' ? 'starts' : 'ends'} in the page scroll`}
+                          style={{ left: `${edge === 'start' ? left : left + width}%` }}
+                          onPointerDown={(event) => beginStripDrag(event, row, edge)}
+                          onPointerMove={updateStripDrag}
+                          onPointerUp={(event) => finishStripDrag(event, row)}
+                          onPointerCancel={() => setDraggingStrip(null)}
+                        />
+                      ))}
+                    </div>
                   </div>
-                  {isActive && renderMotionTrackRows()}
-                  {isActive && motion && !motion.tracks.length && <div className={styles.timelineTrackRow} data-track-row="runtime" />}
-                </div>
+                  {expanded && clips && clips.length > 1 && clips.map((clip) => {
+                    const clipGeo = clipGeometry(row, clip);
+                    const isActiveClip = isActive && clip.id === activeMotionId;
+                    return (
+                      <div key={clip.id} className={styles.timelineRow} data-row-kind="clip">
+                        <div className={styles.rowLabel} data-cell="clip" data-selected={isActiveClip}>
+                          <span className={styles.viewportLabel}>{clip.name}</span>
+                        </div>
+                        <div className={styles.rowTrack} data-clip-row={clip.id}>
+                          <button
+                            type="button"
+                            className={styles.timelineClipStrip}
+                            data-selected={isActiveClip}
+                            data-driver={clip.driver?.type}
+                            style={{ left: `${clipGeo.left}%`, width: `${clipGeo.width}%` }}
+                            title={isActive ? `Edit ${clip.name}` : `Select ${row.label}`}
+                            onClick={() => { if (isActive) onActiveMotion?.(clip.id); else onSelectElement?.(row.elementId); }}
+                          ><span>{clip.name}</span></button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {isActive && motion && (motion.tracks || []).map((track) => renderPropertyRow(track))}
+                  {isActive && motion && !motion.tracks.length && (
+                    <div className={styles.timelineRow} data-row-kind="property">
+                      <div className={styles.rowLabel} data-cell="property">Runtime values</div>
+                      <div className={styles.rowTrack} data-track-row="runtime" />
+                    </div>
+                  )}
+                </Fragment>
               );
             })}
+
             {/* Standalone tracks exist only on the TIME ruler (no page metrics yet).
                 On the scroll axis, an offscreen selection has no strip to nest
                 under — time-math keyframes on a pixel ruler would be lies. */}
-            {!scrollRuler && !rows.some((row) => row.elementId === selectedElementId) && renderMotionTrackRows()}
+            {!scrollRuler && motion && !rows.some((row) => row.elementId === selectedElementId) && (motion.tracks || []).map((track) => renderPropertyRow(track))}
+
             <i
               className={styles.timelinePlayhead}
-              style={{ left: `${scrollRuler ? Math.min(100, (page.scrollY / axisMax) * 100) : currentPercent}%` }}
+              data-timeline-playhead
+              aria-hidden="true"
+              style={{ left: labelsWidth + ((scrollRuler ? Math.min(100, ((page.scrollY || 0) / axisMax) * 100) : currentPercent) / 100) * timelineWidth }}
             ><span /></i>
-            {scrollRuler ? (
-              <input
-                className={styles.timelineScrubber}
-                aria-label="Page scroll position"
-                type="range"
-                min="0"
-                max={axisMax}
-                step="1"
-                value={Math.min(axisMax, page.scrollY)}
-                onChange={(event) => onScrollTo?.(Number(event.currentTarget.value))}
-              />
-            ) : (
-              <input
-                className={styles.timelineScrubber}
-                aria-label="Current animation time"
-                type="range"
-                min="0"
-                max={duration}
-                step="1"
-                value={currentTime}
-                disabled={!motion}
-                onChange={(event) => onSeek(Number(event.currentTarget.value))}
-              />
-            )}
           </div>
         </div>
+        <div
+          className={styles.labelsResizeHandle}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize the labels column"
+          title="Drag to resize the labels column"
+          style={{ left: labelsWidth - 3 }}
+          onPointerDown={beginLabelsResize}
+          onPointerMove={moveLabelsResize}
+          onPointerUp={endLabelsResize}
+          onPointerCancel={endLabelsResize}
+        />
       </div>}
       {open && curveOpen && selectedFrame && nextFrame && (
         <CubicBezierEditor
@@ -1283,9 +1408,44 @@ export default function NativeMotionEditor() {
   const [timelineState, setTimelineState] = useState({ currentTime: 0, duration: 1000, playState: 'idle' });
   const [autoKeyframe, setAutoKeyframe] = useState(false);
   const [selectedKeyframe, setSelectedKeyframe] = useState(null);
+  // Per-row animation detail, fetched lazily (describe-element) or captured
+  // from selections — the timeline's sub-rows read from here.
+  const [motionDetail, setMotionDetail] = useState({});
+  const [expandedLayers, setExpandedLayers] = useState(() => new Set());
+  const [timelineLabelsWidth, setTimelineLabelsWidth] = useState(() => {
+    if (typeof window === 'undefined') return LABELS_DEFAULT_WIDTH;
+    const stored = Number(window.localStorage.getItem('uncraft-motion-labels-w'));
+    return Number.isFinite(stored) && stored >= LABELS_MIN_WIDTH && stored <= LABELS_MAX_WIDTH ? stored : LABELS_DEFAULT_WIDTH;
+  });
+  const [timelineHeight, setTimelineHeight] = useState(() => {
+    if (typeof window === 'undefined') return TIMELINE_MIN_HEIGHT;
+    const stored = Number(window.localStorage.getItem('uncraft-motion-timeline-h'));
+    return Number.isFinite(stored) && stored >= TIMELINE_MIN_HEIGHT && stored <= TIMELINE_MAX_HEIGHT ? stored : TIMELINE_MIN_HEIGHT;
+  });
 
   const motion = useMemo(() => (selected?.motion || []).map(normalizeMotionClip), [selected]);
   const activeMotion = motion.find((item) => item.id === activeMotionId) || null;
+  // The bridge resolves which timeline row OWNS the clicked element
+  // (hostRowId) — comparing raw ids across the iframe boundary is what kept
+  // site clicks from lighting up their row.
+  const selectedRowId = selected ? (selected.hostRowId || selected.id) : null;
+  const motionDetailRef = useRef(motionDetail);
+  useEffect(() => { motionDetailRef.current = motionDetail; }, [motionDetail]);
+
+  useEffect(() => {
+    if (!selected?.id) return;
+    setMotionDetail((current) => ({ ...current, [selected.id]: (selected.motion || []).map(normalizeMotionClip) }));
+    const rowId = selected.hostRowId || selected.id;
+    setExpandedLayers((current) => {
+      if (current.has(rowId)) return current;
+      const next = new Set(current);
+      next.add(rowId);
+      return next;
+    });
+    if (rowId !== selected.id && !motionDetailRef.current[rowId] && status === 'ready') {
+      send('describe-element', { elementId: rowId });
+    }
+  }, [selected, send, status]);
   const timelineOffset = useMemo(() => {
     if (!activeMotion) return 0;
     const delay = Math.max(0, activeMotion.timing.delay || 0);
@@ -1351,6 +1511,9 @@ export default function NativeMotionEditor() {
       if (type === 'viewport-motion-changed') {
         setViewportRows(Array.isArray(payload.rows) ? payload.rows : []);
         if (payload.page) setViewportPage(payload.page);
+      }
+      if (type === 'element-described' && payload.element?.id) {
+        setMotionDetail((current) => ({ ...current, [payload.element.id]: (payload.element.motion || []).map(normalizeMotionClip) }));
       }
       if (type === 'selection-changed' || type === 'patch-applied' || type === 'inline-text-edit-started') {
         setSelected(payload.element || null);
@@ -1832,15 +1995,37 @@ export default function NativeMotionEditor() {
           </nav>
           {activeTab === 'properties' && <PropertiesPanel selected={selected} runtime={runtime} activeMotion={activeMotion} timelineOffset={timelineOffset} onStyle={applyStyle} onText={applyText} onAttribute={applyAttribute} />}
           {activeTab === 'assets' && <AssetsPanel assets={runtime?.assets || []} onSelect={(elementId) => send('select-element', { elementId })} onReplace={replaceAsset} />}
-          {activeTab === 'motion' && <MotionPanel selected={selected} motion={motion} activeMotionId={activeMotionId} onActiveMotion={selectMotion} speed={speed} onPlayback={playback} onSpeed={changeSpeed} onMotion={applyMotion} onStagger={applyStagger} />}
+          {activeTab === 'motion' && <MotionPanel selected={selected} motion={motion} activeMotionId={activeMotionId} onMotion={applyMotion} onStagger={applyStagger} />}
           {activeTab === 'code' && <CodePanel selected={selected} />}
         </aside>
 
         <TimelinePanel
           open={timelineOpen}
           rows={viewportRows}
-          selectedElementId={selected?.id || null}
-          onSelectElement={(elementId) => send('select-element', { elementId })}
+          detailByRow={motionDetail}
+          expandedLayers={expandedLayers}
+          onToggleLayer={(elementId) => {
+            const expanding = !expandedLayers.has(elementId);
+            const next = new Set(expandedLayers);
+            if (expanding) next.add(elementId);
+            else next.delete(elementId);
+            setExpandedLayers(next);
+            if (expanding && !motionDetail[elementId] && status === 'ready') send('describe-element', { elementId });
+          }}
+          activeMotionId={activeMotionId}
+          onActiveMotion={selectMotion}
+          selectedElementId={selectedRowId}
+          onSelectElement={(elementId) => send('focus-element', { elementId })}
+          labelsWidth={timelineLabelsWidth}
+          onLabelsWidth={(width) => {
+            setTimelineLabelsWidth(width);
+            try { window.localStorage.setItem('uncraft-motion-labels-w', String(width)); } catch (_) {}
+          }}
+          bodyHeight={timelineHeight}
+          onBodyHeight={(height) => {
+            setTimelineHeight(height);
+            try { window.localStorage.setItem('uncraft-motion-timeline-h', String(height)); } catch (_) {}
+          }}
           page={viewportPage}
           onScrollTo={(scrollY) => {
             // Optimistic playhead — the bridge confirms via the next debounced emit.
