@@ -212,3 +212,9 @@ All TDD'd, live-validated on the Unspirit fixture (screenshots in session scratc
 - Sol caught the clearProps bug that a Claude-only review missed — **run the cross-model pass on anything touching the live page**.
 - Correlated-model caveat: two LLMs agreeing is not verification. Every finding here was confirmed by running code. Keep that bar.
 - **Route wide repo reading to `--mode scout`** when the Claude budget is tight; it reads the file and returns a compressed map for a fraction of the tokens.
+
+---
+
+## §7 (2026-07-20) — Timeline redesenhada no modelo Figma Motion
+
+Plano e execução: `docs/superpowers/plans/2026-07-20-motion-timeline-figma-style.md` (commits `cd1dec5d`, `78e2ceb5` e seguintes). Muda o que os §6b–6e diziam sobre a UI da timeline: inventário FULL-PAGE (offscreen flagado, não escondido), um scroller único (labels sticky — fim da dessincronização), rows por layer com sub-rows de animação/propriedade, playhead full-height sobre strips FIXAS (scrub na superfície), resize de altura (166–332) e de labels (110–340), painel direito = só propriedades do clip ativo (transporte e lista removidos). Bridge: `focus-element` (scroll+play escopado), `describe-element`, `hostRowId` resolvido contra as rows EMITIDAS (drift de split markers). Referência visual: teardown do Figma Motion (frames em scratchpad da sessão 2026-07-20).
