@@ -261,6 +261,19 @@ describe('timeline canvas layout', () => {
     expect(cap.closest('[data-row-kind="ruler"]')).toBeTruthy();
   });
 
+  it('a controlled expandedLayers set can COLLAPSE the selected layer (chevron works both ways)', () => {
+    // Selection auto-expands by adding to the set — but the set is the single
+    // truth, so removing the id must fold the property rows back in.
+    const { rerender, container } = render(
+      <TimelineHarness rows={viewportRows} selectedElementId="el-a" onSelectElement={vi.fn()} expandedLayers={new Set(['el-a'])} />,
+    );
+    expect(container.querySelector('[data-track-row="opacity"]')).toBeTruthy();
+    rerender(
+      <TimelineHarness rows={viewportRows} selectedElementId="el-a" onSelectElement={vi.fn()} expandedLayers={new Set()} />,
+    );
+    expect(container.querySelector('[data-track-row="opacity"]')).toBeNull();
+  });
+
   it('the layer strip is a button that selects its element on the site', () => {
     const onSelectElement = vi.fn();
     render(<TimelineHarness rows={viewportRows} selectedElementId={null} onSelectElement={onSelectElement} />);

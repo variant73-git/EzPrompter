@@ -413,6 +413,9 @@
   min-width: 0;
   border-top: 1px solid var(--motion-line);
   background: #20201e;
+  /* A control surface: dragging the playhead must never highlight labels. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .timelineHeader {
@@ -758,6 +761,7 @@
 }
 
 .rowLabel[data-cell='clip'][data-selected='true'] {
+  background: rgba(41, 102, 234, 0.22);
   color: #fff;
 }
 
@@ -790,8 +794,8 @@
 }
 
 .timelineClipStrip[data-selected='true'] {
-  border-color: var(--motion-accent);
-  background: rgba(41, 102, 234, 0.2);
+  border-color: rgba(142, 175, 244, 0.7);
+  background: var(--motion-accent);
   color: #fff;
 }
 
@@ -971,9 +975,14 @@
   padding: 0;
   border: 1px solid #8eaff4;
   background: #20201e;
-  cursor: ew-resize;
+  /* Resize arrows only WHILE the button is pressed — hover stays a plain pointer. */
+  cursor: pointer;
   touch-action: none;
   transform: translateX(-50%) rotate(45deg);
+}
+
+.timelineKeyframe:active {
+  cursor: ew-resize;
 }
 
 .timelineKeyframe:hover,

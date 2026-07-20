@@ -887,6 +887,7 @@ export function TimelinePanel({
     if (event.target.closest('button,input,select,textarea')) return;
     const rect = event.currentTarget.getBoundingClientRect();
     if (event.clientX - rect.left < labelsWidth) return; // labels gutter is not scrubbable
+    event.preventDefault(); // no text selection while dragging the playhead
     event.currentTarget.setPointerCapture?.(event.pointerId);
     setScrubbing({ pointerId: event.pointerId });
     applyScrub(event);
@@ -963,6 +964,20 @@ export function TimelinePanel({
       return;
     }
     onSeek?.(delay + offset * clipDuration);
+  }
+
+  // Tweens are named after their element, so two animations on the same
+  // element are homonyms — differentiate them by what they animate (and by
+  // duration when even that collides).
+  function clipDisplayName(clip, clips) {
+    const homonyms = clips.filter((item) => item.name === clip.name);
+    if (homonyms.length < 2) return clip.name;
+    const property = clip.tracks?.[0]?.property || null;
+    if (property && homonyms.filter((item) => (item.tracks?.[0]?.property || null) === property).length < 2) {
+      return `${clip.name} · ${property}`;
+    }
+    const duration = Number(clip.timing?.duration) || 0;
+    return `${clip.name} · ${property ? `${property} · ` : ''}${(duration / 1000).toFixed(1)}s`;
   }
 
   // A sub-row clip strip sits at its own scroll pixels when it has them,
@@ -1209,7 +1224,11 @@ export function TimelinePanel({
             {rows.map((row) => {
               const Icon = KIND_ICON[row.kind] || Layers;
               const isActive = row.elementId === selectedElementId;
-              const expanded = Boolean(expandedLayers?.has?.(row.elementId)) || isActive;
+              // With a controlled Set (the app), the chevron is the single
+              // truth — selection auto-expands by ADDING to the set, so the
+              // user can still collapse it back. Without one (tests/standalone),
+              // the selected row is implicitly expanded.
+              const expanded = expandedLayers ? expandedLayers.has(row.elementId) : isActive;
               const clips = detailByRow?.[row.elementId] || null;
               const isStripDragging = draggingStrip?.elementId === row.elementId;
               const geometry = isStripDragging
@@ -1299,6 +1318,7 @@ export function TimelinePanel({
                   {expanded && clips && clips.length > 1 && clips.map((clip) => {
                     const clipGeo = clipGeometry(row, clip);
                     const isActiveClip = isActive && clip.id === activeMotionId;
+                    const clipName = clipDisplayName(clip, clips);
                     // A time-driven clip is a POINT on the scroll axis — when its
                     // strip is too narrow to hold text, the name sits beside it.
                     const stripPx = (clipGeo.width / 100) * timelineWidth;
@@ -1306,7 +1326,7 @@ export function TimelinePanel({
                     return (
                       <div key={clip.id} className={styles.timelineRow} data-row-kind="clip">
                         <div className={styles.rowLabel} data-cell="clip" data-selected={isActiveClip}>
-                          <span className={styles.viewportLabel}>{clip.name}</span>
+                          <span className={styles.viewportLabel}>{clipName}</span>
                         </div>
                         <div className={styles.rowTrack} data-clip-row={clip.id}>
                           <button
@@ -1315,22 +1335,22 @@ export function TimelinePanel({
                             data-selected={isActiveClip}
                             data-driver={clip.driver?.type}
                             style={{ left: `${clipGeo.left}%`, width: `${clipGeo.width}%` }}
-                            title={isActive ? `Edit ${clip.name}` : `Select ${row.label}`}
+                            title={isActive ? `Edit ${clipName}` : `Select ${row.label}`}
                             onClick={() => { if (isActive) onActiveMotion?.(clip.id); else onSelectElement?.(row.elementId); }}
-                          >{labelInside && <span>{clip.name}</span>}</button>
+                          >{labelInside && <span>{clipName}</span>}</button>
                           {!labelInside && (
                             <span
                               className={styles.clipStripTag}
                               data-selected={isActiveClip}
                               style={{ left: `calc(${clipGeo.left + clipGeo.width}% + 6px)` }}
-                            >{clip.name}</span>
+                            >{clipName}</span>
                           )}
                         </div>
                       </div>
                     );
                   })}
-                  {isActive && motion && (motion.tracks || []).map((track) => renderPropertyRow(track))}
-                  {isActive && motion && !motion.tracks.length && (
+                  {isActive && expanded && motion && (motion.tracks || []).map((track) => renderPropertyRow(track))}
+                  {isActive && expanded && motion && !motion.tracks.length && (
                     <div className={styles.timelineRow} data-row-kind="property">
                       <div className={styles.rowLabel} data-cell="property">Runtime values</div>
                       <div className={styles.rowTrack} data-track-row="runtime" />
