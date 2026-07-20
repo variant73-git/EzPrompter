@@ -694,11 +694,12 @@ function nativeMotionRuntimeBridge() {
       });
     });
 
-    // The list itself must be STABLE while the user scrubs: runtimes create
-    // tweens lazily as sections reveal, so fresh snapshots grow and reshuffle.
-    // Merge into a persistent cache — a row keeps its slot forever (append-only,
-    // pruned only when its element leaves the DOM) and the order is the latched
-    // page position, never the viewport-relative rect.
+    // The list itself must be STABLE while the user scrubs: rows are ordered
+    // by ARRIVAL — a row keeps its slot forever, and animations the runtime
+    // mints later APPEND at the bottom, never insert mid-list (inserting at
+    // their axis position read as "strips relocating" while scrubbing).
+    // Within one snapshot, newcomers enter in page order.
+    rows.sort((a, b) => ((a.scrollStart || 0) - (b.scrollStart || 0)) || (a.top - b.top));
     rows.forEach((row) => {
       const existing = rowCache.get(row.elementId);
       rowCache.set(row.elementId, { ...row, seq: existing ? existing.seq : rowSeq++, host: hostByRowId.get(row.elementId) || existing?.host || null });
@@ -717,7 +718,7 @@ function nativeMotionRuntimeBridge() {
     });
     lastRowHosts = emittedHosts;
     return output
-      .sort((a, b) => ((a.row.scrollStart || 0) - (b.row.scrollStart || 0)) || (a.seq - b.seq))
+      .sort((a, b) => a.seq - b.seq)
       .map((entry) => entry.row);
   }
 

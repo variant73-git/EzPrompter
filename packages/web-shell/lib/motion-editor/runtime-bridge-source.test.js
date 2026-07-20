@@ -1376,6 +1376,54 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('rows are ordered by ARRIVAL: late-minted animations append at the bottom, never mid-list', () => {
+    // Runtimes create tweens lazily while the user scrubs. Inserting the new
+    // row at its axis position shifted every row below it — which read as
+    // "the strips relocate with the playhead". Slots are forever; newcomers
+    // go to the end.
+    document.body.innerHTML = `
+      <main>
+        <h2 id="first">Fertilizer, reinvented</h2>
+        <div id="middle" class="promo-panel">Middle content</div>
+        <div id="last" class="footer-panel">Last content</div>
+      </main>`;
+    const first = document.getElementById('first');
+    const middle = document.getElementById('middle');
+    const last = document.getElementById('last');
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    window.scrollY = 0;
+    Object.defineProperty(document.documentElement, 'scrollHeight', { value: 5000, configurable: true });
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    first.getBoundingClientRect = rect(1000, 60);
+    middle.getBoundingClientRect = rect(2000, 100);
+    last.getBoundingClientRect = rect(4000, 100);
+    let animations = [timeAnimationFor(first), timeAnimationFor(last)];
+    document.getAnimations = () => animations;
+    [first, middle, last].forEach((el) => { el.getAnimations = () => []; });
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const inspect = () => window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+    inspect();
+    const initial = messages.filter((m) => m.type === 'viewport-motion-changed').pop().payload.rows.map((row) => row.elementId);
+    expect(initial).toEqual([first.dataset.uncraftId, last.dataset.uncraftId]);
+
+    // The runtime mints a tween for an element that sits BETWEEN the two.
+    animations = [...animations, timeAnimationFor(middle)];
+    inspect();
+    const relisted = messages.filter((m) => m.type === 'viewport-motion-changed').pop().payload.rows.map((row) => row.elementId);
+    expect(relisted).toEqual([first.dataset.uncraftId, last.dataset.uncraftId, middle.dataset.uncraftId]);
+
+    window.postMessage = originalPostMessage;
+  });
+
   it('hostRowId of an element that IS a row host is its own id, even inside another animated ancestor', () => {
     // Live-fixture regression: resolveHostRowId used to start the walk at
     // splitFragmentHost(), which could jump OVER the clicked element — a row
