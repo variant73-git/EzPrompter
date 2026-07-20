@@ -13,7 +13,11 @@ function nativeMotionRuntimeBridge() {
     'section', 'article', 'header', 'footer', 'nav', 'main', 'div'
   ].join(',');
   const TEXT_BLOCK = 'h1,h2,h3,h4,h5,h6,p,blockquote,a,button,label,li,figcaption,dt,dd';
-  const SPLIT_TOKEN = '.char,.word,.line,[data-split-text],[data-split-type],[text-split],[text-split-delay]';
+  // Split-text fragments come in many dialects: SplitText's .char/.word/.line,
+  // Webflow attributes, and site-authored classes like "gsap_split_line" —
+  // clicking those lines must climb to the text block, never select a
+  // transient fragment (found live: "most fertilizers…" was unselectable).
+  const SPLIT_TOKEN = '.char,.word,.line,[data-split-text],[data-split-type],[text-split],[text-split-delay],[class*="split_line"],[class*="split-line"],[class*="split_word"],[class*="split-word"],[class*="split_char"],[class*="split-char"]';
   let mode = 'edit';
   let tool = 'select';
   let selectedId = null;
@@ -22,6 +26,14 @@ function nativeMotionRuntimeBridge() {
   // Hosts of the LAST emitted timeline rows — selection resolves against what
   // the UI is actually showing, not a freshly re-derived (drift-prone) index.
   let lastRowHosts = new Set();
+  // First-seen reveal points per row (elementId → page px). Cleared on layout
+  // changes so strips stay FIXED while the user scrubs.
+  const revealAtCache = new Map();
+  let lastKnownScrollHeight = 0;
+  // Persistent row list (elementId → row + arrival seq): the timeline's rows
+  // keep their slots while the user scrubs, even as runtimes mint new tweens.
+  const rowCache = new Map();
+  let rowSeq = 0;
   let hoverFrame = null;
   let dragState = null;
   let suppressClickUntil = 0;
@@ -123,7 +135,7 @@ function nativeMotionRuntimeBridge() {
       let group = splitToken.parentElement;
       let depth = 0;
       while (group && group !== document.body && depth < 6) {
-        if (group.querySelectorAll('.char').length > 1 || group.querySelectorAll('.word').length > 1) return group;
+        if (group.querySelectorAll(SPLIT_TOKEN).length > 1) return group;
         group = group.parentElement;
         depth += 1;
       }
@@ -606,6 +618,7 @@ function nativeMotionRuntimeBridge() {
     // to move with the playhead.
     const hosts = motionHosts();
     const emittedHosts = new Set();
+    const hostByRowId = new Map();
     const rows = [];
     hosts.forEach((members, element) => {
       // A row is a PLACE on the page. Detached or laid-out-to-nothing targets
@@ -645,14 +658,26 @@ function nativeMotionRuntimeBridge() {
       // Where the strip lives on the page-scroll ruler. Scroll-driven rows use
       // the trigger's own pixels; time-driven rows are placed at the scroll
       // point where the element enters the viewport (a point, not a range).
-      const revealAt = Math.max(0, Math.min(page.maxScroll, top + page.scrollY - page.viewportHeight));
-      const scrollStart = summary.driver === 'scroll' && summary.scrollStart != null ? summary.scrollStart : revealAt;
+      // That reveal point is LATCHED on first sight: rect-derived positions
+      // drift on pinned/parallax pages, and re-deriving them per emit made
+      // strips crawl along with the scrubber.
+      const rowId = ensureElementId(element);
+      let scrollStart;
+      if (summary.driver === 'scroll' && summary.scrollStart != null) {
+        scrollStart = summary.scrollStart;
+      } else if (revealAtCache.has(rowId)) {
+        scrollStart = revealAtCache.get(rowId);
+      } else {
+        scrollStart = Math.max(0, Math.min(page.maxScroll, top + page.scrollY - page.viewportHeight));
+        revealAtCache.set(rowId, scrollStart);
+      }
       const scrollEnd = summary.driver === 'scroll'
         ? (summary.scrollEnd != null ? summary.scrollEnd : Math.min(page.maxScroll, scrollStart + page.viewportHeight))
         : null;
       emittedHosts.add(element);
+      hostByRowId.set(rowId, element);
       rows.push({
-        elementId: ensureElementId(element),
+        elementId: rowId,
         label: elementLabel(element),
         kind: elementKind(element),
         top,
@@ -668,12 +693,47 @@ function nativeMotionRuntimeBridge() {
         scrollEditable: summary.scrollEditable === true,
       });
     });
+
+    // The list itself must be STABLE while the user scrubs: runtimes create
+    // tweens lazily as sections reveal, so fresh snapshots grow and reshuffle.
+    // Merge into a persistent cache — a row keeps its slot forever (append-only,
+    // pruned only when its element leaves the DOM) and the order is the latched
+    // page position, never the viewport-relative rect.
+    rows.forEach((row) => {
+      const existing = rowCache.get(row.elementId);
+      rowCache.set(row.elementId, { ...row, seq: existing ? existing.seq : rowSeq++, host: hostByRowId.get(row.elementId) || existing?.host || null });
+    });
+    const output = [];
+    rowCache.forEach((entry, id) => {
+      if (entry.host && !entry.host.isConnected) {
+        rowCache.delete(id);
+        return;
+      }
+      if (entry.host) emittedHosts.add(entry.host);
+      const { seq, host, ...row } = entry;
+      // Refresh visibility for cached rows that were not in this snapshot.
+      if (host) row.inViewport = intersectsViewport(host);
+      output.push({ row, seq });
+    });
     lastRowHosts = emittedHosts;
-    return rows.sort((a, b) => a.top - b.top);
+    return output
+      .sort((a, b) => ((a.row.scrollStart || 0) - (b.row.scrollStart || 0)) || (a.seq - b.seq))
+      .map((entry) => entry.row);
   }
 
   function emitViewportMotion() {
     const page = pageMetrics();
+    // A real layout change (content grew/shrank) invalidates latched reveal
+    // points; plain scrolling never does.
+    // Pin-spacers make scrollHeight jitter by a few px while scrubbing — only a
+    // SUBSTANTIAL change (>2% of the page) is a real layout change worth
+    // re-deriving latched positions for.
+    const heightDelta = Math.abs((page.scrollHeight || 0) - lastKnownScrollHeight);
+    if (lastKnownScrollHeight === 0 || heightDelta > Math.max(48, (page.scrollHeight || 0) * 0.02)) {
+      revealAtCache.clear();
+      rowCache.clear();
+      lastKnownScrollHeight = page.scrollHeight || 0;
+    }
     emit('viewport-motion-changed', { page, rows: viewportMotionRows(page) });
   }
 
@@ -1434,6 +1494,8 @@ function nativeMotionRuntimeBridge() {
       const target = Math.max(0, Number(payload.scrollY) || 0);
       try { window.scrollTo(0, target); } catch (_) {}
     } else if (message.type === 'refresh') {
+      revealAtCache.clear();
+      rowCache.clear();
       refreshRuntime();
       emit('runtime-refreshed', { engines: detectedEngines() });
     } else if (message.type === 'inspect-selected') {

@@ -629,6 +629,10 @@
   position: relative;
   height: 28px;
   flex: 0 0 var(--track-w, 720px);
+  /* Transparent border = 5px breathing room before strips start; absolute
+     children position against the padding box, so every strip shifts with it
+     (TRACK_INSET in the component mirrors this value). */
+  border-left: 5px solid transparent;
   border-bottom: 1px solid rgba(56, 55, 51, 0.72);
   background-image: linear-gradient(90deg, rgba(56, 55, 51, 0.54) 1px, transparent 1px);
   background-size: 10% 100%;
@@ -923,9 +927,15 @@
   top: 6px;
   height: 15px;
   min-width: 5px;
+  padding: 0;
   border: 1px solid rgba(241, 240, 235, 0.14);
   border-radius: 8px;
   background: rgba(241, 240, 235, 0.22);
+  cursor: pointer;
+}
+
+.timelineClip:hover {
+  border-color: rgba(241, 240, 235, 0.4);
 }
 
 .timelineClip::before,
@@ -997,14 +1007,18 @@
   background: #6f95ea;
 }
 
-.timelinePlayhead span {
+/* The cap is rendered inside the STICKY ruler row (not on the line), so it
+   stays pinned to the top while the row list scrolls vertically. */
+.playheadCap {
   position: absolute;
-  top: 0;
-  left: -4.5px;
+  z-index: 2;
+  top: 18px;
   width: 10px;
   height: 8px;
+  margin-left: -5px;
   border-radius: 2px 2px 5px 5px;
   background: #6f95ea;
+  pointer-events: none;
 }
 
 /* (The invisible range-input scrubber is gone — the surface itself scrubs:

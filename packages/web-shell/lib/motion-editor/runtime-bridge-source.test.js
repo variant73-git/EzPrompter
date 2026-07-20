@@ -1314,6 +1314,68 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('clicking a site-authored split line (gsap_split_line) selects the TEXT BLOCK, not the fragment', () => {
+    // Live-fixture regression: "most fertilizers…" lines carry the class
+    // gsap_split_line (not SplitText's .line), so textRoot never climbed and
+    // the click selected a transient fragment that the runtime re-splits away.
+    document.body.innerHTML = `
+      <main><div id="block" class="text-60-medium">
+        <div class="gsap_split_line-mask"><div class="gsap_split_line">Most fertilizers</div></div>
+        <div class="gsap_split_line-mask"><div class="gsap_split_line">never make it</div></div>
+      </div></main>`;
+    const block = document.getElementById('block');
+    document.getAnimations = () => [];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    document.querySelector('.gsap_split_line').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    expect(selection).toBeTruthy();
+    expect(selection.payload.element.id).toBe(block.dataset.uncraftId);
+
+    window.postMessage = originalPostMessage;
+  });
+
+  it('latches a time strip position: rect drift between emits never moves the strip', () => {
+    // Pinned/parallax pages report a different rect.top on every scroll —
+    // re-deriving the reveal point per emit made strips crawl with the scrubber.
+    document.body.innerHTML = '<main><h2 id="headline">Fertilizer, reinvented</h2></main>';
+    const headline = document.getElementById('headline');
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    window.scrollY = 1000;
+    Object.defineProperty(document.documentElement, 'scrollHeight', { value: 5000, configurable: true });
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    headline.getBoundingClientRect = rect(120, 60);
+    const animation = timeAnimationFor(headline);
+    document.getAnimations = () => [animation];
+    headline.getAnimations = () => [];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const inspect = () => window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+    inspect();
+    const first = messages.filter((m) => m.type === 'viewport-motion-changed').pop().payload.rows[0];
+    expect(first.scrollStart).toBe(320); // 120 + 1000 - 800
+
+    // Parallax drift: the rect moves, the strip must NOT.
+    headline.getBoundingClientRect = rect(400, 60);
+    inspect();
+    const second = messages.filter((m) => m.type === 'viewport-motion-changed').pop().payload.rows[0];
+    expect(second.scrollStart).toBe(320);
+
+    window.postMessage = originalPostMessage;
+  });
+
   it('hostRowId of an element that IS a row host is its own id, even inside another animated ancestor', () => {
     // Live-fixture regression: resolveHostRowId used to start the walk at
     // splitFragmentHost(), which could jump OVER the clicked element — a row

@@ -56,7 +56,19 @@ export function motionPlaybackMode(timing = {}) {
 // undo `before` must therefore come from that motion's own resolved range, or
 // undo writes the neighbour tween's pixels into it.
 export function buildStripEditPatches({ motion, row, next = {} }) {
-  if (!motion || motion.driver?.type !== 'scroll') return [];
+  if (!motion) return [];
+  // A time-driven strip's right edge edits DURATION: stretching it slows the
+  // animation down. Scroll strips keep editing their page-pixel range below.
+  if (motion.driver?.type !== 'scroll') {
+    if (next.durationMs != null && motion.capabilities?.timing) {
+      const before = Math.round(Number(motion.timing?.duration) || 0);
+      const value = Math.max(50, Math.round(Number(next.durationMs)));
+      if (Number.isFinite(value) && value !== before) {
+        return [{ property: 'timing.duration', before, value }];
+      }
+    }
+    return [];
+  }
   const resolved = (value, fallback) => {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? Math.round(numeric) : fallback;

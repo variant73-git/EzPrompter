@@ -610,6 +610,13 @@ const TIMELINE_MAX_HEIGHT = 332;
 const LABELS_MIN_WIDTH = 110;
 const LABELS_MAX_WIDTH = 340;
 const LABELS_DEFAULT_WIDTH = 152;
+// Breathing room before strips start (matches the transparent border-left on
+// .rowTrack) — every x computation must account for it.
+const TRACK_INSET = 5;
+// Screen px per millisecond for TIME strips on the scroll axis: seconds have
+// no natural page-pixel width, so this fixed scale makes duration visible and
+// its right-edge drag meaningful (wider strip = longer = slower).
+const TIME_PX_PER_MS = 0.06;
 
 export function TimelinePanel({
   open,
@@ -685,7 +692,7 @@ export function TimelinePanel({
       const left = (start / axisMax) * 100;
       const width = row.scrollEnd != null
         ? Math.max(0.8, ((Math.max(start, Math.min(axisMax, Number(row.scrollEnd))) - start) / axisMax) * 100)
-        : NOMINAL_TIME_STRIP;
+        : Math.max(NOMINAL_TIME_STRIP, (((row.durationMs || 0) * TIME_PX_PER_MS) / Math.max(1, timelineWidth - TRACK_INSET)) * 100);
       return { left, width };
     }
     const rowScale = Math.max(1, ...rows.map((item) => (item.delayMs || 0) + (item.durationMs || 0)));
@@ -695,6 +702,7 @@ export function TimelinePanel({
     };
   }
   const activeRow = rows.find((row) => row.elementId === selectedElementId) || null;
+  const playheadPercent = scrollRuler ? Math.min(100, ((page.scrollY || 0) / axisMax) * 100) : currentPercent;
   const playbackMode = motion ? motionPlaybackMode(motion.timing) : 'once';
   const isPlaying = state.playState === 'running';
   const canAutoKeyframe = Boolean(motion?.capabilities?.keyframes && motion?.editability === 'direct');
@@ -734,7 +742,9 @@ export function TimelinePanel({
   useEffect(() => setCurveOpen(false), [selectedKeyframe?.motionId, selectedKeyframe?.property, selectedKeyframe?.offset]);
 
   function offsetAtPointer(event, rect) {
-    const pointerPercent = Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100));
+    // rect is a rowTrack border box; strips live in its padding box, which
+    // starts after the TRACK_INSET transparent border.
+    const pointerPercent = Math.max(0, Math.min(100, ((event.clientX - rect.left - TRACK_INSET) / Math.max(1, rect.width - TRACK_INSET)) * 100));
     if (scrollRuler && activeRow) {
       const strip = stripGeometry(activeRow);
       return Math.max(0, Math.min(1, (pointerPercent - strip.left) / Math.max(0.001, strip.width)));
@@ -799,7 +809,7 @@ export function TimelinePanel({
   // §3b: the strip IS the control. Dragging an edge retargets the ScrollTrigger
   // range in page pixels (writeback probe-verified). Scroll-driven strips only —
   // a time strip is a trigger point here; its extent is edited as duration.
-  function beginStripDrag(event, row, edge) {
+  function beginStripDrag(event, row, edge, kind = 'scroll') {
     if (event.button !== 0) return;
     const canvas = event.currentTarget.closest(`.${styles.rowTrack}`);
     if (!canvas) return;
@@ -810,20 +820,34 @@ export function TimelinePanel({
       pointerId: event.pointerId,
       elementId: row.elementId,
       edge,
+      kind,
       rect: canvas.getBoundingClientRect(),
       start: Number(row.scrollStart) || 0,
       end: Number(row.scrollEnd) || 0,
+      durationMs: Number(row.durationMs) || 0,
       moved: false,
     });
   }
 
   function stripScrollAtPointer(event, rect) {
-    const percent = Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100));
+    const percent = Math.max(0, Math.min(100, ((event.clientX - rect.left - TRACK_INSET) / Math.max(1, rect.width - TRACK_INSET)) * 100));
     return Math.round((percent / 100) * axisMax);
   }
 
-  function updateStripDrag(event) {
+  // Right edge of a TIME strip = duration (px → ms through the fixed scale).
+  function stripDurationAtPointer(event, rect, row) {
+    const x = Math.max(0, event.clientX - rect.left - TRACK_INSET);
+    const startPx = (stripGeometry(row).left / 100) * Math.max(1, rect.width - TRACK_INSET);
+    return Math.max(50, Math.round((x - startPx) / TIME_PX_PER_MS));
+  }
+
+  function updateStripDrag(event, row) {
     if (!draggingStrip || event.pointerId !== draggingStrip.pointerId) return;
+    if (draggingStrip.kind === 'duration') {
+      const durationMs = stripDurationAtPointer(event, draggingStrip.rect, row);
+      setDraggingStrip((current) => current ? { ...current, durationMs, moved: true } : current);
+      return;
+    }
     const value = stripScrollAtPointer(event, draggingStrip.rect);
     setDraggingStrip((current) => {
       if (!current) return current;
@@ -840,6 +864,10 @@ export function TimelinePanel({
     const finished = draggingStrip;
     setDraggingStrip(null);
     if (!finished.moved) return;
+    if (finished.kind === 'duration') {
+      onStripEdit?.(row, { durationMs: finished.durationMs });
+      return;
+    }
     onStripEdit?.(row, finished.edge === 'start' ? { start: finished.start } : { end: finished.end });
   }
 
@@ -848,8 +876,8 @@ export function TimelinePanel({
   // never the strips themselves.
   function applyScrub(event) {
     const rect = event.currentTarget.getBoundingClientRect();
-    const x = event.clientX - rect.left - labelsWidth;
-    const pct = Math.max(0, Math.min(1, x / Math.max(1, timelineWidth)));
+    const x = event.clientX - rect.left - labelsWidth - TRACK_INSET;
+    const pct = Math.max(0, Math.min(1, x / Math.max(1, timelineWidth - TRACK_INSET)));
     if (scrollRuler) onScrollTo?.(Math.round(pct * axisMax));
     else if (motion) onSeek?.(pct * duration);
   }
@@ -1165,6 +1193,9 @@ export function TimelinePanel({
               <div className={styles.rowLabel} data-cell="ruler">Page</div>
               <div className={`${styles.rowTrack} ${styles.rulerTrack}`}>
                 {ticks.map((tick) => <span key={tick.left} style={{ left: `${tick.left}%` }}><i />{tick.label}</span>)}
+                {/* The cap lives in the STICKY ruler row, so it stays visible
+                    while the row list scrolls vertically. */}
+                <i className={styles.playheadCap} data-playhead-cap aria-hidden="true" style={{ left: `${playheadPercent}%` }} />
               </div>
             </div>
 
@@ -1182,16 +1213,24 @@ export function TimelinePanel({
               const clips = detailByRow?.[row.elementId] || null;
               const isStripDragging = draggingStrip?.elementId === row.elementId;
               const geometry = isStripDragging
-                ? {
-                  left: (Math.max(0, draggingStrip.start) / axisMax) * 100,
-                  width: Math.max(0.8, ((draggingStrip.end - draggingStrip.start) / axisMax) * 100),
-                }
+                ? (draggingStrip.kind === 'duration'
+                  ? {
+                    left: stripGeometry(row).left,
+                    width: Math.max(NOMINAL_TIME_STRIP, ((draggingStrip.durationMs * TIME_PX_PER_MS) / Math.max(1, timelineWidth - TRACK_INSET)) * 100),
+                  }
+                  : {
+                    left: (Math.max(0, draggingStrip.start) / axisMax) * 100,
+                    width: Math.max(0.8, ((draggingStrip.end - draggingStrip.start) / axisMax) * 100),
+                  })
                 : stripGeometry(row);
               const { left, width } = geometry;
               // scrollEditable comes from the bridge: only vertical window
               // triggers with a resolved numeric range can be retargeted.
               const editableStrip = isActive && scrollRuler && row.driver === 'scroll'
                 && row.scrollEditable !== false && row.scrollEnd != null && ['scroll', 'media'].includes(motion?.driver?.type);
+              // A time strip's right edge edits duration (wider = slower).
+              const durationEditable = isActive && row.driver === 'time'
+                && motion?.driver?.type === 'time' && Boolean(motion?.capabilities?.timing);
               return (
                 <Fragment key={row.elementId}>
                   <div className={styles.timelineRow} data-row-kind="layer">
@@ -1215,19 +1254,17 @@ export function TimelinePanel({
                       </button>
                     </div>
                     <div className={styles.rowTrack} data-element-row={row.elementId} data-selected={isActive}>
-                      <i
+                      <button
+                        type="button"
                         className={styles.timelineClip}
+                        data-layer-strip
                         data-driver={row.driver}
                         data-selected={isActive}
                         style={{ left: `${left}%`, width: `${width}%` }}
+                        title={`Select ${row.label}`}
+                        aria-label={`Select ${row.label}`}
+                        onClick={() => onSelectElement?.(row.elementId)}
                       />
-                      {(row.marks || []).map((mark) => (
-                        <i
-                          key={mark}
-                          className={styles.viewportMark}
-                          style={{ left: `${left + (mark * width)}%` }}
-                        />
-                      ))}
                       {editableStrip && ['start', 'end'].map((edge) => (
                         <button
                           key={edge}
@@ -1238,11 +1275,25 @@ export function TimelinePanel({
                           title={`Drag to change where this animation ${edge === 'start' ? 'starts' : 'ends'} in the page scroll`}
                           style={{ left: `${edge === 'start' ? left : left + width}%` }}
                           onPointerDown={(event) => beginStripDrag(event, row, edge)}
-                          onPointerMove={updateStripDrag}
+                          onPointerMove={(event) => updateStripDrag(event, row)}
                           onPointerUp={(event) => finishStripDrag(event, row)}
                           onPointerCancel={() => setDraggingStrip(null)}
                         />
                       ))}
+                      {durationEditable && (
+                        <button
+                          type="button"
+                          className={styles.timelineStripHandle}
+                          data-edge="end"
+                          aria-label="Adjust duration"
+                          title="Drag to stretch this animation's duration — longer means slower"
+                          style={{ left: `${left + width}%` }}
+                          onPointerDown={(event) => beginStripDrag(event, row, 'end', 'duration')}
+                          onPointerMove={(event) => updateStripDrag(event, row)}
+                          onPointerUp={(event) => finishStripDrag(event, row)}
+                          onPointerCancel={() => setDraggingStrip(null)}
+                        />
+                      )}
                     </div>
                   </div>
                   {expanded && clips && clips.length > 1 && clips.map((clip) => {
@@ -1298,8 +1349,8 @@ export function TimelinePanel({
               className={styles.timelinePlayhead}
               data-timeline-playhead
               aria-hidden="true"
-              style={{ left: labelsWidth + ((scrollRuler ? Math.min(100, ((page.scrollY || 0) / axisMax) * 100) : currentPercent) / 100) * timelineWidth }}
-            ><span /></i>
+              style={{ left: labelsWidth + TRACK_INSET + (playheadPercent / 100) * (timelineWidth - TRACK_INSET) }}
+            />
           </div>
         </div>
         <div

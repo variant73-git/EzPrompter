@@ -207,11 +207,11 @@ describe('timeline canvas layout', () => {
     );
 
     // Scroll-driven strip is drawn exactly at its trigger's pixels on the page axis.
-    const strip = container.querySelector('[data-element-row="el-a"] i');
+    const strip = container.querySelector('[data-element-row="el-a"] [data-layer-strip]');
     expect(parseFloat(strip.style.left)).toBeCloseTo((400 / 4200) * 100, 1);
     expect(parseFloat(strip.style.width)).toBeCloseTo((500 / 4200) * 100, 1);
     // Time-driven strip is placed at the scroll point where it triggers.
-    const timeStrip = container.querySelector('[data-element-row="el-b"] i');
+    const timeStrip = container.querySelector('[data-element-row="el-b"] [data-layer-strip]');
     expect(parseFloat(timeStrip.style.left)).toBeCloseTo((2100 / 4200) * 100, 1);
 
     // The ruler reads in page pixels, not seconds.
@@ -223,11 +223,11 @@ describe('timeline canvas layout', () => {
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       x: 0, y: 0, left: 0, top: 0, right: 872, bottom: 166, width: 872, height: 166, toJSON: () => ({}),
     });
-    // labels column (152) + half of the 720px track = pct 0.5 → scrollY 2100.
-    fireEvent.pointerDown(surface, { pointerId: 5, button: 0, clientX: 152 + 360 });
+    // labels column (152) + 5px inset + half of the 715px lane = pct 0.5 → scrollY 2100.
+    fireEvent.pointerDown(surface, { pointerId: 5, button: 0, clientX: 152 + 5 + 357.5 });
     expect(onScrollTo).toHaveBeenCalledWith(2100);
     rect.mockRestore();
-    expect(parseFloat(container.querySelector('[data-element-row="el-a"] i').style.left)).toBeCloseTo((400 / 4200) * 100, 1);
+    expect(parseFloat(container.querySelector('[data-element-row="el-a"] [data-layer-strip]').style.left)).toBeCloseTo((400 / 4200) * 100, 1);
   });
 
   it('never plots time-math keyframes on the scroll axis when the selected element is offscreen', () => {
@@ -253,6 +253,57 @@ describe('timeline canvas layout', () => {
     });
     fireEvent.pointerDown(surface, { pointerId: 6, button: 0, clientX: 152 + 720 });
     expect(onScrollTo).toHaveBeenCalledWith(4200);
+    rect.mockRestore();
+    // The playhead CAP lives inside the sticky ruler row, so it stays visible
+    // when the row list scrolls vertically.
+    const cap = container.querySelector('[data-playhead-cap]');
+    expect(cap).toBeTruthy();
+    expect(cap.closest('[data-row-kind="ruler"]')).toBeTruthy();
+  });
+
+  it('the layer strip is a button that selects its element on the site', () => {
+    const onSelectElement = vi.fn();
+    render(<TimelineHarness rows={viewportRows} selectedElementId={null} onSelectElement={onSelectElement} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Select Hero headline' }));
+    expect(onSelectElement).toHaveBeenCalledWith('el-a');
+  });
+
+  it('renders no dots on strip ends', () => {
+    const { container } = render(
+      <TimelineHarness rows={viewportRows} selectedElementId={null} onSelectElement={vi.fn()} />,
+    );
+    expect(container.querySelector('[data-element-row] i')).toBeNull();
+  });
+
+  it('dragging a time strip’s right edge stretches its duration (longer = slower)', () => {
+    const onStripEdit = vi.fn();
+    const page = { scrollY: 0, viewportHeight: 800, scrollHeight: 5000, maxScroll: 4200 };
+    const timeRows = [{ ...viewportRows[1], scrollStart: 2100, scrollEnd: null }];
+    const timeMotion = { ...motion, driver: { type: 'time' }, capabilities: { keyframes: true, timing: true } };
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 200, width: 1000, height: 200,
+      toJSON: () => ({}),
+    });
+    render(
+      <TimelineHarness
+        rows={timeRows}
+        selectedElementId="el-b"
+        onSelectElement={vi.fn()}
+        page={page}
+        motion={timeMotion}
+        onStripEdit={onStripEdit}
+      />,
+    );
+    // Strip starts at 50% of the 995px lane (497.5px). Dragging the end handle
+    // to 120px past the start maps to 120 / 0.06 = 2000ms.
+    const handle = screen.getByRole('button', { name: 'Adjust duration' });
+    fireEvent.pointerDown(handle, { pointerId: 8, button: 0, clientX: 5 + 497.5 + 30 });
+    fireEvent.pointerMove(handle, { pointerId: 8, clientX: 5 + 497.5 + 120 });
+    fireEvent.pointerUp(handle, { pointerId: 8, clientX: 5 + 497.5 + 120 });
+    expect(onStripEdit).toHaveBeenCalledOnce();
+    const [row, next] = onStripEdit.mock.calls[0];
+    expect(row.elementId).toBe('el-b');
+    expect(next.durationMs).toBe(2000);
     rect.mockRestore();
   });
 

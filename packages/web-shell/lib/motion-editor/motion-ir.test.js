@@ -44,6 +44,15 @@ describe('motion IR', () => {
     expect(buildStripEditPatches({ motion: { ...motion, driver: { type: 'time' } }, row, next: { end: 1500 } })).toEqual([]);
   });
 
+  it('maps a time-strip duration drag to a timing.duration patch (longer = slower)', () => {
+    const motion = { id: 'time-1', driver: { type: 'time' }, capabilities: { timing: true }, timing: { duration: 500 } };
+    expect(buildStripEditPatches({ motion, row: {}, next: { durationMs: 2000 } }))
+      .toEqual([{ property: 'timing.duration', before: 500, value: 2000 }]);
+    // No-op when unchanged; no patch when timing is not writable.
+    expect(buildStripEditPatches({ motion, row: {}, next: { durationMs: 500 } })).toEqual([]);
+    expect(buildStripEditPatches({ motion: { ...motion, capabilities: {} }, row: {}, next: { durationMs: 2000 } })).toEqual([]);
+  });
+
   it('labels drivers and writeback capability in designer language', () => {
     expect(motionDriverLabel({ type: 'scroll' })).toBe('Scroll');
     expect(motionCapabilityLabel(MOTION_EDITABILITY.ADAPTER)).toBe('Adapter');
