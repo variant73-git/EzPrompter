@@ -71,8 +71,9 @@ Editor de animações (GSAP/ScrollTrigger/Lottie/WAAPI) dentro do canvas. **Font
 - Entregue: agrupamento semântico (text-reveal/timeline/stagger), régua única = scroll da página (scrubber rola o site), strips arrastáveis (`st.vars.start/end` + `refresh()`), keyframes por adapter, `gsap.from()` read-only, driver `media`, exportador Framer Motion com TRANSLATION REPORT.
 - Motor (154): GSAP mid-tween tracks, snapshot/restore de cssText (amostrar disparava `clearProps` e corrompia a página), `gsap.parseEase()` (vars.ease sozinho não troca curva), `invalidatePreservingStart`, playback escopado à seleção, guarda de instância (AbortController, re-injeção desmonta a anterior), viewport-scoping (`viewport-motion-changed`/`inspect-viewport`, debounce 120ms).
 - **Fixture ao vivo**: clone 1:1 do farmminerals em `~/Desktop/IA/Unspirit-Clone-1to1/site` (GSAP 3.15 real, offline). Rodar: `UNCRAFT_NATIVE_CLONE_ROOT=<site> npm run dev:motion` (porta **3032**, `NEXT_DIST_DIR=.next-motion` — ⚠️ build separado fica velho e serve código desatualizado sem avisar; limpar `.next-motion` ao duvidar). Probes: `scripts/validate-gsap-editor.mjs`, `probe-gsap-ease.mjs`, `probe-text-reveal.mjs`.
-- **Método**: desacordos entre modelos (Claude × Codex) decidem-se por PROBES no GSAP real, não por argumento.
-- Pendente: smoke manual (em curso 2026-07-20), spike de import no Framer (USER, plano §3.5), Fase 2 visual.
+- **Método**: desacordos entre modelos (Claude × Codex) decidem-se por PROBES no GSAP real, não por argumento. Codex via bundle escopado (`--mode prose --file <diff>`), nunca `--mode diff` aqui.
+- **2026-07-20 (item 155)**: timeline redesenhada no modelo Figma Motion + 3 rounds de smoke + review adversarial. Estado canônico: `docs/superpowers/handoffs/2026-07-20-motion-timeline-figma-handoff.md` (arquitetura, convenção replay-on-pass, tradeoffs aceitos, pendências).
+- Pendente: smoke manual (rounds em curso), spike de import no Framer (USER, plano §3.5), achatar layer-mãe se o user preferir, CSS morto do painel antigo.
 
 ## Histórico de checkpoints (95–154)
 > Uma linha por item. Detalhe completo: memo `[[...]]` citado e/ou `docs/CLAUDE-ARCHIVE-2026-07-20.md`. Itens 1–94 (funcionalidades do editor Mode A) na seção seguinte.
@@ -138,6 +139,7 @@ Editor de animações (GSAP/ScrollTrigger/Lottie/WAAPI) dentro do canvas. **Font
 152. OS drag-drop no canvas + fix thumbnail 100vh (fullPage+clip) — [[checkpoint_2026-07-11_os-drop-thumbnail-fix]]
 153. Motion editor 6b–6e (grouping, régua única, strips, keyframes, export Framer) — [[checkpoint_2026-07-19_motion-editor-phases]]
 154. Motion editor: motor + clone-fixture + harness adversarial Codex — [[checkpoint_2026-07-19_motion-editor-phases]]
+155. Timeline Figma Motion (scroller único/labels sticky, full-page rows por CHEGADA, ownership, replay-on-pass edit-mode, tudo clicável) + review Claude×Sol com 11 fixes — [[checkpoint_2026-07-20_motion-timeline-figma]]; handoff `docs/superpowers/handoffs/2026-07-20-motion-timeline-figma-handoff.md`
 
 ## Lições permanentes (destiladas dos checkpoints — valem sempre)
 - **Anthropic billing**: assinatura claude.ai NÃO credita a API — buckets separados (119).
