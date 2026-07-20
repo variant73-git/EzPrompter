@@ -816,15 +816,23 @@ export function TimelinePanel({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
+    // Duration drags are DELTA-based against the ACTIVE clip's own duration —
+    // the drawn strip is the row's merged envelope (with a minimum visual
+    // width), so absolute px→ms mapping would jump on the first pixel.
+    const initialDurationMs = kind === 'duration'
+      ? Math.max(1, Math.round(Number(motion?.timing?.duration) || Number(row.durationMs) || 0))
+      : Number(row.durationMs) || 0;
     setDraggingStrip({
       pointerId: event.pointerId,
       elementId: row.elementId,
       edge,
       kind,
       rect: canvas.getBoundingClientRect(),
+      startX: event.clientX,
+      initialDurationMs,
       start: Number(row.scrollStart) || 0,
       end: Number(row.scrollEnd) || 0,
-      durationMs: Number(row.durationMs) || 0,
+      durationMs: initialDurationMs,
       moved: false,
     });
   }
@@ -834,17 +842,11 @@ export function TimelinePanel({
     return Math.round((percent / 100) * axisMax);
   }
 
-  // Right edge of a TIME strip = duration (px → ms through the fixed scale).
-  function stripDurationAtPointer(event, rect, row) {
-    const x = Math.max(0, event.clientX - rect.left - TRACK_INSET);
-    const startPx = (stripGeometry(row).left / 100) * Math.max(1, rect.width - TRACK_INSET);
-    return Math.max(50, Math.round((x - startPx) / TIME_PX_PER_MS));
-  }
-
   function updateStripDrag(event, row) {
     if (!draggingStrip || event.pointerId !== draggingStrip.pointerId) return;
     if (draggingStrip.kind === 'duration') {
-      const durationMs = stripDurationAtPointer(event, draggingStrip.rect, row);
+      // Delta px → delta ms: stretching right = longer = slower.
+      const durationMs = Math.max(50, Math.round(draggingStrip.initialDurationMs + (event.clientX - draggingStrip.startX) / TIME_PX_PER_MS));
       setDraggingStrip((current) => current ? { ...current, durationMs, moved: true } : current);
       return;
     }
@@ -885,8 +887,13 @@ export function TimelinePanel({
   function beginScrub(event) {
     if (event.button !== 0) return;
     if (event.target.closest('button,input,select,textarea')) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    if (event.clientX - rect.left < labelsWidth) return; // labels gutter is not scrubbable
+    // The labels column is STICKY: on a horizontally-scrolled timeline it
+    // covers surface-x [scrollLeft, scrollLeft+labelsWidth] — guard against
+    // the SCROLLER viewport, not the surface, or label clicks scrub a track
+    // position hidden underneath.
+    const scroller = event.currentTarget.parentElement;
+    const viewportRect = (scroller || event.currentTarget).getBoundingClientRect();
+    if (event.clientX - viewportRect.left < labelsWidth) return;
     event.preventDefault(); // no text selection while dragging the playhead
     event.currentTarget.setPointerCapture?.(event.pointerId);
     setScrubbing({ pointerId: event.pointerId });
@@ -1248,7 +1255,9 @@ export function TimelinePanel({
               const editableStrip = isActive && scrollRuler && row.driver === 'scroll'
                 && row.scrollEditable !== false && row.scrollEnd != null && ['scroll', 'media'].includes(motion?.driver?.type);
               // A time strip's right edge edits duration (wider = slower).
-              const durationEditable = isActive && row.driver === 'time'
+              // Scroll ruler only: on the time ruler strips are drawn in
+              // rowScale percentages, not px/ms — the delta math would lie.
+              const durationEditable = isActive && scrollRuler && row.driver === 'time'
                 && motion?.driver?.type === 'time' && Boolean(motion?.capabilities?.timing);
               return (
                 <Fragment key={row.elementId}>
@@ -1512,12 +1521,23 @@ export default function NativeMotionEditor() {
     return Number.isFinite(stored) && stored >= TIMELINE_MIN_HEIGHT && stored <= TIMELINE_MAX_HEIGHT ? stored : TIMELINE_MIN_HEIGHT;
   });
 
-  const motion = useMemo(() => (selected?.motion || []).map(normalizeMotionClip), [selected]);
-  const activeMotion = motion.find((item) => item.id === activeMotionId) || null;
   // The bridge resolves which timeline row OWNS the clicked element
   // (hostRowId) — comparing raw ids across the iframe boundary is what kept
   // site clicks from lighting up their row.
   const selectedRowId = selected ? (selected.hostRowId || selected.id) : null;
+  // When the click resolved to a CHILD of the animated host, the editable
+  // clips are the HOST's (fetched via describe-element) — otherwise clicking
+  // a host clip in the timeline would activate an id the inspector can't find.
+  const motionFromHost = Boolean(selected && selectedRowId && selectedRowId !== selected.id && motionDetail[selectedRowId]);
+  const motion = useMemo(() => {
+    const own = (selected?.motion || []).map(normalizeMotionClip);
+    if (motionFromHost) return motionDetail[selectedRowId];
+    return own;
+  }, [selected, motionFromHost, motionDetail, selectedRowId]);
+  const activeMotion = motion.find((item) => item.id === activeMotionId) || null;
+  // Motion patches re-inspect through this element when the runtime registry
+  // was rebuilt — it must be the element that OWNS the active clips.
+  const motionElementId = motionFromHost ? selectedRowId : selected?.id || null;
   const motionDetailRef = useRef(motionDetail);
   useEffect(() => { motionDetailRef.current = motionDetail; }, [motionDetail]);
   const timelineOffset = useMemo(() => {
@@ -1559,16 +1579,23 @@ export default function NativeMotionEditor() {
   // Selections feed the timeline: cache the element's clips for its row,
   // auto-expand the row that owns it, and fetch the host row's detail when
   // the click resolved to a child of the animated host.
+  const lastAutoExpandedRef = useRef(null);
   useEffect(() => {
     if (!selected?.id) return;
     setMotionDetail((current) => ({ ...current, [selected.id]: (selected.motion || []).map(normalizeMotionClip) }));
     const rowId = selected.hostRowId || selected.id;
-    setExpandedLayers((current) => {
-      if (current.has(rowId)) return current;
-      const next = new Set(current);
-      next.add(rowId);
-      return next;
-    });
+    // Auto-expand only when the selection MOVED to a different row — every
+    // patch-applied refreshes `selected`, and re-expanding on each edit made
+    // the chevron's collapse impossible to keep.
+    if (lastAutoExpandedRef.current !== rowId) {
+      lastAutoExpandedRef.current = rowId;
+      setExpandedLayers((current) => {
+        if (current.has(rowId)) return current;
+        const next = new Set(current);
+        next.add(rowId);
+        return next;
+      });
+    }
     if (rowId !== selected.id && !motionDetailRef.current[rowId] && status === 'ready') {
       send('describe-element', { elementId: rowId });
     }
@@ -1700,7 +1727,7 @@ export default function NativeMotionEditor() {
     const track = activeMotion.tracks.find((item) => animationProperty(item.property) === normalized);
     const existing = track?.keyframes?.find((keyframe) => Math.abs(Number(keyframe.offset) - timelineOffset) < 0.0005);
     const keyframePatch = createPatch({
-      elementId: selected.id,
+      elementId: motionElementId,
       kind: 'motion',
       motionId: activeMotion.id,
       property: `keyframe.${normalized}`,
@@ -1730,7 +1757,7 @@ export default function NativeMotionEditor() {
   function applyMotion(motion, property, value, before) {
     if (!selected || !motion?.id) return;
     applyNewPatch(createPatch({
-      elementId: selected.id,
+      elementId: motionElementId,
       kind: 'motion',
       motionId: motion.id,
       property,
@@ -1744,7 +1771,7 @@ export default function NativeMotionEditor() {
     const edits = buildStripEditPatches({ motion: activeMotion, row, next });
     if (!edits.length) return;
     applyNewPatches(edits.map((edit) => createPatch({
-      elementId: selected.id, kind: 'motion', motionId: activeMotion.id, ...edit,
+      elementId: motionElementId, kind: 'motion', motionId: activeMotion.id, ...edit,
     })));
     // Redraw strips from the runtime's truth, not from the optimistic drag.
     window.setTimeout(() => send('inspect-viewport'), 60);
@@ -1753,7 +1780,7 @@ export default function NativeMotionEditor() {
   function applyStagger(members, valueMs) {
     if (!selected) return;
     const patches = applyStaggerDelays(members, valueMs).map(({ clip, delay }) => createPatch({
-      elementId: selected.id,
+      elementId: motionElementId,
       kind: 'motion',
       motionId: clip.id,
       property: 'timing.delay',
@@ -1887,7 +1914,7 @@ export default function NativeMotionEditor() {
     const resolved = resolveKeyframe(selection);
     if (!resolved || !selected) return;
     applyNewPatch(createPatch({
-      elementId: selected.id,
+      elementId: motionElementId,
       kind: 'motion',
       motionId: activeMotion.id,
       property: `keyframe.${resolved.track.property}`,
@@ -1907,7 +1934,7 @@ export default function NativeMotionEditor() {
     const offset = availableKeyframeOffset(resolved.track, preferred);
     const existing = resolved.track.keyframes.find((keyframe) => Math.abs(Number(keyframe.offset) - offset) < 0.0005);
     applyNewPatch(createPatch({
-      elementId: selected.id,
+      elementId: motionElementId,
       kind: 'motion',
       motionId: activeMotion.id,
       property: `keyframe.${resolved.track.property}`,
@@ -1926,7 +1953,7 @@ export default function NativeMotionEditor() {
     if (Math.abs(offset - sourceOffset) < 0.0005) return;
     const existing = resolved.track.keyframes.find((keyframe) => Math.abs(Number(keyframe.offset) - offset) < 0.0005);
     const removeSource = createPatch({
-      elementId: selected.id,
+      elementId: motionElementId,
       kind: 'motion',
       motionId: activeMotion.id,
       property: `keyframe.${resolved.track.property}`,
@@ -1934,7 +1961,7 @@ export default function NativeMotionEditor() {
       value: keyframeDescriptor(null, sourceOffset),
     });
     const addDestination = createPatch({
-      elementId: selected.id,
+      elementId: motionElementId,
       kind: 'motion',
       motionId: activeMotion.id,
       property: `keyframe.${resolved.track.property}`,
@@ -1950,7 +1977,7 @@ export default function NativeMotionEditor() {
     const resolved = resolveKeyframe(selection);
     if (!resolved || !selected || String(resolved.keyframe.value) === String(value)) return;
     applyNewPatch(createPatch({
-      elementId: selected.id,
+      elementId: motionElementId,
       kind: 'motion',
       motionId: activeMotion.id,
       property: `keyframe.${resolved.track.property}`,
@@ -1963,7 +1990,7 @@ export default function NativeMotionEditor() {
     const resolved = resolveKeyframe(selection);
     if (!resolved || !selected || resolved.keyframe.easing === easing) return;
     applyNewPatch(createPatch({
-      elementId: selected.id,
+      elementId: motionElementId,
       kind: 'motion',
       motionId: activeMotion.id,
       property: `keyframe.${resolved.track.property}`,
@@ -2098,10 +2125,12 @@ export default function NativeMotionEditor() {
           expandedLayers={expandedLayers}
           onToggleLayer={(elementId) => {
             const expanding = !expandedLayers.has(elementId);
-            const next = new Set(expandedLayers);
-            if (expanding) next.add(elementId);
-            else next.delete(elementId);
-            setExpandedLayers(next);
+            setExpandedLayers((current) => {
+              const next = new Set(current);
+              if (next.has(elementId)) next.delete(elementId);
+              else next.add(elementId);
+              return next;
+            });
             if (expanding && !motionDetail[elementId] && status === 'ready') send('describe-element', { elementId });
           }}
           activeMotionId={activeMotionId}

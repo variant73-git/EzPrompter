@@ -307,16 +307,17 @@ describe('timeline canvas layout', () => {
         onStripEdit={onStripEdit}
       />,
     );
-    // Strip starts at 50% of the 995px lane (497.5px). Dragging the end handle
-    // to 120px past the start maps to 120 / 0.06 = 2000ms.
+    // DELTA-based: the strip's drawn width is the row envelope (with a visual
+    // minimum), so only the drag DISTANCE maps to ms. +90px at 0.06px/ms adds
+    // 1500ms to the active clip's own 1000ms.
     const handle = screen.getByRole('button', { name: 'Adjust duration' });
-    fireEvent.pointerDown(handle, { pointerId: 8, button: 0, clientX: 5 + 497.5 + 30 });
-    fireEvent.pointerMove(handle, { pointerId: 8, clientX: 5 + 497.5 + 120 });
-    fireEvent.pointerUp(handle, { pointerId: 8, clientX: 5 + 497.5 + 120 });
+    fireEvent.pointerDown(handle, { pointerId: 8, button: 0, clientX: 300 });
+    fireEvent.pointerMove(handle, { pointerId: 8, clientX: 390 });
+    fireEvent.pointerUp(handle, { pointerId: 8, clientX: 390 });
     expect(onStripEdit).toHaveBeenCalledOnce();
     const [row, next] = onStripEdit.mock.calls[0];
     expect(row.elementId).toBe('el-b');
-    expect(next.durationMs).toBe(2000);
+    expect(next.durationMs).toBe(2500);
     rect.mockRestore();
   });
 

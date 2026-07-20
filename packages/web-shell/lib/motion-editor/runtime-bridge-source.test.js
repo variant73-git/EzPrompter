@@ -1415,6 +1415,34 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('an animated image INSIDE a paragraph keeps its own row — only text fragments roll up', () => {
+    document.body.innerHTML = '<main><p id="rich">Some text <img id="badge" alt="Badge" /> more text</p></main>';
+    const rich = document.getElementById('rich');
+    const badge = document.getElementById('badge');
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    rich.getBoundingClientRect = rect(100, 60);
+    badge.getBoundingClientRect = rect(110, 20);
+    document.getAnimations = () => [timeAnimationFor(badge)];
+    [rich, badge].forEach((el) => { el.getAnimations = () => []; });
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+    const rows = messages.filter((m) => m.type === 'viewport-motion-changed').pop().payload.rows;
+    expect(rows.length).toBe(1);
+    expect(rows[0].elementId).toBe(badge.dataset.uncraftId);
+
+    window.postMessage = originalPostMessage;
+  });
+
   it('a container row never absorbs its children\'s clips: each tween belongs to its own host', () => {
     // Live fixture: an icon layer listed the neighbouring text's tween as a
     // sub-row. Ownership = host of the CLIP's target.

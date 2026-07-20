@@ -470,8 +470,12 @@ function nativeMotionRuntimeBridge() {
     // one row per h2/p, never one per letter (live fixture had one-letter rows
     // from classless SplitText chars).
     try {
-      const textBlock = element.closest?.('h1,h2,h3,h4,h5,h6,p,blockquote');
-      if (textBlock) return textBlock;
+      // Media/embed elements inside rich text are THINGS of their own — only
+      // text-ish fragments roll up into the block.
+      if (!element.matches?.('img,picture,video,canvas,svg,svg *,iframe,figure,object,embed')) {
+        const textBlock = element.closest?.('h1,h2,h3,h4,h5,h6,p,blockquote');
+        if (textBlock) return textBlock;
+      }
     } catch (_) {}
     const splitClassed = (node) => {
       try { return node.matches(SPLIT_TOKEN) || /(^|[\s_-])split/i.test(String(node.className || '')); } catch (_) { return false; }
@@ -613,13 +617,14 @@ function nativeMotionRuntimeBridge() {
       for (let node = element; node && node !== document.documentElement; node = node.parentElement) {
         if (hosts.has(node)) return ensureElementId(node);
       }
+      const inside = new Set();
+      lastRowHosts.forEach((host) => { if (element.contains(host)) inside.add(host); });
+      hosts.forEach((_members, host) => { if (element.contains(host)) inside.add(host); });
+      // A wrapper holding SEVERAL animated hosts maps to no single row —
+      // picking one arbitrarily would contradict the ownership model.
+      if (inside.size !== 1) return null;
       let found = null;
-      const consider = (host) => {
-        if (!element.contains(host)) return;
-        if (!found || (found.compareDocumentPosition(host) & Node.DOCUMENT_POSITION_PRECEDING)) found = host;
-      };
-      lastRowHosts.forEach(consider);
-      hosts.forEach((_members, host) => consider(host));
+      inside.forEach((host) => { found = host; });
       return found ? ensureElementId(found) : null;
     } catch (_) { return null; }
   }
@@ -1072,23 +1077,50 @@ function nativeMotionRuntimeBridge() {
   // passes over a time-driven strip, its animation replays — even when the
   // site authored it to run once. Nothing persists: leaving edit mode simply
   // stops re-triggering, so the site's own behaviour returns untouched.
-  let lastReplayScrollY = 0;
+  let lastReplayScrollY = Math.max(0, Math.round((typeof window !== 'undefined' && window.scrollY) || 0));
 
   // GSAP garbage-collects one-shot tweens the moment they complete
   // (globalTimeline.autoRemoveChildren) — after that there is nothing left to
   // replay (measured live: 27 → 15 children after one scroll-through). While
   // editing, keep them parked instead; the flag is restored on preview/exit.
+  let siteAutoRemoveChildren = null;
   function syncEditConventions() {
     try {
       const timeline = window.gsap && window.gsap.globalTimeline;
-      if (timeline) timeline.autoRemoveChildren = mode !== 'edit';
+      if (!timeline) return;
+      if (mode === 'edit') {
+        if (siteAutoRemoveChildren === null) siteAutoRemoveChildren = timeline.autoRemoveChildren;
+        timeline.autoRemoveChildren = false;
+        // Retention guard: sites that mint tweens continuously (cursor
+        // followers on mousemove) would grow the timeline without bound.
+        // Above a sane population, kill completed MICRO tweens — parked
+        // one-shot intros (the replay feature's subjects) are longer-lived.
+        const children = timeline.getChildren ? timeline.getChildren(true, true, true) : [];
+        if (children.length > 600) {
+          children.forEach((tween) => {
+            try {
+              if (tween.scrollTrigger || tween.vars?.scrollTrigger) return;
+              if (tween.progress?.() === 1 && (tween.duration?.() || 0) < 0.25) tween.kill();
+            } catch (_) {}
+          });
+        }
+      } else if (siteAutoRemoveChildren !== null) {
+        timeline.autoRemoveChildren = siteAutoRemoveChildren;
+      }
     } catch (_) {}
   }
   function replayElementMotion(host) {
     try {
       if (typeof host.getAnimations === 'function') {
         host.getAnimations({ subtree: true }).forEach((animation) => {
-          try { animation.currentTime = 0; animation.play(); } catch (_) {}
+          try {
+            // Ownership: a nested element that has its OWN row replays on its
+            // own crossing, not on every ancestor's.
+            const target = animation?.effect?.target;
+            if (target instanceof Element && safeHost(target) !== host && target !== host) return;
+            animation.currentTime = 0;
+            animation.play();
+          } catch (_) {}
         });
       }
     } catch (_) {}
@@ -1106,6 +1138,10 @@ function nativeMotionRuntimeBridge() {
             let root = tween;
             while (root.parent && root.parent !== timeline) root = root.parent;
             if (root.scrollTrigger || root.vars?.scrollTrigger) return;
+            // An author-paused chain that NEVER played is waiting for an
+            // interaction (menu, hover) — starting it from a scroll crossing
+            // would fire it out of context.
+            try { if (root.paused?.() && (root.progress?.() || 0) === 0) return; } catch (_) {}
             roots.add(root);
           } catch (_) {}
         });
@@ -1140,6 +1176,7 @@ function nativeMotionRuntimeBridge() {
     }
     // Scroll-driven clips need no replay — arriving at their range scrubs them.
     // Time-driven clips restart SCOPED; their own iterations decide looping.
+    if (mode !== 'edit') return; // preview keeps the site's own behaviour
     const timeClip = inspectMotion(element).find((clip) => clip?.driver?.type === 'time');
     if (!timeClip) return;
     setTimeout(() => controlPlayback('restart', undefined, timeClip.id), offscreen ? 400 : 0);
@@ -1411,7 +1448,10 @@ function nativeMotionRuntimeBridge() {
     // Scoped transport: act ONLY on the selected motion. A scroll-driven page must keep
     // living — pausing the whole document (plus every video and the smooth-scroll lib)
     // is never what "pause this animation" means. `speed` only re-rates, never plays.
-    const scoped = motionId ? motionRegistry.get(motionId) : null;
+    const scoped = motionId ? (motionRegistry.get(motionId) || timelineRecord(motionId)) : null;
+    // A SCOPED request that cannot be resolved must never degrade into the
+    // global path (pausing the whole document, its videos and Lenis).
+    if (motionId && !scoped) return;
     if (scoped) {
       try {
         const animation = scoped.animation;
@@ -1775,7 +1815,13 @@ function nativeMotionRuntimeBridge() {
       viewportTimer = setTimeout(() => { viewportTimer = null; emitViewportMotion(); }, 120);
     };
     on(window, 'scroll', () => { replayCrossedAnimations(); scheduleViewportMotion(); }, { passive: true });
-    on(window, 'resize', scheduleViewportMotion);
+    on(window, 'resize', () => {
+      // Reveal points are functions of viewport height — a resize re-derives
+      // them (and the row list) from scratch.
+      revealAtCache.clear();
+      rowCache.clear();
+      scheduleViewportMotion();
+    });
 
     on(window, 'message', handleCommand);
     window.__uncraftMotionBridge = {
