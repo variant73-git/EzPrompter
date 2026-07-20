@@ -551,11 +551,9 @@ function nativeMotionRuntimeBridge() {
     return index;
   }
 
-  function viewportMotionRows(page) {
+  function motionHosts() {
     // One row per letter is unreadable — attribute each animated fragment to
     // its text root and merge the members' summaries into one legible row.
-    // Visibility is decided by the HOST: an offscreen letter of a visible
-    // headline still belongs to the headline's row.
     const index = buildMotionSummaryIndex();
     const hosts = new Map();
     index.forEach((memberSummary, element) => {
@@ -564,10 +562,46 @@ function nativeMotionRuntimeBridge() {
       if (!hosts.has(host)) hosts.set(host, []);
       hosts.get(host).push(memberSummary);
     });
+    return hosts;
+  }
 
+  function resolveHostRowId(element) {
+    // The click resolver (textRoot/chooseElement) and the row keying
+    // (splitFragmentHost) can land on DIFFERENT nodes of the same widget.
+    // Resolve here, where the DOM is reachable — the UI only compares ids.
+    try {
+      const hosts = motionHosts();
+      if (!hosts.size) return null;
+      let candidate = element;
+      try { candidate = splitFragmentHost(element); } catch (_) {}
+      for (let node = candidate; node && node !== document.documentElement; node = node.parentElement) {
+        if (hosts.has(node)) return ensureElementId(node);
+      }
+      let found = null;
+      hosts.forEach((_members, host) => {
+        if (!element.contains(host)) return;
+        if (!found || (found.compareDocumentPosition(host) & Node.DOCUMENT_POSITION_PRECEDING)) found = host;
+      });
+      return found ? ensureElementId(found) : null;
+    } catch (_) { return null; }
+  }
+
+  function viewportMotionRows(page) {
+    // Full-page inventory (Figma Motion model): every animated element is a
+    // row, ordered by page position. Offscreen rows are FLAGGED, not hidden —
+    // hiding them re-scoped the list on every scrub, which made strips appear
+    // to move with the playhead.
+    const hosts = motionHosts();
     const rows = [];
     hosts.forEach((members, element) => {
-      if (!intersectsViewport(element)) return;
+      // A row is a PLACE on the page. Detached or laid-out-to-nothing targets
+      // (display:none, unmounted runtime clones) have no place — listing them
+      // would resurrect the junk the old viewport filter hid by accident.
+      if (!element.isConnected) return;
+      let box = null;
+      try { box = element.getBoundingClientRect(); } catch (_) { return; }
+      if (!box || (!box.width && !box.height)) return;
+      const inViewport = intersectsViewport(element);
       const merged = members.reduce((accumulator, item) => accumulator ? {
         count: accumulator.count + item.count,
         engines: Array.from(new Set([...accumulator.engines, ...item.engines])),
@@ -607,6 +641,7 @@ function nativeMotionRuntimeBridge() {
         label: elementLabel(element),
         kind: elementKind(element),
         top,
+        inViewport,
         count: summary.count,
         engines: summary.engines,
         driver: summary.driver,
@@ -920,8 +955,23 @@ function nativeMotionRuntimeBridge() {
         transform: computed.transform,
       },
       motion: inspectMotion(element),
+      hostRowId: resolveHostRowId(element),
       warnings: splitText ? ['Text is split by the animation runtime. A production save must rebuild its split instance.'] : [],
     };
+  }
+
+  function focusElement(element) {
+    if (textEditState) finishInlineTextEdit(true);
+    const offscreen = !intersectsViewport(element);
+    select(element);
+    if (offscreen) {
+      try { element.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {}
+    }
+    // Scroll-driven clips need no replay — arriving at their range scrubs them.
+    // Time-driven clips restart SCOPED; their own iterations decide looping.
+    const timeClip = inspectMotion(element).find((clip) => clip?.driver?.type === 'time');
+    if (!timeClip) return;
+    setTimeout(() => controlPlayback('restart', undefined, timeClip.id), offscreen ? 400 : 0);
   }
 
   function chooseElement(target) {
@@ -1357,6 +1407,12 @@ function nativeMotionRuntimeBridge() {
       seekTimeline(payload.motionId, payload.currentTime);
     } else if (message.type === 'inspect-viewport') {
       emitViewportMotion();
+    } else if (message.type === 'describe-element') {
+      const element = findElement(payload.elementId);
+      if (element) emit('element-described', { element: describe(element) });
+    } else if (message.type === 'focus-element') {
+      const element = findElement(payload.elementId);
+      if (element) focusElement(element);
     } else if (message.type === 'scroll-to') {
       // The timeline ruler drives the site: the page's own scroll IS the playhead.
       const target = Math.max(0, Number(payload.scrollY) || 0);

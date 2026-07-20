@@ -351,10 +351,11 @@ describe('native motion runtime bridge', () => {
     expect(vars.startAt).toEqual({ x: '20' });
     expect(vars.x).toBe('160');
 
+    delete window.gsap;
     window.postMessage = originalPostMessage;
   });
 
-  it('lists only animated elements framed in the viewport, named and typed', () => {
+  it('lists every animated element on the page, flagging which are framed in the viewport', () => {
     document.body.innerHTML = `
       <main>
         <h2 id="headline">Fertilizer, reinvented</h2>
@@ -388,6 +389,17 @@ describe('native motion runtime bridge', () => {
     document.getAnimations = () => [headlineAnim, packAnim, belowAnim];
     [headline, pack, below].forEach((el) => { el.getAnimations = () => []; });
 
+    // A runtime tween aimed at a DETACHED node has no place on the page — it
+    // must never become a row (the old viewport filter hid these by accident).
+    const orphan = document.createElement('div');
+    const orphanTween = {
+      targets: () => [orphan], vars: { opacity: 1 }, parent: null,
+      duration: () => 1, delay: () => 0, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false,
+      scrollTrigger: null, progress: vi.fn(() => 0), invalidate: vi.fn(),
+    };
+    window.gsap = { globalTimeline: { getChildren: () => [orphanTween] }, getProperty: () => '0' };
+
     const messages = [];
     const originalPostMessage = window.postMessage;
     window.postMessage = (message) => messages.push(message);
@@ -402,8 +414,11 @@ describe('native motion runtime bridge', () => {
     expect(view).toBeTruthy();
     const rows = view.payload.rows;
 
-    // Offscreen element is excluded; visible ones are ordered top-down.
-    expect(rows.map((row) => row.elementId)).toEqual([headline.dataset.uncraftId, pack.dataset.uncraftId]);
+    // The timeline is a full-page inventory (Figma Motion model): offscreen
+    // elements are LISTED and flagged, never hidden — hiding them re-scoped the
+    // list on every scrub, which read as "the strips move with the playhead".
+    expect(rows.map((row) => row.elementId)).toEqual([headline.dataset.uncraftId, pack.dataset.uncraftId, below.dataset.uncraftId]);
+    expect(rows.map((row) => row.inViewport)).toEqual([true, true, false]);
     // Each row is identified as a thing on the page, not as an engine object.
     expect(rows[0]).toMatchObject({ label: 'Fertilizer, reinvented', kind: 'text', count: 1 });
     expect(rows[1]).toMatchObject({ label: 'CropTab packaging', kind: 'image', count: 1 });
@@ -413,6 +428,7 @@ describe('native motion runtime bridge', () => {
     expect(rows[0]).toMatchObject({ driver: 'time', delayMs: 0, durationMs: 500 });
     expect(rows[0].marks).toEqual([0, 1]);
 
+    delete window.gsap;
     window.postMessage = originalPostMessage;
   });
 
@@ -1251,6 +1267,126 @@ describe('native motion runtime bridge', () => {
     // The visible state reflects the new end value without a manual scrub.
     expect(rendered.x).toBe(160);
 
+    window.postMessage = originalPostMessage;
+  });
+
+  function timeAnimationFor(target, overrides = {}) {
+    return {
+      effect: {
+        target,
+        getTiming: () => ({ delay: 0, duration: 500, iterations: 1, direction: 'normal', fill: 'both', easing: 'linear' }),
+        getComputedTiming: () => ({ duration: 500 }),
+        getKeyframes: () => [{ computedOffset: 0, opacity: '0' }, { computedOffset: 1, opacity: '1' }],
+        setKeyframes: vi.fn(), updateTiming: vi.fn(),
+      },
+      playState: 'running', currentTime: 0, playbackRate: 1, pause: vi.fn(), play: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it('selection carries hostRowId: clicking inside an animated container resolves to its timeline row', () => {
+    document.body.innerHTML = '<main><div id="wrap"><img id="pic" alt="Poster" /></div></main>';
+    const wrap = document.getElementById('wrap');
+    const pic = document.getElementById('pic');
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    const rect = (top, height) => () => ({ top, bottom: top + height, left: 0, right: 400, width: 400, height, x: 0, y: top });
+    wrap.getBoundingClientRect = rect(100, 300);
+    pic.getBoundingClientRect = rect(120, 200);
+    const animation = timeAnimationFor(wrap);
+    document.getAnimations = () => [animation];
+    [wrap, pic].forEach((el) => { el.getAnimations = () => []; });
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    pic.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    expect(selection).toBeTruthy();
+    // Whatever node the click resolves to, the payload names the row that owns
+    // the animation — the UI never has to guess across the iframe boundary.
+    // (Truthiness first: `undefined === undefined` must never pass this test.)
+    expect(selection.payload.element.hostRowId).toBeTruthy();
+    expect(selection.payload.element.hostRowId).toBe(wrap.dataset.uncraftId);
+
+    window.postMessage = originalPostMessage;
+  });
+
+  it('describe-element returns full detail for a row WITHOUT touching the selection', () => {
+    document.body.innerHTML = '<main><h2 id="headline">Fertilizer, reinvented</h2></main>';
+    const headline = document.getElementById('headline');
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    headline.getBoundingClientRect = () => ({ top: 120, bottom: 180, left: 0, right: 400, width: 400, height: 60, x: 0, y: 120 });
+    const animation = timeAnimationFor(headline);
+    document.getAnimations = () => [animation];
+    headline.getAnimations = () => [animation];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    // Materialize row ids the way the UI receives them.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+    const selectionsBefore = messages.filter((message) => message.type === 'selection-changed').length;
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'describe-element', payload: { elementId: headline.dataset.uncraftId } },
+    }));
+
+    const described = messages.filter((message) => message.type === 'element-described').pop();
+    expect(described).toBeTruthy();
+    expect(described.payload.element.id).toBe(headline.dataset.uncraftId);
+    expect(described.payload.element.motion.length).toBe(1);
+    // Expanding a layer must never steal the user's selection.
+    expect(messages.filter((message) => message.type === 'selection-changed').length).toBe(selectionsBefore);
+
+    window.postMessage = originalPostMessage;
+  });
+
+  it('focus-element selects, scrolls an offscreen row into view and replays its time-driven clip once', () => {
+    vi.useFakeTimers();
+    document.body.innerHTML = '<main><div id="deep" class="promo-panel">Deep content</div></main>';
+    const deep = document.getElementById('deep');
+    window.innerHeight = 800;
+    window.innerWidth = 1440;
+    deep.getBoundingClientRect = () => ({ top: 2400, bottom: 2500, left: 0, right: 400, width: 400, height: 100, x: 0, y: 2400 });
+    deep.scrollIntoView = vi.fn();
+    const animation = timeAnimationFor(deep);
+    document.getAnimations = () => [animation];
+    deep.getAnimations = () => [animation];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    // Materialize row ids the way the UI receives them.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'inspect-viewport', payload: {} },
+    }));
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'focus-element', payload: { elementId: deep.dataset.uncraftId } },
+    }));
+
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    expect(selection.payload.element.id).toBe(deep.dataset.uncraftId);
+    expect(deep.scrollIntoView).toHaveBeenCalled();
+    // Replay waits for the smooth scroll to settle, then runs SCOPED (lesson 154:
+    // never drive the whole document's playback).
+    expect(animation.play).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(450);
+    expect(animation.play).toHaveBeenCalled();
+
+    vi.useRealTimers();
     window.postMessage = originalPostMessage;
   });
 });
