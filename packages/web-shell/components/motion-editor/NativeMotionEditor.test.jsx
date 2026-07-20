@@ -175,9 +175,12 @@ describe('motion panel — properties of the active animation', () => {
   });
 });
 
+// count: 2 → the rows carry a chevron. Single-animation rows render a spacer
+// instead (a chevron that expands nothing is noise) and open implicitly when
+// selected — covered by its own test below.
 const viewportRows = [
-  { elementId: 'el-a', label: 'Hero headline', kind: 'text', top: 0, count: 1, engines: ['ScrollTrigger'], driver: 'scroll', delayMs: 0, durationMs: 1000, marks: [0, 1] },
-  { elementId: 'el-b', label: 'Card image', kind: 'image', top: 100, count: 1, engines: ['CSS'], driver: 'time', delayMs: 0, durationMs: 500, marks: [] },
+  { elementId: 'el-a', label: 'Hero headline', kind: 'text', top: 0, count: 2, engines: ['ScrollTrigger'], driver: 'scroll', delayMs: 0, durationMs: 1000, marks: [0, 1] },
+  { elementId: 'el-b', label: 'Card image', kind: 'image', top: 100, count: 2, engines: ['CSS'], driver: 'time', delayMs: 0, durationMs: 500, marks: [] },
 ];
 
 describe('timeline canvas layout', () => {
@@ -481,19 +484,32 @@ describe('adapter (GSAP) keyframes on the timeline', () => {
     }],
   };
 
-  it('lets the user select an adapter keyframe and edit its value from the header', () => {
+  it('lets the user select an adapter keyframe and edit its value in the property label', () => {
+    // The value lives in ONE place: the property row's label field. Selecting a
+    // keyframe points the field at it; typing writes the keyframe back.
     const onValue = vi.fn();
     render(<TimelineHarness motion={adapterMotion} onChangeKeyframeValue={onValue} />);
     const keyframe = screen.getByRole('button', { name: 'x keyframe at 100 percent' });
     expect(keyframe.disabled).toBe(false);
     fireEvent.click(keyframe);
-    const valueField = screen.getByLabelText(/Keyframe value/);
+    const valueField = screen.getByLabelText('x keyframe value');
+    expect(valueField.value).toBe('100');
     fireEvent.change(valueField, { target: { value: '160' } });
     fireEvent.blur(valueField);
     expect(onValue).toHaveBeenCalledWith(
       { motionId: 'gsap-slide', property: 'x', offset: 1 },
       '160',
     );
+  });
+
+  it('single-animation rows carry no chevron; selecting them still reveals their tracks', () => {
+    const soloRows = [{ elementId: 'el-solo', label: 'Solo', kind: 'text', top: 0, count: 1, engines: ['WAAPI'], driver: 'time', delayMs: 0, durationMs: 1000, marks: [] }];
+    const { container, rerender } = render(
+      <TimelineHarness rows={soloRows} selectedElementId={null} onSelectElement={vi.fn()} />,
+    );
+    expect(screen.queryByRole('button', { name: /Expand Solo/ })).toBeNull();
+    rerender(<TimelineHarness rows={soloRows} selectedElementId="el-solo" onSelectElement={vi.fn()} />);
+    expect(container.querySelector('[data-track-row="opacity"]')).toBeTruthy();
   });
 
   it('blocks duplicate, delete and segment-curve for adapter keyframes — values are edited, never removed', () => {

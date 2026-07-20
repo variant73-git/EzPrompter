@@ -67,6 +67,14 @@ export function buildStripEditPatches({ motion, row, next = {} }) {
         return [{ property: 'timing.duration', before, value }];
       }
     }
+    // Dragging a GSAP start keyframe slides the clip: it edits DELAY.
+    if (next.delayMs != null && motion.capabilities?.timing) {
+      const before = Math.round(Number(motion.timing?.delay) || 0);
+      const value = Math.max(0, Math.round(Number(next.delayMs)));
+      if (Number.isFinite(value) && value !== before) {
+        return [{ property: 'timing.delay', before, value }];
+      }
+    }
     return [];
   }
   const resolved = (value, fallback) => {

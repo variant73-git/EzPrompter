@@ -335,7 +335,10 @@ function nativeMotionRuntimeBridge() {
       if (!timeline || typeof timeline.getChildren !== 'function') return [];
       const owner = safeHost(element);
       return timeline.getChildren(true, true, true).flatMap((animation, index) => {
-        const targets = typeof animation.targets === 'function' ? animation.targets() : [];
+        const targets = (typeof animation.targets === 'function' ? animation.targets() : [])
+          // A detached target no longer renders through this tween — its row
+          // must list the standalone clone instead.
+          .filter((target) => !(target instanceof Element) || !isDetached(animation, target));
         // Ownership mirrors the row model: a tween belongs to the host of its
         // own target — containers never absorb their children's tweens.
         const ownsTarget = targets.some((target) =>
@@ -524,6 +527,8 @@ function nativeMotionRuntimeBridge() {
           count: 0, engines: [], scrollDriven: false, timeDriven: false, scrollExotic: false,
           delayMs: Infinity, endMs: 0, marks: new Set(),
           scrollStart: Infinity, scrollEnd: -Infinity,
+          introStartMs: Infinity, introEndMs: -Infinity, introEligible: false,
+          links: new Set(), animKeys: new Set(),
         });
       }
       return index.get(element);
@@ -534,11 +539,15 @@ function nativeMotionRuntimeBridge() {
       record.endMs = Math.max(record.endMs, Math.max(0, delay) + Math.max(0, duration));
     };
     try {
-      (typeof document.getAnimations === 'function' ? document.getAnimations() : []).forEach((animation) => {
+      (typeof document.getAnimations === 'function' ? document.getAnimations() : []).forEach((animation, animationIndex) => {
         const target = animation?.effect?.target;
         if (!(target instanceof Element)) return;
         const record = entryFor(target);
         record.count += 1;
+        // Anonymous animations need an index in the seed — a shared fallback
+        // string would mint ONE id for two different animations on the same
+        // element, and the registry would route edits to the wrong one.
+        record.animKeys.add(motionIdFor(animation, 'css', `${ensureElementId(target)}:${animation.animationName || animation.id || `anim-${animationIndex}`}`));
         record.timeDriven = true;
         addEngine(record, 'CSS');
         const timing = animation.effect?.getTiming?.() || {};
@@ -552,14 +561,36 @@ function nativeMotionRuntimeBridge() {
       });
     } catch (_) {}
     try {
-      (window.gsap?.globalTimeline?.getChildren?.(true, true, true) || []).forEach((tween) => {
-        const targets = typeof tween.targets === 'function' ? tween.targets() : [];
+      (window.gsap?.globalTimeline?.getChildren?.(true, true, true) || []).forEach((tween, tweenIndex) => {
+        const rawTargets = typeof tween.targets === 'function' ? tween.targets() : [];
+        // Detached targets no longer render through this tween — skip them.
+        const targets = rawTargets.filter((target) => !(target instanceof Element) || !isDetached(tween, target));
+        const elementTargets = targets.filter((target) => target instanceof Element);
+        if (!elementTargets.length) return;
+        const trigger = tween.scrollTrigger || tween.vars?.scrollTrigger || null;
+        // Indexed fallback: two anonymous tweens on one element must never
+        // share an id (the WeakMap dedupes per OBJECT, not per seed).
+        const tweenKey = motionIdFor(tween, trigger ? 'scroll' : 'gsap', `${ensureElementId(elementTargets[0])}:${tween.vars?.id || `tween-${tweenIndex}`}`);
+        // One TIME tween animating SEVERAL elements chains their rows together —
+        // editing it moves all of them. Surface that link so the UI can show
+        // (and break) the chain. Scroll-driven groups are not offered: a clone
+        // without the ScrollTrigger would freeze instead of animating.
+        const sharedLinkId = !trigger && elementTargets.length > 1 ? tweenKey : null;
         targets.forEach((target) => {
           if (!(target instanceof Element)) return;
           const record = entryFor(target);
           record.count += 1;
-          const trigger = tween.scrollTrigger || tween.vars?.scrollTrigger || null;
+          record.animKeys.add(tweenKey);
           if (!trigger) record.timeDriven = true;
+          if (sharedLinkId) record.links.add(sharedLinkId);
+          if (!trigger) {
+            const span = introTweenSpans.get(tween);
+            if (span) {
+              record.introEligible = true;
+              record.introStartMs = Math.min(record.introStartMs, span.startMs);
+              record.introEndMs = Math.max(record.introEndMs, span.endMs);
+            }
+          }
           if (trigger) {
             record.scrollDriven = true;
             // A horizontal or custom-scroller trigger's pixels belong to another
@@ -658,10 +689,17 @@ function nativeMotionRuntimeBridge() {
         marks: new Set([...accumulator.marks, ...item.marks]),
         scrollStart: Math.min(accumulator.scrollStart, item.scrollStart),
         scrollEnd: Math.max(accumulator.scrollEnd, item.scrollEnd),
+        introStartMs: Math.min(accumulator.introStartMs, item.introStartMs),
+        introEndMs: Math.max(accumulator.introEndMs, item.introEndMs),
+        introEligible: accumulator.introEligible || item.introEligible,
+        links: new Set([...accumulator.links, ...item.links]),
+        animKeys: new Set([...accumulator.animKeys, ...item.animKeys]),
       } : item, null);
       if (!merged || !merged.count) return;
       const summary = {
-        count: merged.count,
+        // DISTINCT animations, not target-portions: one tween staggering 40
+        // letters is ONE animation — a chevron promising 40 was a lie.
+        count: merged.animKeys.size || merged.count,
         engines: merged.engines,
         driver: merged.scrollDriven ? 'scroll' : 'time',
         timeDriven: merged.timeDriven === true,
@@ -672,6 +710,10 @@ function nativeMotionRuntimeBridge() {
         scrollEnd: Number.isFinite(merged.scrollEnd) ? Math.round(merged.scrollEnd) : null,
         scrollEditable: merged.scrollDriven && !merged.scrollExotic
           && Number.isFinite(merged.scrollStart) && Number.isFinite(merged.scrollEnd),
+        introEligible: merged.introEligible === true && !merged.scrollDriven,
+        introStartMs: Number.isFinite(merged.introStartMs) ? Math.round(merged.introStartMs) : null,
+        introEndMs: Number.isFinite(merged.introEndMs) ? Math.round(merged.introEndMs) : null,
+        links: Array.from(merged.links),
       };
       let top = 0;
       try { top = Math.round(element.getBoundingClientRect().top); } catch (_) {}
@@ -712,6 +754,13 @@ function nativeMotionRuntimeBridge() {
         scrollStart,
         scrollEnd,
         scrollEditable: summary.scrollEditable === true,
+        // Intro rows live on the TIME segment before the page-scroll axis:
+        // load-time animations on elements that were on screen at scroll 0.
+        isIntro: summary.introEligible && summary.driver === 'time' && scrollStart === 0
+          && summary.introStartMs != null && summary.introEndMs != null,
+        introStartMs: summary.introStartMs,
+        introEndMs: summary.introEndMs,
+        links: summary.links,
       });
     });
 
@@ -747,6 +796,9 @@ function nativeMotionRuntimeBridge() {
     // Idempotent, and repeated here because GSAP may finish loading AFTER the
     // bridge was installed.
     syncEditConventions();
+    // Latch the load-time schedule BEFORE anything replays or scrubs it — the
+    // intro lane's positions must come from the page's own opening sequence.
+    registerIntroTimeline();
     const page = pageMetrics();
     // A real layout change (content grew/shrank) invalidates latched reveal
     // points; plain scrolling never does.
@@ -843,6 +895,12 @@ function nativeMotionRuntimeBridge() {
     if (vars.runBackwards) {
       throw new Error('gsap.from() keyframes are read-only — vars hold the start, not the end.');
     }
+    // A staggered tween is a facade over internal per-target tweens: writing
+    // vars/startAt on it silently changes NOTHING (probe-verified — the edit
+    // read back the old value). Fail loudly and point at the way out.
+    if (vars.stagger != null) {
+      throw new Error('This value is shared by a staggered group — unchain the layer (chain icon) to edit it independently.');
+    }
     const offset = Math.max(0, Math.min(1, Number(descriptor?.offset) || 0));
     if (descriptor?.exists === false) {
       if (offset <= 0.001 && vars.startAt) delete vars.startAt[property];
@@ -858,6 +916,95 @@ function nativeMotionRuntimeBridge() {
       throw new Error('Intermediate GSAP keyframes are not editable on this tween yet.');
     }
     invalidatePreservingStart(animation);
+  }
+
+  // Break ONE element out of a shared multi-target tween (stagger chains like
+  // the four `.green-line` bars): mint an equivalent standalone tween for this
+  // element, then remove the element from the shared one. The siblings keep
+  // their animation; the detached element gets its own independent control.
+  function detachCloneId(rowTargets) {
+    return `gsap-${hash(`${ensureElementId(rowTargets[0])}:detached`)}`;
+  }
+
+  function detachElementFromSharedTween(record, element) {
+    const gsap = window.gsap;
+    const tween = record.animation;
+    if (!gsap || !tween || typeof tween.targets !== 'function') {
+      throw new Error('This animation cannot be detached.');
+    }
+    if (tween.scrollTrigger || tween.vars?.scrollTrigger) {
+      throw new Error('This group rides a scroll trigger — unchaining scroll-driven groups is not supported yet.');
+    }
+    const targets = tween.targets().filter((item) => item instanceof Element && !isDetached(tween, item));
+    // The row may own SEVERAL of the tween's targets (split-text fragments):
+    // the whole element detaches, or unchaining a headline would strand all
+    // but its first letter in the shared tween.
+    const rowTargets = targets.filter((item) => item === element || element.contains(item));
+    if (!rowTargets.length || rowTargets.length === targets.length) {
+      throw new Error('This element is not part of a shared animation.');
+    }
+    const progress = finite(tween.progress?.());
+    const vars = { ...(tween.vars || {}) };
+    [
+      'scrollTrigger', 'id', 'parent', 'paused', 'delay', 'duration', 'overwrite',
+      'onComplete', 'onStart', 'onUpdate', 'onRepeat', 'onReverseComplete', 'onInterrupt', 'callbackScope',
+    ].forEach((key) => delete vars[key]);
+    if (rowTargets.length === 1) delete vars.stagger;
+    // A staggered facade lies about timing: duration() is the FULL SPAN
+    // (duration + spread — probe-verified 0.95 for 0.5+3×0.15) and delay()
+    // drops the target's slot. The inner timeline holds the per-target truth.
+    const inner = tween.timeline && typeof tween.timeline.getChildren === 'function'
+      ? tween.timeline.getChildren() : null;
+    const innerChild = inner
+      ? inner.find((child) => { try { return (child.targets?.() || []).includes(rowTargets[0]); } catch (_) { return false; } })
+      : null;
+    const clone = gsap.to(rowTargets.length === 1 ? rowTargets[0] : rowTargets, {
+      ...vars,
+      duration: Math.max(0.001, innerChild ? finite(innerChild.duration?.(), finite(tween.duration?.())) : finite(tween.duration?.())),
+      delay: Math.max(0, finite(tween.delay?.()) + (innerChild ? finite(innerChild.startTime?.()) : 0)),
+      paused: true,
+    });
+    try { clone.progress(progress, true); } catch (_) {}
+    rowTargets.forEach((item) => { try { tween.kill(item); } catch (_) {} });
+    const detachedSet = detachedTargets.get(tween) || new Set();
+    rowTargets.forEach((item) => detachedSet.add(item));
+    detachedTargets.set(tween, detachedSet);
+    const cloneId = motionIdFor(clone, 'gsap', `${ensureElementId(rowTargets[0])}:detached`);
+    motionRegistry.set(cloneId, { type: 'gsap', animation: clone, scrollTrigger: null });
+    // Keep the intro lane coherent: the clone inherits the original tween's
+    // latched span, so its strip stays put and intro scrub keeps driving it.
+    const span = introTweenSpans.get(tween);
+    if (span) {
+      introTweenSpans.set(clone, span);
+      introRoots.set(clone, {
+        startSec: span.startMs / 1000,
+        durSec: Math.max(0.001, finite(clone.totalDuration?.(), finite(clone.duration?.()))),
+      });
+    }
+  }
+
+  // Undo of link.detach. Probe-verified on real GSAP 3.15: invalidate() on a
+  // PLAIN multi-target tween rebuilds PropTweens for a target removed with
+  // kill(target) — but a STAGGERED tween's internal child stays dead, so a
+  // staggered unchain is honestly irreversible without a reload.
+  function relinkElementToSharedTween(record, element) {
+    const tween = record.animation;
+    const set = detachedTargets.get(tween);
+    const rowTargets = set ? Array.from(set).filter((item) => item === element || element.contains(item)) : [];
+    if (!rowTargets.length) throw new Error('This element is not detached from this animation.');
+    if ((tween.vars || {}).stagger != null) {
+      throw new Error('A staggered group cannot be re-chained after unchaining — reload the page to restore it.');
+    }
+    const cloneId = detachCloneId(rowTargets);
+    const cloneRecord = motionRegistry.get(cloneId);
+    if (cloneRecord?.animation) {
+      introRoots.delete(cloneRecord.animation);
+      try { cloneRecord.animation.kill(); } catch (_) {}
+    }
+    motionRegistry.delete(cloneId);
+    rowTargets.forEach((item) => set.delete(item));
+    if (!set.size) detachedTargets.delete(tween);
+    invalidatePreservingStart(tween);
   }
 
   function applyMotionPatch(patch, element) {
@@ -899,8 +1046,8 @@ function nativeMotionRuntimeBridge() {
       const playbackMode = ['loop', 'ping-pong'].includes(value) ? value : 'once';
       animation.repeat?.(playbackMode === 'once' ? 0 : -1);
       animation.yoyo?.(playbackMode === 'ping-pong');
-    } else if (patch.property === 'timing.duration') animation.duration?.(Math.max(0, Number(value)) / 1000);
-    else if (patch.property === 'timing.delay') animation.delay?.(Number(value) / 1000);
+    } else if (patch.property === 'timing.duration') { animation.duration?.(Math.max(0, Number(value)) / 1000); refreshIntroLatch(animation); }
+    else if (patch.property === 'timing.delay') { animation.delay?.(Number(value) / 1000); refreshIntroLatch(animation); }
     else if (patch.property === 'timing.iterations') animation.repeat?.(Math.max(0, Number(value) - 1));
     else if (patch.property === 'timing.repeatDelay') animation.repeatDelay?.(Math.max(0, Number(value)) / 1000);
     else if (patch.property === 'timing.yoyo') animation.yoyo?.(Boolean(value));
@@ -924,6 +1071,9 @@ function nativeMotionRuntimeBridge() {
         const parsed = window.gsap?.parseEase?.(value);
         if (parsed) animation._ease = parsed;
       } catch (_) {}
+    } else if (patch.property === 'link.detach') {
+      if (value && value.detached === true) detachElementFromSharedTween(record, element);
+      else relinkElementToSharedTween(record, element);
     } else {
       throw new Error(`Unsupported GSAP motion property: ${patch.property}`);
     }
@@ -1084,6 +1234,120 @@ function nativeMotionRuntimeBridge() {
   // replay (measured live: 27 → 15 children after one scroll-through). While
   // editing, keep them parked instead; the flag is restored on preview/exit.
   let siteAutoRemoveChildren = null;
+
+  function gsapChainRoot(animation) {
+    const timeline = window.gsap && window.gsap.globalTimeline;
+    let root = animation;
+    try {
+      while (root && root.parent && root.parent !== timeline) root = root.parent;
+    } catch (_) {}
+    return root || animation;
+  }
+
+  // ---- Intro lane (edit-mode convention) -------------------------------------------
+  // Animations that PLAY AT LOAD (preloader, transition wipes, hero text) are
+  // shown as a sequential time segment BEFORE the page-scroll axis, instead of
+  // stacking on top of the hero at scroll 0. Their positions are LATCHED at
+  // registration (page-load schedule) so strips never move, even after the
+  // replay convention re-schedules the live tweens. Nothing persists: the lane
+  // only drives edit-mode preview; save/export read the site's own timing.
+  const introRoots = new Map(); // root → { startSec, durSec }
+  const introTweenSpans = new WeakMap(); // tween → { startMs, endMs }
+  // Targets broken out of a shared tween. GSAP's kill(target) stops rendering
+  // the target (probe-verified) but targets() still lists it — track detached
+  // pairs here so rows and links read the tween's LIVE reach.
+  const detachedTargets = new WeakMap(); // tween → Set(elements)
+  function isDetached(tween, target) {
+    const set = detachedTargets.get(tween);
+    return set ? set.has(target) : false;
+  }
+  // Roots the edit conventions already re-scheduled (replay restarts move
+  // startTime) — a root seen once must never re-latch from its moved schedule.
+  const introRejectedRoots = new WeakSet();
+  function registerIntroTimeline() {
+    const timeline = window.gsap && window.gsap.globalTimeline;
+    if (!timeline || typeof timeline.getChildren !== 'function') return;
+    try {
+      // Incremental: sites mint tweens late (post-preloader heroes). NEW roots
+      // latch from their live schedule; roots already latched (or already
+      // rejected) keep their first-seen truth so replays can't move strips.
+      timeline.getChildren(true, true, true).forEach((tween) => {
+        try {
+          if (introTweenSpans.has(tween)) return;
+          if (tween.scrollTrigger || tween.vars?.scrollTrigger) return;
+          const root = gsapChainRoot(tween);
+          if (introRejectedRoots.has(root)) return;
+          const isNewRoot = !introRoots.has(root);
+          if (isNewRoot) {
+            if (root.scrollTrigger || root.vars?.scrollTrigger
+              // Author-paused chains that never ran are interaction-armed
+              // (menus); endless loops (marquees) are ambient, not an intro.
+              || (root.paused?.() && (root.totalTime?.() || 0) === 0)
+              || root.repeat?.() === -1) {
+              introRejectedRoots.add(root);
+              return;
+            }
+            const totalDuration = root.totalDuration?.();
+            introRoots.set(root, {
+              startSec: Math.max(0, finite(root.startTime?.())),
+              durSec: Number.isFinite(totalDuration) ? totalDuration : finite(root.duration?.()),
+            });
+          }
+          if (tween.repeat?.() === -1) return;
+          // A late child under an already-replayed root would latch from the
+          // MOVED schedule — only trust roots still on their original slot.
+          if (!isNewRoot && Math.abs(finite(root.startTime?.()) - introRoots.get(root).startSec) > 0.05) return;
+          const startMs = Math.max(0, finite(typeof tween.globalTime === 'function' ? tween.globalTime(0) : 0) * 1000);
+          const totalDuration = tween.totalDuration?.();
+          const durMs = Math.max(0, (Number.isFinite(totalDuration) ? totalDuration : finite(tween.duration?.())) * 1000);
+          introTweenSpans.set(tween, { startMs, endMs: startMs + durMs });
+        } catch (_) {}
+      });
+    } catch (_) {}
+  }
+
+  // A timing edit on an intro tween must reshape its latched lane span, or the
+  // strip snaps back and the scrub clamps to the stale duration.
+  function refreshIntroLatch(animation) {
+    const span = introTweenSpans.get(animation);
+    if (span) {
+      const totalDuration = animation.totalDuration?.();
+      const durMs = Math.max(0, (Number.isFinite(totalDuration) ? totalDuration : finite(animation.duration?.())) * 1000);
+      introTweenSpans.set(animation, { startMs: span.startMs, endMs: span.startMs + durMs });
+    }
+    const root = gsapChainRoot(animation);
+    const meta = introRoots.get(root);
+    if (meta) {
+      const totalDuration = root.totalDuration?.();
+      meta.durSec = Number.isFinite(totalDuration) ? totalDuration : finite(root.duration?.());
+    }
+  }
+
+  function scrubIntroTo(timeMs) {
+    if (mode !== 'edit') return;
+    registerIntroTimeline();
+    const targetSec = Math.max(0, Number(timeMs) || 0) / 1000;
+    introRoots.forEach((meta, root) => {
+      try {
+        if (!root || !root.totalTime) return;
+        // The lane axis is in load-time GLOBAL seconds; the root's clock runs
+        // in local seconds — a timeScale (site's or our speed control) scales
+        // between the two.
+        const scale = Math.max(0.0001, finite(root.timeScale?.(), 1) || 1);
+        const local = Math.max(0, Math.min(meta.durSec, (targetSec - meta.startSec) * scale));
+        root.pause?.();
+        root.totalTime(local, true);
+      } catch (_) {}
+    });
+  }
+
+  // Leaving edit mode hands the clock back to the site: scrub-parked intros
+  // play out to their natural end state.
+  function releaseIntroScrub() {
+    introRoots.forEach((_meta, root) => {
+      try { if (root.paused?.()) root.play?.(); } catch (_) {}
+    });
+  }
   function syncEditConventions() {
     try {
       const timeline = window.gsap && window.gsap.globalTimeline;
@@ -1160,6 +1424,9 @@ function nativeMotionRuntimeBridge() {
     rowCache.forEach((entry) => {
       // Mixed rows (scroll + time clips) replay their TIME clips too.
       if (entry.driver !== 'time' && entry.timeDriven !== true) return;
+      // Intro rows are scrubbed through the intro lane — re-triggering them on
+      // every pass over scroll 0 was what kept "eating the hero".
+      if (entry.isIntro) return;
       if (!entry.host || !entry.host.isConnected) return;
       const at = Number(entry.scrollStart) || 0;
       const crossed = (previous < at && now >= at) || (previous > at && now <= at);
@@ -1416,7 +1683,10 @@ function nativeMotionRuntimeBridge() {
         applyMotionPatch(patch, element);
       }
     } catch (error) {
-      if (!quiet) emit('patch-rejected', { patch, error: error?.message || 'The change could not be applied.' });
+      // Rejections must NEVER be quiet — a swallowed failure in a batch (undo,
+      // saved-patch replay) leaves the host history claiming a write that the
+      // runtime refused.
+      emit('patch-rejected', { patch, error: error?.message || 'The change could not be applied.' });
       return;
     }
     refreshRuntime();
@@ -1461,10 +1731,22 @@ function nativeMotionRuntimeBridge() {
           if (action === 'play') animation.play();
           if (action === 'restart') { animation.currentTime = 0; animation.play(); }
         } else {
-          animation.timeScale?.(speed);
-          if (action === 'pause') animation.pause?.();
-          if (action === 'play') animation.play?.();
-          if (action === 'restart') animation.restart?.();
+          // A tween inside a paused/completed parent timeline never renders on
+          // its own — the chain ROOT owns the clock (probe-verified: intro
+          // tweens report running while their root sits paused at 0). Drive
+          // the root, unless the root is scroll-owned.
+          const root = gsapChainRoot(animation);
+          const clock = (root !== animation && !(root.scrollTrigger || root.vars?.scrollTrigger)) ? root : animation;
+          clock.timeScale?.(speed);
+          if (action === 'pause') clock.pause?.();
+          if (action === 'play') {
+            if ((clock.progress?.() || 0) >= 1) clock.restart?.(true, true);
+            else clock.play?.();
+          }
+          if (action === 'restart') clock.restart?.(true, true);
+          // Scrubbing pauses the SELECTED tween (seekTimeline) — a paused child
+          // inside a playing root never advances, so play must unpause it too.
+          if (clock !== animation && (action === 'play' || action === 'restart')) animation.play?.();
         }
       } catch (_) {}
       emit('playback-changed', { action, speed, motionId });
@@ -1533,11 +1815,19 @@ function nativeMotionRuntimeBridge() {
     const animation = record.animation;
     const delay = Math.max(0, finite(animation.delay?.()) * 1000);
     const duration = Math.max(1, finite(animation.duration?.(), 0.001) * 1000);
+    // paused() lies for nested tweens: a child of a paused/completed timeline
+    // reports unpaused while nothing renders. isActive() reflects the CHAIN —
+    // plus the delay window: a delayed child of a running root is still
+    // "playing" from the user's seat, not paused.
+    const root = gsapChainRoot(animation);
+    const chainRunning = root !== animation && typeof root.isActive === 'function' && root.isActive();
+    const active = (typeof animation.isActive === 'function' ? animation.isActive() : !animation.paused?.())
+      || (chainRunning && !animation.paused?.() && (animation.totalProgress?.() || 0) < 1);
     return {
       motionId,
       currentTime: Math.max(0, Math.min(delay + duration, delay + finite(animation.time?.()) * 1000)),
       duration: delay + duration,
-      playState: animation.paused?.() ? 'paused' : 'running',
+      playState: active ? 'running' : 'paused',
       speed,
     };
   }
@@ -1601,6 +1891,7 @@ function nativeMotionRuntimeBridge() {
       mode = payload.mode === 'preview' ? 'preview' : 'edit';
       document.documentElement.dataset.uncraftEditorMode = mode;
       syncEditConventions();
+      if (mode === 'preview') releaseIntroScrub();
       emit('mode-changed', { mode });
     } else if (message.type === 'set-tool') {
       tool = payload.tool === 'move' ? 'move' : 'select';
@@ -1633,6 +1924,9 @@ function nativeMotionRuntimeBridge() {
       // The timeline ruler drives the site: the page's own scroll IS the playhead.
       const target = Math.max(0, Number(payload.scrollY) || 0);
       try { window.scrollTo(0, target); } catch (_) {}
+    } else if (message.type === 'scrub-intro') {
+      // Playhead inside the intro lane: scrub the load-time sequence by TIME.
+      scrubIntroTo(payload.timeMs);
     } else if (message.type === 'refresh') {
       revealAtCache.clear();
       rowCache.clear();

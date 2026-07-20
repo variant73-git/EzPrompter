@@ -675,6 +675,36 @@
   transform: translateX(4px);
 }
 
+/* Intro lane: the page's load sequence, shown as a time segment BEFORE the
+   scroll axis. Shaded on the ruler; a hairline marks the boundary. */
+.introRegion {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 0 6px 2px 0;
+  background: rgba(127, 191, 143, 0.08);
+  border-right: 1px solid rgba(127, 191, 143, 0.4);
+  color: rgba(127, 191, 143, 0.75);
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.introBoundary {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(127, 191, 143, 0.28);
+  pointer-events: none;
+}
+
 .rulerTrack > span > i {
   width: 1px;
   height: 4px;
@@ -687,8 +717,10 @@
   gap: 3px;
 }
 
+/* Labels column is SOLID: it sits sticky over scrolling strips, so any alpha
+   here lets track content ghost through (#243049 = accent 22% over panel). */
 .rowLabel[data-cell='layer'][data-selected='true'] {
-  background: rgba(41, 102, 234, 0.22);
+  background: #243049;
   color: #fff;
 }
 
@@ -723,6 +755,37 @@
 
 .layerChevron:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+
+/* Keeps single-animation rows aligned with expandable ones. */
+.layerChevronSpacer {
+  width: 16px;
+  flex: 0 0 auto;
+}
+
+/* Chain between rows animated by ONE shared tween — click breaks the link. */
+.linkChain {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #7fbf8f;
+  cursor: pointer;
+}
+
+.linkChain svg {
+  width: 10px;
+  height: 10px;
+}
+
+.linkChain:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #a4dcb2;
 }
 
 .layerName {
@@ -761,7 +824,7 @@
 }
 
 .rowLabel[data-cell='clip'][data-selected='true'] {
-  background: rgba(41, 102, 234, 0.22);
+  background: #243049;
   color: #fff;
 }
 
@@ -826,7 +889,7 @@
 
 .rowLabel[data-cell='property'][data-selected='true'] {
   color: var(--motion-secondary);
-  background: rgba(241, 240, 235, 0.04);
+  background: #2a2a28;
 }
 
 .propertyName {
@@ -887,6 +950,32 @@
   font-size: 8px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The value IS the field: edits here write to the keyframe under the playhead. */
+.propertyValueInput {
+  width: 52px;
+  height: 18px;
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--motion-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8px;
+  text-align: right;
+}
+
+.propertyValueInput:hover {
+  border-color: var(--motion-line);
+}
+
+.propertyValueInput:focus {
+  border-color: var(--motion-accent);
+  background: var(--motion-panel);
+  color: var(--motion-text);
+  outline: none;
 }
 
 .rowLabel[data-cell='empty'] {
@@ -2400,30 +2489,6 @@
 /* Layers: one row per element on screen, expanding into its property tracks. */
 .timelineLayerGroup { display: flex; flex-direction: column; }
 .timelineCanvasGroup { display: flex; flex-direction: column; }
-
-.keyframeValueField {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: 6px;
-}
-
-.keyframeValueField span {
-  color: var(--motion-muted);
-  font-size: 9px;
-  white-space: nowrap;
-}
-
-.keyframeValueField input {
-  width: 74px;
-  height: 24px;
-  padding: 0 7px;
-  color: var(--motion-text);
-  border: 1px solid var(--motion-line);
-  border-radius: 6px;
-  background: var(--motion-panel);
-  font-size: 10px;
-}
 
 .timelineStripHandle {
   position: absolute;
