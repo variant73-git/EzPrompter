@@ -633,7 +633,10 @@ Ferramenta de **inspiração e aprendizado** — designer edita para criar algo 
 - Botão de reset visível no `cnode-topbar` durante e fora da edição. Modal de confirmação obrigatório.
 - Durante edição: fecha editor primeiro (`onEditingChange(false)` + 120ms wait) antes de swap srcDoc — evita o `targetDoc` cached do editor virar stale ao replace do iframe content.
 
-## Setup de memória (sessão 2026-05-28)
+## Setup de memória (atualizado 2026-07-19)
+**mem0 DESINSTALADO em 2026-07-19** (plugin `mem0@mem0-plugins` removido via `claude plugin uninstall`). Motivo: redundância com custo — os hooks injetavam ~100-150 tokens por mensagem e a busca semântica não era usada; o sistema nativo (MEMORY.md + checkpoints) + vault Brain cobre tudo (ver `docs/superpowers/handoffs/2026-07-19-compaction-and-memory-handoff.md` §4). As 148 memórias seguem na nuvem do mem0 e `~/.mem0/` (config + API key) foi preservado — reinstalar é 1 comando se um dia fizer falta. Fonte de verdade de memória: **nativo + vault**, apenas.
+
+### Histórico (obsoleto — sessão 2026-05-28)
 Sistemas nativo e mem0 rodam em paralelo. O hook `block_memory_write.sh` do plugin mem0 (PreToolUse Write|Edit) foi neutralizado em `~/.claude/plugins/cache/mem0-plugins/mem0/0.2.4/scripts/` — substituído por `exit 0`, original preservado em `.bak`. **Quando o plugin mem0 atualizar de versão, o cache vai ser recriado e o bloqueio volta**. Pra re-aplicar a neutralização: `cp block_memory_write.sh.bak block_memory_write.sh` no path novo (ajustar versão). Native auto-memory escreve MEMORY.md + arquivos `.md` em `~/.claude/projects/.../memory/`; mem0 mantém busca semântica + skills + API HTTP fallback (key em `~/.mem0/config.json`).
 
 ## Regras de desenvolvimento
