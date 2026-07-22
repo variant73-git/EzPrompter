@@ -310,6 +310,33 @@ async function inlineStylesheets(html, baseUrl, page, captureWidth, captureHeigh
   return out;
 }
 
+// Lazy-load/LQIP sites swap a tiny blurred placeholder for the real asset
+// AFTER networkidle fires, so a fixed post-load wait races the swap and
+// ~half the captures ship a glitched (blurred) hero image. Wait until every
+// visible <img> is complete AND decoded, capped so chatty sites can't hang
+// the capture. Safe no-op on pages without images.
+async function waitForImagesSettled(page, capMs = 6000) {
+  await page.evaluate((cap) => {
+    const imgs = Array.from(document.images).filter((img) => {
+      const r = img.getBoundingClientRect();
+      return r.width > 1 && r.height > 1;
+    });
+    const settled = imgs.map((img) => {
+      if (img.complete && img.naturalWidth > 1) {
+        return img.decode ? img.decode().catch(() => {}) : Promise.resolve();
+      }
+      return new Promise((res) => {
+        img.addEventListener('load', res, { once: true });
+        img.addEventListener('error', res, { once: true });
+      }).then(() => (img.decode ? img.decode().catch(() => {}) : undefined));
+    });
+    return Promise.race([
+      Promise.all(settled),
+      new Promise((res) => setTimeout(res, cap))
+    ]);
+  }, capMs).catch(() => {});
+}
+
 // Probe the loaded page for signals that the site is a JS-driven scroll
 // narrative — the static capture path produces a broken render for these
 // (only the hero shows, sticky sections collapse, animation tracks render
@@ -368,6 +395,7 @@ export async function captureSnapshot(url, opts = {}) {
       await page.goto(url, { waitUntil: 'load', timeout: NAV_TIMEOUT_MS });
     });
     await page.waitForTimeout(RENDER_WAIT_MS);
+    await waitForImagesSettled(page);
 
     // Bot-protection interstitial check. Cloudflare/hCaptcha/Akamai/PerimeterX
     // serve a tiny challenge page in front of the real site. Capturing that
@@ -495,6 +523,7 @@ export async function captureSnapshot(url, opts = {}) {
     // Reset scroll just for the screenshot — HTML already captured.
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.waitForTimeout(300);
+    await waitForImagesSettled(page, 3000);
     const screenshot = await page.screenshot({ type: 'png', fullPage: false });
     const screenshotDataUrl = `data:image/png;base64,${screenshot.toString('base64')}`;
 

@@ -20,7 +20,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 import { recordUsage } from './billing/context.js';
 
-const DEFAULT_MODEL = process.env.UNCRAFT_LLM_MODEL || 'claude-sonnet-4-6';
+// Design-MD extraction is an EASY task (read HTML, distill a markdown spec)
+// — it gets the cheapest capable model by default, per the task-tier
+// principle (easy task = cheapest path; the chat picker/tier ladder governs
+// the agent, not this seam). UNCRAFT_EXTRACT_MODEL pins this seam alone;
+// UNCRAFT_LLM_MODEL remains the global override for all LLM seams.
+const DEFAULT_MODEL = process.env.UNCRAFT_EXTRACT_MODEL || process.env.UNCRAFT_LLM_MODEL || 'gemini-2.5-flash';
 
 // Soft input cap — captured enterprise pages can carry megabytes of
 // inlined CSS/SVG. The design system is fully expressed long before

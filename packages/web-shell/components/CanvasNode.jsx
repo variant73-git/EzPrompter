@@ -1047,17 +1047,23 @@ export default function CanvasNode({
         handler = (e) => {
           const z = window.__uncraftZoom;
           if (!z) return;
-          e.preventDefault();
-          e.stopPropagation();
           if (e.metaKey || e.ctrlKey) {
+            e.preventDefault();
+            e.stopPropagation();
             const rect = iframe.getBoundingClientRect();
             const s = z.getScale ? z.getScale() : 1;
             const cx = rect.left + (e.clientX || 0) * s;
             const cy = rect.top + (e.clientY || 0) * s;
             z.zoomAtPoint?.(e.deltaY || 0, cx, cy);
-          } else if (!editing) {
-            z.panBy?.(-(e.deltaX || 0), -(e.deltaY || 0));
+            return;
           }
+          // Edit mode: plain wheel belongs to the SITE — let it scroll
+          // natively so the user can move through the page while editing.
+          // (The old behavior consumed it and the page felt frozen.)
+          if (editing) return;
+          e.preventDefault();
+          e.stopPropagation();
+          z.panBy?.(-(e.deltaX || 0), -(e.deltaY || 0));
         };
         doc._uncraftWheel = handler;
         doc.addEventListener('wheel', handler, { passive: false, capture: true });

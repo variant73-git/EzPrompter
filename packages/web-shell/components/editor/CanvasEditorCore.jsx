@@ -193,14 +193,36 @@ export default function CanvasEditorCore({ iframe, node, boardId, onExit, onSnap
     transportRef.current = transport;
 
     let cancelled = false;
-    bootEditor({
-      targetDoc: iframe.contentDocument,
-      targetWin: iframe.contentWindow,
-      transport,
-      boardId,
-      nodeId: node.id,
-      kind: node.kind
-    })
+    // Large srcDoc snapshots (multi-MB static captures) parse for a while
+    // after contentDocument first exists — booting then hands the editor a
+    // document with no <body>, rebuild() throws, and the panels come up
+    // empty with only the banner built. Wait for parse to finish, and
+    // re-read contentDocument at boot time (srcDoc swaps replace the doc).
+    const waitForTargetReady = () => new Promise((resolve, reject) => {
+      const started = Date.now();
+      const check = () => {
+        if (cancelled) return reject(new Error('boot aborted'));
+        let d = null;
+        try { d = iframe.contentDocument; } catch { /* cross-origin mid-swap */ }
+        // body.children > 0 matters: srcDoc iframes surface a transient
+        // blank document (readyState 'complete', empty body) BEFORE the
+        // real parsed document swaps in — booting against it leaves the
+        // editor holding a ghost doc while the site loads elsewhere.
+        if (d && d.readyState !== 'loading' && d.body && d.body.children.length > 0) return resolve();
+        if (Date.now() - started > 30000) return reject(new Error('site content never finished loading'));
+        setTimeout(check, 50);
+      };
+      check();
+    });
+    waitForTargetReady()
+      .then(() => bootEditor({
+        targetDoc: iframe.contentDocument,
+        targetWin: iframe.contentWindow,
+        transport,
+        boardId,
+        nodeId: node.id,
+        kind: node.kind
+      }))
       .then(() => { if (!cancelled) setStatus('active'); })
       .catch((e) => {
         if (!cancelled) {

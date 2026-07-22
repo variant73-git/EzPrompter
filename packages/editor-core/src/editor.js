@@ -1354,6 +1354,19 @@
     var b = mk('div');
     b.id = 'rb-ed-banner';
 
+    // Canvas edit-mode is Mode A only — the extension's mode switcher
+    // (Mirror / AI Vision / S2H…) has no meaning there and reads as legacy
+    // UI. Build just the close affordance and skip the whole widget.
+    if (isCanvasMode()) {
+      var xc = mk('button');
+      xc.id = 'rb-ed-banner-close';
+      xc.innerHTML = CLOSE;
+      xc.addEventListener('mousedown', function(e) { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); deactivate(); }, {signal: sig, capture: true});
+      b.appendChild(xc);
+      root.appendChild(b);
+      return;
+    }
+
     // Trigger button shows the active mode; clicking toggles the dropdown.
     var trigger = mk('button', 'rb-ed-mode-trigger');
     trigger.id = 'rb-ed-mode-trigger';

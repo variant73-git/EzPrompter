@@ -17,7 +17,10 @@ import { GoogleGenAI } from '@google/genai';
 import { HOUSE_STYLE_GUARDRAILS, HOUSE_STYLE_ABSORB } from './design/house-style.js';
 import { recordUsage } from './billing/context.js';
 
-const DEFAULT_MODEL = process.env.UNCRAFT_LLM_MODEL || 'claude-sonnet-4-6';
+// This seam only speaks Anthropic/Gemini — a global UNCRAFT_LLM_MODEL set to
+// an OpenAI model (compose's intended default) would misroute here into the
+// Gemini branch and 404. UNCRAFT_RESTYLE_MODEL pins this seam independently.
+const DEFAULT_MODEL = process.env.UNCRAFT_RESTYLE_MODEL || process.env.UNCRAFT_LLM_MODEL || 'claude-sonnet-4-6';
 
 // Reskin/inject preserve the reference's exact design tokens, so only the
 // always-on guardrails apply here (the INVENT directives are for from-scratch
