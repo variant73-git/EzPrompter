@@ -140,6 +140,7 @@ Editor de animações (GSAP/ScrollTrigger/Lottie/WAAPI) dentro do canvas. **Font
 153. Motion editor 6b–6e (grouping, régua única, strips, keyframes, export Framer) — [[checkpoint_2026-07-19_motion-editor-phases]]
 154. Motion editor: motor + clone-fixture + harness adversarial Codex — [[checkpoint_2026-07-19_motion-editor-phases]]
 155. Timeline Figma Motion (scroller único/labels sticky, full-page rows por CHEGADA, ownership, replay-on-pass edit-mode, tudo clicável) + review Claude×Sol com 11 fixes — [[checkpoint_2026-07-20_motion-timeline-figma]]; handoff `docs/superpowers/handoffs/2026-07-20-motion-timeline-figma-handoff.md`
+156. house-style.js → SWITCHBOARD de 38 critérios com chave `on` cada (env `UNCRAFT_HOUSESTYLE_OFF/_ON`, `listCriteria`/`setCriterion`/`buildHouseStyle`); decisões anti-slop 37-53 aplicadas como defaults; auditoria de 11 skills (6 anti-slop + gsap/motion-design/genjutsu/design-dna/threejs) + arquitetura de geração criativa DECOMPOSTA (Sol brief → executor barato + skills → verify) + Ditto como substrato determinístico — [[checkpoint_2026-07-22_skills-audit-decomposition-housestyle]]; handoff `docs/superpowers/handoffs/2026-07-22-skills-audit-housestyle-switchboard-handoff.md`
 
 ## Lições permanentes (destiladas dos checkpoints — valem sempre)
 - **Anthropic billing**: assinatura claude.ai NÃO credita a API — buckets separados (119).
