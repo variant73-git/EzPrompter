@@ -21,7 +21,13 @@
   · compose=`GPT-5.5` (A/B: modelo forte compra COMPOSIÇÃO, não fidelidade de
   token — flash acerta paleta mas empilha; GPT-5.5 desenha).
 
-## Achado do Sol (confirmar e corrigir — PENDENTE, invasivo)
+> **✅ RESOLVIDO em 2026-07-22 (branch `fix/agent-failover-policy`, 4 commits:
+> 356dceae witness → 1bbc68e2 taxonomia+breaker → 698dfebe política por
+> operação → e36631a5 review round).** Ver seção "Estado pós-fix" no fim
+> deste doc para o que entrou, o que foi rejeitado com razão, e as
+> pendências que sobraram.
+
+## Achado do Sol (confirmar e corrigir — RESOLVIDO, ver acima)
 
 **O circuit breaker mascara erros não-retriáveis.** `lib/agent/circuit.js:53`
 registra um `fallback()` que relança tudo como `code='circuit_open'`; no
@@ -60,3 +66,55 @@ composição breaker→driver NÃO está coberta.
   Anthropic estiver seco) + pins de extract/restyle.
 - Smoke da rota real de clone (POST /api/chat com tools) ainda não rodado —
   fazer antes de confiar no caminho completo (recomendação do Sol).
+  **✅ Rodado em 2026-07-22** no fix da branch `fix/agent-failover-policy`:
+  clone com Anthropic seco de verdade → SSE mostrou
+  `provider_failover{anthropic→openai, reason:provider_balance}` na iter 1,
+  ANTES de qualquer token, GPT-5.5 completou o run. Zero Flash no stream.
+
+## Estado pós-fix (2026-07-22, branch `fix/agent-failover-policy`)
+
+Os 7 pontos da correção proposta: **todos implementados** (suíte 802/802;
+baseline era 766). Em resumo: `lib/agent/provider-errors.js` (taxonomia,
+UM lugar, formas reais dos 3 SDKs), breaker honesto (erro original atravessa
+categorizado; `circuit_open` só com circuito aberto; errorFilter tira
+invalid_request/auth/provider_balance da contagem), elegibilidade por
+categoria no driver, `FAILOVER_POLICIES` declarativa por operação (chat
+escada; clone gpt-5.5↔opus fail-closed NUNCA Flash; enterprise fail-closed),
+failover sticky, guarda de saída parcial, teste de integração da composição
+real breaker→driver (o witness do bug, invertido pelo fix).
+
+Review adversarial (2 lenses Claude + Codex Sol, síntese com adjudicação):
+**7 fixes extras** — gating por época de attempt (stream pós-timeout não
+contamina: texto/tools/usage), driver retorna `usedModelId` e a rota persiste
+o modelo que SERVIU o run (registro não mente mais), auth sanitizado pro
+cliente, `resolveCloneModel()` (env dual-bind não fura o invariante),
+`billing_error`/wording real do Gemini/`APIConnectionTimeoutError`/408 no
+classificador, chave do stash de breakers versionada (breaker velho com
+fallback mascarador sobrevivia a HMR).
+
+**Rejeitados com razão** (não são bugs): flag run-wide de no-failover
+(mataria o failover sticky entre iterações, que é design); guard em
+`UNCRAFT_AGENT_MODEL` (escape hatch explícito de dev/test); parsing fino de
+quota do Gemini (limitação de telemetria aceita — quota diária sem wording
+de billing conta pro breaker como rate_limit).
+
+**Pendências que sobraram** (por ordem de valor):
+1. **Failover invisível na UI** — `provider_failover` é emitido no SSE mas
+   nenhum client (PromptDock/AssetSmartEditDock) renderiza; a troca de
+   modelo não deixa rastro visível. UI nova era fora-de-escopo do fix.
+2. **Clone-mode sticky no thread (Fase 4, não coube limpo)** — exige coluna
+   de meta em `chat_threads` (migração Neon), reordenar o POST (thread antes
+   da resolução de operação) e decisão de produto (quando o modo expira?).
+   Sintomas: "agora corrija o header" volta pra política de chat; "capture
+   esta imagem" força política de clone (custo + mensagem errada). O
+   enforcement certo talvez seja por CAPACIDADE (tool captureUrl/runFlow sob
+   orquestrador barato ⇒ escalar), não por regex.
+3. **Texto parcial órfão persistido** — run que falha após streamar meia
+   frase persiste o accumulatedText como turno assistant e o replay no turno
+   seguinte.
+4. **Enterprise sem retry** — chain vazia = um 429 transiente mata o turn;
+   retry-once com backoff no MESMO provider não violaria a promessa de tier.
+5. **Seam de conteúdo**: `runFlow` aceita `modelId` livre do agente (sem
+   allowlist em run-flow.js) — caminho comportamental pro conteúdo cair em
+   modelo fraco; e abort real (AbortSignal nos adapters) para matar streams
+   pós-timeout no provider (hoje só descartamos os eventos).
