@@ -25,62 +25,37 @@ import { renderHtmlScreenshot } from '../../../lib/site-screenshot.js';
 
 export const runtime = 'nodejs';
 
-// Picker IDs → SDK-friendly model strings (mirror MODEL_ALIAS in run-flow.js).
-// The chat dropdown's pick drives the ASSISTANT model (see resolvedModel in
-// POST): an explicit pick wins over the tier default in getAgentModel. The
-// same picker value is also forwarded to runFlow / image gen for the model
-// that runs INSIDE a node.
-const MODEL_ALIAS = {
-  // Anthropic
-  'claude-4.6-opus':    'claude-opus-4-6',
-  'claude-4.7-opus':    'claude-opus-4-7',
-  'claude-sonnet-4-6':  'claude-sonnet-4-6',
-  'claude-haiku-4-5':   'claude-haiku-4-5-20251001',
-  // OpenAI
-  'gpt-5.5':            'gpt-5.5',
-  'gpt-4o-mini':        'gpt-4o-mini',
-  // Gemini
-  'gemini-3.1-pro':     'gemini-3.1-pro-preview',
-  'gemini-2.5-flash':   'gemini-2.5-flash',
-  // Kimi (deferred — accepted alias, falls through to error below for now)
-};
+// Picker scope (vault decision, reaffirmed 2026-07-22): the chat dropdown
+// governs SITE CREATION only — it reaches compose/edit/image tools raw via
+// ctx.pickerModel, and run-flow resolves it through its own MODEL_ALIAS.
+// The ORCHESTRATOR never follows the picker (the 2026-06-19 picker-wins
+// change was a workaround for a then-depleted Gemini key; key is funded).
 
 /**
- * Pick the model that orchestrates the agent (tool calls). Tier ladder:
- *   - free:       gemini-2.5-flash  (cheap; weaker function-calling but adequate)
- *   - pro:        gpt-4o-mini       (US/EU host, no regulatory friction, $0.15/1M in)
+ * Pick the model that orchestrates the agent (tool calls). Tier ladder per
+ * the Billing decision (vault: "Free=Flash, Pro=Flash, Enterprise=Sonnet")
+ * and the operator evals — Flash beat gpt-4o-mini 82%×71% with a safer
+ * failure mode, and 7/7 × 2/7 on the 2026-07 derive/selection suite:
+ *   - free:       gemini-2.5-flash
+ *   - pro:        gemini-2.5-flash  (was gpt-4o-mini — drifted from the
+ *                 eval-backed decision; DeepSeek stays a future candidate)
  *   - enterprise: claude-sonnet-4-6 (best function-calling quality)
- *
- * DeepSeek was the prior plan for pro but was dropped due to China-hosted
- * latency, EU regulatory exposure (PIPL/GDPR), and several US state bans on
- * gov devices. GPT-4o-mini fills the slot without adding a new adapter —
- * the OpenAI key is already wired.
  *
  * Cost floor math per turn @ ~15k in + 1.5k out:
  *   gemini-2.5-flash  — $0.0015 / turn  ($1.8M/yr @ 1M users)
- *   gpt-4o-mini       — $0.003          ($3.6M/yr)
  *   claude-sonnet-4-6 — $0.07           ($84M/yr)
  *
- * UNCRAFT_AGENT_MODEL env override always wins (dev/test).
+ * UNCRAFT_AGENT_MODEL env override always wins (dev/test). Clone requests
+ * are the one exception above (UNCRAFT_CLONE_MODEL / Opus). The chat
+ * picker NEVER reaches this — it only feeds creation tools.
  * Wrapped in a function so tests can override the env var per-test and
  * hot-reload picks up changes without restarting the dev server.
  */
-function getAgentModel(user) {
+export function getAgentModel(user) {
   if (process.env.UNCRAFT_AGENT_MODEL) return process.env.UNCRAFT_AGENT_MODEL;
   const plan = user?.plan || 'free';
   if (plan === 'enterprise') return 'claude-sonnet-4-6';
-  if (plan === 'pro')        return 'gpt-4o-mini';
   return 'gemini-2.5-flash';
-}
-
-/**
- * The model that runs the assistant for one chat turn. An explicit, KNOWN
- * dropdown pick (a MODEL_ALIAS key) wins over the tier default — the user
- * expects the chat dropdown to drive the chat. An unknown or absent pick
- * falls back to the tier ladder in getAgentModel.
- */
-export function resolveAgentModel(modelId, user) {
-  return (modelId && MODEL_ALIAS[modelId]) || getAgentModel(user);
 }
 
 // Clones always run on Opus (best reconstruction + it narrates the capture).
@@ -430,11 +405,11 @@ export async function POST(request) {
   // user's picker. The picker on PromptDock chooses which model runs
   // INSIDE a node when the agent calls runFlow/createImage — that's a
   // different concern handled by run-flow.js / image gen routes.
-  // The chat dropdown picks the model that runs the assistant. An explicit,
-  // known pick WINS over the tier default — the user expects the dropdown to
-  // drive the chat (and to dodge a provider whose credit is depleted). An
-  // unknown/absent pick falls back to the tier ladder.
-  let resolvedModel = resolveAgentModel(modelId, user);
+  // Picker scope (refined 2026-07-22): the chat dropdown governs SITE
+  // CREATION only — it reaches compose/edit/image tools as ctx.pickerModel.
+  // The ORCHESTRATOR (this assistant: tool calls, node orchestration,
+  // extracts) always runs on the tier ladder, never on the picker.
+  let resolvedModel = getAgentModel(user);
   // Clones ALWAYS run on Opus — it gives the best reconstruction and narrates
   // the capture. A clone/capture request forces Opus over the picker/tier.
   // (The reconstruction pipeline itself stays gpt-5.5; this is the chat agent.)
