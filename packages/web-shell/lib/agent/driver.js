@@ -83,6 +83,18 @@ export async function runAgentLoop(opts) {
   // + failover event to every single iteration. Deliberate tradeoff: a
   // primary that recovers mid-run is only used again on the NEXT run.
   let stickyAttemptIdx = 0;
+  // Attempt epoch (adversarial-review find): the llm_timeout race ABANDONS
+  // the promise but cannot kill the underlying stream (adapters take no
+  // AbortSignal). A hung stream that wakes up minutes later would push
+  // text_delta to the client (duplicated output), tool_use into the CURRENT
+  // attempt's toolCalls, and usage into totalUsage. Every attempt captures
+  // its epoch; events from a non-current epoch are dropped.
+  let llmCallEpoch = 0;
+  // The model that actually SERVED the run (updated on every successful
+  // attempt) — the route persists this, not the promised primary, so the
+  // durable record never claims Opus for a run GPT-5.5 carried.
+  let usedModelIdFinal = modelId;
+  let usedLabelFinal = primaryLabel;
 
   // Wall-clock timer.
   let wallExpired = false;
@@ -118,15 +130,15 @@ export async function runAgentLoop(opts) {
     while (true) {
       if (runId && isCancelled(runId)) {
         onEvent({ type: 'run_status', status: 'cancelled' });
-        return { stop_reason: 'cancelled', iterations, usage: totalUsage, toolCounts };
+        return { stop_reason: 'cancelled', iterations, usage: totalUsage, toolCounts, usedModelId: usedModelIdFinal, usedLabel: usedLabelFinal };
       }
       if (wallExpired) {
         onEvent({ type: 'run_status', status: 'failed', err: 'wall_timeout' });
-        return { stop_reason: 'wall_timeout', iterations, usage: totalUsage, toolCounts };
+        return { stop_reason: 'wall_timeout', iterations, usage: totalUsage, toolCounts, usedModelId: usedModelIdFinal, usedLabel: usedLabelFinal };
       }
       if (iterations >= effectiveCaps.hardIterations) {
         onEvent({ type: 'run_status', status: 'hard_limited' });
-        return { stop_reason: 'hard_limited', iterations, usage: totalUsage, toolCounts };
+        return { stop_reason: 'hard_limited', iterations, usage: totalUsage, toolCounts, usedModelId: usedModelIdFinal, usedLabel: usedLabelFinal };
       }
 
       // Soft pause: pause every `softIterations` steps (10, 20, 30, …).
@@ -140,7 +152,7 @@ export async function runAgentLoop(opts) {
         const decision = await awaitContinue(runId);
         if (decision.action !== 'continue') {
           onEvent({ type: 'run_status', status: 'cancelled' });
-          return { stop_reason: 'cancelled_softpause', iterations, usage: totalUsage, toolCounts };
+          return { stop_reason: 'cancelled_softpause', iterations, usage: totalUsage, toolCounts, usedModelId: usedModelIdFinal, usedLabel: usedLabelFinal };
         }
         lastSoftPauseAt = iterations;
       }
@@ -182,6 +194,8 @@ export async function runAgentLoop(opts) {
         // from the next provider — duplicated output with no rollback
         // mechanism on the SSE side. Such a failure must fail the run.
         let emittedToClient = false;
+        llmCallEpoch += 1;
+        const myEpoch = llmCallEpoch;
         if (runId && ctx?.userId) {
           logAgentEvent({
             runId, userId: ctx.userId, type: 'llm_call',
@@ -194,6 +208,10 @@ export async function runAgentLoop(opts) {
           // other adapters ignore the extra field.
           userId: ctx?.userId || null,
           onEvent: (ev) => {
+            // Stale attempt (timed out / failed while its stream stayed
+            // alive): drop everything — no client text, no tool contamination,
+            // no double-counted usage.
+            if (myEpoch !== llmCallEpoch) return;
             if (ev.type === 'text_delta' || ev.type === 'tool_use') emittedToClient = true;
             if (ev.type === 'tool_use') toolCalls.push(ev);
             if (ev.type === 'message_complete') {
@@ -215,10 +233,15 @@ export async function runAgentLoop(opts) {
           ]);
           usedModelId = attempt.modelId;
           usedLabel = attempt.label;
+          usedModelIdFinal = attempt.modelId;
+          usedLabelFinal = attempt.label;
           // Sticky: later iterations start from the provider that worked.
           stickyAttemptIdx = attemptIdx;
           break; // success — leave the failover loop
         } catch (e) {
+          // Invalidate this attempt's epoch FIRST — if its stream is still
+          // alive (llm_timeout race), nothing more from it may leak out.
+          llmCallEpoch += 1;
           const category = classifyProviderError(e);
           const retriable = isRetriableProviderError(e);
           const hasNext = attemptIdx < attempts.length - 1;
@@ -258,9 +281,14 @@ export async function runAgentLoop(opts) {
             errMsg = `Provider ${attempt.label} failed mid-response (${category}). The run was stopped instead of switching providers to avoid duplicated output.`;
           } else if (retriable && unavailableMessage) {
             errMsg = unavailableMessage;
+          } else if (category === 'auth') {
+            // Auth errors can embed key fragments ("Incorrect API key
+            // provided: sk-…"). The raw message is already in the audit log
+            // above — the client gets a clean signal instead.
+            errMsg = 'The AI provider rejected this server’s credentials. This is a configuration problem on our side — please try again later.';
           }
           onEvent({ type: 'run_status', status: 'failed', err: errMsg });
-          return { stop_reason: 'failed', iterations, usage: totalUsage, toolCounts };
+          return { stop_reason: 'failed', iterations, usage: totalUsage, toolCounts, usedModelId: usedModelIdFinal, usedLabel: usedLabelFinal };
         }
       }
 
@@ -351,11 +379,11 @@ export async function runAgentLoop(opts) {
           continue;
         }
         onEvent({ type: 'run_status', status: 'completed' });
-        return { stop_reason: 'end_turn', iterations, usage: totalUsage, toolCounts };
+        return { stop_reason: 'end_turn', iterations, usage: totalUsage, toolCounts, usedModelId: usedModelIdFinal, usedLabel: usedLabelFinal };
       }
       if (finalMsg.stop_reason !== 'tool_use') {
         onEvent({ type: 'run_status', status: 'failed', err: `unexpected stop_reason: ${finalMsg.stop_reason}` });
-        return { stop_reason: 'failed', iterations, usage: totalUsage, toolCounts };
+        return { stop_reason: 'failed', iterations, usage: totalUsage, toolCounts, usedModelId: usedModelIdFinal, usedLabel: usedLabelFinal };
       }
 
       // ── Execute tool calls ────────────────────────────────────────────

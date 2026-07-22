@@ -22,7 +22,12 @@
 import CircuitBreaker from 'opossum';
 import { classifyProviderError, countsForBreaker, annotateProviderError } from './provider-errors.js';
 
-const KEY = '__uncraft_llm_breakers';
+// Version suffix matters (adversarial-review find): the stash survives HMR
+// by design, so an UNVERSIONED key would keep serving breakers built by OLD
+// module code — including the pre-fix ones with the masking fallback()
+// registered — until the process restarts. Bump the suffix whenever breaker
+// construction semantics change.
+const KEY = '__uncraft_llm_breakers_v2';
 const breakers = globalThis[KEY] || (globalThis[KEY] = new Map());
 
 const DEFAULT_OPTS = {
@@ -58,7 +63,12 @@ const DEFAULT_OPTS = {
  *     tripping. invalid_request / auth / provider_balance are OUR problems
  *     (bug, key, billing) — deterministic failures that say nothing about
  *     provider health. A truthy errorFilter makes opossum record the call
- *     as a non-failure while still rejecting with the original error.
+ *     as a SUCCESS (not merely a non-failure) while still rejecting with
+ *     the original error. Two accepted side effects of that semantic:
+ *     filtered errors dilute the failure rate in the rolling window, and a
+ *     HALF-OPEN probe failing with a filtered error CLOSES the circuit —
+ *     defensible, because a provider that answered (even with a 4xx) is
+ *     up; a live outage re-trips within one rolling window.
  */
 export function breakerFor(providerName, fn) {
   if (breakers.has(providerName)) return fireThroughBreaker(providerName, breakers.get(providerName));

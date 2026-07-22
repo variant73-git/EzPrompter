@@ -11,7 +11,7 @@ vi.mock('../../../lib/chat-persistence.js', () => ({
 }));
 
 const {
-  GET, getAgentModel, isCloneRequest, resolveOperation, FAILOVER_POLICIES,
+  GET, getAgentModel, isCloneRequest, resolveOperation, FAILOVER_POLICIES, resolveCloneModel,
 } = await import('./route.js');
 
 describe('isCloneRequest', () => {
@@ -74,6 +74,15 @@ describe('per-operation failover policy (2026-07-22 audit)', () => {
 
   it('chat chain keeps the cost-ascending ladder starting at Flash', () => {
     expect(FAILOVER_POLICIES.chat.chain[0].model).toBe('gemini-2.5-flash');
+  });
+
+  it('resolveCloneModel: env below the quality bar is rejected, honest overrides pass', () => {
+    expect(resolveCloneModel(undefined)).toBe('claude-opus-4-7');
+    expect(resolveCloneModel('gpt-5.5')).toBe('gpt-5.5');
+    expect(resolveCloneModel('claude-opus-4-8')).toBe('claude-opus-4-8');
+    expect(resolveCloneModel('gemini-2.5-flash')).toBe('claude-opus-4-7');
+    expect(resolveCloneModel('gpt-4o-mini')).toBe('claude-opus-4-7');
+    expect(resolveCloneModel('claude-haiku-4-5-20251001')).toBe('claude-opus-4-7');
   });
 });
 

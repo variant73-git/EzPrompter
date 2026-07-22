@@ -512,4 +512,60 @@ describe('runAgentLoop — sticky failover / partial-output guard / fail-closed 
     });
     expect(events.find((e) => e.type === 'run_status').err).toMatch(/max_tokens/);
   });
+
+  it('auth errors reach the client sanitized — no raw key fragments in the bubble', async () => {
+    const primary = throwLLM(401, 'Incorrect API key provided: sk-abc123xyz');
+    const events = [];
+    await runAgentLoop({
+      llm: primary, providerLabel: 'openai', fallbacks: [],
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'go' }],
+      modelId: 'gpt-5.5', apiKey: 'k', ctx: {}, onEvent: (e) => events.push(e), maxIterations: 5,
+    });
+    const status = events.find((e) => e.type === 'run_status');
+    expect(status.err).not.toMatch(/sk-abc123xyz/);
+    expect(status.err).toMatch(/configuration problem/i);
+  });
+
+  it('reports the model that actually SERVED the run, not the promised primary', async () => {
+    const primary = throwLLM(429, 'rate limited');
+    const fallback = buildLLM([
+      { events: [{ type: 'message_complete', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }], finalContent: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' },
+    ]);
+    const result = await runAgentLoop({
+      llm: primary, providerLabel: 'anthropic',
+      fallbacks: [{ llm: fallback, modelId: 'gpt-5.5', apiKey: 'k2', tools: [], label: 'openai' }],
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'clone x' }],
+      modelId: 'claude-opus-4-7', apiKey: 'k', ctx: {}, onEvent: () => {}, maxIterations: 5,
+    });
+    expect(result.usedModelId).toBe('gpt-5.5');
+    expect(result.usedLabel).toBe('openai');
+  });
+
+  it('drops late events from an abandoned attempt — no leaked text, tools, or usage', async () => {
+    // Primary fails AFTER capturing its onEvent (simulating the llm_timeout
+    // race: promise rejected, stream still alive).
+    let staleOnEvent = null;
+    const primary = vi.fn(async ({ onEvent }) => {
+      staleOnEvent = onEvent;
+      const e = new Error('Service Unavailable'); e.status = 503; throw e;
+    });
+    const fallback = buildLLM([
+      { events: [{ type: 'message_complete', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }], finalContent: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' },
+    ]);
+    const events = [];
+    const result = await runAgentLoop({
+      llm: primary, providerLabel: 'anthropic',
+      fallbacks: [{ llm: fallback, modelId: 'gpt-5.5', apiKey: 'k2', tools: [], label: 'openai' }],
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'go' }],
+      modelId: 'claude-opus-4-7', apiKey: 'k', ctx: {}, onEvent: (e) => events.push(e), maxIterations: 5,
+    });
+    expect(result.stop_reason).toBe('end_turn');
+    const usageBefore = { ...result.usage };
+    // The abandoned stream "wakes up" and emits — everything must be dropped.
+    staleOnEvent({ type: 'text_delta', text: 'ZOMBIE' });
+    staleOnEvent({ type: 'tool_use', id: 'z1', name: 'noop', input: {} });
+    staleOnEvent({ type: 'message_complete', stop_reason: 'end_turn', usage: { input_tokens: 999, output_tokens: 999 } });
+    expect(events.some((e) => e.type === 'text_delta' && e.text === 'ZOMBIE')).toBe(false);
+    expect(result.usage).toEqual(usageBefore); // no double-counted usage
+  });
 });

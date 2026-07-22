@@ -76,6 +76,26 @@ describe('classifyProviderError — real SDK shapes', () => {
     expect(classifyProviderError(err({ code: 'ETIMEDOUT' }, 'Timed out after 300000ms'))).toBe('timeout');
   });
 
+  it('SDK connection timeouts (no status/code, class name only) → timeout, not unknown', () => {
+    // Anthropic/OpenAI APIConnectionTimeoutError: message "Request timed out."
+    const e = err({}, 'Request timed out.');
+    e.name = 'APIConnectionTimeoutError';
+    expect(classifyProviderError(e)).toBe('timeout');
+    expect(classifyProviderError(err({}, 'Request timed out.'))).toBe('timeout'); // message alone
+    expect(classifyProviderError(err({ status: 408 }, 'timeout'))).toBe('timeout');
+  });
+
+  it('Anthropic billing_error wire type → provider_balance regardless of wording', () => {
+    const e = err({ status: 400 }, '400 {"type":"error","error":{"type":"billing_error","message":"There is a billing issue with your account."}}');
+    e.error = { type: 'error', error: { type: 'billing_error', message: 'There is a billing issue with your account.' } };
+    expect(classifyProviderError(e)).toBe('provider_balance');
+  });
+
+  it('Gemini depleted prepaid with the REAL generic wording → provider_balance', () => {
+    expect(classifyProviderError(err({ status: 429 },
+      'got status: 429 . {"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED"}}'))).toBe('provider_balance');
+  });
+
   it('circuit markers: our synthesized code and opossum EOPENBREAKER → circuit_open', () => {
     expect(classifyProviderError(err({ code: 'circuit_open' }))).toBe('circuit_open');
     expect(classifyProviderError(err({ code: 'EOPENBREAKER' }, 'Breaker is open'))).toBe('circuit_open');

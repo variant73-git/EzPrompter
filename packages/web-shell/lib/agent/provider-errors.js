@@ -44,6 +44,10 @@ export function classifyProviderError(e) {
   const code = String(e.code || '');
   if (code === 'circuit_open' || code === 'EOPENBREAKER') return 'circuit_open';
   if (code === 'llm_timeout' || code === 'ETIMEDOUT') return 'timeout';
+  // Anthropic/OpenAI SDK connection timeouts carry NO status/code — just the
+  // class name and "Request timed out." (adversarial-review find: they fell
+  // through to 'unknown', which neither fails over nor counts for health).
+  if (e.name === 'APIConnectionTimeoutError') return 'timeout';
 
   const status = e.status ?? e.statusCode ?? e.response?.status ?? null;
   const msg = String(e.message || '');
@@ -52,11 +56,16 @@ export function classifyProviderError(e) {
   const wireType = e?.error?.error?.type || e?.error?.type || e?.type || '';
 
   // ── Balance first — providers disguise it under generic statuses ──
+  if (wireType === 'billing_error') return 'provider_balance';                    // Anthropic billing family
   if (/credit balance is too low/i.test(msg)) return 'provider_balance';          // Anthropic 400
   if (wireType === 'insufficient_quota' || code === 'insufficient_quota'
     || /insufficient_quota/i.test(msg)) return 'provider_balance';                // OpenAI 429
-  if (/prepayment credits|purchase more credits|billing hard limit/i.test(msg)) {
-    return 'provider_balance';                                                    // Gemini prepaid 429
+  // Gemini prepaid depletion arrives as RESOURCE_EXHAUSTED with billing
+  // wording ("check your plan and billing details") — same phrase OpenAI
+  // uses for insufficient_quota, so the match is safe for both. Plain
+  // per-minute RESOURCE_EXHAUSTED quotas fall through to rate_limit.
+  if (/prepayment credits|purchase more credits|billing hard limit|check your plan and billing/i.test(msg)) {
+    return 'provider_balance';
   }
 
   if (status === 401 || status === 403) return 'auth';
@@ -72,7 +81,7 @@ export function classifyProviderError(e) {
     return 'outage';
   }
 
-  if (/llm call exceeded \d+s|timed out after/i.test(msg)) return 'timeout';
+  if (status === 408 || /llm call exceeded \d+s|timed out after|request timed out/i.test(msg)) return 'timeout';
 
   if (status === 400 || status === 404 || status === 422) return 'invalid_request';
   if (wireType === 'invalid_request_error' || wireType === 'not_found_error') return 'invalid_request';

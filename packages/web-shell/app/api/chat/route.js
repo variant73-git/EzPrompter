@@ -59,7 +59,20 @@ export function getAgentModel(user) {
 }
 
 // Clones always run on Opus (best reconstruction + it narrates the capture).
-const CLONE_AGENT_MODEL = process.env.UNCRAFT_CLONE_MODEL || 'claude-opus-4-7';
+// UNCRAFT_CLONE_MODEL is dual-bound (also retargets the clone CONTENT seam in
+// lib/extract-llm.js), so an operator tuning one seam can silently retarget
+// the other — the guard below keeps the "clone never orchestrated by a
+// cheap-tier model" invariant env-proof (adversarial-review find).
+export function resolveCloneModel(envValue) {
+  if (!envValue) return 'claude-opus-4-7';
+  if (/flash|mini|haiku/i.test(envValue)) {
+    // eslint-disable-next-line no-console
+    console.warn(`[chat] UNCRAFT_CLONE_MODEL=${envValue} is below the clone quality bar — ignoring, using claude-opus-4-7`);
+    return 'claude-opus-4-7';
+  }
+  return envValue;
+}
+const CLONE_AGENT_MODEL = resolveCloneModel(process.env.UNCRAFT_CLONE_MODEL);
 
 /** True when the user's message is asking to clone/capture/replicate a site. */
 export function isCloneRequest(message) {
@@ -910,7 +923,11 @@ export async function POST(request) {
         role: 'assistant',
         content: accumulatedText,
         toolCalls: toolCallsForPersistence.length > 0 ? toolCallsForPersistence : null,
-        model: resolvedModel,
+        // The model that actually SERVED the run — after a failover this
+        // differs from the promised primary, and the durable record must
+        // tell the truth (adversarial-review find: it used to log Opus for
+        // runs GPT-5.5 carried).
+        model: loopResult.usedModelId || resolvedModel,
         agentRunId: runId,
       });
       });
