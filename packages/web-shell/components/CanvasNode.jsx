@@ -14,6 +14,7 @@ import { api } from '../lib/canvas-api.js';
 import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
 import { createRafCoalescer } from '../lib/raf-coalesce.js';
 import { fetchThumb } from '../lib/thumb-queue.js';
+import { canExpandSiteViewport } from '../lib/node-viewport.js';
 
 const DRAG_THRESHOLD = 4;
 
@@ -49,11 +50,26 @@ function truncateWithExtension(name, max = 15) {
 // the underlying content, not the canvas card size or a stored aspect
 // guess. Returns null while loading or on error; consumers should hide
 // the label until it resolves.
-function useImageNaturalDims(src) {
+function useMediaNaturalDims(src, mimeType = '') {
   const [dims, setDims] = useState(null);
   useEffect(() => {
     if (!src) { setDims(null); return; }
     let cancelled = false;
+    const isVideo = String(mimeType).startsWith('video/') || String(src).startsWith('data:video/');
+    if (isVideo) {
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.onloadedmetadata = () => {
+        if (!cancelled) setDims({ w: video.videoWidth, h: video.videoHeight });
+      };
+      video.onerror = () => { if (!cancelled) setDims(null); };
+      video.src = src;
+      return () => {
+        cancelled = true;
+        video.removeAttribute('src');
+        video.load();
+      };
+    }
     const img = new window.Image();
     img.onload = () => {
       if (cancelled) return;
@@ -62,7 +78,7 @@ function useImageNaturalDims(src) {
     img.onerror = () => { if (!cancelled) setDims(null); };
     img.src = src;
     return () => { cancelled = true; };
-  }, [src]);
+  }, [mimeType, src]);
   return dims;
 }
 const TrashIcon = () => (
@@ -171,7 +187,8 @@ const CloseIcon = () => (
 // /api/proxy/image route on first load error (hotlink-protected hosts
 // that refuse cross-origin GETs from the canvas) and finally to a
 // clean placeholder card if the proxy can't recover it either.
-function AssetNodeImage({ dataUrl, name }) {
+function AssetNodeMedia({ dataUrl, name, mimeType = '' }) {
+  const isVideo = String(mimeType).startsWith('video/') || String(dataUrl).startsWith('data:video/');
   const [src, setSrc] = useState(dataUrl);
   const [phase, setPhase] = useState('loading'); // loading | ok | proxy | broken
   // dataUrl can change when the node row is updated; resync.
@@ -181,6 +198,10 @@ function AssetNodeImage({ dataUrl, name }) {
   }, [dataUrl]);
 
   function onError() {
+    if (isVideo) {
+      setPhase('broken');
+      return;
+    }
     if (phase === 'loading' && src && !/^data:/.test(src)) {
       setSrc('/api/proxy/image?url=' + encodeURIComponent(src));
       setPhase('proxy');
@@ -200,8 +221,24 @@ function AssetNodeImage({ dataUrl, name }) {
           <circle cx="9" cy="9" r="2"/>
           <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>
         </svg>
-        <span>Image unavailable</span>
+        <span>{isVideo ? 'Video unavailable' : 'Image unavailable'}</span>
       </div>
+    );
+  }
+  if (isVideo) {
+    return (
+      <video
+        className="cnode-asset-img cnode-asset-video"
+        src={src}
+        aria-label={name}
+        muted
+        loop
+        autoPlay
+        playsInline
+        preload="metadata"
+        onError={onError}
+        onLoadedData={onLoad}
+      />
     );
   }
   return (
@@ -278,7 +315,7 @@ const CollapseIcon = () => (
 // The picker + persistence live in CanvasClient.handlePopulateNode; the
 // accept filter there is kind-scoped so the wrong format can't land here.
 function EmptyUploadBody({ kind, onRequestUpload }) {
-  const LABEL = { site: 'Upload .html', designmd: 'Upload .md', asset: 'Upload image' };
+  const LABEL = { site: 'Upload .html', designmd: 'Upload .md', asset: 'Upload image or video' };
   const label = LABEL[kind] || 'Upload file';
   return (
     <div className="cnode-empty-upload">
@@ -356,6 +393,7 @@ export default function CanvasNode({
   const [versionPreview, setVersionPreview] = useState(null); // { snapshotId, html }
   const [restoringVersion, setRestoringVersion] = useState(false);
   const isSiteNode = node.kind === 'site' || node.kind === 'template' || node.kind === 'chunk';
+  const expandableSiteViewport = node.kind !== 'site' || canExpandSiteViewport(node);
   const isTempNode = String(node.id).startsWith('temp-');
 
   useEffect(() => {
@@ -409,7 +447,7 @@ export default function CanvasNode({
   }
   // Natural dimensions of the asset's image content. Used by the dims label
   // below the card. Non-asset nodes pass a null src so the hook short-circuits.
-  const assetNaturalDims = useImageNaturalDims(node.meta?.dataUrl || null);
+  const assetNaturalDims = useMediaNaturalDims(node.meta?.dataUrl || null, node.meta?.mimeType);
   // Asset nodes take the CONTENT's aspect ratio (2026-07-03, user spec): the
   // image fills the whole rounded inner frame — no letterbox bands above/
   // below. When the decoded natural dims disagree with the stored node
@@ -542,7 +580,7 @@ export default function CanvasNode({
   // The resting viewport is restored on exit so opening the editor does not
   // permanently turn a tidy canvas card into a multi-thousand-pixel column.
   useLayoutEffect(() => {
-    if (node.kind !== 'site' || !onResize) return undefined;
+    if (node.kind !== 'site' || !onResize || !expandableSiteViewport) return undefined;
 
     if (!editing) {
       const initial = editViewportRef.current;
@@ -588,7 +626,7 @@ export default function CanvasNode({
       } catch { /* same-origin iframe can still be briefly unavailable during reload */ }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [editing, node.height, node.kind, node.width, onResize]);
+  }, [editing, expandableSiteViewport, node.height, node.kind, node.width, onResize]);
 
   // Prevent wide site internals from creating a second horizontal navigation
   // axis while editing. The temporary style is stripped from saved snapshots.
@@ -1443,35 +1481,39 @@ export default function CanvasNode({
                 hit area is wider so the user doesn't have to aim.
                 Only rendered for site/html iframe nodes — md/prompt/
                 skill bodies size themselves to their own content. */}
-            <button
-              type="button"
-              className="cnode-resize-dash cnode-resize-dash-bottom"
-              onMouseDown={startDashResize('y')}
-              title="Drag to resize viewport height"
-              aria-label="Resize node height"
-            />
-            <button
-              type="button"
-              className="cnode-resize-dash cnode-resize-dash-right"
-              onMouseDown={startDashResize('x')}
-              title="Drag to resize viewport width"
-              aria-label="Resize node width"
-            />
+            {expandableSiteViewport && <>
+              <button
+                type="button"
+                className="cnode-resize-dash cnode-resize-dash-bottom"
+                onMouseDown={startDashResize('y')}
+                title="Drag to resize viewport height"
+                aria-label="Resize node height"
+              />
+              <button
+                type="button"
+                className="cnode-resize-dash cnode-resize-dash-right"
+                onMouseDown={startDashResize('x')}
+                title="Drag to resize viewport width"
+                aria-label="Resize node width"
+              />
+            </>}
             {/* Expand/Collapse floater — sits at the bottom-right of the
                 viewport. Toggles between hero proportion and full
                 content size. Lives inside .cnode-body so it inherits
                 the body's clip and stays anchored to the bottom-right
                 even when the user resizes via dash handles. */}
-            <button
-              type="button"
-              className="cnode-expand-float"
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); handleExpandToggle(); }}
-              title={isExpanded ? 'Collapse to default viewport' : 'Expand viewport to fit full content'}
-              aria-label={isExpanded ? 'Collapse viewport' : 'Expand viewport to full content'}
-            >
-              {isExpanded ? <CollapseIcon /> : <ExpandIcon />}
-            </button>
+            {expandableSiteViewport && (
+              <button
+                type="button"
+                className="cnode-expand-float"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); handleExpandToggle(); }}
+                title={isExpanded ? 'Collapse to default viewport' : 'Expand viewport to fit full content'}
+                aria-label={isExpanded ? 'Collapse viewport' : 'Expand viewport to full content'}
+              >
+                {isExpanded ? <CollapseIcon /> : <ExpandIcon />}
+              </button>
+            )}
             {/* Replace-content overlay — only for uploaded .html nodes (not
                 URL captures, which are re-captured, not file-replaced). */}
             {origin === 'html' && onReplaceContent && (
@@ -1588,9 +1630,10 @@ export default function CanvasNode({
         >
           {node.meta?.dataUrl ? (
             <>
-              <AssetNodeImage
+              <AssetNodeMedia
                 dataUrl={node.meta.dataUrl}
                 name={node.meta?.name || 'asset'}
+                mimeType={node.meta?.mimeType}
               />
               {onReplaceContent && <ReplaceOverlay nodeId={node.id} onReplaceContent={onReplaceContent} />}
             </>

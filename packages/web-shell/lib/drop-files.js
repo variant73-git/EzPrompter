@@ -9,6 +9,7 @@ export function classifyDropFile(file) {
   const name = (file?.name || '').toLowerCase();
   const type = file?.type || '';
   if (type.startsWith('image/') || /\.(png|jpe?g|gif|webp|avif|svg|bmp)$/.test(name)) return 'image';
+  if (type.startsWith('video/') || /\.(mp4|webm|mov|m4v)$/.test(name)) return 'media';
   if (/\.(md|markdown)$/.test(name) || type === 'text/markdown') return 'md';
   if (/\.html?$/.test(name) || type === 'text/html') return 'html';
   return null;
@@ -19,5 +20,5 @@ export function classifyDropFile(file) {
 export function formatDropRejectMessage(names) {
   const list = (names || []).map((n) => `"${n || 'untitled'}"`).join(', ');
   const verb = names?.length > 1 ? "aren't supported formats" : "isn't a supported format";
-  return `${list} ${verb}. Drop images (PNG, JPG, GIF, WebP, AVIF, SVG, BMP), .md, or .html files.`;
+  return `${list} ${verb}. Drop images, videos (MP4, WebM, MOV), .md, or .html files.`;
 }

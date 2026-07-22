@@ -39,24 +39,52 @@ function resolveModel(modelId) {
   return MODEL_ALIAS[modelId] || modelId;
 }
 
-const COMPOSE_SYSTEM = `You receive a TARGET HTML document and one or more SOURCE INPUTS. Your job is to apply the sources to the target and emit the resulting HTML.
+const COMPOSE_SYSTEM = `You are Demarcelizer 4.0. You receive a TARGET HTML document and one or more CONNECTED NODES. Compose them into one production-ready HTML document.
+
+CORE PRINCIPLE
+The connected nodes are the creative direction and source material. Do not replace explicit connected evidence with your own generic design taste. Preserve the reference experience, then transplant the identity, content and media supplied by the graph.
 
 INPUTS YOU MAY RECEIVE
-- HTML SOURCE — a reference HTML document. Use it as design chassis (layout / typography / colour tokens) when no design.md is provided, otherwise as additional design reference.
-- DESIGN.MD SOURCE — a markdown design-system spec describing colours, fonts, spacing, components. Treat as the authoritative source of design tokens; override the HTML source's defaults when the two disagree.
-- PROMPT INSTRUCTION — explicit user direction. ALWAYS follow the prompt over the defaults below.
+- HTML SOURCE — a structural and behavioural reference. Preserve its scene order, layout rhythm and motion system when it is the chosen chassis.
+- DESIGN.MD SOURCE — the authoritative identity and style map: palette, typography, scale, spacing, components, image treatment and written motion guidance.
+- MEDIA SOURCE — a literal connected image or video. Use the exact placeholder supplied for src, poster or CSS background-image; never fabricate a substitute URL.
+- SKILL SOURCE — executable or written behaviour such as a shader, animation or interaction adapter.
+- PROMPT INSTRUCTION — explicit user direction and content priority.
+
+PRIORITY WHEN SOURCES DISAGREE
+1. Explicit prompt instructions.
+2. Edge binding notes and literal media assignments.
+3. DESIGN.MD for identity, palette, typography and component language.
+4. HTML source for structure, layering, responsive logic and motion choreography.
+5. Target content and existing behaviour.
+Only invent where every connected source is silent.
 
 OPERATION MATRIX (compose, do not pick one)
 - HTML only → reskin: preserve the target's exact text content, replace the target's structural chassis with the source HTML's chassis.
 - DESIGN.MD only → restyle: keep the target's HTML structure verbatim; apply the md tokens (colours, type scale, font families, spacing) by injecting / overriding the target's style block.
 - HTML + DESIGN.MD → reskin with the HTML chassis + md tokens as overrides.
+- MEDIA → replace the most semantically compatible image/video slots with the exact connected media placeholders. Names and binding notes indicate intended roles.
+- SKILL → preserve the target/chassis and integrate the supplied behaviour at the compatible semantic target.
 - PROMPT only → execute the instruction directly on the target.
 - PROMPT + any other source → follow the prompt as the primary directive; use the other sources as material.
 
 PRESERVE EVERY TIME (do not break, do not paraphrase)
 - The target's exact text content (real words, numbers, prices, names, proper nouns).
-- The target's image src attributes unless the prompt explicitly requests change.
+- The target's existing media only when no connected media source replaces its semantic slot.
 - When a source design is provided, use ITS exact fonts and hex tokens; preserve the chosen chassis's section count + order.
+
+MOTION TRANSPLANT RULES
+- Preserve all script blocks, dependencies, animation initialization and selectors from the chosen animated chassis unless a connected skill explicitly replaces them.
+- Preserve pinned/sticky scenes, scroll ranges, scrub/pin/snap behaviour, reveal order, masks, transforms, easing, stagger, pointer interactions and media timing.
+- Keep animated DOM targets and their class/id hooks present. Adapt content inside those targets instead of deleting the targets.
+- When replacement copy or media changes dimensions, adapt crop, line wrapping and scroll distance while preserving the same choreography and relative timing.
+- Do not flatten animation into a video, screenshot or static approximation.
+- Include a prefers-reduced-motion resolution that presents the final readable composition.
+
+MEDIA PLACEHOLDERS
+- Copy placeholders such as {{UNCRAFT_MEDIA_1}} exactly into the appropriate src/poster/style URL.
+- Images may be used as visual art direction as well as literal replacement media.
+- Videos must remain real <video> elements. Preserve autoplay/muted/loop/playsinline or scroll-scrub behaviour when compatible with the chassis.
 
 ${HOUSE_STYLE}
 
@@ -171,29 +199,73 @@ function bucketSources(sources) {
   return buckets;
 }
 
+function assetMime(source) {
+  return String(source?.meta?.mimeType || source?.meta?.mediaType || '').toLowerCase();
+}
+
+function isImageSource(source) {
+  const mime = assetMime(source);
+  const value = String(source?.meta?.dataUrl || '');
+  return mime.startsWith('image/') || value.startsWith('data:image/');
+}
+
+function sourceBindingNote(source) {
+  const payload = source?.edge_payload;
+  if (!payload || typeof payload !== 'object') return '';
+  const binding = payload.binding || payload.role || payload.channel || payload.channels;
+  if (!binding) return '';
+  return typeof binding === 'string' ? binding : JSON.stringify(binding);
+}
+
 function assemblePrompt({ targetHtml, buckets }) {
   const parts = [`TARGET HTML:\n${targetHtml}`];
   buckets.html.forEach((s, i) => {
     if (s.source_html) parts.push(`HTML SOURCE${buckets.html.length > 1 ? ` ${i + 1}` : ''}:\n${s.source_html}`);
   });
   buckets.md.forEach((s, i) => {
-    if (s.source_design_md) parts.push(`DESIGN.MD SOURCE${buckets.md.length > 1 ? ` ${i + 1}` : ''}:\n${s.source_design_md}`);
+    if (s.source_design_md) {
+      const binding = sourceBindingNote(s);
+      parts.push(`DESIGN.MD SOURCE${buckets.md.length > 1 ? ` ${i + 1}` : ''}${binding ? ` (binding: ${binding})` : ''}:\n${s.source_design_md}`);
+    }
   });
   buckets.prompt.forEach((s) => {
     const text = s.meta?.prompt || s.meta?.text || '';
     if (text) parts.push(`PROMPT INSTRUCTION:\n${text}`);
   });
-  // Reference the images by index so the system prompt can talk about
-  // them; the actual image content rides in a separate `images` array.
+  // Media placeholders keep large data URLs out of the model context while
+  // still letting the output bind the exact connected files. After compose,
+  // replaceMediaPlaceholders resolves the stable tokens deterministically.
+  const mediaBindings = [];
   buckets.asset.forEach((s, i) => {
-    const label = buckets.asset.length > 1 ? `STYLE IMAGE ${i + 1}` : 'STYLE IMAGE';
-    parts.push(`${label}: see attached image #${i + 1}. This is a STYLE SOURCE — absorb EVERY visual characteristic you can see in it. The accompanying DESIGN.MD brief pins the exact tokens and flags any presentation backdrop to ignore; never copy a backdrop the brief calls out, but reproduce the actual design's look fully.`);
+    const placeholder = `{{UNCRAFT_MEDIA_${i + 1}}}`;
+    const dataUrl = s.meta?.dataUrl || s.meta?.blobUrl || s.meta?.sourceUrl || '';
+    const mime = assetMime(s) || (isImageSource(s) ? 'image/*' : 'application/octet-stream');
+    const name = s.meta?.name || `Media ${i + 1}`;
+    const binding = sourceBindingNote(s);
+    mediaBindings.push({ placeholder, value: dataUrl });
+    parts.push(`CONNECTED MEDIA ${i + 1}:\n- name: ${name}\n- mime: ${mime}\n- exact placeholder: ${placeholder}${binding ? `\n- binding: ${binding}` : ''}\nUse this exact media in the most compatible semantic slot. Treat an attached image as art direction too; treat video as real motion media, never a poster-only substitute.`);
+  });
+  buckets.skill.forEach((s, i) => {
+    const body = s.meta?.instructions || s.meta?.code || s.meta?.prompt || s.source_html || '';
+    if (!body) return;
+    const binding = sourceBindingNote(s);
+    parts.push(`SKILL SOURCE${buckets.skill.length > 1 ? ` ${i + 1}` : ''}${binding ? ` (binding: ${binding})` : ''}:\n${body}`);
   });
   // Extract image data URLs for the vision pipeline.
   const images = buckets.asset
-    .map((s) => s.meta?.dataUrl)
+    .filter(isImageSource)
+    .map((s) => s.meta?.dataUrl || s.meta?.blobUrl || s.meta?.sourceUrl)
     .filter(Boolean);
-  return { text: parts.join('\n\n'), images };
+  return { text: parts.join('\n\n'), images, mediaBindings };
+}
+
+export function replaceMediaPlaceholders(html, bindings = []) {
+  let output = String(html || '');
+  for (const binding of bindings) {
+    if (!binding?.placeholder || !binding?.value) continue;
+    output = output.split(binding.placeholder).join(binding.value);
+  }
+  return output;
 }
 
 export async function runCompose({ target, sources, model, modelId, systemPromptOverride }) {
@@ -212,12 +284,13 @@ export async function runCompose({ target, sources, model, modelId, systemPrompt
     throw new Error('Target node has no snapshot yet. Capture or upload content before running.');
   }
 
-  // Need at least one actionable source — skills alone don't move.
+  // Every connected artifact with actual content can direct a transplant.
   if (
     buckets.html.length === 0 &&
     buckets.md.length === 0 &&
     buckets.prompt.length === 0 &&
-    buckets.asset.length === 0
+    buckets.asset.length === 0 &&
+    !buckets.skill.some((s) => s.meta?.instructions || s.meta?.code || s.meta?.prompt || s.source_html)
   ) {
     throw new Error('No actionable inputs. Connect a site, design.md, screenshot, or prompt source.');
   }
@@ -230,8 +303,9 @@ export async function runCompose({ target, sources, model, modelId, systemPrompt
   // SEES the actual style. Full absorption of every characteristic, which a
   // lossy text brief alone cannot convey (spacing, proportions, the exact feel).
   // The brief + the STYLE ABSORPTION rule keep the backdrop out of the result.
-  if (buckets.asset.length > 0) {
-    for (const a of buckets.asset) {
+  const imageSources = buckets.asset.filter(isImageSource);
+  if (imageSources.length > 0) {
+    for (const a of imageSources) {
       const dataUrl = a.meta?.dataUrl;
       if (!dataUrl) continue;
       try {
@@ -246,11 +320,11 @@ export async function runCompose({ target, sources, model, modelId, systemPrompt
   // model regardless of what the picker said. Falls back to gpt-5.5 if
   // the user picked a text-only model with images attached.
   let effectiveModel = resolvedModel;
-  if (buckets.asset.length > 0 && !/^(gpt|openai|o[1-9])/i.test(effectiveModel)) {
+  if (imageSources.length > 0 && !/^(gpt|openai|o[1-9])/i.test(effectiveModel)) {
     effectiveModel = 'gpt-5.5';
   }
 
-  const { text: userPrompt, images } = assemblePrompt({ targetHtml: target.current_html, buckets });
+  const { text: userPrompt, images, mediaBindings } = assemblePrompt({ targetHtml: target.current_html, buckets });
   const systemPrompt = systemPromptOverride || COMPOSE_SYSTEM;
   const { text } = await callLLM({
     model: effectiveModel,
@@ -260,9 +334,28 @@ export async function runCompose({ target, sources, model, modelId, systemPrompt
     maxTokens: 32000,
     temperature: 0.4
   });
-  const html = stripCodeFences(text);
+  const generatedHtml = stripCodeFences(text);
+  const usedMedia = mediaBindings.filter((binding) => binding.value && generatedHtml.includes(binding.placeholder));
+  const html = replaceMediaPlaceholders(generatedHtml, mediaBindings);
   if (!html || !/<html/i.test(html)) {
     throw new Error('Model returned no usable HTML.');
   }
-  return { html };
+  return {
+    html,
+    transplant: {
+      engine: 'demarcelizer-4',
+      mediaBound: usedMedia.length,
+      mediaUnbound: mediaBindings
+        .filter((binding) => binding.value && !generatedHtml.includes(binding.placeholder))
+        .map((binding) => binding.placeholder),
+      sourceKinds: Object.entries(buckets).flatMap(([kind, items]) => items.length ? [kind] : []),
+      motionPreserved: buckets.html.some((source) => (
+        source.meta?.animatedDetected
+        || source.meta?.animatedRuntime
+        || source.meta?.nativeMotion
+        || source.meta?.runtime === 'native'
+        || source.meta?.runtime === 'animated'
+      )),
+    },
+  };
 }

@@ -33,6 +33,7 @@ export async function GET(request, { params }) {
       `
     : await sql`
         SELECT n.*, s.html AS current_html, s.design_md AS current_design_md, s.screenshot_url AS current_screenshot,
+               s.source AS current_snapshot_source,
                (SELECT id FROM snapshots WHERE node_id = n.id ORDER BY created_at ASC LIMIT 1) AS original_snapshot_id
           FROM nodes n
           LEFT JOIN snapshots s ON s.id = n.current_snapshot_id

@@ -45,17 +45,16 @@ describe('createNode tool', () => {
     expect(sql.mock.calls.length).toBe(3); // SELECT board + SELECT auto-place + INSERT node
   });
 
-  it('resolves explicit coords against the board, preserving them when clear', async () => {
+  it('ignores legacy coordinates and always uses automatic placement', async () => {
     sql.mockResolvedValueOnce([{ id: 'board-1' }]);           // SELECT board (owner check)
-    sql.mockResolvedValueOnce([]);                             // resolvePlacement: empty board → coords kept
-    sql.mockResolvedValueOnce([{ id: 'node-3', kind: 'prompt', pos_x: 500, pos_y: 200, width: 1280, height: 800, meta: {} }]); // INSERT
+    sql.mockResolvedValueOnce([]);                             // placeStackDown: empty board → 0,0
+    sql.mockResolvedValueOnce([{ id: 'node-3', kind: 'prompt', pos_x: 0, pos_y: 0, width: 1280, height: 800, meta: {} }]); // INSERT
     const result = await createNodeTool.execute(
       { type: 'prompt', posX: 500, posY: 200 },
       { boardId: 'board-1', userId: 42 },
     );
-    expect(result.posX).toBe(500);
-    expect(result.posY).toBe(200);
-    // Even explicit coords now get a collision pass (SELECT nodes) before INSERT.
+    expect(result.posX).toBe(0);
+    expect(result.posY).toBe(0);
     expect(sql.mock.calls.length).toBe(3);
   });
 
@@ -136,5 +135,23 @@ describe('createNode tool', () => {
     expect(result.id).toBe('node-11');
     const snapCall = sql.mock.calls.find((c) => String(c[0].join('')).includes('INSERT INTO snapshots'));
     expect(snapCall).toBeFalsy();
+  });
+
+  it('announces the persisted node as the camera focus without a placement ghost', async () => {
+    sql.mockResolvedValueOnce([{ id: 'board-1' }]);
+    sql.mockResolvedValueOnce([]);
+    sql.mockResolvedValueOnce([{ id: 'node-focus', kind: 'prompt', pos_x: 0, pos_y: 0, width: 600, height: 200, meta: {} }]);
+    const emit = vi.fn();
+
+    await createNodeTool.execute(
+      { type: 'prompt' },
+      { boardId: 'board-1', userId: 42, emit },
+    );
+
+    expect(emit).toHaveBeenCalledWith('graph_mutated', {
+      reason: 'createNode',
+      nodeIds: ['node-focus'],
+      focus: 'node',
+    });
   });
 });

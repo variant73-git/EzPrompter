@@ -8,7 +8,7 @@ export const NODE_KIND_META = {
 };
 
 const node = (key, kind, label, col, row = 0, meta = {}) => ({ key, kind, label, col, row, meta });
-const edge = (from, to, kind = 'generic') => ({ from, to, kind });
+const edge = (from, to, kind = 'generic', payload = {}) => ({ from, to, kind, payload });
 
 export const BUILTIN_WORKFLOWS = [
   {
@@ -86,6 +86,31 @@ export const BUILTIN_WORKFLOWS = [
       node('result', 'site', 'Original website', 2),
     ],
     edges: [edge('visual', 'tokens'), edge('brief', 'result'), edge('structure', 'result'), edge('tokens', 'result', 'token-swap')],
+  },
+  {
+    id: 'demarcelizer-4',
+    name: 'Demarcelizer 4.0',
+    eyebrow: 'Animated design transplant',
+    description: 'Keep the source site’s motion and structure while connected nodes replace its identity, content, palette, typography, images, and video.',
+    accent: '#EEA665',
+    icon: 'combine',
+    featuredSpan: 3,
+    primary: true,
+    nodes: [
+      node('source', 'site', 'Animated source', 0, 0, { animatedRuntime: true }),
+      node('direction', 'designmd', 'Design directions.md', 0, 1),
+      node('brief', 'prompt', 'Content & adaptation', 0, 2),
+      node('image', 'asset', 'Replacement image', 1, 0, { mediaType: 'image' }),
+      node('video', 'asset', 'Replacement video', 1, 1, { mediaType: 'video' }),
+      node('result', 'site', 'Transplanted website', 2, 0),
+    ],
+    edges: [
+      edge('source', 'result', 'generic', { binding: { structure: 'preserve', motion: 'preserve', interaction: 'preserve' } }),
+      edge('direction', 'result', 'generic', { binding: { style: 'priority', palette: 'replace', typography: 'replace' } }),
+      edge('brief', 'result', 'generic', { binding: { content: 'priority', adaptation: 'priority' } }),
+      edge('image', 'result', 'generic', { binding: { media: 'replace-images' } }),
+      edge('video', 'result', 'generic', { binding: { media: 'replace-video' } }),
+    ],
   },
   {
     id: 'site-md-site',

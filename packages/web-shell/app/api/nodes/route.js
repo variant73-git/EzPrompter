@@ -8,9 +8,10 @@ export async function POST(request) {
   const { user, error } = await requireUser(request);
   if (error) return error;
   const body = await request.json().catch(() => ({}));
-  const { boardId, kind, originUrl, templateSlug, posX = 0, posY = 0, width = 1280, height = 800, isMain = false, meta = {}, html, designMd } = body || {};
+  const { boardId, kind, originUrl, templateSlug, posX = 0, posY = 0, width = 1280, height = 800, isMain = false, meta = {}, html, designMd, snapshotSource } = body || {};
   if (!boardId) return NextResponse.json({ error: 'boardId required' }, { status: 400 });
   if (!VALID_KINDS.has(kind)) return NextResponse.json({ error: 'invalid kind' }, { status: 400 });
+  const initialSnapshotSource = snapshotSource === 'capture' ? 'capture' : 'upload';
 
   const sql = await db();
   const [board] = await sql`SELECT id FROM boards WHERE id = ${boardId} AND user_id = ${user.id}`;
@@ -30,7 +31,7 @@ export async function POST(request) {
   if (html || designMd) {
     const [snap] = await sql`
       INSERT INTO snapshots (node_id, html, design_md, source)
-      VALUES (${node.id}, ${html || ''}, ${designMd || null}, 'upload')
+      VALUES (${node.id}, ${html || ''}, ${designMd || null}, ${initialSnapshotSource})
       RETURNING id
     `;
     await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${node.id}`;

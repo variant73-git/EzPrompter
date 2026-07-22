@@ -49,14 +49,14 @@ near-opaque warm charcoal:
 ```
 background: rgba(34,34,32,0.97);        /* fixed chrome — --bg-frosted */
 background: #292926;                    /* menus/cards — --bg-frosted-solid */
-border: 1px solid var(--border-frosted);/* #3A3935 warm hairline */
-box-shadow: var(--shadow-frost);        /* 0 8px 28px rgba(0,0,0,0.28) — ambient, small */
-border-radius: 7–16px;                  /* per element, see Radii */
+box-shadow: var(--shadow-frost);        /* ambient separation, never glow */
+border-radius: 10–28px;                 /* nested curves, see Radii */
 ```
 
-**The Flat Canvas Rule:** surfaces are flat by default. Small ambient shadows
-appear only on viewport-fixed chrome, selected floating controls, and menus.
-In-world depth comes from outlines and overlap, never blur.
+**The Flat Canvas Rule:** surfaces are flat by default. The canvas has a 10px
+dark outer bezel with a 28px corner; primary shell panels float inside it with
+18px corners and no perimeter borders. Small ambient shadows appear only on
+viewport-fixed chrome, selected floating controls, and menus.
 
 ## Web-shell tokens (globals.css `:root` — DARK ONLY)
 
@@ -123,7 +123,7 @@ read these. **Color is grammar; do not repurpose.**
 
 ## Fixed chrome layout (unspirit 2026-07-12)
 - **Sidebar** 224px left (collapsible to 52px, exposes `--sidebar-w`):
-  brand, New board, BOARDS, LIBRARY (placeholders), user pill.
+  brand, New node, board rail, Assets, Workflows, user pill.
 - **Topbar** 46px (`--topbar-h`): board-name crumb left; credits +
   Preview/Share (placeholders) right.
 - **Tool rail** vertical and centered along the canvas left edge: cursor, momentary Space-to-pan
@@ -131,9 +131,9 @@ read these. **Color is grammar; do not repurpose.**
   horizontal cursor/hand switch expands on hover and reflects Space while it
   is held; Hand never persists.
 - **Zoom dock** bottom-left (clears the sidebar). **Minimap** top-right,
-  steps left of the inspector via `--inspector-w`.
-- **Inspector** right 248px: Properties/Code tabs, selection title with
-  origin dot, Frame (LIVE X/Y/W/H), Appearance/Fill/Export placeholders;
+  steps left of the inspector via `--inspector-w` and owns node navigation.
+- **Inspector** right 248px: contextual actions and information for the
+  selected node type, including website editing and Open in Browser;
   collapses to a detached 42px control.
 - ALL of it **overlays** the full-viewport canvas world (never insets it —
   client↔world math assumes origin 0,0) and **hides in edit mode** (the
@@ -179,6 +179,9 @@ Solid warm charcoal, Inter, no serif accent.
 | `--radius-sm` | `10px` | Toolbars, menus, collapsed inspector |
 | `--radius-md` | `14px` | Cards, dock, popup cards |
 | `--radius-lg` | `16px` | Large cards |
+| `--chrome-radius` | `18px` | Sidebar, topbar, inspector, library drawer |
+| prompt dock | `20px` | Main canvas prompt |
+| `--shell-radius` | `28px` | Outer workspace frame |
 - Node frame radii are WORLD-LOCKED px (17.25 outer / 11.25 body, below-30 ×0.8)
   — part of the hybrid chrome scaling decision (2026-07-06), untouched.
 

@@ -875,7 +875,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
         // The server pre-created some nodes (e.g. chat attachment persistence)
         // before the agent even started. Tell the canvas to refetch so the
         // user sees them appear immediately, without waiting for run end.
-        onAgentMutatedGraph?.();
+        onAgentMutatedGraph?.(payload || {});
         break;
     }
   }

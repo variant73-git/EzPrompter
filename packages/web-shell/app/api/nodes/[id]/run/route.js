@@ -5,9 +5,11 @@ import { runCompose } from '../../../../../lib/run-flow.js';
 import { BLANK_SITE_HTML } from '../../../../../lib/blank-site-html.js';
 import { runBilledOperation, InsufficientCreditsError } from '../../../../../lib/billing/context.js';
 import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
+import { reconstructSiteNode } from '../../../../../lib/deferred-reconstruction.js';
+import { reconstructionReason } from '../../../../../lib/reconstruction-policy.js';
 
 export const runtime = 'nodejs';
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 // POST /api/nodes/:id/run
 // Smart-compose all incoming edges of a target node into a new snapshot.
@@ -23,9 +25,10 @@ export async function POST(request, { params }) {
   const { modelId } = body || {};
 
   const [target] = await sql`
-    SELECT n.id, n.kind, n.meta, n.board_id,
+    SELECT n.id, n.kind, n.meta, n.board_id, n.origin_url,
            s.html AS current_html,
-           s.design_md AS current_design_md
+           s.design_md AS current_design_md,
+           s.source AS current_snapshot_source
       FROM nodes n
       JOIN boards b ON b.id = n.board_id
       LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
@@ -44,11 +47,15 @@ export async function POST(request, { params }) {
   const sources = await sql`
     SELECT e.id        AS edge_id,
            e.payload   AS edge_payload,
+           n.id        AS id,
            n.id        AS source_node_id,
            n.kind      AS kind,
            n.meta      AS meta,
+           n.board_id  AS board_id,
+           n.origin_url AS origin_url,
            s.html      AS source_html,
-           s.design_md AS source_design_md
+           s.design_md AS source_design_md,
+           s.source    AS current_snapshot_source
       FROM edges e
       JOIN nodes n ON n.id = e.source_node_id
       LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
@@ -65,6 +72,57 @@ export async function POST(request, { params }) {
   if (!rate.allowed) return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
 
   try {
+    // Upgrade only the animated captures whose role in THIS action needs an
+    // editable runtime. Visual/style/content references continue using the
+    // free capture. Reconstructed nodes are returned so the canvas can update
+    // them immediately without a reload.
+    const reconstructionQueue = [];
+    const queuedNodeIds = new Set();
+    const enqueueReconstruction = (item) => {
+      if (!item?.node?.id || queuedNodeIds.has(item.node.id)) return;
+      queuedNodeIds.add(item.node.id);
+      reconstructionQueue.push(item);
+    };
+    const targetReason = reconstructionReason({ node: target, role: 'target' });
+    if (targetReason) enqueueReconstruction({ node: target, reason: targetReason, target });
+    for (const source of sources) {
+      const reason = reconstructionReason({ node: source, role: 'source', edgePayload: source.edge_payload });
+      if (reason) enqueueReconstruction({ node: source, reason, source });
+    }
+
+    const reconstructions = [];
+    let reconstructionCredits = 0;
+    for (const item of reconstructionQueue) {
+      const reconstructed = await reconstructSiteNode({
+        sql,
+        userId: user.id,
+        node: item.node,
+        reason: item.reason,
+      });
+      reconstructionCredits += Number(reconstructed.credits || 0);
+      reconstructions.push({
+        nodeId: reconstructed.nodeId,
+        snapshotId: reconstructed.snapshotId,
+        html: reconstructed.html,
+        meta: reconstructed.meta,
+        reason: item.reason,
+        credits: reconstructed.credits,
+      });
+      if (item.target) {
+        target.current_html = reconstructed.html;
+        target.current_snapshot_source = 'reconstruct';
+        target.meta = { ...(target.meta || {}), ...(reconstructed.meta || {}) };
+      }
+      if (item.source) {
+        for (const source of sources) {
+          if (source.id !== reconstructed.nodeId) continue;
+          source.source_html = reconstructed.html;
+          source.current_snapshot_source = 'reconstruct';
+          source.meta = { ...(source.meta || {}), ...(reconstructed.meta || {}) };
+        }
+      }
+    }
+
     const { result, credits, balanceAfter } = await runBilledOperation(
       { sql, userId: user.id, op: 'compose', boardId: target.board_id, nodeId: target.id },
       async () => {
@@ -76,11 +134,20 @@ export async function POST(request, { params }) {
         }
         const [snap] = await sql`
           INSERT INTO snapshots (node_id, html, source, parent_snapshot_id)
-          VALUES (${id}, ${composed.html}, 'run-flow',
+          VALUES (${id}, ${composed.html}, 'demarcelizer-4',
                   (SELECT current_snapshot_id FROM nodes WHERE id = ${id}))
           RETURNING id
         `;
-        await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${id}`;
+        const transplantMeta = {
+          lastTransplant: composed.transplant || { engine: 'demarcelizer-4' },
+          ...(composed.transplant?.motionPreserved ? { animatedRuntime: true } : {}),
+        };
+        await sql`
+          UPDATE nodes
+             SET current_snapshot_id = ${snap.id},
+                 meta = meta || ${JSON.stringify(transplantMeta)}::jsonb
+           WHERE id = ${id}
+        `;
         // Mark all incoming edges as applied so the UI can paint them
         // differently after a successful run.
         await sql`
@@ -88,10 +155,15 @@ export async function POST(request, { params }) {
              SET status = 'applied', applied_at = NOW(), last_error = NULL
            WHERE target_node_id = ${id}
         `;
-        return { ok: true, snapshotId: snap.id, html: composed.html };
+        return { ok: true, snapshotId: snap.id, html: composed.html, transplant: composed.transplant };
       },
     );
-    return NextResponse.json({ ...result, credits, balanceAfter });
+    return NextResponse.json({
+      ...result,
+      credits: Number(credits || 0) + reconstructionCredits,
+      balanceAfter,
+      reconstructions,
+    });
   } catch (e) {
     if (e instanceof InsufficientCreditsError) {
       return NextResponse.json({ error: 'insufficient_credits', estimate: e.estimate, balance: e.balance }, { status: 402 });

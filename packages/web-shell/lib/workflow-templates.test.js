@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BUILTIN_WORKFLOWS, layoutWorkflowNodes, savedWorkflowToTemplate } from './workflow-templates.js';
 
 describe('workflow templates', () => {
-  it('keeps the five primary entry workflows first and fully connected', () => {
+  it('keeps the primary entry workflows fully connected', () => {
     const primary = BUILTIN_WORKFLOWS.filter((workflow) => workflow.primary);
     expect(primary.map((workflow) => workflow.id)).toEqual([
       'builder',
@@ -10,11 +10,25 @@ describe('workflow templates', () => {
       'style-website',
       'style-screenshot',
       'multiple-references',
+      'demarcelizer-4',
     ]);
     for (const workflow of primary) {
       const keys = new Set(workflow.nodes.map((node) => node.key));
       expect(workflow.edges.every((edge) => keys.has(edge.from) && keys.has(edge.to))).toBe(true);
     }
+  });
+
+  it('ships Demarcelizer 4.0 with explicit structure, style, content and media bindings', () => {
+    const workflow = BUILTIN_WORKFLOWS.find((item) => item.id === 'demarcelizer-4');
+    expect(workflow.nodes.map((item) => item.key)).toEqual([
+      'source', 'direction', 'brief', 'image', 'video', 'result',
+    ]);
+    expect(workflow.edges.map((item) => item.payload.binding)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ motion: 'preserve' }),
+      expect.objectContaining({ typography: 'replace' }),
+      expect.objectContaining({ content: 'priority' }),
+      expect.objectContaining({ media: 'replace-video' }),
+    ]));
   });
 
   it('lays dependency columns apart without overwriting explicit saved geometry', () => {

@@ -1,17 +1,18 @@
 import { NextResponse } from 'next/server';
 import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
-import { reconstructPage } from '../../../../../lib/reconstruct.js';
-import { runBilledOperation, InsufficientCreditsError } from '../../../../../lib/billing/context.js';
+import { InsufficientCreditsError } from '../../../../../lib/billing/context.js';
 import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
+import { reconstructSiteNode } from '../../../../../lib/deferred-reconstruction.js';
+import { shouldReconstructForAction } from '../../../../../lib/reconstruction-policy.js';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
 // POST /api/nodes/:id/reconstruct
-// Deliberate, BILLED vision rebuild of an animated site (spec: capture is
-// always free; reconstruct is the 10×-priced opt-in the client offers when
-// the capture probe flags an animated builder).
+// Deferred, billed upgrade of an animated free capture. The client calls this
+// when the user enters edit mode. Workflow execution uses the same service
+// server-side when an editable runtime is a strict dependency.
 export async function POST(request, { params }) {
   const { user, error } = await requireUser(request);
   if (error) return error;
@@ -20,9 +21,12 @@ export async function POST(request, { params }) {
   const sql = await db();
 
   const [node] = await sql`
-    SELECT n.id, n.board_id, n.origin_url
+    SELECT n.id, n.kind, n.meta, n.board_id, n.origin_url,
+           n.current_snapshot_id, s.html AS current_html,
+           s.source AS current_snapshot_source
       FROM nodes n
       JOIN boards b ON b.id = n.board_id
+      LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
      WHERE n.id = ${id} AND b.user_id = ${user.id}
   `;
   if (!node) return NextResponse.json({ error: 'not_found' }, { status: 404 });
@@ -30,30 +34,25 @@ export async function POST(request, { params }) {
     return NextResponse.json({ error: 'no_origin_url', detail: 'node has no source URL to reconstruct from' }, { status: 400 });
   }
 
+  if (!shouldReconstructForAction({ node, role: 'edit' })) {
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      node: { id: node.id },
+      snapshotId: node.current_snapshot_id,
+      snapshotSource: node.current_snapshot_source,
+      html: node.current_html,
+      meta: node.meta,
+      credits: 0,
+    });
+  }
+
   const rate = await checkOpsRate({ sql, userId: user.id });
   if (!rate.allowed) return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
 
   try {
-    const { result, credits, balanceAfter } = await runBilledOperation(
-      { sql, userId: user.id, op: 'reconstruct', boardId: node.board_id, nodeId: node.id },
-      async () => {
-        const rec = await reconstructPage(node.origin_url);
-        if (!rec?.html) {
-          const err = new Error('no_output');
-          err.code = 'no_output';
-          throw err;
-        }
-        const [snap] = await sql`
-          INSERT INTO snapshots (node_id, html, screenshot_url, source, parent_snapshot_id)
-          VALUES (${id}, ${rec.html}, ${rec.screenshotDataUrl || null}, 'reconstruct',
-                  (SELECT current_snapshot_id FROM nodes WHERE id = ${id}))
-          RETURNING id
-        `;
-        await sql`UPDATE nodes SET current_snapshot_id = ${snap.id}, meta = meta || '{"animatedDetected":false}'::jsonb WHERE id = ${id}`;
-        return { ok: true, snapshotId: snap.id, html: rec.html };
-      },
-    );
-    return NextResponse.json({ ...result, node: { id: node.id }, credits, balanceAfter });
+    const result = await reconstructSiteNode({ sql, userId: user.id, node, reason: 'edit' });
+    return NextResponse.json({ ...result, snapshotSource: 'reconstruct', node: { id: node.id } });
   } catch (e) {
     if (e instanceof InsufficientCreditsError) {
       return NextResponse.json({ error: 'insufficient_credits', estimate: e.estimate, balance: e.balance }, { status: 402 });

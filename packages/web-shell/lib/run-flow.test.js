@@ -30,7 +30,7 @@ vi.mock('openai', () => ({
   },
 }));
 
-const { runCompose } = await import('./run-flow.js');
+const { runCompose, replaceMediaPlaceholders } = await import('./run-flow.js');
 
 function openaiStreamOf(text) {
   return {
@@ -69,6 +69,51 @@ describe('runCompose — Layer B image → style brief', () => {
     expect(userContent.some((p) => p.type === 'image_url' && p.image_url.url.includes('AAA'))).toBe(true);
   });
 
+  it('binds the exact connected image into the generated HTML', async () => {
+    const exact = 'data:image/webp;base64,EXACT_IMAGE';
+    openaiCreate.mockResolvedValue(openaiStreamOf('<html><body><img src="{{UNCRAFT_MEDIA_1}}"></body></html>'));
+
+    const { html, transplant } = await runCompose({
+      target,
+      sources: [{ kind: 'asset', meta: { name: 'Hero product', mimeType: 'image/webp', dataUrl: exact } }],
+    });
+
+    expect(html).toContain(`src="${exact}"`);
+    expect(html).not.toContain('UNCRAFT_MEDIA_1');
+    expect(transplant).toMatchObject({ engine: 'demarcelizer-4', mediaBound: 1 });
+  });
+
+  it('binds video without forcing a vision model or flattening it into an image', async () => {
+    const exact = 'data:video/mp4;base64,EXACT_VIDEO';
+    anthropicStream.mockImplementationOnce(() => ({
+      finalMessage: async () => ({
+        content: [{ text: '<html><body><video src="{{UNCRAFT_MEDIA_1}}" muted loop playsinline></video></body></html>' }],
+        usage: {},
+      }),
+    }));
+
+    const { html } = await runCompose({
+      target,
+      sources: [{ kind: 'asset', meta: { name: 'Launch film', mimeType: 'video/mp4', dataUrl: exact } }],
+    });
+
+    expect(openaiCreate).not.toHaveBeenCalled();
+    expect(extractMock).not.toHaveBeenCalled();
+    expect(html).toContain(`<video src="${exact}"`);
+  });
+
+  it('treats a connected skill with instructions as an actionable behaviour source', async () => {
+    const { html } = await runCompose({
+      target,
+      sources: [{ kind: 'skill', meta: { instructions: 'Keep the hero pinned and scrub opacity with scroll.' } }],
+    });
+
+    expect(html).toContain('composed');
+    const user = anthropicStream.mock.calls[0][0].messages[0].content;
+    expect(user).toContain('SKILL SOURCE');
+    expect(user).toContain('hero pinned');
+  });
+
   it('falls back to a raw vision compose when extraction fails', async () => {
     extractMock.mockRejectedValueOnce(new Error('vision down'));
     openaiCreate.mockResolvedValue(openaiStreamOf('<html><body>vision composed</body></html>'));
@@ -88,5 +133,14 @@ describe('runCompose — Layer B image → style brief', () => {
     expect(extractMock).not.toHaveBeenCalled();
     expect(anthropicStream).toHaveBeenCalledTimes(1);
     expect(html).toContain('composed');
+  });
+});
+
+describe('replaceMediaPlaceholders', () => {
+  it('replaces repeated placeholders deterministically and leaves missing bindings visible', () => {
+    expect(replaceMediaPlaceholders(
+      '<img src="{{UNCRAFT_MEDIA_1}}"><img src="{{UNCRAFT_MEDIA_1}}"><video src="{{UNCRAFT_MEDIA_2}}">',
+      [{ placeholder: '{{UNCRAFT_MEDIA_1}}', value: 'data:image/png;base64,A' }],
+    )).toBe('<img src="data:image/png;base64,A"><img src="data:image/png;base64,A"><video src="{{UNCRAFT_MEDIA_2}}">');
   });
 });

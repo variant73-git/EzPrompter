@@ -3923,52 +3923,102 @@ html:not(.canvas-zoom-low) .cnode.narrow.origin-screenshot .cnode-topbar .kind-p
   height: 100%;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  padding: 28px;
+  justify-content: flex-start;
+  padding: 30px;
   overflow: hidden;
   /* Match .cnode-body: concentric inner radius (outer 10px − 6px inset). */
   border-radius: calc(4px / var(--chrome-scale, 1));
 }
-.cnode-md-preview-stack {
+.cnode-md-preview-header {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  min-height: 0;
+  gap: 5px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid currentColor;
 }
-.cnode-md-preview-h1 {
-  font-weight: 600;
-  line-height: 1.05;
-  letter-spacing: -0.02em;
+.cnode-md-preview-header span,
+.cnode-md-preview-fonts span {
+  font: 650 10px/1.2 var(--font-inter), system-ui, sans-serif;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  opacity: 0.52;
+}
+.cnode-md-preview-header strong {
+  font: 560 17px/1.2 var(--font-inter), system-ui, sans-serif;
+  letter-spacing: -0.025em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cnode-md-preview-h2 {
-  font-weight: 500;
-  line-height: 1.15;
-  letter-spacing: -0.01em;
+.cnode-md-preview-type {
+  min-height: 176px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  align-items: end;
+  gap: 20px;
+  padding: 20px 0 16px;
 }
-.cnode-md-preview-body {
-  font-weight: 400;
-  line-height: 1.55;
-  /* Clamp at 4 lines so long lorem text doesn't overflow the tile. */
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
+.cnode-md-preview-glyph {
+  font-weight: 600;
+  line-height: 0.76;
+  letter-spacing: -0.075em;
+  white-space: nowrap;
   overflow: hidden;
 }
+.cnode-md-preview-fonts {
+  display: grid;
+  gap: 16px;
+  align-self: center;
+}
+.cnode-md-preview-fonts div { display: grid; gap: 4px; min-width: 0; }
+.cnode-md-preview-fonts strong {
+  font-size: 14px;
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cnode-md-preview-scale {
+  display: grid;
+  gap: 8px;
+  padding: 14px 0 18px;
+  border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+}
+.cnode-md-preview-scale-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 9px;
+  font: 600 10px/1 var(--font-inter), system-ui, sans-serif;
+}
+.cnode-md-preview-scale-row span { opacity: 0.55; text-transform: uppercase; letter-spacing: 0.06em; }
+.cnode-md-preview-scale-row i { display: block; height: 4px; border-radius: 99px; opacity: 0.8; }
+.cnode-md-preview-scale-row b { text-align: right; font-variant-numeric: tabular-nums; }
 .cnode-md-preview-palette {
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 18px;
+  min-height: 86px;
+  margin-top: auto;
+  border-radius: 8px;
+  overflow: hidden;
 }
 .cnode-md-preview-swatch {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 9px 7px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font: 600 8px/1 var(--font-inter), system-ui, sans-serif;
+  letter-spacing: 0.02em;
+}
+.cnode-md-preview-swatch span { opacity: 0.62; }
+.cnode-md-preview-swatch b {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ─── prompt body (3:1 textarea) ────────────────────────────────────────── */
@@ -5069,6 +5119,7 @@ input.canvas-section-name-input::placeholder {
   user-select: none;
   -webkit-user-drag: none;
 }
+.cnode-asset-video { pointer-events: none; background: #20201E; }
 html.canvas-zoom-below-30 .cnode-asset-img {
   border-radius: 9px;
 }
@@ -5137,7 +5188,7 @@ html.canvas-zoom-below-30 .cnode-asset-img {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  transition: opacity 140ms ease, outline-color 140ms ease;
+  transition: opacity 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 /* Side-docked layouts — full-height sidebar at left or right edge.
    Top matches the top edge of the zoom widget (18px) so the dock
@@ -5234,28 +5285,28 @@ body.chat-dock-preview {
 /* During a drag, swap the dark dock chrome for the same near-transparent
    frosted glass the section frames use — the canvas reads through cleanly
    while the dock outline still says "this is the widget". */
-/* Click-to-focus: a cold off-white ring appears when the user clicks the dock,
-   cleared when they click away. Reuses the outline channel (the base transition
-   already eases its colour) so it fades in smoothly. */
+/* Click-to-focus stays inside the dock silhouette, preserving the soft shell. */
 .prompt-dock.is-focused {
-  outline: 1.5px solid rgba(227, 231, 236, 0.72);
-  outline-offset: 2px;
+  box-shadow:
+    inset 0 0 0 1px rgba(227, 231, 236, 0.28),
+    0 16px 60px rgba(0, 0, 0, 0.55);
 }
-/* Add-URL: flash the ring to FULL white with a soft outer glow, then ease it
-   back to the normal focused off-white over 2s (one-shot). */
+/* Add-URL: a restrained inner highlight, then back to the focused state. */
 .prompt-dock.add-url-flash {
-  outline: 1.5px solid #ffffff;
-  outline-offset: 2px;
   animation: dock-add-url-flash 2s ease-out;
 }
 @keyframes dock-add-url-flash {
   0% {
-    outline-color: #ffffff;
-    box-shadow: 0 0 18px 3px rgba(255, 255, 255, 0.55), 0 16px 60px rgba(0, 0, 0, 0.55);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.72),
+      0 0 18px 3px rgba(255, 255, 255, 0.22),
+      0 16px 60px rgba(0, 0, 0, 0.55);
   }
   100% {
-    outline-color: rgba(227, 231, 236, 0.72);
-    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0), 0 16px 60px rgba(0, 0, 0, 0.55);
+    box-shadow:
+      inset 0 0 0 1px rgba(227, 231, 236, 0.28),
+      0 0 0 0 rgba(255, 255, 255, 0),
+      0 16px 60px rgba(0, 0, 0, 0.55);
   }
 }
 
@@ -5266,11 +5317,9 @@ body.chat-dock-preview {
   box-shadow: none;
   pointer-events: none;
 }
-/* When dragged INTO a snap zone, brighten the outline + add a subtle
-   white ring as "about to dock" affordance. */
+/* When dragged into a snap zone, an inner highlight signals the target. */
 .prompt-dock.is-snapping {
-  outline: 1px solid rgba(255, 255, 255, 0.85);
-  outline-offset: 2px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.62);
 }
 
 /* Drag handle — dark pill with 6 light dots, centred at the top of
@@ -9313,3 +9362,142 @@ body.rb-ed-active.rb-ed-canvas .canvas-minimap { display: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .canvas-first-node-coachmark { animation: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ROUNDED ADAPTIVE SHELL — keeps the current rail, minimap navigation and
+   contextual inspector while giving the workspace a single soft frame.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --shell-gutter: 10px;
+  --shell-panel-gap: 8px;
+  --shell-radius: 28px;
+  --chrome-radius: 18px;
+}
+
+.canvas-shell::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  border-radius: var(--shell-radius);
+  box-shadow:
+    inset 0 0 0 var(--shell-gutter) #10100F,
+    inset 0 0 18px rgba(0, 0, 0, 0.42);
+}
+body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
+
+.canvas-sidebar {
+  left: var(--shell-gutter);
+  top: var(--shell-gutter);
+  bottom: var(--shell-gutter);
+  border-right: 0;
+  border-radius: var(--chrome-radius);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.canvas-topbar {
+  top: var(--shell-gutter);
+  left: calc(var(--shell-gutter) + var(--sidebar-w) + var(--shell-panel-gap));
+  right: var(--shell-gutter);
+  border-bottom: 0;
+  border-radius: var(--chrome-radius);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.24);
+}
+
+.canvas-sidebar-new,
+.canvas-sidebar-item,
+.canvas-topbar-viewports,
+.canvas-topbar-actions .credits-pill {
+  border-color: transparent;
+  border-radius: 10px;
+}
+
+.canvas-tools {
+  left: calc(var(--shell-gutter) + var(--sidebar-w) + var(--shell-panel-gap));
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+}
+.canvas-tool-mode-track { border-radius: 10px; }
+
+.canvas-zoomdock {
+  left: calc(var(--shell-gutter) + var(--sidebar-w) + var(--shell-panel-gap));
+  bottom: calc(var(--shell-gutter) + var(--shell-panel-gap));
+}
+.zoom-controls {
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+}
+
+.canvas-minimap {
+  top: var(--minimap-top, calc(var(--shell-gutter) + var(--topbar-h) + var(--shell-panel-gap))) !important;
+  right: var(--minimap-right, calc(var(--shell-gutter) + var(--shell-panel-gap) + var(--inspector-w, 0px))) !important;
+  border: 0;
+  border-radius: 16px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.3);
+}
+.canvas-minimap-counts {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+}
+.minimap-node-menu {
+  border: 0;
+  border-radius: 16px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.38);
+}
+.minimap-node-search,
+.minimap-node-row { border-radius: 9px; }
+
+.canvas-inspector {
+  top: calc(var(--shell-gutter) + var(--topbar-h) + var(--shell-panel-gap));
+  right: var(--shell-gutter);
+  bottom: var(--shell-gutter);
+  border-left: 0;
+  border-radius: var(--chrome-radius);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.3);
+  overflow: hidden auto;
+}
+.canvas-inspector.collapsed {
+  top: calc(var(--shell-gutter) + var(--topbar-h) + var(--shell-panel-gap));
+  right: var(--shell-gutter);
+  border: 0;
+  border-radius: 14px;
+}
+.cinsp-field,
+.cinsp-row button,
+.cinsp-fill { border-radius: 9px; }
+
+.canvas-library-drawer {
+  left: calc(var(--shell-gutter) + var(--sidebar-w) + var(--shell-panel-gap));
+  top: calc(var(--shell-gutter) + var(--topbar-h) + var(--shell-panel-gap));
+  bottom: var(--shell-gutter);
+  border-right: 0;
+  border-radius: var(--chrome-radius);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.36);
+  overflow: hidden;
+}
+.canvas-library-drawer > header { border-bottom-color: rgba(255, 255, 255, 0.06); }
+.canvas-library-drawer > header button,
+.canvas-library-empty > span,
+.canvas-library-empty button,
+.canvas-library-new-node,
+.canvas-workflow-card { border-radius: 10px; }
+
+.prompt-dock {
+  bottom: calc(var(--shell-gutter) + var(--shell-panel-gap));
+  border: 0;
+  border-radius: 20px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+}
+.prompt-dock.dock-left,
+.prompt-dock.dock-right {
+  top: var(--shell-gutter);
+  bottom: var(--shell-gutter);
+  border-radius: var(--chrome-radius);
+}
+.prompt-dock.dock-left { left: var(--shell-gutter); }
+.prompt-dock.dock-right { right: var(--shell-gutter); }

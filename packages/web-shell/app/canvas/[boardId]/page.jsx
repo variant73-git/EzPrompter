@@ -18,7 +18,8 @@ export default async function CanvasBoardPage({ params }) {
   if (!board) notFound();
 
   const nodes = await sql`
-    SELECT n.*, s.html AS current_html, s.design_md AS current_design_md, s.screenshot_url AS current_screenshot
+    SELECT n.*, s.html AS current_html, s.design_md AS current_design_md, s.screenshot_url AS current_screenshot,
+           s.source AS current_snapshot_source
       FROM nodes n
       LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
      WHERE n.board_id = ${boardId}

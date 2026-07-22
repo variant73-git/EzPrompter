@@ -1,6 +1,6 @@
 import { sql } from '../../db.js';
 import { BLANK_SITE_HTML, BLANK_SITE_DEFAULTS } from '../../blank-site-html.js';
-import { placeStackDown, resolvePlacement } from '../../canvas-layout.js';
+import { placeStackDown } from '../../canvas-layout.js';
 
 // Type → {kind, meta-mixin, ...} map. The agent reasons in these
 // user-facing types; we translate to the kind/meta shape the rest of the
@@ -103,6 +103,10 @@ export const createNodeTool = {
   name: 'createNode',
   description: `Add a new node to the user's board.
 
+Placement is automatic and immediate. The node is persisted in the next free
+canvas slot, never returned as a cursor-following ghost, and the canvas camera
+centers it after the agent turn. Do not ask the user where to place it.
+
 ${TYPE_DOC}
 
 If the user wants to CAPTURE a real website by URL (snapshot a live site), don't use this tool — that's a separate flow driven from the input bar.`,
@@ -117,13 +121,11 @@ If the user wants to CAPTURE a real website by URL (snapshot a live site), don't
       },
       name: { type: 'string', description: 'Optional display name shown on the node' },
       content: { type: 'string', description: 'Optional body for the node. For a "prompt" node: the brief/instruction text (becomes the prompt the node feeds into a site). For a "design-system" node: the DESIGN.md spec text. For a "blank-website" node: initial HTML — use when deriving/splitting a page from existing content, so the node renders it immediately without an AI call. Omit to leave the node a blank slot the user fills later.' },
-      posX: { type: 'number', description: 'Canvas X (optional)' },
-      posY: { type: 'number', description: 'Canvas Y (optional)' },
     },
     required: ['type'],
   },
   async execute(args, ctx) {
-    const { type, name = null, posX, posY, content = null } = args || {};
+    const { type, name = null, content = null } = args || {};
     if (!type) return { error: 'invalid_args', message: 'type is required' };
     const mapping = NODE_TYPES[type];
     if (!mapping) return { error: 'invalid_args', message: `type must be one of: ${TYPE_LIST.join(', ')}` };
@@ -133,23 +135,10 @@ If the user wants to CAPTURE a real website by URL (snapshot a live site), don't
 
     const { w, h } = computeNodeSize(mapping, content);
 
-    // Auto-place: if caller didn't pass coords, stack vertically in the
-    // rightmost column already in use. Each call in the same agent turn
-    // picks up the previous insert, so N createNode calls pile under each
-    // other instead of running across the canvas as a horizontal line.
-    let placedX = posX;
-    let placedY = posY;
-    if (placedX == null || placedY == null) {
-      const pos = await placeStackDown(ctx.boardId, w, h, sql);
-      if (placedX == null) placedX = pos.x;
-      if (placedY == null) placedY = pos.y;
-    } else {
-      // Explicit coords still must not overlap anything already on the
-      // board — resolve them against the live nodes (push down to clear).
-      const pos = await resolvePlacement(ctx.boardId, placedX, placedY, w, h, sql);
-      placedX = pos.x;
-      placedY = pos.y;
-    }
+    // Agent-created nodes always auto-place. Ignore legacy coordinate fields
+    // if an older model still sends them: chat must never delegate placement
+    // to the cursor or guess canvas coordinates itself.
+    const { x: placedX, y: placedY } = await placeStackDown(ctx.boardId, w, h, sql);
 
     const node = await insertTypedNode({
       boardId: ctx.boardId, mapping, name, content, x: placedX, y: placedY, w, h,
@@ -157,7 +146,7 @@ If the user wants to CAPTURE a real website by URL (snapshot a live site), don't
 
     // Real-time: the canvas refetches on graph_mutated, so the node shows
     // up the moment it exists instead of at the end of the agent run.
-    if (ctx?.emit) { try { ctx.emit('graph_mutated', { reason: 'createNode' }); } catch (_) {} }
+    if (ctx?.emit) { try { ctx.emit('graph_mutated', { reason: 'createNode', nodeIds: [node.id], focus: 'node' }); } catch (_) {} }
 
     return {
       id: node.id,

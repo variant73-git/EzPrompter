@@ -33,6 +33,7 @@ const fullNode = {
   current_html: '<html>heavy payload</html>',
   current_design_md: '# Tokens',
   current_screenshot: 'https://example.com/shot.png',
+  current_snapshot_source: 'capture',
   original_snapshot_id: 'snap-orig',
 };
 
@@ -67,6 +68,7 @@ describe('GET /api/boards/[id]', () => {
     expect(n.current_html).toBe('<html>heavy payload</html>');
     expect(n.current_design_md).toBe('# Tokens');
     expect(n.current_screenshot).toBe('https://example.com/shot.png');
+    expect(n.current_snapshot_source).toBe('capture');
     // Sanity: full query path should include the LEFT JOIN.
     expect(sqlMock._templates[1]).toMatch(/LEFT JOIN snapshots/);
   });
@@ -88,6 +90,7 @@ describe('GET /api/boards/[id]', () => {
     expect(n).not.toHaveProperty('current_html');
     expect(n).not.toHaveProperty('current_design_md');
     expect(n).not.toHaveProperty('current_screenshot');
+    expect(n).not.toHaveProperty('current_snapshot_source');
     // Sanity: light query path must NOT include the LEFT JOIN on snapshots.
     expect(sqlMock._templates[1]).not.toMatch(/LEFT JOIN snapshots/);
     expect(sqlMock._templates[1]).toMatch(/hasSnapshot/);

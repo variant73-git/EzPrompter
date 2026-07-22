@@ -383,10 +383,9 @@ export async function captureSnapshot(url, opts = {}) {
     }
 
     // Detect JS-driven scroll narrative sites — but do NOT auto-route to
-    // reconstruction anymore (billing spec: capture is ALWAYS free; the
-    // 10×-priced vision reconstruct is a deliberate user choice). We flag
-    // the result so the client can offer "Rebuild live with AI?" and hit
-    // POST /api/nodes/[id]/reconstruct when the user opts in.
+    // reconstruction anymore: capture is ALWAYS free. We persist the signal
+    // so Edit or a workflow that strictly needs editable motion can upgrade
+    // the node later, at the moment the capability is actually used.
     const detection = await detectAnimatedBuilder(page);
     if (detection.detected) {
       // eslint-disable-next-line no-console

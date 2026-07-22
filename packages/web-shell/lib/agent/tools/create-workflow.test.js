@@ -90,6 +90,11 @@ describe('createWorkflow tool', () => {
     const reasons = emit.mock.calls.filter(([ev]) => ev === 'graph_mutated').map(([, p]) => p.reason);
     expect(reasons.filter((x) => x === 'createWorkflow:node')).toHaveLength(2);
     expect(reasons.filter((x) => x === 'createWorkflow:edges')).toHaveLength(1);
+    expect(emit).toHaveBeenCalledWith('graph_mutated', {
+      reason: 'createWorkflow:edges',
+      nodeIds: ['n-brief', 'n-site'],
+      focus: 'chain',
+    });
   });
 
   it('rejects the reserved "anchor" node key', async () => {
