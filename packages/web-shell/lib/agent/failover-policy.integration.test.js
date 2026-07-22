@@ -9,19 +9,19 @@ import { breakerFor } from './circuit.js';
  *
  * Every prior "400 does not fall over" test mocked the LLM adapter directly,
  * BYPASSING the circuit breaker. Production wraps every adapter in
- * breakerFor() (app/api/chat/route.js:76-78), and opossum runs the registered
- * fallback() on ANY action failure — not only when the circuit is open
- * (node_modules/opossum/lib/circuit.js handleError → fallback). circuit.js's
- * fallback() rethrew every error as code='circuit_open', which
- * driver.js isRetriableProviderError treats as failover-eligible.
+ * breakerFor() (app/api/chat/route.js:76-78), and opossum runs a registered
+ * fallback() on ANY action failure — not only when the circuit is open.
+ * circuit.js's old fallback() rethrew every error as code='circuit_open',
+ * which the driver treats as failover-eligible.
  *
- * WITNESS (2026-07-22, pre-fix): an Anthropic 400 "credit balance too low" —
- * a non-retriable client error by the driver's own written policy — was
- * masked into circuit_open and triggered silent failover. A clone forced to
- * Opus degraded to Flash without telling anyone. The assertions in the
- * "WITNESS" test below document that bug verbatim; the structural fix
- * (error taxonomy + honest breaker + per-operation failover policy) must
- * invert them.
+ * WITNESS HISTORY (commit 356dceae, 2026-07-22): the first version of this
+ * file PROVED the bug — an Anthropic 400 "credit balance too low" masked
+ * into circuit_open, silently failing a clone-on-Opus over to Flash. The
+ * error-taxonomy fix inverted those assertions into the contract below:
+ *   - the breaker lets the ORIGINAL error through, stamped with a category;
+ *   - provider_balance IS failover-eligible — but with an HONEST reason;
+ *   - a genuinely malformed request (invalid_request) NEVER fails over,
+ *     breaker or no breaker.
  */
 
 const reg = new Registry();
@@ -45,6 +45,14 @@ function anthropicBalanceError() {
   }, undefined, new Headers());
 }
 
+/** A genuinely malformed request — same SDK class, no balance wording. */
+function anthropicInvalidRequestError() {
+  return APIError.generate(400, {
+    type: 'error',
+    error: { type: 'invalid_request_error', message: 'max_tokens: must be greater than 0' },
+  }, undefined, new Headers());
+}
+
 /** A well-behaved fallback provider (the Flash slot in the generic chain). */
 function okLLM(text = 'ok') {
   return vi.fn(async ({ onEvent }) => {
@@ -61,59 +69,77 @@ function freshBreaker(fn) {
   return breakerFor(`itest-provider-${breakerSeq}`, fn);
 }
 
-describe('breaker→driver composition (real opossum, real circuit.js)', () => {
-  it('WITNESS: Anthropic balance-400 through the breaker triggers silent failover (THE BUG)', async () => {
-    const anthropic = vi.fn(async () => { throw anthropicBalanceError(); });
-    const wrappedAnthropic = freshBreaker(anthropic);
-    const flash = okLLM('flash took over');
+function runWith({ llm, fallbacks, message = 'clone this site' }) {
+  const events = [];
+  const resultPromise = runAgentLoop({
+    llm,
+    providerLabel: 'anthropic',
+    fallbacks,
+    registry: reg,
+    systemPrompt: 's',
+    messages: [{ role: 'user', content: message }],
+    modelId: 'claude-opus-4-7',
+    apiKey: 'k',
+    ctx: {},
+    onEvent: (e) => events.push(e),
+    maxIterations: 5,
+  });
+  return resultPromise.then((result) => ({ result, events }));
+}
 
-    const events = [];
-    const result = await runAgentLoop({
-      llm: wrappedAnthropic,
-      providerLabel: 'anthropic',
-      fallbacks: [{ llm: flash, modelId: 'gemini-2.5-flash', apiKey: 'k2', tools: [], label: 'gemini' }],
-      registry: reg,
-      systemPrompt: 's',
-      messages: [{ role: 'user', content: 'clone this site' }],
-      modelId: 'claude-opus-4-7',
-      apiKey: 'k',
-      ctx: {},
-      onEvent: (e) => events.push(e),
-      maxIterations: 5,
+describe('breaker→driver composition (real opossum, real circuit.js)', () => {
+  it('balance-400 through the breaker fails over with the HONEST reason, not circuit_open', async () => {
+    const anthropic = vi.fn(async () => { throw anthropicBalanceError(); });
+    const nextProvider = okLLM('fallback took over');
+
+    const { result, events } = await runWith({
+      llm: freshBreaker(anthropic),
+      fallbacks: [{ llm: nextProvider, modelId: 'gpt-5.5', apiKey: 'k2', tools: [], label: 'openai' }],
     });
 
-    // ── CURRENT (buggy) behaviour — this test PASSING proves the bug. ──
-    // The 400 is not retriable by the driver's own policy, yet the breaker's
-    // fallback() rewrote it as circuit_open, so the driver failed over and
-    // Flash silently completed a run the user believes ran on Opus.
     const failover = events.find((e) => e.type === 'provider_failover');
     expect(failover).toBeTruthy();
-    expect(failover.reason).toBe('circuit_open');
-    expect(flash).toHaveBeenCalledTimes(1);
+    expect(failover.reason).toBe('provider_balance');   // was: 'circuit_open' (the mask)
+    expect(nextProvider).toHaveBeenCalledTimes(1);
     expect(result.stop_reason).toBe('end_turn');
   });
 
-  it('control: the same 400 WITHOUT the breaker fails fast (existing covered path)', async () => {
-    const anthropic = vi.fn(async () => { throw anthropicBalanceError(); });
-    const flash = okLLM();
+  it('invalid_request-400 through the breaker fails FAST — no failover, original error intact', async () => {
+    let seen = null;
+    const anthropic = vi.fn(async () => { throw anthropicInvalidRequestError(); });
+    const wrapped = freshBreaker(anthropic);
+    // Peek at what actually crosses the breaker before handing it to the driver.
+    const peeking = async (args) => {
+      try { return await wrapped(args); } catch (e) { seen = e; throw e; }
+    };
+    const nextProvider = okLLM();
 
-    const events = [];
-    const result = await runAgentLoop({
-      llm: anthropic, // unwrapped — how the old tests exercised it
-      providerLabel: 'anthropic',
-      fallbacks: [{ llm: flash, modelId: 'gemini-2.5-flash', apiKey: 'k2', tools: [], label: 'gemini' }],
-      registry: reg,
-      systemPrompt: 's',
-      messages: [{ role: 'user', content: 'clone this site' }],
-      modelId: 'claude-opus-4-7',
-      apiKey: 'k',
-      ctx: {},
-      onEvent: (e) => events.push(e),
-      maxIterations: 5,
+    const { result, events } = await runWith({
+      llm: peeking,
+      fallbacks: [{ llm: nextProvider, modelId: 'gemini-2.5-flash', apiKey: 'k2', tools: [], label: 'gemini' }],
     });
 
-    expect(flash).not.toHaveBeenCalled();
     expect(events.some((e) => e.type === 'provider_failover')).toBe(false);
+    expect(nextProvider).not.toHaveBeenCalled();
     expect(result.stop_reason).toBe('failed');
+    // The breaker preserved the SDK error instead of synthesizing its own.
+    expect(seen.status).toBe(400);
+    expect(seen.code).not.toBe('circuit_open');
+    expect(seen.providerErrorCategory).toBe('invalid_request');
+  });
+
+  it('control: the same balance-400 WITHOUT the breaker behaves identically (no divergence)', async () => {
+    const anthropic = vi.fn(async () => { throw anthropicBalanceError(); });
+    const nextProvider = okLLM();
+
+    const { events } = await runWith({
+      llm: anthropic, // unwrapped
+      fallbacks: [{ llm: nextProvider, modelId: 'gpt-5.5', apiKey: 'k2', tools: [], label: 'openai' }],
+    });
+
+    const failover = events.find((e) => e.type === 'provider_failover');
+    expect(failover).toBeTruthy();
+    expect(failover.reason).toBe('provider_balance');
+    expect(nextProvider).toHaveBeenCalledTimes(1);
   });
 });

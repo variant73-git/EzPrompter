@@ -20,6 +20,7 @@ import {
 } from './run-map.js';
 import { logAgentEvent } from '../agent-events.js';
 import { startAgentTrace, logGeneration, logToolSpan, endAgentTrace } from './trace.js';
+import { classifyProviderError, isFailoverEligible } from './provider-errors.js';
 
 const DEFAULT_CAPS = {
   softIterations: 10,
@@ -198,6 +199,7 @@ export async function runAgentLoop(opts) {
           usedLabel = attempt.label;
           break; // success — leave the failover loop
         } catch (e) {
+          const category = classifyProviderError(e);
           const retriable = isRetriableProviderError(e);
           const hasNext = attemptIdx < attempts.length - 1;
           if (runId && ctx?.userId) {
@@ -206,7 +208,7 @@ export async function runAgentLoop(opts) {
               payload: {
                 iter: iterations, where: 'llm_call', provider: attempt.label,
                 message: String(e?.message || e), code: e?.code || null, status: e?.status ?? null,
-                retriable, willFailover: retriable && hasNext,
+                category, retriable, willFailover: retriable && hasNext,
               },
               durationMs: Date.now() - llmCallStartTs,
             });
@@ -214,11 +216,11 @@ export async function runAgentLoop(opts) {
           if (retriable && hasNext) {
             const next = attempts[attemptIdx + 1];
             // eslint-disable-next-line no-console
-            console.warn(`[agent] provider failover ${attempt.label} → ${next.label} (iter ${iterations}): ${e?.code || e?.status || e?.message}`);
+            console.warn(`[agent] provider failover ${attempt.label} → ${next.label} (iter ${iterations}): ${category} — ${e?.code || e?.status || e?.message}`);
             onEvent({
               type: 'provider_failover',
               from: attempt.label, to: next.label,
-              reason: e?.code || (e?.status ? `http_${e.status}` : 'error'),
+              reason: category,
               iter: iterations,
             });
             continue; // try the next provider, same iteration
@@ -555,26 +557,18 @@ function labelForModel(modelId) {
 
 /**
  * Should this LLM error trigger failover to the next provider?
- * YES for transient/availability failures the next provider might survive:
- *   - open circuit (this provider's breaker tripped)
- *   - our own per-call hard timeout (provider hung mid-stream)
- *   - HTTP 429 (rate limit / quota / DEPLETED PREPAID CREDITS — the Gemini case)
- *   - HTTP 5xx (provider outage / overload)
- *   - Gemini's RESOURCE_EXHAUSTED / "prepayment credits" message (when no
- *     numeric status is surfaced by the SDK)
- * NO for client-side errors (400 bad request, 401/403 auth) — failover to a
- * different provider wouldn't fix a malformed request, and masking an auth
- * misconfig would hide a real bug.
+ * Delegates to the shared taxonomy (lib/agent/provider-errors.js):
+ * YES for availability failures another provider might survive —
+ * provider_balance (depleted credits: Anthropic's 400, OpenAI's
+ * insufficient_quota 429, Gemini's prepayment message), rate_limit, outage
+ * (5xx / network), timeout (hung stream), and a genuinely open circuit.
+ * NO for invalid_request / auth — failover to a different provider wouldn't
+ * fix a malformed request, and masking an auth misconfig would hide a real
+ * bug — and for anything unclassifiable.
  */
 function isRetriableProviderError(e) {
   if (!e) return false;
-  if (e.code === 'circuit_open' || e.code === 'llm_timeout') return true;
-  const status = e.status ?? e.statusCode ?? e.response?.status ?? null;
-  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 529) return true;
-  const msg = String(e.message || '');
-  if (/RESOURCE_EXHAUSTED|prepayment credits|rate.?limit|overloaded|quota exceeded|temporarily unavailable|service unavailable/i.test(msg)) return true;
-  if (/llm call exceeded \d+s/.test(msg)) return true;
-  return false;
+  return isFailoverEligible(classifyProviderError(e));
 }
 
 /** Human-readable summary shown in confirm chips. Per-tool overrides preferred.

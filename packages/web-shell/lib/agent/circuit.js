@@ -20,6 +20,7 @@
  * the same way run-map.js does so dev sessions don't reset breaker state.
  */
 import CircuitBreaker from 'opossum';
+import { classifyProviderError, countsForBreaker, annotateProviderError } from './provider-errors.js';
 
 const KEY = '__uncraft_llm_breakers';
 const breakers = globalThis[KEY] || (globalThis[KEY] = new Map());
@@ -46,13 +47,25 @@ const DEFAULT_OPTS = {
  *   const safeCall = breakerFor('anthropic', callAnthropic);
  *   await safeCall(args);
  *
- * Throws the original error from the wrapped fn when the breaker is
- * CLOSED. Throws a synthesized "circuit_open" error when OPEN — caller
- * can catch and surface a graceful message to the user.
+ * Error contract (2026-07-22 — the old fallback() rewrote EVERY failure as
+ * code='circuit_open', which the driver treats as failover-eligible; a 400
+ * "credit balance too low" thereby caused silent failover):
+ *   - Breaker CLOSED/HALF-OPEN: the ORIGINAL adapter error crosses,
+ *     annotated with `providerErrorCategory` (see provider-errors.js).
+ *   - Breaker OPEN: a synthesized error with code='circuit_open' — and ONLY
+ *     then.
+ *   - Health accounting: only outage / timeout / rate_limit count toward
+ *     tripping. invalid_request / auth / provider_balance are OUR problems
+ *     (bug, key, billing) — deterministic failures that say nothing about
+ *     provider health. A truthy errorFilter makes opossum record the call
+ *     as a non-failure while still rejecting with the original error.
  */
 export function breakerFor(providerName, fn) {
-  if (breakers.has(providerName)) return breakers.get(providerName).fire.bind(breakers.get(providerName));
-  const breaker = new CircuitBreaker(fn, DEFAULT_OPTS);
+  if (breakers.has(providerName)) return fireThroughBreaker(providerName, breakers.get(providerName));
+  const breaker = new CircuitBreaker(fn, {
+    ...DEFAULT_OPTS,
+    errorFilter: (e) => !countsForBreaker(classifyProviderError(e)),
+  });
   // Optional telemetry hooks — keep them lightweight; observability code
   // hooks into these once Langfuse is wired up.
   breaker.on('open', () => {
@@ -67,15 +80,34 @@ export function breakerFor(providerName, fn) {
     // eslint-disable-next-line no-console
     console.warn(`[circuit] ${providerName} CLOSED — back to normal`);
   });
-  // Fallback returns a structured error the adapter call sites can detect.
-  breaker.fallback(() => {
-    const err = new Error(`${providerName} circuit open — provider unavailable, try again shortly`);
-    err.code = 'circuit_open';
-    err.provider = providerName;
-    throw err;
-  });
   breakers.set(providerName, breaker);
-  return breaker.fire.bind(breaker);
+  return fireThroughBreaker(providerName, breaker);
+}
+
+/**
+ * fire() wrapper enforcing the error contract above. NO opossum fallback()
+ * is registered — opossum runs a registered fallback on ANY action failure
+ * (not just when open), which is exactly the masking bug this replaces.
+ */
+function fireThroughBreaker(providerName, breaker) {
+  return async (...args) => {
+    try {
+      return await breaker.fire(...args);
+    } catch (e) {
+      // Open breaker: opossum rejects with its own EOPENBREAKER error before
+      // ever invoking the adapter. Translate to our stable shape.
+      if (e && (e.code === 'EOPENBREAKER' || /breaker is open/i.test(String(e.message)))) {
+        const err = new Error(`${providerName} circuit open — provider unavailable, try again shortly`);
+        err.code = 'circuit_open';
+        err.provider = providerName;
+        err.providerErrorCategory = 'circuit_open';
+        throw err;
+      }
+      // Everything else crosses UNCHANGED apart from the category stamp —
+      // status, SDK body, and message stay intact for the driver's policy.
+      throw annotateProviderError(e);
+    }
+  };
 }
 
 /** Inspect current state (useful in /api/health). */
