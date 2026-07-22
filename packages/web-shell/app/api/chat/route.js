@@ -100,27 +100,66 @@ function resolveAdapter(resolvedModel) {
   return { error: `unsupported model: ${resolvedModel} (Phase 5a supports Claude / GPT / Gemini)` };
 }
 
-// Provider failover chain for the agent's orchestrating model. When the
-// primary provider returns a retriable error mid-run (rate limit, depleted
-// prepaid credits, outage), the driver falls over to the next provider here
-// that (a) isn't the primary and (b) has a key configured. Order is
-// cost-ascending so a forced failover never silently jumps to the priciest
-// model. Availability beats matching the primary's quality during an outage.
-const AGENT_FALLBACK_CHAIN = [
-  { model: 'gemini-2.5-flash',          label: 'gemini'    },
-  { model: 'gpt-4o-mini',               label: 'openai'    },
-  { model: 'claude-haiku-4-5-20251001', label: 'anthropic' },
-];
+// ── Per-operation failover policy (2026-07-22 model-policy audit) ───────────
+// Failover is a PRODUCT decision, not just an availability mechanism. Chat is
+// an orchestrator where availability beats quality parity; clone and the
+// enterprise tier are sold on a specific quality bar, where silently
+// degrading model tier is WORSE than being briefly unavailable. Declared as
+// data so the whole rule is auditable in one place instead of scattered ifs.
+//
+// `chain` lists candidate alternates tried in order (entries matching the
+// primary's provider are skipped at build time; entries without a server key
+// are skipped too). `unavailableMessage` is the product text surfaced when
+// the entire chain is exhausted by availability failures — fail closed, in
+// plain English, never pretending the run happened on the promised model.
+export const FAILOVER_POLICIES = {
+  chat: {
+    // Cost-ascending so a forced failover never silently jumps to the
+    // priciest model.
+    chain: [
+      { model: 'gemini-2.5-flash',          label: 'gemini'    },
+      { model: 'gpt-4o-mini',               label: 'openai'    },
+      { model: 'claude-haiku-4-5-20251001', label: 'anthropic' },
+    ],
+    unavailableMessage: null, // raw availability error is acceptable for chat
+  },
+  clone: {
+    // Opus (or UNCRAFT_CLONE_MODEL) ↔ GPT-5.5 — the two models field-tested
+    // for reconstruction quality (checkpoint 145). NEVER Flash: a clone the
+    // user asked for on the strong model must not silently ship slop.
+    chain: [
+      { model: 'gpt-5.5',         label: 'openai'    },
+      { model: 'claude-opus-4-7', label: 'anthropic' },
+    ],
+    unavailableMessage: 'Clone is temporarily unavailable — the models it needs are down right now. Nothing was run on a lower-quality model. Please try again in a few minutes.',
+  },
+  enterprise: {
+    // Sonnet is the tier promise. No approved same-quality fallback exists
+    // yet → fail closed with a clear error (audit decision: silent tier
+    // degradation is worse than unavailability).
+    chain: [],
+    unavailableMessage: 'The assistant is temporarily unavailable. Your plan runs on a dedicated model tier and we won’t silently downgrade it. Please try again in a few minutes.',
+  },
+};
+
+/** Which failover policy governs this turn. Clone wins over plan tier —
+ *  an enterprise user asking for a clone gets the clone quality contract. */
+export function resolveOperation({ message, hasText, user }) {
+  if (hasText && isCloneRequest(message)) return 'clone';
+  if ((user?.plan || 'free') === 'enterprise') return 'enterprise';
+  return 'chat';
+}
 
 /**
- * Build the ordered list of alternate providers for the driver's failover.
- * Reuses resolveAdapter (so each entry inherits the same circuit-breaker-
- * wrapped adapter + server key) and builds the provider-specific tool spec.
- * Skips providers with no key and the primary's own provider.
+ * Build the ordered list of alternate providers for the driver's failover
+ * from the operation's policy chain. Reuses resolveAdapter (so each entry
+ * inherits the same circuit-breaker-wrapped adapter + server key) and builds
+ * the provider-specific tool spec. Skips providers with no key and the
+ * primary's own provider.
  */
-function buildAgentFallbacks({ primaryLabel, registry, toolAllowlist }) {
+function buildAgentFallbacks({ policy, primaryLabel, registry, toolAllowlist }) {
   const out = [];
-  for (const entry of AGENT_FALLBACK_CHAIN) {
+  for (const entry of policy.chain) {
     if (entry.label === primaryLabel) continue;
     const r = resolveAdapter(entry.model);
     if (r.error) continue; // provider has no key on this server — skip silently
@@ -410,10 +449,13 @@ export async function POST(request) {
   // The ORCHESTRATOR (this assistant: tool calls, node orchestration,
   // extracts) always runs on the tier ladder, never on the picker.
   let resolvedModel = getAgentModel(user);
+  // The operation decides BOTH the primary model exception and the failover
+  // contract below (clone → never Flash; enterprise → fail closed).
+  const operation = resolveOperation({ message, hasText, user });
   // Clones ALWAYS run on Opus — it gives the best reconstruction and narrates
   // the capture. A clone/capture request forces Opus over the picker/tier.
   // (The reconstruction pipeline itself stays gpt-5.5; this is the chat agent.)
-  if (hasText && isCloneRequest(message)) resolvedModel = CLONE_AGENT_MODEL;
+  if (operation === 'clone') resolvedModel = CLONE_AGENT_MODEL;
   if (!/^(claude|opus|sonnet|haiku|gpt|gemini)/i.test(resolvedModel)) {
     return NextResponse.json({ error: `unsupported model: ${resolvedModel}` }, { status: 500 });
   }
@@ -735,10 +777,12 @@ export async function POST(request) {
       // error instead.
       const RUN_HARD_CAP_MS = 12 * 60 * 1000;
       // Alternate providers the driver falls over to when the primary returns
-      // a retriable error mid-run (the depleted-prepaid-credits 429 is the
-      // motivating case). Empty when no other provider has a key configured.
+      // a retriable error mid-run (the depleted-prepaid-credits case is the
+      // motivating one). Which alternates are ALLOWED is the operation's
+      // policy — clone never degrades to Flash; enterprise fails closed.
+      const failoverPolicy = FAILOVER_POLICIES[operation] || FAILOVER_POLICIES.chat;
       const agentFallbacks = buildAgentFallbacks({
-        primaryLabel: resolved.providerLabel, registry, toolAllowlist,
+        policy: failoverPolicy, primaryLabel: resolved.providerLabel, registry, toolAllowlist,
       });
       const loopPromise = runAgentLoop({
         llm: resolved.adapter,
@@ -749,6 +793,7 @@ export async function POST(request) {
         apiKey: resolved.apiKey,
         providerLabel: resolved.providerLabel,
         fallbacks: agentFallbacks,
+        unavailableMessage: failoverPolicy.unavailableMessage,
         // pickerModel = the user's EXPLICIT dock selection (raw, un-aliased).
         // Tools that route to a provider (createImage) assume it instead of
         // asking — the conversation model can diverge from the picker (clone

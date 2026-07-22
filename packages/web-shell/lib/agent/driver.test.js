@@ -425,3 +425,91 @@ describe('runAgentLoop — provider failover', () => {
     expect(events.some((e) => e.type === 'provider_failover')).toBe(false);
   });
 });
+
+// ── Failover policy hardening (2026-07-22) ────────────────────────────────────
+
+describe('runAgentLoop — sticky failover / partial-output guard / fail-closed message', () => {
+  const r = buildRegistry([{
+    name: 'noop', classification: 'safe',
+    inputSchema: { type: 'object' }, execute: async () => ({ ok: true }),
+  }]);
+  const throwLLM = (status, msg = 'boom') => vi.fn(async () => { const e = new Error(msg); e.status = status; throw e; });
+
+  it('sticky: after falling over, later iterations start on the fallback (primary probed once)', async () => {
+    const primary = throwLLM(429, 'rate limited');
+    // Fallback serves BOTH iterations: a tool call, then end_turn.
+    const fallback = buildLLM([
+      {
+        events: [
+          { type: 'tool_use', id: 't1', name: 'noop', input: {} },
+          { type: 'message_complete', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+        ],
+        finalContent: [{ type: 'tool_use', id: 't1', name: 'noop', input: {} }],
+        stop_reason: 'tool_use',
+      },
+      { events: [{ type: 'message_complete', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }], finalContent: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' },
+    ]);
+    const events = [];
+    const result = await runAgentLoop({
+      llm: primary, providerLabel: 'gemini',
+      fallbacks: [{ llm: fallback, modelId: 'gpt-4o-mini', apiKey: 'k2', tools: [], label: 'openai' }],
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'go' }],
+      modelId: 'gemini-2.5-flash', apiKey: 'k', ctx: {}, onEvent: (e) => events.push(e), maxIterations: 5,
+    });
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.iterations).toBe(2);
+    // Pre-sticky the primary was re-probed (and re-failed) EVERY iteration.
+    expect(primary).toHaveBeenCalledTimes(1);
+    expect(fallback).toHaveBeenCalledTimes(2);
+    expect(events.filter((e) => e.type === 'provider_failover').length).toBe(1);
+  });
+
+  it('never fails over after partial output — mid-stream 503 fails the run explicitly', async () => {
+    const primary = vi.fn(async ({ onEvent }) => {
+      onEvent({ type: 'text_delta', text: 'Here is your si' });
+      const e = new Error('Service Unavailable'); e.status = 503; throw e;
+    });
+    const fallback = buildLLM([
+      { events: [{ type: 'message_complete', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }], finalContent: [{ type: 'text', text: 'dup' }], stop_reason: 'end_turn' },
+    ]);
+    const events = [];
+    const result = await runAgentLoop({
+      llm: primary, providerLabel: 'anthropic',
+      fallbacks: [{ llm: fallback, modelId: 'gpt-5.5', apiKey: 'k2', tools: [], label: 'openai' }],
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'go' }],
+      modelId: 'claude-opus-4-7', apiKey: 'k', ctx: {}, onEvent: (e) => events.push(e), maxIterations: 5,
+    });
+    expect(result.stop_reason).toBe('failed');
+    expect(fallback).not.toHaveBeenCalled();
+    expect(events.some((e) => e.type === 'provider_failover')).toBe(false);
+    const status = events.find((e) => e.type === 'run_status');
+    expect(status.err).toMatch(/mid-response/i);
+    expect(status.err).toMatch(/duplicated output/i);
+  });
+
+  it('fail-closed: chain exhausted on availability → the policy unavailableMessage', async () => {
+    const primary = throwLLM(503, 'overloaded');
+    const events = [];
+    const result = await runAgentLoop({
+      llm: primary, providerLabel: 'anthropic', fallbacks: [],
+      unavailableMessage: 'Clone is temporarily unavailable — try again in a few minutes.',
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'clone x' }],
+      modelId: 'claude-opus-4-7', apiKey: 'k', ctx: {}, onEvent: (e) => events.push(e), maxIterations: 5,
+    });
+    expect(result.stop_reason).toBe('failed');
+    expect(events.find((e) => e.type === 'run_status').err)
+      .toBe('Clone is temporarily unavailable — try again in a few minutes.');
+  });
+
+  it('fail-closed message is NOT used for real bugs — invalid_request keeps the raw error', async () => {
+    const primary = throwLLM(400, 'max_tokens: must be greater than 0');
+    const events = [];
+    await runAgentLoop({
+      llm: primary, providerLabel: 'anthropic', fallbacks: [],
+      unavailableMessage: 'Clone is temporarily unavailable — try again in a few minutes.',
+      registry: r, systemPrompt: 's', messages: [{ role: 'user', content: 'clone x' }],
+      modelId: 'claude-opus-4-7', apiKey: 'k', ctx: {}, onEvent: (e) => events.push(e), maxIterations: 5,
+    });
+    expect(events.find((e) => e.type === 'run_status').err).toMatch(/max_tokens/);
+  });
+});

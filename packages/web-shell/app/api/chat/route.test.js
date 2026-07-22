@@ -10,7 +10,9 @@ vi.mock('../../../lib/chat-persistence.js', () => ({
   ]),
 }));
 
-const { GET, getAgentModel, isCloneRequest } = await import('./route.js');
+const {
+  GET, getAgentModel, isCloneRequest, resolveOperation, FAILOVER_POLICIES,
+} = await import('./route.js');
 
 describe('isCloneRequest', () => {
   it('detects clone/capture/replicate requests (any language form)', () => {
@@ -42,6 +44,36 @@ describe('getAgentModel (orchestrator ladder — picker never reaches it)', () =
   it('lets UNCRAFT_AGENT_MODEL env win over the ladder', () => {
     process.env.UNCRAFT_AGENT_MODEL = 'gpt-4o-mini';
     expect(getAgentModel({ plan: 'enterprise' })).toBe('gpt-4o-mini');
+  });
+});
+
+describe('per-operation failover policy (2026-07-22 audit)', () => {
+  it('resolveOperation: clone beats plan tier; enterprise beats chat', () => {
+    expect(resolveOperation({ message: 'clone https://stripe.com', hasText: true, user: { plan: 'free' } })).toBe('clone');
+    expect(resolveOperation({ message: 'clone this', hasText: true, user: { plan: 'enterprise' } })).toBe('clone');
+    expect(resolveOperation({ message: 'add a pricing section', hasText: true, user: { plan: 'enterprise' } })).toBe('enterprise');
+    expect(resolveOperation({ message: 'add a pricing section', hasText: true, user: { plan: 'pro' } })).toBe('chat');
+    expect(resolveOperation({ message: null, hasText: false, user: null })).toBe('chat');
+  });
+
+  it('clone chain NEVER contains Gemini/Flash — only the field-tested strong pair', () => {
+    const labels = FAILOVER_POLICIES.clone.chain.map((e) => e.label);
+    const models = FAILOVER_POLICIES.clone.chain.map((e) => e.model);
+    expect(labels).not.toContain('gemini');
+    expect(models.some((m) => /flash|mini|haiku/i.test(m))).toBe(false);
+    expect(models).toContain('gpt-5.5');
+    expect(models).toContain('claude-opus-4-7');
+  });
+
+  it('clone and enterprise fail CLOSED with product text; chat does not', () => {
+    expect(FAILOVER_POLICIES.clone.unavailableMessage).toMatch(/temporarily unavailable/i);
+    expect(FAILOVER_POLICIES.enterprise.unavailableMessage).toMatch(/temporarily unavailable/i);
+    expect(FAILOVER_POLICIES.enterprise.chain).toHaveLength(0);
+    expect(FAILOVER_POLICIES.chat.unavailableMessage).toBeNull();
+  });
+
+  it('chat chain keeps the cost-ascending ladder starting at Flash', () => {
+    expect(FAILOVER_POLICIES.chat.chain[0].model).toBe('gemini-2.5-flash');
   });
 });
 

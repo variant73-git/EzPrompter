@@ -46,6 +46,12 @@ export async function runAgentLoop(opts) {
     // (every pre-failover caller keeps its exact behaviour).
     fallbacks = [],
     providerLabel = null,         // human label for the primary (for the failover event)
+    // Product text emitted as the run error when the WHOLE provider chain is
+    // exhausted by availability failures (balance/rate-limit/outage/timeout/
+    // open circuit). Set by the route from the operation's failover policy —
+    // fail-closed operations (clone, enterprise) surface a clear message
+    // instead of a raw SDK error. null = raw error message (chat).
+    unavailableMessage = null,
   } = opts;
   const primaryLabel = providerLabel || labelForModel(modelId);
 
@@ -71,6 +77,12 @@ export async function runAgentLoop(opts) {
   const confirmMemo = {};       // toolName → 'confirm' | 'skip'
   let iterations = 0;
   let lastSoftPauseAt = 0;      // last iteration count at which we paused
+  // Sticky failover (2026-07-22): once a run falls over to a fallback
+  // provider, the REST of the run starts each iteration there instead of
+  // re-trying the primary — re-probing a dead provider added a failed call
+  // + failover event to every single iteration. Deliberate tradeoff: a
+  // primary that recovers mid-run is only used again on the NEXT run.
+  let stickyAttemptIdx = 0;
 
   // Wall-clock timer.
   let wallExpired = false;
@@ -160,11 +172,16 @@ export async function runAgentLoop(opts) {
       let usedModelId = modelId;
       let usedLabel = primaryLabel;
 
-      for (let attemptIdx = 0; attemptIdx < attempts.length; attemptIdx++) {
+      for (let attemptIdx = stickyAttemptIdx; attemptIdx < attempts.length; attemptIdx++) {
         const attempt = attempts[attemptIdx];
         // Fresh per attempt — a failed attempt's partial tool_use events are
         // discarded so we don't execute tools the failed provider proposed.
         toolCalls = [];
+        // Once THIS attempt has streamed anything user-visible (text deltas
+        // or tool_call chips), failing over would replay the same content
+        // from the next provider — duplicated output with no rollback
+        // mechanism on the SSE side. Such a failure must fail the run.
+        let emittedToClient = false;
         if (runId && ctx?.userId) {
           logAgentEvent({
             runId, userId: ctx.userId, type: 'llm_call',
@@ -177,6 +194,7 @@ export async function runAgentLoop(opts) {
           // other adapters ignore the extra field.
           userId: ctx?.userId || null,
           onEvent: (ev) => {
+            if (ev.type === 'text_delta' || ev.type === 'tool_use') emittedToClient = true;
             if (ev.type === 'tool_use') toolCalls.push(ev);
             if (ev.type === 'message_complete') {
               totalUsage.input_tokens         += ev.usage?.input_tokens         || 0;
@@ -197,23 +215,27 @@ export async function runAgentLoop(opts) {
           ]);
           usedModelId = attempt.modelId;
           usedLabel = attempt.label;
+          // Sticky: later iterations start from the provider that worked.
+          stickyAttemptIdx = attemptIdx;
           break; // success — leave the failover loop
         } catch (e) {
           const category = classifyProviderError(e);
           const retriable = isRetriableProviderError(e);
           const hasNext = attemptIdx < attempts.length - 1;
+          const blockedByPartialOutput = retriable && hasNext && emittedToClient;
           if (runId && ctx?.userId) {
             logAgentEvent({
               runId, userId: ctx.userId, type: 'error',
               payload: {
                 iter: iterations, where: 'llm_call', provider: attempt.label,
                 message: String(e?.message || e), code: e?.code || null, status: e?.status ?? null,
-                category, retriable, willFailover: retriable && hasNext,
+                category, retriable, partialOutput: emittedToClient,
+                willFailover: retriable && hasNext && !emittedToClient,
               },
               durationMs: Date.now() - llmCallStartTs,
             });
           }
-          if (retriable && hasNext) {
+          if (retriable && hasNext && !emittedToClient) {
             const next = attempts[attemptIdx + 1];
             // eslint-disable-next-line no-console
             console.warn(`[agent] provider failover ${attempt.label} → ${next.label} (iter ${iterations}): ${category} — ${e?.code || e?.status || e?.message}`);
@@ -225,8 +247,19 @@ export async function runAgentLoop(opts) {
             });
             continue; // try the next provider, same iteration
           }
-          // Non-retriable error, or no providers left → fail the run.
-          onEvent({ type: 'run_status', status: 'failed', err: e?.message || 'llm_error' });
+          // Failing the run. Pick the honest message for the channel:
+          //  - mid-stream failure we REFUSED to fail over: say so;
+          //  - availability failure with the chain exhausted on a fail-closed
+          //    operation: the policy's product message;
+          //  - anything else (invalid_request / auth / unknown): the raw
+          //    error — it's a real bug signal, don't soften it.
+          let errMsg = e?.message || 'llm_error';
+          if (blockedByPartialOutput) {
+            errMsg = `Provider ${attempt.label} failed mid-response (${category}). The run was stopped instead of switching providers to avoid duplicated output.`;
+          } else if (retriable && unavailableMessage) {
+            errMsg = unavailableMessage;
+          }
+          onEvent({ type: 'run_status', status: 'failed', err: errMsg });
           return { stop_reason: 'failed', iterations, usage: totalUsage, toolCounts };
         }
       }
