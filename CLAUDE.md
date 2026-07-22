@@ -140,6 +140,7 @@ Editor de animações (GSAP/ScrollTrigger/Lottie/WAAPI) dentro do canvas. **Font
 153. Motion editor 6b–6e (grouping, régua única, strips, keyframes, export Framer) — [[checkpoint_2026-07-19_motion-editor-phases]]
 154. Motion editor: motor + clone-fixture + harness adversarial Codex — [[checkpoint_2026-07-19_motion-editor-phases]]
 155. Timeline Figma Motion (scroller único/labels sticky, full-page rows por CHEGADA, ownership, replay-on-pass edit-mode, tudo clicável) + review Claude×Sol com 11 fixes — [[checkpoint_2026-07-20_motion-timeline-figma]]; handoff `docs/superpowers/handoffs/2026-07-20-motion-timeline-figma-handoff.md`
+156. Branch preview/soma (soma de todas as frentes) + QA ao vivo: ghost-doc do srcDoc (painéis vazios em captura grande), scroll em edição, gate do seletor de modos legado, cores #20201E, glitch LQIP na captura, viewport-lock confirmado; política de modelos auditada vault×código com Sol (pro=Flash, picker só criação, pins extract/restyle/compose, breaker mascara 400 — pendência estrutural) — [[checkpoint_2026-07-22_preview-soma-qa-model-policy]]; handoff `docs/superpowers/handoffs/2026-07-22-model-policy-audit-handoff.md`
 
 ## Lições permanentes (destiladas dos checkpoints — valem sempre)
 - **Anthropic billing**: assinatura claude.ai NÃO credita a API — buckets separados (119).
