@@ -12,7 +12,10 @@ async function jsonOrThrow(r) {
     err.balance = j?.balance;
     throw err;
   }
-  if (!r.ok) throw new Error(j?.detail || j?.error || `${r.status} ${r.statusText}`);
+  // Surface the server's clean message (e.g. the extract route's timeout text)
+  // — not only the generic `error` code — so a route-deadline timeout reads as
+  // "timed out", not an opaque "extract_failed".
+  if (!r.ok) throw new Error(j?.detail || j?.message || j?.error || `${r.status} ${r.statusText}`);
   if (j?.balanceAfter != null && typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('uncraft:balance', { detail: { balance: j.balanceAfter } }));
   }
@@ -21,9 +24,13 @@ async function jsonOrThrow(r) {
 
 // Extract runs a full LLM pass server-side; bound it client-side so a stuck
 // backend call surfaces a clear timeout instead of an indefinite loader. Kept
-// slightly longer than the server deadline (lib/llm-deadline.js, 150s) so the
-// server's own clean error wins when it fires first.
-const EXTRACT_TIMEOUT_MS = 180_000;
+// well ABOVE the server's route deadline (extract route
+// EXTRACT_ROUTE_DEADLINE_MS, default 160s, clamped ≤180s — which bounds the
+// WHOLE multi-call extract absolutely from handler entry, not just one call),
+// leaving headroom for pre-work + persistence so the server's own clean,
+// refunded error always wins and the client never aborts a still-billing
+// request. Raise both together if you raise the route deadline.
+const EXTRACT_TIMEOUT_MS = 200_000;
 
 async function fetchWithTimeout(url, opts = {}, ms = EXTRACT_TIMEOUT_MS) {
   const controller = new AbortController();

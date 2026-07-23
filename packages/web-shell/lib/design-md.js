@@ -84,17 +84,15 @@ What the @media queries actually change, grouped by breakpoint. Omit if none are
 OUTPUT
 Markdown only. No code fences around the document, no preface, no commentary. Be terse and token-dense — this is a spec, not prose.`;
 
-function isAnthropic(model) {
-  return /^(claude|opus|sonnet|haiku)/i.test(model);
-}
-
 async function callLLM({ model, system, user, maxTokens = 8000, temperature = 0.2 }) {
   // Fast-fail a misrouted model BEFORE any request (this seam routes Anthropic or
   // Gemini only; a global gpt-* override would otherwise reach the wrong SDK).
+  // Dispatch on the provider the guard resolved — never a second, narrower regex,
+  // or a name the guard accepts (fable/mythos) mis-routes to the Gemini branch.
   const provider = assertProvider(model, ['anthropic', 'gemini']);
   // eslint-disable-next-line no-console
   console.log(`[design-md] llm start provider=${provider} model=${model} inputChars=${user?.length || 0}`);
-  if (isAnthropic(model)) {
+  if (provider === 'anthropic') {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing');
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const final = await withDeadline((signal) => {

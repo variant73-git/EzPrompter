@@ -68,12 +68,25 @@ function contentToMarkdown(c) {
   return lines.join('\n').trim();
 }
 
+// Between-stage cancellation: when the route's deadline aborts mid-run, stop
+// LAUNCHING further paid stages (a 2nd LLM call, image cropping). The in-flight
+// stage still finishes under its own seam deadline, but nothing new starts — so
+// a timed-out clone/styleclone doesn't keep spending on work the route already
+// discarded. A no-op when no signal is passed (non-route callers).
+function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    const e = new Error('extract cancelled (deadline)');
+    e.code = 'extract_cancelled';
+    throw e;
+  }
+}
+
 /**
  * Produce a derived artifact from a source node. Pure of DB — the caller
  * persists. Returns { error } on bad input (never throws for validation);
  * generator failures reject so the route aborts before any write.
  */
-export async function runExtract({ to, node, model }) {
+export async function runExtract({ to, node, model, signal }) {
   if (!node || !node.id) return { error: 'no_source', message: 'node required' };
   const isSite = node.kind === 'site';
   const isAsset = node.kind === 'asset' || node.kind === 'image';
@@ -142,6 +155,7 @@ export async function runExtract({ to, node, model }) {
         // then embed the REAL images (hero/render/logo) cropped from the
         // screenshot pixels — placeholders become pixel-identical.
         const raw = await cloneImageToHtml({ dataUrl, ...(model ? { model } : {}) });
+        throwIfAborted(signal);
         const html = await embedClonedImageRegions(raw, dataUrl);
         return result({ kind: 'site', html,
           meta: { name: `${name} — clone`, source: 'extract', extractTo: 'clone', sourceNodeId: node.id } });
@@ -152,7 +166,9 @@ export async function runExtract({ to, node, model }) {
         // precision style spec, not a shallow token guess. The clone html rides
         // along in meta for reuse.
         const raw = await cloneImageToHtml({ dataUrl, ...(model ? { model } : {}) });
+        throwIfAborted(signal);
         const html = await embedClonedImageRegions(raw, dataUrl);
+        throwIfAborted(signal);
         const gen = await generateDesignMd({ html, ...(model ? { model } : {}) });
         return result({ kind: 'designmd', html, designMd: gen.md, truncated: gen.truncated,
           meta: { name: `${name} — style`, source: 'extract', extractTo: 'styleclone', sourceNodeId: node.id, cloneHtml: html } });

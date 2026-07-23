@@ -21,16 +21,12 @@ const DEFAULT_MODEL = 'gemini-2.5-flash';
 const STRONG_VISION_MODEL = process.env.UNCRAFT_CLONE_MODEL || 'gpt-5.5';
 const MAX_HTML = 60000;
 
-function isOpenAI(m) {
-  return /^(gpt|openai|o[1-9])/i.test(m);
-}
-function isAnthropic(m) {
-  return /^(claude|opus|sonnet|haiku)/i.test(m);
-}
-
 async function callText({ model = DEFAULT_MODEL, system, user, maxTokens = 1200 }) {
-  assertProvider(model, ['anthropic', 'gemini']);
-  if (isAnthropic(model)) {
+  // Dispatch on the provider the guard resolved (never a second, narrower regex)
+  // so a name the guard accepts (fable/mythos → anthropic) can't fall through to
+  // the Gemini branch and 404 in the wrong SDK.
+  const provider = assertProvider(model, ['anthropic', 'gemini']);
+  if (provider === 'anthropic') {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing');
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const final = await withDeadline((signal) => client.messages.stream({
@@ -69,9 +65,9 @@ async function callText({ model = DEFAULT_MODEL, system, user, maxTokens = 1200 
 async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTokens = 1200 }) {
   const [, mediaType, b64] = /^data:([^;]+);base64,(.+)$/.exec(dataUrl) || [];
   if (!b64) throw new Error('callVision: dataUrl must be base64');
-  assertProvider(model, ['anthropic', 'openai', 'gemini']);
+  const provider = assertProvider(model, ['anthropic', 'openai', 'gemini']);
 
-  if (isAnthropic(model)) {
+  if (provider === 'anthropic') {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing');
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const final = await withDeadline((signal) => client.messages.stream({
@@ -98,7 +94,7 @@ async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTok
     return (final.content?.map((b) => b.text || '').join('') || '').trim();
   }
 
-  if (isOpenAI(model)) {
+  if (provider === 'openai') {
     if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing');
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const { text, usage } = await withDeadline(async (signal) => {

@@ -115,16 +115,14 @@ OUTPUT
 Single complete self-contained HTML5 document starting with <!DOCTYPE html>. No commentary, no markdown fences, no preface, no truncation.
 ${TASTE_PRINCIPLES}`;
 
-function isAnthropic(model) {
-  return /^(claude|opus|sonnet|haiku)/i.test(model);
-}
-
 async function callLLM({ model, system, user, maxTokens = 16000, temperature = 0.4 }) {
   // Fast-fail a misrouted model BEFORE any request (Anthropic or Gemini only here).
+  // Dispatch on the provider the guard resolved so a name the guard accepts
+  // (fable/mythos → anthropic) never falls through to the Gemini branch.
   const provider = assertProvider(model, ['anthropic', 'gemini']);
   // eslint-disable-next-line no-console
   console.log(`[demarcelize] llm start provider=${provider} model=${model} inputChars=${user?.length || 0}`);
-  if (isAnthropic(model)) {
+  if (provider === 'anthropic') {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing');
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     // Stream for long-running calls — the SDK refuses non-streaming

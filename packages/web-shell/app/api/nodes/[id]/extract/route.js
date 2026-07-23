@@ -5,13 +5,29 @@ import { runExtract } from '../../../../../lib/extract.js';
 import { placeStackDown, resolvePlacement } from '../../../../../lib/canvas-layout.js';
 import { runBilledOperation, InsufficientCreditsError } from '../../../../../lib/billing/context.js';
 import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
+import { withDeadline } from '../../../../../lib/llm-deadline.js';
 
 export const runtime = 'nodejs';
+// Bound the WHOLE extract server-side, BELOW the client's fetch timeout
+// (canvas-api.js EXTRACT_TIMEOUT_MS = 200s). The per-call seam deadline (150s)
+// does NOT bound a multi-call target: clone/styleclone run two sequential LLM
+// calls, so total time can exceed a naive client timeout while each call stays
+// under 150s. The client then aborts, but the route keeps running, charges, and
+// persists a node → double charge + duplicate on retry. This deadline is
+// measured ABSOLUTELY from handler entry (auth/lookup/hold pre-work counts
+// against it) and trips INSIDE runBilledOperation, which refunds the hold and
+// rethrows — so no node is created and the client gets a clean, refunded error
+// first. Clamped [1s, 180s] so a mis-set env can never invert the client>route
+// ordering; raise this and the client EXTRACT_TIMEOUT_MS together if needed.
+const EXTRACT_ROUTE_DEADLINE_MS = Math.min(180_000, Math.max(1_000,
+  Number(process.env.UNCRAFT_EXTRACT_ROUTE_DEADLINE_MS) || 160_000));
+export const maxDuration = 210;
 
 // POST /api/nodes/[id]/extract { to }
 // Creates a NEW node derived from node [id]. Mirrors extractDesign's persist
 // shape: insert node + snapshot + a 'generic' edge from source → new node.
 export async function POST(request, { params }) {
+  const startedAt = Date.now();
   const { user, error } = await requireUser(request);
   if (error) return error;
 
@@ -45,7 +61,14 @@ export async function POST(request, { params }) {
     const billed = await runBilledOperation(
       { sql, userId: user.id, op: `extract.${to}`, boardId: src.board_id, nodeId: src.id },
       async () => {
-        const result = await runExtract({ to, node: { id: src.id, kind: src.kind, html: src.html, meta: src.meta } });
+        const result = await withDeadline(
+          // Thread the deadline's signal so a mid-run abort stops LAUNCHING
+          // further paid stages (styleclone's 2nd LLM call, image cropping).
+          (signal) => runExtract({ to, node: { id: src.id, kind: src.kind, html: src.html, meta: src.meta }, signal }),
+          // Absolute budget from handler entry — pre-work (auth, lookup, hold)
+          // counts against it so the whole route settles before the client aborts.
+          { ms: Math.max(1_000, EXTRACT_ROUTE_DEADLINE_MS - (Date.now() - startedAt)), label: `extract.${to}` },
+        );
         if (result?.error) {
           // Structured extract errors must not charge — throw so the hold
           // refunds, then map the payload back to its response below.
