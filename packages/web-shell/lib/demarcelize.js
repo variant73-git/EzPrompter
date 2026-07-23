@@ -16,6 +16,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 import { HOUSE_STYLE_GUARDRAILS, HOUSE_STYLE_ABSORB } from './design/house-style.js';
 import { recordUsage } from './billing/context.js';
+import { withDeadline, assertProvider } from './llm-deadline.js';
 
 // This seam only speaks Anthropic/Gemini — a global UNCRAFT_LLM_MODEL set to
 // an OpenAI model (compose's intended default) would misroute here into the
@@ -119,19 +120,25 @@ function isAnthropic(model) {
 }
 
 async function callLLM({ model, system, user, maxTokens = 16000, temperature = 0.4 }) {
+  // Fast-fail a misrouted model BEFORE any request (Anthropic or Gemini only here).
+  const provider = assertProvider(model, ['anthropic', 'gemini']);
+  // eslint-disable-next-line no-console
+  console.log(`[demarcelize] llm start provider=${provider} model=${model} inputChars=${user?.length || 0}`);
   if (isAnthropic(model)) {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing');
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     // Stream for long-running calls — the SDK refuses non-streaming
     // requests with max_tokens that could exceed the 10-minute cap.
-    const stream = client.messages.stream({
-      model,
-      max_tokens: maxTokens,
-      temperature,
-      system,
-      messages: [{ role: 'user', content: user }]
-    });
-    const final = await stream.finalMessage();
+    const final = await withDeadline((signal) => {
+      const stream = client.messages.stream({
+        model,
+        max_tokens: maxTokens,
+        temperature,
+        system,
+        messages: [{ role: 'user', content: user }]
+      }, { signal });
+      return stream.finalMessage();
+    }, { label: 'demarcelize:anthropic' });
     recordUsage({
       provider: 'anthropic', model,
       tokensIn: final.usage?.input_tokens || 0,
@@ -146,11 +153,11 @@ async function callLLM({ model, system, user, maxTokens = 16000, temperature = 0
     throw new Error('GEMINI_API_KEY missing');
   }
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY });
-  const resp = await ai.models.generateContent({
+  const resp = await withDeadline((signal) => ai.models.generateContent({
     model,
     contents: [{ role: 'user', parts: [{ text: user }] }],
-    config: { systemInstruction: system, maxOutputTokens: maxTokens, temperature }
-  });
+    config: { systemInstruction: system, maxOutputTokens: maxTokens, temperature, abortSignal: signal }
+  }), { label: 'demarcelize:gemini' });
   recordUsage({
     provider: 'gemini', model,
     tokensIn: resp.usageMetadata?.promptTokenCount || 0,

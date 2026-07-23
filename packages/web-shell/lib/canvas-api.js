@@ -19,6 +19,29 @@ async function jsonOrThrow(r) {
   return j;
 }
 
+// Extract runs a full LLM pass server-side; bound it client-side so a stuck
+// backend call surfaces a clear timeout instead of an indefinite loader. Kept
+// slightly longer than the server deadline (lib/llm-deadline.js, 150s) so the
+// server's own clean error wins when it fires first.
+const EXTRACT_TIMEOUT_MS = 180_000;
+
+async function fetchWithTimeout(url, opts = {}, ms = EXTRACT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal });
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      const err = new Error(`Request timed out after ${Math.round(ms / 1000)}s — the extraction did not finish. Try again.`);
+      err.code = 'client_timeout';
+      throw err;
+    }
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export const api = {
   listBoards: () => fetch('/api/boards', COMMON).then(jsonOrThrow),
   createBoard: (name = 'Untitled') => fetch('/api/boards', { ...COMMON, method: 'POST', body: JSON.stringify({ name }) }).then(jsonOrThrow),
@@ -132,7 +155,7 @@ export const api = {
       { ...COMMON, method: 'GET' }
     ).then(jsonOrThrow),
 
-  extractNode: (id, { to, posX, posY }) => fetch(`/api/nodes/${id}/extract`, { ...COMMON, method: 'POST', body: JSON.stringify({ to, posX, posY }) }).then(jsonOrThrow),
+  extractNode: (id, { to, posX, posY }) => fetchWithTimeout(`/api/nodes/${id}/extract`, { ...COMMON, method: 'POST', body: JSON.stringify({ to, posX, posY }) }).then(jsonOrThrow),
 
   // Version history (site nodes). listSnapshots = light metadata only; getSnapshot
   // pulls one version's html/screenshot on demand (preview + thumbnail);

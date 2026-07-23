@@ -16,6 +16,7 @@
 
 import { chromium } from 'playwright-core';
 import { inflateSync, inflateRawSync } from 'node:zlib';
+import { classify, toMeta, extractVisibleText, extractMotion } from './classify-site.js';
 
 const NAV_TIMEOUT_MS = 25000;
 const RENDER_WAIT_MS = 2000;
@@ -560,7 +561,44 @@ export async function captureSnapshot(url, opts = {}) {
     html = pinViewportUnits(html, viewport.width, viewport.height);
     html = ensureBaseTag(html, url);
 
-    return { html, screenshotDataUrl, title, baseUrl: url, animatedDetected: detection.detected };
+    // SHADOW classifier (env-gated, off by default → zero production cost). Renders
+    // the stripped JS-dead artifact and compares its visible text to the live
+    // source's, per the 2026-07-23 review. It only LOGS + attaches a shadow field;
+    // it does NOT drive `animatedDetected` until calibrated on real captures. Fully
+    // isolated: any failure here leaves the capture untouched.
+    let classificationShadow = null;
+    if (process.env.UNCRAFT_CLASSIFY_SHADOW) {
+      try {
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await page.waitForTimeout(400);
+        const sourceText = await page.evaluate(extractVisibleText);
+        const motion = await page.evaluate(extractMotion);
+        const probe = await context.newPage();
+        await probe.setJavaScriptEnabled(false);
+        await probe.setContent(html, { waitUntil: 'load', timeout: 15000 });
+        await probe.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+        await probe.waitForTimeout(200);
+        const artifactText = await probe.evaluate(extractVisibleText);
+        await probe.close().catch(() => {});
+        const result = classify({ sourceText, artifactText, motion });
+        classificationShadow = toMeta(result);
+        // eslint-disable-next-line no-console
+        console.log(
+          `[classify-site:shadow] category=${result.category} photocopyOk=${result.photocopyOk} ` +
+          `coverage=${result.coverage.toFixed(3)} legacy.animatedDetected=${detection.detected} ` +
+          `new.animatedDetected=${classificationShadow.animatedDetected} signals=${JSON.stringify(result.signals)}`
+        );
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn('[classify-site:shadow] failed (capture unaffected):', e?.message);
+      }
+    }
+
+    return {
+      html, screenshotDataUrl, title, baseUrl: url,
+      animatedDetected: detection.detected,
+      ...(classificationShadow ? { classificationShadow } : {}),
+    };
   } finally {
     if (page) await page.close().catch(() => {});
     if (context) await context.close().catch(() => {});

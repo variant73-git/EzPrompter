@@ -19,6 +19,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 import { recordUsage } from './billing/context.js';
+import { withDeadline, assertProvider } from './llm-deadline.js';
 
 // Design-MD extraction is an EASY task (read HTML, distill a markdown spec)
 // — it gets the cheapest capable model by default, per the task-tier
@@ -88,17 +89,24 @@ function isAnthropic(model) {
 }
 
 async function callLLM({ model, system, user, maxTokens = 8000, temperature = 0.2 }) {
+  // Fast-fail a misrouted model BEFORE any request (this seam routes Anthropic or
+  // Gemini only; a global gpt-* override would otherwise reach the wrong SDK).
+  const provider = assertProvider(model, ['anthropic', 'gemini']);
+  // eslint-disable-next-line no-console
+  console.log(`[design-md] llm start provider=${provider} model=${model} inputChars=${user?.length || 0}`);
   if (isAnthropic(model)) {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing');
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const stream = client.messages.stream({
-      model,
-      max_tokens: maxTokens,
-      temperature,
-      system,
-      messages: [{ role: 'user', content: user }]
-    });
-    const final = await stream.finalMessage();
+    const final = await withDeadline((signal) => {
+      const stream = client.messages.stream({
+        model,
+        max_tokens: maxTokens,
+        temperature,
+        system,
+        messages: [{ role: 'user', content: user }]
+      }, { signal });
+      return stream.finalMessage();
+    }, { label: 'design-md:anthropic' });
     recordUsage({
       provider: 'anthropic', model,
       tokensIn: final.usage?.input_tokens || 0,
@@ -112,11 +120,11 @@ async function callLLM({ model, system, user, maxTokens = 8000, temperature = 0.
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY missing');
   const ai = new GoogleGenAI({ apiKey });
-  const resp = await ai.models.generateContent({
+  const resp = await withDeadline((signal) => ai.models.generateContent({
     model,
     contents: [{ role: 'user', parts: [{ text: user }] }],
-    config: { systemInstruction: system, maxOutputTokens: maxTokens, temperature }
-  });
+    config: { systemInstruction: system, maxOutputTokens: maxTokens, temperature, abortSignal: signal }
+  }), { label: 'design-md:gemini' });
   const gu = resp.usageMetadata || {};
   recordUsage({ provider: 'gemini', model, tokensIn: gu.promptTokenCount || 0, tokensOut: gu.candidatesTokenCount || 0, cachedIn: gu.cachedContentTokenCount || 0 });
   const text =

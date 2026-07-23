@@ -11,6 +11,7 @@ import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import { samplePalette } from './design/sample-palette.js';
 import { recordUsage } from './billing/context.js';
+import { withDeadline, assertProvider } from './llm-deadline.js';
 
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 // Image → site clone / reconstruction brief is a HARD vision task: a weak model
@@ -28,15 +29,16 @@ function isAnthropic(m) {
 }
 
 async function callText({ model = DEFAULT_MODEL, system, user, maxTokens = 1200 }) {
+  assertProvider(model, ['anthropic', 'gemini']);
   if (isAnthropic(model)) {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing');
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const final = await client.messages.stream({
+    const final = await withDeadline((signal) => client.messages.stream({
       model,
       max_tokens: maxTokens,
       system,
       messages: [{ role: 'user', content: user }],
-    }).finalMessage();
+    }, { signal }).finalMessage(), { label: 'extract-llm:text:anthropic' });
     recordUsage({
       provider: 'anthropic', model,
       tokensIn: final.usage?.input_tokens || 0,
@@ -49,11 +51,11 @@ async function callText({ model = DEFAULT_MODEL, system, user, maxTokens = 1200 
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY missing');
   const ai = new GoogleGenAI({ apiKey });
-  const resp = await ai.models.generateContent({
+  const resp = await withDeadline((signal) => ai.models.generateContent({
     model,
     contents: [{ role: 'user', parts: [{ text: user }] }],
-    config: { systemInstruction: system, maxOutputTokens: maxTokens },
-  });
+    config: { systemInstruction: system, maxOutputTokens: maxTokens, abortSignal: signal },
+  }), { label: 'extract-llm:text:gemini' });
   const u = resp.usageMetadata || {};
   recordUsage({ provider: 'gemini', model, tokensIn: u.promptTokenCount || 0, tokensOut: u.candidatesTokenCount || 0, cachedIn: u.cachedContentTokenCount || 0 });
   return (
@@ -67,11 +69,12 @@ async function callText({ model = DEFAULT_MODEL, system, user, maxTokens = 1200 
 async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTokens = 1200 }) {
   const [, mediaType, b64] = /^data:([^;]+);base64,(.+)$/.exec(dataUrl) || [];
   if (!b64) throw new Error('callVision: dataUrl must be base64');
+  assertProvider(model, ['anthropic', 'openai', 'gemini']);
 
   if (isAnthropic(model)) {
     if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY missing');
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const final = await client.messages.stream({
+    const final = await withDeadline((signal) => client.messages.stream({
       model,
       max_tokens: maxTokens,
       system,
@@ -84,7 +87,7 @@ async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTok
           ],
         },
       ],
-    }).finalMessage();
+    }, { signal }).finalMessage(), { label: 'extract-llm:vision:anthropic' });
     recordUsage({
       provider: 'anthropic', model,
       tokensIn: final.usage?.input_tokens || 0,
@@ -98,26 +101,29 @@ async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTok
   if (isOpenAI(model)) {
     if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing');
     const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const stream = await client.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: [
-          { type: 'text', text: user },
-          { type: 'image_url', image_url: { url: dataUrl } },
-        ] },
-      ],
-      max_completion_tokens: maxTokens,
-      stream: true,
-      stream_options: { include_usage: true },
-    });
-    let text = '';
-    let usage = null;
-    for await (const chunk of stream) {
-      const delta = chunk?.choices?.[0]?.delta?.content;
-      if (typeof delta === 'string') text += delta;
-      if (chunk?.usage) usage = chunk.usage;
-    }
+    const { text, usage } = await withDeadline(async (signal) => {
+      const stream = await client.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: [
+            { type: 'text', text: user },
+            { type: 'image_url', image_url: { url: dataUrl } },
+          ] },
+        ],
+        max_completion_tokens: maxTokens,
+        stream: true,
+        stream_options: { include_usage: true },
+      }, { signal });
+      let text = '';
+      let usage = null;
+      for await (const chunk of stream) {
+        const delta = chunk?.choices?.[0]?.delta?.content;
+        if (typeof delta === 'string') text += delta;
+        if (chunk?.usage) usage = chunk.usage;
+      }
+      return { text, usage };
+    }, { label: 'extract-llm:vision:openai' });
     recordUsage({
       provider: 'openai', model,
       tokensIn: usage?.prompt_tokens || 0,
@@ -130,7 +136,7 @@ async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTok
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY missing');
   const ai = new GoogleGenAI({ apiKey });
-  const resp = await ai.models.generateContent({
+  const resp = await withDeadline((signal) => ai.models.generateContent({
     model,
     contents: [
       {
@@ -141,8 +147,8 @@ async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTok
         ],
       },
     ],
-    config: { systemInstruction: system, maxOutputTokens: maxTokens },
-  });
+    config: { systemInstruction: system, maxOutputTokens: maxTokens, abortSignal: signal },
+  }), { label: 'extract-llm:vision:gemini' });
   const u = resp.usageMetadata || {};
   recordUsage({ provider: 'gemini', model, tokensIn: u.promptTokenCount || 0, tokensOut: u.candidatesTokenCount || 0, cachedIn: u.cachedContentTokenCount || 0 });
   return (
