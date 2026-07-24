@@ -573,13 +573,19 @@ export async function captureSnapshot(url, opts = {}) {
         await page.waitForTimeout(400);
         const sourceText = await page.evaluate(extractVisibleText);
         const motion = await page.evaluate(extractMotion);
-        const probe = await context.newPage();
-        await probe.setJavaScriptEnabled(false);
+        // JS-disabled is a CONTEXT option — Playwright has NO page.setJavaScriptEnabled
+        // (that's a Puppeteer method). The old call threw on every capture and the
+        // catch below swallowed it, so this whole shadow silently produced nothing.
+        // A fresh JS-dead context renders the (already script-stripped) artifact the
+        // way the srcDoc iframe does; page.evaluate still runs (Playwright evaluates
+        // in a utility world — verified).
+        const probeCtx = await browser.newContext({ javaScriptEnabled: false, viewport });
+        const probe = await probeCtx.newPage();
         await probe.setContent(html, { waitUntil: 'load', timeout: 15000 });
         await probe.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
         await probe.waitForTimeout(200);
         const artifactText = await probe.evaluate(extractVisibleText);
-        await probe.close().catch(() => {});
+        await probeCtx.close().catch(() => {});
         const result = classify({ sourceText, artifactText, motion });
         classificationShadow = toMeta(result);
         // eslint-disable-next-line no-console
