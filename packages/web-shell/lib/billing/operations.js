@@ -8,16 +8,25 @@
  *   - a stranded hold (settle failed) is just an in_flight row the reconciliation
  *     sweep finds deterministically and refunds.
  *
- * Every claim/hold mutation is ONE atomic SQL statement (a CTE) so the row and
- * the balance deduction can never diverge — neon's HTTP transaction is a
- * non-interactive batch that can't branch mid-way, so the branch lives in SQL.
+ * Concurrency contract (audited 2026-07-24, Codex + Claude):
+ *   - Every claim/hold is ONE atomic SQL statement (a CTE). The affordability
+ *     read locks the balance row with `FOR UPDATE`, so two concurrent claims for
+ *     the SAME user serialize and the second re-reads the debited balance —
+ *     without the lock a stale snapshot let two different-key holds both pass and
+ *     drive the balance negative (overspend).
+ *   - The terminal transition (settle | reconcile) is FENCED on `status='in_flight'`
+ *     (see ledger.settleOperation + reconcileStrandedHold): whichever fires first
+ *     wins, the other is a no-op — so a reconciled row can't be resurrected by a
+ *     late worker settle, and a hold can't be refunded twice.
  * The immutable money audit stays in credit_ledger / usage_events (ledger.js);
- * this table is coordination/dedup only.
+ * holds themselves are NOT journaled (they're transient), so hold refunds
+ * (fail-settle, reconcile) are silent too — keeping SUM(credit_ledger) == balance.
  */
 
 // Claim a logical operation and place its hold, atomically. Inserts an in_flight
 // row IFF affordable AND no existing row for (user_id, idem_key), and deducts the
-// hold in the SAME statement. Returns one of:
+// hold in the SAME statement, under a `FOR UPDATE` lock on the balance row.
+// Returns one of:
 //   { outcome: 'claimed', operationId, balance }   — we own it; run the work
 //   { outcome: 'duplicate', row }                  — a row already exists; caller
 //        inspects row.status (settled → replay, in_flight → busy, failed/expired → reclaim)
@@ -26,7 +35,7 @@ export async function claimOperation({ sql, userId, idemKey, op, boardId = null,
   const hold = Math.max(0, Math.ceil(estimate || 0));
   const rows = await sql`
     WITH bal AS (
-      SELECT COALESCE(credits_cents, 0) AS c FROM users WHERE id = ${userId}
+      SELECT COALESCE(credits_cents, 0) AS c FROM users WHERE id = ${userId} FOR UPDATE
     ),
     ins AS (
       INSERT INTO operations (idem_key, user_id, op, board_id, node_id, status, hold_credits)
@@ -56,7 +65,10 @@ export async function claimOperation({ sql, userId, idemKey, op, boardId = null,
 }
 
 // Reclaim a failed/expired row for a fresh attempt under the same key: flip it
-// back to in_flight and re-place the hold, atomically and affordability-guarded.
+// back to in_flight, RESET created_at (so the reconciliation sweep, which ages on
+// created_at, gives the new attempt a full fresh lease instead of instantly
+// sweeping a day-old row), and re-place the hold — atomically, affordability
+// guarded, under `FOR UPDATE`.
 // Returns:
 //   { outcome: 'reclaimed', operationId, balance } — proceed
 //   { outcome: 'raced', row }                      — someone else moved it; caller re-inspects
@@ -65,11 +77,12 @@ export async function reclaimOperation({ sql, userId, idemKey, estimate = 0 }) {
   const hold = Math.max(0, Math.ceil(estimate || 0));
   const rows = await sql`
     WITH bal AS (
-      SELECT COALESCE(credits_cents, 0) AS c FROM users WHERE id = ${userId}
+      SELECT COALESCE(credits_cents, 0) AS c FROM users WHERE id = ${userId} FOR UPDATE
     ),
     claimed AS (
       UPDATE operations SET status = 'in_flight', hold_credits = ${hold},
-             charge_credits = 0, result = NULL, settled_at = NULL, updated_at = NOW()
+             charge_credits = 0, result = NULL, settled_at = NULL,
+             created_at = NOW(), updated_at = NOW()
       WHERE user_id = ${userId} AND idem_key = ${idemKey}
         AND status IN ('failed', 'expired')
         AND (SELECT c FROM bal) >= ${hold}
@@ -109,11 +122,13 @@ export async function getOperation({ sql, userId, idemKey }) {
 }
 
 // Reconciliation backstop: refund + expire ONE stranded in_flight operation,
-// race-safely and atomically. The status flip is conditional INSIDE the CTE
-// (WHERE status='in_flight'), so a second sweep that lost the race sees an empty
-// `claimed` CTE → refunds nothing → no double refund. The credit_ledger 'refund'
-// row is written from within the same statement. Returns the refunded credits
-// (0 if the row was already moved by another sweep).
+// race-safely and atomically. The status flip is FENCED inside the CTE
+// (WHERE status='in_flight'), so it can't fight a concurrent settle or a second
+// sweep — whichever transitions the row first wins; the loser sees a non-in_flight
+// row and refunds nothing. NO credit_ledger row is written: the matching hold
+// debit was never journaled (holds are transient), so journaling the refund would
+// drift SUM(credit_ledger) above the true balance. The expired operations row is
+// the reconciliation's audit trail. Returns the refunded credits (0 if already moved).
 export async function reconcileStrandedHold({ sql, operationId }) {
   const rows = await sql`
     WITH claimed AS (
@@ -124,23 +139,19 @@ export async function reconcileStrandedHold({ sql, operationId }) {
     refunded AS (
       UPDATE users u SET credits_cents = COALESCE(u.credits_cents, 0) + c.hold_credits
       FROM claimed c WHERE u.id = c.user_id
-      RETURNING u.id AS user_id, u.credits_cents
-    ),
-    audit AS (
-      INSERT INTO credit_ledger (user_id, delta_credits, reason, op_id, balance_after, meta)
-      SELECT c.user_id, c.hold_credits, 'refund', c.id, r.credits_cents, ${JSON.stringify({ reconciled: true })}
-      FROM claimed c JOIN refunded r ON r.user_id = c.user_id
-      WHERE c.hold_credits > 0
-      RETURNING 1
+      RETURNING u.id AS user_id
     )
     SELECT COALESCE((SELECT hold_credits FROM claimed), 0) AS refunded
   `;
   return { refunded: Number(rows[0]?.refunded ?? 0) };
 }
 
-// Find stranded in_flight operations older than `olderThanSecs` for the sweep to
-// reconcile. Kept as a plain SELECT so the caller (a cron/job) drives the loop.
-export async function findStrandedOperations({ sql, olderThanSecs = 600, limit = 100 }) {
+// Find stranded in_flight operations older than `olderThanSecs`. Because a claim
+// AND a reclaim both stamp created_at = NOW(), created_at is the start of the
+// CURRENT attempt, so this never sweeps a freshly-reclaimed live op. Default TTL
+// is generous (15 min) — safely above any real op runtime (route deadlines ≤200s,
+// reconstruct 2-3 min) — so a still-in_flight row past it is genuinely dead.
+export async function findStrandedOperations({ sql, olderThanSecs = 900, limit = 100 }) {
   return sql`
     SELECT id, user_id, op, hold_credits, created_at
     FROM operations
@@ -151,7 +162,7 @@ export async function findStrandedOperations({ sql, olderThanSecs = 600, limit =
 }
 
 // Run one reconciliation pass: refund+expire every stranded op. Returns a summary.
-export async function reconcileStrandedHolds({ sql, olderThanSecs = 600, limit = 100 }) {
+export async function reconcileStrandedHolds({ sql, olderThanSecs = 900, limit = 100 }) {
   const stale = await findStrandedOperations({ sql, olderThanSecs, limit });
   let refundedCredits = 0;
   let count = 0;

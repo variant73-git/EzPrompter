@@ -90,32 +90,45 @@ describe('settleOperation', () => {
     })).rejects.toThrow(/transaction failed/);
   });
 
-  it('transitions the operations row to SETTLED (with the replay result) in the SAME transaction', async () => {
-    const sql = fakeSql([[{ credits_cents: 160 }], [], []]);
-    await settleOperation({
+  it('FENCED settle: transitions the row to SETTLED guarded on in_flight, derives the balance from the ROW hold_credits, stores the replay result', async () => {
+    const sql = fakeSql([[{ balance: 10, fenced: true }]]);
+    const out = await settleOperation({
       sql, userId: 'u1', opId: 'op-1', op: 'extract.clone', events: [], holdCredits: 250, chargeCredits: 240,
       opStatus: 'settled', result: { node: 'n-9' },
     });
-    // balance UPDATE + charge row + operations UPDATE — one atomic batch.
-    const opUpd = sql.calls.find((c) => c.text.includes('UPDATE operations'));
-    expect(opUpd).toBeTruthy();
-    expect(opUpd.text).toContain("status = 'settled'");
-    expect(opUpd.values).toContain(JSON.stringify({ node: 'n-9' }));
-    expect(sql.transaction.mock.calls[0][0]).toHaveLength(3); // balance + charge + operations
+    expect(out).toMatchObject({ fenced: true });
+    // ONE fenced CTE (no events) — guarded flip + gated balance + gated charge row.
+    expect(sql.transaction.mock.calls[0][0]).toHaveLength(1);
+    const cte = sql.calls[0].text;
+    expect(cte).toContain("status = 'settled'");
+    expect(cte).toContain("WHERE id = ¶ AND status = 'in_flight'"); // the fence
+    expect(cte).toContain('(SELECT hold_credits FROM claimed)');    // balance from the row, not the passed estimate
+    expect(cte).toContain('EXISTS (SELECT 1 FROM claimed)');        // balance + charge gated on the flip
+    expect(sql.calls[0].values).toContain(JSON.stringify({ node: 'n-9' }));
   });
 
-  it('transitions the operations row to FAILED in the refund transaction', async () => {
-    const sql = fakeSql([[{ credits_cents: 500 }]]);
+  it('FENCED settle: a row already terminalized (reconciled) does NOT move money — fenced=false', async () => {
+    const sql = fakeSql([[{ balance: null, fenced: false }]]);
+    const out = await settleOperation({
+      sql, userId: 'u1', opId: 'op-1', op: 'extract.clone', events: [], holdCredits: 250, chargeCredits: 240,
+      opStatus: 'settled', result: { node: 'n-9' },
+    });
+    expect(out.fenced).toBe(false); // reconcile got there first → no resurrection, no double refund
+  });
+
+  it('FENCED settle: FAILED refunds the full hold from the row, guarded on in_flight', async () => {
+    const sql = fakeSql([[{ balance: 500, fenced: true }]]);
     await settleOperation({
       sql, userId: 'u1', opId: 'op-1', op: 'extract.clone', events: [], holdCredits: 250, chargeCredits: 0,
       opStatus: 'failed',
     });
-    const opUpd = sql.calls.find((c) => c.text.includes('UPDATE operations'));
-    expect(opUpd.text).toContain("status = 'failed'");
-    expect(sql.transaction.mock.calls[0][0]).toHaveLength(2); // balance refund + operations
+    const cte = sql.calls[0].text;
+    expect(cte).toContain("status = 'failed'");
+    expect(cte).toContain("AND status = 'in_flight'");
+    expect(cte).toContain('(SELECT hold_credits FROM claimed)'); // full-hold refund from the row
   });
 
-  it('leaves the operations row untouched when opStatus is absent (legacy callers)', async () => {
+  it('LEGACY settle (opStatus absent): unconditional, no operations row touched', async () => {
     const sql = fakeSql([[{ credits_cents: 160 }], []]);
     await settleOperation({ sql, userId: 'u1', opId: 'op1', op: 'compose', events: [], holdCredits: 40, chargeCredits: 30 });
     expect(sql.calls.some((c) => c.text.includes('UPDATE operations'))).toBe(false);

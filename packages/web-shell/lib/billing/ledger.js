@@ -58,47 +58,89 @@ export async function refundHold({ sql, userId, credits }) {
 // request/tool key + a durable operation record that dedups/resumes on retry) —
 // a feature, not a per-opId marker (the opId is already unique per retry).
 // Tracked in docs/superpowers/handoffs/2026-07-23-audit-fixes-…handoff.md.
-// When `opStatus` is given (and `opId` is a real operations-row id), the matching
-// `operations` row is transitioned IN THE SAME transaction as the balance +
-// audit writes — so the money movement and the operation's terminal state
-// (settled | failed) commit together or not at all. `result` is the compact,
-// replayable response stored on a settled row for retry-dedup (see
-// operations.js). A stranded hold therefore can only ever be an in_flight row.
+// Two modes (audit 2026-07-24, Codex + Claude):
+//
+// LEGACY (opStatus null — metered ops with no operations row): the original
+// unconditional atomic transaction. Balance moves by (held − charge).
+//
+// FENCED (opStatus 'settled'|'failed' — a real operations row): the terminal
+// transition is GUARDED on `status='in_flight'` inside a single CTE, and the
+// balance move + charge-ledger insert are gated on that transition firing. So a
+// row already terminalized by the reconciliation sweep (or a concurrent settle)
+// can NOT be resurrected and the hold can NOT be refunded twice — the keystone
+// money-safety fix. The refund is derived from the ROW's own recorded
+// `hold_credits`, not a recomputed estimate, so it stays correct even if pricing
+// changes mid-flight. `result` is the compact replayable response stored on a
+// settled row for retry-dedup. usage_events are pure metering (non-financial),
+// written unconditionally in the same transaction.
 export async function settleOperation({ sql, userId, opId, op, boardId = null, nodeId = null, events = [], holdCredits: held = 0, chargeCredits = 0, opStatus = null, result = undefined }) {
-  const diff = Math.ceil(held) - Math.ceil(chargeCredits);
+  const charge = Math.ceil(chargeCredits || 0);
+
+  const usageInserts = events.map((e) => sql`
+    INSERT INTO usage_events (user_id, op_id, op, board_id, node_id, provider, model, tokens_in, tokens_out, cached_in, images, cost_microcents, charged, meta)
+    VALUES (${userId}, ${opId}, ${op}, ${boardId}, ${nodeId}, ${e.provider || null}, ${e.model || null},
+            ${e.tokensIn || 0}, ${e.tokensOut || 0}, ${e.cachedIn || 0}, ${e.images || 0},
+            ${e.costMicrocents || 0}, ${charge > 0}, ${JSON.stringify(e.meta || {})})
+  `);
+
+  if ((opStatus === 'settled' || opStatus === 'failed') && opId != null) {
+    const resultJson = opStatus === 'settled' && result !== undefined ? JSON.stringify(result) : null;
+    const fenced = opStatus === 'settled'
+      ? sql`
+          WITH claimed AS (
+            UPDATE operations SET status = 'settled', charge_credits = ${charge},
+                   result = ${resultJson}, settled_at = NOW(), updated_at = NOW()
+            WHERE id = ${opId} AND status = 'in_flight'
+            RETURNING hold_credits
+          ),
+          bal AS (
+            UPDATE users
+               SET credits_cents = GREATEST(0, COALESCE(credits_cents, 0) + ((SELECT hold_credits FROM claimed) - ${charge}))
+             WHERE id = ${userId} AND EXISTS (SELECT 1 FROM claimed)
+             RETURNING credits_cents
+          ),
+          ledger AS (
+            INSERT INTO credit_ledger (user_id, delta_credits, reason, op_id, balance_after, meta)
+            SELECT ${userId}, ${-charge}, 'charge', ${opId}, (SELECT credits_cents FROM bal), ${JSON.stringify({ op })}
+            WHERE ${charge} > 0 AND EXISTS (SELECT 1 FROM claimed)
+            RETURNING 1
+          )
+          SELECT (SELECT credits_cents FROM bal) AS balance, (EXISTS (SELECT 1 FROM claimed)) AS fenced
+        `
+      : sql`
+          WITH claimed AS (
+            UPDATE operations SET status = 'failed', updated_at = NOW()
+            WHERE id = ${opId} AND status = 'in_flight'
+            RETURNING hold_credits
+          ),
+          bal AS (
+            UPDATE users
+               SET credits_cents = GREATEST(0, COALESCE(credits_cents, 0) + (SELECT hold_credits FROM claimed))
+             WHERE id = ${userId} AND EXISTS (SELECT 1 FROM claimed)
+             RETURNING credits_cents
+          )
+          SELECT (SELECT credits_cents FROM bal) AS balance, (EXISTS (SELECT 1 FROM claimed)) AS fenced
+        `;
+    const results = await sql.transaction([fenced, ...usageInserts]);
+    const row = results?.[0]?.[0];
+    return { balanceAfter: Number(row?.balance ?? 0), fenced: !!(row?.fenced) };
+  }
+
+  // LEGACY path: unconditional (no operations row to fence against).
+  const diff = Math.ceil(held) - charge;
   const queries = [
     sql`
       UPDATE users SET credits_cents = GREATEST(0, COALESCE(credits_cents, 0) + ${diff})
       WHERE id = ${userId}
       RETURNING credits_cents
     `,
+    ...usageInserts,
   ];
-  for (const e of events) {
-    queries.push(sql`
-      INSERT INTO usage_events (user_id, op_id, op, board_id, node_id, provider, model, tokens_in, tokens_out, cached_in, images, cost_microcents, charged, meta)
-      VALUES (${userId}, ${opId}, ${op}, ${boardId}, ${nodeId}, ${e.provider || null}, ${e.model || null},
-              ${e.tokensIn || 0}, ${e.tokensOut || 0}, ${e.cachedIn || 0}, ${e.images || 0},
-              ${e.costMicrocents || 0}, ${chargeCredits > 0}, ${JSON.stringify(e.meta || {})})
-    `);
-  }
-  if (chargeCredits > 0) {
+  if (charge > 0) {
     queries.push(sql`
       INSERT INTO credit_ledger (user_id, delta_credits, reason, op_id, balance_after, meta)
-      VALUES (${userId}, ${-Math.ceil(chargeCredits)}, ${'charge'}, ${opId},
+      VALUES (${userId}, ${-charge}, ${'charge'}, ${opId},
               (SELECT credits_cents FROM users WHERE id = ${userId}), ${JSON.stringify({ op })})
-    `);
-  }
-  if (opStatus === 'settled' && opId != null) {
-    queries.push(sql`
-      UPDATE operations SET status = 'settled', charge_credits = ${Math.ceil(chargeCredits)},
-             result = ${result === undefined ? null : JSON.stringify(result)},
-             settled_at = NOW(), updated_at = NOW()
-      WHERE id = ${opId}
-    `);
-  } else if (opStatus === 'failed' && opId != null) {
-    queries.push(sql`
-      UPDATE operations SET status = 'failed', updated_at = NOW()
-      WHERE id = ${opId}
     `);
   }
   const results = await sql.transaction(queries);

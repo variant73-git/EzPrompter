@@ -25,11 +25,14 @@ describe('claimOperation', () => {
     const sql = fakeSql([[{ op_id: 'op-1', balance: 925 }]]);
     const out = await claimOperation({ sql, userId: 'u1', idemKey: 'k1', op: 'extract.clone', estimate: 250 });
     expect(out).toEqual({ outcome: 'claimed', operationId: 'op-1', balance: 925 });
-    // Single statement: insert-if-affordable-and-no-conflict + deduct the hold.
+    // Single statement: insert-if-affordable-and-no-conflict + deduct the hold,
+    // under a FOR UPDATE lock on the balance row so concurrent claims serialize
+    // (no stale-snapshot overspend).
     expect(sql.calls).toHaveLength(1);
     expect(sql.calls[0].text).toContain('INSERT INTO operations');
     expect(sql.calls[0].text).toContain('ON CONFLICT');
     expect(sql.calls[0].text).toContain('UPDATE users SET credits_cents');
+    expect(sql.calls[0].text).toContain('FOR UPDATE');
   });
 
   it('reports a DUPLICATE when a row already exists for the key (dedup path)', async () => {
@@ -66,6 +69,10 @@ describe('reclaimOperation', () => {
     const out = await reclaimOperation({ sql, userId: 'u1', idemKey: 'k1', estimate: 250 });
     expect(out).toEqual({ outcome: 'reclaimed', operationId: 'op-1', balance: 700 });
     expect(sql.calls[0].text).toContain("status IN ('failed', 'expired')");
+    expect(sql.calls[0].text).toContain('FOR UPDATE');
+    // created_at is RESET so the new attempt gets a fresh reconciliation lease
+    // (a day-old reclaimed row must not be swept as stranded).
+    expect(sql.calls[0].text).toContain('created_at = NOW()');
   });
 
   it('reports RACED when the row is no longer failed/expired (someone else moved it)', async () => {
@@ -105,7 +112,9 @@ describe('reconcileStrandedHold', () => {
     expect(out).toEqual({ refunded: 250 });
     // Race-safe: the status flip is guarded WHERE status='in_flight' inside the CTE.
     expect(sql.calls[0].text).toContain("status = 'in_flight'");
-    expect(sql.calls[0].text).toContain('credit_ledger');
+    // NO credit_ledger row — the matching hold debit was never journaled (holds
+    // are transient), so journaling the refund would drift SUM(credit_ledger).
+    expect(sql.calls[0].text).not.toContain('credit_ledger');
   });
 
   it('refunds nothing when another sweep already moved the row', async () => {

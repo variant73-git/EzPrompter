@@ -176,8 +176,14 @@ export function runBilledOperation(opts, fn, deps) {
   return runOperation({ ...opts, billed: true }, fn, deps);
 }
 
-// Intent-revealing alias for a paid op that carries an idempotency ticket.
+// A paid op that carries an idempotency ticket. REQUIRES a nonempty `idemKey` —
+// the name must never silently be non-idempotent (audit 2026-07-24): a missing
+// key would mint a fresh UUID per call and re-charge on retry. Callers with no
+// stable key must use runBilledOperation (explicitly best-effort) instead.
 export function runIdempotentOperation(opts, fn, deps) {
+  if (!opts || typeof opts.idemKey !== 'string' || opts.idemKey.length === 0) {
+    throw new Error('runIdempotentOperation requires a nonempty idemKey (use runBilledOperation for keyless paid ops)');
+  }
   return runOperation({ ...opts, billed: true }, fn, deps);
 }
 
