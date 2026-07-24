@@ -58,17 +58,20 @@ async function runOperation({ sql, userId, op, boardId = null, nodeId = null, bi
   try {
     result = await als.run(ctx, fn);
   } catch (err) {
-    // Failure: restore the hold via the settle's single balance UPDATE
-    // (holdCredits=estimate, chargeCredits=0 → diff=estimate adds the hold back)
-    // and persist the zero-charge metering. Replaces the old refundHold()+
-    // settle(0,0) where BOTH errors were swallowed, so a transient refund
-    // failure left the user debited behind a clean error. Now a settle failure
-    // is logged LOUDLY (a debited-but-unrefunded balance is observable) and
-    // never masks `err`. NOTE (pre-existing, tracked follow-up): settleOperation
-    // is not yet transactional across (balance UPDATE + usage_events INSERT) nor
-    // idempotent by opId — a durable RETRY of a partially-applied settlement
-    // could double-refund; a per-opId settled-marker + a transaction is the
-    // proper fix (it hardens the success path too).
+    // Failure: restore the hold with a single zero-charge settle (now ONE atomic
+    // transaction in ledger.js). If it fails, log LOUDLY (the hold was deducted
+    // in a SEPARATE earlier commit, so a failed refund strands it — a debit with
+    // no settlement row) and never mask `err`.
+    //
+    // ⚠️ KNOWN money-safety residual (Sol audit 2026-07-24, NOT closed here —
+    // needs a feature): the hold and the settlement are separate commits, and
+    // every op gets a fresh opId, so (a) a settlement that rolls back strands the
+    // hold, and (b) a paid op that commits+settles then loses its HTTP/tool
+    // response is RE-RUN by the client/agent under a NEW opId → the same logical
+    // action is charged twice. The fix is LOGICAL-operation idempotency: a stable
+    // key from the request/tool boundary + a durable operation record that dedups
+    // or resumes on retry (and reconciles stranded holds). A per-opId marker does
+    // NOT help — the opId is fresh per retry. Tracked in the 2026-07-23 handoff.
     try {
       await ledger.settleOperation({ sql, userId, opId, op, boardId, nodeId, events: ctx.events, holdCredits: estimate, chargeCredits: 0 });
     } catch (settleErr) {
@@ -79,10 +82,20 @@ async function runOperation({ sql, userId, op, boardId = null, nodeId = null, bi
   }
   const totalMicrocents = ctx.events.reduce((s, e) => s + (e.costMicrocents || 0), 0);
   const credits = billed ? creditsForOperation({ op, totalMicrocents }) : 0;
-  const { balanceAfter } = await ledger.settleOperation({
-    sql, userId, opId, op, boardId, nodeId, events: ctx.events,
-    holdCredits: billed ? estimate : 0, chargeCredits: credits,
-  });
+  let balanceAfter;
+  try {
+    ({ balanceAfter } = await ledger.settleOperation({
+      sql, userId, opId, op, boardId, nodeId, events: ctx.events,
+      holdCredits: billed ? estimate : 0, chargeCredits: credits,
+    }));
+  } catch (settleErr) {
+    // Success-path settlement failed: the work is done but billing didn't settle,
+    // so the hold is stranded (see the residual note above). Surface it loudly
+    // rather than an opaque 500, then rethrow.
+    // eslint-disable-next-line no-console
+    console.error(`[billing] settle-on-success FAILED (user=${userId} op=${op} opId=${opId} held=${billed ? estimate : 0} charge=${credits}) — hold may be stranded:`, settleErr);
+    throw settleErr;
+  }
   return { result, credits, balanceAfter, opId };
 }
 

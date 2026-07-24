@@ -17,15 +17,29 @@ describe('isDisposableEmail', () => {
 });
 
 describe('grantWelcomeIfEligible', () => {
+  // Dual-mode like the neon client: individual queries are awaitable (lazy —
+  // only consume a result when awaited, not when collected into a transaction),
+  // and grantCredits now settles via sql.transaction([...]).
   function scriptedSql(results) {
     let i = 0;
-    return () => Promise.resolve(results[i++] ?? []);
+    const sql = () => {
+      const q = {};
+      q.then = (onF, onR) => Promise.resolve(results[i++] ?? []).then(onF, onR);
+      return q;
+    };
+    sql.transaction = vi.fn(async (queries) => queries.map(() => results[i++] ?? []));
+    return sql;
   }
   it('grants 500 to a clean signup', async () => {
-    // queries: prior grant by email → none; ip/device window → none; monthly budget sum → 0; grant UPDATE; ledger INSERT
-    const sql = scriptedSql([[], [], [{ total: 0 }], [{ credits_cents: 500 }], []]);
+    // WELCOME_BUDGET unset → the budget query is SKIPPED. Sequence: prior grant
+    // by email → none; ip/device window → none; then grantCredits' atomic
+    // transaction (balance UPDATE returning the new balance + ledger INSERT).
+    delete process.env.WELCOME_BUDGET_MONTHLY_CREDITS;
+    const sql = scriptedSql([[], [], [{ credits_cents: 500 }], []]);
     const out = await grantWelcomeIfEligible({ sql, userId: 'u1', email: 'novo@gmail.com', ip: '1.2.3.4', deviceHash: 'd1' });
     expect(out).toEqual({ granted: true, credits: WELCOME_CREDITS, reason: 'ok' });
+    // The grant actually settled (transaction ran + read the post-UPDATE balance).
+    expect(sql.transaction).toHaveBeenCalledTimes(1);
   });
   it('denies disposable emails without touching the db', async () => {
     const sql = vi.fn();
