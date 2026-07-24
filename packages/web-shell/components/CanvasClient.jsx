@@ -5900,6 +5900,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
       <CanvasInspector
         node={selectedNode}
+        // Busy = the same predicate the progress ring uses (active run,
+        // generating, or loading), plus an unpersisted temp placeholder whose
+        // /preview route has no row yet — "Open in Browser" is disabled then.
+        busy={Boolean(selectedNode && (
+          runStatus.has(selectedNode.id)
+          || selectedNode.meta?.status === 'generating'
+          || (selectedNode._loading && !selectedNode._challenge)
+          || String(selectedNode.id).startsWith('temp-')
+        ))}
         onEditSite={() => selectedSiteNode && handleEditingToggle(selectedSiteNode.id, true)}
         onFrameChange={(id, patch) => {
           // Same path a drag/resize commit takes: optimistic local update +

@@ -1,4 +1,5 @@
 import { launchBrowser } from './browser.js';
+import { waitForImagesSettled } from './snapshot.js';
 
 // Render a snapshot's HTML to a PNG screenshot data URL. This is how the
 // chat agent "sees" a site node: image nodes arrive as their dataUrl, site
@@ -55,6 +56,11 @@ export async function renderHtmlScreenshot(html, { width = 1280, maxHeight = 240
           await new Promise((r) => setTimeout(r, 250));
         })
         .catch(() => {});
+      // The scroll-through triggers lazy/LQIP images; a fixed 250ms then races
+      // their swap and the shot can capture a blurred low-res placeholder —
+      // which, when this render feeds a clone's crop, becomes a pixelated hero.
+      // Wait until every visible <img> is complete AND decoded (capped).
+      await waitForImagesSettled(page, 4000);
       const contentHeight = await page
         .evaluate(() => Math.max(
           document.documentElement.scrollHeight,

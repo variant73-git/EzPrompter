@@ -207,7 +207,12 @@ function CodePreview({ node }) {
   );
 }
 
-function WebsiteActions({ node, onEditSite }) {
+function WebsiteActions({ node, onEditSite, busy = false }) {
+  // Open in Browser needs a viewable preview: a snapshot to render, or an
+  // origin URL the preview route can redirect to. Disabled while busy
+  // (capturing/cloning) OR when neither exists — a blank "Connect to…" node
+  // would otherwise open a guaranteed 404 (adversarial review Codex #3).
+  const openDisabled = busy || (!node.current_snapshot_id && !node.origin_url);
   return (
     <div className="cinsp-primary-action">
       <div>
@@ -216,17 +221,24 @@ function WebsiteActions({ node, onEditSite }) {
       </div>
       <button type="button" onClick={onEditSite}>
         <Pencil aria-hidden="true" />
-        Edit website
+        Clone &amp; Edit
       </button>
-      <a href={`/preview/${node.id}`} target="_blank" rel="noopener noreferrer">
-        <ExternalLink aria-hidden="true" />
-        Open in Browser
-      </a>
+      {openDisabled ? (
+        <span className="cinsp-open-browser cinsp-open-browser-disabled" aria-disabled="true" title={busy ? 'Available once capture finishes' : 'No preview yet'}>
+          <ExternalLink aria-hidden="true" />
+          Open in Browser
+        </span>
+      ) : (
+        <a className="cinsp-open-browser" href={`/preview/${node.id}`} target="_blank" rel="noopener noreferrer">
+          <ExternalLink aria-hidden="true" />
+          Open in Browser
+        </a>
+      )}
     </div>
   );
 }
 
-export default function CanvasInspector({ node, onEditSite, onFrameChange }) {
+export default function CanvasInspector({ node, onEditSite, onFrameChange, busy = false }) {
   const [collapsed, setCollapsed] = useState(false);
   const [tab, setTab] = useState('properties');
 
@@ -286,7 +298,7 @@ export default function CanvasInspector({ node, onEditSite, onFrameChange }) {
         <span className="cinsp-selection-name" title={nodeLabel(node)}>{nodeLabel(node)}</span>
       </div>
 
-      {node.kind === 'site' && <WebsiteActions node={node} onEditSite={onEditSite} />}
+      {node.kind === 'site' && <WebsiteActions node={node} onEditSite={onEditSite} busy={busy} />}
 
       {tab === 'properties'
         ? <Overview node={framedNode} />

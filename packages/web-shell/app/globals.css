@@ -5686,15 +5686,17 @@ body.rb-ed-active .prompt-dock { display: none !important; }
 }
 
 /* Hairline separator between the chat conversation and the text input
-   when the panel is expanded. Spans the full inner width of the dock
-   by breaking out of the dock's 10px horizontal padding via negative
-   margins. Thin + frosted to read as a structural divider, not a hard
-   rule. */
+   when the panel is expanded. Thin + frosted to read as a structural
+   divider, not a hard rule. */
 .prompt-dock-chat-divider {
   height: 1px;
-  /* Break out of the dock's 7px horizontal padding — matching it exactly,
-     so the hairline meets the container edge without bleeding past it. */
-  margin: 2px -7px 6px;
+  /* Inset within the dock's padding box — NO negative margins. The dock
+     carries a 20px border-radius and (in the current theme) no border, and
+     it cannot clip its children (tooltips must escape its bounds). A
+     full-bleed hairline reaching the exact outer edge poked past the rounded
+     corners; keeping the divider inside the padding box makes it structurally
+     impossible to bleed, at any dock size or side. */
+  margin: 2px 0 6px;
   background: var(--border-frosted);
 }
 
@@ -8775,6 +8777,7 @@ body.rb-ed-left-collapsed .canvas-editor-user .user-pill-avatar {
 .cinsp-primary-action p { margin: 5px 0 12px; color: var(--text-muted); font-size: 10px; line-height: 1.45; }
 .cinsp-primary-action button,
 .cinsp-primary-action a,
+.cinsp-primary-action .cinsp-open-browser-disabled,
 .cinsp-code-edit {
   width: 100%;
   height: 31px;
@@ -8792,10 +8795,18 @@ body.rb-ed-left-collapsed .canvas-editor-user .user-pill-avatar {
 }
 .cinsp-primary-action button:hover,
 .cinsp-code-edit:hover { background: #FFFFFF; }
-.cinsp-primary-action a { margin-top: 6px; border: 1px solid #45443F; background: #292926; color: var(--text-primary); }
+.cinsp-primary-action a,
+.cinsp-primary-action .cinsp-open-browser-disabled { margin-top: 6px; border: 1px solid #45443F; background: #292926; color: var(--text-primary); }
 .cinsp-primary-action a:hover { background: #30302D; text-decoration: none; }
+/* Disabled while the node is still capturing/cloning — no preview to open yet. */
+.cinsp-primary-action .cinsp-open-browser-disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
 .cinsp-primary-action button svg,
 .cinsp-primary-action a svg,
+.cinsp-primary-action .cinsp-open-browser-disabled svg,
 .cinsp-code-edit svg { width: 14px; height: 14px; }
 .cinsp-details { margin-top: 6px; }
 .cinsp-detail {

@@ -6,7 +6,14 @@ function fakeSql(results) {
   let i = 0;
   const calls = [];
   const sql = (strings, ...values) => {
-    calls.push({ text: Array.isArray(strings) ? strings.join('¶') : String(strings), values });
+    const text = Array.isArray(strings) ? strings.join('¶') : String(strings);
+    calls.push({ text, values });
+    // The reconstruction helper re-reads the current snapshot authoritatively
+    // (Codex #2). Answer it off a side-channel — as the plain 'capture' — so the
+    // scripted row-sets keep their original ordering and count.
+    if (/SELECT\s+n\.current_snapshot_id\s+AS\s+id/i.test(text)) {
+      return Promise.resolve([{ id: 'cur-snap', source: 'capture' }]);
+    }
     return Promise.resolve(results[i++] ?? []);
   };
   sql.calls = calls;

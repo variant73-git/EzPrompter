@@ -1,0 +1,74 @@
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('./reconstruct.js', () => ({
+  reconstructPage: vi.fn(async () => ({ html: '<html>clone</html>', screenshotDataUrl: 'data:image/png;base64,X' })),
+}));
+vi.mock('./billing/context.js', () => ({
+  runBilledOperation: vi.fn(async (_opts, fn) => ({ result: await fn(), credits: 3, balanceAfter: 100 })),
+}));
+
+const { reconstructSiteNode } = await import('./deferred-reconstruction.js');
+
+// The helper RE-READS the current snapshot itself (never trusts the caller's
+// node fields — Codex #2), so the mock drives the guard via that SELECT.
+function makeSql({ currentId = null, currentSource = null } = {}) {
+  const calls = [];
+  const sql = (strings, ...values) => {
+    const query = strings.join('?');
+    calls.push({ query, values });
+    if (/SELECT\s+n\.current_snapshot_id/i.test(query)) return Promise.resolve([{ id: currentId, source: currentSource }]);
+    if (/UPDATE snapshots/i.test(query)) return Promise.resolve([{ id: currentId }]);
+    if (/INSERT INTO snapshots/i.test(query)) return Promise.resolve([{ id: 'snap-new' }]);
+    return Promise.resolve([]);
+  };
+  sql._calls = calls;
+  return sql;
+}
+
+describe('reconstructSiteNode — snapshot handling (item 3: no pre-clone history version)', () => {
+  it('overwrites the plain capture IN PLACE so the clone becomes the default state, leaving no history version', async () => {
+    const sql = makeSql({ currentId: 'snap-current', currentSource: 'capture' });
+    // Caller node deliberately omits current_snapshot_id/source — the helper
+    // must re-read them (mirrors the run route, Codex #2).
+    const node = { id: 'node-1', board_id: 'b1', origin_url: 'https://x.com' };
+    const out = await reconstructSiteNode({ sql, userId: 42, node, reason: 'edit', idemKey: 'k1' });
+
+    const queries = sql._calls.map((c) => c.query);
+    // A NEW snapshot row would be a spurious history version of the pre-clone state.
+    expect(queries.some((q) => /INSERT INTO snapshots/i.test(q))).toBe(false);
+    // The capture snapshot is upgraded in place, scoped to this node, design_md cleared.
+    const upd = sql._calls.find((c) => /UPDATE snapshots/i.test(c.query));
+    expect(upd).toBeTruthy();
+    expect(upd.values).toContain('snap-current');
+    expect(upd.values).toContain('node-1');
+    expect(upd.query).toMatch(/design_md = NULL/);
+    expect(out.snapshotId).toBe('snap-current');
+    expect(out.html).toBe('<html>clone</html>');
+  });
+
+  it('PRESERVES a non-capture current snapshot (curated manual/handoff/replace/agent-edit/run) by INSERTing instead of overwriting — no silent data loss (F1/Codex #1)', async () => {
+    for (const source of ['manual', 'handoff', 'replace-upload', 'agent-edit', 'compose']) {
+      const sql = makeSql({ currentId: 'snap-user', currentSource: source });
+      const node = { id: 'node-x', board_id: 'b1', origin_url: 'https://x.com' };
+      const out = await reconstructSiteNode({ sql, userId: 42, node, reason: 'edit', idemKey: `k-${source}` });
+      const queries = sql._calls.map((c) => c.query);
+      // The user's snapshot is NEVER overwritten.
+      expect(queries.some((q) => /UPDATE snapshots/i.test(q))).toBe(false);
+      // A new snapshot is inserted, preserving the prior one as history — with it as parent.
+      const ins = sql._calls.find((c) => /INSERT INTO snapshots/i.test(c.query));
+      expect(ins).toBeTruthy();
+      expect(ins.values).toContain('snap-user');
+      expect(out.snapshotId).toBe('snap-new');
+    }
+  });
+
+  it('falls back to INSERT when the node has no current snapshot', async () => {
+    const sql = makeSql({ currentId: null, currentSource: null });
+    const node = { id: 'node-2', board_id: 'b1', origin_url: 'https://x.com' };
+    const out = await reconstructSiteNode({ sql, userId: 42, node, reason: 'edit', idemKey: 'k2' });
+
+    const queries = sql._calls.map((c) => c.query);
+    expect(queries.some((q) => /INSERT INTO snapshots/i.test(q))).toBe(true);
+    expect(out.snapshotId).toBe('snap-new');
+  });
+});

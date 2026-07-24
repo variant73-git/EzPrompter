@@ -321,7 +321,7 @@ async function inlineStylesheets(html, baseUrl, page, captureWidth, captureHeigh
 // ~half the captures ship a glitched (blurred) hero image. Wait until every
 // visible <img> is complete AND decoded, capped so chatty sites can't hang
 // the capture. Safe no-op on pages without images.
-async function waitForImagesSettled(page, capMs = 6000) {
+export async function waitForImagesSettled(page, capMs = 6000) {
   await page.evaluate((cap) => {
     const imgs = Array.from(document.images).filter((img) => {
       const r = img.getBoundingClientRect();
