@@ -29,6 +29,11 @@ const REAL_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537
 const SCROLL_STEP_PX = 800;
 const SCROLL_STEP_WAIT_MS = 350;
 const SCROLL_FINAL_SETTLE_MS = 1000;
+// Shadow classifier (visual instrument) guards: skip the fullPage screenshots
+// above this page height (a very long page's RGBA raster is width×height×4 bytes
+// — an OOM a try/catch can't contain), and bound the in-browser decode/compare.
+const SHADOW_MAX_PAGE_PX = 20000;
+const SHADOW_VISUAL_TIMEOUT_MS = 10000;
 // CSS override injected before page.content() to defeat "off-screen initial
 // state" rules from common animation libraries. Webflow IX3 / AOS / Framer
 // Motion / GSAP ScrollTrigger keep elements at opacity:0 via CSS RULE (not
@@ -573,33 +578,47 @@ export async function captureSnapshot(url, opts = {}) {
         await page.waitForTimeout(400);
         const sourceText = await page.evaluate(extractVisibleText);
         const motion = await page.evaluate(extractMotion);
-        const sourceShot = await page.screenshot({ type: 'png', fullPage: true }).catch(() => null);
-        // JS-disabled is a CONTEXT option — Playwright has NO page.setJavaScriptEnabled
-        // (that's a Puppeteer method). The old call threw on every capture and the
-        // catch below swallowed it, so this whole shadow silently produced nothing.
-        // A fresh JS-dead context renders the (already script-stripped) artifact the
-        // way the srcDoc iframe does; page.evaluate still runs (Playwright evaluates
-        // in a utility world — verified).
-        const probeCtx = await browser.newContext({ javaScriptEnabled: false, viewport });
+        // Skip the fullPage shots (and the visual instrument) on a pathologically
+        // long page — the RGBA raster would risk OOMing the process.
+        const srcPageH = await page.evaluate(() => document.documentElement.scrollHeight || 0).catch(() => 0);
+        const sourceShot = srcPageH > 0 && srcPageH <= SHADOW_MAX_PAGE_PX
+          ? await page.screenshot({ type: 'png', fullPage: true }).catch(() => null) : null;
+
+        // Render the artifact the way the shipped srcDoc iframe does: scripts are
+        // STRIPPED, but the iframe is sandbox="allow-scripts", so scripting stays
+        // ENABLED (a JS-DISABLED probe would wrongly SHOW <noscript> content the
+        // real artifact hides). A fresh JS-enabled context on our own script-free
+        // html matches it.
+        const probeCtx = await browser.newContext({ viewport });
         const probe = await probeCtx.newPage();
         await probe.setContent(html, { waitUntil: 'load', timeout: 15000 });
         await probe.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
         await probe.waitForTimeout(200);
         const artifactText = await probe.evaluate(extractVisibleText);
-        const artifactShot = await probe.screenshot({ type: 'png', fullPage: true }).catch(() => null);
-        await probeCtx.close().catch(() => {});
+        const artPageH = await probe.evaluate(() => document.documentElement.scrollHeight || 0).catch(() => 0);
+        const artifactShot = artPageH > 0 && artPageH <= SHADOW_MAX_PAGE_PX
+          ? await probe.screenshot({ type: 'png', fullPage: true }).catch(() => null) : null;
+
         const result = classify({ sourceText, artifactText, motion });
-        // Second instrument: the direct VISUAL diff of the two fullPage shots
-        // (the JS-enabled `page` decodes the PNGs via canvas). Logged next to the
-        // text verdict so the passive gate reveals which net actually tracks
-        // breakage — the whole point of §3's signals→verify decision.
+        // Second instrument: the visual diff of the two shots. Run it in a TRUSTED
+        // blank page — navigate the probe to about:blank so no site scripts or CSP
+        // can tamper with, HANG (an Image that never settles → evaluate never
+        // returns), or block the data: image decode — and bound it with a deadline.
+        // Logged next to the text verdict for the §3 signals→verify gate.
         let visual = null;
         if (sourceShot && artifactShot) {
-          visual = await page.evaluate(visualDiff, {
+          await probe.goto('about:blank').catch(() => {});
+          const evalP = probe.evaluate(visualDiff, {
             srcUrl: `data:image/png;base64,${sourceShot.toString('base64')}`,
             artUrl: `data:image/png;base64,${artifactShot.toString('base64')}`,
-          }).catch(() => null);
+          });
+          evalP.catch(() => {}); // swallow a late rejection if the deadline wins
+          visual = await Promise.race([
+            evalP,
+            new Promise((_r, rej) => setTimeout(() => rej(new Error('visualDiff timeout')), SHADOW_VISUAL_TIMEOUT_MS)),
+          ]).catch(() => null);
         }
+        await probeCtx.close().catch(() => {});
         classificationShadow = { ...toMeta(result), visual };
         // eslint-disable-next-line no-console
         console.log(

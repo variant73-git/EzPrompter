@@ -173,16 +173,18 @@ export function extractMotion() {
 // Visual diff — the SECOND instrument for the gate. "Renders faithfully?" is a
 // visual question; text coverage is a leaky proxy (vocabulary masks lost
 // sections, blind to transform/clip/off-screen breaks, breaks on CJK). This
-// compares the two fullPage screenshots directly. Runs in a JS-ENABLED page
-// (the browser decodes the PNGs natively via <img>/canvas — no Node PNG
-// decoder). Returns a similarity score + the height ratio (a broken copy that
-// dropped sections is much shorter — often the strongest signal on its own).
+// compares the two fullPage screenshots directly. MUST run in a TRUSTED,
+// script-free page (about:blank) — never the untrusted source page, which could
+// tamper with Image/canvas, hang it, or block data: images via CSP (see the
+// snapshot.js caller). The browser decodes the PNGs natively — no Node decoder.
 //
-// Deliberately CRUDE + fixed-canvas: this is the shadow gate's data-gathering
-// probe, not a shipped verdict. Its job is to log a NUMBER next to the text
-// verdict so we can later see which instrument (signals / text / visual)
-// actually tracks breakage — then keep, calibrate, or cut the net. Async
-// (image load) — call via page.evaluate(visualDiff, { srcUrl, artUrl }).
+// Both images are scaled to a COMMON width preserving aspect ratio, then only
+// the OVERLAPPING top region (min height) is compared at one scale — so equal
+// content at different page heights doesn't create spurious pixel diff. The
+// unmatched height is reported SEPARATELY as a symmetric heightRatio
+// (min/max) — a copy that dropped OR duplicated sections shows it there, not as
+// a confounded similarity. Deliberately crude — a data-gathering probe, not a
+// shipped verdict. Async (image load) — call via page.evaluate(visualDiff, …).
 export async function visualDiff({ srcUrl, artUrl }) {
   const load = (u) => new Promise((res, rej) => {
     const i = new Image();
@@ -191,28 +193,28 @@ export async function visualDiff({ srcUrl, artUrl }) {
     i.src = u;
   });
   const [a, b] = await Promise.all([load(srcUrl), load(artUrl)]);
-  // Normalize both to one small canvas — cheap and robust to sub-pixel shifts;
-  // whole missing sections (what we care about) still move the number a lot.
-  const W = 200, H = 300;
-  const shrink = (img) => {
+  const W = 256;
+  // Scale to width W preserving aspect ratio → same content maps to the same rows.
+  const raster = (img) => {
+    const h = Math.max(1, Math.round(img.naturalHeight * (W / Math.max(1, img.naturalWidth))));
     const c = document.createElement('canvas');
-    c.width = W; c.height = H;
-    const cx = c.getContext('2d');
-    cx.drawImage(img, 0, 0, W, H);
-    return cx.getImageData(0, 0, W, H).data;
+    c.width = W; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, W, h);
+    return { data: c.getContext('2d').getImageData(0, 0, W, h).data, h };
   };
-  const da = shrink(a), db = shrink(b);
+  const A = raster(a), B = raster(b);
+  const H = Math.min(A.h, B.h); // compare only the overlapping top region, one scale
   let diff = 0;
   const n = W * H;
-  for (let i = 0; i < da.length; i += 4) {
+  for (let i = 0; i < n; i++) {
+    const p = i * 4;
     // Per-pixel channel-sum tolerance — ignores minor anti-alias/compression noise.
-    if (Math.abs(da[i] - db[i]) + Math.abs(da[i + 1] - db[i + 1]) + Math.abs(da[i + 2] - db[i + 2]) > 60) diff += 1;
+    if (Math.abs(A.data[p] - B.data[p]) + Math.abs(A.data[p + 1] - B.data[p + 1]) + Math.abs(A.data[p + 2] - B.data[p + 2]) > 60) diff += 1;
   }
-  const heightRatio = a.naturalHeight ? Math.min(1, b.naturalHeight / a.naturalHeight) : 1;
   return {
-    similarity: 1 - diff / n,
-    diffFraction: diff / n,
-    heightRatio,
+    similarity: n ? 1 - diff / n : 1,
+    diffFraction: n ? diff / n : 0,
+    heightRatio: Math.min(A.h, B.h) / Math.max(A.h, B.h), // symmetric: <1 if EITHER side is taller
     sourceH: a.naturalHeight,
     artifactH: b.naturalHeight,
   };
