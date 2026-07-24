@@ -16,7 +16,7 @@
 
 import { chromium } from 'playwright-core';
 import { inflateSync, inflateRawSync } from 'node:zlib';
-import { classify, toMeta, extractVisibleText, extractMotion } from './classify-site.js';
+import { classify, toMeta, extractVisibleText, extractMotion, visualDiff } from './classify-site.js';
 
 const NAV_TIMEOUT_MS = 25000;
 const RENDER_WAIT_MS = 2000;
@@ -573,6 +573,7 @@ export async function captureSnapshot(url, opts = {}) {
         await page.waitForTimeout(400);
         const sourceText = await page.evaluate(extractVisibleText);
         const motion = await page.evaluate(extractMotion);
+        const sourceShot = await page.screenshot({ type: 'png', fullPage: true }).catch(() => null);
         // JS-disabled is a CONTEXT option — Playwright has NO page.setJavaScriptEnabled
         // (that's a Puppeteer method). The old call threw on every capture and the
         // catch below swallowed it, so this whole shadow silently produced nothing.
@@ -585,14 +586,26 @@ export async function captureSnapshot(url, opts = {}) {
         await probe.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
         await probe.waitForTimeout(200);
         const artifactText = await probe.evaluate(extractVisibleText);
+        const artifactShot = await probe.screenshot({ type: 'png', fullPage: true }).catch(() => null);
         await probeCtx.close().catch(() => {});
         const result = classify({ sourceText, artifactText, motion });
-        classificationShadow = toMeta(result);
+        // Second instrument: the direct VISUAL diff of the two fullPage shots
+        // (the JS-enabled `page` decodes the PNGs via canvas). Logged next to the
+        // text verdict so the passive gate reveals which net actually tracks
+        // breakage — the whole point of §3's signals→verify decision.
+        let visual = null;
+        if (sourceShot && artifactShot) {
+          visual = await page.evaluate(visualDiff, {
+            srcUrl: `data:image/png;base64,${sourceShot.toString('base64')}`,
+            artUrl: `data:image/png;base64,${artifactShot.toString('base64')}`,
+          }).catch(() => null);
+        }
+        classificationShadow = { ...toMeta(result), visual };
         // eslint-disable-next-line no-console
         console.log(
-          `[classify-site:shadow] category=${result.category} photocopyOk=${result.photocopyOk} ` +
-          `coverage=${result.coverage.toFixed(3)} legacy.animatedDetected=${detection.detected} ` +
-          `new.animatedDetected=${classificationShadow.animatedDetected} signals=${JSON.stringify(result.signals)}`
+          `[classify-site:shadow] text.category=${result.category} text.coverage=${result.coverage.toFixed(3)} ` +
+          `visual.similarity=${visual ? visual.similarity.toFixed(3) : 'n/a'} visual.heightRatio=${visual ? visual.heightRatio.toFixed(3) : 'n/a'} ` +
+          `legacy.animatedDetected=${detection.detected} new.animatedDetected=${classificationShadow.animatedDetected} signals=${JSON.stringify(result.signals)}`
         );
       } catch (e) {
         // eslint-disable-next-line no-console
