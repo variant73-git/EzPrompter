@@ -31,6 +31,15 @@ const holdCredits = vi.fn(async () => ({ held: true, balance: 100 }));
 const refundHold = vi.fn(async () => {});
 const settleOperation = vi.fn(async () => ({ balanceAfter: 95 }));
 vi.mock('../../../../../lib/billing/ledger.js', () => ({ holdCredits, refundHold, settleOperation }));
+// Bridge claim → the hold mock so the atomic claim+hold is driven by the same
+// fake ledger, and held:false still surfaces as insufficient (402).
+vi.mock('../../../../../lib/billing/operations.js', () => ({
+  claimOperation: async ({ estimate = 0 }) => {
+    const r = await holdCredits({ credits: estimate });
+    return r.held ? { outcome: 'claimed', operationId: 'op-test' } : { outcome: 'insufficient', balance: r.balance };
+  },
+  reclaimOperation: async () => ({ outcome: 'reclaimed', operationId: 'op-test' }),
+}));
 vi.mock('../../../../../lib/billing/pricing.js', () => ({ estimateOp: () => 5, creditsForOperation: () => 3 }));
 
 vi.mock('../../../../../lib/canvas-layout.js', () => ({

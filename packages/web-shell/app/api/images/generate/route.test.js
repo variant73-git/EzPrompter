@@ -17,6 +17,10 @@ vi.mock('../../../../lib/image-gen/openai-image.js', () => ({
 }));
 // Billing wiring (Task 13): the route opens a db handle + billed operation.
 vi.mock('../../../../lib/db.js', () => ({ db: async () => (() => Promise.resolve([])) }));
+vi.mock('../../../../lib/billing/operations.js', () => ({
+  claimOperation: vi.fn(async () => ({ outcome: 'claimed', operationId: 'op-test' })),
+  reclaimOperation: vi.fn(async () => ({ outcome: 'reclaimed', operationId: 'op-test' })),
+}));
 vi.mock('../../../../lib/billing/ledger.js', () => ({
   holdCredits: vi.fn(async () => ({ held: true, balance: 500 })),
   refundHold: vi.fn(async () => ({ balance: 500 })),

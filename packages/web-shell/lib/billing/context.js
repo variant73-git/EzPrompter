@@ -1,16 +1,32 @@
 // lib/billing/context.js
 /**
- * Billing operation context (spec §8-9). A route opens ONE context per
- * user-visible operation; any seam deep in the stack records usage into the
- * INNERMOST context via AsyncLocalStorage — no userId threading. On success
- * the hold settles to the real charge; on failure the hold is fully
- * refunded (failures meter but never charge).
+ * Billing operation context (spec §8-9) + logical-operation idempotency
+ * (money-safety; spec 2026-07-24). A route opens ONE context per user-visible
+ * operation; any seam deep in the stack records usage into the INNERMOST context
+ * via AsyncLocalStorage — no userId threading.
+ *
+ * Lifecycle for a PAID op (or any op carrying an idempotency ticket):
+ *   1. CLAIM — insert a durable `operations` row (keyed by the requester's
+ *      ticket) and deduct the hold, in ONE atomic statement. If a row already
+ *      exists: settled → replay the stored response (DEDUP, no second charge);
+ *      in_flight → 409 in-progress; failed/expired → reclaim and re-run.
+ *   2. RUN — the fn (LLM + side effects) records usage into the context.
+ *   3. SETTLE — charge the real cost, store the replay response, flip the row to
+ *      `settled`; OR on failure refund the hold and flip to `failed`. Both are a
+ *      single atomic transaction, so a stranded hold can only be an in_flight row
+ *      the reconciliation sweep (operations.js) finds and refunds.
+ *
+ * Without a ticket, a paid op still gets a durable row + reconcilable hold, but
+ * a fresh key per call means NO dedup — the pre-existing behavior, made safe.
+ * Metered (unbilled) ops with no ticket skip the operations table entirely
+ * (lightweight path — they only meter usage, never hold or charge).
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { computeCostMicrocents, imageCostMicrocents } from '../agent/cost.js';
 import { creditsForOperation, estimateOp } from './pricing.js';
 import * as realLedger from './ledger.js';
+import * as realOps from './operations.js';
 
 const als = new AsyncLocalStorage();
 
@@ -21,6 +37,18 @@ export class InsufficientCreditsError extends Error {
     this.status = 402;
     this.estimate = estimate;
     this.balance = balance;
+    this.op = op;
+  }
+}
+
+// A retry arrived while the SAME logical operation is still running (its
+// in_flight row is not yet settled). The caller should wait/retry — NOT start a
+// second paid run.
+export class OperationInProgressError extends Error {
+  constructor({ op }) {
+    super(`operation in progress: ${op}`);
+    this.name = 'OperationInProgressError';
+    this.status = 409;
     this.op = op;
   }
 }
@@ -45,61 +73,111 @@ export function recordImage({ provider, model = null, images = 1, quality = null
   });
 }
 
-async function runOperation({ sql, userId, op, boardId = null, nodeId = null, billed }, fn, deps) {
-  const ledger = deps || realLedger;
-  const opId = randomUUID();
-  const estimate = billed ? estimateOp(op) : 0;
-  if (billed && estimate > 0) {
-    const { held, balance } = await ledger.holdCredits({ sql, userId, credits: estimate });
-    if (!held) throw new InsufficientCreditsError({ estimate, balance, op });
+// Unwrap a stored dedup response ({ response } wrapper written on settle) back to
+// the caller's original payload.
+function unwrapResult(stored) {
+  if (stored && typeof stored === 'object' && Object.prototype.hasOwnProperty.call(stored, 'response')) return stored.response;
+  return stored;
+}
+
+// Claim the logical operation (or short-circuit on dedup). Returns either
+// { deduped: true, dedupResult } — replay the stored response, or
+// { operationId } — we own the run. Throws InsufficientCredits / OperationInProgress.
+async function claimOrDedup({ ops, sql, userId, idemKey, op, boardId, nodeId, estimate }) {
+  const claim = await ops.claimOperation({ sql, userId, idemKey, op, boardId, nodeId, estimate });
+  if (claim.outcome === 'insufficient') throw new InsufficientCreditsError({ estimate, balance: claim.balance, op });
+  if (claim.outcome === 'claimed') return { operationId: claim.operationId };
+
+  // duplicate — inspect the existing row.
+  const row = claim.row;
+  if (row.status === 'settled') {
+    return { deduped: true, dedupResult: { result: unwrapResult(row.result), credits: Number(row.charge_credits || 0), balanceAfter: null, opId: row.id, deduped: true } };
   }
+  if (row.status === 'in_flight') throw new OperationInProgressError({ op });
+
+  // failed | expired → reclaim for a fresh attempt.
+  const rc = await ops.reclaimOperation({ sql, userId, idemKey, estimate });
+  if (rc.outcome === 'reclaimed') return { operationId: rc.operationId };
+  if (rc.outcome === 'insufficient') throw new InsufficientCreditsError({ estimate, balance: rc.balance, op });
+  // raced: another attempt moved the row. If it settled meanwhile, replay; else busy.
+  if (rc.row?.status === 'settled') {
+    return { deduped: true, dedupResult: { result: unwrapResult(rc.row.result), credits: Number(rc.row.charge_credits || 0), balanceAfter: null, opId: rc.row.id, deduped: true } };
+  }
+  throw new OperationInProgressError({ op });
+}
+
+async function runOperation({ sql, userId, op, boardId = null, nodeId = null, billed, idemKey = null }, fn, deps) {
+  const ledger = deps || realLedger;
+  const ops = deps || realOps; // tests inject one deps object providing both ledger + ops fns
+  const estimate = billed ? estimateOp(op) : 0;
+  // The operations table backs any PAID op or any op carrying a ticket. Metered
+  // ops with no ticket stay on the lightweight path (meter-only, no row).
+  const useOps = billed || !!idemKey;
+
+  let operationId;
+  if (useOps) {
+    const key = idemKey || randomUUID(); // no ticket → fresh key → durable row, but no dedup
+    const claimed = await claimOrDedup({ ops, sql, userId, idemKey: key, op, boardId, nodeId, estimate });
+    if (claimed.deduped) return claimed.dedupResult;
+    operationId = claimed.operationId;
+  } else {
+    operationId = randomUUID(); // audit id only — no operations row
+  }
+
   const ctx = { events: [] };
   let result;
   try {
     result = await als.run(ctx, fn);
   } catch (err) {
-    // Failure: restore the hold with a single zero-charge settle (now ONE atomic
-    // transaction in ledger.js). If it fails, log LOUDLY (the hold was deducted
-    // in a SEPARATE earlier commit, so a failed refund strands it — a debit with
-    // no settlement row) and never mask `err`.
-    //
-    // ⚠️ KNOWN money-safety residual (Sol audit 2026-07-24, NOT closed here —
-    // needs a feature): the hold and the settlement are separate commits, and
-    // every op gets a fresh opId, so (a) a settlement that rolls back strands the
-    // hold, and (b) a paid op that commits+settles then loses its HTTP/tool
-    // response is RE-RUN by the client/agent under a NEW opId → the same logical
-    // action is charged twice. The fix is LOGICAL-operation idempotency: a stable
-    // key from the request/tool boundary + a durable operation record that dedups
-    // or resumes on retry (and reconciles stranded holds). A per-opId marker does
-    // NOT help — the opId is fresh per retry. Tracked in the 2026-07-23 handoff.
+    // Failure: refund the hold + flip the row to `failed`, atomically (one
+    // transaction in ledger.js). If it fails, log LOUDLY — the hold is then a
+    // stranded in_flight row the reconciliation sweep will refund — and never
+    // mask `err`.
     try {
-      await ledger.settleOperation({ sql, userId, opId, op, boardId, nodeId, events: ctx.events, holdCredits: estimate, chargeCredits: 0 });
+      await ledger.settleOperation({
+        sql, userId, opId: operationId, op, boardId, nodeId, events: ctx.events,
+        holdCredits: estimate, chargeCredits: 0, opStatus: useOps ? 'failed' : null,
+      });
     } catch (settleErr) {
       // eslint-disable-next-line no-console
-      console.error(`[billing] refund-on-error FAILED (user=${userId} op=${op} opId=${opId} held=${estimate}) — balance may be debited:`, settleErr);
+      console.error(`[billing] fail-settle FAILED (user=${userId} op=${op} opId=${operationId} held=${estimate}) — hold stranded (reconciliation will refund):`, settleErr);
     }
     throw err;
   }
+
   const totalMicrocents = ctx.events.reduce((s, e) => s + (e.costMicrocents || 0), 0);
   const credits = billed ? creditsForOperation({ op, totalMicrocents }) : 0;
+  // Persist a replayable response ONLY when dedup is actually possible (an
+  // explicit ticket was supplied). Fresh-key and metered rows store nothing —
+  // they can never be deduped, so there is no response to replay.
+  const storeResult = idemKey ? { response: result } : undefined;
+
   let balanceAfter;
   try {
     ({ balanceAfter } = await ledger.settleOperation({
-      sql, userId, opId, op, boardId, nodeId, events: ctx.events,
+      sql, userId, opId: operationId, op, boardId, nodeId, events: ctx.events,
       holdCredits: billed ? estimate : 0, chargeCredits: credits,
+      opStatus: useOps ? 'settled' : null, result: storeResult,
     }));
   } catch (settleErr) {
     // Success-path settlement failed: the work is done but billing didn't settle,
-    // so the hold is stranded (see the residual note above). Surface it loudly
-    // rather than an opaque 500, then rethrow.
+    // so the hold is a stranded in_flight row (reconciliation refunds it). Surface
+    // loudly rather than an opaque 500, then rethrow.
     // eslint-disable-next-line no-console
-    console.error(`[billing] settle-on-success FAILED (user=${userId} op=${op} opId=${opId} held=${billed ? estimate : 0} charge=${credits}) — hold may be stranded:`, settleErr);
+    console.error(`[billing] settle-on-success FAILED (user=${userId} op=${op} opId=${operationId} charge=${credits}) — hold stranded (reconciliation will refund):`, settleErr);
     throw settleErr;
   }
-  return { result, credits, balanceAfter, opId };
+  return { result, credits, balanceAfter, opId: operationId, deduped: false };
 }
 
+// Paid operation. Pass `idemKey` in opts to enable retry-dedup (the requester's
+// ticket); without it, behaves as before but with a durable, reconcilable record.
 export function runBilledOperation(opts, fn, deps) {
+  return runOperation({ ...opts, billed: true }, fn, deps);
+}
+
+// Intent-revealing alias for a paid op that carries an idempotency ticket.
+export function runIdempotentOperation(opts, fn, deps) {
   return runOperation({ ...opts, billed: true }, fn, deps);
 }
 

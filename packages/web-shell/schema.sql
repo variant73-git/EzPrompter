@@ -263,3 +263,29 @@ CREATE TABLE IF NOT EXISTS credit_ledger (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS credit_ledger_user_time ON credit_ledger(user_id, created_at DESC);
+
+-- Logical-operation idempotency (money-safety: dedup of retries; spec
+-- 2026-07-24). ONE row per logical action, keyed by the requester's idempotency
+-- ticket (client-supplied) or the agent's derived key. The row ABSORBS the hold
+-- (hold_credits) so a stranded hold is just an in_flight row the reconciliation
+-- sweep finds deterministically — not a naked balance debit to guess at. The
+-- immutable money audit stays in credit_ledger / usage_events; this table is
+-- coordination/dedup only.
+CREATE TABLE IF NOT EXISTS operations (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  idem_key       TEXT NOT NULL,          -- requester ticket, or agent-derived key
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  op             VARCHAR(40) NOT NULL,
+  board_id       UUID,
+  node_id        UUID,                   -- SOURCE node (not the created artifact)
+  status         VARCHAR(12) NOT NULL,   -- in_flight | settled | failed | expired
+  hold_credits   BIGINT DEFAULT 0,
+  charge_credits BIGINT DEFAULT 0,
+  result         JSONB,                  -- stored response for dedup replay + created-artifact ref
+  created_at     TIMESTAMPTZ DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ DEFAULT NOW(),
+  settled_at     TIMESTAMPTZ,
+  UNIQUE (user_id, idem_key)
+);
+CREATE INDEX IF NOT EXISTS operations_user_status ON operations(user_id, status);
+CREATE INDEX IF NOT EXISTS operations_inflight_age ON operations(status, created_at);

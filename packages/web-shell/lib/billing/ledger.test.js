@@ -89,6 +89,37 @@ describe('settleOperation', () => {
       sql, userId: 'u1', opId: 'op1', op: 'compose', events: [], holdCredits: 75, chargeCredits: 0,
     })).rejects.toThrow(/transaction failed/);
   });
+
+  it('transitions the operations row to SETTLED (with the replay result) in the SAME transaction', async () => {
+    const sql = fakeSql([[{ credits_cents: 160 }], [], []]);
+    await settleOperation({
+      sql, userId: 'u1', opId: 'op-1', op: 'extract.clone', events: [], holdCredits: 250, chargeCredits: 240,
+      opStatus: 'settled', result: { node: 'n-9' },
+    });
+    // balance UPDATE + charge row + operations UPDATE — one atomic batch.
+    const opUpd = sql.calls.find((c) => c.text.includes('UPDATE operations'));
+    expect(opUpd).toBeTruthy();
+    expect(opUpd.text).toContain("status = 'settled'");
+    expect(opUpd.values).toContain(JSON.stringify({ node: 'n-9' }));
+    expect(sql.transaction.mock.calls[0][0]).toHaveLength(3); // balance + charge + operations
+  });
+
+  it('transitions the operations row to FAILED in the refund transaction', async () => {
+    const sql = fakeSql([[{ credits_cents: 500 }]]);
+    await settleOperation({
+      sql, userId: 'u1', opId: 'op-1', op: 'extract.clone', events: [], holdCredits: 250, chargeCredits: 0,
+      opStatus: 'failed',
+    });
+    const opUpd = sql.calls.find((c) => c.text.includes('UPDATE operations'));
+    expect(opUpd.text).toContain("status = 'failed'");
+    expect(sql.transaction.mock.calls[0][0]).toHaveLength(2); // balance refund + operations
+  });
+
+  it('leaves the operations row untouched when opStatus is absent (legacy callers)', async () => {
+    const sql = fakeSql([[{ credits_cents: 160 }], []]);
+    await settleOperation({ sql, userId: 'u1', opId: 'op1', op: 'compose', events: [], holdCredits: 40, chargeCredits: 30 });
+    expect(sql.calls.some((c) => c.text.includes('UPDATE operations'))).toBe(false);
+  });
 });
 
 describe('refundHold / grantCredits', () => {

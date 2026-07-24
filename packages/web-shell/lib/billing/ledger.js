@@ -58,7 +58,13 @@ export async function refundHold({ sql, userId, credits }) {
 // request/tool key + a durable operation record that dedups/resumes on retry) —
 // a feature, not a per-opId marker (the opId is already unique per retry).
 // Tracked in docs/superpowers/handoffs/2026-07-23-audit-fixes-…handoff.md.
-export async function settleOperation({ sql, userId, opId, op, boardId = null, nodeId = null, events = [], holdCredits: held = 0, chargeCredits = 0 }) {
+// When `opStatus` is given (and `opId` is a real operations-row id), the matching
+// `operations` row is transitioned IN THE SAME transaction as the balance +
+// audit writes — so the money movement and the operation's terminal state
+// (settled | failed) commit together or not at all. `result` is the compact,
+// replayable response stored on a settled row for retry-dedup (see
+// operations.js). A stranded hold therefore can only ever be an in_flight row.
+export async function settleOperation({ sql, userId, opId, op, boardId = null, nodeId = null, events = [], holdCredits: held = 0, chargeCredits = 0, opStatus = null, result = undefined }) {
   const diff = Math.ceil(held) - Math.ceil(chargeCredits);
   const queries = [
     sql`
@@ -80,6 +86,19 @@ export async function settleOperation({ sql, userId, opId, op, boardId = null, n
       INSERT INTO credit_ledger (user_id, delta_credits, reason, op_id, balance_after, meta)
       VALUES (${userId}, ${-Math.ceil(chargeCredits)}, ${'charge'}, ${opId},
               (SELECT credits_cents FROM users WHERE id = ${userId}), ${JSON.stringify({ op })})
+    `);
+  }
+  if (opStatus === 'settled' && opId != null) {
+    queries.push(sql`
+      UPDATE operations SET status = 'settled', charge_credits = ${Math.ceil(chargeCredits)},
+             result = ${result === undefined ? null : JSON.stringify(result)},
+             settled_at = NOW(), updated_at = NOW()
+      WHERE id = ${opId}
+    `);
+  } else if (opStatus === 'failed' && opId != null) {
+    queries.push(sql`
+      UPDATE operations SET status = 'failed', updated_at = NOW()
+      WHERE id = ${opId}
     `);
   }
   const results = await sql.transaction(queries);

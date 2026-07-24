@@ -20,6 +20,14 @@ vi.mock('../../billing/ledger.js', () => ({
   getBalance: vi.fn(async () => 500),
   recentLedger: vi.fn(async () => []),
 }));
+// Bridge claim → the hold mock so held:false still surfaces as insufficient.
+vi.mock('../../billing/operations.js', () => ({
+  claimOperation: async ({ estimate = 0 }) => {
+    const r = await holdMock({ credits: estimate });
+    return r.held ? { outcome: 'claimed', operationId: 'op-test' } : { outcome: 'insufficient', balance: r.balance };
+  },
+  reclaimOperation: async () => ({ outcome: 'reclaimed', operationId: 'op-test' }),
+}));
 
 const { runFlowTool } = await import('./run-flow.js');
 const { runMeteredOperation } = await import('../../billing/context.js');

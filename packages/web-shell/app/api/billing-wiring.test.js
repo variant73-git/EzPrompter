@@ -37,6 +37,15 @@ vi.mock('../../lib/billing/ledger.js', () => ({
   getBalance: vi.fn(async () => 500),
   recentLedger: vi.fn(async () => []),
 }));
+// Operations lifecycle: bridge claim → the existing hold mock so held:false still
+// surfaces as insufficient (402), preserving every hold assertion below.
+vi.mock('../../lib/billing/operations.js', () => ({
+  claimOperation: async ({ estimate = 0 }) => {
+    const r = await holdMock({ credits: estimate });
+    return r.held ? { outcome: 'claimed', operationId: 'op-test' } : { outcome: 'insufficient', balance: r.balance };
+  },
+  reclaimOperation: async () => ({ outcome: 'reclaimed', operationId: 'op-test' }),
+}));
 vi.mock('../../lib/billing/rate-limit.js', () => ({
   checkOpsRate: vi.fn(async () => ({ allowed: true })),
   checkChatRate: vi.fn(async () => ({ allowed: true })),

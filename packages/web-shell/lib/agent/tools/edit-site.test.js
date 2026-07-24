@@ -11,7 +11,11 @@ vi.mock('../../run-flow.js', () => ({
 }));
 
 // Billing (Task 14): the tool wraps its work in runBilledOperation — mock the
-// ledger so hold/settle don't consume the scripted sql sequences above.
+// ledger + operations so hold/claim/settle don't consume the scripted sql sequences above.
+vi.mock('../../billing/operations.js', () => ({
+  claimOperation: vi.fn(async () => ({ outcome: 'claimed', operationId: 'op-test' })),
+  reclaimOperation: vi.fn(async () => ({ outcome: 'reclaimed', operationId: 'op-test' })),
+}));
 vi.mock('../../billing/ledger.js', () => ({
   holdCredits: vi.fn(async () => ({ held: true, balance: 500 })),
   refundHold: vi.fn(async () => ({ balance: 500 })),
