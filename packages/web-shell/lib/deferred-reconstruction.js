@@ -4,9 +4,9 @@ import { runBilledOperation } from './billing/context.js';
 // One implementation for every paid upgrade path. Capture stays free; edit
 // and strict workflow dependencies call this service only after the policy in
 // reconstruction-policy.js has approved the action.
-export async function reconstructSiteNode({ sql, userId, node, reason }) {
+export async function reconstructSiteNode({ sql, userId, node, reason, idemKey = null }) {
   const { result, credits, balanceAfter } = await runBilledOperation(
-    { sql, userId, op: 'reconstruct', boardId: node.board_id, nodeId: node.id },
+    { sql, userId, op: 'reconstruct', boardId: node.board_id, nodeId: node.id, idemKey },
     async () => {
       const rec = await reconstructPage(node.origin_url);
       if (!rec?.html) {

@@ -504,7 +504,9 @@ export async function runAgentLoop(opts) {
             onEvent({ type: 'custom_emit', name: eventName, payload });
           };
           const result = await Promise.race([
-            tool.execute(call.input, { ...ctx, choice: decision.choice ?? null, emit }),
+            // runId scopes derived idempotency keys (money-safety) so a paid tool
+            // re-called after a false timeout dedups instead of double-charging.
+            tool.execute(call.input, { ...ctx, runId, choice: decision.choice ?? null, emit }),
             new Promise((_, reject) => setTimeout(
               () => reject(new Error(`tool ${call.name} exceeded ${TOOL_TIMEOUT_MS / 1000}s — likely a stuck upstream call`)),
               TOOL_TIMEOUT_MS,

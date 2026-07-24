@@ -2,6 +2,7 @@ import { sql } from '../../db.js';
 import { generateGeminiImage } from '../../image-gen/gemini-imagen.js';
 import { generateOpenAIImage } from '../../image-gen/openai-image.js';
 import { runBilledOperation, InsufficientCreditsError } from '../../billing/context.js';
+import { deriveIdemKey } from '../../billing/idem-derive.js';
 import { placeRightOfSources, placeStackDown } from '../../canvas-layout.js';
 import { decodeImageDimsFromDataUrl, pickAspectForDims } from '../../image-dims.js';
 
@@ -374,7 +375,11 @@ Costs money. Pauses for confirmation when the conversation model is Claude (so t
       // The generation bills as its OWN operation (the surrounding chat
       // context stays free — innermost billing context wins).
       const billed = await runBilledOperation(
-        { sql, userId: ctx.userId, op: `image.generate.${effective}`, boardId: ctx.boardId, nodeId: nodeId || null },
+        // Derived key dedups a false-timeout re-call's IMAGE CHARGE (the money).
+        // The placeholder node is created before this op, so a re-call may leave a
+        // duplicate placeholder — a minor UX artifact, not a double charge.
+        { sql, userId: ctx.userId, op: `image.generate.${effective}`, boardId: ctx.boardId, nodeId: nodeId || null,
+          idemKey: deriveIdemKey([ctx.runId, 'image', prompt, effective, nodeId || '']) },
         async () => {
           // Belt-and-suspenders: even if the underlying SDK timeout / driver
           // 3-min cap don't fire (observed in field), this explicit Promise.race

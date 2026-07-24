@@ -1,6 +1,7 @@
 import { sql } from '../../db.js';
 import { runCompose } from '../../run-flow.js';
 import { runBilledOperation, InsufficientCreditsError } from '../../billing/context.js';
+import { deriveIdemKey } from '../../billing/idem-derive.js';
 
 export const runFlowTool = {
   name: 'runFlow',
@@ -57,7 +58,7 @@ Use after you've created and connected the right nodes — don't call runFlow be
       // The tool bills as its OWN compose operation — the surrounding chat
       // context stays free (innermost context wins).
       const { result: payload, credits, balanceAfter } = await runBilledOperation(
-        { sql, userId: ctx.userId, op: 'compose', boardId: ctx.boardId, nodeId },
+        { sql, userId: ctx.userId, op: 'compose', boardId: ctx.boardId, nodeId, idemKey: deriveIdemKey([ctx.runId, 'compose', nodeId, modelId || '']) },
         async () => {
           // Model priority: explicit tool arg > the user's dock picker >
           // runCompose's default. The picker is the user's standing choice —

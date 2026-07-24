@@ -2,6 +2,7 @@ import { sql } from '../../db.js';
 import { runCompose } from '../../run-flow.js';
 import { EDIT_SITE_SYSTEM } from '../prompts.js';
 import { runBilledOperation, InsufficientCreditsError } from '../../billing/context.js';
+import { deriveIdemKey } from '../../billing/idem-derive.js';
 
 // Guard against the model returning PROSE instead of HTML (e.g. "the element
 // isn't in the source, so I'll return it unchanged" — a refusal). Real HTML has
@@ -55,7 +56,7 @@ This will refuse if the user is currently editing the node in-place (you'll get 
 
     try {
       const { result: payload, credits, balanceAfter } = await runBilledOperation(
-        { sql, userId: ctx.userId, op: 'edit', boardId: ctx.boardId, nodeId },
+        { sql, userId: ctx.userId, op: 'edit', boardId: ctx.boardId, nodeId, idemKey: deriveIdemKey([ctx.runId, 'edit', nodeId, instruction]) },
         async () => {
           const result = await runCompose({
             target,

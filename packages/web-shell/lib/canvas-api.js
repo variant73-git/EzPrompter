@@ -1,6 +1,16 @@
 // Client-side fetchers for canvas API. All requests use credentials:'include'
 // so the session cookie travels.
+import { withTicket } from './idempotency.js';
+
 const COMMON = { credentials: 'include', headers: { 'content-type': 'application/json' } };
+
+// Attach a stable idempotency ticket header for a paid request (money-safety;
+// spec 2026-07-24). The ticket is reused if the SAME gesture is retried (so the
+// server dedups a possibly-already-charged action) and cleared on success (a
+// later deliberate redo mints a fresh ticket and pays).
+function withIdemHeader(opts, ticket) {
+  return { ...opts, headers: { ...(opts.headers || COMMON.headers), 'idempotency-key': ticket } };
+}
 
 async function jsonOrThrow(r) {
   const j = await r.json().catch(() => ({}));
@@ -147,11 +157,13 @@ export const api = {
   // client stops waiting immediately and never applies the result, so the
   // node keeps its pre-run state. (The server may still finish the compose;
   // true server-side cancellation is a separate backend concern.)
-  runNode: (nodeId, opts = {}, signal) => fetch(`/api/nodes/${nodeId}/run`, { ...COMMON, method: 'POST', body: JSON.stringify(opts), signal }).then(jsonOrThrow),
+  runNode: (nodeId, opts = {}, signal) => withTicket(`run:${nodeId}:${opts?.modelId || ''}`, (ticket) =>
+    fetch(`/api/nodes/${nodeId}/run`, withIdemHeader({ ...COMMON, method: 'POST', body: JSON.stringify(opts), signal }, ticket)).then(jsonOrThrow)),
   // Deferred billed upgrade of an animated free capture. Called when Edit
   // needs an editable runtime; strict workflow dependencies invoke the same
   // reconstruction service inside the server-side run route.
-  reconstructNode: (nodeId) => fetch(`/api/nodes/${nodeId}/reconstruct`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
+  reconstructNode: (nodeId) => withTicket(`reconstruct:${nodeId}`, (ticket) =>
+    fetch(`/api/nodes/${nodeId}/reconstruct`, withIdemHeader({ ...COMMON, method: 'POST' }, ticket)).then(jsonOrThrow)),
   // Default: node row + current snapshot html (one round-trip when caller
   // actually wants content). `readyCheck:true`: tiny `{ready, snapshotId}`
   // probe used by the handoff poller — avoids transferring snapshot.html
@@ -162,7 +174,8 @@ export const api = {
       { ...COMMON, method: 'GET' }
     ).then(jsonOrThrow),
 
-  extractNode: (id, { to, posX, posY }) => fetchWithTimeout(`/api/nodes/${id}/extract`, { ...COMMON, method: 'POST', body: JSON.stringify({ to, posX, posY }) }).then(jsonOrThrow),
+  extractNode: (id, { to, posX, posY }) => withTicket(`extract:${id}:${to}`, (ticket) =>
+    fetchWithTimeout(`/api/nodes/${id}/extract`, withIdemHeader({ ...COMMON, method: 'POST', body: JSON.stringify({ to, posX, posY }) }, ticket)).then(jsonOrThrow)),
 
   // Version history (site nodes). listSnapshots = light metadata only; getSnapshot
   // pulls one version's html/screenshot on demand (preview + thumbnail);

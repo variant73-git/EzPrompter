@@ -3,7 +3,7 @@ import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
 import { runExtract } from '../../../../../lib/extract.js';
 import { placeStackDown, resolvePlacement } from '../../../../../lib/canvas-layout.js';
-import { runBilledOperation, InsufficientCreditsError } from '../../../../../lib/billing/context.js';
+import { runBilledOperation, InsufficientCreditsError, OperationInProgressError } from '../../../../../lib/billing/context.js';
 import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
 import { withDeadline } from '../../../../../lib/llm-deadline.js';
 
@@ -44,6 +44,10 @@ export async function POST(request, { params }) {
   // where the user asked, matching its loading placeholder.
   const reqX = Number.isFinite(body?.posX) ? Math.round(body.posX) : null;
   const reqY = Number.isFinite(body?.posY) ? Math.round(body.posY) : null;
+  // Idempotency ticket from the client (money-safety; spec 2026-07-24). With it,
+  // a retry of the SAME extract replays the stored node instead of billing +
+  // creating a second one.
+  const idemKey = request.headers.get('idempotency-key') || null;
 
   const rows = await sql`
     SELECT n.id, n.board_id, n.kind, n.meta, s.html, s.design_md
@@ -58,12 +62,17 @@ export async function POST(request, { params }) {
   const rate = await checkOpsRate({ sql, userId: user.id });
   if (!rate.allowed) return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
 
-  let out, credits = 0, balanceAfter = null;
+  const DIMS = { designmd: { width: 600, height: 600 }, asset: { width: 600, height: 600 }, prompt: { width: 600, height: 200 }, site: { width: 1280, height: 720 } };
+
+  let billed;
   try {
-    const billed = await runBilledOperation(
-      { sql, userId: user.id, op: `extract.${to}`, boardId: src.board_id, nodeId: src.id },
+    billed = await runBilledOperation(
+      { sql, userId: user.id, op: `extract.${to}`, boardId: src.board_id, nodeId: src.id, idemKey },
+      // The whole side-effecting unit — extract + node/snapshot/edge creation —
+      // lives INSIDE the billed op so a dedup hit replays the stored response
+      // (the created node) and never bills or creates a second one.
       async () => {
-        const result = await withDeadline(
+        const out = await withDeadline(
           // Thread the deadline's signal so a mid-run abort stops LAUNCHING
           // further paid stages (styleclone's 2nd LLM call, image cropping).
           (signal) => runExtract({ to, node: { id: src.id, kind: src.kind, html: src.html, meta: src.meta }, signal }),
@@ -72,22 +81,58 @@ export async function POST(request, { params }) {
           // the deadline the race times out immediately — a true absolute bound.
           { ms: Math.max(0, EXTRACT_ROUTE_DEADLINE_MS - (Date.now() - startedAt)), label: `extract.${to}` },
         );
-        if (result?.error) {
+        if (out?.error) {
           // Structured extract errors must not charge — throw so the hold
           // refunds, then map the payload back to its response below.
-          const err = new Error(result.error);
-          err.extractError = result;
+          const err = new Error(out.error);
+          err.extractError = out;
           throw err;
         }
-        return result;
+        const { width, height } = DIMS[out.kind] || DIMS.designmd;
+        const { x: posX, y: posY } =
+          reqX != null && reqY != null
+            // Exclude the SOURCE's own section: the derived node belongs to it, so
+            // its frame must not push the node out (was landing far below). It still
+            // avoids overlapping individual nodes + other sections.
+            ? await resolvePlacement(src.board_id, reqX, reqY, width, height, sql, src.id)
+            : await placeStackDown(src.board_id, width, height, sql);
+        const meta = { ...out.meta };
+        const [node] = await sql`
+          INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
+          VALUES (${src.board_id}, ${out.kind}, ${posX}, ${posY}, ${width}, ${height}, ${JSON.stringify(meta)}::jsonb)
+          RETURNING id, board_id, kind, pos_x, pos_y, width, height, meta, created_at
+        `;
+        // Only create a snapshot when there's snapshot-worthy content. prompt nodes
+        // carry their text in meta.prompt and asset (screenshot) nodes carry the
+        // image in meta.dataUrl — neither needs a snapshot row (mirrors createNode /
+        // createImage). Inserting one with html+design_md both null is useless and
+        // would dangle current_snapshot_id at an empty row.
+        if (out.html != null || out.designMd != null) {
+          const [snap] = await sql`
+            INSERT INTO snapshots (node_id, html, design_md, source)
+            VALUES (${node.id}, ${out.html}, ${out.designMd}, 'extract')
+            RETURNING id
+          `;
+          await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${node.id}`;
+        }
+        if (out.dataUrl) {
+          await sql`UPDATE nodes SET meta = meta || ${JSON.stringify({ dataUrl: out.dataUrl })}::jsonb WHERE id = ${node.id}`;
+          node.meta = { ...node.meta, dataUrl: out.dataUrl };
+        }
+        try {
+          await sql`INSERT INTO edges (board_id, source_node_id, target_node_id, kind)
+                    VALUES (${src.board_id}, ${src.id}, ${node.id}, 'generic')`;
+        } catch (_) { /* dup edge — ignore */ }
+        return { node, truncated: out.truncated };
       },
     );
-    out = billed.result;
-    credits = billed.credits;
-    balanceAfter = billed.balanceAfter;
   } catch (e) {
     if (e instanceof InsufficientCreditsError) {
       return NextResponse.json({ error: 'insufficient_credits', estimate: e.estimate, balance: e.balance }, { status: 402 });
+    }
+    if (e instanceof OperationInProgressError) {
+      // Same ticket still running — the client should wait/retry, not re-bill.
+      return NextResponse.json({ error: 'in_progress' }, { status: 409 });
     }
     if (e?.extractError) {
       const payload = e.extractError;
@@ -97,44 +142,6 @@ export async function POST(request, { params }) {
     return NextResponse.json({ error: 'extract_failed', message: String(e?.message || e) }, { status: 502 });
   }
 
-  const DIMS = { designmd: { width: 600, height: 600 }, asset: { width: 600, height: 600 }, prompt: { width: 600, height: 200 }, site: { width: 1280, height: 720 } };
-  const { width, height } = DIMS[out.kind] || DIMS.designmd;
-
-  const { x: posX, y: posY } =
-    reqX != null && reqY != null
-      // Exclude the SOURCE's own section: the derived node belongs to it, so
-      // its frame must not push the node out (was landing far below). It still
-      // avoids overlapping individual nodes + other sections.
-      ? await resolvePlacement(src.board_id, reqX, reqY, width, height, sql, src.id)
-      : await placeStackDown(src.board_id, width, height, sql);
-
-  const meta = { ...out.meta };
-  const [node] = await sql`
-    INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
-    VALUES (${src.board_id}, ${out.kind}, ${posX}, ${posY}, ${width}, ${height}, ${JSON.stringify(meta)}::jsonb)
-    RETURNING id, board_id, kind, pos_x, pos_y, width, height, meta, created_at
-  `;
-  // Only create a snapshot when there's snapshot-worthy content. prompt nodes
-  // carry their text in meta.prompt and asset (screenshot) nodes carry the
-  // image in meta.dataUrl — neither needs a snapshot row (mirrors createNode /
-  // createImage). Inserting one with html+design_md both null is useless and
-  // would dangle current_snapshot_id at an empty row.
-  if (out.html != null || out.designMd != null) {
-    const [snap] = await sql`
-      INSERT INTO snapshots (node_id, html, design_md, source)
-      VALUES (${node.id}, ${out.html}, ${out.designMd}, 'extract')
-      RETURNING id
-    `;
-    await sql`UPDATE nodes SET current_snapshot_id = ${snap.id} WHERE id = ${node.id}`;
-  }
-  if (out.dataUrl) {
-    await sql`UPDATE nodes SET meta = meta || ${JSON.stringify({ dataUrl: out.dataUrl })}::jsonb WHERE id = ${node.id}`;
-    node.meta = { ...node.meta, dataUrl: out.dataUrl };
-  }
-  try {
-    await sql`INSERT INTO edges (board_id, source_node_id, target_node_id, kind)
-              VALUES (${src.board_id}, ${src.id}, ${node.id}, 'generic')`;
-  } catch (_) { /* dup edge — ignore */ }
-
-  return NextResponse.json({ node, truncated: out.truncated, credits, balanceAfter });
+  // billed.result is the fresh response, OR the stored response on a dedup hit.
+  return NextResponse.json({ ...billed.result, credits: billed.credits, balanceAfter: billed.balanceAfter });
 }

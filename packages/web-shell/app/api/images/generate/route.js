@@ -16,6 +16,7 @@ export async function POST(request) {
 
   const body = await request.json().catch(() => ({}));
   const { prompt, aspectRatio = '1:1', provider = 'auto' } = body || {};
+  const idemKey = request.headers.get('idempotency-key') || null;
 
   if (!prompt?.trim()) {
     return NextResponse.json({ error: 'prompt required' }, { status: 400 });
@@ -38,7 +39,7 @@ export async function POST(request) {
 
   try {
     const { result, credits, balanceAfter } = await runBilledOperation(
-      { sql, userId: user.id, op: `image.generate.${effective}` },
+      { sql, userId: user.id, op: `image.generate.${effective}`, idemKey },
       async () => {
         if (effective === 'gemini') {
           const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;

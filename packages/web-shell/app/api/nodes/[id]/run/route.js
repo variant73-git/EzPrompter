@@ -3,7 +3,7 @@ import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
 import { runCompose } from '../../../../../lib/run-flow.js';
 import { BLANK_SITE_HTML } from '../../../../../lib/blank-site-html.js';
-import { runBilledOperation, InsufficientCreditsError } from '../../../../../lib/billing/context.js';
+import { runBilledOperation, InsufficientCreditsError, OperationInProgressError } from '../../../../../lib/billing/context.js';
 import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
 import { reconstructSiteNode } from '../../../../../lib/deferred-reconstruction.js';
 import { reconstructionReason } from '../../../../../lib/reconstruction-policy.js';
@@ -23,6 +23,10 @@ export async function POST(request, { params }) {
   const sql = await db();
   const body = await request.json().catch(() => ({}));
   const { modelId } = body || {};
+  // Idempotency ticket (money-safety; spec 2026-07-24). The compose op keys on it
+  // directly; each reconstruction sub-op derives a scoped key so a route retry
+  // dedups BOTH the compose and any reconstructions instead of re-billing.
+  const idemKey = request.headers.get('idempotency-key') || null;
 
   const [target] = await sql`
     SELECT n.id, n.kind, n.meta, n.board_id, n.origin_url,
@@ -98,6 +102,7 @@ export async function POST(request, { params }) {
         userId: user.id,
         node: item.node,
         reason: item.reason,
+        idemKey: idemKey ? `${idemKey}:reconstruct:${item.node.id}` : null,
       });
       reconstructionCredits += Number(reconstructed.credits || 0);
       reconstructions.push({
@@ -124,7 +129,7 @@ export async function POST(request, { params }) {
     }
 
     const { result, credits, balanceAfter } = await runBilledOperation(
-      { sql, userId: user.id, op: 'compose', boardId: target.board_id, nodeId: target.id },
+      { sql, userId: user.id, op: 'compose', boardId: target.board_id, nodeId: target.id, idemKey },
       async () => {
         const composed = await runCompose({ target, sources, modelId });
         if (!composed?.html) {
@@ -167,6 +172,9 @@ export async function POST(request, { params }) {
   } catch (e) {
     if (e instanceof InsufficientCreditsError) {
       return NextResponse.json({ error: 'insufficient_credits', estimate: e.estimate, balance: e.balance }, { status: 402 });
+    }
+    if (e instanceof OperationInProgressError) {
+      return NextResponse.json({ error: 'in_progress' }, { status: 409 });
     }
     if (e?.code === 'no_output') return NextResponse.json({ error: 'no_output' }, { status: 502 });
     const msg = String(e?.message || e);

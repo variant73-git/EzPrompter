@@ -32,12 +32,14 @@ const refundHold = vi.fn(async () => {});
 const settleOperation = vi.fn(async () => ({ balanceAfter: 95 }));
 vi.mock('../../../../../lib/billing/ledger.js', () => ({ holdCredits, refundHold, settleOperation }));
 // Bridge claim → the hold mock so the atomic claim+hold is driven by the same
-// fake ledger, and held:false still surfaces as insufficient (402).
+// fake ledger, and held:false still surfaces as insufficient (402). A controllable
+// vi.fn so a test can force a DUPLICATE (dedup) outcome.
+const claimMock = vi.fn(async ({ estimate = 0 }) => {
+  const r = await holdCredits({ credits: estimate });
+  return r.held ? { outcome: 'claimed', operationId: 'op-test' } : { outcome: 'insufficient', balance: r.balance };
+});
 vi.mock('../../../../../lib/billing/operations.js', () => ({
-  claimOperation: async ({ estimate = 0 }) => {
-    const r = await holdCredits({ credits: estimate });
-    return r.held ? { outcome: 'claimed', operationId: 'op-test' } : { outcome: 'insufficient', balance: r.balance };
-  },
+  claimOperation: (...a) => claimMock(...a),
   reclaimOperation: async () => ({ outcome: 'reclaimed', operationId: 'op-test' }),
 }));
 vi.mock('../../../../../lib/billing/pricing.js', () => ({ estimateOp: () => 5, creditsForOperation: () => 3 }));
@@ -106,5 +108,24 @@ describe('POST /api/nodes/[id]/extract — route deadline', () => {
     expect(settleOperation).toHaveBeenCalledWith(expect.objectContaining({ chargeCredits: 3 }));
     expect(refundHold).not.toHaveBeenCalled();
     expect(sqlMock._templates.some((t) => /INSERT INTO nodes/i.test(t))).toBe(true);
+  });
+
+  it('a same-ticket retry (already settled) REPLAYS the stored node — no re-bill, no second node', async () => {
+    // Only the source lookup runs before billing; the dedup short-circuits the fn.
+    sqlMock._results = [[srcRow]];
+    claimMock.mockResolvedValueOnce({
+      outcome: 'duplicate',
+      row: { id: 'op-test', status: 'settled', charge_credits: 3, result: { response: { node: { id: 'existing' }, truncated: false } } },
+    });
+
+    const res = await POST(makeReq(), { params: Promise.resolve({ id: 'n1' }) });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.node.id).toBe('existing');   // the stored node, replayed
+    expect(body.credits).toBe(3);            // the original charge, not a new one
+    expect(settleOperation).not.toHaveBeenCalled(); // nothing billed
+    expect(runExtractMock).not.toHaveBeenCalled();  // the work never re-ran
+    expect(sqlMock._templates.some((t) => /INSERT INTO nodes/i.test(t))).toBe(false); // no duplicate node
   });
 });
