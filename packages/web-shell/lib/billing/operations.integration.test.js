@@ -27,7 +27,8 @@ d('operations idempotency — real DB', () => {
     ({ settleOperation } = await import('./ledger.js'));
     sql = await db.db(); // runs initDB() → creates the operations table
     const [u] = await sql`
-      INSERT INTO users (email, credits_cents) VALUES (${`idem-int-${Date.now()}@test.local`}, 1000)
+      INSERT INTO users (email, password_hash, credits_cents)
+      VALUES (${`idem-int-${Date.now()}@test.local`}, ${'x-integration-test'}, 1000)
       RETURNING id
     `;
     userId = u.id;
@@ -56,7 +57,9 @@ d('operations idempotency — real DB', () => {
     const c = await claimOperation({ sql, userId, idemKey: 'int-k1', op: 'extract.clone', estimate: 250 });
     expect(c.outcome).toBe('duplicate');
     expect(c.row.status).toBe('settled');
-    expect(c.row.result.response).toEqual({ node: 'n1' });
+    // Stored via settleOperation directly here (the { response } envelope is
+    // context.js's job, not settleOperation's) → the JSONB round-trips verbatim.
+    expect(c.row.result).toEqual({ node: 'n1' });
   });
 
   it('two concurrent DIFFERENT-key claims can NOT both pass when only one is affordable (no overspend)', async () => {
