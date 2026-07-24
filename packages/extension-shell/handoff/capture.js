@@ -126,14 +126,37 @@
     }
   }
 
-  // Replace viewport-relative units with pixel equivalents against the
-  // capture viewport. Same rationale as snapshot.js pinViewportUnits —
-  // a 100vh hero inside a 12000px iframe blows up; pin to 800px keeps
-  // the design intact.
+  // Replace viewport-relative units with pixel equivalents against the capture
+  // viewport — a 100vh hero inside a tall iframe blows up; pinning keeps the design
+  // intact. Kept in lock-step with web-shell snapshot.js: pin ONLY inside real CSS
+  // contexts (<style> blocks and style="" attributes), and pinCssLengths itself
+  // skips comments / strings / url(), so we never rewrite bytes inside an inline
+  // data-URI. The old naive global replace corrupted base64 payloads (the 2026-07-24
+  // farmminerals "pixelated hero": 382 substitutions inside a 7.5 MB inline Lottie).
+  function pinCssLengths(css, w, h) {
+    const re = /\/\*[\s\S]*?\*\/|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|url\(\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?:[^)'"\\]|\\.)*)\s*\)|(?<![\w-])(-?(?:\d+(?:\.\d+)?|\.\d+))(dvh|svh|lvh|vh|dvw|svw|lvw|vw)(?![a-z])/gi;
+    return css.replace(re, (m, num, unit) => {
+      if (num === undefined) return m; // comment / string / url() token — leave untouched
+      const basis = /w$/i.test(unit) ? w : h;
+      return `${(parseFloat(num) / 100 * basis).toFixed(2)}px`;
+    });
+  }
   function pinViewportUnits(htmlStr, w, h) {
-    return htmlStr
-      .replace(/(\d*\.?\d+)\s*(dvh|svh|lvh|vh)\b/gi, (_m, n) => `${(parseFloat(n) * h / 100).toFixed(2)}px`)
-      .replace(/(\d*\.?\d+)\s*(dvw|svw|lvw|vw)\b/gi, (_m, n) => `${(parseFloat(n) * w / 100).toFixed(2)}px`);
+    let out = htmlStr.replace(
+      /(^|[\s"'/])(style\s*=\s*)("[^"]*"|'[^']*')/gi,
+      (_m, sep, pre, val) => `${sep}${pre}${val[0]}${pinCssLengths(val.slice(1, -1), w, h)}${val[0]}`
+    );
+    let nonce = 'RBSG';
+    while (out.includes(nonce)) nonce += 'x';
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const nRe = new RegExp(esc(nonce) + '(\\d+)' + esc(nonce), 'g');
+    const attrs = [];
+    let masked = out.replace(/=\s*("[^"]*"|'[^']*')/g, (m) => `${nonce}${attrs.push(m) - 1}${nonce}`);
+    masked = masked.replace(
+      /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi,
+      (_m, open, cssBody, close) => open + pinCssLengths(cssBody, w, h) + close
+    );
+    return masked.replace(nRe, (_m, i) => attrs[+i]);
   }
 
   function ensureBaseTag(htmlStr, baseUrl) {

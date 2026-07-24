@@ -248,16 +248,61 @@ function stripScripts(html) {
 // the hero scales to 15000px — covering everything below. Pinning `vh`
 // to the capture viewport height keeps the hero at its designed 800px
 // regardless of the iframe's actual size.
+// Convert CSS viewport lengths (vh/vw and the dvh/svh/lvh + dvw/svw/lvw variants)
+// to px for the capture viewport, while SKIPPING comments, string literals and
+// url(...) tokens. Those are the only spots where a `\d+vh`/`\d+vw` byte-run can
+// appear WITHOUT being a real length — an embedded data-URI inside url(...), a
+// content:"…" string, a base64 payload — and rewriting them corrupts the value.
+// A single-pass alternation consumes each skip-token whole (returning it
+// unchanged) so a length can never be matched inside one. `(?![a-z])` avoids
+// `vhalign`; vmin/vmax are intentionally left alone (rarer, more nuanced).
+export function pinCssLengths(css, captureWidth, captureHeight) {
+  // The length branch: a CSS number (int, decimal, or leading-dot like `.5`) + unit,
+  // with `(?<![\w-])` so it only fires at a real token start — NOT inside an
+  // identifier such as the utility class `.h-100vh` (whose `-100vh` must stay part
+  // of the selector) — and `(?![a-z])` so it doesn't swallow `vhalign` etc.
+  const re = /\/\*[\s\S]*?\*\/|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|url\(\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?:[^)'"\\]|\\.)*)\s*\)|(?<![\w-])(-?(?:\d+(?:\.\d+)?|\.\d+))(dvh|svh|lvh|vh|dvw|svw|lvw|vw)(?![a-z])/gi;
+  return css.replace(re, (m, num, unit) => {
+    if (num === undefined) return m; // comment / string / url() token — leave untouched
+    const basis = /w$/i.test(unit) ? captureWidth : captureHeight;
+    return `${(parseFloat(num) / 100 * basis).toFixed(2)}px`;
+  });
+}
+
+// Pin viewport units in captured HTML. Real CSS lengths only live in <style>
+// blocks and style="" attributes; everything else — data-URIs in src / srcset /
+// xlink:href, sizes="", ordinary text — must stay BYTE-IDENTICAL. Pinning inside
+// an inline base64 payload was the 2026-07-24 farmminerals "pixelated hero"
+// corruption (382 substitutions inside a 7.5 MB inline Lottie's base64 frames
+// decoded as a low-res sky/grass block). Scoping to CSS-bearing contexts (and
+// running pinCssLengths, which itself skips comments/strings/url()) closes the
+// bulk of the SVG-data-URI regressions the Sol audit found. Known residuals for
+// hostile / exotic input (an SVG data-URI whose own inline style="" carries a
+// viewport unit; a `&quot;`-encoded url() inside a style attribute) are accepted
+// for now: the reference-capture path is slated to be redesigned to a scrollable
+// iframe/preview, so full DOM/CSSOM pinning is deferred to that rework.
 export function pinViewportUnits(html, captureWidth, captureHeight) {
-  // Variants we substitute: vh, dvh, svh, lvh (height), vw, dvw, svw, lvw (width).
-  // Don't touch vmin/vmax — usage there is more nuanced and rarer.
-  // Pattern: number (int or decimal, optional sign) followed by unit, with no
-  // letter after — avoids matching `vhalign` or other false positives.
-  const heightUnit = /(-?\d+(?:\.\d+)?)(dvh|svh|lvh|vh)(?![a-z])/gi;
-  const widthUnit  = /(-?\d+(?:\.\d+)?)(dvw|svw|lvw|vw)(?![a-z])/gi;
-  return html
-    .replace(heightUnit, (_m, n) => `${(parseFloat(n) / 100 * captureHeight).toFixed(2)}px`)
-    .replace(widthUnit,  (_m, n) => `${(parseFloat(n) / 100 * captureWidth).toFixed(2)}px`);
+  // 1) style="…" / style='…' attributes. The leading separator keeps `data-style`
+  //    (and other `*style`) from being mistaken for a real style attribute.
+  let out = html.replace(
+    /(^|[\s"'/])(style\s*=\s*)("[^"]*"|'[^']*')/gi,
+    (_m, sep, pre, val) => `${sep}${pre}${val[0]}${pinCssLengths(val.slice(1, -1), captureWidth, captureHeight)}${val[0]}`
+  );
+
+  // 2) Real <style> element contents. Mask every quoted attribute value first so a
+  //    literal <style> embedded inside a data-URI attribute value can't be mistaken
+  //    for a real style element. The nonce is guaranteed absent from the input.
+  let nonce = 'RBSG';
+  while (out.includes(nonce)) nonce += 'x';
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const nRe = new RegExp(esc(nonce) + '(\\d+)' + esc(nonce), 'g');
+  const attrs = [];
+  let masked = out.replace(/=\s*("[^"]*"|'[^']*')/g, (m) => `${nonce}${attrs.push(m) - 1}${nonce}`);
+  masked = masked.replace(
+    /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi,
+    (_m, open, cssBody, close) => open + pinCssLengths(cssBody, captureWidth, captureHeight) + close
+  );
+  return masked.replace(nRe, (_m, i) => attrs[+i]);
 }
 
 // Walk the captured HTML for <link rel="stylesheet"> tags, fetch each
@@ -299,7 +344,7 @@ async function inlineStylesheets(html, baseUrl, page, captureWidth, captureHeigh
     // Pin vh/vw in this stylesheet, then absolutize url(...) refs against
     // the stylesheet's own base (so background-image: url(./a.png) still
     // resolves correctly after inlining).
-    const pinnedCss = pinViewportUnits(f.css, captureWidth, captureHeight);
+    const pinnedCss = pinCssLengths(f.css, captureWidth, captureHeight);
     const cssWithAbsolutes = absolutizeUrls(pinnedCss, f.href);
     // Replace literal tag occurrence with inline style block. We use a
     // unique sentinel attribute so future passes can identify our work.
