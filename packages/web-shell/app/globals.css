@@ -4842,7 +4842,12 @@ input.canvas-section-name-input::placeholder {
 
 /* ── Active context pill in PromptDock ──────────────────────────── */
 .prompt-dock-context-wrap {
-  margin: 0 -10px;
+  /* Break out of the dock's 7px horizontal padding — the wrap has NO
+     overflow clip, so a -10px reach (calibrated for an old 10px padding)
+     pushed its full-bleed divider 3px PAST the dock edge, into the 20px
+     rounded corner. -7px lands it exactly on the edge. This is the divider
+     that shows when a node is selected (its context pill appears here). */
+  margin: 0 -7px;
 }
 .prompt-dock-context-pill {
   display: flex;
@@ -5659,12 +5664,12 @@ body.rb-ed-active .prompt-dock { display: none !important; }
 .prompt-dock-chips-wrap {
   /* Container for the chip row + the edge-to-edge divider underneath.
      AnimatePresence drives the height transition here, so both children
-     fade in/out together. The wrap itself escapes the dock's 10px
-     horizontal padding via negative margin so the divider can reach
-     both side edges without needing its own negative margin — which
-     would be clipped by overflow:hidden. */
+     fade in/out together. The wrap escapes the dock's 7px horizontal
+     padding via negative margin so the divider reaches both side edges;
+     overflow:hidden clips it to the wrap. -7px matches the real padding
+     (was -10px, a stale value that over-reached 3px past the dock). */
   overflow: hidden;
-  margin: 0 -10px;
+  margin: 0 -7px;
 }
 
 .prompt-dock-chips {
@@ -5690,13 +5695,9 @@ body.rb-ed-active .prompt-dock { display: none !important; }
    divider, not a hard rule. */
 .prompt-dock-chat-divider {
   height: 1px;
-  /* Inset within the dock's padding box — NO negative margins. The dock
-     carries a 20px border-radius and (in the current theme) no border, and
-     it cannot clip its children (tooltips must escape its bounds). A
-     full-bleed hairline reaching the exact outer edge poked past the rounded
-     corners; keeping the divider inside the padding box makes it structurally
-     impossible to bleed, at any dock size or side. */
-  margin: 2px 0 6px;
+  /* Break out of the dock's 7px horizontal padding — exactly, so the hairline
+     meets the dock's edge without crossing it. */
+  margin: 2px -7px 6px;
   background: var(--border-frosted);
 }
 
