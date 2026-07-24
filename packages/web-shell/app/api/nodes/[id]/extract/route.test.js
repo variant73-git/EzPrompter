@@ -76,9 +76,10 @@ describe('POST /api/nodes/[id]/extract — route deadline', () => {
 
     expect(res.status).toBe(502);
     expect((await res.json()).message).toMatch(/timed out/i);
-    // The hold was refunded and settled at zero charge — no silent debit.
-    expect(refundHold).toHaveBeenCalled();
-    expect(settleOperation).toHaveBeenCalledWith(expect.objectContaining({ chargeCredits: 0 }));
+    // The hold (estimate 5) was restored by an atomic zero-charge settle — no
+    // silent debit, and no reliance on a separate swallowable refundHold.
+    expect(settleOperation).toHaveBeenCalledWith(expect.objectContaining({ holdCredits: 5, chargeCredits: 0 }));
+    expect(refundHold).not.toHaveBeenCalled();
     // And no node/snapshot was persisted — no duplicate on retry.
     expect(sqlMock._templates.some((t) => /INSERT INTO nodes/i.test(t))).toBe(false);
   });

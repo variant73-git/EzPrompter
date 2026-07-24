@@ -17,11 +17,13 @@ export const runtime = 'nodejs';
 // measured ABSOLUTELY from handler entry (auth/lookup/hold pre-work counts
 // against it) and trips INSIDE runBilledOperation, which refunds the hold and
 // rethrows — so no node is created and the client gets a clean, refunded error
-// first. Clamped [1s, 180s] so a mis-set env can never invert the client>route
-// ordering; raise this and the client EXTRACT_TIMEOUT_MS together if needed.
-const EXTRACT_ROUTE_DEADLINE_MS = Math.min(180_000, Math.max(1_000,
-  Number(process.env.UNCRAFT_EXTRACT_ROUTE_DEADLINE_MS) || 160_000));
-export const maxDuration = 210;
+// first. Clamped [1s, 170s] so a mis-set env can never invert the ordering, and
+// so client(200s) − route(≤170s) leaves ~30s for billing settle + persistence
+// (which run AFTER the deadline) before the client would abort. Raise this and
+// the client EXTRACT_TIMEOUT_MS together if needed.
+const EXTRACT_ROUTE_DEADLINE_MS = Math.min(170_000, Math.max(1_000,
+  Number(process.env.UNCRAFT_EXTRACT_ROUTE_DEADLINE_MS) || 150_000));
+export const maxDuration = 200;
 
 // POST /api/nodes/[id]/extract { to }
 // Creates a NEW node derived from node [id]. Mirrors extractDesign's persist
@@ -66,8 +68,9 @@ export async function POST(request, { params }) {
           // further paid stages (styleclone's 2nd LLM call, image cropping).
           (signal) => runExtract({ to, node: { id: src.id, kind: src.kind, html: src.html, meta: src.meta }, signal }),
           // Absolute budget from handler entry — pre-work (auth, lookup, hold)
-          // counts against it so the whole route settles before the client aborts.
-          { ms: Math.max(1_000, EXTRACT_ROUTE_DEADLINE_MS - (Date.now() - startedAt)), label: `extract.${to}` },
+          // counts against it. Floor 0 (not 1s) so if pre-work already consumed
+          // the deadline the race times out immediately — a true absolute bound.
+          { ms: Math.max(0, EXTRACT_ROUTE_DEADLINE_MS - (Date.now() - startedAt)), label: `extract.${to}` },
         );
         if (result?.error) {
           // Structured extract errors must not charge — throw so the hold

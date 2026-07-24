@@ -25,9 +25,9 @@ async function jsonOrThrow(r) {
 // Extract runs a full LLM pass server-side; bound it client-side so a stuck
 // backend call surfaces a clear timeout instead of an indefinite loader. Kept
 // well ABOVE the server's route deadline (extract route
-// EXTRACT_ROUTE_DEADLINE_MS, default 160s, clamped ≤180s — which bounds the
+// EXTRACT_ROUTE_DEADLINE_MS, default 150s, clamped ≤170s — which bounds the
 // WHOLE multi-call extract absolutely from handler entry, not just one call),
-// leaving headroom for pre-work + persistence so the server's own clean,
+// leaving ~30s headroom for pre-work + persistence so the server's own clean,
 // refunded error always wins and the client never aborts a still-billing
 // request. Raise both together if you raise the route deadline.
 const EXTRACT_TIMEOUT_MS = 200_000;

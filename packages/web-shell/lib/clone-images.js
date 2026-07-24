@@ -388,7 +388,7 @@ export async function cleanCropUi({ page, dataUrl, width, height, bg = null, edi
 
 // Crop the given %-regions out of a screenshot data URL via playwright clip.
 // Returns [dataUrl | null] aligned to `regions`. Isolated so it can be mocked.
-export async function cropScreenshotRegions(screenshotDataUrl, regions) {
+export async function cropScreenshotRegions(screenshotDataUrl, regions, signal) {
   if (!regions.some(Boolean)) return regions.map(() => null);
   const { launchBrowser } = await import('./browser.js');
   const browser = await launchBrowser();
@@ -414,6 +414,10 @@ export async function cropScreenshotRegions(screenshotDataUrl, regions) {
     try { effective = await refineRegionsOnPage(page, dims, regions); } catch { /* estimates stand */ }
     const out = [];
     for (const r of effective) {
+      // Deadline cancellation: stop before the paid per-region work (screenshot
+      // + optional generative cleanCropUi) so a timed-out clone/styleclone
+      // doesn't keep launching GPT image edits the route already discarded.
+      if (signal?.aborted) throw new Error('crop cancelled (deadline)');
       if (!r) { out.push(null); continue; }
       const x = clamp(Math.round(r.x / 100 * dims.w), 0, dims.w - 1);
       const y = clamp(Math.round(r.y / 100 * dims.h), 0, dims.h - 1);
@@ -460,7 +464,7 @@ export async function cropScreenshotRegions(screenshotDataUrl, regions) {
 // pixels from `screenshotDataUrl`. A failed crop leaves the placeholder intact
 // (minus the marker attr). Never throws into the caller — on any error the
 // original html is returned unchanged. `cropFn` is injectable for tests.
-export async function embedClonedImageRegions(html, screenshotDataUrl, { cropFn = cropScreenshotRegions } = {}) {
+export async function embedClonedImageRegions(html, screenshotDataUrl, { cropFn = cropScreenshotRegions, signal } = {}) {
   if (!html || !screenshotDataUrl) return html;
   try {
     const dom = new JSDOM(html);
@@ -468,7 +472,7 @@ export async function embedClonedImageRegions(html, screenshotDataUrl, { cropFn 
     const marked = [...doc.querySelectorAll('[data-clone-crop]')];
     if (!marked.length) return html;
     const regions = marked.map((el) => regionFromAttr(el.getAttribute('data-clone-crop')));
-    const crops = await cropFn(screenshotDataUrl, regions);
+    const crops = await cropFn(screenshotDataUrl, regions, signal);
     marked.forEach((el, i) => {
       el.removeAttribute('data-clone-crop');
       const url = crops?.[i];

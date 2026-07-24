@@ -58,9 +58,23 @@ async function runOperation({ sql, userId, op, boardId = null, nodeId = null, bi
   try {
     result = await als.run(ctx, fn);
   } catch (err) {
-    // Failure: refund everything, persist the metering (charge 0), rethrow.
-    if (billed && estimate > 0) await ledger.refundHold({ sql, userId, credits: estimate }).catch(() => {});
-    await ledger.settleOperation({ sql, userId, opId, op, boardId, nodeId, events: ctx.events, holdCredits: 0, chargeCredits: 0 }).catch(() => {});
+    // Failure: restore the hold via the settle's single balance UPDATE
+    // (holdCredits=estimate, chargeCredits=0 → diff=estimate adds the hold back)
+    // and persist the zero-charge metering. Replaces the old refundHold()+
+    // settle(0,0) where BOTH errors were swallowed, so a transient refund
+    // failure left the user debited behind a clean error. Now a settle failure
+    // is logged LOUDLY (a debited-but-unrefunded balance is observable) and
+    // never masks `err`. NOTE (pre-existing, tracked follow-up): settleOperation
+    // is not yet transactional across (balance UPDATE + usage_events INSERT) nor
+    // idempotent by opId — a durable RETRY of a partially-applied settlement
+    // could double-refund; a per-opId settled-marker + a transaction is the
+    // proper fix (it hardens the success path too).
+    try {
+      await ledger.settleOperation({ sql, userId, opId, op, boardId, nodeId, events: ctx.events, holdCredits: estimate, chargeCredits: 0 });
+    } catch (settleErr) {
+      // eslint-disable-next-line no-console
+      console.error(`[billing] refund-on-error FAILED (user=${userId} op=${op} opId=${opId} held=${estimate}) — balance may be debited:`, settleErr);
+    }
     throw err;
   }
   const totalMicrocents = ctx.events.reduce((s, e) => s + (e.costMicrocents || 0), 0);

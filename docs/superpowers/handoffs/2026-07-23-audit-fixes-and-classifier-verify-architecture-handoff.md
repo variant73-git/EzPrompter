@@ -61,9 +61,18 @@ site → SINAIS (barato, sempre roda: detect.js builder + GSAP/Three/Lenis globa
 
 ---
 
-## 4. PENDENTE
+## 4. FEITO nesta sessão (2ª leva) + PENDENTE
 
-- **#3 refund best-effort** (Sol, pré-existente): `billing/context.js` engole erros do `refundHold` e depois settla com `holdCredits:0` → se o `UPDATE` do refund falhar transientemente, o saldo fica **debitado** com um 502 limpo. Fix: settlement de falha atômico/idempotente (hold→zero-charge) + retry durável/surface em vez de engolir. Alto risco (mexe no ledger) — endereçar com TDD e review do Sol.
+**FEITO — #3 refund best-effort** (`billing/context.js`): a falha antes fazia `refundHold(estimate).catch(()=>{})` + `settle(holdCredits:0)`, ambos engolidos → se o refund falhasse, o saldo ficava **debitado** com um 502 limpo. Agora é **um único `settle(holdCredits:estimate, chargeCredits:0)`** (a UPDATE do settle devolve o hold) num try/catch que **loga alto** a falha (saldo debitado vira observável) e **nunca mascara o erro original**. TDD + testes existentes atualizados pro novo mecanismo.
+
+**FEITO — 2ª rodada do Sol sobre todo o delta** (extract fix + #3), refinamentos aplicados:
+- deadline agora **fail-fast absoluto** (`max(0, ...)`) e margem apertada (route default 150s/clamp ≤170s, cliente 200s, maxDuration 200s → ~30s pra billing settle + persistência que rodam **fora** do deadline);
+- signal do deadline **atravessa até o crop loop** (`embedClonedImageRegions`→`cropScreenshotRegions`) → um clone/styleclone abortado para de lançar `cleanCropUi` (edição de imagem GPT paga) mid-embed;
+- testemunhas novas do threading (extract→embed, embed→crop). **836/836.**
+
+**PENDENTE (residuais que o Sol cravou, não fechados — por escopo/risco):**
+- **Settlement transacional + idempotente** (Sol round 2 #1, **pré-existente**): `settleOperation` NÃO é transacional across (UPDATE de saldo + INSERT de `usage_events`) nem idempotente por `opId` → um RETRY durável de um settlement parcialmente aplicado pode **double-refund**. Meu fix fechou o silent-debit específico; a versão robusta (marcador `settled` por opId + transação) é um mini-projeto de billing que **endurece o caminho de sucesso também**. Alto risco (ledger) — TDD + review do Sol quando encarar.
+- **Bound da persistência sob o deadline** (Sol round 2 #2, residual): o deadline limita o `runExtract`, não o settle+persist que vêm depois; hoje coberto pela margem (~30s) mas não é uma garantia formal. Formalizar = mover o caminho crítico inteiro sob um deadline (chato com writes de DB).
 - **Classificador**: implementar a arquitetura do §3 (consertar shadow → gate → verify visual). O `calibrate-classify.mjs` do handoff anterior fica **pós-gate**, não é o próximo passo.
 - **Frente maior (não desta sessão)**: componentização própria (seções estáveis) — ver `2026-07-23-componentization-and-clone-router-handoff.md`.
 

@@ -52,4 +52,12 @@ describe('runExtract between-stage cancellation', () => {
     expect(generateDesignMd).toHaveBeenCalledTimes(1);
     expect(out.designMd).toBe('# spec');
   });
+
+  it('threads the deadline signal into embedClonedImageRegions (so the crop loop can cancel too)', async () => {
+    const controller = new AbortController();
+    await runExtract({ to: 'styleclone', node: assetNode, signal: controller.signal });
+    expect(embedClonedImageRegions).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.objectContaining({ signal: controller.signal })
+    );
+  });
 });

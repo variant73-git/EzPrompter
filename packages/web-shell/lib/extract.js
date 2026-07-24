@@ -156,7 +156,7 @@ export async function runExtract({ to, node, model, signal }) {
         // screenshot pixels — placeholders become pixel-identical.
         const raw = await cloneImageToHtml({ dataUrl, ...(model ? { model } : {}) });
         throwIfAborted(signal);
-        const html = await embedClonedImageRegions(raw, dataUrl);
+        const html = await embedClonedImageRegions(raw, dataUrl, { signal });
         return result({ kind: 'site', html,
           meta: { name: `${name} — clone`, source: 'extract', extractTo: 'clone', sourceNodeId: node.id } });
       }
@@ -167,7 +167,7 @@ export async function runExtract({ to, node, model, signal }) {
         // along in meta for reuse.
         const raw = await cloneImageToHtml({ dataUrl, ...(model ? { model } : {}) });
         throwIfAborted(signal);
-        const html = await embedClonedImageRegions(raw, dataUrl);
+        const html = await embedClonedImageRegions(raw, dataUrl, { signal });
         throwIfAborted(signal);
         const gen = await generateDesignMd({ html, ...(model ? { model } : {}) });
         return result({ kind: 'designmd', html, designMd: gen.md, truncated: gen.truncated,

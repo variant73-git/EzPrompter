@@ -31,14 +31,18 @@ describe('runBilledOperation', () => {
       .rejects.toBeInstanceOf(InsufficientCreditsError);
     expect(fn).not.toHaveBeenCalled();
   });
-  it('refunds the whole hold and rethrows when fn throws (failure never charges)', async () => {
+  it('refunds the whole hold via an atomic zero-charge settle and rethrows when fn throws', async () => {
     const deps = fakeDeps();
     await expect(runBilledOperation({ sql, userId: 'u1', op: 'compose' }, async () => {
       recordUsage({ provider: 'openai', model: 'gpt-5.5', tokensIn: 1000, tokensOut: 100 });
       throw new Error('llm exploded');
     }, deps)).rejects.toThrow('llm exploded');
-    expect(deps.refundHold).toHaveBeenCalled();
-    expect(deps.settleOperation).toHaveBeenCalledWith(expect.objectContaining({ chargeCredits: 0 }));
+    const held = deps.holdCredits.mock.calls[0][0].credits;
+    expect(held).toBeGreaterThan(0);
+    // The hold is restored by the settle itself (holdCredits=held → the settle
+    // UPDATE adds it back) at zero charge — not a separate, swallowable refundHold.
+    expect(deps.settleOperation).toHaveBeenCalledWith(expect.objectContaining({ holdCredits: held, chargeCredits: 0 }));
+    expect(deps.refundHold).not.toHaveBeenCalled();
   });
   it('records images with quality pricing', async () => {
     const deps = fakeDeps();
