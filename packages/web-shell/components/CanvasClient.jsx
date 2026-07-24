@@ -47,6 +47,7 @@ import {
   parseCanvasView,
 } from '../lib/canvas-view.js';
 import { frameAgentNodes } from '../lib/agent-camera.js';
+import { liveReferenceMeta } from '../lib/url-reference.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -394,8 +395,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // Multi-selection group drag — anchor node + followers' start offsets.
   const groupDragRef = useRef(null);
   // When a URL is added from the "+" toolbar, the temp placeholder is placed
-  // with the ghost first; this stashes the capture to fire once it's dropped.
-  const pendingUrlCaptureRef = useRef(null);
+  // with the ghost first; persistence starts only once it is dropped.
+  const pendingUrlReferenceRef = useRef(null);
   const lastPointerRef = useRef({ x: 0, y: 0 });
   // Multi-file placement queue ("Add multiple files"): files are placed one at
   // a time, each reusing the single-node placement ghost. A cursor-anchored
@@ -1697,19 +1698,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     };
     const drop = () => {
       const node = placingNodeRef.current;
-      // URL placeholder: it was placed BEFORE capture. Commit the dropped
-      // position locally (no server call — it's still a temp- node) and kick
-      // off the capture there instead of the normal move-end persist.
-      const pend = node ? pendingUrlCaptureRef.current : null;
+      // URL placeholder: it was placed before persistence. Commit the dropped
+      // position locally, then turn it into a lightweight live reference.
+      const pend = node ? pendingUrlReferenceRef.current : null;
       if (node && pend && pend.id === node.id) {
         const drag = looseDragRef.current;
         const fx = drag?.lastX ?? node.pos_x;
         const fy = drag?.lastY ?? node.pos_y;
         updateNodeLocal(node.id, { pos_x: fx, pos_y: fy });
-        pendingUrlCaptureRef.current = null;
+        pendingUrlReferenceRef.current = null;
         placingNodeRef.current = null;
         setPlacingNodeId(null);
-        runUrlCapture(pend.id, pend.url, { posX: fx, posY: fy, width: pend.width, height: pend.height, isMain: pend.isMain }, pend.opts);
+        persistUrlReference(pend.id, pend.url, { posX: fx, posY: fy, width: pend.width, height: pend.height, isMain: pend.isMain }, pend.opts);
         return;
       }
       if (node) {
@@ -1953,7 +1953,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       id, kind: 'site', origin_url: url,
       pos_x: posX, pos_y: posY, width, height,
       is_main: isMain,
-      current_html: null, _loading: true
+      current_html: null,
+      meta: liveReferenceMeta(url),
     };
     setNodes((prev) => [...prev, placeholderNode]);
 
@@ -1961,111 +1962,94 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     // ghost following the cursor, exactly like blank/md/screenshot adds. The
     // capture only starts once the user drops it (see the placement drop()).
     if (opts.worldX == null && !opts.linkFromNodeId) {
-      pendingUrlCaptureRef.current = { id, url, width, height, isMain, opts };
+      pendingUrlReferenceRef.current = { id, url, width, height, isMain, opts };
       startPlacement(placeholderNode, { allowTemp: true });
       return;
     }
-    await runUrlCapture(id, url, { posX, posY, width, height, isMain }, opts);
+    await persistUrlReference(id, url, { posX, posY, width, height, isMain }, opts);
   }
 
-  // Runs the (2-3 min) capture for a URL placeholder already on the canvas and
-  // swaps it for the real persisted node. Split out of handleAddUrl so the "+"
-  // path can defer it until the ghost is dropped.
-  async function runUrlCapture(id, url, geom, opts = {}) {
+  // Persist a URL as a lightweight reference. No Playwright capture happens
+  // here: the selected node leases the canvas's one live iframe, and the real
+  // clone begins only when the user chooses Edit.
+  async function persistUrlReference(id, url, geom, opts = {}) {
     const { posX, posY, width, height, isMain } = geom;
     try {
-      // Stream progress so the placeholder shows stage labels (especially
-      // useful for the reconstruction path which can take 2-3 minutes).
-      const STAGE_LABEL = {
-        launching:    'Launching browser…',
-        navigating:   'Navigating to site…',
-        capturing:    'Capturing scroll-stops…',
-        thumbnailing: 'Rendering thumbnails…',
-        thinking:     'Reconstructing layout…',
-        finalizing:   'Finalizing…'
-      };
-      // Pass placement so the server can pre-create a persistent placeholder
-      // node + mint a handoff token if Cloudflare/captcha challenges the
-      // capture. That node sticks in DB even if the user closes the tab,
-      // and the extension's POST /api/snapshot/handoff fills it in later.
-      const placement = {
-        boardId: board.id, posX, posY, width, height,
-        isMain
-      };
-      const cap = await api.captureUrlStream(url, null, (step) => {
-        setNodes((prev) => prev.map((n) =>
-          n.id === id ? { ...n, _loadingLabel: STAGE_LABEL[step] || step } : n
-        ));
-      }, placement);
+      const meta = liveReferenceMeta(url);
       const created = await api.createNode({
         boardId: board.id, kind: 'site', originUrl: url,
         posX, posY, width, height,
         isMain,
-        meta: cap.animatedDetected ? { animatedDetected: true } : {},
-        snapshotSource: 'capture',
-        html: cap.html
+        meta,
       });
       const finalNode = {
         ...created.node,
-        current_html: cap.html,
-        current_screenshot: cap.screenshotDataUrl,
-        current_snapshot_source: 'capture',
-        meta: {
-          ...(created.node.meta || {}),
-          ...(cap.animatedDetected ? { animatedDetected: true } : {}),
-        },
-        _loading: false
+        current_html: null,
+        current_screenshot: null,
+        current_snapshot_source: null,
+        meta: { ...(created.node.meta || {}), ...meta },
       };
       setNodes((prev) => prev.map((n) => (n.id === id ? finalNode : n)));
       let linkEdge = null;
       if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
-      // Undo entry only AFTER the real (persisted) node exists — undoing
-      // a creation mid-capture would orphan the placeholder swap.
+      // Undo entry only after the real persisted node exists.
       pushCreateUndo(created.node, linkEdge);
       // Frame the new node at 100% so it's the immediate focus.
       setTimeout(() => zoomToNode(finalNode, 350, 1), 80);
     } catch (e) {
-      // Bot-protection interstitial — captureUrlStream tags the thrown
-      // error with `.challenge` and (when placement was passed) the
-      // server has already pre-created a persistent node + minted a
-      // handoff token. Swap the in-memory temp placeholder for the
-      // real server node and start the polling loop that waits for
-      // the extension to ship the verified DOM back via
-      // POST /api/snapshot/handoff.
-      if (e?.challenge) {
-        const ch = e.challenge;
-        const persistedNode = ch.node;
-        if (persistedNode) {
-          setNodes((prev) => prev.map((n) =>
-            n.id === id ? {
-              ...persistedNode,
-              current_html: null,
-              _loading: true,
-              _loadingLabel: 'Waiting for verification…',
-              _challenge: true,
-              _handoffPending: true
-            } : n
-          ));
-          startHandoffPolling(persistedNode.id);
-          setChallenge({ ...ch, placeholderId: persistedNode.id });
-        } else {
-          // Fallback for the no-placement path (route returned
-          // challenge without pre-creating). UX is the same as before:
-          // placeholder waits, cancel/open-site clears it.
-          setNodes((prev) => prev.map((n) =>
-            n.id === id ? { ...n, _loadingLabel: 'Waiting for verification…', _challenge: true } : n
-          ));
-          setChallenge({ ...ch, placeholderId: id });
-        }
-        return;
-      }
-      // Use console.warn instead of console.error so Next.js's dev-server
-      // doesn't surface the red full-screen error overlay for an expected
-      // outcome (unreachable host, bot-policy block on the CDN, etc).
-      // The toast already conveys the failure to the user.
-      console.warn('[capture-url] failed:', e?.message || e);
+      console.warn('[url-reference] failed:', e?.message || e);
       setNodes((prev) => prev.filter((n) => n.id !== id));
       toast.error(e.message || 'Could not add this URL.');
+    }
+  }
+
+  // Explicit compatibility fallback for sites that refuse framing. This is
+  // intentionally user-triggered because it performs the slower Playwright
+  // capture; the ordinary URL path never pays this cost.
+  async function handleReferenceFallback(nodeId) {
+    const node = nodes.find((candidate) => candidate.id === nodeId);
+    if (!node?.origin_url || node._loading) return;
+    const STAGE_LABEL = {
+      launching: 'Launching browser…', navigating: 'Navigating to site…',
+      capturing: 'Capturing page…', thumbnailing: 'Rendering preview…',
+      thinking: 'Reconstructing layout…', finalizing: 'Finalizing…',
+    };
+    updateNodeLocal(nodeId, { _loading: true, _loadingLabel: 'Preparing compatible preview…' });
+    try {
+      const cap = await api.captureUrlStream(node.origin_url, nodeId, (step) => {
+        updateNodeLocal(nodeId, { _loadingLabel: STAGE_LABEL[step] || step });
+      });
+      const meta = {
+        ...(node.meta || {}),
+        referenceMode: 'captured-fallback',
+        ...(cap.animatedDetected ? { animatedDetected: true } : {}),
+      };
+      await api.updateNode(nodeId, { meta });
+      setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? {
+        ...candidate,
+        current_html: cap.html,
+        current_screenshot: cap.screenshotDataUrl,
+        current_snapshot_id: cap.snapshotId,
+        current_snapshot_source: 'capture',
+        meta,
+        _loading: false,
+        _loadingLabel: undefined,
+      } : candidate));
+    } catch (e) {
+      if (e?.challenge) {
+        const ch = e.challenge;
+        updateNodeLocal(nodeId, {
+          _loading: true,
+          _loadingLabel: 'Waiting for verification…',
+          _challenge: true,
+          _handoffPending: true,
+        });
+        startHandoffPolling(nodeId);
+        setChallenge({ ...ch, placeholderId: nodeId });
+        return;
+      }
+      updateNodeLocal(nodeId, { _loading: false, _loadingLabel: undefined });
+      toast.error(e.message || 'Could not prepare a compatible preview.');
     }
   }
 
@@ -5698,6 +5682,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     handleNodeMetaPatch,
     handleReplaceContent,
     handlePopulateNode,
+    handleReferenceFallback,
     zoomToNode,
     armNodeRemoval,
     cancelNodeRemoval,
@@ -6135,6 +6120,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               incomingEdges={incomingByTarget.get(n.id) || EMPTY_EDGES}
               hasOutgoingEdges={hasOutgoingBySource.has(n.id)}
               selected={selectedNodeId === n.id || selectedNodeIds.has(n.id)}
+              livePreviewActive={selectedNodeId === n.id}
               placing={placingNodeId === n.id || (altDupGhostIds?.has(n.id) ?? false)}
               editing={editingNodeId === n.id}
               runStatus={runStatus.get(n.id) || null}

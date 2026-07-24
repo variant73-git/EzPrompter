@@ -40,7 +40,7 @@ const SECURITY_HEADERS = [
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
       "connect-src 'self' https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.stripe.com https://*.upstash.io",
-      "frame-src 'self' https://js.stripe.com https://hooks.stripe.com",
+      "frame-src 'self' https:",
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",

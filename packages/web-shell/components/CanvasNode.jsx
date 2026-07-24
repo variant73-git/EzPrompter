@@ -15,6 +15,7 @@ import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
 import { createRafCoalescer } from '../lib/raf-coalesce.js';
 import { fetchThumb } from '../lib/thumb-queue.js';
 import { canExpandSiteViewport } from '../lib/node-viewport.js';
+import { isLiveUrlReference, shouldMountLiveReference } from '../lib/url-reference.js';
 
 const DRAG_THRESHOLD = 4;
 
@@ -365,11 +366,11 @@ function ReplaceOverlay({ nodeId, onReplaceContent }) {
 }
 
 export default function CanvasNode({
-  node, selected, placing = false, editing = false, onEditingChange,
+  node, selected, livePreviewActive = false, placing = false, editing = false, onEditingChange,
   onSelect, onMove, onMoveStart, onMoveEnd, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload, onAltDuplicateDrag,
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
-  onReplaceContent, onRequestUpload, onFrameZoom, onVersionRestore,
+  onReplaceContent, onRequestUpload, onReferenceFallback, onFrameZoom, onVersionRestore,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
   removing = false, removingOutside = false, removeFromMenu = false, inSection = false,
   onRemoveFromSection, onCancelRemove, scale = 1, debit = null,
@@ -393,11 +394,12 @@ export default function CanvasNode({
   const [versionPreview, setVersionPreview] = useState(null); // { snapshotId, html }
   const [restoringVersion, setRestoringVersion] = useState(false);
   const isSiteNode = node.kind === 'site' || node.kind === 'template' || node.kind === 'chunk';
-  const expandableSiteViewport = node.kind !== 'site' || canExpandSiteViewport(node);
+  const liveUrlReference = isLiveUrlReference(node);
+  const expandableSiteViewport = !liveUrlReference && (node.kind !== 'site' || canExpandSiteViewport(node));
   const isTempNode = String(node.id).startsWith('temp-');
 
   useEffect(() => {
-    if (!isSiteNode || !selected || editing || isTempNode) { setVersions([]); setVersionsLoading(false); return; }
+    if (!isSiteNode || liveUrlReference || !selected || editing || isTempNode) { setVersions([]); setVersionsLoading(false); return; }
     let alive = true;
     setVersionsLoading(true);
     api.listSnapshots(node.id)
@@ -405,7 +407,7 @@ export default function CanvasNode({
       .catch(() => { if (alive) setVersions([]); })
       .finally(() => { if (alive) setVersionsLoading(false); });
     return () => { alive = false; };
-  }, [isSiteNode, selected, editing, isTempNode, node.id, node.current_snapshot_id]);
+  }, [isSiteNode, liveUrlReference, selected, editing, isTempNode, node.id, node.current_snapshot_id]);
 
   // The version currently SHOWN in the node = the previewed one if previewing,
   // otherwise the current snapshot. Its thumbnail carries the grey marker.
@@ -794,6 +796,15 @@ export default function CanvasNode({
     io.observe(el);
     return () => io.disconnect();
   }, []);
+  const mountLiveReference = shouldMountLiveReference(node, {
+    active: livePreviewActive,
+    offscreen: offscreenParked,
+  });
+  const interactiveCapturedFallback = Boolean(
+    node.meta?.referenceMode === 'captured-fallback'
+    && livePreviewActive
+    && !offscreenParked
+  );
 
   // Static-by-default site display (perf phase 3b v2, user-directed): the
   // node is a VISUALIZATION of the site's current state — a snapshot image
@@ -806,7 +817,7 @@ export default function CanvasNode({
   // yet (brand-new snapshot) the live iframe covers — no blank frame.
   // Entering edit keeps the thumb OVERLAID until the iframe's onLoad so
   // the swap never flashes.
-  const wantThumb = !editing && !versionPreview;
+  const wantThumb = !liveUrlReference && !editing && !versionPreview;
   const thumbKey = `${node.id}:${node.current_snapshot_id || 'none'}`;
   const [thumb, setThumb] = useState(null);
   const thumbKeyRef = useRef(null);
@@ -822,7 +833,7 @@ export default function CanvasNode({
     });
     return () => { alive = false; };
   }, [wantThumb, thumbKey, node.id]);
-  const showThumb = wantThumb && thumb?.key === thumbKey;
+  const showThumb = wantThumb && thumb?.key === thumbKey && !interactiveCapturedFallback;
   // Anti-flash hand-off: while the live iframe is still parsing its srcDoc
   // (edit entry, version preview), the last thumb stays painted on top.
   const [iframeReady, setIframeReady] = useState(false);
@@ -1007,13 +1018,14 @@ export default function CanvasNode({
   const renderPromptBody = node.kind === 'prompt';
   const renderSkillBody = node.kind === 'skill';
   const renderAssetBody = node.kind === 'asset' || node.kind === 'image';
+  const canEditSite = renderIframeBody && Boolean(html || liveUrlReference);
 
   // Floating tag title budget (2026-07-07): the label must never run under
   // the top-right actions cluster. Chrome is screen-constant while the node
   // is world-sized, so the budget = the node's SCREEN width minus the
   // screen-constant chrome (kind pill ≈110px; Run-from-here + Edit ≈210px
   // when the cluster shows). Truncation keeps the extension ("base...jpg").
-  const actionsVisible = (selected || editing) && !removing && ((renderIframeBody && html) || canRunFromHere);
+  const actionsVisible = (selected || editing) && !removing && (canEditSite || canRunFromHere);
   const floatTitleBudgetPx = (node.width || 1280) * Math.max(0.05, scale) - 110 - (actionsVisible ? 210 : 0);
   const floatTitleText = truncateWithExtension(title, Math.max(8, Math.floor(floatTitleBudgetPx / 6.5)));
 
@@ -1057,10 +1069,9 @@ export default function CanvasNode({
             z.zoomAtPoint?.(e.deltaY || 0, cx, cy);
             return;
           }
-          // Edit mode: plain wheel belongs to the SITE — let it scroll
-          // natively so the user can move through the page while editing.
-          // (The old behavior consumed it and the page felt frozen.)
-          if (editing) return;
+          // Edit mode and the selected compatibility preview both own plain
+          // wheel input, so the page scrolls natively inside the node.
+          if (editing || interactiveCapturedFallback) return;
           e.preventDefault();
           e.stopPropagation();
           z.panBy?.(-(e.deltaX || 0), -(e.deltaY || 0));
@@ -1075,7 +1086,7 @@ export default function CanvasNode({
       iframe.removeEventListener('load', attach);
       detach();
     };
-  }, [editing, html]);
+  }, [editing, html, interactiveCapturedFallback]);
 
   // Editor mounts via <CanvasEditorCore> below — host=parent, target=iframe.
   useEffect(() => {
@@ -1191,7 +1202,7 @@ export default function CanvasNode({
           (the node's top edge sits at the viewport top in the edit frame).
           "Run from here" (2026-07-06) lives in the SAME cluster, same size,
           left of Edit — selection-only, like the rest of the cluster. */}
-      {(selected || editing) && !removing && ((renderIframeBody && html) || canRunFromHere) && (
+      {(selected || editing) && !removing && (canEditSite || canRunFromHere) && (
         <div className="cnode-float-actions" onMouseDown={(e) => e.stopPropagation()}>
           {canRunFromHere && !editing && (
             <button
@@ -1237,7 +1248,7 @@ export default function CanvasNode({
               <span>Cancel</span>
             </button>
           )}
-          {renderIframeBody && html && (
+          {canEditSite && (
             <button
               type="button"
               className={`cnode-float-btn cnode-float-edit${editing ? ' active' : ''}`}
@@ -1247,11 +1258,11 @@ export default function CanvasNode({
                 if (editing) saveAndExit();
                 else onEditingChange?.(true);
               }}
-              title={editing ? 'Save and exit edit mode' : 'Open editor (layers + inspector + guides)'}
+              title={editing ? 'Save and exit edit mode' : liveUrlReference ? 'Clone this site and open the editor' : 'Open editor (layers + inspector + guides)'}
               disabled={editorBusy}
             >
               {editing ? <CheckIcon /> : <EditIcon />}
-              <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : 'Edit'}</span>
+              <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : liveUrlReference ? 'Clone & Edit' : 'Edit'}</span>
             </button>
           )}
         </div>
@@ -1327,7 +1338,7 @@ export default function CanvasNode({
                 <span className="btn-edit-lbl">Cancel</span>
               </button>
             )}
-            {renderIframeBody && html && (
+            {canEditSite && (
               <button
                 className={editing ? 'btn-edit active' : 'btn-edit'}
                 onMouseDown={(e) => e.stopPropagation()}
@@ -1337,11 +1348,11 @@ export default function CanvasNode({
                   if (editing) saveAndExit();
                   else onEditingChange?.(true);
                 }}
-                title={editing ? 'Save and exit edit mode' : 'Open editor (layers + inspector + guides)'}
+                title={editing ? 'Save and exit edit mode' : liveUrlReference ? 'Clone this site and open the editor' : 'Open editor (layers + inspector + guides)'}
                 disabled={editorBusy}
               >
                 {editing ? <CheckIcon /> : <EditIcon />}
-                <span className="btn-edit-lbl">{editing ? (editorBusy ? 'Saving…' : 'Done') : 'Edit'}</span>
+                <span className="btn-edit-lbl">{editing ? (editorBusy ? 'Saving…' : 'Done') : liveUrlReference ? 'Clone & Edit' : 'Edit'}</span>
               </button>
             )}
           </div>
@@ -1388,7 +1399,40 @@ export default function CanvasNode({
           <div className="cnode-loading" />
         )
       ) : renderIframeBody ? (
-        html ? (
+        liveUrlReference ? (
+          <div
+            className={`cnode-body cnode-live-reference${mountLiveReference ? ' is-active' : ''}`}
+            onMouseDown={livePreviewActive ? undefined : onBodyMouseDown}
+            onDoubleClick={livePreviewActive ? undefined : (e) => { e.stopPropagation(); onFrameZoom?.(); }}
+            style={{ height: (node.height || 720) + 'px' }}
+          >
+            {mountLiveReference ? (
+              <iframe
+                className="cnode-iframe cnode-live-iframe"
+                title={`Live preview of ${title}`}
+                src={node.origin_url}
+                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+                referrerPolicy="strict-origin-when-cross-origin"
+              />
+            ) : (
+              <div className="cnode-live-idle">
+                <GlobeIcon />
+                <strong>{node.meta?.name || title}</strong>
+                <span>{offscreenParked ? 'Preview paused off canvas' : 'Select to browse and scroll'}</span>
+              </div>
+            )}
+            {mountLiveReference && (
+              <button
+                type="button"
+                className="cnode-live-fallback"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onReferenceFallback?.(); }}
+              >
+                Site not loading? Use compatible preview
+              </button>
+            )}
+          </div>
+        ) : html ? (
           <div
             className="cnode-body"
             onMouseDown={onBodyMouseDown}
@@ -1431,7 +1475,7 @@ export default function CanvasNode({
               sandbox="allow-same-origin allow-scripts"
               onLoad={(e) => { setIframeReady(true); onIframeLoad(e); }}
               style={{
-                pointerEvents: editing ? 'auto' : 'none',
+                pointerEvents: editing || interactiveCapturedFallback ? 'auto' : 'none',
                 height: '100%',
                 // Off-viewport parking — see offscreenParked note above.
                 visibility: offscreenParked && !editing ? 'hidden' : undefined
@@ -1792,7 +1836,7 @@ export default function CanvasNode({
         <TopbarContextMenu
           x={menuPos.x}
           y={menuPos.y}
-          canEdit={renderIframeBody && !!html}
+          canEdit={canEditSite}
           canReset={renderIframeBody && !!html && hasEdits}
           canReplace={node.kind === 'asset' || node.kind === 'image' || node.kind === 'site' || node.kind === 'designmd'}
           canRemoveFromSection={inSection}

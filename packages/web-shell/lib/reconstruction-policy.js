@@ -1,4 +1,5 @@
 import { isIter9Reconstruction } from './node-viewport.js';
+import { isLiveUrlReference } from './url-reference.js';
 
 // A URL capture is intentionally free. Animated builders are stored as a
 // useful static snapshot and upgraded to editable Iter9 HTML only when a
@@ -6,6 +7,10 @@ import { isIter9Reconstruction } from './node-viewport.js';
 export function needsDeferredReconstruction(node) {
   if (node?.kind !== 'site' || !node?.origin_url) return false;
   if (isIter9Reconstruction(node)) return false;
+  // A live URL reference deliberately has no editable snapshot yet. Edit is
+  // the capability boundary where the real clone begins, regardless of
+  // whether the source happens to advertise an animation library.
+  if (isLiveUrlReference(node)) return true;
   return Boolean(node?.meta?.animatedDetected);
 }
 

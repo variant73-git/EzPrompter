@@ -1,23 +1,17 @@
 import { sql } from '../../db.js';
-import { captureSnapshot, ChallengeRequiredError } from '../../snapshot.js';
 import { placeStackDown } from '../../canvas-layout.js';
+import { liveReferenceMeta } from '../../url-reference.js';
 
 /**
- * Capture a live URL into a site node on the current board. Runs the
- * same pipeline the user gets when they paste a URL into the input bar
- * (snapshot.js free capture path). Cloudflare/captcha
- * walls return a structured `challenge_required` error; the agent then
- * tells the user to paste the URL into the input bar themselves so the
- * extension handoff can pick it up. Animated-builder sites are flagged for
- * deferred reconstruction when Edit or a strict workflow dependency needs it.
+ * Add a live URL reference to the current board. This is deliberately an
+ * immediate database write, not a browser capture: the selected node previews
+ * the source in an iframe, and editable reconstruction begins at Edit.
  */
 export const captureUrlTool = {
   name: 'captureUrl',
-  description: 'Capture a live website URL into a site node on the canvas. Runs the same free snapshot pipeline as the user pasting the URL into the input bar. Animated builders are detected and stored without an immediate AI reconstruction; the node is upgraded later only when Edit or a strict workflow dependency requires editable motion. Returns the new nodeId on success. On Cloudflare/captcha/login walls, returns a `challenge_required` error so you can tell the user to paste the URL themselves (the extension handoff bypasses the wall).',
-  // Confirm chips are reserved for deletes (2026-06-12). Capture only
-  // creates a node. Capture can still be slow on large or protected pages.
+  description: 'Add a live website reference to the canvas immediately. The selected node is scrollable through a lightweight iframe; cloning and editable reconstruction begin only when the user chooses Edit. Returns the new nodeId on success.',
   classification: 'safe',
-  timeoutMs: 5 * 60 * 1000,
+  timeoutMs: 30 * 1000,
   inputSchema: {
     type: 'object',
     properties: {
@@ -38,64 +32,21 @@ export const captureUrlTool = {
     const width = 1280;
     const height = Math.round(width * 9 / 16);
     const { x: posX, y: posY } = await placeStackDown(ctx.boardId, width, height, sql);
-    const displayName = name || new URL(url).hostname;
-
-    // Create a LOADING placeholder node up front so the canvas shows the
-    // generating ring + % during the (2-3 min) capture — instead of nothing
-    // until it finishes. meta.status='generating' is what the ring keys on.
-    const placeholderMeta = { name: displayName, source: 'agent-captured', status: 'generating' };
+    const meta = liveReferenceMeta(url, name);
     const [node] = await sql`
       INSERT INTO nodes (board_id, kind, origin_url, pos_x, pos_y, width, height, meta)
-      VALUES (${ctx.boardId}, 'site', ${url}, ${posX}, ${posY}, ${width}, ${height}, ${JSON.stringify(placeholderMeta)}::jsonb)
+      VALUES (${ctx.boardId}, 'site', ${url}, ${posX}, ${posY}, ${width}, ${height}, ${JSON.stringify(meta)}::jsonb)
       RETURNING id
-    `;
-    if (ctx?.emit) { try { ctx.emit('graph_mutated', { reason: 'captureUrl:start' }); } catch (_) {} }
-
-    let cap;
-    try {
-      cap = await captureSnapshot(url);
-    } catch (e) {
-      // Capture failed — drop the placeholder so a broken loading node isn't
-      // left behind, then re-emit so the canvas removes it.
-      try { await sql`DELETE FROM nodes WHERE id = ${node.id}`; } catch (_) {}
-      if (ctx?.emit) { try { ctx.emit('graph_mutated', { reason: 'captureUrl:failed' }); } catch (_) {} }
-      if (e instanceof ChallengeRequiredError) {
-        return {
-          error: 'challenge_required',
-          message: `The site at ${url} is behind ${e.kind} verification. Ask the user to paste the URL into the input bar so the extension can complete the verification handoff for them.`,
-          kind: e.kind,
-          url,
-        };
-      }
-      return { error: 'capture_failed', message: String(e?.message || e) };
-    }
-
-    const finalName = name || cap.title || displayName;
-    const [snap] = await sql`
-      INSERT INTO snapshots (node_id, html, source)
-      VALUES (${node.id}, ${cap.html}, 'capture')
-      RETURNING id
-    `;
-    // Populate: point at the snapshot and clear the generating status (so the
-    // ring disappears and the captured content renders).
-    const finalMeta = {
-      name: finalName,
-      source: 'agent-captured',
-      ...(cap.animatedDetected ? { animatedDetected: true } : {}),
-    };
-    await sql`
-      UPDATE nodes SET current_snapshot_id = ${snap.id}, meta = ${JSON.stringify(finalMeta)}::jsonb
-      WHERE id = ${node.id}
     `;
 
     if (ctx?.emit) {
-      try { ctx.emit('graph_mutated', { reason: 'captureUrl:done' }); } catch (_) {}
+      try { ctx.emit('graph_mutated', { reason: 'captureUrl:referenced' }); } catch (_) {}
     }
     return {
-      captured: true,
+      referenced: true,
       nodeId: node.id,
       url,
-      name: finalName,
+      name: meta.name,
       posX,
       posY,
       width,

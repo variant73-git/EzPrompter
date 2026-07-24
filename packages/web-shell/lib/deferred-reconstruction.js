@@ -67,6 +67,7 @@ export async function reconstructSiteNode({ sql, userId, node, reason, idemKey =
       const nextMeta = {
         animatedDetected: false,
         animatedRuntime: true,
+        referenceMode: 'clone',
         reconstructionEngine: 'iter9',
         deferredReconstructionReason: reason,
         deferredReconstructedAt: new Date().toISOString(),

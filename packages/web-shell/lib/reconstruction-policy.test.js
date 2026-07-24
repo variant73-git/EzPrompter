@@ -22,6 +22,15 @@ describe('deferred reconstruction policy', () => {
     expect(reconstructionReason({ node: captured, role: 'edit' })).toBe('edit');
   });
 
+  it('starts the clone when a live URL reference enters edit mode', () => {
+    const reference = {
+      id: 'site-ref', kind: 'site', origin_url: 'https://example.com',
+      current_html: null, meta: { referenceMode: 'live' },
+    };
+    expect(needsDeferredReconstruction(reference)).toBe(true);
+    expect(reconstructionReason({ node: reference, role: 'edit' })).toBe('edit');
+  });
+
   it('reconstructs when the captured site is the transformation target', () => {
     expect(reconstructionReason({ node: captured, role: 'target' })).toBe('transform-target');
   });

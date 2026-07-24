@@ -18,7 +18,7 @@ import CanvasNode from './CanvasNode.jsx';
 // fresh state; the ref object identity itself never changes, so it never
 // breaks memoization. Never pass a raw CanvasClient function directly.
 function CanvasNodeItem({
-  node, scale, debit, incomingEdges, hasOutgoingEdges, selected, placing,
+  node, scale, debit, incomingEdges, hasOutgoingEdges, selected, livePreviewActive, placing,
   editing, runStatus, draftActive, removing, removingOutside, removeFromMenu,
   inSection, canRunFromHere, flowRunning, handlersRef,
 }) {
@@ -31,6 +31,7 @@ function CanvasNodeItem({
       incomingEdges={incomingEdges}
       hasOutgoingEdges={hasOutgoingEdges}
       selected={selected}
+      livePreviewActive={livePreviewActive}
       placing={placing}
       editing={editing}
       runStatus={runStatus}
@@ -64,6 +65,7 @@ function CanvasNodeItem({
       onMetaPatch={(metaPatch) => h().handleNodeMetaPatch(node.id, metaPatch)}
       onReplaceContent={(...args) => h().handleReplaceContent(...args)}
       onRequestUpload={() => h().handlePopulateNode(node)}
+      onReferenceFallback={() => h().handleReferenceFallback(node.id)}
       onFrameZoom={() => h().zoomToNode(node, 350, 1)}
       onRemoveFromSection={() => h().armNodeRemoval(node)}
       onCancelRemove={(...args) => h().cancelNodeRemoval(...args)}
