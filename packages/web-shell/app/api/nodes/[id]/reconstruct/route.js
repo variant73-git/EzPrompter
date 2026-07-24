@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
-import { InsufficientCreditsError } from '../../../../../lib/billing/context.js';
+import { InsufficientCreditsError, OperationInProgressError } from '../../../../../lib/billing/context.js';
 import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
 import { reconstructSiteNode } from '../../../../../lib/deferred-reconstruction.js';
 import { shouldReconstructForAction } from '../../../../../lib/reconstruction-policy.js';
@@ -19,6 +19,10 @@ export async function POST(request, { params }) {
 
   const { id } = await params;
   const sql = await db();
+  // The client (canvas-api.reconstructNode) sends an Idempotency-Key; read it so a
+  // retry of a lost-response reconstruction dedups instead of charging twice
+  // (Sol audit #2 — this route was silently dropping the ticket).
+  const idemKey = request.headers.get('idempotency-key') || null;
 
   const [node] = await sql`
     SELECT n.id, n.kind, n.meta, n.board_id, n.origin_url,
@@ -51,11 +55,14 @@ export async function POST(request, { params }) {
   if (!rate.allowed) return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
 
   try {
-    const result = await reconstructSiteNode({ sql, userId: user.id, node, reason: 'edit' });
+    const result = await reconstructSiteNode({ sql, userId: user.id, node, reason: 'edit', idemKey });
     return NextResponse.json({ ...result, snapshotSource: 'reconstruct', node: { id: node.id } });
   } catch (e) {
     if (e instanceof InsufficientCreditsError) {
       return NextResponse.json({ error: 'insufficient_credits', estimate: e.estimate, balance: e.balance }, { status: 402 });
+    }
+    if (e instanceof OperationInProgressError) {
+      return NextResponse.json({ error: 'in_progress' }, { status: 409 });
     }
     if (e?.code === 'no_output') return NextResponse.json({ error: 'no_output' }, { status: 502 });
     console.error('reconstruct error', e);

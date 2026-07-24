@@ -58,7 +58,10 @@ Use after you've created and connected the right nodes — don't call runFlow be
       // The tool bills as its OWN compose operation — the surrounding chat
       // context stays free (innermost context wins).
       const { result: payload, credits, balanceAfter } = await runBilledOperation(
-        { sql, userId: ctx.userId, op: 'compose', boardId: ctx.boardId, nodeId, idemKey: deriveIdemKey([ctx.runId, 'compose', nodeId, modelId || '']) },
+        // Capture the EFFECTIVE model (picker fallback) so the key forms even when
+        // modelId is omitted (the common case) — a null key there dropped dedup and
+        // re-charged a false-timeout re-call (Sol audit #2).
+        { sql, userId: ctx.userId, op: 'compose', boardId: ctx.boardId, nodeId, idemKey: deriveIdemKey([ctx.runId, 'compose', nodeId, modelId || ctx?.pickerModel || 'default']) },
         async () => {
           // Model priority: explicit tool arg > the user's dock picker >
           // runCompose's default. The picker is the user's standing choice —

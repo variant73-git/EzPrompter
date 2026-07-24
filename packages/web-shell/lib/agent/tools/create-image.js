@@ -375,11 +375,14 @@ Costs money. Pauses for confirmation when the conversation model is Claude (so t
       // The generation bills as its OWN operation (the surrounding chat
       // context stays free — innermost billing context wins).
       const billed = await runBilledOperation(
-        // Derived key dedups a false-timeout re-call's IMAGE CHARGE (the money).
-        // The placeholder node is created before this op, so a re-call may leave a
-        // duplicate placeholder — a minor UX artifact, not a double charge.
+        // Key on STABLE REQUEST IDENTITY so a false-timeout re-call dedups the
+        // IMAGE CHARGE (money-safety; Sol audit #2). NEVER the placeholder nodeId —
+        // it's freshly inserted per call, so a re-call would get a new key and
+        // charge again. Accepted trade-offs: two deliberate identical-prompt gens
+        // in one run dedup to one; and the pre-billing placeholder node a re-call
+        // creates may orphan (UX, not money).
         { sql, userId: ctx.userId, op: `image.generate.${effective}`, boardId: ctx.boardId, nodeId: nodeId || null,
-          idemKey: deriveIdemKey([ctx.runId, 'image', prompt, effective, nodeId || '']) },
+          idemKey: deriveIdemKey([ctx.runId, 'image', effective, prompt, aspectRatio, baseImageAssetId, replaceAssetId]) },
         async () => {
           // Belt-and-suspenders: even if the underlying SDK timeout / driver
           // 3-min cap don't fire (observed in field), this explicit Promise.race

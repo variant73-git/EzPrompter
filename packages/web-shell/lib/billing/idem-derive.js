@@ -7,13 +7,19 @@
 // keeping genuinely different actions (or different agent runs) distinct.
 import { createHash } from 'node:crypto';
 
-// Returns a stable hex key, or null when there is no run to scope it to (a
-// Phase-1 caller with no runId) — null means "no dedup", the safe pre-existing
-// behavior, never a collision.
+// The FIRST part is the SCOPE ANCHOR (e.g. runId): if it's absent there is no run
+// to scope a stable key to → return null (no dedup, safe best-effort). But a LATER
+// part being empty is a LEGITIMATE stable value — no modelId, empty edit prompt, a
+// missing optional id — so it is normalized to a sentinel, NOT allowed to nullify
+// the whole key. Nullifying on any-empty was a money footgun (Sol audit #2): it
+// silently dropped dedup on the exact common paths (omitted modelId, empty prompt),
+// re-charging retries. Callers MUST pass only STABLE identity in later parts —
+// never a value that changes per attempt (e.g. a freshly-inserted placeholder id).
+const SENTINEL = '∅'; // ∅
 export function deriveIdemKey(parts) {
   const arr = Array.isArray(parts) ? parts : [parts];
-  if (arr.some((p) => p == null || p === '')) return null;
+  if (arr.length === 0 || arr[0] == null || arr[0] === '') return null;
   const h = createHash('sha256');
-  h.update(arr.map((p) => String(p)).join('␟')); // unit-separator delimiter
+  h.update(arr.map((p) => (p == null || p === '' ? SENTINEL : String(p))).join('␟'));
   return `d:${h.digest('hex').slice(0, 32)}`;
 }
