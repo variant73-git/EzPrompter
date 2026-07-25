@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { pinViewportUnits, pinCssLengths } from './snapshot.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { chromium } from 'playwright-core';
+import { pinViewportUnits, pinCssLengths, pinDomViewportUnits } from './snapshot.js';
 
 // Regression suite for the 2026-07-24 "pixelated hero" root cause: the old
 // pinViewportUnits did a naive global `\d+vh|vw` → px replace over the WHOLE
@@ -55,6 +56,21 @@ describe('pinCssLengths — pins CSS lengths, never inside strings / comments / 
   it('still pins a legitimate negative value', () => {
     expect(pinCssLengths('a{margin-top:-10vh}', 1280, 800)).toBe('a{margin-top:-80.00px}');
   });
+
+  it('(Sol F1c) does not touch a length inside an EOF-terminated comment', () => {
+    const css = '.x{}/* keep 100vh';
+    expect(pinCssLengths(css, 1280, 800)).toBe(css);
+  });
+
+  it('(Sol F1b) keeps a length inside a string with a backslash-newline continuation', () => {
+    const css = '.x{--p:"keep\\\n100vh"}';
+    expect(pinCssLengths(css, 1280, 800)).toBe(css);
+  });
+
+  it('(Sol F4) does not partially convert an invalid unit like 1vh2', () => {
+    const css = '.x{width:1vh2}';
+    expect(pinCssLengths(css, 1280, 800)).toBe(css);
+  });
 });
 
 describe('pinViewportUnits(html) — pins only inside <style> and style="", never in data payloads', () => {
@@ -103,5 +119,71 @@ describe('pinViewportUnits(html) — pins only inside <style> and style="", neve
   it('does not treat a data-style attribute as a CSS style attribute', () => {
     const html = '<div data-style="100vh"></div>';
     expect(pinViewportUnits(html, 1280, 800)).toBe(html);
+  });
+});
+
+// The ACTIVE capture path pins viewport units in the live DOM via CSSOM before
+// serialization (pinViewportUnits above is retained as an inert string fallback).
+// Using the browser as the parser closes the whole class of regex-context
+// corruptions by construction: querySelectorAll only returns real elements (never
+// a <style> that is really text inside a data-URI attribute), and getAttribute /
+// textContent return real quotes (not &quot;) with no surrounding markup — so
+// data-URIs, SVGs/Lotties, strings, comments and url() stay byte-identical.
+describe('pinDomViewportUnits — in-browser CSSOM pin (integration)', () => {
+  let browser;
+  // Generous launch timeout: this browser competes with ~120 other test files
+  // running in parallel, so the default 5s hook window can flake under load.
+  beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30000);
+  afterAll(async () => { if (browser) await browser.close(); });
+
+  const pinHtml = async (html, w = 1280, h = 800) => {
+    const page = await browser.newPage({ viewport: { width: w, height: h } });
+    await page.setContent(html, { waitUntil: 'domcontentloaded' });
+    await pinDomViewportUnits(page, w, h);
+    const out = await page.content();
+    await page.close();
+    return out;
+  };
+
+  it('pins vh inside a real <style> block', async () => {
+    const out = await pinHtml('<style>.hero{height:100vh}</style>');
+    expect(out).toContain('height:800.00px');
+    expect(out).not.toContain('100vh');
+  });
+
+  it('pins a length inside an inline style attribute', async () => {
+    const out = await pinHtml('<div style="width:50vw"></div>');
+    expect(out).toContain('width:640.00px');
+  });
+
+  it('(Sol F1a) leaves a viewport unit inside an SVG data-URI in src untouched', async () => {
+    const out = await pinHtml(`<img src="data:image/svg+xml,<svg height='30vh'></svg>"><style>.x{top:10vh}</style>`);
+    expect(out).toContain("height='30vh'"); // the data-URI is not a real style → untouched
+    expect(out).toContain('top:80.00px');   // the real <style> IS pinned
+  });
+
+  it('(Sol F2) preserves a data-URI inside a url() in an inline style while pinning the length', async () => {
+    const out = await pinHtml(`<div style="height:100vh;background:url('data:image/svg+xml,<svg width=%2740vw%27></svg>')"></div>`);
+    expect(out).toContain('40vw');           // payload inside url() preserved
+    expect(out).toContain('height:800.00px'); // the real length pinned
+  });
+
+  it('(Sol F4a) does not corrupt a utility class selector in a <style> block', async () => {
+    const out = await pinHtml('<style>.h-100vh{height:100vh}</style>');
+    expect(out).toContain('.h-100vh{height:800.00px}');
+  });
+
+  it('does not touch a base64 data-URI in an attribute', async () => {
+    const b64 = 'data:image/png;base64,iVBOR6vh9wKGgo8vw2QQ6vH0Lvh8Vw==';
+    const out = await pinHtml(`<img src="${b64}">`);
+    expect(out).toContain(b64);
+  });
+
+  it('returns the number of style contexts it pinned (observability)', async () => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.setContent('<style>.a{height:100vh}</style><div style="width:50vw"></div><img src="x.png">');
+    const n = await pinDomViewportUnits(page, 1280, 800);
+    await page.close();
+    expect(n).toBe(2); // the <style> block + the one inline style
   });
 });

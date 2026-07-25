@@ -248,39 +248,41 @@ function stripScripts(html) {
 // the hero scales to 15000px — covering everything below. Pinning `vh`
 // to the capture viewport height keeps the hero at its designed 800px
 // regardless of the iframe's actual size.
-// Convert CSS viewport lengths (vh/vw and the dvh/svh/lvh + dvw/svw/lvw variants)
-// to px for the capture viewport, while SKIPPING comments, string literals and
-// url(...) tokens. Those are the only spots where a `\d+vh`/`\d+vw` byte-run can
-// appear WITHOUT being a real length — an embedded data-URI inside url(...), a
-// content:"…" string, a base64 payload — and rewriting them corrupts the value.
-// A single-pass alternation consumes each skip-token whole (returning it
-// unchanged) so a length can never be matched inside one. `(?![a-z])` avoids
-// `vhalign`; vmin/vmax are intentionally left alone (rarer, more nuanced).
+// Single-pass alternation that consumes each SKIP-token whole (returning it
+// unchanged) so a `\d+vh`/`\d+vw` length is never matched inside one. Skip-tokens:
+//   - a comment `/* … */`, OR an EOF-terminated `/* …` (no closing) — Sol F1c;
+//   - a double/single-quoted string, `\\[\s\S]` so a backslash-newline line
+//     continuation stays inside the string — Sol F1b;
+//   - a url(...) token, quoted or not, same continuation handling — data-URIs live here.
+// The length branch: a CSS number (int, decimal, or leading-dot `.5`) + unit, with
+// `(?<![\w-])` so it only fires at a real token start (NOT inside `.h-100vh`) and
+// `(?![\w-])` so it never eats a partial like `1vh2` (unit `vh2`) — Sol F4.
+// Kept as a source STRING so the exact same lexer runs in-page (pinDomViewportUnits)
+// via new RegExp(), never eval() — CSP-safe, zero drift.
+// Known residuals (need a real CSS tokenizer; unreachable in real design-site CSS):
+// an escaped identifier `u\72l(` and a bare `data:` URI in a custom property outside
+// url()/quotes are not recognized as skip-tokens. vmin/vmax left alone. In a headless
+// capture viewport svh/lvh/dvh == vh (no dynamic browser UI), so one basis is correct.
+const CSS_VH_VW_SRC = /\/\*[\s\S]*?(?:\*\/|$)|"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|url\(\s*(?:"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|(?:[^)'"\\]|\\[\s\S])*)\s*\)|(?<![\w-])(-?(?:\d+(?:\.\d+)?|\.\d+))(dvh|svh|lvh|vh|dvw|svw|lvw|vw)(?![\w-])/.source;
+
 export function pinCssLengths(css, captureWidth, captureHeight) {
-  // The length branch: a CSS number (int, decimal, or leading-dot like `.5`) + unit,
-  // with `(?<![\w-])` so it only fires at a real token start — NOT inside an
-  // identifier such as the utility class `.h-100vh` (whose `-100vh` must stay part
-  // of the selector) — and `(?![a-z])` so it doesn't swallow `vhalign` etc.
-  const re = /\/\*[\s\S]*?\*\/|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|url\(\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?:[^)'"\\]|\\.)*)\s*\)|(?<![\w-])(-?(?:\d+(?:\.\d+)?|\.\d+))(dvh|svh|lvh|vh|dvw|svw|lvw|vw)(?![a-z])/gi;
-  return css.replace(re, (m, num, unit) => {
+  return css.replace(new RegExp(CSS_VH_VW_SRC, 'gi'), (m, num, unit) => {
     if (num === undefined) return m; // comment / string / url() token — leave untouched
     const basis = /w$/i.test(unit) ? captureWidth : captureHeight;
     return `${(parseFloat(num) / 100 * basis).toFixed(2)}px`;
   });
 }
 
-// Pin viewport units in captured HTML. Real CSS lengths only live in <style>
-// blocks and style="" attributes; everything else — data-URIs in src / srcset /
-// xlink:href, sizes="", ordinary text — must stay BYTE-IDENTICAL. Pinning inside
-// an inline base64 payload was the 2026-07-24 farmminerals "pixelated hero"
-// corruption (382 substitutions inside a 7.5 MB inline Lottie's base64 frames
-// decoded as a low-res sky/grass block). Scoping to CSS-bearing contexts (and
-// running pinCssLengths, which itself skips comments/strings/url()) closes the
-// bulk of the SVG-data-URI regressions the Sol audit found. Known residuals for
-// hostile / exotic input (an SVG data-URI whose own inline style="" carries a
-// viewport unit; a `&quot;`-encoded url() inside a style attribute) are accepted
-// for now: the reference-capture path is slated to be redesigned to a scrollable
-// iframe/preview, so full DOM/CSSOM pinning is deferred to that rework.
+// String-based viewport-unit pinner — RETAINED AS AN INERT FALLBACK. The capture
+// path now pins in the live DOM via pinDomViewportUnits() (below), which is free of
+// the regex-context holes this one has. This is still used by reconstruct.js on
+// model-generated HTML (which carries no inline data-URIs at pin time), and stays
+// available as a fallback, but it is NOT run on captured HTML anymore.
+// It scopes conversion to CSS-bearing contexts (<style> blocks + style="" attrs) and
+// runs pinCssLengths (which skips comments/strings/url()); data-URIs / sizes="" /
+// text stay byte-identical. Known residuals for hostile/exotic input (an SVG data-URI
+// whose own inline style="" carries a viewport unit; a `&quot;`-encoded url() inside
+// a style attribute) are why the DOM/CSSOM path supersedes it for capture.
 export function pinViewportUnits(html, captureWidth, captureHeight) {
   // 1) style="…" / style='…' attributes. The leading separator keeps `data-style`
   //    (and other `*style`) from being mistaken for a real style attribute.
@@ -303,6 +305,39 @@ export function pinViewportUnits(html, captureWidth, captureHeight) {
     (_m, open, cssBody, close) => open + pinCssLengths(cssBody, captureWidth, captureHeight) + close
   );
   return masked.replace(nRe, (_m, i) => attrs[+i]);
+}
+
+// ACTIVE capture pin. Pins viewport units in the LIVE DOM (inline style="" attrs +
+// <style> element text) before serialization, using the browser as the parser.
+// This is what makes it correct where the string pinViewportUnits above (kept as an
+// inert fallback) has regex-context holes: `document.querySelectorAll` never returns
+// a `<style>` that is actually text inside a data-URI attribute, and
+// `getAttribute('style')` / `textContent` come back with real quotes (never `&quot;`)
+// and no surrounding markup. So data-URIs in src/srcset/xlink:href, SVGs, Lotties,
+// content:"…" strings, comments and url() payloads stay BYTE-IDENTICAL — the
+// 2026-07-24 farmminerals "pixelated hero" (base64 corruption) can't recur. External
+// <link> stylesheets are pinned separately, as pure CSS, in inlineStylesheets().
+// The lexer is rebuilt in-page from CSS_VH_VW_SRC via new RegExp() — NOT eval()/
+// Function() — so a strict page CSP can't silently no-op the pin, and no page string
+// is ever evaluated. Returns the mutation count so the caller can log/observe whether
+// the pin actually ran. Scope note: only serialized light-DOM style is pinned — which
+// is exactly what page.content() emits; adoptedStyleSheets / shadow roots / iframes
+// don't serialize into the artifact anyway, so they neither need nor get pinning.
+export async function pinDomViewportUnits(page, captureWidth, captureHeight) {
+  return page.evaluate(({ src, w, h }) => {
+    const pin = (css) => css.replace(new RegExp(src, 'gi'), (m, num, unit) =>
+      num === undefined ? m : `${(parseFloat(num) / 100 * (/w$/i.test(unit) ? w : h)).toFixed(2)}px`);
+    let mutated = 0;
+    for (const el of document.querySelectorAll('[style]')) {
+      const v = el.getAttribute('style');
+      if (v && /v[hw]/i.test(v)) { const p = pin(v); if (p !== v) { el.setAttribute('style', p); mutated++; } }
+    }
+    for (const styleEl of document.querySelectorAll('style')) {
+      const c = styleEl.textContent;
+      if (c && /v[hw]/i.test(c)) { const p = pin(c); if (p !== c) { styleEl.textContent = p; mutated++; } }
+    }
+    return mutated;
+  }, { src: CSS_VH_VW_SRC, w: captureWidth, h: captureHeight });
 }
 
 // Walk the captured HTML for <link rel="stylesheet"> tags, fetch each
@@ -563,6 +598,18 @@ export async function captureSnapshot(url, opts = {}) {
     }).catch(() => true); // probe failure → don't inject
 
     const title = (await page.title()) || url;
+    // Pin inline style="" + <style> viewport units in the live DOM (browser as
+    // parser) BEFORE serializing, so data-URIs / SVGs / Lotties / strings / url()
+    // are never touched. External <link> CSS is pinned separately in
+    // inlineStylesheets() below. On failure we continue unpinned rather than fall
+    // back to the string pinner automatically (kept inert per the current plan).
+    const pinnedCount = await pinDomViewportUnits(page, viewport.width, viewport.height).catch((e) => {
+      // eslint-disable-next-line no-console
+      console.warn('[snapshot] pinDomViewportUnits failed (capture continues unpinned):', e?.message);
+      return -1;
+    });
+    // eslint-disable-next-line no-console
+    console.log(`[snapshot] pinDomViewportUnits: ${pinnedCount < 0 ? 'FAILED' : `pinned ${pinnedCount} style context(s)`}`);
     const rawHtml = await page.content();
 
     // Inline external stylesheets with vh/vw pinned to capture viewport.
@@ -608,7 +655,10 @@ export async function captureSnapshot(url, opts = {}) {
     // chrome multiple times. curriculum.com.br/AspClientAdapter/header.js
     // was the trigger case — header appeared 3x stacked in the iframe.
     html = stripScripts(html);
-    html = pinViewportUnits(html, viewport.width, viewport.height);
+    // NOTE: viewport-unit pinning already happened in the live DOM above
+    // (pinDomViewportUnits). The string pinViewportUnits() is retained as an inert
+    // fallback (still used by reconstruct.js on model-generated HTML) but is NOT run
+    // on the captured HTML here, to avoid double-pinning and the regex-context holes.
     html = ensureBaseTag(html, url);
 
     // SHADOW classifier (env-gated, off by default → zero production cost). Renders
