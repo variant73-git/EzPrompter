@@ -26,3 +26,7 @@ export function liveReferenceMeta(url, name = null) {
 export function shouldMountLiveReference(node, { active = false, offscreen = false } = {}) {
   return isLiveUrlReference(node) && active && !offscreen;
 }
+
+export function remapLiveReferenceSelection(currentId, temporaryId, persistedId) {
+  return currentId === temporaryId ? persistedId : currentId;
+}

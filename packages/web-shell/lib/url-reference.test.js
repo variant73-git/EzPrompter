@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isLiveUrlReference, liveReferenceMeta, shouldMountLiveReference } from './url-reference.js';
+import {
+  isLiveUrlReference,
+  liveReferenceMeta,
+  remapLiveReferenceSelection,
+  shouldMountLiveReference,
+} from './url-reference.js';
 
 describe('URL reference nodes', () => {
   it('recognizes a live URL reference without snapshot HTML', () => {
@@ -36,5 +41,10 @@ describe('URL reference nodes', () => {
     expect(shouldMountLiveReference(reference, { active: false, offscreen: false })).toBe(false);
     expect(shouldMountLiveReference(reference, { active: true, offscreen: true })).toBe(false);
     expect(shouldMountLiveReference(reference, { active: true, offscreen: false })).toBe(true);
+  });
+
+  it('keeps a newly persisted reference active without stealing later user focus', () => {
+    expect(remapLiveReferenceSelection('temp-1', 'temp-1', 'node-1')).toBe('node-1');
+    expect(remapLiveReferenceSelection('another-node', 'temp-1', 'node-1')).toBe('another-node');
   });
 });

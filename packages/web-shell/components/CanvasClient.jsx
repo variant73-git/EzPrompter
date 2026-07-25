@@ -47,7 +47,11 @@ import {
   parseCanvasView,
 } from '../lib/canvas-view.js';
 import { frameAgentNodes } from '../lib/agent-camera.js';
-import { liveReferenceMeta } from '../lib/url-reference.js';
+import {
+  isLiveUrlReference,
+  liveReferenceMeta,
+  remapLiveReferenceSelection,
+} from '../lib/url-reference.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -1957,6 +1961,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       meta: liveReferenceMeta(url),
     };
     setNodes((prev) => [...prev, placeholderNode]);
+    // A URL node is useful only when its page is visible. Make the temporary
+    // reference the primary selection immediately so it receives the single
+    // live-iframe lease instead of rendering an instructional placeholder.
+    setSelectedNodeId(id);
+    setSelectedNodeIds((current) => (current.size ? new Set() : current));
+    setSelectedEdgeId(null);
+    setSelectedSectionId(null);
+    setPopupPos(null);
 
     // "+" toolbar add (no anchored position, no cord) → place the node first,
     // ghost following the cursor, exactly like blank/md/screenshot adds. The
@@ -1990,6 +2002,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         meta: { ...(created.node.meta || {}), ...meta },
       };
       setNodes((prev) => prev.map((n) => (n.id === id ? finalNode : n)));
+      // Persistence replaces temp-* with the database ID. Move the active
+      // selection in the same render so the iframe never falls back to the
+      // "Select to browse" state. If the user selected something else while
+      // the request was in flight, preserve that newer choice.
+      setSelectedNodeId((currentId) => (
+        remapLiveReferenceSelection(currentId, id, created.node.id)
+      ));
       let linkEdge = null;
       if (opts.linkFromNodeId) linkEdge = await autoLinkNewNode(opts.linkFromNodeId, created.node.id);
       // Undo entry only after the real persisted node exists.
@@ -1999,6 +2018,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     } catch (e) {
       console.warn('[url-reference] failed:', e?.message || e);
       setNodes((prev) => prev.filter((n) => n.id !== id));
+      setSelectedNodeId((currentId) => (currentId === id ? null : currentId));
       toast.error(e.message || 'Could not add this URL.');
     }
   }
@@ -6535,6 +6555,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             // assembles without repeated jumps and then lands as one composed
             // view. A single node uses the standard node-centering frame.
             if (!frame) return;
+
+            // A URL created through chat follows the same contract as one
+            // pasted manually: it is visible and browsable as soon as the
+            // camera lands. The last URL wins, preserving the one-live-frame
+            // performance ceiling when a run creates more than one.
+            const newestLiveReference = [...accumulated].reverse().find(isLiveUrlReference);
+            if (newestLiveReference) {
+              setSelectedNodeId(newestLiveReference.id);
+              setSelectedNodeIds((current) => (current.size ? new Set() : current));
+              setSelectedEdgeId(null);
+              setSelectedSectionId(null);
+            }
 
             setTimeout(() => {
               if (accumulated.length === 1) {
