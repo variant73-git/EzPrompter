@@ -370,7 +370,7 @@ export default function CanvasNode({
   onSelect, onMove, onMoveStart, onMoveEnd, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload, onAltDuplicateDrag,
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
-  onReplaceContent, onRequestUpload, onReferenceFallback, onFrameZoom, onVersionRestore,
+  onReplaceContent, onRequestUpload, onFrameZoom, onVersionRestore,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
   removing = false, removingOutside = false, removeFromMenu = false, inSection = false,
   onRemoveFromSection, onCancelRemove, scale = 1, debit = null,
@@ -799,12 +799,8 @@ export default function CanvasNode({
   const mountLiveReference = shouldMountLiveReference(node, {
     active: livePreviewActive,
     offscreen: offscreenParked,
+    placing,
   });
-  const interactiveCapturedFallback = Boolean(
-    node.meta?.referenceMode === 'captured-fallback'
-    && livePreviewActive
-    && !offscreenParked
-  );
 
   // Static-by-default site display (perf phase 3b v2, user-directed): the
   // node is a VISUALIZATION of the site's current state — a snapshot image
@@ -833,7 +829,7 @@ export default function CanvasNode({
     });
     return () => { alive = false; };
   }, [wantThumb, thumbKey, node.id]);
-  const showThumb = wantThumb && thumb?.key === thumbKey && !interactiveCapturedFallback;
+  const showThumb = wantThumb && thumb?.key === thumbKey;
   // Anti-flash hand-off: while the live iframe is still parsing its srcDoc
   // (edit entry, version preview), the last thumb stays painted on top.
   const [iframeReady, setIframeReady] = useState(false);
@@ -1069,9 +1065,9 @@ export default function CanvasNode({
             z.zoomAtPoint?.(e.deltaY || 0, cx, cy);
             return;
           }
-          // Edit mode and the selected compatibility preview both own plain
-          // wheel input, so the page scrolls natively inside the node.
-          if (editing || interactiveCapturedFallback) return;
+          // Edit mode owns plain wheel input, so the page scrolls natively
+          // inside the node.
+          if (editing) return;
           e.preventDefault();
           e.stopPropagation();
           z.panBy?.(-(e.deltaX || 0), -(e.deltaY || 0));
@@ -1086,7 +1082,7 @@ export default function CanvasNode({
       iframe.removeEventListener('load', attach);
       detach();
     };
-  }, [editing, html, interactiveCapturedFallback]);
+  }, [editing, html]);
 
   // Editor mounts via <CanvasEditorCore> below — host=parent, target=iframe.
   useEffect(() => {
@@ -1414,22 +1410,16 @@ export default function CanvasNode({
                 sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
                 referrerPolicy="strict-origin-when-cross-origin"
               />
+            ) : placing ? (
+              <div className="cnode-live-placing" aria-hidden="true">
+                <GlobeIcon />
+              </div>
             ) : (
               <div className="cnode-live-idle">
                 <GlobeIcon />
                 <strong>{node.meta?.name || title}</strong>
                 <span>{offscreenParked ? 'Preview paused off canvas' : 'Select to browse and scroll'}</span>
               </div>
-            )}
-            {mountLiveReference && (
-              <button
-                type="button"
-                className="cnode-live-fallback"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); onReferenceFallback?.(); }}
-              >
-                Site not loading? Use compatible preview
-              </button>
             )}
           </div>
         ) : html ? (
@@ -1475,7 +1465,7 @@ export default function CanvasNode({
               sandbox="allow-same-origin allow-scripts"
               onLoad={(e) => { setIframeReady(true); onIframeLoad(e); }}
               style={{
-                pointerEvents: editing || interactiveCapturedFallback ? 'auto' : 'none',
+                pointerEvents: editing ? 'auto' : 'none',
                 height: '100%',
                 // Off-viewport parking — see offscreenParked note above.
                 visibility: offscreenParked && !editing ? 'hidden' : undefined

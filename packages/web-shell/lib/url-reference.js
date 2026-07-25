@@ -23,8 +23,8 @@ export function liveReferenceMeta(url, name = null) {
   };
 }
 
-export function shouldMountLiveReference(node, { active = false, offscreen = false } = {}) {
-  return isLiveUrlReference(node) && active && !offscreen;
+export function shouldMountLiveReference(node, { active = false, offscreen = false, placing = false } = {}) {
+  return isLiveUrlReference(node) && active && !offscreen && !placing;
 }
 
 export function remapLiveReferenceSelection(currentId, temporaryId, persistedId) {

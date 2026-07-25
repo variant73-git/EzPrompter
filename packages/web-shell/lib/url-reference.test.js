@@ -40,6 +40,7 @@ describe('URL reference nodes', () => {
     };
     expect(shouldMountLiveReference(reference, { active: false, offscreen: false })).toBe(false);
     expect(shouldMountLiveReference(reference, { active: true, offscreen: true })).toBe(false);
+    expect(shouldMountLiveReference(reference, { active: true, offscreen: false, placing: true })).toBe(false);
     expect(shouldMountLiveReference(reference, { active: true, offscreen: false })).toBe(true);
   });
 

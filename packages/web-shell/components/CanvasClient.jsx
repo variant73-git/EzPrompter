@@ -2023,56 +2023,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }
   }
 
-  // Explicit compatibility fallback for sites that refuse framing. This is
-  // intentionally user-triggered because it performs the slower Playwright
-  // capture; the ordinary URL path never pays this cost.
-  async function handleReferenceFallback(nodeId) {
-    const node = nodes.find((candidate) => candidate.id === nodeId);
-    if (!node?.origin_url || node._loading) return;
-    const STAGE_LABEL = {
-      launching: 'Launching browser…', navigating: 'Navigating to site…',
-      capturing: 'Capturing page…', thumbnailing: 'Rendering preview…',
-      thinking: 'Reconstructing layout…', finalizing: 'Finalizing…',
-    };
-    updateNodeLocal(nodeId, { _loading: true, _loadingLabel: 'Preparing compatible preview…' });
-    try {
-      const cap = await api.captureUrlStream(node.origin_url, nodeId, (step) => {
-        updateNodeLocal(nodeId, { _loadingLabel: STAGE_LABEL[step] || step });
-      });
-      const meta = {
-        ...(node.meta || {}),
-        referenceMode: 'captured-fallback',
-        ...(cap.animatedDetected ? { animatedDetected: true } : {}),
-      };
-      await api.updateNode(nodeId, { meta });
-      setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? {
-        ...candidate,
-        current_html: cap.html,
-        current_screenshot: cap.screenshotDataUrl,
-        current_snapshot_id: cap.snapshotId,
-        current_snapshot_source: 'capture',
-        meta,
-        _loading: false,
-        _loadingLabel: undefined,
-      } : candidate));
-    } catch (e) {
-      if (e?.challenge) {
-        const ch = e.challenge;
-        updateNodeLocal(nodeId, {
-          _loading: true,
-          _loadingLabel: 'Waiting for verification…',
-          _challenge: true,
-          _handoffPending: true,
-        });
-        startHandoffPolling(nodeId);
-        setChallenge({ ...ch, placeholderId: nodeId });
-        return;
-      }
-      updateNodeLocal(nodeId, { _loading: false, _loadingLabel: undefined });
-      toast.error(e.message || 'Could not prepare a compatible preview.');
-    }
-  }
-
   async function handleUploadHtml(file, opts = {}) {
     const html = await file.text();
     if (!/^<!doctype|<html/i.test(html.trim())) {
@@ -5702,7 +5652,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     handleNodeMetaPatch,
     handleReplaceContent,
     handlePopulateNode,
-    handleReferenceFallback,
     zoomToNode,
     armNodeRemoval,
     cancelNodeRemoval,

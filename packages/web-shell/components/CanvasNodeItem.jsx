@@ -65,7 +65,6 @@ function CanvasNodeItem({
       onMetaPatch={(metaPatch) => h().handleNodeMetaPatch(node.id, metaPatch)}
       onReplaceContent={(...args) => h().handleReplaceContent(...args)}
       onRequestUpload={() => h().handlePopulateNode(node)}
-      onReferenceFallback={() => h().handleReferenceFallback(node.id)}
       onFrameZoom={() => h().zoomToNode(node, 350, 1)}
       onRemoveFromSection={() => h().armNodeRemoval(node)}
       onCancelRemove={(...args) => h().cancelNodeRemoval(...args)}
