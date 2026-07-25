@@ -16,6 +16,7 @@ import { createRafCoalescer } from '../lib/raf-coalesce.js';
 import { fetchThumb } from '../lib/thumb-queue.js';
 import { canExpandSiteViewport } from '../lib/node-viewport.js';
 import { isLiveUrlReference, shouldMountLiveReference } from '../lib/url-reference.js';
+import { playfulLoadingMessage } from '../lib/loading-messages.js';
 
 const DRAG_THRESHOLD = 4;
 
@@ -801,6 +802,11 @@ export default function CanvasNode({
     offscreen: offscreenParked,
     placing,
   });
+  const interactiveCapturedReference = Boolean(
+    node.meta?.referenceMode === 'captured-auto'
+    && livePreviewActive
+    && !offscreenParked
+  );
 
   // Static-by-default site display (perf phase 3b v2, user-directed): the
   // node is a VISUALIZATION of the site's current state — a snapshot image
@@ -829,7 +835,7 @@ export default function CanvasNode({
     });
     return () => { alive = false; };
   }, [wantThumb, thumbKey, node.id]);
-  const showThumb = wantThumb && thumb?.key === thumbKey;
+  const showThumb = wantThumb && thumb?.key === thumbKey && !interactiveCapturedReference;
   // Anti-flash hand-off: while the live iframe is still parsing its srcDoc
   // (edit entry, version preview), the last thumb stays painted on top.
   const [iframeReady, setIframeReady] = useState(false);
@@ -1065,9 +1071,9 @@ export default function CanvasNode({
             z.zoomAtPoint?.(e.deltaY || 0, cx, cy);
             return;
           }
-          // Edit mode owns plain wheel input, so the page scrolls natively
-          // inside the node.
-          if (editing) return;
+          // Edit mode and an automatically captured selected reference own
+          // plain wheel input, so the page scrolls natively inside the node.
+          if (editing || interactiveCapturedReference) return;
           e.preventDefault();
           e.stopPropagation();
           z.panBy?.(-(e.deltaX || 0), -(e.deltaY || 0));
@@ -1082,7 +1088,7 @@ export default function CanvasNode({
       iframe.removeEventListener('load', attach);
       detach();
     };
-  }, [editing, html]);
+  }, [editing, html, interactiveCapturedReference]);
 
   // Editor mounts via <CanvasEditorCore> below — host=parent, target=iframe.
   useEffect(() => {
@@ -1118,13 +1124,11 @@ export default function CanvasNode({
   // request driving the run (run-flow plumbs runStatus.request) with honest
   // fallbacks to the operation label.
   const hasContent = !!html || !!node.meta?.dataUrl;
-  const loadingRequest =
-    runStatus?.request ||
-    node._loadingLabel ||
-    node.meta?.prompt ||
-    (node.kind === 'site' && node.origin_url ? `Capturing ${node.origin_url}` : '') ||
-    runStatus?.label ||
-    'Working on it…';
+  const loadingRequest = playfulLoadingMessage({
+    nodeId: node.id,
+    kind: node.kind,
+    stage: node._loadingStage || node._loadingLabel || runStatus?.label || node.meta?.status,
+  });
 
   return (
     <div
@@ -1146,7 +1150,7 @@ export default function CanvasNode({
           clockwise from 12 o'clock. The ring is swapped out for the real
           content the instant generation finishes. */}
       {generating && (
-        <div className={`cnode-gen-overlay${hasContent ? ' has-content' : ''}`} aria-hidden="true">
+        <div className={`cnode-gen-overlay${hasContent ? ' has-content' : ''}`} role="status" aria-live="polite">
           <div className="cnode-gen-status">{loadingRequest}</div>
         </div>
       )}
@@ -1394,6 +1398,10 @@ export default function CanvasNode({
           // ring's number doesn't collide with an inner spinner/label.
           <div className="cnode-loading" />
         )
+      ) : node._loadingError ? (
+        <div className="cnode-loading cnode-loading-error" role="alert">
+          <span>This website slipped away before the curtain call.</span>
+        </div>
       ) : renderIframeBody ? (
         liveUrlReference ? (
           <div
@@ -1465,7 +1473,7 @@ export default function CanvasNode({
               sandbox="allow-same-origin allow-scripts"
               onLoad={(e) => { setIframeReady(true); onIframeLoad(e); }}
               style={{
-                pointerEvents: editing ? 'auto' : 'none',
+                pointerEvents: editing || interactiveCapturedReference ? 'auto' : 'none',
                 height: '100%',
                 // Off-viewport parking — see offscreenParked note above.
                 visibility: offscreenParked && !editing ? 'hidden' : undefined

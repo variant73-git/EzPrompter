@@ -401,6 +401,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // When a URL is added from the "+" toolbar, the temp placeholder is placed
   // with the ghost first; persistence starts only once it is dropped.
   const pendingUrlReferenceRef = useRef(null);
+  // Embed-policy checks start while the URL ghost is being positioned. Most
+  // complete before drop, hiding the iframe-vs-capture decision entirely.
+  const urlEmbedChecksRef = useRef(new Map());
+  const urlResolutionInFlightRef = useRef(new Set());
   const lastPointerRef = useRef({ x: 0, y: 0 });
   // Multi-file placement queue ("Add multiple files"): files are placed one at
   // a time, each reusing the single-node placement ghost. A cursor-anchored
@@ -1947,6 +1951,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
   async function handleAddUrl(url, opts = {}) {
     const id = `temp-${Date.now()}`;
+    const embedCheck = api.checkUrlEmbed(url).catch(() => ({
+      embeddable: true,
+      confidence: 'unknown',
+    }));
+    urlEmbedChecksRef.current.set(id, embedCheck);
     // Hero-section proportion (16:9). The body is a fixed viewport into a
     // potentially much taller iframe; the user expands via dash handles or
     // the Expand button.
@@ -1959,6 +1968,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       is_main: isMain,
       current_html: null,
       meta: liveReferenceMeta(url),
+      _loading: true,
+      _loadingStage: 'checking-embed',
     };
     setNodes((prev) => [...prev, placeholderNode]);
     // A URL node is useful only when its page is visible. Make the temporary
@@ -2000,6 +2011,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         current_screenshot: null,
         current_snapshot_source: null,
         meta: { ...(created.node.meta || {}), ...meta },
+        _loading: true,
+        _loadingStage: 'checking-embed',
       };
       setNodes((prev) => prev.map((n) => (n.id === id ? finalNode : n)));
       // Persistence replaces temp-* with the database ID. Move the active
@@ -2015,11 +2028,99 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       pushCreateUndo(created.node, linkEdge);
       // Frame the new node at 100% so it's the immediate focus.
       setTimeout(() => zoomToNode(finalNode, 350, 1), 80);
+
+      const policyPromise = urlEmbedChecksRef.current.get(id) || api.checkUrlEmbed(url);
+      const policy = await policyPromise.catch(() => ({ embeddable: true, confidence: 'unknown' }));
+      urlEmbedChecksRef.current.delete(id);
+
+      if (policy.embeddable !== false) {
+        updateNodeLocal(created.node.id, {
+          _loading: false,
+          _loadingStage: undefined,
+        });
+        return;
+      }
+
+      await captureBlockedReference({ node: finalNode, url });
     } catch (e) {
+      urlEmbedChecksRef.current.delete(id);
       console.warn('[url-reference] failed:', e?.message || e);
       setNodes((prev) => prev.filter((n) => n.id !== id));
       setSelectedNodeId((currentId) => (currentId === id ? null : currentId));
       toast.error(e.message || 'Could not add this URL.');
+    }
+  }
+
+  async function captureBlockedReference({ node, url }) {
+    const nodeId = node.id;
+    const originalMeta = node.meta || {};
+    const fallbackMeta = {
+      ...originalMeta,
+      referenceMode: 'captured-auto',
+      embedFallbackReason: 'iframe-blocked',
+    };
+    updateNodeLocal(nodeId, {
+      _loading: true,
+      _loadingStage: 'iframe-blocked-shy',
+      meta: fallbackMeta,
+    });
+
+    // Let the user actually read the reason before fast progress events move
+    // to the next line. Capture starts immediately; only the copy transition
+    // is held briefly, so this adds no latency to the work itself.
+    let latestStage = 'launching';
+    let shyReleased = false;
+    let releaseShy = null;
+
+    try {
+      await api.updateNode(nodeId, { meta: fallbackMeta });
+      releaseShy = setTimeout(() => {
+        shyReleased = true;
+        updateNodeLocal(nodeId, { _loadingStage: latestStage });
+      }, 1800);
+      const cap = await api.captureUrlStream(url, nodeId, (step) => {
+        latestStage = step || latestStage;
+        if (shyReleased) updateNodeLocal(nodeId, { _loadingStage: latestStage });
+      });
+      const nextMeta = {
+        ...fallbackMeta,
+        ...(cap.animatedDetected ? { animatedDetected: true } : {}),
+      };
+      await api.updateNode(nodeId, { meta: nextMeta });
+      setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? {
+        ...candidate,
+        current_html: cap.html,
+        current_screenshot: cap.screenshotDataUrl,
+        current_snapshot_id: cap.snapshotId,
+        current_snapshot_source: 'capture',
+        meta: nextMeta,
+        _loading: false,
+        _loadingStage: undefined,
+        _loadingError: false,
+      } : candidate));
+    } catch (e) {
+      if (e?.challenge) {
+        updateNodeLocal(nodeId, {
+          _loading: true,
+          _loadingStage: undefined,
+          _loadingLabel: 'This website needs a quick word with you.',
+          _challenge: true,
+          _handoffPending: true,
+        });
+        startHandoffPolling(nodeId);
+        setChallenge({ ...e.challenge, placeholderId: nodeId });
+        return;
+      }
+      updateNodeLocal(nodeId, {
+        _loading: false,
+        _loadingStage: undefined,
+        _loadingError: true,
+        meta: originalMeta,
+      });
+      api.updateNode(nodeId, { meta: originalMeta }).catch(() => {});
+      toast.error('This website slipped away before the curtain call.');
+    } finally {
+      if (releaseShy) clearTimeout(releaseShy);
     }
   }
 
@@ -6457,6 +6558,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   // Brand-new node — if it already has a snapshot id
                   // (agent created with content), we need its html.
                   if (n.current_snapshot_id) stalenessByNode.set(n.id, true);
+                  if (isLiveUrlReference(n)) {
+                    return { ...n, _loading: true, _loadingStage: 'checking-embed' };
+                  }
                   return n;
                 }
                 const snapChanged = old.current_snapshot_id !== n.current_snapshot_id;
@@ -6486,6 +6590,26 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                   } : n
                 ));
               }).catch(() => {});
+            }
+
+            // Agent-created URL references use the same zero-choice resolver
+            // as pasted URLs. A small in-flight registry prevents repeated
+            // graph_mutated events from launching duplicate checks/captures.
+            for (const newNode of newNodes) {
+              if (!isLiveUrlReference(newNode) || urlResolutionInFlightRef.current.has(newNode.id)) continue;
+              urlResolutionInFlightRef.current.add(newNode.id);
+              api.checkUrlEmbed(newNode.origin_url)
+                .then(async (policy) => {
+                  if (policy?.embeddable === false) {
+                    await captureBlockedReference({ node: newNode, url: newNode.origin_url });
+                  } else {
+                    updateNodeLocal(newNode.id, { _loading: false, _loadingStage: undefined });
+                  }
+                })
+                .catch(() => {
+                  updateNodeLocal(newNode.id, { _loading: false, _loadingStage: undefined });
+                })
+                .finally(() => urlResolutionInFlightRef.current.delete(newNode.id));
             }
 
             // Track every node created across this run so framing can fit

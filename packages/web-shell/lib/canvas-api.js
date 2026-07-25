@@ -88,6 +88,11 @@ export const api = {
   applyEdge: (id) => fetch(`/api/edges/${id}/apply`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
 
   captureUrl: (url, nodeId = null) => fetch('/api/snapshot/capture', { ...COMMON, method: 'POST', body: JSON.stringify({ url, nodeId }) }).then(jsonOrThrow),
+  checkUrlEmbed: (url) => fetch('/api/site/embed-policy', {
+    ...COMMON,
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  }).then(jsonOrThrow),
 
   /**
    * Streaming capture: emits progress events as the snapshot/reconstruction
