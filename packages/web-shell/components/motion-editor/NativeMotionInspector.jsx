@@ -81,6 +81,9 @@ export default function NativeMotionInspector({
             activeMotion={controller.activeMotion}
             timelineOffset={controller.timelineOffset}
             propertyOwnership={controller.propertyOwnership}
+            device={controller.device}
+            responsiveScopeFor={controller.responsiveScopeFor}
+            onScopeRequest={controller.commands.requestResponsiveScopeChange}
             onOwnershipOpen={(property) => {
               controller.commands.focusOwnership(property);
               selectTab('motion');

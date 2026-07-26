@@ -1,7 +1,7 @@
 # Handoff — Live Animated Clone Editing
 
 **Data:** 2026-07-26
-**Status:** Tasks 1–10 concluídas e verificadas; checkpoint antes da Task 11
+**Status:** Tasks 1–11 concluídas e verificadas; checkpoint antes da Task 12
 **Checkout:** `/Users/adilsonporto/Desktop/IA/Uncraft`
 **Branch:** `codex/live-animated-clone-editing`
 **Base:** `main` em `ec297fffd8303e512c8ce3a910930cc2d51b3635`
@@ -1057,9 +1057,108 @@ Remover os três módulos puros e a escolha de ownership, retirar
 anterior. Não há migration nova. Manifests que já contenham patches v2 devem ser
 preservados e migrados ou rejeitados explicitamente antes de retirar o reader.
 
+## Task 11 — scopes responsivos shared, per-device e computed
+
+### Resultado
+
+Cada campo editável de Properties agora resolve e revela seu alcance responsivo
+sem criar outro modo de edição. Valores compartilhados, overrides esparsos por
+dispositivo e valores calculados pelo runtime convivem no mesmo manifest da
+sessão e no mesmo histórico transacional.
+
+Novos arquivos:
+
+- `packages/web-shell/lib/motion-editor/responsive-manifest.js`
+- `packages/web-shell/lib/motion-editor/responsive-manifest.test.js`
+- `packages/web-shell/components/motion-editor/PropertyScopeButton.jsx`
+- `packages/web-shell/components/motion-editor/PropertyScopeButton.test.jsx`
+- `packages/web-shell/components/motion-editor/MotionDeviceScopeDialog.jsx`
+- `packages/web-shell/components/motion-editor/MotionDeviceScopeDialog.test.jsx`
+
+Integração modificada:
+
+- `packages/web-shell/lib/motion-editor/manifest.js`
+- `packages/web-shell/lib/motion-editor/native-edit-api.js`
+- `packages/web-shell/components/motion-editor/useNativeMotionController.js`
+- `packages/web-shell/components/motion-editor/NativeMotionEditor.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionInspector.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditChrome.jsx`
+- os dois CSS modules do editor nativo e os testes focais correspondentes.
+
+### Contrato entregue
+
+- O responsive manifest v1 conserva um valor base compartilhado e somente os
+  overrides explícitos de desktop, tablet ou mobile. Binding, proveniência e
+  relevância por dispositivo são validados e persistidos com a sessão.
+- Cada selector de Properties resolve `shared`, `per-device` ou `computed` para
+  o dispositivo ativo. Campos declarados para outro viewport não aparecem no
+  inspector corrente.
+- Shared usa corrente conectada e o tooltip exato `Applied to all devices`.
+  Nenhuma tag redundante `All devices` foi adicionada.
+- Clicar na corrente conectada abre um dialog modal centralizado no application
+  layer. A cópia é exatamente `This will set this value to desktop-only.`,
+  `Cancel` e `Set Desktop-Only`, substituindo somente o nome em tablet/mobile.
+- O dialog prende foco, trata Escape como Cancel e devolve o foco ao botão que o
+  abriu. Cancel não cria patch nem altera escopo.
+- Confirmar cria somente o override do dispositivo ativo com o valor visível e
+  força o flush imediato do autosave.
+- A corrente desconectada reconecta sem modal, promove o valor visível a shared
+  e remove todas as variações daquela propriedade.
+- Computed comunica que o valor é calculado pelo website e não oferece uma ação
+  de escopo inválida.
+- Mudanças de escopo são transações normais `source: responsive`; undo, redo,
+  save, reload e restore recompõem tanto o manifest quanto o valor efetivo.
+- Patches duráveis recebem metadata responsiva. Ao trocar viewport, apenas os
+  patches aplicáveis ao dispositivo corrente são reexecutados e o valor efetivo
+  final é reconciliado a partir do manifest.
+- A troca de dispositivo não altera escopo nem cria versão. Ela reinicia a
+  medição de settlement, reinspeciona o viewport e reassenta a seleção de forma
+  independente.
+- O parser v2 do patch manifest aceita o patch host-only `responsive` e metadata
+  responsiva estrita sem afrouxar a rejeição dos demais kinds desconhecidos.
+
+### Evidência tests-first e exit gate
+
+As seis suítes novas falharam primeiro pela ausência do manifest, dos dois
+componentes e das integrações no controller/API. Depois da implementação:
+
+```text
+Suíte focal inicial: 8 files, 57 tests passed
+Suíte focal expandida: 15 files, 188 tests passed
+Suíte completa: 160 files passed, 1 skipped; 1153 tests passed, 4 skipped
+Build com NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT=true:
+Next.js 15.5.15; compiled; 41/41 static pages; exit 0
+git diff --check: clean
+```
+
+O aviso não bloqueante já conhecido de `--localstorage-file` permaneceu na
+suíte completa.
+
+### Verificação visual e limite operacional
+
+- `/motion-editor` abriu o `Clone/dist` real, conectou o runtime e permitiu
+  selecionar `We found a better way` sem regressão visual no inspector.
+- A troca para tablet ativou corretamente o viewport canônico `768 × 920`; o
+  runtime permaneceu conectado e a seleção foi reassentada.
+- O único warning observado foi o `force3D` já conhecido do bundle, fora do
+  controller.
+- O lab isolado intencionalmente não injeta descriptors responsivos; os ícones e
+  o dialog vivem no shell nativo integrado ao canvas e estão cobertos pelos
+  testes de componente/controller.
+- O smoke visual desse shell dentro de `/canvas` continua bloqueado pelo ambiente
+  local: o banco configurado não possui a coluna `native_bundle_id`. Nenhuma
+  migration, credencial ou dado externo foi alterado nesta Task.
+
+### Rollback da Task 11
+
+Preservar manifests já persistidos antes de retirar o reader responsivo. Depois,
+remover os dois componentes de escopo, o responsive manifest, a metadata dos
+patches e a reconciliação por device do controller. Não há migration nova; os
+bundles, snapshots e edit sessions das Tasks anteriores permanecem válidos.
+
 ## Estado e rollback da fatia
 
-- Tasks 1–10 estão concluídas; Task 11 não foi iniciada.
+- Tasks 1–11 estão concluídas; Task 12 não foi iniciada.
 - A primeira fatia recomendada do PR (`Bundle contract and persistence schema`,
   Tasks 1–2) permanece íntegra. Tasks 3–4 completam a segunda fatia sem iniciar
   integração com o canvas.
@@ -1077,6 +1176,9 @@ preservados e migrados ou rejeitados explicitamente antes de retirar o reader.
 - Task 10 fecha o núcleo de correção semântica de Properties: o alvo final
   existente é retargetado, ambiguity não é adivinhada e transforms 2D continuam
   editáveis sem destruir os componentes vizinhos.
+- Task 11 fecha o alcance responsivo de Properties: cada campo revela seu scope,
+  overrides são esparsos e por dispositivo, reconectar promove o valor visível a
+  shared e settlement é refeito para o viewport ativo.
 - Nenhum arquivo do worktree Demarcelizer ou material não relacionado foi
   alterado.
 - Rollback da Task 2 é manual e não destrutivo: parar tráfego nativo, preservar
@@ -1107,9 +1209,12 @@ preservados e migrados ou rejeitados explicitamente antes de retirar o reader.
   nenhum estado durável precisa ser migrado ou apagado.
 - Rollback da Task 10: preservar manifests v2 existentes, remover ownership e
   retarget somente depois de existir uma política explícita de compatibilidade.
+- Rollback da Task 11: preservar ou migrar responsive manifests persistidos antes
+  de remover o reader e os controles de alcance por dispositivo.
 
 ## Próxima fatia
 
-Parar no checkpoint antes da Task 11. A próxima etapa adiciona scopes
-responsivos `shared`, `per-device` e `computed` conforme o plano. Não iniciar
-essa etapa sem novo checkpoint.
+Parar no checkpoint antes da Task 12. A próxima etapa implementa a ladder de
+controles e a geração validada de custom controls. Antes de qualquer chamada de
+modelo pago, decidir explicitamente provider/modelo, custo máximo, tratamento de
+billing/créditos, retenção e timeout. Não iniciar essa etapa sem novo checkpoint.

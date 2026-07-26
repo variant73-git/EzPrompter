@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const commit = vi.fn();
 const discard = vi.fn();
 const changeMode = vi.fn();
+const confirmResponsiveScopeChange = vi.fn();
+const cancelResponsiveScopeChange = vi.fn();
 const controller = {
   status: 'ready',
   runtime: null,
@@ -28,7 +30,8 @@ const controller = {
   historyReady: true,
   canUndo: false,
   canRedo: false,
-  commands: new Proxy({ commit, discard, changeMode }, {
+  pendingResponsiveScopeChange: null,
+  commands: new Proxy({ commit, discard, changeMode, confirmResponsiveScopeChange, cancelResponsiveScopeChange }, {
     get: (target, property) => target[property] || vi.fn(),
   }),
 };
@@ -45,7 +48,10 @@ const {
 
 afterEach(() => {
   controller.mode = 'edit';
+  controller.pendingResponsiveScopeChange = null;
   controller.commands.changeMode?.mockClear?.();
+  confirmResponsiveScopeChange.mockClear();
+  cancelResponsiveScopeChange.mockClear();
   document.body.className = '';
   document.body.removeAttribute('style');
 });
@@ -132,5 +138,24 @@ describe('NativeMotionEditChrome', () => {
     expect(document.body.classList.contains('native-motion-previewing')).toBe(true);
     screen.getByRole('button', { name: 'Back to Edit' }).click();
     expect(controller.commands.changeMode).toHaveBeenLastCalledWith('edit');
+  });
+
+  it('mounts the responsive scope confirmation above the editing shell', () => {
+    controller.pendingResponsiveScopeChange = {
+      property: 'opacity',
+      label: 'Opacity',
+      deviceId: 'desktop',
+      trigger: document.createElement('button'),
+    };
+    const { unmount } = render(
+      <NativeMotionEditSessionProvider active nodeId="node-native">
+        <div>Canvas</div>
+      </NativeMotionEditSessionProvider>,
+    );
+
+    expect(screen.getByRole('dialog', { name: 'Change device scope' })).toBeTruthy();
+    screen.getByRole('button', { name: 'Set Desktop-Only' }).click();
+    expect(controller.commands.confirmResponsiveScopeChange).toHaveBeenCalled();
+    unmount();
   });
 });

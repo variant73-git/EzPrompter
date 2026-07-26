@@ -11,6 +11,7 @@ import { ArrowLeft, Eye, Redo2, Undo2 } from 'lucide-react';
 import NativeEditSidebar from './NativeEditSidebar.jsx';
 import NativeMotionInspector from './NativeMotionInspector.jsx';
 import NativeMotionTimelineDock, { hasNativeMotionContext } from './NativeMotionTimelineDock.jsx';
+import MotionDeviceScopeDialog from './MotionDeviceScopeDialog.jsx';
 import { createNativeEditApi } from '../../lib/motion-editor/native-edit-api.js';
 import { useNativeMotionController } from './useNativeMotionController.js';
 import styles from './native-motion-canvas.module.css';
@@ -174,13 +175,22 @@ export function NativeMotionEditSessionProvider({
     <NativeMotionEditContext.Provider value={value}>
       {children}
       {active && (
-        <NativeMotionEditChrome
-          controller={controller}
-          activePanel={activePanel}
-          onActivePanelChange={setActivePanel}
-          timelineOpen={timelineOpen}
-          onTimelineOpenChange={setTimelineOpen}
-        />
+        <>
+          <NativeMotionEditChrome
+            controller={controller}
+            activePanel={activePanel}
+            onActivePanelChange={setActivePanel}
+            timelineOpen={timelineOpen}
+            onTimelineOpenChange={setTimelineOpen}
+          />
+          <MotionDeviceScopeDialog
+            open={Boolean(controller.pendingResponsiveScopeChange)}
+            deviceId={controller.pendingResponsiveScopeChange?.deviceId}
+            returnFocus={controller.pendingResponsiveScopeChange?.trigger}
+            onCancel={controller.commands.cancelResponsiveScopeChange}
+            onConfirm={controller.commands.confirmResponsiveScopeChange}
+          />
+        </>
       )}
     </NativeMotionEditContext.Provider>
   );

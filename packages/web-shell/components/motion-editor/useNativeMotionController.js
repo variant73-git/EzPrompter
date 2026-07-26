@@ -37,6 +37,18 @@ import {
 import { applyStaggerDelays } from '../../lib/motion-editor/motion-groups.js';
 import { getMotionEditorDevice } from '../../lib/motion-editor/devices.js';
 import {
+  createResponsiveManifestPatch,
+  parseResponsiveManifest,
+  responsiveManifestAfterPatches,
+  responsivePatchAppliesToDevice,
+  responsivePropertyKey,
+  responsiveRuntimePatches,
+  resolveResponsiveProperty,
+  setResponsivePropertyMode,
+  setResponsivePropertyValue,
+  withResponsiveMetadata,
+} from '../../lib/motion-editor/responsive-manifest.js';
+import {
   EDIT_STATES,
   createEditState,
   transitionEditState,
@@ -126,6 +138,32 @@ function loadedHistory(value, sessionId) {
   return createSessionHistory({ sessionId });
 }
 
+function responsivePropertyName(property) {
+  if (property === 'text' || String(property).startsWith('attribute.')) return property;
+  return normalizeSemanticProperty(property);
+}
+
+function responsiveBindingFromPatch(patch) {
+  if (!patch || patch.kind === 'responsive') return null;
+  const binding = {
+    elementId: patch.elementId,
+    kind: patch.kind,
+    ...(['text', 'svg'].includes(patch.kind) ? {} : { property: patch.property }),
+    ...(patch.kind === 'motion' ? { motionId: patch.motionId } : {}),
+  };
+  if (patch.kind === 'motion' && patch.property === 'retarget.final' && patch.value && typeof patch.value === 'object') {
+    binding.valueTemplate = patch.value;
+  }
+  return binding;
+}
+
+function responsiveStoredValue(patch, visibleValue) {
+  if (patch?.kind === 'style' && patch.property === 'transform') {
+    return { visibleValue, runtimeValue: patch.value };
+  }
+  return visibleValue;
+}
+
 export function createLocalMotionPersistenceAdapter(source, storage = null) {
   const resolveStorage = () => storage || globalThis.localStorage;
   return {
@@ -180,12 +218,26 @@ export function useNativeMotionController({
   const [editState, setEditState] = useState(() => createEditState());
   const [selectionSettlement, setSelectionSettlement] = useState(null);
   const [ownershipConflict, setOwnershipConflict] = useState(null);
+  const [responsiveManifest, setResponsiveManifest] = useState({});
+  const responsiveManifestRef = useRef(responsiveManifest);
+  const [pendingResponsiveScopeChange, setPendingResponsiveScopeChange] = useState(null);
   const motionDetailRef = useRef(motionDetail);
   const lastAutoExpandedRef = useRef(null);
+  const deviceIdRef = useRef(deviceId);
+  const lastResponsiveDeviceRef = useRef(deviceId);
 
   historyRef.current = historyState;
   motionDetailRef.current = motionDetail;
   persistenceRef.current = persistenceAdapter || NO_PERSISTENCE;
+  responsiveManifestRef.current = responsiveManifest;
+  deviceIdRef.current = deviceId;
+
+  const replaceResponsiveManifest = useCallback((nextManifest) => {
+    const parsed = parseResponsiveManifest(nextManifest);
+    responsiveManifestRef.current = parsed;
+    setResponsiveManifest(parsed);
+    return parsed;
+  }, []);
 
   const historyPayload = useCallback((history = historyRef.current) => ({
     sessionId: history.sessionId,
@@ -194,6 +246,7 @@ export function useNativeMotionController({
       repairs: item.repairs,
     })),
     patches: sessionHistoryPatches(history),
+    responsiveManifest: responsiveManifestRef.current,
   }), []);
 
   const updateHistory = useCallback((updater, { persist = false } = {}) => {
@@ -234,6 +287,31 @@ export function useNativeMotionController({
     ownershipHints,
   }), [motion, motionElementId, ownershipHints]);
   const historyCount = sessionHistoryCount(historyState);
+  const responsiveDescriptorFor = useCallback((property) => {
+    const normalized = responsivePropertyName(property);
+    return selected?.responsiveProperties?.[normalized]
+      || selected?.responsiveProperties?.[property]
+      || selected?.responsive?.properties?.[normalized]
+      || selected?.responsive?.properties?.[property]
+      || null;
+  }, [selected]);
+  const responsiveScopeFor = useCallback((property, fallbackValue = null, binding = null) => {
+    if (!selected?.id) return null;
+    const normalized = responsivePropertyName(property);
+    const descriptor = responsiveDescriptorFor(property);
+    const propertyKey = responsivePropertyKey(selected.id, normalized);
+    const resolved = resolveResponsiveProperty(responsiveManifestRef.current, {
+      propertyKey,
+      deviceId,
+      fallbackValue,
+      descriptor,
+    });
+    return {
+      ...resolved,
+      binding: resolved.binding || binding,
+      property: normalized,
+    };
+  }, [deviceId, responsiveDescriptorFor, responsiveManifest, selected]);
 
   const transitionEditor = useCallback((event) => {
     setEditState((current) => transitionEditState(current, event));
@@ -339,6 +417,9 @@ export function useNativeMotionController({
         if (!scoped.past.length) {
           const loaded = await persistenceRef.current.load();
           if (disposedRef.current || currentSessionId(runtimeContextRef.current) !== sessionId) return;
+          if (loaded?.manifest?.responsiveManifest != null) {
+            replaceResponsiveManifest(loaded.manifest.responsiveManifest);
+          }
           scoped = loadedHistory(loaded, sessionId);
         }
       } catch {
@@ -349,13 +430,16 @@ export function useNativeMotionController({
         return;
       }
       updateHistory(scoped);
-      const saved = sessionHistoryPatches(scoped);
-      if (!saved.length) {
-        setHistoryReady(true);
-        return;
-      }
+      const saved = sessionHistoryPatches(scoped).filter((patch) => (
+        responsivePatchAppliesToDevice(patch, deviceIdRef.current)
+      ));
+      const responsivePatches = responsiveRuntimePatches(
+        responsiveManifestRef.current,
+        deviceIdRef.current,
+      );
       if (!useV2) {
-        send('apply-patches', { patches: saved });
+        if (saved.length) send('apply-patches', { patches: saved });
+        if (responsivePatches.length) send('apply-patches', { patches: responsivePatches });
         setHistoryReady(true);
         return;
       }
@@ -366,6 +450,11 @@ export function useNativeMotionController({
           operation: 'replay',
           patchIds: patches.map((patch) => patch.id),
         });
+        send('apply-transaction', { transaction }, { requestId: transaction.requestId });
+      }
+      if (responsivePatches.length) {
+        const transaction = createTransaction({ patches: responsivePatches, source: 'responsive' });
+        transactionLedgerRef.current.stage(transaction, { operation: 'responsive-reconcile' });
         send('apply-transaction', { transaction }, { requestId: transaction.requestId });
       }
       setPendingTransactions(transactionLedgerRef.current.size);
@@ -394,6 +483,9 @@ export function useNativeMotionController({
             }));
           }
           return;
+        }
+        if (entry.meta.responsiveManifest) {
+          replaceResponsiveManifest(entry.meta.responsiveManifest);
         }
         if (entry.meta.operation === 'apply') {
           updateHistory((current) => acknowledgeSessionTransaction(current, acknowledged, {
@@ -584,7 +676,7 @@ export function useNativeMotionController({
 
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [armHeartbeatTimeout, iframeRef, mode, send, transitionEditor, updateHistory]);
+  }, [armHeartbeatTimeout, iframeRef, mode, replaceResponsiveManifest, send, transitionEditor, updateHistory]);
 
   useEffect(() => {
     if (status === 'ready') send('set-mode', { mode });
@@ -595,25 +687,48 @@ export function useNativeMotionController({
   }, [send, status, tool]);
 
   useEffect(() => {
+    if (status !== 'ready' || lastResponsiveDeviceRef.current === deviceId) return;
+    lastResponsiveDeviceRef.current = deviceId;
+    setSelectionSettlement(null);
+    const patches = responsiveRuntimePatches(responsiveManifestRef.current, deviceId);
+    if (patches.length) {
+      if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2) {
+        const transaction = createTransaction({ patches, source: 'responsive' });
+        transactionLedgerRef.current.stage(transaction, { operation: 'responsive-reconcile' });
+        setPendingTransactions(transactionLedgerRef.current.size);
+        send('apply-transaction', { transaction }, { requestId: transaction.requestId });
+      } else {
+        send('apply-patches', { patches });
+      }
+    }
+    send('inspect-viewport', {});
+    if (selected?.id) send('select-element', { elementId: selected.id, deviceId });
+  }, [deviceId, selected?.id, send, status]);
+
+  useEffect(() => {
     if (status !== 'ready') return undefined;
     send('set-timeline-active', { motionId: timelineOpen ? activeMotionId : null });
     return () => send('set-timeline-active', { motionId: null });
   }, [activeMotionId, send, status, timelineOpen]);
 
-  function applyPatches(patches) {
+  function applyPatches(patches, { source = activePanel, responsiveManifest: nextResponsiveManifest = null } = {}) {
     const changed = patches.filter((patch) => !patchValuesEqual(patch.before, patch.value));
     if (!changed.length) return;
     const groupId = changed.length > 1 ? requestId('group') : null;
     const grouped = changed.map((patch) => groupId ? { ...patch, groupId } : patch);
-    const transaction = createTransaction({ patches: grouped, source: activePanel });
+    const transaction = createTransaction({ patches: grouped, source });
     if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2) {
-      transactionLedgerRef.current.stage(transaction, { operation: 'apply' });
+      transactionLedgerRef.current.stage(transaction, {
+        operation: 'apply',
+        ...(nextResponsiveManifest ? { responsiveManifest: nextResponsiveManifest } : {}),
+      });
       setPendingTransactions(transactionLedgerRef.current.size);
       send('apply-transaction', { transaction }, { requestId: transaction.requestId });
       return;
     }
     if (grouped.length === 1) send('apply-patch', { patch: grouped[0] });
     else send('apply-patches', { patches: grouped });
+    if (nextResponsiveManifest) replaceResponsiveManifest(nextResponsiveManifest);
     updateHistory((current) => {
       const sessionId = currentSessionId(runtimeContextRef.current);
       const scoped = scopeSessionHistory(current, sessionId);
@@ -627,15 +742,59 @@ export function useNativeMotionController({
     applyPatches([patch]);
   }
 
+  function applyResponsiveEdit(property, visibleValue, patches) {
+    if (!selected?.id || !patches?.length) return;
+    const normalized = responsivePropertyName(property);
+    const descriptor = responsiveDescriptorFor(property);
+    const propertyKey = responsivePropertyKey(selected.id, normalized);
+    const current = parseResponsiveManifest(responsiveManifestRef.current);
+    const beforeEntry = current.properties?.[propertyKey] || null;
+    const primaryPatch = patches.find((patch) => patch.property !== 'ownership.hint') || patches.at(-1);
+    const binding = responsiveBindingFromPatch(primaryPatch);
+    const scope = responsiveScopeFor(property, primaryPatch?.before ?? visibleValue, binding);
+    if (scope?.mode === 'computed') return;
+    let base = current;
+    if (!beforeEntry && scope?.mode === 'per-device') {
+      base = setResponsivePropertyMode(base, {
+        propertyKey,
+        mode: 'per-device',
+        deviceId,
+        visibleValue: primaryPatch?.before ?? visibleValue,
+        binding,
+        descriptor,
+      });
+    }
+    const next = setResponsivePropertyValue(base, {
+      propertyKey,
+      deviceId,
+      value: responsiveStoredValue(primaryPatch, visibleValue),
+      binding,
+      descriptor: { ...descriptor, mode: scope?.mode || descriptor?.mode || 'shared' },
+      provenance: scope?.provenance,
+    });
+    const afterEntry = next.properties[propertyKey];
+    const responsivePatches = patches.map((patch) => withResponsiveMetadata(patch, {
+      propertyKey,
+      mode: afterEntry.mode,
+      deviceId,
+      beforeEntry,
+      afterEntry,
+    }));
+    applyPatches(responsivePatches, { responsiveManifest: next });
+  }
+
   function applyStyle(property, value, before) {
     if (!selected) return;
+    const responsiveScope = responsiveScopeFor(property, before);
+    if (responsiveScope?.mode === 'computed') return;
+    const scopedBefore = responsiveScope?.effectiveValue ?? before;
     const normalized = animationProperty(property);
     const canKeyframe = autoKeyframe && activeMotion?.capabilities?.keyframes && activeMotion?.editability === 'direct' && AUTO_KEYFRAME_PROPERTIES.has(normalized);
     if (canKeyframe) {
-      const stylePatch = createPatch({ elementId: selected.id, kind: 'style', property, before, value });
+      const stylePatch = createPatch({ elementId: selected.id, kind: 'style', property, before: scopedBefore, value });
       const track = activeMotion.tracks.find((item) => animationProperty(item.property) === normalized);
       const existing = track?.keyframes?.find((keyframe) => Math.abs(Number(keyframe.offset) - timelineOffset) < 0.0005);
-      applyPatches([stylePatch, createPatch({
+      applyResponsiveEdit(property, value, [stylePatch, createPatch({
         elementId: motionElementId,
         kind: 'motion',
         motionId: activeMotion.id,
@@ -660,7 +819,7 @@ export function useNativeMotionController({
         pending: ownership.status === 'ambiguous' ? {
           property: semanticProperty,
           value,
-          before,
+          before: scopedBefore,
         } : null,
       };
       setOwnershipConflict(conflict);
@@ -670,13 +829,13 @@ export function useNativeMotionController({
     const patch = buildFinalTargetPatch({
       elementId: ownership.status === 'owned' ? motionElementId : selected.id,
       property: semanticProperty,
-      before,
+      before: scopedBefore,
       value,
       owner: ownership.owner,
       transform: selected.styles?.transform,
       transformOrigin: selected.styles?.transformOrigin,
     });
-    applyPatch(createPatch(patch));
+    applyResponsiveEdit(property, value, [createPatch(patch)]);
   }
 
   function focusOwnership(property) {
@@ -722,15 +881,112 @@ export function useNativeMotionController({
     }
     setActiveMotionId(owner.motionId);
     setOwnershipConflict(null);
-    applyPatches(patches);
+    if (ownershipConflict.pending) applyResponsiveEdit(property, ownershipConflict.pending.value, patches);
+    else applyPatches(patches);
   }
 
   function applyText(value) {
-    if (selected) applyPatch(createPatch({ elementId: selected.id, kind: 'text', before: selected.text, value }));
+    if (!selected) return;
+    const scope = responsiveScopeFor('text', selected.text);
+    if (scope?.mode === 'computed') return;
+    applyResponsiveEdit('text', value, [createPatch({
+      elementId: selected.id,
+      kind: 'text',
+      before: scope?.effectiveValue ?? selected.text,
+      value,
+    })]);
   }
 
   function applyAttribute(property, value, before) {
-    if (selected) applyPatch(createPatch({ elementId: selected.id, kind: 'attribute', property, before, value }));
+    if (!selected) return;
+    const responsiveProperty = `attribute.${property}`;
+    const scope = responsiveScopeFor(responsiveProperty, before);
+    if (scope?.mode === 'computed') return;
+    applyResponsiveEdit(responsiveProperty, value, [createPatch({
+      elementId: selected.id,
+      kind: 'attribute',
+      property,
+      before: scope?.effectiveValue ?? before,
+      value,
+    })]);
+  }
+
+  async function persistResponsiveTransaction(transaction, nextManifest) {
+    const sessionId = currentSessionId(runtimeContextRef.current);
+    const nextHistory = acknowledgeSessionTransaction(
+      scopeSessionHistory(historyRef.current, sessionId),
+      transaction,
+      { sessionId },
+    );
+    replaceResponsiveManifest(nextManifest);
+    updateHistory(nextHistory);
+    if (!persistenceRef.current.autosave) return;
+    setSaveState('saving');
+    try {
+      await persistenceRef.current.save(historyPayload(nextHistory));
+      await persistenceRef.current.flush?.();
+      if (!disposedRef.current) setSaveState('saved');
+    } catch (_) {
+      if (!disposedRef.current) {
+        setSaveState('error');
+        setPatchError("Your changes couldn't be saved yet. Your confirmed edits are still open.");
+      }
+    }
+  }
+
+  async function commitResponsiveScopeChange(change, mode) {
+    if (!selected?.id || !change) return;
+    const normalized = responsivePropertyName(change.property);
+    const propertyKey = change.propertyKey || responsivePropertyKey(selected.id, normalized);
+    const current = parseResponsiveManifest(responsiveManifestRef.current);
+    const beforeEntry = current.properties?.[propertyKey] || null;
+    const descriptor = responsiveDescriptorFor(change.property);
+    const next = setResponsivePropertyMode(current, {
+      propertyKey,
+      mode,
+      deviceId: change.deviceId || deviceId,
+      visibleValue: change.visibleValue,
+      binding: change.binding || beforeEntry?.binding || null,
+      descriptor,
+      provenance: beforeEntry?.provenance || descriptor?.provenance,
+    });
+    const patch = createResponsiveManifestPatch({
+      elementId: selected.id,
+      propertyKey,
+      before: beforeEntry,
+      value: next.properties[propertyKey],
+    });
+    const transaction = createTransaction({ patches: [patch], source: 'responsive' });
+    setPendingResponsiveScopeChange(null);
+    await persistResponsiveTransaction(transaction, next);
+  }
+
+  function requestResponsiveScopeChange(change) {
+    if (!change || !selected?.id) return null;
+    const normalized = responsivePropertyName(change.property);
+    const propertyKey = change.propertyKey || responsivePropertyKey(selected.id, normalized);
+    const scope = responsiveScopeFor(change.property, change.visibleValue, change.binding);
+    if (scope?.mode === 'computed') return null;
+    const nextChange = {
+      ...change,
+      property: normalized,
+      propertyKey,
+      deviceId: change.deviceId || deviceId,
+    };
+    if (change.action === 'reconnect') {
+      return commitResponsiveScopeChange(nextChange, 'shared');
+    }
+    setPendingResponsiveScopeChange(nextChange);
+    return nextChange;
+  }
+
+  function confirmResponsiveScopeChange() {
+    if (!pendingResponsiveScopeChange) return Promise.resolve(null);
+    return commitResponsiveScopeChange(pendingResponsiveScopeChange, 'per-device');
+  }
+
+  function cancelResponsiveScopeChange() {
+    setPendingResponsiveScopeChange(null);
   }
 
   function applyMotion(clip, property, value, before) {
@@ -797,15 +1053,28 @@ export function useNativeMotionController({
     if (pendingTransactions) return;
     const latest = historyState.past.at(-1);
     if (!latest) return;
-    const inverse = [...latest.transaction.patches, ...latest.repairs].reverse().map(invertPatch);
-    if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2) {
+    const nextResponsiveManifest = responsiveManifestAfterPatches(
+      responsiveManifestRef.current,
+      latest.transaction.patches,
+      'backward',
+    );
+    const inverse = [...latest.transaction.patches, ...latest.repairs]
+      .reverse()
+      .map(invertPatch)
+      .filter((patch) => responsivePatchAppliesToDevice(patch, deviceId));
+    if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2 && inverse.length) {
       const transaction = createTransaction({ patches: inverse, source: 'undo' });
-      transactionLedgerRef.current.stage(transaction, { operation: 'undo', transactionId: latest.transaction.id });
+      transactionLedgerRef.current.stage(transaction, {
+        operation: 'undo',
+        transactionId: latest.transaction.id,
+        responsiveManifest: nextResponsiveManifest,
+      });
       setPendingTransactions(transactionLedgerRef.current.size);
       send('rollback-transaction', { transaction }, { requestId: transaction.requestId });
       return;
     }
-    send('apply-patches', { patches: inverse });
+    if (inverse.length) send('apply-patches', { patches: inverse });
+    replaceResponsiveManifest(nextResponsiveManifest);
     updateHistory((current) => undoSessionHistory(current).history, { persist: true });
     setSaveState('idle');
   }
@@ -814,15 +1083,26 @@ export function useNativeMotionController({
     if (pendingTransactions) return;
     const next = historyState.future[0];
     if (!next) return;
-    const patches = [...next.transaction.patches, ...next.repairs];
-    if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2) {
+    const nextResponsiveManifest = responsiveManifestAfterPatches(
+      responsiveManifestRef.current,
+      next.transaction.patches,
+      'forward',
+    );
+    const patches = [...next.transaction.patches, ...next.repairs]
+      .filter((patch) => responsivePatchAppliesToDevice(patch, deviceId));
+    if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2 && patches.length) {
       const transaction = createTransaction({ patches, source: 'redo' });
-      transactionLedgerRef.current.stage(transaction, { operation: 'redo', transactionId: next.transaction.id });
+      transactionLedgerRef.current.stage(transaction, {
+        operation: 'redo',
+        transactionId: next.transaction.id,
+        responsiveManifest: nextResponsiveManifest,
+      });
       setPendingTransactions(transactionLedgerRef.current.size);
       send('apply-transaction', { transaction }, { requestId: transaction.requestId });
       return;
     }
-    send('apply-patches', { patches });
+    if (patches.length) send('apply-patches', { patches });
+    replaceResponsiveManifest(nextResponsiveManifest);
     updateHistory((current) => redoSessionHistory(current).history, { persist: true });
     setSaveState('idle');
   }
@@ -1057,6 +1337,9 @@ export function useNativeMotionController({
     setEditState(createEditState());
     setSelectionSettlement(null);
     setOwnershipConflict(null);
+    replaceResponsiveManifest({});
+    setPendingResponsiveScopeChange(null);
+    lastResponsiveDeviceRef.current = deviceIdRef.current;
   }
 
   const commands = {
@@ -1079,6 +1362,9 @@ export function useNativeMotionController({
     scrubIntro: (timeMs) => send('scrub-intro', { timeMs }),
     applyPatches,
     applyStyle,
+    requestResponsiveScopeChange,
+    confirmResponsiveScopeChange,
+    cancelResponsiveScopeChange,
     focusOwnership,
     chooseOwnership,
     clearOwnership: () => setOwnershipConflict(null),
@@ -1144,6 +1430,9 @@ export function useNativeMotionController({
     ownershipHints,
     propertyOwnership,
     ownershipConflict,
+    responsiveManifest,
+    responsiveScopeFor,
+    pendingResponsiveScopeChange,
     autoExpandedRowId: lastAutoExpandedRef.current,
     commands,
   };

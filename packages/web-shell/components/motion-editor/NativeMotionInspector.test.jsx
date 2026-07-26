@@ -21,12 +21,19 @@ function controllerFixture(overrides = {}) {
     activeMotionId: null,
     timelineOffset: 0,
     motion: [],
+    device: { id: 'desktop', label: 'Desktop', width: 1280, height: 800 },
+    responsiveScopeFor: vi.fn((_property, fallbackValue) => ({
+      mode: 'shared',
+      effectiveValue: fallbackValue,
+      relevant: true,
+    })),
     commands: {
       applyStyle: vi.fn(),
       applyText: vi.fn(),
       applyAttribute: vi.fn(),
       applyMotion: vi.fn(),
       applyStagger: vi.fn(),
+      requestResponsiveScopeChange: vi.fn(),
     },
     ...overrides,
   };
@@ -124,5 +131,45 @@ describe('NativeMotionInspector', () => {
     expect(screen.getByText('Multiple motions control Opacity')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Edit Hover' }));
     expect(chooseOwnership).toHaveBeenCalledWith('hover:opacity');
+  });
+
+  it('shows scope per field and omits fields that belong only to another device', () => {
+    const requestResponsiveScopeChange = vi.fn();
+    const base = controllerFixture();
+    const responsiveScopeFor = vi.fn((property, fallbackValue) => ({
+      mode: property === 'fontFamily' ? 'computed' : 'shared',
+      effectiveValue: fallbackValue,
+      provenance: property === 'fontFamily' ? 'runtime' : 'inferred',
+      relevant: property !== 'fontSize',
+    }));
+    render(<NativeMotionInspector controller={controllerFixture({
+      selected: {
+        ...selected,
+        text: 'Hello',
+        styles: {
+          opacity: '0.8',
+          transform: 'none',
+          transformOrigin: '50% 50%',
+          fontFamily: 'Inter',
+          fontSize: '48px',
+        },
+      },
+      responsiveScopeFor,
+      commands: {
+        ...base.commands,
+        requestResponsiveScopeChange,
+      },
+    })} />);
+
+    const opacityScope = screen.getByRole('button', { name: 'Change device scope for Opacity' });
+    expect(opacityScope).toHaveAttribute('title', 'Applied to all devices');
+    fireEvent.click(opacityScope);
+    expect(requestResponsiveScopeChange).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'unlink',
+      property: 'opacity',
+    }));
+    expect(screen.queryByText('Size')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Font is calculated by this website' })).toBeDisabled();
+    expect(screen.queryByText('All devices')).toBeNull();
   });
 });

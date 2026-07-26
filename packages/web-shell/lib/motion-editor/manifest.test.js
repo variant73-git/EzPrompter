@@ -4,6 +4,7 @@ import {
   parseMotionManifest,
   serializeMotionManifest,
 } from './manifest.js';
+import { createResponsiveManifestPatch } from './responsive-manifest.js';
 
 const BUNDLE_ID = '11111111-1111-4111-8111-111111111111';
 const OTHER_BUNDLE_ID = '22222222-2222-4222-8222-222222222222';
@@ -119,5 +120,51 @@ describe('native motion manifest', () => {
       responsiveManifest: { desktop: { resolver: () => 'host-code' } },
     };
     expect(() => parseMotionManifest(manifest)).toThrow(/JSON values only/i);
+  });
+
+  it('strictly round-trips responsive state and host-side scope transactions', () => {
+    const property = {
+      mode: 'per-device',
+      sharedValue: '1',
+      overrides: { desktop: '0.6' },
+      provenance: 'inferred',
+      binding: { elementId: 'hero-title', kind: 'style', property: 'opacity' },
+    };
+    const manifest = {
+      ...createEmptyMotionManifest({ baseBundleId: BUNDLE_ID, runtimeFingerprint: RUNTIME_FINGERPRINT }),
+      responsiveManifest: {
+        schemaVersion: 1,
+        properties: { 'hero-title:opacity': property },
+      },
+      transactions: [{
+        id: '33333333-3333-4333-8333-333333333333',
+        createdAt: '2026-07-26T10:00:00.000Z',
+        source: 'responsive',
+        patches: [createResponsiveManifestPatch({
+          id: 'responsive-1',
+          elementId: 'hero-title',
+          propertyKey: 'hero-title:opacity',
+          before: null,
+          value: property,
+          createdAt: '2026-07-26T10:00:00.000Z',
+        })],
+        automaticRepairs: [],
+      }],
+    };
+
+    expect(parseMotionManifest(serializeMotionManifest(manifest))).toEqual(manifest);
+  });
+
+  it('rejects malformed responsive state instead of accepting arbitrary JSON', () => {
+    const manifest = {
+      ...createEmptyMotionManifest({ baseBundleId: BUNDLE_ID, runtimeFingerprint: RUNTIME_FINGERPRINT }),
+      responsiveManifest: {
+        schemaVersion: 1,
+        properties: {
+          'hero-title:opacity': { mode: 'fluid', sharedValue: '1', overrides: {} },
+        },
+      },
+    };
+    expect(() => parseMotionManifest(manifest)).toThrow(/responsive.*mode/i);
   });
 });

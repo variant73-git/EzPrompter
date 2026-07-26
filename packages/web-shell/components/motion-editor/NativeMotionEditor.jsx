@@ -60,6 +60,7 @@ import {
   useNativeMotionController,
 } from './useNativeMotionController.js';
 import MotionOwnershipChoice from './MotionOwnershipChoice.jsx';
+import PropertyScopeButton from './PropertyScopeButton.jsx';
 import styles from './native-motion-editor.module.css';
 
 const SOURCE = '/api/native-clone/index.html';
@@ -233,6 +234,30 @@ function OwnershipIndicator({ label, ownership, onOpen }) {
   );
 }
 
+function ResponsiveScopeControl({
+  property,
+  label,
+  value,
+  binding,
+  scope,
+  device,
+  onRequest,
+}) {
+  if (!scope) return null;
+  return (
+    <PropertyScopeButton
+      property={property}
+      propertyKey={scope.propertyKey}
+      label={label}
+      value={value}
+      binding={binding}
+      device={device}
+      scope={scope}
+      onRequest={onRequest}
+    />
+  );
+}
+
 function Field({
   label,
   defaultValue,
@@ -243,20 +268,36 @@ function Field({
   keyframeState = null,
   ownership = null,
   onOwnershipOpen,
+  property = null,
+  binding = null,
+  responsiveScope = null,
+  device = null,
+  onScopeRequest,
 }) {
+  if (responsiveScope?.relevant === false) return null;
+  const effectiveValue = responsiveScope?.effectiveValue ?? defaultValue;
   return (
     <label className={styles.field}>
       <span className={styles.controlLabel}>
-        {label}
+        <span className={styles.controlLabelText}>{label}</span>
         <KeyframeMarker state={keyframeState} />
         <OwnershipIndicator label={label} ownership={ownership} onOpen={onOwnershipOpen} />
+        <ResponsiveScopeControl
+          property={property}
+          label={label}
+          value={effectiveValue}
+          binding={binding}
+          scope={responsiveScope}
+          device={device}
+          onRequest={onScopeRequest}
+        />
       </span>
       <span className={styles.fieldControl}>
         <input
-          key={`${label}:${defaultValue}`}
+          key={`${label}:${effectiveValue}`}
           type={type}
-          defaultValue={defaultValue ?? ''}
-          disabled={disabled}
+          defaultValue={effectiveValue ?? ''}
+          disabled={disabled || responsiveScope?.mode === 'computed'}
           onBlur={(event) => onCommit?.(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') event.currentTarget.blur();
@@ -268,12 +309,38 @@ function Field({
   );
 }
 
-function SelectField({ label, value, onCommit, children, disabled = false, keyframeState = null }) {
+function SelectField({
+  label,
+  value,
+  onCommit,
+  children,
+  disabled = false,
+  keyframeState = null,
+  property = null,
+  binding = null,
+  responsiveScope = null,
+  device = null,
+  onScopeRequest,
+}) {
+  if (responsiveScope?.relevant === false) return null;
+  const effectiveValue = responsiveScope?.effectiveValue ?? value;
   return (
     <label className={styles.field}>
-      <span className={styles.controlLabel}>{label}<KeyframeMarker state={keyframeState} /></span>
+      <span className={styles.controlLabel}>
+        <span className={styles.controlLabelText}>{label}</span>
+        <KeyframeMarker state={keyframeState} />
+        <ResponsiveScopeControl
+          property={property}
+          label={label}
+          value={effectiveValue}
+          binding={binding}
+          scope={responsiveScope}
+          device={device}
+          onRequest={onScopeRequest}
+        />
+      </span>
       <span className={styles.fieldControl}>
-        <select disabled={disabled} value={value} onChange={(event) => onCommit(event.currentTarget.value)}>
+        <select disabled={disabled || responsiveScope?.mode === 'computed'} value={effectiveValue} onChange={(event) => onCommit(event.currentTarget.value)}>
           {children}
         </select>
       </span>
@@ -303,25 +370,43 @@ function ColorField({
   keyframeState = null,
   ownership = null,
   onOwnershipOpen,
+  property = null,
+  binding = null,
+  responsiveScope = null,
+  device = null,
+  onScopeRequest,
 }) {
-  const safeValue = /^#[0-9a-f]{6}$/i.test(value || '') ? value : '#292926';
+  if (responsiveScope?.relevant === false) return null;
+  const effectiveValue = responsiveScope?.effectiveValue ?? value;
+  const safeValue = /^#[0-9a-f]{6}$/i.test(effectiveValue || '') ? effectiveValue : '#292926';
   return (
     <label className={styles.field}>
       <span className={styles.controlLabel}>
-        {label}
+        <span className={styles.controlLabelText}>{label}</span>
         <KeyframeMarker state={keyframeState} />
         <OwnershipIndicator label={label} ownership={ownership} onOpen={onOwnershipOpen} />
+        <ResponsiveScopeControl
+          property={property}
+          label={label}
+          value={effectiveValue}
+          binding={binding}
+          scope={responsiveScope}
+          device={device}
+          onRequest={onScopeRequest}
+        />
       </span>
       <span className={styles.colorControl}>
         <input
           key={`${label}:${safeValue}`}
           type="color"
           defaultValue={safeValue}
+          disabled={responsiveScope?.mode === 'computed'}
           onBlur={(event) => onCommit?.(event.currentTarget.value)}
         />
         <input
-          key={`${label}:text:${value}`}
-          defaultValue={value || ''}
+          key={`${label}:text:${effectiveValue}`}
+          defaultValue={effectiveValue || ''}
+          disabled={responsiveScope?.mode === 'computed'}
           onBlur={(event) => onCommit?.(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') event.currentTarget.blur();
@@ -332,15 +417,28 @@ function ColorField({
   );
 }
 
-function TextContentField({ selected, onCommit }) {
-  const [value, setValue] = useState(selected.text || '');
-  useEffect(() => setValue(selected.text || ''), [selected.id, selected.text]);
-  const changed = value !== (selected.text || '');
+function TextContentField({ selected, onCommit, responsiveScope, device, onScopeRequest }) {
+  const effectiveValue = responsiveScope?.effectiveValue ?? selected.text ?? '';
+  const [value, setValue] = useState(effectiveValue);
+  useEffect(() => setValue(effectiveValue), [effectiveValue, selected.id]);
+  if (responsiveScope?.relevant === false) return null;
+  const changed = value !== effectiveValue;
   return (
     <label className={styles.textField}>
-      <span className={styles.controlLabel}>Text</span>
+      <span className={styles.controlLabel}>
+        <span className={styles.controlLabelText}>Text</span>
+        <ResponsiveScopeControl
+          property="text"
+          label="Text"
+          value={effectiveValue}
+          binding={{ elementId: selected.id, kind: 'text' }}
+          scope={responsiveScope}
+          device={device}
+          onRequest={onScopeRequest}
+        />
+      </span>
       <span className={styles.textEditorControl}>
-        <textarea value={value} onChange={(event) => setValue(event.currentTarget.value)} />
+        <textarea disabled={responsiveScope?.mode === 'computed'} value={value} onChange={(event) => setValue(event.currentTarget.value)} />
         <button type="button" disabled={!changed} onClick={() => onCommit(value)}>Apply text</button>
       </span>
     </label>
@@ -416,6 +514,9 @@ export function PropertiesPanel({
   onStyle,
   onText,
   onAttribute,
+  device = null,
+  responsiveScopeFor = null,
+  onScopeRequest,
 }) {
   if (!selected) return <DocumentProperties runtime={runtime} />;
   const stylesValue = selected.styles || {};
@@ -423,6 +524,19 @@ export function PropertiesPanel({
   const canEditText = selected.canEditText !== false && !['img', 'video', 'canvas', 'svg', 'section'].includes(selected.tag);
   const supportsTypography = canEditText || Boolean(selected.text);
   const ownershipFor = (property) => propertyOwnership[animationProperty(property)] || null;
+  const scopeProps = (property, fallbackValue, binding = null) => ({
+    property,
+    binding,
+    responsiveScope: responsiveScopeFor?.(property, fallbackValue, binding) || null,
+    device,
+    onScopeRequest,
+  });
+  const styleBinding = (property) => ({ elementId: selected.id, kind: 'style', property });
+  const alignmentScope = responsiveScopeFor?.(
+    'textAlign',
+    stylesValue.textAlign,
+    styleBinding('text-align'),
+  ) || null;
   const keyframeState = (property) => {
     const normalized = animationProperty(property);
     const track = activeMotion?.tracks?.find((item) => animationProperty(item.property) === normalized);
@@ -434,12 +548,19 @@ export function PropertiesPanel({
     <div className={styles.panelBody}>
       <InspectorSection title="Content" meta={selected.tag}>
         {canEditText && (
-          <TextContentField selected={selected} onCommit={onText} />
+          <TextContentField
+            selected={selected}
+            onCommit={onText}
+            responsiveScope={responsiveScopeFor?.('text', selected.text, { elementId: selected.id, kind: 'text' }) || null}
+            device={device}
+            onScopeRequest={onScopeRequest}
+          />
         )}
         {selected.tag === 'img' && (
           <Field
             label="Source"
             defaultValue={selected.imageSrc}
+            {...scopeProps('attribute.src', selected.imageSrc, { elementId: selected.id, kind: 'attribute', property: 'src' })}
             onCommit={(value) => onAttribute('src', value, selected.imageSrc)}
           />
         )}
@@ -460,6 +581,7 @@ export function PropertiesPanel({
             <Field
               label="X"
               defaultValue={transformComponentValue(transform, 'translateX')}
+              {...scopeProps('translateX', transformComponentValue(transform, 'translateX'))}
               ownership={ownershipFor('translateX')}
               onOwnershipOpen={() => onOwnershipOpen?.('translateX')}
               onCommit={(value) => onStyle('translateX', value, transformComponentValue(transform, 'translateX'))}
@@ -467,6 +589,7 @@ export function PropertiesPanel({
             <Field
               label="Y"
               defaultValue={transformComponentValue(transform, 'translateY')}
+              {...scopeProps('translateY', transformComponentValue(transform, 'translateY'))}
               ownership={ownershipFor('translateY')}
               onOwnershipOpen={() => onOwnershipOpen?.('translateY')}
               onCommit={(value) => onStyle('translateY', value, transformComponentValue(transform, 'translateY'))}
@@ -476,6 +599,7 @@ export function PropertiesPanel({
             <Field
               label="Scale X"
               defaultValue={transformComponentValue(transform, 'scaleX')}
+              {...scopeProps('scaleX', transformComponentValue(transform, 'scaleX'))}
               ownership={ownershipFor('scaleX')}
               onOwnershipOpen={() => onOwnershipOpen?.('scaleX')}
               onCommit={(value) => onStyle('scaleX', value, transformComponentValue(transform, 'scaleX'))}
@@ -483,6 +607,7 @@ export function PropertiesPanel({
             <Field
               label="Scale Y"
               defaultValue={transformComponentValue(transform, 'scaleY')}
+              {...scopeProps('scaleY', transformComponentValue(transform, 'scaleY'))}
               ownership={ownershipFor('scaleY')}
               onOwnershipOpen={() => onOwnershipOpen?.('scaleY')}
               onCommit={(value) => onStyle('scaleY', value, transformComponentValue(transform, 'scaleY'))}
@@ -491,6 +616,7 @@ export function PropertiesPanel({
           <Field
             label="Rotate"
             defaultValue={transformComponentValue(transform, 'rotate')}
+            {...scopeProps('rotate', transformComponentValue(transform, 'rotate'))}
             ownership={ownershipFor('rotate')}
             onOwnershipOpen={() => onOwnershipOpen?.('rotate')}
             onCommit={(value) => onStyle('rotate', value, transformComponentValue(transform, 'rotate'))}
@@ -499,6 +625,7 @@ export function PropertiesPanel({
             <Field
               label="Skew X"
               defaultValue={transformComponentValue(transform, 'skewX')}
+              {...scopeProps('skewX', transformComponentValue(transform, 'skewX'))}
               ownership={ownershipFor('skewX')}
               onOwnershipOpen={() => onOwnershipOpen?.('skewX')}
               onCommit={(value) => onStyle('skewX', value, transformComponentValue(transform, 'skewX'))}
@@ -506,6 +633,7 @@ export function PropertiesPanel({
             <Field
               label="Skew Y"
               defaultValue={transformComponentValue(transform, 'skewY')}
+              {...scopeProps('skewY', transformComponentValue(transform, 'skewY'))}
               ownership={ownershipFor('skewY')}
               onOwnershipOpen={() => onOwnershipOpen?.('skewY')}
               onCommit={(value) => onStyle('skewY', value, transformComponentValue(transform, 'skewY'))}
@@ -515,6 +643,7 @@ export function PropertiesPanel({
             <Field
               label="Origin X"
               defaultValue={transformComponentValue(transform, 'transformOriginX')}
+              {...scopeProps('transformOriginX', transformComponentValue(transform, 'transformOriginX'))}
               ownership={ownershipFor('transformOriginX')}
               onOwnershipOpen={() => onOwnershipOpen?.('transformOriginX')}
               onCommit={(value) => onStyle('transformOriginX', value, transformComponentValue(transform, 'transformOriginX'))}
@@ -522,6 +651,7 @@ export function PropertiesPanel({
             <Field
               label="Origin Y"
               defaultValue={transformComponentValue(transform, 'transformOriginY')}
+              {...scopeProps('transformOriginY', transformComponentValue(transform, 'transformOriginY'))}
               ownership={ownershipFor('transformOriginY')}
               onOwnershipOpen={() => onOwnershipOpen?.('transformOriginY')}
               onCommit={(value) => onStyle('transformOriginY', value, transformComponentValue(transform, 'transformOriginY'))}
@@ -539,6 +669,7 @@ export function PropertiesPanel({
         <ColorField
           label="Text"
           value={stylesValue.colorHex}
+          {...scopeProps('color', stylesValue.colorHex, styleBinding('color'))}
           keyframeState={keyframeState('color')}
           ownership={ownershipFor('color')}
           onOwnershipOpen={() => onOwnershipOpen?.('color')}
@@ -547,6 +678,7 @@ export function PropertiesPanel({
         <ColorField
           label="Fill"
           value={stylesValue.backgroundColorHex}
+          {...scopeProps('backgroundColor', stylesValue.backgroundColorHex, styleBinding('background-color'))}
           keyframeState={keyframeState('background-color')}
           ownership={ownershipFor('backgroundColor')}
           onOwnershipOpen={() => onOwnershipOpen?.('backgroundColor')}
@@ -556,6 +688,7 @@ export function PropertiesPanel({
           <Field
             label="Opacity"
             defaultValue={stylesValue.opacity}
+            {...scopeProps('opacity', stylesValue.opacity, styleBinding('opacity'))}
             keyframeState={keyframeState('opacity')}
             ownership={ownershipFor('opacity')}
             onOwnershipOpen={() => onOwnershipOpen?.('opacity')}
@@ -564,6 +697,7 @@ export function PropertiesPanel({
           <Field
             label="Radius"
             defaultValue={stylesValue.borderRadius}
+            {...scopeProps('borderRadius', stylesValue.borderRadius, styleBinding('border-radius'))}
             keyframeState={keyframeState('border-radius')}
             ownership={ownershipFor('borderRadius')}
             onOwnershipOpen={() => onOwnershipOpen?.('borderRadius')}
@@ -573,11 +707,17 @@ export function PropertiesPanel({
       </InspectorSection>
 
       {supportsTypography && <InspectorSection title="Typography">
-        <Field label="Font" defaultValue={stylesValue.fontFamily} onCommit={(value) => onStyle('font-family', value, stylesValue.fontFamily)} />
+        <Field
+          label="Font"
+          defaultValue={stylesValue.fontFamily}
+          {...scopeProps('fontFamily', stylesValue.fontFamily, styleBinding('font-family'))}
+          onCommit={(value) => onStyle('font-family', value, stylesValue.fontFamily)}
+        />
         <div className={styles.controlGrid}>
           <Field
             label="Weight"
             defaultValue={stylesValue.fontWeight}
+            {...scopeProps('fontWeight', stylesValue.fontWeight, styleBinding('font-weight'))}
             keyframeState={keyframeState('font-weight')}
             ownership={ownershipFor('fontWeight')}
             onOwnershipOpen={() => onOwnershipOpen?.('fontWeight')}
@@ -586,6 +726,7 @@ export function PropertiesPanel({
           <Field
             label="Size"
             defaultValue={stylesValue.fontSize}
+            {...scopeProps('fontSize', stylesValue.fontSize, styleBinding('font-size'))}
             keyframeState={keyframeState('font-size')}
             ownership={ownershipFor('fontSize')}
             onOwnershipOpen={() => onOwnershipOpen?.('fontSize')}
@@ -596,6 +737,7 @@ export function PropertiesPanel({
           <Field
             label="Line height"
             defaultValue={stylesValue.lineHeight}
+            {...scopeProps('lineHeight', stylesValue.lineHeight, styleBinding('line-height'))}
             keyframeState={keyframeState('line-height')}
             ownership={ownershipFor('lineHeight')}
             onOwnershipOpen={() => onOwnershipOpen?.('lineHeight')}
@@ -604,27 +746,56 @@ export function PropertiesPanel({
           <Field
             label="Letter spacing"
             defaultValue={stylesValue.letterSpacing}
+            {...scopeProps('letterSpacing', stylesValue.letterSpacing, styleBinding('letter-spacing'))}
             keyframeState={keyframeState('letter-spacing')}
             ownership={ownershipFor('letterSpacing')}
             onOwnershipOpen={() => onOwnershipOpen?.('letterSpacing')}
             onCommit={(value) => onStyle('letter-spacing', value, stylesValue.letterSpacing)}
           />
         </div>
-        <div className={styles.field}>
-          <span className={styles.controlLabel}>Alignment</span>
+        {alignmentScope?.relevant !== false && <div className={styles.field}>
+          <span className={styles.controlLabel}>
+            <span className={styles.controlLabelText}>Alignment</span>
+            <ResponsiveScopeControl
+              property="textAlign"
+              label="Alignment"
+              value={alignmentScope?.effectiveValue ?? stylesValue.textAlign}
+              binding={styleBinding('text-align')}
+              scope={alignmentScope}
+              device={device}
+              onRequest={onScopeRequest}
+            />
+          </span>
           <div className={styles.alignControl}>
             {[
               ['left', AlignLeft], ['center', AlignCenter], ['right', AlignRight], ['justify', AlignJustify],
             ].map(([value, Icon]) => (
-              <button key={value} type="button" aria-label={`Align ${value}`} aria-pressed={stylesValue.textAlign === value} onClick={() => onStyle('text-align', value, stylesValue.textAlign)}><Icon /></button>
+              <button
+                key={value}
+                type="button"
+                aria-label={`Align ${value}`}
+                aria-pressed={(alignmentScope?.effectiveValue ?? stylesValue.textAlign) === value}
+                disabled={alignmentScope?.mode === 'computed'}
+                onClick={() => onStyle('text-align', value, stylesValue.textAlign)}
+              ><Icon /></button>
             ))}
           </div>
-        </div>
+        </div>}
         <div className={styles.controlGrid}>
-          <SelectField label="Case" value={stylesValue.textTransform || 'none'} onCommit={(value) => onStyle('text-transform', value, stylesValue.textTransform)}>
+          <SelectField
+            label="Case"
+            value={stylesValue.textTransform || 'none'}
+            {...scopeProps('textTransform', stylesValue.textTransform || 'none', styleBinding('text-transform'))}
+            onCommit={(value) => onStyle('text-transform', value, stylesValue.textTransform)}
+          >
             <option value="none">Original</option><option value="uppercase">Uppercase</option><option value="lowercase">Lowercase</option><option value="capitalize">Title case</option>
           </SelectField>
-          <SelectField label="Style" value={stylesValue.fontStyle || 'normal'} onCommit={(value) => onStyle('font-style', value, stylesValue.fontStyle)}>
+          <SelectField
+            label="Style"
+            value={stylesValue.fontStyle || 'normal'}
+            {...scopeProps('fontStyle', stylesValue.fontStyle || 'normal', styleBinding('font-style'))}
+            onCommit={(value) => onStyle('font-style', value, stylesValue.fontStyle)}
+          >
             <option value="normal">Normal</option><option value="italic">Italic</option><option value="oblique">Oblique</option>
           </SelectField>
         </div>

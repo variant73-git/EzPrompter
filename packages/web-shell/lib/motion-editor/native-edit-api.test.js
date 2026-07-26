@@ -138,6 +138,35 @@ describe('native edit API adapter', () => {
     expect(adapter.getState()).toMatchObject({ revision: 1, pending: false, status: 'saved' });
   });
 
+  it('persists the responsive manifest beside acknowledged transactions', async () => {
+    const saved = transaction('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    const responsiveManifest = {
+      schemaVersion: 1,
+      properties: {
+        'hero:opacity': {
+          mode: 'per-device',
+          sharedValue: '1',
+          overrides: { desktop: '0.6' },
+          provenance: 'inferred',
+          binding: { elementId: 'hero', kind: 'style', property: 'opacity' },
+        },
+      },
+    };
+    const fetcher = vi.fn(async (_url, options) => {
+      if (options.method === 'POST') return response(openedSession());
+      const body = JSON.parse(options.body);
+      expect(body.draftManifest.responsiveManifest).toEqual(responsiveManifest);
+      return response({ session: { ...openedSession().session, revision: 1, draftManifest: body.draftManifest } });
+    });
+    const adapter = createNativeEditApi({ nodeId: NODE_ID, fetcher });
+    await adapter.load();
+
+    await adapter.save({ transactions: [saved], responsiveManifest });
+    await adapter.flush();
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('serializes writes made during an in-flight autosave so stale responses cannot win', async () => {
     const first = transaction('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     const second = transaction('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '0.25');

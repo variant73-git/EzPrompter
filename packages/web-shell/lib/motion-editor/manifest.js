@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
+import { parseResponsiveManifest as parseResponsiveStateManifest } from './responsive-manifest.js';
 
 export const MOTION_MANIFEST_SCHEMA_VERSION = 2;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
-const PATCH_KINDS = new Set(['style', 'text', 'attribute', 'svg', 'motion']);
+const PATCH_KINDS = new Set(['style', 'text', 'attribute', 'svg', 'motion', 'responsive']);
 const TRANSACTION_SOURCES = new Set(['properties', 'motion', 'code', 'custom-control', 'responsive']);
 const CONTROL_TYPES = new Set(['slider', 'number', 'toggle', 'select', 'segmented', 'color', 'text']);
 const ADAPTER_KINDS = new Set(['declarative', 'custom']);
@@ -74,6 +75,32 @@ function parsePatchValue(value, label) {
   return cloneJson(value, label);
 }
 
+function parseResponsiveEntry(value, propertyKey, label) {
+  if (value == null) return null;
+  return parseResponsiveStateManifest({
+    schemaVersion: 1,
+    properties: { [propertyKey]: value },
+  }).properties[propertyKey];
+}
+
+function parseResponsiveMetadata(input) {
+  if (!isPlainObject(input)) fail('patch responsive metadata must be an object');
+  if (typeof input.propertyKey !== 'string' || !input.propertyKey.trim()) {
+    fail('patch responsive metadata requires a propertyKey');
+  }
+  if (!['shared', 'per-device'].includes(input.mode)) fail('patch responsive metadata has an unsupported mode');
+  if (input.mode === 'per-device' && !['desktop', 'tablet', 'mobile'].includes(input.deviceId)) {
+    fail('patch responsive metadata requires a supported device');
+  }
+  return {
+    propertyKey: input.propertyKey,
+    mode: input.mode,
+    deviceId: input.mode === 'per-device' ? input.deviceId : null,
+    beforeEntry: parseResponsiveEntry(input.beforeEntry, input.propertyKey, 'patch responsive beforeEntry'),
+    afterEntry: parseResponsiveEntry(input.afterEntry, input.propertyKey, 'patch responsive afterEntry'),
+  };
+}
+
 function parsePatch(input, { legacyIndex = null } = {}) {
   if (!isPlainObject(input)) fail('patches must be objects');
   if (!PATCH_KINDS.has(input.kind)) fail(`unsupported patch kind ${String(input.kind)}`);
@@ -101,8 +128,12 @@ function parsePatch(input, { legacyIndex = null } = {}) {
     kind: input.kind,
     property: propertyOptional ? null : input.property,
     motionId: input.kind === 'motion' ? input.motionId : null,
-    before: parsePatchValue(input.before ?? '', 'patch before'),
-    value: parsePatchValue(input.value ?? '', 'patch value'),
+    before: input.kind === 'responsive'
+      ? parseResponsiveEntry(input.before, input.property, 'patch responsive before')
+      : parsePatchValue(input.before ?? '', 'patch before'),
+    value: input.kind === 'responsive'
+      ? parseResponsiveEntry(input.value, input.property, 'patch responsive value')
+      : parsePatchValue(input.value ?? '', 'patch value'),
     createdAt,
   };
   if (input.groupId != null) {
@@ -113,6 +144,7 @@ function parsePatch(input, { legacyIndex = null } = {}) {
     if (!isPlainObject(input.layoutIntent)) fail('patch layoutIntent must be an object');
     patch.layoutIntent = cloneJson(input.layoutIntent, 'patch layoutIntent');
   }
+  if (input.responsive != null) patch.responsive = parseResponsiveMetadata(input.responsive);
   return patch;
 }
 
@@ -133,12 +165,6 @@ function parseControlManifest(input, runtimeFingerprint) {
     if (!CONTROL_STATUSES.has(control.status)) fail(`unsupported control status ${String(control.status)}`);
   }
   return cloneJson(input, 'controlManifest');
-}
-
-function parseResponsiveManifest(input) {
-  if (input == null) return {};
-  if (!isPlainObject(input)) fail('responsiveManifest must be an object');
-  return cloneJson(input, 'responsiveManifest');
 }
 
 function parseTransaction(input) {
@@ -206,7 +232,7 @@ function adaptVersionOne(input, options) {
     baseBundleId,
     transactions,
     controlManifest: parseControlManifest(legacy.controlManifest ?? {}, runtimeFingerprint),
-    responsiveManifest: parseResponsiveManifest(legacy.responsiveManifest ?? {}),
+    responsiveManifest: parseResponsiveStateManifest(legacy.responsiveManifest ?? {}),
     runtimeFingerprint,
   };
 }
@@ -242,7 +268,7 @@ export function parseMotionManifest(input, options = {}) {
     baseBundleId,
     transactions: manifest.transactions.map(parseTransaction),
     controlManifest: parseControlManifest(manifest.controlManifest, runtimeFingerprint),
-    responsiveManifest: parseResponsiveManifest(manifest.responsiveManifest),
+    responsiveManifest: parseResponsiveStateManifest(manifest.responsiveManifest),
     runtimeFingerprint,
   };
 }

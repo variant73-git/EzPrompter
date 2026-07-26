@@ -626,4 +626,141 @@ describe('useNativeMotionController', () => {
     });
     expect(result.current.ownershipConflict).toBeNull();
   });
+
+  it('loads sparse responsive overrides and remeasures settlement when the active device changes', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const propertyKey = 'hero:opacity';
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({
+        manifest: {
+          responsiveManifest: {
+            schemaVersion: 1,
+            properties: {
+              [propertyKey]: {
+                mode: 'per-device',
+                sharedValue: '1',
+                overrides: { desktop: '0.6' },
+                provenance: 'inferred',
+                binding: { elementId: 'hero', kind: 'style', property: 'opacity' },
+              },
+            },
+          },
+        },
+        transactions: [],
+      })),
+      save: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'selection-changed',
+        payload: { element: { id: 'hero', label: 'Hero', styles: { opacity: '0.6' }, motion: [] } },
+      },
+    })));
+
+    expect(result.current.responsiveScopeFor('opacity', '0.6')).toMatchObject({
+      propertyKey,
+      mode: 'per-device',
+      effectiveValue: '0.6',
+    });
+    frame.contentWindow.postMessage.mockClear();
+    act(() => result.current.commands.changeDevice('mobile'));
+    expect(result.current.responsiveScopeFor('opacity', '0.6')).toMatchObject({
+      mode: 'per-device',
+      effectiveValue: '1',
+    });
+    await waitFor(() => expect(frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .some((message) => message.type === 'select-element' && message.payload.elementId === 'hero')).toBe(true));
+    expect(result.current.historyCount).toBe(0);
+  });
+
+  it('records unlink, reconnect, and device-only values in the same history and flushes scope changes', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ manifest: { responsiveManifest: {} }, transactions: [] })),
+      save: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'selection-changed',
+        payload: { element: { id: 'hero', label: 'Hero', styles: { opacity: '1' }, motion: [] } },
+      },
+    })));
+    persistenceAdapter.save.mockClear();
+
+    const trigger = document.createElement('button');
+    act(() => result.current.commands.requestResponsiveScopeChange({
+      action: 'unlink',
+      property: 'opacity',
+      label: 'Opacity',
+      visibleValue: '1',
+      binding: { elementId: 'hero', kind: 'style', property: 'opacity' },
+      trigger,
+    }));
+    expect(result.current.pendingResponsiveScopeChange).toMatchObject({ property: 'opacity', deviceId: 'desktop' });
+    await act(async () => result.current.commands.confirmResponsiveScopeChange());
+
+    expect(result.current.responsiveScopeFor('opacity', '1')).toMatchObject({
+      mode: 'per-device',
+      effectiveValue: '1',
+    });
+    expect(result.current.historyCount).toBe(1);
+    expect(result.current.canUndo).toBe(true);
+    expect(persistenceAdapter.save.mock.calls.at(-1)[0]).toMatchObject({
+      transactions: [expect.objectContaining({ source: 'responsive' })],
+      responsiveManifest: expect.objectContaining({ schemaVersion: 1 }),
+    });
+    expect(persistenceAdapter.flush).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.commands.applyStyle('opacity', '0.5', '1'));
+    await waitFor(() => expect(result.current.responsiveScopeFor('opacity', '1')).toMatchObject({
+      mode: 'per-device',
+      effectiveValue: '0.5',
+    }));
+    expect(result.current.historyPatches.at(-1)).toMatchObject({
+      responsive: { mode: 'per-device', deviceId: 'desktop' },
+    });
+
+    await act(async () => result.current.commands.requestResponsiveScopeChange({
+      action: 'reconnect',
+      property: 'opacity',
+      label: 'Opacity',
+      visibleValue: '0.5',
+      binding: { elementId: 'hero', kind: 'style', property: 'opacity' },
+      trigger,
+    }));
+    expect(result.current.pendingResponsiveScopeChange).toBeNull();
+    expect(result.current.responsiveScopeFor('opacity', '0.5')).toMatchObject({
+      mode: 'shared',
+      effectiveValue: '0.5',
+      overrides: {},
+    });
+    expect(result.current.historyCount).toBe(3);
+    expect(persistenceAdapter.flush).toHaveBeenCalledTimes(2);
+
+    act(() => result.current.commands.undo());
+    expect(result.current.responsiveScopeFor('opacity', '0.5').mode).toBe('per-device');
+    expect(result.current.historyCount).toBe(2);
+  });
 });

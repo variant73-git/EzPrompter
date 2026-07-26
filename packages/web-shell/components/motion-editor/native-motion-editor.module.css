@@ -1463,6 +1463,13 @@
   white-space: nowrap;
 }
 
+.controlLabelText {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .fieldKeyframe {
   width: 8px;
   height: 8px;
