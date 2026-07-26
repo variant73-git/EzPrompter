@@ -1827,19 +1827,39 @@
 
 .assetList article {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   min-width: 0;
   min-height: 49px;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   padding: 4px;
   border-radius: 7px;
-  cursor: pointer;
   transition: background-color 140ms ease;
 }
 
 .assetList article:hover {
   background: var(--motion-hover);
+}
+
+.assetSelect {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assetSelect:focus-visible {
+  border-radius: 6px;
+  outline: 2px solid var(--motion-accent);
+  outline-offset: 1px;
 }
 
 .assetThumb {

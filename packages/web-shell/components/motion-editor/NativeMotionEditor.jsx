@@ -355,7 +355,7 @@ function InspectorEmpty() {
   );
 }
 
-function PropertiesPanel({ selected, runtime, activeMotion, timelineOffset, onStyle, onText, onAttribute }) {
+export function PropertiesPanel({ selected, runtime, activeMotion, timelineOffset, onStyle, onText, onAttribute }) {
   if (!selected) return <DocumentProperties runtime={runtime} />;
   const stylesValue = selected.styles || {};
   const canEditText = selected.canEditText !== false && !['img', 'video', 'canvas', 'svg', 'section'].includes(selected.tag);
@@ -1666,7 +1666,7 @@ function assetPreview(asset) {
   return '';
 }
 
-function AssetsPanel({ assets, onSelect, onReplace }) {
+export function AssetsPanel({ assets, onSelect, onReplace }) {
   const [query, setQuery] = useState('');
   const filtered = assets.filter((asset) => `${asset.label} ${asset.kind}`.toLowerCase().includes(query.toLowerCase()));
   return (
@@ -1677,12 +1677,14 @@ function AssetsPanel({ assets, onSelect, onReplace }) {
         {filtered.map((asset, index) => {
           const preview = assetPreview(asset);
           return (
-            <article key={`${asset.elementId}:${asset.kind}:${index}`} onClick={() => onSelect(asset.elementId)}>
-              <div className={styles.assetThumb}>
-                {preview ? <img src={preview} alt="" /> : asset.kind === 'video' ? <Film /> : <ImageIcon />}
-                <span>{asset.kind}</span>
-              </div>
-              <div className={styles.assetMeta}><strong>{asset.label}</strong><small>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : asset.kind}</small></div>
+            <article key={`${asset.elementId}:${asset.kind}:${index}`}>
+              <button type="button" className={styles.assetSelect} onClick={() => onSelect(asset.elementId)}>
+                <span className={styles.assetThumb}>
+                  {preview ? <img src={preview} alt="" /> : asset.kind === 'video' ? <Film /> : <ImageIcon />}
+                  <span>{asset.kind}</span>
+                </span>
+                <span className={styles.assetMeta}><strong>{asset.label}</strong><small>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : asset.kind}</small></span>
+              </button>
               <label className={styles.assetReplace} title={`Replace ${asset.label}`} onClick={(event) => event.stopPropagation()}>
                 <Upload />
                 <input
@@ -1703,7 +1705,7 @@ function AssetsPanel({ assets, onSelect, onReplace }) {
   );
 }
 
-function CodePanel({ selected }) {
+export function CodePanel({ selected }) {
   if (!selected) return <InspectorEmpty />;
   return (
     <div className={styles.panelBody}>

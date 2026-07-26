@@ -119,6 +119,12 @@ describe('useNativeMotionController', () => {
     act(() => result.current.commands.redo());
     expect(result.current.historyCount).toBe(1);
     expect(result.current.canRedo).toBe(false);
+
+    act(() => result.current.commands.resetSession());
+    expect(result.current.status).toBe('loading');
+    expect(result.current.selected).toBeNull();
+    expect(result.current.viewportRows).toEqual([]);
+    expect(result.current.historyCount).toBe(0);
   });
 
   it('uses a caller-supplied persistence adapter and keeps localStorage inside the lab adapter', async () => {

@@ -22,6 +22,11 @@ import Minimap from './Minimap.jsx';
 import CanvasSidebar from './CanvasSidebar.jsx';
 import CanvasTools from './CanvasTools.jsx';
 import CanvasInspector from './CanvasInspector.jsx';
+import {
+  NativeMotionEditSessionProvider,
+  NativeMotionEditTopbarControls,
+  nativeMotionEditShellLayout,
+} from './motion-editor/NativeMotionEditChrome.jsx';
 import ChallengeModal from './ChallengeModal.jsx';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
@@ -4291,7 +4296,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
   function editFrameReserves(node) {
     if (editorKindForNode(node) === NODE_EDITOR_KIND.NATIVE) {
-      return { left: 0, right: 0 };
+      return nativeMotionEditShellLayout(window.innerWidth);
     }
     const layersEl = document.getElementById('rb-editor-layers');
     const inspectorEl = document.getElementById('rb-editor-inspector');
@@ -4311,6 +4316,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       viewportHeight: window.innerHeight,
       leftReserve: reserves.left,
       rightReserve: reserves.right,
+      bottom: reserves.bottom ?? 18,
     });
   }
 
@@ -5864,7 +5870,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     cancelNodeRemoval,
   };
 
+  const nativeEditing = Boolean(
+    editingNode && editorKindForNode(editingNode) === NODE_EDITOR_KIND.NATIVE
+  );
+
   return (
+    <NativeMotionEditSessionProvider
+      active={nativeEditing}
+      nodeId={nativeEditing ? editingNode.id : null}
+    >
     <div
       className={`canvas-shell${removingOutside ? ' removing-outside' : ''}`}
       onMouseDown={maybeStartMarquee}
@@ -5959,6 +5973,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               ))}
             </div>
             <div className="canvas-edit-actions">
+              {nativeEditing && <NativeMotionEditTopbarControls />}
               <button type="button" className="canvas-edit-cancel" onClick={() => sendEditorAction('cancel')} disabled={editorActionBusy}>
                 <X aria-hidden="true" />
                 Cancel
@@ -6892,6 +6907,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         />
       )}
     </div>
+    </NativeMotionEditSessionProvider>
   );
 }
 

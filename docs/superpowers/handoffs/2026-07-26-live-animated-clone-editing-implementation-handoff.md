@@ -1,7 +1,7 @@
 # Handoff — Live Animated Clone Editing
 
 **Data:** 2026-07-26
-**Status:** Tasks 1–6 concluídas e verificadas; Task 7 não iniciada
+**Status:** Tasks 1–7 concluídas e verificadas; Task 8 não iniciada
 **Checkout:** `/Users/adilsonporto/Desktop/IA/Uncraft`
 **Branch:** `codex/live-animated-clone-editing`
 **Base:** `main` em `ec297fffd8303e512c8ce3a910930cc2d51b3635`
@@ -615,16 +615,117 @@ feature flag ativa; o smoke em browser com um node nativo persistido continua
 dependente de um ambiente com `UNCRAFT_RUNTIME_SESSION_SECRET`,
 `UNCRAFT_RUNTIME_ORIGIN` e `UNCRAFT_NATIVE_BUNDLE_STORE_ROOT`.
 
+## Task 7 — shell nativo de edição no canvas
+
+### Resultado
+
+O canvas agora monta o chrome de edição aprovado no application layer e o
+viewport, os painéis e a timeline consomem uma única instância do controller
+compartilhado. O lab isolado continua com o mesmo controller e mantém sua
+persistência local própria.
+
+Novos arquivos:
+
+- `packages/web-shell/components/motion-editor/NativeEditSidebar.jsx`
+- `packages/web-shell/components/motion-editor/NativeEditSidebar.test.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionInspector.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionInspector.test.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionTimelineDock.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionTimelineDock.test.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditChrome.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditChrome.test.jsx`
+- `packages/web-shell/components/motion-editor/native-motion-canvas.module.css`
+
+Arquivos modificados:
+
+- `packages/web-shell/components/CanvasClient.jsx`
+- `packages/web-shell/components/motion-editor/NativeEditViewport.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditor.jsx`
+- `packages/web-shell/components/motion-editor/native-motion-editor.module.css`
+- `packages/web-shell/components/motion-editor/useNativeMotionController.js`
+- `packages/web-shell/components/motion-editor/useNativeMotionController.test.jsx`
+- `packages/web-shell/app/globals.css`
+
+### Contrato entregue
+
+- `NativeMotionEditSessionProvider` vive no nível do canvas, cria uma única
+  sessão de controller e a compartilha por contexto com o viewport e o chrome.
+  `NativeEditViewport` mantém um fallback standalone para seus testes e usos
+  isolados, mas não cria um segundo controller quando está dentro do canvas.
+- A sidebar esquerda oferece `Layers`, `Sections` e `Assets`. Layers/Sections
+  selecionam por stable element ID através do bridge; Assets reutiliza o painel
+  do lab e ficou navegável por teclado.
+- O inspector direito oferece somente `Properties`, `Motion` e `Code`; Assets
+  não foi reintroduzido como quarta aba direita.
+- A timeline reutiliza `TimelinePanel`, aparece somente quando a seleção ou a
+  página expõe motion e fica dockada abaixo da região central, entre os dois
+  painéis. O resize vertical do lab não é exposto no dock do canvas para evitar
+  que a timeline invada o viewport reservado.
+- O topbar contextual conserva Cancel, Done e device controls e agora inclui
+  Undo/Redo ligados ao mesmo controller. Nenhuma ação da Task 8 foi simulada.
+- Painéis ficam fora do mundo transformado e do iframe. O clone continua
+  rolando dentro do viewport; CSS do app não atravessa o sandbox.
+- O framing reserva left/right/bottom de forma responsiva: `224/248/200` em
+  hosts largos, `176/224/200` abaixo de 900 px e rail esquerdo de 52 px abaixo
+  de 720 px. Controles essenciais do topbar permanecem alcançáveis em hosts
+  estreitos.
+- Tabs, tabpanels, toolbar, timeline region, foco visível e estados vazios têm
+  semântica acessível. O chrome nativo só monta para um editor elegível;
+  repouso e editores legados continuam no inspector anterior.
+- A saída limpa runtime, seleção, timeline e histórico efêmero do controller,
+  impedindo estado de um node de aparecer na sessão nativa seguinte.
+- Persistência, autosave, commit, restore e discard server-side permanecem
+  exclusivamente na Task 8. O lab continua usando `localStorage`; o canvas não
+  ganhou fallback de persistência local.
+
+### Evidência tests-first e exit gate
+
+Os três testes de superfície falharam primeiro porque sidebar, inspector e
+timeline dock ainda não existiam. Depois da implementação:
+
+```text
+Suíte focal: 11 files, 70 tests passed
+Suíte completa: 146 files passed, 1 skipped; 1048 tests passed, 4 skipped
+Build com NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT=true:
+Next.js 15.5.15; compiled; 41/41 static pages; exit 0
+git diff --check: clean
+```
+
+O warning não bloqueante já conhecido de `--localstorage-file` permaneceu na
+suíte completa.
+
+### Verificação visual e limite operacional
+
+- `/motion-editor` foi aberto com o bundle real `Clone/dist`: rota e assets
+  retornaram HTTP 200, o runtime conectou, os painéis/timeline renderizaram com
+  a hierarquia esperada e não houve erro ou warning no console do browser.
+- O smoke do shell dentro de `/canvas` não pôde alcançar um board neste
+  ambiente porque o banco apontado por `.env.local` ainda não possui a coluna
+  `native_bundle_id` criada pela migration da Task 2. O erro foi observado antes
+  de qualquer interação do shell. A migration não foi aplicada automaticamente
+  e nenhum dado externo foi alterado.
+- Mesmo após a migration, o smoke completo de um node nativo persistido continua
+  exigindo a configuração conjunta já registrada na Task 6:
+  `UNCRAFT_RUNTIME_SESSION_SECRET`, `UNCRAFT_RUNTIME_ORIGIN` e
+  `UNCRAFT_NATIVE_BUNDLE_STORE_ROOT`.
+
+### Rollback da Task 7
+
+Remover o provider/chrome nativo do `CanvasClient`, devolver ao viewport seu
+controller standalone, restaurar reservas nativas a zero e remover os quatro
+componentes de shell e seus estilos. Não há migration, bundle, manifest ou
+sessão durável da Task 7 para reverter.
+
 ## Estado e rollback da fatia
 
-- Tasks 1–6 estão concluídas; Task 7 não foi iniciada.
+- Tasks 1–7 estão concluídas; Task 8 não foi iniciada.
 - A primeira fatia recomendada do PR (`Bundle contract and persistence schema`,
   Tasks 1–2) permanece íntegra. Tasks 3–4 completam a segunda fatia sem iniciar
   integração com o canvas.
 - Task 5 fecha a terceira fatia recomendada (`Shared controller extraction`).
-- Task 6 inicia a quarta fatia (`Canvas M1 vertical slice`) somente no boundary
-  de routing/viewport. O lab e o canvas agora consomem o mesmo controller;
-  `CanvasEditorCore` permanece exclusivo do branch legado.
+- Tasks 6–7 completam a quarta fatia (`Canvas M1 vertical slice`): o lab e o
+  canvas consomem o mesmo controller, o shell nativo vive no application layer
+  e `CanvasEditorCore` permanece exclusivo do branch legado.
 - Nenhum arquivo do worktree Demarcelizer ou material não relacionado foi
   alterado.
 - Rollback da Task 2 é manual e não destrutivo: parar tráfego nativo, preservar
@@ -646,10 +747,13 @@ dependente de um ambiente com `UNCRAFT_RUNTIME_SESSION_SECRET`,
   remover o resolver/viewport e as aliases nativas das queries, e restaurar o
   framing único anterior. Bundles, snapshots, manifests e sessões existentes
   permanecem intactos.
+- Rollback da Task 7: remover provider/chrome nativo, devolver ao viewport seu
+  controller standalone e zerar as reservas de framing. Não há estado durável
+  novo para reverter.
 
 ## Próxima fatia
 
-Parar no checkpoint antes da Task 7. A próxima etapa adiciona somente o shell
-nativo de edição: sidebar esquerda, inspector `Properties`/`Motion`/`Code`,
-timeline dock e chrome contextual ligados ao controller compartilhado. Não
-iniciar persistência/autosave da Task 8 dentro dessa mudança.
+Parar no checkpoint antes da Task 8. A próxima etapa implementa o adapter de
+persistência server-backed do controller, draft autosave, commit, restore,
+discard e undo/redo de sessão conforme o plano. Não iniciar freeze/settlement
+da Task 9 dentro dessa mudança.

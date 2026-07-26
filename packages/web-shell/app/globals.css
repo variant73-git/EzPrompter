@@ -8767,6 +8767,22 @@ body.rb-ed-active.rb-ed-canvas .canvas-inspector { display: none; }
 .canvas-edit-done { background: #F0EFE9; color: #20201E; }
 .canvas-edit-done:hover:not(:disabled) { background: #FFFFFF; }
 
+@media (max-width: 899px) {
+  body.native-motion-editing .canvas-edit-context { display: none; }
+}
+
+@media (max-width: 719px) {
+  body.native-motion-editing .canvas-edit-actions button {
+    width: 30px;
+    padding: 0;
+    overflow: hidden;
+    color: transparent;
+    gap: 0;
+  }
+  body.native-motion-editing .canvas-edit-actions button svg { color: var(--text-secondary); }
+  body.native-motion-editing .canvas-edit-actions .canvas-edit-done svg { color: #20201E; }
+}
+
 /* The actual account component lives at the foot of the editor's layers
    panel. It stays present as a compact avatar when that panel is collapsed. */
 .canvas-editor-user {

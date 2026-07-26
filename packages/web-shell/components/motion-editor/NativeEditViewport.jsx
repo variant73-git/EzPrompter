@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { getMotionEditorDevice } from '../../lib/motion-editor/devices.js';
+import { useNativeMotionEditSession } from './NativeMotionEditChrome.jsx';
 import { useNativeMotionController } from './useNativeMotionController.js';
 
 const EMPTY_PERSISTENCE = Object.freeze({
@@ -12,11 +13,12 @@ const EMPTY_PERSISTENCE = Object.freeze({
 const LOADING_COPY = 'Please wait — it’ll be worth the wait.';
 const UNAVAILABLE_COPY = "This website couldn't be opened for editing.";
 
-export default function NativeEditViewport({
+function NativeEditViewportRuntime({
   nodeId,
   deviceId = 'desktop',
   onBusyChange,
   onUnavailable,
+  controller,
 }) {
   const device = getMotionEditorDevice(deviceId);
   const [runtimeUrl, setRuntimeUrl] = useState(null);
@@ -27,9 +29,6 @@ export default function NativeEditViewport({
   unavailableRef.current = onUnavailable;
   busyRef.current = onBusyChange;
 
-  const controller = useNativeMotionController({
-    persistenceAdapter: EMPTY_PERSISTENCE,
-  });
   const { iframeRef, status, commands } = controller;
 
   function reportUnavailable(code) {
@@ -55,6 +54,8 @@ export default function NativeEditViewport({
     const abortController = new AbortController();
     let active = true;
     unavailableReportedRef.current = false;
+    commands.resetSession?.();
+    commands.changeDevice(device.id);
     setLoadState('loading');
     setRuntimeUrl(null);
     busyRef.current?.(true);
@@ -153,4 +154,19 @@ export default function NativeEditViewport({
       )}
     </div>
   );
+}
+
+function StandaloneNativeEditViewport(props) {
+  const controller = useNativeMotionController({
+    persistenceAdapter: EMPTY_PERSISTENCE,
+  });
+  return <NativeEditViewportRuntime {...props} controller={controller} />;
+}
+
+export default function NativeEditViewport(props) {
+  const session = useNativeMotionEditSession();
+  if (session?.controller) {
+    return <NativeEditViewportRuntime {...props} controller={session.controller} />;
+  }
+  return <StandaloneNativeEditViewport {...props} />;
 }

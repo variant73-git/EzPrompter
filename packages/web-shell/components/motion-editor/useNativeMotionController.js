@@ -740,7 +740,33 @@ export function useNativeMotionController({
     }));
   }
 
+  function resetSession() {
+    if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
+    heartbeatTimeoutRef.current = null;
+    runtimeContextRef.current = null;
+    transactionLedgerRef.current = createTransactionLedger();
+    lastAutoExpandedRef.current = null;
+    setStatus('loading');
+    setRuntime(null);
+    setMode('edit');
+    setTool('select');
+    setSelected(null);
+    setViewportRows([]);
+    setViewportPage(null);
+    updateHistory(createSessionHistory());
+    setSpeed(1);
+    setSaveState('idle');
+    setPatchError(null);
+    setPendingTransactions(0);
+    setActiveMotionId(null);
+    setTimelineState({ currentTime: 0, duration: 1000, playState: 'idle' });
+    setAutoKeyframe(false);
+    setSelectedKeyframe(null);
+    setMotionDetail({});
+  }
+
   const commands = {
+    resetSession,
     changeMode: (nextMode) => setMode(nextMode),
     changeTool: (nextTool) => setTool(nextTool),
     changeDevice: (nextDevice) => setDeviceId(getMotionEditorDevice(nextDevice).id),
