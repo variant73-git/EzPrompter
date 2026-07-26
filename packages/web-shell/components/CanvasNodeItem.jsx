@@ -19,7 +19,7 @@ import CanvasNode from './CanvasNode.jsx';
 // breaks memoization. Never pass a raw CanvasClient function directly.
 function CanvasNodeItem({
   node, scale, debit, incomingEdges, hasOutgoingEdges, selected, livePreviewActive, placing,
-  editing, runStatus, draftActive, removing, removingOutside, removeFromMenu,
+  editing, editorKind, runStatus, draftActive, removing, removingOutside, removeFromMenu,
   inSection, canRunFromHere, flowRunning, handlersRef,
 }) {
   const h = () => handlersRef.current;
@@ -34,6 +34,7 @@ function CanvasNodeItem({
       livePreviewActive={livePreviewActive}
       placing={placing}
       editing={editing}
+      editorKind={editorKind}
       runStatus={runStatus}
       draftActive={draftActive}
       removing={removing}
@@ -45,7 +46,7 @@ function CanvasNodeItem({
       onRunFromHere={() => h().runFromNode(node.id)}
       onStopFlow={() => h().stopFlowForNode(node.id)}
       getRunFromHereEst={() => h().getRunFromHereEst(node.id)}
-      onEditingChange={(willEdit) => h().handleEditingToggle(node.id, willEdit)}
+      onEditingChange={(willEdit, details) => h().handleEditingToggle(node.id, willEdit, details)}
       onSelect={(e) => h().handleNodeSelect(node, e)}
       onMove={(posX, posY) => h().handleNodeMove(node, posX, posY)}
       onMoveStart={() => h().handleNodeMoveStart(node)}

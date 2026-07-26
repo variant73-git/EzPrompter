@@ -45,6 +45,8 @@ describe('GET /api/nodes/[id]', () => {
       id: 'snap-1', html: '<html>full payload</html>',
       screenshot_url: 'https://example.com/shot.png',
       source: 'capture', created_at: '2026-06-19T00:00:00Z',
+      native_bundle_id: '33333333-3333-4333-8333-333333333333',
+      motion_manifest_version: 2,
     };
     sqlMock._results = [
       [nodeWithSnap], // ownedNode
@@ -58,6 +60,10 @@ describe('GET /api/nodes/[id]', () => {
     expect(body.snapshot).toBeTruthy();
     expect(body.snapshot.html).toBe('<html>full payload</html>');
     expect(body.snapshot.screenshot_url).toBe('https://example.com/shot.png');
+    expect(body.snapshot.native_bundle_id).toBe('33333333-3333-4333-8333-333333333333');
+    expect(body.snapshot.motion_manifest_version).toBe(2);
+    expect(sqlMock._templates[1]).toMatch(/native_bundle_id/);
+    expect(sqlMock._templates[1]).toMatch(/motion_manifest_version/);
   });
 
   it('?ready_check=1 returns { ready: true, snapshotId } when snapshot has html', async () => {

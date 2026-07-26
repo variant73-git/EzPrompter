@@ -3,6 +3,7 @@
 import { useRef, useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
+import NativeEditViewport from './motion-editor/NativeEditViewport.jsx';
 import { nodeOrigin } from '../lib/node-origin.js';
 import { NodeProgressRing, useGenerationProgress } from './NodeProgressRing.jsx';
 import { estimatedDurationMs } from '../lib/generation-progress.js';
@@ -14,7 +15,11 @@ import { api } from '../lib/canvas-api.js';
 import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
 import { createRafCoalescer } from '../lib/raf-coalesce.js';
 import { fetchThumb } from '../lib/thumb-queue.js';
-import { canExpandSiteViewport } from '../lib/node-viewport.js';
+import {
+  canExpandSiteViewport,
+  nativeEditDeviceForNode,
+} from '../lib/node-viewport.js';
+import { NODE_EDITOR_KIND } from '../lib/node-editor-kind.js';
 import { isLiveUrlReference, shouldMountLiveReference } from '../lib/url-reference.js';
 import { playfulLoadingMessage } from '../lib/loading-messages.js';
 
@@ -368,6 +373,7 @@ function ReplaceOverlay({ nodeId, onReplaceContent }) {
 
 export default function CanvasNode({
   node, selected, livePreviewActive = false, placing = false, editing = false, onEditingChange,
+  editorKind = NODE_EDITOR_KIND.LEGACY,
   onSelect, onMove, onMoveStart, onMoveEnd, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
   onDuplicate, onDownload, onAltDuplicateDrag,
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
@@ -396,7 +402,13 @@ export default function CanvasNode({
   const [restoringVersion, setRestoringVersion] = useState(false);
   const isSiteNode = node.kind === 'site' || node.kind === 'template' || node.kind === 'chunk';
   const liveUrlReference = isLiveUrlReference(node);
-  const expandableSiteViewport = !liveUrlReference && (node.kind !== 'site' || canExpandSiteViewport(node));
+  const nativeEditor = editorKind === NODE_EDITOR_KIND.NATIVE;
+  const nativeEditing = editing && nativeEditor;
+  const legacyEditing = editing && !nativeEditor;
+  const nativeDevice = nativeEditDeviceForNode(node);
+  const expandableSiteViewport = !nativeEditor
+    && !liveUrlReference
+    && (node.kind !== 'site' || canExpandSiteViewport(node));
   const isTempNode = String(node.id).startsWith('temp-');
 
   useEffect(() => {
@@ -491,6 +503,10 @@ export default function CanvasNode({
   // teardown is async (50ms StrictMode grace), so capturing first gives
   // us the user's edits while the iframe DOM is still authoritative.
   const saveAndExit = useCallback(async () => {
+    if (nativeEditor) {
+      onEditingChange?.(false);
+      return;
+    }
     if (!onSaveEdit || !iframeRef.current) {
       onEditingChange?.(false);
       return;
@@ -508,7 +524,7 @@ export default function CanvasNode({
     onEditingChange?.(false);
     // Editor unmounts asynchronously; clear the busy spinner once the
     // editing flag flips back via the parent prop.
-  }, [onEditingChange, onSaveEdit]);
+  }, [nativeEditor, onEditingChange, onSaveEdit]);
 
   // The canvas owns edit-mode chrome. Its fixed topbar forwards Done/Cancel
   // to the active node so saving still captures the live iframe before the
@@ -519,11 +535,14 @@ export default function CanvasNode({
     function handleEditorAction(event) {
       if (event.detail?.nodeId !== node.id || editorBusy) return;
       if (event.detail.action === 'save') void saveAndExit();
-      if (event.detail.action === 'cancel') setShowCancelPrompt(true);
+      if (event.detail.action === 'cancel') {
+        if (nativeEditor) onEditingChange?.(false);
+        else setShowCancelPrompt(true);
+      }
     }
     window.addEventListener('uncraft:editor-action', handleEditorAction);
     return () => window.removeEventListener('uncraft:editor-action', handleEditorAction);
-  }, [editing, editorBusy, node.id, saveAndExit]);
+  }, [editing, editorBusy, nativeEditor, node.id, onEditingChange, saveAndExit]);
 
   useEffect(() => {
     if (!editing) return undefined;
@@ -583,7 +602,7 @@ export default function CanvasNode({
   // The resting viewport is restored on exit so opening the editor does not
   // permanently turn a tidy canvas card into a multi-thousand-pixel column.
   useLayoutEffect(() => {
-    if (node.kind !== 'site' || !onResize || !expandableSiteViewport) return undefined;
+    if (nativeEditing || node.kind !== 'site' || !onResize || !expandableSiteViewport) return undefined;
 
     if (!editing) {
       const initial = editViewportRef.current;
@@ -629,12 +648,12 @@ export default function CanvasNode({
       } catch { /* same-origin iframe can still be briefly unavailable during reload */ }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [editing, expandableSiteViewport, node.height, node.kind, node.width, onResize]);
+  }, [editing, expandableSiteViewport, nativeEditing, node.height, node.kind, node.width, onResize]);
 
   // Prevent wide site internals from creating a second horizontal navigation
   // axis while editing. The temporary style is stripped from saved snapshots.
   useEffect(() => {
-    if (!editing || node.kind !== 'site') return undefined;
+    if (!legacyEditing || node.kind !== 'site') return undefined;
     const iframe = iframeRef.current;
     function lockOverflow() {
       try {
@@ -655,7 +674,7 @@ export default function CanvasNode({
       iframe?.removeEventListener('load', lockOverflow);
       try { iframe?.contentDocument?.getElementById('uncraft-edit-viewport-lock')?.remove(); } catch {}
     };
-  }, [editing, node.kind]);
+  }, [legacyEditing, node.kind]);
 
   // Expand toggle — grow the body to fit the full iframe content
   // (scrollWidth × scrollHeight) on first click, restore the
@@ -1020,7 +1039,15 @@ export default function CanvasNode({
   const renderPromptBody = node.kind === 'prompt';
   const renderSkillBody = node.kind === 'skill';
   const renderAssetBody = node.kind === 'asset' || node.kind === 'image';
-  const canEditSite = renderIframeBody && Boolean(html || liveUrlReference);
+  const canEditSite = renderIframeBody && Boolean(html || liveUrlReference || nativeEditor);
+  const openEditorTitle = nativeEditor
+    ? 'Open animated website editor'
+    : liveUrlReference
+      ? 'Clone this site and open the editor'
+      : 'Open editor (layers + inspector + guides)';
+  const cancelEditorTitle = nativeEditor
+    ? 'Exit edit mode'
+    : "Cancel — exit edit mode (you'll be asked to save)";
 
   // Floating tag title budget (2026-07-07): the label must never run under
   // the top-right actions cluster. Chrome is screen-constant while the node
@@ -1123,7 +1150,7 @@ export default function CanvasNode({
   // node gets a neutral frosted surface. The status line shows the real
   // request driving the run (run-flow plumbs runStatus.request) with honest
   // fallbacks to the operation label.
-  const hasContent = !!html || !!node.meta?.dataUrl;
+  const hasContent = !!html || !!node.meta?.dataUrl || nativeEditor;
   const loadingRequest = playfulLoadingMessage({
     nodeId: node.id,
     kind: node.kind,
@@ -1238,9 +1265,10 @@ export default function CanvasNode({
               onClick={(e) => {
                 e.stopPropagation();
                 if (editorBusy) return;
-                setShowCancelPrompt(true);
+                if (nativeEditor) onEditingChange?.(false);
+                else setShowCancelPrompt(true);
               }}
-              title="Cancel — exit edit mode (you'll be asked to save)"
+              title={cancelEditorTitle}
               aria-label="Cancel edit"
               disabled={editorBusy}
             >
@@ -1258,7 +1286,7 @@ export default function CanvasNode({
                 if (editing) saveAndExit();
                 else onEditingChange?.(true);
               }}
-              title={editing ? 'Save and exit edit mode' : liveUrlReference ? 'Clone this site and open the editor' : 'Open editor (layers + inspector + guides)'}
+              title={editing ? 'Save and exit edit mode' : openEditorTitle}
               disabled={editorBusy}
             >
               {editing ? <CheckIcon /> : <EditIcon />}
@@ -1321,16 +1349,17 @@ export default function CanvasNode({
             )}
           </div>
           <div className="topbar-actions">
-            {renderIframeBody && html && editing && (
+            {renderIframeBody && canEditSite && editing && (
               <button
                 className="btn-cancel"
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (editorBusy) return;
-                  setShowCancelPrompt(true);
+                  if (nativeEditor) onEditingChange?.(false);
+                  else setShowCancelPrompt(true);
                 }}
-                title="Cancel — exit edit mode (you'll be asked to save)"
+                title={cancelEditorTitle}
                 aria-label="Cancel edit"
                 disabled={editorBusy}
               >
@@ -1348,7 +1377,7 @@ export default function CanvasNode({
                   if (editing) saveAndExit();
                   else onEditingChange?.(true);
                 }}
-                title={editing ? 'Save and exit edit mode' : liveUrlReference ? 'Clone this site and open the editor' : 'Open editor (layers + inspector + guides)'}
+                title={editing ? 'Save and exit edit mode' : openEditorTitle}
                 disabled={editorBusy}
               >
                 {editing ? <CheckIcon /> : <EditIcon />}
@@ -1403,7 +1432,50 @@ export default function CanvasNode({
           <span>This website slipped away before the curtain call.</span>
         </div>
       ) : renderIframeBody ? (
-        liveUrlReference ? (
+        nativeEditing ? (
+          <div
+            className="cnode-body cnode-native-edit-body"
+            style={{ height: (node.height || nativeDevice.height) + 'px', overflow: 'hidden' }}
+          >
+            <NativeEditViewport
+              nodeId={node.id}
+              deviceId={nativeDevice.id}
+              onBusyChange={setEditorBusy}
+              onUnavailable={({ code }) => {
+                onEditingChange?.(false, {
+                  reason: 'runtime-unavailable',
+                  code,
+                });
+              }}
+            />
+          </div>
+        ) : nativeEditor ? (
+          <div
+            className="cnode-body cnode-native-resting"
+            onMouseDown={onBodyMouseDown}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              onFrameZoom?.();
+            }}
+            style={{ height: (node.height || nativeDevice.height) + 'px' }}
+          >
+            {node.current_screenshot ? (
+              <img
+                className="cnode-iframe cnode-thumb"
+                src={node.current_screenshot}
+                alt=""
+                draggable={false}
+                style={{ display: 'block', width: '100%', height: 'auto', pointerEvents: 'none' }}
+              />
+            ) : (
+              <div className="cnode-live-idle">
+                <GlobeIcon />
+                <strong>{node.meta?.name || title}</strong>
+                <span>Ready to edit</span>
+              </div>
+            )}
+          </div>
+        ) : liveUrlReference ? (
           <div
             className={`cnode-body cnode-live-reference${mountLiveReference ? ' is-active' : ''}`}
             onMouseDown={livePreviewActive ? undefined : onBodyMouseDown}
@@ -1770,7 +1842,7 @@ export default function CanvasNode({
           <span className="cnode-port-dot" aria-hidden="true" />
         </button>
       </>
-      {editing && iframeRef.current && (
+      {legacyEditing && iframeRef.current && (
         <CanvasEditorCore
           iframe={iframeRef.current}
           node={node}

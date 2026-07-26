@@ -1,7 +1,7 @@
 # Handoff — Live Animated Clone Editing
 
 **Data:** 2026-07-26
-**Status:** Tasks 1–5 concluídas e verificadas; Task 6 não iniciada
+**Status:** Tasks 1–6 concluídas e verificadas; Task 7 não iniciada
 **Checkout:** `/Users/adilsonporto/Desktop/IA/Uncraft`
 **Branch:** `codex/live-animated-clone-editing`
 **Base:** `main` em `ec297fffd8303e512c8ce3a910930cc2d51b3635`
@@ -526,15 +526,105 @@ browser console errors: 0
 O clone emitiu um warning GSAP sobre `force3D`; ele vem do bundle servido, não
 do controller, e não bloqueou runtime, interação ou build.
 
+## Task 6 — roteamento elegível e viewport nativo no canvas
+
+### Resultado
+
+O canvas agora resolve o editor por contrato de snapshot e monta o controller
+compartilhado em um viewport nativo fixo somente quando a feature flag e a
+metadata nativa validada estão presentes. Static e Iter9 continuam no caminho
+legado.
+
+Novos arquivos:
+
+- `packages/web-shell/lib/node-editor-kind.js`
+- `packages/web-shell/lib/node-editor-kind.test.js`
+- `packages/web-shell/components/motion-editor/NativeEditViewport.jsx`
+- `packages/web-shell/components/motion-editor/NativeEditViewport.test.jsx`
+- `packages/web-shell/components/CanvasNode.test.jsx`
+
+Arquivos modificados:
+
+- `packages/web-shell/components/CanvasClient.jsx`
+- `packages/web-shell/components/CanvasNodeItem.jsx`
+- `packages/web-shell/components/CanvasNode.jsx`
+- `packages/web-shell/app/canvas/[boardId]/page.jsx`
+- `packages/web-shell/app/api/boards/[id]/route.js`
+- `packages/web-shell/app/api/boards/[id]/route.test.js`
+- `packages/web-shell/app/api/nodes/[id]/route.js`
+- `packages/web-shell/app/api/nodes/[id]/route.test.js`
+- `packages/web-shell/lib/node-viewport.js`
+- `packages/web-shell/lib/node-viewport.test.js`
+- `packages/web-shell/.env.example`
+
+### Contrato entregue
+
+- `resolveNodeEditorKind(node, snapshot, flags)` é puro e só escolhe `native`
+  para site/template/chunk com bundle UUID válido, manifest v2 suportado e
+  `NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT` ativo.
+- `animatedDetected`, `animatedRuntime` ou metadata do node não substituem a
+  identidade do snapshot. Static, Iter9, manifest antigo e bundle inválido
+  continuam no editor legado.
+- A query inicial do board e os GETs de refresh carregam apenas bundle ID e
+  versão do manifest. O manifest completo continua fora do payload inicial.
+- A URL assinada é pedida somente ao abrir Edit. O iframe nativo usa
+  `allow-scripts allow-pointer-lock`, sem `allow-same-origin`, e mantém
+  `Referrer-Policy: no-referrer`.
+- `NativeEditViewport` usa o mesmo `useNativeMotionController` do lab. Não foi
+  criado fork de bridge, protocolo, seleção ou timeline.
+- Desktop `1280x800`, tablet `768x920` e mobile `390x844` vêm da configuração
+  compartilhada. O viewport temporário não persiste como geometria do node.
+- O framing nativo usa somente o retângulo fixo do device e não mede
+  `scrollHeight`. Até a Task 7 adicionar painéis nativos, ele ocupa a região
+  livre abaixo da topbar.
+- O estado de Edit já existente bloqueia pan do canvas; scroll permanece dentro
+  do iframe. Resize/Expand e `CanvasEditorCore` não montam no branch nativo.
+- Done, Cancel, falha de abertura, remoção do node, route change e runtime
+  unhealthy restauram a geometria e a câmera anteriores. Timers/RAFs tardios
+  são cancelados para não reenquadrar depois da saída.
+- Falha de runtime fecha automaticamente o estado parcial, mostra somente
+  `This website couldn't be opened for editing.` e emite um evento sanitizado
+  `uncraft:native-edit-unavailable`.
+- O node nativo em repouso usa o screenshot corrente quando disponível e uma
+  mensagem simples quando não há thumbnail.
+- Nenhum painel da Task 7 foi iniciado.
+
+### Evidência tests-first e exit gate
+
+Os testes novos falharam primeiro pela ausência do resolver, do viewport e dos
+helpers de framing. Depois da implementação:
+
+```text
+Suíte focal: 11 files, 77 tests passed
+Suíte completa: 142 files passed, 1 skipped; 1040 tests passed, 4 skipped
+Build com NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT=true:
+Next.js 15.5.15; compiled; 41/41 static pages; exit 0
+git diff --check: clean
+```
+
+O warning não bloqueante já conhecido de `--localstorage-file` permaneceu na
+suíte completa.
+
+### Limite operacional ainda não exercitado
+
+O checkout não possui a configuração conjunta do runtime assinado e do bundle
+store de desenvolvimento necessária para abrir um snapshot nativo real no
+board sem criar dados/credenciais artificiais. O fluxo foi verificado no
+boundary de componentes, controller e rotas, e o build foi compilado com a
+feature flag ativa; o smoke em browser com um node nativo persistido continua
+dependente de um ambiente com `UNCRAFT_RUNTIME_SESSION_SECRET`,
+`UNCRAFT_RUNTIME_ORIGIN` e `UNCRAFT_NATIVE_BUNDLE_STORE_ROOT`.
+
 ## Estado e rollback da fatia
 
-- Tasks 1–5 estão concluídas; Task 6 não foi iniciada.
+- Tasks 1–6 estão concluídas; Task 7 não foi iniciada.
 - A primeira fatia recomendada do PR (`Bundle contract and persistence schema`,
   Tasks 1–2) permanece íntegra. Tasks 3–4 completam a segunda fatia sem iniciar
   integração com o canvas.
-- Task 5 fecha a terceira fatia recomendada (`Shared controller extraction`). O
-  lab isolado continua sendo o único consumidor visual; nenhum arquivo de
-  `CanvasClient`, `CanvasNode` ou `CanvasEditorCore` foi alterado.
+- Task 5 fecha a terceira fatia recomendada (`Shared controller extraction`).
+- Task 6 inicia a quarta fatia (`Canvas M1 vertical slice`) somente no boundary
+  de routing/viewport. O lab e o canvas agora consomem o mesmo controller;
+  `CanvasEditorCore` permanece exclusivo do branch legado.
 - Nenhum arquivo do worktree Demarcelizer ou material não relacionado foi
   alterado.
 - Rollback da Task 2 é manual e não destrutivo: parar tráfego nativo, preservar
@@ -552,11 +642,14 @@ do controller, e não bloqueou runtime, interação ou build.
 - Rollback da Task 5: restaurar o controller embutido no lab, remover o hook e os
   módulos de session history/devices e devolver as dimensões antigas. Não há
   migration, bundle ou snapshot persistido para reverter.
+- Rollback da Task 6: deixar `NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT=false`,
+  remover o resolver/viewport e as aliases nativas das queries, e restaurar o
+  framing único anterior. Bundles, snapshots, manifests e sessões existentes
+  permanecem intactos.
 
 ## Próxima fatia
 
-Parar no checkpoint antes da Task 6. A próxima etapa adiciona a resolução pura
-de editor kind, `NativeEditViewport` e o roteamento elegível no boundary do
-canvas sob feature flag. Preservar o editor legado para static/Iter9, buscar a
-runtime URL curta somente ao abrir Edit e não iniciar ainda o shell de painéis
-da Task 7.
+Parar no checkpoint antes da Task 7. A próxima etapa adiciona somente o shell
+nativo de edição: sidebar esquerda, inspector `Properties`/`Motion`/`Code`,
+timeline dock e chrome contextual ligados ao controller compartilhado. Não
+iniciar persistência/autosave da Task 8 dentro dessa mudança.

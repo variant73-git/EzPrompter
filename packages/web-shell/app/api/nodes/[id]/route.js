@@ -48,7 +48,8 @@ export async function GET(request, { params }) {
   let snapshot = null;
   if (node.current_snapshot_id) {
     const [snap] = await sql`
-      SELECT id, html, screenshot_url, source, created_at
+      SELECT id, html, screenshot_url, source, created_at,
+             native_bundle_id, motion_manifest_version
         FROM snapshots WHERE id = ${node.current_snapshot_id}
     `;
     if (snap) snapshot = snap;
