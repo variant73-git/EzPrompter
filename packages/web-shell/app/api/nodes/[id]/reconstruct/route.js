@@ -56,7 +56,8 @@ export async function POST(request, { params }) {
 
   try {
     const result = await reconstructSiteNode({ sql, userId: user.id, node, reason: 'edit', idemKey });
-    return NextResponse.json({ ...result, snapshotSource: 'reconstruct', node: { id: node.id } });
+    const snapshotSource = result.kind === 'native' ? 'native-bundle' : 'reconstruct';
+    return NextResponse.json({ ...result, snapshotSource, node: { id: node.id } });
   } catch (e) {
     if (e instanceof InsufficientCreditsError) {
       return NextResponse.json({ error: 'insufficient_credits', estimate: e.estimate, balance: e.balance }, { status: 402 });

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { createMemoryBundleStore } from './native-clone/bundle-store.js';
 
 vi.mock('./reconstruct.js', () => ({
   reconstructPage: vi.fn(async () => ({ html: '<html>clone</html>', screenshotDataUrl: 'data:image/png;base64,X' })),
@@ -7,7 +8,11 @@ vi.mock('./billing/context.js', () => ({
   runBilledOperation: vi.fn(async (_opts, fn) => ({ result: await fn(), credits: 3, balanceAfter: 100 })),
 }));
 
-const { reconstructSiteNode } = await import('./deferred-reconstruction.js');
+const {
+  materializeReconstructionOutput,
+  normalizeReconstructionOutput,
+  reconstructSiteNode,
+} = await import('./deferred-reconstruction.js');
 
 // The helper RE-READS the current snapshot itself (never trusts the caller's
 // node fields — Codex #2), so the mock drives the guard via that SELECT.
@@ -70,5 +75,40 @@ describe('reconstructSiteNode — snapshot handling (item 3: no pre-clone histor
     const queries = sql._calls.map((c) => c.query);
     expect(queries.some((q) => /INSERT INTO snapshots/i.test(q))).toBe(true);
     expect(out.snapshotId).toBe('snap-new');
+  });
+});
+
+describe('deferred reconstruction result kinds', () => {
+  const runtimeHash = `sha256:${'a'.repeat(64)}`;
+
+  it('keeps the existing untagged HTML result on the Iter9 path', async () => {
+    const current = { html: '<html>iter9</html>', screenshotDataUrl: null };
+    expect(normalizeReconstructionOutput(current)).toEqual({ kind: 'iter9', output: current });
+    expect(await materializeReconstructionOutput(current)).toEqual({ kind: 'iter9', output: current });
+  });
+
+  it('registers an explicit native producer result through the bundle boundary', async () => {
+    const store = createMemoryBundleStore();
+    const materialized = await materializeReconstructionOutput({
+      kind: 'native',
+      bundle: {
+        entryPath: 'index.html',
+        runtimeFingerprint: runtimeHash,
+        assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+        reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+      },
+    }, { bundleStore: store });
+
+    expect(materialized.kind).toBe('native');
+    expect(materialized.bundleDescriptor.entryPath).toBe('index.html');
+    expect(await store.listIndexedAssets(materialized.bundleDescriptor)).toHaveLength(1);
+  });
+
+  it('does not promote animation detection or malformed native output', async () => {
+    expect(() => normalizeReconstructionOutput({ animatedDetected: true })).toThrow(/output/i);
+    expect(() => normalizeReconstructionOutput({ kind: 'native', animatedDetected: true })).toThrow(/bundle/i);
+    await expect(materializeReconstructionOutput({ kind: 'native', bundle: {} }, {
+      bundleStore: createMemoryBundleStore(),
+    })).rejects.toThrow();
   });
 });
