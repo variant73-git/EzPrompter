@@ -52,9 +52,14 @@ import {
   MOTION_EDITOR_DEVICES,
 } from '../../lib/motion-editor/devices.js';
 import {
+  decomposeTransform,
+  transformComponentValue,
+} from '../../lib/motion-editor/transform-components.js';
+import {
   createLocalMotionPersistenceAdapter,
   useNativeMotionController,
 } from './useNativeMotionController.js';
+import MotionOwnershipChoice from './MotionOwnershipChoice.jsx';
 import styles from './native-motion-editor.module.css';
 
 const SOURCE = '/api/native-clone/index.html';
@@ -207,10 +212,45 @@ function KeyframeMarker({ state }) {
   return <Diamond className={styles.fieldKeyframe} data-state={state} aria-label={state === 'current' ? 'Keyframe at current time' : 'Animated property'} />;
 }
 
-function Field({ label, defaultValue, suffix, onCommit, type = 'text', disabled = false, keyframeState = null }) {
+function OwnershipIndicator({ label, ownership, onOpen }) {
+  if (ownership?.status !== 'ambiguous') return null;
+  return (
+    <button
+      type="button"
+      className={styles.ownershipIndicator}
+      aria-label={`Choose controlling motion for ${label}`}
+      title="Multiple motions control this value"
+      onPointerDown={(event) => event.preventDefault()}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpen?.();
+      }}
+    >
+      <Link2 aria-hidden="true" />
+      <span>{ownership.candidates.length}</span>
+    </button>
+  );
+}
+
+function Field({
+  label,
+  defaultValue,
+  suffix,
+  onCommit,
+  type = 'text',
+  disabled = false,
+  keyframeState = null,
+  ownership = null,
+  onOwnershipOpen,
+}) {
   return (
     <label className={styles.field}>
-      <span className={styles.controlLabel}>{label}<KeyframeMarker state={keyframeState} /></span>
+      <span className={styles.controlLabel}>
+        {label}
+        <KeyframeMarker state={keyframeState} />
+        <OwnershipIndicator label={label} ownership={ownership} onOpen={onOwnershipOpen} />
+      </span>
       <span className={styles.fieldControl}>
         <input
           key={`${label}:${defaultValue}`}
@@ -256,11 +296,22 @@ function ToggleField({ label, checked, onCommit, disabled = false }) {
   );
 }
 
-function ColorField({ label, value, onCommit, keyframeState = null }) {
+function ColorField({
+  label,
+  value,
+  onCommit,
+  keyframeState = null,
+  ownership = null,
+  onOwnershipOpen,
+}) {
   const safeValue = /^#[0-9a-f]{6}$/i.test(value || '') ? value : '#292926';
   return (
     <label className={styles.field}>
-      <span className={styles.controlLabel}>{label}<KeyframeMarker state={keyframeState} /></span>
+      <span className={styles.controlLabel}>
+        {label}
+        <KeyframeMarker state={keyframeState} />
+        <OwnershipIndicator label={label} ownership={ownership} onOpen={onOwnershipOpen} />
+      </span>
       <span className={styles.colorControl}>
         <input
           key={`${label}:${safeValue}`}
@@ -355,11 +406,23 @@ function InspectorEmpty() {
   );
 }
 
-export function PropertiesPanel({ selected, runtime, activeMotion, timelineOffset, onStyle, onText, onAttribute }) {
+export function PropertiesPanel({
+  selected,
+  runtime,
+  activeMotion,
+  timelineOffset,
+  propertyOwnership = {},
+  onOwnershipOpen,
+  onStyle,
+  onText,
+  onAttribute,
+}) {
   if (!selected) return <DocumentProperties runtime={runtime} />;
   const stylesValue = selected.styles || {};
+  const transform = decomposeTransform(stylesValue.transform || 'none', stylesValue.transformOrigin || '50% 50%');
   const canEditText = selected.canEditText !== false && !['img', 'video', 'canvas', 'svg', 'section'].includes(selected.tag);
   const supportsTypography = canEditText || Boolean(selected.text);
+  const ownershipFor = (property) => propertyOwnership[animationProperty(property)] || null;
   const keyframeState = (property) => {
     const normalized = animationProperty(property);
     const track = activeMotion?.tracks?.find((item) => animationProperty(item.property) === normalized);
@@ -391,24 +454,161 @@ export function PropertiesPanel({ selected, runtime, activeMotion, timelineOffse
         </div>
       </InspectorSection>
 
+      <InspectorSection title="Transform">
+        {transform.reliable ? <>
+          <div className={styles.controlGrid}>
+            <Field
+              label="X"
+              defaultValue={transformComponentValue(transform, 'translateX')}
+              ownership={ownershipFor('translateX')}
+              onOwnershipOpen={() => onOwnershipOpen?.('translateX')}
+              onCommit={(value) => onStyle('translateX', value, transformComponentValue(transform, 'translateX'))}
+            />
+            <Field
+              label="Y"
+              defaultValue={transformComponentValue(transform, 'translateY')}
+              ownership={ownershipFor('translateY')}
+              onOwnershipOpen={() => onOwnershipOpen?.('translateY')}
+              onCommit={(value) => onStyle('translateY', value, transformComponentValue(transform, 'translateY'))}
+            />
+          </div>
+          <div className={styles.controlGrid}>
+            <Field
+              label="Scale X"
+              defaultValue={transformComponentValue(transform, 'scaleX')}
+              ownership={ownershipFor('scaleX')}
+              onOwnershipOpen={() => onOwnershipOpen?.('scaleX')}
+              onCommit={(value) => onStyle('scaleX', value, transformComponentValue(transform, 'scaleX'))}
+            />
+            <Field
+              label="Scale Y"
+              defaultValue={transformComponentValue(transform, 'scaleY')}
+              ownership={ownershipFor('scaleY')}
+              onOwnershipOpen={() => onOwnershipOpen?.('scaleY')}
+              onCommit={(value) => onStyle('scaleY', value, transformComponentValue(transform, 'scaleY'))}
+            />
+          </div>
+          <Field
+            label="Rotate"
+            defaultValue={transformComponentValue(transform, 'rotate')}
+            ownership={ownershipFor('rotate')}
+            onOwnershipOpen={() => onOwnershipOpen?.('rotate')}
+            onCommit={(value) => onStyle('rotate', value, transformComponentValue(transform, 'rotate'))}
+          />
+          <div className={styles.controlGrid}>
+            <Field
+              label="Skew X"
+              defaultValue={transformComponentValue(transform, 'skewX')}
+              ownership={ownershipFor('skewX')}
+              onOwnershipOpen={() => onOwnershipOpen?.('skewX')}
+              onCommit={(value) => onStyle('skewX', value, transformComponentValue(transform, 'skewX'))}
+            />
+            <Field
+              label="Skew Y"
+              defaultValue={transformComponentValue(transform, 'skewY')}
+              ownership={ownershipFor('skewY')}
+              onOwnershipOpen={() => onOwnershipOpen?.('skewY')}
+              onCommit={(value) => onStyle('skewY', value, transformComponentValue(transform, 'skewY'))}
+            />
+          </div>
+          <div className={styles.controlGrid}>
+            <Field
+              label="Origin X"
+              defaultValue={transformComponentValue(transform, 'transformOriginX')}
+              ownership={ownershipFor('transformOriginX')}
+              onOwnershipOpen={() => onOwnershipOpen?.('transformOriginX')}
+              onCommit={(value) => onStyle('transformOriginX', value, transformComponentValue(transform, 'transformOriginX'))}
+            />
+            <Field
+              label="Origin Y"
+              defaultValue={transformComponentValue(transform, 'transformOriginY')}
+              ownership={ownershipFor('transformOriginY')}
+              onOwnershipOpen={() => onOwnershipOpen?.('transformOriginY')}
+              onCommit={(value) => onStyle('transformOriginY', value, transformComponentValue(transform, 'transformOriginY'))}
+            />
+          </div>
+        </> : (
+          <div className={styles.transformUnavailable}>
+            <p>Position and rotation are controlled by a complex motion.</p>
+            <button type="button" onClick={() => onOwnershipOpen?.('transform')}>Open Motion</button>
+          </div>
+        )}
+      </InspectorSection>
+
       <InspectorSection title="Appearance">
-        <ColorField label="Text" value={stylesValue.colorHex} keyframeState={keyframeState('color')} onCommit={(value) => onStyle('color', value, stylesValue.color)} />
-        <ColorField label="Fill" value={stylesValue.backgroundColorHex} keyframeState={keyframeState('background-color')} onCommit={(value) => onStyle('background-color', value, stylesValue.backgroundColor)} />
+        <ColorField
+          label="Text"
+          value={stylesValue.colorHex}
+          keyframeState={keyframeState('color')}
+          ownership={ownershipFor('color')}
+          onOwnershipOpen={() => onOwnershipOpen?.('color')}
+          onCommit={(value) => onStyle('color', value, stylesValue.color)}
+        />
+        <ColorField
+          label="Fill"
+          value={stylesValue.backgroundColorHex}
+          keyframeState={keyframeState('background-color')}
+          ownership={ownershipFor('backgroundColor')}
+          onOwnershipOpen={() => onOwnershipOpen?.('backgroundColor')}
+          onCommit={(value) => onStyle('background-color', value, stylesValue.backgroundColor)}
+        />
         <div className={styles.controlGrid}>
-          <Field label="Opacity" defaultValue={stylesValue.opacity} keyframeState={keyframeState('opacity')} onCommit={(value) => onStyle('opacity', value, stylesValue.opacity)} />
-          <Field label="Radius" defaultValue={stylesValue.borderRadius} keyframeState={keyframeState('border-radius')} onCommit={(value) => onStyle('border-radius', value, stylesValue.borderRadius)} />
+          <Field
+            label="Opacity"
+            defaultValue={stylesValue.opacity}
+            keyframeState={keyframeState('opacity')}
+            ownership={ownershipFor('opacity')}
+            onOwnershipOpen={() => onOwnershipOpen?.('opacity')}
+            onCommit={(value) => onStyle('opacity', value, stylesValue.opacity)}
+          />
+          <Field
+            label="Radius"
+            defaultValue={stylesValue.borderRadius}
+            keyframeState={keyframeState('border-radius')}
+            ownership={ownershipFor('borderRadius')}
+            onOwnershipOpen={() => onOwnershipOpen?.('borderRadius')}
+            onCommit={(value) => onStyle('border-radius', value, stylesValue.borderRadius)}
+          />
         </div>
       </InspectorSection>
 
       {supportsTypography && <InspectorSection title="Typography">
         <Field label="Font" defaultValue={stylesValue.fontFamily} onCommit={(value) => onStyle('font-family', value, stylesValue.fontFamily)} />
         <div className={styles.controlGrid}>
-          <Field label="Weight" defaultValue={stylesValue.fontWeight} keyframeState={keyframeState('font-weight')} onCommit={(value) => onStyle('font-weight', value, stylesValue.fontWeight)} />
-          <Field label="Size" defaultValue={stylesValue.fontSize} keyframeState={keyframeState('font-size')} onCommit={(value) => onStyle('font-size', value, stylesValue.fontSize)} />
+          <Field
+            label="Weight"
+            defaultValue={stylesValue.fontWeight}
+            keyframeState={keyframeState('font-weight')}
+            ownership={ownershipFor('fontWeight')}
+            onOwnershipOpen={() => onOwnershipOpen?.('fontWeight')}
+            onCommit={(value) => onStyle('font-weight', value, stylesValue.fontWeight)}
+          />
+          <Field
+            label="Size"
+            defaultValue={stylesValue.fontSize}
+            keyframeState={keyframeState('font-size')}
+            ownership={ownershipFor('fontSize')}
+            onOwnershipOpen={() => onOwnershipOpen?.('fontSize')}
+            onCommit={(value) => onStyle('font-size', value, stylesValue.fontSize)}
+          />
         </div>
         <div className={styles.controlGrid}>
-          <Field label="Line height" defaultValue={stylesValue.lineHeight} keyframeState={keyframeState('line-height')} onCommit={(value) => onStyle('line-height', value, stylesValue.lineHeight)} />
-          <Field label="Letter spacing" defaultValue={stylesValue.letterSpacing} keyframeState={keyframeState('letter-spacing')} onCommit={(value) => onStyle('letter-spacing', value, stylesValue.letterSpacing)} />
+          <Field
+            label="Line height"
+            defaultValue={stylesValue.lineHeight}
+            keyframeState={keyframeState('line-height')}
+            ownership={ownershipFor('lineHeight')}
+            onOwnershipOpen={() => onOwnershipOpen?.('lineHeight')}
+            onCommit={(value) => onStyle('line-height', value, stylesValue.lineHeight)}
+          />
+          <Field
+            label="Letter spacing"
+            defaultValue={stylesValue.letterSpacing}
+            keyframeState={keyframeState('letter-spacing')}
+            ownership={ownershipFor('letterSpacing')}
+            onOwnershipOpen={() => onOwnershipOpen?.('letterSpacing')}
+            onCommit={(value) => onStyle('letter-spacing', value, stylesValue.letterSpacing)}
+          />
         </div>
         <div className={styles.field}>
           <span className={styles.controlLabel}>Alignment</span>
@@ -442,13 +642,17 @@ const MOTION_GROUP_LABELS = {
 // Phase 0 legibility: the badge must EXPLAIN, not just style. "Sometimes it
 // works, sometimes it doesn't" came from capabilities that never said why.
 const EDITABILITY_EXPLAINED = {
-  direct: 'Editable — keyframes and timing write back natively (CSS/WAAPI)',
-  adapter: 'Adapter — timing, easing and start/end values write back through GSAP; keyframes cannot be moved or added',
-  code: 'Code-driven — this animation is controlled by site scripts and is read-only here',
+  direct: 'Editable: keyframes and timing write back natively (CSS/WAAPI)',
+  known: 'Known adapter: timing, easing and final values write back through the site runtime',
+  adapter: 'Adapter: timing, easing and start/end values write back through GSAP; keyframes cannot be moved or added',
+  declarative: 'Declarative: this value writes back through a safe site binding',
+  custom: 'Custom: this control was validated for this website',
+  code: 'Code-driven: this animation is controlled by site scripts and is read-only here',
 };
 
 export function MotionPanel({ selected, motion, activeMotionId, onMotion, onStagger }) {
   const activeMotion = motion.find((item) => item.id === activeMotionId) || null;
+  const usesKnownAdapter = ['adapter', 'known'].includes(activeMotion?.editability);
   const motionRows = useMemo(() => groupMotionClips(motion), [motion]);
   // The timeline owns the LIST of animations (Figma Motion model) — this panel
   // inspects the active one. Group context surfaces here only as the Stagger
@@ -514,9 +718,9 @@ export function MotionPanel({ selected, motion, activeMotionId, onMotion, onStag
           </div>
           <div className={styles.controlGrid}>
             <Field label="Iterations" type="number" defaultValue={activeMotion.timing.iterations} disabled={!activeMotion.capabilities.timing} onCommit={(value) => commit('timing.iterations', value, activeMotion.timing.iterations)} />
-            <Field label="Repeat delay" type="number" defaultValue={activeMotion.timing.repeatDelay} suffix="ms" disabled={activeMotion.editability !== 'adapter'} onCommit={(value) => commit('timing.repeatDelay', value, activeMotion.timing.repeatDelay)} />
+            <Field label="Repeat delay" type="number" defaultValue={activeMotion.timing.repeatDelay} suffix="ms" disabled={!usesKnownAdapter} onCommit={(value) => commit('timing.repeatDelay', value, activeMotion.timing.repeatDelay)} />
           </div>
-          <ToggleField label="Alternate direction" checked={activeMotion.timing.yoyo} disabled={activeMotion.editability !== 'adapter'} onCommit={(value) => commit('timing.yoyo', value, activeMotion.timing.yoyo)} />
+          <ToggleField label="Alternate direction" checked={activeMotion.timing.yoyo} disabled={!usesKnownAdapter} onCommit={(value) => commit('timing.yoyo', value, activeMotion.timing.yoyo)} />
           {staggerable && (
             <Field
               label="Stagger"
@@ -544,7 +748,7 @@ export function MotionPanel({ selected, motion, activeMotionId, onMotion, onStag
             <option value="ease-in">Ease in</option>
             <option value="ease-out">Ease out</option>
             <option value="ease-in-out">Ease in out</option>
-            {activeMotion.editability === 'adapter' && <><option value="power2.out">Power out</option><option value="power2.inOut">Power in out</option></>}
+            {usesKnownAdapter && <><option value="power2.out">Power out</option><option value="power2.inOut">Power in out</option></>}
           </SelectField>
           <div className={styles.curvePreview} aria-hidden="true"><i /><span /></div>
         </InspectorSection>
@@ -1787,6 +1991,8 @@ export default function NativeMotionEditor({
     autoKeyframe,
     selectedKeyframe,
     motionDetail,
+    propertyOwnership,
+    ownershipConflict,
     commands,
   } = controller;
 
@@ -1951,9 +2157,26 @@ export default function NativeMotionEditor({
               </button>
             ))}
           </nav>
-          {activeTab === 'properties' && <PropertiesPanel selected={selected} runtime={runtime} activeMotion={activeMotion} timelineOffset={timelineOffset} onStyle={commands.applyStyle} onText={commands.applyText} onAttribute={commands.applyAttribute} />}
+          {activeTab === 'properties' && <PropertiesPanel
+            selected={selected}
+            runtime={runtime}
+            activeMotion={activeMotion}
+            timelineOffset={timelineOffset}
+            propertyOwnership={propertyOwnership}
+            onOwnershipOpen={(property) => {
+              commands.focusOwnership(property);
+              setActiveTab('motion');
+              setTimelineOpen(true);
+            }}
+            onStyle={commands.applyStyle}
+            onText={commands.applyText}
+            onAttribute={commands.applyAttribute}
+          />}
           {activeTab === 'assets' && <AssetsPanel assets={runtime?.assets || []} onSelect={commands.selectElement} onReplace={commands.replaceAsset} />}
-          {activeTab === 'motion' && <MotionPanel selected={selected} motion={motion} activeMotionId={activeMotionId} onMotion={commands.applyMotion} onStagger={commands.applyStagger} />}
+          {activeTab === 'motion' && <>
+            <MotionOwnershipChoice conflict={ownershipConflict} onChoose={commands.chooseOwnership} />
+            <MotionPanel selected={selected} motion={motion} activeMotionId={activeMotionId} onMotion={commands.applyMotion} onStagger={commands.applyStagger} />
+          </>}
           {activeTab === 'code' && <CodePanel selected={selected} />}
         </aside>
 

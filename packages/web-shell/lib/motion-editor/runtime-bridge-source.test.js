@@ -2306,4 +2306,515 @@ describe('native motion runtime bridge', () => {
     runtime.restore();
     vi.useRealTimers();
   });
+
+  it('enumerates browser writer ownership and retargets the existing final keyframe without changing timing', () => {
+    const title = document.getElementById('hero-title');
+    let keyframes = [
+      { computedOffset: 0, opacity: '0', easing: 'ease-out' },
+      { computedOffset: 1, opacity: '1' },
+    ];
+    const setKeyframes = vi.fn((next) => { keyframes = next; });
+    const updateTiming = vi.fn();
+    const animation = {
+      id: 'hero-entrance',
+      animationName: 'hero-entrance',
+      currentTime: 400,
+      playState: 'paused',
+      playbackRate: 1,
+      effect: {
+        target: title,
+        getTiming: () => ({ delay: 0, duration: 800, iterations: 1, direction: 'normal', fill: 'both', easing: 'ease-out' }),
+        getComputedTiming: () => ({ duration: 800 }),
+        getKeyframes: () => keyframes,
+        setKeyframes,
+        updateTiming,
+      },
+      pause: vi.fn(),
+      play: vi.fn(),
+    };
+    title.getAnimations = () => [animation];
+    document.getAnimations = () => [animation];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+    title.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion[0];
+    expect(motion.tracks[0].ownership).toMatchObject({
+      behavior: 'entrance',
+      relationship: 'independent',
+      targetId: selection.payload.element.id,
+      runtimeProperty: 'opacity',
+      retargetable: true,
+    });
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: {
+              schemaVersion: 2,
+              semanticProperty: 'opacity',
+              runtimeProperty: 'opacity',
+              value: '1',
+            },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'opacity',
+              runtimeProperty: 'opacity',
+              value: '0.7',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:opacity`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+
+    expect(setKeyframes).toHaveBeenLastCalledWith([
+      { offset: 0, opacity: '0', easing: 'ease-out' },
+      { offset: 1, opacity: '0.7' },
+    ]);
+    expect(setKeyframes.mock.calls.at(-1)[0]).toHaveLength(2);
+    expect(updateTiming).not.toHaveBeenCalled();
+    expect(animation.currentTime).toBe(400);
+    window.__uncraftMotionBridge?.teardown?.();
+    window.postMessage = originalPostMessage;
+  });
+
+  it('retargets one browser transform component without disturbing the other authored components', () => {
+    document.body.innerHTML = '<main><div id="card" aria-label="Feature card"></div></main>';
+    const card = document.getElementById('card');
+    let keyframes = [
+      { computedOffset: 0, transform: 'rotate(12deg) scale(1.2) translateX(-40px)' },
+      { computedOffset: 1, transform: 'rotate(12deg) scale(1.2) translateX(20px)' },
+    ];
+    const setKeyframes = vi.fn((next) => { keyframes = next; });
+    const animation = {
+      id: 'card-entrance',
+      currentTime: 500,
+      playState: 'paused',
+      effect: {
+        target: card,
+        getTiming: () => ({ duration: 1000, iterations: 1, easing: 'power2.out' }),
+        getComputedTiming: () => ({ duration: 1000 }),
+        getKeyframes: () => keyframes,
+        setKeyframes,
+        updateTiming: vi.fn(),
+      },
+      pause: vi.fn(),
+      play: vi.fn(),
+    };
+    card.getAnimations = () => [animation];
+    document.getAnimations = () => [animation];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+    card.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion[0];
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: {
+              schemaVersion: 2,
+              semanticProperty: 'translateX',
+              runtimeProperty: 'transform',
+              component: 'translateX',
+              value: '20px',
+            },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'translateX',
+              runtimeProperty: 'transform',
+              component: 'translateX',
+              value: '80px',
+              writeModel: 'absolute',
+              owner: { motionId: motion.id },
+            },
+          },
+        },
+      },
+    }));
+
+    expect(setKeyframes).toHaveBeenLastCalledWith([
+      { offset: 0, transform: 'rotate(12deg) scale(1.2) translateX(-40px)' },
+      { offset: 1, transform: 'rotate(12deg) scale(1.2) translateX(80px)' },
+    ]);
+    window.__uncraftMotionBridge?.teardown?.();
+    window.postMessage = originalPostMessage;
+  });
+
+  it('shifts a looping browser animation around its visible frozen value', () => {
+    document.body.innerHTML = '<main><div id="pulse" aria-label="Pulse"></div></main>';
+    const pulse = document.getElementById('pulse');
+    pulse.style.opacity = '0.5';
+    let keyframes = [
+      { computedOffset: 0, opacity: '0.2' },
+      { computedOffset: 1, opacity: '0.8' },
+    ];
+    const setKeyframes = vi.fn((next) => { keyframes = next; });
+    const animation = {
+      id: 'pulse-loop',
+      currentTime: 400,
+      playState: 'paused',
+      effect: {
+        target: pulse,
+        getTiming: () => ({ duration: 1000, iterations: Infinity, easing: 'ease-in-out' }),
+        getComputedTiming: () => ({ duration: 1000 }),
+        getKeyframes: () => keyframes,
+        setKeyframes,
+        updateTiming: vi.fn(),
+      },
+      pause: vi.fn(),
+      play: vi.fn(),
+    };
+    pulse.getAnimations = () => [animation];
+    document.getAnimations = () => [animation];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+    pulse.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion[0];
+    expect(motion.tracks[0].ownership.writeModel).toBe('additive-base');
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: {
+              schemaVersion: 2,
+              semanticProperty: 'opacity',
+              runtimeProperty: 'opacity',
+              value: '0.5',
+            },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'opacity',
+              runtimeProperty: 'opacity',
+              value: '0.7',
+              writeModel: 'additive-base',
+              owner: { motionId: motion.id },
+            },
+          },
+        },
+      },
+    }));
+
+    expect(setKeyframes).toHaveBeenLastCalledWith([
+      { offset: 0, opacity: '0.4' },
+      { offset: 1, opacity: '1' },
+    ]);
+    expect(animation.currentTime).toBe(400);
+    window.__uncraftMotionBridge?.teardown?.();
+    window.postMessage = originalPostMessage;
+  });
+
+  it('preserves a relative GSAP expression while retargeting its measured final value', () => {
+    document.body.innerHTML = '<main><div id="mark" aria-label="Moving mark"></div></main>';
+    const mark = document.getElementById('mark');
+    const rendered = { x: 0 };
+    let progress = 0.5;
+    const vars = { id: 'mark-entrance', x: '+=100', duration: 1, ease: 'power2.out' };
+    const resolveFinal = () => {
+      const match = String(vars.x).match(/^([+-])=(\d+(?:\.\d+)?)$/);
+      if (match) return (match[1] === '-' ? -1 : 1) * Number(match[2]);
+      return Number(vars.x);
+    };
+    const tween = {
+      vars,
+      targets: () => [mark],
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => true,
+      startTime: () => 0,
+      globalTime: () => 0,
+      progress: vi.fn((next) => {
+        if (next === undefined) return progress;
+        progress = next;
+        rendered.x = resolveFinal() * next;
+        return tween;
+      }),
+      invalidate: vi.fn(() => tween),
+    };
+    tween.progress(progress);
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (_target, property) => rendered[property],
+    };
+    document.getAnimations = () => [];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+    mark.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(motion.tracks[0].ownership).toMatchObject({ writeModel: 'relative', retargetable: true });
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: {
+              schemaVersion: 2,
+              semanticProperty: 'translateX',
+              runtimeProperty: 'x',
+              value: '100',
+            },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'translateX',
+              runtimeProperty: 'x',
+              value: '140',
+              writeModel: 'relative',
+              owner: { motionId: motion.id },
+            },
+          },
+        },
+      },
+    }));
+
+    expect(vars.x).toBe('+=140');
+    expect(vars.ease).toBe('power2.out');
+    expect(progress).toBe(0.5);
+    expect(rendered.x).toBe(70);
+    window.__uncraftMotionBridge?.teardown?.();
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('wraps a single-target function-valued GSAP property instead of replacing its authored function', () => {
+    document.body.innerHTML = '<main><div id="badge" aria-label="Moving badge"></div></main>';
+    const badge = document.getElementById('badge');
+    const rendered = { x: 0 };
+    let progress = 0.25;
+    const authored = (index) => 100 + (index * 20);
+    const vars = { id: 'badge-motion', x: authored, duration: 2, ease: 'none' };
+    const tween = {
+      vars,
+      targets: () => [badge],
+      duration: () => 2,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => true,
+      startTime: () => 0,
+      globalTime: () => 0,
+      progress: vi.fn((next) => {
+        if (next === undefined) return progress;
+        progress = next;
+        const final = typeof vars.x === 'function' ? Number(vars.x(0, badge, [badge])) : Number(vars.x);
+        rendered.x = final * next;
+        return tween;
+      }),
+      invalidate: vi.fn(() => tween),
+    };
+    tween.progress(progress);
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (_target, property) => rendered[property],
+    };
+    document.getAnimations = () => [];
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+    badge.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(motion.tracks[0].ownership).toMatchObject({ writeModel: 'function-offset', retargetable: true });
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: {
+              schemaVersion: 2,
+              semanticProperty: 'translateX',
+              runtimeProperty: 'x',
+              value: '100',
+            },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'translateX',
+              runtimeProperty: 'x',
+              value: '150',
+              writeModel: 'function-offset',
+              owner: { motionId: motion.id },
+            },
+          },
+        },
+      },
+    }));
+
+    expect(vars.x).not.toBe(authored);
+    expect(vars.x(0, badge, [badge])).toBe('150');
+    expect(vars.x(2, badge, [badge])).toBe('190');
+    expect(progress).toBe(0.25);
+    expect(rendered.x).toBe(37.5);
+    window.__uncraftMotionBridge?.teardown?.();
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('commits and rolls back an ownership hint with its final-target retarget as one v2 transaction', () => {
+    document.body.innerHTML = '<main><div id="hero" data-uncraft-id="el-hero" aria-label="Hero"></div></main>';
+    const hero = document.getElementById('hero');
+    let keyframes = [
+      { computedOffset: 0, opacity: '0' },
+      { computedOffset: 1, opacity: '1' },
+    ];
+    const setKeyframes = vi.fn((next) => { keyframes = next; });
+    const animation = {
+      id: 'hero-entrance',
+      currentTime: 1000,
+      playState: 'paused',
+      effect: {
+        target: hero,
+        getTiming: () => ({ duration: 1000, iterations: 1, easing: 'ease-out' }),
+        getComputedTiming: () => ({ duration: 1000 }),
+        getKeyframes: () => keyframes,
+        setKeyframes,
+        updateTiming: vi.fn(),
+      },
+      pause: vi.fn(),
+      play: vi.fn(),
+    };
+    hero.getAnimations = () => [animation];
+    document.getAnimations = () => [animation];
+
+    const runtime = bootV2Runtime();
+    hero.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion[0];
+    const channelId = `${motion.id}:opacity`;
+    runtime.send('apply-transaction', {
+      transaction: {
+        id: 'tx-own-opacity',
+        patches: [
+          {
+            id: 'hint-opacity',
+            elementId: 'el-hero',
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'ownership.hint',
+            before: null,
+            value: {
+              schemaVersion: 1,
+              semanticProperty: 'opacity',
+              channelId,
+              motionId: motion.id,
+            },
+          },
+          {
+            id: 'retarget-opacity',
+            elementId: 'el-hero',
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: {
+              schemaVersion: 2,
+              semanticProperty: 'opacity',
+              runtimeProperty: 'opacity',
+              value: '1',
+            },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'opacity',
+              runtimeProperty: 'opacity',
+              value: '0.65',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId, motionId: motion.id },
+            },
+          },
+        ],
+      },
+    }, 'request-own-opacity');
+
+    const committed = runtime.messages.filter((message) => message.type === 'transaction-committed').pop();
+    expect(committed.payload.transaction.patches[0].before).toEqual({
+      schemaVersion: 1,
+      semanticProperty: 'opacity',
+      channelId: null,
+      motionId: null,
+    });
+    expect(committed.payload.transaction.patches[1]).toMatchObject({
+      before: { value: '1' },
+      value: { value: '0.65' },
+    });
+    expect(keyframes.at(-1).opacity).toBe('0.65');
+
+    runtime.send('rollback-transaction', {
+      targetTransactionId: 'tx-own-opacity',
+      transactionId: 'tx-own-opacity-undo',
+    }, 'request-own-opacity-undo');
+
+    expect(keyframes.at(-1).opacity).toBe('1');
+    expect(runtime.messages.filter((message) => message.type === 'transaction-rejected')).toHaveLength(0);
+    expect(runtime.messages.filter((message) => message.type === 'transaction-committed').pop().payload.operation)
+      .toBe('rollback');
+    runtime.restore();
+  });
 });

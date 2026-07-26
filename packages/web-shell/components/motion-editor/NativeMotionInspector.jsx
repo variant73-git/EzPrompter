@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Code2 } from 'lucide-react';
 import {
   CodePanel,
   MotionPanel,
   PropertiesPanel,
 } from './NativeMotionEditor.jsx';
+import MotionOwnershipChoice from './MotionOwnershipChoice.jsx';
 import styles from './native-motion-canvas.module.css';
 
 const TABS = ['properties', 'motion', 'code'];
@@ -30,6 +31,11 @@ export default function NativeMotionInspector({
     onActiveTabChange?.(tab);
     if (tab === 'motion') onMotionOpen?.();
   }
+
+  useEffect(() => {
+    if (!controller?.ownershipConflict?.requestId) return;
+    selectTab('motion');
+  }, [controller?.ownershipConflict?.requestId]);
 
   return (
     <aside className={styles.inspector} aria-label="Native website inspector">
@@ -74,19 +80,30 @@ export default function NativeMotionInspector({
             runtime={controller.runtime}
             activeMotion={controller.activeMotion}
             timelineOffset={controller.timelineOffset}
+            propertyOwnership={controller.propertyOwnership}
+            onOwnershipOpen={(property) => {
+              controller.commands.focusOwnership(property);
+              selectTab('motion');
+            }}
             onStyle={controller.commands.applyStyle}
             onText={controller.commands.applyText}
             onAttribute={controller.commands.applyAttribute}
           />
         )}
         {activeTab === 'motion' && (
-          <MotionPanel
-            selected={selected}
-            motion={controller.motion || []}
-            activeMotionId={controller.activeMotionId}
-            onMotion={controller.commands.applyMotion}
-            onStagger={controller.commands.applyStagger}
-          />
+          <>
+            <MotionOwnershipChoice
+              conflict={controller.ownershipConflict}
+              onChoose={controller.commands.chooseOwnership}
+            />
+            <MotionPanel
+              selected={selected}
+              motion={controller.motion || []}
+              activeMotionId={controller.activeMotionId}
+              onMotion={controller.commands.applyMotion}
+              onStagger={controller.commands.applyStagger}
+            />
+          </>
         )}
         {activeTab === 'code' && <CodePanel selected={selected} />}
       </div>

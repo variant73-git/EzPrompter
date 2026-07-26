@@ -1476,6 +1476,60 @@
   fill: var(--motion-accent);
 }
 
+.ownershipIndicator {
+  display: inline-flex;
+  min-width: 24px;
+  height: 18px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 4px;
+  border: 1px solid var(--motion-line);
+  border-radius: 5px;
+  color: var(--motion-secondary);
+  background: var(--motion-hover);
+  font-size: 8px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.ownershipIndicator:hover {
+  color: var(--motion-text);
+  border-color: var(--motion-line-strong);
+}
+
+.ownershipIndicator svg {
+  width: 10px;
+  height: 10px;
+}
+
+.transformUnavailable {
+  display: grid;
+  gap: 8px;
+}
+
+.transformUnavailable p {
+  margin: 0;
+  color: var(--motion-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.transformUnavailable button {
+  min-height: 28px;
+  border: 1px solid var(--motion-line);
+  border-radius: 6px;
+  color: var(--motion-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.transformUnavailable button:hover {
+  color: var(--motion-text);
+  background: var(--motion-hover);
+}
+
 .controlGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

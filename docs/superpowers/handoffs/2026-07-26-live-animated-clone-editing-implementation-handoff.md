@@ -1,7 +1,7 @@
 # Handoff — Live Animated Clone Editing
 
 **Data:** 2026-07-26
-**Status:** Tasks 1–9 concluídas e verificadas; Task 10 não iniciada
+**Status:** Tasks 1–10 concluídas e verificadas; checkpoint antes da Task 11
 **Checkout:** `/Users/adilsonporto/Desktop/IA/Uncraft`
 **Branch:** `codex/live-animated-clone-editing`
 **Base:** `main` em `ec297fffd8303e512c8ce3a910930cc2d51b3635`
@@ -953,9 +953,113 @@ bridge e do controller e restaurar o chrome anterior sem `Loop`/`Back to Edit`.
 Não há migration, bundle, snapshot ou manifest persistido novo para reverter;
 as sessões e versões duráveis das Tasks 1–8 permanecem válidas.
 
+## Task 10 — ownership, retarget do alvo final e transforms semânticos
+
+### Resultado
+
+Properties agora altera o alvo final do writer que realmente controla o valor,
+sem criar keyframe invisível nem sobrescrever timing, easing, playback, loops ou
+estrutura da timeline. Ambiguidades genuínas ficam no tab Motion e exigem uma
+escolha explícita com nomes como `Entrance`, `Hover`, `Scroll` e `Loop`.
+
+Novos arquivos:
+
+- `packages/web-shell/lib/motion-editor/motion-ownership.js`
+- `packages/web-shell/lib/motion-editor/motion-ownership.test.js`
+- `packages/web-shell/lib/motion-editor/retarget-patch.js`
+- `packages/web-shell/lib/motion-editor/retarget-patch.test.js`
+- `packages/web-shell/lib/motion-editor/transform-components.js`
+- `packages/web-shell/lib/motion-editor/transform-components.test.js`
+- `packages/web-shell/components/motion-editor/MotionOwnershipChoice.jsx`
+- `packages/web-shell/components/motion-editor/MotionOwnershipChoice.test.jsx`
+
+Integração modificada:
+
+- `packages/web-shell/lib/motion-editor/motion-ir.js`
+- `packages/web-shell/lib/motion-editor/motion-ir.test.js`
+- `packages/web-shell/lib/motion-editor/runtime-bridge-source.js`
+- `packages/web-shell/lib/motion-editor/runtime-bridge-source.test.js`
+- `packages/web-shell/components/motion-editor/useNativeMotionController.js`
+- `packages/web-shell/components/motion-editor/useNativeMotionController.test.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditor.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionInspector.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionInspector.test.jsx`
+- os dois CSS modules do editor nativo.
+
+### Contrato entregue
+
+- O bridge enumera writers CSS/WAAPI/GSAP por propriedade, target, comportamento,
+  ordem de execução, sequência, write model e quantidade de targets afetados.
+- Um único writer seguro é resolvido automaticamente. Em sequências reais, o
+  último child que determina o estado de repouso recebe o retarget; containers
+  que apenas agendam não viram owners.
+- Writers de descendants não são confundidos com a propriedade do host row.
+  Isso evita que uma edição no heading retargete por acidente um caractere de
+  split text.
+- Dois writers independentes produzem `ambiguous`. Properties conserva o valor
+  calculado, mostra o indicador de múltiplos controllers e abre Motion somente
+  com os contributors relevantes.
+- A escolha do contributor e o retarget são uma única transação v2. O hint fica
+  no manifest, é revalidado contra os channels atuais e participa de undo/redo,
+  restore e rollback atômico.
+- `retarget.final` altera o último keyframe/target já existente. Nenhum scrub ou
+  playhead intermediário cria keyframe; timing, easing, paths, tracks, repeats,
+  yoyo e estrutura continuam sob ações explícitas de Motion.
+- Loops CSS/WAAPI deslocam a base em torno do frame congelado. Loops GSAP
+  preservam a excursão relativa; valores `+=`/`-=` mantêm a expressão e valores
+  calculados por função recebem um wrapper de offset sem perder a função
+  original.
+- Grupos/staggers com escopo de target não comprovado permanecem visíveis, mas
+  recusam o retarget padrão em vez de aplicar uma alteração ampla silenciosa.
+- Translate X/Y, scale X/Y, rotate, skew X/Y e transform-origin X/Y são campos
+  independentes. Transform 2D preserva componentes e ordem autoral; matrix 2D é
+  decomposta e recomposta. Matrix 3D e transforms procedurais aparecem como
+  controle específico necessário ou `Code only`, nunca como posição inventada.
+- A ladder de editabilidade agora distingue `direct`, `known`, `declarative`,
+  `custom` e `code`, mantendo `adapter` apenas como alias de migração.
+
+### Evidência tests-first e exit gate
+
+Os quatro primeiros arquivos de teste falharam pela ausência dos módulos de
+ownership, retarget, transform e escolha. Depois da integração:
+
+```text
+Suíte focal: 8 files, 101 tests passed
+Suíte completa: 157 files passed, 1 skipped; 1133 tests passed, 4 skipped
+Build com NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT=true:
+Next.js 15.5.15; compiled; 41/41 static pages; exit 0
+git diff --check: clean
+```
+
+As fixtures cobrem owner único, último writer sequencial, parent scheduler,
+propriedade sem motion, descendants, ambiguity + hint, transform 2D/matrix,
+transform complexo, retarget browser, loop no frame visível, GSAP relativo,
+GSAP function-valued e commit/rollback v2 de hint + alvo final.
+
+### Verificação visual
+
+- `/motion-editor` abriu o `Clone/dist` real; runtime e assets responderam HTTP
+  200 e `CropTab™` foi selecionado em estado congelado.
+- O inspector exibiu os nove controles semânticos de transform com a hierarquia
+  esperada e sem quebrar Layout, Appearance ou Typography.
+- Alterar X para `40px` produziu `translateX(40px)` no elemento real. Undo
+  restaurou exatamente `transform: none` e removeu o inline style.
+- Não houve erro no console. O warning `force3D` do bundle, já documentado antes
+  desta Task, permaneceu fora do controller.
+- O smoke completo dentro de `/canvas` ainda depende do ambiente nativo dedicado
+  registrado nas Tasks 7–9; nenhuma migration ou configuração externa foi
+  alterada nesta Task.
+
+### Rollback da Task 10
+
+Remover os três módulos puros e a escolha de ownership, retirar
+`ownership.hint`/`retarget.final` do bridge e devolver Properties ao write direto
+anterior. Não há migration nova. Manifests que já contenham patches v2 devem ser
+preservados e migrados ou rejeitados explicitamente antes de retirar o reader.
+
 ## Estado e rollback da fatia
 
-- Tasks 1–9 estão concluídas; Task 10 não foi iniciada.
+- Tasks 1–10 estão concluídas; Task 11 não foi iniciada.
 - A primeira fatia recomendada do PR (`Bundle contract and persistence schema`,
   Tasks 1–2) permanece íntegra. Tasks 3–4 completam a segunda fatia sem iniciar
   integração com o canvas.
@@ -970,6 +1074,9 @@ as sessões e versões duráveis das Tasks 1–8 permanecem válidas.
 - Task 9 fecha a estabilidade híbrida de edição: a seleção assenta de forma
   scoped, loops preservam o frame corrente e Preview é reversível sem congelar
   motion alheio ou criar histórico persistente.
+- Task 10 fecha o núcleo de correção semântica de Properties: o alvo final
+  existente é retargetado, ambiguity não é adivinhada e transforms 2D continuam
+  editáveis sem destruir os componentes vizinhos.
 - Nenhum arquivo do worktree Demarcelizer ou material não relacionado foi
   alterado.
 - Rollback da Task 2 é manual e não destrutivo: parar tráfego nativo, preservar
@@ -998,9 +1105,11 @@ as sessões e versões duráveis das Tasks 1–8 permanecem válidas.
   ativos, remover o adapter/rotas e restaurar o lifecycle anterior do canvas.
 - Rollback da Task 9: remover a máquina híbrida e seus comandos transitórios;
   nenhum estado durável precisa ser migrado ou apagado.
+- Rollback da Task 10: preservar manifests v2 existentes, remover ownership e
+  retarget somente depois de existir uma política explícita de compatibilidade.
 
 ## Próxima fatia
 
-Parar no checkpoint antes da Task 10. A próxima etapa adiciona ownership
-analysis, retargeting do final existente, decomposição de transform e UI de
-ambiguidade conforme o plano. Não iniciar essa etapa sem novo checkpoint.
+Parar no checkpoint antes da Task 11. A próxima etapa adiciona scopes
+responsivos `shared`, `per-device` e `computed` conforme o plano. Não iniciar
+essa etapa sem novo checkpoint.

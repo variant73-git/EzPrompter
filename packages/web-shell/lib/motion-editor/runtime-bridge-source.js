@@ -81,6 +81,8 @@ function nativeMotionRuntimeBridge() {
   let recoveryTimer = null;
   const animationIds = new WeakMap();
   const motionRegistry = new Map();
+  const runtimeOwnershipHints = new Map();
+  const gsapFunctionRetargets = new WeakMap();
   // Every listener this instance installs hangs off one controller, so a
   // re-injected bridge can remove ALL of them at once. Leaving even the DOM
   // listeners behind makes a stale instance keep emitting selections with ids
@@ -224,6 +226,73 @@ function nativeMotionRuntimeBridge() {
     return Number.isFinite(value) ? value : fallback;
   }
 
+  function semanticProperty(property) {
+    const camel = String(property || '').replace(/-([a-z])/g, (_, character) => character.toUpperCase());
+    const aliases = {
+      x: 'translateX',
+      y: 'translateY',
+      xPercent: 'translateX',
+      yPercent: 'translateY',
+      rotation: 'rotate',
+      rotationZ: 'rotate',
+    };
+    return aliases[camel] || camel;
+  }
+
+  function motionBehavior({ name, id, driver, iterations }) {
+    const text = `${name || ''} ${id || ''}`.toLowerCase();
+    if (driver === 'pointer' || /hover|pointer|mouse/.test(text)) return 'hover';
+    if (driver === 'scroll' || /scroll|parallax/.test(text)) return 'scroll';
+    if (iterations === Infinity || /loop|marquee|ticker/.test(text)) return 'loop';
+    if (/click|tap|press|interaction/.test(text)) return 'interaction';
+    if (/entrance|intro|reveal|fade.?in|load|hero/.test(text)) return 'entrance';
+    return 'playback';
+  }
+
+  function gsapWriteModel(value, looping) {
+    if (looping) return 'additive-base';
+    if (typeof value === 'function') return 'function-offset';
+    if (/^[+-]=/.test(String(value || '').trim())) return 'relative';
+    return 'absolute';
+  }
+
+  function safeSourceValue(value) {
+    if (value == null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
+    return null;
+  }
+
+  function writerOwnership({
+    clipId,
+    animation,
+    target,
+    property,
+    behavior,
+    order,
+    sequenceId = null,
+    writeModel = 'absolute',
+    retargetable = true,
+    sourceValue = null,
+    targetCount = 1,
+    stagger = null,
+  }) {
+    const normalized = semanticProperty(property);
+    return {
+      channelId: `${clipId}:${normalized}`,
+      animationId: clipId,
+      targetId: ensureElementId(target),
+      runtimeProperty: property,
+      behavior,
+      order: finite(order),
+      sequenceId,
+      relationship: sequenceId ? 'sequential' : 'independent',
+      writeModel,
+      retargetable,
+      sourceValue,
+      affectedTargetCount: Math.max(1, targetCount),
+      ...(stagger ? { stagger } : {}),
+    };
+  }
+
   function motionIdFor(animation, prefix, seed) {
     if (animationIds.has(animation)) return animationIds.get(animation);
     const id = `${prefix}-${seed ? hash(seed) : ++motionSequence}`;
@@ -305,6 +374,28 @@ function nativeMotionRuntimeBridge() {
     const timelineName = animation.timeline?.constructor?.name || '';
     const driverType = /scroll|view/i.test(timelineName) ? 'scroll' : 'time';
     const id = motionIdFor(animation, engine.toLowerCase(), `${ensureElementId(target)}:${keyframeName || animation.id || index}`);
+    const iterations = rawTiming.iterations ?? 1;
+    const behavior = motionBehavior({
+      name: keyframeName || animation.id,
+      id,
+      driver: driverType,
+      iterations,
+    });
+    const tracks = keyframeTracks(effect).map((track, trackIndex) => ({
+      ...track,
+      ownership: writerOwnership({
+        clipId: id,
+        animation,
+        target,
+        property: track.property,
+        behavior,
+        order: index + (trackIndex / 1000),
+        writeModel: iterations === Infinity ? 'additive-base' : 'absolute',
+        retargetable: typeof effect?.setKeyframes === 'function'
+          && track.keyframes.some((keyframe) => Number(keyframe.offset) >= 0.999),
+        sourceValue: track.keyframes.at(-1)?.value ?? null,
+      }),
+    }));
     const clip = {
       id,
       engine,
@@ -320,20 +411,20 @@ function nativeMotionRuntimeBridge() {
         delay: finite(rawTiming.delay),
         duration: finite(computed.duration, finite(rawTiming.duration)),
         endDelay: finite(rawTiming.endDelay),
-        iterations: rawTiming.iterations ?? 1,
+        iterations,
         direction: rawTiming.direction || 'normal',
         fill: rawTiming.fill || 'none',
         easing: rawTiming.easing || 'linear',
         yoyo: rawTiming.direction === 'alternate' || rawTiming.direction === 'alternate-reverse',
         repeatDelay: 0,
       },
-      tracks: keyframeTracks(effect),
+      tracks,
       group: clipGroupMeta(animation, target, [target]),
       scroll: driverType === 'scroll' ? { start: 'timeline start', end: 'timeline end', scrub: true, pin: false, snap: false } : null,
       capabilities: { timing: true, easing: true, keyframes: true, trigger: false, scroll: driverType === 'scroll' },
       source: { engine, animationName: keyframeName || null, timeline: timelineName || null, writeback: 'native' },
     };
-    motionRegistry.set(id, { type: 'browser', animation });
+    motionRegistry.set(id, { type: 'browser', animation, target });
     return clip;
   }
 
@@ -344,7 +435,7 @@ function nativeMotionRuntimeBridge() {
       keyframes: false,
       tracks: animatedProps.map((property) => ({
         property,
-        keyframes: [{ offset: 1, value: String(vars[property]), easing: ease }],
+        keyframes: [{ offset: 1, value: typeof vars[property] === 'function' ? '' : String(vars[property]), easing: ease }],
       })),
     });
     if (!gsap || typeof gsap.getProperty !== 'function' || typeof animation.progress !== 'function') {
@@ -423,9 +514,45 @@ function nativeMotionRuntimeBridge() {
           'force3D', 'data', 'autoRound', 'inherit', 'defaults', 'smoothChildTiming', 'keyframes', 'clearProps',
         ]);
         const animatedProps = Object.keys(vars)
-          .filter((property) => !ignored.has(property) && typeof vars[property] !== 'function');
+          .filter((property) => !ignored.has(property));
         const sampled = gsapEditableTracks(animation, vars, primaryTarget, animatedProps);
-        const tracks = sampled.tracks;
+        const group = clipGroupMeta(animation, primaryTarget, targets);
+        const iterations = animation.repeat?.() === -1 ? Infinity : (Number.isFinite(animation.repeat?.()) ? animation.repeat() + 1 : 1);
+        const driverType = scrollTrigger && primaryTarget instanceof HTMLMediaElement && animatedProps.includes('currentTime')
+          ? 'media'
+          : scrollTrigger ? 'scroll' : 'time';
+        const behavior = motionBehavior({
+          name: vars.id || scrollTrigger?.vars?.id || scrollTrigger?.id || elementLabel(primaryTarget),
+          id,
+          driver: driverType,
+          iterations,
+        });
+        const order = finite(animation.globalTime?.(0), finite(animation.startTime?.(), index)) * 1000;
+        const tracks = sampled.tracks.map((track, trackIndex) => {
+          const rawValue = vars[track.property];
+          const looping = iterations === Infinity;
+          const writeModel = gsapWriteModel(rawValue, looping);
+          const targetCount = Math.max(1, targets.filter((target) => target instanceof Element).length);
+          const functionSupported = typeof rawValue !== 'function' || targetCount === 1;
+          const scopeSafe = targetCount === 1;
+          return {
+            ...track,
+            ownership: writerOwnership({
+              clipId: id,
+              animation,
+              target: primaryTarget,
+              property: track.property,
+              behavior,
+              order: order + (trackIndex / 1000),
+              sequenceId: group.timelineId,
+              writeModel,
+              retargetable: sampled.keyframes && !vars.runBackwards && functionSupported && scopeSafe,
+              sourceValue: safeSourceValue(rawValue),
+              targetCount,
+              stagger: vars.stagger != null ? { mode: 'staggered', targetCount } : null,
+            }),
+          };
+        });
         const clip = {
           id,
           engine,
@@ -434,11 +561,7 @@ function nativeMotionRuntimeBridge() {
           // A scroll-SCRUBBED video is the cleanest case of the whole model:
           // one track whose value is currentTime, driven by scroll → MEDIA.
           // Without a trigger it is just a timed seek — a plain time clip.
-          driver: {
-            type: scrollTrigger && primaryTarget instanceof HTMLMediaElement && animatedProps.includes('currentTime')
-              ? 'media'
-              : scrollTrigger ? 'scroll' : 'time',
-          },
+          driver: { type: driverType },
           trigger: {
             type: scrollTrigger ? 'scroll' : 'runtime',
             target: scrollTrigger?.trigger?.className || scrollTrigger?.trigger?.id || vars.scrollTrigger?.trigger?.className || vars.scrollTrigger?.trigger?.id || null,
@@ -448,7 +571,7 @@ function nativeMotionRuntimeBridge() {
             delay: Math.round((animation.delay?.() || 0) * 1000),
             duration: Math.round((animation.duration?.() || 0) * 1000),
             endDelay: 0,
-            iterations: animation.repeat?.() === -1 ? Infinity : (Number.isFinite(animation.repeat?.()) ? animation.repeat() + 1 : 1),
+            iterations,
             direction: animation.reversed?.() ? 'reverse' : 'normal',
             fill: 'both',
             easing: typeof vars.ease === 'string' ? vars.ease : 'power1.out',
@@ -456,7 +579,7 @@ function nativeMotionRuntimeBridge() {
             repeatDelay: Math.round((animation.repeatDelay?.() || 0) * 1000),
           },
           tracks,
-          group: clipGroupMeta(animation, primaryTarget, targets),
+          group,
           scroll: scrollTrigger ? {
             start: String(scrollTrigger.start ?? scrollTrigger.vars?.start ?? 'top bottom'),
             end: String(scrollTrigger.end ?? scrollTrigger.vars?.end ?? 'bottom top'),
@@ -470,7 +593,13 @@ function nativeMotionRuntimeBridge() {
           capabilities: { timing: true, easing: true, keyframes: sampled.keyframes && !vars.runBackwards, trigger: false, scroll: Boolean(scrollTrigger) },
           source: { engine, writeback: 'adapter' },
         };
-        motionRegistry.set(id, { type: 'gsap', animation, scrollTrigger });
+        motionRegistry.set(id, {
+          type: 'gsap',
+          animation,
+          scrollTrigger,
+          target: primaryTarget,
+          targets: targets.filter((target) => target instanceof Element),
+        });
         return [clip];
       });
     } catch (_) {
@@ -1250,6 +1379,254 @@ function nativeMotionRuntimeBridge() {
     effect.setKeyframes(frames);
   }
 
+  function runtimeNumber(value, fallback = 0) {
+    const result = Number.parseFloat(String(value ?? ''));
+    return Number.isFinite(result) ? result : fallback;
+  }
+
+  function runtimeRound(value) {
+    if (!Number.isFinite(value)) return 0;
+    const result = Math.round(value * 1000000) / 1000000;
+    return Object.is(result, -0) ? 0 : result;
+  }
+
+  function runtimeArgs(value) {
+    return String(value || '').trim().split(/\s*,\s*|\s+/).filter(Boolean);
+  }
+
+  function parseRuntimeTransform(value) {
+    const source = String(value || 'none').trim() || 'none';
+    if (source === 'none') return { format: 'functions', operations: [] };
+    if (/matrix3d|translate3d|translateZ|scale3d|scaleZ|rotate3d|rotateX|rotateY|perspective|var\(|calc\(/i.test(source)) return null;
+    const matrix = source.match(/^matrix\(\s*([^)]+)\)$/i);
+    if (matrix) {
+      const values = runtimeArgs(matrix[1]).map(Number);
+      if (values.length !== 6 || values.some((item) => !Number.isFinite(item))) return null;
+      const [a, b, c, d, e, f] = values;
+      const scaleX = Math.hypot(a, b);
+      if (scaleX < 1e-9) return null;
+      return {
+        format: 'matrix',
+        components: {
+          translateX: e,
+          translateY: f,
+          scaleX,
+          scaleY: ((a * d) - (b * c)) / scaleX,
+          rotate: Math.atan2(b, a) * (180 / Math.PI),
+          skewX: Math.atan2((a * c) + (b * d), scaleX * scaleX) * (180 / Math.PI),
+          skewY: 0,
+        },
+      };
+    }
+    const operations = [];
+    const pattern = /([a-zA-Z][a-zA-Z0-9]*)\(([^()]*)\)/g;
+    let consumed = 0;
+    let match;
+    while ((match = pattern.exec(source))) {
+      if (source.slice(consumed, match.index).trim()) return null;
+      if (!['translate', 'translateX', 'translateY', 'scale', 'scaleX', 'scaleY', 'rotate', 'skew', 'skewX', 'skewY'].includes(match[1])) return null;
+      operations.push({ type: match[1], args: runtimeArgs(match[2]) });
+      consumed = pattern.lastIndex;
+    }
+    if (!operations.length || source.slice(consumed).trim()) return null;
+    return { format: 'functions', operations };
+  }
+
+  function runtimeComponentValue(value, component) {
+    const parsed = parseRuntimeTransform(value);
+    if (!parsed) return null;
+    if (parsed.format === 'matrix') {
+      const numeric = parsed.components[component];
+      if (component.startsWith('translate')) return `${runtimeRound(numeric)}px`;
+      if (component === 'rotate' || component.startsWith('skew')) return `${runtimeRound(numeric)}deg`;
+      return String(runtimeRound(numeric));
+    }
+    const defaultValue = component.startsWith('scale') ? '1'
+      : component.startsWith('translate') ? '0px' : '0deg';
+    for (let index = parsed.operations.length - 1; index >= 0; index -= 1) {
+      const operation = parsed.operations[index];
+      if (operation.type === component) return operation.args[0] || defaultValue;
+      if (operation.type === 'translate' && component === 'translateX') return operation.args[0] || '0px';
+      if (operation.type === 'translate' && component === 'translateY') return operation.args[1] || '0px';
+      if (operation.type === 'scale' && component === 'scaleX') return operation.args[0] || '1';
+      if (operation.type === 'scale' && component === 'scaleY') return operation.args[1] || operation.args[0] || '1';
+      if (operation.type === 'skew' && component === 'skewX') return operation.args[0] || '0deg';
+      if (operation.type === 'skew' && component === 'skewY') return operation.args[1] || '0deg';
+    }
+    return defaultValue;
+  }
+
+  function runtimeValueWithUnit(value, fallbackUnit = '') {
+    const text = String(value ?? '').trim();
+    if (!text) return `0${fallbackUnit}`;
+    return /[a-z%]$/i.test(text) || !fallbackUnit ? text : `${text}${fallbackUnit}`;
+  }
+
+  function updateRuntimeTransform(value, component, nextValue) {
+    const parsed = parseRuntimeTransform(value);
+    if (!parsed) throw bridgeError('unsafe_transform', 'This transform cannot be decomposed safely.');
+    if (parsed.format === 'matrix') {
+      const components = parsed.components;
+      components[component] = runtimeNumber(nextValue, component.startsWith('scale') ? 1 : 0);
+      const radians = components.rotate * (Math.PI / 180);
+      const skew = Math.tan(components.skewX * (Math.PI / 180));
+      const cos = Math.cos(radians);
+      const sin = Math.sin(radians);
+      const a = cos * components.scaleX;
+      const b = sin * components.scaleX;
+      const c = ((cos * skew) - sin) * components.scaleY;
+      const d = ((sin * skew) + cos) * components.scaleY;
+      return `matrix(${[a, b, c, d, components.translateX, components.translateY].map(runtimeRound).join(', ')})`;
+    }
+    const unit = component.startsWith('translate') ? 'px'
+      : component === 'rotate' || component.startsWith('skew') ? 'deg' : '';
+    const formatted = runtimeValueWithUnit(nextValue, unit);
+    let updated = false;
+    for (let index = parsed.operations.length - 1; index >= 0; index -= 1) {
+      const operation = parsed.operations[index];
+      if (operation.type === component) {
+        operation.args[0] = formatted;
+        updated = true;
+        break;
+      }
+      if (operation.type === 'translate' && ['translateX', 'translateY'].includes(component)) {
+        operation.args = [
+          component === 'translateX' ? formatted : operation.args[0] || '0px',
+          component === 'translateY' ? formatted : operation.args[1] || '0px',
+        ];
+        updated = true;
+        break;
+      }
+      if (operation.type === 'scale' && ['scaleX', 'scaleY'].includes(component)) {
+        operation.args = [
+          component === 'scaleX' ? formatted : operation.args[0] || '1',
+          component === 'scaleY' ? formatted : operation.args[1] || operation.args[0] || '1',
+        ];
+        updated = true;
+        break;
+      }
+      if (operation.type === 'skew' && ['skewX', 'skewY'].includes(component)) {
+        operation.args = [
+          component === 'skewX' ? formatted : operation.args[0] || '0deg',
+          component === 'skewY' ? formatted : operation.args[1] || '0deg',
+        ];
+        updated = true;
+        break;
+      }
+    }
+    if (!updated) parsed.operations.push({ type: component, args: [formatted] });
+    return parsed.operations.map((operation) => `${operation.type}(${operation.args.join(', ')})`).join(' ') || 'none';
+  }
+
+  function runtimeOriginComponent(value, component) {
+    const parts = runtimeArgs(value || '50% 50%');
+    return component === 'transformOriginY' ? parts[1] || '50%' : parts[0] || '50%';
+  }
+
+  function updateRuntimeOrigin(value, component, nextValue) {
+    const parts = runtimeArgs(value || '50% 50%');
+    const next = [parts[0] || '50%', parts[1] || '50%'];
+    next[component === 'transformOriginY' ? 1 : 0] = String(nextValue);
+    return next.join(' ');
+  }
+
+  function numericCss(value) {
+    const match = String(value ?? '').trim().match(/^(-?(?:\d+|\d*\.\d+))([a-z%]*)$/i);
+    return match ? { value: Number(match[1]), unit: match[2] || '' } : null;
+  }
+
+  function shiftCssValue(value, delta) {
+    const parsed = numericCss(value);
+    if (!parsed) throw bridgeError('unsupported_value', 'This animation value cannot be shifted safely.');
+    return `${runtimeRound(parsed.value + delta)}${parsed.unit}`;
+  }
+
+  function retargetDescriptorValue(descriptor, rawValue) {
+    if (descriptor.component === 'transformOriginX' || descriptor.component === 'transformOriginY') {
+      return runtimeOriginComponent(rawValue, descriptor.component);
+    }
+    if (descriptor.component && descriptor.runtimeProperty === 'transform') {
+      return runtimeComponentValue(rawValue, descriptor.component);
+    }
+    return rawValue;
+  }
+
+  function browserFinalFrame(effect, property) {
+    const frames = editableKeyframes(effect);
+    let ownerIndex = -1;
+    let ownerOffset = -Infinity;
+    frames.forEach((frame, index) => {
+      if (frame[property] == null) return;
+      const offset = finite(frame.offset);
+      if (offset >= ownerOffset) {
+        ownerOffset = offset;
+        ownerIndex = index;
+      }
+    });
+    return { frames, ownerIndex };
+  }
+
+  function browserVisibleRetargetValue(record, descriptor, fallback) {
+    const target = record.target;
+    if (!(target instanceof Element)) return fallback;
+    try {
+      const computed = getComputedStyle(target);
+      const property = descriptor.runtimeProperty;
+      const cssProperty = property.replace(/[A-Z]/g, (character) => `-${character.toLowerCase()}`);
+      const rawValue = computed[property] || computed.getPropertyValue(cssProperty);
+      const value = retargetDescriptorValue(descriptor, rawValue);
+      return value == null || value === '' ? fallback : value;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  function readBrowserRetarget(record, descriptor) {
+    const property = descriptor.runtimeProperty;
+    const { frames, ownerIndex } = browserFinalFrame(record.animation.effect, property);
+    if (ownerIndex < 0) throw bridgeError('motion_owner_missing', 'The animation no longer writes this property.');
+    const rawValue = frames[ownerIndex][property];
+    const finalValue = retargetDescriptorValue(descriptor, rawValue);
+    return {
+      ...cloneValue(descriptor),
+      value: descriptor.writeModel === 'additive-base'
+        ? browserVisibleRetargetValue(record, descriptor, finalValue)
+        : finalValue,
+    };
+  }
+
+  function applyBrowserRetarget(record, descriptor) {
+    const effect = record.animation.effect;
+    if (typeof effect?.setKeyframes !== 'function') throw bridgeError('unsupported_patch', 'This animation does not expose editable keyframes.');
+    const property = descriptor.runtimeProperty;
+    const { frames, ownerIndex } = browserFinalFrame(effect, property);
+    if (ownerIndex < 0) throw bridgeError('motion_owner_missing', 'The animation no longer writes this property.');
+    if (descriptor.writeModel === 'additive-base') {
+      const finalValue = retargetDescriptorValue(descriptor, frames[ownerIndex][property]);
+      const current = browserVisibleRetargetValue(record, descriptor, finalValue);
+      const from = numericCss(current);
+      const to = numericCss(descriptor.value);
+      if (!from || !to || from.unit !== to.unit) throw bridgeError('unsupported_value', 'This loop value cannot be shifted safely.');
+      const delta = to.value - from.value;
+      frames.forEach((frame) => {
+        if (frame[property] == null) return;
+        if (descriptor.component && property === 'transform') {
+          const componentValue = runtimeComponentValue(frame[property], descriptor.component);
+          frame[property] = updateRuntimeTransform(frame[property], descriptor.component, shiftCssValue(componentValue, delta));
+        } else {
+          frame[property] = shiftCssValue(frame[property], delta);
+        }
+      });
+    } else if (descriptor.component === 'transformOriginX' || descriptor.component === 'transformOriginY') {
+      frames[ownerIndex][property] = updateRuntimeOrigin(frames[ownerIndex][property], descriptor.component, descriptor.value);
+    } else if (descriptor.component && property === 'transform') {
+      frames[ownerIndex][property] = updateRuntimeTransform(frames[ownerIndex][property], descriptor.component, descriptor.value);
+    } else {
+      frames[ownerIndex][property] = String(descriptor.value);
+    }
+    effect.setKeyframes(frames);
+  }
+
   // invalidate() clears the tween's recorded values; the NEXT render re-records
   // the implicit from-value from whatever the DOM currently shows. For a tween
   // parked mid-animation that silently shifts the start to the parked value
@@ -1268,6 +1645,157 @@ function nativeMotionRuntimeBridge() {
     if (parked != null) {
       try { animation.progress(parked, true); } catch (_) {}
     }
+  }
+
+  function sampleGsapValue(record, property, progress = 1) {
+    const animation = record.animation;
+    const target = record.target || record.targets?.[0];
+    const gsap = window.gsap;
+    const touched = [];
+    (record.targets || [target]).forEach((item) => {
+      if (item instanceof Element && !touched.some(([element]) => element === item)) {
+        touched.push([item, item.style.cssText]);
+      }
+    });
+    let parked = null;
+    try {
+      parked = animation.progress?.();
+      if (Number.isFinite(progress)) animation.progress?.(progress, true);
+      let value;
+      if (gsap && typeof gsap.getProperty === 'function' && target) value = gsap.getProperty(target, property);
+      else value = animation.vars?.[property];
+      return value;
+    } finally {
+      if (Number.isFinite(parked)) {
+        try { animation.progress?.(parked, true); } catch (_) {}
+      }
+      touched.forEach(([element, cssText]) => {
+        try { element.style.cssText = cssText; } catch (_) {}
+      });
+    }
+  }
+
+  function readGsapRetarget(record, descriptor) {
+    const property = descriptor.runtimeProperty;
+    let value;
+    if (descriptor.component === 'transformOriginX' || descriptor.component === 'transformOriginY') {
+      value = runtimeOriginComponent(sampleGsapValue(record, property, 1), descriptor.component);
+    } else if (descriptor.component && property === 'transform') {
+      value = runtimeComponentValue(sampleGsapValue(record, property, 1), descriptor.component);
+    } else if (descriptor.component && property === 'scale') {
+      value = sampleGsapValue(record, descriptor.component, 1);
+    } else if (descriptor.writeModel === 'additive-base') {
+      value = sampleGsapValue(record, property, finite(record.animation.progress?.()));
+    } else {
+      value = sampleGsapValue(record, property, 1);
+    }
+    const rawValue = record.animation.vars?.[property];
+    return {
+      ...cloneValue(descriptor),
+      value: String(value ?? ''),
+      sourceValue: safeSourceValue(rawValue),
+    };
+  }
+
+  function assignGsapAbsolute(record, descriptor) {
+    const animation = record.animation;
+    const vars = animation.vars || (animation.vars = {});
+    const property = descriptor.runtimeProperty;
+    const desired = descriptor.value;
+    if (descriptor.component === 'transformOriginX' || descriptor.component === 'transformOriginY') {
+      vars[property] = updateRuntimeOrigin(sampleGsapValue(record, property, 1), descriptor.component, desired);
+      return;
+    }
+    if (descriptor.component && property === 'transform') {
+      vars[property] = updateRuntimeTransform(sampleGsapValue(record, property, 1), descriptor.component, desired);
+      return;
+    }
+    if (descriptor.component && property === 'scale') {
+      const other = descriptor.component === 'scaleX' ? 'scaleY' : 'scaleX';
+      vars[other] = sampleGsapValue(record, other, 1);
+      vars[descriptor.component] = Number.isFinite(Number(desired)) ? Number(desired) : desired;
+      delete vars.scale;
+      return;
+    }
+    vars[property] = typeof vars[property] === 'number' && Number.isFinite(Number(desired))
+      ? Number(desired)
+      : desired;
+  }
+
+  function applyGsapRelative(record, descriptor) {
+    const animation = record.animation;
+    const vars = animation.vars || (animation.vars = {});
+    const property = descriptor.runtimeProperty;
+    const raw = String(vars[property] ?? descriptor.sourceValue ?? '').trim();
+    const relative = raw.match(/^([+-])=(-?(?:\d+|\d*\.\d+))([a-z%]*)$/i);
+    const current = numericCss(sampleGsapValue(record, property, 1));
+    const desired = numericCss(descriptor.value);
+    if (!relative || !current || !desired || current.unit !== desired.unit) {
+      throw bridgeError('unsupported_value', 'This relative animation value cannot be retargeted safely.');
+    }
+    const signed = (relative[1] === '-' ? -1 : 1) * Number(relative[2]);
+    const next = signed + (desired.value - current.value);
+    vars[property] = `${next < 0 ? '-=' : '+='}${runtimeRound(Math.abs(next))}${relative[3] || desired.unit}`;
+  }
+
+  function applyGsapFunctionOffset(record, descriptor) {
+    const animation = record.animation;
+    const vars = animation.vars || (animation.vars = {});
+    const property = descriptor.runtimeProperty;
+    let bindings = gsapFunctionRetargets.get(animation);
+    if (!bindings) {
+      bindings = new Map();
+      gsapFunctionRetargets.set(animation, bindings);
+    }
+    let binding = bindings.get(property);
+    if (!binding) {
+      const original = vars[property];
+      if (typeof original !== 'function') throw bridgeError('unsupported_value', 'The function-based animation value is no longer available.');
+      const current = numericCss(sampleGsapValue(record, property, 1));
+      if (!current) throw bridgeError('unsupported_value', 'The function-based animation value cannot be measured.');
+      binding = { original, baseFinal: current };
+      bindings.set(property, binding);
+    }
+    const desired = numericCss(descriptor.value);
+    if (!desired || desired.unit !== binding.baseFinal.unit) {
+      throw bridgeError('unsupported_value', 'The function-based animation value uses an incompatible unit.');
+    }
+    const delta = desired.value - binding.baseFinal.value;
+    const wrapper = function uncraftRetargetedValue(...args) {
+      return shiftCssValue(binding.original.apply(this, args), delta);
+    };
+    vars[property] = wrapper;
+  }
+
+  function applyGsapLoopBase(record, descriptor) {
+    const animation = record.animation;
+    const vars = animation.vars || (animation.vars = {});
+    const property = descriptor.runtimeProperty;
+    if (typeof vars[property] === 'function' || /^[+-]=/.test(String(vars[property] || ''))) {
+      throw bridgeError('unsupported_value', 'This loop base cannot be shifted safely.');
+    }
+    const current = numericCss(sampleGsapValue(record, property, finite(animation.progress?.())));
+    const desired = numericCss(descriptor.value);
+    const start = numericCss(sampleGsapValue(record, property, 0));
+    const end = numericCss(sampleGsapValue(record, property, 1));
+    if (!current || !desired || !start || !end || current.unit !== desired.unit || start.unit !== current.unit || end.unit !== current.unit) {
+      throw bridgeError('unsupported_value', 'This loop base cannot be measured safely.');
+    }
+    const delta = desired.value - current.value;
+    vars.startAt = { ...(vars.startAt || {}), [property]: `${runtimeRound(start.value + delta)}${start.unit}` };
+    vars[property] = `${runtimeRound(end.value + delta)}${end.unit}`;
+  }
+
+  function applyGsapRetarget(record, descriptor) {
+    const targetCount = Math.max(1, record.targets?.length || 1);
+    if (targetCount > 1 && Number(descriptor.affectedTargetCount || 1) !== targetCount) {
+      throw bridgeError('scope_mismatch', 'This animation controls more targets than the patch declares.');
+    }
+    if (descriptor.writeModel === 'relative') applyGsapRelative(record, descriptor);
+    else if (descriptor.writeModel === 'function-offset') applyGsapFunctionOffset(record, descriptor);
+    else if (descriptor.writeModel === 'additive-base') applyGsapLoopBase(record, descriptor);
+    else assignGsapAbsolute(record, descriptor);
+    invalidatePreservingStart(record.animation);
   }
 
   function applyGsapKeyframe(animation, property, descriptor) {
@@ -1350,7 +1878,13 @@ function nativeMotionRuntimeBridge() {
     rowTargets.forEach((item) => detachedSet.add(item));
     detachedTargets.set(tween, detachedSet);
     const cloneId = motionIdFor(clone, 'gsap', `${ensureElementId(rowTargets[0])}:detached`);
-    motionRegistry.set(cloneId, { type: 'gsap', animation: clone, scrollTrigger: null });
+    motionRegistry.set(cloneId, {
+      type: 'gsap',
+      animation: clone,
+      scrollTrigger: null,
+      target: rowTargets[0],
+      targets: rowTargets,
+    });
     // Keep the intro lane coherent: the clone inherits the original tween's
     // latched span, so its strip stays put and intro scrub keeps driving it.
     const span = introTweenSpans.get(tween);
@@ -1392,6 +1926,28 @@ function nativeMotionRuntimeBridge() {
     const record = motionRegistry.get(patch.motionId);
     if (!record) throw new Error('The selected animation is no longer available.');
     const value = patch.value;
+
+    if (patch.property === 'ownership.hint') {
+      const descriptor = value && typeof value === 'object' ? value : patch.before;
+      const semantic = descriptor?.semanticProperty;
+      if (!semantic) throw bridgeError('invalid_value', 'The ownership hint has no property.');
+      const key = `${patch.elementId}:${semantic}`;
+      if (value?.motionId) runtimeOwnershipHints.set(key, cloneValue(value));
+      else runtimeOwnershipHints.delete(key);
+      return;
+    }
+
+    if (patch.property === 'retarget.final') {
+      if (!value || value.schemaVersion !== 2 || !value.runtimeProperty) {
+        throw bridgeError('invalid_value', 'The final-target patch is invalid.');
+      }
+      if (value.owner?.motionId && value.owner.motionId !== patch.motionId) {
+        throw bridgeError('motion_owner_mismatch', 'The selected motion no longer owns this value.');
+      }
+      if (record.type === 'browser') applyBrowserRetarget(record, value);
+      else applyGsapRetarget(record, value);
+      return;
+    }
 
     if (record.type === 'browser') {
       const effect = record.animation.effect;
@@ -1596,6 +2152,7 @@ function nativeMotionRuntimeBridge() {
         display: computed.display,
         position: computed.position,
         transform: computed.transform,
+        transformOrigin: computed.transformOrigin,
       },
       motion: inspectMotion(element),
       hostRowId: resolveHostRowId(element),
@@ -2147,6 +2704,26 @@ function nativeMotionRuntimeBridge() {
     if (!record) throw bridgeError('motion_missing', 'The selected animation is no longer available.');
     const property = patch.property;
     const animation = record.animation;
+    if (property === 'ownership.hint') {
+      const descriptor = patch.value && typeof patch.value === 'object' ? patch.value : patch.before;
+      const semantic = descriptor?.semanticProperty;
+      if (!semantic) throw bridgeError('invalid_value', 'The ownership hint has no property.');
+      return cloneValue(runtimeOwnershipHints.get(`${patch.elementId}:${semantic}`) || {
+        schemaVersion: 1,
+        semanticProperty: semantic,
+        channelId: null,
+        motionId: null,
+      });
+    }
+    if (property === 'retarget.final') {
+      const descriptor = patch.value && typeof patch.value === 'object' ? patch.value : patch.before;
+      if (!descriptor || descriptor.schemaVersion !== 2 || !descriptor.runtimeProperty) {
+        throw bridgeError('invalid_value', 'The final-target patch is invalid.');
+      }
+      return record.type === 'browser'
+        ? readBrowserRetarget(record, descriptor)
+        : readGsapRetarget(record, descriptor);
+    }
     if (property.startsWith('keyframe.')) {
       const trackProperty = property.slice('keyframe.'.length);
       const descriptor = patch.value && typeof patch.value === 'object' ? patch.value : patch.before;

@@ -463,4 +463,167 @@ describe('useNativeMotionController', () => {
     expect(frame.contentWindow.postMessage.mock.calls.map(([message]) => message.type)).toContain('release-edit-state');
     expect(result.current.editState.value).toBe('navigating');
   });
+
+  it('retargets the true final owner from Properties without creating a keyframe at the playhead', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    frame.contentWindow.postMessage.mockClear();
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'selection-changed',
+        payload: {
+          element: {
+            id: 'hero',
+            label: 'Hero',
+            styles: { opacity: '1', transform: 'none', transformOrigin: '50% 50%' },
+            motion: [{
+              id: 'hero-entrance',
+              engine: 'GSAP',
+              editability: 'adapter',
+              timing: { duration: 800 },
+              tracks: [{
+                property: 'opacity',
+                keyframes: [{ offset: 0, value: '0' }, { offset: 1, value: '1' }],
+                ownership: {
+                  channelId: 'hero-entrance:opacity',
+                  behavior: 'entrance',
+                  order: 10,
+                  targetId: 'hero',
+                  runtimeProperty: 'opacity',
+                  retargetable: true,
+                },
+              }],
+            }],
+          },
+        },
+      },
+    })));
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'timeline-changed',
+        payload: { currentTime: 400, duration: 800, playState: 'paused' },
+      },
+    })));
+
+    act(() => result.current.commands.applyStyle('opacity', '0.7', '1'));
+    const message = frame.contentWindow.postMessage.mock.calls
+      .map(([value]) => value)
+      .findLast((value) => value.type === 'apply-patch');
+    expect(message.payload.patch).toMatchObject({
+      kind: 'motion',
+      motionId: 'hero-entrance',
+      property: 'retarget.final',
+      value: {
+        semanticProperty: 'opacity',
+        value: '0.7',
+      },
+    });
+    expect(message.payload.patch.property.startsWith('keyframe.')).toBe(false);
+  });
+
+  it('holds an ambiguous Properties edit until Motion chooses a contributor, then persists the hint with the retarget', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    frame.contentWindow.postMessage.mockClear();
+
+    const motion = [
+      {
+        id: 'entrance',
+        engine: 'GSAP',
+        editability: 'adapter',
+        timing: {},
+        tracks: [{
+          property: 'opacity',
+          keyframes: [{ offset: 1, value: '1' }],
+          ownership: {
+            channelId: 'entrance:opacity',
+            behavior: 'entrance',
+            relationship: 'independent',
+            targetId: 'hero',
+            runtimeProperty: 'opacity',
+          },
+        }],
+      },
+      {
+        id: 'hover',
+        engine: 'WAAPI',
+        editability: 'direct',
+        timing: {},
+        tracks: [{
+          property: 'opacity',
+          keyframes: [{ offset: 1, value: '0.8' }],
+          ownership: {
+            channelId: 'hover:opacity',
+            behavior: 'hover',
+            relationship: 'independent',
+            targetId: 'hero',
+            runtimeProperty: 'opacity',
+          },
+        }],
+      },
+    ];
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'selection-changed',
+        payload: {
+          element: {
+            id: 'hero',
+            label: 'Hero',
+            styles: { opacity: '0.8', transform: 'none', transformOrigin: '50% 50%' },
+            motion,
+          },
+        },
+      },
+    })));
+
+    act(() => result.current.commands.applyStyle('opacity', '0.6', '0.8'));
+    expect(result.current.ownershipConflict).toMatchObject({
+      property: 'opacity',
+      status: 'ambiguous',
+    });
+    expect(frame.contentWindow.postMessage.mock.calls
+      .map(([value]) => value.type)
+      .some((type) => type === 'apply-patch' || type === 'apply-patches')).toBe(false);
+
+    act(() => result.current.commands.chooseOwnership('hover:opacity'));
+    const message = frame.contentWindow.postMessage.mock.calls
+      .map(([value]) => value)
+      .findLast((value) => value.type === 'apply-patches');
+    expect(message.payload.patches).toHaveLength(2);
+    expect(message.payload.patches[0]).toMatchObject({
+      kind: 'motion',
+      motionId: 'hover',
+      property: 'ownership.hint',
+    });
+    expect(message.payload.patches[1]).toMatchObject({
+      kind: 'motion',
+      motionId: 'hover',
+      property: 'retarget.final',
+      value: { semanticProperty: 'opacity', value: '0.6' },
+    });
+    expect(result.current.ownershipHints.opacity).toMatchObject({
+      channelId: 'hover:opacity',
+      motionId: 'hover',
+    });
+    expect(result.current.ownershipConflict).toBeNull();
+  });
 });

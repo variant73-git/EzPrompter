@@ -24,6 +24,16 @@ import {
   motionPlaybackMode,
   normalizeMotionClip,
 } from '../../lib/motion-editor/motion-ir.js';
+import {
+  analyzeMotionOwnership,
+  motionOwnershipForProperties,
+  normalizeSemanticProperty,
+} from '../../lib/motion-editor/motion-ownership.js';
+import {
+  buildFinalTargetPatch,
+  buildOwnershipHintPatch,
+  ownershipHintsFromPatches,
+} from '../../lib/motion-editor/retarget-patch.js';
 import { applyStaggerDelays } from '../../lib/motion-editor/motion-groups.js';
 import { getMotionEditorDevice } from '../../lib/motion-editor/devices.js';
 import {
@@ -59,6 +69,26 @@ function requestId(prefix = 'request') {
 
 function animationProperty(property) {
   return String(property || '').replace(/-([a-z])/g, (_, character) => character.toUpperCase());
+}
+
+function propertyLabel(property) {
+  const labels = {
+    backgroundColor: 'Fill',
+    borderRadius: 'Radius',
+    fontSize: 'Size',
+    fontWeight: 'Weight',
+    letterSpacing: 'Letter spacing',
+    lineHeight: 'Line height',
+    translateX: 'X',
+    translateY: 'Y',
+    scaleX: 'Scale X',
+    scaleY: 'Scale Y',
+    skewX: 'Skew X',
+    skewY: 'Skew Y',
+    transformOriginX: 'Origin X',
+    transformOriginY: 'Origin Y',
+  };
+  return labels[property] || `${property[0]?.toUpperCase() || ''}${property.slice(1)}`;
 }
 
 function patchValuesEqual(first, second) {
@@ -149,6 +179,7 @@ export function useNativeMotionController({
   const [motionDetail, setMotionDetail] = useState({});
   const [editState, setEditState] = useState(() => createEditState());
   const [selectionSettlement, setSelectionSettlement] = useState(null);
+  const [ownershipConflict, setOwnershipConflict] = useState(null);
   const motionDetailRef = useRef(motionDetail);
   const lastAutoExpandedRef = useRef(null);
 
@@ -196,6 +227,12 @@ export function useNativeMotionController({
   }, [activeMotion, timelineState.currentTime]);
   const device = getMotionEditorDevice(deviceId);
   const historyPatches = useMemo(() => sessionHistoryPatches(historyState), [historyState]);
+  const ownershipHints = useMemo(() => ownershipHintsFromPatches(historyPatches), [historyPatches]);
+  const propertyOwnership = useMemo(() => motionOwnershipForProperties({
+    motion,
+    targetId: motionElementId,
+    ownershipHints,
+  }), [motion, motionElementId, ownershipHints]);
   const historyCount = sessionHistoryCount(historyState);
 
   const transitionEditor = useCallback((event) => {
@@ -207,6 +244,8 @@ export function useNativeMotionController({
   }, [motion]);
 
   useEffect(() => setSelectedKeyframe(null), [activeMotionId, selected?.id]);
+
+  useEffect(() => setOwnershipConflict(null), [selected?.id]);
 
   useEffect(() => {
     if (!patchError) return undefined;
@@ -590,23 +629,100 @@ export function useNativeMotionController({
 
   function applyStyle(property, value, before) {
     if (!selected) return;
-    const stylePatch = createPatch({ elementId: selected.id, kind: 'style', property, before, value });
     const normalized = animationProperty(property);
     const canKeyframe = autoKeyframe && activeMotion?.capabilities?.keyframes && activeMotion?.editability === 'direct' && AUTO_KEYFRAME_PROPERTIES.has(normalized);
-    if (!canKeyframe) {
-      applyPatch(stylePatch);
+    if (canKeyframe) {
+      const stylePatch = createPatch({ elementId: selected.id, kind: 'style', property, before, value });
+      const track = activeMotion.tracks.find((item) => animationProperty(item.property) === normalized);
+      const existing = track?.keyframes?.find((keyframe) => Math.abs(Number(keyframe.offset) - timelineOffset) < 0.0005);
+      applyPatches([stylePatch, createPatch({
+        elementId: motionElementId,
+        kind: 'motion',
+        motionId: activeMotion.id,
+        property: `keyframe.${normalized}`,
+        before: existing ? keyframeDescriptor(existing, timelineOffset) : { offset: timelineOffset, exists: false },
+        value: { offset: timelineOffset, value: String(value), ...(existing?.easing ? { easing: existing.easing } : {}), exists: true },
+      })]);
       return;
     }
-    const track = activeMotion.tracks.find((item) => animationProperty(item.property) === normalized);
-    const existing = track?.keyframes?.find((keyframe) => Math.abs(Number(keyframe.offset) - timelineOffset) < 0.0005);
-    applyPatches([stylePatch, createPatch({
+    const semanticProperty = normalizeSemanticProperty(property);
+    const ownership = propertyOwnership[semanticProperty] || analyzeMotionOwnership({
+      motion,
+      property: semanticProperty,
+      targetId: motionElementId,
+      ownershipHint: ownershipHints[semanticProperty],
+    });
+    if (ownership.status === 'ambiguous' || ownership.status === 'unsupported') {
+      const conflict = {
+        ...ownership,
+        requestId: requestId('ownership'),
+        label: propertyLabel(semanticProperty),
+        pending: ownership.status === 'ambiguous' ? {
+          property: semanticProperty,
+          value,
+          before,
+        } : null,
+      };
+      setOwnershipConflict(conflict);
+      if (ownership.candidates[0]?.motionId) setActiveMotionId(ownership.candidates[0].motionId);
+      return;
+    }
+    const patch = buildFinalTargetPatch({
+      elementId: ownership.status === 'owned' ? motionElementId : selected.id,
+      property: semanticProperty,
+      before,
+      value,
+      owner: ownership.owner,
+      transform: selected.styles?.transform,
+      transformOrigin: selected.styles?.transformOrigin,
+    });
+    applyPatch(createPatch(patch));
+  }
+
+  function focusOwnership(property) {
+    const semanticProperty = normalizeSemanticProperty(property);
+    const ownership = propertyOwnership[semanticProperty] || analyzeMotionOwnership({
+      motion,
+      property: semanticProperty,
+      targetId: motionElementId,
+      ownershipHint: ownershipHints[semanticProperty],
+    });
+    if (!ownership.candidates.length) return;
+    setOwnershipConflict({
+      ...ownership,
+      requestId: requestId('ownership'),
+      label: propertyLabel(semanticProperty),
+      pending: null,
+    });
+    if (ownership.candidates[0]?.motionId) setActiveMotionId(ownership.candidates[0].motionId);
+  }
+
+  function chooseOwnership(channelId) {
+    if (!ownershipConflict) return;
+    const owner = ownershipConflict.candidates.find((candidate) => candidate.channelId === channelId);
+    if (!owner?.retargetable) return;
+    const property = ownershipConflict.property;
+    const patches = [createPatch(buildOwnershipHintPatch({
       elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${normalized}`,
-      before: existing ? keyframeDescriptor(existing, timelineOffset) : { offset: timelineOffset, exists: false },
-      value: { offset: timelineOffset, value: String(value), ...(existing?.easing ? { easing: existing.easing } : {}), exists: true },
-    })]);
+      property,
+      owner,
+      before: ownershipHints[property] || null,
+    }))];
+    if (ownershipConflict.pending) {
+      const pending = ownershipConflict.pending;
+      patches.push(createPatch(buildFinalTargetPatch({
+        elementId: motionElementId,
+        property,
+        before: pending.before,
+        value: pending.value,
+        owner,
+        transform: selected?.styles?.transform,
+        transformOrigin: selected?.styles?.transformOrigin,
+      })));
+    }
+    setActiveMotionId(owner.motionId);
+    setOwnershipConflict(null);
+    applyPatches(patches);
   }
 
   function applyText(value) {
@@ -940,6 +1056,7 @@ export function useNativeMotionController({
     setMotionDetail({});
     setEditState(createEditState());
     setSelectionSettlement(null);
+    setOwnershipConflict(null);
   }
 
   const commands = {
@@ -962,6 +1079,9 @@ export function useNativeMotionController({
     scrubIntro: (timeMs) => send('scrub-intro', { timeMs }),
     applyPatches,
     applyStyle,
+    focusOwnership,
+    chooseOwnership,
+    clearOwnership: () => setOwnershipConflict(null),
     applyText,
     applyAttribute,
     applyMotion,
@@ -1021,6 +1141,9 @@ export function useNativeMotionController({
     motionDetail,
     editState,
     selectionSettlement,
+    ownershipHints,
+    propertyOwnership,
+    ownershipConflict,
     autoExpandedRowId: lastAutoExpandedRef.current,
     commands,
   };
