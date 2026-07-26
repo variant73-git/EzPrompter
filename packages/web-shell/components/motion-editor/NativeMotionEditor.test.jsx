@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
   MOTION_EDITOR_PROTOCOL,
   MOTION_EDITOR_PROTOCOL_V2,
@@ -100,6 +100,35 @@ function renderMotionPanel(props = {}) {
 }
 
 describe('native motion editor protocol v2 integration', () => {
+  it('mounts with a caller-supplied runtime URL and persistence adapter', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    const persistenceAdapter = { load: vi.fn(async () => []), save: vi.fn(async () => {}) };
+    render(<NativeMotionEditor runtimeUrl="/runtime/custom.html" persistenceAdapter={persistenceAdapter} />);
+    expect(screen.getByTitle('Native animated website runtime').getAttribute('src')).toBe('/runtime/custom.html');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(persistenceAdapter.save).toHaveBeenCalledOnce());
+    vi.unstubAllGlobals();
+  });
+
+  it('uses the shared canvas device dimensions in the isolated lab', () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+    });
+    render(<NativeMotionEditor />);
+    expect(screen.getByText('1280 × 800')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Tablet' }));
+    expect(screen.getByText('768 × 920')).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+
   it('negotiates v2 and adds history only after the runtime commits the transaction', async () => {
     vi.stubGlobal('ResizeObserver', class {
       observe() {}

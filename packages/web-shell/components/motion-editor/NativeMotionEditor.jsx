@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   AlignCenter,
@@ -40,61 +40,42 @@ import {
   X,
 } from 'lucide-react';
 import {
-  command,
-  commandV2,
-  createPatch,
-  invertPatch,
-  isRuntimeMessage,
-  matchesRuntimeContext,
-  MOTION_EDITOR_PROTOCOL,
-  MOTION_EDITOR_PROTOCOL_V2,
-  removeRejectedPatch,
-  storageKey,
-  SUPPORTED_MOTION_EDITOR_PROTOCOLS,
-} from '../../lib/motion-editor/protocol.js';
-import {
-  TRANSACTION_LIMITS,
-  createTransaction,
-  createTransactionLedger,
-} from '../../lib/motion-editor/transaction.js';
-import {
-  buildStripEditPatches,
   coerceMotionValue,
   motionCapabilityLabel,
   motionDriverLabel,
   motionPlaybackMode,
-  normalizeMotionClip,
 } from '../../lib/motion-editor/motion-ir.js';
-import { applyStaggerDelays, groupMotionClips } from '../../lib/motion-editor/motion-groups.js';
+import { groupMotionClips } from '../../lib/motion-editor/motion-groups.js';
 import { buildFramerExport } from '../../lib/motion-editor/framer-export.js';
+import {
+  MOTION_EDITOR_DEVICE_ORDER,
+  MOTION_EDITOR_DEVICES,
+} from '../../lib/motion-editor/devices.js';
+import {
+  createLocalMotionPersistenceAdapter,
+  useNativeMotionController,
+} from './useNativeMotionController.js';
 import styles from './native-motion-editor.module.css';
 
 const SOURCE = '/api/native-clone/index.html';
 
-function requestId(prefix = 'request') {
-  return globalThis.crypto?.randomUUID?.() || `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-const DEVICES = {
-  desktop: { label: 'Desktop', width: 1440, height: 900, Icon: Monitor },
-  tablet: { label: 'Tablet', width: 768, height: 900, Icon: Tablet },
-  mobile: { label: 'Mobile', width: 390, height: 844, Icon: Smartphone },
-};
-
-const AUTO_KEYFRAME_PROPERTIES = new Set([
-  'backgroundColor', 'borderRadius', 'color', 'filter', 'fontSize', 'fontWeight',
-  'letterSpacing', 'lineHeight', 'opacity', 'transform', 'translate',
-]);
+const DEVICE_ICONS = Object.freeze({
+  desktop: Monitor,
+  tablet: Tablet,
+  mobile: Smartphone,
+});
 
 function animationProperty(property) {
   return String(property || '').replace(/-([a-z])/g, (_, character) => character.toUpperCase());
 }
 
-function patchValuesEqual(first, second) {
-  if (typeof first === 'object' || typeof second === 'object') {
-    try { return JSON.stringify(first) === JSON.stringify(second); } catch (_) { return false; }
+function readLabPreference(key, fallback, minimum, maximum) {
+  try {
+    const stored = Number(window.localStorage.getItem(key));
+    return Number.isFinite(stored) && stored >= minimum && stored <= maximum ? stored : fallback;
+  } catch (_) {
+    return fallback;
   }
-  return String(first ?? '') === String(second ?? '');
 }
 
 const EASING_PRESETS = {
@@ -113,16 +94,6 @@ function parseEasing(value) {
 
 function formatBezier(values) {
   return `cubic-bezier(${values.map((value) => Number(value).toFixed(2).replace(/\.00$/, '')).join(', ')})`;
-}
-
-function keyframeDescriptor(keyframe, offset = keyframe?.offset) {
-  if (!keyframe) return { offset: Number(offset) || 0, exists: false };
-  return {
-    offset: Number(offset) || 0,
-    value: String(keyframe.value ?? ''),
-    ...(keyframe.easing ? { easing: keyframe.easing } : {}),
-    exists: true,
-  };
 }
 
 function CubicBezierEditor({ keyframe, nextKeyframe, onCommit, onClose }) {
@@ -1756,148 +1727,71 @@ function CodePanel({ selected }) {
   );
 }
 
-export default function NativeMotionEditor() {
-  const iframeRef = useRef(null);
+export default function NativeMotionEditor({
+  runtimeUrl = SOURCE,
+  persistenceAdapter = null,
+}) {
   const stageRef = useRef(null);
-  const runtimeContextRef = useRef(null);
-  const transactionLedgerRef = useRef(createTransactionLedger());
-  const heartbeatTimeoutRef = useRef(null);
-  const [status, setStatus] = useState('loading');
-  const [runtime, setRuntime] = useState(null);
-  const [mode, setMode] = useState('edit');
-  const [tool, setTool] = useState('select');
-  const [device, setDevice] = useState('desktop');
-  const [selected, setSelected] = useState(null);
-  const [viewportRows, setViewportRows] = useState([]);
-  const [viewportPage, setViewportPage] = useState(null);
+  const localPersistence = useMemo(
+    () => createLocalMotionPersistenceAdapter(runtimeUrl),
+    [runtimeUrl],
+  );
   const [activeTab, setActiveTab] = useState('properties');
-  const [history, setHistory] = useState([]);
-  const [redo, setRedo] = useState([]);
-  const [speed, setSpeed] = useState(1);
-  const [saveState, setSaveState] = useState('idle');
-  const [patchError, setPatchError] = useState(null);
-  const [pendingTransactions, setPendingTransactions] = useState(0);
   const [stageSize, setStageSize] = useState({ width: 1000, height: 800 });
-  const [activeMotionId, setActiveMotionId] = useState(null);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [timelineZoom, setTimelineZoom] = useState(1);
-  const [timelineState, setTimelineState] = useState({ currentTime: 0, duration: 1000, playState: 'idle' });
-  const [autoKeyframe, setAutoKeyframe] = useState(false);
-  const [selectedKeyframe, setSelectedKeyframe] = useState(null);
-  const historyRef = useRef(history);
-  useEffect(() => { historyRef.current = history; }, [history]);
-  // Per-row animation detail, fetched lazily (describe-element) or captured
-  // from selections — the timeline's sub-rows read from here.
-  const [motionDetail, setMotionDetail] = useState({});
   const [expandedLayers, setExpandedLayers] = useState(() => new Set());
   const [timelineLabelsWidth, setTimelineLabelsWidth] = useState(() => {
     if (typeof window === 'undefined') return LABELS_DEFAULT_WIDTH;
-    const stored = Number(window.localStorage.getItem('uncraft-motion-labels-w'));
-    return Number.isFinite(stored) && stored >= LABELS_MIN_WIDTH && stored <= LABELS_MAX_WIDTH ? stored : LABELS_DEFAULT_WIDTH;
+    return readLabPreference('uncraft-motion-labels-w', LABELS_DEFAULT_WIDTH, LABELS_MIN_WIDTH, LABELS_MAX_WIDTH);
   });
   const [timelineHeight, setTimelineHeight] = useState(() => {
     if (typeof window === 'undefined') return TIMELINE_MIN_HEIGHT;
-    const stored = Number(window.localStorage.getItem('uncraft-motion-timeline-h'));
-    return Number.isFinite(stored) && stored >= TIMELINE_MIN_HEIGHT && stored <= TIMELINE_MAX_HEIGHT ? stored : TIMELINE_MIN_HEIGHT;
+    return readLabPreference('uncraft-motion-timeline-h', TIMELINE_MIN_HEIGHT, TIMELINE_MIN_HEIGHT, TIMELINE_MAX_HEIGHT);
   });
-
-  // The bridge resolves which timeline row OWNS the clicked element
-  // (hostRowId) — comparing raw ids across the iframe boundary is what kept
-  // site clicks from lighting up their row.
-  const selectedRowId = selected ? (selected.hostRowId || selected.id) : null;
-  // When the click resolved to a CHILD of the animated host, the editable
-  // clips are the HOST's (fetched via describe-element) — otherwise clicking
-  // a host clip in the timeline would activate an id the inspector can't find.
-  const motionFromHost = Boolean(selected && selectedRowId && selectedRowId !== selected.id && motionDetail[selectedRowId]);
-  const motion = useMemo(() => {
-    const own = (selected?.motion || []).map(normalizeMotionClip);
-    if (motionFromHost) return motionDetail[selectedRowId];
-    return own;
-  }, [selected, motionFromHost, motionDetail, selectedRowId]);
-  const activeMotion = motion.find((item) => item.id === activeMotionId) || null;
-  // Motion patches re-inspect through this element when the runtime registry
-  // was rebuilt — it must be the element that OWNS the active clips.
-  const motionElementId = motionFromHost ? selectedRowId : selected?.id || null;
-  const motionDetailRef = useRef(motionDetail);
-  useEffect(() => { motionDetailRef.current = motionDetail; }, [motionDetail]);
-  const timelineOffset = useMemo(() => {
-    if (!activeMotion) return 0;
-    const delay = Math.max(0, activeMotion.timing.delay || 0);
-    const duration = Math.max(1, activeMotion.timing.duration || 1);
-    return Math.max(0, Math.min(1, (timelineState.currentTime - delay) / duration));
-  }, [activeMotion, timelineState.currentTime]);
-
-  useEffect(() => {
-    setActiveMotionId((current) => motion.some((item) => item.id === current) ? current : motion[0]?.id || null);
-  }, [motion]);
-
-  useEffect(() => setSelectedKeyframe(null), [activeMotionId, selected?.id]);
-
-  useEffect(() => {
-    if (!patchError) return undefined;
-    const timer = window.setTimeout(() => setPatchError(null), 4500);
-    return () => window.clearTimeout(timer);
-  }, [patchError]);
+  const controller = useNativeMotionController({
+    persistenceAdapter: persistenceAdapter || localPersistence,
+    activePanel: activeTab,
+    timelineOpen,
+  });
+  const {
+    iframeRef,
+    status,
+    runtime,
+    mode,
+    tool,
+    device: deviceConfig,
+    selected,
+    selectedRowId,
+    viewportRows,
+    viewportPage,
+    historyCount,
+    canUndo,
+    canRedo,
+    speed,
+    saveState,
+    patchError,
+    pendingTransactions,
+    activeMotionId,
+    motion,
+    activeMotion,
+    timelineState,
+    timelineOffset,
+    autoKeyframe,
+    selectedKeyframe,
+    motionDetail,
+    commands,
+  } = controller;
 
   useEffect(() => {
-    if (autoKeyframe && !(activeMotion?.capabilities?.keyframes && activeMotion?.editability === 'direct')) {
-      setAutoKeyframe(false);
-    }
-  }, [activeMotion, autoKeyframe]);
-
-  const deviceConfig = DEVICES[device];
-  const viewportScale = useMemo(() => {
-    const horizontal = Math.max(0.25, (stageSize.width - 80) / deviceConfig.width);
-    const vertical = Math.max(0.25, (stageSize.height - 72) / deviceConfig.height);
-    return Math.min(1, horizontal, vertical);
-  }, [deviceConfig, stageSize]);
-
-  const armHeartbeatTimeout = useCallback(() => {
-    if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
-    heartbeatTimeoutRef.current = window.setTimeout(() => {
-      setStatus('unhealthy');
-      setPatchError('The website stopped responding. Your confirmed changes are safe.');
-    }, 3500);
-  }, []);
-
-  useEffect(() => () => {
-    if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
-  }, []);
-
-  const send = useCallback((type, payload = {}, options = {}) => {
-    const context = runtimeContextRef.current;
-    const nextRequestId = options.requestId || requestId(type);
-    const message = context?.protocol === MOTION_EDITOR_PROTOCOL_V2
-      ? commandV2(type, payload, { ...context, requestId: nextRequestId })
-      : command(type, payload);
-    iframeRef.current?.contentWindow?.postMessage(message, '*');
-    return nextRequestId;
-  }, []);
-
-  // Selections feed the timeline: cache the element's clips for its row,
-  // auto-expand the row that owns it, and fetch the host row's detail when
-  // the click resolved to a child of the animated host.
-  const lastAutoExpandedRef = useRef(null);
-  useEffect(() => {
-    if (!selected?.id) return;
-    setMotionDetail((current) => ({ ...current, [selected.id]: (selected.motion || []).map(normalizeMotionClip) }));
-    const rowId = selected.hostRowId || selected.id;
-    // Auto-expand only when the selection MOVED to a different row — every
-    // patch-applied refreshes `selected`, and re-expanding on each edit made
-    // the chevron's collapse impossible to keep.
-    if (lastAutoExpandedRef.current !== rowId) {
-      lastAutoExpandedRef.current = rowId;
-      setExpandedLayers((current) => {
-        if (current.has(rowId)) return current;
-        const next = new Set(current);
-        next.add(rowId);
-        return next;
-      });
-    }
-    if (rowId !== selected.id && !motionDetailRef.current[rowId] && status === 'ready') {
-      send('describe-element', { elementId: rowId });
-    }
-  }, [selected, send, status]);
+    if (!selectedRowId) return;
+    setExpandedLayers((current) => {
+      if (current.has(selectedRowId)) return current;
+      const next = new Set(current);
+      next.add(selectedRowId);
+      return next;
+    });
+  }, [selectedRowId]);
 
   useEffect(() => {
     if (!stageRef.current) return undefined;
@@ -1908,367 +1802,11 @@ export default function NativeMotionEditor() {
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    function replayCurrentHistory(useV2) {
-      let saved = historyRef.current;
-      if (!saved.length) {
-        try {
-          const stored = JSON.parse(localStorage.getItem(storageKey(SOURCE)) || '[]');
-          saved = Array.isArray(stored) ? stored : [];
-        } catch (_) { saved = []; }
-      }
-      if (!saved.length) return;
-      setHistory(saved);
-      if (!useV2) {
-        send('apply-patches', { patches: saved });
-        return;
-      }
-      for (let index = 0; index < saved.length; index += TRANSACTION_LIMITS.maxPatches) {
-        const patches = saved.slice(index, index + TRANSACTION_LIMITS.maxPatches);
-        const transaction = createTransaction({ patches, source: 'replay' });
-        transactionLedgerRef.current.stage(transaction, {
-          operation: 'replay',
-          patchIds: patches.map((patch) => patch.id),
-        });
-        send('apply-transaction', { transaction }, { requestId: transaction.requestId });
-      }
-      setPendingTransactions(transactionLedgerRef.current.size);
-    }
-
-    function releaseSettled(entries) {
-      entries.forEach((entry) => {
-        const acknowledged = entry.payload?.transaction || entry.transaction;
-        const patches = acknowledged.patches || entry.transaction.patches;
-        if (entry.status !== 'committed') {
-          if (entry.meta.operation === 'replay') {
-            const rejectedIds = new Set(entry.meta.patchIds || []);
-            setHistory((current) => current.filter((patch) => !rejectedIds.has(patch.id)));
-          }
-          return;
-        }
-        if (entry.meta.operation === 'apply') {
-          setHistory((current) => [...current, ...patches]);
-          setRedo([]);
-        } else if (entry.meta.operation === 'undo') {
-          const reversedIds = new Set(entry.meta.group.map((patch) => patch.id));
-          setHistory((current) => current.filter((patch) => !reversedIds.has(patch.id)));
-          setRedo((current) => [...current, entry.meta.group]);
-        } else if (entry.meta.operation === 'redo') {
-          setRedo((current) => current.slice(0, -1));
-          setHistory((current) => [...current, ...patches]);
-        }
-        setSaveState('idle');
-      });
-      setPendingTransactions(transactionLedgerRef.current.size);
-    }
-
-    function onMessage(event) {
-      if (event.source !== iframeRef.current?.contentWindow || !isRuntimeMessage(event.data)) return;
-      const { type, payload = {} } = event.data;
-      if (event.data.protocol === MOTION_EDITOR_PROTOCOL_V2) {
-        const context = runtimeContextRef.current;
-        if (!context || !matchesRuntimeContext(event.data, context, event.origin)) return;
-      }
-      if (type === 'runtime-ready') {
-        setRuntime(payload);
-        if (transactionLedgerRef.current.size) {
-          setPatchError('The website restarted before a change was confirmed. The previous value was restored.');
-        }
-        transactionLedgerRef.current = createTransactionLedger();
-        setPendingTransactions(0);
-        const supportsV2 = Array.isArray(payload.supportedProtocols) && payload.supportedProtocols.includes(MOTION_EDITOR_PROTOCOL_V2);
-        if (supportsV2) {
-          const context = {
-            protocol: MOTION_EDITOR_PROTOCOL,
-            sessionNonce: payload.sessionNonce,
-            runtimeGeneration: payload.runtimeGeneration,
-            bundleId: payload.bundleId,
-            sessionId: payload.sessionId,
-            origin: event.origin,
-          };
-          runtimeContextRef.current = context;
-          setStatus('negotiating');
-          const negotiationId = requestId('negotiate');
-          iframeRef.current?.contentWindow?.postMessage({
-            ...command('negotiate-protocol', { selectedProtocol: MOTION_EDITOR_PROTOCOL_V2 }),
-            protocolVersion: MOTION_EDITOR_PROTOCOL,
-            supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
-            sessionNonce: context.sessionNonce,
-            requestId: negotiationId,
-            runtimeGeneration: context.runtimeGeneration,
-            bundleId: context.bundleId,
-            sessionId: context.sessionId,
-          }, '*');
-        } else {
-          runtimeContextRef.current = { protocol: MOTION_EDITOR_PROTOCOL, origin: event.origin };
-          setStatus('ready');
-          send('set-mode', { mode });
-          send('inspect-viewport', {});
-          replayCurrentHistory(false);
-        }
-      }
-      if (type === 'protocol-negotiated') {
-        runtimeContextRef.current = {
-          ...runtimeContextRef.current,
-          protocol: MOTION_EDITOR_PROTOCOL_V2,
-        };
-        setStatus('ready');
-        armHeartbeatTimeout();
-        send('set-mode', { mode });
-        send('inspect-viewport', {});
-        replayCurrentHistory(true);
-      }
-      if (type === 'heartbeat' || type === 'runtime-health') {
-        armHeartbeatTimeout();
-        setStatus('ready');
-      }
-      if (type === 'transaction-committed') {
-        const transaction = payload.transaction;
-        if (transaction?.id && transactionLedgerRef.current.has(transaction.id)) {
-          releaseSettled(transactionLedgerRef.current.settle(transaction.id, 'committed', payload));
-        } else if (payload.originatedByRuntime && transaction?.patches?.length) {
-          setHistory((current) => [...current, ...transaction.patches]);
-          setRedo([]);
-          setSaveState('idle');
-        }
-        if (payload.element) setSelected(payload.element);
-        window.setTimeout(() => send('refresh-inventory'), 80);
-      }
-      if (type === 'transaction-rejected') {
-        if (payload.transactionId && transactionLedgerRef.current.has(payload.transactionId)) {
-          releaseSettled(transactionLedgerRef.current.settle(payload.transactionId, 'rejected', payload));
-        }
-        setPatchError("This change couldn't be applied. The previous value was restored.");
-      }
-      if (type === 'viewport-motion-changed') {
-        setViewportRows(Array.isArray(payload.rows) ? payload.rows : []);
-        if (payload.page) setViewportPage(payload.page);
-      }
-      if (type === 'element-described' && payload.element?.id) {
-        setMotionDetail((current) => ({ ...current, [payload.element.id]: (payload.element.motion || []).map(normalizeMotionClip) }));
-      }
-      if (type === 'selection-changed' || type === 'patch-applied' || type === 'inline-text-edit-started') {
-        setSelected(payload.element || null);
-      }
-      if (type === 'inline-text-committed') {
-        const patch = createPatch({
-          elementId: payload.elementId,
-          kind: 'text',
-          before: payload.before,
-          value: payload.value,
-        });
-        setHistory((current) => [...current, patch]);
-        setRedo([]);
-        setSelected(payload.element || null);
-        setSaveState('idle');
-      }
-      if (type === 'inventory-changed') {
-        setRuntime((current) => current ? { ...current, assets: payload.assets || [], profile: payload.profile || current.profile } : current);
-      }
-      if (type === 'layout-intent-committed') {
-        const patch = {
-          ...createPatch({ elementId: payload.elementId, kind: 'style', property: 'translate', before: payload.before, value: payload.value }),
-          layoutIntent: { delta: payload.delta, originalRect: payload.originalRect },
-        };
-        setHistory((current) => [...current, patch]);
-        setRedo([]);
-        setSelected(payload.element || null);
-        setSaveState('idle');
-      }
-      if (type === 'patches-applied' && payload.element) setSelected(payload.element);
-      if (type === 'patch-rejected') {
-        // The runtime refused the write — a phantom entry in history would replay
-        // the same failure on every undo/save, silently.
-        setHistory((current) => removeRejectedPatch(current, payload.patch));
-        setPatchError(payload.error || 'The change could not be applied.');
-      }
-      if (type === 'playback-changed' && payload.speed) setSpeed(payload.speed);
-      if (type === 'timeline-changed') {
-        setTimelineState({
-          currentTime: Number(payload.currentTime) || 0,
-          duration: Math.max(1, Number(payload.duration) || 1),
-          playState: payload.playState || 'idle',
-        });
-      }
-    }
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [armHeartbeatTimeout, mode, send]);
-
-  useEffect(() => {
-    if (status === 'ready') send('set-mode', { mode });
-  }, [mode, send, status]);
-
-  useEffect(() => {
-    if (status === 'ready') send('set-tool', { tool });
-  }, [send, status, tool]);
-
-  useEffect(() => {
-    if (status !== 'ready') return undefined;
-    send('set-timeline-active', { motionId: timelineOpen ? activeMotionId : null });
-    return () => send('set-timeline-active', { motionId: null });
-  }, [activeMotionId, send, status, timelineOpen]);
-
-  function applyNewPatches(patches) {
-    const changed = patches.filter((patch) => !patchValuesEqual(patch.before, patch.value));
-    if (!changed.length) return;
-    const groupId = changed.length > 1
-      ? (globalThis.crypto?.randomUUID?.() || `group-${Date.now()}-${Math.random().toString(16).slice(2)}`)
-      : null;
-    const grouped = changed.map((patch) => groupId ? { ...patch, groupId } : patch);
-    if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2) {
-      const transaction = createTransaction({ patches: grouped, source: activeTab });
-      transactionLedgerRef.current.stage(transaction, { operation: 'apply' });
-      setPendingTransactions(transactionLedgerRef.current.size);
-      send('apply-transaction', { transaction }, { requestId: transaction.requestId });
-      return;
-    }
-    if (grouped.length === 1) send('apply-patch', { patch: grouped[0] });
-    else send('apply-patches', { patches: grouped });
-    setHistory((current) => [...current, ...grouped]);
-    setRedo([]);
-    setSaveState('idle');
-    window.setTimeout(() => send('refresh-inventory'), 80);
-  }
-
-  function applyNewPatch(patch) {
-    applyNewPatches([patch]);
-  }
-
-  function applyStyle(property, value, before) {
-    if (!selected) return;
-    const stylePatch = createPatch({ elementId: selected.id, kind: 'style', property, before, value });
-    const normalized = animationProperty(property);
-    const canKeyframe = autoKeyframe && activeMotion?.capabilities?.keyframes && activeMotion?.editability === 'direct' && AUTO_KEYFRAME_PROPERTIES.has(normalized);
-    if (!canKeyframe) {
-      applyNewPatch(stylePatch);
-      return;
-    }
-    const track = activeMotion.tracks.find((item) => animationProperty(item.property) === normalized);
-    const existing = track?.keyframes?.find((keyframe) => Math.abs(Number(keyframe.offset) - timelineOffset) < 0.0005);
-    const keyframePatch = createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${normalized}`,
-      before: existing
-        ? keyframeDescriptor(existing, timelineOffset)
-        : { offset: timelineOffset, exists: false },
-      value: {
-        offset: timelineOffset,
-        value: String(value),
-        ...(existing?.easing ? { easing: existing.easing } : {}),
-        exists: true,
-      },
-    });
-    applyNewPatches([stylePatch, keyframePatch]);
-  }
-
-  function applyText(value) {
-    if (!selected) return;
-    applyNewPatch(createPatch({ elementId: selected.id, kind: 'text', before: selected.text, value }));
-  }
-
-  function applyAttribute(property, value, before) {
-    if (!selected) return;
-    applyNewPatch(createPatch({ elementId: selected.id, kind: 'attribute', property, before, value }));
-  }
-
-  function applyMotion(motion, property, value, before) {
-    if (!selected || !motion?.id) return;
-    applyNewPatch(createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: motion.id,
-      property,
-      before,
-      value,
-    }));
-  }
-
-  function applyStripEdit(row, next) {
-    if (!selected || !activeMotion) return;
-    const edits = buildStripEditPatches({ motion: activeMotion, row, next });
-    if (!edits.length) return;
-    applyNewPatches(edits.map((edit) => createPatch({
-      elementId: motionElementId, kind: 'motion', motionId: activeMotion.id, ...edit,
-    })));
-    // Redraw strips from the runtime's truth, not from the optimistic drag.
-    window.setTimeout(() => send('inspect-viewport'), 60);
-  }
-
-  function applyStagger(members, valueMs) {
-    if (!selected) return;
-    const patches = applyStaggerDelays(members, valueMs).map(({ clip, delay }) => createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: clip.id,
-      property: 'timing.delay',
-      before: clip.timing.delay,
-      value: delay,
-    }));
-    applyNewPatches(patches);
-  }
-
-  async function replaceAsset(asset, file) {
-    if (asset.kind === 'svg') {
-      const markup = await file.text();
-      applyNewPatch(createPatch({ elementId: asset.elementId, kind: 'svg', before: asset.markup || '', value: markup }));
-      return;
-    }
-    const value = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
-    if (asset.kind === 'background') {
-      applyNewPatch(createPatch({ elementId: asset.elementId, kind: 'style', property: 'background-image', before: `url("${asset.source}")`, value: `url("${value}")` }));
-    } else {
-      applyNewPatch(createPatch({ elementId: asset.elementId, kind: 'attribute', property: asset.property || 'src', before: asset.source, value }));
-    }
-  }
-
-  function undo() {
-    if (pendingTransactions) return;
-    const patch = history.at(-1);
-    if (!patch) return;
-    let groupStart = history.length - 1;
-    if (patch.groupId) {
-      while (groupStart > 0 && history[groupStart - 1].groupId === patch.groupId) groupStart -= 1;
-    }
-    const group = history.slice(groupStart);
-    const inverse = group.slice().reverse().map(invertPatch);
-    if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2) {
-      const transaction = createTransaction({ patches: inverse, source: 'undo' });
-      transactionLedgerRef.current.stage(transaction, { operation: 'undo', group });
-      setPendingTransactions(transactionLedgerRef.current.size);
-      send('rollback-transaction', { transaction }, { requestId: transaction.requestId });
-      return;
-    }
-    send('apply-patches', { patches: inverse });
-    setHistory((current) => current.slice(0, groupStart));
-    setRedo((current) => [...current, group]);
-    setSaveState('idle');
-  }
-
-  function redoPatch() {
-    if (pendingTransactions) return;
-    const entry = redo.at(-1);
-    if (!entry) return;
-    const group = Array.isArray(entry) ? entry : [entry];
-    if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2) {
-      const transaction = createTransaction({ patches: group, source: 'redo' });
-      transactionLedgerRef.current.stage(transaction, { operation: 'redo', group });
-      setPendingTransactions(transactionLedgerRef.current.size);
-      send('apply-transaction', { transaction }, { requestId: transaction.requestId });
-      return;
-    }
-    send('apply-patches', { patches: group });
-    setRedo((current) => current.slice(0, -1));
-    setHistory((current) => [...current, ...group]);
-    setSaveState('idle');
-  }
+  const viewportScale = useMemo(() => {
+    const horizontal = Math.max(0.25, (stageSize.width - 80) / deviceConfig.width);
+    const vertical = Math.max(0.25, (stageSize.height - 72) / deviceConfig.height);
+    return Math.min(1, horizontal, vertical);
+  }, [deviceConfig, stageSize]);
 
   function exportFramer() {
     if (!selected || !motion.length) return;
@@ -2279,161 +1817,17 @@ export default function NativeMotionEditor() {
     link.href = url;
     link.download = `${String(selected.label || 'motion').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'motion'}-framer.jsx`;
     link.click();
-    // Synchronous revoke races the download outside Chromium.
     window.setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
-  function save() {
-    localStorage.setItem(storageKey(SOURCE), JSON.stringify(history));
-    setSaveState('saved');
-    window.setTimeout(() => setSaveState('idle'), 1800);
-  }
-
-  function playback(action) {
-    send('playback', { action, speed, motionId: activeMotionId });
-  }
-
-  function changeSpeed(nextSpeed) {
-    setSpeed(nextSpeed);
-    // Re-rate only — changing speed must never start playback.
-    send('playback', { action: 'speed', speed: nextSpeed, motionId: activeMotionId });
-  }
-
   function selectMotion(motionId) {
-    setActiveMotionId(motionId);
+    commands.selectMotion(motionId);
     setTimelineOpen(true);
   }
 
-  function seekMotion(currentTime) {
-    if (!activeMotionId) return;
-    setTimelineState((current) => ({ ...current, currentTime, playState: 'paused' }));
-    send('seek-motion', { motionId: activeMotionId, currentTime });
-  }
-
-  function changePlaybackMode(nextMode) {
-    if (!activeMotion) return;
-    applyMotion(activeMotion, 'timing.playbackMode', nextMode, motionPlaybackMode(activeMotion.timing));
-  }
-
   function toggleAutoKeyframe(nextValue) {
-    if (nextValue) {
-      playback('pause');
-      setTimelineOpen(true);
-    }
-    setAutoKeyframe(nextValue);
-  }
-
-  function resolveKeyframe(selection) {
-    if (!selection || !activeMotion || selection.motionId !== activeMotion.id) return null;
-    const track = activeMotion.tracks.find((item) => item.property === selection.property);
-    const keyframe = track?.keyframes?.find((item) => Math.abs(Number(item.offset) - Number(selection.offset)) < 0.0005);
-    return track && keyframe ? { track, keyframe } : null;
-  }
-
-  function availableKeyframeOffset(track, desiredOffset, ignoredOffset = null) {
-    const desired = Math.max(0, Math.min(1, Number(desiredOffset) || 0));
-    const occupied = (offset) => track.keyframes.some((keyframe) => (
-      Math.abs(Number(keyframe.offset) - offset) < 0.004
-      && (ignoredOffset == null || Math.abs(Number(keyframe.offset) - Number(ignoredOffset)) >= 0.0005)
-    ));
-    if (!occupied(desired)) return desired;
-    for (let step = 1; step <= 100; step += 1) {
-      const distance = step * 0.01;
-      const forward = desired + distance;
-      const backward = desired - distance;
-      if (forward <= 1 && !occupied(forward)) return forward;
-      if (backward >= 0 && !occupied(backward)) return backward;
-    }
-    return desired;
-  }
-
-  function deleteKeyframe(selection) {
-    const resolved = resolveKeyframe(selection);
-    if (!resolved || !selected) return;
-    applyNewPatch(createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: keyframeDescriptor(resolved.keyframe),
-      value: keyframeDescriptor(null, resolved.keyframe.offset),
-    }));
-    setSelectedKeyframe(null);
-  }
-
-  function duplicateKeyframe(selection, requestedOffset = null) {
-    const resolved = resolveKeyframe(selection);
-    if (!resolved || !selected) return;
-    const defaultStep = Math.max(0.02, Math.min(0.12, 80 / Math.max(1, activeMotion.timing.duration)));
-    const preferred = requestedOffset == null
-      ? (Number(resolved.keyframe.offset) + defaultStep <= 1 ? Number(resolved.keyframe.offset) + defaultStep : Number(resolved.keyframe.offset) - defaultStep)
-      : requestedOffset;
-    const offset = availableKeyframeOffset(resolved.track, preferred);
-    const existing = resolved.track.keyframes.find((keyframe) => Math.abs(Number(keyframe.offset) - offset) < 0.0005);
-    applyNewPatch(createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: keyframeDescriptor(existing, offset),
-      value: keyframeDescriptor(resolved.keyframe, offset),
-    }));
-    setSelectedKeyframe({ motionId: activeMotion.id, property: resolved.track.property, offset });
-    seekMotion((activeMotion.timing.delay || 0) + offset * Math.max(1, activeMotion.timing.duration));
-  }
-
-  function moveKeyframe(selection, requestedOffset) {
-    const resolved = resolveKeyframe(selection);
-    if (!resolved || !selected) return;
-    const sourceOffset = Number(resolved.keyframe.offset) || 0;
-    const offset = availableKeyframeOffset(resolved.track, requestedOffset, sourceOffset);
-    if (Math.abs(offset - sourceOffset) < 0.0005) return;
-    const existing = resolved.track.keyframes.find((keyframe) => Math.abs(Number(keyframe.offset) - offset) < 0.0005);
-    const removeSource = createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: keyframeDescriptor(resolved.keyframe),
-      value: keyframeDescriptor(null, sourceOffset),
-    });
-    const addDestination = createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: keyframeDescriptor(existing, offset),
-      value: keyframeDescriptor(resolved.keyframe, offset),
-    });
-    applyNewPatches([removeSource, addDestination]);
-    setSelectedKeyframe({ motionId: activeMotion.id, property: resolved.track.property, offset });
-    seekMotion((activeMotion.timing.delay || 0) + offset * Math.max(1, activeMotion.timing.duration));
-  }
-
-  function changeKeyframeValue(selection, value) {
-    const resolved = resolveKeyframe(selection);
-    if (!resolved || !selected || String(resolved.keyframe.value) === String(value)) return;
-    applyNewPatch(createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: keyframeDescriptor(resolved.keyframe),
-      value: { ...keyframeDescriptor(resolved.keyframe), value: String(value) },
-    }));
-  }
-
-  function changeKeyframeEasing(selection, easing) {
-    const resolved = resolveKeyframe(selection);
-    if (!resolved || !selected || resolved.keyframe.easing === easing) return;
-    applyNewPatch(createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: { ...keyframeDescriptor(resolved.keyframe), easing: resolved.keyframe.easing || null },
-      value: { ...keyframeDescriptor(resolved.keyframe), easing },
-    }));
+    if (nextValue) setTimelineOpen(true);
+    commands.toggleAutoKeyframe(nextValue);
   }
 
   return (
@@ -2449,15 +1843,16 @@ export default function NativeMotionEditor() {
         </div>
 
         <div className={styles.deviceSwitcher} aria-label="Viewport">
-          {Object.entries(DEVICES).map(([key, value]) => {
-            const Icon = value.Icon;
+          {MOTION_EDITOR_DEVICE_ORDER.map((key) => {
+            const value = MOTION_EDITOR_DEVICES[key];
+            const Icon = DEVICE_ICONS[key];
             return (
               <button
                 key={key}
                 type="button"
                 aria-label={value.label}
-                aria-pressed={device === key}
-                onClick={() => setDevice(key)}
+                aria-pressed={deviceConfig.id === key}
+                onClick={() => commands.changeDevice(key)}
               ><Icon /></button>
             );
           })}
@@ -2465,12 +1860,12 @@ export default function NativeMotionEditor() {
 
         <div className={styles.topbarEnd}>
           <div className={styles.historyControls}>
-            <button type="button" onClick={undo} disabled={!history.length || pendingTransactions > 0} aria-label="Undo"><Undo2 /></button>
-            <button type="button" onClick={redoPatch} disabled={!redo.length || pendingTransactions > 0} aria-label="Redo"><Redo2 /></button>
+            <button type="button" onClick={commands.undo} disabled={!canUndo || pendingTransactions > 0} aria-label="Undo"><Undo2 /></button>
+            <button type="button" onClick={commands.redo} disabled={!canRedo || pendingTransactions > 0} aria-label="Redo"><Redo2 /></button>
           </div>
           <div className={styles.modeSwitch}>
-            <button type="button" aria-pressed={mode === 'edit'} onClick={() => setMode('edit')}><MousePointer2 />Edit</button>
-            <button type="button" aria-pressed={mode === 'preview'} onClick={() => setMode('preview')}><Eye />Preview</button>
+            <button type="button" aria-pressed={mode === 'edit'} onClick={() => commands.changeMode('edit')}><MousePointer2 />Edit</button>
+            <button type="button" aria-pressed={mode === 'preview'} onClick={() => commands.changeMode('preview')}><Eye />Preview</button>
           </div>
           <button
             type="button"
@@ -2481,7 +1876,7 @@ export default function NativeMotionEditor() {
               : 'Select an animated element to export it'}
             onClick={exportFramer}
           ><Code2 />Export</button>
-          <button type="button" className={styles.saveButton} onClick={save} disabled={pendingTransactions > 0}>
+          <button type="button" className={styles.saveButton} onClick={commands.save} disabled={pendingTransactions > 0}>
             {saveState === 'saved' ? <Check /> : <Save />}
             {saveState === 'saved' ? 'Saved' : 'Save changes'}
           </button>
@@ -2491,8 +1886,8 @@ export default function NativeMotionEditor() {
       <section className={styles.workspace}>
         <div className={styles.stage} ref={stageRef}>
           <div className={styles.toolRail}>
-            <button type="button" aria-pressed={mode === 'edit' && tool === 'select'} onClick={() => { setMode('edit'); setTool('select'); }} title="Select elements"><MousePointer2 /></button>
-            <button type="button" aria-pressed={mode === 'edit' && tool === 'move'} onClick={() => { setMode('edit'); setTool('move'); }} title="Move freely"><Move /></button>
+            <button type="button" aria-pressed={mode === 'edit' && tool === 'select'} onClick={() => { commands.changeMode('edit'); commands.changeTool('select'); }} title="Select elements"><MousePointer2 /></button>
+            <button type="button" aria-pressed={mode === 'edit' && tool === 'move'} onClick={() => { commands.changeMode('edit'); commands.changeTool('move'); }} title="Move freely"><Move /></button>
             <span />
             <button type="button" onClick={() => { setActiveTab('motion'); setTimelineOpen(true); }} title="Inspect motion"><Gauge /></button>
           </div>
@@ -2515,10 +1910,10 @@ export default function NativeMotionEditor() {
               <iframe
                 ref={iframeRef}
                 title="Native animated website runtime"
-                src={SOURCE}
+                src={runtimeUrl}
                 sandbox="allow-scripts allow-pointer-lock"
                 referrerPolicy="no-referrer"
-                onLoad={() => setStatus((current) => current === 'ready' ? current : 'bridge')}
+                onLoad={commands.markRuntimeLoaded}
               />
             </div>
           </div>
@@ -2527,7 +1922,7 @@ export default function NativeMotionEditor() {
           <div className={styles.stageStatus}>
             <span>{deviceConfig.width} × {deviceConfig.height}</span>
             <span>{Math.round(viewportScale * 100)}%</span>
-            <span>{history.length} {history.length === 1 ? 'change' : 'changes'}</span>
+            <span>{historyCount} {historyCount === 1 ? 'change' : 'changes'}</span>
           </div>
         </div>
 
@@ -2549,9 +1944,9 @@ export default function NativeMotionEditor() {
               </button>
             ))}
           </nav>
-          {activeTab === 'properties' && <PropertiesPanel selected={selected} runtime={runtime} activeMotion={activeMotion} timelineOffset={timelineOffset} onStyle={applyStyle} onText={applyText} onAttribute={applyAttribute} />}
-          {activeTab === 'assets' && <AssetsPanel assets={runtime?.assets || []} onSelect={(elementId) => send('select-element', { elementId })} onReplace={replaceAsset} />}
-          {activeTab === 'motion' && <MotionPanel selected={selected} motion={motion} activeMotionId={activeMotionId} onMotion={applyMotion} onStagger={applyStagger} />}
+          {activeTab === 'properties' && <PropertiesPanel selected={selected} runtime={runtime} activeMotion={activeMotion} timelineOffset={timelineOffset} onStyle={commands.applyStyle} onText={commands.applyText} onAttribute={commands.applyAttribute} />}
+          {activeTab === 'assets' && <AssetsPanel assets={runtime?.assets || []} onSelect={commands.selectElement} onReplace={commands.replaceAsset} />}
+          {activeTab === 'motion' && <MotionPanel selected={selected} motion={motion} activeMotionId={activeMotionId} onMotion={commands.applyMotion} onStagger={commands.applyStagger} />}
           {activeTab === 'code' && <CodePanel selected={selected} />}
         </aside>
 
@@ -2568,12 +1963,12 @@ export default function NativeMotionEditor() {
               else next.add(elementId);
               return next;
             });
-            if (expanding && !motionDetail[elementId] && status === 'ready') send('describe-element', { elementId });
+            if (expanding && !motionDetail[elementId] && status === 'ready') commands.describeElement(elementId);
           }}
           activeMotionId={activeMotionId}
           onActiveMotion={selectMotion}
           selectedElementId={selectedRowId}
-          onSelectElement={(elementId) => send('focus-element', { elementId })}
+          onSelectElement={commands.focusElement}
           labelsWidth={timelineLabelsWidth}
           onLabelsWidth={(width) => {
             setTimelineLabelsWidth(width);
@@ -2585,31 +1980,10 @@ export default function NativeMotionEditor() {
             try { window.localStorage.setItem('uncraft-motion-timeline-h', String(height)); } catch (_) {}
           }}
           page={viewportPage}
-          onScrollTo={(scrollY) => {
-            // Optimistic playhead — the bridge confirms via the next debounced emit.
-            setViewportPage((current) => current ? { ...current, scrollY } : current);
-            send('scroll-to', { scrollY });
-          }}
-          onScrubIntro={(timeMs) => send('scrub-intro', { timeMs })}
-          onUnlink={(row, linkIds) => {
-            const patches = (linkIds || []).map((linkId) => createPatch({
-              elementId: row.elementId,
-              kind: 'motion',
-              motionId: linkId,
-              property: 'link.detach',
-              before: { detached: false },
-              value: { detached: true },
-            }));
-            if (!patches.length) return;
-            applyNewPatches(patches);
-            // The chain broke in the runtime — redraw rows and this row's clips
-            // from the runtime's truth.
-            window.setTimeout(() => {
-              send('inspect-viewport');
-              send('describe-element', { elementId: row.elementId });
-            }, 120);
-          }}
-          onStripEdit={applyStripEdit}
+          onScrollTo={commands.scrollTo}
+          onScrubIntro={commands.scrubIntro}
+          onUnlink={commands.unlinkMotion}
+          onStripEdit={commands.applyStripEdit}
           motion={activeMotion}
           state={timelineState}
           speed={speed}
@@ -2617,18 +1991,18 @@ export default function NativeMotionEditor() {
           autoKeyframe={autoKeyframe}
           selectedKeyframe={selectedKeyframe}
           onToggle={() => setTimelineOpen((current) => !current)}
-          onPlayback={playback}
-          onSpeed={changeSpeed}
-          onSeek={seekMotion}
+          onPlayback={commands.playback}
+          onSpeed={commands.changeSpeed}
+          onSeek={commands.seekMotion}
           onZoom={setTimelineZoom}
-          onPlaybackMode={changePlaybackMode}
+          onPlaybackMode={commands.changePlaybackMode}
           onAutoKeyframe={toggleAutoKeyframe}
-          onSelectKeyframe={setSelectedKeyframe}
-          onMoveKeyframe={moveKeyframe}
-          onDuplicateKeyframe={duplicateKeyframe}
-          onDeleteKeyframe={deleteKeyframe}
-          onChangeKeyframeEasing={changeKeyframeEasing}
-          onChangeKeyframeValue={changeKeyframeValue}
+          onSelectKeyframe={commands.selectKeyframe}
+          onMoveKeyframe={commands.moveKeyframe}
+          onDuplicateKeyframe={commands.duplicateKeyframe}
+          onDeleteKeyframe={commands.deleteKeyframe}
+          onChangeKeyframeEasing={commands.changeKeyframeEasing}
+          onChangeKeyframeValue={commands.changeKeyframeValue}
         />
       </section>
     </main>

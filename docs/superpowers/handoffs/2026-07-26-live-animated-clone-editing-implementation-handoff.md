@@ -1,7 +1,7 @@
 # Handoff — Live Animated Clone Editing
 
 **Data:** 2026-07-26
-**Status:** Tasks 1–4 concluídas e verificadas; Task 5 não iniciada
+**Status:** Tasks 1–5 concluídas e verificadas; Task 6 não iniciada
 **Checkout:** `/Users/adilsonporto/Desktop/IA/Uncraft`
 **Branch:** `codex/live-animated-clone-editing`
 **Base:** `main` em `ec297fffd8303e512c8ce3a910930cc2d51b3635`
@@ -445,12 +445,96 @@ na suíte completa.
 - Um reload simulado com transação pendente preservou uma mudança confirmada e
   não promoveu a mudança sem acknowledgement.
 
+## Task 5 — controller nativo compartilhado e lab preservado
+
+### Resultado
+
+O engine que estava embutido em `NativeMotionEditor.jsx` foi extraído para um
+único hook reutilizável. O motion lab continua sendo consumidor desse mesmo
+controller, sem fork de protocolo, bridge, timeline ou painéis e sem iniciar o
+roteamento do canvas.
+
+Novos arquivos:
+
+- `packages/web-shell/components/motion-editor/useNativeMotionController.js`
+- `packages/web-shell/components/motion-editor/useNativeMotionController.test.jsx`
+- `packages/web-shell/lib/motion-editor/session-history.js`
+- `packages/web-shell/lib/motion-editor/session-history.test.js`
+- `packages/web-shell/lib/motion-editor/devices.js`
+- `packages/web-shell/lib/motion-editor/devices.test.js`
+
+Arquivos modificados:
+
+- `packages/web-shell/components/motion-editor/NativeMotionEditor.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditor.test.jsx`
+- `packages/web-shell/app/motion-editor/page.jsx`
+
+### Contrato entregue
+
+- O controller agora possui conexão com o bridge, negociação v1/v2, runtime e
+  health, seleção, inspeção do viewport, fila transacional, histórico da sessão,
+  playback, timeline, device, recovery e comandos de mutação.
+- O componente visual conserva apenas layout: abas, escala do stage, expansão
+  de layers, zoom e dimensões visuais da timeline.
+- O hook recebe `iframeRef` e persistence adapter; `NativeMotionEditor` recebe
+  runtime URL e adapter do chamador. A rota isolada fornece explicitamente sua
+  URL e usa o adapter local atual.
+- `localStorage` não é autoridade do controller. Ele existe somente no adapter
+  do lab para o patch manifest legado e nas preferências visuais do próprio lab.
+- Histórico é transacional e node/session-scoped: somente transações de usuário
+  reconhecidas entram; Undo e Redo atravessam a sessão corrente em ordem; uma
+  mudança após Undo remove somente o branch abandonado.
+- Reparos automáticos ficam aninhados na transação causadora e acompanham essa
+  única entrada em replay, Undo, Redo e persistência.
+- Trocar device não cria histórico. As dimensões canônicas compartilhadas agora
+  são desktop `1280x800`, tablet `768x920` e mobile `390x844`.
+- Teardown remove listeners e timers; eventos tardios são recusados. Dois
+  controllers na mesma página permanecem isolados pela source window do iframe.
+- `NativeMotionEditor` caiu de 2.636 para 2.010 linhas e não contém mais ledger,
+  message listener, histórico ou implementação do protocolo.
+
+### Evidência tests-first e exit gate
+
+Os testes novos falharam primeiro pela ausência dos três módulos e pelas
+dimensões antigas do lab. Depois da extração:
+
+```text
+Suíte focal final: 7 files, 99 tests passed
+Suíte completa: 139 files passed, 1 skipped; 1025 tests passed, 4 skipped
+Build: Next.js 15.5.15; compiled; 41/41 static pages; exit 0
+git diff --check: clean
+```
+
+O warning não bloqueante já conhecido de `--localstorage-file` permaneceu na
+suíte. Não houve warning novo de build.
+
+### Verificação com bundle real e browser
+
+O motion lab abriu `Clone/dist` pelo gateway explícito de desenvolvimento e
+preservou o fluxo principal depois da extração:
+
+```text
+runtime: connected
+iframe sandbox: allow-scripts allow-pointer-lock
+desktop viewport: 1280x800
+tablet viewport: 768x920
+Preview -> Edit: ok
+Motion tab + Timeline: opened
+browser console errors: 0
+```
+
+O clone emitiu um warning GSAP sobre `force3D`; ele vem do bundle servido, não
+do controller, e não bloqueou runtime, interação ou build.
+
 ## Estado e rollback da fatia
 
-- Tasks 1–4 estão concluídas; Task 5 não foi iniciada.
+- Tasks 1–5 estão concluídas; Task 6 não foi iniciada.
 - A primeira fatia recomendada do PR (`Bundle contract and persistence schema`,
   Tasks 1–2) permanece íntegra. Tasks 3–4 completam a segunda fatia sem iniciar
   integração com o canvas.
+- Task 5 fecha a terceira fatia recomendada (`Shared controller extraction`). O
+  lab isolado continua sendo o único consumidor visual; nenhum arquivo de
+  `CanvasClient`, `CanvasNode` ou `CanvasEditorCore` foi alterado.
 - Nenhum arquivo do worktree Demarcelizer ou material não relacionado foi
   alterado.
 - Rollback da Task 2 é manual e não destrutivo: parar tráfego nativo, preservar
@@ -465,10 +549,14 @@ na suíte completa.
   v1, remover os comandos/ledger transacionais e o bootstrap extra de contexto.
   Bundles, snapshots e edit sessions persistidos permanecem válidos porque a
   Task 4 não alterou schema nem manifests duráveis.
+- Rollback da Task 5: restaurar o controller embutido no lab, remover o hook e os
+  módulos de session history/devices e devolver as dimensões antigas. Não há
+  migration, bundle ou snapshot persistido para reverter.
 
 ## Próxima fatia
 
-Parar no checkpoint antes da Task 5. A próxima etapa extrai um único controller
-nativo reutilizável, preserva o motion lab como consumidor e adiciona session
-history/devices sem iniciar ainda o roteamento do canvas. Não misturar a extração
-do controller com panel extraction ou com mudanças em `CanvasClient.jsx`.
+Parar no checkpoint antes da Task 6. A próxima etapa adiciona a resolução pura
+de editor kind, `NativeEditViewport` e o roteamento elegível no boundary do
+canvas sob feature flag. Preservar o editor legado para static/Iter9, buscar a
+runtime URL curta somente ao abrir Edit e não iniciar ainda o shell de painéis
+da Task 7.
