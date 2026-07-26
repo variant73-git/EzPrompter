@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const commit = vi.fn();
 const discard = vi.fn();
+const changeMode = vi.fn();
 const controller = {
   status: 'ready',
   runtime: null,
@@ -14,6 +15,9 @@ const controller = {
   motion: [],
   activeMotion: null,
   activeMotionId: null,
+  mode: 'edit',
+  editState: { value: 'navigating', selectionId: null, loop: false },
+  selectionSettlement: null,
   timelineOffset: 0,
   timelineState: { currentTime: 0, duration: 1000, playState: 'idle' },
   speed: 1,
@@ -24,7 +28,7 @@ const controller = {
   historyReady: true,
   canUndo: false,
   canRedo: false,
-  commands: new Proxy({ commit, discard }, {
+  commands: new Proxy({ commit, discard, changeMode }, {
     get: (target, property) => target[property] || vi.fn(),
   }),
 };
@@ -40,6 +44,8 @@ const {
 } = await import('./NativeMotionEditChrome.jsx');
 
 afterEach(() => {
+  controller.mode = 'edit';
+  controller.commands.changeMode?.mockClear?.();
   document.body.className = '';
   document.body.removeAttribute('style');
 });
@@ -100,5 +106,31 @@ describe('NativeMotionEditChrome', () => {
       detail: { nodeId: 'node-native', action: 'cancel' },
     })));
     await waitFor(() => expect(onDiscarded).toHaveBeenCalledWith({ session: { status: 'discarded' } }));
+  });
+
+  it('enters Preview from the edit topbar and leaves only a clear return action visible', () => {
+    const { rerender } = render(
+      <NativeMotionEditSessionProvider active nodeId="node-native">
+        <div>Canvas</div>
+        <NativeMotionEditTopbarControls />
+      </NativeMotionEditSessionProvider>,
+    );
+
+    screen.getByRole('button', { name: 'Preview website' }).click();
+    expect(controller.commands.changeMode).toHaveBeenCalledWith('preview');
+
+    controller.mode = 'preview';
+    rerender(
+      <NativeMotionEditSessionProvider active nodeId="node-native">
+        <div>Canvas</div>
+        <NativeMotionEditTopbarControls />
+      </NativeMotionEditSessionProvider>,
+    );
+
+    expect(screen.queryByLabelText('Website editing sidebar')).toBeNull();
+    expect(screen.queryByLabelText('Native website inspector')).toBeNull();
+    expect(document.body.classList.contains('native-motion-previewing')).toBe(true);
+    screen.getByRole('button', { name: 'Back to Edit' }).click();
+    expect(controller.commands.changeMode).toHaveBeenLastCalledWith('edit');
   });
 });

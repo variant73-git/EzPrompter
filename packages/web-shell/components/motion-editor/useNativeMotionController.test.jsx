@@ -371,4 +371,96 @@ describe('useNativeMotionController', () => {
     expect(persistenceAdapter.flush.mock.calls[1][0]).toEqual({ keepalive: true });
     visibility.mockRestore();
   });
+
+  it('tracks the explicit hybrid edit state and loop settlement reported by the runtime', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: { title: 'Loop fixture', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+    await act(async () => {
+      window.dispatchEvent(runtimeV2Message(frame, 'edit-state-changed', {
+        state: 'selection-pending',
+        selectionId: 'ticker',
+      }, 'state-selection'));
+      window.dispatchEvent(runtimeV2Message(frame, 'edit-state-changed', {
+        state: 'settling',
+        selectionId: 'ticker',
+        operationId: 'settlement-1',
+      }, 'state-settling'));
+      window.dispatchEvent(runtimeV2Message(frame, 'selection-settled', {
+        elementId: 'ticker',
+        operationId: 'settlement-1',
+        loop: true,
+        progress: 0.63,
+        writerCount: 1,
+      }, 'state-settled-detail'));
+      window.dispatchEvent(runtimeV2Message(frame, 'edit-state-changed', {
+        state: 'editing-frozen',
+        selectionId: 'ticker',
+        operationId: 'settlement-1',
+        loop: true,
+      }, 'state-frozen'));
+    });
+
+    expect(result.current.editState).toMatchObject({
+      value: 'editing-frozen',
+      selectionId: 'ticker',
+      loop: true,
+    });
+    expect(result.current.selectionSettlement).toMatchObject({
+      status: 'settled',
+      elementId: 'ticker',
+      loop: true,
+      progress: 0.63,
+    });
+  });
+
+  it('sends transient Preview and scrub commands without adding session history', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    frame.contentWindow.postMessage.mockClear();
+
+    act(() => result.current.commands.beginScrub());
+    act(() => result.current.commands.seekMotion(320));
+    act(() => result.current.commands.endScrub());
+    act(() => result.current.commands.changeMode('preview'));
+
+    await waitFor(() => {
+      const types = frame.contentWindow.postMessage.mock.calls.map(([message]) => message.type);
+      expect(types).toContain('begin-scrub');
+      expect(types).toContain('end-scrub');
+      expect(types).toContain('set-mode');
+    });
+    expect(result.current.historyCount).toBe(0);
+    expect(result.current.mode).toBe('preview');
+  });
+
+  it('releases scoped runtime state before resetting an active session', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    frame.contentWindow.postMessage.mockClear();
+
+    act(() => result.current.commands.resetSession());
+
+    expect(frame.contentWindow.postMessage.mock.calls.map(([message]) => message.type)).toContain('release-edit-state');
+    expect(result.current.editState.value).toBe('navigating');
+  });
 });

@@ -20,6 +20,10 @@ export default function NativeMotionInspector({
   const [localTab, setLocalTab] = useState('properties');
   const activeTab = controlledTab || localTab;
   const selected = controller?.selected || null;
+  const selectionLoop = activeTab === 'motion'
+    && controller?.selectionSettlement?.status === 'settled'
+    && controller.selectionSettlement.elementId === selected?.id
+    && controller.selectionSettlement.loop === true;
 
   function selectTab(tab) {
     if (!controlledTab) setLocalTab(tab);
@@ -35,6 +39,9 @@ export default function NativeMotionInspector({
           <strong>{selected?.label || 'Nothing selected'}</strong>
           <small>{selected ? `${selected.tag}${selected.classes?.[0] ? `.${selected.classes[0]}` : ''}` : 'Choose an element on the website'}</small>
         </span>
+        {selectionLoop && (
+          <span className={styles.loopIndicator} data-motion-loop="true">Loop</span>
+        )}
       </div>
       <div className={styles.panelTabs} role="tablist" aria-label="Inspector tabs">
         {TABS.map((tab) => {

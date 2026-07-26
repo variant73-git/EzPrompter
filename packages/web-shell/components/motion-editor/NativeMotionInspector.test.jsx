@@ -54,4 +54,16 @@ describe('NativeMotionInspector', () => {
     expect(screen.getByRole('tabpanel', { name: 'Code' })).toBeTruthy();
     expect(screen.getByText('[data-uncraft-id="hero-title"]')).toBeTruthy();
   });
+
+  it('shows Loop in the selected Motion header without placing it over the viewport', () => {
+    render(<NativeMotionInspector
+      controller={controllerFixture({
+        activeMotion: { id: 'marquee', timing: { iterations: Infinity } },
+        selectionSettlement: { status: 'settled', elementId: 'hero-title', loop: true },
+      })}
+      activeTab="motion"
+    />);
+
+    expect(screen.getByText('Loop')).toHaveAttribute('data-motion-loop', 'true');
+  });
 });

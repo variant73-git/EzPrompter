@@ -21,6 +21,8 @@ function controllerFixture(overrides = {}) {
       focusElement: vi.fn(),
       scrollTo: vi.fn(),
       scrubIntro: vi.fn(),
+      beginScrub: vi.fn(),
+      endScrub: vi.fn(),
       unlinkMotion: vi.fn(),
       applyStripEdit: vi.fn(),
       playback: vi.fn(),
@@ -68,5 +70,32 @@ describe('NativeMotionTimelineDock', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Hero title' }));
     expect(controller.commands.focusElement).toHaveBeenCalledWith('hero-title');
+  });
+
+  it('marks looping rows and brackets timeline scrubbing with transient runtime commands', () => {
+    const controller = controllerFixture({
+      selectedRowId: 'ticker',
+      viewportRows: [{
+        elementId: 'ticker',
+        label: 'Ticker',
+        kind: 'text',
+        count: 1,
+        engines: ['CSS'],
+        driver: 'time',
+        delayMs: 0,
+        durationMs: 1000,
+        marks: [],
+        inViewport: true,
+        loop: true,
+      }],
+    });
+    const { container } = render(<NativeMotionTimelineDock controller={controller} />);
+
+    expect(container.querySelector('[data-motion-loop="true"]')).toHaveTextContent('Loop');
+    const surface = container.querySelector('[data-timeline-surface]');
+    fireEvent.pointerDown(surface, { button: 0, pointerId: 7, clientX: 260 });
+    fireEvent.pointerUp(surface, { pointerId: 7, clientX: 260 });
+    expect(controller.commands.beginScrub).toHaveBeenCalledTimes(1);
+    expect(controller.commands.endScrub).toHaveBeenCalledTimes(1);
   });
 });

@@ -27,6 +27,11 @@ import {
 import { applyStaggerDelays } from '../../lib/motion-editor/motion-groups.js';
 import { getMotionEditorDevice } from '../../lib/motion-editor/devices.js';
 import {
+  EDIT_STATES,
+  createEditState,
+  transitionEditState,
+} from '../../lib/motion-editor/edit-state-machine.js';
+import {
   acknowledgeSessionTransaction,
   createSessionHistory,
   redoSessionHistory,
@@ -142,6 +147,8 @@ export function useNativeMotionController({
   const [autoKeyframe, setAutoKeyframe] = useState(false);
   const [selectedKeyframe, setSelectedKeyframe] = useState(null);
   const [motionDetail, setMotionDetail] = useState({});
+  const [editState, setEditState] = useState(() => createEditState());
+  const [selectionSettlement, setSelectionSettlement] = useState(null);
   const motionDetailRef = useRef(motionDetail);
   const lastAutoExpandedRef = useRef(null);
 
@@ -190,6 +197,10 @@ export function useNativeMotionController({
   const device = getMotionEditorDevice(deviceId);
   const historyPatches = useMemo(() => sessionHistoryPatches(historyState), [historyState]);
   const historyCount = sessionHistoryCount(historyState);
+
+  const transitionEditor = useCallback((event) => {
+    setEditState((current) => transitionEditState(current, event));
+  }, []);
 
   useEffect(() => {
     setActiveMotionId((current) => motion.some((item) => item.id === current) ? current : motion[0]?.id || null);
@@ -377,6 +388,8 @@ export function useNativeMotionController({
         if (!context || !matchesRuntimeContext(event.data, context, event.origin)) return;
       }
       if (type === 'runtime-ready') {
+        transitionEditor({ type: 'runtime-ready' });
+        setSelectionSettlement(null);
         setHistoryReady(false);
         setRuntime(payload);
         if (transactionLedgerRef.current.size) {
@@ -449,6 +462,45 @@ export function useNativeMotionController({
         setViewportRows(Array.isArray(payload.rows) ? payload.rows : []);
         if (payload.page) setViewportPage(payload.page);
       }
+      if (type === 'edit-state-changed') {
+        const eventByState = {
+          [EDIT_STATES.NAVIGATING]: { type: 'scroll-started' },
+          [EDIT_STATES.SELECTION_PENDING]: { type: 'select', elementId: payload.selectionId },
+          [EDIT_STATES.SETTLING]: {
+            type: 'settlement-started',
+            elementId: payload.selectionId,
+            operationId: payload.operationId,
+          },
+          [EDIT_STATES.EDITING_FROZEN]: payload.reason
+            ? {
+              type: 'settlement-skipped',
+              elementId: payload.selectionId,
+              operationId: payload.operationId,
+              reason: payload.reason,
+            }
+            : {
+              type: 'settlement-completed',
+              elementId: payload.selectionId,
+              operationId: payload.operationId,
+              loop: payload.loop,
+            },
+          [EDIT_STATES.SCRUBBING]: { type: 'scrub-started' },
+          [EDIT_STATES.PREVIEWING]: { type: 'preview-started' },
+          [EDIT_STATES.RECOVERING]: { type: 'recovery-started', code: payload.code },
+          [EDIT_STATES.UNAVAILABLE]: { type: 'runtime-unavailable', code: payload.code },
+        };
+        const nextEvent = eventByState[payload.state];
+        if (nextEvent) transitionEditor(nextEvent);
+      }
+      if (type === 'selection-settled') {
+        setSelectionSettlement({ status: 'settled', ...payload });
+      }
+      if (type === 'selection-settlement-skipped') {
+        setSelectionSettlement({ status: 'skipped', ...payload });
+      }
+      if (type === 'selection-settlement-recovering') {
+        setSelectionSettlement({ status: 'recovering', ...payload });
+      }
       if (type === 'element-described' && payload.element?.id) {
         setMotionDetail((current) => ({ ...current, [payload.element.id]: (payload.element.motion || []).map(normalizeMotionClip) }));
       }
@@ -493,7 +545,7 @@ export function useNativeMotionController({
 
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [armHeartbeatTimeout, iframeRef, mode, send, updateHistory]);
+  }, [armHeartbeatTimeout, iframeRef, mode, send, transitionEditor, updateHistory]);
 
   useEffect(() => {
     if (status === 'ready') send('set-mode', { mode });
@@ -731,6 +783,15 @@ export function useNativeMotionController({
     send('seek-motion', { motionId: activeMotionId, currentTime });
   }
 
+  function beginScrub() {
+    transitionEditor({ type: 'scrub-started' });
+    send('begin-scrub');
+  }
+
+  function endScrub() {
+    send('end-scrub');
+  }
+
   function changePlaybackMode(nextMode) {
     if (activeMotion) applyMotion(activeMotion, 'timing.playbackMode', nextMode, motionPlaybackMode(activeMotion.timing));
   }
@@ -853,6 +914,7 @@ export function useNativeMotionController({
   }
 
   function resetSession() {
+    if (runtimeContextRef.current) send('release-edit-state');
     if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
     heartbeatTimeoutRef.current = null;
     runtimeContextRef.current = null;
@@ -876,6 +938,8 @@ export function useNativeMotionController({
     setAutoKeyframe(false);
     setSelectedKeyframe(null);
     setMotionDetail({});
+    setEditState(createEditState());
+    setSelectionSettlement(null);
   }
 
   const commands = {
@@ -915,6 +979,8 @@ export function useNativeMotionController({
     changeSpeed,
     selectMotion,
     seekMotion,
+    beginScrub,
+    endScrub,
     changePlaybackMode,
     toggleAutoKeyframe,
     selectKeyframe: setSelectedKeyframe,
@@ -953,6 +1019,8 @@ export function useNativeMotionController({
     autoKeyframe,
     selectedKeyframe,
     motionDetail,
+    editState,
+    selectionSettlement,
     autoExpandedRowId: lastAutoExpandedRef.current,
     commands,
   };

@@ -618,6 +618,8 @@ export function TimelinePanel({
   page = null,
   onScrollTo,
   onScrubIntro,
+  onScrubStart,
+  onScrubEnd,
   onUnlink,
   onStripEdit,
   state,
@@ -1034,6 +1036,7 @@ export function TimelinePanel({
     if (event.clientX - viewportRect.left < labelsWidth) return;
     event.preventDefault(); // no text selection while dragging the playhead
     event.currentTarget.setPointerCapture?.(event.pointerId);
+    onScrubStart?.();
     setScrubbing({ pointerId: event.pointerId });
     applyScrub(event);
   }
@@ -1046,6 +1049,7 @@ export function TimelinePanel({
     if (!scrubbing || event.pointerId !== scrubbing.pointerId) return;
     event.currentTarget.releasePointerCapture?.(event.pointerId);
     setScrubbing(null);
+    onScrubEnd?.();
   }
 
   // ---- Panel resizes: top edge grows the timeline (up to 2×), the vertical
@@ -1460,6 +1464,7 @@ export function TimelinePanel({
                       >
                         <span className={styles.viewportKind}><Icon /></span>
                         <span className={styles.viewportLabel}>{row.label}</span>
+                        {row.loop && <span className={styles.timelineLoopIndicator} data-motion-loop="true">Loop</span>}
                         {row.inViewport === false && <span className={styles.offscreenMark} title="Outside the current viewport — click to scroll there" />}
                       </button>
                       {sharedLinks.length > 0 && (

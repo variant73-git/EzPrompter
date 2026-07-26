@@ -7,7 +7,7 @@ import {
   useMemo,
   useState,
 } from 'react';
-import { Redo2, Undo2 } from 'lucide-react';
+import { ArrowLeft, Eye, Redo2, Undo2 } from 'lucide-react';
 import NativeEditSidebar from './NativeEditSidebar.jsx';
 import NativeMotionInspector from './NativeMotionInspector.jsx';
 import NativeMotionTimelineDock, { hasNativeMotionContext } from './NativeMotionTimelineDock.jsx';
@@ -46,7 +46,7 @@ export function NativeMotionEditSessionProvider({
     timelineOpen,
     persistenceAdapter,
   });
-  const hasTimeline = active && hasNativeMotionContext(controller);
+  const hasTimeline = active && controller.mode !== 'preview' && hasNativeMotionContext(controller);
 
   useEffect(() => {
     if (!active || !nodeId) return undefined;
@@ -135,19 +135,21 @@ export function NativeMotionEditSessionProvider({
       resizeFrame = window.requestAnimationFrame(applyLayout);
     };
     body.classList.add('rb-ed-active', 'rb-ed-canvas', 'native-motion-editing');
+    body.classList.toggle('native-motion-previewing', controller.mode === 'preview');
     applyLayout();
     window.addEventListener('resize', handleResize);
     return () => {
       if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
       window.removeEventListener('resize', handleResize);
       body.classList.remove('rb-ed-active', 'rb-ed-canvas', 'native-motion-editing');
+      body.classList.remove('native-motion-previewing');
       body.style.removeProperty('--native-motion-left-w');
       body.style.removeProperty('--native-motion-right-w');
       body.style.removeProperty('--native-motion-timeline-h');
       body.style.removeProperty('--rb-layers-width');
       body.style.removeProperty('--rb-insp-width');
     };
-  }, [active]);
+  }, [active, controller.mode]);
 
   useEffect(() => {
     if (active) return;
@@ -197,6 +199,15 @@ export function NativeMotionEditTopbarControls() {
       <button
         type="button"
         className={styles.historyButton}
+        aria-label="Preview website"
+        disabled={busy}
+        onClick={() => controller.commands.changeMode('preview')}
+      >
+        <Eye aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className={styles.historyButton}
         aria-label="Undo"
         disabled={!controller.canUndo || busy}
         onClick={controller.commands.undo}
@@ -223,6 +234,19 @@ export default function NativeMotionEditChrome({
   timelineOpen,
   onTimelineOpenChange,
 }) {
+  if (controller.mode === 'preview') {
+    return (
+      <button
+        type="button"
+        className={styles.previewExit}
+        aria-label="Back to Edit"
+        onClick={() => controller.commands.changeMode('edit')}
+      >
+        <ArrowLeft aria-hidden="true" />
+        Back to Edit
+      </button>
+    );
+  }
   return (
     <>
       <NativeEditSidebar controller={controller} />

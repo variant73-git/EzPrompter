@@ -72,6 +72,13 @@ function nativeMotionRuntimeBridge() {
   let activeTimelineId = null;
   let timelineFrame = null;
   let lastTimelineEmit = 0;
+  let editState = 'navigating';
+  let scopedSettlement = null;
+  let previewState = null;
+  let scrubActive = false;
+  let settlementSequence = 0;
+  let viewportTimer = null;
+  let recoveryTimer = null;
   const animationIds = new WeakMap();
   const motionRegistry = new Map();
   // Every listener this instance installs hangs off one controller, so a
@@ -508,6 +515,30 @@ function nativeMotionRuntimeBridge() {
     return rect.bottom > 0 && rect.top < height && rect.right > 0 && rect.left < width;
   }
 
+  function visibilityFor(element) {
+    let rect = null;
+    try { rect = element?.getBoundingClientRect?.(); } catch (_) {}
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (!rect || !rect.width || !rect.height || !viewportWidth || !viewportHeight) {
+      return { ratio: 0, visibleWidth: 0, visibleHeight: 0, meaningful: false, reason: 'empty' };
+    }
+    const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
+    const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
+    const ratio = (visibleWidth * visibleHeight) / Math.max(1, rect.width * rect.height);
+    if (ratio >= 0.25) return { ratio, visibleWidth, visibleHeight, meaningful: true, reason: 'ratio' };
+    if (visibleWidth >= 32 && visibleHeight >= 32) {
+      return { ratio, visibleWidth, visibleHeight, meaningful: true, reason: 'pixels' };
+    }
+    return {
+      ratio,
+      visibleWidth,
+      visibleHeight,
+      meaningful: false,
+      reason: visibleWidth && visibleHeight ? 'sliver' : 'offscreen',
+    };
+  }
+
   function pageMetrics() {
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
     const scrollHeight = Math.max(viewportHeight, document.documentElement.scrollHeight || 0);
@@ -581,7 +612,7 @@ function nativeMotionRuntimeBridge() {
     const entryFor = (element) => {
       if (!index.has(element)) {
         index.set(element, {
-          count: 0, engines: [], scrollDriven: false, timeDriven: false, scrollExotic: false,
+          count: 0, engines: [], scrollDriven: false, timeDriven: false, scrollExotic: false, loop: false,
           delayMs: Infinity, endMs: 0, marks: new Set(),
           scrollStart: Infinity, scrollEnd: -Infinity,
           introStartMs: Infinity, introEndMs: -Infinity, introEligible: false,
@@ -608,6 +639,7 @@ function nativeMotionRuntimeBridge() {
         record.timeDriven = true;
         addEngine(record, 'CSS');
         const timing = animation.effect?.getTiming?.() || {};
+        if (timing.iterations === Infinity) record.loop = true;
         const computed = animation.effect?.getComputedTiming?.() || {};
         envelope(record, finite(timing.delay), finite(computed.duration, finite(timing.duration)));
         try {
@@ -639,6 +671,7 @@ function nativeMotionRuntimeBridge() {
           record.count += 1;
           record.animKeys.add(tweenKey);
           if (!trigger) record.timeDriven = true;
+          if (tween.repeat?.() === -1) record.loop = true;
           if (sharedLinkId) record.links.add(sharedLinkId);
           if (!trigger) {
             const span = introTweenSpans.get(tween);
@@ -741,6 +774,7 @@ function nativeMotionRuntimeBridge() {
         scrollDriven: accumulator.scrollDriven || item.scrollDriven,
         timeDriven: accumulator.timeDriven || item.timeDriven,
         scrollExotic: accumulator.scrollExotic || item.scrollExotic,
+        loop: accumulator.loop || item.loop,
         delayMs: Math.min(accumulator.delayMs, item.delayMs),
         endMs: Math.max(accumulator.endMs, item.endMs),
         marks: new Set([...accumulator.marks, ...item.marks]),
@@ -760,6 +794,7 @@ function nativeMotionRuntimeBridge() {
         engines: merged.engines,
         driver: merged.scrollDriven ? 'scroll' : 'time',
         timeDriven: merged.timeDriven === true,
+        loop: merged.loop === true,
         delayMs: Number.isFinite(merged.delayMs) ? merged.delayMs : 0,
         durationMs: Math.max(0, merged.endMs - (Number.isFinite(merged.delayMs) ? merged.delayMs : 0)),
         marks: Array.from(merged.marks).sort((a, b) => a - b),
@@ -805,6 +840,7 @@ function nativeMotionRuntimeBridge() {
         engines: summary.engines,
         driver: summary.driver,
         timeDriven: summary.timeDriven,
+        loop: summary.loop,
         delayMs: summary.delayMs,
         durationMs: summary.durationMs,
         marks: summary.marks,
@@ -888,6 +924,293 @@ function nativeMotionRuntimeBridge() {
         .map((animation, index) => browserMotionClip(animation, index, element))
       : [];
     return [...native, ...gsapAnimationsFor(element)];
+  }
+
+  function emitEditState(next, details = {}) {
+    editState = next;
+    document.documentElement.dataset.uncraftEditState = next;
+    emit('edit-state-changed', {
+      state: next,
+      selectionId: selectedId,
+      ...details,
+    });
+  }
+
+  function motionIsLooping(clip) {
+    return clip?.timing?.iterations === Infinity
+      || clip?.timing?.iterations === 'Infinity'
+      || clip?.timing?.playbackMode === 'loop'
+      || clip?.timing?.playbackMode === 'ping-pong';
+  }
+
+  function writerTargetsAreScoped(record, element) {
+    if (!record || record.type === 'browser') return true;
+    let targets = [];
+    try { targets = record.animation?.targets?.().filter((target) => target instanceof Element) || []; } catch (_) {}
+    if (targets.length <= 1) return true;
+    return targets.every((target) => target === element || element.contains(target));
+  }
+
+  function browserCycleDuration(animation) {
+    const timing = animation.effect?.getTiming?.() || {};
+    const computed = animation.effect?.getComputedTiming?.() || {};
+    const duration = Math.max(1, finite(computed.duration, finite(timing.duration, 1)));
+    return Math.max(1, finite(timing.delay) + duration + finite(timing.endDelay));
+  }
+
+  function captureWriter(clip, element) {
+    const record = motionRegistry.get(clip.id);
+    if (!record || !writerTargetsAreScoped(record, element)) return null;
+    const loop = motionIsLooping(clip);
+    if (record.type === 'browser') {
+      const animation = record.animation;
+      const duration = browserCycleDuration(animation);
+      const rawTime = finite(animation.currentTime);
+      return {
+        motionId: clip.id,
+        type: 'browser',
+        animation,
+        loop,
+        progress: Math.max(0, Math.min(1, (rawTime > duration ? rawTime % duration : rawTime) / duration)),
+        currentTime: animation.currentTime,
+        playbackRate: animation.playbackRate,
+        playState: animation.playState,
+        endTime: (() => {
+          const timing = animation.effect?.getTiming?.() || {};
+          const computed = animation.effect?.getComputedTiming?.() || {};
+          const activeDuration = finite(computed.activeDuration, finite(computed.duration, finite(timing.duration, 1)) * Math.max(1, finite(timing.iterations, 1)));
+          return Math.max(0, finite(computed.endTime, finite(timing.delay) + activeDuration + finite(timing.endDelay)));
+        })(),
+      };
+    }
+    const animation = record.animation;
+    const trigger = record.scrollTrigger || animation.scrollTrigger || null;
+    return {
+      motionId: clip.id,
+      type: 'gsap',
+      animation,
+      trigger,
+      loop,
+      progress: Math.max(0, Math.min(1, finite(animation.progress?.()))),
+      totalProgress: finite(animation.totalProgress?.(), finite(animation.progress?.())),
+      time: finite(animation.time?.()),
+      totalTime: finite(animation.totalTime?.(), finite(animation.time?.())),
+      paused: Boolean(animation.paused?.()),
+      reversed: Boolean(animation.reversed?.()),
+      timeScale: finite(animation.timeScale?.(), 1) || 1,
+      triggerProgress: trigger ? finite(trigger.progress) : null,
+      triggerEnabled: trigger ? trigger.enabled !== false : null,
+    };
+  }
+
+  function applyWriterSettlement(writer, freezeCurrent = false, restoreFrozenFrame = false) {
+    if (writer.type === 'browser') {
+      writer.animation.pause?.();
+      if (restoreFrozenFrame) writer.animation.currentTime = writer.currentTime;
+      if (!writer.loop && !freezeCurrent) writer.animation.currentTime = writer.endTime;
+      return;
+    }
+    writer.trigger?.disable?.(false, false);
+    writer.animation.pause?.();
+    if (restoreFrozenFrame) {
+      if (typeof writer.animation.totalTime === 'function') writer.animation.totalTime(writer.totalTime, true);
+      else if (typeof writer.animation.time === 'function') writer.animation.time(writer.time, true);
+      else writer.animation.progress?.(writer.progress, true);
+    }
+    if (!writer.loop && !freezeCurrent) {
+      if (typeof writer.animation.totalProgress === 'function') writer.animation.totalProgress(1, true);
+      else writer.animation.progress?.(1, true);
+    }
+  }
+
+  function restoreWriter(writer) {
+    if (writer.type === 'browser') {
+      if (Number.isFinite(writer.playbackRate)) writer.animation.playbackRate = writer.playbackRate;
+      writer.animation.currentTime = writer.currentTime;
+      if (writer.playState === 'running') writer.animation.play?.();
+      else writer.animation.pause?.();
+      return;
+    }
+    if (Number.isFinite(writer.timeScale)) writer.animation.timeScale?.(writer.timeScale);
+    writer.animation.reversed?.(writer.reversed);
+    if (typeof writer.animation.totalTime === 'function') writer.animation.totalTime(writer.totalTime, true);
+    else if (typeof writer.animation.time === 'function') writer.animation.time(writer.time, true);
+    else writer.animation.progress?.(writer.progress, true);
+    if (writer.trigger && writer.triggerEnabled) writer.trigger.enable?.(false, false);
+    writer.trigger?.update?.();
+    if (writer.paused) writer.animation.pause?.();
+    else writer.animation.play?.();
+  }
+
+  function restoreScopedSettlement() {
+    const settlement = scopedSettlement;
+    scopedSettlement = null;
+    if (!settlement) return null;
+    settlement.writers.slice().reverse().forEach((writer) => {
+      try { restoreWriter(writer); } catch (_) {}
+    });
+    return settlement;
+  }
+
+  function reapplyScopedSettlement(settlement) {
+    if (!settlement) return false;
+    try {
+      settlement.writers.forEach((writer) => applyWriterSettlement(
+        writer,
+        settlement.manualFrame === true,
+        writer.loop || settlement.manualFrame === true,
+      ));
+      scopedSettlement = settlement;
+      emitEditState('editing-frozen', {
+        operationId: settlement.operationId,
+        loop: settlement.loop,
+        progress: settlement.writers.find((writer) => writer.loop)?.progress ?? null,
+        manualFrame: settlement.manualFrame === true,
+      });
+      emitTimelineState(true);
+      return true;
+    } catch (_) {
+      scopedSettlement = null;
+      return false;
+    }
+  }
+
+  function settlementIdentity(elementId, clips) {
+    return `${elementId}:${clips.map((clip) => clip.id).sort().join(',')}`;
+  }
+
+  function settleSelection(element, { recoveryAttempt = 0 } = {}) {
+    if (mode !== 'edit' || scrubActive || !element || ensureElementId(element) !== selectedId) return;
+    const visibility = visibilityFor(element);
+    const clips = inspectMotion(element);
+    const identity = settlementIdentity(selectedId, clips);
+    if (scopedSettlement?.identity === identity) {
+      const loopWriter = scopedSettlement.writers.find((writer) => writer.loop);
+      emitEditState('editing-frozen', {
+        operationId: scopedSettlement.operationId,
+        loop: scopedSettlement.loop,
+        progress: loopWriter?.progress ?? 1,
+        visibility,
+      });
+      emit('selection-settled', {
+        elementId: selectedId,
+        operationId: scopedSettlement.operationId,
+        loop: scopedSettlement.loop,
+        progress: loopWriter?.progress ?? 1,
+        writerCount: scopedSettlement.writers.length,
+        visibility,
+        duplicate: true,
+      });
+      return;
+    }
+    if (!visibility.meaningful || !clips.length) {
+      emitEditState('editing-frozen', {
+        operationId: null,
+        loop: clips.some(motionIsLooping),
+        reason: visibility.meaningful ? 'no-motion' : 'not-meaningfully-visible',
+        visibility,
+      });
+      emit('selection-settlement-skipped', {
+        elementId: selectedId,
+        reason: visibility.meaningful ? 'no-motion' : 'not-meaningfully-visible',
+        visibility,
+      });
+      return;
+    }
+
+    const writers = clips.map((clip) => captureWriter(clip, element));
+    if (writers.some((writer) => !writer)) {
+      emitEditState('editing-frozen', { reason: 'shared-writer', loop: clips.some(motionIsLooping), visibility });
+      emit('selection-settlement-skipped', { elementId: selectedId, reason: 'shared-writer', visibility });
+      return;
+    }
+
+    const operationId = `settlement-${++settlementSequence}`;
+    emitEditState('settling', { operationId, visibility });
+    const startedAt = Date.now();
+    try {
+      restoreScopedSettlement();
+      writers
+        .sort((first, second) => {
+          const firstClip = clips.find((clip) => clip.id === first.motionId);
+          const secondClip = clips.find((clip) => clip.id === second.motionId);
+          const end = (clip) => finite(clip?.timing?.delay) + finite(clip?.timing?.duration) + finite(clip?.timing?.endDelay);
+          return end(firstClip) - end(secondClip);
+        })
+        .forEach((writer) => applyWriterSettlement(writer));
+      if (Date.now() - startedAt > 800) throw bridgeError('settlement_timeout', 'Settlement exceeded its time bound.');
+      scopedSettlement = {
+        identity,
+        elementId: selectedId,
+        operationId,
+        writers,
+        loop: writers.some((writer) => writer.loop),
+        scrollY: Math.max(0, finite(window.scrollY)),
+      };
+      const loopWriter = writers.find((writer) => writer.loop);
+      emitEditState('editing-frozen', {
+        operationId,
+        loop: scopedSettlement.loop,
+        progress: loopWriter?.progress ?? 1,
+        visibility,
+      });
+      emit('selection-settled', {
+        elementId: selectedId,
+        operationId,
+        loop: scopedSettlement.loop,
+        progress: loopWriter?.progress ?? 1,
+        writerCount: writers.length,
+        visibility,
+      });
+      emitTimelineState(true);
+    } catch (error) {
+      writers.slice().reverse().forEach((writer) => { try { restoreWriter(writer); } catch (_) {} });
+      const code = error?.code || 'settlement_failed';
+      emitEditState('recovering', { operationId, code });
+      emit('selection-settlement-recovering', { elementId: selectedId, operationId, code });
+      if (recoveryTimer) clearTimeout(recoveryTimer);
+      if (recoveryAttempt < 1) {
+        recoveryTimer = setTimeout(() => {
+          recoveryTimer = null;
+          if (mode === 'edit' && selectedId === ensureElementId(element)) settleSelection(element, { recoveryAttempt: 1 });
+        }, 160);
+      } else {
+        emitEditState('editing-frozen', { operationId, code, reason: 'recovery-exhausted' });
+      }
+    }
+  }
+
+  function freezeSelectionAtCurrent() {
+    const element = findElement(selectedId);
+    if (!element || mode !== 'edit') return;
+    restoreScopedSettlement();
+    const visibility = visibilityFor(element);
+    const clips = inspectMotion(element);
+    const writers = clips.map((clip) => captureWriter(clip, element));
+    if (!visibility.meaningful || !writers.length || writers.some((writer) => !writer)) {
+      emitEditState('editing-frozen', {
+        loop: clips.some(motionIsLooping),
+        reason: visibility.meaningful ? 'shared-writer' : 'not-meaningfully-visible',
+      });
+      return;
+    }
+    writers.forEach((writer) => applyWriterSettlement(writer, true));
+    const operationId = `scrub-freeze-${++settlementSequence}`;
+    scopedSettlement = {
+      identity: `${settlementIdentity(selectedId, clips)}:manual:${operationId}`,
+      elementId: selectedId,
+      operationId,
+      writers,
+      loop: writers.some((writer) => writer.loop),
+      scrollY: Math.max(0, finite(window.scrollY)),
+      manualFrame: true,
+    };
+    emitEditState('editing-frozen', {
+      operationId,
+      loop: scopedSettlement.loop,
+      progress: writers.find((writer) => writer.loop)?.progress ?? null,
+      manualFrame: true,
+    });
   }
 
   function editableKeyframes(effect) {
@@ -1291,6 +1614,7 @@ function nativeMotionRuntimeBridge() {
   // replay (measured live: 27 → 15 children after one scroll-through). While
   // editing, keep them parked instead; the flag is restored on preview/exit.
   let siteAutoRemoveChildren = null;
+  let siteGlobalTimeline = null;
 
   function gsapChainRoot(animation) {
     const timeline = window.gsap && window.gsap.globalTimeline;
@@ -1405,12 +1729,78 @@ function nativeMotionRuntimeBridge() {
       try { if (root.paused?.()) root.play?.(); } catch (_) {}
     });
   }
+
+  function enterPreviewMode() {
+    if (textEditState) finishInlineTextEdit(true);
+    if (mode === 'preview') return;
+    const settlement = restoreScopedSettlement();
+    previewState = {
+      selectionId: selectedId,
+      scrollY: Math.max(0, finite(window.scrollY)),
+      settlement,
+    };
+    document.querySelectorAll('[data-uncraft-selected]').forEach((node) => node.removeAttribute('data-uncraft-selected'));
+    hover(null);
+    mode = 'preview';
+    document.documentElement.dataset.uncraftEditorMode = mode;
+    syncEditConventions();
+    releaseIntroScrub();
+    emitEditState('previewing', { loop: settlement?.loop === true });
+    emit('mode-changed', { mode });
+  }
+
+  function leavePreviewMode() {
+    if (mode === 'edit') return;
+    const previous = previewState;
+    previewState = null;
+    mode = 'edit';
+    document.documentElement.dataset.uncraftEditorMode = mode;
+    syncEditConventions();
+    if (previous && Math.abs(finite(window.scrollY) - previous.scrollY) > 1) {
+      try { window.scrollTo(0, previous.scrollY); } catch (_) {}
+    }
+    selectedId = previous?.selectionId || selectedId;
+    const element = findElement(selectedId);
+    if (element) element.setAttribute('data-uncraft-selected', 'true');
+    emit('mode-changed', { mode });
+    if (element) {
+      emitEditState('selection-pending', { loop: previous?.settlement?.loop === true });
+      if (!reapplyScopedSettlement(previous?.settlement)) settleSelection(element);
+    } else {
+      emitEditState('navigating', { loop: false });
+    }
+  }
+
+  function releaseEditState() {
+    if (recoveryTimer) clearTimeout(recoveryTimer);
+    recoveryTimer = null;
+    if (viewportTimer) clearTimeout(viewportTimer);
+    viewportTimer = null;
+    scrubActive = false;
+    restoreScopedSettlement();
+    previewState = null;
+    document.querySelectorAll('[data-uncraft-selected],[data-uncraft-hovered]').forEach((node) => {
+      node.removeAttribute('data-uncraft-selected');
+      node.removeAttribute('data-uncraft-hovered');
+    });
+    selectedId = null;
+    mode = 'preview';
+    document.documentElement.dataset.uncraftEditorMode = mode;
+    syncEditConventions();
+    releaseIntroScrub();
+    editState = 'navigating';
+    document.documentElement.dataset.uncraftEditState = editState;
+  }
+
   function syncEditConventions() {
     try {
       const timeline = window.gsap && window.gsap.globalTimeline;
       if (!timeline) return;
       if (mode === 'edit') {
-        if (siteAutoRemoveChildren === null) siteAutoRemoveChildren = timeline.autoRemoveChildren;
+        if (siteAutoRemoveChildren === null || siteGlobalTimeline !== timeline) {
+          siteAutoRemoveChildren = timeline.autoRemoveChildren;
+          siteGlobalTimeline = timeline;
+        }
         timeline.autoRemoveChildren = false;
         // Retention guard: sites that mint tweens continuously (cursor
         // followers on mousemove) would grow the timeline without bound.
@@ -1425,8 +1815,10 @@ function nativeMotionRuntimeBridge() {
             } catch (_) {}
           });
         }
-      } else if (siteAutoRemoveChildren !== null) {
+      } else if (siteAutoRemoveChildren !== null && siteGlobalTimeline === timeline) {
         timeline.autoRemoveChildren = siteAutoRemoveChildren;
+        siteAutoRemoveChildren = null;
+        siteGlobalTimeline = null;
       }
     } catch (_) {}
   }
@@ -1498,12 +1890,6 @@ function nativeMotionRuntimeBridge() {
     if (offscreen) {
       try { element.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {}
     }
-    // Scroll-driven clips need no replay — arriving at their range scrubs them.
-    // Time-driven clips restart SCOPED; their own iterations decide looping.
-    if (mode !== 'edit') return; // preview keeps the site's own behaviour
-    const timeClip = inspectMotion(element).find((clip) => clip?.driver?.type === 'time');
-    if (!timeClip) return;
-    setTimeout(() => controlPlayback('restart', undefined, timeClip.id), offscreen ? 400 : 0);
   }
 
   function chooseElement(target) {
@@ -1696,13 +2082,19 @@ function nativeMotionRuntimeBridge() {
   function select(element) {
     document.querySelectorAll('[data-uncraft-selected]').forEach((node) => node.removeAttribute('data-uncraft-selected'));
     if (!element) {
+      restoreScopedSettlement();
       selectedId = null;
+      emitEditState('navigating', { loop: false });
       emit('selection-changed', { element: null });
       return;
     }
-    selectedId = ensureElementId(element);
+    const nextId = ensureElementId(element);
+    if (selectedId && selectedId !== nextId) restoreScopedSettlement();
+    selectedId = nextId;
     element.setAttribute('data-uncraft-selected', 'true');
+    emitEditState('selection-pending', { loop: false });
     emit('selection-changed', { element: describe(element) });
+    settleSelection(element);
   }
 
   function hover(element) {
@@ -2403,12 +2795,24 @@ function nativeMotionRuntimeBridge() {
         runtimeFingerprint,
       });
     } else if (message.type === 'set-mode') {
-      if (textEditState && payload.mode === 'preview') finishInlineTextEdit(true);
-      mode = payload.mode === 'preview' ? 'preview' : 'edit';
-      document.documentElement.dataset.uncraftEditorMode = mode;
-      syncEditConventions();
-      if (mode === 'preview') releaseIntroScrub();
-      emit('mode-changed', { mode });
+      if (payload.mode === 'preview') enterPreviewMode();
+      else leavePreviewMode();
+    } else if (message.type === 'begin-scrub') {
+      if (mode !== 'edit') return;
+      scrubActive = true;
+      if (viewportTimer) clearTimeout(viewportTimer);
+      viewportTimer = null;
+      restoreScopedSettlement();
+      emitEditState('scrubbing', { loop: false });
+    } else if (message.type === 'end-scrub') {
+      if (mode !== 'edit') return;
+      scrubActive = false;
+      if (viewportTimer) clearTimeout(viewportTimer);
+      viewportTimer = null;
+      freezeSelectionAtCurrent();
+    } else if (message.type === 'release-edit-state') {
+      releaseEditState();
+      emit('edit-state-released', { released: true });
     } else if (message.type === 'set-tool') {
       tool = payload.tool === 'move' ? 'move' : 'select';
       document.documentElement.dataset.uncraftEditorTool = tool;
@@ -2507,6 +2911,7 @@ function nativeMotionRuntimeBridge() {
     installStyles();
     document.documentElement.dataset.uncraftEditorMode = mode;
     document.documentElement.dataset.uncraftEditorTool = tool;
+    document.documentElement.dataset.uncraftEditState = editState;
     on(document, 'pointermove', (event) => {
       if (dragState) {
         const dx = Math.round(event.clientX - dragState.startX);
@@ -2648,14 +3053,36 @@ function nativeMotionRuntimeBridge() {
     // double gateway injection) must REPLACE the previous one — two live bridges
     // handle every command twice: duplicated patches, duplicated playback.
     try { window.__uncraftMotionBridge?.teardown?.(); } catch (_) {}
+    document.documentElement.dataset.uncraftEditorMode = mode;
+    document.documentElement.dataset.uncraftEditorTool = tool;
+    document.documentElement.dataset.uncraftEditState = editState;
+    syncEditConventions();
     // Scrolling the site re-scopes the timeline. Debounced to the scroll settling:
     // the list is cheap to build, but rebuilding it on every scroll event is waste.
-    let viewportTimer = null;
     const scheduleViewportMotion = () => {
       if (viewportTimer) clearTimeout(viewportTimer);
-      viewportTimer = setTimeout(() => { viewportTimer = null; emitViewportMotion(); }, 120);
+      viewportTimer = setTimeout(() => {
+        viewportTimer = null;
+        emitViewportMotion();
+        if (mode === 'edit' && !scrubActive) {
+          const selected = findElement(selectedId);
+          if (selected) {
+            emitEditState('selection-pending', { loop: false });
+            settleSelection(selected);
+          } else {
+            emitEditState('navigating', { loop: false });
+          }
+        }
+      }, 120);
     };
-    on(window, 'scroll', () => { replayCrossedAnimations(); scheduleViewportMotion(); }, { passive: true });
+    on(window, 'scroll', () => {
+      if (mode === 'edit' && !scrubActive) {
+        restoreScopedSettlement();
+        emitEditState('navigating', { loop: false });
+      }
+      replayCrossedAnimations();
+      scheduleViewportMotion();
+    }, { passive: true });
     on(window, 'resize', () => {
       // Reveal points are functions of viewport height — a resize re-derives
       // them (and the row list) from scratch.
@@ -2674,6 +3101,7 @@ function nativeMotionRuntimeBridge() {
     }, 1000);
     window.__uncraftMotionBridge = {
       teardown() {
+        releaseEditState();
         activeGestures.forEach((gesture) => {
           cancelGestureFrame(gesture);
           try { applyPatchOrThrow({ ...gesture.patch, value: cloneValue(gesture.before) }); } catch (_) {}
@@ -2682,6 +3110,10 @@ function nativeMotionRuntimeBridge() {
         try { listeners.abort(); } catch (_) {}
         try { if (heartbeatTimer) clearInterval(heartbeatTimer); } catch (_) {}
         heartbeatTimer = null;
+        try { if (viewportTimer) clearTimeout(viewportTimer); } catch (_) {}
+        viewportTimer = null;
+        try { if (recoveryTimer) clearTimeout(recoveryTimer); } catch (_) {}
+        recoveryTimer = null;
         try {
           if (timelineFrame != null && typeof window.cancelAnimationFrame === 'function') {
             window.cancelAnimationFrame(timelineFrame);

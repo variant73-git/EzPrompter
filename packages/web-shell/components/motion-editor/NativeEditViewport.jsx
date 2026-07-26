@@ -91,7 +91,9 @@ function NativeEditViewportRuntime({
 
   return (
     <div
-      aria-label="Native website editing viewport"
+      aria-label={controller.mode === 'preview' ? 'Native website preview' : 'Native website editing viewport'}
+      data-edit-state={controller.editState?.value || 'navigating'}
+      data-previewing={controller.mode === 'preview' || undefined}
       data-viewport-width={device.width}
       data-viewport-height={device.height}
       style={{

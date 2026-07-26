@@ -1,7 +1,7 @@
 # Handoff — Live Animated Clone Editing
 
 **Data:** 2026-07-26
-**Status:** Tasks 1–8 concluídas e verificadas; Task 9 não iniciada
+**Status:** Tasks 1–9 concluídas e verificadas; Task 10 não iniciada
 **Checkout:** `/Users/adilsonporto/Desktop/IA/Uncraft`
 **Branch:** `codex/live-animated-clone-editing`
 **Base:** `main` em `ec297fffd8303e512c8ce3a910930cc2d51b3635`
@@ -839,9 +839,123 @@ somente o commit contínuo e os campos nativos extras de restore. Snapshots já
 commitados e seus bundles/manifests permanecem válidos e não devem ser apagados;
 sessões ativas devem ser expiradas ou descartadas antes da remoção das rotas.
 
+## Task 9 — estado híbrido de freeze, settlement, loop e Preview
+
+### Resultado
+
+O runtime agora conserva a página viva durante navegação e congela somente os
+writers que afetam a seleção quando o elemento está significativamente visível.
+Sequências finitas assentam no final; loops preservam o frame corrente. Preview
+libera o estado de playback original e volta exatamente ao contexto congelado.
+
+Novos arquivos:
+
+- `packages/web-shell/lib/motion-editor/edit-state-machine.js`
+- `packages/web-shell/lib/motion-editor/edit-state-machine.test.js`
+- `packages/web-shell/lib/motion-editor/visibility.js`
+- `packages/web-shell/lib/motion-editor/visibility.test.js`
+- `packages/web-shell/lib/motion-editor/settlement.js`
+- `packages/web-shell/lib/motion-editor/settlement.test.js`
+
+Arquivos modificados:
+
+- `packages/web-shell/lib/motion-editor/runtime-bridge-source.js`
+- `packages/web-shell/lib/motion-editor/runtime-bridge-source.test.js`
+- `packages/web-shell/components/motion-editor/useNativeMotionController.js`
+- `packages/web-shell/components/motion-editor/useNativeMotionController.test.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditor.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditChrome.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditChrome.test.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionInspector.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionInspector.test.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionTimelineDock.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionTimelineDock.test.jsx`
+- `packages/web-shell/components/motion-editor/NativeEditViewport.jsx`
+- `packages/web-shell/components/motion-editor/native-motion-canvas.module.css`
+- `packages/web-shell/app/globals.css`
+
+### Contrato entregue
+
+- A máquina de estados representa explicitamente `navigating`,
+  `selection-pending`, `settling`, `editing-frozen`, `scrubbing`, `previewing`,
+  `recovering` e `unavailable`. Acknowledgements antigos de outra seleção ou
+  operação não substituem o estado corrente.
+- A visibilidade significativa é centralizada em `visibility.js`: pelo menos
+  25% da área ou um bloco visível de 32 × 32 px. Uma fresta de 1–2 px nunca
+  inicia settlement nem movimenta a câmera.
+- Cada settlement captura tempo/progresso, playback rate, paused/reversed,
+  time scale, posição de scroll e estado do ScrollTrigger antes de tocar no
+  writer. A saída, a troca de seleção, o scroll e Preview restauram esse estado.
+- CSS Animations, WAAPI, GSAP e ScrollTrigger usam os writers já inventariados
+  pelo bridge. Sequências finitas são ordenadas pelo final efetivo e assentadas
+  com callbacks suprimidos quando a API suporta isso. Loops pausam no progresso
+  normalizado já visível, sem salto inventado.
+- Writers alheios continuam rodando. Um GSAP compartilhado só é congelado se
+  todos os seus targets pertencem à seleção; grupos que alcançam siblings são
+  recusados de forma segura como `shared-writer`.
+- Settlement duplicado é idempotente. A operação tem limite síncrono de 800 ms,
+  uma tentativa automática de recovery e degrada somente a seleção afetada.
+- Durante scroll o writer selecionado volta ao estado vivo, o runtime entra em
+  `navigating` e reavalia o freeze 120 ms depois de o scroll assentar. O draft e
+  as alterações confirmadas do manifest não são tocados.
+- Scrub é um comando transitório: começa em `scrubbing`, atualiza o frame sem
+  patch e congela o ponto escolhido ao soltar. Play, pause e Preview continuam
+  fora do histórico durável.
+- Preview restaura playback e scroll, remove seleção e chrome de edição e deixa
+  somente `Back to Edit`. Ao voltar, a seleção e seu frame congelado reaparecem.
+- `Loop` aparece somente no header de Motion da seleção e ao lado da row da
+  timeline; nenhum badge foi colocado sobre o elemento no canvas.
+- O viewport expõe o estado atual para diagnóstico acessível. Reset/teardown
+  envia `release-edit-state`, remove observers/timers e libera todos os freezes.
+- Nenhum ownership analysis, retargeting, decomposição de transform ou UI de
+  ambiguidade da Task 10 foi iniciado.
+
+### Evidência tests-first e exit gate
+
+Os helpers puros e os cenários de runtime falharam primeiro pela ausência da
+máquina de estados, do critério geométrico e do settlement. Depois da integração:
+
+```text
+Suíte focal: 10 files, 122 tests passed
+Suíte completa: 153 files passed, 1 skipped; 1101 tests passed, 4 skipped
+Build com NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT=true:
+Next.js 15.5.15; compiled; 41/41 static pages; exit 0
+git diff --check: clean
+```
+
+As fixtures novas cobrem sequência finita, loop no frame corrente, browser
+animations CSS/WAAPI, GSAP, ScrollTrigger, writers mistos, troca de seleção,
+scroll + reassentamento, Preview reversível, scrub sem patch, seleção duplicada
+e fresta de 1 px. A suíte anterior conserva cobertura de split text, nested
+motion, grupos e inventário de múltiplos engines.
+
+### Verificação visual e limite operacional
+
+- `/motion-editor` abriu o bundle real `Clone/dist`; rota e assets responderam
+  HTTP 200 e o runtime conectou.
+- Selecionar `CropTab™` produziu exatamente uma seleção e
+  `data-uncraft-edit-state="editing-frozen"`.
+- Preview mudou o runtime para `previewing` e removeu a seleção. Voltar a Edit
+  restaurou a mesma seleção em `editing-frozen`.
+- O layout, outline, inspector Motion e timeline permaneceram estáveis. Não
+  houve erro no console. O único warning foi o `force3D` já conhecido do bundle,
+  fora do controller.
+- O smoke do chrome da Task 9 dentro de `/canvas` permanece dependente do mesmo
+  ambiente nativo dedicado registrado nas Tasks 7–8: migration nativa aplicada,
+  runtime assinado e bundle store configurado. Nenhuma migration ou dado externo
+  foi alterado nesta tarefa; Preview/Loop do shell estão cobertos por testes de
+  componente e pelo build com a flag ativa.
+
+### Rollback da Task 9
+
+Remover os três helpers puros, retirar o settlement/Preview transitório do
+bridge e do controller e restaurar o chrome anterior sem `Loop`/`Back to Edit`.
+Não há migration, bundle, snapshot ou manifest persistido novo para reverter;
+as sessões e versões duráveis das Tasks 1–8 permanecem válidas.
+
 ## Estado e rollback da fatia
 
-- Tasks 1–8 estão concluídas; Task 9 não foi iniciada.
+- Tasks 1–9 estão concluídas; Task 10 não foi iniciada.
 - A primeira fatia recomendada do PR (`Bundle contract and persistence schema`,
   Tasks 1–2) permanece íntegra. Tasks 3–4 completam a segunda fatia sem iniciar
   integração com o canvas.
@@ -853,6 +967,9 @@ sessões ativas devem ser expiradas ou descartadas antes da remoção das rotas.
   boundaries automatizados: autosave, histórico, commit, discard e restore
   estão integrados. O smoke visual real ainda depende do ambiente nativo
   dedicado descrito acima.
+- Task 9 fecha a estabilidade híbrida de edição: a seleção assenta de forma
+  scoped, loops preservam o frame corrente e Preview é reversível sem congelar
+  motion alheio ou criar histórico persistente.
 - Nenhum arquivo do worktree Demarcelizer ou material não relacionado foi
   alterado.
 - Rollback da Task 2 é manual e não destrutivo: parar tráfego nativo, preservar
@@ -879,9 +996,11 @@ sessões ativas devem ser expiradas ou descartadas antes da remoção das rotas.
   novo para reverter.
 - Rollback da Task 8: manter bundles e snapshots já commitados, expirar drafts
   ativos, remover o adapter/rotas e restaurar o lifecycle anterior do canvas.
+- Rollback da Task 9: remover a máquina híbrida e seus comandos transitórios;
+  nenhum estado durável precisa ser migrado ou apagado.
 
 ## Próxima fatia
 
-Parar no checkpoint antes da Task 9. A próxima etapa implementa o estado híbrido
-de freeze, settlement, loop e Preview conforme o plano. Não iniciar ownership,
-retargeting ou ambiguity UI da Task 10 dentro dessa mudança.
+Parar no checkpoint antes da Task 10. A próxima etapa adiciona ownership
+analysis, retargeting do final existente, decomposição de transform e UI de
+ambiguidade conforme o plano. Não iniciar essa etapa sem novo checkpoint.

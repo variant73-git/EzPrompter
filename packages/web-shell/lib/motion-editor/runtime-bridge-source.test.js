@@ -1769,7 +1769,7 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
-  it('focus-element selects, scrolls an offscreen row into view and replays its time-driven clip once', () => {
+  it('focus-element selects and scrolls an offscreen row without replaying it before meaningful visibility', () => {
     vi.useFakeTimers();
     document.body.innerHTML = '<main><div id="deep" class="promo-panel">Deep content</div></main>';
     const deep = document.getElementById('deep');
@@ -1799,11 +1799,12 @@ describe('native motion runtime bridge', () => {
     const selection = messages.filter((message) => message.type === 'selection-changed').pop();
     expect(selection.payload.element.id).toBe(deep.dataset.uncraftId);
     expect(deep.scrollIntoView).toHaveBeenCalled();
-    // Replay waits for the smooth scroll to settle, then runs SCOPED (lesson 154:
-    // never drive the whole document's playback).
+    // The hybrid editor no longer restarts a time clip on selection. The real
+    // scroll may bring it into meaningful visibility, then settlement decides
+    // what to freeze. A mocked offscreen rect must remain untouched.
     expect(animation.play).not.toHaveBeenCalled();
     vi.advanceTimersByTime(450);
-    expect(animation.play).toHaveBeenCalled();
+    expect(animation.play).not.toHaveBeenCalled();
 
     vi.useRealTimers();
     window.postMessage = originalPostMessage;
@@ -1944,6 +1945,329 @@ describe('native motion runtime bridge', () => {
     expect(document.querySelector('[data-uncraft-id="el-a"]').style.opacity).toBe('1');
     expect(runtime.messages.filter((message) => message.type === 'transaction-committed')).toHaveLength(0);
     expect(runtime.messages.filter((message) => message.type === 'gesture-canceled').pop().payload.restored).toBe(true);
+    runtime.restore();
+  });
+
+  it('settles only the selected finite browser writer and leaves unrelated motion live', () => {
+    const title = document.getElementById('hero-title');
+    const unrelated = document.createElement('div');
+    unrelated.id = 'ambient';
+    document.body.appendChild(unrelated);
+    title.getBoundingClientRect = () => ({ left: 40, top: 40, right: 240, bottom: 140, width: 200, height: 100 });
+    unrelated.getBoundingClientRect = () => ({ left: 260, top: 40, right: 360, bottom: 140, width: 100, height: 100 });
+    const selectedAnimation = {
+      id: 'hero-in', animationName: 'hero-in', currentTime: 120, playState: 'running', playbackRate: 1,
+      effect: {
+        target: title,
+        getTiming: () => ({ delay: 0, duration: 800, endDelay: 0, iterations: 1 }),
+        getComputedTiming: () => ({ duration: 800, endTime: 800 }),
+        getKeyframes: () => [{ offset: 0, opacity: 0 }, { offset: 1, opacity: 1 }],
+      },
+      pause: vi.fn(function pause() { this.playState = 'paused'; }),
+      play: vi.fn(function play() { this.playState = 'running'; }),
+    };
+    const ambientAnimation = {
+      id: 'ambient-loop', animationName: 'ambient-loop', currentTime: 410, playState: 'running', playbackRate: 1,
+      effect: {
+        target: unrelated,
+        getTiming: () => ({ duration: 1000, iterations: Infinity }),
+        getComputedTiming: () => ({ duration: 1000, endTime: Infinity }),
+        getKeyframes: () => [],
+      },
+      pause: vi.fn(), play: vi.fn(),
+    };
+    title.getAnimations = () => [selectedAnimation];
+    unrelated.getAnimations = () => [ambientAnimation];
+    document.getAnimations = () => [selectedAnimation, ambientAnimation];
+
+    const runtime = bootV2Runtime();
+    title.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    const settled = runtime.messages.filter((message) => message.type === 'selection-settled').pop();
+    expect(settled.payload).toMatchObject({ elementId: title.dataset.uncraftId, loop: false, writerCount: 1 });
+    expect(selectedAnimation.pause).toHaveBeenCalled();
+    expect(selectedAnimation.currentTime).toBe(800);
+    expect(ambientAnimation.pause).not.toHaveBeenCalled();
+    expect(ambientAnimation.currentTime).toBe(410);
+    runtime.restore();
+  });
+
+  it('freezes a loop at its visible frame and reports Loop without inventing another frame', () => {
+    const title = document.getElementById('hero-title');
+    title.getBoundingClientRect = () => ({ left: 40, top: 40, right: 240, bottom: 140, width: 200, height: 100 });
+    const animation = {
+      id: 'marquee', animationName: 'marquee', currentTime: 630, playState: 'running', playbackRate: 1,
+      effect: {
+        target: title,
+        getTiming: () => ({ duration: 1000, iterations: Infinity }),
+        getComputedTiming: () => ({ duration: 1000, endTime: Infinity }),
+        getKeyframes: () => [],
+      },
+      pause: vi.fn(function pause() { this.playState = 'paused'; }),
+      play: vi.fn(function play() { this.playState = 'running'; }),
+    };
+    title.getAnimations = () => [animation];
+    document.getAnimations = () => [animation];
+
+    const runtime = bootV2Runtime();
+    title.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    const settled = runtime.messages.filter((message) => message.type === 'selection-settled').pop();
+    expect(settled.payload).toMatchObject({ loop: true, progress: 0.63 });
+    expect(animation.currentTime).toBe(630);
+    expect(animation.pause).toHaveBeenCalledTimes(1);
+
+    runtime.send('inspect-viewport', {}, 'viewport-loop');
+    const view = runtime.messages.filter((message) => message.type === 'viewport-motion-changed').pop();
+    expect(view.payload.rows.find((row) => row.elementId === title.dataset.uncraftId)).toMatchObject({ loop: true });
+    runtime.restore();
+  });
+
+  it('restores the live frame for Preview and reinstates the frozen selection on return', () => {
+    const title = document.getElementById('hero-title');
+    title.getBoundingClientRect = () => ({ left: 40, top: 40, right: 240, bottom: 140, width: 200, height: 100 });
+    const animation = {
+      id: 'hero-in', animationName: 'hero-in', currentTime: 180, playState: 'running', playbackRate: 1,
+      effect: {
+        target: title,
+        getTiming: () => ({ duration: 800, iterations: 1 }),
+        getComputedTiming: () => ({ duration: 800, endTime: 800 }),
+        getKeyframes: () => [],
+      },
+      pause: vi.fn(function pause() { this.playState = 'paused'; }),
+      play: vi.fn(function play() { this.playState = 'running'; }),
+    };
+    title.getAnimations = () => [animation];
+    document.getAnimations = () => [animation];
+    window.scrollY = 140;
+
+    const runtime = bootV2Runtime();
+    title.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(animation.currentTime).toBe(800);
+    expect(title).toHaveAttribute('data-uncraft-selected', 'true');
+
+    runtime.send('set-mode', { mode: 'preview' }, 'preview-enter');
+    expect(animation.currentTime).toBe(180);
+    expect(animation.play).toHaveBeenCalled();
+    expect(title).not.toHaveAttribute('data-uncraft-selected');
+    expect(runtime.messages.filter((message) => message.type === 'edit-state-changed').pop().payload.state).toBe('previewing');
+
+    runtime.send('set-mode', { mode: 'edit' }, 'preview-exit');
+    expect(animation.currentTime).toBe(800);
+    expect(title).toHaveAttribute('data-uncraft-selected', 'true');
+    expect(runtime.messages.filter((message) => message.type === 'selection-settled').pop().payload.elementId).toBe(title.dataset.uncraftId);
+    runtime.restore();
+  });
+
+  it('keeps a manually scrubbed frame frozen on release without creating a patch', () => {
+    const title = document.getElementById('hero-title');
+    title.getBoundingClientRect = () => ({ left: 40, top: 40, right: 240, bottom: 140, width: 200, height: 100 });
+    const animation = {
+      id: 'hero-in', animationName: 'hero-in', currentTime: 120, playState: 'running', playbackRate: 1,
+      effect: {
+        target: title,
+        getTiming: () => ({ duration: 800, iterations: 1 }),
+        getComputedTiming: () => ({ duration: 800, endTime: 800 }),
+        getKeyframes: () => [],
+      },
+      pause: vi.fn(function pause() { this.playState = 'paused'; }),
+      play: vi.fn(function play() { this.playState = 'running'; }),
+    };
+    title.getAnimations = () => [animation];
+    document.getAnimations = () => [animation];
+
+    const runtime = bootV2Runtime();
+    title.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const motionId = runtime.messages.filter((message) => message.type === 'selection-changed').pop().payload.element.motion[0].id;
+    runtime.send('begin-scrub', {}, 'scrub-begin');
+    runtime.send('seek-motion', { motionId, currentTime: 360 }, 'scrub-seek');
+    runtime.send('end-scrub', {}, 'scrub-end');
+
+    expect(animation.currentTime).toBe(360);
+    expect(runtime.messages.filter((message) => message.type === 'edit-state-changed').pop().payload.state).toBe('editing-frozen');
+    expect(runtime.messages.some((message) => message.type === 'transaction-committed' || message.type === 'patch-applied')).toBe(false);
+    runtime.restore();
+  });
+
+  it('settles a scoped GSAP ScrollTrigger, then restores its exact live state on release', () => {
+    const title = document.getElementById('hero-title');
+    title.getBoundingClientRect = () => ({ left: 40, top: 40, right: 240, bottom: 140, width: 200, height: 100 });
+    document.getAnimations = () => [];
+    title.getAnimations = () => [];
+
+    let progress = 0.35;
+    let totalProgress = 0.35;
+    let totalTime = 0.35;
+    let paused = false;
+    const trigger = {
+      start: 120,
+      end: 900,
+      progress: 0.35,
+      enabled: true,
+      vars: { scrub: true },
+      disable: vi.fn(() => { trigger.enabled = false; }),
+      enable: vi.fn(() => { trigger.enabled = true; }),
+      update: vi.fn(),
+    };
+    const tween = {
+      targets: () => [title],
+      vars: { yPercent: 0, duration: 1 },
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: vi.fn(() => false),
+      paused: vi.fn(() => paused),
+      timeScale: vi.fn(() => 1),
+      progress: vi.fn((value) => {
+        if (value === undefined) return progress;
+        progress = value;
+        return tween;
+      }),
+      totalProgress: vi.fn((value) => {
+        if (value === undefined) return totalProgress;
+        totalProgress = value;
+        totalTime = value;
+        return tween;
+      }),
+      time: vi.fn(() => totalTime),
+      totalTime: vi.fn((value) => {
+        if (value === undefined) return totalTime;
+        totalTime = value;
+        totalProgress = value;
+        progress = value;
+        return tween;
+      }),
+      pause: vi.fn(() => { paused = true; return tween; }),
+      play: vi.fn(() => { paused = false; return tween; }),
+      invalidate: vi.fn(() => tween),
+      scrollTrigger: trigger,
+    };
+    window.gsap = { globalTimeline: { getChildren: () => [tween] }, getProperty: () => '0' };
+
+    const runtime = bootV2Runtime();
+    title.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(trigger.disable).toHaveBeenCalledWith(false, false);
+    expect(tween.pause).toHaveBeenCalled();
+    expect(totalProgress).toBe(1);
+    expect(runtime.messages.filter((message) => message.type === 'selection-settled').pop().payload)
+      .toMatchObject({ loop: false, writerCount: 1 });
+
+    runtime.send('release-edit-state', {}, 'release-gsap');
+    expect(totalTime).toBe(0.35);
+    expect(trigger.enable).toHaveBeenCalledWith(false, false);
+    expect(trigger.update).toHaveBeenCalled();
+    expect(tween.play).toHaveBeenCalled();
+    delete window.gsap;
+    runtime.restore();
+  });
+
+  it('restores the previous writer before freezing a newly selected element', () => {
+    const first = document.getElementById('hero-title');
+    const second = document.createElement('h2');
+    second.textContent = 'Second';
+    document.body.appendChild(second);
+    const visibleRect = () => ({ left: 40, top: 40, right: 240, bottom: 140, width: 200, height: 100 });
+    first.getBoundingClientRect = visibleRect;
+    second.getBoundingClientRect = visibleRect;
+    const makeAnimation = (target, currentTime, endTime) => ({
+      currentTime,
+      playState: 'running',
+      playbackRate: 1,
+      effect: {
+        target,
+        getTiming: () => ({ duration: endTime, iterations: 1 }),
+        getComputedTiming: () => ({ duration: endTime, endTime }),
+        getKeyframes: () => [],
+      },
+      pause: vi.fn(function pause() { this.playState = 'paused'; }),
+      play: vi.fn(function play() { this.playState = 'running'; }),
+    });
+    const firstAnimation = makeAnimation(first, 125, 800);
+    const secondAnimation = makeAnimation(second, 210, 600);
+    first.getAnimations = () => [firstAnimation];
+    second.getAnimations = () => [secondAnimation];
+    document.getAnimations = () => [firstAnimation, secondAnimation];
+
+    const runtime = bootV2Runtime();
+    first.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(firstAnimation.currentTime).toBe(800);
+    second.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(firstAnimation.currentTime).toBe(125);
+    expect(firstAnimation.play).toHaveBeenCalled();
+    expect(secondAnimation.currentTime).toBe(600);
+    expect(secondAnimation.pause).toHaveBeenCalled();
+    runtime.restore();
+  });
+
+  it('re-settles after scroll and treats duplicate selection as idempotent', () => {
+    vi.useFakeTimers();
+    const title = document.getElementById('hero-title');
+    title.getBoundingClientRect = () => ({ left: 40, top: 40, right: 240, bottom: 140, width: 200, height: 100 });
+    const animation = {
+      currentTime: 120,
+      playState: 'running',
+      playbackRate: 1,
+      effect: {
+        target: title,
+        getTiming: () => ({ duration: 800, iterations: 1 }),
+        getComputedTiming: () => ({ duration: 800, endTime: 800 }),
+        getKeyframes: () => [],
+      },
+      pause: vi.fn(function pause() { this.playState = 'paused'; }),
+      play: vi.fn(function play() { this.playState = 'running'; }),
+    };
+    title.getAnimations = () => [animation];
+    document.getAnimations = () => [animation];
+
+    const runtime = bootV2Runtime();
+    title.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(animation.pause).toHaveBeenCalledTimes(1);
+    title.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(animation.pause).toHaveBeenCalledTimes(1);
+    expect(runtime.messages.filter((message) => message.type === 'selection-settled').pop().payload.duplicate).toBe(true);
+
+    window.dispatchEvent(new Event('scroll'));
+    expect(animation.currentTime).toBe(120);
+    expect(animation.play).toHaveBeenCalled();
+    expect(runtime.messages.filter((message) => message.type === 'edit-state-changed').pop().payload.state).toBe('navigating');
+    vi.advanceTimersByTime(120);
+    expect(animation.currentTime).toBe(800);
+    expect(animation.pause).toHaveBeenCalledTimes(2);
+    expect(runtime.messages.filter((message) => message.type === 'edit-state-changed').pop().payload.state).toBe('editing-frozen');
+    runtime.restore();
+    vi.useRealTimers();
+  });
+
+  it('does not settle a one-pixel sliver that is technically inside the viewport', () => {
+    const title = document.getElementById('hero-title');
+    title.getBoundingClientRect = () => ({ left: -199, top: 40, right: 1, bottom: 140, width: 200, height: 100 });
+    const animation = {
+      currentTime: 120,
+      playState: 'running',
+      playbackRate: 1,
+      effect: {
+        target: title,
+        getTiming: () => ({ duration: 800, iterations: 1 }),
+        getComputedTiming: () => ({ duration: 800, endTime: 800 }),
+        getKeyframes: () => [],
+      },
+      pause: vi.fn(),
+      play: vi.fn(),
+    };
+    title.getAnimations = () => [animation];
+    document.getAnimations = () => [animation];
+
+    const runtime = bootV2Runtime();
+    title.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(animation.pause).not.toHaveBeenCalled();
+    expect(animation.currentTime).toBe(120);
+    expect(runtime.messages.filter((message) => message.type === 'selection-settlement-skipped').pop().payload.reason)
+      .toBe('not-meaningfully-visible');
     runtime.restore();
   });
 

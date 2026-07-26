@@ -7984,6 +7984,10 @@ body.rb-ed-active.rb-ed-canvas .canvas-topbar.editing {
   display: flex;
 }
 
+body.native-motion-previewing .canvas-topbar {
+  display: none;
+}
+
 /* Dock footer hint — quiet keyboard affordance, right-aligned before the
    mic/send cluster (unspirit 2026-07-12). */
 .prompt-dock-kbd-hint {
