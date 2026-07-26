@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '../../../../../../lib/db.js';
 import { requireUser } from '../../../../../../lib/auth.js';
+import { parseMotionManifest } from '../../../../../../lib/motion-editor/manifest.js';
 
 // GET /api/nodes/[id]/snapshots/[snapId]
 //
@@ -14,14 +15,43 @@ export async function GET(request, { params }) {
   const { id, snapId } = await params;
 
   const [row] = await sql`
-    SELECT s.id, s.html, s.design_md, s.screenshot_url, s.source, s.created_at
+    SELECT s.id, s.html, s.design_md, s.screenshot_url, s.source, s.created_at,
+           s.native_bundle_id, s.motion_manifest, s.motion_manifest_version,
+           nb.schema_version AS native_bundle_schema_version,
+           nb.content_hash AS native_bundle_content_hash,
+           nb.entry_path AS native_bundle_entry_path,
+           nb.runtime_fingerprint AS native_bundle_runtime_fingerprint
       FROM snapshots s
       JOIN nodes n ON n.id = s.node_id
       JOIN boards b ON b.id = n.board_id
+      LEFT JOIN native_bundles nb ON nb.bundle_id = s.native_bundle_id
      WHERE s.id = ${snapId} AND s.node_id = ${id} AND b.user_id = ${user.id}
   `;
   if (!row) return NextResponse.json({ error: 'not_found' }, { status: 404 });
-  return NextResponse.json({ snapshot: row });
+  const snapshot = {
+    id: row.id,
+    html: row.html,
+    design_md: row.design_md,
+    screenshot_url: row.screenshot_url,
+    source: row.source,
+    created_at: row.created_at,
+  };
+  if (row.native_bundle_id) {
+    snapshot.nativeBundle = {
+      schemaVersion: Number(row.native_bundle_schema_version),
+      bundleId: row.native_bundle_id,
+      contentHash: row.native_bundle_content_hash,
+      entryPath: row.native_bundle_entry_path,
+      runtimeFingerprint: row.native_bundle_runtime_fingerprint,
+    };
+    if (row.motion_manifest) {
+      snapshot.motionManifest = parseMotionManifest(row.motion_manifest, {
+        expectedBundleId: row.native_bundle_id,
+      });
+      snapshot.motionManifestVersion = Number(row.motion_manifest_version);
+    }
+  }
+  return NextResponse.json({ snapshot });
 }
 
 // DELETE /api/nodes/[id]/snapshots/[snapId]

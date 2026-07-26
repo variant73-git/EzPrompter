@@ -22,18 +22,28 @@ export async function GET(request, { params }) {
   if (!node) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   const rows = await sql`
-    SELECT id, source, created_at, (screenshot_url IS NOT NULL) AS "hasScreenshot"
+    SELECT id, source, created_at, (screenshot_url IS NOT NULL) AS "hasScreenshot",
+           native_bundle_id, motion_manifest_version
       FROM snapshots
      WHERE node_id = ${id}
      ORDER BY created_at DESC
   `;
 
-  const snapshots = rows.map((r) => ({
-    id: r.id,
-    source: r.source,
-    created_at: r.created_at,
-    hasScreenshot: r.hasScreenshot === true,
-    isCurrent: r.id === node.current_snapshot_id,
-  }));
+  const snapshots = rows.map((r) => {
+    const snapshot = {
+      id: r.id,
+      source: r.source,
+      created_at: r.created_at,
+      hasScreenshot: r.hasScreenshot === true,
+      isCurrent: r.id === node.current_snapshot_id,
+    };
+    if (r.native_bundle_id) {
+      snapshot.nativeBundleId = r.native_bundle_id;
+      if (r.motion_manifest_version != null) {
+        snapshot.motionManifestVersion = Number(r.motion_manifest_version);
+      }
+    }
+    return snapshot;
+  });
   return NextResponse.json({ snapshots });
 }

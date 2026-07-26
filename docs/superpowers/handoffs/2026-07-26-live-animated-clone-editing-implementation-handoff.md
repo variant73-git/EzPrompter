@@ -1,7 +1,7 @@
 # Handoff — Live Animated Clone Editing
 
 **Data:** 2026-07-26
-**Status:** Task 1 concluída e verificada; Task 2 não iniciada
+**Status:** Tasks 1–2 concluídas e verificadas; Task 3 não iniciada
 **Checkout:** `/Users/adilsonporto/Desktop/IA/Uncraft`
 **Branch:** `codex/live-animated-clone-editing`
 **Base:** `main` em `ec297fffd8303e512c8ce3a910930cc2d51b3635`
@@ -63,6 +63,8 @@ Warning: --localstorage-file was provided without a valid path
 ```
 
 ## Task 1 — contrato e armazenamento imutável de bundles
+
+**Commit:** `41911ec8 feat(native-clone): add immutable bundle contract`
 
 ### Resultado
 
@@ -165,19 +167,106 @@ testado isoladamente contra o contrato do SDK e participou do build, mas o uploa
 contra uma store real deverá ser exercitado quando a store privada e
 `BLOB_READ_WRITE_TOKEN` estiverem configurados no ambiente.
 
+## Task 2 — persistência de bundles, manifests e sessões
+
+### Resultado
+
+Foi adicionada a persistência server-side que ancora uma sessão mutável em um
+snapshot/bundle imutável, sem substituir ou alterar o `save-edit` legado.
+
+Novos arquivos:
+
+- `packages/web-shell/migrations/2026-07-26-native-motion-editing.sql`
+- `packages/web-shell/lib/motion-editor/manifest.js`
+- `packages/web-shell/lib/motion-editor/manifest.test.js`
+- `packages/web-shell/lib/motion-editor/edit-session-store.js`
+- `packages/web-shell/lib/motion-editor/edit-session-store.test.js`
+
+Arquivos modificados:
+
+- `packages/web-shell/schema.sql`
+- `packages/web-shell/app/api/nodes/[id]/snapshots/route.js`
+- `packages/web-shell/app/api/nodes/[id]/snapshots/route.test.js`
+- `packages/web-shell/app/api/nodes/[id]/snapshots/[snapId]/route.js`
+- `packages/web-shell/app/api/nodes/[id]/snapshots/[snapId]/route.test.js`
+
+### Contratos entregues
+
+- Manifest v2 estrito, ancorado a `baseBundleId` e `runtimeFingerprint`.
+- Histórico v1 adaptado deterministicamente; patches agrupados conservam uma
+  única transação e valores estruturados de keyframes permanecem íntegros.
+- Patch kinds, transaction sources e control kinds desconhecidos são rejeitados.
+- Valores não JSON, ciclos e chaves inseguras não entram no manifest.
+- Descriptor de bundle é persistido de forma idempotente; colisões imutáveis
+  falham sem `DO UPDATE`.
+- Abertura retoma a sessão ativa existente e exige node/snapshot nativo owned e
+  corrente.
+- Drafts usam revisão otimista e detectam revision, bundle, base-snapshot e
+  sessão fechada como conflitos separados.
+- Commit cria snapshot nativo, avança `nodes.current_snapshot_id` e fecha a
+  sessão em uma única instrução PostgreSQL com CTEs mutáveis.
+- Discard/expire alteram somente a sessão; o snapshot-base permanece íntegro.
+
+### Schema e APIs
+
+- `native_bundles` armazena metadata imutável, hash único, índice de assets e
+  capabilities de reconstrução.
+- `snapshots` recebeu `native_bundle_id`, `motion_manifest` e
+  `motion_manifest_version`, com FK `ON DELETE RESTRICT` e check que impede
+  manifest/bundle divergentes.
+- `native_motion_edit_sessions` registra owner, node, snapshot-base, draft,
+  revisão e status, com índice parcial garantindo uma sessão ativa por node.
+- A lista de snapshots continua idêntica para snapshots legados e acrescenta
+  somente IDs/versão nativos presentes.
+- O detalhe continua idêntico para snapshots legados; snapshots nativos recebem
+  metadata segura do bundle e manifest validado, sem `storage_key`.
+
+### Evidência tests-first e exit gate
+
+Os testes falharam primeiro pela ausência dos módulos e dos campos nativos nas
+APIs. Depois da implementação:
+
+```text
+Suíte focal final: 4 files, 25 tests passed
+Suíte completa: 132 files passed, 1 skipped; 970 tests passed, 4 skipped
+Build: Next.js 15.5.15; compiled; 41/41 static pages; exit 0
+git diff --check: clean
+```
+
+O aviso não bloqueante já conhecido de `--localstorage-file` permaneceu na suíte
+completa.
+
+### Verificação PostgreSQL real
+
+Em um PostgreSQL 16 descartável:
+
+- o schema legado da base da branch recebeu a migration;
+- a migration foi aplicada duas vezes sem erro;
+- o índice de content hash foi confirmado como unique;
+- os dois constraints de snapshot foram confirmados uma única vez;
+- abrir duas vezes retomou a mesma sessão ativa;
+- autosave avançou a revisão de 0 para 1;
+- uma escrita com revisão 0 foi rejeitada como `revision_conflict`;
+- commit criou e manteve legível o snapshot com manifest;
+- discard da sessão seguinte preservou o snapshot commitado;
+- um manifest cujo `baseBundleId` divergia da FK foi rejeitado pelo banco.
+
+O container e todos os dados descartáveis foram removidos após a verificação.
+
 ## Estado e rollback da fatia
 
-- Task 1 está concluída; Task 2 não foi iniciada.
-- Esta é a primeira fatia do PR 1 do plano (`Bundle contract and persistence
-  schema`, Tasks 1–2); o PR ainda não está completo.
+- Tasks 1 e 2 estão concluídas; Task 3 não foi iniciada.
+- A primeira fatia recomendada do PR (`Bundle contract and persistence schema`,
+  Tasks 1–2) está completa e ainda não inclui UI/runtime routing.
 - Nenhum arquivo do worktree Demarcelizer ou material não relacionado foi
   alterado.
-- Rollback da fatia: remover os três módulos/testes de `lib/native-clone`, a
-  nova route test e reverter somente as integrações/dependência/configuração
-  listadas acima. O caminho Iter9 não requer migração reversa.
+- Rollback da Task 2 é manual e não destrutivo: parar tráfego nativo, preservar
+  bundles/manifests referenciados, remover o índice de sessão ativa, a tabela de
+  sessões e somente então constraints/colunas. `native_bundles` nunca deve ser
+  removida enquanto um snapshot a referenciar.
 
 ## Próxima fatia
 
-Executar somente a Task 2, tests-first: schema de persistência/admissão,
-migration e round-trip DB/API do descriptor. Revalidar ownership dos arquivos
-antes de qualquer edição e não avançar ao próximo checkpoint do plano.
+Parar no checkpoint antes da Task 3. A próxima fatia substitui o path local de
+desenvolvimento por gateway runtime assinado e node-scoped. Revalidar ownership,
+token/segredo e isolamento do runtime antes de qualquer edição; não iniciar UI.
