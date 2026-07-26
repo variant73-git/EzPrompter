@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { MotionPanel, TimelinePanel } from './NativeMotionEditor.jsx';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import {
+  MOTION_EDITOR_PROTOCOL,
+  MOTION_EDITOR_PROTOCOL_V2,
+  SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+} from '../../lib/motion-editor/protocol.js';
+import NativeMotionEditor, { MotionPanel, TimelinePanel } from './NativeMotionEditor.jsx';
 
 const motion = {
   id: 'waapi-fade',
@@ -93,6 +98,124 @@ function renderMotionPanel(props = {}) {
     />,
   );
 }
+
+describe('native motion editor protocol v2 integration', () => {
+  it('negotiates v2 and adds history only after the runtime commits the transaction', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+    });
+    render(<NativeMotionEditor />);
+    const iframe = screen.getByTitle('Native animated website runtime');
+    const postMessage = vi.spyOn(iframe.contentWindow, 'postMessage');
+    const origin = 'https://runtime.uncraft.test';
+    const context = {
+      sessionNonce: 'nonce-editor-123456',
+      runtimeGeneration: 2,
+      bundleId: 'bundle-editor',
+      sessionId: 'session-editor',
+    };
+    const runtimeMessage = (type, payload, requestId) => ({
+      protocol: MOTION_EDITOR_PROTOCOL_V2,
+      protocolVersion: MOTION_EDITOR_PROTOCOL_V2,
+      supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+      source: 'runtime',
+      type,
+      requestId,
+      ...context,
+      payload,
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: iframe.contentWindow,
+        origin,
+        data: {
+          protocol: MOTION_EDITOR_PROTOCOL,
+          source: 'runtime',
+          type: 'runtime-ready',
+          payload: {
+            title: 'Fixture',
+            supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+            ...context,
+          },
+        },
+      }));
+    });
+    const negotiation = postMessage.mock.calls.map(([message]) => message)
+      .find((message) => message.type === 'negotiate-protocol');
+    expect(negotiation).toMatchObject({ ...context, payload: { selectedProtocol: MOTION_EDITOR_PROTOCOL_V2 } });
+
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: iframe.contentWindow,
+        origin,
+        data: runtimeMessage('protocol-negotiated', { selectedProtocol: MOTION_EDITOR_PROTOCOL_V2 }, negotiation.requestId),
+      }));
+      window.dispatchEvent(new MessageEvent('message', {
+        source: iframe.contentWindow,
+        origin,
+        data: runtimeMessage('selection-changed', {
+          element: {
+            id: 'el-a', label: 'Hero', tag: 'div', classes: [], text: '', canEditText: false,
+            rect: {}, motion: [], warnings: [],
+            styles: { opacity: '1', color: 'rgb(0, 0, 0)', colorHex: '#000000', backgroundColor: 'rgba(0, 0, 0, 0)', backgroundColorHex: '#000000' },
+          },
+        }, 'runtime-selection-1'),
+      }));
+    });
+
+    const opacity = screen.getByLabelText('Opacity');
+    fireEvent.change(opacity, { target: { value: '0.4' } });
+    fireEvent.blur(opacity);
+    const apply = postMessage.mock.calls.map(([message]) => message)
+      .filter((message) => message.type === 'apply-transaction').pop();
+    expect(apply).toBeTruthy();
+    expect(screen.getByText('0 changes')).toBeTruthy();
+
+    const acknowledged = {
+      ...apply.payload.transaction,
+      patches: apply.payload.transaction.patches.map((patch) => ({ ...patch, before: '1', value: '0.4' })),
+    };
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: iframe.contentWindow,
+        origin,
+        data: runtimeMessage('transaction-committed', { transaction: acknowledged, operation: 'apply' }, apply.requestId),
+      }));
+    });
+    expect(screen.getByText('1 change')).toBeTruthy();
+
+    fireEvent.change(opacity, { target: { value: '0.2' } });
+    fireEvent.blur(opacity);
+    expect(postMessage.mock.calls.map(([message]) => message)
+      .filter((message) => message.type === 'apply-transaction')).toHaveLength(2);
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: iframe.contentWindow,
+        origin,
+        data: {
+          protocol: MOTION_EDITOR_PROTOCOL,
+          source: 'runtime',
+          type: 'runtime-ready',
+          payload: {
+            title: 'Fixture reloaded',
+            supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+            ...context,
+            runtimeGeneration: context.runtimeGeneration + 1,
+          },
+        },
+      }));
+    });
+    expect(screen.getByText('1 change')).toBeTruthy();
+    expect(screen.getByRole('alert')).toHaveTextContent('The website restarted before a change was confirmed. The previous value was restored.');
+    vi.unstubAllGlobals();
+  });
+});
 
 describe('motion panel — properties of the active animation', () => {
   it('renders no transport and no animations list: the timeline owns the list', () => {

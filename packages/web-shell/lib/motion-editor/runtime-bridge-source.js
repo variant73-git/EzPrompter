@@ -5,6 +5,36 @@
  */
 function nativeMotionRuntimeBridge() {
   const PROTOCOL = 'uncraft-motion-editor/v1';
+  const PROTOCOL_V2 = 'uncraft-motion-editor/v2';
+  const SUPPORTED_PROTOCOLS = [PROTOCOL_V2, PROTOCOL];
+  const TRANSACTION_LIMITS = {
+    maxPatches: 100,
+    maxBytes: 256 * 1024,
+    maxPreviewUpdates: 120,
+    maxExecutionMs: 2000,
+  };
+  let runtimeConfig = {};
+  try {
+    const configNode = document.querySelector('[data-uncraft-' + 'runtime-config]');
+    runtimeConfig = configNode ? JSON.parse(configNode.textContent || '{}') : {};
+  } catch (_) {}
+  const randomIdentity = (prefix) => {
+    try { return `${prefix}-${crypto.randomUUID()}`; } catch (_) { return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+  };
+  const sessionNonce = typeof runtimeConfig.sessionNonce === 'string' && runtimeConfig.sessionNonce.length >= 8
+    ? runtimeConfig.sessionNonce
+    : randomIdentity('lab-nonce');
+  const bundleId = runtimeConfig.initialManifest?.baseBundleId || runtimeConfig.bundleId || 'motion-lab-bundle';
+  const runtimeSessionId = runtimeConfig.runtimeSessionId || 'motion-lab-session';
+  const runtimeFingerprint = runtimeConfig.runtimeFingerprint || null;
+  const runtimeGeneration = Math.max(1, Number(window.__uncraftMotionRuntimeGeneration || 0) + 1);
+  window.__uncraftMotionRuntimeGeneration = runtimeGeneration;
+  let negotiatedProtocol = PROTOCOL;
+  let trustedHostOrigin = null;
+  let heartbeatTimer = null;
+  const processedRequests = new Map();
+  const committedTransactions = new Map();
+  const activeGestures = new Map();
   const SELECTABLE = [
     '[data-w-id]', '[data-wf-target]',
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'blockquote',
@@ -54,8 +84,35 @@ function nativeMotionRuntimeBridge() {
     target.addEventListener(type, handler, { ...base, signal: listeners.signal });
   };
 
-  function emit(type, payload) {
-    window.parent.postMessage({ protocol: PROTOCOL, source: 'runtime', type, payload }, '*');
+  function emit(type, payload, context = {}) {
+    const protocol = context.protocol || negotiatedProtocol;
+    const requestId = context.requestId || randomIdentity('runtime-event');
+    const message = {
+      protocol,
+      protocolVersion: protocol,
+      supportedProtocols: SUPPORTED_PROTOCOLS,
+      source: 'runtime',
+      type,
+      sessionNonce,
+      requestId,
+      runtimeGeneration,
+      bundleId,
+      sessionId: runtimeSessionId,
+      payload,
+    };
+    window.parent.postMessage(message, trustedHostOrigin || '*');
+    return message;
+  }
+
+  function reply(message, type, payload, context = {}) {
+    if (message?.protocol === PROTOCOL_V2 && message.requestId && context.cache !== false) {
+      processedRequests.set(message.requestId, { type, payload });
+      if (processedRequests.size > 500) processedRequests.delete(processedRequests.keys().next().value);
+    }
+    return emit(type, payload, {
+      protocol: context.protocol || (message?.protocol === PROTOCOL_V2 ? PROTOCOL_V2 : negotiatedProtocol),
+      requestId: message?.requestId,
+    });
   }
 
   function hash(value) {
@@ -1559,12 +1616,39 @@ function nativeMotionRuntimeBridge() {
         element.dataset.uncraftNeedsMotionRebind = 'split-text';
         element.setAttribute('aria-label', value);
       }
-      emit('inline-text-committed', {
-        elementId: state.elementId,
-        before: state.beforeText,
-        value,
-        element: describe(element),
-      });
+      const elementDescription = describe(element);
+      if (negotiatedProtocol === PROTOCOL_V2) {
+        const transaction = {
+          id: randomIdentity('transaction'),
+          requestId: randomIdentity('runtime-gesture'),
+          source: 'properties',
+          createdAt: new Date().toISOString(),
+          runtimeGeneration,
+          patches: [{
+            id: randomIdentity('patch'),
+            elementId: state.elementId,
+            kind: 'text',
+            property: null,
+            motionId: null,
+            before: state.beforeText,
+            value,
+          }],
+        };
+        committedTransactions.set(transaction.id, transaction);
+        emit('transaction-committed', {
+          transaction,
+          operation: 'runtime-gesture',
+          originatedByRuntime: true,
+          element: elementDescription,
+        }, { protocol: PROTOCOL_V2, requestId: transaction.requestId });
+      } else {
+        emit('inline-text-committed', {
+          elementId: state.elementId,
+          before: state.beforeText,
+          value,
+          element: elementDescription,
+        });
+      }
     }
 
     state.pausedAnimations.forEach((animation) => {
@@ -1652,15 +1736,104 @@ function nativeMotionRuntimeBridge() {
     return document.importNode(svg, true);
   }
 
-  function applyPatch(patch, quiet) {
-    let element = findElement(patch.elementId);
-    if (!element) {
-      if (!quiet) emit('patch-rejected', { patch, error: 'Element is no longer present in the runtime.' });
-      return;
+  function bridgeError(code, message) {
+    const error = new Error(message || code);
+    error.code = code;
+    return error;
+  }
+
+  function cloneValue(value) {
+    try { return structuredClone(value); } catch (_) {
+      if (value == null || typeof value !== 'object') return value;
+      try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
     }
+  }
+
+  function readMotionPatchValue(patch, element) {
+    if (!motionRegistry.has(patch.motionId)) inspectMotion(element);
+    const record = motionRegistry.get(patch.motionId);
+    if (!record) throw bridgeError('motion_missing', 'The selected animation is no longer available.');
+    const property = patch.property;
+    const animation = record.animation;
+    if (property.startsWith('keyframe.')) {
+      const trackProperty = property.slice('keyframe.'.length);
+      const descriptor = patch.value && typeof patch.value === 'object' ? patch.value : patch.before;
+      const offset = Math.max(0, Math.min(1, Number(descriptor?.offset) || 0));
+      if (record.type === 'browser') {
+        let frames = [];
+        try { frames = animation.effect?.getKeyframes?.() || []; } catch (_) {}
+        const frame = frames.find((candidate) => Math.abs(finite(candidate.computedOffset, finite(candidate.offset)) - offset) < 0.0005);
+        if (!frame || frame[trackProperty] == null) return { offset, exists: false };
+        return {
+          offset,
+          value: String(frame[trackProperty]),
+          ...(frame.easing ? { easing: frame.easing } : {}),
+          exists: true,
+        };
+      }
+      const vars = animation.vars || {};
+      if (offset <= 0.001) {
+        if (vars.startAt?.[trackProperty] == null) return { offset, exists: false };
+        return { offset, value: String(vars.startAt[trackProperty]), exists: true };
+      }
+      if (offset >= 0.999) {
+        if (vars[trackProperty] == null) return { offset, exists: false };
+        return { offset, value: String(vars[trackProperty]), exists: true };
+      }
+      return { offset, exists: false };
+    }
+    if (record.type === 'browser') {
+      const timing = animation.effect?.getTiming?.() || {};
+      if (property === 'timing.playbackMode') {
+        if (timing.direction === 'alternate' && timing.iterations === Infinity) return 'ping-pong';
+        return timing.iterations === Infinity ? 'loop' : 'once';
+      }
+      const timingMap = {
+        'timing.delay': 'delay', 'timing.duration': 'duration', 'timing.endDelay': 'endDelay',
+        'timing.iterations': 'iterations', 'timing.direction': 'direction', 'timing.fill': 'fill', 'timing.easing': 'easing',
+      };
+      if (!timingMap[property]) throw bridgeError('unsupported_patch', 'The browser animation property is not supported.');
+      return cloneValue(timing[timingMap[property]]);
+    }
+    if (property === 'timing.playbackMode') {
+      if (animation.repeat?.() === -1 && animation.yoyo?.()) return 'ping-pong';
+      return animation.repeat?.() === -1 ? 'loop' : 'once';
+    }
+    if (property === 'timing.duration') return finite(animation.duration?.()) * 1000;
+    if (property === 'timing.delay') return finite(animation.delay?.()) * 1000;
+    if (property === 'timing.iterations') return Math.max(1, finite(animation.repeat?.()) + 1);
+    if (property === 'timing.repeatDelay') return finite(animation.repeatDelay?.()) * 1000;
+    if (property === 'timing.yoyo') return Boolean(animation.yoyo?.());
+    if (property === 'timing.easing') return animation.vars?.ease || '';
+    if (property === 'scroll.start' || property === 'scroll.end') {
+      const key = property === 'scroll.start' ? 'start' : 'end';
+      return cloneValue(record.scrollTrigger?.vars?.[key] ?? '');
+    }
+    if (property === 'link.detach') {
+      const detached = detachedTargets.get(animation);
+      const targets = detached ? Array.from(detached) : [];
+      return { detached: targets.some((target) => target === element || element.contains(target)) };
+    }
+    throw bridgeError('unsupported_patch', 'The GSAP animation property is not supported.');
+  }
+
+  function readPatchValue(patch) {
+    const element = findElement(patch?.elementId);
+    if (!element) throw bridgeError('target_missing', 'The target element is no longer present.');
+    if (patch.kind === 'style') return element.style.getPropertyValue(patch.property);
+    if (patch.kind === 'attribute') return element.getAttribute(patch.property) ?? '';
+    if (patch.kind === 'text') return element.matches('input,textarea') ? element.value : element.textContent;
+    if (patch.kind === 'svg') return element.outerHTML;
+    if (patch.kind === 'motion') return readMotionPatchValue(patch, element);
+    throw bridgeError('unsupported_patch', 'The patch kind is not supported.');
+  }
+
+  function applyPatchOrThrow(patch) {
+    let element = findElement(patch?.elementId);
+    if (!element) throw bridgeError('target_missing', 'The target element is no longer present.');
     try {
       if (patch.kind === 'style') {
-        element.style.setProperty(patch.property, patch.value || '');
+        element.style.setProperty(patch.property, patch.value ?? '');
       } else if (patch.kind === 'attribute') {
         if (patch.value === '' || patch.value == null) element.removeAttribute(patch.property);
         else element.setAttribute(patch.property, patch.value);
@@ -1676,21 +1849,133 @@ function nativeMotionRuntimeBridge() {
         }
       } else if (patch.kind === 'svg') {
         const replacement = safeSvg(patch.value, patch.elementId);
-        if (!replacement) throw new Error('The selected SVG file is invalid.');
+        if (!replacement) throw bridgeError('invalid_value', 'The selected SVG is invalid.');
         element.replaceWith(replacement);
         element = replacement;
       } else if (patch.kind === 'motion') {
         applyMotionPatch(patch, element);
+      } else {
+        throw bridgeError('unsupported_patch', 'The patch kind is not supported.');
       }
     } catch (error) {
-      // Rejections must NEVER be quiet — a swallowed failure in a batch (undo,
-      // saved-patch replay) leaves the host history claiming a write that the
-      // runtime refused.
+      if (error?.code) throw error;
+      throw bridgeError('write_failed', error?.message || 'The change could not be applied.');
+    }
+    return element;
+  }
+
+  function applyPatch(patch, quiet) {
+    let element;
+    try {
+      element = applyPatchOrThrow(patch);
+    } catch (error) {
+      // Legacy v1 stays readable during migration. Protocol v2 sends only a
+      // stable error code and keeps details in its sanitized diagnostics field.
       emit('patch-rejected', { patch, error: error?.message || 'The change could not be applied.' });
-      return;
+      return false;
     }
     refreshRuntime();
     if (!quiet) emit('patch-applied', { patch, element: describe(element) });
+    return true;
+  }
+
+  function transactionDiagnostic(code, transactionId) {
+    return { code, fingerprint: hash(`${code}:${transactionId || 'unknown'}`) };
+  }
+
+  function assertTransaction(transaction) {
+    if (!transaction || typeof transaction !== 'object' || typeof transaction.id !== 'string' || !transaction.id) {
+      throw bridgeError('invalid_transaction', 'The transaction is invalid.');
+    }
+    if (!Array.isArray(transaction.patches) || !transaction.patches.length) {
+      throw bridgeError('invalid_transaction', 'The transaction has no patches.');
+    }
+    if (transaction.patches.length > TRANSACTION_LIMITS.maxPatches) {
+      throw bridgeError('patch_limit_exceeded', 'The transaction has too many patches.');
+    }
+  }
+
+  function rollbackApplied(applied) {
+    let rollbackError = null;
+    applied.slice().reverse().forEach((patch) => {
+      try { applyPatchOrThrow({ ...patch, value: cloneValue(patch.before) }); }
+      catch (error) { rollbackError ||= error; }
+    });
+    refreshRuntime();
+    if (rollbackError) throw bridgeError('rollback_failed', 'The transaction could not be restored.');
+  }
+
+  function applyAtomicTransaction(transaction, { restore = false } = {}) {
+    assertTransaction(transaction);
+    const startedAt = performance.now();
+    const applied = [];
+    try {
+      transaction.patches.forEach((patch) => {
+        if (performance.now() - startedAt > TRANSACTION_LIMITS.maxExecutionMs) {
+          throw bridgeError('execution_timeout', 'The transaction exceeded its execution limit.');
+        }
+        const canonical = { ...patch, before: cloneValue(readPatchValue(patch)) };
+        applyPatchOrThrow(canonical);
+        canonical.value = cloneValue(readPatchValue(canonical));
+        applied.push(canonical);
+      });
+      refreshRuntime();
+      const acknowledged = { ...transaction, patches: applied, runtimeGeneration };
+      if (restore) rollbackApplied(applied);
+      return acknowledged;
+    } catch (error) {
+      if (applied.length) rollbackApplied(applied);
+      throw error;
+    }
+  }
+
+  function valuesEqual(left, right) {
+    if (Object.is(left, right)) return true;
+    if (left == null || right == null) return left === right;
+    if (typeof left !== 'object' && typeof right !== 'object') return String(left) === String(right);
+    try { return JSON.stringify(left) === JSON.stringify(right); } catch (_) { return false; }
+  }
+
+  function rejectTransaction(message, transactionId, error) {
+    const code = error?.code || 'transaction_failed';
+    reply(message, 'transaction-rejected', {
+      transactionId: transactionId || null,
+      code,
+      diagnostics: transactionDiagnostic(code, transactionId),
+    });
+  }
+
+  function commitTransaction(message, transaction, operation = 'apply') {
+    try {
+      const acknowledged = applyAtomicTransaction(transaction);
+      committedTransactions.set(acknowledged.id, acknowledged);
+      reply(message, 'transaction-committed', { transaction: acknowledged, operation });
+    } catch (error) {
+      rejectTransaction(message, transaction?.id, error);
+    }
+  }
+
+  function validateTransaction(message, transaction) {
+    try {
+      const acknowledged = applyAtomicTransaction(transaction, { restore: true });
+      const valid = acknowledged.patches.every((patch, index) => valuesEqual(patch.value, transaction.patches[index].value));
+      reply(message, 'validation-result', {
+        transactionId: acknowledged.id,
+        valid,
+        restored: true,
+        observations: acknowledged.patches.map((patch) => ({ patchId: patch.id, value: cloneValue(patch.value) })),
+        ...(valid ? {} : { code: 'effect_mismatch', diagnostics: transactionDiagnostic('effect_mismatch', acknowledged.id) }),
+      });
+    } catch (error) {
+      const code = error?.code || 'validation_failed';
+      reply(message, 'validation-result', {
+        transactionId: transaction?.id || null,
+        valid: false,
+        restored: code !== 'rollback_failed',
+        code,
+        diagnostics: transactionDiagnostic(code, transaction?.id),
+      });
+    }
   }
 
   function detectedEngines() {
@@ -1880,13 +2165,244 @@ function nativeMotionRuntimeBridge() {
     emitTimelineState(true);
   }
 
+  function validNegotiation(message) {
+    return message &&
+      message.protocol === PROTOCOL &&
+      message.source === 'host' &&
+      message.type === 'negotiate-protocol' &&
+      message.payload?.selectedProtocol === PROTOCOL_V2 &&
+      Array.isArray(message.supportedProtocols) &&
+      message.supportedProtocols.includes(PROTOCOL_V2) &&
+      message.sessionNonce === sessionNonce &&
+      message.runtimeGeneration === runtimeGeneration &&
+      message.bundleId === bundleId &&
+      message.sessionId === runtimeSessionId &&
+      typeof message.requestId === 'string' && message.requestId.length > 0;
+  }
+
+  function validV2Command(message, eventOrigin) {
+    return message &&
+      negotiatedProtocol === PROTOCOL_V2 &&
+      message.protocol === PROTOCOL_V2 &&
+      message.protocolVersion === PROTOCOL_V2 &&
+      Array.isArray(message.supportedProtocols) &&
+      message.supportedProtocols.includes(PROTOCOL_V2) &&
+      message.source === 'host' &&
+      typeof message.type === 'string' &&
+      typeof message.requestId === 'string' && message.requestId.length > 0 &&
+      message.sessionNonce === sessionNonce &&
+      message.runtimeGeneration === runtimeGeneration &&
+      message.bundleId === bundleId &&
+      message.sessionId === runtimeSessionId &&
+      eventOrigin === trustedHostOrigin;
+  }
+
+  function beginRuntimeGesture(message, payload) {
+    const gestureId = payload.gestureId;
+    if (typeof gestureId !== 'string' || !gestureId || !payload.patch) {
+      rejectTransaction(message, null, bridgeError('invalid_gesture', 'The gesture is invalid.'));
+      return;
+    }
+    try {
+      const before = cloneValue(readPatchValue(payload.patch));
+      activeGestures.set(gestureId, {
+        id: gestureId,
+        patch: { ...payload.patch, before, value: before },
+        before,
+        value: before,
+        previewUpdates: 0,
+        pendingValue: undefined,
+        pendingMessage: null,
+        previewFrame: null,
+      });
+      reply(message, 'gesture-previewed', { gestureId, phase: 'began' });
+    } catch (error) {
+      rejectTransaction(message, null, error);
+    }
+  }
+
+  function cancelGestureFrame(gesture) {
+    if (gesture?.previewFrame == null) return;
+    try {
+      if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(gesture.previewFrame);
+      else clearTimeout(gesture.previewFrame);
+    } catch (_) {}
+    gesture.previewFrame = null;
+  }
+
+  function flushGesturePreview(gesture) {
+    if (gesture.pendingValue === undefined) return;
+    const value = gesture.pendingValue;
+    gesture.pendingValue = undefined;
+    applyPatchOrThrow({ ...gesture.patch, value });
+    refreshRuntime();
+    gesture.value = cloneValue(readPatchValue(gesture.patch));
+  }
+
+  function previewRuntimeGesture(message, payload) {
+    const gesture = activeGestures.get(payload.gestureId);
+    if (!gesture) {
+      rejectTransaction(message, null, bridgeError('gesture_missing', 'The gesture is no longer active.'));
+      return;
+    }
+    try {
+      if (gesture.previewUpdates >= TRANSACTION_LIMITS.maxPreviewUpdates) {
+        throw bridgeError('preview_limit_exceeded', 'The gesture exceeded its preview limit.');
+      }
+      gesture.previewUpdates += 1;
+      gesture.pendingValue = cloneValue(payload.value);
+      gesture.pendingMessage = message;
+      if (gesture.previewFrame == null) {
+        const schedule = typeof window.requestAnimationFrame === 'function'
+          ? window.requestAnimationFrame.bind(window)
+          : (callback) => setTimeout(callback, 16);
+        gesture.previewFrame = schedule(() => {
+          gesture.previewFrame = null;
+          try { flushGesturePreview(gesture); }
+          catch (error) {
+            try { applyPatchOrThrow({ ...gesture.patch, value: cloneValue(gesture.before) }); refreshRuntime(); } catch (_) {}
+            activeGestures.delete(gesture.id);
+            rejectTransaction(gesture.pendingMessage || message, null, error);
+          }
+        });
+      }
+      reply(message, 'gesture-previewed', {
+        gestureId: gesture.id,
+        phase: 'queued',
+        coalesced: true,
+        previewUpdates: gesture.previewUpdates,
+        value: cloneValue(payload.value),
+      });
+    } catch (error) {
+      cancelGestureFrame(gesture);
+      try { applyPatchOrThrow({ ...gesture.patch, value: cloneValue(gesture.before) }); refreshRuntime(); } catch (_) {}
+      activeGestures.delete(gesture.id);
+      rejectTransaction(message, null, error);
+    }
+  }
+
+  function commitRuntimeGesture(message, payload) {
+    const gesture = activeGestures.get(payload.gestureId);
+    if (!gesture) {
+      rejectTransaction(message, payload.transactionId, bridgeError('gesture_missing', 'The gesture is no longer active.'));
+      return;
+    }
+    try {
+      cancelGestureFrame(gesture);
+      flushGesturePreview(gesture);
+      const after = cloneValue(readPatchValue(gesture.patch));
+      if (!valuesEqual(after, gesture.value)) throw bridgeError('effect_mismatch', 'The preview result could not be verified.');
+      const transaction = {
+        id: payload.transactionId || randomIdentity('transaction'),
+        requestId: message.requestId,
+        source: payload.source || 'gesture',
+        createdAt: new Date().toISOString(),
+        runtimeGeneration,
+        patches: [{ ...gesture.patch, before: cloneValue(gesture.before), value: after }],
+      };
+      activeGestures.delete(gesture.id);
+      committedTransactions.set(transaction.id, transaction);
+      reply(message, 'transaction-committed', { transaction, operation: 'gesture' });
+    } catch (error) {
+      cancelGestureFrame(gesture);
+      try { applyPatchOrThrow({ ...gesture.patch, value: cloneValue(gesture.before) }); refreshRuntime(); } catch (_) {}
+      activeGestures.delete(gesture.id);
+      rejectTransaction(message, payload.transactionId, error);
+    }
+  }
+
+  function cancelRuntimeGesture(message, payload) {
+    const gesture = activeGestures.get(payload.gestureId);
+    if (!gesture) {
+      reply(message, 'gesture-canceled', { gestureId: payload.gestureId, restored: true });
+      return;
+    }
+    try {
+      cancelGestureFrame(gesture);
+      applyPatchOrThrow({ ...gesture.patch, value: cloneValue(gesture.before) });
+      refreshRuntime();
+      activeGestures.delete(gesture.id);
+      reply(message, 'gesture-canceled', { gestureId: gesture.id, restored: true });
+    } catch (error) {
+      activeGestures.delete(gesture.id);
+      rejectTransaction(message, null, bridgeError('rollback_failed', error?.message));
+    }
+  }
+
   function handleCommand(event) {
     if (event.source !== window.parent) return;
     const message = event.data;
-    if (!message || message.protocol !== PROTOCOL || message.source !== 'host') return;
+    if (validNegotiation(message)) {
+      trustedHostOrigin = event.origin;
+      negotiatedProtocol = PROTOCOL_V2;
+      reply(message, 'protocol-negotiated', {
+        selectedProtocol: PROTOCOL_V2,
+        supportedProtocols: SUPPORTED_PROTOCOLS,
+        runtimeGeneration,
+        sessionNonce,
+        bundleId,
+        sessionId: runtimeSessionId,
+      }, { protocol: PROTOCOL_V2 });
+      return;
+    }
+    if (message?.protocol === PROTOCOL_V2) {
+      if (!validV2Command(message, event.origin)) return;
+      let messageBytes = 0;
+      try { messageBytes = JSON.stringify(message).length; } catch (_) { messageBytes = TRANSACTION_LIMITS.maxBytes + 1; }
+      if (messageBytes > TRANSACTION_LIMITS.maxBytes) {
+        rejectTransaction(message, message.payload?.transaction?.id, bridgeError('message_too_large', 'The message is too large.'));
+        return;
+      }
+      const cached = processedRequests.get(message.requestId);
+      if (cached) {
+        emit(cached.type, cached.payload, { protocol: PROTOCOL_V2, requestId: message.requestId });
+        return;
+      }
+    } else if (!message || message.protocol !== PROTOCOL || message.source !== 'host' || negotiatedProtocol === PROTOCOL_V2) {
+      return;
+    }
     const payload = message.payload || {};
 
-    if (message.type === 'set-mode') {
+    if (message.type === 'apply-transaction') {
+      commitTransaction(message, payload.transaction, 'apply');
+    } else if (message.type === 'rollback-transaction') {
+      let transaction = payload.transaction;
+      if (!transaction && payload.targetTransactionId) {
+        const target = committedTransactions.get(payload.targetTransactionId);
+        if (target) {
+          transaction = {
+            id: payload.transactionId || randomIdentity('rollback'),
+            requestId: message.requestId,
+            source: 'rollback',
+            patches: target.patches.slice().reverse().map((patch) => ({
+              ...patch,
+              id: `${patch.id || randomIdentity('patch')}:rollback`,
+              before: cloneValue(patch.value),
+              value: cloneValue(patch.before),
+            })),
+          };
+        }
+      }
+      if (!transaction) rejectTransaction(message, payload.transactionId, bridgeError('transaction_missing', 'The transaction is no longer available.'));
+      else commitTransaction(message, transaction, 'rollback');
+    } else if (message.type === 'validate-transaction') {
+      validateTransaction(message, payload.transaction);
+    } else if (message.type === 'begin-gesture') {
+      beginRuntimeGesture(message, payload);
+    } else if (message.type === 'preview-gesture') {
+      previewRuntimeGesture(message, payload);
+    } else if (message.type === 'commit-gesture') {
+      commitRuntimeGesture(message, payload);
+    } else if (message.type === 'cancel-gesture') {
+      cancelRuntimeGesture(message, payload);
+    } else if (message.type === 'health-check') {
+      reply(message, 'runtime-health', {
+        status: 'healthy',
+        runtimeGeneration,
+        activeGestures: activeGestures.size,
+        runtimeFingerprint,
+      });
+    } else if (message.type === 'set-mode') {
       if (textEditState && payload.mode === 'preview') finishInlineTextEdit(true);
       mode = payload.mode === 'preview' ? 'preview' : 'edit';
       document.documentElement.dataset.uncraftEditorMode = mode;
@@ -2036,17 +2552,48 @@ function nativeMotionRuntimeBridge() {
       finished.element.releasePointerCapture?.(event.pointerId);
       if (Math.abs(finished.dx) + Math.abs(finished.dy) > 2) {
         suppressClickUntil = Date.now() + 120;
-        emit('layout-intent-committed', {
-          elementId: finished.elementId,
-          before: finished.before,
-          value: finished.value,
+        const layoutIntent = {
           delta: { x: finished.dx, y: finished.dy },
           originalRect: {
             x: Math.round(finished.rect.x), y: Math.round(finished.rect.y),
             width: Math.round(finished.rect.width), height: Math.round(finished.rect.height),
           },
-          element: describe(finished.element),
-        });
+        };
+        const elementDescription = describe(finished.element);
+        if (negotiatedProtocol === PROTOCOL_V2) {
+          const transaction = {
+            id: randomIdentity('transaction'),
+            requestId: randomIdentity('runtime-gesture'),
+            source: 'properties',
+            createdAt: new Date().toISOString(),
+            runtimeGeneration,
+            patches: [{
+              id: randomIdentity('patch'),
+              elementId: finished.elementId,
+              kind: 'style',
+              property: 'translate',
+              motionId: null,
+              before: finished.before,
+              value: finished.value,
+              layoutIntent,
+            }],
+          };
+          committedTransactions.set(transaction.id, transaction);
+          emit('transaction-committed', {
+            transaction,
+            operation: 'runtime-gesture',
+            originatedByRuntime: true,
+            element: elementDescription,
+          }, { protocol: PROTOCOL_V2, requestId: transaction.requestId });
+        } else {
+          emit('layout-intent-committed', {
+            elementId: finished.elementId,
+            before: finished.before,
+            value: finished.value,
+            ...layoutIntent,
+            element: elementDescription,
+          });
+        }
       }
     }, true);
     on(document, 'click', (event) => {
@@ -2118,9 +2665,23 @@ function nativeMotionRuntimeBridge() {
     });
 
     on(window, 'message', handleCommand);
+    heartbeatTimer = setInterval(() => {
+      emit('heartbeat', {
+        status: 'healthy',
+        runtimeGeneration,
+        now: Date.now(),
+      });
+    }, 1000);
     window.__uncraftMotionBridge = {
       teardown() {
+        activeGestures.forEach((gesture) => {
+          cancelGestureFrame(gesture);
+          try { applyPatchOrThrow({ ...gesture.patch, value: cloneValue(gesture.before) }); } catch (_) {}
+        });
+        activeGestures.clear();
         try { listeners.abort(); } catch (_) {}
+        try { if (heartbeatTimer) clearInterval(heartbeatTimer); } catch (_) {}
+        heartbeatTimer = null;
         try {
           if (timelineFrame != null && typeof window.cancelAnimationFrame === 'function') {
             window.cancelAnimationFrame(timelineFrame);
@@ -2136,6 +2697,13 @@ function nativeMotionRuntimeBridge() {
       engines: detectedEngines(),
       profile: collectDocumentProfile(),
       assets: collectAssets(),
+      supportedProtocols: SUPPORTED_PROTOCOLS,
+      selectedProtocol: PROTOCOL,
+      sessionNonce,
+      runtimeGeneration,
+      bundleId,
+      sessionId: runtimeSessionId,
+      runtimeFingerprint,
     });
   }
 

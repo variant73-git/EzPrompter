@@ -1,7 +1,7 @@
 # Handoff — Live Animated Clone Editing
 
 **Data:** 2026-07-26
-**Status:** Tasks 1–3 concluídas e verificadas; Task 4 não iniciada
+**Status:** Tasks 1–4 concluídas e verificadas; Task 5 não iniciada
 **Checkout:** `/Users/adilsonporto/Desktop/IA/Uncraft`
 **Branch:** `codex/live-animated-clone-editing`
 **Base:** `main` em `ec297fffd8303e512c8ce3a910930cc2d51b3635`
@@ -359,11 +359,98 @@ dependem da configuração real de `UNCRAFT_RUNTIME_ORIGIN`,
 recusa exposição sem as duas primeiras; o adapter Vercel permanece coberto por
 teste isolado, mas não houve credencial real disponível para um smoke remoto.
 
+## Task 4 — protocolo v2 transacional, validação e health
+
+### Resultado
+
+O bridge existente passou a negociar protocol v2 sem remover o envelope v1 do
+motion lab. O host só promove uma mutação a histórico depois de receber
+`transaction-committed`; transações rejeitadas ou interrompidas não entram em
+Undo, Redo ou Save.
+
+Novo módulo:
+
+- `packages/web-shell/lib/motion-editor/transaction.js`
+
+Novo teste:
+
+- `packages/web-shell/lib/motion-editor/transaction.test.js`
+
+Arquivos modificados:
+
+- `packages/web-shell/lib/motion-editor/protocol.js`
+- `packages/web-shell/lib/motion-editor/protocol.test.js`
+- `packages/web-shell/lib/motion-editor/runtime-bridge-source.js`
+- `packages/web-shell/lib/motion-editor/runtime-bridge-source.test.js`
+- `packages/web-shell/components/motion-editor/NativeMotionEditor.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditor.test.jsx`
+- `packages/web-shell/app/api/runtime/[token]/[...path]/route.js`
+
+### Contrato entregue
+
+- `runtime-ready` permanece legível por clientes v1 e anuncia v2; o host negocia
+  explicitamente antes de emitir comandos v2.
+- Todo envelope v2 carrega versão suportada, session nonce, request ID, runtime
+  generation, bundle e edit session. Source window, origin e todo o contexto são
+  conferidos antes de qualquer mutação.
+- `apply-transaction`, `rollback-transaction` e `validate-transaction` possuem
+  acknowledgements explícitos e códigos de erro estáveis.
+- Todos os valores `before` são lidos no runtime antes do primeiro write. Uma
+  falha intermediária restaura as mutações anteriores em ordem reversa.
+- Request IDs duplicados são idempotentes. O ledger do host segura respostas
+  fora de ordem até que possam ser liberadas na ordem das ações do usuário.
+- O ciclo de gesto captura `before` uma vez, coalesce previews por frame, limita
+  contagem/tamanho/tempo, valida no fim e produz um único `after`.
+- Cancelamento ou falha restaura o valor anterior sem histórico. Validação
+  aplica, observa e restaura sem emitir uma transação persistível.
+- Heartbeats e `runtime-health` são emitidos pelo bridge; o host detecta timeout
+  e conserva somente mudanças já confirmadas.
+- Uma nova geração de runtime invalida comandos e acknowledgements antigos. Um
+  reload durante uma transação pendente mantém o histórico confirmado e rejeita
+  a mudança ainda não reconhecida.
+- Edições originadas dentro do runtime, como texto inline e move livre, também
+  chegam ao host como uma única transação confirmada em v2.
+- O bootstrap assinado agora inclui explicitamente bundle e edit-session IDs,
+  além do nonce, manifest e fingerprint já existentes.
+- A mensagem de falha permanece automática e não técnica; nenhum Retry, Repair
+  ou detalhe do runtime foi exposto na UI.
+
+### Evidência tests-first e exit gate
+
+Os testes falharam primeiro pela ausência de `transaction.js`, dos exports v2 e
+dos comandos transacionais no bridge. O primeiro fault-injection do bridge
+registrou sete falhas esperadas antes da implementação. Depois da implementação:
+
+```text
+Suíte focal final: 5 files, 98 tests passed
+Suíte completa: 136 files passed, 1 skipped; 1012 tests passed, 4 skipped
+Build: Next.js 15.5.15; compiled; 41/41 static pages; exit 0
+git diff --check: clean
+```
+
+O warning não bloqueante já conhecido de `--localstorage-file` apareceu somente
+na suíte completa.
+
+### Verificação de falhas
+
+- Uma falha no terceiro patch de uma transação restaurou estilo e atributo dos
+  dois patches anteriores exatamente aos valores lidos do DOM.
+- Um rollback reconhecido foi executado como uma segunda transação atômica.
+- Uma validation transaction aplicou `opacity`, observou o resultado e restaurou
+  o estado anterior sem `transaction-committed`.
+- Dois previews foram coalescidos e confirmados como uma única entrada; o fluxo
+  cancelado restaurou `before` e criou zero entradas de histórico.
+- Nonce, origin, bundle, edit session ou runtime generation divergentes foram
+  ignorados sem mutar o DOM.
+- Um reload simulado com transação pendente preservou uma mudança confirmada e
+  não promoveu a mudança sem acknowledgement.
+
 ## Estado e rollback da fatia
 
-- Tasks 1–3 estão concluídas; Task 4 não foi iniciada.
+- Tasks 1–4 estão concluídas; Task 5 não foi iniciada.
 - A primeira fatia recomendada do PR (`Bundle contract and persistence schema`,
-  Tasks 1–2) permanece íntegra. A Task 3 inicia a segunda fatia sem incluir UI.
+  Tasks 1–2) permanece íntegra. Tasks 3–4 completam a segunda fatia sem iniciar
+  integração com o canvas.
 - Nenhum arquivo do worktree Demarcelizer ou material não relacionado foi
   alterado.
 - Rollback da Task 2 é manual e não destrutivo: parar tráfego nativo, preservar
@@ -374,10 +461,14 @@ teste isolado, mas não houve credencial real disponível para um smoke remoto.
   novas e o módulo de token, restaurar o gateway do lab e os headers globais, e
   então remover as duas variáveis runtime. Bundles, snapshots e edit sessions
   persistidos não precisam ser removidos.
+- Rollback da Task 4: manter o gateway assinado e voltar o motion lab ao envelope
+  v1, remover os comandos/ledger transacionais e o bootstrap extra de contexto.
+  Bundles, snapshots e edit sessions persistidos permanecem válidos porque a
+  Task 4 não alterou schema nem manifests duráveis.
 
 ## Próxima fatia
 
-Parar no checkpoint antes da Task 4. A próxima etapa introduz protocol v2 com
-negociação, transações atômicas, rollback/validation acknowledgement, health e
-session nonce no bridge existente. Preservar o motion lab e não iniciar UI ou
-extração do controller antes de fechar o exit gate da Task 4.
+Parar no checkpoint antes da Task 5. A próxima etapa extrai um único controller
+nativo reutilizável, preserva o motion lab como consumidor e adiciona session
+history/devices sem iniciar ainda o roteamento do canvas. Não misturar a extração
+do controller com panel extraction ou com mudanças em `CanvasClient.jsx`.

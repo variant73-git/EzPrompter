@@ -41,12 +41,22 @@ import {
 } from 'lucide-react';
 import {
   command,
+  commandV2,
   createPatch,
   invertPatch,
   isRuntimeMessage,
+  matchesRuntimeContext,
+  MOTION_EDITOR_PROTOCOL,
+  MOTION_EDITOR_PROTOCOL_V2,
   removeRejectedPatch,
   storageKey,
+  SUPPORTED_MOTION_EDITOR_PROTOCOLS,
 } from '../../lib/motion-editor/protocol.js';
+import {
+  TRANSACTION_LIMITS,
+  createTransaction,
+  createTransactionLedger,
+} from '../../lib/motion-editor/transaction.js';
 import {
   buildStripEditPatches,
   coerceMotionValue,
@@ -60,6 +70,10 @@ import { buildFramerExport } from '../../lib/motion-editor/framer-export.js';
 import styles from './native-motion-editor.module.css';
 
 const SOURCE = '/api/native-clone/index.html';
+
+function requestId(prefix = 'request') {
+  return globalThis.crypto?.randomUUID?.() || `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 const DEVICES = {
   desktop: { label: 'Desktop', width: 1440, height: 900, Icon: Monitor },
@@ -1745,6 +1759,9 @@ function CodePanel({ selected }) {
 export default function NativeMotionEditor() {
   const iframeRef = useRef(null);
   const stageRef = useRef(null);
+  const runtimeContextRef = useRef(null);
+  const transactionLedgerRef = useRef(createTransactionLedger());
+  const heartbeatTimeoutRef = useRef(null);
   const [status, setStatus] = useState('loading');
   const [runtime, setRuntime] = useState(null);
   const [mode, setMode] = useState('edit');
@@ -1759,6 +1776,7 @@ export default function NativeMotionEditor() {
   const [speed, setSpeed] = useState(1);
   const [saveState, setSaveState] = useState('idle');
   const [patchError, setPatchError] = useState(null);
+  const [pendingTransactions, setPendingTransactions] = useState(0);
   const [stageSize, setStageSize] = useState({ width: 1000, height: 800 });
   const [activeMotionId, setActiveMotionId] = useState(null);
   const [timelineOpen, setTimelineOpen] = useState(false);
@@ -1766,6 +1784,8 @@ export default function NativeMotionEditor() {
   const [timelineState, setTimelineState] = useState({ currentTime: 0, duration: 1000, playState: 'idle' });
   const [autoKeyframe, setAutoKeyframe] = useState(false);
   const [selectedKeyframe, setSelectedKeyframe] = useState(null);
+  const historyRef = useRef(history);
+  useEffect(() => { historyRef.current = history; }, [history]);
   // Per-row animation detail, fetched lazily (describe-element) or captured
   // from selections — the timeline's sub-rows read from here.
   const [motionDetail, setMotionDetail] = useState({});
@@ -1832,8 +1852,26 @@ export default function NativeMotionEditor() {
     return Math.min(1, horizontal, vertical);
   }, [deviceConfig, stageSize]);
 
-  const send = useCallback((type, payload) => {
-    iframeRef.current?.contentWindow?.postMessage(command(type, payload), '*');
+  const armHeartbeatTimeout = useCallback(() => {
+    if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
+    heartbeatTimeoutRef.current = window.setTimeout(() => {
+      setStatus('unhealthy');
+      setPatchError('The website stopped responding. Your confirmed changes are safe.');
+    }, 3500);
+  }, []);
+
+  useEffect(() => () => {
+    if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
+  }, []);
+
+  const send = useCallback((type, payload = {}, options = {}) => {
+    const context = runtimeContextRef.current;
+    const nextRequestId = options.requestId || requestId(type);
+    const message = context?.protocol === MOTION_EDITOR_PROTOCOL_V2
+      ? commandV2(type, payload, { ...context, requestId: nextRequestId })
+      : command(type, payload);
+    iframeRef.current?.contentWindow?.postMessage(message, '*');
+    return nextRequestId;
   }, []);
 
   // Selections feed the timeline: cache the element's clips for its row,
@@ -1871,21 +1909,136 @@ export default function NativeMotionEditor() {
   }, []);
 
   useEffect(() => {
+    function replayCurrentHistory(useV2) {
+      let saved = historyRef.current;
+      if (!saved.length) {
+        try {
+          const stored = JSON.parse(localStorage.getItem(storageKey(SOURCE)) || '[]');
+          saved = Array.isArray(stored) ? stored : [];
+        } catch (_) { saved = []; }
+      }
+      if (!saved.length) return;
+      setHistory(saved);
+      if (!useV2) {
+        send('apply-patches', { patches: saved });
+        return;
+      }
+      for (let index = 0; index < saved.length; index += TRANSACTION_LIMITS.maxPatches) {
+        const patches = saved.slice(index, index + TRANSACTION_LIMITS.maxPatches);
+        const transaction = createTransaction({ patches, source: 'replay' });
+        transactionLedgerRef.current.stage(transaction, {
+          operation: 'replay',
+          patchIds: patches.map((patch) => patch.id),
+        });
+        send('apply-transaction', { transaction }, { requestId: transaction.requestId });
+      }
+      setPendingTransactions(transactionLedgerRef.current.size);
+    }
+
+    function releaseSettled(entries) {
+      entries.forEach((entry) => {
+        const acknowledged = entry.payload?.transaction || entry.transaction;
+        const patches = acknowledged.patches || entry.transaction.patches;
+        if (entry.status !== 'committed') {
+          if (entry.meta.operation === 'replay') {
+            const rejectedIds = new Set(entry.meta.patchIds || []);
+            setHistory((current) => current.filter((patch) => !rejectedIds.has(patch.id)));
+          }
+          return;
+        }
+        if (entry.meta.operation === 'apply') {
+          setHistory((current) => [...current, ...patches]);
+          setRedo([]);
+        } else if (entry.meta.operation === 'undo') {
+          const reversedIds = new Set(entry.meta.group.map((patch) => patch.id));
+          setHistory((current) => current.filter((patch) => !reversedIds.has(patch.id)));
+          setRedo((current) => [...current, entry.meta.group]);
+        } else if (entry.meta.operation === 'redo') {
+          setRedo((current) => current.slice(0, -1));
+          setHistory((current) => [...current, ...patches]);
+        }
+        setSaveState('idle');
+      });
+      setPendingTransactions(transactionLedgerRef.current.size);
+    }
+
     function onMessage(event) {
       if (event.source !== iframeRef.current?.contentWindow || !isRuntimeMessage(event.data)) return;
       const { type, payload = {} } = event.data;
+      if (event.data.protocol === MOTION_EDITOR_PROTOCOL_V2) {
+        const context = runtimeContextRef.current;
+        if (!context || !matchesRuntimeContext(event.data, context, event.origin)) return;
+      }
       if (type === 'runtime-ready') {
         setRuntime(payload);
+        if (transactionLedgerRef.current.size) {
+          setPatchError('The website restarted before a change was confirmed. The previous value was restored.');
+        }
+        transactionLedgerRef.current = createTransactionLedger();
+        setPendingTransactions(0);
+        const supportsV2 = Array.isArray(payload.supportedProtocols) && payload.supportedProtocols.includes(MOTION_EDITOR_PROTOCOL_V2);
+        if (supportsV2) {
+          const context = {
+            protocol: MOTION_EDITOR_PROTOCOL,
+            sessionNonce: payload.sessionNonce,
+            runtimeGeneration: payload.runtimeGeneration,
+            bundleId: payload.bundleId,
+            sessionId: payload.sessionId,
+            origin: event.origin,
+          };
+          runtimeContextRef.current = context;
+          setStatus('negotiating');
+          const negotiationId = requestId('negotiate');
+          iframeRef.current?.contentWindow?.postMessage({
+            ...command('negotiate-protocol', { selectedProtocol: MOTION_EDITOR_PROTOCOL_V2 }),
+            protocolVersion: MOTION_EDITOR_PROTOCOL,
+            supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+            sessionNonce: context.sessionNonce,
+            requestId: negotiationId,
+            runtimeGeneration: context.runtimeGeneration,
+            bundleId: context.bundleId,
+            sessionId: context.sessionId,
+          }, '*');
+        } else {
+          runtimeContextRef.current = { protocol: MOTION_EDITOR_PROTOCOL, origin: event.origin };
+          setStatus('ready');
+          send('set-mode', { mode });
+          send('inspect-viewport', {});
+          replayCurrentHistory(false);
+        }
+      }
+      if (type === 'protocol-negotiated') {
+        runtimeContextRef.current = {
+          ...runtimeContextRef.current,
+          protocol: MOTION_EDITOR_PROTOCOL_V2,
+        };
         setStatus('ready');
+        armHeartbeatTimeout();
         send('set-mode', { mode });
         send('inspect-viewport', {});
-        try {
-          const saved = JSON.parse(localStorage.getItem(storageKey(SOURCE)) || '[]');
-          if (Array.isArray(saved) && saved.length) {
-            setHistory(saved);
-            send('apply-patches', { patches: saved });
-          }
-        } catch (_) {}
+        replayCurrentHistory(true);
+      }
+      if (type === 'heartbeat' || type === 'runtime-health') {
+        armHeartbeatTimeout();
+        setStatus('ready');
+      }
+      if (type === 'transaction-committed') {
+        const transaction = payload.transaction;
+        if (transaction?.id && transactionLedgerRef.current.has(transaction.id)) {
+          releaseSettled(transactionLedgerRef.current.settle(transaction.id, 'committed', payload));
+        } else if (payload.originatedByRuntime && transaction?.patches?.length) {
+          setHistory((current) => [...current, ...transaction.patches]);
+          setRedo([]);
+          setSaveState('idle');
+        }
+        if (payload.element) setSelected(payload.element);
+        window.setTimeout(() => send('refresh-inventory'), 80);
+      }
+      if (type === 'transaction-rejected') {
+        if (payload.transactionId && transactionLedgerRef.current.has(payload.transactionId)) {
+          releaseSettled(transactionLedgerRef.current.settle(payload.transactionId, 'rejected', payload));
+        }
+        setPatchError("This change couldn't be applied. The previous value was restored.");
       }
       if (type === 'viewport-motion-changed') {
         setViewportRows(Array.isArray(payload.rows) ? payload.rows : []);
@@ -1940,7 +2093,7 @@ export default function NativeMotionEditor() {
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [mode, send]);
+  }, [armHeartbeatTimeout, mode, send]);
 
   useEffect(() => {
     if (status === 'ready') send('set-mode', { mode });
@@ -1963,6 +2116,13 @@ export default function NativeMotionEditor() {
       ? (globalThis.crypto?.randomUUID?.() || `group-${Date.now()}-${Math.random().toString(16).slice(2)}`)
       : null;
     const grouped = changed.map((patch) => groupId ? { ...patch, groupId } : patch);
+    if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2) {
+      const transaction = createTransaction({ patches: grouped, source: activeTab });
+      transactionLedgerRef.current.stage(transaction, { operation: 'apply' });
+      setPendingTransactions(transactionLedgerRef.current.size);
+      send('apply-transaction', { transaction }, { requestId: transaction.requestId });
+      return;
+    }
     if (grouped.length === 1) send('apply-patch', { patch: grouped[0] });
     else send('apply-patches', { patches: grouped });
     setHistory((current) => [...current, ...grouped]);
@@ -2070,6 +2230,7 @@ export default function NativeMotionEditor() {
   }
 
   function undo() {
+    if (pendingTransactions) return;
     const patch = history.at(-1);
     if (!patch) return;
     let groupStart = history.length - 1;
@@ -2077,16 +2238,32 @@ export default function NativeMotionEditor() {
       while (groupStart > 0 && history[groupStart - 1].groupId === patch.groupId) groupStart -= 1;
     }
     const group = history.slice(groupStart);
-    send('apply-patches', { patches: group.slice().reverse().map(invertPatch) });
+    const inverse = group.slice().reverse().map(invertPatch);
+    if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2) {
+      const transaction = createTransaction({ patches: inverse, source: 'undo' });
+      transactionLedgerRef.current.stage(transaction, { operation: 'undo', group });
+      setPendingTransactions(transactionLedgerRef.current.size);
+      send('rollback-transaction', { transaction }, { requestId: transaction.requestId });
+      return;
+    }
+    send('apply-patches', { patches: inverse });
     setHistory((current) => current.slice(0, groupStart));
     setRedo((current) => [...current, group]);
     setSaveState('idle');
   }
 
   function redoPatch() {
+    if (pendingTransactions) return;
     const entry = redo.at(-1);
     if (!entry) return;
     const group = Array.isArray(entry) ? entry : [entry];
+    if (runtimeContextRef.current?.protocol === MOTION_EDITOR_PROTOCOL_V2) {
+      const transaction = createTransaction({ patches: group, source: 'redo' });
+      transactionLedgerRef.current.stage(transaction, { operation: 'redo', group });
+      setPendingTransactions(transactionLedgerRef.current.size);
+      send('apply-transaction', { transaction }, { requestId: transaction.requestId });
+      return;
+    }
     send('apply-patches', { patches: group });
     setRedo((current) => current.slice(0, -1));
     setHistory((current) => [...current, ...group]);
@@ -2288,8 +2465,8 @@ export default function NativeMotionEditor() {
 
         <div className={styles.topbarEnd}>
           <div className={styles.historyControls}>
-            <button type="button" onClick={undo} disabled={!history.length} aria-label="Undo"><Undo2 /></button>
-            <button type="button" onClick={redoPatch} disabled={!redo.length} aria-label="Redo"><Redo2 /></button>
+            <button type="button" onClick={undo} disabled={!history.length || pendingTransactions > 0} aria-label="Undo"><Undo2 /></button>
+            <button type="button" onClick={redoPatch} disabled={!redo.length || pendingTransactions > 0} aria-label="Redo"><Redo2 /></button>
           </div>
           <div className={styles.modeSwitch}>
             <button type="button" aria-pressed={mode === 'edit'} onClick={() => setMode('edit')}><MousePointer2 />Edit</button>
@@ -2304,7 +2481,7 @@ export default function NativeMotionEditor() {
               : 'Select an animated element to export it'}
             onClick={exportFramer}
           ><Code2 />Export</button>
-          <button type="button" className={styles.saveButton} onClick={save}>
+          <button type="button" className={styles.saveButton} onClick={save} disabled={pendingTransactions > 0}>
             {saveState === 'saved' ? <Check /> : <Save />}
             {saveState === 'saved' ? 'Saved' : 'Save changes'}
           </button>

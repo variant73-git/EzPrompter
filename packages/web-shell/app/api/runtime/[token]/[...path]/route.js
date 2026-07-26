@@ -225,6 +225,8 @@ export async function GET(request, { params }) {
   headers.set('Cache-Control', 'no-store');
   const body = injectRuntimeBridge(rewritten, {
     initialManifest: manifest,
+    bundleId: descriptor.bundleId,
+    runtimeSessionId: row.session_id,
     runtimeFingerprint: descriptor.runtimeFingerprint,
     sessionNonce: payload.nonce,
   });

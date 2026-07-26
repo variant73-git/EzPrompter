@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   MOTION_EDITOR_PROTOCOL,
+  MOTION_EDITOR_PROTOCOL_V2,
+  SUPPORTED_MOTION_EDITOR_PROTOCOLS,
   command,
+  commandV2,
   createPatch,
   invertPatch,
   isRuntimeMessage,
+  matchesRuntimeContext,
   removeRejectedPatch,
   storageKey,
 } from './protocol.js';
@@ -97,5 +101,72 @@ describe('motion editor protocol', () => {
       payload: { mode: 'edit' },
     });
     expect(storageKey('/api/native-clone/index.html')).toContain('/api/native-clone/index.html');
+  });
+
+  it('creates a bounded v2 envelope with explicit negotiation and runtime context', () => {
+    const message = commandV2('apply-transaction', { transaction: { id: 'tx-1', patches: [] } }, {
+      sessionNonce: 'nonce-1234567890',
+      requestId: 'request-1',
+      runtimeGeneration: 3,
+      bundleId: 'bundle-1',
+      sessionId: 'session-1',
+    });
+
+    expect(message).toEqual({
+      protocol: MOTION_EDITOR_PROTOCOL_V2,
+      protocolVersion: MOTION_EDITOR_PROTOCOL_V2,
+      supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+      source: 'host',
+      type: 'apply-transaction',
+      sessionNonce: 'nonce-1234567890',
+      requestId: 'request-1',
+      runtimeGeneration: 3,
+      bundleId: 'bundle-1',
+      sessionId: 'session-1',
+      payload: { transaction: { id: 'tx-1', patches: [] } },
+    });
+  });
+
+  it('accepts v1 during migration but requires the complete v2 envelope', () => {
+    const context = {
+      sessionNonce: 'nonce-1234567890',
+      requestId: 'runtime-event-1',
+      runtimeGeneration: 4,
+      bundleId: 'bundle-1',
+      sessionId: 'session-1',
+    };
+    const message = {
+      ...commandV2('runtime-health', { status: 'healthy' }, context),
+      source: 'runtime',
+    };
+
+    expect(isRuntimeMessage(message)).toBe(true);
+    expect(isRuntimeMessage({ ...message, requestId: '' })).toBe(false);
+    expect(isRuntimeMessage({ ...message, sessionNonce: null })).toBe(false);
+    expect(isRuntimeMessage({ ...message, runtimeGeneration: 0 })).toBe(false);
+    expect(isRuntimeMessage({ ...message, protocolVersion: MOTION_EDITOR_PROTOCOL })).toBe(false);
+  });
+
+  it('rejects runtime events from a stale or foreign runtime context', () => {
+    const expected = {
+      sessionNonce: 'nonce-1234567890',
+      runtimeGeneration: 5,
+      bundleId: 'bundle-1',
+      sessionId: 'session-1',
+      origin: 'https://runtime.uncraft.test',
+    };
+    const message = {
+      ...commandV2('transaction-committed', {}, {
+        ...expected,
+        requestId: 'request-5',
+      }),
+      source: 'runtime',
+    };
+
+    expect(matchesRuntimeContext(message, expected, 'https://runtime.uncraft.test')).toBe(true);
+    expect(matchesRuntimeContext({ ...message, bundleId: 'bundle-2' }, expected, expected.origin)).toBe(false);
+    expect(matchesRuntimeContext({ ...message, sessionId: 'session-2' }, expected, expected.origin)).toBe(false);
+    expect(matchesRuntimeContext({ ...message, runtimeGeneration: 4 }, expected, expected.origin)).toBe(false);
+    expect(matchesRuntimeContext(message, expected, 'https://other.test')).toBe(false);
   });
 });

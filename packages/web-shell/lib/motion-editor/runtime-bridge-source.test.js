@@ -1,12 +1,77 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MOTION_EDITOR_PROTOCOL } from './protocol.js';
+import {
+  MOTION_EDITOR_PROTOCOL,
+  MOTION_EDITOR_PROTOCOL_V2,
+  SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+  commandV2,
+} from './protocol.js';
 import { getRuntimeBridgeSource } from './runtime-bridge-source.js';
 
 describe('native motion runtime bridge', () => {
   beforeEach(() => {
+    try { window.__uncraftMotionBridge?.teardown?.(); } catch (_) {}
+    document.querySelectorAll('[data-uncraft-runtime-config]').forEach((node) => node.remove());
     document.documentElement.removeAttribute('data-uncraft-editor-mode');
     document.body.innerHTML = '<main><h1 id="hero-title" aria-label="CropTab"><span class="char">C</span><span class="char">r</span><span class="char">o</span><span class="char">p</span><span class="char">T</span><span class="char">a</span><span class="char">b</span></h1></main>';
   });
+
+  function bootV2Runtime({
+    bundleId = 'bundle-fixture',
+    sessionId = 'session-fixture',
+    sessionNonce = 'nonce-fixture-123456',
+    origin = 'https://app.uncraft.test',
+  } = {}) {
+    const config = document.createElement('script');
+    config.type = 'application/json';
+    config.dataset.uncraftRuntimeConfig = 'true';
+    config.textContent = JSON.stringify({
+      initialManifest: { schemaVersion: 2, baseBundleId: bundleId, transactions: [] },
+      runtimeSessionId: sessionId,
+      runtimeFingerprint: 'sha256:fixture',
+      sessionNonce,
+    });
+    document.head.appendChild(config);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+    const ready = messages.filter((message) => message.type === 'runtime-ready').pop();
+    const context = {
+      sessionNonce,
+      runtimeGeneration: ready.payload.runtimeGeneration,
+      bundleId,
+      sessionId,
+    };
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      origin,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        protocolVersion: MOTION_EDITOR_PROTOCOL,
+        supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+        source: 'host',
+        type: 'negotiate-protocol',
+        requestId: 'negotiate-1',
+        ...context,
+        payload: { selectedProtocol: MOTION_EDITOR_PROTOCOL_V2 },
+      },
+    }));
+    const negotiated = messages.filter((message) => message.type === 'protocol-negotiated').pop();
+    const send = (type, payload, requestId, overrides = {}) => {
+      const message = commandV2(type, payload, { ...context, requestId, ...overrides });
+      window.dispatchEvent(new MessageEvent('message', { source: window, origin, data: message }));
+      return message;
+    };
+    return {
+      messages,
+      ready,
+      negotiated,
+      context,
+      send,
+      restore: () => { window.__uncraftMotionBridge?.teardown?.(); window.postMessage = originalPostMessage; },
+    };
+  }
 
   it('normalizes browser animations and writes timing changes back to the live effect', () => {
     const title = document.getElementById('hero-title');
@@ -1742,5 +1807,179 @@ describe('native motion runtime bridge', () => {
 
     vi.useRealTimers();
     window.postMessage = originalPostMessage;
+  });
+
+  it('negotiates v2 without breaking the v1 runtime-ready envelope', () => {
+    const runtime = bootV2Runtime();
+    expect(runtime.ready.protocol).toBe(MOTION_EDITOR_PROTOCOL);
+    expect(runtime.ready.payload.supportedProtocols).toEqual(SUPPORTED_MOTION_EDITOR_PROTOCOLS);
+    expect(runtime.negotiated).toMatchObject({
+      protocol: MOTION_EDITOR_PROTOCOL_V2,
+      source: 'runtime',
+      type: 'protocol-negotiated',
+      requestId: 'negotiate-1',
+      sessionNonce: runtime.context.sessionNonce,
+      runtimeGeneration: runtime.context.runtimeGeneration,
+      bundleId: runtime.context.bundleId,
+      sessionId: runtime.context.sessionId,
+    });
+    runtime.restore();
+  });
+
+  it('rolls back every prior mutation when a transaction fails in the middle', () => {
+    document.body.innerHTML = '<main><div data-uncraft-id="el-a" style="opacity: 1" title="original"></div><div data-uncraft-id="el-b"></div></main>';
+    const runtime = bootV2Runtime();
+    const element = document.querySelector('[data-uncraft-id="el-a"]');
+    runtime.send('apply-transaction', {
+      transaction: {
+        id: 'tx-rollback',
+        patches: [
+          { id: 'p1', elementId: 'el-a', kind: 'style', property: 'opacity', before: 'invented', value: '0.25' },
+          { id: 'p2', elementId: 'el-a', kind: 'attribute', property: 'title', before: 'invented', value: 'changed' },
+          { id: 'p3', elementId: 'missing', kind: 'style', property: 'color', before: '', value: 'red' },
+        ],
+      },
+    }, 'request-rollback');
+
+    expect(element.style.opacity).toBe('1');
+    expect(element.getAttribute('title')).toBe('original');
+    const rejected = runtime.messages.filter((message) => message.type === 'transaction-rejected').pop();
+    expect(rejected.payload).toMatchObject({ transactionId: 'tx-rollback', code: 'target_missing' });
+    expect(rejected.payload.error).toBeUndefined();
+    expect(rejected.payload.diagnostics).toMatchObject({ code: 'target_missing' });
+    runtime.restore();
+  });
+
+  it('captures runtime before values, commits atomically, and replays duplicate request IDs idempotently', () => {
+    document.body.innerHTML = '<main><div data-uncraft-id="el-a" style="opacity: 1"></div></main>';
+    const runtime = bootV2Runtime();
+    const payload = {
+      transaction: {
+        id: 'tx-commit',
+        patches: [{ id: 'p1', elementId: 'el-a', kind: 'style', property: 'opacity', before: 'invented', value: '0.4' }],
+      },
+    };
+    const request = runtime.send('apply-transaction', payload, 'request-commit');
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      origin: 'https://app.uncraft.test',
+      data: request,
+    }));
+
+    expect(document.querySelector('[data-uncraft-id="el-a"]').style.opacity).toBe('0.4');
+    const committed = runtime.messages.filter((message) => message.type === 'transaction-committed');
+    expect(committed).toHaveLength(2);
+    expect(committed[0].payload.transaction.patches[0]).toMatchObject({ before: '1', value: '0.4' });
+    expect(committed[1].payload).toEqual(committed[0].payload);
+    runtime.restore();
+  });
+
+  it('rolls back an acknowledged transaction as a second atomic transaction', () => {
+    document.body.innerHTML = '<main><div data-uncraft-id="el-a" style="opacity: 1"></div></main>';
+    const runtime = bootV2Runtime();
+    runtime.send('apply-transaction', {
+      transaction: {
+        id: 'tx-original',
+        patches: [{ id: 'p1', elementId: 'el-a', kind: 'style', property: 'opacity', before: 'invented', value: '0.4' }],
+      },
+    }, 'request-original');
+    runtime.send('rollback-transaction', {
+      targetTransactionId: 'tx-original',
+      transactionId: 'tx-undo',
+    }, 'request-undo');
+
+    expect(document.querySelector('[data-uncraft-id="el-a"]').style.opacity).toBe('1');
+    const committed = runtime.messages.filter((message) => message.type === 'transaction-committed');
+    expect(committed).toHaveLength(2);
+    expect(committed[1].payload).toMatchObject({ operation: 'rollback', transaction: { id: 'tx-undo' } });
+    runtime.restore();
+  });
+
+  it('validates by applying, observing, and restoring without committing history', () => {
+    document.body.innerHTML = '<main><div data-uncraft-id="el-a" style="opacity: 1"></div></main>';
+    const runtime = bootV2Runtime();
+    runtime.send('validate-transaction', {
+      transaction: {
+        id: 'tx-validate',
+        patches: [{ id: 'p1', elementId: 'el-a', kind: 'style', property: 'opacity', before: 'invented', value: '0.35' }],
+      },
+    }, 'request-validate');
+
+    expect(document.querySelector('[data-uncraft-id="el-a"]').style.opacity).toBe('1');
+    const result = runtime.messages.filter((message) => message.type === 'validation-result').pop();
+    expect(result.payload).toMatchObject({ transactionId: 'tx-validate', valid: true, restored: true });
+    expect(runtime.messages.filter((message) => message.type === 'transaction-committed')).toHaveLength(0);
+    runtime.restore();
+  });
+
+  it('captures gesture before once, previews updates, and commits one acknowledged transaction', () => {
+    document.body.innerHTML = '<main><div data-uncraft-id="el-a" style="opacity: 1"></div></main>';
+    const runtime = bootV2Runtime();
+    runtime.send('begin-gesture', {
+      gestureId: 'gesture-1',
+      patch: { id: 'p1', elementId: 'el-a', kind: 'style', property: 'opacity', before: 'invented', value: '1' },
+    }, 'request-gesture-begin');
+    runtime.send('preview-gesture', { gestureId: 'gesture-1', value: '0.8' }, 'request-gesture-preview-1');
+    runtime.send('preview-gesture', { gestureId: 'gesture-1', value: '0.2' }, 'request-gesture-preview-2');
+    runtime.send('commit-gesture', { gestureId: 'gesture-1', transactionId: 'tx-gesture' }, 'request-gesture-commit');
+
+    const committed = runtime.messages.filter((message) => message.type === 'transaction-committed');
+    expect(committed).toHaveLength(1);
+    expect(committed[0].payload.transaction.patches).toEqual([
+      expect.objectContaining({ before: '1', value: '0.2' }),
+    ]);
+    runtime.restore();
+  });
+
+  it('cancels a preview gesture by restoring before and creating no history transaction', () => {
+    document.body.innerHTML = '<main><div data-uncraft-id="el-a" style="opacity: 1"></div></main>';
+    const runtime = bootV2Runtime();
+    runtime.send('begin-gesture', {
+      gestureId: 'gesture-cancel',
+      patch: { id: 'p1', elementId: 'el-a', kind: 'style', property: 'opacity', before: 'invented', value: '1' },
+    }, 'request-cancel-begin');
+    runtime.send('preview-gesture', { gestureId: 'gesture-cancel', value: '0.2' }, 'request-cancel-preview');
+    runtime.send('cancel-gesture', { gestureId: 'gesture-cancel' }, 'request-cancel');
+
+    expect(document.querySelector('[data-uncraft-id="el-a"]').style.opacity).toBe('1');
+    expect(runtime.messages.filter((message) => message.type === 'transaction-committed')).toHaveLength(0);
+    expect(runtime.messages.filter((message) => message.type === 'gesture-canceled').pop().payload.restored).toBe(true);
+    runtime.restore();
+  });
+
+  it('ignores commands from the wrong origin, bundle, nonce, session, or runtime generation', () => {
+    document.body.innerHTML = '<main><div data-uncraft-id="el-a" style="opacity: 1"></div></main>';
+    const runtime = bootV2Runtime();
+    const payload = {
+      transaction: {
+        id: 'tx-foreign',
+        patches: [{ id: 'p1', elementId: 'el-a', kind: 'style', property: 'opacity', before: '1', value: '0.1' }],
+      },
+    };
+    const base = commandV2('apply-transaction', payload, { ...runtime.context, requestId: 'request-foreign' });
+    const variants = [
+      { message: base, origin: 'https://other.test' },
+      { message: { ...base, bundleId: 'other-bundle' }, origin: 'https://app.uncraft.test' },
+      { message: { ...base, sessionNonce: 'other-nonce-1234' }, origin: 'https://app.uncraft.test' },
+      { message: { ...base, sessionId: 'other-session' }, origin: 'https://app.uncraft.test' },
+      { message: { ...base, runtimeGeneration: runtime.context.runtimeGeneration + 1 }, origin: 'https://app.uncraft.test' },
+    ];
+    variants.forEach(({ message, origin }) => window.dispatchEvent(new MessageEvent('message', { source: window, origin, data: message })));
+
+    expect(document.querySelector('[data-uncraft-id="el-a"]').style.opacity).toBe('1');
+    expect(runtime.messages.filter((message) => message.type === 'transaction-committed')).toHaveLength(0);
+    runtime.restore();
+  });
+
+  it('emits heartbeat and responds with scoped runtime health', () => {
+    vi.useFakeTimers();
+    const runtime = bootV2Runtime();
+    vi.advanceTimersByTime(1100);
+    expect(runtime.messages.some((message) => message.type === 'heartbeat')).toBe(true);
+    runtime.send('health-check', {}, 'request-health');
+    expect(runtime.messages.filter((message) => message.type === 'runtime-health').pop().payload)
+      .toMatchObject({ status: 'healthy' });
+    runtime.restore();
+    vi.useRealTimers();
   });
 });
