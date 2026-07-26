@@ -25,6 +25,20 @@ describe('native clone gateway', () => {
     expect(result).toContain('"/api/native-clone/assets/a.png"');
   });
 
+  it('rewrites bundle-root references against a signed runtime base while preserving relative URLs', () => {
+    const source = [
+      '<link rel="stylesheet" href="/assets/app.css">',
+      '<script type="module">import("/vendor/chunk.js")</script>',
+      '<img srcset="/media/a.webp 1x, /media/b.webp 2x">',
+      '<img src="./assets/relative.webp">',
+    ].join('');
+    const base = '/api/runtime/signed-token';
+    const result = rewriteRuntimePaths(source, ['assets', 'vendor', 'media'], base);
+    expect(result.match(/\/api\/runtime\/signed-token\//g)).toHaveLength(4);
+    expect(result).toContain('src="./assets/relative.webp"');
+    expect(rewriteRuntimePaths(result, ['assets', 'vendor', 'media'], base)).toBe(result);
+  });
+
   it('ignores unsafe or irrelevant prefix names and leaves other absolute paths alone', () => {
     const source = '<a href="/about/team">x</a><script src="/vendor/a.js"></script>';
     const result = rewriteRuntimePaths(source, ['vendor', 'not/safe', '']);
@@ -42,5 +56,20 @@ describe('native clone gateway', () => {
     expect(result).toContain("form-action 'none'");
     expect(result.match(/data-uncraft-runtime-bridge/g)).toHaveLength(1);
     expect(result.indexOf('Content-Security-Policy')).toBeLessThan(result.indexOf('<main'));
+  });
+
+  it('injects one inert runtime config and remains idempotent', () => {
+    const html = '<html><head></head><body><main /></body></html>';
+    const config = {
+      sessionNonce: 'nonce-123',
+      runtimeFingerprint: `sha256:${'a'.repeat(64)}`,
+      initialManifest: { schemaVersion: 2, note: '</script><script>unsafe()</script>' },
+    };
+    const first = injectRuntimeBridge(html, config);
+    const second = injectRuntimeBridge(first, config);
+    expect(second.match(/data-uncraft-runtime-bridge/g)).toHaveLength(1);
+    expect(second.match(/data-uncraft-runtime-config/g)).toHaveLength(1);
+    expect(second).not.toContain('</script><script>unsafe()');
+    expect(second).toContain('\\u003c/script\\u003e');
   });
 });

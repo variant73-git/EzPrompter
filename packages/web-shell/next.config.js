@@ -63,7 +63,11 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: '/:path*',
+        // The native runtime route is served from a dedicated origin in
+        // production and owns a stricter, iframe-compatible policy in the
+        // route itself. Applying the app's SAMEORIGIN/frame-ancestors headers
+        // there would make the isolated iframe impossible to open.
+        source: '/:path((?!api/runtime(?:/|$)).*)',
         headers: SECURITY_HEADERS,
       },
     ];

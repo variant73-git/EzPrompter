@@ -47,9 +47,16 @@ function notAvailable(message, status = 404) {
   return Response.json({ error: message }, { status });
 }
 
+export function isLocalMotionLabEnabled({
+  environment = process.env.NODE_ENV,
+  configuredRoot = process.env.UNCRAFT_NATIVE_CLONE_ROOT,
+} = {}) {
+  return environment !== 'production' && Boolean(configuredRoot);
+}
+
 export async function GET(_request, { params }) {
   const configuredRoot = process.env.UNCRAFT_NATIVE_CLONE_ROOT;
-  if (!configuredRoot) {
+  if (!isLocalMotionLabEnabled({ configuredRoot })) {
     return notAvailable('UNCRAFT_NATIVE_CLONE_ROOT is not configured.', 503);
   }
 

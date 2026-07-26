@@ -1,7 +1,7 @@
 # Handoff — Live Animated Clone Editing
 
 **Data:** 2026-07-26
-**Status:** Tasks 1–2 concluídas e verificadas; Task 3 não iniciada
+**Status:** Tasks 1–3 concluídas e verificadas; Task 4 não iniciada
 **Checkout:** `/Users/adilsonporto/Desktop/IA/Uncraft`
 **Branch:** `codex/live-animated-clone-editing`
 **Base:** `main` em `ec297fffd8303e512c8ce3a910930cc2d51b3635`
@@ -253,20 +253,131 @@ Em um PostgreSQL 16 descartável:
 
 O container e todos os dados descartáveis foram removidos após a verificação.
 
+## Task 3 — gateway runtime assinado e node-scoped
+
+### Resultado
+
+O gateway local baseado em `UNCRAFT_NATIVE_CLONE_ROOT` deixou de ser um
+boundary implícito de produção. Snapshots nativos agora podem abrir ou retomar
+uma sessão owned e receber uma URL curta, assinada e read-only para o bundle
+imutável correspondente.
+
+Novos arquivos:
+
+- `packages/web-shell/lib/motion-editor/runtime-session-token.js`
+- `packages/web-shell/lib/motion-editor/runtime-session-token.test.js`
+- `packages/web-shell/app/api/nodes/[id]/runtime-session/route.js`
+- `packages/web-shell/app/api/nodes/[id]/runtime-session/route.test.js`
+- `packages/web-shell/app/api/runtime/[token]/[...path]/route.js`
+- `packages/web-shell/app/api/runtime/[token]/[...path]/route.test.js`
+
+Arquivos modificados:
+
+- `packages/web-shell/lib/motion-editor/native-clone-gateway.js`
+- `packages/web-shell/lib/motion-editor/native-clone-gateway.test.js`
+- `packages/web-shell/app/api/native-clone/[...path]/route.js`
+- `packages/web-shell/app/api/native-clone/[...path]/route.test.js`
+- `packages/web-shell/next.config.js`
+- `packages/web-shell/.env.example`
+
+### Contrato entregue
+
+- Token HS256 dedicado, com audience, issuer, tipo, scope read-only, node,
+  bundle, edit session, entry prefix, nonce e TTL máximo de cinco minutos.
+- `UNCRAFT_RUNTIME_SESSION_SECRET` é obrigatório, tem tamanho mínimo e é
+  rejeitado quando coincide com `JWT_SECRET`.
+- Produção exige `UNCRAFT_RUNTIME_ORIGIN` HTTPS diferente da origem do app; a
+  rota assinada recusa o host do app mesmo se houver configuração incorreta.
+- A criação da sessão exige o usuário autenticado, o node owned e o snapshot
+  nativo corrente. Configuração inválida não deixa uma sessão ativa órfã.
+- O runtime ignora cookies ambientes do app. O cookie `uncraft_sess` permanece
+  host-only e a rota de runtime não chama o boundary de login.
+- Token expirado, alterado ou divergente em node/session/bundle produz a mesma
+  página inerte e não técnica.
+- Somente assets presentes no índice validado do bundle são lidos do store;
+  traversal simples/codificado, bytes nulos, path confusion e assets não
+  declarados são rejeitados.
+- HTML recebe CSP, bootstrap com manifest/fingerprint/nonce e uma única bridge.
+- Paths root-relative em HTML, CSS, módulos, JSON e SVG são rebased para o
+  prefixo assinado. Bytes binários de imagens, fontes, vídeo e mídia não são
+  alterados.
+- HTML usa `no-store`; assets usam cache privado e imutável limitado pela
+  expiração do token, com ETag do conteúdo efetivamente servido.
+- Respostas assinadas usam `Referrer-Policy: no-referrer`, CSP restritiva,
+  HSTS, CORS sem credenciais e headers compatíveis com o iframe sandboxed.
+- O gateway `/api/native-clone` permanece disponível somente como adapter
+  explícito do motion lab em desenvolvimento/testes e é recusado em produção.
+- Os headers globais do app não são aplicados à rota isolada, evitando que
+  `SAMEORIGIN` bloqueie o runtime cross-origin; a rota possui sua própria
+  política mais restritiva.
+- Falhas técnicas são registradas apenas por código sanitizado e digest curto
+  do token, nunca com a URL assinada completa.
+
+### Evidência tests-first e exit gate
+
+Os testes falharam primeiro pela ausência do token/rotas, pela base ainda fixa
+em `/api/native-clone` e pela injeção duplicável. Depois da implementação:
+
+```text
+Suíte focal final: 5 files, 31 tests passed
+Suíte completa: 135 files passed, 1 skipped; 994 tests passed, 4 skipped
+Build: Next.js 15.5.15; compiled; 41/41 static pages; exit 0
+git diff --check: clean
+```
+
+O aviso não bloqueante já conhecido de `--localstorage-file` permaneceu na
+suíte completa.
+
+### Verificação com bundle real e browser
+
+O bundle real `Clone/dist` foi registrado no store em memória e aberto em
+Chrome dentro do mesmo iframe sandboxed usado pelo motion lab, servido por HTTP
+com o prefixo assinado. Requests fora da origem local foram bloqueados.
+
+```text
+bundleId: fb297e47-6cd7-5567-8d43-9850f99127e9
+assets: 370
+bridge status: runtime-ready
+external requests: 0
+local 4xx responses: 0
+browser console errors: 0
+file:// used: false
+UNCRAFT_NATIVE_CLONE_ROOT used: false
+```
+
+O primeiro smoke encontrou fonts/SVGs root-relative que escapavam a partir de
+CSS e módulos. O rebasing foi ampliado somente para conteúdo textual; a segunda
+execução ficou limpa. O script descartável exibiu apenas o warning já observado
+de reparsing ESM por ausência de `type: module`; isso não aparece em testes nem
+no build e não justifica mudar o tipo de módulo do app.
+
+### Limite operacional ainda não exercitado
+
+O domínio HTTPS dedicado e o upload/download contra Vercel Blob privado ainda
+dependem da configuração real de `UNCRAFT_RUNTIME_ORIGIN`,
+`UNCRAFT_RUNTIME_SESSION_SECRET` e `BLOB_READ_WRITE_TOKEN`. A rota de produção
+recusa exposição sem as duas primeiras; o adapter Vercel permanece coberto por
+teste isolado, mas não houve credencial real disponível para um smoke remoto.
+
 ## Estado e rollback da fatia
 
-- Tasks 1 e 2 estão concluídas; Task 3 não foi iniciada.
+- Tasks 1–3 estão concluídas; Task 4 não foi iniciada.
 - A primeira fatia recomendada do PR (`Bundle contract and persistence schema`,
-  Tasks 1–2) está completa e ainda não inclui UI/runtime routing.
+  Tasks 1–2) permanece íntegra. A Task 3 inicia a segunda fatia sem incluir UI.
 - Nenhum arquivo do worktree Demarcelizer ou material não relacionado foi
   alterado.
 - Rollback da Task 2 é manual e não destrutivo: parar tráfego nativo, preservar
   bundles/manifests referenciados, remover o índice de sessão ativa, a tabela de
   sessões e somente então constraints/colunas. `native_bundles` nunca deve ser
   removida enquanto um snapshot a referenciar.
+- Rollback da Task 3: interromper emissão de URLs runtime, remover as duas rotas
+  novas e o módulo de token, restaurar o gateway do lab e os headers globais, e
+  então remover as duas variáveis runtime. Bundles, snapshots e edit sessions
+  persistidos não precisam ser removidos.
 
 ## Próxima fatia
 
-Parar no checkpoint antes da Task 3. A próxima fatia substitui o path local de
-desenvolvimento por gateway runtime assinado e node-scoped. Revalidar ownership,
-token/segredo e isolamento do runtime antes de qualquer edição; não iniciar UI.
+Parar no checkpoint antes da Task 4. A próxima etapa introduz protocol v2 com
+negociação, transações atômicas, rollback/validation acknowledgement, health e
+session nonce no bridge existente. Preservar o motion lab e não iniciar UI ou
+extração do controller antes de fechar o exit gate da Task 4.
