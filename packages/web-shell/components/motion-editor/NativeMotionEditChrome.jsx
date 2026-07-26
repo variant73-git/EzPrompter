@@ -11,6 +11,7 @@ import { Redo2, Undo2 } from 'lucide-react';
 import NativeEditSidebar from './NativeEditSidebar.jsx';
 import NativeMotionInspector from './NativeMotionInspector.jsx';
 import NativeMotionTimelineDock, { hasNativeMotionContext } from './NativeMotionTimelineDock.jsx';
+import { createNativeEditApi } from '../../lib/motion-editor/native-edit-api.js';
 import { useNativeMotionController } from './useNativeMotionController.js';
 import styles from './native-motion-canvas.module.css';
 
@@ -27,11 +28,95 @@ export function useNativeMotionEditSession() {
   return useContext(NativeMotionEditContext);
 }
 
-export function NativeMotionEditSessionProvider({ active, nodeId, children }) {
+export function NativeMotionEditSessionProvider({
+  active,
+  nodeId,
+  onCommitted,
+  onDiscarded,
+  children,
+}) {
   const [activePanel, setActivePanel] = useState('properties');
   const [timelineOpen, setTimelineOpen] = useState(true);
-  const controller = useNativeMotionController({ activePanel, timelineOpen });
+  const persistenceAdapter = useMemo(
+    () => (active && nodeId ? createNativeEditApi({ nodeId }) : null),
+    [active, nodeId],
+  );
+  const controller = useNativeMotionController({
+    activePanel,
+    timelineOpen,
+    persistenceAdapter,
+  });
   const hasTimeline = active && hasNativeMotionContext(controller);
+
+  useEffect(() => {
+    if (!active || !nodeId) return undefined;
+    const busy = controller.status !== 'ready'
+      || controller.historyReady === false
+      || controller.pendingTransactions > 0
+      || controller.saveState === 'saving';
+    window.dispatchEvent(new CustomEvent('uncraft:editor-busy', {
+      detail: { nodeId, busy },
+    }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('uncraft:editor-busy', {
+        detail: { nodeId, busy: false },
+      }));
+    };
+  }, [
+    active,
+    controller.historyReady,
+    controller.pendingTransactions,
+    controller.saveState,
+    controller.status,
+    nodeId,
+  ]);
+
+  useEffect(() => {
+    if (!active || !nodeId) return undefined;
+    let busy = false;
+    function publishBusy(next) {
+      busy = next;
+      window.dispatchEvent(new CustomEvent('uncraft:editor-busy', {
+        detail: { nodeId, busy: next },
+      }));
+    }
+    async function handleEditorAction(event) {
+      if (event.detail?.nodeId !== nodeId || busy) return;
+      if (event.detail.action !== 'save' && event.detail.action !== 'cancel') return;
+      if (controller.status !== 'ready'
+        || controller.historyReady === false
+        || controller.pendingTransactions > 0) return;
+      publishBusy(true);
+      try {
+        if (event.detail.action === 'save') {
+          const result = await controller.commands.commit('exit');
+          onCommitted?.(result);
+        } else {
+          const result = await controller.commands.discard();
+          onDiscarded?.(result);
+        }
+      } catch {
+        // The controller keeps the confirmed draft open and owns the
+        // non-technical error message. Staying in Edit is the safe fallback.
+      } finally {
+        publishBusy(false);
+      }
+    }
+    window.addEventListener('uncraft:editor-action', handleEditorAction);
+    return () => {
+      window.removeEventListener('uncraft:editor-action', handleEditorAction);
+      if (busy) publishBusy(false);
+    };
+  }, [
+    active,
+    controller.commands,
+    controller.historyReady,
+    controller.pendingTransactions,
+    controller.status,
+    nodeId,
+    onCommitted,
+    onDiscarded,
+  ]);
 
   useEffect(() => {
     if (!active) return undefined;
@@ -103,7 +188,10 @@ export function NativeMotionEditTopbarControls() {
   const session = useNativeMotionEditSession();
   if (!session) return null;
   const { controller } = session;
-  const busy = controller.pendingTransactions > 0;
+  const busy = controller.pendingTransactions > 0
+    || controller.status !== 'ready'
+    || controller.historyReady === false
+    || controller.saveState === 'saving';
   return (
     <div className={styles.historyControls} role="toolbar" aria-label="Edit history">
       <button

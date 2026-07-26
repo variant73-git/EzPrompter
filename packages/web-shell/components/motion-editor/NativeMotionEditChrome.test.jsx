@@ -1,8 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const commit = vi.fn();
+const discard = vi.fn();
 const controller = {
-  status: 'loading',
+  status: 'ready',
   runtime: null,
   selected: null,
   selectedRowId: null,
@@ -18,9 +20,13 @@ const controller = {
   autoKeyframe: false,
   selectedKeyframe: null,
   pendingTransactions: 0,
+  saveState: 'idle',
+  historyReady: true,
   canUndo: false,
   canRedo: false,
-  commands: new Proxy({}, { get: () => vi.fn() }),
+  commands: new Proxy({ commit, discard }, {
+    get: (target, property) => target[property] || vi.fn(),
+  }),
 };
 
 vi.mock('./useNativeMotionController.js', () => ({
@@ -67,5 +73,32 @@ describe('NativeMotionEditChrome', () => {
     expect(nativeMotionEditShellLayout(1440)).toEqual({ left: 224, right: 248, bottom: 200 });
     expect(nativeMotionEditShellLayout(820)).toEqual({ left: 176, right: 224, bottom: 200 });
     expect(nativeMotionEditShellLayout(640)).toEqual({ left: 52, right: 216, bottom: 200 });
+  });
+
+  it('commits Done and discards Cancel before allowing the canvas to exit', async () => {
+    const onCommitted = vi.fn();
+    const onDiscarded = vi.fn();
+    commit.mockResolvedValue({ snapshot: { id: 'snapshot-2' } });
+    discard.mockResolvedValue({ session: { status: 'discarded' } });
+    render(
+      <NativeMotionEditSessionProvider
+        active
+        nodeId="node-native"
+        onCommitted={onCommitted}
+        onDiscarded={onDiscarded}
+      >
+        <div>Canvas</div>
+      </NativeMotionEditSessionProvider>,
+    );
+
+    await act(async () => window.dispatchEvent(new CustomEvent('uncraft:editor-action', {
+      detail: { nodeId: 'node-native', action: 'save' },
+    })));
+    await waitFor(() => expect(onCommitted).toHaveBeenCalledWith({ snapshot: { id: 'snapshot-2' } }));
+
+    await act(async () => window.dispatchEvent(new CustomEvent('uncraft:editor-action', {
+      detail: { nodeId: 'node-native', action: 'cancel' },
+    })));
+    await waitFor(() => expect(onDiscarded).toHaveBeenCalledWith({ session: { status: 'discarded' } }));
   });
 });

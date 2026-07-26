@@ -190,5 +190,27 @@ export const api = {
   restoreVersion: (nodeId, snapshotId) => fetch(`/api/nodes/${nodeId}/restore-version`, { ...COMMON, method: 'POST', body: JSON.stringify({ snapshotId }) }).then(jsonOrThrow),
   deleteSnapshot: (nodeId, snapId) => fetch(`/api/nodes/${nodeId}/snapshots/${snapId}`, { ...COMMON, method: 'DELETE' }).then(jsonOrThrow),
 
+  // Native motion editing persists a manifest draft, never iframe HTML.
+  openNativeMotionSession: (nodeId) => fetch(`/api/nodes/${nodeId}/motion-session`, {
+    ...COMMON,
+    method: 'POST',
+  }).then(jsonOrThrow),
+  saveNativeMotionDraft: (nodeId, body, { keepalive = false } = {}) => fetch(`/api/nodes/${nodeId}/motion-session`, {
+    ...COMMON,
+    method: 'PATCH',
+    body: JSON.stringify(body),
+    keepalive,
+  }).then(jsonOrThrow),
+  commitNativeMotionSession: (nodeId, body) => fetch(`/api/nodes/${nodeId}/motion-session/commit`, {
+    ...COMMON,
+    method: 'POST',
+    body: JSON.stringify(body),
+  }).then(jsonOrThrow),
+  discardNativeMotionSession: (nodeId, sessionId) => fetch(`/api/nodes/${nodeId}/motion-session/discard`, {
+    ...COMMON,
+    method: 'POST',
+    body: JSON.stringify({ sessionId }),
+  }).then(jsonOrThrow),
+
   logout: () => fetch('/api/auth/logout', { ...COMMON, method: 'POST' }).then(jsonOrThrow)
 };

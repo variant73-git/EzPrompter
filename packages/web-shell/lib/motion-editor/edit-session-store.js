@@ -271,10 +271,66 @@ export async function updateEditSessionDraft({
   throw conflictError(conflict, manifest);
 }
 
-export async function commitEditSession({ sql, userId, nodeId, sessionId, expectedRevision }) {
+export async function commitEditSession({
+  sql,
+  userId,
+  nodeId,
+  sessionId,
+  expectedRevision,
+  continueEditing = false,
+}) {
   assertSql(sql);
   assertRevision(expectedRevision);
-  const rows = await sql`
+  const rows = continueEditing ? await sql`
+    WITH eligible AS (
+      SELECT e.id, e.node_id, e.base_snapshot_id, e.draft_manifest, e.revision,
+             s.native_bundle_id
+        FROM native_motion_edit_sessions e
+        JOIN nodes n ON n.id = e.node_id
+        JOIN boards b ON b.id = n.board_id
+        JOIN snapshots s ON s.id = e.base_snapshot_id
+       WHERE e.id = ${sessionId}
+         AND e.node_id = ${nodeId}
+         AND e.user_id = ${userId}
+         AND b.user_id = ${userId}
+         AND e.status = 'active'
+         AND e.revision = ${expectedRevision}
+         AND n.current_snapshot_id = e.base_snapshot_id
+         AND s.native_bundle_id IS NOT NULL
+         AND e.draft_manifest_version = ${MOTION_MANIFEST_SCHEMA_VERSION}
+         AND e.draft_manifest->>'schemaVersion' = ${String(MOTION_MANIFEST_SCHEMA_VERSION)}
+         AND e.draft_manifest->>'baseBundleId' = s.native_bundle_id::text
+       FOR UPDATE OF e, n
+    ), created_snapshot AS (
+      INSERT INTO snapshots (
+        node_id, html, design_md, screenshot_url, source, parent_snapshot_id,
+        native_bundle_id, motion_manifest, motion_manifest_version
+      )
+      SELECT node_id, NULL, NULL, NULL, 'native-edit', base_snapshot_id,
+             native_bundle_id, draft_manifest, ${MOTION_MANIFEST_SCHEMA_VERSION}
+        FROM eligible
+      RETURNING id, node_id
+    ), advanced_node AS (
+      UPDATE nodes n
+         SET current_snapshot_id = created_snapshot.id
+        FROM created_snapshot, eligible
+       WHERE n.id = created_snapshot.node_id AND n.id = eligible.node_id
+      RETURNING n.id
+    ), continued_session AS (
+      UPDATE native_motion_edit_sessions e
+         SET base_snapshot_id = created_snapshot.id,
+             revision = e.revision + 1,
+             updated_at = NOW()
+        FROM created_snapshot, advanced_node, eligible
+       WHERE e.id = eligible.id AND advanced_node.id = eligible.node_id
+      RETURNING e.id, e.node_id, e.base_snapshot_id, e.revision, e.status,
+                created_snapshot.id AS snapshot_id,
+                eligible.native_bundle_id::text AS base_bundle_id
+    )
+    SELECT id AS session_id, node_id, base_snapshot_id, revision, status,
+           snapshot_id, base_bundle_id
+      FROM continued_session
+  ` : await sql`
     WITH eligible AS (
       SELECT e.id, e.node_id, e.base_snapshot_id, e.draft_manifest, e.revision,
              s.native_bundle_id
@@ -314,9 +370,13 @@ export async function commitEditSession({ sql, userId, nodeId, sessionId, expect
          SET status = 'committed', updated_at = NOW(), closed_at = NOW()
         FROM created_snapshot, advanced_node, eligible
        WHERE e.id = eligible.id AND advanced_node.id = eligible.node_id
-      RETURNING e.id, e.node_id, e.revision, e.status, created_snapshot.id AS snapshot_id
+      RETURNING e.id, e.node_id, e.revision, e.status,
+                created_snapshot.id AS snapshot_id,
+                created_snapshot.id AS base_snapshot_id,
+                eligible.native_bundle_id::text AS base_bundle_id
     )
-    SELECT id AS session_id, node_id, revision, status, snapshot_id
+    SELECT id AS session_id, node_id, base_snapshot_id, revision, status,
+           snapshot_id, base_bundle_id
       FROM closed_session
   `;
   const row = rows[0];
@@ -327,6 +387,8 @@ export async function commitEditSession({ sql, userId, nodeId, sessionId, expect
   return {
     sessionId: row.session_id,
     snapshotId: row.snapshot_id,
+    baseSnapshotId: row.base_snapshot_id || row.snapshot_id,
+    baseBundleId: row.base_bundle_id,
     nodeId: row.node_id,
     revision: Number(row.revision),
     status: row.status,

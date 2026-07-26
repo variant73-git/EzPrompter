@@ -504,7 +504,9 @@ export default function CanvasNode({
   // us the user's edits while the iframe DOM is still authoritative.
   const saveAndExit = useCallback(async () => {
     if (nativeEditor) {
-      onEditingChange?.(false);
+      window.dispatchEvent(new CustomEvent('uncraft:editor-action', {
+        detail: { nodeId: node.id, action: 'save' },
+      }));
       return;
     }
     if (!onSaveEdit || !iframeRef.current) {
@@ -524,7 +526,7 @@ export default function CanvasNode({
     onEditingChange?.(false);
     // Editor unmounts asynchronously; clear the busy spinner once the
     // editing flag flips back via the parent prop.
-  }, [nativeEditor, onEditingChange, onSaveEdit]);
+  }, [nativeEditor, node.id, onEditingChange, onSaveEdit]);
 
   // The canvas owns edit-mode chrome. Its fixed topbar forwards Done/Cancel
   // to the active node so saving still captures the live iframe before the
@@ -534,10 +536,10 @@ export default function CanvasNode({
     if (!editing) return undefined;
     function handleEditorAction(event) {
       if (event.detail?.nodeId !== node.id || editorBusy) return;
+      if (nativeEditor) return;
       if (event.detail.action === 'save') void saveAndExit();
       if (event.detail.action === 'cancel') {
-        if (nativeEditor) onEditingChange?.(false);
-        else setShowCancelPrompt(true);
+        setShowCancelPrompt(true);
       }
     }
     window.addEventListener('uncraft:editor-action', handleEditorAction);
@@ -1265,7 +1267,9 @@ export default function CanvasNode({
               onClick={(e) => {
                 e.stopPropagation();
                 if (editorBusy) return;
-                if (nativeEditor) onEditingChange?.(false);
+                if (nativeEditor) window.dispatchEvent(new CustomEvent('uncraft:editor-action', {
+                  detail: { nodeId: node.id, action: 'cancel' },
+                }));
                 else setShowCancelPrompt(true);
               }}
               title={cancelEditorTitle}
@@ -1356,7 +1360,9 @@ export default function CanvasNode({
                 onClick={(e) => {
                   e.stopPropagation();
                   if (editorBusy) return;
-                  if (nativeEditor) onEditingChange?.(false);
+                  if (nativeEditor) window.dispatchEvent(new CustomEvent('uncraft:editor-action', {
+                    detail: { nodeId: node.id, action: 'cancel' },
+                  }));
                   else setShowCancelPrompt(true);
                 }}
                 title={cancelEditorTitle}

@@ -1,7 +1,11 @@
 import { StrictMode, createRef } from 'react';
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { MOTION_EDITOR_PROTOCOL } from '../../lib/motion-editor/protocol.js';
+import {
+  MOTION_EDITOR_PROTOCOL,
+  MOTION_EDITOR_PROTOCOL_V2,
+  SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+} from '../../lib/motion-editor/protocol.js';
 import {
   createLocalMotionPersistenceAdapter,
   useNativeMotionController,
@@ -24,6 +28,30 @@ function readyMessage(frame, title = 'Fixture') {
   });
 }
 
+const V2_CONTEXT = {
+  sessionNonce: 'nonce-123456789',
+  runtimeGeneration: 1,
+  bundleId: 'bundle-native',
+  sessionId: 'session-native',
+};
+
+function runtimeV2Message(frame, type, payload = {}, requestId = `runtime-${type}`) {
+  return new MessageEvent('message', {
+    source: frame.contentWindow,
+    origin: 'https://runtime.uncraft.test',
+    data: {
+      protocol: MOTION_EDITOR_PROTOCOL_V2,
+      protocolVersion: MOTION_EDITOR_PROTOCOL_V2,
+      supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+      source: 'runtime',
+      type,
+      requestId,
+      ...V2_CONTEXT,
+      payload,
+    },
+  });
+}
+
 describe('useNativeMotionController', () => {
   it('isolates two controllers by iframe source and survives React strict mode without duplicate listeners', async () => {
     const firstFrame = runtimeFrame();
@@ -40,6 +68,7 @@ describe('useNativeMotionController', () => {
 
     expect(first.result.current.runtime.title).toBe('First');
     expect(first.result.current.status).toBe('ready');
+    await waitFor(() => expect(first.result.current.historyReady).toBe(true));
     expect(second.result.current.runtime).toBeNull();
     expect(firstFrame.contentWindow.postMessage.mock.calls.filter(([message]) => message.type === 'inspect-viewport')).toHaveLength(1);
     expect(secondFrame.contentWindow.postMessage).not.toHaveBeenCalled();
@@ -141,5 +170,205 @@ describe('useNativeMotionController', () => {
       'uncraft:native-motion-patches:v1:/runtime/custom.html',
       JSON.stringify(loaded),
     );
+  });
+
+  it('autosaves only acknowledged history and flushes before a server commit', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ transactions: [] })),
+      save: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
+      commit: vi.fn(async () => ({ snapshot: { id: 'snapshot-2' } })),
+      discard: vi.fn(async () => ({})),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'selection-changed',
+        payload: { element: { id: 'hero', label: 'Hero', motion: [] } },
+      },
+    })));
+
+    act(() => result.current.commands.applyStyle('opacity', '0.5', '1'));
+    await waitFor(() => expect(persistenceAdapter.save).toHaveBeenCalled());
+    expect(persistenceAdapter.save.mock.calls.at(-1)[0].transactions).toHaveLength(1);
+
+    act(() => result.current.commands.undo());
+    await waitFor(() => expect(persistenceAdapter.save.mock.calls.at(-1)[0].transactions).toHaveLength(0));
+    act(() => result.current.commands.redo());
+    await waitFor(() => expect(persistenceAdapter.save.mock.calls.at(-1)[0].transactions).toHaveLength(1));
+
+    await act(async () => result.current.commands.commit('exit'));
+    expect(persistenceAdapter.flush).toHaveBeenCalled();
+    expect(persistenceAdapter.commit).toHaveBeenCalledWith({ reason: 'exit' });
+  });
+
+  it('does not add or autosave a runtime inventory refresh', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ transactions: [] })),
+      save: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    persistenceAdapter.save.mockClear();
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'inventory-changed',
+        payload: { assets: [], profile: {} },
+      },
+    })));
+
+    expect(result.current.historyCount).toBe(0);
+    expect(persistenceAdapter.save).not.toHaveBeenCalled();
+  });
+
+  it('waits for v2 acknowledgement before autosave and preserves history when Undo is rejected', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ transactions: [] })),
+      save: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const diagnostic = vi.fn();
+    window.addEventListener('uncraft:motion-diagnostic', diagnostic);
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: {
+          title: 'V2 fixture',
+          supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+          ...V2_CONTEXT,
+        },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'selection-changed', {
+      element: { id: 'hero', label: 'Hero', motion: [] },
+    })));
+    persistenceAdapter.save.mockClear();
+
+    act(() => result.current.commands.applyStyle('opacity', '0.5', '1'));
+    const applyMessage = frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .findLast((message) => message.type === 'apply-transaction');
+    expect(result.current.historyCount).toBe(0);
+    expect(persistenceAdapter.save).not.toHaveBeenCalled();
+
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', {
+      transaction: applyMessage.payload.transaction,
+    }, applyMessage.requestId)));
+    await waitFor(() => expect(result.current.historyCount).toBe(1));
+    expect(persistenceAdapter.save).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.commands.undo());
+    const undoMessage = frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .findLast((message) => message.type === 'rollback-transaction');
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-rejected', {
+      transactionId: undoMessage.payload.transaction.id,
+      code: 'write_failed',
+    }, undoMessage.requestId)));
+
+    expect(result.current.historyCount).toBe(1);
+    expect(result.current.canRedo).toBe(false);
+    expect(persistenceAdapter.save).toHaveBeenCalledTimes(1);
+    expect(diagnostic).toHaveBeenCalledTimes(1);
+    expect(diagnostic.mock.calls[0][0].detail).toMatchObject({ code: 'undo_transaction_rejected' });
+    window.removeEventListener('uncraft:motion-diagnostic', diagnostic);
+  });
+
+  it('resumes and replays the server draft after a browser reload', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const persisted = {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      source: 'properties',
+      createdAt: '2026-07-26T10:00:00.000Z',
+      patches: [{
+        id: 'patch-persisted',
+        elementId: 'hero',
+        kind: 'style',
+        property: 'opacity',
+        before: '1',
+        value: '0.5',
+        createdAt: '2026-07-26T10:00:00.000Z',
+      }],
+      automaticRepairs: [{
+        id: 'patch-repair',
+        elementId: 'hero',
+        kind: 'style',
+        property: 'transform',
+        before: 'translateX(2px)',
+        value: 'translateX(0px)',
+        createdAt: '2026-07-26T10:00:00.000Z',
+      }],
+    };
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ transactions: [persisted] })),
+      save: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    await waitFor(() => expect(result.current.historyCount).toBe(1));
+
+    const replay = frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .find((message) => message.type === 'apply-patches');
+    expect(replay.payload.patches.map((patch) => patch.id)).toEqual(['patch-persisted', 'patch-repair']);
+    expect(result.current.canUndo).toBe(true);
+    expect(persistenceAdapter.save).not.toHaveBeenCalled();
+  });
+
+  it('flushes the confirmed draft before Preview and when the page becomes hidden', async () => {
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ transactions: [] })),
+      save: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ persistenceAdapter }));
+
+    await act(async () => result.current.commands.changeMode('preview'));
+    await waitFor(() => expect(persistenceAdapter.flush).toHaveBeenCalledTimes(1));
+
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    await waitFor(() => expect(persistenceAdapter.flush).toHaveBeenCalledTimes(2));
+    expect(persistenceAdapter.flush.mock.calls[1][0]).toEqual({ keepalive: true });
+    visibility.mockRestore();
   });
 });

@@ -196,6 +196,39 @@ describe('native motion edit-session store', () => {
     expect(statement).toContain('UPDATE native_motion_edit_sessions');
   });
 
+  it('can save a version while keeping the same session active on the new base', async () => {
+    const nextSnapshotId = '55555555-5555-4555-8555-555555555555';
+    const sql = createSql([[{
+      session_id: SESSION_ID,
+      snapshot_id: nextSnapshotId,
+      base_snapshot_id: nextSnapshotId,
+      base_bundle_id: BUNDLE_ID,
+      node_id: NODE_ID,
+      revision: 3,
+      status: 'active',
+    }]]);
+
+    const committed = await commitEditSession({
+      sql,
+      userId: 42,
+      nodeId: NODE_ID,
+      sessionId: SESSION_ID,
+      expectedRevision: 2,
+      continueEditing: true,
+    });
+
+    expect(committed).toMatchObject({
+      sessionId: SESSION_ID,
+      snapshotId: nextSnapshotId,
+      baseSnapshotId: nextSnapshotId,
+      baseBundleId: BUNDLE_ID,
+      revision: 3,
+      status: 'active',
+    });
+    expect(sql.calls[0].text).toMatch(/SET\s+base_snapshot_id\s*=\s*created_snapshot\.id/i);
+    expect(sql.calls[0].text).not.toMatch(/status\s*=\s*'committed'/i);
+  });
+
   it('discards or expires only the mutable session row', async () => {
     const discardSql = createSql([[sessionRow({ status: 'discarded' })]]);
     const expireSql = createSql([[sessionRow({ status: 'expired' })]]);

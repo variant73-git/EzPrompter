@@ -1,7 +1,7 @@
 # Handoff — Live Animated Clone Editing
 
 **Data:** 2026-07-26
-**Status:** Tasks 1–7 concluídas e verificadas; Task 8 não iniciada
+**Status:** Tasks 1–8 concluídas e verificadas; Task 9 não iniciada
 **Checkout:** `/Users/adilsonporto/Desktop/IA/Uncraft`
 **Branch:** `codex/live-animated-clone-editing`
 **Base:** `main` em `ec297fffd8303e512c8ce3a910930cc2d51b3635`
@@ -716,9 +716,132 @@ controller standalone, restaurar reservas nativas a zero e remover os quatro
 componentes de shell e seus estilos. Não há migration, bundle, manifest ou
 sessão durável da Task 7 para reverter.
 
+## Task 8 — autosave, commit, restore, discard e histórico de sessão
+
+### Resultado
+
+O controller compartilhado agora usa um adapter server-backed no canvas. Cada
+transação reconhecida atualiza o draft local imediatamente, agenda autosave do
+manifest e só altera Undo/Redo e persistência depois do acknowledgement do
+runtime. O lab isolado mantém seu adapter local e não ganhou dependência do
+backend do canvas.
+
+Novos arquivos:
+
+- `packages/web-shell/lib/motion-editor/native-edit-api.js`
+- `packages/web-shell/lib/motion-editor/native-edit-api.test.js`
+- `packages/web-shell/app/api/nodes/[id]/motion-session/route.js`
+- `packages/web-shell/app/api/nodes/[id]/motion-session/route.test.js`
+- `packages/web-shell/app/api/nodes/[id]/motion-session/commit/route.js`
+- `packages/web-shell/app/api/nodes/[id]/motion-session/commit/route.test.js`
+- `packages/web-shell/app/api/nodes/[id]/motion-session/discard/route.js`
+- `packages/web-shell/app/api/nodes/[id]/motion-session/discard/route.test.js`
+
+Arquivos modificados:
+
+- `packages/web-shell/components/motion-editor/useNativeMotionController.js`
+- `packages/web-shell/components/motion-editor/useNativeMotionController.test.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditChrome.jsx`
+- `packages/web-shell/components/motion-editor/NativeMotionEditChrome.test.jsx`
+- `packages/web-shell/components/CanvasClient.jsx`
+- `packages/web-shell/components/CanvasNode.jsx`
+- `packages/web-shell/lib/canvas-api.js`
+- `packages/web-shell/lib/motion-editor/edit-session-store.js`
+- `packages/web-shell/lib/motion-editor/edit-session-store.test.js`
+- `packages/web-shell/lib/motion-editor/session-history.js`
+- `packages/web-shell/lib/motion-editor/session-history.test.js`
+- `packages/web-shell/app/api/nodes/[id]/restore-version/route.js`
+- `packages/web-shell/app/api/nodes/[id]/restore-version/route.test.js`
+
+### Contrato entregue
+
+- Abrir Edit cria ou retoma o único draft owned do snapshot nativo corrente; o
+  controller recarrega e reaplica o histórico confirmado depois de um reload.
+- O autosave usa debounce curto de 180 ms, uma única escrita em voo, revisão
+  otimista monotônica e coalescing para que respostas antigas nunca substituam
+  um manifest mais novo.
+- Falhas transitórias mantêm o draft local e repetem automaticamente com
+  backoff limitado entre 500 ms e 8 s. Conflitos semânticos não entram em retry
+  cego nem fazem merge silencioso.
+- Somente transações reconhecidas entram no manifest. Gestos contínuos continuam
+  sendo uma transação; refresh de inventário/runtime não cria histórico nem
+  autosave.
+- Undo e Redo mudam o draft somente depois do acknowledgement. Rejeição conserva
+  cursor e histórico anteriores e emite somente um evento diagnóstico
+  sanitizado. Repairs automáticos persistidos acompanham a transação causadora
+  no replay, Undo e Redo.
+- Preview, `visibilitychange`, `pagehide` e commit forçam flush do draft
+  confirmado. O adapter conserva revisões locais ainda não confirmadas.
+- Done faz flush, cria snapshot imutável, avança o ponteiro do node, fecha a
+  sessão e só então sai de Edit. Cancel descarta a sessão sem persistir o draft
+  local pendente e restaura o node ao snapshot-base já corrente.
+- `save-version` e `before-structural-operation` criam snapshot imutável e
+  reancoram a mesma sessão ativa no novo base, com revisão avançada. Apenas
+  `exit` fecha Edit e encerra o histórico efêmero.
+- O canvas atualiza bundle ID, versão do manifest e snapshot corrente no estado
+  local depois do commit. `save-edit` continua exclusivo do editor legado.
+- Restore retorna bundle e manifest do snapshot escolhido, invalida qualquer
+  sessão ativa anterior e nunca usa HTML capturado como fonte do snapshot
+  nativo.
+- Fechar ou descartar a sessão revoga na prática a URL runtime: o gateway já
+  exige `status = 'active'` para cada request e o token curto deixa de servir o
+  bundle imediatamente.
+
+### Evidência tests-first e exit gate
+
+Os quatro novos arquivos de teste falharam primeiro pela ausência do adapter e
+das três rotas. Depois da implementação:
+
+```text
+Suíte focal: 10 files, 52 tests passed
+Suíte completa: 150 files passed, 1 skipped; 1072 tests passed, 4 skipped
+Build com NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT=true:
+Next.js 15.5.15; compiled; 41/41 static pages; exit 0
+git diff --check: clean
+```
+
+O warning não bloqueante já conhecido de `--localstorage-file` permaneceu na
+suíte completa. Não houve warning novo de build.
+
+### Verificação PostgreSQL real
+
+Em um PostgreSQL 16 descartável com o schema da branch:
+
+- `Save version` criou um snapshot `native-edit`, avançou o node, conservou a
+  mesma sessão ativa, reancorou `base_snapshot_id` e avançou a revisão de 0
+  para 1;
+- o autosave seguinte foi aceito somente na revisão 1 e avançou para 2;
+- Done criou um segundo snapshot `native-edit`, avançou o node e fechou a
+  sessão como `committed` em uma única instrução CTE;
+- a cadeia terminou com três snapshots, dois manifests nativos editados e o
+  ponteiro exatamente no snapshot do Done;
+- restore de uma versão anterior descartou uma sessão ativa em aberto, revogou
+  seu runtime e moveu o node ao snapshot escolhido.
+
+O container e todos os dados descartáveis foram removidos após a verificação.
+
+### Limite operacional ainda não exercitado
+
+O smoke completo dentro de `/canvas` continua bloqueado pela configuração local
+já registrada na Task 7: o banco de `.env.local` não possui a migration nativa
+e o checkout não reúne `UNCRAFT_RUNTIME_SESSION_SECRET`,
+`UNCRAFT_RUNTIME_ORIGIN` e `UNCRAFT_NATIVE_BUNDLE_STORE_ROOT` para um node real.
+Nenhuma migration foi aplicada automaticamente e nenhum dado externo foi
+alterado. Controller, rotas, build, gateway de revogação e transações PostgreSQL
+foram verificados separadamente; o fluxo visual real permanece o primeiro smoke
+quando esse ambiente dedicado existir.
+
+### Rollback da Task 8
+
+Desativar `NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT`, remover o adapter e as três
+rotas de motion session, devolver Done/Cancel ao lifecycle anterior e reverter
+somente o commit contínuo e os campos nativos extras de restore. Snapshots já
+commitados e seus bundles/manifests permanecem válidos e não devem ser apagados;
+sessões ativas devem ser expiradas ou descartadas antes da remoção das rotas.
+
 ## Estado e rollback da fatia
 
-- Tasks 1–7 estão concluídas; Task 8 não foi iniciada.
+- Tasks 1–8 estão concluídas; Task 9 não foi iniciada.
 - A primeira fatia recomendada do PR (`Bundle contract and persistence schema`,
   Tasks 1–2) permanece íntegra. Tasks 3–4 completam a segunda fatia sem iniciar
   integração com o canvas.
@@ -726,6 +849,10 @@ sessão durável da Task 7 para reverter.
 - Tasks 6–7 completam a quarta fatia (`Canvas M1 vertical slice`): o lab e o
   canvas consomem o mesmo controller, o shell nativo vive no application layer
   e `CanvasEditorCore` permanece exclusivo do branch legado.
+- Task 8 fecha a quarta fatia (`Canvas M1 vertical slice`) no código e nos
+  boundaries automatizados: autosave, histórico, commit, discard e restore
+  estão integrados. O smoke visual real ainda depende do ambiente nativo
+  dedicado descrito acima.
 - Nenhum arquivo do worktree Demarcelizer ou material não relacionado foi
   alterado.
 - Rollback da Task 2 é manual e não destrutivo: parar tráfego nativo, preservar
@@ -750,10 +877,11 @@ sessão durável da Task 7 para reverter.
 - Rollback da Task 7: remover provider/chrome nativo, devolver ao viewport seu
   controller standalone e zerar as reservas de framing. Não há estado durável
   novo para reverter.
+- Rollback da Task 8: manter bundles e snapshots já commitados, expirar drafts
+  ativos, remover o adapter/rotas e restaurar o lifecycle anterior do canvas.
 
 ## Próxima fatia
 
-Parar no checkpoint antes da Task 8. A próxima etapa implementa o adapter de
-persistência server-backed do controller, draft autosave, commit, restore,
-discard e undo/redo de sessão conforme o plano. Não iniciar freeze/settlement
-da Task 9 dentro dessa mudança.
+Parar no checkpoint antes da Task 9. A próxima etapa implementa o estado híbrido
+de freeze, settlement, loop e Preview conforme o plano. Não iniciar ownership,
+retargeting ou ambiguity UI da Task 10 dentro dessa mudança.

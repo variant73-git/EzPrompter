@@ -87,6 +87,16 @@ describe('native motion edit-session history', () => {
     expect(undone.repairs).toEqual([repair]);
   });
 
+  it('restores persisted automatic repairs as part of the same history entry', () => {
+    const repair = patch('repair-1', { property: 'transform', before: 'none', value: 'translateX(0px)' });
+    const history = createSessionHistory({
+      sessionId: 'session-a',
+      transactions: [{ ...transaction('tx-1'), automaticRepairs: [repair] }],
+    });
+    expect(history.past[0].repairs).toEqual([repair]);
+    expect(sessionHistoryPatches(history).map((item) => item.id)).toEqual(['tx-1-patch', 'repair-1']);
+  });
+
   it('adapts legacy patch arrays by consecutive group without creating cross-session history', () => {
     const legacy = [
       patch('a', { groupId: 'group-1' }),

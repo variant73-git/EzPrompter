@@ -43,6 +43,7 @@ const AUTO_KEYFRAME_PROPERTIES = new Set([
 ]);
 
 const NO_PERSISTENCE = Object.freeze({
+  autosave: false,
   load: async () => [],
   save: async () => {},
 });
@@ -93,6 +94,7 @@ function loadedHistory(value, sessionId) {
 export function createLocalMotionPersistenceAdapter(source, storage = null) {
   const resolveStorage = () => storage || globalThis.localStorage;
   return {
+    autosave: false,
     async load() {
       try {
         const parsed = JSON.parse(resolveStorage().getItem(storageKey(source)) || '[]');
@@ -132,6 +134,7 @@ export function useNativeMotionController({
   const historyRef = useRef(historyState);
   const [speed, setSpeed] = useState(1);
   const [saveState, setSaveState] = useState('idle');
+  const [historyReady, setHistoryReady] = useState(false);
   const [patchError, setPatchError] = useState(null);
   const [pendingTransactions, setPendingTransactions] = useState(0);
   const [activeMotionId, setActiveMotionId] = useState(null);
@@ -146,13 +149,29 @@ export function useNativeMotionController({
   motionDetailRef.current = motionDetail;
   persistenceRef.current = persistenceAdapter || NO_PERSISTENCE;
 
-  const updateHistory = useCallback((updater) => {
-    setHistoryState((current) => {
-      const next = typeof updater === 'function' ? updater(current) : updater;
-      historyRef.current = next;
-      return next;
-    });
-  }, []);
+  const historyPayload = useCallback((history = historyRef.current) => ({
+    sessionId: history.sessionId,
+    transactions: history.past.map((item) => ({
+      ...item.transaction,
+      repairs: item.repairs,
+    })),
+    patches: sessionHistoryPatches(history),
+  }), []);
+
+  const updateHistory = useCallback((updater, { persist = false } = {}) => {
+    const current = historyRef.current;
+    const next = typeof updater === 'function' ? updater(current) : updater;
+    historyRef.current = next;
+    setHistoryState(next);
+    if (persist && persistenceRef.current.autosave) {
+      void persistenceRef.current.save(historyPayload(next)).catch(() => {
+        if (disposedRef.current) return;
+        setSaveState('error');
+        setPatchError("Your changes couldn't be saved yet. Your confirmed edits are still open.");
+      });
+    }
+    return next;
+  }, [historyPayload]);
 
   const selectedRowId = selected ? (selected.hostRowId || selected.id) : null;
   const motionFromHost = Boolean(selected && selectedRowId && selectedRowId !== selected.id && motionDetail[selectedRowId]);
@@ -198,6 +217,39 @@ export function useNativeMotionController({
     };
   }, []);
 
+  useEffect(() => {
+    const adapter = persistenceAdapter || NO_PERSISTENCE;
+    const unsubscribe = adapter.subscribe?.((next) => {
+      if (disposedRef.current) return;
+      if (next.status === 'saving') setSaveState('saving');
+      if (next.status === 'saved') setSaveState('saved');
+      if (next.status === 'error') {
+        setSaveState('error');
+        setPatchError("Your changes couldn't be saved yet. Your confirmed edits are still open.");
+      }
+    });
+    return () => {
+      unsubscribe?.();
+      adapter.dispose?.({ flushPending: true });
+    };
+  }, [persistenceAdapter]);
+
+  useEffect(() => {
+    function flushConfirmedDraft() {
+      if (!persistenceRef.current.autosave) return;
+      void persistenceRef.current.flush?.({ keepalive: true }).catch(() => null);
+    }
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') flushConfirmedDraft();
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', flushConfirmedDraft);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', flushConfirmedDraft);
+    };
+  }, []);
+
   const armHeartbeatTimeout = useCallback(() => {
     if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
     heartbeatTimeoutRef.current = window.setTimeout(() => {
@@ -231,17 +283,30 @@ export function useNativeMotionController({
   useEffect(() => {
     async function replayCurrentHistory(useV2) {
       const sessionId = currentSessionId(runtimeContextRef.current);
-      let scoped = scopeSessionHistory(historyRef.current, sessionId);
-      if (!scoped.past.length) {
-        const loaded = await persistenceRef.current.load();
-        if (disposedRef.current || currentSessionId(runtimeContextRef.current) !== sessionId) return;
-        scoped = loadedHistory(loaded, sessionId);
+      let scoped;
+      try {
+        scoped = scopeSessionHistory(historyRef.current, sessionId);
+        if (!scoped.past.length) {
+          const loaded = await persistenceRef.current.load();
+          if (disposedRef.current || currentSessionId(runtimeContextRef.current) !== sessionId) return;
+          scoped = loadedHistory(loaded, sessionId);
+        }
+      } catch {
+        if (!disposedRef.current) {
+          setSaveState('error');
+          setPatchError("Your changes couldn't be loaded yet. Please keep this editor open.");
+        }
+        return;
       }
       updateHistory(scoped);
       const saved = sessionHistoryPatches(scoped);
-      if (!saved.length) return;
+      if (!saved.length) {
+        setHistoryReady(true);
+        return;
+      }
       if (!useV2) {
         send('apply-patches', { patches: saved });
+        setHistoryReady(true);
         return;
       }
       for (let index = 0; index < saved.length; index += TRANSACTION_LIMITS.maxPatches) {
@@ -254,6 +319,7 @@ export function useNativeMotionController({
         send('apply-transaction', { transaction }, { requestId: transaction.requestId });
       }
       setPendingTransactions(transactionLedgerRef.current.size);
+      if (transactionLedgerRef.current.size === 0) setHistoryReady(true);
     }
 
     function releaseSettled(entries) {
@@ -268,21 +334,31 @@ export function useNativeMotionController({
               { sessionId: current.sessionId },
             ));
           }
+          if (entry.meta.operation === 'undo' || entry.meta.operation === 'redo') {
+            window.dispatchEvent(new CustomEvent('uncraft:motion-diagnostic', {
+              detail: {
+                code: `${entry.meta.operation}_transaction_rejected`,
+                operation: entry.meta.operation,
+                nodeScoped: true,
+              },
+            }));
+          }
           return;
         }
         if (entry.meta.operation === 'apply') {
           updateHistory((current) => acknowledgeSessionTransaction(current, acknowledged, {
             sessionId: currentSessionId(runtimeContextRef.current),
             repairs: entry.payload?.repairs,
-          }));
+          }), { persist: true });
         } else if (entry.meta.operation === 'undo') {
-          updateHistory((current) => undoSessionHistory(current).history);
+          updateHistory((current) => undoSessionHistory(current).history, { persist: true });
         } else if (entry.meta.operation === 'redo') {
-          updateHistory((current) => redoSessionHistory(current).history);
+          updateHistory((current) => redoSessionHistory(current).history, { persist: true });
         }
         setSaveState('idle');
       });
       setPendingTransactions(transactionLedgerRef.current.size);
+      if (transactionLedgerRef.current.size === 0) setHistoryReady(true);
     }
 
     function recordRuntimeTransaction(transaction, repairs = []) {
@@ -290,7 +366,7 @@ export function useNativeMotionController({
         const sessionId = currentSessionId(runtimeContextRef.current);
         const scoped = scopeSessionHistory(current, sessionId);
         return acknowledgeSessionTransaction(scoped, transaction, { sessionId, repairs });
-      });
+      }, { persist: true });
     }
 
     function onMessage(event) {
@@ -301,6 +377,7 @@ export function useNativeMotionController({
         if (!context || !matchesRuntimeContext(event.data, context, event.origin)) return;
       }
       if (type === 'runtime-ready') {
+        setHistoryReady(false);
         setRuntime(payload);
         if (transactionLedgerRef.current.size) {
           setPatchError('The website restarted before a change was confirmed. The previous value was restored.');
@@ -401,7 +478,7 @@ export function useNativeMotionController({
         updateHistory((current) => sessionHistoryFromPatches(
           removeRejectedPatch(sessionHistoryPatches(current), payload.patch),
           { sessionId: current.sessionId },
-        ));
+        ), { persist: true });
         setPatchError(payload.error || 'The change could not be applied.');
       }
       if (type === 'playback-changed' && payload.speed) setSpeed(payload.speed);
@@ -450,7 +527,7 @@ export function useNativeMotionController({
       const sessionId = currentSessionId(runtimeContextRef.current);
       const scoped = scopeSessionHistory(current, sessionId);
       return acknowledgeSessionTransaction(scoped, transaction, { sessionId });
-    });
+    }, { persist: true });
     setSaveState('idle');
     window.setTimeout(() => send('refresh-inventory'), 80);
   }
@@ -561,7 +638,7 @@ export function useNativeMotionController({
       return;
     }
     send('apply-patches', { patches: inverse });
-    updateHistory((current) => undoSessionHistory(current).history);
+    updateHistory((current) => undoSessionHistory(current).history, { persist: true });
     setSaveState('idle');
   }
 
@@ -578,18 +655,15 @@ export function useNativeMotionController({
       return;
     }
     send('apply-patches', { patches });
-    updateHistory((current) => redoSessionHistory(current).history);
+    updateHistory((current) => redoSessionHistory(current).history, { persist: true });
     setSaveState('idle');
   }
 
   async function save() {
     setSaveState('saving');
     try {
-      await persistenceRef.current.save({
-        sessionId: historyState.sessionId,
-        transactions: historyState.past.map((item) => ({ ...item.transaction, repairs: item.repairs })),
-        patches: historyPatches,
-      });
+      await persistenceRef.current.save(historyPayload());
+      await persistenceRef.current.flush?.();
       if (disposedRef.current) return;
       setSaveState('saved');
       window.setTimeout(() => { if (!disposedRef.current) setSaveState('idle'); }, 1800);
@@ -597,6 +671,44 @@ export function useNativeMotionController({
       if (disposedRef.current) return;
       setSaveState('error');
       setPatchError("Your changes couldn't be saved yet. Your confirmed edits are still open.");
+    }
+  }
+
+  async function flush() {
+    if (!persistenceRef.current.autosave) return null;
+    await persistenceRef.current.save(historyPayload());
+    return persistenceRef.current.flush?.();
+  }
+
+  async function commit(reason = 'exit') {
+    setSaveState('saving');
+    try {
+      await persistenceRef.current.save(historyPayload());
+      await persistenceRef.current.flush?.();
+      const result = await persistenceRef.current.commit?.({ reason });
+      if (!disposedRef.current) setSaveState('saved');
+      return result || null;
+    } catch (error) {
+      if (!disposedRef.current) {
+        setSaveState('error');
+        setPatchError("Your changes couldn't be saved yet. Your confirmed edits are still open.");
+      }
+      throw error;
+    }
+  }
+
+  async function discard() {
+    setSaveState('saving');
+    try {
+      const result = await persistenceRef.current.discard?.();
+      if (!disposedRef.current) setSaveState('idle');
+      return result || null;
+    } catch (error) {
+      if (!disposedRef.current) {
+        setSaveState('error');
+        setPatchError("Your changes couldn't be discarded yet. Keep editing and try again.");
+      }
+      throw error;
     }
   }
 
@@ -756,6 +868,7 @@ export function useNativeMotionController({
     updateHistory(createSessionHistory());
     setSpeed(1);
     setSaveState('idle');
+    setHistoryReady(false);
     setPatchError(null);
     setPendingTransactions(0);
     setActiveMotionId(null);
@@ -767,7 +880,10 @@ export function useNativeMotionController({
 
   const commands = {
     resetSession,
-    changeMode: (nextMode) => setMode(nextMode),
+    changeMode: (nextMode) => {
+      if (nextMode === 'preview') void flush().catch(() => null);
+      setMode(nextMode);
+    },
     changeTool: (nextTool) => setTool(nextTool),
     changeDevice: (nextDevice) => setDeviceId(getMotionEditorDevice(nextDevice).id),
     markRuntimeLoaded: () => setStatus((current) => current === 'ready' ? current : 'bridge'),
@@ -792,6 +908,9 @@ export function useNativeMotionController({
     undo,
     redo,
     save,
+    flush,
+    commit,
+    discard,
     playback,
     changeSpeed,
     selectMotion,
@@ -823,6 +942,7 @@ export function useNativeMotionController({
     canRedo: historyState.future.length > 0,
     speed,
     saveState,
+    historyReady,
     patchError,
     pendingTransactions,
     activeMotionId,

@@ -67,6 +67,7 @@ import {
   computeNodeEditFrame,
   nativeEditDeviceForNode,
 } from '../lib/node-viewport.js';
+import { applyNativeCommitSnapshot } from '../lib/motion-editor/native-edit-api.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -2945,10 +2946,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   async function handleRestoreVersion(id, snapshotId) {
     if (String(id).startsWith('temp-') || !snapshotId) return;
     try {
-      const { html, snapshot_id } = await api.restoreVersion(id, snapshotId);
+      const restored = await api.restoreVersion(id, snapshotId);
       setNodes((prev) => prev.map((n) =>
         n.id === id
-          ? { ...n, current_html: html, current_snapshot_id: snapshot_id, _resetTick: (n._resetTick || 0) + 1 }
+          ? {
+            ...n,
+            current_html: restored.html,
+            current_snapshot_id: restored.snapshot_id,
+            current_snapshot_source: restored.source || n.current_snapshot_source,
+            current_native_bundle_id: restored.native_bundle_id || null,
+            current_motion_manifest_version: restored.motion_manifest_version == null
+              ? null
+              : Number(restored.motion_manifest_version),
+            _resetTick: (n._resetTick || 0) + 1,
+          }
           : n
       ));
     } catch (e) {
@@ -5874,10 +5885,27 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     editingNode && editorKindForNode(editingNode) === NODE_EDITOR_KIND.NATIVE
   );
 
+  function finishNativeCommit(result) {
+    if (!editingNode?.id || !result?.snapshot?.id) return;
+    const nodeId = editingNode.id;
+    setNodes((current) => current.map((node) => (
+      node.id === nodeId
+        ? applyNativeCommitSnapshot(node, result)
+        : node
+    )));
+    exitEditMode(nodeId, { reason: 'native-commit' });
+  }
+
+  function finishNativeDiscard() {
+    if (editingNode?.id) exitEditMode(editingNode.id, { reason: 'native-discard' });
+  }
+
   return (
     <NativeMotionEditSessionProvider
       active={nativeEditing}
       nodeId={nativeEditing ? editingNode.id : null}
+      onCommitted={finishNativeCommit}
+      onDiscarded={finishNativeDiscard}
     >
     <div
       className={`canvas-shell${removingOutside ? ' removing-outside' : ''}`}

@@ -25,7 +25,9 @@ export function createSessionHistory({ sessionId = null, transactions = [] } = {
   return {
     sessionId,
     past: transactions.map((value) => (
-      value?.transaction ? entry(value.transaction, value.repairs) : entry(value, value?.repairs)
+      value?.transaction
+        ? entry(value.transaction, value.repairs || value.automaticRepairs)
+        : entry(value, value?.repairs || value?.automaticRepairs)
     )),
     future: [],
   };
