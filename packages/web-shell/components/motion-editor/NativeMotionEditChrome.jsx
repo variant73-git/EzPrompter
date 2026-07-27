@@ -13,6 +13,10 @@ import NativeMotionInspector from './NativeMotionInspector.jsx';
 import NativeMotionTimelineDock, { hasNativeMotionContext } from './NativeMotionTimelineDock.jsx';
 import MotionDeviceScopeDialog from './MotionDeviceScopeDialog.jsx';
 import { createNativeEditApi } from '../../lib/motion-editor/native-edit-api.js';
+import {
+  createMotionDiagnosticBatcher,
+  normalizeDiagnosticControlKind,
+} from '../../lib/motion-editor/diagnostics.js';
 import { useNativeMotionController } from './useNativeMotionController.js';
 import styles from './native-motion-canvas.module.css';
 
@@ -48,6 +52,48 @@ export function NativeMotionEditSessionProvider({
     persistenceAdapter,
   });
   const hasTimeline = active && controller.mode !== 'preview' && hasNativeMotionContext(controller);
+  const diagnosticDevice = controller.device || { id: 'unknown', width: null, height: null };
+
+  useEffect(() => {
+    if (!active || !nodeId || !persistenceAdapter) return undefined;
+    let sessionId = persistenceAdapter.getState().sessionId;
+    const reporter = createMotionDiagnosticBatcher({ getSessionId: () => sessionId });
+    const unsubscribe = persistenceAdapter.subscribe((state) => {
+      sessionId = state.sessionId;
+      if (sessionId) reporter.resume();
+    });
+    const controls = new Map((controller.controlManifest?.controls || []).map((control) => [control.id, control]));
+    function handleDiagnostic(event) {
+      const detail = event.detail || {};
+      const control = controls.get(detail.controlId);
+      reporter.enqueue({
+        ...detail,
+        occurredAt: new Date().toISOString(),
+        device: diagnosticDevice.id,
+        viewportWidth: diagnosticDevice.width,
+        viewportHeight: diagnosticDevice.height,
+        controlKind: normalizeDiagnosticControlKind(control),
+        controlScope: control?.scope || 'unknown',
+        appVersion: process.env.NEXT_PUBLIC_APP_VERSION || 'web-shell',
+        buildVersion: process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || 'development',
+        origin: 'production',
+      });
+    }
+    window.addEventListener('uncraft:motion-diagnostic', handleDiagnostic);
+    return () => {
+      window.removeEventListener('uncraft:motion-diagnostic', handleDiagnostic);
+      unsubscribe();
+      reporter.dispose();
+    };
+  }, [
+    active,
+    controller.controlManifest,
+    diagnosticDevice.height,
+    diagnosticDevice.id,
+    diagnosticDevice.width,
+    nodeId,
+    persistenceAdapter,
+  ]);
 
   useEffect(() => {
     if (!active || !nodeId) return undefined;

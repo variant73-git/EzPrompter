@@ -40,7 +40,7 @@ export async function POST(request) {
       rows = await sql`
         INSERT INTO users (email, password_hash, name, signup_ip, signup_device_hash)
         VALUES (${email.toLowerCase()}, ${passwordHash}, ${name || null}, ${signupIp}, ${signupDevice})
-        RETURNING id, email, name, plan
+        RETURNING id, email, name, plan, role
       `;
     } catch (err) {
       if (err.message && err.message.includes('unique')) {
@@ -67,7 +67,7 @@ export async function POST(request) {
 
     const res = NextResponse.json({
       token,
-      user: { id: user.id, email: user.email, name: user.name, plan: user.plan },
+      user: { id: user.id, email: user.email, name: user.name, plan: user.plan, role: user.role || 'member' },
       welcome: { granted: welcome.granted, credits: welcome.credits },
     });
     res.headers.set('set-cookie', sessionCookieHeader(token));

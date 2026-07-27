@@ -108,7 +108,7 @@ export default function CanvasSidebar({ user, onSignOut, onNewNode, newNodeOpen 
       {!collapsed && (
         <>
           <div className="canvas-sidebar-user">
-            <UserPill name={user?.name} email={user?.email} plan={user?.plan} onSignOut={onSignOut} workspaceMode />
+            <UserPill name={user?.name} email={user?.email} plan={user?.plan} role={user?.role} onSignOut={onSignOut} workspaceMode />
           </div>
         </>
       )}

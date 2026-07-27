@@ -6,8 +6,10 @@ import CanvasClient from '../../../components/CanvasClient.jsx';
 
 export const dynamic = 'force-dynamic';
 
-export default async function CanvasBoardPage({ params }) {
+export default async function CanvasBoardPage({ params, searchParams }) {
   const { boardId } = await params;
+  const query = await searchParams;
+  const initialFocusNodeId = typeof query?.focusNode === 'string' ? query.focusNode : null;
   const h = await headers();
   const fakeReq = { headers: { get: (k) => h.get(k) } };
   const user = await getAuthUser(fakeReq);
@@ -34,7 +36,14 @@ export default async function CanvasBoardPage({ params }) {
       board={board}
       initialNodes={nodes}
       initialEdges={edges}
-      user={{ id: user.id, email: user.email, name: user.name || null, plan: user.plan || 'free' }}
+      initialFocusNodeId={initialFocusNodeId}
+      user={{
+        id: user.id,
+        email: user.email,
+        name: user.name || null,
+        plan: user.plan || 'free',
+        role: user.role || 'member',
+      }}
     />
   );
 }

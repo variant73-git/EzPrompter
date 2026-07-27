@@ -1622,6 +1622,23 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-minimap { right: 18px; }
   text-decoration: none;
 }
 
+.user-menu-item:focus-visible,
+.user-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.user-menu-group-label {
+  padding: 5px 12px 2px;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
 /* Header block at the top of the dropdown — name + plan tag, then a
    smaller "Manage Account" link, then (free only) an Upgrade CTA. */
 .user-menu-header {

@@ -12,8 +12,8 @@ function sqlFixture(row = {}) {
     const text = strings.join('?');
     calls.push(text);
     if (/SELECT n\.id AS node_id/i.test(text)) return Promise.resolve([{
-      node_id: 'node-1', snapshot_id: 'snapshot-1', bundle_id: BUNDLE_ID,
-      runtime_fingerprint: RUNTIME_FINGERPRINT,
+      node_id: 'node-1', board_id: 'board-1', snapshot_id: 'snapshot-1', bundle_id: BUNDLE_ID,
+      runtime_fingerprint: RUNTIME_FINGERPRINT, content_hash: `sha256:${'b'.repeat(64)}`,
       reconstruction_capabilities: { detectedEngines: ['gsap'], candidateControls: [] },
       session_id: 'session-1', session_revision: 0,
       ...row,
@@ -96,6 +96,12 @@ describe('POST internal motion-control generation boundary', () => {
     expect(body).not.toHaveProperty('rawResponse');
     expect(JSON.stringify(body)).not.toMatch(/secret|private/);
     expect(fixture.sql.callsText.some((text) => /updated_session[\s\S]+updated_snapshot/i.test(text))).toBe(true);
+    const diagnosticWrite = fixture.sql.mock.calls.find(([strings]) => (
+      /INSERT INTO motion_diagnostic_events/i.test(strings.join('?'))
+    ));
+    expect(diagnosticWrite).toBeTruthy();
+    expect(JSON.stringify(diagnosticWrite)).toMatch(/no_effect/);
+    expect(JSON.stringify(diagnosticWrite)).not.toMatch(/secret|private/);
   });
 
   it('surfaces a stable error and no manifest when persistence fails after model success', async () => {

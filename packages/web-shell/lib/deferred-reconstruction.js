@@ -5,6 +5,10 @@ import { registerNativeBundle } from './native-clone/register-bundle.js';
 import { generateControlsForReconstruction } from './motion-editor/control-generation.js';
 import { persistNativeBundleDescriptor } from './motion-editor/edit-session-store.js';
 import { createEmptyMotionManifest, parseMotionManifest } from './motion-editor/manifest.js';
+import {
+  motionControlGenerationDiagnosticEvents,
+  persistMotionDiagnosticEvents,
+} from './motion-editor/diagnostics.js';
 
 const CONTROL_CONVERSION_DEADLINE_MS = 90_000;
 
@@ -226,6 +230,15 @@ export async function reconstructSiteNode({
             current,
             meta: nextMeta,
           });
+          await persistMotionDiagnosticEvents(sql, {
+            user_id: userId,
+            board_id: node.board_id,
+            node_id: node.id,
+            snapshot_id: snapshotId,
+            edit_session_id: null,
+            runtime_fingerprint: descriptor.runtimeFingerprint,
+            content_hash: descriptor.contentHash,
+          }, motionControlGenerationDiagnosticEvents(generated)).catch(() => null);
           return {
             ok: true,
             kind: 'native',

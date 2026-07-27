@@ -41,6 +41,7 @@ export default async function CanvasIndex() {
       userName={user.name}
       userEmail={user.email}
       userPlan={user.plan}
+      userRole={user.role || 'member'}
       view="home"
     />
   );

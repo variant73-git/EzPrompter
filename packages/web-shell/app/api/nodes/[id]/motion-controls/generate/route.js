@@ -9,6 +9,10 @@ import {
   generateControlsForReconstruction,
 } from '../../../../../../lib/motion-editor/control-generation.js';
 import { parseControlManifest } from '../../../../../../lib/motion-editor/control-manifest.js';
+import {
+  motionControlGenerationDiagnosticEvents,
+  persistMotionDiagnosticEvents,
+} from '../../../../../../lib/motion-editor/diagnostics.js';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -109,8 +113,8 @@ export function createMotionControlsGenerateHandler({
     try {
       sql = await dbFn();
       [row] = await sql`
-        SELECT n.id AS node_id, n.current_snapshot_id AS snapshot_id,
-               s.native_bundle_id::text AS bundle_id, nb.runtime_fingerprint,
+        SELECT n.id AS node_id, n.board_id, n.current_snapshot_id AS snapshot_id,
+               s.native_bundle_id::text AS bundle_id, nb.runtime_fingerprint, nb.content_hash,
                nb.reconstruction_capabilities, s.motion_manifest,
                e.id AS session_id, e.revision AS session_revision
           FROM nodes n
@@ -201,6 +205,20 @@ export function createMotionControlsGenerateHandler({
           FROM updated_session CROSS JOIN updated_snapshot
       `;
       if (!persistence[0]?.snapshot_id) throw new ControlGenerationError('persistence_failed');
+      const diagnosticContext = {
+        user_id: user.id,
+        board_id: row.board_id,
+        node_id: row.node_id,
+        snapshot_id: row.snapshot_id,
+        edit_session_id: row.session_id,
+        runtime_fingerprint: row.runtime_fingerprint,
+        content_hash: row.content_hash,
+      };
+      await persistMotionDiagnosticEvents(
+        sql,
+        diagnosticContext,
+        motionControlGenerationDiagnosticEvents({ ...generated, manifest }),
+      ).catch(() => null);
       return noStore({
         ok: true,
         manifest,

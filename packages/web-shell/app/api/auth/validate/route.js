@@ -35,6 +35,7 @@ export async function GET(request) {
         email: user.email,
         name: user.name,
         plan: user.plan,
+        role: user.role || 'member',
         capturesUsed: user.captures_this_month,
         capturesLimit: plan.captures,
       },

@@ -36,6 +36,19 @@ beforeEach(() => {
 });
 
 describe('POST /api/auth/login', () => {
+  it('returns the explicit database role for presentation without inferring it from plan', async () => {
+    currentSql = fakeSql([[
+      { id: 'u1', email: 'admin@example.com', name: 'Admin', password_hash: 'hash', plan: 'free', role: 'admin' },
+    ]]);
+    verifyPasswordMock.mockResolvedValue(true);
+
+    const res = await POST(makeRequest({ email: 'admin@example.com', password: 'password123' }));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.user).toMatchObject({ email: 'admin@example.com', plan: 'free', role: 'admin' });
+  });
+
   it('returns 401 when the email is unknown', async () => {
     currentSql = fakeSql([[]]);
 

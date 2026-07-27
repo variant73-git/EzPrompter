@@ -207,11 +207,14 @@ function editorKindForNode(node) {
   );
 }
 
-export default function CanvasClient({ board, initialNodes, initialEdges, user }) {
+export default function CanvasClient({ board, initialNodes, initialEdges, user, initialFocusNodeId = null }) {
   const [nodes, setNodes] = useState(initialNodes || []);
   const [edges, setEdges] = useState(initialEdges || []);
   const [boardName, setBoardName] = useState(board.name || 'Untitled');
-  const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const initialFocusedNode = initialFocusNodeId
+    ? initialNodes.find((node) => node.id === initialFocusNodeId)
+    : null;
+  const [selectedNodeId, setSelectedNodeId] = useState(initialFocusedNode?.id || null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
   const [draftEdge, setDraftEdge] = useState(null);  // {sourceNodeId, mouseX, mouseY}
   const [popupPos, setPopupPos] = useState(null);
@@ -4740,9 +4743,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const transform = transformRef.current;
       if (!transform?.setTransform) return;
 
+      const requestedNode = initialFocusNodeId
+        ? initialNodes.find((node) => node.id === initialFocusNodeId)
+        : null;
       let saved = null;
       try { saved = parseCanvasView(localStorage.getItem(CANVAS_VIEW_KEY)); } catch {}
-      if (saved) {
+      if (requestedNode) {
+        setSelectedNodeId(requestedNode.id);
+        setSelectedNodeIds((current) => (current.size ? new Set() : current));
+        zoomToNode(requestedNode, 0);
+      } else if (saved) {
         transform.setTransform(saved.positionX, saved.positionY, saved.scale, 0);
       } else if (initialNodes?.length) {
         const focusNode = initialNodes.find((node) => node.is_main) || initialNodes[0];
@@ -4759,7 +4769,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       clearTimeout(timer);
       clearTimeout(canvasViewSaveTimerRef.current);
     };
-  }, [CANVAS_VIEW_KEY]);
+  }, [CANVAS_VIEW_KEY, initialFocusNodeId]);
 
   // Keyboard shortcuts: Esc clears selection. F fits all nodes. 0 resets to
   // 1:1 center. Pan is handled separately and exists only while Space is held.
@@ -6063,6 +6073,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             name={user?.name}
             email={user?.email}
             plan={user?.plan}
+            role={user?.role}
             onSignOut={logout}
             workspaceMode
           />

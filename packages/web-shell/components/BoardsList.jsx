@@ -61,7 +61,7 @@ function shortName(name, max = 28) {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
-function WorkspaceSidebar({ activeSection, userName, userEmail, userPlan, onSignOut }) {
+function WorkspaceSidebar({ activeSection, userName, userEmail, userPlan, userRole, onSignOut }) {
   return (
     <aside className="hub-sidebar">
       <a href="/canvas" className="hub-brand" aria-label="Uncraft home">
@@ -81,7 +81,7 @@ function WorkspaceSidebar({ activeSection, userName, userEmail, userPlan, onSign
         ))}
       </nav>
       <div className="hub-sidebar-bottom">
-        <UserPill name={userName} email={userEmail} plan={userPlan} onSignOut={onSignOut} />
+        <UserPill name={userName} email={userEmail} plan={userPlan} role={userRole} onSignOut={onSignOut} />
       </div>
     </aside>
   );
@@ -363,6 +363,7 @@ export default function BoardsList({
   userName,
   userEmail,
   userPlan,
+  userRole = 'member',
   savedWorkflows = [],
   assets = [],
   view = 'home',
@@ -452,7 +453,14 @@ export default function BoardsList({
   const activeSection = view === 'home' ? null : view;
   return (
     <div className="hub-shell">
-      <WorkspaceSidebar activeSection={activeSection} userName={userName} userEmail={userEmail} userPlan={userPlan} onSignOut={logout} />
+      <WorkspaceSidebar
+        activeSection={activeSection}
+        userName={userName}
+        userEmail={userEmail}
+        userPlan={userPlan}
+        userRole={userRole}
+        onSignOut={logout}
+      />
       <main className="hub-main">
         <div className="hub-global-actions"><CreditsPill /></div>
         {view === 'home'

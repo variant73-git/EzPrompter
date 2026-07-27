@@ -413,7 +413,7 @@ export default function CreateStudio({ initialMode = 'builder', user }) {
         <a className="studio-logo" href="/canvas" aria-label="Back to Projects">U</a>
         <a className="studio-back" href="/canvas"><ArrowLeft aria-hidden="true" />Projects</a>
         <div className="studio-draft-name">{suggestStudioProjectName(mode, draft)}<span>Prototype</span></div>
-        <div className="studio-account"><CreditsPill /><UserPill name={user?.name} email={user?.email} plan={user?.plan} onSignOut={logout} /></div>
+        <div className="studio-account"><CreditsPill /><UserPill name={user?.name} email={user?.email} plan={user?.plan} role={user?.role} onSignOut={logout} /></div>
       </header>
 
       {stage !== 'building' && <ModeTabs mode={mode} onChange={setNextMode} />}
