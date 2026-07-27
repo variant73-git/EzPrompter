@@ -324,6 +324,69 @@ describe('useNativeMotionController', () => {
     window.removeEventListener('uncraft:motion-diagnostic', diagnostic);
   });
 
+  it('composes sequential direct transform components from the acknowledged runtime selection', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: {
+          title: 'Transform fixture',
+          supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+          ...V2_CONTEXT,
+        },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'selection-changed', {
+      element: {
+        id: 'hero',
+        label: 'Hero',
+        styles: { transform: 'none', transformOrigin: '50% 50%' },
+        motion: [],
+      },
+    })));
+
+    act(() => result.current.commands.applyStyle('translateX', '18px', '0px'));
+    const translate = frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .findLast((message) => message.type === 'apply-transaction');
+    expect(translate.payload.transaction.patches[0]).toMatchObject({
+      kind: 'style',
+      property: 'transform',
+      value: 'translateX(18px)',
+    });
+
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', {
+      transaction: translate.payload.transaction,
+      element: {
+        id: 'hero',
+        label: 'Hero',
+        styles: { transform: 'matrix(1, 0, 0, 1, 18, 0)', transformOrigin: '50% 50%' },
+        motion: [],
+      },
+    }, translate.requestId)));
+    await waitFor(() => expect(result.current.selected.styles.transform).toBe('matrix(1, 0, 0, 1, 18, 0)'));
+
+    act(() => result.current.commands.applyStyle('rotate', '7deg', '0deg'));
+    const rotate = frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .findLast((message) => message.type === 'apply-transaction');
+    expect(rotate.payload.transaction.patches[0]).toMatchObject({
+      kind: 'style',
+      property: 'transform',
+      before: 'matrix(1, 0, 0, 1, 18, 0)',
+      value: 'matrix(0.992546, 0.121869, -0.121869, 0.992546, 18, 0)',
+    });
+  });
+
   it('resumes and replays the server draft after a browser reload', async () => {
     const frame = runtimeFrame();
     const iframeRef = createRef();

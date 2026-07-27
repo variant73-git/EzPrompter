@@ -3135,11 +3135,25 @@ function nativeMotionRuntimeBridge() {
     });
   }
 
+  function describedTransactionElement(transaction) {
+    const selectedElement = findElement(selectedId);
+    if (!selectedElement) return null;
+    const affectedIds = new Set((transaction?.patches || []).map((patch) => patch?.elementId).filter(Boolean));
+    const activeElementId = ensureElementId(selectedElement);
+    if (affectedIds.size && !affectedIds.has(activeElementId)) return null;
+    return describe(selectedElement);
+  }
+
   function commitTransaction(message, transaction, operation = 'apply') {
     try {
       const acknowledged = applyAtomicTransaction(transaction);
       committedTransactions.set(acknowledged.id, acknowledged);
-      reply(message, 'transaction-committed', { transaction: acknowledged, operation });
+      const element = describedTransactionElement(acknowledged);
+      reply(message, 'transaction-committed', {
+        transaction: acknowledged,
+        operation,
+        ...(element ? { element } : {}),
+      });
     } catch (error) {
       rejectTransaction(message, transaction?.id, error);
     }

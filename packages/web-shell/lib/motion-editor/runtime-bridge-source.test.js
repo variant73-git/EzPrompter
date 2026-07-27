@@ -1857,6 +1857,8 @@ describe('native motion runtime bridge', () => {
   it('captures runtime before values, commits atomically, and replays duplicate request IDs idempotently', () => {
     document.body.innerHTML = '<main><div data-uncraft-id="el-a" style="opacity: 1"></div></main>';
     const runtime = bootV2Runtime();
+    document.querySelector('[data-uncraft-id="el-a"]')
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     const payload = {
       transaction: {
         id: 'tx-commit',
@@ -1874,6 +1876,10 @@ describe('native motion runtime bridge', () => {
     const committed = runtime.messages.filter((message) => message.type === 'transaction-committed');
     expect(committed).toHaveLength(2);
     expect(committed[0].payload.transaction.patches[0]).toMatchObject({ before: '1', value: '0.4' });
+    expect(committed[0].payload.element).toMatchObject({
+      id: 'el-a',
+      styles: { opacity: '0.4' },
+    });
     expect(committed[1].payload).toEqual(committed[0].payload);
     runtime.restore();
   });
