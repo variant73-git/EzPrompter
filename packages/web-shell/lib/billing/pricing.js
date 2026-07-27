@@ -6,7 +6,11 @@
  * free/meterOnly = charge 0 (usage still recorded).
  * Longest-prefix match: 'extract.clone' beats 'extract'.
  */
+// Fixed customer price for one successful, explicit live-reference conversion.
+export const CLONE_EDIT_CREDIT_ESTIMATE = 275;
+
 export const OP_PRICING = {
+  'clone.edit':         { flat: CLONE_EDIT_CREDIT_ESTIMATE },
   'compose':            { mult: 3 },
   'extract':            { mult: 3 },
   'extract.clone':      { mult: 4 },
@@ -52,6 +56,7 @@ export const OP_ESTIMATES = {
   'compose': 75,
   'transplant': 75,
   'edit': 50,
+  'clone.edit': CLONE_EDIT_CREDIT_ESTIMATE,
   'reconstruct': 200,
   'image.generate.openai': 100,
   'image.generate.gemini': 20,

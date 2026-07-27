@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../../lib/auth.js', () => ({
-  requireUser: vi.fn(async () => ({ user: { id: 42 } })),
+  requireUser: vi.fn(async () => ({ user: { id: 42, plan: 'pro' } })),
 }));
 
 const sqlMock = vi.fn();
@@ -11,6 +11,7 @@ vi.mock('../../../../../lib/reconstruction-policy.js', () => ({ shouldReconstruc
 vi.mock('../../../../../lib/deferred-reconstruction.js', () => ({ reconstructSiteNode: vi.fn() }));
 
 const { reconstructSiteNode } = await import('../../../../../lib/deferred-reconstruction.js');
+const { requireUser } = await import('../../../../../lib/auth.js');
 const { POST } = await import('./route.js');
 
 const params = { params: Promise.resolve({ id: 'node-1' }) };
@@ -26,6 +27,7 @@ const descriptor = {
 };
 
 beforeEach(() => {
+  requireUser.mockResolvedValue({ user: { id: 42, plan: 'pro' } });
   sqlMock.mockReset();
   sqlMock.mockResolvedValue([{
     id: 'node-1', kind: 'site', meta: { animatedDetected: true }, board_id: 'board-1',
@@ -36,6 +38,22 @@ beforeEach(() => {
 });
 
 describe('POST /api/nodes/[id]/reconstruct native result', () => {
+  it('fails closed before reconstruction for a free plan', async () => {
+    requireUser.mockResolvedValueOnce({ user: { id: 42, plan: 'free' } });
+    const response = await POST(new Request('http://test/api/nodes/node-1/reconstruct', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': 'reconstruct-free' },
+    }), params);
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'paid_plan_required',
+      feature: 'clone_edit',
+    });
+    expect(sqlMock).not.toHaveBeenCalled();
+    expect(reconstructSiteNode).not.toHaveBeenCalled();
+  });
+
   it('returns an explicit registered native bundle without pretending it is Iter9 HTML', async () => {
     reconstructSiteNode.mockResolvedValue({
       ok: true,
@@ -54,6 +72,9 @@ describe('POST /api/nodes/[id]/reconstruct native result', () => {
     expect(response.status).toBe(200);
     expect(json).toMatchObject({ kind: 'native', snapshotSource: 'native-bundle', bundleDescriptor: descriptor });
     expect(json).not.toHaveProperty('html');
-    expect(reconstructSiteNode).toHaveBeenCalledWith(expect.objectContaining({ idemKey: 'reconstruct-1' }));
+    expect(reconstructSiteNode).toHaveBeenCalledWith(expect.objectContaining({
+      idemKey: 'reconstruct-1',
+      op: 'clone.edit',
+    }));
   });
 });

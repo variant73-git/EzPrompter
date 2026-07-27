@@ -13,8 +13,12 @@ import {
   PanelRightOpen,
   Pencil,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 import { originColor } from '../lib/node-origin.js';
+import { canUseCloneEdit } from '../lib/clone-edit-access.js';
+import { CLONE_EDIT_CREDIT_ESTIMATE } from '../lib/billing/pricing.js';
+import { isLiveUrlReference } from '../lib/url-reference.js';
 
 // The canvas inspector is intentionally contextual. With no selection it
 // disappears and returns the space to the canvas. With a selection it offers
@@ -207,21 +211,36 @@ function CodePreview({ node }) {
   );
 }
 
-function WebsiteActions({ node, onEditSite, busy = false }) {
+function WebsiteActions({ node, onEditSite, onUpgradeRequired, plan, busy = false }) {
   // Open in Browser needs a viewable preview: a snapshot to render, or an
   // origin URL the preview route can redirect to. Disabled while busy
   // (capturing/cloning) OR when neither exists — a blank "Connect to…" node
   // would otherwise open a guaranteed 404 (adversarial review Codex #3).
   const openDisabled = busy || (!node.current_snapshot_id && !node.origin_url);
+  const cloneRequired = isLiveUrlReference(node);
+  const cloneAllowed = canUseCloneEdit(plan);
+  const cloneLocked = cloneRequired && !cloneAllowed;
+  const cloneLabel = cloneLocked
+    ? `Clone & Edit, paid plans only, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`
+    : `Clone & Edit, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`;
   return (
     <div className="cinsp-primary-action">
       <div>
         <span>Website</span>
         <p>Open the visual editor or inspect the current result in a clean browser tab.</p>
       </div>
-      <button type="button" onClick={onEditSite}>
-        <Pencil aria-hidden="true" />
-        Clone &amp; Edit
+      <button
+        type="button"
+        className={cloneRequired ? 'cinsp-clone-edit' : undefined}
+        data-subscriber-feature={cloneRequired ? (cloneLocked ? 'locked' : 'available') : undefined}
+        aria-label={cloneRequired ? cloneLabel : 'Edit'}
+        title={cloneLocked ? 'Available on paid plans' : undefined}
+        disabled={busy}
+        onClick={cloneLocked ? onUpgradeRequired : onEditSite}
+      >
+        {cloneRequired ? <Zap aria-hidden="true" /> : <Pencil aria-hidden="true" />}
+        <span>{cloneRequired ? 'Clone & Edit' : 'Edit'}</span>
+        {cloneRequired && <span className="cinsp-clone-cost">{CLONE_EDIT_CREDIT_ESTIMATE} credits</span>}
       </button>
       {openDisabled ? (
         <span className="cinsp-open-browser cinsp-open-browser-disabled" aria-disabled="true" title={busy ? 'Available once capture finishes' : 'No preview yet'}>
@@ -238,7 +257,14 @@ function WebsiteActions({ node, onEditSite, busy = false }) {
   );
 }
 
-export default function CanvasInspector({ node, onEditSite, onFrameChange, busy = false }) {
+export default function CanvasInspector({
+  node,
+  onEditSite,
+  onUpgradeRequired,
+  onFrameChange,
+  plan = 'free',
+  busy = false,
+}) {
   const [collapsed, setCollapsed] = useState(false);
   const [tab, setTab] = useState('properties');
 
@@ -298,7 +324,15 @@ export default function CanvasInspector({ node, onEditSite, onFrameChange, busy 
         <span className="cinsp-selection-name" title={nodeLabel(node)}>{nodeLabel(node)}</span>
       </div>
 
-      {node.kind === 'site' && <WebsiteActions node={node} onEditSite={onEditSite} busy={busy} />}
+      {node.kind === 'site' && (
+        <WebsiteActions
+          node={node}
+          onEditSite={onEditSite}
+          onUpgradeRequired={onUpgradeRequired}
+          plan={plan}
+          busy={busy}
+        />
+      )}
 
       {tab === 'properties'
         ? <Overview node={framedNode} />

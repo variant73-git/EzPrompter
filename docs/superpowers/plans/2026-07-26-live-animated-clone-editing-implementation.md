@@ -939,7 +939,7 @@ The browser UI receives only controls with `ready` or approved `disabled` status
 
 **Purpose:** Offer direct controls where reliable, generate custom controls only when needed, and never show a failed binding.
 
-**Decision gate before model calls:** Approve the model/provider, maximum cost, billing/credit treatment, retention policy, and timeout budget for one explicit Generate controls request. Do not wire a paid model call until this is decided.
+**Decision gate resolved 2026-07-26:** Controls are generated automatically as part of the paid-plan-only `Clone & Edit` conversion; they are not a separate user option. Use OpenAI Responses API with `gpt-5.6-terra`, reasoning `medium`, Structured Outputs, `store: false`, one automatic repair pass, a US$0.25 provider-cost ceiling for the custom-control generation stage, and a 90-second end-to-end operation budget. Hold/show the fixed 275-credit customer price at the moment of intent and settle it once for one successful idempotent conversion. Persist only the accepted manifest, provider usage, and sanitized diagnostics. Do not persist raw prompts/responses or send credentials, cookies, localStorage, or unrelated page text.
 
 **Create:**
 
@@ -966,7 +966,7 @@ The browser UI receives only controls with `ready` or approved `disabled` status
 
 - [ ] Direct mappings appear automatically without generation.
 - [ ] Known-library and declarative controls appear automatically only when their bindings validate.
-- [ ] The explicit generation action appears only when useful editability remains and direct mapping is insufficient.
+- [ ] Custom generation runs automatically inside `Clone & Edit` only when useful editability remains and direct mapping is insufficient; no generation action appears in the UI.
 - [ ] One request normally proposes approximately three useful controls and never exposes more than five per animation or group.
 - [ ] Generated controls default to `Animation` scope; Group or Site scope is accepted only when every affected target/capability is declared and validated.
 - [ ] The initial catalog accepts only slider plus numeric entry, toggle, curated select, curated color, and the existing easing curve.
@@ -984,7 +984,7 @@ The browser UI receives only controls with `ready` or approved `disabled` status
 - [ ] Accepted controls persist with stable IDs and reload without another model call.
 - [ ] A compatible descendant snapshot retains the stable control ID after semantic-target and binding revalidation.
 - [ ] An unrelated text/style change does not invalidate a control merely because the complete site hash changed.
-- [ ] Subsequent repair/regeneration attempts happen automatically and do not show user choices.
+- [ ] The single allowed repair attempt happens automatically and does not show user choices.
 - [ ] A custom adapter executes only inside the sandboxed runtime with a narrow capability API.
 - [ ] Host UI code never evaluates generated adapter source.
 
@@ -1008,7 +1008,12 @@ The browser UI receives only controls with `ready` or approved `disabled` status
 - [ ] Persist the accepted manifest against bundle and runtime fingerprints.
 - [ ] On snapshot/runtime change, follow compatible lineage by stable identity, resolve semantic target and relevant runtime capabilities again, rebuild the binding, rerun effect/safety/restore validation, and only then reapply the persisted value.
 - [ ] Keep the stable identity when migration succeeds. Enter automatic repair when it fails, without creating user history.
-- [ ] Present generation as one explicit initial action. Do not expose Retry, Repair, or Regenerate afterward.
+- [ ] Start generation automatically within the one `Clone & Edit` operation. Do not expose Generate controls, Retry, Repair, or Regenerate.
+- [ ] Keep the complete custom-controls layer enabled for this Task. Do not implement the deferred modular flag yet.
+- [ ] Reserve the future server-owned `UNCRAFT_NATIVE_MOTION_CUSTOM_CONTROLS_ENABLED` boundary so it can later disable only model-generated/custom adapters while preserving Direct, Known Library, Declarative Adapter, accepted-manifest reading, and already-persisted custom manifests.
+- [ ] Gate the conversion on the server to paid plans (`pro`, `ultimate`, `enterprise`) and fail closed for unknown plans; the client state is explanatory, not authoritative.
+- [ ] Reuse one idempotency key across reconstruction, generation, validation, repair, persistence, and settlement. Charge once only after a successful conversion; refund the hold on failure; reopening/editing/saving/restoring an existing clone does not charge again.
+- [ ] Enforce the provider-cost and wall-clock ceilings server-side. Do not silently fall back to another model/provider or expose a technical provider choice.
 
 **Verification:**
 
@@ -1016,7 +1021,7 @@ The browser UI receives only controls with `ready` or approved `disabled` status
 - [ ] Deliberately generate invalid bindings and prove none appear in the normal UI.
 - [ ] Reload and restore a snapshot without re-running generation.
 
-**Exit gate:** Custom controls are useful, reversible, fingerprinted, and invisible until validated.
+**Exit gate:** Paid-plan `Clone & Edit` automatically yields useful, reversible, fingerprinted controls that remain invisible until validated, with one idempotent charge and no separate generation UX.
 
 ---
 

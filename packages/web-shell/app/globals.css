@@ -8872,6 +8872,57 @@ body.rb-ed-left-collapsed .canvas-editor-user .user-pill-avatar {
 }
 .cinsp-primary-action button:hover,
 .cinsp-code-edit:hover { background: #FFFFFF; }
+.cinsp-primary-action button.cinsp-clone-edit {
+  position: relative;
+  isolation: isolate;
+  justify-content: flex-start;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  background:
+    linear-gradient(105deg,
+      oklch(91% 0.11 305) 0%,
+      oklch(92% 0.10 242) 24%,
+      oklch(94% 0.11 174) 50%,
+      oklch(94% 0.12 92) 75%,
+      oklch(91% 0.12 18) 100%);
+  background-size: 140% 100%;
+  color: #171716;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 0 0 1px rgba(142, 174, 248, 0.12),
+    0 5px 16px rgba(93, 112, 201, 0.22);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.cinsp-primary-action button.cinsp-clone-edit:hover {
+  background-position: 100% 0;
+  filter: saturate(1.08) brightness(1.03);
+}
+.cinsp-primary-action button.cinsp-clone-edit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.cinsp-primary-action button.cinsp-clone-edit[data-subscriber-feature='locked']::after {
+  content: 'Paid';
+  margin-left: auto;
+  padding: 3px 5px;
+  border: 1px solid rgba(23, 23, 22, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.36);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.cinsp-clone-cost {
+  margin-left: auto;
+  color: rgba(23, 23, 22, 0.72);
+  font-size: 9px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cinsp-primary-action button.cinsp-clone-edit { transition: none; }
+}
 .cinsp-primary-action a,
 .cinsp-primary-action .cinsp-open-browser-disabled { margin-top: 6px; border: 1px solid #45443F; background: #292926; color: var(--text-primary); }
 .cinsp-primary-action a:hover { background: #30302D; text-decoration: none; }

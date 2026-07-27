@@ -1,7 +1,7 @@
 # Handoff — Live Animated Clone Editing
 
 **Data:** 2026-07-26
-**Status:** Tasks 1–11 concluídas e verificadas; checkpoint antes da Task 12
+**Status:** Tasks 1–11 concluídas e verificadas; decisão da Task 12 resolvida e pacote de execução preparado
 **Checkout:** `/Users/adilsonporto/Desktop/IA/Uncraft`
 **Branch:** `codex/live-animated-clone-editing`
 **Base:** `main` em `ec297fffd8303e512c8ce3a910930cc2d51b3635`
@@ -1214,7 +1214,7 @@ bundles, snapshots e edit sessions das Tasks anteriores permanecem válidos.
 
 ## Próxima fatia
 
-Parar no checkpoint antes da Task 12. A próxima etapa implementa a ladder de
-controles e a geração validada de custom controls. Antes de qualquer chamada de
-modelo pago, decidir explicitamente provider/modelo, custo máximo, tratamento de
-billing/créditos, retenção e timeout. Não iniciar essa etapa sem novo checkpoint.
+Parar no checkpoint antes da implementação central da Task 12. A decisão de
+modelo, billing, privacidade, timeout, geração automática e acesso pago já foi
+resolvida. O pacote completo e autoritativo para iniciar a próxima sessão está em
+`docs/superpowers/handoffs/2026-07-26-task-12-full-custom-controls-handoff.md`.

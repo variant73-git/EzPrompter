@@ -1,6 +1,6 @@
 // lib/billing/pricing.test.js
 import { describe, it, expect } from 'vitest';
-import { roundCredits, creditsForOperation, estimateOp, estimateChain, pricingFor } from './pricing.js';
+import { CLONE_EDIT_CREDIT_ESTIMATE, roundCredits, creditsForOperation, estimateOp, estimateChain, pricingFor } from './pricing.js';
 
 describe('roundCredits', () => {
   it('rounds UP to multiples of 5 with a floor of 5', () => {
@@ -25,6 +25,10 @@ describe('creditsForOperation', () => {
   it('static site clone is flat 25 regardless of measured cost', () => {
     expect(creditsForOperation({ op: 'extract.html', totalMicrocents: 0 })).toBe(25);
   });
+  it('charges Clone & Edit once at the exact displayed price', () => {
+    expect(creditsForOperation({ op: 'clone.edit', totalMicrocents: 0 })).toBe(CLONE_EDIT_CREDIT_ESTIMATE);
+    expect(creditsForOperation({ op: 'clone.edit', totalMicrocents: 9_999_999 })).toBe(CLONE_EDIT_CREDIT_ESTIMATE);
+  });
   it('chat and capture are free', () => {
     expect(creditsForOperation({ op: 'chat', totalMicrocents: 5_000 })).toBe(0);
     expect(creditsForOperation({ op: 'capture', totalMicrocents: 0 })).toBe(0);
@@ -39,6 +43,8 @@ describe('estimates', () => {
   it('single-op estimates match the spec table', () => {
     expect(estimateOp('extract.clone')).toBe(250);
     expect(estimateOp('compose')).toBe(75);
+    expect(CLONE_EDIT_CREDIT_ESTIMATE).toBe(275);
+    expect(estimateOp('clone.edit')).toBe(CLONE_EDIT_CREDIT_ESTIMATE);
     expect(estimateOp('reconstruct')).toBe(200);
   });
   it('chain estimate is the sum', () => {

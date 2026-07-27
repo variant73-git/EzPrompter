@@ -27,7 +27,7 @@ const settleMock = vi.fn(async ({ chargeCredits }) => ({ balanceAfter: 500 - cha
 
 vi.mock('../../lib/db.js', () => ({ db: async () => currentSql, sql: (...a) => currentSql(...a) }));
 vi.mock('../../lib/auth.js', () => ({
-  requireUser: async () => ({ user: { id: 1 }, error: null }),
+  requireUser: async () => ({ user: { id: 1, plan: 'pro' }, error: null }),
   hashPassword: async () => 'hashed',
   createToken: () => 'tok',
   sessionCookieHeader: () => 'uncraft_session=tok; Path=/',
@@ -139,7 +139,12 @@ describe('POST /api/nodes/[id]/reconstruct billing wrapper (Task 15)', () => {
     const json = await res.json();
     expect(res.status).toBe(200);
     expect(json.ok).toBe(true);
-    expect(holdMock).toHaveBeenCalledWith(expect.objectContaining({ credits: 200 })); // reconstruct estimate
+    expect(holdMock).toHaveBeenCalledWith(expect.objectContaining({ credits: 275 }));
+    expect(settleMock).toHaveBeenCalledWith(expect.objectContaining({
+      holdCredits: 275,
+      chargeCredits: 275,
+      op: 'clone.edit',
+    }));
   });
 
   it('returns 402 when the hold fails', async () => {
@@ -150,7 +155,7 @@ describe('POST /api/nodes/[id]/reconstruct billing wrapper (Task 15)', () => {
     const res = await reconstructPost(makeRequest(), runParams);
     const json = await res.json();
     expect(res.status).toBe(402);
-    expect(json).toMatchObject({ error: 'insufficient_credits', estimate: 200, balance: 5 });
+    expect(json).toMatchObject({ error: 'insufficient_credits', estimate: 275, balance: 5 });
   });
 });
 

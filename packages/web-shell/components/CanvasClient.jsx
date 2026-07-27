@@ -34,6 +34,7 @@ import { findSectionTerminals, planIncrementalRun, planRunFromNode, nodeInputSig
 import { buildNodesClipboardPayload, parseNodesClipboardText, payloadToPasteItems } from '../lib/node-clipboard.js';
 import { estimateChain } from '../lib/billing/pricing.js';
 import { needsDeferredReconstruction } from '../lib/reconstruction-policy.js';
+import { canUseCloneEdit } from '../lib/clone-edit-access.js';
 import { clampToViewport } from '../lib/menu-position.js';
 import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
 import { createWheelBatcher } from '../lib/wheel-batch.js';
@@ -4397,6 +4398,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     if (willEdit) {
       const node = nodes.find((n) => n.id === nodeId);
       if (!node || editPreparationRef.current.has(nodeId)) return;
+      if (isLiveUrlReference(node) && !canUseCloneEdit(user?.plan)) {
+        setPlansOpen(true);
+        return;
+      }
       const editorKind = editorKindForNode(node);
       if (editorKind === NODE_EDITOR_KIND.NATIVE) {
         enterEditMode(node, editorKind);
@@ -6104,6 +6109,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
       <CanvasInspector
         node={selectedNode}
+        plan={user?.plan}
         // Busy = the same predicate the progress ring uses (active run,
         // generating, or loading), plus an unpersisted temp placeholder whose
         // /preview route has no row yet — "Open in Browser" is disabled then.
@@ -6114,6 +6120,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           || String(selectedNode.id).startsWith('temp-')
         ))}
         onEditSite={() => selectedSiteNode && handleEditingToggle(selectedSiteNode.id, true)}
+        onUpgradeRequired={() => setPlansOpen(true)}
         onFrameChange={(id, patch) => {
           // Same path a drag/resize commit takes: optimistic local update +
           // debounced-enough single PATCH (field commits are discrete).
@@ -6851,7 +6858,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         }}
         onCancel={() => setInsufficientCredits(null)}
       />
-      <PlansModal open={plansOpen} onClose={() => setPlansOpen(false)} />
+      <PlansModal open={plansOpen} currentPlan={user?.plan} onClose={() => setPlansOpen(false)} />
 
       <ConfirmModal
         open={!!dropRejects}

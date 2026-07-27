@@ -5,6 +5,7 @@ import { InsufficientCreditsError, OperationInProgressError } from '../../../../
 import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
 import { reconstructSiteNode } from '../../../../../lib/deferred-reconstruction.js';
 import { shouldReconstructForAction } from '../../../../../lib/reconstruction-policy.js';
+import { canUseCloneEdit } from '../../../../../lib/clone-edit-access.js';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -16,6 +17,12 @@ export const maxDuration = 300;
 export async function POST(request, { params }) {
   const { user, error } = await requireUser(request);
   if (error) return error;
+  if (!canUseCloneEdit(user?.plan)) {
+    return NextResponse.json(
+      { error: 'paid_plan_required', feature: 'clone_edit' },
+      { status: 403 },
+    );
+  }
 
   const { id } = await params;
   const sql = await db();
@@ -55,7 +62,14 @@ export async function POST(request, { params }) {
   if (!rate.allowed) return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
 
   try {
-    const result = await reconstructSiteNode({ sql, userId: user.id, node, reason: 'edit', idemKey });
+    const result = await reconstructSiteNode({
+      sql,
+      userId: user.id,
+      node,
+      reason: 'edit',
+      idemKey,
+      op: 'clone.edit',
+    });
     const snapshotSource = result.kind === 'native' ? 'native-bundle' : 'reconstruct';
     return NextResponse.json({ ...result, snapshotSource, node: { id: node.id } });
   } catch (e) {

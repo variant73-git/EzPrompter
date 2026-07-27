@@ -20,6 +20,15 @@ describe('PlansModal', () => {
     expect(screen.getByText('6,000 credits every month')).toBeTruthy();
   });
 
+  it('marks the actual current paid plan instead of always marking Free', () => {
+    render(<PlansModal open currentPlan="pro" onClose={() => {}} />);
+    const proCard = screen.getByText('Pro').closest('.plans-modal-card');
+    const freeCard = screen.getByText('Free').closest('.plans-modal-card');
+    expect(proCard).toHaveClass('current');
+    expect(proCard).toHaveTextContent('Current plan');
+    expect(freeCard).not.toHaveClass('current');
+  });
+
   it('shows the waitlist toast when a CTA is clicked', () => {
     render(<PlansModal open onClose={() => {}} />);
     const ctas = screen.getAllByText('Coming soon');

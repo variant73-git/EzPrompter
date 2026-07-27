@@ -48,11 +48,12 @@ export async function reconstructSiteNode({
   node,
   reason,
   idemKey = null,
+  op = 'reconstruct',
   producer = reconstructPage,
   bundleStore = null,
 }) {
   const { result, credits, balanceAfter } = await runBilledOperation(
-    { sql, userId, op: 'reconstruct', boardId: node.board_id, nodeId: node.id, idemKey },
+    { sql, userId, op, boardId: node.board_id, nodeId: node.id, idemKey },
     async () => {
       const materialized = await materializeReconstructionOutput(
         await producer(node.origin_url),
