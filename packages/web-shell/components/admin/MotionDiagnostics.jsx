@@ -214,6 +214,8 @@ export default function MotionDiagnostics() {
         <div><dt>Unresolved</dt><dd>{summary.failed}</dd></div>
       </dl>
 
+      {view === 'smoke' && <SmokeDecisionStatus summary={summary} />}
+
       {state === 'loading' && <SkeletonRows />}
       {state === 'error' && (
         <div className={styles.message} role="alert">
@@ -269,6 +271,25 @@ export default function MotionDiagnostics() {
         </>
       )}
       </div>
+    </section>
+  );
+}
+
+function SmokeDecisionStatus({ summary }) {
+  const total = Number(summary.total || 0);
+  const disabled = Number(summary.disabled || 0);
+  const disabledIncidence = total > 0 ? `${Math.round((disabled / total) * 100)}%` : 'Awaiting evidence';
+  return (
+    <section className={styles.smokeDecision} aria-labelledby="smoke-decision-heading">
+      <div>
+        <p>Evidence checkpoint</p>
+        <h2 id="smoke-decision-heading">Presentation decision approved</h2>
+        <span>Controls remain custom. Exhausted candidates remain visible but disabled, and no candidate has a common or global presentation.</span>
+      </div>
+      <dl>
+        <div><dt>Observed disabled incidence</dt><dd>{disabledIncidence}</dd></div>
+        <div><dt>Manual review</dt><dd>Approved</dd></div>
+      </dl>
     </section>
   );
 }

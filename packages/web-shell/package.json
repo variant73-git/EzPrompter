@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
+    "smoke:motion-controls": "node scripts/smoke-motion-controls.mjs",
     "evals:gen": "node evals/gen-prompt.mjs",
     "evals": "node evals/gen-prompt.mjs && promptfoo eval -c evals/promptfooconfig.yaml",
     "evals:view": "promptfoo view"

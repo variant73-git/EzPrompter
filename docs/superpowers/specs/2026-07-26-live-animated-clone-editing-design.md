@@ -575,6 +575,34 @@ The classification remains empirical:
   after representative smoke-test evidence exists;
 - no fixed decision threshold is asserted by this specification.
 
+### Task 15 evidence amendment — approved 2026-07-27
+
+The product owner reviewed the Task 15 smoke evidence and approved the
+following presentation decision for the current product:
+
+- the available evidence is insufficient to promote any candidate control to
+  a common, global, or universal presentation;
+- candidate cross-site controls remain classified as custom;
+- a control that exhausts automatic recovery remains visible but disabled;
+- the disabled control keeps the tooltip
+  `This website doesn't support this control.`;
+- no universality percentage is hardcoded in implementation.
+
+The reviewed matrix covered 15 candidate/device cases across desktop, tablet,
+and mobile. Nine passed initial validation, three recovered automatically, and
+three intentionally stale bindings exhausted recovery and were disabled. The
+reviewed false-positive rate was zero. Because the required fault fixture
+deliberately influences the observed 20% disabled incidence, and the two
+real-clone controls were harness sentinels rather than complete semantic
+controls, those figures validate the harness and safe fallback but do not
+establish real-world universality.
+
+Any future proposal to hide exhausted controls or promote a control beyond
+custom requires a separate approved amendment. That proposal must pre-register
+the real-clone distribution, semantic success threshold per control and site,
+maximum exhausted and false-positive rates, and the resulting presentation
+policy before implementation changes.
+
 Non-persistent session commands such as play, pause, and scrub use the same
 safety principles, but they are tested as editor commands rather than node
 patches.
@@ -730,8 +758,10 @@ Current fallback tooltip for a disabled control:
 This website doesn't support this control.
 ```
 
-The disabled fallback is provisional. Smoke-test evidence will decide whether
-unsupported controls remain disabled or are hidden entirely.
+Task 15 approved the disabled fallback for the current product. Unsupported
+controls remain visible but disabled after recovery is exhausted. Hiding them
+requires a later evidence-based amendment; diagnostics must be preserved either
+way.
 
 ### Runtime loss
 
@@ -1002,18 +1032,18 @@ implementation from this specification alone.
 
 ## Explicitly deferred decisions
 
-The following decisions require evidence or later implementation design and are
-not silently resolved by this specification:
+The Task 15 evidence amendment resolves the current common/global and
+hide-versus-disable presentation questions: no candidate is promoted, and
+exhausted controls remain disabled. The following decisions still require
+evidence or later implementation design and are not silently resolved by this
+specification:
 
-1. Which candidate site-level controls, if any, qualify as universal.
-2. The smoke-test percentage and distribution threshold for that label.
-3. Whether an unsupported control is hidden or remains disabled after those
-   smoke tests.
-4. The exact catalog of candidate site-level appearance and motion controls.
-5. The physical storage schema and API shape for manifests and diagnostics.
-6. Telemetry retention, access-control implementation, and production consent
+1. The exact catalog of candidate site-level appearance and motion controls.
+2. The evidence design for any future proposal to promote or hide controls.
+3. The physical storage schema and API shape for manifests and diagnostics.
+4. Telemetry retention, access-control implementation, and production consent
    policy.
-7. The implementation sequence, ownership map, migrations, and rollout plan.
+5. The implementation sequence, ownership map, migrations, and rollout plan.
 
 ## Specification approval gate
 

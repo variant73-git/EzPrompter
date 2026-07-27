@@ -24,6 +24,41 @@ export const RECOVERY_LIMITS = Object.freeze({
   jitterRatio: 0.2,
 });
 
+export const EXHAUSTED_CONTROL_PRESENTATIONS = Object.freeze({
+  DISABLED: 'disabled',
+  HIDDEN: 'hidden',
+});
+
+// Task 15 approved the disabled presentation for the current product. This
+// resolver prevents a later hidden policy from shipping without a separate
+// approved decision linked to its evidence runs.
+export function resolveExhaustedControlPresentation({
+  requested = EXHAUSTED_CONTROL_PRESENTATIONS.DISABLED,
+  decision = null,
+} = {}) {
+  const evidenceRunIds = Array.isArray(decision?.evidenceRunIds)
+    ? decision.evidenceRunIds.filter((value) => typeof value === 'string' && value)
+    : [];
+  const approved = requested === EXHAUSTED_CONTROL_PRESENTATIONS.HIDDEN
+    && decision?.approved === true
+    && typeof decision?.decisionId === 'string'
+    && Boolean(decision.decisionId)
+    && evidenceRunIds.length > 0;
+  if (!approved) {
+    return {
+      presentation: EXHAUSTED_CONTROL_PRESENTATIONS.DISABLED,
+      approved: false,
+      evidenceRunIds,
+    };
+  }
+  return {
+    presentation: EXHAUSTED_CONTROL_PRESENTATIONS.HIDDEN,
+    approved: true,
+    decisionId: decision.decisionId,
+    evidenceRunIds,
+  };
+}
+
 const SEQUENCES = Object.freeze({
   [FAILURE_CLASSES.TRANSIENT_TRANSPORT]: [
     RECOVERY_ACTIONS.RETRY_TRANSPORT,

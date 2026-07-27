@@ -40,6 +40,11 @@ describe('MotionDiagnostics', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'Failures' }));
     await waitFor(() => expect(fetcher.mock.calls.at(-1)[0]).toMatch(/view=failures/));
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Smoke tests' }));
+    await waitFor(() => expect(fetcher.mock.calls.at(-1)[0]).toMatch(/view=smoke/));
+    expect(screen.getByRole('heading', { name: 'Presentation decision approved' })).toBeTruthy();
+    expect(screen.getByText('Manual review').nextSibling.textContent).toBe('Approved');
   });
 
   it('keeps the private surface useful when ingestion has no events yet', async () => {

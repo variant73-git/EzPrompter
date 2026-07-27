@@ -37,6 +37,9 @@ const FAILURE_CODES = Object.freeze({
   effect_mismatch: FAILURE_CLASSES.VALIDATION_NO_EFFECT,
   non_deterministic: FAILURE_CLASSES.VALIDATION_NO_EFFECT,
   validation_failed: FAILURE_CLASSES.VALIDATION_NO_EFFECT,
+  visible_evidence_missing: FAILURE_CLASSES.VALIDATION_NO_EFFECT,
+  restore_evidence_missing: FAILURE_CLASSES.REJECTED_MUTATION,
+  semantic_promise_incomplete: FAILURE_CLASSES.UNSUPPORTED_CAPABILITY,
 
   capability_missing: FAILURE_CLASSES.UNSUPPORTED_CAPABILITY,
   unsupported_capability: FAILURE_CLASSES.UNSUPPORTED_CAPABILITY,

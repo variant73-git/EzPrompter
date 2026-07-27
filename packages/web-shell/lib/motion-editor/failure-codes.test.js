@@ -13,6 +13,9 @@ describe('motion editor failure codes', () => {
     ['fingerprint_mismatch', FAILURE_CLASSES.RUNTIME_FINGERPRINT_CHANGE],
     ['write_failed', FAILURE_CLASSES.REJECTED_MUTATION],
     ['no_effect', FAILURE_CLASSES.VALIDATION_NO_EFFECT],
+    ['visible_evidence_missing', FAILURE_CLASSES.VALIDATION_NO_EFFECT],
+    ['restore_evidence_missing', FAILURE_CLASSES.REJECTED_MUTATION],
+    ['semantic_promise_incomplete', FAILURE_CLASSES.UNSUPPORTED_CAPABILITY],
     ['capability_missing', FAILURE_CLASSES.UNSUPPORTED_CAPABILITY],
     ['runtime_exception', FAILURE_CLASSES.FATAL_RUNTIME],
   ])('classifies %s as %s', (code, expected) => {

@@ -170,6 +170,29 @@
 .summary dt { color: var(--text-muted); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; }
 .summary dd { margin: 0; color: var(--text-primary); font-size: 19px; font-weight: 620; font-variant-numeric: tabular-nums; }
 
+.smokeDecision {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 32px;
+  align-items: center;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border-frosted);
+}
+.smokeDecision p {
+  margin: 0 0 5px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.smokeDecision h2 { margin: 0; font-size: 13px; font-weight: 650; }
+.smokeDecision span { display: block; max-width: 72ch; margin-top: 5px; color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
+.smokeDecision dl { display: flex; gap: 28px; margin: 0; }
+.smokeDecision dl div { display: grid; gap: 4px; }
+.smokeDecision dt { color: var(--text-muted); font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.smokeDecision dd { margin: 0; color: var(--text-primary); font-size: 11px; font-weight: 620; text-align: right; }
+
 .groupSection,
 .eventSection { padding-top: 28px; }
 .groupSection > header,
@@ -256,6 +279,8 @@
   .exports { justify-content: flex-start; }
   .moreFilters > div { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
   .evidenceRow dl { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+  .smokeDecision { grid-template-columns: 1fr; gap: 14px; }
+  .smokeDecision dd { text-align: left; }
 }
 
 @media (max-width: 600px) {
@@ -272,6 +297,7 @@
   .eventSection th:nth-child(4),
   .eventSection td:nth-child(4) { display: none; }
   .eventActions { align-items: flex-end; flex-direction: column; }
+  .smokeDecision dl { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

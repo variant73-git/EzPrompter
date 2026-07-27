@@ -3,6 +3,7 @@ import {
   CONTROL_LADDER,
   classifyControlCandidates,
   createRuntimeControlValidator,
+  evaluateControlSemanticPromise,
   needsCustomGeneration,
 } from './control-capabilities.js';
 
@@ -153,5 +154,36 @@ describe('control capability ladder', () => {
     }), { bundleId: BUNDLE_ID, runtimeFingerprint: RUNTIME_FINGERPRINT });
     expect(result).toMatchObject({ accepted: false, code: 'fingerprint_mismatch' });
     expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('requires visible and restore evidence in trusted smoke mode', async () => {
+    const transport = vi.fn(async (stage, proposal, context) => {
+      if (stage === 'read') return { ok: true, before: proposal.currentValue };
+      if (stage === 'apply' || stage === 'reapply') {
+        return { ok: true, value: context.value, effect: { changed: true }, mutations: 1 };
+      }
+      return { ok: true, restored: true, value: context.before, leaks: {} };
+    });
+    const validate = createRuntimeControlValidator({ transport, requireVisibleEvidence: true });
+
+    expect(await validate(candidate(), { bundleId: BUNDLE_ID, runtimeFingerprint: RUNTIME_FINGERPRINT }))
+      .toMatchObject({ accepted: false, code: 'visible_evidence_missing', stage: 'effect' });
+  });
+
+  it('requires every declared site target to satisfy the semantic promise', () => {
+    expect(evaluateControlSemanticPromise({
+      control: candidate({
+        scope: 'site',
+        targets: [
+          { semanticTargetId: 'hero', elementId: 'el-hero', motionId: 'motion-hero', property: 'timing.duration' },
+          { semanticTargetId: 'shader', elementId: 'el-shader', motionId: 'motion-shader', property: 'timing.duration' },
+        ],
+      }),
+      evidence: {
+        declaredTargetIds: ['hero', 'shader'],
+        affectedTargetIds: ['hero'],
+        unhandledTargetIds: ['shader'],
+      },
+    })).toMatchObject({ satisfied: false, missingTargetIds: ['shader'] });
   });
 });

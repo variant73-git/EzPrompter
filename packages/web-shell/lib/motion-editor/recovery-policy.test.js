@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  EXHAUSTED_CONTROL_PRESENTATIONS,
   RECOVERY_ACTIONS,
   RECOVERY_LIMITS,
   createRecoveryPolicy,
+  resolveExhaustedControlPresentation,
 } from './recovery-policy.js';
 
 describe('bounded automatic motion recovery', () => {
@@ -87,5 +89,24 @@ describe('bounded automatic motion recovery', () => {
 
     policy.recovered({ code: 'target_missing', controlId: 'control-a' });
     expect(policy.snapshot()).toMatchObject({ runtimeFailures: 0, failures: {} });
+  });
+
+  it('keeps exhausted controls disabled until smoke evidence and an explicit approval exist', () => {
+    expect(resolveExhaustedControlPresentation()).toMatchObject({
+      presentation: EXHAUSTED_CONTROL_PRESENTATIONS.DISABLED,
+      approved: false,
+    });
+    expect(resolveExhaustedControlPresentation({
+      requested: EXHAUSTED_CONTROL_PRESENTATIONS.HIDDEN,
+      decision: { approved: false, evidenceRunIds: ['run-1'] },
+    })).toMatchObject({ presentation: EXHAUSTED_CONTROL_PRESENTATIONS.DISABLED });
+    expect(resolveExhaustedControlPresentation({
+      requested: EXHAUSTED_CONTROL_PRESENTATIONS.HIDDEN,
+      decision: { approved: true, decisionId: 'task-15-owner-approval', evidenceRunIds: ['run-1'] },
+    })).toMatchObject({
+      presentation: EXHAUSTED_CONTROL_PRESENTATIONS.HIDDEN,
+      approved: true,
+      decisionId: 'task-15-owner-approval',
+    });
   });
 });

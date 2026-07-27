@@ -198,6 +198,60 @@ function valuesEqual(left, right) {
   try { return JSON.stringify(left) === JSON.stringify(right); } catch { return false; }
 }
 
+function uniqueIdentifiers(values) {
+  return [...new Set((values || []).filter((value) => typeof value === 'string' && value))];
+}
+
+export function evaluateControlSemanticPromise({ control = {}, evidence = {} } = {}) {
+  const declaredTargetIds = uniqueIdentifiers([
+    ...(control.targets || []).map((target) => target?.semanticTargetId),
+    ...(evidence.declaredTargetIds || []),
+  ]);
+  const affectedTargetIds = new Set(uniqueIdentifiers(evidence.affectedTargetIds));
+  const unhandledTargetIds = uniqueIdentifiers(evidence.unhandledTargetIds);
+  const requiredEngines = uniqueIdentifiers([
+    ...(control.semanticPromise?.requiredEngines || []),
+    ...(evidence.declaredEngines || []),
+  ]);
+  const affectedEngines = new Set(uniqueIdentifiers(evidence.affectedEngines));
+  const unhandledEngines = uniqueIdentifiers(evidence.unhandledEngines);
+  const missingTargetIds = uniqueIdentifiers([
+    ...declaredTargetIds.filter((targetId) => !affectedTargetIds.has(targetId)),
+    ...unhandledTargetIds,
+  ]);
+  const missingEngines = uniqueIdentifiers([
+    ...requiredEngines.filter((engine) => !affectedEngines.has(engine)),
+    ...unhandledEngines,
+  ]);
+  const requiresCompleteCoverage = control.scope === 'site';
+  return {
+    satisfied: !requiresCompleteCoverage || (missingTargetIds.length === 0 && missingEngines.length === 0),
+    declaredTargetIds,
+    affectedTargetIds: [...affectedTargetIds],
+    missingTargetIds,
+    requiredEngines,
+    affectedEngines: [...affectedEngines],
+    missingEngines,
+  };
+}
+
+function hasVisibleEffectEvidence(result, expectsEffect) {
+  if (!expectsEffect) return true;
+  return Boolean(
+    result?.visualOracle?.changed === true
+    || result?.computedStateEvidence?.changed === true
+    || result?.screenshotEvidence?.changed === true,
+  );
+}
+
+function hasRestoreEvidence(result) {
+  return Boolean(
+    result?.restoreEvidence?.restored === true
+    || result?.computedStateEvidence?.restored === true
+    || result?.screenshotEvidence?.restored === true,
+  );
+}
+
 function rejected(code, stage, details = {}) {
   return {
     accepted: false,
@@ -222,7 +276,12 @@ function validationValues(proposal) {
   return [!proposal.currentValue];
 }
 
-export function createRuntimeControlValidator({ transport, now = () => new Date() } = {}) {
+export function createRuntimeControlValidator({
+  transport,
+  now = () => new Date(),
+  requireVisibleEvidence = false,
+  requireSemanticCoverage = false,
+} = {}) {
   if (typeof transport !== 'function') throw new TypeError('A runtime validation transport is required');
   return async function validate(candidate, { bundleId, runtimeFingerprint, signal } = {}) {
     if (candidate.runtimeFingerprint && candidate.runtimeFingerprint !== runtimeFingerprint) {
@@ -248,7 +307,7 @@ export function createRuntimeControlValidator({ transport, now = () => new Date(
       signal,
     };
     const read = await transport('read', proposal, context).catch(() => ({ ok: false }));
-    if (!read?.ok || read.before === undefined) return rejected('read_failed', 'read');
+    if (!read?.ok || read.before === undefined) return rejected(read?.code || 'read_failed', 'read');
     let visualOracleUsed = false;
     for (const validationValue of context.validationValues) {
       const valueContext = { ...context, before: read.before, value: validationValue };
@@ -260,15 +319,35 @@ export function createRuntimeControlValidator({ transport, now = () => new Date(
       }
       const expectsEffect = !valuesEqual(validationValue, read.before);
       if (expectsEffect && !applied.effect?.changed && !applied.visualOracle?.changed) return rejected('no_effect', 'effect');
+      if (requireVisibleEvidence && !hasVisibleEffectEvidence(applied, expectsEffect)) {
+        return rejected('visible_evidence_missing', 'effect');
+      }
+      if (requireSemanticCoverage) {
+        const semantic = evaluateControlSemanticPromise({ control: proposal, evidence: applied.semanticCoverage });
+        if (!semantic.satisfied) return rejected('semantic_promise_incomplete', 'effect');
+      }
       visualOracleUsed ||= Boolean(applied.visualOracle);
       const restored = await transport('restore', proposal, { ...valueContext, applied }).catch(() => ({ ok: false }));
       if (!restored?.ok || restored.restored !== true || !valuesEqual(restored.value, read.before)) return rejected('restore_failed', 'restore');
+      if (requireVisibleEvidence && !hasRestoreEvidence(restored)) {
+        return rejected('restore_evidence_missing', 'restore');
+      }
       const reapplied = await transport('reapply', proposal, valueContext).catch(() => ({ ok: false }));
       if (!reapplied?.ok
         || (expectsEffect && !reapplied.effect?.changed && !reapplied.visualOracle?.changed)
         || !valuesEqual(reapplied.value, applied.value)) return rejected('non_deterministic', 'deterministic');
+      if (requireVisibleEvidence && !hasVisibleEffectEvidence(reapplied, expectsEffect)) {
+        return rejected('visible_evidence_missing', 'deterministic');
+      }
+      if (requireSemanticCoverage) {
+        const semantic = evaluateControlSemanticPromise({ control: proposal, evidence: reapplied.semanticCoverage });
+        if (!semantic.satisfied) return rejected('semantic_promise_incomplete', 'deterministic');
+      }
       const finalRestore = await transport('final-restore', proposal, { ...valueContext, applied: reapplied }).catch(() => ({ ok: false }));
       if (!finalRestore?.ok || finalRestore.restored !== true || !valuesEqual(finalRestore.value, read.before)) return rejected('restore_failed', 'restore');
+      if (requireVisibleEvidence && !hasRestoreEvidence(finalRestore)) {
+        return rejected('restore_evidence_missing', 'restore');
+      }
       const leaks = finalRestore.leaks || {};
       if (Object.values(leaks).some((value) => Number(value) > 0)) return rejected('teardown_leak', 'teardown');
     }
