@@ -35,7 +35,7 @@ const V2_CONTEXT = {
   sessionId: 'session-native',
 };
 
-function runtimeV2Message(frame, type, payload = {}, requestId = `runtime-${type}`) {
+function runtimeV2Message(frame, type, payload = {}, requestId = `runtime-${type}`, context = V2_CONTEXT) {
   return new MessageEvent('message', {
     source: frame.contentWindow,
     origin: 'https://runtime.uncraft.test',
@@ -46,10 +46,28 @@ function runtimeV2Message(frame, type, payload = {}, requestId = `runtime-${type
       source: 'runtime',
       type,
       requestId,
-      ...V2_CONTEXT,
+      ...context,
       payload,
     },
   });
+}
+
+function customControl(overrides = {}) {
+  return {
+    id: 'control-aaaaaaaaaaaaaaaaaaaaaaaa',
+    status: 'ready',
+    scope: 'animation',
+    label: 'Depth',
+    description: 'Controls depth.',
+    controlType: 'slider-number',
+    unit: 'multiplier',
+    currentValue: 1,
+    originalValue: 1,
+    domain: { min: 0, max: 2, step: 0.1 },
+    binding: { kind: 'custom-capability', capability: 'motion.scalar', property: 'depth' },
+    targets: [{ elementId: 'hero', motionId: 'hero-motion', property: 'depth' }],
+    ...overrides,
+  };
 }
 
 describe('useNativeMotionController', () => {
@@ -838,5 +856,421 @@ describe('useNativeMotionController', () => {
       transaction: redoMessage.payload.transaction,
     }, redoMessage.requestId)));
     await waitFor(() => expect(result.current.customControls[0].currentValue).toBe(1.5));
+  });
+
+  it('reinspects and retries a stale custom binding without creating a repair undo entry', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const control = customControl();
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ manifest: { controlManifest: { schemaVersion: 1, controls: [control] } }, transactions: [] })),
+      save: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const diagnostic = vi.fn();
+    window.addEventListener('uncraft:motion-diagnostic', diagnostic);
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: { title: 'V2 recovery', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+    await waitFor(() => expect(result.current.customControls).toHaveLength(1));
+
+    act(() => result.current.commands.applyCustomControl(result.current.customControls[0], 1.5));
+    const firstApply = frame.contentWindow.postMessage.mock.calls.map(([message]) => message)
+      .findLast((message) => message.type === 'apply-transaction');
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-rejected', {
+      transactionId: firstApply.payload.transaction.id,
+      code: 'target_missing',
+    }, firstApply.requestId)));
+
+    expect(result.current.patchError).toBe("This change couldn't be applied. The previous value was restored.");
+    expect(result.current.customControls[0]).toMatchObject({ disabled: true, recoveryStatus: 'recovering' });
+    const reinspect = frame.contentWindow.postMessage.mock.calls.map(([message]) => message)
+      .findLast((message) => message.type === 'recover-control');
+    expect(reinspect.payload).toMatchObject({ controlId: control.id, stage: 'reinspect' });
+
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'control-recovery-result', {
+      controlId: control.id,
+      stage: 'reinspect',
+      recovered: true,
+    }, reinspect.requestId)));
+    const retry = frame.contentWindow.postMessage.mock.calls.map(([message]) => message)
+      .filter((message) => message.type === 'apply-transaction').at(-1);
+    expect(retry.payload.transaction.id).not.toBe(firstApply.payload.transaction.id);
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', {
+      transaction: retry.payload.transaction,
+    }, retry.requestId)));
+
+    await waitFor(() => expect(result.current.historyCount).toBe(1));
+    expect(result.current.customControls[0]).toMatchObject({ currentValue: 1.5, disabled: false });
+    expect(persistenceAdapter.save.mock.calls.at(-1)[0].transactions).toHaveLength(1);
+    expect(diagnostic.mock.calls.some(([event]) => event.detail.transition === 'recovery-succeeded')).toBe(true);
+    window.removeEventListener('uncraft:motion-diagnostic', diagnostic);
+  });
+
+  it('disables only an exhausted unsupported control and keeps unrelated controls available', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const controls = [
+      customControl(),
+      customControl({ id: 'control-bbbbbbbbbbbbbbbbbbbbbbbb', label: 'Speed' }),
+    ];
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ manifest: { controlManifest: { schemaVersion: 1, controls } }, transactions: [] })),
+      save: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: { title: 'V2 recovery', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+    await waitFor(() => expect(result.current.customControls).toHaveLength(2));
+
+    act(() => result.current.commands.applyCustomControl(result.current.customControls[0], 1.5));
+    const apply = frame.contentWindow.postMessage.mock.calls.map(([message]) => message)
+      .findLast((message) => message.type === 'apply-transaction');
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-rejected', {
+      transactionId: apply.payload.transaction.id,
+      code: 'capability_missing',
+    }, apply.requestId)));
+
+    expect(result.current.customControls[0]).toMatchObject({ disabled: true, recoveryStatus: 'unavailable' });
+    expect(result.current.customControls[1]).toMatchObject({ disabled: false });
+    expect(result.current.historyCount).toBe(0);
+    expect(frame.contentWindow.postMessage.mock.calls.map(([message]) => message.type)).not.toContain('regenerate-control');
+  });
+
+  it('stops after two failed automatic runtime reopen attempts and preserves the draft', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ transactions: [] })),
+      save: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: { title: 'V2 recovery', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'runtime-failure', { code: 'runtime_exception' })));
+    await waitFor(() => expect(result.current.runtimeRecovery).toMatchObject({ attempt: 1, exhausted: false }));
+
+    await act(async () => result.current.commands.reportRuntimeRecoveryFailure('runtime_session_unavailable'));
+    expect(result.current.runtimeRecovery).toMatchObject({ attempt: 2, exhausted: false });
+    await act(async () => result.current.commands.reportRuntimeRecoveryFailure('runtime_session_unavailable'));
+    expect(result.current.runtimeRecovery).toMatchObject({ attempt: 2, exhausted: true });
+    expect(result.current.status).toBe('unavailable');
+    expect(persistenceAdapter.save).toHaveBeenCalled();
+    expect(persistenceAdapter.flush).toHaveBeenCalled();
+    expect(result.current.historyCount).toBe(0);
+  });
+
+  it('attributes a runtime crash to the in-flight control without persisting its unacknowledged value', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const control = customControl();
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ manifest: { controlManifest: { schemaVersion: 1, controls: [control] } }, transactions: [] })),
+      save: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: { title: 'V2 crash', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+    await waitFor(() => expect(result.current.customControls).toHaveLength(1));
+    act(() => result.current.commands.applyCustomControl(result.current.customControls[0], 1.5));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'runtime-failure', { code: 'runtime_exception' })));
+
+    await waitFor(() => expect(result.current.runtimeRecovery).toMatchObject({
+      attempt: 1,
+      controlId: control.id,
+      exhausted: false,
+    }));
+    expect(result.current.patchError).toBe("This change couldn't be applied. The previous value was restored.");
+    expect(result.current.customControls[0]).toMatchObject({ currentValue: 1, disabled: true, recoveryStatus: 'recovering' });
+    expect(result.current.historyCount).toBe(0);
+    expect(persistenceAdapter.save.mock.calls.at(-1)[0].transactions).toHaveLength(0);
+  });
+
+  it('replays the last acknowledged draft and restores selection, scroll, and frame after a runtime restart', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ transactions: [] })),
+      save: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter, timelineOpen: true }));
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: { title: 'V2 recovery', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+    await act(async () => {
+      window.dispatchEvent(runtimeV2Message(frame, 'selection-changed', {
+        element: {
+          id: 'hero',
+          label: 'Hero',
+          motion: [{
+            id: 'hero-motion',
+            engine: 'CSS',
+            editability: 'direct',
+            driver: { type: 'time' },
+            capabilities: { keyframes: true },
+            timing: { delay: 0, duration: 1000, endDelay: 0, iterations: 1 },
+            tracks: [{ property: 'opacity', keyframes: [{ offset: 0, value: '0' }, { offset: 1, value: '1' }] }],
+          }],
+        },
+      }));
+      window.dispatchEvent(runtimeV2Message(frame, 'viewport-motion-changed', {
+        rows: [{ elementId: 'hero' }],
+        page: { scrollY: 420, scrollHeight: 2400 },
+      }));
+      window.dispatchEvent(runtimeV2Message(frame, 'timeline-changed', {
+        currentTime: 360,
+        duration: 1000,
+        playState: 'paused',
+      }));
+    });
+    act(() => result.current.commands.applyStyle('opacity', '0.5', '1'));
+    const applied = frame.contentWindow.postMessage.mock.calls.map(([message]) => message)
+      .findLast((message) => message.type === 'apply-transaction');
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', {
+      transaction: applied.payload.transaction,
+    }, applied.requestId)));
+    await waitFor(() => expect(result.current.historyCount).toBe(1));
+    const applyCountBeforeRecovery = frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.type === 'apply-transaction').length;
+
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'runtime-failure', { code: 'runtime_exception' })));
+    await waitFor(() => expect(result.current.runtimeRecovery).toMatchObject({ attempt: 1 }));
+    const nextContext = { ...V2_CONTEXT, sessionNonce: 'nonce-reopened-123', runtimeGeneration: 2 };
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: { title: 'Recovered', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...nextContext },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(
+      frame,
+      'protocol-negotiated',
+      {},
+      'runtime-protocol-negotiated-2',
+      nextContext,
+    )));
+    await waitFor(() => expect(frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.type === 'apply-transaction').length).toBeGreaterThan(applyCountBeforeRecovery));
+    const recoveryTransactions = frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.type === 'apply-transaction')
+      .slice(applyCountBeforeRecovery);
+    for (const replay of recoveryTransactions) {
+      await act(async () => window.dispatchEvent(runtimeV2Message(
+        frame,
+        'transaction-committed',
+        { transaction: replay.payload.transaction },
+        replay.requestId,
+        nextContext,
+      )));
+    }
+
+    await waitFor(() => expect(result.current.runtimeRecovery).toBeNull());
+    expect(result.current.status).toBe('ready');
+    expect(result.current.historyCount).toBe(1);
+    const recoveryCommands = frame.contentWindow.postMessage.mock.calls.map(([message]) => message);
+    expect(recoveryCommands.findLast((message) => message.type === 'scroll-to').payload).toEqual({ scrollY: 420 });
+    expect(recoveryCommands.findLast((message) => message.type === 'select-element').payload).toMatchObject({ elementId: 'hero' });
+    expect(recoveryCommands.findLast((message) => message.type === 'seek-motion').payload).toMatchObject({
+      motionId: 'hero-motion',
+      currentTime: 360,
+    });
+  });
+
+  it('keeps confirmed history intact when recovery replay fails and advances to the next bounded reopen', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const persisted = {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      source: 'properties',
+      createdAt: '2026-07-26T10:00:00.000Z',
+      patches: [{
+        id: 'patch-persisted-recovery',
+        elementId: 'hero',
+        kind: 'style',
+        property: 'opacity',
+        before: '1',
+        value: '0.5',
+        createdAt: '2026-07-26T10:00:00.000Z',
+      }],
+      automaticRepairs: [],
+    };
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({ transactions: [persisted] })),
+      save: vi.fn(async () => {}),
+      flush: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: { title: 'Initial', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+    await waitFor(() => expect(frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message.type)).toContain('apply-transaction'));
+    const initialReplay = frame.contentWindow.postMessage.mock.calls.map(([message]) => message)
+      .findLast((message) => message.type === 'apply-transaction');
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', {
+      transaction: initialReplay.payload.transaction,
+    }, initialReplay.requestId)));
+    expect(result.current.historyCount).toBe(1);
+
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'runtime-failure', { code: 'runtime_exception' })));
+    await waitFor(() => expect(result.current.runtimeRecovery).toMatchObject({ attempt: 1 }));
+    const nextContext = { ...V2_CONTEXT, sessionNonce: 'nonce-replay-failed', runtimeGeneration: 2 };
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: { title: 'Recovery attempt', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...nextContext },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(
+      frame,
+      'protocol-negotiated',
+      {},
+      'runtime-protocol-negotiated-replay',
+      nextContext,
+    )));
+    await waitFor(() => expect(frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.type === 'apply-transaction').length).toBeGreaterThan(1));
+    const failedReplay = frame.contentWindow.postMessage.mock.calls.map(([message]) => message)
+      .findLast((message) => message.type === 'apply-transaction');
+    await act(async () => window.dispatchEvent(runtimeV2Message(
+      frame,
+      'transaction-rejected',
+      { transactionId: failedReplay.payload.transaction.id, code: 'write_failed' },
+      failedReplay.requestId,
+      nextContext,
+    )));
+
+    await waitFor(() => expect(result.current.runtimeRecovery).toMatchObject({ attempt: 2, exhausted: false }));
+    expect(result.current.historyCount).toBe(1);
+    expect(persistenceAdapter.save.mock.calls.at(-1)[0].transactions).toHaveLength(1);
+    expect(result.current.historyReady).toBe(false);
+  });
+
+  it('automatically probes a transient bridge timeout and returns to ready on health acknowledgement', async () => {
+    vi.useFakeTimers();
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const diagnostic = vi.fn();
+    window.addEventListener('uncraft:motion-diagnostic', diagnostic);
+    const hook = renderHook(() => useNativeMotionController({ iframeRef }));
+    try {
+      await act(async () => window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        origin: 'https://runtime.uncraft.test',
+        data: {
+          protocol: MOTION_EDITOR_PROTOCOL,
+          source: 'runtime',
+          type: 'runtime-ready',
+          payload: { title: 'V2 heartbeat', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT },
+        },
+      })));
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+      frame.contentWindow.postMessage.mockClear();
+
+      act(() => vi.advanceTimersByTime(3_501));
+      expect(hook.result.current.status).toBe('recovering');
+      act(() => vi.advanceTimersByTime(301));
+      expect(frame.contentWindow.postMessage.mock.calls.map(([message]) => message.type)).toContain('health-check');
+
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'runtime-health', { status: 'healthy' })));
+      expect(hook.result.current.status).toBe('ready');
+      expect(diagnostic.mock.calls.some(([event]) => event.detail.transition === 'recovery-succeeded')).toBe(true);
+    } finally {
+      hook.unmount();
+      window.removeEventListener('uncraft:motion-diagnostic', diagnostic);
+      vi.useRealTimers();
+    }
   });
 });

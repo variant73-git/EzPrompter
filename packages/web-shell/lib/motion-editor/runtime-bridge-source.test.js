@@ -2919,4 +2919,83 @@ describe('native motion runtime bridge', () => {
       .toBe('rollback');
     runtime.restore();
   });
+
+  it('reinspects stale targets and locally regenerates a changed animation binding', () => {
+    document.body.innerHTML = '<main><div id="hero" data-uncraft-id="hero"></div></main>';
+    const hero = document.getElementById('hero');
+    let duration = 800;
+    const updateTiming = vi.fn((next) => { if (Number.isFinite(next?.duration)) duration = next.duration; });
+    const animation = {
+      id: 'replacement-motion',
+      animationName: 'replacement-motion',
+      currentTime: 0,
+      playState: 'paused',
+      playbackRate: 1,
+      effect: {
+        target: hero,
+        getTiming: () => ({ delay: 0, duration, iterations: 1, direction: 'normal', fill: 'both', easing: 'linear' }),
+        getComputedTiming: () => ({ duration }),
+        getKeyframes: () => [{ computedOffset: 0, opacity: '0' }, { computedOffset: 1, opacity: '1' }],
+        updateTiming,
+      },
+      pause: vi.fn(),
+      play: vi.fn(),
+    };
+    hero.getAnimations = () => [animation];
+    document.getAnimations = () => [animation];
+    const control = {
+      id: 'control-aaaaaaaaaaaaaaaaaaaaaaaa',
+      status: 'ready',
+      scope: 'animation',
+      controlType: 'slider-number',
+      currentValue: 800,
+      originalValue: 800,
+      domain: { min: 200, max: 1600, step: 100 },
+      binding: { kind: 'known-runtime', engine: 'waapi', property: 'timing.duration' },
+      targets: [{ semanticTargetId: 'hero', elementId: 'hero', motionId: 'stale-motion', property: 'timing.duration' }],
+      bundleId: 'bundle-fixture',
+      runtimeFingerprint: 'sha256:fixture',
+    };
+    const runtime = bootV2Runtime({
+      controlManifest: {
+        schemaVersion: 1,
+        bundleId: 'bundle-fixture',
+        runtimeFingerprint: 'sha256:fixture',
+        controls: [control],
+      },
+    });
+
+    runtime.send('recover-control', {
+      controlId: control.id,
+      stage: 'reinspect',
+    }, 'recover-reinspect');
+    expect(runtime.messages.filter((message) => message.type === 'control-recovery-result').pop().payload)
+      .toMatchObject({ recovered: false, code: 'motion_missing', stage: 'reinspect' });
+
+    runtime.send('recover-control', {
+      controlId: control.id,
+      stage: 'regenerate-control',
+    }, 'recover-regenerate');
+    const regenerated = runtime.messages.filter((message) => message.type === 'control-recovery-result').pop();
+    expect(regenerated.payload).toMatchObject({ recovered: true, stage: 'regenerate-control' });
+    expect(regenerated.payload.control.targets[0].motionId).not.toBe('stale-motion');
+    expect(updateTiming).toHaveBeenCalled();
+    runtime.restore();
+  });
+
+  it('reports runtime exceptions with a sanitized stable code only', () => {
+    const runtime = bootV2Runtime();
+    window.dispatchEvent(new ErrorEvent('error', {
+      message: 'secret page text at /private/site.js:42',
+      error: new Error('credential-shaped-value'),
+    }));
+
+    const failure = runtime.messages.filter((message) => message.type === 'runtime-failure').pop();
+    expect(failure.payload).toMatchObject({
+      code: 'runtime_exception',
+      diagnostics: { code: 'runtime_exception' },
+    });
+    expect(JSON.stringify(failure.payload)).not.toMatch(/secret|private|credential|site\.js/i);
+    runtime.restore();
+  });
 });

@@ -2914,6 +2914,108 @@ function nativeMotionRuntimeBridge() {
     applyMotionPatch(controlMotionPatch(control, target, patch), element);
   }
 
+  function alternateControlValue(control) {
+    const current = control.currentValue;
+    const domain = control.domain || {};
+    if (control.controlType === 'slider-number') {
+      const step = Number(domain.step);
+      const min = Number(domain.min);
+      const max = Number(domain.max);
+      if (![step, min, max].every(Number.isFinite) || step <= 0) return null;
+      if (Number(current) + step <= max) return Number(current) + step;
+      if (Number(current) - step >= min) return Number(current) - step;
+      return null;
+    }
+    if (control.controlType === 'toggle') return !current;
+    const options = Array.isArray(domain.options) ? domain.options : [];
+    const next = options.map((option) => option?.value ?? option).find((value) => !valuesEqual(value, current));
+    return next === undefined ? null : next;
+  }
+
+  function controlMotionMatches(control, target, clip) {
+    const property = control.binding?.property || target.property;
+    if (String(property).startsWith('timing.') || String(property).startsWith('scroll.')) return true;
+    return (clip?.tracks || []).some((track) => track.property === property);
+  }
+
+  function recoverControl(message, payload) {
+    const controlId = payload?.controlId;
+    const stage = ['reinspect', 'rebind', 'regenerate-control'].includes(payload?.stage)
+      ? payload.stage
+      : 'reinspect';
+    const original = controlRegistry.get(controlId);
+    if (!original) {
+      reply(message, 'control-recovery-result', {
+        controlId: controlId || null,
+        stage,
+        recovered: false,
+        code: 'control_missing',
+        diagnostics: transactionDiagnostic('control_missing', controlId),
+      });
+      return;
+    }
+    let nextControl = original;
+    try {
+      document.querySelectorAll(SELECTABLE).forEach((element) => ensureElementId(element));
+      refreshRuntime();
+      const nextTargets = original.targets.map((target) => {
+        const element = findElement(target.elementId);
+        if (!element) throw bridgeError('target_missing', 'The target element is no longer present.');
+        if (!target.motionId) return target;
+        const clips = inspectMotion(element);
+        if (clips.some((clip) => clip.id === target.motionId)) return target;
+        if (stage !== 'regenerate-control') throw bridgeError('motion_missing', 'The motion target is no longer present.');
+        const compatible = clips.filter((clip) => controlMotionMatches(original, target, clip));
+        if (compatible.length !== 1) throw bridgeError('motion_missing', 'The motion target could not be rebuilt safely.');
+        return { ...target, motionId: compatible[0].id };
+      });
+      nextControl = { ...original, targets: nextTargets };
+      controlRegistry.set(controlId, nextControl);
+      nextTargets.forEach((target) => {
+        const element = findElement(target.elementId);
+        readControlPatchValue({ elementId: target.elementId, kind: 'control', property: controlId, value: nextControl.currentValue }, element);
+      });
+      if (stage === 'regenerate-control') {
+        const alternate = alternateControlValue(nextControl);
+        if (alternate == null) throw bridgeError('no_effect', 'The control has no safe validation value.');
+        const transaction = {
+          id: randomIdentity('control-recovery'),
+          patches: nextTargets.map((target) => ({
+            id: randomIdentity('control-recovery-patch'),
+            elementId: target.elementId,
+            kind: 'control',
+            property: controlId,
+            before: nextControl.currentValue,
+            value: alternate,
+          })),
+        };
+        const first = applyAtomicTransaction(transaction, { restore: true });
+        const second = applyAtomicTransaction({ ...transaction, id: `${transaction.id}:second` }, { restore: true });
+        const changed = first.patches.some((patch) => !valuesEqual(patch.before, patch.value));
+        const deterministic = first.patches.every((patch, index) => valuesEqual(patch.value, second.patches[index]?.value));
+        if (!changed) throw bridgeError('no_effect', 'The rebuilt control had no effect.');
+        if (!deterministic) throw bridgeError('non_deterministic', 'The rebuilt control is not deterministic.');
+      }
+      reply(message, 'control-recovery-result', {
+        controlId,
+        stage,
+        recovered: true,
+        control: nextControl,
+        diagnostics: transactionDiagnostic('control_recovered', controlId),
+      });
+    } catch (error) {
+      controlRegistry.set(controlId, original);
+      const code = error?.code || 'validation_failed';
+      reply(message, 'control-recovery-result', {
+        controlId,
+        stage,
+        recovered: false,
+        code,
+        diagnostics: transactionDiagnostic(code, controlId),
+      });
+    }
+  }
+
   function applyPatchOrThrow(patch) {
     let element = findElement(patch?.elementId);
     if (!element) throw bridgeError('target_missing', 'The target element is no longer present.');
@@ -3501,6 +3603,8 @@ function nativeMotionRuntimeBridge() {
         activeGestures: activeGestures.size,
         runtimeFingerprint,
       });
+    } else if (message.type === 'recover-control') {
+      recoverControl(message, payload);
     } else if (message.type === 'set-mode') {
       if (payload.mode === 'preview') enterPreviewMode();
       else leavePreviewMode();
@@ -3799,6 +3903,18 @@ function nativeMotionRuntimeBridge() {
     });
 
     on(window, 'message', handleCommand);
+    on(window, 'error', () => {
+      emit('runtime-failure', {
+        code: 'runtime_exception',
+        diagnostics: transactionDiagnostic('runtime_exception', runtimeGeneration),
+      });
+    });
+    on(window, 'unhandledrejection', () => {
+      emit('runtime-failure', {
+        code: 'runtime_exception',
+        diagnostics: transactionDiagnostic('runtime_exception', runtimeGeneration),
+      });
+    });
     heartbeatTimer = setInterval(() => {
       emit('heartbeat', {
         status: 'healthy',

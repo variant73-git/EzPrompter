@@ -47,8 +47,10 @@ function NativeEditViewportRuntime({
   }, [commands, device.id]);
 
   useEffect(() => {
-    if (status === 'unhealthy') reportUnavailable('runtime_unavailable');
-  }, [status]);
+    if (status === 'unavailable' && controller.runtimeRecovery?.exhausted) {
+      reportUnavailable('runtime_recovery_exhausted');
+    }
+  }, [controller.runtimeRecovery?.exhausted, status]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -89,6 +91,45 @@ function NativeEditViewportRuntime({
     };
   }, [nodeId]);
 
+  useEffect(() => {
+    const recovery = controller.runtimeRecovery;
+    if (!recovery?.requestId || recovery.exhausted) return undefined;
+    const abortController = new AbortController();
+    let active = true;
+    unavailableReportedRef.current = false;
+    setLoadState('loading');
+    setRuntimeUrl(null);
+    busyRef.current?.(true);
+
+    async function reopenRuntime() {
+      try {
+        const response = await fetch(`/api/nodes/${encodeURIComponent(nodeId)}/runtime-session`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'content-type': 'application/json' },
+          signal: abortController.signal,
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!active) return;
+        if (!response.ok || !body?.runtime?.url || !body?.session?.id) {
+          throw new Error('runtime_session_unavailable');
+        }
+        setRuntimeUrl(body.runtime.url);
+        setLoadState('runtime-loading');
+      } catch (error) {
+        if (!active || error?.name === 'AbortError') return;
+        busyRef.current?.(false);
+        commands.reportRuntimeRecoveryFailure?.('runtime_session_unavailable');
+      }
+    }
+
+    void reopenRuntime();
+    return () => {
+      active = false;
+      abortController.abort();
+    };
+  }, [controller.runtimeRecovery?.requestId, nodeId]);
+
   return (
     <div
       aria-label={controller.mode === 'preview' ? 'Native website preview' : 'Native website editing viewport'}
@@ -119,25 +160,66 @@ function NativeEditViewportRuntime({
           {UNAVAILABLE_COPY}
         </div>
       ) : runtimeUrl ? (
-        <iframe
-          ref={iframeRef}
-          title="Native animated website runtime"
-          src={runtimeUrl}
-          sandbox="allow-scripts allow-pointer-lock"
-          referrerPolicy="no-referrer"
-          onLoad={() => {
-            setLoadState('ready');
-            busyRef.current?.(false);
-            commands.markRuntimeLoaded();
-          }}
-          style={{
-            display: 'block',
-            width: '100%',
-            height: '100%',
-            border: 0,
-            background: '#191917',
-          }}
-        />
+        <>
+          <iframe
+            ref={iframeRef}
+            title="Native animated website runtime"
+            src={runtimeUrl}
+            sandbox="allow-scripts allow-pointer-lock"
+            referrerPolicy="no-referrer"
+            onLoad={() => {
+              setLoadState('ready');
+              busyRef.current?.(false);
+              commands.markRuntimeLoaded();
+            }}
+            style={{
+              display: 'block',
+              width: '100%',
+              height: '100%',
+              border: 0,
+              background: '#191917',
+            }}
+          />
+          {controller.recoveryNotice && (
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                position: 'absolute',
+                left: '50%',
+                bottom: 16,
+                transform: 'translateX(-50%)',
+                maxWidth: 'calc(100% - 32px)',
+                padding: '8px 11px',
+                borderRadius: 8,
+                background: 'rgba(25, 25, 23, 0.92)',
+                color: '#F1F0EB',
+                font: '500 12px/1.4 var(--font-inter), Inter, sans-serif',
+              }}
+            >
+              {controller.recoveryNotice}
+            </div>
+          )}
+          {controller.patchError && (
+            <div
+              role="alert"
+              style={{
+                position: 'absolute',
+                left: '50%',
+                bottom: controller.recoveryNotice ? 58 : 16,
+                transform: 'translateX(-50%)',
+                maxWidth: 'calc(100% - 32px)',
+                padding: '8px 11px',
+                borderRadius: 8,
+                background: 'rgba(71, 34, 31, 0.94)',
+                color: '#F1F0EB',
+                font: '500 12px/1.4 var(--font-inter), Inter, sans-serif',
+              }}
+            >
+              {controller.patchError}
+            </div>
+          )}
+        </>
       ) : (
         <div
           role="status"

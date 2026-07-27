@@ -3,14 +3,24 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const changeDevice = vi.fn();
 const markRuntimeLoaded = vi.fn();
+const resetSession = vi.fn();
+const reportRuntimeRecoveryFailure = vi.fn();
 const iframeRef = { current: null };
 let controllerStatus = 'loading';
+let runtimeRecovery = null;
+let recoveryNotice = null;
+let patchError = null;
 
 vi.mock('./useNativeMotionController.js', () => ({
   useNativeMotionController: vi.fn(() => ({
     iframeRef,
     status: controllerStatus,
-    commands: { changeDevice, markRuntimeLoaded },
+    runtimeRecovery,
+    recoveryNotice,
+    patchError,
+    mode: 'edit',
+    editState: { value: 'navigating' },
+    commands: { changeDevice, markRuntimeLoaded, resetSession, reportRuntimeRecoveryFailure },
   })),
 }));
 
@@ -33,8 +43,13 @@ function runtimeResponse(nodeId) {
 beforeEach(() => {
   changeDevice.mockReset();
   markRuntimeLoaded.mockReset();
+  resetSession.mockReset();
+  reportRuntimeRecoveryFailure.mockReset();
   iframeRef.current = null;
   controllerStatus = 'loading';
+  runtimeRecovery = null;
+  recoveryNotice = null;
+  patchError = null;
   vi.stubGlobal('fetch', vi.fn(async (url) => runtimeResponse(String(url).split('/')[3])));
 });
 
@@ -100,16 +115,51 @@ describe('NativeEditViewport', () => {
     expect(screen.queryByTitle('Native animated website runtime')).toBeNull();
   });
 
-  it('reports an unexpected runtime teardown once so the canvas can restore its camera and geometry', async () => {
+  it('reports exhausted runtime recovery once so the canvas can restore its camera and geometry', async () => {
     const onUnavailable = vi.fn();
     const { rerender } = render(
       <NativeEditViewport nodeId="node-a" deviceId="desktop" onUnavailable={onUnavailable} />,
     );
     await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
 
-    controllerStatus = 'unhealthy';
+    controllerStatus = 'unavailable';
+    runtimeRecovery = { requestId: 2, attempt: 2, exhausted: true };
     rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" onUnavailable={onUnavailable} />);
-    await waitFor(() => expect(onUnavailable).toHaveBeenCalledWith({ code: 'runtime_unavailable' }));
+    await waitFor(() => expect(onUnavailable).toHaveBeenCalledWith({ code: 'runtime_recovery_exhausted' }));
     expect(onUnavailable).toHaveBeenCalledOnce();
+  });
+
+  it('reopens a signed runtime automatically and renders only non-technical recovery copy', async () => {
+    const { rerender } = render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+    fetch.mockClear();
+
+    controllerStatus = 'recovering';
+    runtimeRecovery = { requestId: 7, attempt: 1, exhausted: false };
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(fetch).toHaveBeenCalledWith('/api/nodes/node-a/runtime-session', expect.objectContaining({ method: 'POST' }));
+
+    recoveryNotice = 'The website was recovered. One unsupported control was disabled.';
+    controllerStatus = 'ready';
+    runtimeRecovery = null;
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    expect(screen.getByRole('status').textContent).toBe('The website was recovered. One unsupported control was disabled.');
+    patchError = "This change couldn't be applied. The previous value was restored.";
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    expect(screen.getByRole('alert').textContent).toBe("This change couldn't be applied. The previous value was restored.");
+    expect(screen.queryByText(/retry|repair|regenerate/i)).toBeNull();
+  });
+
+  it('returns a failed automatic reopen to the controller instead of exposing recovery choices', async () => {
+    const { rerender } = render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+    fetch.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'not_available' }) });
+
+    controllerStatus = 'recovering';
+    runtimeRecovery = { requestId: 9, attempt: 1, exhausted: false };
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(reportRuntimeRecoveryFailure).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /retry|repair|regenerate/i })).toBeNull();
   });
 });

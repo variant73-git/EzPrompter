@@ -2651,6 +2651,7 @@
 
 .customControlList { gap: 12px; }
 .customControlRow { gap: 7px; }
+.customControlRow[data-control-unavailable='true'] { opacity: 0.52; }
 .customControlCopy { gap: 2px; min-width: 0; }
 
 .customControlCopy strong {

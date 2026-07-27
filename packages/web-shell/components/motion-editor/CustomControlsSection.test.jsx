@@ -66,4 +66,25 @@ describe('CustomControlsSection', () => {
     expect(screen.getByRole('combobox', { name: 'Glow' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Curve' })).toBeInTheDocument();
   });
+
+  it('keeps an exhausted control visible but unavailable with the approved tooltip', () => {
+    render(<CustomControlsSection
+      controls={[
+        control({ disabled: true, recoveryStatus: 'unavailable' }),
+        control({ id: 'control-aaaaaaaaaaaaaaaaaaaaaaaa', label: 'Still available' }),
+      ]}
+      activeMotionId="motion-1"
+      onChange={() => {}}
+      onReset={() => {}}
+    />);
+
+    const unavailable = screen.getByText('Parallax depth').closest('[data-control-unavailable]');
+    expect(unavailable).toHaveAttribute('title', "This website doesn't support this control.");
+    expect(screen.getByRole('slider', { name: 'Parallax depth slider' })).toBeDisabled();
+    expect(screen.getByRole('spinbutton', { name: 'Parallax depth value' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Reset Parallax depth to original' }))
+      .toHaveAttribute('title', "This website doesn't support this control.");
+    expect(screen.getByRole('slider', { name: 'Still available slider' })).not.toBeDisabled();
+    expect(screen.queryByRole('button', { name: /generate|retry|repair|regenerate/i })).not.toBeInTheDocument();
+  });
 });

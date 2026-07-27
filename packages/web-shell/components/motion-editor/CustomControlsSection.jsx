@@ -3,6 +3,8 @@
 import { RotateCcw } from 'lucide-react';
 import styles from './native-motion-editor.module.css';
 
+const UNSUPPORTED_CONTROL_COPY = "This website doesn't support this control.";
+
 function isRelevant(control, activeMotionId) {
   if (control?.status !== 'ready') return false;
   if (control.scope === 'site') return true;
@@ -14,7 +16,7 @@ function sameValue(left, right) {
   return Object.is(left, right) || String(left) === String(right);
 }
 
-function SliderControl({ control, onChange }) {
+function SliderControl({ control, onChange, disabled = false }) {
   const commit = (raw) => {
     const value = Number(raw);
     if (Number.isFinite(value) && !sameValue(value, control.currentValue)) onChange?.(control, value);
@@ -29,6 +31,7 @@ function SliderControl({ control, onChange }) {
         max={control.domain.max}
         step={control.domain.step}
         defaultValue={control.currentValue}
+        disabled={disabled}
         onPointerUp={(event) => commit(event.currentTarget.value)}
         onKeyUp={(event) => {
           if (['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) commit(event.currentTarget.value);
@@ -43,6 +46,7 @@ function SliderControl({ control, onChange }) {
           max={control.domain.max}
           step={control.domain.step}
           defaultValue={control.currentValue}
+          disabled={disabled}
           onBlur={(event) => commit(event.currentTarget.value)}
           onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
         />
@@ -52,7 +56,7 @@ function SliderControl({ control, onChange }) {
   );
 }
 
-function ToggleControl({ control, onChange }) {
+function ToggleControl({ control, onChange, disabled = false }) {
   return (
     <button
       type="button"
@@ -60,6 +64,7 @@ function ToggleControl({ control, onChange }) {
       role="switch"
       aria-label={control.label}
       aria-checked={Boolean(control.currentValue)}
+      disabled={disabled}
       onClick={() => onChange?.(control, !control.currentValue)}
     >
       <i />
@@ -67,7 +72,7 @@ function ToggleControl({ control, onChange }) {
   );
 }
 
-function SelectControl({ control, onChange }) {
+function SelectControl({ control, onChange, disabled = false }) {
   const rawOptions = control.domain.options || [];
   const options = control.controlType === 'select'
     ? rawOptions
@@ -76,6 +81,7 @@ function SelectControl({ control, onChange }) {
     <select
       aria-label={control.label}
       value={String(control.currentValue)}
+      disabled={disabled}
       onChange={(event) => {
         const option = options.find((candidate) => String(candidate.value) === event.currentTarget.value);
         if (option) onChange?.(control, option.value);
@@ -89,9 +95,9 @@ function SelectControl({ control, onChange }) {
 }
 
 function ControlInput({ control, onChange }) {
-  if (control.controlType === 'slider-number') return <SliderControl control={control} onChange={onChange} />;
-  if (control.controlType === 'toggle') return <ToggleControl control={control} onChange={onChange} />;
-  return <SelectControl control={control} onChange={onChange} />;
+  if (control.controlType === 'slider-number') return <SliderControl control={control} onChange={onChange} disabled={control.disabled} />;
+  if (control.controlType === 'toggle') return <ToggleControl control={control} onChange={onChange} disabled={control.disabled} />;
+  return <SelectControl control={control} onChange={onChange} disabled={control.disabled} />;
 }
 
 export default function CustomControlsSection({ controls = [], activeMotionId = null, onChange, onReset }) {
@@ -105,7 +111,12 @@ export default function CustomControlsSection({ controls = [], activeMotionId = 
       </header>
       <div className={styles.customControlList}>
         {visible.map((control) => (
-          <div key={control.id} className={styles.customControlRow}>
+          <div
+            key={control.id}
+            className={styles.customControlRow}
+            data-control-unavailable={control.disabled || undefined}
+            title={control.disabled ? UNSUPPORTED_CONTROL_COPY : undefined}
+          >
             <div className={styles.customControlCopy}>
               <strong>{control.label}</strong>
               <small>{control.description}</small>
@@ -116,8 +127,8 @@ export default function CustomControlsSection({ controls = [], activeMotionId = 
                 type="button"
                 className={styles.customControlReset}
                 aria-label={`Reset ${control.label} to original`}
-                title="Reset to original"
-                disabled={sameValue(control.currentValue, control.originalValue)}
+                title={control.disabled ? UNSUPPORTED_CONTROL_COPY : 'Reset to original'}
+                disabled={control.disabled || sameValue(control.currentValue, control.originalValue)}
                 onClick={() => onReset?.(control)}
               >
                 <RotateCcw aria-hidden="true" />

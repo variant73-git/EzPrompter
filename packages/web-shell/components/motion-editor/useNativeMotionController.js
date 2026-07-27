@@ -63,6 +63,14 @@ import {
   sessionHistoryPatches,
   undoSessionHistory,
 } from '../../lib/motion-editor/session-history.js';
+import {
+  RECOVERY_ACTIONS,
+  createRecoveryPolicy,
+} from '../../lib/motion-editor/recovery-policy.js';
+import {
+  FAILURE_CLASSES,
+  createSanitizedDiagnostic,
+} from '../../lib/motion-editor/failure-codes.js';
 
 const AUTO_KEYFRAME_PROPERTIES = new Set([
   'backgroundColor', 'borderRadius', 'color', 'filter', 'fontSize', 'fontWeight',
@@ -74,6 +82,9 @@ const NO_PERSISTENCE = Object.freeze({
   load: async () => [],
   save: async () => {},
 });
+
+const FAILED_MUTATION_COPY = "This change couldn't be applied. The previous value was restored.";
+const RECOVERED_WITH_DISABLED_CONTROL_COPY = 'The website was recovered. One unsupported control was disabled.';
 
 function requestId(prefix = 'request') {
   return globalThis.crypto?.randomUUID?.() || `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -202,9 +213,18 @@ export function useNativeMotionController({
   const runtimeContextRef = useRef(null);
   const transactionLedgerRef = useRef(createTransactionLedger());
   const heartbeatTimeoutRef = useRef(null);
+  const recoveryTimerRef = useRef(null);
+  const recoveryPolicyRef = useRef(createRecoveryPolicy());
+  const recoverySequenceRef = useRef(0);
+  const pendingControlRecoveryRef = useRef(null);
+  const inFlightControlTransactionsRef = useRef(new Map());
+  const runtimeRecoverySnapshotRef = useRef(null);
+  const runtimeRecoveredRef = useRef(false);
+  const recoveryExecutorRef = useRef(null);
   const disposedRef = useRef(false);
   const persistenceRef = useRef(persistenceAdapter || NO_PERSISTENCE);
   const [status, setStatus] = useState('loading');
+  const statusRef = useRef(status);
   const [runtime, setRuntime] = useState(null);
   const [mode, setMode] = useState('edit');
   const [tool, setTool] = useState('select');
@@ -231,11 +251,21 @@ export function useNativeMotionController({
   const responsiveManifestRef = useRef(responsiveManifest);
   const [controlManifest, setControlManifest] = useState({});
   const controlManifestRef = useRef(controlManifest);
+  const [controlAvailability, setControlAvailability] = useState({});
+  const [runtimeRecovery, setRuntimeRecovery] = useState(null);
+  const [recoveryNotice, setRecoveryNotice] = useState(null);
+  const runtimeRecoveryRef = useRef(runtimeRecovery);
   const [pendingResponsiveScopeChange, setPendingResponsiveScopeChange] = useState(null);
   const motionDetailRef = useRef(motionDetail);
   const lastAutoExpandedRef = useRef(null);
   const deviceIdRef = useRef(deviceId);
   const lastResponsiveDeviceRef = useRef(deviceId);
+  const selectedRef = useRef(selected);
+  const viewportPageRef = useRef(viewportPage);
+  const timelineStateRef = useRef(timelineState);
+  const activeMotionIdRef = useRef(activeMotionId);
+  const modeRef = useRef(mode);
+  const toolRef = useRef(tool);
 
   historyRef.current = historyState;
   motionDetailRef.current = motionDetail;
@@ -243,6 +273,13 @@ export function useNativeMotionController({
   responsiveManifestRef.current = responsiveManifest;
   controlManifestRef.current = controlManifest;
   deviceIdRef.current = deviceId;
+  selectedRef.current = selected;
+  viewportPageRef.current = viewportPage;
+  timelineStateRef.current = timelineState;
+  activeMotionIdRef.current = activeMotionId;
+  modeRef.current = mode;
+  toolRef.current = tool;
+  statusRef.current = status;
 
   const replaceResponsiveManifest = useCallback((nextManifest) => {
     const parsed = parseResponsiveManifest(nextManifest);
@@ -269,6 +306,33 @@ export function useNativeMotionController({
     };
     return replaceControlManifest(next);
   }, [replaceControlManifest]);
+
+  const replaceRecoveredControl = useCallback((nextControl) => {
+    if (!nextControl?.id) return controlManifestRef.current;
+    const current = controlManifestRef.current;
+    if (!Array.isArray(current?.controls)) return current;
+    const next = {
+      ...current,
+      controls: current.controls.map((control) => (
+        control.id === nextControl.id ? { ...control, ...nextControl, status: 'ready' } : control
+      )),
+    };
+    return replaceControlManifest(next);
+  }, [replaceControlManifest]);
+
+  const setControlRecoveryStatus = useCallback((controlId, recoveryStatus = 'ready', code = null) => {
+    if (!controlId) return;
+    setControlAvailability((current) => ({
+      ...current,
+      [controlId]: recoveryStatus === 'ready' ? null : { recoveryStatus, code },
+    }));
+  }, []);
+
+  const emitRecoveryDiagnostic = useCallback((input) => {
+    window.dispatchEvent(new CustomEvent('uncraft:motion-diagnostic', {
+      detail: createSanitizedDiagnostic(input),
+    }));
+  }, []);
 
   const historyPayload = useCallback((history = historyRef.current) => ({
     sessionId: history.sessionId,
@@ -364,6 +428,12 @@ export function useNativeMotionController({
   }, [patchError]);
 
   useEffect(() => {
+    if (!recoveryNotice) return undefined;
+    const timer = window.setTimeout(() => setRecoveryNotice(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [recoveryNotice]);
+
+  useEffect(() => {
     if (autoKeyframe && !(activeMotion?.capabilities?.keyframes && activeMotion?.editability === 'direct')) {
       setAutoKeyframe(false);
     }
@@ -374,6 +444,7 @@ export function useNativeMotionController({
     return () => {
       disposedRef.current = true;
       if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
+      if (recoveryTimerRef.current) window.clearTimeout(recoveryTimerRef.current);
     };
   }, []);
 
@@ -414,8 +485,7 @@ export function useNativeMotionController({
     if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
     heartbeatTimeoutRef.current = window.setTimeout(() => {
       if (disposedRef.current) return;
-      setStatus('unhealthy');
-      setPatchError('The website stopped responding. Your confirmed changes are safe.');
+      recoveryExecutorRef.current?.({ code: 'bridge_timeout' });
     }, 3500);
   }, []);
 
@@ -429,6 +499,278 @@ export function useNativeMotionController({
     iframeRef.current?.contentWindow?.postMessage(message, '*');
     return nextRequestId;
   }, [iframeRef]);
+
+  function clearRecoveryTimer() {
+    if (recoveryTimerRef.current) window.clearTimeout(recoveryTimerRef.current);
+    recoveryTimerRef.current = null;
+  }
+
+  function disableControl(controlId, code) {
+    clearRecoveryTimer();
+    if (pendingControlRecoveryRef.current?.controlId === controlId) pendingControlRecoveryRef.current = null;
+    setControlRecoveryStatus(controlId, 'unavailable', code);
+    emitRecoveryDiagnostic({
+      transition: 'control-disabled',
+      code,
+      controlId,
+      operation: RECOVERY_ACTIONS.DISABLE_CONTROL,
+      recovered: false,
+    });
+    if (runtimeRecoveredRef.current) {
+      setRecoveryNotice(RECOVERED_WITH_DISABLED_CONTROL_COPY);
+      runtimeRecoveredRef.current = false;
+      runtimeRecoverySnapshotRef.current = null;
+      recoveryPolicyRef.current.recovered({ code, controlId });
+    }
+    if (!runtimeRecoveryRef.current?.exhausted) setStatus('ready');
+  }
+
+  async function beginRuntimeRecovery(failure) {
+    clearRecoveryTimer();
+    inFlightControlTransactionsRef.current.clear();
+    if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
+    heartbeatTimeoutRef.current = null;
+    emitRecoveryDiagnostic({
+      transition: 'failure-detected',
+      code: failure.code,
+      controlId: failure.controlId,
+      operation: RECOVERY_ACTIONS.RELOAD_RUNTIME,
+      recovered: false,
+    });
+    const decision = recoveryPolicyRef.current.runtimeFailure(failure);
+    if (decision.action === RECOVERY_ACTIONS.FALLBACK_SNAPSHOT) {
+      if (failure.controlId) disableControl(failure.controlId, failure.code);
+      const exhausted = {
+        requestId: recoverySequenceRef.current,
+        attempt: decision.runtimeAttempt,
+        code: decision.code,
+        exhausted: true,
+      };
+      runtimeRecoveryRef.current = exhausted;
+      setRuntimeRecovery(exhausted);
+      setStatus('unavailable');
+      setHistoryReady(false);
+      setPatchError("This website couldn't be recovered. Your confirmed version is safe.");
+      transitionEditor({ type: 'runtime-unavailable', code: decision.code });
+      emitRecoveryDiagnostic({
+        transition: 'snapshot-restored',
+        code: decision.code,
+        operation: RECOVERY_ACTIONS.FALLBACK_SNAPSHOT,
+        attempt: decision.runtimeAttempt,
+        recovered: false,
+      });
+      return;
+    }
+
+    if (!runtimeRecoverySnapshotRef.current) {
+      runtimeRecoverySnapshotRef.current = {
+        selectionId: selectedRef.current?.id || null,
+        scrollY: Number(viewportPageRef.current?.scrollY) || 0,
+        activeMotionId: activeMotionIdRef.current || null,
+        currentTime: Number(timelineStateRef.current?.currentTime) || 0,
+        mode: modeRef.current,
+        tool: toolRef.current,
+        deviceId: deviceIdRef.current,
+      };
+    }
+    runtimeRecoveryRef.current = {
+      preparing: true,
+      attempt: decision.runtimeAttempt,
+      code: decision.code,
+      controlId: failure.controlId || null,
+      exhausted: false,
+    };
+    if (failure.controlId) setControlRecoveryStatus(failure.controlId, 'recovering', failure.code);
+    setStatus('recovering');
+    setHistoryReady(false);
+    emitRecoveryDiagnostic({
+      transition: 'recovery-started',
+      code: decision.code,
+      controlId: failure.controlId,
+      operation: RECOVERY_ACTIONS.RELOAD_RUNTIME,
+      attempt: decision.runtimeAttempt,
+      recovered: false,
+    });
+
+    try {
+      await persistenceRef.current.save(historyPayload());
+      await persistenceRef.current.flush?.();
+    } catch (_) {
+      // The server's last acknowledged draft remains the safe recovery source.
+    }
+    if (disposedRef.current) return;
+    const request = {
+      requestId: ++recoverySequenceRef.current,
+      attempt: decision.runtimeAttempt,
+      code: decision.code,
+      controlId: failure.controlId || null,
+      exhausted: false,
+    };
+    runtimeRecoveryRef.current = request;
+    setRuntimeRecovery(request);
+  }
+
+  function retryRecoveredControl(nextControl = null) {
+    clearRecoveryTimer();
+    const pending = pendingControlRecoveryRef.current;
+    if (!pending?.controlId || !pending.transaction) return;
+    if (nextControl?.id === pending.controlId) replaceRecoveredControl(nextControl);
+    const control = nextControl?.id === pending.controlId
+      ? nextControl
+      : controlManifestRef.current?.controls?.find((candidate) => candidate.id === pending.controlId);
+    const patches = pending.transaction.patches.map((patch, index) => ({
+      ...patch,
+      ...(control?.targets?.[index]?.elementId ? { elementId: control.targets[index].elementId } : {}),
+      id: requestId('repair-patch'),
+      createdAt: new Date().toISOString(),
+    }));
+    const transaction = createTransaction({ patches, source: pending.transaction.source });
+    pendingControlRecoveryRef.current = { ...pending, transaction, recoveryRequestId: null };
+    transactionLedgerRef.current.stage(transaction, {
+      operation: 'apply',
+      controlUpdate: pending.controlUpdate,
+      recoveredControl: true,
+      recoveryOperationId: pending.operationId,
+    });
+    inFlightControlTransactionsRef.current.set(transaction.id, {
+      controlId: pending.controlId,
+      controlUpdate: pending.controlUpdate,
+      transaction,
+      operationId: pending.operationId,
+    });
+    setPendingTransactions(transactionLedgerRef.current.size);
+    send('apply-transaction', { transaction }, { requestId: transaction.requestId });
+  }
+
+  function executeRecovery(input = {}) {
+    const failure = {
+      code: input.code || 'unknown_failure',
+      controlId: input.controlId || pendingControlRecoveryRef.current?.controlId || null,
+      operationId: input.operationId || pendingControlRecoveryRef.current?.operationId || null,
+    };
+    const decision = recoveryPolicyRef.current.next(failure);
+    emitRecoveryDiagnostic({
+      transition: 'recovery-step',
+      code: decision.code,
+      controlId: decision.controlId,
+      operation: decision.action,
+      attempt: decision.attempt,
+      recovered: false,
+    });
+
+    if (decision.action === RECOVERY_ACTIONS.RETRY_TRANSPORT) {
+      setStatus('recovering');
+      clearRecoveryTimer();
+      recoveryTimerRef.current = window.setTimeout(() => {
+        recoveryTimerRef.current = null;
+        send('health-check');
+        armHeartbeatTimeout();
+      }, decision.delayMs);
+      return;
+    }
+    if (decision.action === RECOVERY_ACTIONS.RELOAD_RUNTIME) {
+      if (runtimeRecoveryRef.current?.preparing) return;
+      if (runtimeRecoveryRef.current
+        && !runtimeRecoveryRef.current.exhausted
+        && decision.failureClass === FAILURE_CLASSES.FATAL_RUNTIME) return;
+      if (!failure.controlId && inFlightControlTransactionsRef.current.size) {
+        const activeControl = inFlightControlTransactionsRef.current.values().next().value;
+        const responsibleFailure = {
+          code: 'runtime_exception',
+          controlId: activeControl.controlId,
+          operationId: activeControl.operationId,
+        };
+        pendingControlRecoveryRef.current = {
+          ...activeControl,
+          failure: responsibleFailure,
+          recoveryRequestId: null,
+        };
+        setPatchError(FAILED_MUTATION_COPY);
+        setControlRecoveryStatus(activeControl.controlId, 'recovering', responsibleFailure.code);
+        recoveryPolicyRef.current.next(responsibleFailure);
+        void beginRuntimeRecovery(responsibleFailure);
+        return;
+      }
+      void beginRuntimeRecovery(failure);
+      return;
+    }
+    if (decision.action === RECOVERY_ACTIONS.DISABLE_CONTROL) {
+      if (failure.controlId) disableControl(failure.controlId, decision.code);
+      else void beginRuntimeRecovery(failure);
+      return;
+    }
+    if (!failure.controlId) {
+      void beginRuntimeRecovery(failure);
+      return;
+    }
+
+    setControlRecoveryStatus(failure.controlId, 'recovering', decision.code);
+    const recoveryRequestId = send('recover-control', {
+      controlId: failure.controlId,
+      stage: decision.action,
+    });
+    if (pendingControlRecoveryRef.current?.controlId === failure.controlId) {
+      pendingControlRecoveryRef.current = {
+        ...pendingControlRecoveryRef.current,
+        failure,
+        recoveryRequestId,
+      };
+    }
+    clearRecoveryTimer();
+    recoveryTimerRef.current = window.setTimeout(() => {
+      recoveryTimerRef.current = null;
+      executeRecovery(failure);
+    }, 1800);
+  }
+
+  function restoreRuntimeContext() {
+    const snapshot = runtimeRecoverySnapshotRef.current;
+    if (!snapshot) return;
+    send('set-mode', { mode: snapshot.mode });
+    send('set-tool', { tool: snapshot.tool });
+    send('scroll-to', { scrollY: snapshot.scrollY });
+    if (snapshot.selectionId) send('select-element', { elementId: snapshot.selectionId, deviceId: snapshot.deviceId });
+    if (snapshot.activeMotionId) {
+      send('set-timeline-active', { motionId: snapshot.activeMotionId });
+      send('seek-motion', { motionId: snapshot.activeMotionId, currentTime: snapshot.currentTime });
+    }
+  }
+
+  function finishRuntimeRecovery() {
+    const active = runtimeRecoveryRef.current;
+    if (!active || active.exhausted) return;
+    restoreRuntimeContext();
+    runtimeRecoveryRef.current = null;
+    setRuntimeRecovery(null);
+    setStatus('ready');
+    setHistoryReady(true);
+    runtimeRecoveredRef.current = true;
+    emitRecoveryDiagnostic({
+      transition: 'runtime-reopened',
+      code: active.code,
+      controlId: active.controlId,
+      operation: RECOVERY_ACTIONS.RELOAD_RUNTIME,
+      attempt: active.attempt,
+      recovered: true,
+    });
+    const pending = pendingControlRecoveryRef.current;
+    if (pending?.controlId) {
+      executeRecovery(pending.failure || { code: active.code, controlId: pending.controlId });
+      return;
+    }
+    runtimeRecoveredRef.current = false;
+    runtimeRecoverySnapshotRef.current = null;
+    recoveryPolicyRef.current.recovered({ code: active.code });
+    emitRecoveryDiagnostic({
+      transition: 'recovery-succeeded',
+      code: active.code,
+      operation: RECOVERY_ACTIONS.RELOAD_RUNTIME,
+      attempt: active.attempt,
+      recovered: true,
+    });
+  }
+
+  recoveryExecutorRef.current = executeRecovery;
 
   useEffect(() => {
     if (!selected?.id) return;
@@ -476,6 +818,7 @@ export function useNativeMotionController({
         if (saved.length) send('apply-patches', { patches: saved });
         if (responsivePatches.length) send('apply-patches', { patches: responsivePatches });
         setHistoryReady(true);
+        if (runtimeRecoveryRef.current && !runtimeRecoveryRef.current.exhausted) finishRuntimeRecovery();
         return;
       }
       for (let index = 0; index < saved.length; index += TRANSACTION_LIMITS.maxPatches) {
@@ -493,20 +836,34 @@ export function useNativeMotionController({
         send('apply-transaction', { transaction }, { requestId: transaction.requestId });
       }
       setPendingTransactions(transactionLedgerRef.current.size);
-      if (transactionLedgerRef.current.size === 0) setHistoryReady(true);
+      if (transactionLedgerRef.current.size === 0) {
+        setHistoryReady(true);
+        if (runtimeRecoveryRef.current && !runtimeRecoveryRef.current.exhausted) finishRuntimeRecovery();
+      }
     }
 
     function releaseSettled(entries) {
+      let recoveryReplayFailed = false;
       entries.forEach((entry) => {
+        if (entry.meta.controlUpdate?.controlId) {
+          inFlightControlTransactionsRef.current.delete(entry.transaction.id);
+        }
         const acknowledged = entry.payload?.transaction || entry.transaction;
         const patches = acknowledged.patches || entry.transaction.patches;
         if (entry.status !== 'committed') {
           if (entry.meta.operation === 'replay') {
-            const rejectedIds = new Set(entry.meta.patchIds || []);
-            updateHistory((current) => sessionHistoryFromPatches(
-              sessionHistoryPatches(current).filter((patch) => !rejectedIds.has(patch.id)),
-              { sessionId: current.sessionId },
-            ));
+            if (runtimeRecoveryRef.current && !runtimeRecoveryRef.current.exhausted) {
+              recoveryReplayFailed = true;
+              if (!runtimeRecoveryRef.current.preparing) {
+                void beginRuntimeRecovery({ code: entry.payload?.code || 'replay_failed' });
+              }
+            } else {
+              const rejectedIds = new Set(entry.meta.patchIds || []);
+              updateHistory((current) => sessionHistoryFromPatches(
+                sessionHistoryPatches(current).filter((patch) => !rejectedIds.has(patch.id)),
+                { sessionId: current.sessionId },
+              ));
+            }
           }
           if (entry.meta.operation === 'undo' || entry.meta.operation === 'redo') {
             window.dispatchEvent(new CustomEvent('uncraft:motion-diagnostic', {
@@ -516,6 +873,28 @@ export function useNativeMotionController({
                 nodeScoped: true,
               },
             }));
+          }
+          if (entry.meta.operation === 'apply' && entry.meta.controlUpdate?.controlId) {
+            const controlId = entry.meta.controlUpdate.controlId;
+            const code = entry.payload?.code || 'transaction_rejected';
+            const operationId = entry.meta.recoveryOperationId || entry.transaction.id;
+            pendingControlRecoveryRef.current = {
+              controlId,
+              controlUpdate: entry.meta.controlUpdate,
+              transaction: entry.transaction,
+              operationId,
+              failure: { code, controlId, operationId },
+              recoveryRequestId: null,
+            };
+            setPatchError(FAILED_MUTATION_COPY);
+            emitRecoveryDiagnostic({
+              transition: 'failure-detected',
+              code,
+              controlId,
+              operation: 'apply-control',
+              recovered: false,
+            });
+            executeRecovery({ code, controlId, operationId });
           }
           return;
         }
@@ -530,6 +909,22 @@ export function useNativeMotionController({
             sessionId: currentSessionId(runtimeContextRef.current),
             repairs: entry.payload?.repairs,
           }), { persist: true });
+          if (entry.meta.recoveredControl && entry.meta.controlUpdate?.controlId) {
+            const controlId = entry.meta.controlUpdate.controlId;
+            const failure = pendingControlRecoveryRef.current?.failure || { code: 'transaction_rejected', controlId };
+            pendingControlRecoveryRef.current = null;
+            setControlRecoveryStatus(controlId, 'ready');
+            runtimeRecoveredRef.current = false;
+            runtimeRecoverySnapshotRef.current = null;
+            recoveryPolicyRef.current.recovered(failure);
+            emitRecoveryDiagnostic({
+              transition: 'recovery-succeeded',
+              code: failure.code,
+              controlId,
+              operation: 'apply-control',
+              recovered: true,
+            });
+          }
         } else if (entry.meta.operation === 'undo') {
           if (entry.meta.controlUpdate) updateControlValue(entry.meta.controlUpdate.controlId, entry.meta.controlUpdate.value);
           updateHistory((current) => undoSessionHistory(current).history, { persist: true });
@@ -540,7 +935,12 @@ export function useNativeMotionController({
         setSaveState('idle');
       });
       setPendingTransactions(transactionLedgerRef.current.size);
-      if (transactionLedgerRef.current.size === 0) setHistoryReady(true);
+      if (transactionLedgerRef.current.size === 0) {
+        setHistoryReady(!recoveryReplayFailed);
+        if (!recoveryReplayFailed && runtimeRecoveryRef.current && !runtimeRecoveryRef.current.exhausted) {
+          finishRuntimeRecovery();
+        }
+      }
     }
 
     function recordRuntimeTransaction(transaction, repairs = []) {
@@ -559,11 +959,13 @@ export function useNativeMotionController({
         if (!context || !matchesRuntimeContext(event.data, context, event.origin)) return;
       }
       if (type === 'runtime-ready') {
+        if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
+        heartbeatTimeoutRef.current = null;
         transitionEditor({ type: 'runtime-ready' });
         setSelectionSettlement(null);
         setHistoryReady(false);
         setRuntime(payload);
-        if (transactionLedgerRef.current.size) {
+        if (transactionLedgerRef.current.size && !runtimeRecoveryRef.current) {
           setPatchError('The website restarted before a change was confirmed. The previous value was restored.');
         }
         transactionLedgerRef.current = createTransactionLedger();
@@ -594,7 +996,7 @@ export function useNativeMotionController({
           }, '*');
         } else {
           runtimeContextRef.current = { protocol: MOTION_EDITOR_PROTOCOL, origin: event.origin, sessionId: 'motion-lab-session' };
-          setStatus('ready');
+          setStatus(runtimeRecoveryRef.current ? 'recovering' : 'ready');
           send('set-mode', { mode });
           send('inspect-viewport', {});
           void replayCurrentHistory(false);
@@ -602,7 +1004,7 @@ export function useNativeMotionController({
       }
       if (type === 'protocol-negotiated') {
         runtimeContextRef.current = { ...runtimeContextRef.current, protocol: MOTION_EDITOR_PROTOCOL_V2 };
-        setStatus('ready');
+        setStatus(runtimeRecoveryRef.current ? 'recovering' : 'ready');
         armHeartbeatTimeout();
         send('set-mode', { mode });
         send('inspect-viewport', {});
@@ -610,7 +1012,18 @@ export function useNativeMotionController({
       }
       if (type === 'heartbeat' || type === 'runtime-health') {
         armHeartbeatTimeout();
-        setStatus('ready');
+        if (!runtimeRecoveryRef.current) {
+          if (statusRef.current === 'recovering') {
+            recoveryPolicyRef.current.recovered({ code: 'bridge_timeout' });
+            emitRecoveryDiagnostic({
+              transition: 'recovery-succeeded',
+              code: 'bridge_timeout',
+              operation: RECOVERY_ACTIONS.RETRY_TRANSPORT,
+              recovered: true,
+            });
+          }
+          setStatus('ready');
+        }
       }
       if (type === 'transaction-committed') {
         const transaction = payload.transaction;
@@ -627,7 +1040,46 @@ export function useNativeMotionController({
         if (payload.transactionId && transactionLedgerRef.current.has(payload.transactionId)) {
           releaseSettled(transactionLedgerRef.current.settle(payload.transactionId, 'rejected', payload));
         }
-        setPatchError("This change couldn't be applied. The previous value was restored.");
+        setPatchError(FAILED_MUTATION_COPY);
+      }
+      if (type === 'control-recovery-result') {
+        const pending = pendingControlRecoveryRef.current;
+        if (!pending || payload.controlId !== pending.controlId) return;
+        if (pending.recoveryRequestId && event.data.requestId !== pending.recoveryRequestId) return;
+        clearRecoveryTimer();
+        emitRecoveryDiagnostic({
+          transition: payload.recovered ? 'recovery-step' : 'failure-detected',
+          code: payload.code || pending.failure?.code,
+          controlId: pending.controlId,
+          operation: payload.stage || 'recover-control',
+          recovered: payload.recovered === true,
+        });
+        if (payload.recovered === true) retryRecoveredControl(payload.control || null);
+        else executeRecovery({
+          code: payload.code || pending.failure?.code,
+          controlId: pending.controlId,
+          operationId: pending.operationId,
+        });
+      }
+      if (type === 'runtime-failure') {
+        const activeControl = inFlightControlTransactionsRef.current.values().next().value;
+        if (activeControl && !pendingControlRecoveryRef.current) {
+          const failure = {
+            code: payload.code || 'runtime_exception',
+            controlId: activeControl.controlId,
+            operationId: activeControl.operationId,
+          };
+          pendingControlRecoveryRef.current = {
+            ...activeControl,
+            failure,
+            recoveryRequestId: null,
+          };
+          setPatchError(FAILED_MUTATION_COPY);
+          setControlRecoveryStatus(activeControl.controlId, 'recovering', failure.code);
+          executeRecovery(failure);
+        } else {
+          executeRecovery({ code: payload.code || 'runtime_exception' });
+        }
       }
       if (type === 'viewport-motion-changed') {
         setViewportRows(Array.isArray(payload.rows) ? payload.rows : []);
@@ -767,6 +1219,14 @@ export function useNativeMotionController({
         ...(nextResponsiveManifest ? { responsiveManifest: nextResponsiveManifest } : {}),
         ...(controlUpdate ? { controlUpdate } : {}),
       });
+      if (controlUpdate?.controlId) {
+        inFlightControlTransactionsRef.current.set(transaction.id, {
+          controlId: controlUpdate.controlId,
+          controlUpdate,
+          transaction,
+          operationId: transaction.id,
+        });
+      }
       setPendingTransactions(transactionLedgerRef.current.size);
       send('apply-transaction', { transaction }, { requestId: transaction.requestId });
       return;
@@ -1061,7 +1521,8 @@ export function useNativeMotionController({
   }
 
   function applyCustomControl(control, value) {
-    if (!control?.id || control.status !== 'ready' || patchValuesEqual(control.currentValue, value)) return;
+    if (!control?.id || control.status !== 'ready' || controlAvailability[control.id]
+      || patchValuesEqual(control.currentValue, value)) return;
     const patches = (control.targets || []).map((target) => ({
       ...createPatch({
         elementId: target.elementId,
@@ -1384,6 +1845,13 @@ export function useNativeMotionController({
     if (runtimeContextRef.current) send('release-edit-state');
     if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
     heartbeatTimeoutRef.current = null;
+    clearRecoveryTimer();
+    recoveryPolicyRef.current = createRecoveryPolicy();
+    pendingControlRecoveryRef.current = null;
+    inFlightControlTransactionsRef.current = new Map();
+    runtimeRecoverySnapshotRef.current = null;
+    runtimeRecoveredRef.current = false;
+    runtimeRecoveryRef.current = null;
     runtimeContextRef.current = null;
     transactionLedgerRef.current = createTransactionLedger();
     lastAutoExpandedRef.current = null;
@@ -1410,6 +1878,9 @@ export function useNativeMotionController({
     setOwnershipConflict(null);
     replaceResponsiveManifest({});
     replaceControlManifest({});
+    setControlAvailability({});
+    setRuntimeRecovery(null);
+    setRecoveryNotice(null);
     setPendingResponsiveScopeChange(null);
     lastResponsiveDeviceRef.current = deviceIdRef.current;
   }
@@ -1422,7 +1893,14 @@ export function useNativeMotionController({
     },
     changeTool: (nextTool) => setTool(nextTool),
     changeDevice: (nextDevice) => setDeviceId(getMotionEditorDevice(nextDevice).id),
-    markRuntimeLoaded: () => setStatus((current) => current === 'ready' ? current : 'bridge'),
+    markRuntimeLoaded: () => {
+      setStatus((current) => current === 'ready' ? current : 'bridge');
+      armHeartbeatTimeout();
+    },
+    reportRuntimeRecoveryFailure: (code = 'runtime_session_unavailable') => beginRuntimeRecovery({
+      code,
+      controlId: runtimeRecoveryRef.current?.controlId || pendingControlRecoveryRef.current?.controlId || null,
+    }),
     send,
     describeElement: (elementId) => send('describe-element', { elementId }),
     selectElement: (elementId) => send('select-element', { elementId }),
@@ -1506,8 +1984,20 @@ export function useNativeMotionController({
     ownershipConflict,
     responsiveManifest,
     controlManifest,
+    controlAvailability,
+    runtimeRecovery,
+    recoveryNotice,
     customControls: Array.isArray(controlManifest?.controls)
-      ? controlManifest.controls.filter((control) => control.status === 'ready')
+      ? controlManifest.controls
+        .filter((control) => control.status === 'ready')
+        .map((control) => {
+          const availability = controlAvailability[control.id];
+          return {
+            ...control,
+            disabled: Boolean(availability),
+            recoveryStatus: availability?.recoveryStatus || 'ready',
+          };
+        })
       : [],
     responsiveScopeFor,
     pendingResponsiveScopeChange,
