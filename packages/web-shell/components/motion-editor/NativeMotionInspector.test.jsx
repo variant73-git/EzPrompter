@@ -19,6 +19,7 @@ function controllerFixture(overrides = {}) {
     selected,
     activeMotion: null,
     activeMotionId: null,
+    customControls: [],
     timelineOffset: 0,
     motion: [],
     device: { id: 'desktop', label: 'Desktop', width: 1280, height: 800 },
@@ -34,6 +35,8 @@ function controllerFixture(overrides = {}) {
       applyMotion: vi.fn(),
       applyStagger: vi.fn(),
       requestResponsiveScopeChange: vi.fn(),
+      applyCustomControl: vi.fn(),
+      resetCustomControl: vi.fn(),
     },
     ...overrides,
   };
@@ -171,5 +174,40 @@ describe('NativeMotionInspector', () => {
     expect(screen.queryByText('Size')).toBeNull();
     expect(screen.getByRole('button', { name: 'Font is calculated by this website' })).toBeDisabled();
     expect(screen.queryByText('All devices')).toBeNull();
+  });
+
+  it('shows only ready controls and forwards changes without generation actions', () => {
+    const applyCustomControl = vi.fn();
+    const resetCustomControl = vi.fn();
+    const base = controllerFixture();
+    const ready = {
+      id: 'control-aaaaaaaaaaaaaaaaaaaaaaaa',
+      status: 'ready',
+      scope: 'animation',
+      label: 'Entrance duration',
+      description: 'Adjusts the entrance timing.',
+      controlType: 'slider-number',
+      unit: 'ms',
+      currentValue: 800,
+      originalValue: 600,
+      domain: { min: 100, max: 1600, step: 50 },
+      targets: [{ motionId: 'entrance', elementId: 'hero-title' }],
+    };
+    render(<NativeMotionInspector
+      controller={controllerFixture({
+        activeMotionId: 'entrance',
+        customControls: [ready, { ...ready, id: 'control-bbbbbbbbbbbbbbbbbbbbbbbb', status: 'pending', label: 'Unsafe control' }],
+        commands: { ...base.commands, applyCustomControl, resetCustomControl },
+      })}
+      activeTab="motion"
+    />);
+
+    expect(screen.getByText('Entrance duration')).toBeTruthy();
+    expect(screen.queryByText('Unsafe control')).toBeNull();
+    expect(screen.queryByRole('button', { name: /generate|retry|repair|regenerate/i })).toBeNull();
+    fireEvent.blur(screen.getByRole('spinbutton', { name: 'Entrance duration value' }), { target: { value: '900' } });
+    expect(applyCustomControl).toHaveBeenCalledWith(ready, 900);
+    fireEvent.click(screen.getByRole('button', { name: 'Reset Entrance duration to original' }));
+    expect(resetCustomControl).toHaveBeenCalledWith(ready);
   });
 });

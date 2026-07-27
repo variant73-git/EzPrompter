@@ -110,6 +110,15 @@ function patchValuesEqual(first, second) {
   return String(first ?? '') === String(second ?? '');
 }
 
+function controlUpdateFromPatches(patches, direction = 'forward') {
+  const patch = (patches || []).find((candidate) => candidate?.controlId || candidate?.kind === 'control');
+  if (!patch) return null;
+  return {
+    controlId: patch.controlId || patch.property,
+    value: direction === 'backward' ? patch.before : patch.value,
+  };
+}
+
 function keyframeDescriptor(keyframe, offset = keyframe?.offset) {
   if (!keyframe) return { offset: Number(offset) || 0, exists: false };
   return {
@@ -220,6 +229,8 @@ export function useNativeMotionController({
   const [ownershipConflict, setOwnershipConflict] = useState(null);
   const [responsiveManifest, setResponsiveManifest] = useState({});
   const responsiveManifestRef = useRef(responsiveManifest);
+  const [controlManifest, setControlManifest] = useState({});
+  const controlManifestRef = useRef(controlManifest);
   const [pendingResponsiveScopeChange, setPendingResponsiveScopeChange] = useState(null);
   const motionDetailRef = useRef(motionDetail);
   const lastAutoExpandedRef = useRef(null);
@@ -230,6 +241,7 @@ export function useNativeMotionController({
   motionDetailRef.current = motionDetail;
   persistenceRef.current = persistenceAdapter || NO_PERSISTENCE;
   responsiveManifestRef.current = responsiveManifest;
+  controlManifestRef.current = controlManifest;
   deviceIdRef.current = deviceId;
 
   const replaceResponsiveManifest = useCallback((nextManifest) => {
@@ -239,6 +251,25 @@ export function useNativeMotionController({
     return parsed;
   }, []);
 
+  const replaceControlManifest = useCallback((nextManifest) => {
+    const parsed = nextManifest && typeof nextManifest === 'object' ? nextManifest : {};
+    controlManifestRef.current = parsed;
+    setControlManifest(parsed);
+    return parsed;
+  }, []);
+
+  const updateControlValue = useCallback((controlId, value) => {
+    const current = controlManifestRef.current;
+    if (!Array.isArray(current?.controls)) return current;
+    const next = {
+      ...current,
+      controls: current.controls.map((control) => (
+        control.id === controlId ? { ...control, currentValue: value } : control
+      )),
+    };
+    return replaceControlManifest(next);
+  }, [replaceControlManifest]);
+
   const historyPayload = useCallback((history = historyRef.current) => ({
     sessionId: history.sessionId,
     transactions: history.past.map((item) => ({
@@ -247,6 +278,7 @@ export function useNativeMotionController({
     })),
     patches: sessionHistoryPatches(history),
     responsiveManifest: responsiveManifestRef.current,
+    controlManifest: controlManifestRef.current,
   }), []);
 
   const updateHistory = useCallback((updater, { persist = false } = {}) => {
@@ -420,6 +452,9 @@ export function useNativeMotionController({
           if (loaded?.manifest?.responsiveManifest != null) {
             replaceResponsiveManifest(loaded.manifest.responsiveManifest);
           }
+          if (loaded?.manifest?.controlManifest != null) {
+            replaceControlManifest(loaded.manifest.controlManifest);
+          }
           scoped = loadedHistory(loaded, sessionId);
         }
       } catch {
@@ -488,13 +523,18 @@ export function useNativeMotionController({
           replaceResponsiveManifest(entry.meta.responsiveManifest);
         }
         if (entry.meta.operation === 'apply') {
+          if (entry.meta.controlUpdate) {
+            updateControlValue(entry.meta.controlUpdate.controlId, entry.meta.controlUpdate.value);
+          }
           updateHistory((current) => acknowledgeSessionTransaction(current, acknowledged, {
             sessionId: currentSessionId(runtimeContextRef.current),
             repairs: entry.payload?.repairs,
           }), { persist: true });
         } else if (entry.meta.operation === 'undo') {
+          if (entry.meta.controlUpdate) updateControlValue(entry.meta.controlUpdate.controlId, entry.meta.controlUpdate.value);
           updateHistory((current) => undoSessionHistory(current).history, { persist: true });
         } else if (entry.meta.operation === 'redo') {
+          if (entry.meta.controlUpdate) updateControlValue(entry.meta.controlUpdate.controlId, entry.meta.controlUpdate.value);
           updateHistory((current) => redoSessionHistory(current).history, { persist: true });
         }
         setSaveState('idle');
@@ -676,7 +716,7 @@ export function useNativeMotionController({
 
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [armHeartbeatTimeout, iframeRef, mode, replaceResponsiveManifest, send, transitionEditor, updateHistory]);
+  }, [armHeartbeatTimeout, iframeRef, mode, replaceControlManifest, replaceResponsiveManifest, send, transitionEditor, updateControlValue, updateHistory]);
 
   useEffect(() => {
     if (status === 'ready') send('set-mode', { mode });
@@ -711,7 +751,11 @@ export function useNativeMotionController({
     return () => send('set-timeline-active', { motionId: null });
   }, [activeMotionId, send, status, timelineOpen]);
 
-  function applyPatches(patches, { source = activePanel, responsiveManifest: nextResponsiveManifest = null } = {}) {
+  function applyPatches(patches, {
+    source = activePanel,
+    responsiveManifest: nextResponsiveManifest = null,
+    controlUpdate = null,
+  } = {}) {
     const changed = patches.filter((patch) => !patchValuesEqual(patch.before, patch.value));
     if (!changed.length) return;
     const groupId = changed.length > 1 ? requestId('group') : null;
@@ -721,6 +765,7 @@ export function useNativeMotionController({
       transactionLedgerRef.current.stage(transaction, {
         operation: 'apply',
         ...(nextResponsiveManifest ? { responsiveManifest: nextResponsiveManifest } : {}),
+        ...(controlUpdate ? { controlUpdate } : {}),
       });
       setPendingTransactions(transactionLedgerRef.current.size);
       send('apply-transaction', { transaction }, { requestId: transaction.requestId });
@@ -729,6 +774,7 @@ export function useNativeMotionController({
     if (grouped.length === 1) send('apply-patch', { patch: grouped[0] });
     else send('apply-patches', { patches: grouped });
     if (nextResponsiveManifest) replaceResponsiveManifest(nextResponsiveManifest);
+    if (controlUpdate) updateControlValue(controlUpdate.controlId, controlUpdate.value);
     updateHistory((current) => {
       const sessionId = currentSessionId(runtimeContextRef.current);
       const scoped = scopeSessionHistory(current, sessionId);
@@ -1014,6 +1060,25 @@ export function useNativeMotionController({
     })));
   }
 
+  function applyCustomControl(control, value) {
+    if (!control?.id || control.status !== 'ready' || patchValuesEqual(control.currentValue, value)) return;
+    const patches = (control.targets || []).map((target) => ({
+      ...createPatch({
+        elementId: target.elementId,
+        kind: 'control',
+        property: control.id,
+        before: control.currentValue,
+        value,
+      }),
+      controlId: control.id,
+    }));
+    if (!patches.length) return;
+    applyPatches(patches, {
+      source: 'custom-control',
+      controlUpdate: { controlId: control.id, value },
+    });
+  }
+
   function unlinkMotion(row, linkIds) {
     const patches = (linkIds || []).map((linkId) => createPatch({
       elementId: row.elementId,
@@ -1068,6 +1133,7 @@ export function useNativeMotionController({
         operation: 'undo',
         transactionId: latest.transaction.id,
         responsiveManifest: nextResponsiveManifest,
+        controlUpdate: controlUpdateFromPatches(latest.transaction.patches, 'backward'),
       });
       setPendingTransactions(transactionLedgerRef.current.size);
       send('rollback-transaction', { transaction }, { requestId: transaction.requestId });
@@ -1075,6 +1141,8 @@ export function useNativeMotionController({
     }
     if (inverse.length) send('apply-patches', { patches: inverse });
     replaceResponsiveManifest(nextResponsiveManifest);
+    const controlUpdate = controlUpdateFromPatches(latest.transaction.patches, 'backward');
+    if (controlUpdate) updateControlValue(controlUpdate.controlId, controlUpdate.value);
     updateHistory((current) => undoSessionHistory(current).history, { persist: true });
     setSaveState('idle');
   }
@@ -1096,6 +1164,7 @@ export function useNativeMotionController({
         operation: 'redo',
         transactionId: next.transaction.id,
         responsiveManifest: nextResponsiveManifest,
+        controlUpdate: controlUpdateFromPatches(next.transaction.patches, 'forward'),
       });
       setPendingTransactions(transactionLedgerRef.current.size);
       send('apply-transaction', { transaction }, { requestId: transaction.requestId });
@@ -1103,6 +1172,8 @@ export function useNativeMotionController({
     }
     if (patches.length) send('apply-patches', { patches });
     replaceResponsiveManifest(nextResponsiveManifest);
+    const controlUpdate = controlUpdateFromPatches(next.transaction.patches, 'forward');
+    if (controlUpdate) updateControlValue(controlUpdate.controlId, controlUpdate.value);
     updateHistory((current) => redoSessionHistory(current).history, { persist: true });
     setSaveState('idle');
   }
@@ -1338,6 +1409,7 @@ export function useNativeMotionController({
     setSelectionSettlement(null);
     setOwnershipConflict(null);
     replaceResponsiveManifest({});
+    replaceControlManifest({});
     setPendingResponsiveScopeChange(null);
     lastResponsiveDeviceRef.current = deviceIdRef.current;
   }
@@ -1373,6 +1445,8 @@ export function useNativeMotionController({
     applyMotion,
     applyStripEdit,
     applyStagger,
+    applyCustomControl,
+    resetCustomControl: (control) => applyCustomControl(control, control?.originalValue),
     unlinkMotion,
     replaceAsset,
     undo,
@@ -1431,6 +1505,10 @@ export function useNativeMotionController({
     propertyOwnership,
     ownershipConflict,
     responsiveManifest,
+    controlManifest,
+    customControls: Array.isArray(controlManifest?.controls)
+      ? controlManifest.controls.filter((control) => control.status === 'ready')
+      : [],
     responsiveScopeFor,
     pendingResponsiveScopeChange,
     autoExpandedRowId: lastAutoExpandedRef.current,

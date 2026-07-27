@@ -1,7 +1,98 @@
 import { reconstructPage } from './reconstruct.js';
-import { runBilledOperation } from './billing/context.js';
+import { recordUsage, runBilledOperation } from './billing/context.js';
 import { createConfiguredBundleStore } from './native-clone/bundle-store.js';
 import { registerNativeBundle } from './native-clone/register-bundle.js';
+import { generateControlsForReconstruction } from './motion-editor/control-generation.js';
+import { persistNativeBundleDescriptor } from './motion-editor/edit-session-store.js';
+import { createEmptyMotionManifest, parseMotionManifest } from './motion-editor/manifest.js';
+
+const CONTROL_CONVERSION_DEADLINE_MS = 90_000;
+
+function generationMeta(generated) {
+  return {
+    status: 'ready',
+    provider: generated.provider?.provider || null,
+    model: generated.provider?.model || null,
+    repaired: generated.provider?.repaired === true,
+    providerCostUsd: Number(generated.provider?.costUsd || 0),
+    acceptedControls: generated.manifest.controls.length,
+    decisionCodes: [...new Set((generated.diagnostics || []).map((item) => item.code))],
+  };
+}
+
+async function persistNativeSnapshot({ sql, node, descriptor, motionManifest, current, meta }) {
+  let rows;
+  if (current?.id && current.source === 'capture') {
+    rows = await sql`
+      WITH current_node AS (
+        SELECT current_snapshot_id
+          FROM nodes
+         WHERE id = ${node.id}
+         FOR UPDATE
+      ), updated_snapshot AS (
+        UPDATE snapshots
+           SET html = NULL,
+               source = 'native-bundle',
+               design_md = NULL,
+               native_bundle_id = ${descriptor.bundleId},
+               motion_manifest = ${JSON.stringify(motionManifest)}::jsonb,
+               motion_manifest_version = ${motionManifest.schemaVersion}
+         WHERE id = ${current.id}
+           AND node_id = ${node.id}
+           AND source = 'capture'
+           AND EXISTS (
+             SELECT 1 FROM current_node WHERE current_snapshot_id = ${current.id}
+           )
+        RETURNING id
+      ), updated_node AS (
+        UPDATE nodes
+           SET current_snapshot_id = updated_snapshot.id,
+               meta = meta || ${JSON.stringify(meta)}::jsonb
+          FROM updated_snapshot
+         WHERE nodes.id = ${node.id}
+           AND nodes.current_snapshot_id = ${current.id}
+        RETURNING updated_snapshot.id AS snapshot_id
+      )
+      SELECT snapshot_id FROM updated_node
+    `;
+  } else {
+    rows = await sql`
+      WITH current_node AS (
+        SELECT current_snapshot_id
+          FROM nodes
+         WHERE id = ${node.id}
+           AND current_snapshot_id IS NOT DISTINCT FROM ${current?.id || null}
+         FOR UPDATE
+      ), inserted_snapshot AS (
+        INSERT INTO snapshots (
+          node_id, html, screenshot_url, source, parent_snapshot_id,
+          native_bundle_id, motion_manifest, motion_manifest_version
+        )
+        SELECT
+          ${node.id}, NULL, NULL, 'native-bundle', ${current?.id || null},
+          ${descriptor.bundleId}, ${JSON.stringify(motionManifest)}::jsonb, ${motionManifest.schemaVersion}
+        FROM current_node
+        RETURNING id
+      ), updated_node AS (
+        UPDATE nodes
+           SET current_snapshot_id = inserted_snapshot.id,
+               meta = meta || ${JSON.stringify(meta)}::jsonb
+          FROM inserted_snapshot
+         WHERE nodes.id = ${node.id}
+           AND nodes.current_snapshot_id IS NOT DISTINCT FROM ${current?.id || null}
+        RETURNING inserted_snapshot.id AS snapshot_id
+      )
+      SELECT snapshot_id FROM updated_node
+    `;
+  }
+  const snapshotId = rows[0]?.snapshot_id || rows[0]?.id || null;
+  if (!snapshotId) {
+    const error = new Error('reconstruction_snapshot_changed');
+    error.code = 'reconstruction_snapshot_changed';
+    throw error;
+  }
+  return snapshotId;
+}
 
 export function normalizeReconstructionOutput(output) {
   if (!output || typeof output !== 'object') {
@@ -51,30 +142,34 @@ export async function reconstructSiteNode({
   op = 'reconstruct',
   producer = reconstructPage,
   bundleStore = null,
+  generateControls = generateControlsForReconstruction,
+  persistBundle = persistNativeBundleDescriptor,
 }) {
   const { result, credits, balanceAfter } = await runBilledOperation(
     { sql, userId, op, boardId: node.board_id, nodeId: node.id, idemKey },
     async () => {
-      const materialized = await materializeReconstructionOutput(
-        await producer(node.origin_url),
-        { bundleStore },
-      );
-      if (materialized.kind === 'native') {
-        return {
-          ok: true,
-          kind: 'native',
-          nodeId: node.id,
-          bundleDescriptor: materialized.bundleDescriptor,
-          meta: {
-            animatedDetected: false,
-            animatedRuntime: true,
-            referenceMode: 'clone',
-            reconstructionEngine: 'native-bundle',
-            deferredReconstructionReason: reason,
-          },
-        };
+      const deadline = new AbortController();
+      const deadlineError = Object.assign(new Error('control_conversion_timeout'), { code: 'control_conversion_timeout' });
+      const aborted = new Promise((_, reject) => deadline.signal.addEventListener('abort', () => reject(deadline.signal.reason), { once: true }));
+      const timer = setTimeout(() => deadline.abort(deadlineError), CONTROL_CONVERSION_DEADLINE_MS);
+      try {
+      let materialized;
+      try {
+        materialized = await materializeReconstructionOutput(
+          await Promise.race([
+            producer(node.origin_url),
+            aborted,
+          ]),
+          { bundleStore },
+        );
+      } catch (error) {
+        if (deadline.signal.aborted) {
+          const timeout = new Error('control_conversion_timeout');
+          timeout.code = 'control_conversion_timeout';
+          throw timeout;
+        }
+        throw error;
       }
-      const rec = materialized.output;
       // Read the CURRENT snapshot AUTHORITATIVELY — never trust the caller's
       // node fields. The run route builds its node without current_snapshot_id
       // (adversarial review Codex #2), and the row can change between the
@@ -85,6 +180,65 @@ export async function reconstructSiteNode({
           LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
          WHERE n.id = ${node.id}
       `;
+
+      if (materialized.kind === 'native') {
+          const descriptor = await persistBundle({ sql, descriptor: materialized.bundleDescriptor });
+          const generated = await Promise.race([generateControls({
+            descriptor,
+            reconstructionOutput: materialized.output,
+            signal: deadline.signal,
+            onUsage: (usage) => recordUsage({
+              provider: usage.provider,
+              model: usage.model,
+              tokensIn: usage.inputTokens,
+              tokensOut: usage.outputTokens,
+              cachedIn: usage.cachedInputTokens,
+              cacheWrite: usage.cacheWriteTokens,
+              meta: { stage: 'motion-control-generation' },
+            }),
+          }), aborted]);
+          const baseManifest = createEmptyMotionManifest({
+            baseBundleId: descriptor.bundleId,
+            runtimeFingerprint: descriptor.runtimeFingerprint,
+          });
+          const motionManifest = parseMotionManifest({
+            ...baseManifest,
+            controlManifest: generated.manifest,
+          }, {
+            expectedBundleId: descriptor.bundleId,
+            runtimeFingerprint: descriptor.runtimeFingerprint,
+          });
+          const nextMeta = {
+            animatedDetected: false,
+            animatedRuntime: true,
+            referenceMode: 'clone',
+            reconstructionEngine: 'native-bundle',
+            deferredReconstructionReason: reason,
+            deferredReconstructedAt: new Date().toISOString(),
+            motionControls: generationMeta(generated),
+          };
+          if (deadline.signal.aborted) throw deadline.signal.reason;
+          const snapshotId = await persistNativeSnapshot({
+            sql,
+            node,
+            descriptor,
+            motionManifest,
+            current,
+            meta: nextMeta,
+          });
+          return {
+            ok: true,
+            kind: 'native',
+            nodeId: node.id,
+            snapshotId,
+            bundleDescriptor: descriptor,
+            motionManifest,
+            controlManifest: generated.manifest,
+            controlGeneration: generationMeta(generated),
+            meta: nextMeta,
+          };
+      }
+      const rec = materialized.output;
 
       // The reconstruction is a FORMAT UPGRADE of the SAME state (animated
       // capture → editable Iter9 clone), not a saved edit. Overwrite the current
@@ -140,6 +294,9 @@ export async function reconstructSiteNode({
          WHERE id = ${node.id}
       `;
       return { ok: true, nodeId: node.id, snapshotId: snapId, html: rec.html, meta: nextMeta };
+      } finally {
+        clearTimeout(timer);
+      }
     },
   );
   return { ...result, credits, balanceAfter };

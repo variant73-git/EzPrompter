@@ -10,6 +10,7 @@ import { getRuntimeBridgeSource } from './runtime-bridge-source.js';
 describe('native motion runtime bridge', () => {
   beforeEach(() => {
     try { window.__uncraftMotionBridge?.teardown?.(); } catch (_) {}
+    delete window.__uncraftMotionControlCapabilities;
     document.querySelectorAll('[data-uncraft-runtime-config]').forEach((node) => node.remove());
     document.documentElement.removeAttribute('data-uncraft-editor-mode');
     document.body.innerHTML = '<main><h1 id="hero-title" aria-label="CropTab"><span class="char">C</span><span class="char">r</span><span class="char">o</span><span class="char">p</span><span class="char">T</span><span class="char">a</span><span class="char">b</span></h1></main>';
@@ -20,14 +21,16 @@ describe('native motion runtime bridge', () => {
     sessionId = 'session-fixture',
     sessionNonce = 'nonce-fixture-123456',
     origin = 'https://app.uncraft.test',
+    runtimeFingerprint = 'sha256:fixture',
+    controlManifest = null,
   } = {}) {
     const config = document.createElement('script');
     config.type = 'application/json';
     config.dataset.uncraftRuntimeConfig = 'true';
     config.textContent = JSON.stringify({
-      initialManifest: { schemaVersion: 2, baseBundleId: bundleId, transactions: [] },
+      initialManifest: { schemaVersion: 2, baseBundleId: bundleId, transactions: [], ...(controlManifest ? { controlManifest } : {}) },
       runtimeSessionId: sessionId,
-      runtimeFingerprint: 'sha256:fixture',
+      runtimeFingerprint,
       sessionNonce,
     });
     document.head.appendChild(config);
@@ -1908,8 +1911,107 @@ describe('native motion runtime bridge', () => {
 
     expect(document.querySelector('[data-uncraft-id="el-a"]').style.opacity).toBe('1');
     const result = runtime.messages.filter((message) => message.type === 'validation-result').pop();
-    expect(result.payload).toMatchObject({ transactionId: 'tx-validate', valid: true, restored: true });
+    expect(result.payload).toMatchObject({
+      transactionId: 'tx-validate',
+      valid: true,
+      restored: true,
+      stages: { read: 'passed', apply: 'passed', effect: 'passed', restore: 'passed', deterministic: 'passed', teardown: 'passed' },
+    });
     expect(runtime.messages.filter((message) => message.type === 'transaction-committed')).toHaveLength(0);
+    runtime.restore();
+  });
+
+  it('applies only ready custom controls declared for the exact bundle fingerprint', () => {
+    document.body.innerHTML = '<main><div data-uncraft-id="el-a"></div></main>';
+    const bundleId = 'bundle-controls';
+    const runtimeFingerprint = 'sha256:controls';
+    const control = {
+      id: 'control-aaaaaaaaaaaaaaaaaaaaaaaa',
+      status: 'ready',
+      bundleId,
+      runtimeFingerprint,
+      controlType: 'slider-number',
+      domain: { min: 0, max: 2, step: 0.1 },
+      binding: { kind: 'css-custom-property', property: '--motion-scale' },
+      targets: [{ elementId: 'el-a', motionId: null, property: '--motion-scale' }],
+    };
+    const runtime = bootV2Runtime({
+      bundleId,
+      runtimeFingerprint,
+      controlManifest: { bundleId, runtimeFingerprint, controls: [control] },
+    });
+
+    runtime.send('apply-transaction', {
+      transaction: {
+        id: 'tx-control',
+        patches: [{ id: 'p-control', elementId: 'el-a', kind: 'control', property: control.id, before: '', value: 1.4 }],
+      },
+    }, 'request-control');
+
+    expect(document.querySelector('[data-uncraft-id="el-a"]').style.getPropertyValue('--motion-scale')).toBe('1.4');
+    expect(runtime.messages.filter((message) => message.type === 'transaction-committed').pop().payload.transaction.id).toBe('tx-control');
+
+    runtime.send('apply-transaction', {
+      transaction: {
+        id: 'tx-control-off-step',
+        patches: [{ id: 'p-control-off-step', elementId: 'el-a', kind: 'control', property: control.id, before: 1.4, value: 1.45 }],
+      },
+    }, 'request-control-off-step');
+    expect(runtime.messages.filter((message) => message.type === 'transaction-rejected').pop().payload.code).toBe('invalid_value');
+    expect(document.querySelector('[data-uncraft-id="el-a"]').style.getPropertyValue('--motion-scale')).toBe('1.4');
+
+    runtime.send('apply-transaction', {
+      transaction: {
+        id: 'tx-control-escape',
+        patches: [{ id: 'p-control-escape', elementId: 'el-a', kind: 'control', property: 'control-bbbbbbbbbbbbbbbbbbbbbbbb', before: '', value: 1 }],
+      },
+    }, 'request-control-escape');
+    expect(runtime.messages.filter((message) => message.type === 'transaction-rejected').pop().payload.code).toBe('control_missing');
+    runtime.restore();
+  });
+
+  it('executes an instrumented custom adapter only through the sandbox capability registry', () => {
+    document.body.innerHTML = '<main><div data-uncraft-id="el-a"></div></main>';
+    const bundleId = 'bundle-custom-adapter';
+    const runtimeFingerprint = 'sha256:custom-adapter';
+    let depth = 1;
+    const read = vi.fn(() => depth);
+    const apply = vi.fn(({ value }) => { depth = value; });
+    window.__uncraftMotionControlCapabilities = {
+      'motion.scalar': { read, apply },
+    };
+    const control = {
+      id: 'control-cccccccccccccccccccccccc',
+      status: 'ready',
+      bundleId,
+      runtimeFingerprint,
+      controlType: 'slider-number',
+      domain: { min: 0, max: 2, step: 0.1 },
+      binding: { kind: 'custom-capability', capability: 'motion.scalar', property: 'depth' },
+      targets: [{ elementId: 'el-a', motionId: 'custom-motion', property: 'depth' }],
+    };
+    const runtime = bootV2Runtime({
+      bundleId,
+      runtimeFingerprint,
+      controlManifest: { bundleId, runtimeFingerprint, controls: [control] },
+    });
+
+    runtime.send('apply-transaction', {
+      transaction: {
+        id: 'tx-custom-adapter',
+        patches: [{ id: 'p-custom-adapter', elementId: 'el-a', kind: 'control', property: control.id, before: 1, value: 1.6 }],
+      },
+    }, 'request-custom-adapter');
+
+    expect(depth).toBe(1.6);
+    expect(apply).toHaveBeenCalledWith(expect.objectContaining({
+      controlId: control.id,
+      elementId: 'el-a',
+      motionId: 'custom-motion',
+      property: 'depth',
+      value: 1.6,
+    }));
+    expect(read).toHaveBeenCalled();
     runtime.restore();
   });
 

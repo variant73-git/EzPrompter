@@ -64,7 +64,10 @@ const { POST: signupPost } = await import('./auth/signup/route.js');
 const { grantCredits: grantMock } = await import('../../lib/billing/ledger.js');
 const { reconstructPage: reconstructPageMock } = await import('../../lib/reconstruct.js');
 
-const makeRequest = (body = {}) => ({ json: async () => body, headers: { get: () => null } });
+const makeRequest = (body = {}) => ({
+  json: async () => body,
+  headers: { get: (name) => name.toLowerCase() === 'idempotency-key' ? 'billing-wiring-operation' : null },
+});
 const runParams = { params: Promise.resolve({ id: 'node-1' }) };
 
 beforeEach(() => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyReconstructionResultToNode,
   NODE_EDITOR_KIND,
   resolveNodeEditorKind,
   snapshotEditorMetadata,
@@ -68,5 +69,39 @@ describe('node editor kind', () => {
       nativeBundleId: null,
       motionManifestVersion: null,
     });
+  });
+
+  it('promotes a completed native conversion into native editor eligibility immediately', () => {
+    const prepared = applyReconstructionResultToNode({
+      id: 'site-1', kind: 'site', current_html: '<html>capture</html>', meta: { animatedDetected: true },
+    }, {
+      kind: 'native', snapshotId: 'snapshot-native', snapshotSource: 'native-bundle',
+      bundleDescriptor: { bundleId: BUNDLE_ID },
+      motionManifest: { schemaVersion: 2 },
+      meta: { motionControls: { status: 'ready', acceptedControls: 3 } },
+    });
+
+    expect(prepared).toMatchObject({
+      current_html: null,
+      current_snapshot_id: 'snapshot-native',
+      current_snapshot_source: 'native-bundle',
+      current_native_bundle_id: BUNDLE_ID,
+      current_motion_manifest_version: 2,
+      meta: { reconstructionEngine: 'native-bundle', motionControls: { acceptedControls: 3 } },
+    });
+    expect(resolveNodeEditorKind(prepared, snapshotEditorMetadata(prepared), flags)).toBe(NODE_EDITOR_KIND.NATIVE);
+  });
+
+  it('keeps an Iter9 conversion on the legacy path', () => {
+    const prepared = applyReconstructionResultToNode({ id: 'site-1', kind: 'site', meta: {} }, {
+      snapshotId: 'snapshot-iter9', html: '<html>iter9</html>', snapshotSource: 'reconstruct', meta: {},
+    });
+    expect(prepared).toMatchObject({
+      current_html: '<html>iter9</html>',
+      current_native_bundle_id: null,
+      current_motion_manifest_version: null,
+      meta: { reconstructionEngine: 'iter9' },
+    });
+    expect(resolveNodeEditorKind(prepared, snapshotEditorMetadata(prepared), flags)).toBe(NODE_EDITOR_KIND.LEGACY);
   });
 });

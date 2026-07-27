@@ -5,7 +5,7 @@ export const SUPPORTED_MOTION_EDITOR_PROTOCOLS = Object.freeze([
   MOTION_EDITOR_PROTOCOL,
 ]);
 
-const PATCH_KINDS = new Set(['style', 'text', 'attribute', 'svg', 'motion']);
+const PATCH_KINDS = new Set(['style', 'text', 'attribute', 'svg', 'motion', 'control']);
 
 export function isRuntimeMessage(value) {
   if (!value || typeof value !== 'object' || value.source !== 'runtime' || typeof value.type !== 'string') {
@@ -39,7 +39,7 @@ export function createPatch({ elementId, kind, property = null, before = '', val
   if (!elementId || typeof elementId !== 'string') throw new Error('elementId is required');
   if (!PATCH_KINDS.has(kind)) throw new Error(`Unsupported patch kind: ${kind}`);
   if (!['text', 'svg'].includes(kind) && (!property || typeof property !== 'string')) {
-    throw new Error('property is required for style, attribute and motion patches');
+    throw new Error('property is required for style, attribute, motion and control patches');
   }
   if (kind === 'motion' && (!motionId || typeof motionId !== 'string')) {
     throw new Error('motionId is required for motion patches');

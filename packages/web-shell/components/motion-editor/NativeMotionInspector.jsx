@@ -7,6 +7,7 @@ import {
   MotionPanel,
   PropertiesPanel,
 } from './NativeMotionEditor.jsx';
+import CustomControlsSection from './CustomControlsSection.jsx';
 import MotionOwnershipChoice from './MotionOwnershipChoice.jsx';
 import styles from './native-motion-canvas.module.css';
 
@@ -98,6 +99,12 @@ export default function NativeMotionInspector({
             <MotionOwnershipChoice
               conflict={controller.ownershipConflict}
               onChoose={controller.commands.chooseOwnership}
+            />
+            <CustomControlsSection
+              controls={controller.customControls || []}
+              activeMotionId={controller.activeMotionId}
+              onChange={controller.commands.applyCustomControl}
+              onReset={controller.commands.resetCustomControl}
             />
             <MotionPanel
               selected={selected}

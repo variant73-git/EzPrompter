@@ -22,12 +22,13 @@ function manifestTransaction(value) {
   };
 }
 
-function draftFromHistory(base, transactions, responsiveManifest) {
+function draftFromHistory(base, transactions, responsiveManifest, controlManifest) {
   return {
     ...cloneJson(base),
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     transactions: (transactions || []).map(manifestTransaction),
     ...(responsiveManifest === undefined ? {} : { responsiveManifest: cloneJson(responsiveManifest) }),
+    ...(controlManifest === undefined ? {} : { controlManifest: cloneJson(controlManifest) }),
   };
 }
 
@@ -166,12 +167,13 @@ export function createNativeEditApi({
     }, debounceMs);
   }
 
-  async function save({ transactions = [], responsiveManifest } = {}) {
+  async function save({ transactions = [], responsiveManifest, controlManifest } = {}) {
     const current = await open();
     desiredManifest = draftFromHistory(
       desiredManifest || current.draftManifest,
       transactions,
       responsiveManifest,
+      controlManifest,
     );
     localVersion += 1;
     if (status === 'saved') status = 'idle';

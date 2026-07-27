@@ -6,6 +6,7 @@ vi.mock('./reconstruct.js', () => ({
 }));
 vi.mock('./billing/context.js', () => ({
   runBilledOperation: vi.fn(async (_opts, fn) => ({ result: await fn(), credits: 3, balanceAfter: 100 })),
+  recordUsage: vi.fn(),
 }));
 
 const {
@@ -110,5 +111,84 @@ describe('deferred reconstruction result kinds', () => {
     await expect(materializeReconstructionOutput({ kind: 'native', bundle: {} }, {
       bundleStore: createMemoryBundleStore(),
     })).rejects.toThrow();
+  });
+
+  it('automatically validates controls and persists the native snapshot before billing can settle', async () => {
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const generated = vi.fn(async ({ descriptor }) => ({
+      manifest: {
+        schemaVersion: 1,
+        bundleId: descriptor.bundleId,
+        runtimeFingerprint: descriptor.runtimeFingerprint,
+        controls: [],
+      },
+      provider: { provider: 'openai', model: 'gpt-5.6-terra', repaired: false, costUsd: 0.01, usage: [] },
+      diagnostics: [],
+    }));
+    const producer = vi.fn(async () => ({
+      kind: 'native',
+      bundle: {
+        entryPath: 'index.html',
+        runtimeFingerprint: runtimeHash,
+        assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+        reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+      },
+      controlValidationTransport: vi.fn(),
+    }));
+
+    const result = await reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-1',
+      producer,
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: generated,
+    });
+
+    expect(generated).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ kind: 'native', snapshotId: 'snap-native', credits: 3 });
+    expect(result.motionManifest.controlManifest).toEqual(result.controlManifest);
+    const snapshotWrite = sql._calls.find((call) => /UPDATE snapshots/i.test(call.query));
+    expect(snapshotWrite.query).toMatch(/native_bundle_id[\s\S]+motion_manifest[\s\S]+motion_manifest_version/i);
+    expect(snapshotWrite.values).toContain(JSON.stringify(result.motionManifest));
+  });
+
+  it('does not return a partially valid native result when persistence fails after generation', async () => {
+    const store = createMemoryBundleStore();
+    const baseSql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const sql = (strings, ...values) => {
+      const query = strings.join('?');
+      if (/UPDATE snapshots/i.test(query)) throw new Error('persistence unavailable');
+      return baseSql(strings, ...values);
+    };
+    const generateControls = vi.fn(async ({ descriptor }) => ({
+      manifest: { schemaVersion: 1, bundleId: descriptor.bundleId, runtimeFingerprint: descriptor.runtimeFingerprint, controls: [] },
+      provider: { provider: 'openai', model: 'gpt-5.6-terra', repaired: false, costUsd: 0.01, usage: [] },
+      diagnostics: [],
+    }));
+
+    await expect(reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-fail',
+      producer: vi.fn(async () => ({
+        kind: 'native',
+        bundle: {
+          entryPath: 'index.html', runtimeFingerprint: runtimeHash,
+          assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+          reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
+        },
+      })),
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls,
+    })).rejects.toThrow('persistence unavailable');
+    expect(generateControls).toHaveBeenCalledTimes(1);
   });
 });

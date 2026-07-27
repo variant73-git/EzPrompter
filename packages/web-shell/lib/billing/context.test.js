@@ -63,6 +63,18 @@ describe('runBilledOperation', () => {
     }, deps);
     expect(out.credits).toBe(100); // 250,000 µ¢ × 4 = 100¢ → 100 credits
   });
+
+  it('surfaces a success-path settlement failure instead of returning a paid artifact', async () => {
+    const deps = fakeDeps();
+    deps.settleOperation.mockRejectedValueOnce(new Error('settlement unavailable'));
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(runBilledOperation({
+      sql, userId: 'u1', op: 'clone.edit', idemKey: 'clone-settlement-failure',
+    }, async () => ({ snapshotId: 'snapshot-ready' }), deps)).rejects.toThrow('settlement unavailable');
+    expect(errorLog).toHaveBeenCalledWith(expect.stringMatching(/settle-on-success FAILED/), expect.any(Error));
+    errorLog.mockRestore();
+  });
 });
 
 describe('idempotency (retry dedup)', () => {

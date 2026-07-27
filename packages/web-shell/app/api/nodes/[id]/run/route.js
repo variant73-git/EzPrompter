@@ -106,23 +106,27 @@ export async function POST(request, { params }) {
       });
       reconstructionCredits += Number(reconstructed.credits || 0);
       reconstructions.push({
+        kind: reconstructed.kind || 'iter9',
         nodeId: reconstructed.nodeId,
         snapshotId: reconstructed.snapshotId,
         html: reconstructed.html,
+        snapshotSource: reconstructed.kind === 'native' ? 'native-bundle' : 'reconstruct',
+        bundleDescriptor: reconstructed.bundleDescriptor,
+        motionManifest: reconstructed.motionManifest,
         meta: reconstructed.meta,
         reason: item.reason,
         credits: reconstructed.credits,
       });
       if (item.target) {
         target.current_html = reconstructed.html;
-        target.current_snapshot_source = 'reconstruct';
+        target.current_snapshot_source = reconstructed.kind === 'native' ? 'native-bundle' : 'reconstruct';
         target.meta = { ...(target.meta || {}), ...(reconstructed.meta || {}) };
       }
       if (item.source) {
         for (const source of sources) {
           if (source.id !== reconstructed.nodeId) continue;
           source.source_html = reconstructed.html;
-          source.current_snapshot_source = 'reconstruct';
+          source.current_snapshot_source = reconstructed.kind === 'native' ? 'native-bundle' : 'reconstruct';
           source.meta = { ...(source.meta || {}), ...(reconstructed.meta || {}) };
         }
       }

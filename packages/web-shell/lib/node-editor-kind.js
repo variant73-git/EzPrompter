@@ -18,6 +18,31 @@ export function snapshotEditorMetadata(node) {
   };
 }
 
+export function applyReconstructionResultToNode(node, result) {
+  if (!node || !result || (result.skipped && !result.html)) return node;
+  const native = result.kind === 'native'
+    && typeof result.bundleDescriptor?.bundleId === 'string'
+    && Number(result.motionManifest?.schemaVersion) === NATIVE_MOTION_MANIFEST_VERSION;
+  return {
+    ...node,
+    current_html: native ? null : result.html,
+    current_snapshot_id: result.snapshotId,
+    current_snapshot_source: result.snapshotSource || (native ? 'native-bundle' : 'reconstruct'),
+    current_native_bundle_id: native ? result.bundleDescriptor.bundleId : null,
+    current_motion_manifest_version: native ? NATIVE_MOTION_MANIFEST_VERSION : null,
+    meta: {
+      ...(node.meta || {}),
+      ...(result.meta || {}),
+      ...(!result.skipped ? {
+        animatedDetected: false,
+        animatedRuntime: true,
+        reconstructionEngine: native ? 'native-bundle' : 'iter9',
+      } : {}),
+    },
+    _resetTick: (node._resetTick || 0) + 1,
+  };
+}
+
 export function resolveNodeEditorKind(node, snapshot, flags = {}) {
   if (!flags.nativeMotionCanvasEdit) return NODE_EDITOR_KIND.LEGACY;
   if (!['site', 'template', 'chunk'].includes(node?.kind)) return NODE_EDITOR_KIND.LEGACY;

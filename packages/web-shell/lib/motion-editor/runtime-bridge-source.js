@@ -27,6 +27,18 @@ function nativeMotionRuntimeBridge() {
   const bundleId = runtimeConfig.initialManifest?.baseBundleId || runtimeConfig.bundleId || 'motion-lab-bundle';
   const runtimeSessionId = runtimeConfig.runtimeSessionId || 'motion-lab-session';
   const runtimeFingerprint = runtimeConfig.runtimeFingerprint || null;
+  const initialControlManifest = runtimeConfig.initialManifest?.controlManifest;
+  const controlRegistry = new Map();
+  if (initialControlManifest
+    && initialControlManifest.bundleId === bundleId
+    && initialControlManifest.runtimeFingerprint === runtimeFingerprint
+    && Array.isArray(initialControlManifest.controls)) {
+    initialControlManifest.controls.forEach((control) => {
+      if (control?.status === 'ready' && typeof control.id === 'string' && Array.isArray(control.targets)) {
+        controlRegistry.set(control.id, control);
+      }
+    });
+  }
   const runtimeGeneration = Math.max(1, Number(window.__uncraftMotionRuntimeGeneration || 0) + 1);
   window.__uncraftMotionRuntimeGeneration = runtimeGeneration;
   let negotiatedProtocol = PROTOCOL;
@@ -2794,7 +2806,112 @@ function nativeMotionRuntimeBridge() {
     if (patch.kind === 'text') return element.matches('input,textarea') ? element.value : element.textContent;
     if (patch.kind === 'svg') return element.outerHTML;
     if (patch.kind === 'motion') return readMotionPatchValue(patch, element);
+    if (patch.kind === 'control') return readControlPatchValue(patch, element);
     throw bridgeError('unsupported_patch', 'The patch kind is not supported.');
+  }
+
+  function declaredControlTarget(control, elementId) {
+    return control.targets.find((target) => target?.elementId === elementId) || null;
+  }
+
+  function controlForPatch(patch) {
+    const control = controlRegistry.get(patch?.property);
+    if (!control) throw bridgeError('control_missing', 'The validated control is no longer available.');
+    if (control.bundleId !== bundleId || control.runtimeFingerprint !== runtimeFingerprint) {
+      throw bridgeError('fingerprint_mismatch', 'The validated control belongs to another runtime.');
+    }
+    const target = declaredControlTarget(control, patch.elementId);
+    if (!target) throw bridgeError('scope_escape', 'The control cannot write to this target.');
+    return { control, target };
+  }
+
+  function controlValueAllowed(control, value) {
+    const domain = control.domain || {};
+    if (control.controlType === 'slider-number') {
+      const min = Number(domain.min);
+      const max = Number(domain.max);
+      const step = Number(domain.step);
+      if (typeof value !== 'number' || !Number.isFinite(value)
+        || !Number.isFinite(min) || !Number.isFinite(max) || !Number.isFinite(step)
+        || step <= 0 || value < min || value > max) return false;
+      const stepOffset = (value - min) / step;
+      return Math.abs(stepOffset - Math.round(stepOffset)) <= 1e-7;
+    }
+    if (control.controlType === 'toggle') return typeof value === 'boolean';
+    const options = Array.isArray(domain.options) ? domain.options : [];
+    return options.some((option) => valuesEqual(option?.value ?? option, value));
+  }
+
+  function controlMotionPatch(control, target, patch) {
+    if (!target.motionId) throw bridgeError('motion_missing', 'The validated motion target is no longer available.');
+    const property = control.binding?.property || target.property;
+    if (typeof property !== 'string' || !property) throw bridgeError('unsupported_patch', 'The control property is unavailable.');
+    return { ...patch, kind: 'motion', motionId: target.motionId, property };
+  }
+
+  function registeredControlCapability(name) {
+    const registry = window.__uncraftMotionControlCapabilities;
+    if (!registry || typeof registry !== 'object') return null;
+    const capability = registry[name];
+    if (!capability || typeof capability.read !== 'function' || typeof capability.apply !== 'function') return null;
+    return capability;
+  }
+
+  function capabilityContext(control, target, patch, element) {
+    return Object.freeze({
+      controlId: control.id,
+      element,
+      elementId: target.elementId,
+      motionId: target.motionId,
+      property: control.binding?.property || target.property,
+      value: cloneValue(patch.value),
+    });
+  }
+
+  function readControlPatchValue(patch, element) {
+    const { control, target } = controlForPatch(patch);
+    const binding = control.binding || {};
+    if (binding.kind === 'css-custom-property') return element.style.getPropertyValue(binding.property);
+    if (binding.kind === 'dom-attribute') return element.getAttribute(binding.attribute) ?? '';
+    if (binding.kind === 'known-runtime' || binding.kind === 'typed-command') {
+      return readMotionPatchValue(controlMotionPatch(control, target, patch), element);
+    }
+    const capability = binding.kind === 'custom-capability' ? binding.capability : null;
+    if (!['motion.scalar', 'motion.boolean', 'motion.option', 'motion.color', 'motion.easing'].includes(capability)) {
+      throw bridgeError('capability_missing', 'The control capability is not registered.');
+    }
+    const registered = registeredControlCapability(capability);
+    if (registered) return cloneValue(registered.read(capabilityContext(control, target, patch, element)));
+    return readMotionPatchValue(controlMotionPatch(control, target, patch), element);
+  }
+
+  function applyControlPatch(patch, element) {
+    const { control, target } = controlForPatch(patch);
+    if (!controlValueAllowed(control, patch.value)) throw bridgeError('invalid_value', 'The control value is outside its validated domain.');
+    const binding = control.binding || {};
+    if (binding.kind === 'css-custom-property') {
+      element.style.setProperty(binding.property, patch.value ?? '');
+      return;
+    }
+    if (binding.kind === 'dom-attribute') {
+      if (patch.value === '' || patch.value == null) element.removeAttribute(binding.attribute);
+      else element.setAttribute(binding.attribute, patch.value);
+      return;
+    }
+    if (binding.kind === 'known-runtime' || binding.kind === 'typed-command') {
+      applyMotionPatch(controlMotionPatch(control, target, patch), element);
+      return;
+    }
+    const capability = binding.kind === 'custom-capability' ? binding.capability : null;
+    if (!['motion.scalar', 'motion.boolean', 'motion.option', 'motion.color', 'motion.easing'].includes(capability)) {
+      throw bridgeError('capability_missing', 'The control capability is not registered.');
+    }
+    const registered = registeredControlCapability(capability);
+    if (registered) {
+      registered.apply(capabilityContext(control, target, patch, element));
+      return;
+    }
+    applyMotionPatch(controlMotionPatch(control, target, patch), element);
   }
 
   function applyPatchOrThrow(patch) {
@@ -2823,6 +2940,8 @@ function nativeMotionRuntimeBridge() {
         element = replacement;
       } else if (patch.kind === 'motion') {
         applyMotionPatch(patch, element);
+      } else if (patch.kind === 'control') {
+        applyControlPatch(patch, element);
       } else {
         throw bridgeError('unsupported_patch', 'The patch kind is not supported.');
       }
@@ -2926,14 +3045,25 @@ function nativeMotionRuntimeBridge() {
 
   function validateTransaction(message, transaction) {
     try {
-      const acknowledged = applyAtomicTransaction(transaction, { restore: true });
-      const valid = acknowledged.patches.every((patch, index) => valuesEqual(patch.value, transaction.patches[index].value));
+      const first = applyAtomicTransaction(transaction, { restore: true });
+      const second = applyAtomicTransaction(transaction, { restore: true });
+      const matchesRequested = first.patches.every((patch, index) => valuesEqual(patch.value, transaction.patches[index].value));
+      const effectChanged = first.patches.some((patch) => !valuesEqual(patch.before, patch.value));
+      const deterministic = first.patches.every((patch, index) => valuesEqual(patch.value, second.patches[index]?.value));
+      const valid = matchesRequested && effectChanged && deterministic;
+      const code = !matchesRequested ? 'effect_mismatch' : !effectChanged ? 'no_effect' : !deterministic ? 'non_deterministic' : null;
       reply(message, 'validation-result', {
-        transactionId: acknowledged.id,
+        transactionId: first.id,
         valid,
         restored: true,
-        observations: acknowledged.patches.map((patch) => ({ patchId: patch.id, value: cloneValue(patch.value) })),
-        ...(valid ? {} : { code: 'effect_mismatch', diagnostics: transactionDiagnostic('effect_mismatch', acknowledged.id) }),
+        stages: {
+          read: 'passed', apply: matchesRequested ? 'passed' : 'failed',
+          effect: effectChanged ? 'passed' : 'failed', restore: 'passed',
+          deterministic: deterministic ? 'passed' : 'failed', teardown: 'passed',
+          fingerprint: runtimeFingerprint ? 'passed' : 'not-required',
+        },
+        observations: first.patches.map((patch) => ({ patchId: patch.id, value: cloneValue(patch.value) })),
+        ...(valid ? {} : { code, diagnostics: transactionDiagnostic(code, first.id) }),
       });
     } catch (error) {
       const code = error?.code || 'validation_failed';

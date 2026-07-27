@@ -1,15 +1,13 @@
 import { createHash } from 'node:crypto';
 import { parseResponsiveManifest as parseResponsiveStateManifest } from './responsive-manifest.js';
+import { parseControlManifest as parseStrictControlManifest } from './control-manifest.js';
 
 export const MOTION_MANIFEST_SCHEMA_VERSION = 2;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/;
-const PATCH_KINDS = new Set(['style', 'text', 'attribute', 'svg', 'motion', 'responsive']);
+const PATCH_KINDS = new Set(['style', 'text', 'attribute', 'svg', 'motion', 'control', 'responsive']);
 const TRANSACTION_SOURCES = new Set(['properties', 'motion', 'code', 'custom-control', 'responsive']);
-const CONTROL_TYPES = new Set(['slider', 'number', 'toggle', 'select', 'segmented', 'color', 'text']);
-const ADAPTER_KINDS = new Set(['declarative', 'custom']);
-const CONTROL_STATUSES = new Set(['ready', 'disabled']);
 const VALUE_TYPES = new Set(['string', 'number', 'boolean']);
 const LEGACY_EPOCH = '1970-01-01T00:00:00.000Z';
 
@@ -140,6 +138,12 @@ function parsePatch(input, { legacyIndex = null } = {}) {
     if (typeof input.groupId !== 'string' || !input.groupId.trim()) fail('patch groupId must be a non-empty string');
     patch.groupId = input.groupId;
   }
+  if (input.controlId != null) {
+    if (typeof input.controlId !== 'string' || !/^control-[0-9a-f]{24}$/.test(input.controlId)) {
+      fail('patch controlId is invalid');
+    }
+    patch.controlId = input.controlId;
+  }
   if (input.layoutIntent != null) {
     if (!isPlainObject(input.layoutIntent)) fail('patch layoutIntent must be an object');
     patch.layoutIntent = cloneJson(input.layoutIntent, 'patch layoutIntent');
@@ -148,23 +152,25 @@ function parsePatch(input, { legacyIndex = null } = {}) {
   return patch;
 }
 
-function parseControlManifest(input, runtimeFingerprint) {
+function parseControlManifest(input, runtimeFingerprint, bundleId) {
   if (input == null) return {};
   if (!isPlainObject(input)) fail('controlManifest must be an object');
   if (Object.keys(input).length === 0) return {};
-  if (input.schemaVersion !== 1) fail(`unsupported control manifest version ${String(input.schemaVersion)}`);
-  if (input.runtimeFingerprint !== runtimeFingerprint) fail('control manifest runtime fingerprint does not match');
-  if (!Array.isArray(input.controls)) fail('control manifest controls must be an array');
-
-  for (const control of input.controls) {
-    if (!isPlainObject(control) || typeof control.id !== 'string' || !control.id.trim()) {
-      fail('controls require a stable id');
-    }
-    if (!CONTROL_TYPES.has(control.controlType)) fail(`unsupported control type ${String(control.controlType)}`);
-    if (!ADAPTER_KINDS.has(control.adapterKind)) fail(`unsupported control adapter kind ${String(control.adapterKind)}`);
-    if (!CONTROL_STATUSES.has(control.status)) fail(`unsupported control status ${String(control.status)}`);
+  // Early legacy diagnostic keeps old v1 manifests readable enough to fail on
+  // their actual unsafe catalog entry, before the new strict anchor fields.
+  if (!input.bundleId && Array.isArray(input.controls)) {
+    const supported = new Set(['slider-number', 'toggle', 'select', 'color', 'easing']);
+    const unsupported = input.controls.find((control) => !supported.has(control?.controlType));
+    if (unsupported) fail(`unsupported control type ${String(unsupported.controlType)}`);
   }
-  return cloneJson(input, 'controlManifest');
+  try {
+    return parseStrictControlManifest(
+      input.bundleId ? input : { ...input, bundleId },
+      { expectedBundleId: bundleId, expectedRuntimeFingerprint: runtimeFingerprint },
+    );
+  } catch (error) {
+    fail(error?.message?.replace(/^Invalid control manifest:\s*/, '') || 'control manifest is invalid');
+  }
 }
 
 function parseTransaction(input) {
@@ -231,7 +237,7 @@ function adaptVersionOne(input, options) {
     schemaVersion: MOTION_MANIFEST_SCHEMA_VERSION,
     baseBundleId,
     transactions,
-    controlManifest: parseControlManifest(legacy.controlManifest ?? {}, runtimeFingerprint),
+    controlManifest: parseControlManifest(legacy.controlManifest ?? {}, runtimeFingerprint, baseBundleId),
     responsiveManifest: parseResponsiveStateManifest(legacy.responsiveManifest ?? {}),
     runtimeFingerprint,
   };
@@ -267,7 +273,7 @@ export function parseMotionManifest(input, options = {}) {
     schemaVersion: MOTION_MANIFEST_SCHEMA_VERSION,
     baseBundleId,
     transactions: manifest.transactions.map(parseTransaction),
-    controlManifest: parseControlManifest(manifest.controlManifest, runtimeFingerprint),
+    controlManifest: parseControlManifest(manifest.controlManifest, runtimeFingerprint, baseBundleId),
     responsiveManifest: parseResponsiveStateManifest(manifest.responsiveManifest),
     runtimeFingerprint,
   };

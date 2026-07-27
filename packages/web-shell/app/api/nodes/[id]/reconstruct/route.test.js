@@ -54,6 +54,17 @@ describe('POST /api/nodes/[id]/reconstruct native result', () => {
     expect(reconstructSiteNode).not.toHaveBeenCalled();
   });
 
+  it('requires one stable parent idempotency key before DB or billing work', async () => {
+    const response = await POST(new Request('http://test/api/nodes/node-1/reconstruct', {
+      method: 'POST',
+    }), params);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: 'idempotency_key_required' });
+    expect(sqlMock).not.toHaveBeenCalled();
+    expect(reconstructSiteNode).not.toHaveBeenCalled();
+  });
+
   it('returns an explicit registered native bundle without pretending it is Iter9 HTML', async () => {
     reconstructSiteNode.mockResolvedValue({
       ok: true,
@@ -76,5 +87,20 @@ describe('POST /api/nodes/[id]/reconstruct native result', () => {
       idemKey: 'reconstruct-1',
       op: 'clone.edit',
     }));
+  });
+
+  it('returns sanitized stable control-generation failures without provider details', async () => {
+    reconstructSiteNode.mockRejectedValue(Object.assign(new Error('raw provider output must stay private'), {
+      code: 'structured_output_invalid',
+    }));
+    const response = await POST(new Request('http://test/api/nodes/node-1/reconstruct', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': 'reconstruct-invalid-controls' },
+    }), params);
+
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body).toEqual({ error: 'control_generation_failed' });
+    expect(JSON.stringify(body)).not.toContain('raw provider output');
   });
 });

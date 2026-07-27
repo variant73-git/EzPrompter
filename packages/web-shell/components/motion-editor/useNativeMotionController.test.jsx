@@ -763,4 +763,80 @@ describe('useNativeMotionController', () => {
     expect(result.current.responsiveScopeFor('opacity', '0.5').mode).toBe('per-device');
     expect(result.current.historyCount).toBe(2);
   });
+
+  it('loads ready custom controls, applies them through v2, and persists the acknowledged value', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const control = {
+      id: 'control-aaaaaaaaaaaaaaaaaaaaaaaa',
+      status: 'ready',
+      scope: 'animation',
+      label: 'Depth',
+      controlType: 'slider-number',
+      currentValue: 1,
+      originalValue: 1,
+      domain: { min: 0, max: 2, step: 0.1 },
+      binding: { kind: 'custom-capability', capability: 'motion.scalar', property: 'depth' },
+      targets: [{ elementId: 'hero', motionId: 'hero-motion', property: 'depth' }],
+    };
+    const persistenceAdapter = {
+      autosave: true,
+      load: vi.fn(async () => ({
+        manifest: { controlManifest: { schemaVersion: 1, controls: [control] } },
+        transactions: [],
+      })),
+      save: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'runtime-ready',
+        payload: { title: 'V2 controls', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT },
+      },
+    })));
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+    await waitFor(() => expect(result.current.customControls).toHaveLength(1));
+    persistenceAdapter.save.mockClear();
+
+    act(() => result.current.commands.applyCustomControl(result.current.customControls[0], 1.5));
+    const applyMessage = frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .findLast((message) => message.type === 'apply-transaction');
+    expect(applyMessage.payload.transaction).toMatchObject({
+      source: 'custom-control',
+      patches: [{ kind: 'control', property: control.id, before: 1, value: 1.5 }],
+    });
+    expect(result.current.customControls[0].currentValue).toBe(1);
+
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', {
+      transaction: applyMessage.payload.transaction,
+    }, applyMessage.requestId)));
+    await waitFor(() => expect(result.current.customControls[0].currentValue).toBe(1.5));
+    expect(persistenceAdapter.save.mock.calls.at(-1)[0].controlManifest.controls[0].currentValue).toBe(1.5);
+
+    act(() => result.current.commands.undo());
+    const undoMessage = frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .findLast((message) => message.type === 'rollback-transaction');
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', {
+      transaction: undoMessage.payload.transaction,
+    }, undoMessage.requestId)));
+    await waitFor(() => expect(result.current.customControls[0].currentValue).toBe(1));
+
+    act(() => result.current.commands.redo());
+    const redoMessage = frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message)
+      .findLast((message) => message.type === 'apply-transaction');
+    await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', {
+      transaction: redoMessage.payload.transaction,
+    }, redoMessage.requestId)));
+    await waitFor(() => expect(result.current.customControls[0].currentValue).toBe(1.5));
+  });
 });

@@ -59,6 +59,7 @@ import {
   remapLiveReferenceSelection,
 } from '../lib/url-reference.js';
 import {
+  applyReconstructionResultToNode,
   NODE_EDITOR_KIND,
   resolveNodeEditorKind,
   snapshotEditorMetadata,
@@ -3064,20 +3065,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         setNodes((prev) => prev.map((node) => {
           const reconstructed = byId.get(node.id);
           if (!reconstructed) return node;
-          return {
-            ...node,
-            current_html: reconstructed.html,
-            current_snapshot_id: reconstructed.snapshotId,
-            current_snapshot_source: 'reconstruct',
-            meta: {
-              ...(node.meta || {}),
-              ...(reconstructed.meta || {}),
-              animatedDetected: false,
-              animatedRuntime: true,
-              reconstructionEngine: 'iter9',
-            },
-            _resetTick: (node._resetTick || 0) + 1,
-          };
+          return applyReconstructionResultToNode(node, reconstructed);
         }));
       }
       setNodeRunStatus(id, { step: 3, label: 'Saving…', request });
@@ -4417,22 +4405,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       try {
         const result = await api.reconstructNode(nodeId);
         flashNodeDebit(nodeId, result?.credits);
-        const preparedNode = result?.skipped && !result?.html ? node : {
-          ...node,
-          current_html: result.html,
-          current_snapshot_id: result.snapshotId,
-          current_snapshot_source: result.snapshotSource || 'reconstruct',
-          meta: {
-            ...(node.meta || {}),
-            ...(result.meta || {}),
-            ...(!result.skipped ? {
-              animatedDetected: false,
-              animatedRuntime: true,
-              reconstructionEngine: 'iter9',
-            } : {}),
-          },
-          _resetTick: (node._resetTick || 0) + 1,
-        };
+        const preparedNode = applyReconstructionResultToNode(node, result);
         setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? preparedNode : candidate));
         setNodeRunStatus(nodeId, null);
         enterEditMode(preparedNode, editorKindForNode(preparedNode));
