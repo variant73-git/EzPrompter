@@ -1,16 +1,30 @@
 // Task 16 fixture — the RICH primary-node motion manifest (v2).
 //
 // Encodes the fixture-contract characteristics the seed CAN carry statically:
-//   • exactly ONE fully-valid status:'ready' accepted custom control (all 8
-//     validation stages passed, lineage pinned to this bundle+fingerprint,
-//     targetCount === targets.length, network:false), and
+//   • THREE fully-valid status:'ready' accepted custom controls, and
 //   • a responsive binding with a per-device value on desktop/tablet/mobile.
 //
-// It CANNOT carry fault controls: control-manifest.js only admits status:'ready'
-// controls (exactKeys rejects any recovery/disabled field). The recoverable and
-// exhausted fault PRESENTATION is a pure runtime overlay (controlAvailability /
-// recoveryStatus in useNativeMotionController.js) driven live via the Task 6a
-// fault-injection seam in Task 14 — never encoded here.
+// Why THREE controls (audit, Codex+Claude 2026-07-28): the disabled/recovering/
+// exhausted presentation is a pure runtime overlay (controlAvailability in
+// useNativeMotionController.js) that only lists controls already present as
+// status:'ready' in this manifest — the fault-injection seam never ADDS controls.
+// The two Task-14 fault scenarios (recover + exhaust) therefore each need their own
+// ready control, plus one that stays healthy:
+//   ctl-ok        — never faults (proves the healthy path survives)
+//   ctl-recover   — the seam faults its FIRST write, then it auto-recovers
+//   ctl-exhausted — the seam faults it until recovery is exhausted → visible+disabled
+// The seam itself is built in Task 14; the manifest cannot encode fault STATE
+// (control-manifest.js admits only status:'ready').
+//
+// Binding notes (audit): controls are string-valued `color` controls bound to CSS
+// custom properties. The bridge reads a css-custom-property with getPropertyValue →
+// a STRING, so a numeric slider-number control would fail type validation; a color
+// control's value IS a hex string. Each target is a SELECTABLE <div> carrying an
+// explicit data-uncraft-id (findElement resolves by data-uncraft-id, and <span> is
+// not selectable) with the property inline-initialized + consumed, so the control has
+// a real readable value and visible effect. Runtime application is proven end-to-end
+// in the Phase-4 canvas scenarios (parser round-trips alone cannot prove it reaches
+// the runtime bridge's controlForPatch).
 //
 // The shape below was proven to survive parseMotionManifest (the same strict
 // re-validation openOrResumeEditSession runs on load) and its idempotent re-parse.
@@ -21,33 +35,37 @@ import { createStableControlId } from '../../../lib/motion-editor/control-manife
 // (the control id derives from identity, not from this).
 const VALIDATED_AT = '2026-07-01T00:00:00.000Z';
 
-/**
- * Build the primary node's rich v2 motion manifest.
- * @param {{ baseBundleId: string, runtimeFingerprint: string }} args
- * @returns {object} a manifest normalized through parseMotionManifest.
- */
-export function buildFixtureManifest({ baseBundleId, runtimeFingerprint }) {
-  // The accepted custom control targets the fixture page's #ctl-ok element (a
-  // site-scoped slider bound to a CSS custom property — no motionId required).
-  const controlIdentity = {
+// Curated swatch options every color control shares (must include each currentValue).
+const COLOR_OPTIONS = ['#a7f3d0', '#fde68a', '#fca5a5', '#93c5fd'];
+
+// The three control targets, keyed by the fixture page's data-uncraft-id. Each holds
+// the initial (inline) color the fixture element renders with.
+export const FIXTURE_CONTROL_TARGETS = Object.freeze([
+  { slug: 'ctl-ok', label: 'Accepted control color', value: '#a7f3d0' },
+  { slug: 'ctl-recover', label: 'Recoverable control color', value: '#fde68a' },
+  { slug: 'ctl-exhausted', label: 'Exhausted control color', value: '#fca5a5' },
+]);
+
+function buildColorControl({ slug, label, value }, { baseBundleId, runtimeFingerprint }) {
+  const identity = {
     ladder: 'known-library',
     scope: 'site',
-    targets: [{ semanticTargetId: 'ctl-ok', elementId: 'ctl-ok', motionId: null, property: 'opacity' }],
-    binding: { kind: 'css-custom-property', property: '--ctl-ok-opacity' },
+    targets: [{ semanticTargetId: slug, elementId: slug, motionId: null, property: 'color' }],
+    binding: { kind: 'css-custom-property', property: `--${slug}-color` },
   };
-  const control = {
-    id: createStableControlId(controlIdentity),
-    ladder: controlIdentity.ladder,
-    scope: controlIdentity.scope,
-    label: 'Accepted control opacity',
-    description: 'Adjusts the accepted control target opacity.',
-    controlType: 'slider-number',
-    unit: 'percent',
-    currentValue: 100,
-    originalValue: 100,
-    targets: controlIdentity.targets,
-    binding: controlIdentity.binding,
-    domain: { min: 0, max: 100, step: 5 },
+  return {
+    id: createStableControlId(identity),
+    ladder: identity.ladder,
+    scope: identity.scope,
+    label,
+    description: `${label} swatch.`,
+    controlType: 'color',
+    unit: 'color',
+    currentValue: value,
+    originalValue: value,
+    targets: identity.targets,
+    binding: identity.binding,
+    domain: { options: COLOR_OPTIONS },
     teardown: { required: false, capability: null },
     limits: { executionMs: 200, mutationCount: 1, targetCount: 1, network: false },
     bundleId: baseBundleId,
@@ -61,6 +79,16 @@ export function buildFixtureManifest({ baseBundleId, runtimeFingerprint }) {
     provenance: { source: 'reconstruction', engine: 'css', decisionCode: 'fixture-accepted' },
     status: 'ready',
   };
+}
+
+/**
+ * Build the primary node's rich v2 motion manifest.
+ * @param {{ baseBundleId: string, runtimeFingerprint: string }} args
+ * @returns {object} a manifest normalized through parseMotionManifest.
+ */
+export function buildFixtureManifest({ baseBundleId, runtimeFingerprint }) {
+  const controls = FIXTURE_CONTROL_TARGETS.map((target) =>
+    buildColorControl(target, { baseBundleId, runtimeFingerprint }));
 
   const raw = {
     schemaVersion: 2,
@@ -71,14 +99,14 @@ export function buildFixtureManifest({ baseBundleId, runtimeFingerprint }) {
       schemaVersion: 1,
       bundleId: baseBundleId,
       runtimeFingerprint,
-      controls: [control],
+      controls,
     },
     responsiveManifest: {
       schemaVersion: 1,
       properties: {
-        // One per-device binding: the hero's opacity settles to a distinct value
-        // on each canonical device, so a reconnect/device-switch scenario has real
-        // per-device data to compare.
+        // One per-device binding: the hero's opacity settles to a distinct value on
+        // each canonical device, so a reconnect/device-switch scenario has real
+        // per-device data to compare. The hero carries data-uncraft-id="hero".
         'hero:opacity': {
           mode: 'per-device',
           sharedValue: 1,

@@ -11,23 +11,35 @@ const BUNDLE_ID = 'a1b2c3d4-5e6f-5a7b-8c9d-0e1f2a3b4c5d'; // valid UUID (v-nibbl
 const FINGERPRINT = 'sha256:' + 'a'.repeat(64);
 const STAGES = ['schema', 'read', 'apply', 'effect', 'restore', 'deterministic', 'teardown', 'fingerprint'];
 
+const CONTROL_SLUGS = ['ctl-ok', 'ctl-recover', 'ctl-exhausted'];
+
 describe('buildFixtureManifest', () => {
-  it('produces a v2 manifest that survives parseMotionManifest with exactly one ready control', () => {
+  it('produces a v2 manifest that survives parseMotionManifest with three ready controls', () => {
     const manifest = buildFixtureManifest({ baseBundleId: BUNDLE_ID, runtimeFingerprint: FINGERPRINT });
     const parsed = parseMotionManifest(manifest, { expectedBundleId: BUNDLE_ID });
     expect(parsed.schemaVersion).toBe(2);
     expect(parsed.baseBundleId).toBe(BUNDLE_ID);
 
-    expect(parsed.controlManifest.controls).toHaveLength(1);
-    const control = parsed.controlManifest.controls[0];
-    expect(control.status).toBe('ready');
-    expect(control.id).toMatch(/^control-[0-9a-f]{24}$/);
-    for (const stage of STAGES) expect(control.validation[stage]).toBe('passed');
-    expect(control.compatibleLineage).toEqual(
-      expect.arrayContaining([{ bundleId: BUNDLE_ID, runtimeFingerprint: FINGERPRINT }]),
-    );
-    expect(control.limits.targetCount).toBe(control.targets.length);
-    expect(control.limits.network).toBe(false);
+    // One healthy (ctl-ok) + one recoverable + one exhaustible fault target (Task 14).
+    const controls = parsed.controlManifest.controls;
+    expect(controls).toHaveLength(3);
+    expect(new Set(controls.map((c) => c.id)).size).toBe(3); // distinct ids
+    expect(controls.map((c) => c.targets[0].elementId).sort()).toEqual([...CONTROL_SLUGS].sort());
+
+    for (const control of controls) {
+      expect(control.status).toBe('ready');
+      expect(control.id).toMatch(/^control-[0-9a-f]{24}$/);
+      // color controls read a css-custom-property (a STRING) — a numeric control would
+      // fail runtime type validation.
+      expect(control.controlType).toBe('color');
+      expect(control.binding.kind).toBe('css-custom-property');
+      for (const stage of STAGES) expect(control.validation[stage]).toBe('passed');
+      expect(control.compatibleLineage).toEqual(
+        expect.arrayContaining([{ bundleId: BUNDLE_ID, runtimeFingerprint: FINGERPRINT }]),
+      );
+      expect(control.limits.targetCount).toBe(control.targets.length);
+      expect(control.limits.network).toBe(false);
+    }
   });
 
   it('binds at least one responsive property per device (desktop/tablet/mobile)', () => {

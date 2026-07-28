@@ -118,11 +118,12 @@ d('seed (isolated DB)', () => {
     expect(resolveNodeEditorKind(node, snapMeta, { nativeMotionCanvasEdit: true }))
       .toBe(NODE_EDITOR_KIND.NATIVE);
 
-    // The primary node persists the RICH manifest: exactly one accepted (ready) control.
+    // The primary node persists the RICH manifest: three accepted (ready) controls
+    // (ctl-ok healthy + ctl-recover + ctl-exhausted for the Task-14 fault scenarios).
     const [snap] = await sql`
       SELECT motion_manifest FROM snapshots WHERE id = ${node.current_snapshot_id}`;
     const controls = snap.motion_manifest?.controlManifest?.controls || [];
-    expect(controls).toHaveLength(1);
-    expect(controls[0].status).toBe('ready');
+    expect(controls).toHaveLength(3);
+    expect(controls.every((c) => c.status === 'ready')).toBe(true);
   });
 });

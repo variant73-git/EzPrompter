@@ -37,25 +37,29 @@
   @keyframes drift  { to { transform: translateX(60px); } }
   @keyframes pulse  { 50% { transform: scale(1.15); } }
 
-  /* Elements that carry candidate controls (targets for custom controls / faults). */
+  /* Control targets. These are selectable block elements (div is in the bridge's
+     SELECTABLE set — span is NOT) and carry an explicit data-uncraft-id matching the
+     manifest's elementId (findElement resolves by data-uncraft-id, never the authored
+     id). Each consumes its own inline-initialized custom property so a color control
+     bound to that property has a real, readable (string) value and a visible effect. */
   .ctl { display: inline-block; padding: 12px 20px; border-radius: 10px; background: #1f1f27; }
-  #ctl-ok        { color: #a7f3d0; }
-  #ctl-recover   { color: #fde68a; }
-  #ctl-exhausted { color: #fca5a5; }
 </style>
 </head>
 <body>
 <main>
   <section>
-    <h1 id="hero">We found a better way</h1>
+    <h1 id="hero" data-uncraft-id="hero">We found a better way</h1>
     <div id="badge" aria-hidden="true"></div>
   </section>
   <section>
     <div id="ambiguous" aria-hidden="true"></div>
     <div>
-      <span class="ctl" id="ctl-ok">Accepted control target</span>
-      <span class="ctl" id="ctl-recover">Recoverable control target</span>
-      <span class="ctl" id="ctl-exhausted">Exhausted control target</span>
+      <div class="ctl" id="ctl-ok" data-uncraft-id="ctl-ok"
+           style="--ctl-ok-color:#a7f3d0; color:var(--ctl-ok-color)">Accepted control target</div>
+      <div class="ctl" id="ctl-recover" data-uncraft-id="ctl-recover"
+           style="--ctl-recover-color:#fde68a; color:var(--ctl-recover-color)">Recoverable control target</div>
+      <div class="ctl" id="ctl-exhausted" data-uncraft-id="ctl-exhausted"
+           style="--ctl-exhausted-color:#fca5a5; color:var(--ctl-exhausted-color)">Exhausted control target</div>
     </div>
   </section>
 </main>
