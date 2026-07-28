@@ -6,12 +6,13 @@ const HAS_DB = !!process.env.E2E_ISOLATED_DATABASE_URL;
 const d = HAS_DB ? describe : describe.skip;
 
 d('seed (isolated DB)', () => {
-  let sql, seedUsers, seedBundle, createConfiguredBundleStore, jwt;
+  let sql, seedUsers, seedBundle, seedBoardAndNodes, createConfiguredBundleStore, createEmptyMotionManifest, jwt;
   beforeAll(async () => {
     process.env.DATABASE_URL = process.env.E2E_ISOLATED_DATABASE_URL;
     ({ sql } = await import('../../../lib/db.js'));
-    ({ seedUsers, seedBundle } = await import('./seed.mjs'));
+    ({ seedUsers, seedBundle, seedBoardAndNodes } = await import('./seed.mjs'));
     ({ createConfiguredBundleStore } = await import('../../../lib/native-clone/bundle-store.js'));
+    ({ createEmptyMotionManifest } = await import('../../../lib/motion-editor/manifest.js'));
     jwt = (await import('jsonwebtoken')).default;
   });
 
@@ -43,5 +44,42 @@ d('seed (isolated DB)', () => {
     expect(row.content_hash).toBe(first.contentHash);
     const second = await seedBundle({ sql, store });
     expect(second.bundleId).toBe(first.bundleId); // content-addressed → stable
+  });
+
+  it('seedBoardAndNodes creates a board + two native nodes with native snapshots (idempotent)', async () => {
+    const { nonAdminUserId } = await seedUsers({ sql });
+    const store = createConfiguredBundleStore();
+    const descriptor = await seedBundle({ sql, store });
+    const primaryManifest = createEmptyMotionManifest({
+      baseBundleId: descriptor.bundleId,
+      runtimeFingerprint: descriptor.runtimeFingerprint,
+    });
+
+    const r = await seedBoardAndNodes({ sql, ownerUserId: nonAdminUserId, descriptor, primaryManifest });
+    expect(r.boardId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(r.primaryNodeId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(r.secondaryNodeId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(r.primaryNodeId).not.toBe(r.secondaryNodeId);
+    expect(r.boardPath).toBe('/canvas/' + r.boardId);
+
+    for (const nodeId of [r.primaryNodeId, r.secondaryNodeId]) {
+      const [node] = await sql`SELECT current_snapshot_id FROM nodes WHERE id = ${nodeId}`;
+      expect(node.current_snapshot_id).toBeTruthy();
+      const [snap] = await sql`
+        SELECT native_bundle_id, motion_manifest_version
+          FROM snapshots WHERE id = ${node.current_snapshot_id}`;
+      expect(snap.native_bundle_id).toBe(descriptor.bundleId);
+      expect(Number(snap.motion_manifest_version)).toBe(2);
+    }
+
+    // Re-run returns the same board + node ids (idempotent) and does not duplicate the base snapshot.
+    const again = await seedBoardAndNodes({ sql, ownerUserId: nonAdminUserId, descriptor, primaryManifest });
+    expect(again.boardId).toBe(r.boardId);
+    expect(again.primaryNodeId).toBe(r.primaryNodeId);
+    expect(again.secondaryNodeId).toBe(r.secondaryNodeId);
+    const [{ count }] = await sql`
+      SELECT COUNT(*)::int AS count FROM snapshots
+       WHERE node_id = ${r.primaryNodeId} AND source = 'native-bundle'`;
+    expect(count).toBe(1);
   });
 });

@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { createToken, hashPassword } from '../../../lib/auth.js';
 import { registerNativeBundle } from '../../../lib/native-clone/register-bundle.js';
 import { persistNativeBundleDescriptor } from '../../../lib/motion-editor/edit-session-store.js';
+import { createEmptyMotionManifest } from '../../../lib/motion-editor/manifest.js';
 
 export const FIXTURE_TAG = 'e2e-native-motion-fixture';
 
@@ -83,4 +84,78 @@ export async function seedBundle({ sql, store }) {
   );
   await persistNativeBundleDescriptor({ sql, descriptor });
   return descriptor;
+}
+
+// The one fixture board is named after the tag so a re-run finds and reuses it.
+const BOARD_NAME = FIXTURE_TAG;
+
+/**
+ * Idempotently ensure one native node exists on `boardId` for `role` ('primary' |
+ * 'secondary'), carrying a base `native-bundle` snapshot. Native-ness lives in the
+ * snapshot, not the node kind (`kind='site'` + snapshot.native_bundle_id +
+ * motion_manifest_version=2). Re-runs never duplicate the base snapshot and never
+ * clobber a `current_snapshot_id` that later edit history (Task 7) has advanced.
+ */
+async function upsertNativeNode({ sql, boardId, role, descriptor, manifest }) {
+  const [existing] = await sql`
+    SELECT id, current_snapshot_id FROM nodes
+     WHERE board_id = ${boardId} AND meta->>'fixtureRole' = ${role}
+     LIMIT 1`;
+  let nodeId = existing?.id;
+  if (!nodeId) {
+    const [node] = await sql`
+      INSERT INTO nodes (board_id, kind, width, height, meta)
+      VALUES (${boardId}, 'site', 1280, 800, ${JSON.stringify({ fixtureRole: role })}::jsonb)
+      RETURNING id`;
+    nodeId = node.id;
+  }
+
+  const [existingSnap] = await sql`
+    SELECT id FROM snapshots
+     WHERE node_id = ${nodeId} AND source = 'native-bundle'
+     ORDER BY created_at ASC LIMIT 1`;
+  let snapshotId = existingSnap?.id;
+  if (!snapshotId) {
+    // The snapshots_native_manifest_shape CHECK requires baseBundleId == native_bundle_id
+    // and schemaVersion/version 2 — createEmptyMotionManifest + this bundleId satisfy it.
+    const [snap] = await sql`
+      INSERT INTO snapshots (node_id, source, native_bundle_id, motion_manifest, motion_manifest_version)
+      VALUES (${nodeId}, 'native-bundle', ${descriptor.bundleId}, ${JSON.stringify(manifest)}::jsonb, 2)
+      RETURNING id`;
+    snapshotId = snap.id;
+  }
+
+  if (!existing?.current_snapshot_id) {
+    await sql`UPDATE nodes SET current_snapshot_id = ${snapshotId} WHERE id = ${nodeId}`;
+  }
+  return nodeId;
+}
+
+/**
+ * Seed the single fixture board plus its two native nodes (primary = the rich
+ * scenario surface; secondary = runtime/message/asset isolation only). Idempotent:
+ * a re-run reuses the existing board (owner + FIXTURE_TAG name) and its two nodes.
+ */
+export async function seedBoardAndNodes({ sql, ownerUserId, descriptor, primaryManifest }) {
+  const [existingBoard] = await sql`
+    SELECT id FROM boards WHERE user_id = ${ownerUserId} AND name = ${BOARD_NAME} LIMIT 1`;
+  let boardId = existingBoard?.id;
+  if (!boardId) {
+    const [board] = await sql`
+      INSERT INTO boards (user_id, name) VALUES (${ownerUserId}, ${BOARD_NAME}) RETURNING id`;
+    boardId = board.id;
+  }
+
+  const primaryNodeId = await upsertNativeNode({
+    sql, boardId, role: 'primary', descriptor, manifest: primaryManifest,
+  });
+  const secondaryManifest = createEmptyMotionManifest({
+    baseBundleId: descriptor.bundleId,
+    runtimeFingerprint: descriptor.runtimeFingerprint,
+  });
+  const secondaryNodeId = await upsertNativeNode({
+    sql, boardId, role: 'secondary', descriptor, manifest: secondaryManifest,
+  });
+
+  return { boardId, primaryNodeId, secondaryNodeId, boardPath: '/canvas/' + boardId };
 }
