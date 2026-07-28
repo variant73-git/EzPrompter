@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 import process from 'node:process';
 import { chromium } from 'playwright-core';
 import { seedNativeMotionFixture } from './fixtures/native-motion/seed.mjs';
+import { runCanvasScenarios } from './native-motion/canvas-scenarios.mjs';
 
 const require = createRequire(import.meta.url);
 export const DEVICES = Object.freeze([
@@ -117,6 +118,11 @@ function startNextServer(port) {
       ...process.env,
       NEXT_DIST_DIR: '.next-task16-e2e',
       NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT: 'true',
+      // Pin the runtime gateway's expected origin to the exact address the runner
+      // serves and navigates. next dev reports request.url as http://localhost:<port>,
+      // so a stray UNCRAFT_RUNTIME_ORIGIN (e.g. 127.0.0.1 from .env.local) would make
+      // every runtime asset request fail the origin check → 404 → blank iframe.
+      UNCRAFT_RUNTIME_ORIGIN: `http://localhost:${port}`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -527,7 +533,7 @@ async function runCanvasGate({ browser, baseUrl, evidenceDir, report }) {
     error.code = 'task16_canvas_prerequisite';
     throw error;
   }
-  throw new Error('Persisted /canvas fixture is configured, but its mutation pack must be reviewed against the fixture ownership record before execution.');
+  await runCanvasScenarios({ browser, baseUrl, evidenceDir, report });
 }
 
 async function main() {
@@ -554,7 +560,12 @@ async function main() {
   };
   let server = null;
   let browser = null;
-  const baseUrl = options.baseUrl || `http://127.0.0.1:${options.port}`;
+  // Use `localhost` (not 127.0.0.1): `next dev` always reports request.url origin as
+  // http://localhost:<port> regardless of the client host, and the native runtime
+  // gateway rejects any asset request whose origin != UNCRAFT_RUNTIME_ORIGIN
+  // (wrong_runtime_origin → 404 → blank runtime iframe). Page origin, runtime origin,
+  // and request.url must all be `localhost` so they agree and the iframe is same-origin.
+  const baseUrl = options.baseUrl || `http://localhost:${options.port}`;
 
   try {
     if (options.startServer && !options.baseUrl) {

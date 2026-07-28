@@ -103,16 +103,19 @@ const BOARD_NAME = FIXTURE_TAG;
  * motion_manifest_version=2). Re-runs never duplicate the base snapshot and never
  * clobber a `current_snapshot_id` that later edit history (Task 7) has advanced.
  */
-async function upsertNativeNode({ sql, boardId, role, descriptor, manifest }) {
+async function upsertNativeNode({ sql, boardId, role, descriptor, manifest, posX = 0, posY = 0 }) {
   const [existing] = await sql`
     SELECT id, current_snapshot_id FROM nodes
      WHERE board_id = ${boardId} AND meta->>'fixtureRole' = ${role}
      LIMIT 1`;
   let nodeId = existing?.id;
   if (!nodeId) {
+    // Distinct pos_x/pos_y so the two 1280-wide nodes never overlap on the board
+    // (pos_x/pos_y default to 0 → both would stack and intercept each other's
+    // clicks). The scenarios reach the primary node via ?focusNode= framing.
     const [node] = await sql`
-      INSERT INTO nodes (board_id, kind, width, height, meta)
-      VALUES (${boardId}, 'site', 1280, 800, ${JSON.stringify({ fixtureRole: role })}::jsonb)
+      INSERT INTO nodes (board_id, kind, pos_x, pos_y, width, height, meta)
+      VALUES (${boardId}, 'site', ${posX}, ${posY}, 1280, 800, ${JSON.stringify({ fixtureRole: role })}::jsonb)
       RETURNING id`;
     nodeId = node.id;
   }
@@ -154,14 +157,14 @@ export async function seedBoardAndNodes({ sql, ownerUserId, descriptor, primaryM
   }
 
   const primaryNodeId = await upsertNativeNode({
-    sql, boardId, role: 'primary', descriptor, manifest: primaryManifest,
+    sql, boardId, role: 'primary', descriptor, manifest: primaryManifest, posX: 0, posY: 0,
   });
   const secondaryManifest = createEmptyMotionManifest({
     baseBundleId: descriptor.bundleId,
     runtimeFingerprint: descriptor.runtimeFingerprint,
   });
   const secondaryNodeId = await upsertNativeNode({
-    sql, boardId, role: 'secondary', descriptor, manifest: secondaryManifest,
+    sql, boardId, role: 'secondary', descriptor, manifest: secondaryManifest, posX: 1700, posY: 0,
   });
 
   return { boardId, primaryNodeId, secondaryNodeId, boardPath: '/canvas/' + boardId };
