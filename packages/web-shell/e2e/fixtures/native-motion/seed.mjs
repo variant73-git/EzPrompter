@@ -4,7 +4,12 @@
 // Runs only when the runner grants E2E_NATIVE_MOTION_ALLOW_MUTATIONS=1. It creates
 // legitimate test fixtures (users/board/nodes/bundles/sessions) — never production data.
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { createToken, hashPassword } from '../../../lib/auth.js';
+import { registerNativeBundle } from '../../../lib/native-clone/register-bundle.js';
+import { persistNativeBundleDescriptor } from '../../../lib/motion-editor/edit-session-store.js';
 
 export const FIXTURE_TAG = 'e2e-native-motion-fixture';
 
@@ -56,4 +61,26 @@ export async function seedUsers({ sql }) {
     RETURNING id`;
   const sessionCookie = createToken({ id: owner.id, email: owner.email, plan: owner.plan });
   return { adminUserId: admin.id, nonAdminUserId: owner.id, sessionCookie };
+}
+
+/**
+ * Register the offline animated fixture page as an immutable native bundle (bytes into
+ * `store`, descriptor row into `native_bundles`). Idempotent: registerNativeBundle is
+ * content-addressed and persistNativeBundleDescriptor is ON CONFLICT DO NOTHING.
+ */
+export async function seedBundle({ sql, store }) {
+  // Both callers (vitest + the runner) execute with cwd = packages/web-shell.
+  const html = readFileSync(join(process.cwd(), 'e2e/fixtures/native-motion/fixture-site/index.html'), 'utf8');
+  const runtimeFingerprint = 'sha256:' + createHash('sha256').update(`fixture-runtime-v1:${html}`).digest('hex');
+  const descriptor = await registerNativeBundle(
+    {
+      assets: [{ path: 'index.html', body: html, contentType: 'text/html; charset=utf-8' }],
+      entryPath: 'index.html',
+      runtimeFingerprint,
+      reconstructionCapabilities: { detectedEngines: ['css'], candidateControls: [] },
+    },
+    { store },
+  );
+  await persistNativeBundleDescriptor({ sql, descriptor });
+  return descriptor;
 }

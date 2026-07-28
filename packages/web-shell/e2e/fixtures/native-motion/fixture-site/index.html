@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task 16 fixture — animated clone</title>
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #0b0b0e; color: #f4f4f5; }
+  main { min-height: 220vh; padding: 8vh 6vw; }
+  section { min-height: 90vh; display: flex; align-items: center; gap: 4vw; }
+
+  /* (a) FINITE motion — a hero that rises once and settles (forwards, no infinite). */
+  #hero {
+    font-size: clamp(28px, 6vw, 64px); font-weight: 600; opacity: 0;
+    animation: rise 0.8s ease-out forwards;
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(40px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* (b) LOOP motion — a badge spinning forever. */
+  #badge {
+    width: 72px; height: 72px; border-radius: 50%;
+    background: conic-gradient(#6366f1, #22d3ee, #6366f1);
+    animation: spin 2s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* (c) AMBIGUOUS owner — one element driven by TWO separate transform animations. */
+  #ambiguous {
+    width: 120px; height: 120px; background: #f472b6; border-radius: 16px;
+    animation: drift 3s ease-in-out infinite alternate, pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes drift  { to { transform: translateX(60px); } }
+  @keyframes pulse  { 50% { transform: scale(1.15); } }
+
+  /* Elements that carry candidate controls (targets for custom controls / faults). */
+  .ctl { display: inline-block; padding: 12px 20px; border-radius: 10px; background: #1f1f27; }
+  #ctl-ok        { color: #a7f3d0; }
+  #ctl-recover   { color: #fde68a; }
+  #ctl-exhausted { color: #fca5a5; }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <h1 id="hero">We found a better way</h1>
+    <div id="badge" aria-hidden="true"></div>
+  </section>
+  <section>
+    <div id="ambiguous" aria-hidden="true"></div>
+    <div>
+      <span class="ctl" id="ctl-ok">Accepted control target</span>
+      <span class="ctl" id="ctl-recover">Recoverable control target</span>
+      <span class="ctl" id="ctl-exhausted">Exhausted control target</span>
+    </div>
+  </section>
+</main>
+</body>
+</html>

@@ -6,11 +6,12 @@ const HAS_DB = !!process.env.E2E_ISOLATED_DATABASE_URL;
 const d = HAS_DB ? describe : describe.skip;
 
 d('seed (isolated DB)', () => {
-  let sql, seedUsers, jwt;
+  let sql, seedUsers, seedBundle, createConfiguredBundleStore, jwt;
   beforeAll(async () => {
     process.env.DATABASE_URL = process.env.E2E_ISOLATED_DATABASE_URL;
     ({ sql } = await import('../../../lib/db.js'));
-    ({ seedUsers } = await import('./seed.mjs'));
+    ({ seedUsers, seedBundle } = await import('./seed.mjs'));
+    ({ createConfiguredBundleStore } = await import('../../../lib/native-clone/bundle-store.js'));
     jwt = (await import('jsonwebtoken')).default;
   });
 
@@ -31,5 +32,16 @@ d('seed (isolated DB)', () => {
     const b = await seedUsers({ sql });
     expect(b.adminUserId).toBe(a.adminUserId);
     expect(b.nonAdminUserId).toBe(a.nonAdminUserId);
+  });
+
+  it('seedBundle registers a native bundle + descriptor row (idempotent)', async () => {
+    const store = createConfiguredBundleStore();
+    const first = await seedBundle({ sql, store });
+    expect(first.bundleId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(first.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    const [row] = await sql`SELECT content_hash FROM native_bundles WHERE bundle_id = ${first.bundleId}`;
+    expect(row.content_hash).toBe(first.contentHash);
+    const second = await seedBundle({ sql, store });
+    expect(second.bundleId).toBe(first.bundleId); // content-addressed → stable
   });
 });
