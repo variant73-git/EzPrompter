@@ -1,6 +1,6 @@
 // Integration tests for the native-motion fixture seed. Gated on the isolated DB env
 // (E2E_ISOLATED_DATABASE_URL); skipped otherwise so CI without the disposable DB stays green.
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 
 const HAS_DB = !!process.env.E2E_ISOLATED_DATABASE_URL;
 const d = HAS_DB ? describe : describe.skip;
@@ -15,6 +15,14 @@ d('seed (isolated DB)', () => {
     ({ createConfiguredBundleStore } = await import('../../../lib/native-clone/bundle-store.js'));
     ({ createEmptyMotionManifest } = await import('../../../lib/motion-editor/manifest.js'));
     jwt = (await import('jsonwebtoken')).default;
+  });
+
+  // The seed is idempotent by REUSE — whichever manifest seeds a node's base
+  // snapshot first wins. In the shared test DB that makes results order-dependent,
+  // so each test starts from a clean board (users + bundle persist idempotently).
+  // A real gate run seeds a fresh disposable DB, so this only affects the suite.
+  beforeEach(async () => {
+    await sql`DELETE FROM boards WHERE name = 'e2e-native-motion-fixture'`;
   });
 
   it('seedUsers creates an admin + non-admin and a valid non-admin cookie', async () => {
@@ -109,5 +117,12 @@ d('seed (isolated DB)', () => {
     const snapMeta = snapshotEditorMetadata(node);
     expect(resolveNodeEditorKind(node, snapMeta, { nativeMotionCanvasEdit: true }))
       .toBe(NODE_EDITOR_KIND.NATIVE);
+
+    // The primary node persists the RICH manifest: exactly one accepted (ready) control.
+    const [snap] = await sql`
+      SELECT motion_manifest FROM snapshots WHERE id = ${node.current_snapshot_id}`;
+    const controls = snap.motion_manifest?.controlManifest?.controls || [];
+    expect(controls).toHaveLength(1);
+    expect(controls[0].status).toBe('ready');
   });
 });
