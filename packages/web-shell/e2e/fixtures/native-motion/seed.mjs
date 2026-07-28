@@ -9,7 +9,12 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createToken, hashPassword } from '../../../lib/auth.js';
 import { registerNativeBundle } from '../../../lib/native-clone/register-bundle.js';
-import { persistNativeBundleDescriptor } from '../../../lib/motion-editor/edit-session-store.js';
+import {
+  persistNativeBundleDescriptor,
+  openOrResumeEditSession,
+  updateEditSessionDraft,
+  commitEditSession,
+} from '../../../lib/motion-editor/edit-session-store.js';
 import { createEmptyMotionManifest } from '../../../lib/motion-editor/manifest.js';
 import { createConfiguredBundleStore } from '../../../lib/native-clone/bundle-store.js';
 import { buildFixtureManifest } from './build-fixture-manifest.mjs';
@@ -162,6 +167,59 @@ export async function seedBoardAndNodes({ sql, ownerUserId, descriptor, primaryM
   return { boardId, primaryNodeId, secondaryNodeId, boardPath: '/canvas/' + boardId };
 }
 
+// Distinct hero-opacity desktop values per committed edit → the two history
+// snapshots differ from the base (1) and from each other, giving the snapshot-restore
+// scenario real state to compare. Responsive-only, so this stays decoupled from the
+// control set.
+const HISTORY_DESKTOP_OPACITIES = [0.7, 0.5];
+
+function withHeroDesktopOpacity(manifest, desktopValue) {
+  const next = JSON.parse(JSON.stringify(manifest));
+  const prop = next.responsiveManifest?.properties?.['hero:opacity'];
+  if (prop?.overrides) prop.overrides.desktop = desktopValue;
+  return next;
+}
+
+/**
+ * Drive the REAL edit-session helpers to leave ≥2 committed native-edit snapshots on
+ * the primary node, each advancing current_snapshot_id (source='native-edit'). Gives
+ * the snapshot-restore scenario genuine history. Idempotent: if ≥2 native-edit
+ * snapshots already exist, it returns them without creating more. One session per
+ * commit (each commit closes its session), respecting the one-active-session index.
+ */
+export async function seedSnapshotHistory({ sql, ownerUserId, primaryNodeId }) {
+  const existing = await sql`
+    SELECT id FROM snapshots
+     WHERE node_id = ${primaryNodeId} AND source = 'native-edit'
+     ORDER BY created_at ASC`;
+  if (existing.length >= HISTORY_DESKTOP_OPACITIES.length) {
+    return { committedSnapshotIds: existing.map((row) => row.id) };
+  }
+
+  const [node] = await sql`SELECT current_snapshot_id FROM nodes WHERE id = ${primaryNodeId}`;
+  let baseSnapshotId = node?.current_snapshot_id;
+  if (!baseSnapshotId) throw new Error('seed: primary node has no base snapshot to edit');
+
+  const committedSnapshotIds = [];
+  for (const desktopValue of HISTORY_DESKTOP_OPACITIES) {
+    const session = await openOrResumeEditSession({
+      sql, userId: ownerUserId, nodeId: primaryNodeId, baseSnapshotId,
+    });
+    const updated = await updateEditSessionDraft({
+      sql, userId: ownerUserId, nodeId: primaryNodeId,
+      sessionId: session.id, expectedRevision: session.revision,
+      draftManifest: withHeroDesktopOpacity(session.draftManifest, desktopValue),
+    });
+    const committed = await commitEditSession({
+      sql, userId: ownerUserId, nodeId: primaryNodeId,
+      sessionId: updated.id, expectedRevision: updated.revision,
+    });
+    committedSnapshotIds.push(committed.snapshotId);
+    baseSnapshotId = committed.snapshotId;
+  }
+  return { committedSnapshotIds };
+}
+
 /**
  * The full mutation pack. Guards the DB target (isolated endpoint only) BEFORE any
  * write, then seeds users, the animated bundle, and the board + two native nodes.
@@ -184,6 +242,7 @@ export async function seedNativeMotionFixture({ sql }) {
   const { boardId, primaryNodeId, secondaryNodeId, boardPath } = await seedBoardAndNodes({
     sql, ownerUserId: nonAdminUserId, descriptor, primaryManifest,
   });
+  await seedSnapshotHistory({ sql, ownerUserId: nonAdminUserId, primaryNodeId });
 
   return {
     boardId, primaryNodeId, secondaryNodeId, boardPath,

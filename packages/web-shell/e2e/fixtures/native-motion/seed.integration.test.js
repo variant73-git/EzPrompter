@@ -126,4 +126,25 @@ d('seed (isolated DB)', () => {
     expect(controls).toHaveLength(3);
     expect(controls.every((c) => c.status === 'ready')).toBe(true);
   });
+
+  it('leaves ≥2 committed native-edit snapshots on the primary node (idempotent)', async () => {
+    const r = await seedNativeMotionFixture({ sql });
+    const edits = await sql`
+      SELECT id FROM snapshots
+       WHERE node_id = ${r.primaryNodeId} AND source = 'native-edit'`;
+    expect(edits.length).toBeGreaterThanOrEqual(2);
+
+    // current_snapshot_id points at a committed native-edit snapshot (history advanced).
+    const [cur] = await sql`
+      SELECT s.source FROM nodes n JOIN snapshots s ON s.id = n.current_snapshot_id
+       WHERE n.id = ${r.primaryNodeId}`;
+    expect(cur.source).toBe('native-edit');
+
+    // Re-running the seed does not pile up more history.
+    await seedNativeMotionFixture({ sql });
+    const [{ count }] = await sql`
+      SELECT COUNT(*)::int AS count FROM snapshots
+       WHERE node_id = ${r.primaryNodeId} AND source = 'native-edit'`;
+    expect(count).toBe(edits.length);
+  });
 });
