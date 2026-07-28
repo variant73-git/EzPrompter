@@ -11,6 +11,7 @@ import { createToken, hashPassword } from '../../../lib/auth.js';
 import { registerNativeBundle } from '../../../lib/native-clone/register-bundle.js';
 import { persistNativeBundleDescriptor } from '../../../lib/motion-editor/edit-session-store.js';
 import { createEmptyMotionManifest } from '../../../lib/motion-editor/manifest.js';
+import { createConfiguredBundleStore } from '../../../lib/native-clone/bundle-store.js';
 
 export const FIXTURE_TAG = 'e2e-native-motion-fixture';
 
@@ -158,4 +159,33 @@ export async function seedBoardAndNodes({ sql, ownerUserId, descriptor, primaryM
   });
 
   return { boardId, primaryNodeId, secondaryNodeId, boardPath: '/canvas/' + boardId };
+}
+
+/**
+ * The full mutation pack. Guards the DB target (isolated endpoint only) BEFORE any
+ * write, then seeds users, the animated bundle, and the board + two native nodes.
+ * Idempotent — safe to re-run. Returns the seven values the runner turns into the
+ * four E2E_NATIVE_MOTION_* env vars (+ the two user ids for the diagnostics scenario).
+ *
+ * NOTE: the primary node currently uses an empty (but valid v2) manifest; Task 6b
+ * swaps in the rich `buildFixtureManifest` here.
+ */
+export async function seedNativeMotionFixture({ sql }) {
+  assertIsolatedTarget(process.env.DATABASE_URL, { allowlistEndpoint: ALLOWLIST_ENDPOINT });
+
+  const store = createConfiguredBundleStore();
+  const { adminUserId, nonAdminUserId, sessionCookie } = await seedUsers({ sql });
+  const descriptor = await seedBundle({ sql, store });
+  const primaryManifest = createEmptyMotionManifest({
+    baseBundleId: descriptor.bundleId,
+    runtimeFingerprint: descriptor.runtimeFingerprint,
+  });
+  const { boardId, primaryNodeId, secondaryNodeId, boardPath } = await seedBoardAndNodes({
+    sql, ownerUserId: nonAdminUserId, descriptor, primaryManifest,
+  });
+
+  return {
+    boardId, primaryNodeId, secondaryNodeId, boardPath,
+    sessionCookie, adminUserId, nonAdminUserId,
+  };
 }

@@ -6,11 +6,12 @@ const HAS_DB = !!process.env.E2E_ISOLATED_DATABASE_URL;
 const d = HAS_DB ? describe : describe.skip;
 
 d('seed (isolated DB)', () => {
-  let sql, seedUsers, seedBundle, seedBoardAndNodes, createConfiguredBundleStore, createEmptyMotionManifest, jwt;
+  let sql, seedUsers, seedBundle, seedBoardAndNodes, seedNativeMotionFixture,
+    createConfiguredBundleStore, createEmptyMotionManifest, jwt;
   beforeAll(async () => {
     process.env.DATABASE_URL = process.env.E2E_ISOLATED_DATABASE_URL;
     ({ sql } = await import('../../../lib/db.js'));
-    ({ seedUsers, seedBundle, seedBoardAndNodes } = await import('./seed.mjs'));
+    ({ seedUsers, seedBundle, seedBoardAndNodes, seedNativeMotionFixture } = await import('./seed.mjs'));
     ({ createConfiguredBundleStore } = await import('../../../lib/native-clone/bundle-store.js'));
     ({ createEmptyMotionManifest } = await import('../../../lib/motion-editor/manifest.js'));
     jwt = (await import('jsonwebtoken')).default;
@@ -81,5 +82,32 @@ d('seed (isolated DB)', () => {
       SELECT COUNT(*)::int AS count FROM snapshots
        WHERE node_id = ${r.primaryNodeId} AND source = 'native-bundle'`;
     expect(count).toBe(1);
+  });
+
+  it('seedNativeMotionFixture returns all seven fields; primary node resolves to NATIVE', async () => {
+    const { resolveNodeEditorKind, snapshotEditorMetadata, NODE_EDITOR_KIND } =
+      await import('../../../lib/node-editor-kind.js');
+    const r = await seedNativeMotionFixture({ sql });
+    for (const k of [
+      'boardId', 'primaryNodeId', 'secondaryNodeId', 'sessionCookie',
+      'adminUserId', 'nonAdminUserId', 'boardPath',
+    ]) {
+      expect(r[k], `field ${k}`).toBeTruthy();
+    }
+    expect(r.boardPath).toBe('/canvas/' + r.boardId);
+    const decoded = jwt.verify(r.sessionCookie, process.env.JWT_SECRET);
+    expect(decoded.userId).toBe(r.nonAdminUserId);
+
+    // Load the primary node the way the canvas page does and confirm it edits NATIVE.
+    const [node] = await sql`
+      SELECT n.id, n.kind, n.meta, n.current_snapshot_id,
+             s.source AS current_snapshot_source,
+             s.native_bundle_id AS current_native_bundle_id,
+             s.motion_manifest_version AS current_motion_manifest_version
+        FROM nodes n JOIN snapshots s ON s.id = n.current_snapshot_id
+       WHERE n.id = ${r.primaryNodeId}`;
+    const snapMeta = snapshotEditorMetadata(node);
+    expect(resolveNodeEditorKind(node, snapMeta, { nativeMotionCanvasEdit: true }))
+      .toBe(NODE_EDITOR_KIND.NATIVE);
   });
 });
