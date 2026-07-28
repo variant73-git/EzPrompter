@@ -6,11 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import process from 'node:process';
 import { chromium } from 'playwright-core';
 
 const require = createRequire(import.meta.url);
-const DEVICES = Object.freeze([
+export const DEVICES = Object.freeze([
   { id: 'desktop', label: 'Desktop', width: 1280, height: 800 },
   { id: 'tablet', label: 'Tablet', width: 768, height: 920 },
   { id: 'mobile', label: 'Mobile', width: 390, height: 844 },
@@ -138,7 +139,7 @@ async function stopNextServer(server) {
   if (server.child.exitCode == null) server.child.kill('SIGKILL');
 }
 
-function createRecorder(report) {
+export function createRecorder(report) {
   return async function record(name, fn, { required = true } = {}) {
     const startedAt = Date.now();
     try {
@@ -163,7 +164,7 @@ async function writeJsonExclusive(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { flag: 'wx' });
 }
 
-async function computedTargetState(target) {
+export async function computedTargetState(target) {
   return target.evaluate((element) => {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
@@ -184,7 +185,7 @@ async function computedTargetState(target) {
   });
 }
 
-async function waitForTargetState(target, predicate, timeoutMs = 20_000) {
+export async function waitForTargetState(target, predicate, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   let state = null;
   while (Date.now() < deadline) {
@@ -494,7 +495,7 @@ async function inspectCanvasPrerequisites() {
   return result;
 }
 
-async function runCanvasGate({ report }) {
+async function runCanvasGate({ browser, baseUrl, evidenceDir, report }) {
   const prerequisites = await inspectCanvasPrerequisites();
   report.canvasPrerequisites = prerequisites;
   const problems = [];
@@ -542,7 +543,7 @@ async function main() {
     }
     browser = await chromium.launch({ headless: !options.headed });
     if (options.mode !== 'canvas') await runLab({ browser, baseUrl, evidenceDir, report });
-    if (options.mode !== 'lab') await runCanvasGate({ report });
+    if (options.mode !== 'lab') await runCanvasGate({ browser, baseUrl, evidenceDir, report });
     report.verdict = report.checks.every((check) => check.status === 'passed') ? 'passed' : 'failed';
   } catch (error) {
     report.verdict = error?.code === 'task16_canvas_prerequisite' ? 'blocked' : 'failed';
@@ -566,7 +567,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`Task 16 E2E failed before evidence initialization: ${error?.message || error}\n`);
-  process.exitCode = 1;
-});
+// Only auto-run when executed directly (node …spec.js). Importing the module for
+// tests must NOT start a server or run the gate.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    process.stderr.write(`Task 16 E2E failed before evidence initialization: ${error?.message || error}\n`);
+    process.exitCode = 1;
+  });
+}
