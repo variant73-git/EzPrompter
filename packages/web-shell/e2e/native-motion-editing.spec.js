@@ -9,6 +9,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import process from 'node:process';
 import { chromium } from 'playwright-core';
+import { seedNativeMotionFixture } from './fixtures/native-motion/seed.mjs';
 
 const require = createRequire(import.meta.url);
 export const DEVICES = Object.freeze([
@@ -495,6 +496,25 @@ async function inspectCanvasPrerequisites() {
   return result;
 }
 
+/**
+ * When mutations are explicitly approved (E2E_NATIVE_MOTION_ALLOW_MUTATIONS=1) and the
+ * four canvas env vars are not already provided, run the fixture seed against
+ * DATABASE_URL and populate them from its return value. The seed guards its own DB
+ * target (isolated endpoint allowlist). If approval is off this is a NO-OP, so the
+ * gate's preflight stays fail-closed exactly as before. `seed`/`sql` are injectable
+ * for tests.
+ */
+export async function ensureFixtureEnv({ baseUrl, seed = seedNativeMotionFixture, sql } = {}) {
+  if (process.env.E2E_NATIVE_MOTION_ALLOW_MUTATIONS !== '1') return;
+  if (REQUIRED_CANVAS_ENV.every((key) => process.env[key])) return;
+  const resolvedSql = sql || (await import('../lib/db.js')).sql;
+  const fixture = await seed({ sql: resolvedSql });
+  process.env.E2E_NATIVE_MOTION_BOARD_URL = baseUrl + fixture.boardPath;
+  process.env.E2E_NATIVE_MOTION_PRIMARY_NODE_ID = fixture.primaryNodeId;
+  process.env.E2E_NATIVE_MOTION_SECONDARY_NODE_ID = fixture.secondaryNodeId;
+  process.env.E2E_NATIVE_MOTION_SESSION_COOKIE = fixture.sessionCookie;
+}
+
 async function runCanvasGate({ browser, baseUrl, evidenceDir, report }) {
   const prerequisites = await inspectCanvasPrerequisites();
   report.canvasPrerequisites = prerequisites;
@@ -543,7 +563,10 @@ async function main() {
     }
     browser = await chromium.launch({ headless: !options.headed });
     if (options.mode !== 'canvas') await runLab({ browser, baseUrl, evidenceDir, report });
-    if (options.mode !== 'lab') await runCanvasGate({ browser, baseUrl, evidenceDir, report });
+    if (options.mode !== 'lab') {
+      await ensureFixtureEnv({ baseUrl });
+      await runCanvasGate({ browser, baseUrl, evidenceDir, report });
+    }
     report.verdict = report.checks.every((check) => check.status === 'passed') ? 'passed' : 'failed';
   } catch (error) {
     report.verdict = error?.code === 'task16_canvas_prerequisite' ? 'blocked' : 'failed';
