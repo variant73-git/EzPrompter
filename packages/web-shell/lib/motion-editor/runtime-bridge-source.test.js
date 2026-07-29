@@ -423,6 +423,297 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('surfaces per-property tracks for GSAP keyframes tweens as detected but not retargetable', () => {
+    document.body.innerHTML = '<main><div id="kf"></div></main>';
+    const kfTarget = document.getElementById('kf');
+
+    // Mock a live GSAP keyframes tween (array form). Real GSAP mutates each entry,
+    // injecting config keys (parent/ease/overwrite/delay/duration) beside the animated
+    // ones — probe-verified 2026-07-29 — so extraction must filter them. A top-level
+    // `y` rides along to prove plain props KEEP their retargetability.
+    const rendered = { x: 0, scale: 1, y: 0 };
+    let progress = 0.2;
+    const vars = {
+      y: 40,
+      keyframes: [
+        { x: 0, duration: 1, parent: {}, ease: 'none', overwrite: 'auto', delay: 0 },
+        { x: 60, duration: 1, parent: {}, ease: 'none', overwrite: 'auto', delay: 0 },
+        { scale: 1.5, duration: 1, parent: {}, ease: 'none', overwrite: 'auto', delay: 0 },
+      ],
+      duration: 3,
+      ease: 'power2.out',
+    };
+    const tween = {
+      targets: () => [kfTarget],
+      vars,
+      duration: () => 3,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn((p) => {
+        if (p === undefined) return progress;
+        progress = p;
+        rendered.x = 60 * p;
+        rendered.scale = 1 + 0.5 * p;
+        rendered.y = 40 * p;
+        return tween;
+      }),
+      invalidate: vi.fn(() => tween),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    kfTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.find((message) => message.type === 'selection-changed');
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+
+    // The keyframe-driven properties surface as real sampled tracks (no more
+    // invisible writer -> unowned -> style patch stomped by the live tween).
+    expect(motion.tracks.map((track) => track.property).sort()).toEqual(['scale', 'x', 'y']);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.keyframes).toEqual([
+      { offset: 0, value: '0', easing: 'power2.out' },
+      { offset: 1, value: '60', easing: null },
+    ]);
+    const scaleTrack = motion.tracks.find((track) => track.property === 'scale');
+    expect(scaleTrack.keyframes.map((keyframe) => keyframe.value)).toEqual(['1', '1.5']);
+
+    // No safe writeback exists for keyframes tweens (probe: vars edits corrupt the
+    // path start; object-form edits are ignored) -> detected but NOT retargetable,
+    // while the plain top-level `y` stays retargetable.
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(scaleTrack.ownership.retargetable).toBe(false);
+    expect(motion.tracks.find((track) => track.property === 'y').ownership.retargetable).toBe(true);
+    // Timeline keyframe editing uses the same unsafe write path -> disabled.
+    expect(motion.capabilities.keyframes).toBe(false);
+
+    // Defense in depth: a keyframe patch against a keyframes tween must not write.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '60', exists: true },
+            value: { offset: 1, value: '160', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.x).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('never marks a property retargetable when keyframes also drive it (both-places form)', () => {
+    document.body.innerHTML = '<main><div id="kfb"></div></main>';
+    const bothTarget = document.getElementById('kfb');
+
+    // gsap.to(el, { x: 100, keyframes: [...x...] }) — the SAME property authored in
+    // both places. Probe-verified (2026-07-29): the keyframes win the rendered path,
+    // and retargeting the top-level x corrupts the start. It must classify as
+    // keyframe-driven (not retargetable), and the bridge must refuse the retarget.
+    const rendered = { x: 0 };
+    let progress = 0;
+    const vars = {
+      x: 100,
+      keyframes: [
+        { x: 0, duration: 1 },
+        { x: 60, duration: 1 },
+      ],
+      duration: 2,
+    };
+    const tween = {
+      targets: () => [bothTarget],
+      vars,
+      duration: () => 2,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn((p) => {
+        if (p === undefined) return progress;
+        progress = p;
+        rendered.x = 60 * p;
+        return tween;
+      }),
+      invalidate: vi.fn(() => tween),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    bothTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+
+    // One deduplicated track, classified keyframe-driven.
+    expect(motion.tracks.map((track) => track.property)).toEqual(['x']);
+    expect(motion.tracks[0].ownership.retargetable).toBe(false);
+
+    // Defense in depth: a retarget.final patch for it must not write vars.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: '60' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'translateX',
+              runtimeProperty: 'x',
+              value: '200',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:translateX`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+    expect(vars.x).toBe(100);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('extracts animated properties from object and percent GSAP keyframes forms', () => {
+    document.body.innerHTML = '<main><div id="kfo"></div><div id="kfp"></div></main>';
+    const objectTarget = document.getElementById('kfo');
+    const percentTarget = document.getElementById('kfp');
+
+    const rendered = { x: 0, scale: 1, opacity: 1 };
+    const makeTween = (target, vars) => ({
+      targets: () => [target],
+      vars,
+      duration: () => 2,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressFn(p) { return p === undefined ? 0 : this; }),
+      invalidate: vi.fn(),
+    });
+    // Property-array form: {x:[...], scale:[...]} + easeEach config key.
+    const objectTween = makeTween(objectTarget, {
+      keyframes: { x: [0, 30, 60], scale: [1, 1.5], easeEach: 'power1.inOut' },
+      duration: 2,
+    });
+    // Percent form: "N%" keys wrap per-stop objects (with injected config to filter).
+    const percentTween = makeTween(percentTarget, {
+      keyframes: { '0%': { x: 0, ease: 'none' }, '50%': { opacity: 0.5 }, '100%': { x: 60, opacity: 1 } },
+      duration: 2,
+    });
+    window.gsap = {
+      globalTimeline: { getChildren: () => [objectTween, percentTween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    objectTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    let selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    let motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(motion.tracks.map((track) => track.property).sort()).toEqual(['scale', 'x']);
+    expect(motion.tracks.every((track) => track.ownership.retargetable === false)).toBe(true);
+
+    percentTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(motion.tracks.map((track) => track.property).sort()).toEqual(['opacity', 'x']);
+    expect(motion.tracks.every((track) => track.ownership.retargetable === false)).toBe(true);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('extracts properties from numeric-key GSAP keyframes (position keys without %)', () => {
+    document.body.innerHTML = '<main><div id="kfn"></div></main>';
+    const numericTarget = document.getElementById('kfn');
+
+    // GSAP 3.15 accepts { 0: {...}, 50: {...}, 100: {...} } — parseFloat position
+    // keys, no % required (probe-verified: the tween animates the full path). A
+    // %-only matcher misses it and recreates the unowned -> style-stomp bug.
+    const rendered = { x: 0, opacity: 1 };
+    const tween = {
+      targets: () => [numericTarget],
+      vars: {
+        keyframes: { 0: { x: 0 }, 50: { opacity: 0.5 }, 100: { x: 60, opacity: 1 } },
+        duration: 2,
+      },
+      duration: () => 2,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressFn(p) { return p === undefined ? 0 : this; }),
+      invalidate: vi.fn(),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    numericTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(motion.tracks.map((track) => track.property).sort()).toEqual(['opacity', 'x']);
+    expect(motion.tracks.every((track) => track.ownership.retargetable === false)).toBe(true);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('lists every animated element on the page, flagging which are framed in the viewport', () => {
     document.body.innerHTML = `
       <main>

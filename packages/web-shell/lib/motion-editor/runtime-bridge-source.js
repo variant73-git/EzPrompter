@@ -440,6 +440,46 @@ function nativeMotionRuntimeBridge() {
     return clip;
   }
 
+  // GSAP config/callback vars — never real animatable properties. Shared between
+  // the clip lister and the retarget guard so both agree on what a "property" is.
+  const GSAP_CONFIG_VARS = new Set([
+    'id', 'parent', 'duration', 'delay', 'ease', 'repeat', 'repeatDelay', 'yoyo', 'scrollTrigger',
+    'stagger', 'immediateRender', 'startAt', 'overwrite', 'runBackwards', 'lazy', 'paused', 'reversed',
+    'callbackScope', 'onComplete', 'onInterrupt', 'onRepeat', 'onReverseComplete', 'onStart', 'onUpdate',
+    'force3D', 'data', 'autoRound', 'inherit', 'defaults', 'smoothChildTiming', 'keyframes', 'clearProps',
+  ]);
+
+  // vars.keyframes holds animated properties the top-level vars never mention, in
+  // three authored shapes (GSAP 3): entry array [{x, duration}...], property-array
+  // {x:[...], easeEach}, and percent/numeric stops {"50%":{x}} / {50:{x}}. Real GSAP MUTATES the entries,
+  // injecting config keys (parent/ease/overwrite/delay/duration) beside the animated
+  // ones (probe-verified 2026-07-29), so extraction filters through the same ignored
+  // set. Without this, keyframes tweens reported ZERO tracks -> the host saw the
+  // property as unowned -> wrote a style patch the live tween stomps every tick.
+  function gsapKeyframeProps(keyframes, ignored) {
+    const names = new Set();
+    const collect = (entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      Object.keys(entry).forEach((key) => {
+        if (!ignored.has(key) && key !== 'parent' && key !== 'easeEach') names.add(key);
+      });
+    };
+    if (Array.isArray(keyframes)) keyframes.forEach(collect);
+    else if (keyframes && typeof keyframes === 'object') {
+      Object.keys(keyframes).forEach((key) => {
+        const value = keyframes[key];
+        if (Array.isArray(value)) {
+          if (!ignored.has(key) && key !== 'easeEach') names.add(key);
+        } else if (value && typeof value === 'object' && Number.isFinite(parseFloat(key))) {
+          // Position-stop keys: GSAP parseFloats them, so "50%", "50" and 50 are all
+          // valid stops (probe-verified — % is NOT required).
+          collect(value);
+        }
+      });
+    }
+    return Array.from(names);
+  }
+
   function gsapEditableTracks(animation, vars, target, animatedProps) {
     const gsap = window.gsap;
     const ease = typeof vars.ease === 'string' ? vars.ease : null;
@@ -447,7 +487,9 @@ function nativeMotionRuntimeBridge() {
       keyframes: false,
       tracks: animatedProps.map((property) => ({
         property,
-        keyframes: [{ offset: 1, value: typeof vars[property] === 'function' ? '' : String(vars[property]), easing: ease }],
+        // Keyframe-driven properties have no top-level vars value — never report
+        // the literal string "undefined" as a keyframe value.
+        keyframes: [{ offset: 1, value: typeof vars[property] === 'function' || vars[property] === undefined ? '' : String(vars[property]), easing: ease }],
       })),
     });
     if (!gsap || typeof gsap.getProperty !== 'function' || typeof animation.progress !== 'function') {
@@ -518,15 +560,19 @@ function nativeMotionRuntimeBridge() {
         const engine = scrollTrigger ? 'ScrollTrigger' : 'GSAP';
         const primaryTarget = targets.find((target) => target instanceof Element) || element;
         const id = motionIdFor(animation, engine === 'GSAP' ? 'gsap' : 'scroll', `${ensureElementId(primaryTarget)}:${vars.id || index}`);
-        const ignored = new Set([
-          'id', 'parent', 'duration', 'delay', 'ease', 'repeat', 'repeatDelay', 'yoyo', 'scrollTrigger',
-          'stagger', 'immediateRender', 'startAt', 'overwrite', 'runBackwards', 'lazy', 'paused', 'reversed',
-          'callbackScope', 'onComplete', 'onInterrupt', 'onRepeat', 'onReverseComplete', 'onStart', 'onUpdate',
-          // GSAP internal/config vars — never real animatable properties
-          'force3D', 'data', 'autoRound', 'inherit', 'defaults', 'smoothChildTiming', 'keyframes', 'clearProps',
-        ]);
-        const animatedProps = Object.keys(vars)
+        const ignored = GSAP_CONFIG_VARS;
+        const topLevelProps = Object.keys(vars)
           .filter((property) => !ignored.has(property));
+        // Surface keyframe-driven properties as tracks too — but remember which they
+        // are: no safe writeback exists for them (probe 2026-07-29: editing vars or
+        // the keyframes structure + invalidate corrupts the path start on the array
+        // form and is silently ignored on the object/percent forms). A property
+        // authored BOTH top-level and in keyframes stays keyframe-driven — the
+        // keyframes win the rendered path, so retargeting the top-level value would
+        // corrupt it the same way (dedup only the track list).
+        const keyframeDriven = new Set(vars.keyframes ? gsapKeyframeProps(vars.keyframes, ignored) : []);
+        const animatedProps = topLevelProps.concat(
+          Array.from(keyframeDriven).filter((property) => !topLevelProps.includes(property)));
         const sampled = gsapEditableTracks(animation, vars, primaryTarget, animatedProps);
         const group = clipGroupMeta(animation, primaryTarget, targets);
         const iterations = animation.repeat?.() === -1 ? Infinity : (Number.isFinite(animation.repeat?.()) ? animation.repeat() + 1 : 1);
@@ -558,7 +604,7 @@ function nativeMotionRuntimeBridge() {
               order: order + (trackIndex / 1000),
               sequenceId: group.timelineId,
               writeModel,
-              retargetable: sampled.keyframes && !vars.runBackwards && functionSupported && scopeSafe,
+              retargetable: sampled.keyframes && !vars.runBackwards && functionSupported && scopeSafe && !keyframeDriven.has(track.property),
               sourceValue: safeSourceValue(rawValue),
               targetCount,
               stagger: vars.stagger != null ? { mode: 'staggered', targetCount } : null,
@@ -602,7 +648,9 @@ function nativeMotionRuntimeBridge() {
           // gsap.from(): vars hold the FROM, not the end — a keyframe write
           // labelled "end" would silently retarget the start. Read-only until
           // the writeback understands runBackwards.
-          capabilities: { timing: true, easing: true, keyframes: sampled.keyframes && !vars.runBackwards, trigger: false, scroll: Boolean(scrollTrigger) },
+          // Timeline keyframe editing writes vars/startAt — the same unsafe path the
+          // probe showed corrupting keyframes tweens — so it is disabled for them.
+          capabilities: { timing: true, easing: true, keyframes: sampled.keyframes && !vars.runBackwards && !vars.keyframes, trigger: false, scroll: Boolean(scrollTrigger) },
           source: { engine, writeback: 'adapter' },
         };
         motionRegistry.set(id, {
@@ -1803,6 +1851,15 @@ function nativeMotionRuntimeBridge() {
     if (targetCount > 1 && Number(descriptor.affectedTargetCount || 1) !== targetCount) {
       throw bridgeError('scope_mismatch', 'This animation controls more targets than the patch declares.');
     }
+    // Defense in depth: every write model funnels into vars/startAt writes, which are
+    // unsafe on keyframes-driven properties (probe 2026-07-29: path-start corruption
+    // on the array form, silently ignored on object/percent forms) — including a
+    // property authored BOTH top-level and in keyframes.
+    const authoredKeyframes = record.animation?.vars?.keyframes;
+    if (authoredKeyframes
+      && gsapKeyframeProps(authoredKeyframes, GSAP_CONFIG_VARS).includes(descriptor.runtimeProperty)) {
+      throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be retargeted safely yet.');
+    }
     if (descriptor.writeModel === 'relative') applyGsapRelative(record, descriptor);
     else if (descriptor.writeModel === 'function-offset') applyGsapFunctionOffset(record, descriptor);
     else if (descriptor.writeModel === 'additive-base') applyGsapLoopBase(record, descriptor);
@@ -1814,6 +1871,11 @@ function nativeMotionRuntimeBridge() {
     const vars = animation.vars || (animation.vars = {});
     if (vars.runBackwards) {
       throw new Error('gsap.from() keyframes are read-only — vars hold the start, not the end.');
+    }
+    // Writing vars/startAt on a keyframes-driven tween corrupts its path start on
+    // invalidate (array form) or does nothing (object/percent forms) — probe-verified.
+    if (vars.keyframes) {
+      throw new Error('This animation is driven by GSAP keyframes — its steps cannot be edited safely yet.');
     }
     // A staggered tween is a facade over internal per-target tweens: writing
     // vars/startAt on it silently changes NOTHING (probe-verified — the edit
