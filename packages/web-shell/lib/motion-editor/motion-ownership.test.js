@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   analyzeMotionOwnership,
   motionChannelLabel,
+  motionOwnershipForProperties,
   normalizeSemanticProperty,
 } from './motion-ownership.js';
 
@@ -153,5 +154,15 @@ describe('motion ownership', () => {
 
     expect(result.status).toBe('unsupported');
     expect(result.candidates[0]).toMatchObject({ editability: 'known', retargetable: false });
+  });
+
+  it('precomputes ownership for every typography property the Properties panel edits', () => {
+    // Font/Alignment/Case/Style commit through applyStyle too; without these keys in
+    // the precomputed map an unsupported writer would be discovered only by the
+    // inline fallback — with no field plumbing, the edit became a silent no-op.
+    const map = motionOwnershipForProperties({ motion: [], targetId: 'hero' });
+    ['fontFamily', 'textAlign', 'textTransform', 'fontStyle'].forEach((property) => {
+      expect(map[property]).toMatchObject({ status: 'unowned' });
+    });
   });
 });

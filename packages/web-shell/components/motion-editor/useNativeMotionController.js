@@ -1317,16 +1317,22 @@ export function useNativeMotionController({
       targetId: motionElementId,
       ownershipHint: ownershipHints[semanticProperty],
     });
-    if (ownership.status === 'ambiguous' || ownership.status === 'unsupported') {
+    // Unsupported = a writer exists but none is retargetable (gsap.from, keyframes
+    // tweens, code-only). Never raise the chooser for it — a list with no choice is
+    // a dead end (product rule 2026-07-29: no blocking dialog; the field renders
+    // disabled with a locked indicator, and the explanation lives in Motion via an
+    // explicit focusOwnership click).
+    if (ownership.status === 'unsupported') return;
+    if (ownership.status === 'ambiguous') {
       const conflict = {
         ...ownership,
         requestId: requestId('ownership'),
         label: propertyLabel(semanticProperty),
-        pending: ownership.status === 'ambiguous' ? {
+        pending: {
           property: semanticProperty,
           value,
           before: scopedBefore,
-        } : null,
+        },
       };
       setOwnershipConflict(conflict);
       if (ownership.candidates[0]?.motionId) setActiveMotionId(ownership.candidates[0].motionId);

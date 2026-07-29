@@ -20,6 +20,7 @@ import {
   Inspect,
   Layers,
   Link2,
+  Lock,
   Monitor,
   Move,
   MousePointer2,
@@ -214,13 +215,22 @@ function KeyframeMarker({ state }) {
 }
 
 function OwnershipIndicator({ label, ownership, onOpen }) {
-  if (ownership?.status !== 'ambiguous') return null;
+  if (ownership?.status !== 'ambiguous' && ownership?.status !== 'unsupported') return null;
+  // Unsupported = a writer exists but cannot be edited safely (gsap.from, keyframes
+  // tweens, code-only). The field is disabled; this indicator carries the reason and
+  // routes to Motion for the full explanation — never a chooser with no choice.
+  const locked = ownership.status === 'unsupported';
   return (
     <button
       type="button"
       className={styles.ownershipIndicator}
-      aria-label={`Choose controlling motion for ${label}`}
-      title="Multiple motions control this value"
+      data-ownership-locked={locked || undefined}
+      aria-label={locked
+        ? `${label} is driven by an animation — open Motion for details`
+        : `Choose controlling motion for ${label}`}
+      title={locked
+        ? 'Driven by an animation this editor cannot change safely — open Motion for details'
+        : 'Multiple motions control this value'}
       onPointerDown={(event) => event.preventDefault()}
       onClick={(event) => {
         event.preventDefault();
@@ -228,8 +238,10 @@ function OwnershipIndicator({ label, ownership, onOpen }) {
         onOpen?.();
       }}
     >
-      <Link2 aria-hidden="true" />
-      <span>{ownership.candidates.length}</span>
+      {locked ? <Lock aria-hidden="true" /> : <>
+        <Link2 aria-hidden="true" />
+        <span>{ownership.candidates.length}</span>
+      </>}
     </button>
   );
 }
@@ -297,7 +309,7 @@ function Field({
           key={`${label}:${effectiveValue}`}
           type={type}
           defaultValue={effectiveValue ?? ''}
-          disabled={disabled || responsiveScope?.mode === 'computed'}
+          disabled={disabled || responsiveScope?.mode === 'computed' || ownership?.status === 'unsupported'}
           onBlur={(event) => onCommit?.(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') event.currentTarget.blur();
@@ -316,6 +328,8 @@ function SelectField({
   children,
   disabled = false,
   keyframeState = null,
+  ownership = null,
+  onOwnershipOpen,
   property = null,
   binding = null,
   responsiveScope = null,
@@ -329,6 +343,7 @@ function SelectField({
       <span className={styles.controlLabel}>
         <span className={styles.controlLabelText}>{label}</span>
         <KeyframeMarker state={keyframeState} />
+        <OwnershipIndicator label={label} ownership={ownership} onOpen={onOwnershipOpen} />
         <ResponsiveScopeControl
           property={property}
           label={label}
@@ -340,7 +355,7 @@ function SelectField({
         />
       </span>
       <span className={styles.fieldControl}>
-        <select disabled={disabled || responsiveScope?.mode === 'computed'} value={effectiveValue} onChange={(event) => onCommit(event.currentTarget.value)}>
+        <select disabled={disabled || responsiveScope?.mode === 'computed' || ownership?.status === 'unsupported'} value={effectiveValue} onChange={(event) => onCommit(event.currentTarget.value)}>
           {children}
         </select>
       </span>
@@ -400,13 +415,13 @@ function ColorField({
           key={`${label}:${safeValue}`}
           type="color"
           defaultValue={safeValue}
-          disabled={responsiveScope?.mode === 'computed'}
+          disabled={responsiveScope?.mode === 'computed' || ownership?.status === 'unsupported'}
           onBlur={(event) => onCommit?.(event.currentTarget.value)}
         />
         <input
           key={`${label}:text:${effectiveValue}`}
           defaultValue={effectiveValue || ''}
-          disabled={responsiveScope?.mode === 'computed'}
+          disabled={responsiveScope?.mode === 'computed' || ownership?.status === 'unsupported'}
           onBlur={(event) => onCommit?.(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') event.currentTarget.blur();
@@ -711,6 +726,8 @@ export function PropertiesPanel({
           label="Font"
           defaultValue={stylesValue.fontFamily}
           {...scopeProps('fontFamily', stylesValue.fontFamily, styleBinding('font-family'))}
+          ownership={ownershipFor('fontFamily')}
+          onOwnershipOpen={() => onOwnershipOpen?.('fontFamily')}
           onCommit={(value) => onStyle('font-family', value, stylesValue.fontFamily)}
         />
         <div className={styles.controlGrid}>
@@ -756,6 +773,7 @@ export function PropertiesPanel({
         {alignmentScope?.relevant !== false && <div className={styles.field}>
           <span className={styles.controlLabel}>
             <span className={styles.controlLabelText}>Alignment</span>
+            <OwnershipIndicator label="Alignment" ownership={ownershipFor('textAlign')} onOpen={() => onOwnershipOpen?.('textAlign')} />
             <ResponsiveScopeControl
               property="textAlign"
               label="Alignment"
@@ -775,7 +793,7 @@ export function PropertiesPanel({
                 type="button"
                 aria-label={`Align ${value}`}
                 aria-pressed={(alignmentScope?.effectiveValue ?? stylesValue.textAlign) === value}
-                disabled={alignmentScope?.mode === 'computed'}
+                disabled={alignmentScope?.mode === 'computed' || ownershipFor('textAlign')?.status === 'unsupported'}
                 onClick={() => onStyle('text-align', value, stylesValue.textAlign)}
               ><Icon /></button>
             ))}
@@ -786,6 +804,8 @@ export function PropertiesPanel({
             label="Case"
             value={stylesValue.textTransform || 'none'}
             {...scopeProps('textTransform', stylesValue.textTransform || 'none', styleBinding('text-transform'))}
+            ownership={ownershipFor('textTransform')}
+            onOwnershipOpen={() => onOwnershipOpen?.('textTransform')}
             onCommit={(value) => onStyle('text-transform', value, stylesValue.textTransform)}
           >
             <option value="none">Original</option><option value="uppercase">Uppercase</option><option value="lowercase">Lowercase</option><option value="capitalize">Title case</option>
@@ -794,6 +814,8 @@ export function PropertiesPanel({
             label="Style"
             value={stylesValue.fontStyle || 'normal'}
             {...scopeProps('fontStyle', stylesValue.fontStyle || 'normal', styleBinding('font-style'))}
+            ownership={ownershipFor('fontStyle')}
+            onOwnershipOpen={() => onOwnershipOpen?.('fontStyle')}
             onCommit={(value) => onStyle('font-style', value, stylesValue.fontStyle)}
           >
             <option value="normal">Normal</option><option value="italic">Italic</option><option value="oblique">Oblique</option>

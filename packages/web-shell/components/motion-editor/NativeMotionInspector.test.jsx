@@ -108,6 +108,84 @@ describe('NativeMotionInspector', () => {
     expect(screen.getByRole('tab', { name: 'Motion' })).toHaveAttribute('aria-selected', 'true');
   });
 
+  it('disables an unsupported field with a locked indicator instead of raising a chooser', () => {
+    const focusOwnership = vi.fn();
+    const base = controllerFixture();
+    const controller = controllerFixture({
+      selected: {
+        ...selected,
+        styles: { opacity: '0.8', transform: 'none', transformOrigin: '50% 50%' },
+      },
+      propertyOwnership: {
+        opacity: {
+          status: 'unsupported',
+          property: 'opacity',
+          candidates: [
+            { channelId: 'entrance:opacity', motionId: 'entrance', label: 'Entrance', engine: 'GSAP', retargetable: false },
+          ],
+        },
+      },
+      commands: { ...base.commands, focusOwnership, chooseOwnership: vi.fn() },
+    });
+    render(<NativeMotionInspector controller={controller} />);
+
+    // The input is disabled up front — an unsafe edit cannot even be attempted
+    // (product rule: no blocking chooser without a choice). Query structurally by
+    // the field's leaf label text (accessible-name composition is unreliable here —
+    // same lesson as the Task 11 e2e locator).
+    const opacityInput = screen.getByText('Opacity', { selector: 'span' }).closest('label').querySelector('input');
+    expect(opacityInput).toBeDisabled();
+    // The locked indicator carries the explanation and routes to Motion for details.
+    fireEvent.click(screen.getByRole('button', { name: 'Opacity is driven by an animation — open Motion for details' }));
+    expect(focusOwnership).toHaveBeenCalledWith('opacity');
+    expect(screen.getByRole('tab', { name: 'Motion' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('locks typography controls too and moves focus to Motion on lock activation', () => {
+    const focusOwnership = vi.fn();
+    const base = controllerFixture();
+    const unsupported = (property) => ({
+      status: 'unsupported',
+      property,
+      candidates: [{ channelId: `entrance:${property}`, motionId: 'entrance', label: 'Entrance', engine: 'GSAP', retargetable: false }],
+    });
+    const controller = controllerFixture({
+      selected: {
+        ...selected,
+        text: 'Hero title',
+        styles: {
+          fontFamily: 'Inter', textTransform: 'none', textAlign: 'left', fontStyle: 'normal',
+          transform: 'none', transformOrigin: '50% 50%',
+        },
+      },
+      propertyOwnership: {
+        fontFamily: unsupported('fontFamily'),
+        textTransform: unsupported('textTransform'),
+        textAlign: unsupported('textAlign'),
+        fontStyle: unsupported('fontStyle'),
+      },
+      commands: { ...base.commands, focusOwnership, chooseOwnership: vi.fn() },
+    });
+    render(<NativeMotionInspector controller={controller} />);
+
+    // Typography fields lock exactly like transform/appearance ones — the inline
+    // ownership fallback in applyStyle reaches them, so a live-looking field with a
+    // silently ignored commit would be a new lie.
+    const fontInput = screen.getByText('Font', { selector: 'span' }).closest('label').querySelector('input');
+    expect(fontInput).toBeDisabled();
+    const caseSelect = screen.getByText('Case', { selector: 'span' }).closest('label').querySelector('select');
+    expect(caseSelect).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Align left' })).toBeDisabled();
+
+    // Keyboard a11y: activating the lock must land focus on the Motion tab (the
+    // button itself may unmount with the tab switch — focus cannot fall to body).
+    fireEvent.click(screen.getByRole('button', { name: 'Font is driven by an animation — open Motion for details' }));
+    expect(focusOwnership).toHaveBeenCalledWith('fontFamily');
+    const motionTab = screen.getByRole('tab', { name: 'Motion' });
+    expect(motionTab).toHaveAttribute('aria-selected', 'true');
+    expect(document.activeElement).toBe(motionTab);
+  });
+
   it('renders only the contributing Motion channels and forwards the explicit choice', () => {
     const chooseOwnership = vi.fn();
     const base = controllerFixture();

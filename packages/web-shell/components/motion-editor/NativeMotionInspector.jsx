@@ -88,6 +88,9 @@ export default function NativeMotionInspector({
             onOwnershipOpen={(property) => {
               controller.commands.focusOwnership(property);
               selectTab('motion');
+              // The indicator that was clicked unmounts with the tab switch — land
+              // focus on the Motion tab so keyboard users are not dropped on body.
+              document.getElementById('native-motion-inspector-tab-motion')?.focus();
             }}
             onStyle={controller.commands.applyStyle}
             onText={controller.commands.applyText}

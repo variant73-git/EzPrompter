@@ -614,6 +614,68 @@ describe('useNativeMotionController', () => {
     expect(message.payload.patch.property.startsWith('keyframe.')).toBe(false);
   });
 
+  it('quietly refuses an unsupported Properties edit without raising the chooser', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    frame.contentWindow.postMessage.mockClear();
+
+    // A single writer that is NOT retargetable (e.g. gsap.from(), or a keyframes
+    // tween): ownership resolves 'unsupported'. The field is disabled in the UI,
+    // and the controller must NOT open the ownership chooser (a list with no
+    // choice) — the explanation lives behind the explicit indicator instead.
+    const motion = [{
+      id: 'entrance',
+      engine: 'GSAP',
+      editability: 'adapter',
+      timing: {},
+      tracks: [{
+        property: 'opacity',
+        keyframes: [{ offset: 1, value: '1' }],
+        ownership: {
+          channelId: 'entrance:opacity',
+          behavior: 'entrance',
+          relationship: 'independent',
+          targetId: 'hero',
+          runtimeProperty: 'opacity',
+          retargetable: false,
+        },
+      }],
+    }];
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'selection-changed',
+        payload: {
+          element: {
+            id: 'hero',
+            label: 'Hero',
+            styles: { opacity: '0.8', transform: 'none', transformOrigin: '50% 50%' },
+            motion,
+          },
+        },
+      },
+    })));
+
+    act(() => result.current.commands.applyStyle('opacity', '0.6', '0.8'));
+    expect(result.current.ownershipConflict).toBeNull();
+    expect(frame.contentWindow.postMessage.mock.calls
+      .map(([value]) => value.type)
+      .some((type) => type === 'apply-patch' || type === 'apply-patches')).toBe(false);
+
+    // The explicit indicator click still opens the Motion-side explanation.
+    act(() => result.current.commands.focusOwnership('opacity'));
+    expect(result.current.ownershipConflict).toMatchObject({
+      status: 'unsupported',
+      property: 'opacity',
+    });
+  });
+
   it('holds an ambiguous Properties edit until Motion chooses a contributor, then persists the hint with the retarget', async () => {
     const frame = runtimeFrame();
     const iframeRef = createRef();
