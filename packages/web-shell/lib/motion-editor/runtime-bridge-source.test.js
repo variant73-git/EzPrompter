@@ -613,6 +613,896 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('surfaces css-wrapper properties as retargetable tracks that write back INTO vars.css', () => {
+    document.body.innerHTML = '<main><div id="cssw"></div></main>';
+    const cssTarget = document.getElementById('cssw');
+
+    // Legacy GSAP-2 wrapper: gsap.to(el, { css: { x: 60 } }). Probe-verified
+    // (2026-07-29): writing top-level vars.x is a silent NO-OP on these tweens,
+    // but writing vars.css.x + preserved-start invalidate retargets cleanly. So the
+    // properties must surface as tracks (no more unowned -> style-stomp) AND the
+    // absolute writeback must route into the css wrapper.
+    const rendered = { x: 30 };
+    let progress = 0.5;
+    const vars = { css: { x: 60 }, duration: 1 };
+    const tween = {
+      targets: () => [cssTarget],
+      vars,
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn((p) => {
+        if (p === undefined) return progress;
+        progress = p;
+        rendered.x = 60 * p;
+        return tween;
+      }),
+      invalidate: vi.fn(() => tween),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    cssTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+
+    // 'css' is a wrapper, not a property: its sub-keys are the real tracks.
+    expect(motion.tracks.map((track) => track.property)).toEqual(['x']);
+    expect(motion.tracks[0].ownership.retargetable).toBe(true);
+    // Step (keyframe) editing on css tweens is unproven -> disabled.
+    expect(motion.capabilities.keyframes).toBe(false);
+
+    // A keyframe patch must not write anything on a css tween (defense in depth).
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '60', exists: true },
+            value: { offset: 1, value: '160', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.css.x).toBe(60);
+    expect(vars.x).toBeUndefined();
+
+    // The retarget writes INTO vars.css (top-level writes are a no-op on css tweens).
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: '60' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'translateX',
+              runtimeProperty: 'x',
+              value: '160',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:translateX`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+    expect(vars.css.x).toBe(160);
+    expect(vars.x).toBeUndefined();
+    expect(tween.invalidate).toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('routes component retargets and write models through the css wrapper too', () => {
+    document.body.innerHTML = '<main><div id="cssc"></div></main>';
+    const cssTarget = document.getElementById('cssc');
+
+    // css:{ scale } needs the component split INSIDE the wrapper (probe-verified:
+    // css.scaleX/scaleY works; top-level writes are no-ops). And a relative value
+    // inside the wrapper must surface its real write model — reading the top-level
+    // vars (undefined) would misreport 'absolute'.
+    const rendered = { scale: 1, scaleX: 1, scaleY: 1, x: 0 };
+    let progress = 0.5;
+    const vars = { css: { scale: 1.5, x: '+=60' }, duration: 1 };
+    const tween = {
+      targets: () => [cssTarget],
+      vars,
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn((p) => {
+        if (p === undefined) return progress;
+        progress = p;
+        rendered.scale = 1 + 0.5 * p;
+        rendered.scaleX = rendered.scale;
+        rendered.scaleY = rendered.scale;
+        rendered.x = 60 * p;
+        return tween;
+      }),
+      invalidate: vi.fn(() => tween),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    cssTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+
+    // The relative value inside the wrapper surfaces its true write model — and
+    // stays NON-retargetable: the relative/function/loop write paths write top-level
+    // vars/startAt, which css tweens ignore (only the absolute wrapper write is proven).
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.writeModel).toBe('relative');
+    expect(xTrack.ownership.retargetable).toBe(false);
+
+    // Component retarget (scaleX) splits INSIDE the wrapper, never top-level.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'scaleX', runtimeProperty: 'scale', component: 'scaleX', value: '1.5' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'scaleX',
+              runtimeProperty: 'scale',
+              component: 'scaleX',
+              value: '2',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:scaleX`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+    expect(vars.css.scaleX).toBe(2);
+    expect(vars.css.scaleY).toBe('1.5');
+    expect(vars.css.scale).toBeUndefined();
+    expect(vars.scaleX).toBeUndefined();
+    expect(vars.scale).toBeUndefined();
+
+    // ROLLBACK with the STALE descriptor (runtimeProperty 'scale' — which the split
+    // just deleted from the wrapper): the write must still find the wrapper via the
+    // component key, or undo silently lands on ignored top-level vars.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'scaleX', runtimeProperty: 'scale', component: 'scaleX', value: '2' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'scaleX',
+              runtimeProperty: 'scale',
+              component: 'scaleX',
+              value: '1.5',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:scaleX`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+    expect(vars.css.scaleX).toBe(1.5);
+    expect(vars.scaleX).toBeUndefined();
+    expect(vars.scale).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks colliding top-level + css.x authoring and reads endOnly values from the wrapper', () => {
+    document.body.innerHTML = '<main><div id="csscol"></div><div id="csscross"></div><div id="cssend"></div></main>';
+    const collisionTarget = document.getElementById('csscol');
+    const crossTarget = document.getElementById('csscross');
+    const endOnlyTarget = document.getElementById('cssend');
+
+    const makeTween = (target, vars) => ({
+      targets: () => [target],
+      vars,
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressFn(p) { return p === undefined ? 0 : this; }),
+      invalidate: vi.fn(),
+    });
+    // Pathological authoring: the SAME property top-level AND in the wrapper.
+    // The wrapper slot is the live one (top-level is a phantom — probe
+    // 2026-07-29), but the write-bucket predicate and the authored slot still
+    // disagree here — precedence stays locked, non-retargetable.
+    const collisionTween = makeTween(collisionTarget, { x: '+=60', css: { x: 100 }, duration: 1 });
+    // CROSS-FAMILY authoring (Sol round 3): vars.scale is a dead phantom (never
+    // reaches CSS once a wrapper exists); css.scaleX is the live animation. The
+    // phantom must NOT surface as a track, and the live scaleX edits cleanly
+    // (probe: absolute wrapper write renders, start intact).
+    const crossTween = makeTween(crossTarget, { scale: 1.5, css: { scaleX: 2 }, duration: 1 });
+    const endOnlyTween = makeTween(endOnlyTarget, { css: { x: 60 }, duration: 1 });
+    window.gsap = {
+      globalTimeline: { getChildren: () => [collisionTween, crossTween, endOnlyTween] },
+      // Sampling AVAILABLE here — the collision lock must come from the explicit
+      // rule, not incidentally from a failed sampling path.
+      getProperty: () => '0',
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    collisionTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    let selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    let motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    const collisionTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(collisionTrack.ownership.retargetable).toBe(false);
+    // Its only track is wrapper-guarded -> the derived clip capability is false
+    // (the old clip-level formula said true here — the exact Sol-v5 mismatch).
+    expect(motion.capabilities.keyframes).toBe(false);
+
+    crossTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(motion.tracks.map((track) => track.property)).toEqual(['scaleX']);
+    expect(motion.tracks[0].ownership.retargetable).toBe(true);
+
+    // endOnly path: drop getProperty so sampling is unavailable.
+    delete window.gsap.getProperty;
+
+    // endOnly fallback publishes the wrapper's known value, not ''.
+    endOnlyTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    const endTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(endTrack.keyframes.at(-1).value).toBe('60');
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('drops phantom top-level props on css-wrapper tweens — only the wrapper animates CSS', () => {
+    document.body.innerHTML = '<main><div id="cssmix"></div></main>';
+    const mixedTarget = document.getElementById('cssmix');
+
+    // Probe 2026-07-29 (_probe-mix-debug.mjs, GSAP 3.15 real): when a css:{}
+    // wrapper is present — even EMPTY — every top-level animatable prop becomes a
+    // generic object-property tween (el.x = 100): it never touches CSS, in either
+    // direction ({x, css:{opacity}} and {opacity, css:{x}} both leave the
+    // top-level prop unrendered). A "mixed" tween therefore has no top-level CSS
+    // tracks: listing x as an editable track is a phantom (the same class of lie
+    // as furo #1), and dropping it is what makes the element's x genuinely
+    // unowned — a Properties style edit works and nothing stomps it.
+    const rendered = { x: 0, opacity: 1 };
+    let progress = 0.4;
+    const tween = {
+      targets: () => [mixedTarget],
+      vars: { x: 100, css: { opacity: 0.5 }, duration: 1 },
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn((p) => {
+        if (p === undefined) return progress;
+        progress = p;
+        rendered.x = 100 * p;
+        rendered.opacity = 1 - 0.5 * p;
+        return tween;
+      }),
+      invalidate: vi.fn(() => tween),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    mixedTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+
+    // x is a phantom — not a track. Its absence is what frees the style path.
+    expect(motion.tracks.map((track) => track.property)).toEqual(['opacity']);
+    // The wrapper-authored opacity stays retargetable (absolute wrapper write is proven).
+    expect(motion.tracks.find((track) => track.property === 'opacity').ownership.retargetable).toBe(true);
+    // No step-editable track left -> the clip-level capability follows the tracks.
+    expect(motion.capabilities.keyframes).toBe(false);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('publishes per-track keyframe editability so the UI only enables what the writer accepts', () => {
+    document.body.innerHTML = '<main><div id="purekf"></div><div id="wrapkf"></div><div id="kfdriven"></div><div id="stag1"></div><div id="stag2"></div></main>';
+    const pureTarget = document.getElementById('purekf');
+    const wrapTarget = document.getElementById('wrapkf');
+    const kfDrivenTarget = document.getElementById('kfdriven');
+    const staggerTarget = document.getElementById('stag1');
+
+    // Sol round 5: the CLIP-level keyframe capability alone promised step edits
+    // the per-property writer guard refuses. Each track now publishes whether the
+    // keyframe writer accepts it, and the clip capability is DERIVED from the
+    // tracks — the two can no longer disagree. (This per-track channel is also
+    // what phase-2 array-form step editing will flip on.)
+    const rendered = { x: 0, opacity: 1, y: 0 };
+    let pureProgress = 0.4;
+    const pureVars = { x: 100, duration: 1 };
+    const pureTween = {
+      targets: () => [pureTarget],
+      vars: pureVars,
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn((p) => {
+        if (p === undefined) return pureProgress;
+        pureProgress = p;
+        rendered.x = 100 * p;
+        return pureTween;
+      }),
+      invalidate: vi.fn(() => pureTween),
+    };
+    const wrapVars = { css: { opacity: 0.5 }, duration: 1 };
+    const wrapTween = {
+      targets: () => [wrapTarget],
+      vars: wrapVars,
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressFn(p) { return p === undefined ? 0 : this; }),
+      invalidate: vi.fn(),
+    };
+    // A keyframes-driven tween surfaces tracks too (furo #1) — none are step-editable.
+    const kfDrivenTween = {
+      targets: () => [kfDrivenTarget],
+      vars: { keyframes: [{ y: 0, duration: 1 }, { y: 60, duration: 1 }] },
+      duration: () => 2,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressFn(p) { return p === undefined ? 0 : this; }),
+      invalidate: vi.fn(),
+    };
+    // Stagger: the writer guard rejects EVERY step write on the facade (Sol v6
+    // #3 — the flag must mirror it, or capability×guard reopens), and the reason
+    // is published so the locked field can point at the way out (unchain).
+    const staggerTween = {
+      targets: () => [staggerTarget, document.getElementById('stag2')],
+      vars: { x: 100, stagger: 0.1, duration: 1 },
+      duration: () => 1.1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressFn(p) { return p === undefined ? 0 : this; }),
+      invalidate: vi.fn(),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [pureTween, wrapTween, kfDrivenTween, staggerTween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    pureTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    let selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const pureMotion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(pureMotion.tracks.find((track) => track.property === 'x').keyframeEditable).toBe(true);
+    expect(pureMotion.tracks.find((track) => track.property === 'x').keyframeEditReason).toBeUndefined();
+    expect(pureMotion.capabilities.keyframes).toBe(true);
+
+    // Regression (Sol v5): keyframe.x must APPLY where the writer accepts it.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: pureMotion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '100', exists: true },
+            value: { offset: 1, value: '160', exists: true },
+          },
+        },
+      },
+    }));
+    expect(pureVars.x).toBe('160');
+    expect(pureTween.invalidate).toHaveBeenCalled();
+
+    wrapTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const wrapMotion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(wrapMotion.tracks.find((track) => track.property === 'opacity').keyframeEditable).toBe(false);
+    expect(wrapMotion.tracks.find((track) => track.property === 'opacity').keyframeEditReason).toBe('css-wrapper');
+    expect(wrapMotion.capabilities.keyframes).toBe(false);
+
+    // Regression (Sol v5): a wrapper-track step edit must refuse WITHOUT writing.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: wrapMotion.id,
+            property: 'keyframe.opacity',
+            before: { offset: 1, value: '0.5', exists: true },
+            value: { offset: 1, value: '0.8', exists: true },
+          },
+        },
+      },
+    }));
+    expect(wrapVars.css.opacity).toBe(0.5);
+    expect(wrapVars.opacity).toBeUndefined();
+    expect(wrapVars.startAt).toBeUndefined();
+
+    kfDrivenTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const kfMotion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(kfMotion.tracks.find((track) => track.property === 'y').keyframeEditable).toBe(false);
+    expect(kfMotion.tracks.find((track) => track.property === 'y').keyframeEditReason).toBe('keyframes');
+    expect(kfMotion.capabilities.keyframes).toBe(false);
+
+    staggerTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const staggerMotion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    const staggerTrack = staggerMotion.tracks.find((track) => track.property === 'x');
+    expect(staggerTrack.keyframeEditable).toBe(false);
+    expect(staggerTrack.keyframeEditReason).toBe('stagger');
+    expect(staggerMotion.capabilities.keyframes).toBe(false);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps plugin-namespace vars (attr) in the inventory on wrapper tweens, locked read-only (Sol v6)', () => {
+    document.body.innerHTML = '<main><div id="atw" data-n="0"></div><div id="atp" data-n="0"></div></main>';
+    const wrapAttrTarget = document.getElementById('atw');
+    const plainAttrTarget = document.getElementById('atp');
+
+    // Probe 2026-07-29 (GSAP 3.15 real): with a css wrapper present, scalar
+    // top-level props die (el.x, never CSS) but PLUGIN namespaces stay live —
+    // attr:{'data-n':100} keeps animating the attribute. Dropping every
+    // top-level var would erase a live writer from the inventory. Structured
+    // (object-valued) vars survive the drop and are locked: no vars-write path
+    // is proven for them (writing vars.attr = '160' would corrupt the object).
+    const makeTween = (target, vars) => ({
+      targets: () => [target],
+      vars,
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressFn(p) { return p === undefined ? 0 : this; }),
+      invalidate: vi.fn(),
+    });
+    const wrapAttrTween = makeTween(wrapAttrTarget, { attr: { 'data-n': 100 }, x: 60, css: { opacity: 0.5 }, duration: 1 });
+    const plainAttrTween = makeTween(plainAttrTarget, { attr: { 'data-n': 100 }, y: 50, duration: 1 });
+    window.gsap = {
+      globalTimeline: { getChildren: () => [wrapAttrTween, plainAttrTween] },
+      getProperty: () => '0',
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    wrapAttrTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    let selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    let motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    // The scalar x is still a phantom (dropped); opacity (wrapper) and attr (plugin) remain.
+    expect(motion.tracks.map((track) => track.property).sort()).toEqual(['attr', 'opacity']);
+    const wrapAttrTrack = motion.tracks.find((track) => track.property === 'attr');
+    expect(wrapAttrTrack.ownership.retargetable).toBe(false);
+    expect(wrapAttrTrack.keyframeEditable).toBe(false);
+
+    // On a plain tween the structured var is locked the same way (writing
+    // vars.attr = '160' is the same corruption) while scalars stay editable.
+    plainAttrTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    const plainAttrTrack = motion.tracks.find((track) => track.property === 'attr');
+    expect(plainAttrTrack.ownership.retargetable).toBe(false);
+    expect(plainAttrTrack.keyframeEditable).toBe(false);
+    const yTrack = motion.tracks.find((track) => track.property === 'y');
+    expect(yTrack.keyframeEditable).toBe(true);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps SCALAR registered-plugin vars in the inventory too, locked on both channels (Sol v7)', () => {
+    document.body.innerHTML = '<main><div id="scw"></div><div id="scu"></div></main>';
+    const target = document.getElementById('scw');
+    const undefTarget = document.getElementById('scu');
+
+    // Probe 2026-07-29 (GSAP 3.15 real): a REGISTERED plugin claims its var
+    // regardless of value type — a scalar `fakeplug: 5` still runs its init
+    // beside a css wrapper (TextPlugin's `text: "..."`, ScrollToPlugin's
+    // `scrollTo: 500` are the real-world shapes). The object-valued heuristic
+    // alone would drop it as a phantom — a live writer erased from the
+    // inventory, the exact unowned->stomp lie again. gsap.core.globals() lists
+    // registered plugins as `<Name>Plugin` keys: that set identifies plugin
+    // vars, and the SAME predicate locks classifier and writers.
+    // The var key is CASE-SENSITIVE and comes from the plugin's declared name
+    // ('Fakeplug' → vars.Fakeplug; probe: lowercase does NOT fire its init), so
+    // the set must be read from each plugin's `.prop` — real GSAP publishes the
+    // exact var name there ({prop:'attr'}, {prop:'Fakeplug'}) — never derived
+    // from the `<Name>Plugin` global key (lossy capitalization, Sol v8).
+    const vars = { Fakeplug: 5, x: 60, css: { opacity: 0.5 }, duration: 1 };
+    const tween = {
+      targets: () => [target],
+      vars,
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressFn(p) { return p === undefined ? 0 : this; }),
+      invalidate: vi.fn(),
+    };
+    // GSAP dispatches plugins by ENUMERATED KEY — {Fakeplug: undefined} still
+    // runs init (probe 2026-07-29; a plugin may treat undefined as its default
+    // and keep writing). The predicate must test key PRESENCE, not the value.
+    const undefVars = { Fakeplug: undefined, css: { opacity: 0.5 }, duration: 1 };
+    const undefTween = {
+      targets: () => [undefTarget],
+      vars: undefVars,
+      duration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressFn(p) { return p === undefined ? 0 : this; }),
+      invalidate: vi.fn(),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween, undefTween] },
+      getProperty: () => '0',
+      core: { globals: () => ({ CSSPlugin: { prop: 'css' }, AttrPlugin: { prop: 'attr' }, FakeplugPlugin: { prop: 'Fakeplug' } }) },
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(motion.tracks.map((track) => track.property).sort()).toEqual(['Fakeplug', 'opacity']);
+    const pluginTrack = motion.tracks.find((track) => track.property === 'Fakeplug');
+    expect(pluginTrack.ownership.retargetable).toBe(false);
+    expect(pluginTrack.keyframeEditable).toBe(false);
+    expect(pluginTrack.keyframeEditReason).toBe('plugin');
+
+    // Neither writer may mutate the plugin's var.
+    const sendPatch = (property, patchProperty, value) => window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id, kind: 'motion', motionId: motion.id,
+            property: patchProperty,
+            before: patchProperty.startsWith('keyframe.') ? { offset: 1, value: '5', exists: true } : { schemaVersion: 2, semanticProperty: property, runtimeProperty: property, value: '5' },
+            value,
+          },
+        },
+      },
+    }));
+    sendPatch('Fakeplug', 'keyframe.Fakeplug', { offset: 1, value: '9', exists: true });
+    sendPatch('Fakeplug', 'retarget.final', {
+      schemaVersion: 2, semanticProperty: 'Fakeplug', runtimeProperty: 'Fakeplug', value: '9',
+      writeModel: 'absolute', responsiveScope: 'shared',
+      owner: { channelId: `${motion.id}:Fakeplug`, motionId: motion.id },
+      keyframe: { position: 'final-existing' },
+    });
+    expect(vars.Fakeplug).toBe(5);
+    expect(vars.startAt).toBeUndefined();
+
+    // Explicit-undefined plugin var: still a live writer -> still in the
+    // inventory, still locked, still refused by the keyframe writer.
+    undefTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const undefSelection = messages.filter((message) => message.type === 'selection-changed').pop();
+    const undefMotion = undefSelection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(undefMotion.tracks.map((track) => track.property).sort()).toEqual(['Fakeplug', 'opacity']);
+    const undefTrack = undefMotion.tracks.find((track) => track.property === 'Fakeplug');
+    expect(undefTrack.ownership.retargetable).toBe(false);
+    expect(undefTrack.keyframeEditable).toBe(false);
+    expect(undefTrack.keyframeEditReason).toBe('plugin');
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: undefSelection.payload.element.id, kind: 'motion', motionId: undefMotion.id,
+            property: 'keyframe.Fakeplug',
+            before: { offset: 1, value: '', exists: true },
+            value: { offset: 1, value: '9', exists: true },
+          },
+        },
+      },
+    }));
+    expect(undefVars.Fakeplug).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(undefVars, 'Fakeplug')).toBe(true);
+    expect(undefVars.startAt).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('validates a GSAP retarget round-trip — sourceValue is immutable metadata (Sol v6)', () => {
+    document.body.innerHTML = '<main><div id="vplain"></div><div id="vwrap"></div></main>';
+    const plainTarget = document.getElementById('vplain');
+    const wrapTarget = document.getElementById('vwrap');
+
+    // validate-transaction re-reads the patch value after applying. The GSAP
+    // readback used to RECOMPUTE sourceValue from vars — post-write it differs
+    // from the requested descriptor (and on wrapper tweens the top-level slot is
+    // empty, so it silently vanished) → every GSAP retarget failed validation
+    // with effect_mismatch (probe 2026-07-29, plain AND wrapper). sourceValue is
+    // authored-value METADATA: the readback must carry it through untouched,
+    // exactly like readBrowserRetarget does.
+    const makeTween = (target, vars) => {
+      const rendered = {};
+      let current = 0.5;
+      const tween = {
+        targets: () => [target],
+        vars,
+        duration: () => 1,
+        delay: () => 0,
+        repeat: () => 0,
+        repeatDelay: () => 0,
+        yoyo: () => false,
+        reversed: () => false,
+        paused: () => false,
+        scrollTrigger: null,
+        progress: vi.fn((p) => {
+          if (p === undefined) return current;
+          current = p;
+          rendered.x = Number(vars.css && 'x' in vars.css ? vars.css.x : vars.x) * p;
+          return tween;
+        }),
+        invalidate: vi.fn(() => tween),
+        rendered,
+      };
+      return tween;
+    };
+    const plainTween = makeTween(plainTarget, { x: 60, duration: 1 });
+    const wrapTween = makeTween(wrapTarget, { css: { x: 60 }, duration: 1 });
+    window.gsap = {
+      globalTimeline: { getChildren: () => [plainTween, wrapTween] },
+      getProperty: (target, prop) => String((target === plainTarget ? plainTween : wrapTween).rendered[prop] ?? 0),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const validate = (domId, tween) => {
+      document.getElementById(domId).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+      const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+      const sourceValue = motion.tracks.find((track) => track.property === 'x').ownership.sourceValue;
+      window.dispatchEvent(new MessageEvent('message', {
+        source: window,
+        data: {
+          protocol: MOTION_EDITOR_PROTOCOL,
+          source: 'host',
+          type: 'validate-transaction',
+          payload: {
+            transaction: {
+              id: `tx-${domId}`,
+              patches: [{
+                id: `p-${domId}`,
+                elementId: selection.payload.element.id,
+                kind: 'motion',
+                motionId: motion.id,
+                property: 'retarget.final',
+                before: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: String(sourceValue) },
+                value: {
+                  schemaVersion: 2,
+                  semanticProperty: 'translateX',
+                  runtimeProperty: 'x',
+                  value: '160',
+                  writeModel: 'absolute',
+                  responsiveScope: 'shared',
+                  sourceValue,
+                  owner: { channelId: `${motion.id}:translateX`, motionId: motion.id },
+                  keyframe: { position: 'final-existing' },
+                },
+              }],
+            },
+          },
+        },
+      }));
+      return { tween, result: messages.filter((message) => message.type === 'validation-result').pop() };
+    };
+
+    const plain = validate('vplain', plainTween);
+    expect(plain.result.payload.valid).toBe(true);
+    expect(plain.result.payload.stages.apply).toBe('passed');
+    // restored: the validated write must not leak into the live tween.
+    expect(String(plainTween.vars.x)).toBe('60');
+
+    const wrap = validate('vwrap', wrapTween);
+    expect(wrap.result.payload.valid).toBe(true);
+    expect(wrap.result.payload.stages.apply).toBe('passed');
+    expect(String(wrapTween.vars.css.x)).toBe('60');
+    expect(wrapTween.vars.x).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('sees css-wrapped keyframes entries and keeps looping css values non-retargetable', () => {
+    document.body.innerHTML = '<main><div id="kfc"></div><div id="cloop"></div></main>';
+    const kfCssTarget = document.getElementById('kfc');
+    const loopTarget = document.getElementById('cloop');
+
+    const rendered = { x: 0 };
+    const makeTween = (target, vars, repeat = 0) => ({
+      targets: () => [target],
+      vars,
+      duration: () => 2,
+      delay: () => 0,
+      repeat: () => repeat,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressFn(p) { return p === undefined ? 0 : this; }),
+      invalidate: vi.fn(),
+    });
+    // GSAP honors a css wrapper INSIDE keyframes entries (probe-verified: the tween
+    // animates x) — extraction must recurse or the writer goes invisible again.
+    const kfCssTween = makeTween(kfCssTarget, {
+      keyframes: [{ css: { x: 0 }, duration: 1 }, { css: { x: 100 }, duration: 1 }],
+    });
+    // A looping css:{} value writes through applyGsapLoopBase (top-level vars +
+    // startAt) which the wrapper ignores — must stay non-retargetable.
+    const loopTween = makeTween(loopTarget, { css: { x: 60 }, duration: 2 }, -1);
+    window.gsap = {
+      globalTimeline: { getChildren: () => [kfCssTween, loopTween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    kfCssTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    let selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    let motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    expect(motion.tracks.map((track) => track.property)).toEqual(['x']);
+    expect(motion.tracks[0].ownership.retargetable).toBe(false);
+
+    loopTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    const loopTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(loopTrack.ownership.writeModel).toBe('additive-base');
+    expect(loopTrack.ownership.retargetable).toBe(false);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('extracts animated properties from object and percent GSAP keyframes forms', () => {
     document.body.innerHTML = '<main><div id="kfo"></div><div id="kfp"></div></main>';
     const objectTarget = document.getElementById('kfo');

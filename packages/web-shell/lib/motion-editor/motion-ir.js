@@ -111,6 +111,16 @@ export function buildStripEditPatches({ motion, row, next = {} }) {
   return patches;
 }
 
+// Per-track keyframe (step) editability. Clip-level `capabilities.keyframes`
+// says the CLIP accepts step edits; a track can still be refused by the
+// runtime's per-property writer guard (e.g. a css:{}-wrapper property on a
+// mixed GSAP tween). Adapters that publish the flag set it explicitly on every
+// track; adapters that don't (CSS/WAAPI direct paths) leave it absent, which
+// means editable — so absence keeps their behavior unchanged.
+export function trackKeyframeEditable(track) {
+  return track?.keyframeEditable !== false;
+}
+
 export function normalizeMotionClip(input = {}) {
   const timing = input.timing || {};
   return {

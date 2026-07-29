@@ -273,6 +273,38 @@ function nativeMotionRuntimeBridge() {
     return null;
   }
 
+  // Vars owned by a GSAP plugin, in either authored shape: structured namespaces
+  // (attr:{...}) or SCALAR vars claimed by a REGISTERED plugin (text:"...",
+  // scrollTo:500 — probe 2026-07-29: a registered plugin's init runs for its
+  // scalar var even beside a css wrapper). The var key is CASE-SENSITIVE and
+  // comes from the plugin's declared name — every plugin in gsap.core.globals()
+  // publishes it verbatim in `.prop` ({prop:'attr'}, {prop:'Fakeplug'}; probed),
+  // so the set is read from there, never derived from the `<Name>Plugin` global
+  // key (lossy capitalization — Sol v8). ONE predicate, shared by the classifier
+  // and BOTH writers: no vars-write path is proven for plugin vars, so both
+  // edit channels lock wherever this is true.
+  function gsapRegisteredPluginVars() {
+    const names = new Set();
+    try {
+      const globals = window.gsap?.core?.globals?.() || {};
+      Object.values(globals).forEach((value) => {
+        const prop = value?.prop;
+        if (typeof prop === 'string' && prop) names.add(prop);
+      });
+    } catch (_) {}
+    return names;
+  }
+
+  function gsapPluginOwnedVar(vars, property) {
+    // Key PRESENCE, not value: GSAP dispatches plugins by enumerated key, so
+    // {Fakeplug: undefined} still runs the plugin's init (probe 2026-07-29 —
+    // a plugin may treat undefined as its default and keep writing).
+    if (!vars || !Object.prototype.hasOwnProperty.call(vars, property)) return false;
+    const value = vars[property];
+    if (value && typeof value === 'object') return true;
+    return gsapRegisteredPluginVars().has(property);
+  }
+
   function writerOwnership({
     clipId,
     animation,
@@ -440,6 +472,18 @@ function nativeMotionRuntimeBridge() {
     return clip;
   }
 
+  // The component keys a retarget descriptor can carry for each runtime property —
+  // mirrored by BOTH the classifier and the writer's bucket lookup so provenance
+  // (top-level vars vs css wrapper) can never diverge between them.
+  function gsapDescriptorComponentKeys(property) {
+    if (property === 'scale') return ['scaleX', 'scaleY'];
+    if (property === 'translate') return ['translateX', 'translateY'];
+    if (property === 'skew') return ['skewX', 'skewY'];
+    if (property === 'transform') return ['translateX', 'translateY', 'scaleX', 'scaleY', 'rotate', 'skewX', 'skewY'];
+    if (property === 'transformOrigin') return ['transformOriginX', 'transformOriginY'];
+    return [];
+  }
+
   // GSAP config/callback vars — never real animatable properties. Shared between
   // the clip lister and the retarget guard so both agree on what a "property" is.
   const GSAP_CONFIG_VARS = new Set([
@@ -447,6 +491,8 @@ function nativeMotionRuntimeBridge() {
     'stagger', 'immediateRender', 'startAt', 'overwrite', 'runBackwards', 'lazy', 'paused', 'reversed',
     'callbackScope', 'onComplete', 'onInterrupt', 'onRepeat', 'onReverseComplete', 'onStart', 'onUpdate',
     'force3D', 'data', 'autoRound', 'inherit', 'defaults', 'smoothChildTiming', 'keyframes', 'clearProps',
+    // Legacy GSAP-2 wrapper — its SUB-KEYS are the real animated properties.
+    'css',
   ]);
 
   // vars.keyframes holds animated properties the top-level vars never mention, in
@@ -461,6 +507,12 @@ function nativeMotionRuntimeBridge() {
     const collect = (entry) => {
       if (!entry || typeof entry !== 'object') return;
       Object.keys(entry).forEach((key) => {
+        // css wrapper INSIDE a keyframes entry is honored by GSAP (probe-verified)
+        // — recurse into it or the writer goes invisible again.
+        if (key === 'css' && entry.css && typeof entry.css === 'object' && !Array.isArray(entry.css)) {
+          collect(entry.css);
+          return;
+        }
         if (!ignored.has(key) && key !== 'parent' && key !== 'easeEach') names.add(key);
       });
     };
@@ -485,12 +537,17 @@ function nativeMotionRuntimeBridge() {
     const ease = typeof vars.ease === 'string' ? vars.ease : null;
     const endOnly = () => ({
       keyframes: false,
-      tracks: animatedProps.map((property) => ({
-        property,
-        // Keyframe-driven properties have no top-level vars value — never report
-        // the literal string "undefined" as a keyframe value.
-        keyframes: [{ offset: 1, value: typeof vars[property] === 'function' || vars[property] === undefined ? '' : String(vars[property]), easing: ease }],
-      })),
+      tracks: animatedProps.map((property) => {
+        // The wrapper slot is the live one (top-level values on wrapper tweens are
+        // phantoms); keyframe-driven props have no vars value at all — never
+        // report the literal string "undefined".
+        const wrapper = vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css) ? vars.css : null;
+        const raw = wrapper && property in wrapper ? wrapper[property] : vars[property];
+        return {
+          property,
+          keyframes: [{ offset: 1, value: typeof raw === 'function' || raw === undefined ? '' : String(raw), easing: ease }],
+        };
+      }),
     });
     if (!gsap || typeof gsap.getProperty !== 'function' || typeof animation.progress !== 'function') {
       return endOnly();
@@ -561,8 +618,24 @@ function nativeMotionRuntimeBridge() {
         const primaryTarget = targets.find((target) => target instanceof Element) || element;
         const id = motionIdFor(animation, engine === 'GSAP' ? 'gsap' : 'scroll', `${ensureElementId(primaryTarget)}:${vars.id || index}`);
         const ignored = GSAP_CONFIG_VARS;
-        const topLevelProps = Object.keys(vars)
-          .filter((property) => !ignored.has(property));
+        // css:{} wrapper (legacy GSAP-2 authoring): once it exists — even empty —
+        // GSAP routes ONLY the wrapper through CSSPlugin; every SCALAR top-level
+        // prop becomes a generic object-property tween (el.x = 100), which never
+        // touches CSS (probe 2026-07-29, both directions). So the wrapper's
+        // sub-keys ARE the tween's CSS tracks, and scalar top-level props on a
+        // wrapper tween are phantoms — listing them would be furo-#1-class lies,
+        // and dropping them leaves those channels genuinely unowned (a style edit
+        // works; the tween cannot stomp what it never writes). PLUGIN vars stay
+        // LIVE beside a wrapper in BOTH shapes — structured namespaces
+        // (attr:{...}) and scalar vars of registered plugins (text/scrollTo;
+        // probe: attr's data-n keeps animating, a registered plugin's init runs
+        // for its scalar var) — they survive the drop so the inventory never
+        // hides a live writer, and they are locked below.
+        const cssWrapper = vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css) ? vars.css : null;
+        const topLevelProps = (cssWrapper
+          ? Object.keys(cssWrapper).concat(Object.keys(vars).filter((property) => gsapPluginOwnedVar(vars, property)))
+          : Object.keys(vars))
+          .filter((property, index, list) => !ignored.has(property) && list.indexOf(property) === index);
         // Surface keyframe-driven properties as tracks too — but remember which they
         // are: no safe writeback exists for them (probe 2026-07-29: editing vars or
         // the keyframes structure + invalidate corrupts the path start on the array
@@ -587,14 +660,51 @@ function nativeMotionRuntimeBridge() {
         });
         const order = finite(animation.globalTime?.(0), finite(animation.startTime?.(), index)) * 1000;
         const tracks = sampled.tracks.map((track, trackIndex) => {
-          const rawValue = vars[track.property];
+          // The wrapper slot is the LIVE one whenever the property sits there —
+          // on a collision ({ x: '+=60', css: { x: 100 } }) the top-level value
+          // is a phantom, so reading it would misreport the value/write model.
+          const rawValue = cssWrapper && track.property in cssWrapper
+            ? cssWrapper[track.property]
+            : vars[track.property];
           const looping = iterations === Infinity;
           const writeModel = gsapWriteModel(rawValue, looping);
           const targetCount = Math.max(1, targets.filter((target) => target instanceof Element).length);
           const functionSupported = typeof rawValue !== 'function' || targetCount === 1;
           const scopeSafe = targetCount === 1;
+          // css:{}-wrapped values: only the ABSOLUTE wrapper write is probe-proven.
+          // The relative/function/loop write paths write top-level vars/startAt,
+          // which css tweens silently ignore — keep those non-retargetable. And the
+          // classifier must mirror the writer's bucket predicate EXACTLY: if the
+          // slot this track was authored in differs from where the write would land
+          // (name OR any descriptor-component key found in the wrapper — e.g.
+          // vars.scale + css.scaleX), provenance would cross — lock it.
+          // Plugin-owned vars (attr:{...}, text:"...", scrollTo:500): no
+          // vars-write path is proven — writing over them corrupts the plugin's
+          // config — so both edit channels lock (Sol v6 #2 + v7).
+          const pluginOwned = gsapPluginOwnedVar(vars, track.property);
+          const authoredInCss = vars[track.property] === undefined && Boolean(cssWrapper && track.property in cssWrapper);
+          const writeLandsInCss = Boolean(cssWrapper && (track.property in cssWrapper
+            || gsapDescriptorComponentKeys(track.property).some((key) => key in cssWrapper)));
+          const cssProvenanceMismatch = Boolean(cssWrapper) && authoredInCss !== writeLandsInCss;
+          const cssWriteUnproven = (authoredInCss && writeModel !== 'absolute') || cssProvenanceMismatch;
+          // The keyframe (step) channel's per-track truth: mirror EVERY writer
+          // guard (applyGsapKeyframe), so the UI never enables an input whose
+          // write is always rejected (Sol rounds 5-6 — clip capability alone
+          // promised step edits the guards refuse; stagger reopened the same
+          // hole when left out). The reason is published so a locked field can
+          // explain itself — stagger's points at unchain. Phase-2 array-form
+          // step editing flips this per track when its entry-edit writeback lands.
+          const keyframeEditReason = !sampled.keyframes ? 'sampling'
+            : vars.runBackwards ? 'from'
+              : vars.keyframes ? 'keyframes'
+                : vars.stagger != null ? 'stagger'
+                  : (cssWrapper && track.property in cssWrapper) ? 'css-wrapper'
+                    : pluginOwned ? 'plugin'
+                      : null;
           return {
             ...track,
+            keyframeEditable: keyframeEditReason == null,
+            ...(keyframeEditReason ? { keyframeEditReason } : {}),
             ownership: writerOwnership({
               clipId: id,
               animation,
@@ -604,7 +714,7 @@ function nativeMotionRuntimeBridge() {
               order: order + (trackIndex / 1000),
               sequenceId: group.timelineId,
               writeModel,
-              retargetable: sampled.keyframes && !vars.runBackwards && functionSupported && scopeSafe && !keyframeDriven.has(track.property),
+              retargetable: sampled.keyframes && !vars.runBackwards && functionSupported && scopeSafe && !keyframeDriven.has(track.property) && !cssWriteUnproven && !pluginOwned,
               sourceValue: safeSourceValue(rawValue),
               targetCount,
               stagger: vars.stagger != null ? { mode: 'staggered', targetCount } : null,
@@ -645,12 +755,11 @@ function nativeMotionRuntimeBridge() {
             pin: Boolean(scrollTrigger.pin || (scrollTrigger.vars?.pin ?? vars.scrollTrigger?.pin)),
             snap: Boolean(scrollTrigger.vars?.snap ?? vars.scrollTrigger?.snap),
           } : null,
-          // gsap.from(): vars hold the FROM, not the end — a keyframe write
-          // labelled "end" would silently retarget the start. Read-only until
-          // the writeback understands runBackwards.
-          // Timeline keyframe editing writes vars/startAt — the same unsafe path the
-          // probe showed corrupting keyframes tweens — so it is disabled for them.
-          capabilities: { timing: true, easing: true, keyframes: sampled.keyframes && !vars.runBackwards && !vars.keyframes, trigger: false, scroll: Boolean(scrollTrigger) },
+          // The clip-level keyframe capability is DERIVED from the tracks: it is
+          // true only when at least one track's step edits the writer will accept
+          // (per-track truth in `keyframeEditable`). Deriving it is what makes a
+          // capability-vs-guard disagreement structurally impossible (Sol v5).
+          capabilities: { timing: true, easing: true, keyframes: tracks.some((track) => track.keyframeEditable), trigger: false, scroll: Boolean(scrollTrigger) },
           source: { engine, writeback: 'adapter' },
         };
         motionRegistry.set(id, {
@@ -1749,11 +1858,14 @@ function nativeMotionRuntimeBridge() {
     } else {
       value = sampleGsapValue(record, property, 1);
     }
-    const rawValue = record.animation.vars?.[property];
+    // sourceValue is authored-value METADATA — the readback must carry it through
+    // untouched (like readBrowserRetarget). Recomputing it from vars made every
+    // GSAP retarget fail validate-transaction with effect_mismatch: post-write it
+    // differs from the requested descriptor, and on wrapper tweens the top-level
+    // slot is empty so it silently vanished (Sol v6 #1, probe 2026-07-29).
     return {
       ...cloneValue(descriptor),
       value: String(value ?? ''),
-      sourceValue: safeSourceValue(rawValue),
     };
   }
 
@@ -1762,22 +1874,32 @@ function nativeMotionRuntimeBridge() {
     const vars = animation.vars || (animation.vars = {});
     const property = descriptor.runtimeProperty;
     const desired = descriptor.value;
+    // css:{}-wrapped property: EVERY write (component splits included) must land
+    // INSIDE the wrapper — top-level vars writes are silently ignored by these
+    // tweens, while wrapper edits (incl. scaleX/scaleY splits) retarget cleanly
+    // (probe-verified 2026-07-29). The COMPONENT key matters too: after a scale
+    // split deletes wrapper.scale, a rollback replays the stale descriptor
+    // (runtimeProperty 'scale') and must still find the wrapper via 'scaleX'.
+    const cssWrapper = vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css) ? vars.css : null;
+    const bucket = cssWrapper && (property in cssWrapper || (descriptor.component && descriptor.component in cssWrapper))
+      ? cssWrapper
+      : vars;
     if (descriptor.component === 'transformOriginX' || descriptor.component === 'transformOriginY') {
-      vars[property] = updateRuntimeOrigin(sampleGsapValue(record, property, 1), descriptor.component, desired);
+      bucket[property] = updateRuntimeOrigin(sampleGsapValue(record, property, 1), descriptor.component, desired);
       return;
     }
     if (descriptor.component && property === 'transform') {
-      vars[property] = updateRuntimeTransform(sampleGsapValue(record, property, 1), descriptor.component, desired);
+      bucket[property] = updateRuntimeTransform(sampleGsapValue(record, property, 1), descriptor.component, desired);
       return;
     }
     if (descriptor.component && property === 'scale') {
       const other = descriptor.component === 'scaleX' ? 'scaleY' : 'scaleX';
-      vars[other] = sampleGsapValue(record, other, 1);
-      vars[descriptor.component] = Number.isFinite(Number(desired)) ? Number(desired) : desired;
-      delete vars.scale;
+      bucket[other] = sampleGsapValue(record, other, 1);
+      bucket[descriptor.component] = Number.isFinite(Number(desired)) ? Number(desired) : desired;
+      delete bucket.scale;
       return;
     }
-    vars[property] = typeof vars[property] === 'number' && Number.isFinite(Number(desired))
+    bucket[property] = typeof bucket[property] === 'number' && Number.isFinite(Number(desired))
       ? Number(desired)
       : desired;
   }
@@ -1860,6 +1982,11 @@ function nativeMotionRuntimeBridge() {
       && gsapKeyframeProps(authoredKeyframes, GSAP_CONFIG_VARS).includes(descriptor.runtimeProperty)) {
       throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be retargeted safely yet.');
     }
+    // Plugin-owned vars (attr:{...}, text:"...", scrollTo:500): writing over
+    // them corrupts the plugin's config — no write path is proven (Sol v6/v7).
+    if (gsapPluginOwnedVar(record.animation?.vars, descriptor.runtimeProperty)) {
+      throw bridgeError('unsupported_patch', 'This value is driven by a GSAP plugin and cannot be retargeted safely yet.');
+    }
     if (descriptor.writeModel === 'relative') applyGsapRelative(record, descriptor);
     else if (descriptor.writeModel === 'function-offset') applyGsapFunctionOffset(record, descriptor);
     else if (descriptor.writeModel === 'additive-base') applyGsapLoopBase(record, descriptor);
@@ -1877,11 +2004,21 @@ function nativeMotionRuntimeBridge() {
     if (vars.keyframes) {
       throw new Error('This animation is driven by GSAP keyframes — its steps cannot be edited safely yet.');
     }
+    // css:{}-wrapped properties: top-level vars/startAt writes are silently ignored
+    // by these tweens (probe-verified) — step editing needs a css-aware path first.
+    if (vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css) && property in vars.css) {
+      throw new Error('This value lives in the legacy css wrapper — step editing is not supported yet.');
+    }
     // A staggered tween is a facade over internal per-target tweens: writing
     // vars/startAt on it silently changes NOTHING (probe-verified — the edit
     // read back the old value). Fail loudly and point at the way out.
     if (vars.stagger != null) {
       throw new Error('This value is shared by a staggered group — unchain the layer (chain icon) to edit it independently.');
+    }
+    // Plugin-owned vars (attr:{...}, text:"...", scrollTo:500): a write over
+    // them corrupts the plugin's config — same predicate as the classifier.
+    if (gsapPluginOwnedVar(vars, property)) {
+      throw new Error('This value is driven by a GSAP plugin — its steps cannot be edited safely yet.');
     }
     const offset = Math.max(0, Math.min(1, Number(descriptor?.offset) || 0));
     if (descriptor?.exists === false) {

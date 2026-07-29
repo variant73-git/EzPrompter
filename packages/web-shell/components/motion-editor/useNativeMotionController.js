@@ -23,6 +23,7 @@ import {
   buildStripEditPatches,
   motionPlaybackMode,
   normalizeMotionClip,
+  trackKeyframeEditable,
 } from '../../lib/motion-editor/motion-ir.js';
 import {
   analyzeMotionOwnership,
@@ -1824,6 +1825,9 @@ export function useNativeMotionController({
   function changeKeyframeValue(selection, value) {
     const resolved = resolveKeyframe(selection);
     if (!resolved || !selected || String(resolved.keyframe.value) === String(value)) return;
+    // The runtime guard would reject this track's step write anyway — refusing
+    // here keeps a doomed patch (and its error toast) out of the pipeline.
+    if (!trackKeyframeEditable(resolved.track)) return;
     applyPatch(createPatch({
       elementId: motionElementId,
       kind: 'motion',
@@ -1837,6 +1841,7 @@ export function useNativeMotionController({
   function changeKeyframeEasing(selection, easing) {
     const resolved = resolveKeyframe(selection);
     if (!resolved || !selected || resolved.keyframe.easing === easing) return;
+    if (!trackKeyframeEditable(resolved.track)) return;
     applyPatch(createPatch({
       elementId: motionElementId,
       kind: 'motion',

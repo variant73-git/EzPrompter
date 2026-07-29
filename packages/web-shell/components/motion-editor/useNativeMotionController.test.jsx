@@ -676,6 +676,91 @@ describe('useNativeMotionController', () => {
     });
   });
 
+  it('refuses keyframe edits on a track the writer will reject — no patch leaves the controller', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    frame.contentWindow.postMessage.mockClear();
+
+    // Sol round 5: a clip whose capability allows step edits can still carry
+    // tracks the writer refuses (phase-2 array-form tweens will publish exactly
+    // this shape). The controller must honor the per-track flag — emitting the
+    // doomed patch would round-trip an error toast for an input that looked
+    // editable.
+    const motion = [{
+      id: 'mixed',
+      engine: 'GSAP',
+      editability: 'adapter',
+      timing: { duration: 1000 },
+      capabilities: { timing: true, easing: true, keyframes: true },
+      tracks: [
+        {
+          property: 'x',
+          keyframeEditable: true,
+          keyframes: [{ offset: 0, value: '0' }, { offset: 1, value: '100' }],
+          ownership: {
+            channelId: 'mixed:x',
+            behavior: 'entrance',
+            relationship: 'independent',
+            targetId: 'hero',
+            runtimeProperty: 'x',
+            retargetable: true,
+          },
+        },
+        {
+          property: 'opacity',
+          keyframeEditable: false,
+          keyframes: [{ offset: 0, value: '1' }, { offset: 1, value: '0.5' }],
+          ownership: {
+            channelId: 'mixed:opacity',
+            behavior: 'entrance',
+            relationship: 'independent',
+            targetId: 'hero',
+            runtimeProperty: 'opacity',
+            retargetable: true,
+          },
+        },
+      ],
+    }];
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'selection-changed',
+        payload: {
+          element: {
+            id: 'hero',
+            label: 'Hero',
+            styles: { opacity: '1', transform: 'none', transformOrigin: '50% 50%' },
+            motion,
+          },
+        },
+      },
+    })));
+
+    act(() => result.current.commands.changeKeyframeValue({ motionId: 'mixed', property: 'opacity', offset: 1 }, '0.8'));
+    act(() => result.current.commands.changeKeyframeEasing({ motionId: 'mixed', property: 'opacity', offset: 1 }, 'ease-in'));
+    expect(frame.contentWindow.postMessage.mock.calls
+      .map(([value]) => value)
+      .some((value) => value.type === 'apply-patch' || value.type === 'apply-patches')).toBe(false);
+
+    // The editable track keeps its full path: the same command emits the patch.
+    act(() => result.current.commands.changeKeyframeValue({ motionId: 'mixed', property: 'x', offset: 1 }, '160'));
+    const message = frame.contentWindow.postMessage.mock.calls
+      .map(([value]) => value)
+      .findLast((value) => value.type === 'apply-patch');
+    expect(message.payload.patch).toMatchObject({
+      kind: 'motion',
+      motionId: 'mixed',
+      property: 'keyframe.x',
+      value: { offset: 1, value: '160' },
+    });
+  });
+
   it('holds an ambiguous Properties edit until Motion chooses a contributor, then persists the hint with the retarget', async () => {
     const frame = runtimeFrame();
     const iframeRef = createRef();

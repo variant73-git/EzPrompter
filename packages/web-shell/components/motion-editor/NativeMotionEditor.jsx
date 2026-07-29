@@ -45,6 +45,7 @@ import {
   motionCapabilityLabel,
   motionDriverLabel,
   motionPlaybackMode,
+  trackKeyframeEditable,
 } from '../../lib/motion-editor/motion-ir.js';
 import { groupMotionClips } from '../../lib/motion-editor/motion-groups.js';
 import { buildFramerExport } from '../../lib/motion-editor/framer-export.js';
@@ -1560,6 +1561,20 @@ export function TimelinePanel({
     };
   }
 
+  // Why a track's step (keyframe) edits are locked — published by the adapter
+  // per track so the field explains itself instead of dead-ending (Sol v6).
+  const KEYFRAME_LOCK_REASONS = {
+    stagger: 'Shared by a staggered group — unchain the layer (chain icon) to edit it independently.',
+    'css-wrapper': "This value lives in the tween's legacy css wrapper — step editing isn't supported yet.",
+    keyframes: 'Driven by GSAP keyframes — its steps cannot be edited safely yet.',
+    from: 'A gsap.from() holds the start, not the end — read-only.',
+    plugin: 'Driven by a GSAP plugin — read-only.',
+    sampling: 'This track could not be sampled — read-only.',
+  };
+  function keyframeLockText(track) {
+    return KEYFRAME_LOCK_REASONS[track?.keyframeEditReason] || "This step value can't be edited safely yet.";
+  }
+
   function renderTrackCell(track) {
     return (
       <div className={styles.rowTrack} data-track-row={track.property}>
@@ -1579,11 +1594,13 @@ export function TimelinePanel({
               style={{ left: `${left}%` }}
               title={canAutoKeyframe
                 ? `${track.property}: ${keyframe.value}. Drag to move, Option-drag to duplicate.`
-                : adapterTimingDrag
-                  ? `${track.property}: ${keyframe.value}. Edit the value in the label; drag the end diamond to stretch duration, the start diamond to slide delay.`
-                  : canSelectKeyframes
-                    ? `${track.property}: ${keyframe.value}. Click to select and edit its value in the label; GSAP start/end cannot be moved.`
-                    : `${track.property}: ${keyframe.value}. This track is read-only.`}
+                : !trackKeyframeEditable(track)
+                  ? `${track.property}: ${keyframe.value}. ${keyframeLockText(track)}`
+                  : adapterTimingDrag
+                    ? `${track.property}: ${keyframe.value}. Edit the value in the label; drag the end diamond to stretch duration, the start diamond to slide delay.`
+                    : canSelectKeyframes
+                      ? `${track.property}: ${keyframe.value}. Click to select and edit its value in the label; GSAP start/end cannot be moved.`
+                      : `${track.property}: ${keyframe.value}. This track is read-only.`}
               aria-label={`${track.property} keyframe at ${Math.round(offset * 100)} percent`}
               aria-pressed={isSelected}
               disabled={!canSelectKeyframes}
@@ -1647,7 +1664,7 @@ export function TimelinePanel({
             ><Diamond /></button>
             <button type="button" aria-label={`Next ${track.property} keyframe`} disabled={!following} onClick={() => following && jumpTo(following)}>›</button>
           </span>
-          {canSelectKeyframes && editSource ? (
+          {canSelectKeyframes && trackKeyframeEditable(track) && editSource ? (
             <input
               className={styles.propertyValueInput}
               key={`${track.property}:${editSource.offset}:${editSource.value}`}
@@ -1664,7 +1681,12 @@ export function TimelinePanel({
               }}
             />
           ) : (
-            <span className={styles.propertyValue} title={valueSource ? String(valueSource.value) : ''}>
+            <span
+              className={styles.propertyValue}
+              title={!trackKeyframeEditable(track)
+                ? keyframeLockText(track)
+                : (valueSource ? String(valueSource.value) : '')}
+            >
               {valueSource ? String(valueSource.value).slice(0, 14) : ''}
             </span>
           )}
