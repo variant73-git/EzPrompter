@@ -1565,6 +1565,7 @@ export function TimelinePanel({
   // per track so the field explains itself instead of dead-ending (Sol v6).
   const KEYFRAME_LOCK_REASONS = {
     stagger: 'Shared by a staggered group — unchain the layer (chain icon) to edit it independently.',
+    'multi-target': 'Shared by multiple targets — unchain the layer (chain icon) to edit it independently.',
     'css-wrapper': "This value lives in the tween's legacy css wrapper — step editing isn't supported yet.",
     keyframes: 'Driven by GSAP keyframes — its steps cannot be edited safely yet.',
     from: 'A gsap.from() holds the start, not the end — read-only.',

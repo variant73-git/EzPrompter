@@ -491,6 +491,17 @@ function nativeMotionRuntimeBridge() {
     'stagger', 'immediateRender', 'startAt', 'overwrite', 'runBackwards', 'lazy', 'paused', 'reversed',
     'callbackScope', 'onComplete', 'onInterrupt', 'onRepeat', 'onReverseComplete', 'onStart', 'onUpdate',
     'force3D', 'data', 'autoRound', 'inherit', 'defaults', 'smoothChildTiming', 'keyframes', 'clearProps',
+    // The rest of GSAP 3.15's _reservedProps — extracted VERBATIM from the
+    // fixture source, and nothing beyond it: omitting one surfaces FALSE
+    // editable tracks (yoyoEase inside entries validated edits that changed
+    // nothing visual — Sol r17), while adding one NOT in the list hides a
+    // genuine writer (GSAP really animates a target-owned `onOverwrite` —
+    // Sol r18). The reserved lookup is callbacks + their `<name>Params` + the
+    // literal tail (fixture: `Tt += t + "," + t + "Params,"` — Sol r19), so
+    // the six Params lists ARE reserved.
+    'stringFilter', 'yoyoEase', 'repeatRefresh', 'autoRevert', 'easeReverse',
+    'onCompleteParams', 'onUpdateParams', 'onStartParams', 'onRepeatParams',
+    'onReverseCompleteParams', 'onInterruptParams',
     // Legacy GSAP-2 wrapper — its SUB-KEYS are the real animated properties.
     'css',
   ]);
@@ -530,6 +541,411 @@ function nativeMotionRuntimeBridge() {
       });
     }
     return Array.from(names);
+  }
+
+  // The ONLY safe write on a keyframes tween is editing the ENTRIES of the ARRAY
+  // form (probe 2026-07-29, _probe-kf-entryedit.mjs, GSAP 3.15 real): trailing-run
+  // entry edits + preserved-start invalidate render a clean path — intermediates
+  // and non-trailing duplicates intact, entry-level css wrappers honored, post-hoc
+  // startAt clean. Everything outside this plan stays locked: property-array and
+  // stops forms no-op on entry writes; BOTH-PLACES authoring corrupts (the
+  // invalidate RESURRECTS the dead top-level value — probe H); component-decomposed
+  // props, plugin props and relative/function entry values have no probed write;
+  // and a stagger facade's inner rebuild is unproven. ONE predicate shared by the
+  // classifier and both writers (furo #2 lesson): returns the trailing-run write
+  // buckets (every consecutive final entry sharing the end value — an entry's css
+  // wrapper IS its bucket when the property lives there), or null.
+  // The LIVE processed entries of the ARRAY keyframes form, in SEGMENT order.
+  // The inner timeline is the truth when exposed: GSAP builds one child tween
+  // per processed entry at construction, child.vars IS the entry object, and
+  // children sit in TIME order. The array is not the truth — reversing it never
+  // reorders the rendered segments, a raw appended entry never becomes a child,
+  // and a SPLICED-OUT entry's child stays alive and rendering (probes
+  // _probe-kf-reorder.mjs / _probe-kf-append.mjs: after reverse() the path still
+  // renders 100→200→300; writing the last CHILD's entry retargets the real end;
+  // appended {x:400} never renders). The array (filtered to GSAP-processed
+  // entries — it injects `parent` with ease/duration/overwrite/delay into each;
+  // raw entries are INERT dead slots) stands in ONLY when getChildren is absent
+  // or throws — an EMPTY children list is an answer, not an outage (Sol r8).
+  // POSITIVE provenance of the keyframes form, per animation: an inner timeline
+  // alone proves NOTHING — a plain tween builds one too when duration/delay is
+  // a function or string, and its children's vars are per-target COPIES with
+  // the animated prop + injected `parent` (probe _probe-plain-fnduration.mjs),
+  // indistinguishable from entries by shape. Treating those as keyframes would
+  // lock a legitimate plain tween (Sol r10 — generalized-lock product-rule
+  // violation). So the shape is CACHED while vars.keyframes is still present;
+  // after the page deletes it, the cache is the proof. An animation first seen
+  // only after the delete is treated as plain — the pre-feature status quo.
+  // FROZEN at first observation — shape AND source identity. A later truthy
+  // REPLACEMENT of vars.keyframes is an impostor (the original source's
+  // children keep rendering — inner timeline built once): letting it overwrite
+  // the cache abandons the live writers and a stale patch falls through to the
+  // plain vars writer, resurrecting the probe-H corruption (Sol r15).
+  // Ownership entries for the ARRAY form. A STAGGER facade's outer children
+  // are per-target COPIES whose vars carry the `keyframes` key itself and no
+  // animated props (probe on GSAP 3.15, Claude final review) — reading
+  // ownership from them yields ZERO tracks (the furo-#1 unowned lie) and lets
+  // the plain vars writer through. There the authored array is the truth.
+  function gsapAuthoredOwnershipEntries(animation, vars, source) {
+    const children = gsapInnerTimelineEntries(animation);
+    const facades = (vars && vars.stagger != null)
+      || (children && children.length > 0 && children.every((entry) => entry && entry.keyframes));
+    if (!facades && children) return children;
+    return Array.isArray(source) ? gsapProcessedEntries(source) : [];
+  }
+
+  const gsapKeyframesOriginShapes = new WeakMap();
+  function gsapKeyframesOrigin(animation, vars) {
+    const cached = gsapKeyframesOriginShapes.get(animation);
+    if (cached) return cached;
+    if (vars && vars.keyframes) {
+      const isArray = Array.isArray(vars.keyframes);
+      const origin = {
+        shape: isArray ? 'array' : 'other',
+        source: vars.keyframes,
+        // CONTENT frozen too: an in-place mutation (delete source.x) keeps the
+        // reference identical while the children keep rendering — the authored
+        // prop set observed here is the durable truth (Sol r16). For the array
+        // form the processed entries are the authored truth (raw slots lie).
+        props: isArray
+          ? gsapKeyframeProps(gsapAuthoredOwnershipEntries(animation, vars, vars.keyframes), GSAP_CONFIG_VARS)
+          : gsapKeyframeProps(vars.keyframes, GSAP_CONFIG_VARS),
+      };
+      gsapKeyframesOriginShapes.set(animation, origin);
+      return origin;
+    }
+    return null;
+  }
+
+  function gsapProcessedEntries(list) {
+    return list.filter((entry) =>
+      entry && typeof entry === 'object' && Object.prototype.hasOwnProperty.call(entry, 'parent'));
+  }
+
+  // Entries whose child grew its OWN inner timeline: GSAP passes each entry to
+  // tl.to(), which re-processes stagger and fn/string timing — the real
+  // animation then lives a level deeper, and writing the outer entry renders
+  // NOTHING (probe _probe-r19.mjs: end stayed 200 after an outer x:900).
+  // Marked here, rejected by the write plan (Sol r19).
+  const gsapNestedFacadeEntries = new WeakSet();
+  // Entry -> child tween, so the plan can confront what an entry DECLARES with
+  // what its child ACTUALLY animates (Sol r27).
+  const gsapEntryChildTweens = new WeakMap();
+
+  function gsapInnerTimelineEntries(animation) {
+    if (!(animation.timeline && typeof animation.timeline.getChildren === 'function')) return null;
+    try {
+      const children = animation.timeline.getChildren();
+      children.forEach((child) => {
+        if (child && child.vars && typeof child.vars === 'object') {
+          gsapEntryChildTweens.set(child.vars, child);
+          if (child.timeline) gsapNestedFacadeEntries.add(child.vars);
+        }
+      });
+      return gsapProcessedEntries(children.map((child) => child?.vars));
+    } catch (_) { return null; }
+  }
+
+  // OWNERSHIP read of the authored keyframes props — the single helper for the
+  // classifier and both writer guards. For the ARRAY form, raw slots lie in
+  // both directions (a raw appended entry is INERT and never renders — probe
+  // _probe-kf-append.mjs), so only PROCESSED entries count: the live children
+  // when the inner timeline is exposed, else the parent-injected entries of
+  // the array. Counting a raw slot would mark a PLAIN prop keyframe-owned and
+  // lock its legitimate writer with no cure (Sol r14). The object/stops forms
+  // keep the raw read — GSAP consumes them wholesale.
+  function gsapAuthoredKeyframeProps(animation, ignored) {
+    const vars = animation?.vars;
+    if (!vars) return [];
+    const origin = gsapKeyframesOrigin(animation, vars);
+    if (!origin) return [];
+    // The FROZEN prop set is the floor (in-place source mutations cannot hide
+    // live segments — Sol r16); for the array form the live ownership entries
+    // union in on top (never a truthy replacement — the inert impostor of Sol
+    // r15; never facade copies — Claude final review).
+    if (origin.shape === 'other') return origin.props;
+    const entries = gsapAuthoredOwnershipEntries(animation, animation.vars, origin.source);
+    return Array.from(new Set(origin.props.concat(gsapKeyframeProps(entries, ignored))));
+  }
+
+  // WRITE-grade live entries: only for animations with proven ARRAY origin.
+  // Consulted independently of vars.keyframes still being present — GSAP keeps
+  // the inner timeline (and its live, rendering entries) after the page
+  // deletes/replaces the array (probe _probe-kf-delete.mjs); gating on the
+  // array would vanish the writer from the inventory and reopen furo #1
+  // (Sol r9). A STAGGER facade's children are per-target copies — excluded.
+  function gsapLiveKeyframeEntries(animation) {
+    const vars = animation?.vars;
+    if (!vars) return null;
+    const origin = gsapKeyframesOrigin(animation, vars);
+    if (vars.stagger != null) return null;
+    if (!origin || origin.shape !== 'array') return null;
+    const children = gsapInnerTimelineEntries(animation);
+    if (children) return children;
+    // Fallback reads the ORIGINAL source — a replacement array is inert.
+    return gsapProcessedEntries(origin.source);
+  }
+
+  // DETECTION-grade PROPERTIES: keeps deleted keyframes tweens inventoried
+  // (fail-closed) — proven origin of ANY shape qualifies (object/percent forms
+  // stay write-denied: no ARRAY proof). For an UNPROVEN origin (deleted before
+  // the first inspection), OWNERSHIP decides PER PROPERTY — key-shape
+  // heuristics are unsound (GSAP passes entries to tl.to() verbatim, so
+  // `stagger: 0` is a legitimate entry key — Sol r11), and whole-child
+  // filtering drags plain props into the lock on a mixed child (Sol r12): a
+  // per-target COPY only ever mirrors props the tween's own vars (or css
+  // wrapper) still carries — those have a live plain writer and stay plain
+  // (Sol r10). A property the vars does NOT own has no other writer: it stays
+  // inventoried but LOCKED — detection is fail-closed, the write plan still
+  // demands proof.
+  function gsapDetectionKeyframeProps(animation, ignored) {
+    const vars = animation?.vars;
+    if (!vars) return [];
+    if (vars.stagger != null) return [];
+    const origin = gsapKeyframesOrigin(animation, vars);
+    const children = gsapInnerTimelineEntries(animation);
+    if (!children) return [];
+    const props = gsapKeyframeProps(children, ignored);
+    // Proven origin: ALWAYS union the live children — never gate on source
+    // identity (a reference can be mutated in place — Sol r16) nor on the
+    // truthy key (a replacement is an inert impostor — Sol r15).
+    if (origin) return props;
+    const wrapper = vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css) ? vars.css : null;
+    return props.filter((property) =>
+      !Object.prototype.hasOwnProperty.call(vars, property) && !(wrapper && property in wrapper));
+  }
+
+  // Properties the renderer NORMALIZES: raw values outside the range compute
+  // to the same rendered value (opacity 2 and 3 both render 1 — Sol r24), so
+  // equivalence must compare THROUGH the clamp or a visual hold reads as a
+  // ramp.
+  const GSAP_RENDER_CLAMPS = { opacity: [0, 1], autoAlpha: [0, 1] };
+
+  // Three-state value equivalence, shared by the plan's trailing-run walk and
+  // the writer's pre-write simulation (Sol r20/r21). Numbers only compare
+  // within the SAME unit: cross-unit pairs are ambiguous in BOTH directions —
+  // '16px' vs '1rem' may render equal (a hidden hold) just as '200px' vs 200
+  // may — and either misread corrupts the path on retarget (Sol r22).
+  function gsapValueEquivalence(property, left, right) {
+    if (String(left) === String(right)) return 'equal';
+    const parsedLeft = numericCss(String(left));
+    const parsedRight = numericCss(String(right));
+    // Parse failure on a differing pair is ambiguous in BOTH directions too:
+    // '#fff' vs 'rgb(255,255,255)' render EQUAL (a hidden hold) and '#00f' IS
+    // 'blue' — neither equality nor distinctness is provable (Sol r23).
+    if (!parsedLeft || !parsedRight) return 'ambiguous';
+    if (parsedLeft.unit !== parsedRight.unit) return 'ambiguous';
+    const clampRange = GSAP_RENDER_CLAMPS[property];
+    if (clampRange) {
+      // autoAlpha carries a DISCRETE visibility state beside the clamped
+      // number: exactly 0 renders visibility:hidden, anything else inherits —
+      // -1 and 0 are NOT equivalent (Sol r25).
+      if (property === 'autoAlpha' && (parsedLeft.value === 0) !== (parsedRight.value === 0)) return 'different';
+      // Percents normalize BEFORE the clamp: '2%' is 0.02, not 2 (Sol r25).
+      const rendered = (parsed) => {
+        const raw = parsed.unit === '%' ? parsed.value / 100 : parsed.value;
+        return Math.min(clampRange[1], Math.max(clampRange[0], raw));
+      };
+      return rendered(parsedLeft) === rendered(parsedRight) ? 'equal' : 'different';
+    }
+    return parsedLeft.value === parsedRight.value ? 'equal' : 'different';
+  }
+
+  // ANIMATION-level resurrection hazard: an entry that DECLARES a prop whose
+  // PropTween was killed (t.kill(target, prop)) is a trap — OUR invalidate,
+  // fired by an edit of ANY channel (a rides-along top-level prop included),
+  // re-inits from vars and brings the dead writer back, stomping whatever
+  // animation took the channel over (probe _probe-r28.mjs: x 999 -> 200 after
+  // a y edit — Sol r28/r29). Consulted by the classifier and BOTH writers
+  // before any mutation. Plugin vars excluded — their lookup entries are
+  // unreliable (furo #2 v10).
+  // Aliased props materialize in _ptLookup under their EXPANDED keys, in two
+  // distinct shapes (probes _probe-r30.mjs / _probe-r31.mjs — Sol r30/r31):
+  // SYNONYMS rename a single writer (rotate/rotationZ -> rotation,
+  // translateX -> x, rotateX -> rotationX, alpha -> opacity), while COMPOUNDS
+  // fan out into SEVERAL writers that must ALL be alive — a partial kill
+  // (opacity of autoAlpha, scaleX of scale) leaves the sibling in the lookup,
+  // and .some() would read the trap as healthy; the leftover literal `scale`
+  // key is no shortcut either.
+  const GSAP_PT_SYNONYMS = {
+    rotate: 'rotation', rotateZ: 'rotation', rotationZ: 'rotation',
+    rotateX: 'rotationX', rotateY: 'rotationY',
+    translateX: 'x', translateY: 'y', translateZ: 'z',
+    alpha: 'opacity',
+  };
+  const GSAP_PT_COMPOUNDS = { autoAlpha: ['opacity', 'visibility'], scale: ['scaleX', 'scaleY'] };
+
+  // The canonical _ptLookup keys a declared property materializes as — the ONE
+  // resolver shared by the hazard (every: all writers alive) and the
+  // hidden-carrier check (some: any writer still alive) (Sol r31/r32).
+  function gsapPtRequiredKeys(property) {
+    return GSAP_PT_COMPOUNDS[property] || [GSAP_PT_SYNONYMS[property] || property];
+  }
+
+  // The AGGREGATE `transform` materializes VALUE-dependent writers that no
+  // static map can reconstruct — GSAP diffs the full start/end caches, so
+  // translate3d yields x/y/z and omitted-but-reset components become writers
+  // too (Sol r33/r34). Two-tier detection: at FIRST sight the declared model
+  // is best-effort (synonyms/compounds exact; `transform` needs only SOME
+  // component alive — a partial pre-observation kill is a documented
+  // residual); from then on the OBSERVED baseline of each child's lookup keys
+  // is the truth — any key that vanishes is a killed writer our invalidate
+  // would resurrect.
+  const GSAP_TRANSFORM_COMPONENT_KEYS = ['x', 'y', 'z', 'scaleX', 'scaleY', 'rotation', 'rotationX', 'rotationY', 'skewX', 'skewY'];
+  const gsapChildLookupBaselines = new WeakMap();
+
+  function gsapResurrectionHazard(animation) {
+    // gsap.from() semantics INSIDE an entry (entry-level runBackwards /
+    // materialized child._from): the entry's values are STARTS, not ends —
+    // editing them as ends corrupts the path while reporting success, and any
+    // edit's invalidate re-inits the whole timeline (Sol r40). Scanned over
+    // the LIVE entries so it holds with or without an exposed inner timeline.
+    const liveEntries = gsapLiveKeyframeEntries(animation);
+    if (liveEntries && liveEntries.some((entry) => {
+      const child = gsapEntryChildTweens.get(entry);
+      return Boolean(entry.runBackwards || (child && (child._from || (child.vars && child.vars.runBackwards))));
+    })) return true;
+    const entries = gsapInnerTimelineEntries(animation);
+    if (!entries || !entries.length) return false;
+    const registeredPluginVars = gsapRegisteredPluginVars();
+    return entries.some((entry) => {
+      const child = gsapEntryChildTweens.get(entry);
+      if (!(child && child._initted && Array.isArray(child._ptLookup))) return false;
+      const lookups = child._ptLookup.filter((lookup) => lookup && typeof lookup === 'object');
+      if (!lookups.length) return false;
+      // Declaration<->lookup validation runs on EVERY inspection — a prop
+      // DECLARED after the baseline froze may have no live writer yet (or was
+      // materialized and killed between inspections); our invalidate would
+      // materialize it and stomp that channel's owner (Sol r36).
+      const declared = gsapKeyframeProps([entry], GSAP_CONFIG_VARS)
+        .filter((declaredProperty) => !registeredPluginVars.has(declaredProperty));
+      const declaredHazard = declared.some((declaredProperty) => {
+        if (declaredProperty === 'transform') {
+          return lookups.some((lookup) =>
+            !GSAP_TRANSFORM_COMPONENT_KEYS.some((componentKey) => componentKey in lookup));
+        }
+        const required = gsapPtRequiredKeys(declaredProperty);
+        return required.some((requiredKey) => lookups.some((lookup) => !(requiredKey in lookup)));
+      });
+      if (declaredHazard) return true;
+      const allowedKeys = new Set();
+      declared.forEach((declaredProperty) => {
+        allowedKeys.add(declaredProperty);
+        if (declaredProperty === 'transform') {
+          GSAP_TRANSFORM_COMPONENT_KEYS.forEach((componentKey) => allowedKeys.add(componentKey));
+        } else {
+          gsapPtRequiredKeys(declaredProperty).forEach((requiredKey) => allowedKeys.add(requiredKey));
+        }
+      });
+      // REVERSE direction, animation-wide: a lookup key no longer explained by
+      // the current declarations is an ORPHANED live writer — editing ANY
+      // channel invalidates and kills it mid-flight, corrupting a channel the
+      // user never touched (Sol r37). Attribution is POSITIVE: every PropTween
+      // carries its driver's name (probe _probe-r39.mjs — d.name 'css' for CSS
+      // keys, the plugin's own name for plugin keys), so a key driven by a
+      // DECLARED plugin is explained per key — never by exempting the whole
+      // entry (Sol r38) nor by negative attribution at freeze time, which
+      // would file a pre-first-inspection orphan under the plugin (Sol r39).
+      const declaredPluginNames = new Set(Object.keys(entry)
+        .filter((entryKey) => registeredPluginVars.has(entryKey)));
+      const orphaned = lookups.some((lookup) =>
+        Object.keys(lookup).some((lookupKey) => {
+          if (allowedKeys.has(lookupKey)) return false;
+          const propTween = lookup[lookupKey];
+          const driverName = propTween && propTween.d && typeof propTween.d.name === 'string'
+            ? propTween.d.name
+            : null;
+          return !(driverName && driverName !== 'css' && declaredPluginNames.has(driverName));
+        }));
+      if (orphaned) return true;
+      const baseline = gsapChildLookupBaselines.get(child);
+      if (baseline) {
+        // Exact from the second sight on: a baseline key missing now was killed.
+        const vanished = baseline.some((keySet, index) => {
+          const lookup = lookups[index];
+          if (!lookup) return true;
+          return Array.from(keySet).some((key) => !(key in lookup));
+        });
+        if (!vanished) {
+          // MONOTONIC growth: writers observed later join the watched set, or a
+          // later kill of a later-added writer stays invisible (Sol r35).
+          lookups.forEach((lookup, index) => {
+            if (!baseline[index]) baseline[index] = new Set();
+            Object.keys(lookup).forEach((key) => baseline[index].add(key));
+          });
+        }
+        return vanished;
+      }
+      gsapChildLookupBaselines.set(child, lookups.map((lookup) => new Set(Object.keys(lookup))));
+      return false;
+    });
+  }
+
+  function gsapArrayKeyframePlan(animation, property) {
+    const vars = animation?.vars;
+    if (!vars) return null;
+    if (vars.keyframes && !Array.isArray(vars.keyframes)) return null;
+    if (vars.stagger != null || vars.runBackwards) return null;
+    if (Object.prototype.hasOwnProperty.call(vars, property)) return null;
+    const wrapper = vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css) ? vars.css : null;
+    if (wrapper && property in wrapper) return null;
+    if (gsapDescriptorComponentKeys(property).length) return null;
+    if (gsapRegisteredPluginVars().has(property)) return null;
+    if (gsapResurrectionHazard(animation)) return null;
+    const orderedEntries = gsapLiveKeyframeEntries(animation) || [];
+    const buckets = [];
+    let nestedCarrier = false;
+    let hiddenLiveCarrier = false;
+    orderedEntries.forEach((entry) => {
+      const child = gsapEntryChildTweens.get(entry);
+      const carriesInCss = entry.css && typeof entry.css === 'object' && !Array.isArray(entry.css) && property in entry.css;
+      if (!carriesInCss && !Object.prototype.hasOwnProperty.call(entry, property)) {
+        // An entry that no longer DECLARES the property may still ANIMATE it:
+        // deleting the key in place leaves the child's PropTween alive until
+        // the next invalidate (probe _probe-r27.mjs — the end still renders).
+        // The live writers sit under CANONICAL keys (autoAlpha ->
+        // opacity+visibility, rotate -> rotation — Sol r32): ANY of them still
+        // alive makes the visible end unknowable — lock.
+        if (child && child._initted && Array.isArray(child._ptLookup)
+          && child._ptLookup.some((lookup) => lookup
+            && gsapPtRequiredKeys(property).some((requiredKey) => requiredKey in lookup))) {
+          hiddenLiveCarrier = true;
+        }
+        return;
+      }
+      // A carrying entry that spawned its OWN inner timeline (stagger or
+      // fn/string timing inside the entry) renders a level deeper — writing
+      // the outer entry changes nothing (Sol r19). Any nested carrier poisons
+      // the whole property's plan: the end may live inside it.
+      if (gsapNestedFacadeEntries.has(entry)) {
+        nestedCarrier = true;
+        return;
+      }
+      buckets.push(carriesInCss ? entry.css : entry);
+    });
+    if (nestedCarrier) return null;
+    if (hiddenLiveCarrier) return null;
+    if (!buckets.length) return null;
+    const values = buckets.map((bucket) => bucket[property]);
+    const unsafe = values.some((value) =>
+      (typeof value !== 'string' && typeof value !== 'number')
+      || /^[+-]=/.test(String(value).trim()));
+    if (unsafe) return null;
+    // Trailing run membership by NUMERIC equivalence, not textual: GSAP renders
+    // 200, "200.0" and "0200" identically, so a textual run would edit only the
+    // last one and turn a hold into a ramp (Sol r20). The same NUMBER with a
+    // DIFFERENT unit spelling ("200px" vs 200) may or may not render equal —
+    // unprovable without per-property knowledge — so it locks the plan.
+    let start = buckets.length - 1;
+    while (start > 0) {
+      const relation = gsapValueEquivalence(property, values[start - 1], values[values.length - 1]);
+      if (relation === 'ambiguous') return null;
+      if (relation === 'different') break;
+      start -= 1;
+    }
+    // `buckets` (ALL carrying buckets, in order) is exposed so a frozen binding
+    // can verify it is still the trailing suffix of the CURRENT structure.
+    return { run: buckets.slice(start), buckets };
   }
 
   function gsapEditableTracks(animation, vars, target, animatedProps) {
@@ -613,6 +1029,10 @@ function nativeMotionRuntimeBridge() {
         );
         if (!ownsTarget) return [];
         const vars = animation.vars || {};
+        // Re-inspection refreshes the editing truth the UI shows — stale frozen
+        // entry bindings are dropped HERE, so a later write is a genuinely NEW
+        // edit against the current entries, never a reinterpreted replay (Sol r5).
+        pruneStaleEntryBindings(animation);
         const scrollTrigger = animation.scrollTrigger || vars.scrollTrigger || null;
         const engine = scrollTrigger ? 'ScrollTrigger' : 'GSAP';
         const primaryTarget = targets.find((target) => target instanceof Element) || element;
@@ -643,7 +1063,20 @@ function nativeMotionRuntimeBridge() {
         // authored BOTH top-level and in keyframes stays keyframe-driven — the
         // keyframes win the rendered path, so retargeting the top-level value would
         // corrupt it the same way (dedup only the track list).
-        const keyframeDriven = new Set(vars.keyframes ? gsapKeyframeProps(vars.keyframes, ignored) : []);
+        // Detection is the UNION of the array and the live children entries
+        // (fail-closed): a spliced-out entry's child keeps rendering — dropping
+        // it from the inventory would resurrect the furo-#1 invisible-writer
+        // lie, and a later vars.<prop> would reach the unsafe plain writer
+        // (Sol r8). The write plan, in contrast, uses ONLY the live entries.
+        const liveKeyframeEntries = gsapLiveKeyframeEntries(animation);
+        const keyframeDriven = new Set(
+          gsapAuthoredKeyframeProps(animation, ignored)
+            .concat(liveKeyframeEntries ? gsapKeyframeProps(liveKeyframeEntries, ignored) : [])
+            .concat(gsapDetectionKeyframeProps(animation, ignored)));
+        // A killed writer haunting ANY entry locks EVERY channel of this
+        // animation — even rides-along top-level props: their plain write also
+        // fires invalidate, which resurrects the dead writer (Sol r29).
+        const resurrectionHazard = gsapResurrectionHazard(animation);
         const animatedProps = topLevelProps.concat(
           Array.from(keyframeDriven).filter((property) => !topLevelProps.includes(property)));
         const sampled = gsapEditableTracks(animation, vars, primaryTarget, animatedProps);
@@ -692,12 +1125,26 @@ function nativeMotionRuntimeBridge() {
           // write is always rejected (Sol rounds 5-6 — clip capability alone
           // promised step edits the guards refuse; stagger reopened the same
           // hole when left out). The reason is published so a locked field can
-          // explain itself — stagger's points at unchain. Phase-2 array-form
-          // step editing flips this per track when its entry-edit writeback lands.
+          // explain itself — stagger's points at unchain. The ARRAY keyframes
+          // form with a safe entry plan unlocks: END edits go through the
+          // ENTRIES, START edits through startAt (probe 2026-07-29) — the plan
+          // itself excludes stagger/wrapper/plugin/both-places, so the later
+          // reasons stay accurate for it.
+          const entryPlan = keyframeDriven.has(track.property) ? gsapArrayKeyframePlan(animation, track.property) : null;
+          // Per PROPERTY on the step channel too: a plain top-level prop beside
+          // keyframes of ANOTHER prop keeps its plain writer (probe
+          // _probe-rides-along.mjs: vars.x/startAt.x writes preserve y's path
+          // completely — Sol r13).
           const keyframeEditReason = !sampled.keyframes ? 'sampling'
             : vars.runBackwards ? 'from'
-              : vars.keyframes ? 'keyframes'
+              : resurrectionHazard ? 'keyframes'
+              : keyframeDriven.has(track.property) && !entryPlan ? 'keyframes'
                 : vars.stagger != null ? 'stagger'
+                  // vars.startAt is ONE shared object: an offset-0 edit
+                  // flattens distinct per-target starts and a single-value
+                  // rollback cannot restore them ([10,20] -> [10,10] — probe
+                  // _probe-r19.mjs, Sol r19).
+                  : targetCount > 1 ? 'multi-target'
                   : (cssWrapper && track.property in cssWrapper) ? 'css-wrapper'
                     : pluginOwned ? 'plugin'
                       : null;
@@ -714,7 +1161,10 @@ function nativeMotionRuntimeBridge() {
               order: order + (trackIndex / 1000),
               sequenceId: group.timelineId,
               writeModel,
-              retargetable: sampled.keyframes && !vars.runBackwards && functionSupported && scopeSafe && !keyframeDriven.has(track.property) && !cssWriteUnproven && !pluginOwned,
+              // Keyframe-driven props unlock ONLY through the array-form entry
+              // plan, and only for the ABSOLUTE model — the loop (additive-base)
+              // and relative/function write paths have no entry equivalent.
+              retargetable: sampled.keyframes && !vars.runBackwards && !resurrectionHazard && functionSupported && scopeSafe && (!keyframeDriven.has(track.property) || (entryPlan != null && writeModel === 'absolute')) && !cssWriteUnproven && !pluginOwned,
               sourceValue: safeSourceValue(rawValue),
               targetCount,
               stagger: vars.stagger != null ? { mode: 'staggered', targetCount } : null,
@@ -1968,18 +2418,169 @@ function nativeMotionRuntimeBridge() {
     vars[property] = `${runtimeRound(end.value + delta)}${end.unit}`;
   }
 
+  // Entry-edit writeback for the ARRAY keyframes form — the only probe-proven
+  // safe write on keyframes tweens (2026-07-29): set the trailing-run entries and
+  // re-invalidate preserving the start. The edited-entry set and its authored
+  // values are FROZEN at the first write (like function-offset bindings): every
+  // later write — rollbacks included — hits the SAME entries, and landing exactly
+  // back on the original end restores the authored values VERBATIM. Recomputing
+  // the run instead would swallow intermediate entries that happen to equal the
+  // new value, making undo inexact (probe I: [100,200] -> end 100 -> undo must
+  // give [100,200], never [200,200]).
+  const gsapKeyframeEntryRetargets = new WeakMap();
+  // Original start values (sampled at progress 0 before the FIRST offset-0
+  // edit), per (animation, property) — the render-equivalent rollback target
+  // for startAt edits (Sol r18).
+  const gsapStartAtRetargets = new WeakMap();
+  // A frozen binding is only authoritative while it still DESCRIBES the tween.
+  // It is validated against a FRESH plan: every plan guard must still hold
+  // (vars[property] appearing post-binding reopens the probe-H both-places
+  // resurrection; an external relative entry voids the write model), the frozen
+  // run must still be the TRAILING SUFFIX of the current carrying buckets (an
+  // appended entry moves the real end past the frozen run — writing through it
+  // would edit an intermediate), and every bucket must hold exactly the value
+  // our writer last left there (a diverged run written uniformly would flatten
+  // on rollback: [300,250] -> [250,250]). Suffix — not equality — because a
+  // collision edit widens the recomputed run ([100,100] plans BOTH entries)
+  // while the frozen single-bucket run must keep undo exact (Sol r3/r4).
+  //
+  // A STALE binding is never silently replaced mid-flight: replanning an undo
+  // replay would reinterpret it against the new structure (edit 500 -> page
+  // appends {x:400} -> undo 200 would write the APPENDED entry: [100,500,200] —
+  // neither a restore nor a no-op, Sol r5). Writes against a stale binding are
+  // refused atomically; RE-INSPECTION (which refreshes the truth the UI shows)
+  // prunes stale bindings, so the next edit is a genuinely new edit against the
+  // current entries — edits stay available, never a generalized lock.
+  function entryBindingState(animation, property) {
+    const bindings = gsapKeyframeEntryRetargets.get(animation);
+    const binding = bindings?.get(property);
+    if (!binding) return { binding: null, stale: false };
+    const plan = gsapArrayKeyframePlan(animation, property);
+    // The WHOLE carrying set is frozen — identity AND expected values (updated
+    // only for buckets the bridge itself writes). Watching just the run bucket
+    // misses an external mutation of a NEIGHBOR that creates a live hold: the
+    // next single-bucket write would turn that hold into a ramp (Sol r26).
+    const intact = plan
+      && plan.buckets.length === binding.allBuckets.length
+      && plan.buckets.every((bucket, index) => binding.allBuckets[index] === bucket)
+      && binding.allBuckets.every((bucket, index) => bucket[property] === binding.allExpected[index]);
+    return intact ? { binding, stale: false } : { binding: null, stale: true };
+  }
+
+  function pruneStaleEntryBindings(animation) {
+    const bindings = gsapKeyframeEntryRetargets.get(animation);
+    if (!bindings) return;
+    Array.from(bindings.keys()).forEach((property) => {
+      if (entryBindingState(animation, property).stale) bindings.delete(property);
+    });
+  }
+  function applyGsapKeyframeEntryEdit(record, property, desired) {
+    const animation = record.animation;
+    // A RELATIVE desired ('+=10') must be refused BEFORE any mutation: written
+    // into an entry it would invalidate the plan itself on the next read/write,
+    // leaving an edit no rollback can reach (Sol r2).
+    if (/^[+-]=/.test(String(desired ?? '').trim())) {
+      throw bridgeError('unsupported_value', 'Relative values cannot be written into GSAP keyframes entries.');
+    }
+    // Binding FIRST: once an edit run is frozen, later writes — rollbacks above
+    // all — must keep working even if a fresh plan would no longer validate
+    // (e.g. the page mutated an unrelated entry). Only a first write needs a plan.
+    let bindings = gsapKeyframeEntryRetargets.get(animation);
+    if (!bindings) {
+      bindings = new Map();
+      gsapKeyframeEntryRetargets.set(animation, bindings);
+    }
+    const state = entryBindingState(animation, property);
+    if (state.stale) {
+      throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
+    }
+    let binding = state.binding;
+    if (!binding) {
+      const plan = gsapArrayKeyframePlan(animation, property);
+      if (!plan) {
+        throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be retargeted safely yet.');
+      }
+      binding = {
+        buckets: plan.run,
+        originals: plan.run.map((bucket) => bucket[property]),
+        allBuckets: plan.buckets,
+        allExpected: plan.buckets.map((bucket) => bucket[property]),
+        end: numericCss(sampleGsapValue(record, property, 1)),
+      };
+      bindings.set(property, binding);
+    }
+    const coerceFor = (bucket) => (typeof bucket[property] === 'number' && Number.isFinite(Number(desired))
+      ? Number(desired)
+      : String(desired));
+    const desiredParsed = numericCss(desired);
+    // Landing back on the ORIGINAL end restores the authored entries verbatim.
+    // The AUTHORED final matters as much as the sampled one: for clamped props
+    // the sampled end (computed 1) diverges from the authored value (3), and a
+    // rollback replaying the authored '3' must restore — never uniform-write
+    // [3,3] over [2,3] (Sol r25).
+    const authoredEnd = binding.originals[binding.originals.length - 1];
+    const landsOnOriginal = (binding.end && desiredParsed
+      && desiredParsed.unit === binding.end.unit && desiredParsed.value === binding.end.value)
+      || gsapValueEquivalence(property, desired, authoredEnd) === 'equal';
+    if (landsOnOriginal) {
+      binding.buckets.forEach((bucket, index) => { bucket[property] = binding.originals[index]; });
+    } else {
+      // PRE-SIMULATE the write: a desired that lands beside a same-number,
+      // different-unit neighbor ('100' beside '100px') would turn the next
+      // plan AMBIGUOUS -> null, stranding the applied edit beyond any rollback
+      // (the r2 failure class — Sol r21). Reject BEFORE mutating.
+      const plan = gsapArrayKeyframePlan(animation, property);
+      if (plan) {
+        const simulated = plan.buckets.map((bucket) =>
+          (binding.buckets.includes(bucket) ? coerceFor(bucket) : bucket[property]));
+        for (let index = simulated.length - 1; index > 0; index -= 1) {
+          const relation = gsapValueEquivalence(property, simulated[index - 1], simulated[simulated.length - 1]);
+          if (relation === 'ambiguous') {
+            throw bridgeError('unsupported_value', 'Mixed units around this keyframe make the edit unsafe.');
+          }
+          if (relation === 'different') break;
+        }
+      }
+      binding.buckets.forEach((bucket) => { bucket[property] = coerceFor(bucket); });
+    }
+    binding.allExpected = binding.allBuckets.map((bucket) => bucket[property]);
+    invalidatePreservingStart(animation);
+  }
+
   function applyGsapRetarget(record, descriptor) {
     const targetCount = Math.max(1, record.targets?.length || 1);
     if (targetCount > 1 && Number(descriptor.affectedTargetCount || 1) !== targetCount) {
       throw bridgeError('scope_mismatch', 'This animation controls more targets than the patch declares.');
     }
+    // Reserved GSAP config keys are never animatable properties (Sol r17).
+    if (GSAP_CONFIG_VARS.has(descriptor.runtimeProperty)) {
+      throw bridgeError('unsupported_patch', 'This is a GSAP configuration key — not an animatable property.');
+    }
+    // ANY write here ends in invalidate — refuse while a killed writer haunts
+    // the animation (Sol r28/r29).
+    if (gsapResurrectionHazard(record.animation)) {
+      throw bridgeError('unsupported_patch', "Part of this animation was killed by the page — editing it would bring the dead writer back.");
+    }
     // Defense in depth: every write model funnels into vars/startAt writes, which are
     // unsafe on keyframes-driven properties (probe 2026-07-29: path-start corruption
     // on the array form, silently ignored on object/percent forms) — including a
-    // property authored BOTH top-level and in keyframes.
-    const authoredKeyframes = record.animation?.vars?.keyframes;
-    if (authoredKeyframes
-      && gsapKeyframeProps(authoredKeyframes, GSAP_CONFIG_VARS).includes(descriptor.runtimeProperty)) {
+    // property authored BOTH top-level and in keyframes. Ownership is the UNION of
+    // the array and the live children entries: a spliced-out entry's child keeps
+    // rendering, so its property must never fall through to the plain vars writer
+    // (Sol r8). The ARRAY form with a safe entry plan is the one exception: its
+    // retarget edits the ENTRIES instead, and only for the ABSOLUTE model
+    // (loop/relative/function paths have no entry equivalent — the classifier
+    // mirrors this exactly).
+    const liveKeyframeEntries = gsapLiveKeyframeEntries(record.animation);
+    if (gsapAuthoredKeyframeProps(record.animation, GSAP_CONFIG_VARS).includes(descriptor.runtimeProperty)
+      || (liveKeyframeEntries
+        && gsapKeyframeProps(liveKeyframeEntries, GSAP_CONFIG_VARS).includes(descriptor.runtimeProperty))
+      || gsapDetectionKeyframeProps(record.animation, GSAP_CONFIG_VARS).includes(descriptor.runtimeProperty)) {
+      if (descriptor.writeModel === 'absolute' && !descriptor.component
+        && gsapArrayKeyframePlan(record.animation, descriptor.runtimeProperty)) {
+        applyGsapKeyframeEntryEdit(record, descriptor.runtimeProperty, descriptor.value);
+        return;
+      }
       throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be retargeted safely yet.');
     }
     // Plugin-owned vars (attr:{...}, text:"...", scrollTo:500): writing over
@@ -1994,14 +2595,40 @@ function nativeMotionRuntimeBridge() {
     invalidatePreservingStart(record.animation);
   }
 
-  function applyGsapKeyframe(animation, property, descriptor) {
+  function applyGsapKeyframe(record, property, descriptor) {
+    const animation = record.animation;
     const vars = animation.vars || (animation.vars = {});
+    // Reserved GSAP config keys are never animatable properties — writing one
+    // into vars mutates tween CONFIG while reporting a visual edit (Sol r17).
+    if (GSAP_CONFIG_VARS.has(property)) {
+      throw new Error('This is a GSAP configuration key — not an animatable property.');
+    }
+    // ANY write here ends in invalidate — refuse while a killed writer haunts
+    // the animation (Sol r28/r29).
+    if (gsapResurrectionHazard(animation)) {
+      throw new Error("Part of this animation was killed by the page — editing it would bring the dead writer back.");
+    }
     if (vars.runBackwards) {
       throw new Error('gsap.from() keyframes are read-only — vars hold the start, not the end.');
     }
     // Writing vars/startAt on a keyframes-driven tween corrupts its path start on
     // invalidate (array form) or does nothing (object/percent forms) — probe-verified.
-    if (vars.keyframes) {
+    // The ARRAY form with a safe entry plan is the exception: END edits go through
+    // the ENTRIES and START edits through startAt (post-hoc startAt is clean on
+    // keyframes tweens — probe G). The plan itself excludes the wrapper/stagger/
+    // plugin/both-places cases, so the guards below stay accurate without it.
+    // Ownership PER PROPERTY, independent of the array's presence: live
+    // children entries keep rendering after `delete vars.keyframes` — their
+    // property must never fall through to the plain vars writer below (Sol r9)
+    // — while a plain top-level prop beside keyframes of ANOTHER prop keeps its
+    // plain writer (probe _probe-rides-along.mjs — Sol r13).
+    const liveKeyframeEntries = gsapLiveKeyframeEntries(animation);
+    const keyframeOwned = gsapAuthoredKeyframeProps(animation, GSAP_CONFIG_VARS).includes(property)
+      || Boolean(liveKeyframeEntries
+        && gsapKeyframeProps(liveKeyframeEntries, GSAP_CONFIG_VARS).includes(property))
+      || gsapDetectionKeyframeProps(animation, GSAP_CONFIG_VARS).includes(property);
+    const entryPlan = keyframeOwned ? gsapArrayKeyframePlan(animation, property) : null;
+    if (keyframeOwned && !entryPlan) {
       throw new Error('This animation is driven by GSAP keyframes — its steps cannot be edited safely yet.');
     }
     // css:{}-wrapped properties: top-level vars/startAt writes are silently ignored
@@ -2015,6 +2642,11 @@ function nativeMotionRuntimeBridge() {
     if (vars.stagger != null) {
       throw new Error('This value is shared by a staggered group — unchain the layer (chain icon) to edit it independently.');
     }
+    // Shared vars/startAt cannot restore distinct per-target starts on
+    // rollback ([10,20] -> [10,10] — probe _probe-r19.mjs, Sol r19).
+    if (Math.max(1, record.targets?.length || 1) > 1) {
+      throw new Error('This value is shared by multiple targets — unchain the layer (chain icon) to edit it independently.');
+    }
     // Plugin-owned vars (attr:{...}, text:"...", scrollTo:500): a write over
     // them corrupts the plugin's config — same predicate as the classifier.
     if (gsapPluginOwnedVar(vars, property)) {
@@ -2022,14 +2654,36 @@ function nativeMotionRuntimeBridge() {
     }
     const offset = Math.max(0, Math.min(1, Number(descriptor?.offset) || 0));
     if (descriptor?.exists === false) {
-      if (offset <= 0.001 && vars.startAt) delete vars.startAt[property];
+      if (offset <= 0.001 && vars.startAt) {
+        // A naive delete is a FALSE rollback: GSAP materializes _startAt on
+        // first render and deleting vars.startAt does not un-materialize it —
+        // the edited start keeps rendering while the ack reports restored
+        // (probe _probe-startat-rollback.mjs — Sol r18). Writing the ORIGINAL
+        // start value (sampled at progress 0 before the first edit) back is
+        // the render-equivalent restore.
+        const binding = gsapStartAtRetargets.get(animation)?.get(property);
+        if (binding) vars.startAt = { ...vars.startAt, [property]: binding.original };
+        else delete vars.startAt[property];
+      }
       invalidatePreservingStart(animation);
       return;
     }
     const value = String(descriptor?.value ?? '');
     if (offset >= 0.999) {
+      if (entryPlan) {
+        applyGsapKeyframeEntryEdit(record, property, value); // entries, never vars
+        return;
+      }
       vars[property] = value; // end target
     } else if (offset <= 0.001) {
+      let bindings = gsapStartAtRetargets.get(animation);
+      if (!bindings) {
+        bindings = new Map();
+        gsapStartAtRetargets.set(animation, bindings);
+      }
+      if (!bindings.has(property)) {
+        bindings.set(property, { original: String(sampleGsapValue(record, property, 0)) });
+      }
       vars.startAt = { ...(vars.startAt || {}), [property]: value }; // explicit start
     } else {
       throw new Error('Intermediate GSAP keyframes are not editable on this tween yet.');
@@ -2188,7 +2842,7 @@ function nativeMotionRuntimeBridge() {
 
     const animation = record.animation;
     if (patch.property.startsWith('keyframe.')) {
-      applyGsapKeyframe(animation, patch.property.slice('keyframe.'.length), value);
+      applyGsapKeyframe(record, patch.property.slice('keyframe.'.length), value);
     } else if (patch.property === 'timing.playbackMode') {
       const playbackMode = ['loop', 'ping-pong'].includes(value) ? value : 'once';
       animation.repeat?.(playbackMode === 'once' ? 0 : -1);
@@ -2957,6 +3611,16 @@ function nativeMotionRuntimeBridge() {
         return { offset, value: String(vars.startAt[trackProperty]), exists: true };
       }
       if (offset >= 0.999) {
+        // Array-form keyframe-driven ends live in the ENTRIES (the writer edits
+        // them, never vars) — read the trailing bucket, or before/value both
+        // report {exists:false} and a transaction rollback no-ops while the
+        // edit stays applied (Sol r1). The plan's last bucket is also a valid
+        // frozen binding's last bucket (the binding is a suffix of it).
+        const entryPlan = gsapArrayKeyframePlan(animation, trackProperty);
+        if (entryPlan) {
+          const bucket = entryPlan.run[entryPlan.run.length - 1];
+          return { offset, value: String(bucket[trackProperty]), exists: true };
+        }
         if (vars[trackProperty] == null) return { offset, exists: false };
         return { offset, value: String(vars[trackProperty]), exists: true };
       }

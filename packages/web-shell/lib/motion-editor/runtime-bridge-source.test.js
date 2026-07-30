@@ -489,16 +489,23 @@ describe('native motion runtime bridge', () => {
     const scaleTrack = motion.tracks.find((track) => track.property === 'scale');
     expect(scaleTrack.keyframes.map((keyframe) => keyframe.value)).toEqual(['1', '1.5']);
 
-    // No safe writeback exists for keyframes tweens (probe: vars edits corrupt the
-    // path start; object-form edits are ignored) -> detected but NOT retargetable,
-    // while the plain top-level `y` stays retargetable.
-    expect(xTrack.ownership.retargetable).toBe(false);
+    // The ARRAY form has a proven safe write path: editing the ENTRIES of
+    // vars.keyframes + preserved-start invalidate (probe 2026-07-29). So the
+    // plain-value `x` flips retargetable/step-editable, while `scale` (a
+    // component-decomposed property — entry writes unproven) stays locked and
+    // the plain top-level `y` keeps its retargetability.
+    expect(xTrack.ownership.retargetable).toBe(true);
+    expect(xTrack.keyframeEditable).toBe(true);
+    expect(xTrack.keyframeEditReason).toBeUndefined();
     expect(scaleTrack.ownership.retargetable).toBe(false);
+    expect(scaleTrack.keyframeEditable).toBe(false);
+    expect(scaleTrack.keyframeEditReason).toBe('keyframes');
     expect(motion.tracks.find((track) => track.property === 'y').ownership.retargetable).toBe(true);
-    // Timeline keyframe editing uses the same unsafe write path -> disabled.
-    expect(motion.capabilities.keyframes).toBe(false);
+    // Derived from the tracks: the editable array-form x enables the clip.
+    expect(motion.capabilities.keyframes).toBe(true);
 
-    // Defense in depth: a keyframe patch against a keyframes tween must not write.
+    // The step edit routes through the ENTRIES — vars.x must never be written
+    // (probe: vars writes corrupt the path start even with preserved-start).
     window.dispatchEvent(new MessageEvent('message', {
       source: window,
       data: {
@@ -518,6 +525,10 @@ describe('native motion runtime bridge', () => {
       },
     }));
     expect(vars.x).toBeUndefined();
+    expect(vars.startAt).toBeUndefined();
+    expect(vars.keyframes[1].x).toBe(160);
+    expect(vars.keyframes[0].x).toBe(0);
+    expect(tween.invalidate).toHaveBeenCalled();
 
     delete window.gsap;
     window.postMessage = originalPostMessage;
@@ -536,8 +547,8 @@ describe('native motion runtime bridge', () => {
     const vars = {
       x: 100,
       keyframes: [
-        { x: 0, duration: 1 },
-        { x: 60, duration: 1 },
+        { x: 0, duration: 1, parent: {} },
+        { x: 60, duration: 1, parent: {} },
       ],
       duration: 2,
     };
@@ -608,6 +619,2192 @@ describe('native motion runtime bridge', () => {
     }));
     expect(vars.x).toBe(100);
     expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  // ---- FEATURE caminho-seguro: entry-edit da forma ARRAY de vars.keyframes ------
+  // Probe 2026-07-29 (_probe-kf-entryedit.mjs, GSAP 3.15 real): editar as ENTRADAS
+  // + invalidatePreservingStart rende path limpo (trailing run; intermediárias e
+  // duplicatas não-trailing intactas; css DENTRO de entry honrado; startAt pós-hoc
+  // limpo). Both-places segue trancado (o invalidate RESSUSCITA o top-level morto).
+
+  const buildArrayKeyframesTween = (target, vars, { repeat = 0, targets } = {}) => {
+    const rendered = { x: 0 };
+    const tween = {
+      targets: () => targets || [target],
+      vars,
+      duration: () => Number(vars.duration) || 2,
+      delay: () => 0,
+      repeat: () => repeat,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressMock(p) {
+        if (p === undefined) return progressMock.current || 0;
+        progressMock.current = p;
+        const entries = Array.isArray(vars.keyframes)
+          ? vars.keyframes.filter((entry) => entry && Object.prototype.hasOwnProperty.call(entry, 'x'))
+          : [];
+        const end = entries.length ? Number(entries[entries.length - 1].x) : 0;
+        rendered.x = end * p;
+        return tween;
+      }),
+      invalidate: vi.fn(() => tween),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (element, prop) => String(rendered[prop] ?? ''),
+    };
+    return tween;
+  };
+
+  const grabMotion = (target, messages) => {
+    target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.filter((message) => message.type === 'selection-changed').pop();
+    return { selection, motion: selection.payload.element.motion.find((clip) => clip.engine === 'GSAP') };
+  };
+
+  const sendRetarget = (selection, motion, value) => {
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: '0' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'translateX',
+              runtimeProperty: 'x',
+              value,
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:translateX`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+  };
+
+  it('retargets the ARRAY keyframes form by editing the trailing-run ENTRIES only', () => {
+    document.body.innerHTML = '<main><div id="kfa"></div></main>';
+    const target = document.getElementById('kfa');
+    // Carrying entries [0, 60, 60] -> trailing run = the LAST TWO (value == end).
+    // The y values, injected config keys and per-entry durations must survive.
+    const vars = {
+      keyframes: [
+        { x: 0, y: 10, duration: 1, parent: {}, ease: 'none', overwrite: 'auto', delay: 0 },
+        { x: 60, y: 20, duration: 1, parent: {}, ease: 'none', overwrite: 'auto', delay: 0 },
+        { x: 60, duration: 1, parent: {}, ease: 'none', overwrite: 'auto', delay: 0 },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(true);
+
+    sendRetarget(selection, motion, '160');
+
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([0, 160, 160]);
+    expect(vars.keyframes.map((entry) => entry.y)).toEqual([10, 20, undefined]);
+    expect(vars.keyframes.map((entry) => entry.duration)).toEqual([1, 1, 1]);
+    expect(vars.x).toBeUndefined();
+    expect(vars.startAt).toBeUndefined();
+    expect(tween.invalidate).toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('restores the EXACT authored entries on rollback even when the new value collides with an intermediate entry', () => {
+    document.body.innerHTML = '<main><div id="kfu"></div></main>';
+    const target = document.getElementById('kfu');
+    // [100, 200] -> retarget end to 100 (collides with entry 0). The edited-entry
+    // set is FROZEN at first write: rolling back to 200 must restore [100, 200],
+    // never [200, 200] (a recomputed trailing run would swallow entry 0).
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '100');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 100]);
+
+    sendRetarget(selection, motion, '200');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('writes entry-edits INTO an entry-level css wrapper when the property lives there', () => {
+    document.body.innerHTML = '<main><div id="kfc"></div></main>';
+    const target = document.getElementById('kfc');
+    // GSAP honors css:{} INSIDE keyframes entries (probe E) — the write must land
+    // in entry.css, never as a sibling entry.x.
+    const vars = { keyframes: [{ css: { x: 30 }, duration: 1, parent: {} }, { css: { x: 60 }, duration: 1, parent: {} }], duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(true);
+
+    sendRetarget(selection, motion, '160');
+    expect(vars.keyframes[1].css.x).toBe(160);
+    expect(vars.keyframes[0].css.x).toBe(30);
+    expect(vars.keyframes[1].x).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('edits the START of an array keyframes tween via startAt and refuses intermediate steps', () => {
+    document.body.innerHTML = '<main><div id="kfs"></div></main>';
+    const target = document.getElementById('kfs');
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const sendKeyframe = (offset, value) => window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset, value: '', exists: true },
+            value: { offset, value, exists: true },
+          },
+        },
+      },
+    }));
+
+    // startAt post-hoc is clean on keyframes tweens (probe G) — offset-0 edits land there.
+    sendKeyframe(0, '40');
+    expect(vars.startAt).toEqual({ x: '40' });
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+    expect(tween.invalidate).toHaveBeenCalled();
+
+    // Intermediate steps stay phase-2: nothing may be written.
+    tween.invalidate.mockClear();
+    sendKeyframe(0.5, '150');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+    expect(vars.startAt).toEqual({ x: '40' });
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('reads the final step of an array keyframes tween from its ENTRIES so transactions can roll it back (Sol r1)', () => {
+    document.body.innerHTML = '<main><div id="kfv"></div></main>';
+    const target = document.getElementById('kfv');
+    // The transactional reader must see the entry-driven end ({exists:true}, the
+    // trailing entry's value — entry.css included) or before/value both read
+    // {exists:false}: undo becomes a no-op and validate-transaction "restores"
+    // while leaving the edit applied.
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-kf-step',
+            patches: [{
+              id: 'p-kf-step',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframe.x',
+              before: { offset: 1, value: '200', exists: true },
+              value: { offset: 1, value: '160', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+    const validation = messages.filter((message) => message.type === 'validation-result').pop();
+    expect(validation.payload.valid).toBe(true);
+    // The probe transaction must leave NOTHING behind: entries restored exactly.
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+    expect(vars.x).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('refuses RELATIVE desired values on entry-edits before any mutation (Sol r2)', () => {
+    document.body.innerHTML = '<main><div id="kfr"></div></main>';
+    const target = document.getElementById('kfr');
+    // Writing '+=10' into an entry would invalidate the plan itself on the next
+    // read/write (relative entry values are unplannable) — the rollback would
+    // then be refused and the edit would stick. The write must be rejected
+    // BEFORE mutating anything.
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '200', exists: true },
+            value: { offset: 1, value: '+=10', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    sendRetarget(selection, motion, '-=25');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+
+    // And a probe transaction with a relative value must leave nothing behind.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-kf-rel',
+            patches: [{
+              id: 'p-kf-rel',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframe.x',
+              before: { offset: 1, value: '200', exists: true },
+              value: { offset: 1, value: '+=10', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+    const validation = messages.filter((message) => message.type === 'validation-result').pop();
+    expect(validation.payload.valid).toBe(false);
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('discards a stale frozen binding when the page mutates a run entry externally (Sol r3)', () => {
+    document.body.innerHTML = '<main><div id="kfx"></div></main>';
+    const target = document.getElementById('kfx');
+    // [200,200] -> edit 300 -> page mutates the LAST entry to 250. The frozen
+    // binding no longer describes reality: writing through it would set BOTH
+    // entries and a rollback would produce [250,250] instead of [300,250].
+    // The binding must be detected stale and replaced by a fresh plan (run =
+    // last entry only), keeping validate/undo atomic.
+    const vars = { keyframes: [{ x: 200, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([300, 300]);
+
+    vars.keyframes[1].x = 250; // external page mutation
+
+    const sendStaleValidate = (id) => window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id,
+            patches: [{
+              id: `p-${id}`,
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframe.x',
+              before: { offset: 1, value: '250', exists: true },
+              value: { offset: 1, value: '400', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+
+    // While the stale binding stands, the write is REFUSED atomically — never
+    // silently reinterpreted (Sol r5) — and nothing mutates.
+    sendStaleValidate('tx-kf-stale');
+    let validation = messages.filter((message) => message.type === 'validation-result').pop();
+    expect(validation.payload.valid).toBe(false);
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([300, 250]);
+
+    // Re-inspection refreshes the truth (stale binding pruned): the same probe
+    // is now a NEW edit against the current entries and validates cleanly.
+    grabMotion(target, messages);
+    sendStaleValidate('tx-kf-stale-2');
+    validation = messages.filter((message) => message.type === 'validation-result').pop();
+    expect(validation.payload.valid).toBe(true);
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([300, 250]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('invalidates a frozen binding on structural changes: appended entries and post-binding both-places (Sol r4)', () => {
+    document.body.innerHTML = '<main><div id="kfy"></div><div id="kfz"></div></main>';
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+
+    // (a) APPEND: a raw entry pushed into the live array is INERT — GSAP builds
+    // the inner timeline at construction and never processes it (no injected
+    // `parent`; probe _probe-kf-append.mjs: it never renders). It must not
+    // become a bucket: the frozen binding stays valid, an undo replay restores
+    // the REAL end exactly (writing the appended slot would give [100,500,200]
+    // rendering 500 — Sol r5), and later edits keep landing on the real end.
+    const appendTarget = document.getElementById('kfy');
+    const appendVars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    buildArrayKeyframesTween(appendTarget, appendVars);
+    window.eval(getRuntimeBridgeSource());
+    const append = grabMotion(appendTarget, messages);
+    sendRetarget(append.selection, append.motion, '500');
+    expect(appendVars.keyframes.map((entry) => entry.x)).toEqual([100, 500]);
+    appendVars.keyframes.push({ x: 400, duration: 1 }); // external page mutation (raw, unprocessed)
+    sendRetarget(append.selection, append.motion, '200'); // undo replay
+    expect(appendVars.keyframes.map((entry) => entry.x)).toEqual([100, 200, 400]);
+    sendRetarget(append.selection, append.motion, '600'); // new edit
+    expect(appendVars.keyframes.map((entry) => entry.x)).toEqual([100, 600, 400]);
+
+    // (b) BOTH-PLACES appearing post-binding: vars.x written by the page after
+    // our first edit reopens the probe-H resurrection — the binding must die
+    // and the write must be refused without mutating anything.
+    const bothTarget = document.getElementById('kfz');
+    const bothVars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    const bothTween = buildArrayKeyframesTween(bothTarget, bothVars);
+    const both = grabMotion(bothTarget, messages);
+    sendRetarget(both.selection, both.motion, '300');
+    expect(bothVars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+    bothVars.x = 50; // external page mutation
+    bothTween.invalidate.mockClear();
+    sendRetarget(both.selection, both.motion, '400');
+    expect(bothVars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+    expect(bothVars.x).toBe(50);
+    expect(bothTween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('derives segment order from the INNER TIMELINE, surviving external array reorder (Sol r7)', () => {
+    document.body.innerHTML = '<main><div id="kfo2"></div></main>';
+    const target = document.getElementById('kfo2');
+    // GSAP builds one child tween per processed entry at construction —
+    // child.vars IS the entry object, children are in TIME order, and
+    // reordering the array never reorders the rendered segments (probe
+    // _probe-kf-reorder.mjs). After a reverse(), the array's last item is the
+    // rendered FIRST segment: writing it would corrupt an intermediate while
+    // the real end lives elsewhere.
+    const first = { x: 100, duration: 1, parent: {} };
+    const last = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [first, last], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = { getChildren: () => [{ vars: first }, { vars: last }] };
+    vars.keyframes.reverse(); // external page mutation: array now [last, first]
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    // The REAL end segment (`last`) gets the write — never the array's last item.
+    expect(last.x).toBe(300);
+    expect(first.x).toBe(100);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps a removed-but-live entry in the inventory and locks post-removal both-places (Sol r8)', () => {
+    document.body.innerHTML = '<main><div id="kfrm"></div></main>';
+    const target = document.getElementById('kfrm');
+    // GSAP builds the inner timeline once: splicing the only x-carrying entry
+    // out of the ARRAY leaves its child alive and rendering. Detection must be
+    // the UNION of array and children (fail-closed) or x vanishes from the
+    // inventory — invisible writer -> unowned -> style patch stomped (the
+    // furo-#1 lie) — and a later vars.x falls into the unsafe plain writer.
+    const ex = { x: 100, duration: 1, parent: {} };
+    const ey = { y: 5, duration: 1, parent: {} };
+    const vars = { keyframes: [ex, ey], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = { getChildren: () => [{ vars: ex }, { vars: ey }] };
+    vars.keyframes.splice(0, 1); // page removes the only x-carrying entry
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(true);
+
+    // The write reaches the LIVE segment (the removed entry the child holds).
+    sendRetarget(selection, motion, '300');
+    expect(ex.x).toBe(300);
+    expect(vars.x).toBeUndefined();
+    expect(vars.startAt).toBeUndefined();
+
+    // vars.x appearing afterwards = both-places: the plain writer must never
+    // run (probe-H resurrection) and nothing may mutate.
+    vars.x = 50;
+    sendRetarget(selection, motion, '400');
+    expect(ex.x).toBe(300);
+    expect(vars.x).toBe(50);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps live children editable after the page DELETES vars.keyframes entirely (Sol r9)', () => {
+    document.body.innerHTML = '<main><div id="kfdel"></div></main>';
+    const target = document.getElementById('kfdel');
+    // GSAP keeps the inner timeline (and its live, rendering entries) after
+    // `delete vars.keyframes` (probe _probe-kf-delete.mjs). Detection and both
+    // writers must consult the children INDEPENDENTLY of the array's presence,
+    // or the property vanishes from the inventory and later falls into the
+    // plain vars writer — the furo-#1 lie all over again. Provenance is cached
+    // at the inspection BEFORE the delete (the product flow: selection inspects
+    // long before a page script could mutate).
+    const ex = { x: 100, duration: 1, parent: {} };
+    const ey = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [ex, ey], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = { getChildren: () => [{ vars: ex }, { vars: ey }] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // provenance observed: array
+    delete vars.keyframes; // external page mutation
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(true);
+
+    // retarget channel: the write reaches the live end entry, never vars.x.
+    sendRetarget(selection, motion, '300');
+    expect(ey.x).toBe(300);
+    expect(ex.x).toBe(100);
+    expect(vars.x).toBeUndefined();
+
+    // step channel: same — the plain vars writer must never run.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '300', exists: true },
+            value: { offset: 1, value: '160', exists: true },
+          },
+        },
+      },
+    }));
+    expect(ey.x).toBe(160);
+    expect(vars.x).toBeUndefined();
+    expect(vars.startAt).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('inventories-but-locks entry-shaped children whose origin was never observed (Sol r9+r10)', () => {
+    document.body.innerHTML = '<main><div id="kfun"></div></main>';
+    const target = document.getElementById('kfun');
+    // Deleted BEFORE any inspection: no provenance. Ownership decides, not key
+    // shape (an entry may legitimately author `stagger: 0` — GSAP passes
+    // entries to tl.to() verbatim, Sol r11): a child carrying a prop the
+    // tween's vars does NOT own has no other writer, so the track stays
+    // inventoried and the plain writer stays blocked (fail-closed) — but the
+    // write plan demands PROOF of the array form, so both edit channels refuse.
+    const ex = { x: 100, duration: 1, stagger: 0, parent: {} };
+    const ey = { x: 200, duration: 1, stagger: 0, parent: {} };
+    const vars = { duration: 2 }; // deleted before first inspection
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = { getChildren: () => [{ vars: ex }, { vars: ey }] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+    expect(xTrack.keyframeEditReason).toBe('keyframes');
+
+    sendRetarget(selection, motion, '300');
+    expect(ey.x).toBe(200);
+    expect(vars.x).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('applies unproven-origin ownership PER PROPERTY on mixed children (Sol r12)', () => {
+    document.body.innerHTML = '<main><div id="kfmx"></div></main>';
+    const target = document.getElementById('kfmx');
+    // Unproven origin, MIXED child {x owned by vars, y unowned}: x keeps its
+    // live plain writer (retargetable, plain write path), while y — which has
+    // no other writer — stays inventoried and locked. Whole-child filtering
+    // would drag x into the lock (the r10/r11 generalized-lock violation).
+    const child = { x: 100, y: 200, duration: 2, parent: {} };
+    const vars = { x: 100, duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = { getChildren: () => [{ vars: child }] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    const yTrack = motion.tracks.find((track) => track.property === 'y');
+    expect(xTrack.ownership.retargetable).toBe(true);
+    expect(xTrack.keyframeEditable).toBe(true);
+    expect(yTrack).toBeTruthy();
+    expect(yTrack.ownership.retargetable).toBe(false);
+    expect(yTrack.keyframeEditable).toBe(false);
+
+    // x keeps the plain vars write path; y refuses without mutating.
+    sendRetarget(selection, motion, '300');
+    expect(vars.x).toBe(300);
+    expect(child.x).toBe(100);
+    expect(child.y).toBe(200);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps a plain top-level prop step-editable beside keyframes of ANOTHER prop (Sol r13)', () => {
+    document.body.innerHTML = '<main><div id="kfra"></div></main>';
+    const target = document.getElementById('kfra');
+    // {x:100, keyframes:[{y}...]}: x is entirely plain — probe
+    // _probe-rides-along.mjs: writing vars.x and startAt.x preserves y's path
+    // completely. Gating the step channel on vars.keyframes ALONE locked it
+    // (generalized lock). Ownership is per PROPERTY on this channel too.
+    const vars = { x: 100, keyframes: [{ y: 50, duration: 1, parent: {} }, { y: 100, duration: 1, parent: {} }], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.keyframeEditable).toBe(true);
+    expect(xTrack.keyframeEditReason).toBeUndefined();
+
+    const sendKeyframe = (offset, value) => window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset, value: '', exists: true },
+            value: { offset, value, exists: true },
+          },
+        },
+      },
+    }));
+
+    sendKeyframe(1, '150');
+    expect(vars.x).toBe('150');
+    sendKeyframe(0, '20');
+    expect(vars.startAt).toEqual({ x: '20' });
+    // y's entries stay untouched by x's plain writes.
+    expect(vars.keyframes.map((entry) => entry.y)).toEqual([50, 100]);
+    expect(tween.invalidate).toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('never lets an INERT appended slot claim ownership of a plain prop (Sol r14)', () => {
+    document.body.innerHTML = '<main><div id="kfin"></div></main>';
+    const target = document.getElementById('kfin');
+    // {x:100, keyframes:[{y}...]} + raw push({x:200}): the appended slot never
+    // renders (r5 probe — inert), so it must not mark the PLAIN x as
+    // keyframe-owned; that would null the plan (vars.x = both-places) and lock
+    // the legitimate writer with no cure. Ownership of the array form reads
+    // PROCESSED entries only.
+    const vars = { x: 100, keyframes: [{ y: 50, duration: 1, parent: {} }, { y: 100, duration: 1, parent: {} }], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    vars.keyframes.push({ x: 200 }); // raw external append — inert
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(true);
+    expect(xTrack.keyframeEditable).toBe(true);
+
+    sendRetarget(selection, motion, '300');
+    expect(vars.x).toBe(300);
+    expect(vars.keyframes[2].x).toBe(200); // inert slot untouched
+    expect(vars.keyframes.map((entry) => entry.y)).toEqual([50, 100, undefined]);
+    expect(tween.invalidate).toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps ownership frozen when the page REPLACES vars.keyframes with another shape (Sol r15)', () => {
+    document.body.innerHTML = '<main><div id="kfr1"></div><div id="kfr2"></div></main>';
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+
+    // (a) array → object replacement: the old array's children keep rendering.
+    // The truthy impostor must not flip the cached provenance — x stays
+    // inventoried and LOCKED; a stale retarget must never reach the plain
+    // writer (vars.x would resurrect probe-H corruption).
+    const ex = { x: 100, duration: 1, parent: {} };
+    const ey = { x: 200, duration: 1, parent: {} };
+    const arrVars = { keyframes: [ex, ey], duration: 2 };
+    const arrTween = buildArrayKeyframesTween(document.getElementById('kfr1'), arrVars);
+    arrTween.timeline = { getChildren: () => [{ vars: ex }, { vars: ey }] };
+
+    // (b) object → array replacement: the original object's children keep
+    // rendering; the impostor array must not unlock the write plan.
+    const gen1 = { x: 0, duration: 1, parent: {} };
+    const gen2 = { x: 60, duration: 1, parent: {} };
+    const objVars = { keyframes: { x: [0, 60] }, duration: 2 };
+    const objTween = buildArrayKeyframesTween(document.getElementById('kfr2'), objVars);
+    objTween.timeline = { getChildren: () => [{ vars: gen1 }, { vars: gen2 }] };
+    // buildArrayKeyframesTween replaces window.gsap each call — expose BOTH tweens.
+    window.gsap.globalTimeline = { getChildren: () => [arrTween, objTween] };
+
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(document.getElementById('kfr1'), messages); // provenance: array
+    arrVars.keyframes = { y: [0, 60] }; // external replacement (inert impostor)
+    const arr = grabMotion(document.getElementById('kfr1'), messages);
+    const arrTrack = arr.motion.tracks.find((track) => track.property === 'x');
+    expect(arrTrack).toBeTruthy();
+    expect(arrTrack.ownership.retargetable).toBe(false);
+    sendRetarget(arr.selection, arr.motion, '300');
+    expect(arrVars.x).toBeUndefined();
+    expect(ey.x).toBe(200);
+
+    grabMotion(document.getElementById('kfr2'), messages); // provenance: other
+    objVars.keyframes = [{ x: 100 }]; // external replacement (inert impostor array)
+    const obj = grabMotion(document.getElementById('kfr2'), messages);
+    const objTrack = obj.motion.tracks.find((track) => track.property === 'x');
+    expect(objTrack).toBeTruthy();
+    expect(objTrack.ownership.retargetable).toBe(false);
+    sendRetarget(obj.selection, obj.motion, '300');
+    expect(objVars.x).toBeUndefined();
+    expect(gen2.x).toBe(60);
+    expect(objVars.keyframes[0].x).toBe(100); // impostor untouched
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps in-place mutations of the object source from hiding live segments (Sol r16)', () => {
+    document.body.innerHTML = '<main><div id="kfip"></div></main>';
+    const target = document.getElementById('kfip');
+    // The frozen provenance must freeze CONTENT too: `delete source.x` in
+    // place keeps the reference identical while the children keep rendering
+    // x — losing it from the inventory lets a stale patch write vars.x and
+    // report success while the path still ends at 60 (false write).
+    const gen1 = { x: 0, duration: 1, parent: {} };
+    const gen2 = { x: 60, duration: 1, parent: {} };
+    const vars = { keyframes: { x: [0, 60] }, duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = { getChildren: () => [{ vars: gen1 }, { vars: gen2 }] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // provenance frozen (shape, source, props)
+    delete vars.keyframes.x; // external in-place mutation — reference unchanged
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '160');
+    expect(vars.x).toBeUndefined();
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '60', exists: true },
+            value: { offset: 1, value: '160', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.x).toBeUndefined();
+    expect(vars.startAt).toBeUndefined();
+    expect(gen2.x).toBe(60);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('never surfaces GSAP reserved keys inside entries as editable tracks (Sol r17)', () => {
+    document.body.innerHTML = '<main><div id="kfrv"></div></main>';
+    const target = document.getElementById('kfrv');
+    // yoyoEase/easeReverse/repeatRefresh/autoRevert/stringFilter are RESERVED
+    // (GSAP 3.15 _reservedProps, extracted verbatim from the fixture source) —
+    // treating them as animated props creates a FALSE control whose edits
+    // validate while changing nothing visual.
+    const vars = {
+      keyframes: [
+        { x: 100, yoyoEase: true, duration: 1, parent: {} },
+        { x: 200, easeReverse: 'power1', repeatRefresh: true, onCompleteParams: [1], duration: 1, parent: {} },
+      ],
+      duration: 2,
+    };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    expect(motion.tracks.map((track) => track.property)).toEqual(['x']);
+
+    // A patch against a reserved key must not mutate anything.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.yoyoEase',
+            before: { offset: 1, value: 'true', exists: true },
+            value: { offset: 1, value: 'power2', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes[0].yoyoEase).toBe(true);
+    expect(vars.yoyoEase).toBeUndefined();
+    expect(vars.startAt).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('rolls back a startAt edit by RENDER-equivalent restore, never a naive delete (Sol r18)', () => {
+    document.body.innerHTML = '<main><div id="kfsr"></div></main>';
+    const target = document.getElementById('kfsr');
+    // GSAP materializes _startAt on first render: deleting vars.startAt does
+    // NOT un-materialize it (probe _probe-startat-rollback.mjs — the start
+    // stays 40 while validate reports restored). The rollback must write the
+    // ORIGINAL start value (sampled at progress 0 before the first edit) back.
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-startat',
+            patches: [{
+              id: 'p-startat',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframe.x',
+              before: { offset: 0, exists: false },
+              value: { offset: 0, value: '40', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+    const validation = messages.filter((message) => message.type === 'validation-result').pop();
+    expect(validation.payload.valid).toBe(true);
+    // Render-equivalent restore: the original start value written back —
+    // never a dangling {x:'40'} nor a naive delete the _startAt outlives.
+    expect(vars.startAt).toEqual({ x: '0' });
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps a target-owned onOverwrite animatable — it is NOT in GSAP 3.15 _reservedProps (Sol r18)', () => {
+    document.body.innerHTML = '<main><div id="kfoo"></div></main>';
+    const target = document.getElementById('kfoo');
+    // onOverwrite is absent from the fixture's verbatim _reservedProps string:
+    // GSAP genuinely animates a target-owned property with that name. Treating
+    // it as reserved recreated an invisible writer.
+    const vars = { onOverwrite: 100, duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { motion } = grabMotion(target, messages);
+    const track = motion.tracks.find((candidate) => candidate.property === 'onOverwrite');
+    expect(track).toBeTruthy();
+    expect(track.ownership.retargetable).toBe(true);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks entries that spawn NESTED facades (stagger/fn-timing inside an entry) (Sol r19)', () => {
+    document.body.innerHTML = '<main><div id="kfnf"></div></main>';
+    const target = document.getElementById('kfnf');
+    // GSAP passes each entry to tl.to(), which re-processes stagger and
+    // fn/string timing: the entry's child grows its OWN inner timeline and the
+    // real animation lives a level deeper — writing the outer entry renders
+    // NOTHING (probe _probe-r19.mjs: end stayed 200 after x:900).
+    const e1 = { x: 100, stagger: 0.1, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = { getChildren: () => [{ vars: e1, timeline: {} }, { vars: e2, timeline: {} }] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy(); // still inventoried — the writer is alive
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '900');
+    expect(e2.x).toBe(200);
+    expect(vars.x).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks the step channel on multi-target tweens — startAt cannot restore per-target starts (Sol r19)', () => {
+    document.body.innerHTML = '<main><div id="kmt1"></div><div id="kmt2"></div></main>';
+    const t1 = document.getElementById('kmt1');
+    const t2 = document.getElementById('kmt2');
+    // vars.startAt is ONE shared object: an offset-0 edit flattens distinct
+    // per-target starts and the single-value rollback cannot restore them
+    // ([10,20] -> [10,10], probe _probe-r19.mjs).
+    const vars = { x: 100, duration: 2 };
+    const tween = buildArrayKeyframesTween(t1, vars, { targets: [t1, t2] });
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(t1, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.keyframeEditable).toBe(false);
+    expect(xTrack.keyframeEditReason).toBe('multi-target');
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 0, exists: false },
+            value: { offset: 0, value: '40', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.startAt).toBeUndefined();
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('computes the trailing run by NUMERIC equivalence, locking unprovable unit mixes (Sol r20)', () => {
+    document.body.innerHTML = '<main><div id="kfnum"></div><div id="kfamb"></div></main>';
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+
+    // [0, "200.0", 200] renders as a HOLD at 200 — a textual run would edit
+    // only the last entry and turn the hold into a ramp (intermediate path
+    // corruption). Numeric equivalence must extend the run over both.
+    const numVars = { keyframes: [{ x: 0, duration: 1, parent: {} }, { x: '200.0', duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 3 };
+    const numTween = buildArrayKeyframesTween(document.getElementById('kfnum'), numVars);
+
+    // [.., "200px", 200] MAY render as a hold (px is the length default) but
+    // the equivalence is unprovable without per-property knowledge — locked.
+    const ambVars = { keyframes: [{ x: '200px', duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    const ambTween = buildArrayKeyframesTween(document.getElementById('kfamb'), ambVars);
+    window.gsap.globalTimeline = { getChildren: () => [numTween, ambTween] };
+
+    window.eval(getRuntimeBridgeSource());
+
+    const num = grabMotion(document.getElementById('kfnum'), messages);
+    expect(num.motion.tracks.find((track) => track.property === 'x').ownership.retargetable).toBe(true);
+    sendRetarget(num.selection, num.motion, '300');
+    // Type preserved per bucket (the authored string stays a string) — GSAP
+    // renders '300' and 300 identically; what matters is the hold held.
+    expect(numVars.keyframes.map((entry) => entry.x)).toEqual([0, '300', 300]);
+
+    const amb = grabMotion(document.getElementById('kfamb'), messages);
+    const ambTrack = amb.motion.tracks.find((track) => track.property === 'x');
+    expect(ambTrack.ownership.retargetable).toBe(false);
+    expect(ambTrack.keyframeEditable).toBe(false);
+    sendRetarget(amb.selection, amb.motion, '300');
+    expect(ambVars.keyframes.map((entry) => entry.x)).toEqual(['200px', 200]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('refuses a desired value that would leave the run AMBIGUOUS against its neighbors (Sol r21)', () => {
+    document.body.innerHTML = '<main><div id="kfsim"></div></main>';
+    const target = document.getElementById('kfsim');
+    // ['100px','200px'] + bare '100': the write would land '100' beside
+    // '100px' — same number, different unit spelling — nulling the next plan
+    // and stranding the edit beyond any rollback (the r2 failure class). The
+    // simulation must reject BEFORE mutating; a unit-consistent '100px' is
+    // accepted and extends the hold.
+    const vars = { keyframes: [{ x: '100px', duration: 1, parent: {} }, { x: '200px', duration: 1, parent: {} }], duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    expect(motion.tracks.find((track) => track.property === 'x').ownership.retargetable).toBe(true);
+
+    sendRetarget(selection, motion, '100');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['100px', '200px']);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-amb',
+            patches: [{
+              id: 'p-amb',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'retarget.final',
+              before: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: '200px' },
+              value: {
+                schemaVersion: 2,
+                semanticProperty: 'translateX',
+                runtimeProperty: 'x',
+                value: '100',
+                writeModel: 'absolute',
+                responsiveScope: 'shared',
+                owner: { channelId: `${motion.id}:translateX`, motionId: motion.id },
+                keyframe: { position: 'final-existing' },
+              },
+            }],
+          },
+        },
+      },
+    }));
+    const validation = messages.filter((message) => message.type === 'validation-result').pop();
+    expect(validation.payload.valid).toBe(false);
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['100px', '200px']);
+
+    // Unit-consistent write stays accepted.
+    sendRetarget(selection, motion, '100px');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['100px', '100px']);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('treats CROSS-UNIT neighbors as ambiguous regardless of the numbers (Sol r22)', () => {
+    document.body.innerHTML = '<main><div id="kfxu"></div></main>';
+    const target = document.getElementById('kfxu');
+    // '16px' and '1rem' may render EQUAL (a hold) — numeric comparison across
+    // units is unprovable in either direction, so the pair must lock the plan,
+    // never be read as 'different' (which would edit only the last bucket and
+    // turn the hold into a ramp).
+    const vars = { keyframes: [{ x: '16px', duration: 1, parent: {} }, { x: '1rem', duration: 1, parent: {} }], duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['16px', '1rem']);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('treats UNPARSABLE value pairs as ambiguous — colors can alias each other (Sol r23)', () => {
+    document.body.innerHTML = '<main><div id="kfcl"></div><div id="kfcs"></div></main>';
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+
+    // '#fff' and 'rgb(255,255,255)' render EQUAL (a hold): reading them as
+    // 'different' edits only the last entry and turns the hold into a fade.
+    // Distinctness of unparsable values is equally unprovable ('#00f' IS
+    // 'blue') — any parse failure on a differing pair locks the plan.
+    const holdVars = { keyframes: [{ backgroundColor: '#fff', duration: 1, parent: {} }, { backgroundColor: 'rgb(255,255,255)', duration: 1, parent: {} }], duration: 2 };
+    const holdTween = buildArrayKeyframesTween(document.getElementById('kfcl'), holdVars);
+    // A SINGLE color entry has no neighbor to misread — stays editable.
+    const singleVars = { keyframes: [{ backgroundColor: 'red', duration: 1, parent: {} }], duration: 1 };
+    const singleTween = buildArrayKeyframesTween(document.getElementById('kfcs'), singleVars);
+    window.gsap.globalTimeline = { getChildren: () => [holdTween, singleTween] };
+
+    window.eval(getRuntimeBridgeSource());
+
+    const hold = grabMotion(document.getElementById('kfcl'), messages);
+    const holdTrack = hold.motion.tracks.find((track) => track.property === 'backgroundColor');
+    expect(holdTrack.ownership.retargetable).toBe(false);
+    expect(holdTrack.keyframeEditable).toBe(false);
+
+    const single = grabMotion(document.getElementById('kfcs'), messages);
+    const singleTrack = single.motion.tracks.find((track) => track.property === 'backgroundColor');
+    expect(singleTrack.ownership.retargetable).toBe(true);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('compares opacity through its render clamp — out-of-range values hold at 1 (Sol r24)', () => {
+    document.body.innerHTML = '<main><div id="kfop"></div></main>';
+    const target = document.getElementById('kfop');
+    // opacity 2 and 3 BOTH compute to 1 (CSS clamps to [0,1]): a raw numeric
+    // comparison reads 'different', edits only the last entry and turns the
+    // visual hold into a fade. The clamp-aware run must edit BOTH.
+    const vars = { keyframes: [{ opacity: 2, duration: 1, parent: {} }, { opacity: 3, duration: 1, parent: {} }], duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'opacity', runtimeProperty: 'opacity', value: '3' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'opacity',
+              runtimeProperty: 'opacity',
+              value: '0',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:opacity`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.opacity)).toEqual([0, 0]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('normalizes percents, honors autoAlpha visibility, and restores AUTHORED ends on rollback (Sol r25)', () => {
+    document.body.innerHTML = '<main><div id="kfpc"></div><div id="kfaa"></div><div id="kfrb"></div></main>';
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+
+    // '2%' and '3%' convert to 0.02/0.03 — a REAL ramp, never a clamped hold.
+    const pctVars = { keyframes: [{ opacity: '2%', duration: 1, parent: {} }, { opacity: '3%', duration: 1, parent: {} }], duration: 2 };
+    const pctTween = buildArrayKeyframesTween(document.getElementById('kfpc'), pctVars);
+    // autoAlpha 0 means visibility:hidden; -1 does NOT — discrete state differs.
+    const aaVars = { keyframes: [{ autoAlpha: -1, duration: 1, parent: {} }, { autoAlpha: 0, duration: 1, parent: {} }], duration: 2 };
+    const aaTween = buildArrayKeyframesTween(document.getElementById('kfaa'), aaVars);
+    // Rollback of [2,3]: the reader reports the AUTHORED '3', the sampled end
+    // is the clamped 1 — landing back on the authored end must restore
+    // verbatim, never uniform-write [3,3].
+    const rbVars = { keyframes: [{ opacity: 2, duration: 1, parent: {} }, { opacity: 3, duration: 1, parent: {} }], duration: 2 };
+    const rbTween = buildArrayKeyframesTween(document.getElementById('kfrb'), rbVars);
+    window.gsap.globalTimeline = { getChildren: () => [pctTween, aaTween, rbTween] };
+
+    window.eval(getRuntimeBridgeSource());
+
+    const sendPropRetarget = (grabbed, property, before, value) => window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: grabbed.selection.payload.element.id,
+            kind: 'motion',
+            motionId: grabbed.motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: property, runtimeProperty: property, value: before },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: property,
+              runtimeProperty: property,
+              value,
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${grabbed.motion.id}:${property}`, motionId: grabbed.motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+
+    const pct = grabMotion(document.getElementById('kfpc'), messages);
+    sendPropRetarget(pct, 'opacity', '3%', '50%');
+    expect(pctVars.keyframes.map((entry) => entry.opacity)).toEqual(['2%', '50%']);
+
+    const aa = grabMotion(document.getElementById('kfaa'), messages);
+    sendPropRetarget(aa, 'autoAlpha', '0', '1');
+    expect(aaVars.keyframes.map((entry) => entry.autoAlpha)).toEqual([-1, 1]);
+
+    const rb = grabMotion(document.getElementById('kfrb'), messages);
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-clamp-rb',
+            patches: [{
+              id: 'p-clamp-rb',
+              elementId: rb.selection.payload.element.id,
+              kind: 'motion',
+              motionId: rb.motion.id,
+              property: 'keyframe.opacity',
+              before: { offset: 1, value: '3', exists: true },
+              value: { offset: 1, value: '0', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+    const validation = messages.filter((message) => message.type === 'validation-result').pop();
+    expect(validation.payload.valid).toBe(true);
+    expect(rbVars.keyframes.map((entry) => entry.opacity)).toEqual([2, 3]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('detects external mutation of NON-run buckets — a live hold must never become a ramp (Sol r26)', () => {
+    document.body.innerHTML = '<main><div id="kfnr"></div></main>';
+    const target = document.getElementById('kfnr');
+    // [100,200] -> we write 300 -> page mutates the FIRST entry to 300: the
+    // page created a live hold [300,300]. A binding that only watches its own
+    // run bucket still validates, writes 400 into the last entry alone and
+    // turns the hold into a ramp [300,400]. The whole carrying set is frozen:
+    // external divergence anywhere -> atomic refusal; re-inspection re-plans
+    // and the next edit covers the full hold.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    e1.x = 300; // external page mutation of a NON-run bucket — live hold now
+
+    sendRetarget(selection, motion, '400'); // must refuse atomically
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([300, 300]);
+
+    grabMotion(target, messages); // re-inspection prunes the stale binding
+    sendRetarget(selection, motion, '400'); // fresh plan covers the whole hold
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([400, 400]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks the plan when a live PropTween lost its vars slot (hidden terminal carrier) (Sol r27)', () => {
+    document.body.innerHTML = '<main><div id="kfhc"></div></main>';
+    const target = document.getElementById('kfhc');
+    // Deleting x from the LAST entry (no invalidate yet) leaves its PropTween
+    // ALIVE — the end still renders 200 while the entry no longer declares x
+    // (probe _probe-r27.mjs: _ptLookup keeps the key). The plan would then
+    // treat a NON-terminal entry as the end and corrupt the path on write.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { duration: 1, parent: {} }; // x deleted in place
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = {
+      getChildren: () => [
+        { vars: e1, _initted: true, _ptLookup: [{ x: {} }] },
+        { vars: e2, _initted: true, _ptLookup: [{ x: {} }] }, // live, undeclared
+      ],
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(e1.x).toBe(100);
+    expect(vars.x).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks ALL channels of an animation with a KILLED writer — invalidate would resurrect it (Sol r28)', () => {
+    document.body.innerHTML = '<main><div id="kfkl"></div></main>';
+    const target = document.getElementById('kfkl');
+    // After t.kill(target,'x') the entries still DECLARE x but the PropTween
+    // is dead (probe _probe-r28.mjs: ptLookup only has y). Our invalidate —
+    // fired by an edit of ANY channel, y included — re-inits from vars and
+    // RESURRECTS x, stomping whatever animation took the channel over
+    // (x: 999 -> 200 in the probe). Declaration<->lookup asymmetry poisons the
+    // whole animation's entry plan.
+    const e1 = { x: 100, y: 5, duration: 1, parent: {} };
+    const e2 = { x: 200, y: 10, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = {
+      getChildren: () => [
+        { vars: e1, _initted: true, _ptLookup: [{ y: {} }] },
+        { vars: e2, _initted: true, _ptLookup: [{ y: {} }] },
+      ],
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const yTrack = motion.tracks.find((track) => track.property === 'y');
+    expect(yTrack.ownership.retargetable).toBe(false);
+    expect(yTrack.keyframeEditable).toBe(false);
+
+    // Editing y must refuse WITHOUT invalidating (resurrection vector).
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'y', runtimeProperty: 'y', value: '10' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'y',
+              runtimeProperty: 'y',
+              value: '50',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:y`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+    expect(e2.y).toBe(10);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks even RIDES-ALONG channels when a killed writer haunts the animation (Sol r29)', () => {
+    document.body.innerHTML = '<main><div id="kfrz"></div></main>';
+    const target = document.getElementById('kfrz');
+    // {z:100, keyframes:[{x}...]} with x's PropTween killed: editing the
+    // top-level z rides the PLAIN path — which also fires invalidate and
+    // resurrects the dead x writer. The hazard is per ANIMATION, not per
+    // property: every channel must refuse before any mutation/invalidate.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { z: 100, keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = {
+      getChildren: () => [
+        { vars: e1, _initted: true, _ptLookup: [{}] }, // x killed
+        { vars: e2, _initted: true, _ptLookup: [{}] },
+      ],
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const zTrack = motion.tracks.find((track) => track.property === 'z');
+    expect(zTrack.ownership.retargetable).toBe(false);
+    expect(zTrack.keyframeEditable).toBe(false);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'z', runtimeProperty: 'z', value: '100' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'z',
+              runtimeProperty: 'z',
+              value: '300',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:z`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+    expect(vars.z).toBe(100);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('never flags ALIASED props as killed writers — autoAlpha materializes as opacity+visibility (Sol r30)', () => {
+    document.body.innerHTML = '<main><div id="kfal"></div></main>';
+    const target = document.getElementById('kfal');
+    // GSAP normalizes aliases in _ptLookup (probe _probe-r30.mjs): autoAlpha
+    // -> visibility+opacity, alpha -> opacity, scale -> scale/scaleX/scaleY.
+    // Literal comparison read a HEALTHY child as a killed writer and locked
+    // the whole animation.
+    const e1 = { autoAlpha: 0.5, duration: 1, parent: {} };
+    const e2 = { autoAlpha: 1, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = {
+      getChildren: () => [
+        { vars: e1, _initted: true, _ptLookup: [{ opacity: {}, visibility: {} }] },
+        { vars: e2, _initted: true, _ptLookup: [{ opacity: {}, visibility: {} }] },
+      ],
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { motion } = grabMotion(target, messages);
+    const track = motion.tracks.find((candidate) => candidate.property === 'autoAlpha');
+    expect(track.ownership.retargetable).toBe(true);
+    expect(track.keyframeEditable).toBe(true);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('models aliases as synonyms vs compounds — partial kills stay hazards (Sol r31)', () => {
+    document.body.innerHTML = '<main><div id="kfs1"></div><div id="kfs2"></div><div id="kfs3"></div></main>';
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+
+    // Healthy SYNONYM: declared `rotate` materializes as `rotation` (probe
+    // _probe-r31.mjs) — never a hazard.
+    const r1 = { rotate: 45, duration: 1, parent: {} };
+    const r2 = { rotate: 90, duration: 1, parent: {} };
+    const rotVars = { keyframes: [r1, r2], duration: 2 };
+    const rotTween = buildArrayKeyframesTween(document.getElementById('kfs1'), rotVars);
+    rotTween.timeline = { getChildren: () => [{ vars: r1, _initted: true, _ptLookup: [{ rotation: {} }] }, { vars: r2, _initted: true, _ptLookup: [{ rotation: {} }] }] };
+
+    // COMPOUND partial kill: autoAlpha with only `visibility` left (opacity
+    // killed) — .some() would read healthy; ALL expansions are required.
+    const a1 = { autoAlpha: 0.5, duration: 1, parent: {} };
+    const a2 = { autoAlpha: 1, duration: 1, parent: {} };
+    const aaVars = { keyframes: [a1, a2], duration: 2 };
+    const aaTween = buildArrayKeyframesTween(document.getElementById('kfs2'), aaVars);
+    aaTween.timeline = { getChildren: () => [{ vars: a1, _initted: true, _ptLookup: [{ visibility: {} }] }, { vars: a2, _initted: true, _ptLookup: [{ visibility: {} }] }] };
+
+    // COMPOUND partial kill: scale with scaleX killed — the leftover literal
+    // `scale` key must NOT serve as a shortcut (probe: ['scaleY','scale']).
+    const s1 = { scale: 1.5, duration: 1, parent: {} };
+    const s2 = { scale: 1, duration: 1, parent: {} };
+    const scVars = { keyframes: [s1, s2], duration: 2 };
+    const scTween = buildArrayKeyframesTween(document.getElementById('kfs3'), scVars);
+    scTween.timeline = { getChildren: () => [{ vars: s1, _initted: true, _ptLookup: [{ scaleY: {}, scale: {} }] }, { vars: s2, _initted: true, _ptLookup: [{ scaleY: {}, scale: {} }] }] };
+
+    window.gsap.globalTimeline = { getChildren: () => [rotTween, aaTween, scTween] };
+    window.eval(getRuntimeBridgeSource());
+
+    const rot = grabMotion(document.getElementById('kfs1'), messages);
+    expect(rot.motion.tracks.find((track) => track.property === 'rotate').ownership.retargetable).toBe(true);
+
+    const aa = grabMotion(document.getElementById('kfs2'), messages);
+    expect(aa.motion.tracks.find((track) => track.property === 'autoAlpha').ownership.retargetable).toBe(false);
+    expect(aa.motion.tracks.find((track) => track.property === 'autoAlpha').keyframeEditable).toBe(false);
+
+    const sc = grabMotion(document.getElementById('kfs3'), messages);
+    expect(sc.motion.tracks.find((track) => track.property === 'scale').ownership.retargetable).toBe(false);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('sees hidden carriers through ALIASES — terminal deletion of autoAlpha/rotate stays locked (Sol r32)', () => {
+    document.body.innerHTML = '<main><div id="kfh1"></div><div id="kfh2"></div></main>';
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+
+    // autoAlpha deleted from the TERMINAL entry: the live writers are keyed
+    // opacity+visibility, never 'autoAlpha' — a literal lookup check misses
+    // them and the plan edits a non-terminal entry as the end.
+    const a1 = { autoAlpha: 0.5, duration: 1, parent: {} };
+    const a2 = { duration: 1, parent: {} }; // autoAlpha deleted in place
+    const aaVars = { keyframes: [a1, a2], duration: 2 };
+    const aaTween = buildArrayKeyframesTween(document.getElementById('kfh1'), aaVars);
+    aaTween.timeline = { getChildren: () => [
+      { vars: a1, _initted: true, _ptLookup: [{ opacity: {}, visibility: {} }] },
+      { vars: a2, _initted: true, _ptLookup: [{ opacity: {}, visibility: {} }] },
+    ] };
+
+    // Same through a SYNONYM: rotate materializes as 'rotation'.
+    const r1 = { rotate: 45, duration: 1, parent: {} };
+    const r2 = { duration: 1, parent: {} }; // rotate deleted in place
+    const rotVars = { keyframes: [r1, r2], duration: 2 };
+    const rotTween = buildArrayKeyframesTween(document.getElementById('kfh2'), rotVars);
+    rotTween.timeline = { getChildren: () => [
+      { vars: r1, _initted: true, _ptLookup: [{ rotation: {} }] },
+      { vars: r2, _initted: true, _ptLookup: [{ rotation: {} }] },
+    ] };
+
+    window.gsap.globalTimeline = { getChildren: () => [aaTween, rotTween] };
+    window.eval(getRuntimeBridgeSource());
+
+    const aa = grabMotion(document.getElementById('kfh1'), messages);
+    const aaTrack = aa.motion.tracks.find((track) => track.property === 'autoAlpha');
+    expect(aaTrack.ownership.retargetable).toBe(false);
+    expect(aaTrack.keyframeEditable).toBe(false);
+
+    const rot = grabMotion(document.getElementById('kfh2'), messages);
+    const rotTrack = rot.motion.tracks.find((track) => track.property === 'rotate');
+    expect(rotTrack.ownership.retargetable).toBe(false);
+    expect(rotTrack.keyframeEditable).toBe(false);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('resolves the transform AGGREGATE by parsing the entry value (Sol r33)', () => {
+    document.body.innerHTML = '<main><div id="kft1"></div><div id="kft2"></div></main>';
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+
+    // transform:'translateX(...)' materializes as the `x` writer — no
+    // 'transform' key ever exists in _ptLookup. A fixed-key resolver read a
+    // HEALTHY tween as hazardous and locked even the plain opacity track.
+    const h1 = { transform: 'translateX(10px)', duration: 1, parent: {} };
+    const h2 = { transform: 'translateX(20px)', duration: 1, parent: {} };
+    const healthyVars = { opacity: 0.5, keyframes: [h1, h2], duration: 2 };
+    const healthyTween = buildArrayKeyframesTween(document.getElementById('kft1'), healthyVars);
+    healthyTween.timeline = { getChildren: () => [
+      { vars: h1, _initted: true, _ptLookup: [{ x: {} }] },
+      { vars: h2, _initted: true, _ptLookup: [{ x: {} }] },
+    ] };
+
+    // Same shape with the x writer KILLED: a real hazard again.
+    const k1 = { transform: 'translateX(10px)', duration: 1, parent: {} };
+    const k2 = { transform: 'translateX(20px)', duration: 1, parent: {} };
+    const killedVars = { opacity: 0.5, keyframes: [k1, k2], duration: 2 };
+    const killedTween = buildArrayKeyframesTween(document.getElementById('kft2'), killedVars);
+    killedTween.timeline = { getChildren: () => [
+      { vars: k1, _initted: true, _ptLookup: [{}] },
+      { vars: k2, _initted: true, _ptLookup: [{}] },
+    ] };
+
+    window.gsap.globalTimeline = { getChildren: () => [healthyTween, killedTween] };
+    window.eval(getRuntimeBridgeSource());
+
+    const healthy = grabMotion(document.getElementById('kft1'), messages);
+    const healthyOpacity = healthy.motion.tracks.find((track) => track.property === 'opacity');
+    expect(healthyOpacity.ownership.retargetable).toBe(true);
+    expect(healthyOpacity.keyframeEditable).toBe(true);
+
+    const killed = grabMotion(document.getElementById('kft2'), messages);
+    const killedOpacity = killed.motion.tracks.find((track) => track.property === 'opacity');
+    expect(killedOpacity.ownership.retargetable).toBe(false);
+    expect(killedOpacity.keyframeEditable).toBe(false);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('freezes a positive writer BASELINE per child — later kills are exact, one-arg translate is healthy (Sol r34)', () => {
+    document.body.innerHTML = '<main><div id="kfb1"></div><div id="kfb2"></div></main>';
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+
+    // translate3d-style writers (x,y,z) cannot be reconstructed from function
+    // names — the baseline is OBSERVED at first sight; killing x afterwards
+    // must read as a hazard on re-inspection.
+    const b1 = { transform: 'translate3d(1px,2px,3px)', duration: 1, parent: {} };
+    const b2 = { transform: 'translate3d(4px,5px,6px)', duration: 1, parent: {} };
+    const blVars = { opacity: 0.5, keyframes: [b1, b2], duration: 2 };
+    const blTween = buildArrayKeyframesTween(document.getElementById('kfb1'), blVars);
+    const lookup1 = { x: {}, y: {}, z: {} };
+    const lookup2 = { x: {}, y: {}, z: {} };
+    // Children are STABLE objects in real GSAP — the baseline is keyed on them.
+    const blChild1 = { vars: b1, _initted: true, _ptLookup: [lookup1] };
+    const blChild2 = { vars: b2, _initted: true, _ptLookup: [lookup2] };
+    blTween.timeline = { getChildren: () => [blChild1, blChild2] };
+
+    // translate(10px) creates only x — demanding y would lock a healthy tween.
+    const o1 = { transform: 'translate(10px)', duration: 1, parent: {} };
+    const o2 = { transform: 'translate(20px)', duration: 1, parent: {} };
+    const oneVars = { opacity: 0.5, keyframes: [o1, o2], duration: 2 };
+    const oneTween = buildArrayKeyframesTween(document.getElementById('kfb2'), oneVars);
+    oneTween.timeline = { getChildren: () => [
+      { vars: o1, _initted: true, _ptLookup: [{ x: {} }] },
+      { vars: o2, _initted: true, _ptLookup: [{ x: {} }] },
+    ] };
+
+    window.gsap.globalTimeline = { getChildren: () => [blTween, oneTween] };
+    window.eval(getRuntimeBridgeSource());
+
+    const first = grabMotion(document.getElementById('kfb1'), messages);
+    expect(first.motion.tracks.find((track) => track.property === 'opacity').ownership.retargetable).toBe(true);
+
+    delete lookup1.x; // page kills x AFTER the baseline was frozen
+    delete lookup2.x;
+    const second = grabMotion(document.getElementById('kfb1'), messages);
+    const lockedOpacity = second.motion.tracks.find((track) => track.property === 'opacity');
+    expect(lockedOpacity.ownership.retargetable).toBe(false);
+    expect(lockedOpacity.keyframeEditable).toBe(false);
+
+    const one = grabMotion(document.getElementById('kfb2'), messages);
+    expect(one.motion.tracks.find((track) => track.property === 'opacity').ownership.retargetable).toBe(true);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('grows the baseline MONOTONICALLY — writers observed later are watched too (Sol r35)', () => {
+    document.body.innerHTML = '<main><div id="kfmg"></div></main>';
+    const target = document.getElementById('kfmg');
+    // Baseline {x} -> page adds a y writer (observed on re-inspection) -> page
+    // kills y. A frozen-only baseline never watched y, reads healthy, and the
+    // next edit resurrects it.
+    const e1 = { transform: 'translateX(10px)', duration: 1, parent: {} };
+    const e2 = { transform: 'translateX(20px)', duration: 1, parent: {} };
+    const vars = { opacity: 0.5, keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const lookup1 = { x: {} };
+    const lookup2 = { x: {} };
+    const child1 = { vars: e1, _initted: true, _ptLookup: [lookup1] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [lookup2] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // baseline frozen: {x}
+    lookup1.y = {}; // page grows a y writer
+    lookup2.y = {};
+    const grown = grabMotion(target, messages); // healthy — y joins the baseline
+    expect(grown.motion.tracks.find((track) => track.property === 'opacity').ownership.retargetable).toBe(true);
+
+    delete lookup1.y; // page kills the LATER writer
+    delete lookup2.y;
+    const killed = grabMotion(target, messages);
+    const lockedOpacity = killed.motion.tracks.find((track) => track.property === 'opacity');
+    expect(lockedOpacity.ownership.retargetable).toBe(false);
+    expect(lockedOpacity.keyframeEditable).toBe(false);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('re-validates DECLARATIONS on every inspection — a new unmaterialized prop is a hazard (Sol r36)', () => {
+    document.body.innerHTML = '<main><div id="kfnd"></div></main>';
+    const target = document.getElementById('kfnd');
+    // Baseline {x} healthy; the page then DECLARES entry.y without a live
+    // writer (never materialized, or materialized-and-killed between
+    // inspections). x is still present, so a vanish-only check reads healthy —
+    // but our invalidate would MATERIALIZE y and stomp that channel's owner.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const first = grabMotion(target, messages);
+    expect(first.motion.tracks.find((track) => track.property === 'x').ownership.retargetable).toBe(true);
+
+    e1.y = 5; // page declares y in place — no live writer yet
+    e2.y = 10;
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('promotes hidden live carriers to an ANIMATION hazard — editing y with an orphaned x refuses (Sol r37)', () => {
+    document.body.innerHTML = '<main><div id="kfoc"></div></main>';
+    const target = document.getElementById('kfoc');
+    // Entries {x,y} healthy; the page deletes entry.x in place — x's
+    // PropTweens stay alive (orphans). A per-property check only locks the x
+    // track: editing y still invalidates and KILLS the orphan mid-flight
+    // (x drops to 0) — cross-channel corruption. Any lookup key no longer
+    // explained by the declarations must lock every channel.
+    const e1 = { x: 50, y: 5, duration: 1, parent: {} };
+    const e2 = { x: 100, y: 10, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {}, y: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {}, y: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const first = grabMotion(target, messages);
+    expect(first.motion.tracks.find((track) => track.property === 'y').ownership.retargetable).toBe(true);
+
+    delete e1.x; // page orphans the x writers
+    delete e2.x;
+    const { selection, motion } = grabMotion(target, messages);
+    const yTrack = motion.tracks.find((track) => track.property === 'y');
+    expect(yTrack.ownership.retargetable).toBe(false);
+    expect(yTrack.keyframeEditable).toBe(false);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'y', runtimeProperty: 'y', value: '10' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'y',
+              runtimeProperty: 'y',
+              value: '50',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:y`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+    expect(e2.y).toBe(10);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('attributes plugin keys individually — mixed entries keep orphan detection (Sol r38)', () => {
+    document.body.innerHTML = '<main><div id="kfmx2"></div></main>';
+    const target = document.getElementById('kfmx2');
+    // Mixed entry {x, y, attr:{...}}: exempting the WHOLE entry because of the
+    // plugin hides an orphaned x. Only the keys attributed to the plugin at
+    // freeze time (lookup keys unexplained by non-plugin declarations) are
+    // exempt; x orphaned later must still lock everything.
+    const e1 = { x: 50, y: 5, attr: { 'data-n': 1 }, duration: 1, parent: {} };
+    const e2 = { x: 100, y: 10, attr: { 'data-n': 2 }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {}, y: {}, 'data-n': { d: { name: 'attr' } } }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {}, y: {}, 'data-n': { d: { name: 'attr' } } }] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+    window.gsap.core = { globals: () => ({ AttrPlugin: { prop: 'attr' } }) };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const first = grabMotion(target, messages);
+    expect(first.motion.tracks.find((track) => track.property === 'y').ownership.retargetable).toBe(true);
+
+    delete e1.x; // page orphans x inside the MIXED entry
+    delete e2.x;
+    const { selection, motion } = grabMotion(target, messages);
+    const yTrack = motion.tracks.find((track) => track.property === 'y');
+    expect(yTrack.ownership.retargetable).toBe(false);
+    expect(yTrack.keyframeEditable).toBe(false);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'y', runtimeProperty: 'y', value: '10' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'y',
+              runtimeProperty: 'y',
+              value: '50',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:y`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+    expect(e2.y).toBe(10);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('detects an orphaned writer even BEFORE the first inspection — attribution is positive (Sol r39)', () => {
+    document.body.innerHTML = '<main><div id="kfpo"></div></main>';
+    const target = document.getElementById('kfpo');
+    // x was orphaned before we ever inspected: negative attribution would file
+    // it under the plugin. The PropTween carries its driver's name (probe
+    // _probe-r39.mjs: d.name 'css' / 'attr') — an unexplained css-driven key
+    // is an orphan at FIRST sight.
+    const e1 = { y: 5, attr: { 'data-n': 1 }, duration: 1, parent: {} };
+    const e2 = { y: 10, attr: { 'data-n': 2 }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const lookup = () => ({ x: { d: { name: 'css' } }, y: { d: { name: 'css' } }, 'data-n': { d: { name: 'attr' } } });
+    const child1 = { vars: e1, _initted: true, _ptLookup: [lookup()] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [lookup()] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+    window.gsap.core = { globals: () => ({ AttrPlugin: { prop: 'attr' } }) };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const yTrack = motion.tracks.find((track) => track.property === 'y');
+    expect(yTrack.ownership.retargetable).toBe(false);
+    expect(yTrack.keyframeEditable).toBe(false);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'y', runtimeProperty: 'y', value: '10' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'y',
+              runtimeProperty: 'y',
+              value: '50',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:y`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+    expect(e2.y).toBe(10);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks entries carrying runBackwards — their values are STARTS, not ends (Sol r40)', () => {
+    document.body.innerHTML = '<main><div id="kfrb2"></div></main>';
+    const target = document.getElementById('kfrb2');
+    // GSAP applies entry-level runBackwards to the child: the entry's value is
+    // the FROM, not the end — editing it as an end corrupts the path while
+    // reporting success. Any such entry locks the whole animation.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, runBackwards: true, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps stagger+keyframes tweens inventoried — facade copies carry no animated props (Claude final)', () => {
+    document.body.innerHTML = '<main><div id="kfsg1"></div><div id="kfsg2"></div></main>';
+    const t1 = document.getElementById('kfsg1');
+    const t2 = document.getElementById('kfsg2');
+    // gsap.to('.s', {keyframes:[...], stagger}) builds per-target FACADE
+    // copies whose vars carry the `keyframes` key itself and NO animated props
+    // (probe on real GSAP 3.15): reading ownership from those children yields
+    // zero tracks — the furo-#1 unowned lie — and the retarget guard lets the
+    // plain vars writer through. The authored ARRAY is the ownership truth.
+    const entries = [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }];
+    const vars = { keyframes: entries, stagger: 0.3, duration: 2 };
+    const tween = buildArrayKeyframesTween(t1, vars, { targets: [t1, t2] });
+    const copy1 = { keyframes: entries, stagger: 0.3, duration: 2, delay: 0, overwrite: 'auto', parent: {} };
+    const copy2 = { keyframes: entries, stagger: 0.3, duration: 2, delay: 0.3, overwrite: 'auto', parent: {} };
+    tween.timeline = { getChildren: () => [{ vars: copy1 }, { vars: copy2 }] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(t1, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy(); // inventoried — never invisible
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    // The retarget must refuse via the keyframes guard — never write vars.x.
+    sendRetarget(selection, motion, '300');
+    expect(vars.x).toBeUndefined();
+    expect(entries[1].x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('never mistakes a plain tween with an inner timeline for a keyframes tween (Sol r10)', () => {
+    document.body.innerHTML = '<main><div id="kfpl"></div><div id="kfob"></div></main>';
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+
+    // A PLAIN tween gets an inner timeline too when duration/delay is a
+    // function or string (probe _probe-plain-fnduration.mjs) — its children's
+    // vars are per-target COPIES carrying the animated prop + injected parent.
+    // Treating them as keyframes entries would lock a legitimate plain tween
+    // (generalized lock — product rule violation). Keyframes treatment needs
+    // POSITIVE provenance: vars.keyframes observed on this animation.
+    const plainTarget = document.getElementById('kfpl');
+    const plainVars = { x: 100, duration: 2 };
+    const plainTween = buildArrayKeyframesTween(plainTarget, plainVars);
+    plainTween.timeline = {
+      getChildren: () => [{ vars: { x: 100, overwrite: 'auto', ease: 'none', stagger: 0, duration: 2, delay: 0, parent: {} } }],
+    };
+
+    window.eval(getRuntimeBridgeSource());
+
+    const plain = grabMotion(plainTarget, messages);
+    const plainTrack = plain.motion.tracks.find((track) => track.property === 'x');
+    expect(plainTrack.ownership.retargetable).toBe(true);
+    expect(plainTrack.keyframeEditable).toBe(true);
+    expect(plainTrack.keyframeEditReason).toBeUndefined();
+    sendRetarget(plain.selection, plain.motion, '300');
+    expect(plainVars.x).toBe(300); // the plain vars writer stays the write path
+
+    // Opposite direction: an OBJECT-form tween seen before the page deletes
+    // vars.keyframes keeps its provenance — detection stays (fail-closed),
+    // the write plan stays denied (no proven ARRAY origin).
+    const objTarget = document.getElementById('kfob');
+    const objEntry = { x: 60, duration: 2, parent: {} };
+    const objVars = { keyframes: { x: [0, 60] }, duration: 2 };
+    const objTween = buildArrayKeyframesTween(objTarget, objVars);
+    objTween.timeline = { getChildren: () => [{ vars: objEntry }] };
+    const objBefore = grabMotion(objTarget, messages); // provenance observed: 'other'
+    expect(objBefore.motion.tracks.find((track) => track.property === 'x').ownership.retargetable).toBe(false);
+    delete objVars.keyframes; // external page mutation
+    const objAfter = grabMotion(objTarget, messages);
+    const objTrack = objAfter.motion.tracks.find((track) => track.property === 'x');
+    expect(objTrack).toBeTruthy(); // still inventoried — invisible-writer lie stays dead
+    expect(objTrack.ownership.retargetable).toBe(false);
+    sendRetarget(objAfter.selection, objAfter.motion, '160');
+    expect(objEntry.x).toBe(60);
+    expect(objVars.x).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps every unproven keyframes shape locked: property-array, stops, relative entries, looping retarget', () => {
+    document.body.innerHTML = '<main><div id="kf1"></div><div id="kf2"></div><div id="kf3"></div><div id="kf4"></div></main>';
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+
+    const classify = (target, vars, options) => {
+      const tween = buildArrayKeyframesTween(target, vars, options);
+      const { selection, motion } = grabMotion(target, messages);
+      return { tween, selection, motion, track: motion.tracks.find((track) => track.property === 'x') };
+    };
+
+    window.postMessage = (message) => messages.push(message);
+
+    // property-array form {x:[...]}: no proven entry path -> locked on both channels.
+    const propArrayVars = { keyframes: { x: [0, 60] }, duration: 2 };
+    // stops form {"50%":{...}}: locked on both channels.
+    const stopsVars = { keyframes: { '50%': { x: 30 }, '100%': { x: 60 } }, duration: 2 };
+    // relative-valued entries: replacing '+=' semantics with an absolute is unproven -> locked.
+    const relativeVars = { keyframes: [{ x: '+=50', duration: 1, parent: {} }, { x: '+=100', duration: 1, parent: {} }], duration: 2 };
+    // looping array form: the additive-base loop write has no entry path -> NOT
+    // retargetable, but the END step edit is probe-proven (D) -> stays editable.
+    const loopingVars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+
+    window.eval(getRuntimeBridgeSource());
+
+    const propArray = classify(document.getElementById('kf1'), propArrayVars);
+    expect(propArray.track.ownership.retargetable).toBe(false);
+    expect(propArray.track.keyframeEditable).toBe(false);
+    expect(propArray.track.keyframeEditReason).toBe('keyframes');
+    sendRetarget(propArray.selection, propArray.motion, '160');
+    expect(propArrayVars.keyframes.x).toEqual([0, 60]);
+
+    const stops = classify(document.getElementById('kf2'), stopsVars);
+    expect(stops.track.ownership.retargetable).toBe(false);
+    expect(stops.track.keyframeEditable).toBe(false);
+    sendRetarget(stops.selection, stops.motion, '160');
+    expect(stopsVars.keyframes['100%']).toEqual({ x: 60 });
+
+    const relative = classify(document.getElementById('kf3'), relativeVars);
+    expect(relative.track.ownership.retargetable).toBe(false);
+    expect(relative.track.keyframeEditable).toBe(false);
+    sendRetarget(relative.selection, relative.motion, '160');
+    expect(relativeVars.keyframes.map((entry) => entry.x)).toEqual(['+=50', '+=100']);
+
+    const looping = classify(document.getElementById('kf4'), loopingVars, { repeat: -1 });
+    expect(looping.track.ownership.retargetable).toBe(false);
+    expect(looping.track.keyframeEditable).toBe(true);
 
     delete window.gsap;
     window.postMessage = originalPostMessage;
@@ -1033,7 +3230,7 @@ describe('native motion runtime bridge', () => {
     // A keyframes-driven tween surfaces tracks too (furo #1) — none are step-editable.
     const kfDrivenTween = {
       targets: () => [kfDrivenTarget],
-      vars: { keyframes: [{ y: 0, duration: 1 }, { y: 60, duration: 1 }] },
+      vars: { keyframes: [{ y: 0, duration: 1, parent: {} }, { y: 60, duration: 1, parent: {} }] },
       duration: () => 2,
       delay: () => 0,
       repeat: () => 0,
@@ -1134,9 +3331,11 @@ describe('native motion runtime bridge', () => {
     kfDrivenTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     selection = messages.filter((message) => message.type === 'selection-changed').pop();
     const kfMotion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
-    expect(kfMotion.tracks.find((track) => track.property === 'y').keyframeEditable).toBe(false);
-    expect(kfMotion.tracks.find((track) => track.property === 'y').keyframeEditReason).toBe('keyframes');
-    expect(kfMotion.capabilities.keyframes).toBe(false);
+    // The pure ARRAY form now has a safe step path (entry-edit + startAt,
+    // probe 2026-07-29) — editable, and it enables the derived clip capability.
+    expect(kfMotion.tracks.find((track) => track.property === 'y').keyframeEditable).toBe(true);
+    expect(kfMotion.tracks.find((track) => track.property === 'y').keyframeEditReason).toBeUndefined();
+    expect(kfMotion.capabilities.keyframes).toBe(true);
 
     staggerTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     selection = messages.filter((message) => message.type === 'selection-changed').pop();
@@ -1471,7 +3670,7 @@ describe('native motion runtime bridge', () => {
     // GSAP honors a css wrapper INSIDE keyframes entries (probe-verified: the tween
     // animates x) — extraction must recurse or the writer goes invisible again.
     const kfCssTween = makeTween(kfCssTarget, {
-      keyframes: [{ css: { x: 0 }, duration: 1 }, { css: { x: 100 }, duration: 1 }],
+      keyframes: [{ css: { x: 0 }, duration: 1, parent: {} }, { css: { x: 100 }, duration: 1, parent: {} }],
     });
     // A looping css:{} value writes through applyGsapLoopBase (top-level vars +
     // startAt) which the wrapper ignores — must stay non-retargetable.
@@ -1490,7 +3689,9 @@ describe('native motion runtime bridge', () => {
     let selection = messages.filter((message) => message.type === 'selection-changed').pop();
     let motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
     expect(motion.tracks.map((track) => track.property)).toEqual(['x']);
-    expect(motion.tracks[0].ownership.retargetable).toBe(false);
+    // Entry-level css wrappers are the write bucket of the array-form entry
+    // plan (probe E, 2026-07-29) — this shape retargets safely now.
+    expect(motion.tracks[0].ownership.retargetable).toBe(true);
 
     loopTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     selection = messages.filter((message) => message.type === 'selection-changed').pop();
