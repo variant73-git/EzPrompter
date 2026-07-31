@@ -1368,6 +1368,44 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('locks the plan when a carrier is INHERITED from the entry prototype — write would shadow, undo would lie (Sol r11)', () => {
+    document.body.innerHTML = '<main><div id="ksi"></div></main>';
+    const target = document.getElementById('ksi');
+    // Entry com x HERDADO (protótipo): o GSAP processa enumeráveis herdadas
+    // (for..in mirror), mas escrever cria propriedade PRÓPRIA (sombra) que o
+    // undo não remove — mudança posterior no protótipo ficaria mascarada; e o
+    // hazard-scan (hasOwnProperty) veria assinatura 'none' vs 'top' congelada.
+    // Fail closed: sem steps, sem writes, nada de sombra criada.
+    const proto = { x: 200 };
+    const inherited = Object.assign(Object.create(proto), { duration: 1, parent: {} });
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        inherited,
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.steps).toBeUndefined();
+    sendStep(selection, motion, 'x', 1, '500');
+    expect(Object.prototype.hasOwnProperty.call(inherited, 'x')).toBe(false);
+    expect(proto.x).toBe(200);
+    expect(vars.keyframes[0].x).toBe(100);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

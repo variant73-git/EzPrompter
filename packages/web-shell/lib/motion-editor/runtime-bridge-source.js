@@ -1806,6 +1806,22 @@ function nativeMotionRuntimeBridge() {
         nestedCarrier = true;
         return;
       }
+      // A carrier must hold the property as an OWN writable data property
+      // (Sol r11): GSAP renders inherited enumerables (for..in mirror), but
+      // writing would SHADOW the prototype — the undo cannot un-shadow, so a
+      // later prototype change would stay masked (non-verbatim rollback) —
+      // and the hazard scan's own-property signature would read 'none' vs the
+      // frozen 'top', refusing the write the UI just promised. An accessor
+      // or non-writable slot has the same no-safe-write shape. Fail closed:
+      // the whole property's plan locks; the inventory stays read-only.
+      {
+        const bucketObject = carriesInCss ? entry.css : entry;
+        const slot = Object.getOwnPropertyDescriptor(bucketObject, property);
+        if (!slot || !('value' in slot) || slot.writable === false) {
+          nestedCarrier = true;
+          return;
+        }
+      }
       buckets.push(carriesInCss ? entry.css : entry);
       // The occurrence index is carried FROM the traversal (Sol r7): indexOf
       // would collapse aliased occurrences to the first. Aliased CARRIERS are
