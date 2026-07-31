@@ -1634,20 +1634,34 @@ export function TimelinePanel({
             back to even spacing by order. */}
         {(() => {
           const renderedSteps = (track.steps || []).filter((step) => !step.isEnd);
-          const seenOffsets = new Map();
+          // GLOBAL slot allocation (Sol r8/r9): stacked absolute buttons make
+          // the covered address unclickable, and a local per-duplicate nudge
+          // just re-collides with the NEXT occupied position ([0.50,0.50,0.52])
+          // or with the START/END diamonds (a non-terminal step at 1). Every
+          // diamond claims a slot on a 2% grid; each step takes the nearest
+          // free slot (right first, then left). The REAL offset still drives
+          // seek and selection.
+          const occupiedSlots = new Set((track.keyframes || [])
+            .map((keyframe) => (Number.isFinite(Number(keyframe.offset)) ? Number(keyframe.offset) : 0).toFixed(2)));
+          const claimSlot = (desired) => {
+            for (let distance = 0; distance <= 50; distance += 1) {
+              const rightSlot = Math.min(1, desired + distance * 0.02);
+              if (!occupiedSlots.has(rightSlot.toFixed(2))) {
+                occupiedSlots.add(rightSlot.toFixed(2));
+                return rightSlot;
+              }
+              const leftSlot = Math.max(0, desired - distance * 0.02);
+              if (!occupiedSlots.has(leftSlot.toFixed(2))) {
+                occupiedSlots.add(leftSlot.toFixed(2));
+                return leftSlot;
+              }
+            }
+            return desired;
+          };
           return renderedSteps.map((step, index, list) => {
             const fallback = (index + 1) / (list.length + 1);
             const realOffset = step.offset == null ? fallback : Number(step.offset);
-            // DUPLICATE numeric offsets (zero-duration entries) would stack
-            // the absolute buttons — the later covering the earlier, which
-            // becomes unclickable (Sol r8). Each duplicate gets a fixed
-            // visual nudge (flipped left near the track end); the REAL
-            // offset still drives seek and selection.
-            const offsetKey = realOffset.toFixed(4);
-            const duplicateIndex = seenOffsets.get(offsetKey) || 0;
-            seenOffsets.set(offsetKey, duplicateIndex + 1);
-            let displayOffset = realOffset + duplicateIndex * 0.02;
-            if (displayOffset > 1) displayOffset = Math.max(0, realOffset - duplicateIndex * 0.02);
+            const displayOffset = claimSlot(realOffset);
             const left = keyframeLeft(displayOffset);
             const isSelected = selectedKeyframe?.motionId === motion.id
               && selectedKeyframe.property === track.property

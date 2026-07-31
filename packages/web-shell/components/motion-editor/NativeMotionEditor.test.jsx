@@ -786,6 +786,63 @@ describe('adapter (GSAP) keyframes on the timeline', () => {
     expect(screen.getByLabelText('x step value').value).toBe('200');
   });
 
+  it('resolves step positions GLOBALLY — cascades of near-duplicates never overlap (Sol r9)', () => {
+    // [0.50, 0.50, 0.52]: um nudge local empurraria o 2º pra cima do 3º.
+    const cascadeMotion = {
+      ...adapterMotion,
+      id: 'gsap-cascade',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: null },
+          { offset: 1, value: '400', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: 0.5, value: '100', editable: true },
+          { entryIndex: 1, offset: 0.5, value: '200', editable: true },
+          { entryIndex: 2, offset: 0.52, value: '300', editable: true },
+          { entryIndex: 3, offset: 1, value: '400', editable: false, reason: 'final', isEnd: true },
+        ],
+      }],
+    };
+    render(<TimelineHarness motion={cascadeMotion} onChangeStepValue={vi.fn()} />);
+    const lefts = [1, 2, 3].map((n) => screen.getByRole('button', { name: `x step ${n}` }).style.left);
+    expect(new Set(lefts).size).toBe(3);
+    // Cada índice seleciona o próprio valor.
+    fireEvent.click(screen.getByRole('button', { name: 'x step 2' }));
+    expect(screen.getByLabelText('x step value').value).toBe('200');
+    fireEvent.click(screen.getByRole('button', { name: 'x step 3' }));
+    expect(screen.getByLabelText('x step value').value).toBe('300');
+  });
+
+  it('a non-terminal step at offset 1 never sits on the END diamond (Sol r9)', () => {
+    // zero-dur no FIM: um step editável (não-run) cai exatamente em 1.0 — sem
+    // resolução global ele empilha com o diamante END da track.
+    const tailMotion = {
+      ...adapterMotion,
+      id: 'gsap-tail',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: null },
+          { offset: 1, value: '200', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: 1, value: '100', editable: true },
+          { entryIndex: 1, offset: 1, value: '200', editable: false, reason: 'final', isEnd: true },
+        ],
+      }],
+    };
+    render(<TimelineHarness motion={tailMotion} onChangeStepValue={vi.fn()} />);
+    const step = screen.getByRole('button', { name: 'x step 1' });
+    const endDiamond = screen.getByRole('button', { name: 'x keyframe at 100 percent' });
+    expect(step.style.left).not.toBe(endDiamond.style.left);
+    fireEvent.click(step);
+    expect(screen.getByLabelText('x step value').value).toBe('100');
+  });
+
   it('single-animation rows carry no chevron; selecting them still reveals their tracks', () => {
     const soloRows = [{ elementId: 'el-solo', label: 'Solo', kind: 'text', top: 0, count: 1, engines: ['WAAPI'], driver: 'time', delayMs: 0, durationMs: 1000, marks: [] }];
     const { container, rerender } = render(
