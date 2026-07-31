@@ -1808,6 +1808,54 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a NON-carrier reorder after the freeze stales the binding — the edit lands on the SHOWN entry (Sol r20)', () => {
+    document.body.innerHTML = '<main><div id="ksu"></div></main>';
+    const target = document.getElementById('ksu');
+    // [x100, opacity, x200, x300, x400]: edit idx2 (200→500) congela o
+    // binding; a página move a entry de opacity pro fim (carriers idênticos —
+    // a staleness por buckets não via). Re-inspeção mostra idx2 = x300; editar
+    // esse step pra '200' colidia com o journal ANTIGO (original 200 do idx2
+    // congelado) → restore lane restaurava a entry ERRADA (x500→200) com
+    // histórico falso. allEntries integral na staleness: reorder → stale →
+    // prune → o write novo edita a entry EXPOSTA.
+    const e0 = { x: 100, duration: 1, parent: {} };
+    const eOp = { opacity: 0.5, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const e3 = { x: 300, duration: 1, parent: {} };
+    const e4 = { x: 400, duration: 1, parent: {} };
+    const vars = { keyframes: [e0, eOp, e2, e3, e4], duration: 5 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const childFor = (entry, start) => ({ vars: entry, startTime: () => start, duration: () => 1, _initted: true });
+    let children = [childFor(e0, 0), childFor(eOp, 1), childFor(e2, 1), childFor(e3, 2), childFor(e4, 3)];
+    tween.timeline = { duration: () => 5, getChildren: () => children };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 2, '500');
+    expect(e2.x).toBe(500);
+
+    // Página move a non-carrier pro fim (ordem viva muda; carriers idênticos).
+    children = [childFor(e0, 0), childFor(e2, 1), childFor(e3, 2), childFor(e4, 3), childFor(eOp, 4)];
+    tween.timeline.getChildren = () => children;
+
+    const regrab = grabMotion(target, messages);
+    const xTrack = regrab.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.steps.map((step) => [step.entryIndex, step.value])).toEqual([
+      [0, '100'], [1, '500'], [2, '300'], [3, '400'],
+    ]);
+
+    sendStep(regrab.selection, regrab.motion, 'x', 2, '200');
+    expect(e3.x).toBe(200); // a entry MOSTRADA
+    expect(e2.x).toBe(500); // o edit antigo fica
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

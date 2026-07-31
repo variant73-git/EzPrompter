@@ -3614,6 +3614,13 @@ function nativeMotionRuntimeBridge() {
     const intact = plan
       && plan.buckets.length === binding.allBuckets.length
       && plan.buckets.every((bucket, index) => binding.allBuckets[index] === bucket)
+      // The WHOLE live entry ORDER is frozen too (Sol r20): reordering a
+      // NON-carrier shifts every raw index while the carrying buckets stay
+      // identical — a frozen binding would resolve a re-inspected index
+      // against the OLD order and restore the wrong entry (masked as a
+      // restore when the value collides with the old journal original).
+      && (!binding.allEntries || (plan.allEntries.length === binding.allEntries.length
+        && plan.allEntries.every((entry, index) => binding.allEntries[index] === entry)))
       && binding.allBuckets.every((bucket, index) => bucket[property] === binding.allExpected[index]);
     return intact ? { binding, stale: false } : { binding: null, stale: true };
   }
