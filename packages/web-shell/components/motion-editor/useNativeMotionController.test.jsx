@@ -780,9 +780,9 @@ describe('useNativeMotionController', () => {
         keyframeEditable: true,
         keyframes: [{ offset: 0, value: '0' }, { offset: 1, value: '300' }],
         steps: [
-          { entryIndex: 0, offset: 1 / 3, value: '100', editable: true },
-          { entryIndex: 1, offset: 2 / 3, value: '200', editable: true },
-          { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final' },
+          { entryIndex: 0, offset: 1 / 3, value: '100', editable: true, token: 7 },
+          { entryIndex: 1, offset: 2 / 3, value: '200', editable: true, token: 7 },
+          { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final', token: 7 },
         ],
         ownership: {
           channelId: 'stepped:x',
@@ -827,8 +827,8 @@ describe('useNativeMotionController', () => {
       kind: 'motion',
       motionId: 'stepped',
       property: 'keyframeStep.x',
-      before: { entryIndex: 1, value: '200', exists: true },
-      value: { entryIndex: 1, value: '500', exists: true },
+      before: { entryIndex: 1, token: 7, value: '200', exists: true },
+      value: { entryIndex: 1, token: 7, value: '500', exists: true },
     });
   });
 

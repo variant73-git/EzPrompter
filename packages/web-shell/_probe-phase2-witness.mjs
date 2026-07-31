@@ -43,18 +43,24 @@ const captured = await page.evaluate((src) => {
     const tween = tweenOf(domId);
     return steps.map((p) => { tween.progress(p, true); return gsap.getProperty(document.getElementById(domId), 'x'); });
   };
-  const sendStep = (grabbed, motionId, property, entryIndex, value) => window.dispatchEvent(new MessageEvent('message', {
-    source: window,
-    data: {
-      protocol: 'uncraft-motion-editor/v1', source: 'host', type: 'apply-patch',
-      payload: { patch: {
-        elementId: grabbed.uncraftId, kind: 'motion', motionId,
-        property: `keyframeStep.${property}`,
-        before: { entryIndex, value: '', exists: true },
-        value: { entryIndex, value, exists: true },
-      } },
-    },
-  }));
+  const sendStep = (grabbed, motionId, property, entryIndex, value) => {
+    // Como a UI real: o token vem da exposição corrente (steps[]) do motion.
+    const motionClip = (grabbed.motion || []).find((clip) => clip.id === motionId);
+    const track = motionClip?.tracks?.find((candidate) => candidate.property === property);
+    const token = track?.steps?.find((step) => step.entryIndex === entryIndex)?.token;
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: 'uncraft-motion-editor/v1', source: 'host', type: 'apply-patch',
+        payload: { patch: {
+          elementId: grabbed.uncraftId, kind: 'motion', motionId,
+          property: `keyframeStep.${property}`,
+          before: { entryIndex, token, value: '', exists: true },
+          value: { entryIndex, token, value, exists: true },
+        } },
+      },
+    }));
+  };
   const sendRetarget = (grabbed, motion, before, value) => window.dispatchEvent(new MessageEvent('message', {
     source: window,
     data: {

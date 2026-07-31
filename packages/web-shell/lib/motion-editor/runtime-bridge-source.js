@@ -2141,8 +2141,24 @@ function nativeMotionRuntimeBridge() {
             // Phase-2 addressable steps: entryIndex is the canonical address
             // (raw position in the live entry order); offset positions the
             // diamond only and may be null/duplicated (zero-duration cases).
-            ...(entryPlan && Array.isArray(entryPlan.steps) ? {
-              steps: entryPlan.steps.map((step, stepIndex, list) => {
+            ...(entryPlan && Array.isArray(entryPlan.steps) ? (() => {
+              // Mint the exposure token for this inspection (Sol r19): the
+              // first write must prove it edits the ENTRY the UI showed.
+              let exposures = gsapStepExposures.get(animation);
+              if (!exposures) {
+                exposures = new Map();
+                gsapStepExposures.set(animation, exposures);
+              }
+              // The token names a TRUTH, not an inspection run: re-inspecting
+              // the same entry set keeps the token (the apply path itself
+              // re-inspects — a per-run token would refuse every first write).
+              const nextEntries = new Map(entryPlan.steps.map((step) => [step.rawEntryIndex, step.entry]));
+              const previous = exposures.get(track.property);
+              const sameTruth = previous && previous.entries.size === nextEntries.size
+                && Array.from(nextEntries).every(([rawIndex, entry]) => previous.entries.get(rawIndex) === entry);
+              const exposureToken = sameTruth ? previous.token : (gsapStepExposureCounter += 1);
+              exposures.set(track.property, { token: exposureToken, entries: nextEntries });
+              return { steps: entryPlan.steps.map((step, stepIndex, list) => {
                 // Frozen-run members belong to the END writer (journal
                 // separation) — their diamond points at the end edit. The
                 // OWNERSHIP truth is the FROZEN binding's run once one exists
@@ -2167,9 +2183,10 @@ function nativeMotionRuntimeBridge() {
                   // flag — never by numeric offset, which is null/duplicated
                   // in zero-duration shapes (Sol r4).
                   ...(stepIndex === list.length - 1 ? { isEnd: true } : {}),
+                  token: exposureToken,
                 };
-              }),
-            } : {}),
+              }) };
+            })() : {}),
             ownership: writerOwnership({
               clipId: id,
               animation,
@@ -3449,6 +3466,14 @@ function nativeMotionRuntimeBridge() {
   // new value, making undo inexact (probe I: [100,200] -> end 100 -> undo must
   // give [100,200], never [200,200]).
   const gsapKeyframeEntryRetargets = new WeakMap();
+  // Exposure registry for the step channel (Sol r19): each inspection mints a
+  // token and records the ENTRY identities the UI was shown, by raw index.
+  // The FIRST write must present the current token and its entry must still
+  // occupy the claimed index — a pre-first-write reorder with equal values is
+  // otherwise undetectable (the freeze would happen at write time and the
+  // identity check would compare the fresh plan with itself).
+  const gsapStepExposures = new WeakMap(); // animation -> Map(property -> { token, entries: Map(rawIndex -> entry) })
+  let gsapStepExposureCounter = 0;
   // Original start values (sampled at progress 0 before the FIRST offset-0
   // edit), per (animation, property) — the render-equivalent rollback target
   // for startAt edits (Sol r18).
@@ -3607,13 +3632,34 @@ function nativeMotionRuntimeBridge() {
   // journal (verbatim value per rawEntryIndex, frozen at first touch). Returns
   // null when no plan exists (callers word their own refusal); throws on a
   // stale binding — never silently replaces it (Sol r5).
-  function ensureFrozenEntryBinding(record, property) {
+  function createFrozenEntryBinding(record, property, plan) {
     const animation = record.animation;
     let bindings = gsapKeyframeEntryRetargets.get(animation);
     if (!bindings) {
       bindings = new Map();
       gsapKeyframeEntryRetargets.set(animation, bindings);
     }
+    const binding = {
+      buckets: plan.run,
+      originals: plan.run.map((bucket) => bucket[property]),
+      allBuckets: plan.buckets,
+      allExpected: plan.buckets.map((bucket) => bucket[property]),
+      carriers: plan.carriers,
+      allEntries: plan.allEntries,
+      allEntryStates: plan.allEntries.map((frozenEntry) => ({
+        entry: frozenEntry,
+        namespace: gsapEntryPropertyNamespace(frozenEntry, property),
+        child: gsapEntryChildTweens.get(frozenEntry) || null,
+      })),
+      end: numericCss(sampleGsapValue(record, property, 1)),
+      stepOriginals: new Map(),
+    };
+    bindings.set(property, binding);
+    return binding;
+  }
+
+  function ensureFrozenEntryBinding(record, property) {
+    const animation = record.animation;
     const state = entryBindingState(animation, property);
     if (state.stale) {
       throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
@@ -3622,22 +3668,7 @@ function nativeMotionRuntimeBridge() {
     if (!binding) {
       const plan = gsapArrayKeyframePlan(animation, property);
       if (!plan) return null;
-      binding = {
-        buckets: plan.run,
-        originals: plan.run.map((bucket) => bucket[property]),
-        allBuckets: plan.buckets,
-        allExpected: plan.buckets.map((bucket) => bucket[property]),
-        carriers: plan.carriers,
-        allEntries: plan.allEntries,
-        allEntryStates: plan.allEntries.map((frozenEntry) => ({
-          entry: frozenEntry,
-          namespace: gsapEntryPropertyNamespace(frozenEntry, property),
-          child: gsapEntryChildTweens.get(frozenEntry) || null,
-        })),
-        end: numericCss(sampleGsapValue(record, property, 1)),
-        stepOriginals: new Map(),
-      };
-      bindings.set(property, binding);
+      binding = createFrozenEntryBinding(record, property, plan);
     }
     if (!binding.stepOriginals) binding.stepOriginals = new Map();
     return binding;
@@ -3791,10 +3822,34 @@ function nativeMotionRuntimeBridge() {
     if (gsapPluginOwnedVar(vars, property)) {
       throw bridgeError('unsupported_patch', 'This value is driven by a GSAP plugin — its steps cannot be edited safely yet.');
     }
-    const binding = ensureFrozenEntryBinding(record, property);
-    if (!binding) {
-      throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be edited safely yet.');
+    const bindingState = entryBindingState(animation, property);
+    if (bindingState.stale) {
+      throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
     }
+    let binding = bindingState.binding;
+    if (!binding) {
+      // FIRST WRITE (Sol r19): the exposure token pins the ENTRY the UI
+      // showed. Without it, a pre-first-write reorder with equal values is
+      // undetectable — the freeze would happen right here and the identity
+      // check would compare the fresh plan with itself, editing/journaling
+      // the wrong entry. Stale token or a moved entry refuses; re-inspection
+      // re-exposes the current truth.
+      const exposure = gsapStepExposures.get(animation)?.get(property);
+      const exposureToken = Number(descriptor?.token);
+      if (!exposure || !Number.isFinite(exposureToken) || exposureToken !== exposure.token) {
+        throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
+      }
+      const promisedEntry = exposure.entries.get(entryIndex);
+      const firstPlan = gsapArrayKeyframePlan(animation, property);
+      if (!firstPlan) {
+        throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be edited safely yet.');
+      }
+      if (!promisedEntry || firstPlan.allEntries[entryIndex] !== promisedEntry) {
+        throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
+      }
+      binding = createFrozenEntryBinding(record, property, firstPlan);
+    }
+    if (!binding.stepOriginals) binding.stepOriginals = new Map();
     // Address against the FROZEN binding (identity — Sol F2): the raw index
     // names a position in the entry order frozen at first write.
     const frozenEntry = binding.allEntries ? binding.allEntries[entryIndex] : null;
@@ -5028,8 +5083,11 @@ function nativeMotionRuntimeBridge() {
       const trackProperty = property.slice('keyframeStep.'.length);
       const descriptor = patch.value && typeof patch.value === 'object' ? patch.value : patch.before;
       const entryIndex = Number(descriptor?.entryIndex);
+      // The exposure token is descriptor METADATA — echoed back so the
+      // validate flow's requested-vs-reread comparison never mismatches on it.
+      const echo = Number.isFinite(Number(descriptor?.token)) ? { token: Number(descriptor.token) } : {};
       if (record.type === 'browser' || !Number.isInteger(entryIndex) || entryIndex < 0) {
-        return { entryIndex, exists: false };
+        return { entryIndex, ...echo, exists: false };
       }
       // Canonicalize by the FROZEN binding when one exists: buckets are held
       // by identity and stay readable through an outage — the transactional
@@ -5040,16 +5098,16 @@ function nativeMotionRuntimeBridge() {
         const carrier = frozenEntry
           ? (bindingRead.binding.carriers || []).find((candidate) => candidate.entry === frozenEntry)
           : null;
-        if (!carrier) return { entryIndex, exists: false };
-        return { entryIndex, value: String(carrier.bucket[trackProperty]), exists: true };
+        if (!carrier) return { entryIndex, ...echo, exists: false };
+        return { entryIndex, ...echo, value: String(carrier.bucket[trackProperty]), exists: true };
       }
       const plan = gsapArrayKeyframePlan(animation, trackProperty);
       if (plan) {
         const step = plan.steps.find((candidate) => candidate.rawEntryIndex === entryIndex);
-        if (!step) return { entryIndex, exists: false };
-        return { entryIndex, value: String(step.bucket[trackProperty]), exists: true };
+        if (!step) return { entryIndex, ...echo, exists: false };
+        return { entryIndex, ...echo, value: String(step.bucket[trackProperty]), exists: true };
       }
-      return { entryIndex, exists: false };
+      return { entryIndex, ...echo, exists: false };
     }
     if (property.startsWith('keyframe.')) {
       const trackProperty = property.slice('keyframe.'.length);

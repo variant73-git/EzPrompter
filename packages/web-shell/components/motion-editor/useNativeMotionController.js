@@ -1853,8 +1853,8 @@ export function useNativeMotionController({
       kind: 'motion',
       motionId: activeMotion.id,
       property: `keyframeStep.${track.property}`,
-      before: { entryIndex: step.entryIndex, value: String(step.value), exists: true },
-      value: { entryIndex: step.entryIndex, value: String(value), exists: true },
+      before: { entryIndex: step.entryIndex, token: step.token, value: String(step.value), exists: true },
+      value: { entryIndex: step.entryIndex, token: step.token, value: String(value), exists: true },
     }));
   }
 

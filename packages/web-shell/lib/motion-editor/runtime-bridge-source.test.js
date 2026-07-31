@@ -911,12 +911,12 @@ describe('native motion runtime bridge', () => {
     const { motion } = grabMotion(target, messages);
     const xTrack = motion.tracks.find((track) => track.property === 'x');
     expect(xTrack.steps).toEqual([
-      { entryIndex: 0, offset: null, value: '100', editable: true },
-      { entryIndex: 2, offset: null, value: '300', editable: false, reason: 'final', isEnd: true },
+      { entryIndex: 0, offset: null, value: '100', editable: true, token: expect.any(Number) },
+      { entryIndex: 2, offset: null, value: '300', editable: false, reason: 'final', isEnd: true, token: expect.any(Number) },
     ]);
     const opacityTrack = motion.tracks.find((track) => track.property === 'opacity');
     // Carrier único = o próprio run: sem step intermediário, edita pelo end.
-    expect(opacityTrack.steps).toEqual([{ entryIndex: 1, offset: null, value: '0.5', editable: false, reason: 'final', isEnd: true }]);
+    expect(opacityTrack.steps).toEqual([{ entryIndex: 1, offset: null, value: '0.5', editable: false, reason: 'final', isEnd: true, token: expect.any(Number) }]);
 
     delete window.gsap;
     window.postMessage = originalPostMessage;
@@ -957,9 +957,9 @@ describe('native motion runtime bridge', () => {
     const { motion } = grabMotion(target, messages);
     const xTrack = motion.tracks.find((track) => track.property === 'x');
     expect(xTrack.steps).toEqual([
-      { entryIndex: 0, offset: 0.5, value: '100', editable: true },
-      { entryIndex: 1, offset: 0.5, value: '200', editable: true },
-      { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final', isEnd: true },
+      { entryIndex: 0, offset: 0.5, value: '100', editable: true, token: expect.any(Number) },
+      { entryIndex: 1, offset: 0.5, value: '200', editable: true, token: expect.any(Number) },
+      { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final', isEnd: true, token: expect.any(Number) },
     ]);
 
     delete window.gsap;
@@ -991,32 +991,81 @@ describe('native motion runtime bridge', () => {
     const { motion } = grabMotion(target, messages);
     const xTrack = motion.tracks.find((track) => track.property === 'x');
     expect(xTrack.steps).toEqual([
-      { entryIndex: 0, offset: null, value: '100', editable: true },
-      { entryIndex: 1, offset: null, value: '200', editable: false, reason: 'final', isEnd: true },
+      { entryIndex: 0, offset: null, value: '100', editable: true, token: expect.any(Number) },
+      { entryIndex: 1, offset: null, value: '200', editable: false, reason: 'final', isEnd: true, token: expect.any(Number) },
     ]);
 
     delete window.gsap;
     window.postMessage = originalPostMessage;
   });
 
-  const sendStep = (selection, motion, property, entryIndex, value) => window.dispatchEvent(new MessageEvent('message', {
-    source: window,
-    data: {
-      protocol: MOTION_EDITOR_PROTOCOL,
-      source: 'host',
-      type: 'apply-patch',
-      payload: {
-        patch: {
-          elementId: selection.payload.element.id,
-          kind: 'motion',
-          motionId: motion.id,
-          property: `keyframeStep.${property}`,
-          before: { entryIndex, value: '', exists: true },
-          value: { entryIndex, value, exists: true },
+  const sendStep = (selection, motion, property, entryIndex, value) => {
+    // Como a UI real: o token vem da exposição (steps[]) da inspeção corrente.
+    const track = motion.tracks.find((candidate) => candidate.property === property);
+    const token = track?.steps?.find((step) => step.entryIndex === entryIndex)?.token;
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: `keyframeStep.${property}`,
+            before: { entryIndex, token, value: '', exists: true },
+            value: { entryIndex, token, value, exists: true },
+          },
         },
       },
-    },
-  }));
+    }));
+  };
+
+  it('a pre-first-write REORDER with equal values refuses — the exposure token pins the entry the UI showed (Sol r19)', () => {
+    document.body.innerHTML = '<main><div id="ksw2"></div></main>';
+    const target = document.getElementById('ksw2');
+    // A (idx1, dur 1) e B (idx2, dur 2) com o MESMO x=200: a página troca as
+    // duas ANTES do primeiro write. Sem token, o freeze aconteceria no write e
+    // a identidade passaria trivialmente (plano comparado com ele mesmo) —
+    // editando/journalando a entry errada sem detecção possível por valor.
+    const entryA = { x: 200, duration: 1, parent: {} };
+    const entryB = { x: 200, duration: 2, parent: {} };
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        entryA,
+        entryB,
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 5,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // Página troca A/B antes do 1º write.
+    vars.keyframes[1] = entryB;
+    vars.keyframes[2] = entryA;
+    sendStep(selection, motion, 'x', 1, '500');
+    expect(entryA.x).toBe(200);
+    expect(entryB.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // Re-inspeção re-expõe a verdade atual — o edit volta a funcionar.
+    const regrab = grabMotion(target, messages);
+    sendStep(regrab.selection, regrab.motion, 'x', 1, '500');
+    expect(entryB.x).toBe(500);
+    expect(entryA.x).toBe(200);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
 
   it('edits an INTERMEDIATE keyframe entry by raw index and restores it verbatim on rollback', () => {
     document.body.innerHTML = '<main><div id="kse"></div></main>';
@@ -1852,6 +1901,8 @@ describe('native motion runtime bridge', () => {
     window.eval(getRuntimeBridgeSource());
 
     const { selection, motion } = grabMotion(target, messages);
+    const stepToken = motion.tracks.find((track) => track.property === 'x').steps
+      .find((step) => step.entryIndex === 1).token;
     window.dispatchEvent(new MessageEvent('message', {
       source: window,
       data: {
@@ -1867,8 +1918,8 @@ describe('native motion runtime bridge', () => {
               kind: 'motion',
               motionId: motion.id,
               property: 'keyframeStep.x',
-              before: { entryIndex: 1, value: '200', exists: true },
-              value: { entryIndex: 1, value: '160', exists: true },
+              before: { entryIndex: 1, token: stepToken, value: '200', exists: true },
+              value: { entryIndex: 1, token: stepToken, value: '160', exists: true },
             }],
           },
         },
