@@ -3423,6 +3423,22 @@ function nativeMotionRuntimeBridge() {
       && desiredParsed.unit === binding.end.unit && desiredParsed.value === binding.end.value)
       || gsapValueEquivalence(property, String(desired), authoredEnd) === 'equal');
   }
+  // Step-channel analog of the frozen-restore candidate: a desired landing on
+  // the journal original (or the untouched bucket value) for a NON-RUN index
+  // opens the binding-first restore lane. Validated state only (Sol r84).
+  function gsapFrozenStepRestoreCandidate(animation, property, entryIndex, desired) {
+    const binding = entryBindingState(animation, property).binding;
+    if (!binding || !Number.isInteger(entryIndex) || entryIndex < 0) return false;
+    const frozenEntry = binding.allEntries ? binding.allEntries[entryIndex] : null;
+    const carrier = frozenEntry
+      ? (binding.carriers || []).find((candidate) => candidate.entry === frozenEntry)
+      : null;
+    if (!carrier || binding.buckets.includes(carrier.bucket)) return false;
+    const journal = binding.stepOriginals;
+    const original = journal && journal.has(entryIndex) ? journal.get(entryIndex) : carrier.bucket[property];
+    return gsapValueEquivalence(property, String(desired), String(original)) === 'equal';
+  }
+
   // A frozen binding is only authoritative while it still DESCRIBES the tween.
   // It is validated against a FRESH plan: every plan guard must still hold
   // (vars[property] appearing post-binding reopens the probe-H both-places
@@ -4886,6 +4902,33 @@ function nativeMotionRuntimeBridge() {
         ? readBrowserRetarget(record, descriptor)
         : readGsapRetarget(record, descriptor);
     }
+    if (property.startsWith('keyframeStep.')) {
+      const trackProperty = property.slice('keyframeStep.'.length);
+      const descriptor = patch.value && typeof patch.value === 'object' ? patch.value : patch.before;
+      const entryIndex = Number(descriptor?.entryIndex);
+      if (record.type === 'browser' || !Number.isInteger(entryIndex) || entryIndex < 0) {
+        return { entryIndex, exists: false };
+      }
+      // Canonicalize by the FROZEN binding when one exists: buckets are held
+      // by identity and stay readable through an outage — the transactional
+      // history stays truthful (Sol r83 semantics, per index).
+      const bindingRead = entryBindingState(animation, trackProperty);
+      if (bindingRead.binding) {
+        const frozenEntry = bindingRead.binding.allEntries ? bindingRead.binding.allEntries[entryIndex] : null;
+        const carrier = frozenEntry
+          ? (bindingRead.binding.carriers || []).find((candidate) => candidate.entry === frozenEntry)
+          : null;
+        if (!carrier) return { entryIndex, exists: false };
+        return { entryIndex, value: String(carrier.bucket[trackProperty]), exists: true };
+      }
+      const plan = gsapArrayKeyframePlan(animation, trackProperty);
+      if (plan) {
+        const step = plan.steps.find((candidate) => candidate.rawEntryIndex === entryIndex);
+        if (!step) return { entryIndex, exists: false };
+        return { entryIndex, value: String(step.bucket[trackProperty]), exists: true };
+      }
+      return { entryIndex, exists: false };
+    }
     if (property.startsWith('keyframe.')) {
       const trackProperty = property.slice('keyframe.'.length);
       const descriptor = patch.value && typeof patch.value === 'object' ? patch.value : patch.before;
@@ -5292,6 +5335,16 @@ function nativeMotionRuntimeBridge() {
         if (value.writeModel !== 'absolute' || value.component) return false;
         property = value.runtimeProperty;
         desired = String(value.value ?? '');
+      } else if (patch.property.startsWith('keyframeStep.')) {
+        // The step channel has the same asymmetry per INDEX: its frozen-journal
+        // restore is the only lane under an outage and cannot be rolled back
+        // (writing the pre-transaction value back is a blocked non-restore).
+        const descriptor = patch.value;
+        if (descriptor?.exists === false) return false;
+        const stepProperty = patch.property.slice('keyframeStep.'.length);
+        if (!gsapFrozenStepRestoreCandidate(record.animation, stepProperty,
+          Number(descriptor?.entryIndex), String(descriptor?.value ?? ''))) return false;
+        return !gsapArrayKeyframePlan(record.animation, stepProperty);
       } else if (patch.property.startsWith('keyframe.')) {
         const descriptor = patch.value;
         if (!(Number(descriptor?.offset) >= 0.999) || descriptor?.exists === false) return false;

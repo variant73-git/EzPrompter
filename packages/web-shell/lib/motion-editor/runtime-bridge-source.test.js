@@ -1222,6 +1222,114 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('reads an intermediate STEP from its entry so transactions can roll it back', () => {
+    document.body.innerHTML = '<main><div id="ksv"></div></main>';
+    const target = document.getElementById('ksv');
+    // Sem reader do canal, validate-transaction canonicaliza before como
+    // inexistente e o rollback vira no-op com o edit aplicado (classe Sol r1).
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-ks-step',
+            patches: [{
+              id: 'p-ks-step',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframeStep.x',
+              before: { entryIndex: 1, value: '200', exists: true },
+              value: { entryIndex: 1, value: '160', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+    const validation = messages.filter((message) => message.type === 'validation-result').pop();
+    expect(validation.payload.valid).toBe(true);
+    // A transação-sonda não deixa NADA: entradas restauradas exatamente.
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200, 300]);
+    expect(vars.keyframes[1].x).toBe(200);
+    expect(vars.x).toBeUndefined();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an outage STEP restore inside a transaction is rejected BEFORE mutating (r82 lane)', () => {
+    document.body.innerHTML = '<main><div id="ksw"></div></main>';
+    const target = document.getElementById('ksw');
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '500');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 300]);
+
+    tween.timeline = {}; // outage: timeline presente, getChildren ausente
+    tween.invalidate.mockClear();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-ks-outage',
+            patches: [{
+              id: 'p-ks-outage',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframeStep.x',
+              before: { entryIndex: 1, value: '500', exists: true },
+              value: { entryIndex: 1, value: '200', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 300]); // intocado
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE desired values on entry-edits before any mutation (Sol r2)', () => {
     document.body.innerHTML = '<main><div id="kfr"></div></main>';
     const target = document.getElementById('kfr');
