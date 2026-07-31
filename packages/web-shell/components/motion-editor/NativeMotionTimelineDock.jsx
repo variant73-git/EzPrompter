@@ -92,6 +92,7 @@ export default function NativeMotionTimelineDock({ controller, open = true, onOp
         onDeleteKeyframe={controller.commands.deleteKeyframe}
         onChangeKeyframeEasing={controller.commands.changeKeyframeEasing}
         onChangeKeyframeValue={controller.commands.changeKeyframeValue}
+        onChangeStepValue={controller.commands.changeStepValue}
       />
     </div>
   );

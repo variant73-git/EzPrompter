@@ -1042,6 +1042,7 @@ export function TimelinePanel({
   onDeleteKeyframe,
   onChangeKeyframeEasing,
   onChangeKeyframeValue,
+  onChangeStepValue,
 }) {
   const [draggingKeyframe, setDraggingKeyframe] = useState(null);
   const [draggingStrip, setDraggingStrip] = useState(null);
@@ -1576,6 +1577,13 @@ export function TimelinePanel({
     return KEYFRAME_LOCK_REASONS[track?.keyframeEditReason] || "This step value can't be edited safely yet.";
   }
 
+  // Fase-2: why ONE step diamond is locked while its track edits — the frozen
+  // trailing run belongs to the end keyframe.
+  function stepLockText(step) {
+    if (step?.reason === 'final') return 'This step holds the final value — edit the end keyframe.';
+    return KEYFRAME_LOCK_REASONS[step?.reason] || "This step value can't be edited safely yet.";
+  }
+
   function renderTrackCell(track) {
     return (
       <div className={styles.rowTrack} data-track-row={track.property}>
@@ -1618,6 +1626,41 @@ export function TimelinePanel({
             />
           );
         })}
+        {/* Fase-2: one diamond per addressable ENTRY (rawEntryIndex is the
+            address; offset only positions). The final step coincides with the
+            end diamond above and is not duplicated; a null offset (zero total
+            duration) falls back to even spacing by order. */}
+        {(track.steps || [])
+          .filter((step) => !(Number.isFinite(Number(step.offset)) && Number(step.offset) >= 0.999))
+          .map((step, index, list) => {
+            const fallback = (index + 1) / (list.length + 1);
+            const displayOffset = Number.isFinite(Number(step.offset)) ? Number(step.offset) : fallback;
+            const left = keyframeLeft(displayOffset);
+            const isSelected = selectedKeyframe?.motionId === motion.id
+              && selectedKeyframe.property === track.property
+              && selectedKeyframe.entryIndex === step.entryIndex;
+            return (
+              <button
+                type="button"
+                key={`step:${track.property}:${step.entryIndex}`}
+                className={styles.timelineKeyframe}
+                data-step
+                data-selected={isSelected}
+                data-locked={!step.editable || undefined}
+                style={{ left: `${left}%` }}
+                title={step.editable
+                  ? `${track.property} step: ${step.value}. Click to select and edit its value in the label.`
+                  : `${track.property} step: ${step.value}. ${stepLockText(step)}`}
+                aria-label={`${track.property} step ${step.entryIndex + 1}`}
+                aria-pressed={isSelected}
+                onClick={() => {
+                  if (suppressKeyframeClick.current) return;
+                  onSelectKeyframe({ motionId: motion.id, property: track.property, entryIndex: step.entryIndex, offset: displayOffset });
+                  onSeek(delay + displayOffset * clipDuration);
+                }}
+              />
+            );
+          })}
       </div>
     );
   }
@@ -1635,7 +1678,14 @@ export function TimelinePanel({
     // The label's value field edits the SELECTED keyframe when one is picked on
     // this track; otherwise the keyframe under the playhead.
     const selectedOnTrack = selectedKeyframe && selectedKeyframe.motionId === motion.id && selectedKeyframe.property === track.property
+      && selectedKeyframe.entryIndex == null
       ? frames.find((keyframe) => Math.abs(Number(keyframe.offset) - Number(selectedKeyframe.offset)) < 0.0005) || null
+      : null;
+    // Fase-2: a selected STEP points the label field at the entry value —
+    // addressed by rawEntryIndex, never by its (possibly duplicated) offset.
+    const selectedStep = selectedKeyframe && selectedKeyframe.motionId === motion.id && selectedKeyframe.property === track.property
+      && selectedKeyframe.entryIndex != null
+      ? (track.steps || []).find((step) => step.entryIndex === selectedKeyframe.entryIndex) || null
       : null;
     const editSource = selectedOnTrack || valueSource;
     const nearest = atPlayhead || previous || following;
@@ -1665,7 +1715,28 @@ export function TimelinePanel({
             ><Diamond /></button>
             <button type="button" aria-label={`Next ${track.property} keyframe`} disabled={!following} onClick={() => following && jumpTo(following)}>›</button>
           </span>
-          {canSelectKeyframes && trackKeyframeEditable(track) && editSource ? (
+          {selectedStep ? (
+            selectedStep.editable ? (
+              <input
+                className={styles.propertyValueInput}
+                key={`${track.property}:step:${selectedStep.entryIndex}:${selectedStep.value}`}
+                defaultValue={String(selectedStep.value)}
+                title={`${track.property} step value — type to change it`}
+                aria-label={`${track.property} step value`}
+                onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+                onBlur={(event) => {
+                  const next = event.currentTarget.value;
+                  if (next !== String(selectedStep.value)) {
+                    onChangeStepValue?.({ motionId: motion.id, property: track.property, entryIndex: selectedStep.entryIndex }, next);
+                  }
+                }}
+              />
+            ) : (
+              <span className={styles.propertyValue} title={stepLockText(selectedStep)}>
+                {String(selectedStep.value).slice(0, 14)}
+              </span>
+            )
+          ) : canSelectKeyframes && trackKeyframeEditable(track) && editSource ? (
             <input
               className={styles.propertyValueInput}
               key={`${track.property}:${editSource.offset}:${editSource.value}`}
@@ -2449,6 +2520,7 @@ export default function NativeMotionEditor({
           onDeleteKeyframe={commands.deleteKeyframe}
           onChangeKeyframeEasing={commands.changeKeyframeEasing}
           onChangeKeyframeValue={commands.changeKeyframeValue}
+          onChangeStepValue={commands.changeStepValue}
         />
       </section>
     </main>

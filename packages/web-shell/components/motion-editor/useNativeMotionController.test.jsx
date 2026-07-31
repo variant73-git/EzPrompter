@@ -761,6 +761,77 @@ describe('useNativeMotionController', () => {
     });
   });
 
+  it('edits an intermediate STEP by raw entry index and refuses locked steps (fase-2)', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    frame.contentWindow.postMessage.mockClear();
+
+    const motion = [{
+      id: 'stepped',
+      engine: 'GSAP',
+      editability: 'adapter',
+      timing: { duration: 1000 },
+      capabilities: { timing: true, easing: true, keyframes: true },
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [{ offset: 0, value: '0' }, { offset: 1, value: '300' }],
+        steps: [
+          { entryIndex: 0, offset: 1 / 3, value: '100', editable: true },
+          { entryIndex: 1, offset: 2 / 3, value: '200', editable: true },
+          { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final' },
+        ],
+        ownership: {
+          channelId: 'stepped:x',
+          behavior: 'entrance',
+          relationship: 'independent',
+          targetId: 'hero',
+          runtimeProperty: 'x',
+          retargetable: true,
+        },
+      }],
+    }];
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'selection-changed',
+        payload: {
+          element: {
+            id: 'hero',
+            label: 'Hero',
+            styles: { opacity: '1', transform: 'none', transformOrigin: '50% 50%' },
+            motion,
+          },
+        },
+      },
+    })));
+
+    // Step travado (reason 'final') → nenhum patch sai do controller.
+    act(() => result.current.commands.changeStepValue({ motionId: 'stepped', property: 'x', entryIndex: 2 }, '350'));
+    expect(frame.contentWindow.postMessage.mock.calls
+      .map(([value]) => value)
+      .some((value) => value.type === 'apply-patch' || value.type === 'apply-patches')).toBe(false);
+
+    // Step editável → patch do canal keyframeStep com endereço por índice RAW.
+    act(() => result.current.commands.changeStepValue({ motionId: 'stepped', property: 'x', entryIndex: 1 }, '500'));
+    const message = frame.contentWindow.postMessage.mock.calls
+      .map(([value]) => value)
+      .findLast((value) => value.type === 'apply-patch');
+    expect(message.payload.patch).toMatchObject({
+      kind: 'motion',
+      motionId: 'stepped',
+      property: 'keyframeStep.x',
+      before: { entryIndex: 1, value: '200', exists: true },
+      value: { entryIndex: 1, value: '500', exists: true },
+    });
+  });
+
   it('holds an ambiguous Properties edit until Motion chooses a contributor, then persists the hint with the retarget', async () => {
     const frame = runtimeFrame();
     const iframeRef = createRef();

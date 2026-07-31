@@ -1838,6 +1838,26 @@ export function useNativeMotionController({
     }));
   }
 
+  // Fase-2: edit the VALUE of one intermediate keyframe entry, addressed by
+  // raw entry index (the canonical step address — offsets duplicate on
+  // zero-duration entries). Locked steps (frozen-run members, channel locks)
+  // are refused here so a doomed patch never round-trips an error toast.
+  function changeStepValue(selection, value) {
+    if (!selected || !activeMotion || selection?.motionId !== activeMotion.id) return;
+    const track = (activeMotion.tracks || []).find((candidate) => candidate.property === selection.property);
+    const step = track?.steps?.find((candidate) => candidate.entryIndex === selection.entryIndex);
+    if (!track || !step || String(step.value) === String(value)) return;
+    if (!step.editable) return;
+    applyPatch(createPatch({
+      elementId: motionElementId,
+      kind: 'motion',
+      motionId: activeMotion.id,
+      property: `keyframeStep.${track.property}`,
+      before: { entryIndex: step.entryIndex, value: String(step.value), exists: true },
+      value: { entryIndex: step.entryIndex, value: String(value), exists: true },
+    }));
+  }
+
   function changeKeyframeEasing(selection, easing) {
     const resolved = resolveKeyframe(selection);
     if (!resolved || !selected || resolved.keyframe.easing === easing) return;
@@ -1958,6 +1978,7 @@ export function useNativeMotionController({
     deleteKeyframe,
     changeKeyframeEasing,
     changeKeyframeValue,
+    changeStepValue,
   };
 
   return {

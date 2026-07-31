@@ -654,6 +654,72 @@ describe('adapter (GSAP) keyframes on the timeline', () => {
     );
   });
 
+  it('renders intermediate STEP diamonds and edits an editable step via the label field (fase-2)', () => {
+    const steppedMotion = {
+      ...adapterMotion,
+      id: 'gsap-steps',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: 'power2.out' },
+          { offset: 1, value: '300', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: 1 / 3, value: '100', editable: true },
+          { entryIndex: 1, offset: 2 / 3, value: '200', editable: true },
+          { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final' },
+        ],
+      }],
+    };
+    const onStep = vi.fn();
+    render(<TimelineHarness motion={steppedMotion} onChangeStepValue={onStep} />);
+    // O step final coincide com o diamante de end — não duplica.
+    expect(screen.queryByRole('button', { name: 'x step 3' })).toBeNull();
+    // Steps intermediários têm diamantes próprios; selecionar aponta o campo
+    // do label pro valor do step.
+    const step2 = screen.getByRole('button', { name: 'x step 2' });
+    fireEvent.click(step2);
+    const valueField = screen.getByLabelText('x step value');
+    expect(valueField.value).toBe('200');
+    fireEvent.change(valueField, { target: { value: '500' } });
+    fireEvent.blur(valueField);
+    expect(onStep).toHaveBeenCalledWith(
+      { motionId: 'gsap-steps', property: 'x', entryIndex: 1 },
+      '500',
+    );
+  });
+
+  it('a LOCKED step diamond explains itself instead of editing (fase-2)', () => {
+    const heldMotion = {
+      ...adapterMotion,
+      id: 'gsap-held',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: 'power2.out' },
+          { offset: 1, value: '200', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: 1 / 3, value: '100', editable: true },
+          { entryIndex: 1, offset: 2 / 3, value: '200', editable: false, reason: 'final' },
+          { entryIndex: 2, offset: 1, value: '200', editable: false, reason: 'final' },
+        ],
+      }],
+    };
+    const onStep = vi.fn();
+    render(<TimelineHarness motion={heldMotion} onChangeStepValue={onStep} />);
+    // Membro NÃO-final do run congelado (offset < 1) aparece, travado.
+    const heldStep = screen.getByRole('button', { name: 'x step 2' });
+    expect(heldStep.title).toMatch(/final value/i);
+    fireEvent.click(heldStep);
+    // Sem campo editável — o valor mostra e explica a razão.
+    expect(screen.queryByLabelText('x step value')).toBeNull();
+
+    delete window.gsap;
+  });
+
   it('single-animation rows carry no chevron; selecting them still reveals their tracks', () => {
     const soloRows = [{ elementId: 'el-solo', label: 'Solo', kind: 'text', top: 0, count: 1, engines: ['WAAPI'], driver: 'time', delayMs: 0, durationMs: 1000, marks: [] }];
     const { container, rerender } = render(
