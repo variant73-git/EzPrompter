@@ -3556,6 +3556,13 @@ function nativeMotionRuntimeBridge() {
     const entryStatesIntact = !binding.allEntryStates || binding.allEntryStates.every(({ entry, namespace, child }) => {
       if (!entry || typeof entry !== 'object' || entry.runBackwards) return false;
       if (gsapEntryHasTemporalModifier(entry, child)) return false; // absolute — none existed at freeze (Sol r93/r94)
+      // The frozen entry must still BE the live child's vars (Sol r17): a
+      // replaced child.vars detaches the bucket — a restore would write the
+      // DEAD object (the reader lies) while invalidate reprocesses the NEW
+      // vars (GSAP contract), re-rolling hazards the frozen-entry scan never
+      // sees. The child ref was frozen at binding time — readable without
+      // the timeline, so this stales the binding even mid-outage.
+      if (child && child.vars !== entry) return false;
       return gsapEntryPropertyNamespace(entry, property) === namespace;
     });
     if (!entryStatesIntact) return { binding: null, stale: true };

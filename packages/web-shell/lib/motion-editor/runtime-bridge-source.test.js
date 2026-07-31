@@ -1671,6 +1671,52 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a REPLACED child.vars detaches the frozen bucket — restores refuse even in outage (Sol r17)', () => {
+    document.body.innerHTML = '<main><div id="ksv2"></div></main>';
+    const target = document.getElementById('ksv2');
+    // child.vars substituído = a entry congelada virou bucket MORTO: o restore
+    // escreveria nele (reader mente) e o invalidate reprocessa o vars NOVO
+    // (contrato do GSAP) — re-sorteando random que o scan das entries
+    // congeladas nunca vê. Identidade child.vars === entry é obrigatória,
+    // inclusive na outage (child ref congelado, leitura sem timeline).
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const childFor = (entry, start) => ({ vars: entry, startTime: () => start, duration: () => 1, _initted: true });
+    const children = [childFor(vars.keyframes[0], 0), childFor(vars.keyframes[1], 1), childFor(vars.keyframes[2], 2)];
+    tween.timeline = { duration: () => 3, getChildren: () => children };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '500');
+    sendRetarget(selection, motion, '350');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 350]);
+
+    // Página substitui o vars do child 1 (entry congelada vira bucket morto).
+    children[1].vars = { ...children[1].vars, opacity: 'random(0,1)' };
+    tween.timeline.getChildren = undefined; // outage
+    tween.invalidate.mockClear();
+
+    sendStep(selection, motion, 'x', 1, '200'); // undo do step
+    expect(vars.keyframes[1].x).toBe(500); // bucket morto intocado
+    sendRetarget(selection, motion, '300'); // undo do end
+    expect(vars.keyframes[2].x).toBe(350);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
