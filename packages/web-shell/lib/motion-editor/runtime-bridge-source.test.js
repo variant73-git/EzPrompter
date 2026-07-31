@@ -2048,6 +2048,66 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a hash COLLISION cannot smuggle a stale patch through the gate — the token is the exact shape (Sol r25)', () => {
+    document.body.innerHTML = '<main><div id="ksh2"></div></main>';
+    const target = document.getElementById('ksh2');
+    // FNV-1a 32-bit é forjável por página adversarial (birthday ≈ 77k
+    // tentativas). Geramos DOIS valores de x cujos shapes colidem sob o hash:
+    // mutação + re-inspeção manteria o token idêntico e o patch retido
+    // passaria, sobrescrevendo a mutação. O token deve ser o SHAPE exato.
+    const fnv = (value) => {
+      let result = 2166136261;
+      for (let index = 0; index < value.length; index += 1) {
+        result ^= value.charCodeAt(index);
+        result = Math.imul(result, 16777619);
+      }
+      return (result >>> 0).toString(36);
+    };
+    const entryShape = (entry) => JSON.stringify(Object.keys(entry).filter((k) => k !== 'parent').sort()
+      .map((k) => [k, String(entry[k])]));
+    const shapeFor = (headX) => JSON.stringify([
+      entryShape({ x: headX, duration: 1 }),
+      entryShape({ x: 500001, duration: 1 }),
+      entryShape({ x: 1000001, duration: 1 }),
+    ]);
+    const seen = new Map();
+    let xA = null; let xB = null;
+    for (let candidate = 1; candidate < 5000000; candidate += 1) {
+      const digest = fnv(shapeFor(candidate));
+      if (seen.has(digest)) { xA = seen.get(digest); xB = candidate; break; }
+      seen.set(digest, candidate);
+    }
+    expect(xA).not.toBeNull();
+
+    const vars = {
+      keyframes: [
+        { x: xA, duration: 1, parent: {} },
+        { x: 500001, duration: 1, parent: {} },
+        { x: 1000001, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // Página muda pro valor COLIDENTE e a UI re-inspeciona (token colidiria).
+    vars.keyframes[0].x = xB;
+    grabMotion(target, messages);
+
+    // Patch retido da exposição VELHA — precisa recusar.
+    sendStep(selection, motion, 'x', 0, '777');
+    expect(vars.keyframes[0].x).toBe(xB);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

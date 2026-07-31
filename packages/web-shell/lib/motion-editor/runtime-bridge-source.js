@@ -3505,7 +3505,11 @@ function nativeMotionRuntimeBridge() {
     return JSON.stringify(entries.map((entry) => gsapStepEntryShape(entry)));
   }
   function gsapStepExposureToken(shape) {
-    return `sx-${hash(shape)}`;
+    // The token IS the exact serialized shape (Sol r25): a 32-bit non-crypto
+    // hash is forgeable by an adversarial page (birthday ≈ 77k tries), and a
+    // collision would smuggle a stale patch through the gate. Exact equality
+    // by construction; still deterministic across bridges (r22 replay).
+    return `sx:${shape}`;
   }
   // Original start values (sampled at progress 0 before the FIRST offset-0
   // edit), per (animation, property) — the render-equivalent rollback target
