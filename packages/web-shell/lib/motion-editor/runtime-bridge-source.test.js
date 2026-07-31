@@ -1558,6 +1558,79 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a bucket turned NON-WRITABLE after the freeze stales the binding — STEP restore refuses instead of no-op "success" (Sol r15)', () => {
+    document.body.innerHTML = '<main><div id="ksd"></div></main>';
+    const target = document.getElementById('ksd');
+    // defineProperty(writable:false) pós-freeze mantém o VALOR intacto (a
+    // staleness por valores passa), mas o assignment do restore falha em
+    // silêncio (sloppy mode) → invalidate roda e o undo confirmaria sem
+    // restaurar. O descriptor deve ser revalidado: mudou → stale → recusa
+    // antes de qualquer assignment/invalidate.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '500');
+    expect(vars.keyframes[1].x).toBe(500);
+
+    Object.defineProperty(vars.keyframes[1], 'x', { value: 500, enumerable: true, configurable: true, writable: false });
+    tween.timeline = {}; // outage
+    tween.invalidate.mockClear();
+
+    sendStep(selection, motion, 'x', 1, '200');
+    expect(vars.keyframes[1].x).toBe(500); // nada restaurado (esperado)...
+    expect(tween.invalidate).not.toHaveBeenCalled(); // ...e NADA confirmado
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a bucket turned NON-WRITABLE after the freeze stales the binding — END restore refuses too (Sol r15)', () => {
+    document.body.innerHTML = '<main><div id="kse2"></div></main>';
+    const target = document.getElementById('kse2');
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '350');
+    expect(vars.keyframes[2].x).toBe(350);
+
+    Object.defineProperty(vars.keyframes[2], 'x', { value: 350, enumerable: true, configurable: true, writable: false });
+    tween.timeline = {}; // outage
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes[2].x).toBe(350);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

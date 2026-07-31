@@ -3534,7 +3534,18 @@ function nativeMotionRuntimeBridge() {
       if (gsapEntryPropertyNamespace(entry, property) !== namespace) return false;
       // BUCKET IDENTITY is frozen too: a replaced css wrapper detaches the
       // frozen bucket — writing it changes nothing that renders (Sol r87).
-      return (namespace === 'css' ? cssWrap : entry) === bucket;
+      if ((namespace === 'css' ? cssWrap : entry) !== bucket) return false;
+      // The SLOT shape is frozen too (Sol r15): a defineProperty(writable:
+      // false) after the freeze keeps the VALUE intact but makes the restore
+      // assignment a silent no-op (sloppy mode) — invalidate would run and
+      // the undo would confirm without restoring. Same own+writable data-
+      // property requirement as the plan; observable without the timeline.
+      try {
+        const slot = Object.getOwnPropertyDescriptor(bucket, property);
+        return Boolean(slot && 'value' in slot && slot.writable !== false);
+      } catch (_) {
+        return false;
+      }
     });
     if (!carriersIntact) return { binding: null, stale: true };
     // The namespace of EVERY planned entry is frozen — including 'none': a
