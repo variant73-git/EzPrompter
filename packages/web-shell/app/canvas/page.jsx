@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { db } from '../../lib/db.js';
 import { getAuthUser } from '../../lib/auth.js';
-import { getReferenceCatalog } from '../../lib/reference-bank.js';
+import { getPersistentReferenceCatalog } from '../../lib/reference-bank-store.js';
 import BoardsList from '../../components/BoardsList.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -34,12 +34,13 @@ export default async function CanvasIndex() {
      ORDER BY created_at DESC
      LIMIT 24
   `;
+  const references = await getPersistentReferenceCatalog({ userId: user.id, limit: 4 });
   return (
     <BoardsList
       boards={boards}
       savedWorkflows={savedWorkflows}
       assets={assets}
-      references={getReferenceCatalog({ limit: 4 })}
+      references={references}
       userName={user.name}
       userEmail={user.email}
       userPlan={user.plan}

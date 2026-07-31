@@ -1,6 +1,6 @@
 # Start from a Ref: reference intelligence architecture
 
-**Status:** initial catalog slice implemented on `codex/start-from-ref`
+**Status:** persistent catalog, private manual curation, and retrieval shadow mode implemented on `codex/start-from-ref`
 
 **Base:** `main` at `ec297fff`
 
@@ -12,7 +12,7 @@ Uncraft should turn a short business brief into an original, animated landing pa
 
 The first product surface is the authenticated `Start from a Ref` catalog. The eventual generation path begins at the same catalog, but runs through typed retrieval and a composition plan before Demarcelizer 4.0 materializes any HTML.
 
-## What shipped in the initial slice
+## What has shipped
 
 - A dedicated worktree and branch, isolated from `codex/live-animated-clone-editing`.
 - Source adapters for Codrops Webzibition, Pafolios, and SiteInspire.
@@ -20,9 +20,13 @@ The first product surface is the authenticated `Start from a Ref` catalog. The e
 - Provenance-preserving records: one canonical reference can retain several source appearances and thumbnails.
 - A reproducible seed builder. Raw crawler output remains ignored; only normalized records are versioned.
 - An authenticated, paginated catalog route and UI with real thumbnails, external links, search, source/category filters, sorting, empty/loading/error states, reduced-motion handling, and mobile layout.
-- Initial snapshot: 1,720 appearances normalized into 1,636 canonical references, with 84 duplicates merged. The source appearance counts are Codrops 863, Pafolios 816, SiteInspire 41.
+- Initial snapshot: 1,720 raw appearances normalized into 1,636 canonical references, with 84 cross-reference duplicates merged. The source appearance counts are Codrops 863, Pafolios 816, SiteInspire 41.
+- An additive, idempotent shared-database migration for canonical sites, provenance appearances, private user reviews, and shadow-plan audit records.
+- A shared-database import with 1,636 canonical sites and 1,704 unique provenance appearances. Sixteen raw appearances shared the same canonical site, source, and source-record identity and are deliberately collapsed at the persistence boundary.
+- A 24-reference Working Table review queue with private per-user verdict, taste score, intended role, business/visual/motion tags, and notes.
+- A deterministic retrieval shadow planner that consumes only manually reviewed `keep`/`maybe` references, chooses exactly one chassis and one to three bounded donors, and records approval or rejection without generating a site or spending model credits.
 
-This is a real discovery catalog, but not yet the final database, enrichment pipeline, or generation planner.
+This is now a real persistent discovery and curation catalog with a safe planner rehearsal. The 24 entries are review candidates, not a pre-approved gold set. Deep capture/enrichment and Demarcelizer materialization remain gated on human review.
 
 ## The key composition rule
 
@@ -139,20 +143,25 @@ Every generated page must pass:
 
 Approval/rework outcomes update manual and compatibility weights. They do not silently retrain taste from every generated result.
 
-## Proposed persistent model
+## Persistent model: implemented foundation and next extensions
 
-The versioned seed is intentionally the first safe milestone. The production store should introduce:
+The shared database now includes:
 
 - `reference_sites`: canonical URL, host, availability, manual weight, lifecycle state.
 - `reference_appearances`: source, source record, listing/detail URL, source taxonomy, thumbnail, last seen.
+- `reference_preferences`: private per-user ratings, roles, tags, notes, and exclusions, separate from global records.
+- `generation_reference_uses`: audited shadow recipes and their approval/rejection state.
+
+The next enrichment slice should add:
+
 - `reference_snapshots`: capture version, viewport, screenshot, measured DOM/runtime evidence.
 - `reference_sections`: section geometry, semantic role, media slots, dependencies, transfer contract.
 - `reference_analyses`: versioned business/visual/motion/runtime profiles and model provenance.
 - `reference_embeddings`: separate vectors for business intent, visual system, section semantics, and motion.
-- `reference_preferences`: user/admin ratings and exclusions, separate from global records.
-- `generation_reference_uses`: immutable audit of chosen references, roles, plan, output, approval/rework.
 
 Do not put every signal into a single JSON blob or single embedding. Version each analysis contract so records can be re-enriched without rewriting source identity.
+
+Manual decisions are intentionally private to the signed-in user in this slice. The migration does not add or infer an admin role, and the import path is server-side tooling rather than a public catalog mutation endpoint. A future global moderation surface must define admin identity and server-side authorization separately.
 
 ## Asset and rights boundary
 
@@ -165,9 +174,9 @@ Do not put every signal into a single JSON blob or single embedding. Version eac
 ## Delivery sequence
 
 1. **Catalog slice (done):** real data, deduplication, browse/search/filter UI.
-2. **Persistent catalog:** database tables, resumable scheduled ingestion, health checks, moderation/removal controls.
-3. **Top-reference enrichment:** section/motion/runtime manifests for a deliberately small, high-value subset.
-4. **Retrieval shadow mode:** given a brief, return ranked chassis/donor plans without generating a page; collect human approval.
+2. **Persistent curation foundation (done):** additive shared tables, idempotent import, private manual review, plan audit.
+3. **Retrieval shadow mode v1 (done):** deterministic brief matching over reviewed references, chassis/donor recipes, human approval, zero generation.
+4. **Top-reference enrichment (next):** capture only the approved `keep` subset, then produce section/motion/runtime manifests and versioned visual evidence.
 5. **Demarcelizer integration:** execute approved plans with one chassis and bounded donors.
 6. **Automated validation and learning:** visual/motion gates, provenance, novelty, approval/rework signals.
 

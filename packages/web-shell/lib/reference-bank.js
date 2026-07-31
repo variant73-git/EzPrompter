@@ -35,10 +35,13 @@ export function queryReferenceCatalog({
   sort = 'curated',
   offset = 0,
   limit = 48,
+  referenceIds = null,
 } = {}) {
   const references = seed.references || [];
+  const allowedIds = referenceIds ? new Set(referenceIds) : null;
   const filtered = references.filter((reference) => (
-    (source === 'all' || reference.sourceIds?.includes(source))
+    (!allowedIds || allowedIds.has(reference.id))
+    && (source === 'all' || reference.sourceIds?.includes(source))
     && (category === 'all' || reference.categories?.includes(category))
     && containsQuery(reference, query.trim())
   ));

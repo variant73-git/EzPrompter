@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, Search, SlidersHorizontal, X } from 'lucide-react';
+import { ArrowUpRight, BookOpenCheck, LayoutGrid, Search, SlidersHorizontal, WandSparkles, X } from 'lucide-react';
+import ReferencePlanner from './ReferencePlanner.jsx';
+import ReferenceReviewPanel from './ReferenceReviewPanel.jsx';
 
 const SOURCE_LABELS = {
   all: 'All sources',
@@ -19,7 +21,7 @@ function ReferenceImage({ reference }) {
   return <img src={reference.thumbnailUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
 }
 
-export function ReferenceGridCard({ reference }) {
+export function ReferenceGridCard({ reference, reviewMode = false, onReview }) {
   const primaryCategory = reference.categories?.[0] || 'Website';
   return (
     <article className="ref-card" id={reference.id}>
@@ -37,6 +39,12 @@ export function ReferenceGridCard({ reference }) {
       </div>
       {reference.editorialConsensus > 1 && (
         <p className="ref-card-consensus">Found in {reference.editorialConsensus} curated sources</p>
+      )}
+      {(reviewMode || reference.preference) && (
+        <button type="button" className="ref-card-review" onClick={() => onReview?.(reference)}>
+          <span data-decision={reference.preference?.decision || 'unreviewed'}>{reference.preference?.decision || 'unreviewed'}</span>
+          {reference.preference ? 'Edit review' : 'Review'}
+        </button>
       )}
     </article>
   );
@@ -60,9 +68,12 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
   const [source, setSource] = useState('all');
   const [category, setCategory] = useState('all');
   const [sort, setSort] = useState('curated');
+  const [view, setView] = useState('browse');
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
+  const [reviewStats, setReviewStats] = useState(initialPage.reviewStats || { total: 24, reviewed: 0, keep: 0, maybe: 0, pass: 0 });
+  const [selectedReference, setSelectedReference] = useState(null);
   const firstRun = useRef(true);
 
   const sourceOptions = useMemo(() => [
@@ -80,6 +91,7 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       source,
       category,
       sort,
+      view: view === 'review' ? 'review' : 'browse',
       offset: append ? String(items.length) : '0',
       limit: '48',
     });
@@ -90,6 +102,10 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       setItems((current) => append ? [...current, ...page.items] : page.items);
       setTotal(page.total);
       setHasMore(page.hasMore);
+      setReviewStats(page.reviewStats || reviewStats);
+      if (view === 'review' && !append) {
+        setSelectedReference((current) => page.items.find((item) => item.id === current?.id) || page.items[0] || null);
+      }
     } catch (nextError) {
       if (nextError.name !== 'AbortError') setError(nextError.message);
     } finally {
@@ -102,6 +118,7 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       firstRun.current = false;
       return undefined;
     }
+    if (view === 'plan') return undefined;
     const controller = new AbortController();
     const timer = window.setTimeout(() => loadPage({ signal: controller.signal }), 220);
     return () => {
@@ -110,7 +127,7 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
     };
     // items is deliberately omitted: it is only an offset for explicit Load more.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, source, category, sort]);
+  }, [query, source, category, sort, view]);
 
   function clearFilters() {
     setQuery('');
@@ -119,8 +136,28 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
     setSort('curated');
   }
 
+  function savePreference(referenceId, preference) {
+    const previous = items.find((item) => item.id === referenceId)?.preference;
+    setItems((current) => current.map((item) => item.id === referenceId ? { ...item, preference } : item));
+    setSelectedReference((current) => current?.id === referenceId ? { ...current, preference } : current);
+    setReviewStats((current) => {
+      const next = { ...current };
+      if (!previous) next.reviewed += 1;
+      if (previous?.decision) next[previous.decision] = Math.max(0, Number(next[previous.decision] || 0) - 1);
+      next[preference.decision] = Number(next[preference.decision] || 0) + 1;
+      return next;
+    });
+  }
+
   return (
     <section className="ref-library" aria-label="Reference catalog">
+      <div className="ref-view-tabs" aria-label="Reference workspace">
+        <button type="button" aria-pressed={view === 'browse'} onClick={() => setView('browse')}><LayoutGrid aria-hidden="true" />Browse</button>
+        <button type="button" aria-pressed={view === 'review'} onClick={() => setView('review')}><BookOpenCheck aria-hidden="true" />Review queue<span>{reviewStats.reviewed}/{reviewStats.total}</span></button>
+        <button type="button" aria-pressed={view === 'plan'} onClick={() => setView('plan')}><WandSparkles aria-hidden="true" />Plan<span>shadow</span></button>
+      </div>
+
+      {view === 'plan' ? <ReferencePlanner reviewStats={reviewStats} /> : <>
       <div className="ref-toolbar">
         <label className="ref-search">
           <Search aria-hidden="true" />
@@ -155,13 +192,16 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       </div>
 
       <div className="ref-results-heading" aria-live="polite">
-        <p>{loading ? 'Updating references…' : `${total.toLocaleString()} ${total === 1 ? 'reference' : 'references'}`}</p>
+        <p>{loading ? 'Updating references…' : view === 'review' ? `${reviewStats.reviewed} of ${reviewStats.total} candidates reviewed` : `${total.toLocaleString()} ${total === 1 ? 'reference' : 'references'}`}</p>
         {filtersActive && <button type="button" onClick={clearFilters}>Clear filters</button>}
       </div>
 
       {loading ? <ReferenceSkeletons /> : items.length ? (
-        <div className="ref-grid">
-          {items.map((reference) => <ReferenceGridCard reference={reference} key={reference.id} />)}
+        <div className={view === 'review' ? 'ref-review-layout' : undefined}>
+          <div className="ref-grid">
+            {items.map((reference) => <ReferenceGridCard reference={reference} reviewMode={view === 'review'} onReview={setSelectedReference} key={reference.id} />)}
+          </div>
+          {view === 'review' && <ReferenceReviewPanel reference={selectedReference || items[0]} onSaved={savePreference} />}
         </div>
       ) : (
         <div className="ref-empty">
@@ -180,6 +220,7 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
           </button>
         </div>
       )}
+      </>}
     </section>
   );
 }
