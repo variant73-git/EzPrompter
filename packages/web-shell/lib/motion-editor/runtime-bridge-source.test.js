@@ -911,12 +911,12 @@ describe('native motion runtime bridge', () => {
     const { motion } = grabMotion(target, messages);
     const xTrack = motion.tracks.find((track) => track.property === 'x');
     expect(xTrack.steps).toEqual([
-      { entryIndex: 0, offset: null, value: '100', editable: true, token: expect.any(Number) },
-      { entryIndex: 2, offset: null, value: '300', editable: false, reason: 'final', isEnd: true, token: expect.any(Number) },
+      { entryIndex: 0, offset: null, value: '100', editable: true, token: expect.any(String) },
+      { entryIndex: 2, offset: null, value: '300', editable: false, reason: 'final', isEnd: true, token: expect.any(String) },
     ]);
     const opacityTrack = motion.tracks.find((track) => track.property === 'opacity');
     // Carrier único = o próprio run: sem step intermediário, edita pelo end.
-    expect(opacityTrack.steps).toEqual([{ entryIndex: 1, offset: null, value: '0.5', editable: false, reason: 'final', isEnd: true, token: expect.any(Number) }]);
+    expect(opacityTrack.steps).toEqual([{ entryIndex: 1, offset: null, value: '0.5', editable: false, reason: 'final', isEnd: true, token: expect.any(String) }]);
 
     delete window.gsap;
     window.postMessage = originalPostMessage;
@@ -957,9 +957,9 @@ describe('native motion runtime bridge', () => {
     const { motion } = grabMotion(target, messages);
     const xTrack = motion.tracks.find((track) => track.property === 'x');
     expect(xTrack.steps).toEqual([
-      { entryIndex: 0, offset: 0.5, value: '100', editable: true, token: expect.any(Number) },
-      { entryIndex: 1, offset: 0.5, value: '200', editable: true, token: expect.any(Number) },
-      { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final', isEnd: true, token: expect.any(Number) },
+      { entryIndex: 0, offset: 0.5, value: '100', editable: true, token: expect.any(String) },
+      { entryIndex: 1, offset: 0.5, value: '200', editable: true, token: expect.any(String) },
+      { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final', isEnd: true, token: expect.any(String) },
     ]);
 
     delete window.gsap;
@@ -991,8 +991,8 @@ describe('native motion runtime bridge', () => {
     const { motion } = grabMotion(target, messages);
     const xTrack = motion.tracks.find((track) => track.property === 'x');
     expect(xTrack.steps).toEqual([
-      { entryIndex: 0, offset: null, value: '100', editable: true, token: expect.any(Number) },
-      { entryIndex: 1, offset: null, value: '200', editable: false, reason: 'final', isEnd: true, token: expect.any(Number) },
+      { entryIndex: 0, offset: null, value: '100', editable: true, token: expect.any(String) },
+      { entryIndex: 1, offset: null, value: '200', editable: false, reason: 'final', isEnd: true, token: expect.any(String) },
     ]);
 
     delete window.gsap;
@@ -1883,6 +1883,81 @@ describe('native motion runtime bridge', () => {
     expect(vars.keyframes[1].opacity).toBe(3); // WRITE, nunca no-op de restore
     sendStep(selection, motion, 'opacity', 1, '2');
     expect(vars.keyframes[1].opacity).toBe(2); // rollback verbatim (número)
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a persisted step patch REPLAYS across a bridge reload — the token is a stable truth fingerprint (Sol r22)', () => {
+    document.body.innerHTML = '<main><div id="ra2"></div><div id="rc2"></div><div id="rb2"></div></main>';
+    const targetA = document.getElementById('ra2');
+    const targetC = document.getElementById('rc2');
+    const targetB = document.getElementById('rb2');
+    // Um contador efêmero por instância morre no reload: A inspecionado antes
+    // de B no bridge 1 (token de B = 2), bridge novo só inspeciona B (token 1)
+    // → replay do patch persistido de B recusado → edição confirmada some.
+    // O token deve ser um FINGERPRINT estrutural da verdade exposta —
+    // determinístico entre bridges quando a página re-carrega igual.
+    const varsA = { keyframes: [{ x: 10, duration: 1, parent: {} }, { x: 20, duration: 1, parent: {} }, { x: 30, duration: 1, parent: {} }], duration: 3 };
+    const varsC = { keyframes: [{ x: 40, duration: 1, parent: {} }, { x: 50, duration: 1, parent: {} }, { x: 60, duration: 1, parent: {} }], duration: 3 };
+    const varsB = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }, { x: 300, duration: 1, parent: {} }], duration: 3 };
+    const makeTween = (vars) => ({
+      targets: () => [vars === varsA ? targetA : vars === varsC ? targetC : targetB],
+      vars,
+      duration: () => 3,
+      delay: () => 0, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressMock(p) { if (p === undefined) return progressMock.current || 0; progressMock.current = p; return this; }),
+      invalidate: vi.fn(function invalidateMock() { return this; }),
+    });
+    const tweenA = makeTween(varsA);
+    const tweenC = makeTween(varsC);
+    const tweenB = makeTween(varsB);
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tweenA, tweenC, tweenB] },
+      getProperty: () => '0',
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    // Bridge 1: A e C primeiro (avançariam um contador efêmero), depois B.
+    grabMotion(targetA, messages);
+    grabMotion(targetC, messages);
+    const grabbedB = grabMotion(targetB, messages);
+    const trackB = grabbedB.motion.tracks.find((track) => track.property === 'x');
+    const persistedToken = trackB.steps.find((step) => step.entryIndex === 1).token;
+    const persistedPatch = {
+      elementId: grabbedB.selection.payload.element.id,
+      kind: 'motion',
+      motionId: grabbedB.motion.id,
+      property: 'keyframeStep.x',
+      before: { entryIndex: 1, token: persistedToken, value: '200', exists: true },
+      value: { entryIndex: 1, token: persistedToken, value: '555', exists: true },
+    };
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'apply-patch', payload: { patch: persistedPatch } },
+    }));
+    expect(varsB.keyframes[1].x).toBe(555);
+
+    // "Reload": página volta ao pristino, bridge novo, SÓ B re-inspecionado.
+    varsB.keyframes[1].x = 200;
+    try { window.__uncraftMotionBridge?.teardown?.(); } catch (_) {}
+    window.eval(getRuntimeBridgeSource());
+    // Bridge novo re-inspeciona na mesma ordem de boot que o prod (A antes de
+    // B; C fica de fora — um contador efêmero divergiria aqui), ids estáveis.
+    grabMotion(targetA, messages);
+    grabMotion(targetB, messages);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'apply-patch', payload: { patch: persistedPatch } },
+    }));
+    expect(varsB.keyframes[1].x).toBe(555); // replay aplicado no bridge novo
 
     delete window.gsap;
     window.postMessage = originalPostMessage;

@@ -2151,12 +2151,11 @@ function nativeMotionRuntimeBridge() {
               }
               // The token names a TRUTH, not an inspection run: re-inspecting
               // the same entry set keeps the token (the apply path itself
-              // re-inspects — a per-run token would refuse every first write).
+              // re-inspects — a per-run token would refuse every first write),
+              // and the SAME truth in a fresh bridge mints the SAME token
+              // (fingerprint — persisted patches replay after a reload).
               const nextEntries = new Map(entryPlan.steps.map((step) => [step.rawEntryIndex, step.entry]));
-              const previous = exposures.get(track.property);
-              const sameTruth = previous && previous.entries.size === nextEntries.size
-                && Array.from(nextEntries).every(([rawIndex, entry]) => previous.entries.get(rawIndex) === entry);
-              const exposureToken = sameTruth ? previous.token : (gsapStepExposureCounter += 1);
+              const exposureToken = gsapStepExposureToken(entryPlan.allEntries);
               exposures.set(track.property, { token: exposureToken, entries: nextEntries });
               return { steps: entryPlan.steps.map((step, stepIndex, list) => {
                 // Frozen-run members belong to the END writer (journal
@@ -3473,7 +3472,27 @@ function nativeMotionRuntimeBridge() {
   // otherwise undetectable (the freeze would happen at write time and the
   // identity check would compare the fresh plan with itself).
   const gsapStepExposures = new WeakMap(); // animation -> Map(property -> { token, entries: Map(rawIndex -> entry) })
-  let gsapStepExposureCounter = 0;
+
+  // The exposure token is a STABLE structural fingerprint of the exposed
+  // truth — never an instance counter (Sol r22): persisted patches replay
+  // through a FRESH bridge after a reload, and a per-instance counter would
+  // refuse every replayed first write (the committed edit would vanish).
+  // Deterministic across bridges when the page reloads identically; any
+  // observable reorder/shape change (the r19 class) changes it. Enumeration
+  // via the for..in mirror; `parent` is GSAP's mutable backedge, excluded.
+  function gsapStepExposureToken(entries) {
+    const shape = entries.map((entry) => gsapForInKeys(entry)
+      .filter((key) => key !== 'parent')
+      .sort()
+      .map((key) => {
+        const value = entry[key];
+        if (key === 'css' && value && typeof value === 'object' && !Array.isArray(value)) {
+          return ['css', gsapForInKeys(value).sort().map((cssKey) => [cssKey, String(value[cssKey])])];
+        }
+        return [key, typeof value === 'function' ? 'fn' : String(value)];
+      }));
+    return `sx-${hash(JSON.stringify(shape))}`;
+  }
   // Original start values (sampled at progress 0 before the FIRST offset-0
   // edit), per (animation, property) — the render-equivalent rollback target
   // for startAt edits (Sol r18).
@@ -3856,8 +3875,8 @@ function nativeMotionRuntimeBridge() {
       // the wrong entry. Stale token or a moved entry refuses; re-inspection
       // re-exposes the current truth.
       const exposure = gsapStepExposures.get(animation)?.get(property);
-      const exposureToken = Number(descriptor?.token);
-      if (!exposure || !Number.isFinite(exposureToken) || exposureToken !== exposure.token) {
+      const exposureToken = typeof descriptor?.token === 'string' ? descriptor.token : null;
+      if (!exposure || !exposureToken || exposureToken !== exposure.token) {
         throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
       }
       const promisedEntry = exposure.entries.get(entryIndex);
@@ -5106,7 +5125,7 @@ function nativeMotionRuntimeBridge() {
       const entryIndex = Number(descriptor?.entryIndex);
       // The exposure token is descriptor METADATA — echoed back so the
       // validate flow's requested-vs-reread comparison never mismatches on it.
-      const echo = Number.isFinite(Number(descriptor?.token)) ? { token: Number(descriptor.token) } : {};
+      const echo = descriptor?.token != null ? { token: descriptor.token } : {};
       if (record.type === 'browser' || !Number.isInteger(entryIndex) || entryIndex < 0) {
         return { entryIndex, ...echo, exists: false };
       }
