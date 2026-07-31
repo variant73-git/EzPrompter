@@ -998,6 +998,230 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  const sendStep = (selection, motion, property, entryIndex, value) => window.dispatchEvent(new MessageEvent('message', {
+    source: window,
+    data: {
+      protocol: MOTION_EDITOR_PROTOCOL,
+      source: 'host',
+      type: 'apply-patch',
+      payload: {
+        patch: {
+          elementId: selection.payload.element.id,
+          kind: 'motion',
+          motionId: motion.id,
+          property: `keyframeStep.${property}`,
+          before: { entryIndex, value: '', exists: true },
+          value: { entryIndex, value, exists: true },
+        },
+      },
+    },
+  }));
+
+  it('edits an INTERMEDIATE keyframe entry by raw index and restores it verbatim on rollback', () => {
+    document.body.innerHTML = '<main><div id="kse"></div></main>';
+    const target = document.getElementById('kse');
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '500');
+    // Escrita coerce: bucket numérico recebe NÚMERO (como o entry-edit).
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 300]);
+    expect(tween.invalidate).toHaveBeenCalled();
+
+    // Rollback = valor original → restore VERBATIM (número 200, nunca '200').
+    sendStep(selection, motion, 'x', 1, '200');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200, 300]);
+    expect(vars.keyframes[1].x).toBe(200);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('refuses step edits on FROZEN trailing-run members — the end edit owns the hold', () => {
+    document.body.innerHTML = '<main><div id="ksh"></div></main>';
+    const target = document.getElementById('ksh');
+    // [100, 200, 200]: run congelado = entries 1 e 2. Editar um membro
+    // individualmente divergiria o run e o value-replay do undo do retarget
+    // não representa estado divergente (Sol F1 — journal separado por writer).
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '250');
+    sendStep(selection, motion, 'x', 2, '250');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200, 200]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('addresses steps by RAW entry index — a missing-prop entry refuses instead of shifting', () => {
+    document.body.innerHTML = '<main><div id="ksr"></div></main>';
+    const target = document.getElementById('ksr');
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { opacity: 0.5, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // raw 1 não carrega x — recusa, nada escrito (um índice de bucket teria
+    // editado a entry errada).
+    sendStep(selection, motion, 'x', 1, '150');
+    expect(vars.keyframes[1]).toEqual({ opacity: 0.5, duration: 1, parent: {} });
+    expect(tween.invalidate).not.toHaveBeenCalled();
+    // raw 0 é intermediária de x — edita.
+    sendStep(selection, motion, 'x', 0, '150');
+    expect(vars.keyframes[0].x).toBe(150);
+    expect(vars.keyframes[2].x).toBe(300);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('journals step edits and trailing retargets independently — LIFO undo restores each exactly', () => {
+    document.body.innerHTML = '<main><div id="ksj"></div></main>';
+    const target = document.getElementById('ksj');
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '500');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 300]);
+    sendRetarget(selection, motion, '350');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 350]);
+    // Undo LIFO: primeiro o retarget (volta ao fim autoral, verbatim)...
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 300]);
+    expect(vars.keyframes[2].x).toBe(300);
+    // ...depois o step (volta ao autoral do índice, verbatim).
+    sendStep(selection, motion, 'x', 1, '200');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200, 300]);
+    expect(vars.keyframes[1].x).toBe(200);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
+    document.body.innerHTML = '<main><div id="ksg"></div></main>';
+    const target = document.getElementById('ksg');
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '+=10');
+    sendStep(selection, motion, 'x', 1, 'random(0,100)');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200, 300]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('restores a step through an inner-timeline OUTAGE via the frozen binding (binding-first lane)', () => {
+    document.body.innerHTML = '<main><div id="kso2"></div></main>';
+    const target = document.getElementById('kso2');
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const childFor = (entry, start) => ({ vars: entry, startTime: () => start, duration: () => 1, _initted: true });
+    tween.timeline = {
+      duration: () => 3,
+      getChildren: () => [
+        childFor(vars.keyframes[0], 0),
+        childFor(vars.keyframes[1], 1),
+        childFor(vars.keyframes[2], 2),
+      ],
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '500');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 300]);
+
+    // OUTAGE: a timeline interna some do ar — o rollback NUNCA depende de
+    // plano fresco (lane binding-first); write NOVO é recusado.
+    tween.timeline.getChildren = () => { throw new Error('gone'); };
+    sendStep(selection, motion, 'x', 1, '700');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 300]);
+    sendStep(selection, motion, 'x', 1, '200');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200, 300]);
+    expect(vars.keyframes[1].x).toBe(200);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE desired values on entry-edits before any mutation (Sol r2)', () => {
     document.body.innerHTML = '<main><div id="kfr"></div></main>';
     const target = document.getElementById('kfr');

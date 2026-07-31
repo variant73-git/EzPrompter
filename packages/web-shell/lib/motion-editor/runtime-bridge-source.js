@@ -3520,6 +3520,49 @@ function nativeMotionRuntimeBridge() {
       if (entryBindingState(animation, property).stale) bindings.delete(property);
     });
   }
+  // The ONE frozen binding per (animation, property) — shared by the trailing
+  // entry-edit writer and the phase-2 step writer (design-lock Sol r1: two
+  // snapshot families of the same index would corrupt composed rollbacks).
+  // Created on the FIRST write of either writer; `stepOriginals` is the step
+  // journal (verbatim value per rawEntryIndex, frozen at first touch). Returns
+  // null when no plan exists (callers word their own refusal); throws on a
+  // stale binding — never silently replaces it (Sol r5).
+  function ensureFrozenEntryBinding(record, property) {
+    const animation = record.animation;
+    let bindings = gsapKeyframeEntryRetargets.get(animation);
+    if (!bindings) {
+      bindings = new Map();
+      gsapKeyframeEntryRetargets.set(animation, bindings);
+    }
+    const state = entryBindingState(animation, property);
+    if (state.stale) {
+      throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
+    }
+    let binding = state.binding;
+    if (!binding) {
+      const plan = gsapArrayKeyframePlan(animation, property);
+      if (!plan) return null;
+      binding = {
+        buckets: plan.run,
+        originals: plan.run.map((bucket) => bucket[property]),
+        allBuckets: plan.buckets,
+        allExpected: plan.buckets.map((bucket) => bucket[property]),
+        carriers: plan.carriers,
+        allEntries: plan.allEntries,
+        allEntryStates: plan.allEntries.map((frozenEntry) => ({
+          entry: frozenEntry,
+          namespace: gsapEntryPropertyNamespace(frozenEntry, property),
+          child: gsapEntryChildTweens.get(frozenEntry) || null,
+        })),
+        end: numericCss(sampleGsapValue(record, property, 1)),
+        stepOriginals: new Map(),
+      };
+      bindings.set(property, binding);
+    }
+    if (!binding.stepOriginals) binding.stepOriginals = new Map();
+    return binding;
+  }
+
   function applyGsapKeyframeEntryEdit(record, property, desired) {
     const animation = record.animation;
     // A RELATIVE desired ('+=10') must be refused BEFORE any mutation: written
@@ -3536,36 +3579,9 @@ function nativeMotionRuntimeBridge() {
     // Binding FIRST: once an edit run is frozen, later writes — rollbacks above
     // all — must keep working even if a fresh plan would no longer validate
     // (e.g. the page mutated an unrelated entry). Only a first write needs a plan.
-    let bindings = gsapKeyframeEntryRetargets.get(animation);
-    if (!bindings) {
-      bindings = new Map();
-      gsapKeyframeEntryRetargets.set(animation, bindings);
-    }
-    const state = entryBindingState(animation, property);
-    if (state.stale) {
-      throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
-    }
-    let binding = state.binding;
+    const binding = ensureFrozenEntryBinding(record, property);
     if (!binding) {
-      const plan = gsapArrayKeyframePlan(animation, property);
-      if (!plan) {
-        throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be retargeted safely yet.');
-      }
-      binding = {
-        buckets: plan.run,
-        originals: plan.run.map((bucket) => bucket[property]),
-        allBuckets: plan.buckets,
-        allExpected: plan.buckets.map((bucket) => bucket[property]),
-        carriers: plan.carriers,
-        allEntries: plan.allEntries,
-        allEntryStates: plan.allEntries.map((frozenEntry) => ({
-          entry: frozenEntry,
-          namespace: gsapEntryPropertyNamespace(frozenEntry, property),
-          child: gsapEntryChildTweens.get(frozenEntry) || null,
-        })),
-        end: numericCss(sampleGsapValue(record, property, 1)),
-      };
-      bindings.set(property, binding);
+      throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be retargeted safely yet.');
     }
     const coerceFor = (bucket) => (typeof bucket[property] === 'number' && Number.isFinite(Number(desired))
       ? Number(desired)
@@ -3624,6 +3640,116 @@ function nativeMotionRuntimeBridge() {
         }
       }
       binding.buckets.forEach((bucket) => { bucket[property] = coerceFor(bucket); });
+    }
+    binding.allExpected = binding.allBuckets.map((bucket) => bucket[property]);
+    invalidatePreservingStart(animation);
+  }
+
+  // Phase-2 step writer: edits ONE intermediate entry of the ARRAY keyframes
+  // form, addressed by rawEntryIndex (the canonical transactional address —
+  // design-lock Sol r2/r3: offsets duplicate on duration:0 and vanish on a
+  // zero total duration; probe _probe-phase2-zerodur.mjs). Probe
+  // _probe-phase2-midentry.mjs (GSAP 3.15 real): editing an intermediate
+  // entry + invalidatePreservingStart preserves the global start and never
+  // touches the segment BEFORE the edited one; zero callbacks leak
+  // (suppressEvents — probe _probe-phase2-callbacks.mjs).
+  function applyGsapKeyframeStep(record, property, descriptor) {
+    const animation = record.animation;
+    const vars = animation.vars || {};
+    if (GSAP_CONFIG_VARS.has(property)) {
+      throw bridgeError('unsupported_patch', 'This is a GSAP configuration key — not an animatable property.');
+    }
+    const desired = String(descriptor?.value ?? '');
+    // Same value refusals as the entry-edit writer, BEFORE any mutation: a
+    // relative/randomized value written into an entry voids the plan itself
+    // and has no restorable rollback (Sol r2/r97).
+    if (/^[+-]=/.test(desired.trim())) {
+      throw bridgeError('unsupported_value', 'Relative values cannot be written into GSAP keyframes entries.');
+    }
+    if (/random\(/i.test(desired)) {
+      throw bridgeError('unsupported_value', 'Randomized values cannot be written into GSAP keyframes entries.');
+    }
+    const entryIndex = Number(descriptor?.entryIndex);
+    if (!Number.isInteger(entryIndex) || entryIndex < 0) {
+      throw bridgeError('invalid_value', 'The step patch is missing its keyframe address.');
+    }
+    if (vars.runBackwards) {
+      throw bridgeError('unsupported_patch', 'gsap.from() keyframes are read-only — vars hold the start, not the end.');
+    }
+    // Channel guards mirrored from applyGsapKeyframe: entries are shared
+    // storage across targets/staggers, and plugin/css-wrapper carriers have
+    // no proven step path.
+    if (vars.stagger != null) {
+      throw bridgeError('unsupported_patch', 'This value is shared by a staggered group — unchain the layer (chain icon) to edit it independently.');
+    }
+    if (Math.max(1, record.targets?.length || 1) > 1) {
+      throw bridgeError('unsupported_patch', 'This value is shared by multiple targets — unchain the layer (chain icon) to edit it independently.');
+    }
+    if (vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css) && property in vars.css) {
+      throw bridgeError('unsupported_patch', 'This value lives in the legacy css wrapper — step editing is not supported yet.');
+    }
+    if (gsapPluginOwnedVar(vars, property)) {
+      throw bridgeError('unsupported_patch', 'This value is driven by a GSAP plugin — its steps cannot be edited safely yet.');
+    }
+    const binding = ensureFrozenEntryBinding(record, property);
+    if (!binding) {
+      throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be edited safely yet.');
+    }
+    // Address against the FROZEN binding (identity — Sol F2): the raw index
+    // names a position in the entry order frozen at first write.
+    const frozenEntry = binding.allEntries ? binding.allEntries[entryIndex] : null;
+    const carrier = frozenEntry
+      ? (binding.carriers || []).find((candidate) => candidate.entry === frozenEntry)
+      : null;
+    if (!frozenEntry || !carrier) {
+      throw bridgeError('unsupported_patch', 'This keyframe step does not carry the edited property.');
+    }
+    // Journal separation (Sol F1): the frozen trailing run belongs to the END
+    // writer — its uniform writes and value-replay undo cannot represent a
+    // divergent member. Steps own everything BEFORE the run.
+    if (binding.buckets.includes(carrier.bucket)) {
+      throw bridgeError('unsupported_patch', 'This step holds the final value — edit it from the end keyframe.');
+    }
+    const journal = binding.stepOriginals;
+    const original = journal.has(entryIndex) ? journal.get(entryIndex) : carrier.bucket[property];
+    if (gsapValueEquivalence(property, desired, String(original)) === 'equal') {
+      // RESTORE lane — binding-first, never a fresh plan (a rollback must
+      // traverse an outage). Same terminal guards as the entry-edit restore:
+      // a PROVEN resurrection hazard or cross-tween sharing refuses (Sol
+      // r75/r45); a mere inner-timeline outage restores (Sol r79).
+      if (gsapResurrectionHazardVerdict(animation) === 'proven') {
+        throw bridgeError('unsupported_patch', "Part of this animation was killed by the page — restoring would bring the dead writer back.");
+      }
+      if (gsapBucketsSharedWithOtherTween(animation, binding.allBuckets)) {
+        throw bridgeError('unsupported_patch', 'These keyframes are shared with another animation and cannot be restored safely.');
+      }
+      carrier.bucket[property] = original;
+    } else {
+      // WRITE lane — the full plan is demanded immediately before a
+      // non-restore mutation (TOCTOU — Sol r70), plus the channel-level
+      // hazards the plan alone does not carry.
+      if (gsapResurrectionHazard(animation)) {
+        throw bridgeError('unsupported_patch', "Part of this animation was killed by the page — editing it would bring the dead writer back.");
+      }
+      // No property self-exemption on this channel (Sol r116): the write
+      // replaces the entry value and would destroy an authored function.
+      if (gsapAnimationRandomHazard(animation)) {
+        throw bridgeError('unsupported_patch', 'This animation uses randomized values — any edit would re-roll them.');
+      }
+      const plan = gsapArrayKeyframePlan(animation, property);
+      if (!plan) {
+        throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be edited safely yet.');
+      }
+      // The frozen entry must still OCCUPY this raw index in the live order
+      // (Sol F2) — a moved/spliced entry refuses instead of editing a
+      // neighbor; re-inspection prunes and re-freezes.
+      if (plan.allEntries[entryIndex] !== frozenEntry) {
+        throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
+      }
+      if (!journal.has(entryIndex)) journal.set(entryIndex, carrier.bucket[property]);
+      carrier.bucket[property] = (typeof carrier.bucket[property] === 'number' && Number.isFinite(Number(desired)))
+        ? Number(desired)
+        : desired;
     }
     binding.allExpected = binding.allBuckets.map((bucket) => bucket[property]);
     invalidatePreservingStart(animation);
@@ -4010,7 +4136,9 @@ function nativeMotionRuntimeBridge() {
     }
 
     const animation = record.animation;
-    if (patch.property.startsWith('keyframe.')) {
+    if (patch.property.startsWith('keyframeStep.')) {
+      applyGsapKeyframeStep(record, patch.property.slice('keyframeStep.'.length), value);
+    } else if (patch.property.startsWith('keyframe.')) {
       applyGsapKeyframe(record, patch.property.slice('keyframe.'.length), value);
     } else if (patch.property === 'timing.playbackMode') {
       const playbackMode = ['loop', 'ping-pong'].includes(value) ? value : 'once';
