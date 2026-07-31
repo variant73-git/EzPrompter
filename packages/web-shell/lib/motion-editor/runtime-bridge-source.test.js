@@ -2141,6 +2141,44 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a swapped easing FUNCTION diverges the shape by source — stale patch refuses, unchanged ease edits (Sol r27)', () => {
+    document.body.innerHTML = '<main><div id="ksf2"></div></main>';
+    const target = document.getElementById('ksf2');
+    // ease funcional na raiz é config BENIGNA (plano vivo, steps expostos) —
+    // mas colapsá-la em 'fn' deixava um swap p=>p → p=>p*p invisível ao token.
+    // Serialização por SOURCE diverge o shape; ease intacta segue editável.
+    const vars = {
+      keyframes: [
+        { x: 100, ease: (p) => p, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // Página troca a ease ANTES do 1º write, preservando entry/índice/valores.
+    vars.keyframes[0].ease = (p) => p * p;
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 0, '150');
+    expect(vars.keyframes[0].x).toBe(100);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // Re-inspeção (ease nova exposta) → edit funciona.
+    const regrab = grabMotion(target, messages);
+    sendStep(regrab.selection, regrab.motion, 'x', 0, '150');
+    expect(vars.keyframes[0].x).toBe(150);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

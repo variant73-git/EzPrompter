@@ -3506,7 +3506,6 @@ function nativeMotionRuntimeBridge() {
     try {
       const seen = new Set();
       const serialize = (value, depth) => {
-        if (typeof value === 'function') return 'fn';
         if (value === null) return 'null';
         if (typeof value !== 'object') return `${typeof value}:${String(value)}`;
         if (seen.has(value) || depth > 6) return null;
@@ -3520,7 +3519,20 @@ function nativeMotionRuntimeBridge() {
             owner = Object.getPrototypeOf(owner);
           }
           if (!slot || !('value' in slot)) return null; // accessor — unstable
-          const child = serialize(slot.value, depth + 1);
+          let child;
+          if (typeof slot.value === 'function') {
+            // A blanket 'fn' let a swapped easing slip through the token
+            // (Sol r27). Config-key functions at the ENTRY ROOT (ease etc.)
+            // are benign for the plan and stay editable — serialized by
+            // SOURCE so a swap diverges the shape. Functions anywhere else
+            // have no stable representation (they are hazard-locked upstream
+            // anyway) → null. Residual: same-source different-closure config
+            // swaps are unobservable — accepted class.
+            if (depth === 0 && GSAP_CONFIG_VARS.has(key)) child = `fn:${String(slot.value)}`;
+            else return null;
+          } else {
+            child = serialize(slot.value, depth + 1);
+          }
           if (child === null) return null;
           out.push([key, child]);
         }
