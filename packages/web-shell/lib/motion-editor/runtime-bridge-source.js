@@ -2155,8 +2155,9 @@ function nativeMotionRuntimeBridge() {
               // and the SAME truth in a fresh bridge mints the SAME token
               // (fingerprint — persisted patches replay after a reload).
               const nextEntries = new Map(entryPlan.steps.map((step) => [step.rawEntryIndex, step.entry]));
-              const exposureToken = gsapStepExposureToken(entryPlan.allEntries);
-              exposures.set(track.property, { token: exposureToken, entries: nextEntries });
+              const exposureShape = gsapStepExposureShape(entryPlan.allEntries);
+              const exposureToken = gsapStepExposureToken(exposureShape);
+              exposures.set(track.property, { token: exposureToken, shape: exposureShape, entries: nextEntries });
               return { steps: entryPlan.steps.map((step, stepIndex, list) => {
                 // Frozen-run members belong to the END writer (journal
                 // separation) — their diamond points at the end edit. The
@@ -3480,8 +3481,8 @@ function nativeMotionRuntimeBridge() {
   // Deterministic across bridges when the page reloads identically; any
   // observable reorder/shape change (the r19 class) changes it. Enumeration
   // via the for..in mirror; `parent` is GSAP's mutable backedge, excluded.
-  function gsapStepExposureToken(entries) {
-    const shape = entries.map((entry) => gsapForInKeys(entry)
+  function gsapStepExposureShape(entries) {
+    return JSON.stringify(entries.map((entry) => gsapForInKeys(entry)
       .filter((key) => key !== 'parent')
       .sort()
       .map((key) => {
@@ -3490,8 +3491,10 @@ function nativeMotionRuntimeBridge() {
           return ['css', gsapForInKeys(value).sort().map((cssKey) => [cssKey, String(value[cssKey])])];
         }
         return [key, typeof value === 'function' ? 'fn' : String(value)];
-      }));
-    return `sx-${hash(JSON.stringify(shape))}`;
+      })));
+  }
+  function gsapStepExposureToken(shape) {
+    return `sx-${hash(shape)}`;
   }
   // Original start values (sampled at progress 0 before the FIRST offset-0
   // edit), per (animation, property) — the render-equivalent rollback target
@@ -3885,6 +3888,15 @@ function nativeMotionRuntimeBridge() {
         throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be edited safely yet.');
       }
       if (!promisedEntry || firstPlan.allEntries[entryIndex] !== promisedEntry) {
+        throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
+      }
+      // The token must also match the LIVE truth, not just the stored record
+      // (Sol r23): a page mutation of a bucket VALUE keeps identity and order
+      // — the stale UI token equals the stale record and the journal would
+      // freeze the mutated value while patch.before claims the shown one.
+      // Compared as the EXACT serialized shape (never the hash alone — a
+      // collision would slip a changed truth through).
+      if (gsapStepExposureShape(firstPlan.allEntries) !== exposure.shape) {
         throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
       }
       binding = createFrozenEntryBinding(record, property, firstPlan);

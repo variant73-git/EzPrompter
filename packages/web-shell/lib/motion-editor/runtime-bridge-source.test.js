@@ -1963,6 +1963,46 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a pre-first-write VALUE mutation refuses — the token is checked against the LIVE truth, not the stored record (Sol r23)', () => {
+    document.body.innerHTML = '<main><div id="ksl"></div></main>';
+    const target = document.getElementById('ksl');
+    // [0,10,100]: a página muda o bucket de 10→20 (identidade/ordem intactas)
+    // antes do 1º write. Token pedido × token GRAVADO são ambos o T velho —
+    // sem recomputar contra a verdade VIVA, o journal congelaria 20 com
+    // before=10 e o undo sobrescreveria a mudança externa. Deve recusar e
+    // exigir re-inspeção.
+    const vars = {
+      keyframes: [
+        { x: 0, duration: 1, parent: {} },
+        { x: 10, duration: 1, parent: {} },
+        { x: 100, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    vars.keyframes[1].x = 20; // mutação externa pré-1º-write
+    sendStep(selection, motion, 'x', 1, '30');
+    expect(vars.keyframes[1].x).toBe(20); // intocado
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // Re-inspeção re-expõe a verdade — o edit funciona e o undo é exato.
+    const regrab = grabMotion(target, messages);
+    sendStep(regrab.selection, regrab.motion, 'x', 1, '30');
+    expect(vars.keyframes[1].x).toBe(30);
+    sendStep(regrab.selection, regrab.motion, 'x', 1, '20');
+    expect(vars.keyframes[1].x).toBe(20);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
