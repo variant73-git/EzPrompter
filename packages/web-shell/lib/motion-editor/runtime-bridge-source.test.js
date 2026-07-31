@@ -2226,6 +2226,57 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('exposures with config FUNCTIONS are session-bound — cross-bridge replay refuses (Sol r29)', () => {
+    document.body.innerHTML = '<main><div id="ksb2"></div></main>';
+    const target = document.getElementById('ksb2');
+    // Identidades === morrem no reload; source não distingue makeEase(1) de
+    // makeEase(2). Não há identidade cross-sessão estável pra closures →
+    // token de exposição COM função ganha nonce da instância do bridge:
+    // replay persistido recusa e exige re-inspeção consciente.
+    const makeEase = (power) => (p) => p ** power;
+    const vars = {
+      keyframes: [
+        { x: 100, ease: makeEase(1), duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const grabbed = grabMotion(target, messages);
+    const track = grabbed.motion.tracks.find((candidate) => candidate.property === 'x');
+    const persistedToken = track.steps.find((step) => step.entryIndex === 1).token;
+    const persistedPatch = {
+      elementId: grabbed.selection.payload.element.id,
+      kind: 'motion',
+      motionId: grabbed.motion.id,
+      property: 'keyframeStep.x',
+      before: { entryIndex: 1, token: persistedToken, value: '200', exists: true },
+      value: { entryIndex: 1, token: persistedToken, value: '555', exists: true },
+    };
+
+    // "Reload": página reconstrói com makeEase(2) — MESMO source, curva outra.
+    vars.keyframes[0].ease = makeEase(2);
+    try { window.__uncraftMotionBridge?.teardown?.(); } catch (_) {}
+    window.eval(getRuntimeBridgeSource());
+    grabMotion(target, messages);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'apply-patch', payload: { patch: persistedPatch } },
+    }));
+    expect(vars.keyframes[1].x).toBe(200); // replay recusado
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

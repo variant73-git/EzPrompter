@@ -2156,7 +2156,9 @@ function nativeMotionRuntimeBridge() {
               // (fingerprint — persisted patches replay after a reload).
               const nextEntries = new Map(entryPlan.steps.map((step) => [step.rawEntryIndex, step.entry]));
               const exposureShape = gsapStepExposureShape(entryPlan.allEntries);
-              const exposureToken = exposureShape === null ? null : gsapStepExposureToken(exposureShape);
+              const exposureConfigFns = entryPlan.allEntries.map((planEntry) => gsapEntryConfigFns(planEntry));
+              const exposureSessionBound = exposureConfigFns.some((fns) => fns.size > 0);
+              const exposureToken = exposureShape === null ? null : gsapStepExposureToken(exposureShape, exposureSessionBound);
               if (exposureToken === null) {
                 gsapStepExposures.get(animation)?.delete(track.property);
               } else {
@@ -2171,7 +2173,7 @@ function nativeMotionRuntimeBridge() {
                   // Function IDENTITIES over ALL live entries (Sol r28): a
                   // swapped same-source closure on ANY entry re-renders on
                   // the next invalidate — collateral to untouched channels.
-                  allEntryConfigFns: entryPlan.allEntries.map((planEntry) => gsapEntryConfigFns(planEntry)),
+                  allEntryConfigFns: exposureConfigFns,
                 });
               }
               return { steps: entryPlan.steps.map((step, stepIndex, list) => {
@@ -3576,12 +3578,19 @@ function nativeMotionRuntimeBridge() {
     const shapes = entries.map((entry) => gsapStepEntryShape(entry));
     return shapes.some((shape) => shape === null) ? null : JSON.stringify(shapes);
   }
-  function gsapStepExposureToken(shape) {
+  // Per-bridge-instance nonce: exposures whose truth carries a config
+  // FUNCTION have no stable cross-session identity (same source, different
+  // closure — Sol r29), so their tokens are SESSION-BOUND: a persisted patch
+  // replayed through a fresh bridge refuses and demands a conscious
+  // re-inspection. Function-free exposures stay replay-stable (r22).
+  const gsapStepSessionNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  function gsapStepExposureToken(shape, sessionBound) {
     // The token IS the exact serialized shape (Sol r25): a 32-bit non-crypto
     // hash is forgeable by an adversarial page (birthday ≈ 77k tries), and a
     // collision would smuggle a stale patch through the gate. Exact equality
-    // by construction; still deterministic across bridges (r22 replay).
-    return `sx:${shape}`;
+    // by construction; deterministic across bridges (r22 replay) unless the
+    // truth carries functions (session-bound — Sol r29).
+    return sessionBound ? `sxs:${gsapStepSessionNonce}:${shape}` : `sx:${shape}`;
   }
   // Original start values (sampled at progress 0 before the FIRST offset-0
   // edit), per (animation, property) — the render-equivalent rollback target
