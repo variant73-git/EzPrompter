@@ -2706,6 +2706,3953 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('restores a FUNCTION-valued startAt verbatim on rollback — never its stringification (Sol r41)', () => {
+    document.body.innerHTML = '<main><div id="kfsf"></div></main>';
+    const target = document.getElementById('kfsf');
+    // Authored startAt:{x:()=>40}: the reader must never serialize the
+    // function (String(fn) written back on rollback replaces it with garbage
+    // and the start renders wrong DURING validation). The binding freezes the
+    // authored existence+value; landing back restores the function IDENTITY.
+    const startFn = () => 40;
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], startAt: { x: startFn }, duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-startfn',
+            patches: [{
+              id: 'p-startfn',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframe.x',
+              before: { offset: 0, value: '40', exists: true },
+              value: { offset: 0, value: '80', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+    const validation = messages.filter((message) => message.type === 'validation-result').pop();
+    expect(validation.payload.valid).toBe(true);
+    // Identity restored — never a stringified function, never a leftover '80'.
+    expect(vars.startAt.x).toBe(startFn);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('rebases the startAt binding when the page replaces the authored value (Sol r42)', () => {
+    document.body.innerHTML = '<main><div id="kfsb"></div></main>';
+    const target = document.getElementById('kfsb');
+    // After a validated edit over fnA, the page swaps in fnB. A frozen binding
+    // would roll the NEXT transaction back to fnA (or a sampled string),
+    // destroying fnB with a false success. The binding tracks what the bridge
+    // last wrote and REBASES from the live state when it diverged.
+    const fnA = () => 40;
+    const fnB = () => 60;
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], startAt: { x: fnA }, duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const validateStart = (id, value) => window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id,
+            patches: [{
+              id: `p-${id}`,
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframe.x',
+              before: { offset: 0, value: '0', exists: true },
+              value: { offset: 0, value, exists: true },
+            }],
+          },
+        },
+      },
+    }));
+
+    validateStart('tx-sa1', '80');
+    expect(vars.startAt.x).toBe(fnA); // first transaction restores fnA
+
+    vars.startAt.x = fnB; // external page replacement
+
+    validateStart('tx-sa2', '90');
+    const validation = messages.filter((message) => message.type === 'validation-result').pop();
+    expect(validation.payload.valid).toBe(true);
+    expect(vars.startAt.x).toBe(fnB); // rebased — fnB survives, never a string
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks ALIASED entries — the same object at two positions cannot be edited safely (Sol r43)', () => {
+    document.body.innerHTML = '<main><div id="kfae"></div></main>';
+    const target = document.getElementById('kfae');
+    // keyframes:[shared, {x:100}, shared]: writing the trailing bucket also
+    // mutates the FIRST occurrence through shared identity ([300,100,300] —
+    // the non-trailing duplicate guarantee breaks). Repeated bucket identity
+    // locks the plan.
+    const shared = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [shared, { x: 100, duration: 1, parent: {} }, shared], duration: 3 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(shared.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('inspects EVERY occurrence of an aliased entry — a kill in the first child is a hazard (Sol r44)', () => {
+    document.body.innerHTML = '<main><div id="kfao"></div></main>';
+    const target = document.getElementById('kfao');
+    // [shared, middle, shared]: an entry->child map keeps only the LAST child,
+    // so a kill in the FIRST occurrence goes unseen and a top-level z edit
+    // invalidates and resurrects it. The hazard must walk {entry, child}
+    // PAIRS.
+    const shared = { x: 100, y: 5, duration: 1, parent: {} };
+    const middle = { x: 150, y: 8, duration: 1, parent: {} };
+    const vars = { z: 1, keyframes: [shared, middle, shared], duration: 3 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: shared, _initted: true, _ptLookup: [{ y: {} }] }; // x killed HERE
+    const child2 = { vars: middle, _initted: true, _ptLookup: [{ x: {}, y: {} }] };
+    const child3 = { vars: shared, _initted: true, _ptLookup: [{ x: {}, y: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2, child3] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const zTrack = motion.tracks.find((track) => track.property === 'z');
+    expect(zTrack.ownership.retargetable).toBe(false);
+    expect(zTrack.keyframeEditable).toBe(false);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'retarget.final',
+            before: { schemaVersion: 2, semanticProperty: 'z', runtimeProperty: 'z', value: '1' },
+            value: {
+              schemaVersion: 2,
+              semanticProperty: 'z',
+              runtimeProperty: 'z',
+              value: '9',
+              writeModel: 'absolute',
+              responsiveScope: 'shared',
+              owner: { channelId: `${motion.id}:z`, motionId: motion.id },
+              keyframe: { position: 'final-existing' },
+            },
+          },
+        },
+      },
+    }));
+    expect(vars.z).toBe(1);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks buckets shared BETWEEN tweens — editing A must never rewrite B (Sol r45)', () => {
+    document.body.innerHTML = '<main><div id="kfx1"></div><div id="kfx2"></div></main>';
+    const tA = document.getElementById('kfx1');
+    const tB = document.getElementById('kfx2');
+    // Two tweens reuse the SAME keyframes array (GSAP preserves identity):
+    // writing A's trailing bucket rewrites B's source, and B re-renders the
+    // edit on its next invalidate. Cross-tween sharing locks the plan.
+    const sharedEntries = [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }];
+    const varsA = { keyframes: sharedEntries, duration: 2 };
+    const varsB = { keyframes: sharedEntries, duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, varsA);
+    const tweenB = buildArrayKeyframesTween(tB, varsB);
+    window.gsap.globalTimeline = { getChildren: () => [tweenA, tweenB] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const a = grabMotion(tA, messages);
+    const xTrack = a.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(a.selection, a.motion, '300');
+    expect(sharedEntries[1].x).toBe(200);
+    expect(tweenA.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('still sees cross-tween sharing after B deletes its source — live children carry the identity (Sol r46)', () => {
+    document.body.innerHTML = '<main><div id="kfy1"></div><div id="kfy2"></div></main>';
+    const tA = document.getElementById('kfy1');
+    const tB = document.getElementById('kfy2');
+    // A and B share entries; B then deletes vars.keyframes. B's CHILDREN stay
+    // alive rendering the shared entries (nested global walk exposes them) —
+    // A must stay locked or editing A rewrites what B still renders.
+    const sharedEntries = [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }];
+    const varsA = { keyframes: sharedEntries, duration: 2 };
+    const varsB = { keyframes: sharedEntries, duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, varsA);
+    const tweenB = buildArrayKeyframesTween(tB, varsB);
+    const bChild1 = { vars: sharedEntries[0], _initted: true, _ptLookup: [{ x: {} }] };
+    const bChild2 = { vars: sharedEntries[1], _initted: true, _ptLookup: [{ x: {} }] };
+    // The GLOBAL walk does NOT recurse into a Tween's inner timeline — B's
+    // children are reachable ONLY through tweenB.timeline (Sol r47).
+    tweenB.timeline = { getChildren: () => [bChild1, bChild2] };
+    delete varsB.keyframes; // B's source gone; children remain live
+    window.gsap.globalTimeline = { getChildren: () => [tweenA, tweenB] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const a = grabMotion(tA, messages);
+    const xTrack = a.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(a.selection, a.motion, '300');
+    expect(sharedEntries[1].x).toBe(200);
+    expect(tweenA.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('sees sharing through FACADE children carrying the array in child.vars.keyframes (Sol r48)', () => {
+    document.body.innerHTML = '<main><div id="kfz1"></div><div id="kfz2"></div><div id="kfz3"></div></main>';
+    const tA = document.getElementById('kfz1');
+    // B is stagger+keyframes over two targets: its facade children hold the
+    // SHARED array in child.vars.keyframes. After B's source is deleted (no
+    // cached provenance), only that nested reference betrays the sharing —
+    // A must stay locked.
+    const sharedEntries = [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }];
+    const varsA = { keyframes: sharedEntries, duration: 2 };
+    const varsB = { keyframes: sharedEntries, stagger: 0.3, duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, varsA);
+    const tweenB = buildArrayKeyframesTween(document.getElementById('kfz2'), varsB, { targets: [document.getElementById('kfz2'), document.getElementById('kfz3')] });
+    const facade1 = { vars: { keyframes: sharedEntries, stagger: 0.3, duration: 2, delay: 0, overwrite: 'auto', parent: {} } };
+    const facade2 = { vars: { keyframes: sharedEntries, stagger: 0.3, duration: 2, delay: 0.3, overwrite: 'auto', parent: {} } };
+    tweenB.timeline = { getChildren: () => [facade1, facade2] };
+    delete varsB.keyframes; // source gone BEFORE any provenance was cached
+    window.gsap.globalTimeline = { getChildren: () => [tweenA, tweenB] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const a = grabMotion(tA, messages);
+    const xTrack = a.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(a.selection, a.motion, '300');
+    expect(sharedEntries[1].x).toBe(200);
+    expect(tweenA.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('descends into facade GRANDCHILDREN — shared entries deep in B lock A (Sol r49)', () => {
+    document.body.innerHTML = '<main><div id="kfw1"></div><div id="kfw2"></div><div id="kfw3"></div></main>';
+    const tA = document.getElementById('kfw1');
+    // A and B use DISTINCT arrays that share entry objects. B is a stagger
+    // facade whose children have their OWN inner timelines: the segments live
+    // in the GRANDCHILDREN. With both sources deleted/emptied and B never
+    // inspected, only the recursive descent sees the sharing.
+    const shared1 = { x: 100, duration: 1, parent: {} };
+    const shared2 = { x: 200, duration: 1, parent: {} };
+    const arrA = [shared1, shared2];
+    const arrB = [shared1, shared2];
+    const varsA = { keyframes: arrA, duration: 2 };
+    const varsB = { keyframes: arrB, stagger: 0.3, duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, varsA);
+    const tweenB = buildArrayKeyframesTween(document.getElementById('kfw2'), varsB, { targets: [document.getElementById('kfw2'), document.getElementById('kfw3')] });
+    const grand1 = { vars: shared1, _initted: true, _ptLookup: [{ x: {} }] };
+    const grand2 = { vars: shared2, _initted: true, _ptLookup: [{ x: {} }] };
+    const facade = {
+      vars: { stagger: 0.3, duration: 2, delay: 0, overwrite: 'auto', parent: {} },
+      timeline: { getChildren: () => [grand1, grand2] },
+    };
+    tweenB.timeline = { getChildren: () => [facade] };
+    delete varsB.keyframes; // sources gone before any provenance
+    arrB.length = 0;
+    window.gsap.globalTimeline = { getChildren: () => [tweenA, tweenB] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const a = grabMotion(tA, messages);
+    const xTrack = a.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(a.selection, a.motion, '900');
+    expect(shared2.x).toBe(200);
+    expect(tweenA.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('sees sharing when another tween ROOT vars IS one of our entries (Sol r50)', () => {
+    document.body.innerHTML = '<main><div id="kfv1"></div><div id="kfv2"></div></main>';
+    const tA = document.getElementById('kfv1');
+    const tB = document.getElementById('kfv2');
+    // The page reuses A's terminal ENTRY as the vars of a plain tween B:
+    // editing A's end rewrites B.vars.x and B renders it on its next
+    // invalidate. The root of the shared-tree walk must be compared too.
+    const terminal = { x: 200, duration: 1, parent: {} };
+    const varsA = { keyframes: [{ x: 100, duration: 1, parent: {} }, terminal], duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, varsA);
+    const tweenB = buildArrayKeyframesTween(tB, { x: 50, duration: 1 });
+    tweenB.vars = terminal; // B's vars IS the shared entry object
+    window.gsap.globalTimeline = { getChildren: () => [tweenA, tweenB] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const a = grabMotion(tA, messages);
+    const xTrack = a.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(a.selection, a.motion, '300');
+    expect(terminal.x).toBe(200);
+    expect(tweenA.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('sees sharing through another tween startAt (Sol r51)', () => {
+    document.body.innerHTML = '<main><div id="kfq1"></div><div id="kfq2"></div></main>';
+    const tA = document.getElementById('kfq1');
+    const tB = document.getElementById('kfq2');
+    // B uses A's terminal entry as its startAt: editing A's end rewrites
+    // B.vars.startAt.x and B's start moves on its next invalidate.
+    const terminal = { x: 200, duration: 1, parent: {} };
+    const varsA = { keyframes: [{ x: 100, duration: 1, parent: {} }, terminal], duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, varsA);
+    const tweenB = buildArrayKeyframesTween(tB, { x: 50, startAt: terminal, duration: 1 });
+    window.gsap.globalTimeline = { getChildren: () => [tweenA, tweenB] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const a = grabMotion(tA, messages);
+    const xTrack = a.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(a.selection, a.motion, '300');
+    expect(terminal.x).toBe(200);
+    expect(tweenA.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('sees sharing nested inside plugin wrappers of startAt (Sol r52)', () => {
+    document.body.innerHTML = '<main><div id="kfp1"></div><div id="kfp2"></div></main>';
+    const tA = document.getElementById('kfp1');
+    const tB = document.getElementById('kfp2');
+    // B reuses A's terminal entry NESTED inside a plugin wrapper:
+    // startAt:{attr: entry}. A shallow startAt check misses it; editing A
+    // would rewrite B.vars.startAt.attr.x.
+    const terminal = { x: 200, duration: 1, parent: {} };
+    const varsA = { keyframes: [{ x: 100, duration: 1, parent: {} }, terminal], duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, varsA);
+    const tweenB = buildArrayKeyframesTween(tB, { x: 50, startAt: { attr: terminal }, duration: 1 });
+    window.gsap.globalTimeline = { getChildren: () => [tweenA, tweenB] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const a = grabMotion(tA, messages);
+    const xTrack = a.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(a.selection, a.motion, '300');
+    expect(terminal.x).toBe(200);
+    expect(tweenA.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('fails CLOSED when the sharing walk hits a throwing getter (Sol r53)', () => {
+    document.body.innerHTML = '<main><div id="kfg1"></div><div id="kfg2"></div></main>';
+    const tA = document.getElementById('kfg1');
+    const tB = document.getElementById('kfg2');
+    // B shares A's terminal entry via startAt AND carries a throwing
+    // enumerable getter: an exception during inspection must mean "assume
+    // shared" — never abort-and-unlock.
+    const terminal = { x: 200, duration: 1, parent: {} };
+    const varsA = { keyframes: [{ x: 100, duration: 1, parent: {} }, terminal], duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, varsA);
+    const varsB = { x: 50, duration: 1, startAt: { attr: terminal } };
+    Object.defineProperty(varsB, 'boom', { enumerable: true, get() { throw new Error('trap'); } });
+    const tweenB = buildArrayKeyframesTween(tB, { x: 1, duration: 1 });
+    tweenB.vars = varsB;
+    window.gsap.globalTimeline = { getChildren: () => [tweenA, tweenB] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const a = grabMotion(tA, messages);
+    const xTrack = a.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(a.selection, a.motion, '300');
+    expect(terminal.x).toBe(200);
+    expect(tweenA.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('fails CLOSED when a nested getChildren throws during the sharing walk (Sol r54)', () => {
+    document.body.innerHTML = '<main><div id="kfn1"></div><div id="kfn2"></div></main>';
+    const tA = document.getElementById('kfn1');
+    const tB = document.getElementById('kfn2');
+    // B's inner timeline cannot be inspected (getChildren throws): whatever
+    // hides in there is unknowable — the plan must lock, never unlock on a
+    // swallowed failure.
+    const varsA = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, varsA);
+    const tweenB = buildArrayKeyframesTween(tB, { x: 50, duration: 1 });
+    tweenB.timeline = { getChildren: () => { throw new Error('trap'); } };
+    window.gsap.globalTimeline = { getChildren: () => [tweenA, tweenB] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const a = grabMotion(tA, messages);
+    const xTrack = a.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(a.selection, a.motion, '300');
+    expect(varsA.keyframes[1].x).toBe(200);
+    expect(tweenA.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks when OUR OWN inner timeline is uninspectable — never fall back to the array (Sol r55)', () => {
+    document.body.innerHTML = '<main><div id="kfu2"></div></main>';
+    const target = document.getElementById('kfu2');
+    // A.timeline exists but getChildren throws: the REAL segment structure is
+    // unknowable — the array fallback (meant for an ABSENT API) must not
+    // engage; both channels lock, detection keeps the track inventoried.
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = { getChildren: () => { throw new Error('trap'); } };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy(); // still inventoried
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes[1].x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('treats a PRESENT timeline without getChildren as uninspectable — never the array fallback (Sol r56)', () => {
+    document.body.innerHTML = '<main><div id="kfu3"></div></main>';
+    const target = document.getElementById('kfu3');
+    // Page reorders the array AND strips getChildren: the array order is a
+    // lie and the truth is unreachable. `null` may only mean "no timeline
+    // ever existed" (plain tween, falsy 0) — a present-but-API-less timeline
+    // is uninspectable and locks.
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    vars.keyframes.reverse(); // external reorder
+    tween.timeline = {}; // timeline present, getChildren gone
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([200, 100]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('fails CLOSED when the global timeline becomes uninspectable after selection (Sol r57)', () => {
+    document.body.innerHTML = '<main><div id="kfgt"></div></main>';
+    const target = document.getElementById('kfgt');
+    // After inspection the page strips globalTimeline.getChildren: sharing can
+    // no longer be ruled out — the write must refuse, never proceed.
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    window.gsap.globalTimeline = {}; // API gone post-selection
+
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps observed sharing locked after the other tween detaches from the global timeline (Sol r58)', () => {
+    document.body.innerHTML = '<main><div id="kfd1"></div><div id="kfd2"></div></main>';
+    const tA = document.getElementById('kfd1');
+    const tB = document.getElementById('kfd2');
+    // Sharing observed once must be REMEMBERED: B completes/detaches from the
+    // global timeline but stays restartable — a fresh snapshot no longer sees
+    // it, yet editing A would still rewrite B's source.
+    const sharedEntries = [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }];
+    const varsA = { keyframes: sharedEntries, duration: 2 };
+    const varsB = { keyframes: sharedEntries, duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, varsA);
+    const tweenB = buildArrayKeyframesTween(tB, varsB);
+    let attached = [tweenA, tweenB];
+    window.gsap.globalTimeline = { getChildren: () => attached };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const first = grabMotion(tA, messages); // sharing observed here
+    expect(first.motion.tracks.find((track) => track.property === 'x').ownership.retargetable).toBe(false);
+
+    attached = [tweenA]; // B detaches (completed) but remains restartable
+    const second = grabMotion(tA, messages);
+    const xTrack = second.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(second.selection, second.motion, '300');
+    expect(sharedEntries[1].x).toBe(200);
+    expect(tweenA.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('transient uncertainty locks WITHOUT contaminating the durable memory (Sol r59)', () => {
+    document.body.innerHTML = '<main><div id="kft3"></div><div id="kft4"></div></main>';
+    const tA = document.getElementById('kft3');
+    const tB = document.getElementById('kft4');
+    // B has NO shared identity — only a throwing getter. The lock must be
+    // transient: once the page removes the getter (and B detaches), a
+    // re-inspection unlocks A. Only PROVEN identity may be remembered forever.
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, vars);
+    const varsB = { x: 50, duration: 1 };
+    Object.defineProperty(varsB, 'boom', { enumerable: true, configurable: true, get() { throw new Error('trap'); } });
+    const tweenB = buildArrayKeyframesTween(tB, { x: 1, duration: 1 });
+    tweenB.vars = varsB;
+    let attached = [tweenA, tweenB];
+    window.gsap.globalTimeline = { getChildren: () => attached };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const first = grabMotion(tA, messages);
+    expect(first.motion.tracks.find((track) => track.property === 'x').ownership.retargetable).toBe(false); // transient lock
+
+    delete varsB.boom; // page removes the hostile getter
+    attached = [tweenA]; // and B detaches
+    const second = grabMotion(tA, messages);
+    const xTrack = second.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.ownership.retargetable).toBe(true); // unlocked — no contamination
+    expect(xTrack.keyframeEditable).toBe(true);
+
+    sendRetarget(second.selection, second.motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('preserves the frozen binding through TRANSIENT sharing uncertainty — undo stays exact (Sol r60)', () => {
+    document.body.innerHTML = '<main><div id="kfe1"></div><div id="kfe2"></div></main>';
+    const tA = document.getElementById('kfe1');
+    const tB = document.getElementById('kfe2');
+    // Collision edit freezes the run; a hostile getter on an UNRELATED tween
+    // makes sharing 'unknown'. That must lock writes transiently WITHOUT
+    // pruning the binding — else the post-uncertainty undo recomputes the run
+    // and flattens the collision ([200,200] instead of [100,200]).
+    const vars = { keyframes: [{ x: 100, duration: 1, parent: {} }, { x: 200, duration: 1, parent: {} }], duration: 2 };
+    const tweenA = buildArrayKeyframesTween(tA, vars);
+    const varsB = { x: 50, duration: 1 };
+    const tweenB = buildArrayKeyframesTween(tB, { x: 1, duration: 1 });
+    tweenB.vars = varsB;
+    window.gsap.globalTimeline = { getChildren: () => [tweenA, tweenB] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const first = grabMotion(tA, messages);
+    sendRetarget(first.selection, first.motion, '100'); // collision edit — binding frozen
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 100]);
+
+    Object.defineProperty(varsB, 'boom', { enumerable: true, configurable: true, get() { throw new Error('trap'); } });
+    grabMotion(tA, messages); // re-inspection during uncertainty must NOT prune
+    delete varsB.boom; // uncertainty clears
+
+    const second = grabMotion(tA, messages);
+    sendRetarget(second.selection, second.motion, '200'); // undo replay
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]); // exact — never [200,200]
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks entries carrying a property in BOTH namespaces (entry.x AND entry.css.x) (Sol r61)', () => {
+    document.body.innerHTML = '<main><div id="kfns"></div></main>';
+    const target = document.getElementById('kfns');
+    // With css:{} present, the CSSPlugin drives the wrapper while remaining
+    // top-level props ride the generic writer: entry.x and entry.css.x can be
+    // TWO distinct writers of homonymous channels. Picking one silently
+    // leaves the other alive and uninventoried.
+    const e1 = { x: 10, css: { x: 30 }, duration: 1, parent: {} };
+    const e2 = { x: 20, css: { x: 60 }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(20);
+    expect(e2.css.x).toBe(60);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps the dual-namespace lock after one namespace is deleted post-init (Sol r62)', () => {
+    document.body.innerHTML = '<main><div id="kfns2"></div></main>';
+    const target = document.getElementById('kfns2');
+    // {x, css:{x}} observed BOTH -> the page deletes entry.css.x: the CSS
+    // PropTween keeps rendering while the entry now looks single-namespace.
+    // The frozen signature must keep the lock for the tween's life.
+    const e1 = { x: 10, css: { x: 30 }, duration: 1, parent: {} };
+    const e2 = { x: 20, css: { x: 60 }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // signature frozen: both
+    delete e1.css.x; // page strips ONE namespace post-init
+    delete e2.css.x;
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(20);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('freezes namespace signatures on EVERY inspection — even while other guards lock (Sol r63)', () => {
+    document.body.innerHTML = '<main><div id="kfns3"></div></main>';
+    const target = document.getElementById('kfns3');
+    // {x:50, keyframes:[{x}...]} is initially locked by both-places — but the
+    // signature 'top' must be frozen anyway. The page then deletes vars.x and
+    // MOVES entry.x into entry.css.x without a rebuild: the old top-level
+    // PropTweens stay alive, and treating 'css' as the original signature
+    // would unlock a corrupting write.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { x: 50, keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // locked by both-places; signatures frozen 'top'
+    delete vars.x;
+    e1.css = { x: e1.x }; delete e1.x; // page moves top -> css, no rebuild
+    e2.css = { x: e2.x }; delete e2.x;
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(e2.css.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('freezes signatures from the SOURCE when the timeline is transiently uninspectable (Sol r64)', () => {
+    document.body.innerHTML = '<main><div id="kfns4"></div></main>';
+    const target = document.getElementById('kfns4');
+    // First inspection happens while getChildren throws: the signature scan
+    // must still freeze 'both' from the processed SOURCE entries (same
+    // objects) — else a later css.x removal + API restore baselines 'top' and
+    // unlocks a corrupting write.
+    const e1 = { x: 10, css: { x: 30 }, duration: 1, parent: {} };
+    const e2 = { x: 20, css: { x: 60 }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    tween.timeline = { getChildren: () => { throw new Error('trap'); } };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // uninspectable — but signatures freeze 'both'
+    delete e1.css.x; // page strips one namespace
+    delete e2.css.x;
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2] }; // API restored
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(20);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('marks signature-unknown when a live child escaped the blind scan window (Sol r65)', () => {
+    document.body.innerHTML = '<main><div id="kfns5"></div></main>';
+    const target = document.getElementById('kfns5');
+    // e2 is spliced out of the source, then the FIRST inspection runs blind
+    // (getChildren down) — e2's 'both' signature is never observed. The page
+    // strips e2.css.x (both->top) and restores the API: e2's live child was
+    // never scanned, so its current signature must NOT become a baseline.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, css: { x: 60 }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    vars.keyframes.splice(1, 1); // e2 leaves the source; its child stays live
+    tween.timeline = { getChildren: () => { throw new Error('trap'); } };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // blind scan — covers e1 only
+    delete e2.css.x; // both -> top while unobserved
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2] }; // API restored
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('recognizes the source fallback as a BLIND scan when the timeline is falsy (Sol r66)', () => {
+    document.body.innerHTML = '<main><div id="kfns6"></div></main>';
+    const target = document.getElementById('kfns6');
+    // Same escape as r65, but the timeline is FALSY (stashed as 0) instead of
+    // throwing: the source-based scan is still blind — a live child surfacing
+    // later without identity coverage must mark signature-unknown.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, css: { x: 60 }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    vars.keyframes.splice(1, 1); // e2 leaves the source; its child stays live
+    tween.timeline = 0; // page stashes the timeline (falsy — like a plain tween)
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // blind scan via source — covers e1 only
+    delete e2.css.x; // both -> top while unobserved
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2] }; // restored
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps a live child in the set after its parent METADATA is deleted (Sol r67)', () => {
+    document.body.innerHTML = '<main><div id="kfpm"></div></main>';
+    const target = document.getElementById('kfpm');
+    // `parent` is mutable metadata: deleting it from the terminal entry must
+    // not shrink the live set — the child keeps rendering, and the retarget
+    // must reach the REAL terminal.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+    delete e2.parent; // page strips the injected metadata
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300); // the REAL terminal — never the previous entry
+    expect(e1.x).toBe(100);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('freezes signatures for parent-less LIVE children too (Sol r68)', () => {
+    document.body.innerHTML = '<main><div id="kfns7"></div></main>';
+    const target = document.getElementById('kfns7');
+    // r63+r67 combo: the terminal entry lost its `parent` metadata AND the
+    // tween is initially locked by both-places vars.x. The signature scan
+    // must still freeze the terminal's 'top' — else a later vars.x removal +
+    // top->css move baselines 'css' and unlocks a corrupting write.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1 }; // parent metadata stripped
+    const vars = { x: 50, keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // locked; signatures must freeze anyway
+    delete vars.x;
+    e2.css = { x: e2.x }; delete e2.x; // top -> css without rebuild
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(e2.css.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('preserves the frozen binding through a transient TIMELINE outage — undo stays exact (Sol r69)', () => {
+    document.body.innerHTML = '<main><div id="kfe3"></div></main>';
+    const target = document.getElementById('kfe3');
+    // Collision edit freezes the run; getChildren then throws during a
+    // re-inspection. That uncertainty must not prune the binding — the
+    // post-recovery undo must restore [100,200], never re-plan to [200,200].
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const first = grabMotion(target, messages);
+    sendRetarget(first.selection, first.motion, '100'); // collision — binding frozen
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 100]);
+
+    tween.timeline = { getChildren: () => { throw new Error('trap'); } };
+    grabMotion(target, messages); // re-inspection during outage must NOT prune
+    tween.timeline = 0; // API recovered (no inner timeline exposed again)
+
+    const second = grabMotion(target, messages);
+    sendRetarget(second.selection, second.motion, '200'); // undo replay
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]); // exact
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('demands a FULL plan immediately before a non-restore write (Sol r70)', () => {
+    document.body.innerHTML = '<main><div id="kfe4"></div></main>';
+    const target = document.getElementById('kfe4');
+    // Divergence + outage arriving between router and writer: the normal
+    // write must refuse (a uniform write would turn the page's hold into a
+    // ramp), while the binding survives for a later restore.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    e1.x = 300; // page creates a live hold [300,300]
+    tween.timeline = { getChildren: () => { throw new Error('trap'); } }; // outage
+
+    tween.invalidate.mockClear();
+    sendRetarget(selection, motion, '400'); // must refuse — never [300,400]
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([300, 300]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('denies writes when the timeline HIDES after children were observed (Sol r71)', () => {
+    document.body.innerHTML = '<main><div id="kfhd"></div></main>';
+    const target = document.getElementById('kfhd');
+    // Children [e1,e2] observed; the page then reverses the source AND stashes
+    // the timeline (falsy). The array is a lie — the write-grade path must
+    // refuse until the children reappear.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // children observed
+    vars.keyframes.reverse(); // page reorders the source
+    tween.timeline = 0; // and hides the timeline
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy();
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(e1.x).toBe(100);
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('remembers properties observed in LIVE children while the timeline hides (Sol r72)', () => {
+    document.body.innerHTML = '<main><div id="kfob"></div></main>';
+    const target = document.getElementById('kfob');
+    // {y} observed first; the page then materializes x on the entry (seen
+    // live), later removes the carrier and hides the timeline. x was OBSERVED
+    // — it must stay inventoried and locked, never fall to the plain writer.
+    const ey = { y: 5, duration: 1, parent: {} };
+    const vars = { keyframes: [ey], duration: 1 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child = { vars: ey, _initted: true, _ptLookup: [{ y: {} }] };
+    tween.timeline = { getChildren: () => [child] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // observes {y}
+    ey.x = 100; // page materializes x
+    child._ptLookup = [{ y: {}, x: {} }];
+    grabMotion(target, messages); // observes {x, y}
+    delete ey.x; // carrier removed
+    child._ptLookup = [{ y: {}, x: {} }]; // x writer still alive
+    tween.timeline = 0; // and the timeline hides
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy(); // inventoried — never invisible
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(vars.x).toBeUndefined();
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('keeps feeding observed props AFTER signature-unknown (Sol r73)', () => {
+    document.body.innerHTML = '<main><div id="kfob2"></div></main>';
+    const target = document.getElementById('kfob2');
+    // r65 marks the animation signature-unknown; x is then materialized and
+    // OBSERVED live; later its carrier leaves and the timeline hides. x must
+    // stay inventoried (locked) — the unknown early-return must not starve
+    // the monotonic observed set.
+    const e1 = { y: 5, duration: 1, parent: {} };
+    const e2 = { y: 8, css: { y: 3 }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    vars.keyframes.splice(1, 1); // e2 leaves the source
+    tween.timeline = { getChildren: () => { throw new Error('trap'); } };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    grabMotion(target, messages); // blind — covers e1 only
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ y: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ y: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+    grabMotion(target, messages); // e2 escaped the blind window -> signature-unknown
+
+    e1.x = 100; // page materializes x — OBSERVED live below
+    child1._ptLookup = [{ y: {}, x: {} }];
+    grabMotion(target, messages);
+
+    delete e1.x; // carrier removed
+    tween.timeline = 0; // timeline hides
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack).toBeTruthy(); // inventoried — never the furo-#1 lie
+    expect(xTrack.ownership.retargetable).toBe(false);
+    expect(xTrack.keyframeEditable).toBe(false);
+
+    sendRetarget(selection, motion, '300');
+    expect(vars.x).toBeUndefined();
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('routes frozen-binding RESTORES past the gates during an outage (Sol r74)', () => {
+    document.body.innerHTML = '<main><div id="kfro"></div></main>';
+    const target = document.getElementById('kfro');
+    // Collision edit freezes the binding; the timeline then throws. A rollback
+    // to the ORIGINAL end must still reach the writer restore path (frozen
+    // buckets, authored payload) — both on retarget.final and keyframe.x.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '100'); // collision — binding frozen
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 100]);
+
+    tween.timeline = { getChildren: () => { throw new Error('trap'); } }; // outage
+
+    sendRetarget(selection, motion, '200'); // rollback to the original end
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]); // exact restore
+
+    tween.timeline = 0; // outage lifts
+    sendRetarget(selection, motion, '100'); // collision again
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 100]);
+    tween.timeline = { getChildren: () => { throw new Error('trap'); } }; // outage again
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '100', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('random() under an authored key NAMED parent still locks the animation (Sol r100)', () => {
+    document.body.innerHTML = '<main><div id="kfsv"></div></main>';
+    const target = document.getElementById('kfsv');
+    // attr:{parent:'random(...)'} is an AUTHORED attribute value — GSAP
+    // processes every key of the attr namespace, including one named
+    // "parent". Backedge suppression applies only to OBJECT values (real
+    // backedges into the GSAP graph); strings are authored and must be
+    // scanned.
+    const e1 = { x: 100, attr: { parent: 'random(0,100)' }, duration: 1, parent: {} };
+    const e2 = { x: 200, attr: { parent: 'random(0,100)' }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget x — refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a css-wrapper parent alias to another css bucket locks writes and restores (Sol r125)', () => {
+    document.body.innerHTML = '<main><div id="kfud"></div></main>';
+    const target = document.getElementById('kfud');
+    // e1.css.parent === e2.css (the terminal css bucket): the alias is found
+    // inside the canonical css branch — the flag must be consumed there, not
+    // only after another stack object drains.
+    const w2 = { x: 200 };
+    const e1 = { css: { x: 100, parent: w2 }, duration: 1, parent: {} };
+    const e2 = { css: w2, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // write — refuse
+    expect(w2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('own-vars alias via attr.parent locks writes and outage restores (Sol r124)', () => {
+    document.body.innerHTML = '<main><div id="kfub"></div></main>';
+    const target = document.getElementById('kfub');
+    // vars.attr.parent = terminalEntry: nested `parent` is authored/animated
+    // (attr namespace), not a structural backedge — the identity check must
+    // cover it (no-descent policy kept).
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    vars.attr = { parent: e2 }; // page aliases through a namespace parent key
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '400'); // non-restore — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    tween.timeline = {}; // outage: frozen restore must refuse too
+    sendRetarget(selection, motion, '200');
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an entry-level attr.parent alias locks writes too (Sol r124)', () => {
+    document.body.innerHTML = '<main><div id="kfuc"></div></main>';
+    const target = document.getElementById('kfuc');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    e1.attr = { parent: e2 }; // alias through the entry's namespace
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('own-vars alias via _phase locks writes and outage restores (Sol r123)', () => {
+    document.body.innerHTML = '<main><div id="kftz"></div></main>';
+    const target = document.getElementById('kftz');
+    // vars._phase = terminalEntry (and entry0._phase = terminalEntry): the
+    // _-key is animatable (r111/r113) — writing the bucket also writes the
+    // animated _phase payload. The own-vars walker must identity-check these
+    // edges instead of skipping them.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    vars._phase = e2; // page aliases the terminal entry under a _-key
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '400'); // non-restore — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    tween.timeline = {}; // outage: frozen restore must refuse too
+    sendRetarget(selection, motion, '200');
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an entry-level _phase alias locks writes too (Sol r123)', () => {
+    document.body.innerHTML = '<main><div id="kfua"></div></main>';
+    const target = document.getElementById('kfua');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    e1._phase = e2; // alias under a _-key at the entry root
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('sharing identity uses the FROZEN origin, not the mutable keyframes pointer (Sol r122)', () => {
+    document.body.innerHTML = '<main><div id="kftx"></div></main>';
+    const target = document.getElementById('kftx');
+    // After the page replaces vars.keyframes, the authority is the FROZEN
+    // origin.source. B aliasing the frozen array must refuse the restore;
+    // B aliasing only the inert replacement must NOT block it.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const originalArray = [e1, e2];
+    const vars = { keyframes: originalArray, duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages); // origin frozen here
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    const replacement = [{ x: 999, duration: 1 }];
+    vars.keyframes = replacement; // page swaps the source pointer
+
+    const riderFrozen = { vars: { _phase: originalArray, duration: 1 } };
+    window.gsap.globalTimeline.getChildren = () => [tween, riderFrozen];
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // frozen-origin alias — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an alias to only the inert REPLACEMENT array does not block the restore (Sol r122)', () => {
+    document.body.innerHTML = '<main><div id="kfty"></div></main>';
+    const target = document.getElementById('kfty');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    const replacement = [{ x: 999, duration: 1 }];
+    vars.keyframes = replacement; // inert swap
+    const riderImpostor = { vars: { data: replacement, duration: 1 } };
+    window.gsap.globalTimeline.getChildren = () => [tween, riderImpostor];
+
+    sendRetarget(selection, motion, '200'); // impostor alias — restore APPLIES
+    expect(e2.x).toBe(200);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('cross-tween sharing via _phase or attr.parent refuses the restore (Sol r121)', () => {
+    document.body.innerHTML = '<main><div id="kftw"></div></main>';
+    const target = document.getElementById('kftw');
+    // B holds A's terminal bucket under _phase (animatable at root — r111)
+    // and under attr.parent (animated in a namespace — r100). The sharing
+    // walker must be contextual: only the injected root `parent` is skipped.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    const riderPhase = { vars: { _phase: e2, duration: 1 } };
+    window.gsap.globalTimeline.getChildren = () => [tween, riderPhase];
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // restore — refuse (_phase sharing)
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    const riderAttr = { vars: { attr: { parent: e2 }, duration: 1 } };
+    window.gsap.globalTimeline.getChildren = () => [tween, riderAttr];
+
+    sendRetarget(selection, motion, '200'); // restore — refuse (attr.parent sharing)
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a cross-tween INHERITED startAt sharing a bucket refuses the restore (Sol r120)', () => {
+    document.body.innerHTML = '<main><div id="kftv"></div></main>';
+    const target = document.getElementById('kftv');
+    // Tween B inherits an enumerable startAt pointing at A's terminal entry:
+    // GSAP's for..in processes it, so restoring A's bucket silently rewrites
+    // B's config. The sharing walker must enumerate the chain.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    const rider = { vars: Object.assign(Object.create({ startAt: e2 }), { duration: 1 }) };
+    window.gsap.globalTimeline.getChildren = () => [tween, rider];
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // restore — refuse (inherited sharing)
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an INHERITED flat property is still inventoried as a track (Sol r119)', () => {
+    document.body.innerHTML = '<main><div id="kftt"></div></main>';
+    const target = document.getElementById('kftt');
+    // GSAP creates a PropTween for the inherited x (for..in) — omitting it
+    // from the inventory resurrects the furo-#1 invisible-writer lie.
+    const vars = Object.assign(Object.create({ x: 200 }), { duration: 2 });
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { motion } = grabMotion(target, messages);
+    const track = motion?.tracks?.find((candidate) => candidate.property === 'x') || null;
+    expect(track).not.toBeNull(); // inherited x IS a live channel
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an INHERITED entry property is still inventoried as keyframe-driven (Sol r119)', () => {
+    document.body.innerHTML = '<main><div id="kftu"></div></main>';
+    const target = document.getElementById('kftu');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = Object.assign(Object.create({ y: 50 }), { x: 200, duration: 1, parent: {} });
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { motion } = grabMotion(target, messages);
+    const track = motion?.tracks?.find((candidate) => candidate.property === 'y') || null;
+    expect(track).not.toBeNull(); // inherited y IS a live keyframe channel
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an INHERITED startAt aliasing the terminal entry locks both channels (Sol r118)', () => {
+    document.body.innerHTML = '<main><div id="kfts"></div></main>';
+    const target = document.getElementById('kfts');
+    // vars inherits an enumerable startAt pointing at the terminal entry:
+    // GSAP processes it (for..in), so writing e2.x also rewrites the START.
+    // The alias walker must enumerate the whole chain.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = Object.assign(Object.create({ startAt: e2 }), { keyframes: [e1, e2], duration: 2 });
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget x — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '200', exists: true },
+            value: { offset: 1, value: '300', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe(200); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an INHERITED enumerable top-level prop counts as both-places (Sol r117)', () => {
+    document.body.innerHTML = '<main><div id="kftq"></div></main>';
+    const target = document.getElementById('kftq');
+    // GSAP processes vars with for..in — an inherited enumerable x IS a
+    // top-level carrier (probe-H both-places on invalidate). hasOwnProperty
+    // misses it; the guards must mirror GSAP's enumeration.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = Object.assign(Object.create({ x: 50 }), { keyframes: [e1, e2], duration: 2 });
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget x — refuse (inherited both-places)
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '200', exists: true },
+            value: { offset: 1, value: '300', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe(200); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an INHERITED sibling function locks other properties (Sol r117)', () => {
+    document.body.innerHTML = '<main><div id="kftr"></div></main>';
+    const target = document.getElementById('kftr');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = Object.assign(Object.create({ y: () => 50 }), { keyframes: [e1, e2], duration: 2 });
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // edit x — refuse (inherited y fn)
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('the keyframe channel blocks even the OWN function property (Sol r116)', () => {
+    document.body.innerHTML = '<main><div id="kftp"></div></main>';
+    const target = document.getElementById('kftp');
+    // The self-exemption belongs to retarget.final (function-offset model).
+    // keyframe.y writes vars.y = value — destroying the authored function;
+    // the transactional reader only captured String(fn), so a rollback would
+    // write source code as a string. Both offsets must refuse.
+    const authoredFn = () => 50;
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { y: authoredFn, keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    const sendKeyframeY = (offset, value) => window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.y',
+            before: { offset, value: '50', exists: true },
+            value: { offset, value: '30', exists: true },
+          },
+        },
+      },
+    }));
+
+    sendKeyframeY(1, '30'); // step END on the fn prop — refuse
+    expect(vars.y).toBe(authoredFn);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    sendKeyframeY(0, '10'); // step START — refuse, startAt untouched
+    expect(vars.startAt).toBeUndefined();
+    expect(vars.y).toBe(authoredFn);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a SIBLING top-level function locks edits on other properties (Sol r115)', () => {
+    document.body.innerHTML = '<main><div id="kfto"></div></main>';
+    const target = document.getElementById('kfto');
+    // vars.y is a stateful function beside keyframes of x: editing x
+    // invalidates and re-executes y (and the rollback a third time). Only the
+    // property EFFECTIVELY covered by the function-model writer is exempt
+    // from its own function — siblings are an animation hazard.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { y: () => 50, keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages); // observed here
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // edit x — refuse (sibling y fn)
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '200', exists: true },
+            value: { offset: 1, value: '300', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe(200); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an entry REUSED as a namespace is re-walked in its nested context (Sol r114)', () => {
+    document.body.innerHTML = '<main><div id="kftn"></div></main>';
+    const target = document.getElementById('kftn');
+    // sharedEntry is BOTH a canonical entry (root: its `parent` key is a
+    // config slot) and e1.attr (nested: attr.parent is an ANIMATED channel).
+    // Context must travel with the PATH — the same identity reappearing under
+    // a namespace is walked again, finding the random array.
+    const shared = { y: 10, parent: ['random(0,100)'], duration: 1 };
+    const e1 = { x: 100, attr: shared, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, shared, e2], duration: 3 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages); // observed here
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // edit x (not carried by shared) — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a random-array under an underscore expando locks — entry root and vars root (Sol r113)', () => {
+    document.body.innerHTML = '<main><div id="kftk"></div><div id="kftl"></div></main>';
+    const targetA = document.getElementById('kftk');
+    // _phase is NOT reserved: GSAP animates it and re-rolls the array's
+    // random() on every invalidate. Only the PROVEN backedge (structural
+    // `parent`) is suppressed — _-keyed objects are walked.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, _phase: ['random(0,100)'], duration: 1, parent: {} };
+    const varsA = { keyframes: [e1, e2], duration: 2 };
+    const tweenA = buildArrayKeyframesTween(targetA, varsA);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(targetA, messages);
+    tweenA.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // entry-root expando — refuse
+    expect(e2.x).toBe(200);
+    expect(tweenA.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a random-array under a vars-root underscore expando locks the flat track (Sol r113)', () => {
+    document.body.innerHTML = '<main><div id="kftm"></div></main>';
+    const target = document.getElementById('kftm');
+    const e1 = { y: 10, duration: 1, parent: {} };
+    const e2 = { y: 20, duration: 1, parent: {} };
+    const vars = { x: 50, _phase: ['random(0,100)'], keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // flat x beside vars-root expando — refuse
+    expect(vars.x).toBe(50);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a random-array under attr.parent (object in a namespace) still locks (Sol r112)', () => {
+    document.body.innerHTML = '<main><div id="kftj"></div></main>';
+    const target = document.getElementById('kftj');
+    // The array hides under attr.parent — inside an animated namespace the
+    // parent key is an ATTRIBUTE, not a backedge; object suppression applies
+    // only at structural roots, and the array's random string must be found.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, attr: { parent: ['random(0,100)'] }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages); // observed here
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget x — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a function under an underscore expando at the entry root still locks (Sol r111)', () => {
+    document.body.innerHTML = '<main><div id="kfti"></div></main>';
+    const target = document.getElementById('kfti');
+    // GSAP animates arbitrary target expandos including _-prefixed ones:
+    // {x, _phase: () => ...} at the entry ROOT is an animated channel — the
+    // backedge branch must apply the same contextual predicate (_phase is not
+    // a config key).
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, _phase: () => 5, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages); // observed here
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget x — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a function under attr.parent (namespace key with reserved name) still locks (Sol r110)', () => {
+    document.body.innerHTML = '<main><div id="kfth"></div></main>';
+    const target = document.getElementById('kfth');
+    // The function hides under a namespace subkey NAMED like a reserved key:
+    // attr.parent is an ANIMATED attribute — the config exemption applies
+    // only at the entry ROOT, and the backedge branch must not silently pass
+    // functions through.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, attr: { parent: () => 5 }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages); // observed here
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget x — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a FUNCTION-valued entry property locks the animation like random() (Sol r109)', () => {
+    document.body.innerHTML = '<main><div id="kftg"></div></main>';
+    const target = document.getElementById('kftg');
+    // y is function-valued inside the keyframes entries: any invalidate
+    // re-executes it (stateful functions drift) — editing x would mutate y
+    // without exact rollback. Animation-level hazard with durable provenance,
+    // same as random().
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, y: () => 50, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages); // observed here
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget x — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    e2.y = 5; // page concretizes WITHOUT invalidating — durable memory holds
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('observed random prevails over a REVOKED proxy sibling (Sol r108)', () => {
+    document.body.innerHTML = '<main><div id="kftf"></div></main>';
+    const target = document.getElementById('kftf');
+    // A revoked Proxy makes Array.isArray itself throw. It sits beside a
+    // random string on the same entry: the revoked node degrades alone, the
+    // random is observed and the memory survives concretization.
+    const revocable = Proxy.revocable([], {});
+    revocable.revoke();
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, y: 'random(0,100)', data: revocable.proxy, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages); // scan runs here
+    e2.y = 5; // page concretizes...
+    e2.data = [1]; // ...and swaps the revoked proxy, WITHOUT invalidating
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // durable memory — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('observed random prevails over a proxy-array with throwing descriptor trap (Sol r107)', () => {
+    document.body.innerHTML = '<main><div id="kfte"></div></main>';
+    const target = document.getElementById('kfte');
+    // A Proxy-array whose descriptor trap throws sits beside a plain random
+    // string on the SAME entry. Per-candidate isolation must keep draining:
+    // the random is observed, the memory is fed, and the hazard survives the
+    // page later concretizing and dropping the proxy without invalidating.
+    const proxied = new Proxy(['x'], {
+      getOwnPropertyDescriptor(inner, key) {
+        if (key === '0') throw new Error('trap');
+        return Reflect.getOwnPropertyDescriptor(inner, key);
+      },
+    });
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, y: 'random(0,100)', pts: proxied, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages); // scan runs here
+    e2.y = 5; // page concretizes...
+    e2.pts = [1]; // ...and drops the proxy, WITHOUT invalidating
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // durable memory — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('observed random prevails over a THROWING array-index getter (Sol r106)', () => {
+    document.body.innerHTML = '<main><div id="kftd"></div></main>';
+    const target = document.getElementById('kftd');
+    // The random string sits at index 0; a throwing getter at index 1 must
+    // not abort the whole scan to unknown — arrays are walked via
+    // descriptors, failures isolated per node, and the observation feeds the
+    // durable memory.
+    const trapped = ['random(0,100)'];
+    Object.defineProperty(trapped, 1, { get() { throw new Error('trap'); }, enumerable: true, configurable: true });
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, pts: trapped, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages); // scan runs here
+    e2.pts = [5]; // page concretizes WITHOUT invalidating
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // durable memory — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('observed random prevails over an accessor in the same scan (Sol r105)', () => {
+    document.body.innerHTML = '<main><div id="kftc"></div></main>';
+    const target = document.getElementById('kftc');
+    // The entry holds BOTH x random and an enumerable getter. The scan must
+    // keep walking past the accessor and return OBSERVED (feeding the durable
+    // memory) — not abort to transient unknown. After the page concretizes
+    // and removes the accessor without invalidating, the edit still refuses.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, y: 'random(0,100)', duration: 1, parent: {} };
+    Object.defineProperty(e2, 'z', { get() { return 1; }, enumerable: true, configurable: true });
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages); // scan runs here
+    e2.y = 5; // page concretizes the random...
+    // ...and swaps the accessor for a plain data property (same namespace —
+    // no signature change masks the random-memory path), WITHOUT invalidating
+    Object.defineProperty(e2, 'z', { value: 1, writable: true, enumerable: true, configurable: true });
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // durable memory — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('random observed on a SPLICED entry via the binding feeds the durable memory (Sol r104)', () => {
+    document.body.innerHTML = '<main><div id="kftb"></div></main>';
+    const target = document.getElementById('kftb');
+    // The spliced entry lives only in binding.allEntries: random appears
+    // there, is observed during the outage (binding invalidation), then the
+    // page swaps it for a concrete value without invalidating and restores
+    // the timeline. The observation must have fed the durable memory — the
+    // next edit still refuses (the PropTween holds the rolled value).
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    vars.keyframes.splice(1, 1); // e2 leaves the source but stays frozen
+    e2.y = 'random(0,100)'; // random appears on the spliced entry
+    tween.timeline = {}; // outage
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // restore attempt — refused, random OBSERVED
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    e2.y = 5; // page swaps to a concrete value WITHOUT invalidating...
+    const lookup1 = { x: {} };
+    const lookup2 = { x: {}, y: {} };
+    tween.timeline = { getChildren: () => [
+      { vars: e1, _initted: true, _ptLookup: [lookup1] },
+      { vars: e2, _initted: true, _ptLookup: [lookup2] },
+    ] }; // ...and restores the timeline
+
+    sendRetarget(selection, motion, '400'); // durable memory — still refused
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('observed random() stays a hazard after the page swaps the value without invalidating (Sol r103)', () => {
+    document.body.innerHTML = '<main><div id="kfsz"></div><div id="kfta"></div></main>';
+    const targetA = document.getElementById('kfsz');
+    const targetB = document.getElementById('kfta');
+    // random() was OBSERVED at inspection; the page then sets vars.x=50
+    // without invalidate — the PropTweens still hold the rolled ends. The
+    // hazard is durable provenance, not a live re-read: unchain must still
+    // refuse (a relink would replace two rolled ends with [50,50]).
+    const vars = { x: 'random(0,100)', duration: 2 };
+    const tween = buildArrayKeyframesTween(targetA, vars, { targets: [targetA, targetB] });
+    tween.kill = vi.fn();
+    window.gsap.to = vi.fn(() => ({ progress: vi.fn(), kill: vi.fn() }));
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(targetA, messages); // random observed here
+    vars.x = 50; // page swaps the value WITHOUT invalidating
+    tween.invalidate.mockClear();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'link.detach',
+            before: { detached: false },
+            value: { detached: true },
+          },
+        },
+      },
+    }));
+    expect(window.gsap.to).not.toHaveBeenCalled(); // zero clone
+    expect(tween.kill).not.toHaveBeenCalled(); // zero kill
+    expect(tween.invalidate).not.toHaveBeenCalled(); // zero invalidate
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('unchain (link.detach) refuses on a randomized shared tween (Sol r102)', () => {
+    document.body.innerHTML = '<main><div id="kfsx"></div><div id="kfsy"></div></main>';
+    const targetA = document.getElementById('kfsx');
+    const targetB = document.getElementById('kfsy');
+    // Detach re-creates the tween from authored vars — re-rolling random();
+    // relink invalidates and re-rolls BOTH targets. The hazard must gate the
+    // whole unchain path: zero clone, zero kill, zero invalidate.
+    const vars = { x: 'random(0,100)', duration: 2 };
+    const tween = buildArrayKeyframesTween(targetA, vars, { targets: [targetA, targetB] });
+    tween.kill = vi.fn();
+    window.gsap.to = vi.fn(() => ({ progress: vi.fn(), kill: vi.fn() }));
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(targetA, messages);
+    tween.invalidate.mockClear();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'link.detach',
+            before: { detached: false },
+            value: { detached: true },
+          },
+        },
+      },
+    }));
+    expect(window.gsap.to).not.toHaveBeenCalled(); // zero clone
+    expect(tween.kill).not.toHaveBeenCalled(); // zero kill
+    expect(tween.invalidate).not.toHaveBeenCalled(); // zero invalidate
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a FLAT rides-along track is locked when keyframes carry random() (Sol r101)', () => {
+    document.body.innerHTML = '<main><div id="kfsw"></div></main>';
+    const target = document.getElementById('kfsw');
+    // vars.x=50 beside keyframes:[{y:'random(...)'}]: the flat x writer also
+    // invalidates, and the invalidate re-rolls y. The random hazard is
+    // ANIMATION-level and must gate every invalidating writer, including
+    // rides-along flat tracks.
+    const e1 = { y: 'random(0,100)', duration: 1, parent: {} };
+    const e2 = { y: 'random(0,100)', duration: 1, parent: {} };
+    const vars = { x: 50, keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // flat retarget of x — refuse
+    expect(vars.x).toBe(50);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '50', exists: true },
+            value: { offset: 1, value: '300', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.x).toBe(50); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('random() inside a PLUGIN namespace (attr) locks the animation (Sol r99)', () => {
+    document.body.innerHTML = '<main><div id="kfst"></div></main>';
+    const target = document.getElementById('kfst');
+    // The randomized value hides inside attr:{} — a plugin container the old
+    // scan never entered. Editing x still re-rolls the attribute on every
+    // invalidate: the scan must walk ALL authored containers.
+    const e1 = { x: 100, attr: { 'data-n': 'random(0,100)' }, duration: 1, parent: {} };
+    const e2 = { x: 200, attr: { 'data-n': 'random(0,100)' }, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget x — refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 0, value: '0', exists: false },
+            value: { offset: 0, value: '40', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.startAt).toBeUndefined(); // offset 0 — refuse, nothing written
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('plugin-namespace random() appearing post-binding voids the outage restore (Sol r99)', () => {
+    document.body.innerHTML = '<main><div id="kfsu"></div></main>';
+    const target = document.getElementById('kfsu');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    e2.attr = { 'data-n': 'random(0,100)' }; // page randomizes via plugin ns...
+    tween.timeline = {}; // ...and the outage starts
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // restore — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('random() on ANY animated property locks the whole animation (Sol r98)', () => {
+    document.body.innerHTML = '<main><div id="kfsq"></div></main>';
+    const target = document.getElementById('kfsq');
+    // y is randomized; editing x still invalidates the WHOLE tween and
+    // re-rolls y — cross-property mutation with inexact rollback. The random
+    // hazard is animation-level, not per-property.
+    const e1 = { x: 100, y: 'random(0,100)', duration: 1, parent: {} };
+    const e2 = { x: 200, y: 'random(0,100)', duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget x — refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '200', exists: true },
+            value: { offset: 1, value: '300', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('random() appearing post-binding voids the outage restore (Sol r98)', () => {
+    document.body.innerHTML = '<main><div id="kfsr"></div></main>';
+    const target = document.getElementById('kfsr');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    e2.y = 'random(0,100)'; // page randomizes another channel post-binding...
+    tween.timeline = {}; // ...and the outage starts
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // restore — refuse (would re-roll y)
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a random() desired at offset 0 is refused before touching startAt (Sol r98)', () => {
+    document.body.innerHTML = '<main><div id="kfss"></div></main>';
+    const target = document.getElementById('kfss');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 0, value: '0', exists: false },
+            value: { offset: 0, value: 'random(0,50)', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.startAt).toBeUndefined(); // refuse — nothing written
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('random() entry values lock the plan and random() desired is refused (Sol r97)', () => {
+    document.body.innerHTML = '<main><div id="kfso"></div></main>';
+    const target = document.getElementById('kfso');
+    // GSAP re-resolves random(...) on every PropTween init and invalidate()
+    // re-rolls it: two textually equal random() strings are NOT a hold, and a
+    // verbatim rollback re-rolls instead of restoring. Both directions fail
+    // closed before any mutation.
+    const e1 = { x: 'random(0,100)', duration: 1, parent: {} };
+    const e2 = { x: 'random(0,100)', duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget.final — refuse
+    expect(e1.x).toBe('random(0,100)');
+    expect(e2.x).toBe('random(0,100)');
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: 'random(0,100)', exists: true },
+            value: { offset: 1, value: '300', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe('random(0,100)'); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a random() DESIRED value is refused before mutating clean entries (Sol r97)', () => {
+    document.body.innerHTML = '<main><div id="kfsp"></div></main>';
+    const target = document.getElementById('kfsp');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, 'random(0,300)'); // desired random — refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('authored paused:false / reversed:false stay EDITABLE with a forward-active child (Sol r96)', () => {
+    document.body.innerHTML = '<main><div id="kfsn"></div></main>';
+    const target = document.getElementById('kfsn');
+    // Falsy authored paused/reversed are benign — GSAP only applies the
+    // setters for truthy values. With a confrontable forward-active child the
+    // effective trio decides; key presence alone must NOT lock (product rule
+    // against generalized locks).
+    const e1 = { x: 100, duration: 1, paused: false, parent: {} };
+    const e2 = { x: 200, duration: 1, reversed: false, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }], _ts: 1, _rts: 1, _ps: false };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }], _ts: 1, _rts: 1, _ps: false };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300'); // must APPLY
+    expect(e2.x).toBe(300);
+
+    sendRetarget(selection, motion, '200'); // rollback must APPLY too
+    expect(e2.x).toBe(200);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a REVERSED child locks the plan — the rendered end is not the authored end (Sol r95)', () => {
+    document.body.innerHTML = '<main><div id="kfsl"></div></main>';
+    const target = document.getElementById('kfsl');
+    // child.reversed(true) flips _ts/_rts to -1 without touching vars: the
+    // segment renders backwards and the visual end is not the authored end.
+    // Editing "the end" would move an intermediate peak with false success.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }], _ts: -1, _rts: -1 };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget.final — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '200', exists: true },
+            value: { offset: 1, value: '300', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe(200); // keyframe.x (step-edit) — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a child PAUSED post-binding voids the outage restore (Sol r95)', () => {
+    document.body.innerHTML = '<main><div id="kfsm"></div></main>';
+    const target = document.getElementById('kfsm');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    child2._ps = true; // page calls child.paused(true) — vars untouched
+    child2._ts = 0;
+    tween.timeline = { getChildren: () => { throw new Error('outage'); } };
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // restore — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('effective child _repeat/_yoyo lock the plan even with authored keys deleted (Sol r94)', () => {
+    document.body.innerHTML = '<main><div id="kfsj"></div></main>';
+    const target = document.getElementById('kfsj');
+    // GSAP keeps the EFFECTIVE temporal state in child._repeat/_yoyo; deleting
+    // entry.repeat/yoyo post-init leaves own-keys absent while the child still
+    // yoyos. The predicate must confront the child, not just the entry.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }], _repeat: 1, _yoyo: true };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget.final — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '200', exists: true },
+            value: { offset: 1, value: '300', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe(200); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('post-binding child.repeat()/yoyo() setters void the outage restore (Sol r94)', () => {
+    document.body.innerHTML = '<main><div id="kfsk"></div></main>';
+    const target = document.getElementById('kfsk');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const child1 = { vars: e1, _initted: true, _ptLookup: [{ x: {} }] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [{ x: {} }] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    child2._repeat = 1; // page calls child.repeat(1).yoyo(true) — vars untouched
+    child2._yoyo = true;
+    tween.timeline = { getChildren: () => { throw new Error('outage'); } };
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // restore — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('entry-level repeat/yoyo locks the plan — rendered end is not the authored end (Sol r93)', () => {
+    document.body.innerHTML = '<main><div id="kfsh"></div></main>';
+    const target = document.getElementById('kfsh');
+    // {x:200, repeat:1, yoyo:true} RENDERS its segment back to the start: the
+    // visual end is 100, not 200 — editing "the end" would move an
+    // intermediate peak while reporting success. Temporal modifiers per entry
+    // void the plan, and one appearing post-binding voids the binding.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, repeat: 1, yoyo: true, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget.final — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '200', exists: true },
+            value: { offset: 1, value: '300', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe(200); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('repeat/yoyo appearing on an entry post-binding voids the outage restore (Sol r93)', () => {
+    document.body.innerHTML = '<main><div id="kfsi"></div></main>';
+    const target = document.getElementById('kfsi');
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    e2.yoyo = true; // page adds a temporal modifier post-binding...
+    e2.repeat = 1;
+    tween.timeline = {}; // ...and the outage starts
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // restore — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a non-carrier entry GAINING the property voids the outage restore (Sol r92)', () => {
+    document.body.innerHTML = '<main><div id="kfsg"></div></main>';
+    const target = document.getElementById('kfsg');
+    // A {css:{y:50}} entry gains css.x=50 during the outage — a brand-new x
+    // carrier invisible to the frozen carriers. The binding freezes the
+    // namespace of ALL entries (including 'none'); any none→top/css
+    // transition makes it stale: the restore's invalidate would materialize
+    // the new writer (the r36 class).
+    const e0 = { css: { y: 50 }, duration: 1, parent: {} };
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e0, e1, e2], duration: 3 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    e0.css.x = 50; // none → css: a new x carrier appears...
+    tween.timeline = {}; // ...and the outage starts
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo via retarget.final — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '300', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe(300); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a stolen css wrapper on a non-carrier entry voids the outage restore (Sol r91)', () => {
+    document.body.innerHTML = '<main><div id="kfsf"></div></main>';
+    const target = document.getElementById('kfsf');
+    // Page splices a non-carrier entry and gives it e0.css = e2.css: the css
+    // edge is canonical ONLY for the exact frozen (carrier, bucket) pair — a
+    // shared wrapper on any other entry is an active alias (the restore's
+    // invalidate would materialize x into e0's segment too).
+    const e0 = { y: 50, duration: 1, parent: {} };
+    const e1 = { css: { x: 100 }, duration: 1, parent: {} };
+    const e2 = { css: { x: 200 }, duration: 1, parent: {} };
+    const vars = { keyframes: [e0, e1, e2], duration: 3 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.css.x).toBe(300);
+
+    vars.keyframes.splice(0, 1); // page removes the y-entry from the source...
+    e0.css = e2.css; // ...and steals the terminal wrapper
+    tween.timeline = {}; // outage
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo via retarget.final — refuse
+    expect(e2.css.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '300', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.css.x).toBe(300); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a spliced NON-carrier entry aliasing a bucket voids the outage restore (Sol r90)', () => {
+    document.body.innerHTML = '<main><div id="kfse"></div></main>';
+    const target = document.getElementById('kfse');
+    // A live entry WITHOUT x is spliced from the array and given
+    // startAt = terminalBucket: it sits outside the current source AND outside
+    // binding.carriers. The binding must persist ALL entries it planned over,
+    // so the alias is still seen during the outage.
+    const e0 = { y: 50, duration: 1, parent: {} };
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e0, e1, e2], duration: 3 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    vars.keyframes.splice(0, 1); // page removes the y-entry from the source...
+    e0.startAt = e2; // ...and aliases the terminal bucket through it
+    tween.timeline = {}; // outage
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo via retarget.final — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '300', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe(300); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an entry-level startAt aliasing another entry locks both channels (Sol r89)', () => {
+    document.body.innerHTML = '<main><div id="kfsd"></div></main>';
+    const target = document.getElementById('kfsd');
+    // GSAP treats each entry as a to() vars — entry.startAt is ACTIVE. With
+    // e1.startAt === e2, writing e2.x also rewrites e1's start values; the
+    // invalidate materializes that new start. The walker must allow buckets
+    // only at their canonical occurrence (array slot / entry.css) and flag any
+    // re-encounter through entry sub-fields.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    e1.startAt = e2; // page aliases the terminal INSIDE the keyframes subtree
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '300'); // retarget.final — refuse
+    expect(e2.x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '200', exists: true },
+            value: { offset: 1, value: '300', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe(200); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // Alias removed → editable again (transient lock, no durable memory)...
+    delete e1.startAt;
+    sendRetarget(selection, motion, '300');
+    expect(e2.x).toBe(300);
+
+    // ...then re-aliased + outage: the frozen restore must refuse too.
+    e1.startAt = e2;
+    tween.timeline = {};
+    tween.invalidate.mockClear();
+    sendRetarget(selection, motion, '200'); // restore — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a bucket aliased in the tween OWN vars graph locks writes and restores (Sol r88)', () => {
+    document.body.innerHTML = '<main><div id="kfsc"></div></main>';
+    const target = document.getElementById('kfsc');
+    // Page does vars.startAt = terminalEntry after the binding froze: writing
+    // the bucket now ALSO writes startAt.x, and invalidatePreservingStart
+    // materializes that new start — the path corrupts while every r87 check
+    // (namespace, identity, value) still passes.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    vars.startAt = e2; // page aliases the terminal entry into its own vars
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '400'); // non-restore write — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    sendRetarget(selection, motion, '200'); // restore — refuse too
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '300', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe(300); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a REPLACED css wrapper detaches the frozen bucket — restore refuses (Sol r87)', () => {
+    document.body.innerHTML = '<main><div id="kfsb"></div></main>';
+    const target = document.getElementById('kfsb');
+    // Page swaps entry.css for a NEW object after the edit; the frozen bucket
+    // is detached. Namespace still reads 'css' and the old bucket still holds
+    // the expected value — but writing it changes nothing that renders. The
+    // binding must freeze BUCKET IDENTITY per carrier.
+    const w1 = { x: 100 };
+    const w2 = { x: 200 };
+    const e1 = { css: w1, duration: 1, parent: {} };
+    const e2 = { css: w2, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.css.x)).toEqual([100, 300]);
+
+    const detached = e2.css; // the frozen bucket...
+    e2.css = { x: 300 }; // ...replaced by a fresh wrapper (same value)
+    tween.timeline = {}; // outage
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo via retarget.final — refuse
+    expect(detached.x).toBe(300); // detached bucket untouched
+    expect(e2.css.x).toBe(300); // live wrapper untouched
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '300', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+    expect(detached.x).toBe(300); // keyframe.x — refuse
+    expect(e2.css.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('runBackwards on a frozen carrier entry voids the restore during an outage (Sol r86)', () => {
+    document.body.innerHTML = '<main><div id="kfsa"></div></main>';
+    const target = document.getElementById('kfsa');
+    // Page splices the terminal entry out of the array (child stays alive —
+    // supported) and flips runBackwards on it, then the outage starts. Values
+    // still match ('300'), but the restore's invalidate would reverse the
+    // path — carrier-entry state is frozen in the binding and revalidated.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    vars.keyframes.splice(1, 1); // page removes the terminal from the SOURCE...
+    e2.runBackwards = true; // ...and reverses the live entry
+    tween.timeline = {}; // outage
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo via retarget.final — refuse
+    expect(e2.x).toBe(300);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '300', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+    expect(e2.x).toBe(300); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('vars[property] appearing post-binding voids the restore even during an outage (Sol r85)', () => {
+    document.body.innerHTML = '<main><div id="kfrz"></div></main>';
+    const target = document.getElementById('kfrz');
+    // Page adds vars.x=50 AFTER the binding froze, then the outage starts. The
+    // frozen restore's invalidate would materialize the both-places probe-H
+    // corruption (restored path starts at 50, not 0) — vars.x is directly
+    // observable without the timeline and must void the binding.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    vars.x = 50; // page adds a top-level carrier post-binding...
+    tween.timeline = {}; // ...and the outage starts
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo via retarget.final — refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '300', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an externally mutated bucket makes the binding STALE even during an outage (Sol r84)', () => {
+    document.body.innerHTML = '<main><div id="kfry"></div></main>';
+    const target = document.getElementById('kfry');
+    // Two-bucket trailing run; the page mutates the NON-terminal bucket, then
+    // the outage starts. The frozen restore would wipe the page's 250 — the
+    // value check needs no timeline and must run even while uninspectable.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const e3 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2, e3], duration: 3 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300'); // collision run freezes BOTH buckets
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300, 300]);
+
+    e2.x = 250; // page mutates the non-terminal bucket...
+    tween.timeline = {}; // ...and the outage starts
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // restore attempt — must refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 250, 300]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-r84',
+            patches: [{
+              id: 'p-r84',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframe.x',
+              before: { offset: 1, value: '300', exists: true },
+              value: { offset: 1, value: '200', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 250, 300]); // still refused
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a committed outage restore keeps TRUTHFUL history and rolls back exactly after recovery (Sol r83)', () => {
+    document.body.innerHTML = '<main><div id="kfrw"></div></main>';
+    const target = document.getElementById('kfrw');
+    // The LAST patch of a commit may ride the frozen-restore lane during an
+    // outage — but its ACK must canonicalize the REAL values (300→200) via the
+    // frozen binding, never {exists:false} on both sides (whose persisted
+    // inverse no-ops forever). After the timeline recovers, rollback-transaction
+    // must restore 300 exactly.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    tween.timeline = {}; // outage: timeline present, getChildren missing
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-r83',
+            patches: [{
+              id: 'p-r83',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframe.x',
+              before: { offset: 1, value: '300', exists: true },
+              value: { offset: 1, value: '200', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]); // committed restore
+    const ack = messages.filter((message) => message.type === 'transaction-committed').pop();
+    const canonical = ack.payload.transaction.patches[0];
+    expect(canonical.before.exists).toBe(true);
+    expect(canonical.before.value).toBe('300'); // truthful history via the binding
+    expect(canonical.value.exists).toBe(true);
+    expect(canonical.value.value).toBe('200');
+
+    // Timeline recovers with healthy children.
+    const lookup1 = { x: {} };
+    const lookup2 = { x: {} };
+    const child1 = { vars: e1, _initted: true, _ptLookup: [lookup1] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [lookup2] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'rollback-transaction',
+        payload: { targetTransactionId: 'tx-r83' },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]); // exact rollback
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a MULTIPATCH commit whose final patch is an outage restore stays atomic and truthful (Sol r83)', () => {
+    document.body.innerHTML = '<main><div id="kfrx"></div></main>';
+    const target = document.getElementById('kfrx');
+    // Earlier reversible patches + the restore LAST: allowed (the final patch
+    // of a commit never needs its own rollback), with truthful canonical
+    // history for the restore.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    tween.timeline = {}; // outage
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-r83-multi',
+            patches: [
+              {
+                id: 'p-r83-hint',
+                elementId: selection.payload.element.id,
+                kind: 'motion',
+                motionId: motion.id,
+                property: 'ownership.hint',
+                before: null,
+                value: { semanticProperty: 'translateX', motionId: motion.id },
+              },
+              {
+                id: 'p-r83-final',
+                elementId: selection.payload.element.id,
+                kind: 'motion',
+                motionId: motion.id,
+                property: 'keyframe.x',
+                before: { offset: 1, value: '300', exists: true },
+                value: { offset: 1, value: '200', exists: true },
+              },
+            ],
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]); // committed
+    const ack = messages.filter((message) => message.type === 'transaction-committed').pop();
+    expect(ack.payload.transaction.id).toBe('tx-r83-multi');
+    const canonical = ack.payload.transaction.patches[1];
+    expect(canonical.before.exists).toBe(true);
+    expect(canonical.before.value).toBe('300');
+    expect(canonical.value.value).toBe('200');
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('an outage restore inside a transaction is rejected BEFORE mutating (Sol r82)', () => {
+    document.body.innerHTML = '<main><div id="kfrv"></div></main>';
+    const target = document.getElementById('kfrv');
+    // During an outage the frozen-binding restore is the ONLY lane: it can be
+    // APPLIED but never ROLLED BACK (re-writing the pre-transaction value is a
+    // blocked non-restore). validate-transaction applies then restores — so it
+    // must reject upfront, leaving the tween untouched.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    tween.timeline = {}; // outage: timeline present, getChildren missing
+    tween.invalidate.mockClear();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-r82-kf',
+            patches: [{
+              id: 'p-r82-kf',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframe.x',
+              before: { offset: 1, value: '300', exists: true },
+              value: { offset: 1, value: '200', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]); // untouched
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-r82-rt',
+            patches: [{
+              id: 'p-r82-rt',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'retarget.final',
+              before: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: '300' },
+              value: {
+                schemaVersion: 2,
+                semanticProperty: 'translateX',
+                runtimeProperty: 'x',
+                value: '200',
+                writeModel: 'absolute',
+                responsiveScope: 'shared',
+                owner: { channelId: `${motion.id}:translateX`, motionId: motion.id },
+                keyframe: { position: 'final-existing' },
+              },
+            }],
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]); // untouched
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a broken inner timeline on ANOTHER tween makes sharing unknown — restore refuses (Sol r81)', () => {
+    document.body.innerHTML = '<main><div id="kfru"></div></main>';
+    const target = document.getElementById('kfru');
+    // B carries a truthy timeline WITHOUT getChildren: its children (which may
+    // target A's buckets) are unreachable. "Cannot inspect" must read as
+    // unknown — never as "not shared".
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    const rider = { vars: { duration: 1 }, timeline: {} }; // uninspectable subtree
+    window.gsap.globalTimeline.getChildren = () => [tween, rider];
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo via retarget.final — refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '300', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a restore refuses when another tween TARGETS one of the buckets (Sol r80)', () => {
+    document.body.innerHTML = '<main><div id="kfrt"></div></main>';
+    const target = document.getElementById('kfrt');
+    // GSAP animates arbitrary objects: B = gsap.to(entryOfA, {...}) holds the
+    // entry only in targets(), never in vars. The restore must identity-check
+    // targets() too — otherwise it rewrites B's animated object (r45 class).
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    // Page creates B animating A's entry OBJECT — visible only via targets().
+    const rider = { vars: { x: 500, duration: 1 }, targets: () => [e2] };
+    window.gsap.globalTimeline.getChildren = () => [tween, rider];
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo via retarget.final — refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '300', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a restore refuses when sharing arose AFTER the binding froze (Sol r79)', () => {
+    document.body.innerHTML = '<main><div id="kfrs"></div></main>';
+    const target = document.getElementById('kfrs');
+    // Edit A, page creates tween B reusing A's entry object, undo A: the
+    // frozen-bucket restore would silently rewrite B's segment (the r45
+    // cross-motionId corruption). Proven sharing fails the restore closed on
+    // BOTH channels; the binding stays for a later attempt.
+    const e1 = { x: 100, duration: 1, parent: {} };
+    const e2 = { x: 200, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    // Page creates B riding on A's entry object AFTER the binding froze.
+    const rider = { vars: { startAt: e2, duration: 1 } };
+    window.gsap.globalTimeline.getChildren = () => [tween, rider];
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo via retarget.final — refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.x',
+            before: { offset: 1, value: '300', exists: true },
+            value: { offset: 1, value: '200', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]); // keyframe.x — refuse
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a filtered-out child makes the snapshot uninspectable — never healthy (Sol r78)', () => {
+    document.body.innerHTML = '<main><div id="kfrr"></div></main>';
+    const target = document.getElementById('kfrr');
+    // proven → page injects a vars-less child among otherwise-healthy ones.
+    // The silent filter must NOT let the survivors count as a full healthy
+    // snapshot and clear the proven memory: any discard = uninspectable.
+    const e1 = { x: 100, y: 5, duration: 1, parent: {} };
+    const e2 = { x: 200, y: 10, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const lookup1 = { x: {}, y: {} };
+    const lookup2 = { x: {}, y: {} };
+    const child1 = { vars: e1, _initted: true, _ptLookup: [lookup1] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [lookup2] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    delete lookup1.y; // page kills y — PROVEN...
+    delete lookup2.y;
+    sendRetarget(selection, motion, '500'); // ...observed by this refused edit
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    // Page "recovers" the survivors but a corrupted vars-less child rides
+    // along — the snapshot is NOT integrally inspectable.
+    lookup1.y = {};
+    lookup2.y = {};
+    const corrupted = { vars: null, _initted: true, _ptLookup: [] };
+    tween.timeline.getChildren = () => [child1, child2, corrupted];
+    sendRetarget(selection, motion, '500'); // must refuse, must not clear memory
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    tween.timeline.getChildren = () => { throw new Error('outage'); };
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo during outage — must refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('proven memory survives an INCOMPLETE inspection and clears only on a healthy one (Sol r77)', () => {
+    document.body.innerHTML = '<main><div id="kfrq"></div></main>';
+    const target = document.getElementById('kfrq');
+    // proven → non-initted inspection (scan false, but NOT healthy) → outage:
+    // the restore must still refuse. Only a FULL healthy inspection (all
+    // children initted, complete lookups, every check passing) clears the
+    // memory and reopens the restore lane.
+    const e1 = { x: 100, y: 5, duration: 1, parent: {} };
+    const e2 = { x: 200, y: 10, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const lookup1 = { x: {}, y: {} };
+    const lookup2 = { x: {}, y: {} };
+    const child1 = { vars: e1, _initted: true, _ptLookup: [lookup1] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [lookup2] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    delete lookup1.y; // page kills y — PROVEN...
+    delete lookup2.y;
+    sendRetarget(selection, motion, '500'); // ...observed by this refused edit
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    child1._initted = false; // page re-inits: children present but NOT initted
+    child2._initted = false; // scan sees no hazard — but proves nothing
+    sendRetarget(selection, motion, '500'); // incomplete inspection, refused
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    const liveGetChildren = tween.timeline.getChildren;
+    tween.timeline.getChildren = () => { throw new Error('outage'); };
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo during outage — must refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // Page genuinely recovers: children re-initted with COMPLETE lookups.
+    tween.timeline.getChildren = liveGetChildren;
+    child1._initted = true;
+    child2._initted = true;
+    lookup1.y = {};
+    lookup2.y = {};
+    sendRetarget(selection, motion, '200'); // healthy → memory cleared → restore
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a PROVEN hazard never downgrades to unknown through an outage (Sol r76)', () => {
+    document.body.innerHTML = '<main><div id="kfrp"></div></main>';
+    const target = document.getElementById('kfrp');
+    // x edited, page kills y's writers (PROVEN), THEN an outage hides the
+    // children. The proven memory must survive the outage: the undo of x
+    // still refuses instead of riding the outage-unknown restore lane.
+    const e1 = { x: 100, y: 5, duration: 1, parent: {} };
+    const e2 = { x: 200, y: 10, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const lookup1 = { x: {}, y: {} };
+    const lookup2 = { x: {}, y: {} };
+    const child1 = { vars: e1, _initted: true, _ptLookup: [lookup1] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [lookup2] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    delete lookup1.y; // page kills y's writers — PROVEN hazard...
+    delete lookup2.y;
+    sendRetarget(selection, motion, '500'); // ...observed by this refused edit
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    tween.timeline.getChildren = () => { throw new Error('outage'); };
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo during outage — must refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('refuses a restore under a PROVEN resurrection hazard — only outage-unknown passes (Sol r75)', () => {
+    document.body.innerHTML = '<main><div id="kfrh"></div></main>';
+    const target = document.getElementById('kfrh');
+    // x edited, then the page KILLS y's PropTween (proven hazard): undoing x
+    // would invalidate the whole tween and resurrect y. The restore must
+    // refuse; only outage-born uncertainty may pass.
+    const e1 = { x: 100, y: 5, duration: 1, parent: {} };
+    const e2 = { x: 200, y: 10, duration: 1, parent: {} };
+    const vars = { keyframes: [e1, e2], duration: 2 };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const lookup1 = { x: {}, y: {} };
+    const lookup2 = { x: {}, y: {} };
+    const child1 = { vars: e1, _initted: true, _ptLookup: [lookup1] };
+    const child2 = { vars: e2, _initted: true, _ptLookup: [lookup2] };
+    tween.timeline = { getChildren: () => [child1, child2] };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+
+    delete lookup1.y; // page kills y's writers — PROVEN hazard
+    delete lookup2.y;
+    tween.invalidate.mockClear();
+
+    sendRetarget(selection, motion, '200'); // undo of x — must refuse
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('never mistakes a plain tween with an inner timeline for a keyframes tween (Sol r10)', () => {
     document.body.innerHTML = '<main><div id="kfpl"></div><div id="kfob"></div></main>';
     const messages = [];

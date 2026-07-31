@@ -513,11 +513,24 @@ function nativeMotionRuntimeBridge() {
   // ones (probe-verified 2026-07-29), so extraction filters through the same ignored
   // set. Without this, keyframes tweens reported ZERO tracks -> the host saw the
   // property as unowned -> wrote a style patch the live tween stomps every tick.
+  // for..in mirror for INVENTORY (Sol r119): own + inherited enumerable keys
+  // — GSAP creates PropTweens for inherited vars too. Fail-closed direction
+  // for inventory is INCLUSION: a partially-enumerable proxy still surfaces
+  // whatever keys it yields (the write-side scans fail closed separately).
+  function gsapForInKeys(owner) {
+    const keys = [];
+    try {
+      // eslint-disable-next-line guard-for-in
+      for (const key in owner) keys.push(key);
+    } catch (_) {}
+    return keys;
+  }
+
   function gsapKeyframeProps(keyframes, ignored) {
     const names = new Set();
     const collect = (entry) => {
       if (!entry || typeof entry !== 'object') return;
-      Object.keys(entry).forEach((key) => {
+      gsapForInKeys(entry).forEach((key) => {
         // css wrapper INSIDE a keyframes entry is honored by GSAP (probe-verified)
         // — recurse into it or the writer goes invisible again.
         if (key === 'css' && entry.css && typeof entry.css === 'object' && !Array.isArray(entry.css)) {
@@ -529,7 +542,7 @@ function nativeMotionRuntimeBridge() {
     };
     if (Array.isArray(keyframes)) keyframes.forEach(collect);
     else if (keyframes && typeof keyframes === 'object') {
-      Object.keys(keyframes).forEach((key) => {
+      gsapForInKeys(keyframes).forEach((key) => {
         const value = keyframes[key];
         if (Array.isArray(value)) {
           if (!ignored.has(key) && key !== 'easeEach') names.add(key);
@@ -587,7 +600,10 @@ function nativeMotionRuntimeBridge() {
   // ownership from them yields ZERO tracks (the furo-#1 unowned lie) and lets
   // the plain vars writer through. There the authored array is the truth.
   function gsapAuthoredOwnershipEntries(animation, vars, source) {
-    const children = gsapInnerTimelineEntries(animation);
+    const rawChildren = gsapInnerTimelineEntries(animation);
+    // Uninspectable timeline: OWNERSHIP (detection) falls back to the source
+    // (fail-closed inventory) while the WRITE plan denies separately (Sol r55).
+    const children = Array.isArray(rawChildren) ? rawChildren : null;
     const facades = (vars && vars.stagger != null)
       || (children && children.length > 0 && children.every((entry) => entry && entry.keyframes));
     if (!facades && children) return children;
@@ -632,18 +648,51 @@ function nativeMotionRuntimeBridge() {
   // what its child ACTUALLY animates (Sol r27).
   const gsapEntryChildTweens = new WeakMap();
 
-  function gsapInnerTimelineEntries(animation) {
-    if (!(animation.timeline && typeof animation.timeline.getChildren === 'function')) return null;
+  // The raw child tweens whose vars are processed entries. ALIASED entries
+  // (same object at two positions) have DISTINCT children — per-occurrence
+  // checks must walk these pairs, never an entry->child map, which keeps only
+  // the last occurrence and blinds the hazard to a kill in the first
+  // (Sol r44).
+  function gsapInnerTimelineChildren(animation) {
+    // `null` means ONLY "no timeline ever existed" (a plain tween's timeline
+    // is the falsy 0) — a PRESENT timeline whose getChildren is missing or
+    // broken hides an unknowable structure and must fail closed, never fall
+    // back to the (possibly reordered) array (Sol r56).
+    if (!animation.timeline) return null;
+    if (typeof animation.timeline.getChildren !== 'function') return 'uninspectable';
     try {
-      const children = animation.timeline.getChildren();
+      // Every real child is authoritative BY CONSTRUCTION — the injected
+      // `parent` key is mutable metadata, and filtering on it would shrink
+      // the live set when the page deletes it, misidentifying the terminal
+      // (Sol r67). The parent filter belongs only to the SOURCE fallback,
+      // where raw appended entries are genuinely inert.
+      const rawChildren = animation.timeline.getChildren();
+      if (!Array.isArray(rawChildren)) return 'uninspectable';
+      const children = rawChildren.filter((child) =>
+        child && child.vars && typeof child.vars === 'object');
+      // A discarded child means the snapshot was NOT integrally inspectable —
+      // validating only the survivors could certify a partial view as
+      // 'healthy' and erase a proven hazard. Any discard fails closed
+      // (Sol r78).
+      if (children.length !== rawChildren.length) return 'uninspectable';
       children.forEach((child) => {
-        if (child && child.vars && typeof child.vars === 'object') {
-          gsapEntryChildTweens.set(child.vars, child);
-          if (child.timeline) gsapNestedFacadeEntries.add(child.vars);
-        }
+        gsapEntryChildTweens.set(child.vars, child);
+        if (child.timeline) gsapNestedFacadeEntries.add(child.vars);
       });
-      return gsapProcessedEntries(children.map((child) => child?.vars));
-    } catch (_) { return null; }
+      gsapLiveObservedAnimations.add(animation);
+      return children;
+    } catch (_) {
+      // Tri-state (Sol r55): an ABSENT API allows the array fallback; a
+      // THROWING one means the real structure is unknowable — callers must
+      // fail closed, never fall back.
+      return 'uninspectable';
+    }
+  }
+
+  function gsapInnerTimelineEntries(animation) {
+    const children = gsapInnerTimelineChildren(animation);
+    if (children === 'uninspectable') return 'uninspectable';
+    return children ? children.map((child) => child.vars) : null;
   }
 
   // OWNERSHIP read of the authored keyframes props — the single helper for the
@@ -665,7 +714,10 @@ function nativeMotionRuntimeBridge() {
     // r15; never facade copies — Claude final review).
     if (origin.shape === 'other') return origin.props;
     const entries = gsapAuthoredOwnershipEntries(animation, animation.vars, origin.source);
-    return Array.from(new Set(origin.props.concat(gsapKeyframeProps(entries, ignored))));
+    const observedProps = gsapLiveObservedPropSets.get(animation);
+    return Array.from(new Set(origin.props
+      .concat(gsapKeyframeProps(entries, ignored))
+      .concat(observedProps ? Array.from(observedProps) : [])));
   }
 
   // WRITE-grade live entries: only for animations with proven ARRAY origin.
@@ -681,7 +733,12 @@ function nativeMotionRuntimeBridge() {
     if (vars.stagger != null) return null;
     if (!origin || origin.shape !== 'array') return null;
     const children = gsapInnerTimelineEntries(animation);
+    if (children === 'uninspectable') return null; // write-grade fails closed (Sol r55)
     if (children) return children;
+    // A HIDDEN timeline after observation is not absence — the array may have
+    // been reordered meanwhile; write-grade denies until children reappear
+    // (Sol r71).
+    if (gsapLiveObservedAnimations.has(animation)) return null;
     // Fallback reads the ORIGINAL source — a replacement array is inert.
     return gsapProcessedEntries(origin.source);
   }
@@ -704,7 +761,7 @@ function nativeMotionRuntimeBridge() {
     if (vars.stagger != null) return [];
     const origin = gsapKeyframesOrigin(animation, vars);
     const children = gsapInnerTimelineEntries(animation);
-    if (!children) return [];
+    if (!children || children === 'uninspectable') return [];
     const props = gsapKeyframeProps(children, ignored);
     // Proven origin: ALWAYS union the live children — never gate on source
     // identity (a reference can be mutated in place — Sol r16) nor on the
@@ -794,24 +851,158 @@ function nativeMotionRuntimeBridge() {
   const GSAP_TRANSFORM_COMPONENT_KEYS = ['x', 'y', 'z', 'scaleX', 'scaleY', 'rotation', 'rotationX', 'rotationY', 'skewX', 'skewY'];
   const gsapChildLookupBaselines = new WeakMap();
 
+  // Tri-state verdict: false (no hazard), 'unknown' (structure transiently
+  // uninspectable — outage), 'proven' (a dead/orphaned writer, runBackwards
+  // entry or signature violation was actually OBSERVED). Restores may traverse
+  // 'unknown' only — an invalidate under a PROVEN hazard resurrects the killed
+  // channel even when the restored payload is authored (Sol r75).
   function gsapResurrectionHazard(animation) {
+    return Boolean(gsapResurrectionHazardVerdict(animation));
+  }
+
+  // A PROVEN hazard is remembered per animation: the dead writer is still
+  // there when an outage later hides the children — the verdict must not
+  // downgrade to 'unknown' and open the restore lane (Sol r76). Cleared only
+  // after a provably healthy FULL inspection (live children walked, every
+  // check passed).
+  const gsapProvenHazardAnimations = new WeakSet();
+
+  function gsapResurrectionHazardVerdict(animation) {
+    const verdict = gsapResurrectionHazardScan(animation);
+    if (verdict === 'proven') {
+      gsapProvenHazardAnimations.add(animation);
+      return 'proven';
+    }
+    if (verdict === 'unknown') {
+      return gsapProvenHazardAnimations.has(animation) ? 'proven' : 'unknown';
+    }
+    // Only an explicitly HEALTHY scan (every child initted, complete lookups,
+    // every check passing) proves recovery and clears the memory. A plain
+    // false (no hazard seen, but validation incomplete — non-initted children,
+    // missing lookups) proves nothing: a proven animation stays proven
+    // (Sol r77).
+    if (verdict === 'healthy') {
+      gsapProvenHazardAnimations.delete(animation);
+      return false;
+    }
+    return gsapProvenHazardAnimations.has(animation) ? 'proven' : false;
+  }
+
+  function gsapResurrectionHazardScan(animation) {
     // gsap.from() semantics INSIDE an entry (entry-level runBackwards /
     // materialized child._from): the entry's values are STARTS, not ends —
     // editing them as ends corrupts the path while reporting success, and any
     // edit's invalidate re-inits the whole timeline (Sol r40). Scanned over
     // the LIVE entries so it holds with or without an exposed inner timeline.
-    const liveEntries = gsapLiveKeyframeEntries(animation);
-    if (liveEntries && liveEntries.some((entry) => {
-      const child = gsapEntryChildTweens.get(entry);
-      return Boolean(entry.runBackwards || (child && (child._from || (child.vars && child.vars.runBackwards))));
-    })) return true;
-    const entries = gsapInnerTimelineEntries(animation);
-    if (!entries || !entries.length) return false;
+    // The signature scan must run on EVERY inspection even while the timeline
+    // is transiently uninspectable: the processed SOURCE entries are the same
+    // objects the children hold, so they carry the identities (Sol r64). The
+    // live-vs-blind provenance comes from the CHILDREN read directly — a falsy
+    // (stashed) timeline also means BLIND, not just a throwing one (Sol r66).
+    // With the source unrecoverable too, the animation is marked
+    // signature-unknown durably — no later baseline without proof of a
+    // rebuild.
+    const hazardOrigin = gsapKeyframesOrigin(animation, animation.vars);
+    const hazardChildren = hazardOrigin && hazardOrigin.shape === 'array'
+      ? gsapInnerTimelineChildren(animation)
+      : null;
+    const scanIsLive = Array.isArray(hazardChildren);
+    // Live children go in UNFILTERED — the `parent` filter would drop a
+    // metadata-stripped child from the signature scan (Sol r67/r68); it
+    // belongs only to the source fallback.
+    const scanEntries = scanIsLive
+      ? hazardChildren.map((child) => child.vars).filter((entry) => entry && typeof entry === 'object')
+      : (hazardOrigin && hazardOrigin.shape === 'array' && Array.isArray(hazardOrigin.source)
+        ? gsapProcessedEntries(hazardOrigin.source)
+        : null);
+    if (!scanEntries && hazardOrigin && hazardOrigin.shape === 'array') {
+      gsapSignatureUnknownAnimations.add(animation);
+    }
+    // Observed-prop feed runs BEFORE the unknown early-return: even a
+    // signature-unknown animation keeps its inventory truthful for props
+    // materialized and seen later (Sol r73).
+    if (scanIsLive && Array.isArray(scanEntries)) {
+      let observedProps = gsapLiveObservedPropSets.get(animation);
+      if (!observedProps) {
+        observedProps = new Set();
+        gsapLiveObservedPropSets.set(animation, observedProps);
+      }
+      scanEntries.forEach((entry) => {
+        gsapKeyframeProps([entry], GSAP_CONFIG_VARS).forEach((observedProperty) => observedProps.add(observedProperty));
+      });
+    }
+    if (gsapSignatureUnknownAnimations.has(animation)) return 'proven';
+    if (Array.isArray(scanEntries)) {
+      let coverage = gsapScannedEntryCoverage.get(animation);
+      if (!coverage) {
+        coverage = new WeakSet();
+        gsapScannedEntryCoverage.set(animation, coverage);
+      }
+      if (!scanIsLive) {
+        gsapBlindScannedAnimations.add(animation);
+      } else if (gsapBlindScannedAnimations.has(animation)
+        && scanEntries.some((entry) => !coverage.has(entry))) {
+        // A live child never scanned surfaced after a blind window — its
+        // signature history is unknowable (Sol r65).
+        gsapSignatureUnknownAnimations.add(animation);
+        return 'proven';
+      }
+      scanEntries.forEach((entry) => coverage.add(entry));
+      if (scanEntries.some((entry) => Boolean(entry.runBackwards))) return 'proven';
+      // NAMESPACE signatures observed and validated on EVERY inspection —
+      // BEFORE any eligibility guard can short-circuit: a tween first seen
+      // while locked (both-places etc.) still freezes 'top'/'css' here, so a
+      // later top->css move without rebuild (old PropTweens alive) reads as a
+      // signature change and stays locked (Sol r61–r63). 'both' locks for the
+      // tween's life.
+      for (let entryIndex = 0; entryIndex < scanEntries.length; entryIndex += 1) {
+        const entry = scanEntries[entryIndex];
+        const cssWrap = entry.css && typeof entry.css === 'object' && !Array.isArray(entry.css) ? entry.css : null;
+        let signatures = gsapEntryNamespaceSignatures.get(entry);
+        if (!signatures) {
+          signatures = new Map();
+          gsapEntryNamespaceSignatures.set(entry, signatures);
+        }
+        const propsToCheck = new Set(gsapKeyframeProps([entry], GSAP_CONFIG_VARS));
+        signatures.forEach((_, frozenProperty) => propsToCheck.add(frozenProperty));
+        for (const checkedProperty of propsToCheck) {
+          const inTop = Object.prototype.hasOwnProperty.call(entry, checkedProperty);
+          const inCss = Boolean(cssWrap && checkedProperty in cssWrap);
+          const currentSignature = inTop && inCss ? 'both' : inCss ? 'css' : inTop ? 'top' : 'none';
+          const frozenSignature = signatures.get(checkedProperty);
+          if (!frozenSignature) {
+            if (currentSignature !== 'none') signatures.set(checkedProperty, currentSignature);
+            if (currentSignature === 'both') return 'proven';
+            continue;
+          }
+          if (frozenSignature === 'both' || currentSignature === 'both') return 'proven';
+          if (frozenSignature !== currentSignature) return 'proven';
+        }
+      }
+    }
+    // Per-OCCURRENCE walk over the real {entry, child} pairs — an entry->child
+    // map keeps only the last occurrence of an aliased entry and blinds the
+    // guard to a kill in the first (Sol r44).
+    const children = gsapInnerTimelineChildren(animation);
+    if (children === 'uninspectable') return 'unknown'; // outage: unknowable, not proven (Sol r55/r75)
+    if (!children || !children.length) return false;
+    if (children.some((child) => Boolean(child._from || (child.vars && child.vars.runBackwards)))) return 'proven';
     const registeredPluginVars = gsapRegisteredPluginVars();
-    return entries.some((entry) => {
-      const child = gsapEntryChildTweens.get(entry);
-      if (!(child && child._initted && Array.isArray(child._ptLookup))) return false;
+    // 'healthy' (memory-clearing grade) requires EVERY child of this same
+    // non-empty snapshot to have been integrally validated — initted, with
+    // complete well-formed lookups. Anything skipped keeps the scan at plain
+    // false: no hazard observed, but nothing proven either (Sol r77).
+    let fullyValidated = true;
+    const hazardObserved = children.some((child) => {
+      const entry = child.vars;
+      if (!(child._initted && Array.isArray(child._ptLookup))) {
+        fullyValidated = false;
+        return false;
+      }
       const lookups = child._ptLookup.filter((lookup) => lookup && typeof lookup === 'object');
+      if (!lookups.length || lookups.length !== child._ptLookup.length) {
+        fullyValidated = false;
+      }
       if (!lookups.length) return false;
       // Declaration<->lookup validation runs on EVERY inspection — a prop
       // DECLARED after the baseline froze may have no live writer yet (or was
@@ -879,27 +1070,721 @@ function nativeMotionRuntimeBridge() {
       gsapChildLookupBaselines.set(child, lookups.map((lookup) => new Set(Object.keys(lookup))));
       return false;
     });
+    if (hazardObserved) return 'proven';
+    return fullyValidated ? 'healthy' : false;
   }
 
-  function gsapArrayKeyframePlan(animation, property) {
+  // True when any of the write buckets is also referenced by ANOTHER live
+  // tween's keyframes (same array wholesale, a shared entry, or a shared
+  // entry-level css wrapper) — Sol r45. Our own inner children never carry a
+  // keyframes array (stagger facades do, but stagger tweens are plan-locked
+  // before this check runs).
+  // Animations whose LIVE children were observed at least once: a falsy
+  // timeline afterwards means the page HID it, not that it never existed —
+  // the (possibly reordered) array must not regain write authority until the
+  // children reappear (Sol r71). Never-observed animations keep the array
+  // fallback (mocks / observation limit, same epistemics as provenance r10).
+  const gsapLiveObservedAnimations = new WeakSet();
+  // MONOTONIC per-animation set of properties actually observed in LIVE
+  // children — unioned into ownership while the timeline hides, so a
+  // later-materialized prop never vanishes from the inventory after its
+  // carrier leaves the source (Sol r72). Never fed by the source fallback.
+  const gsapLiveObservedPropSets = new WeakMap();
+
+  // Animations whose signature window was missed with NO recoverable source —
+  // no later baseline is trustworthy without proof of a rebuild (Sol r64).
+  const gsapSignatureUnknownAnimations = new WeakSet();
+  // Coverage of the signature scans, by identity: which entries each animation
+  // has actually scanned, and whether any scan ever ran BLIND (source-based,
+  // children unavailable). A live child that surfaces later WITHOUT having
+  // been scanned escaped the blind window — its current signature must never
+  // become a baseline (Sol r65).
+  const gsapScannedEntryCoverage = new WeakMap();
+  const gsapBlindScannedAnimations = new WeakSet();
+
+  // Namespace signature of each (entry, property), frozen at first sight —
+  // 'both' or a signature CHANGE locks for the tween's life (Sol r61/r62).
+  const gsapEntryNamespaceSignatures = new WeakMap();
+
+  // Sharing once OBSERVED is remembered forever: a snapshot of the global
+  // timeline cannot prove uniqueness — the other tween may have completed and
+  // detached while staying restartable (Sol r58). Buckets seen shared are
+  // marked contested durably; sharing never observed remains a documented
+  // residual (observation is the limit).
+  const gsapContestedBuckets = new WeakSet();
+
+  function gsapBucketsSharedWithOtherTween(animation, buckets) {
+    if (buckets.some((bucket) => gsapContestedBuckets.has(bucket))) return true;
+    const markContested = () => {
+      buckets.forEach((bucket) => gsapContestedBuckets.add(bucket));
+      return true;
+    };
+    try {
+      const timeline = window.gsap && window.gsap.globalTimeline;
+      // Fail CLOSED (transient): with no inspectable global timeline, sharing
+      // cannot be ruled out — "cannot check" must never read as "not shared"
+      // (Sol r57).
+      if (!timeline || typeof timeline.getChildren !== 'function') return true;
+      const bucketSet = new Set(buckets);
+      // The authoritative keyframes container is the FROZEN origin.source —
+      // after a delete/replace the current pointer is an inert impostor:
+      // aliasing the frozen array is real sharing, aliasing only the
+      // replacement is not (Sol r122).
+      const frozenOriginShape = gsapKeyframesOriginShapes.get(animation);
+      const authoritativeKeyframes = frozenOriginShape && Array.isArray(frozenOriginShape.source)
+        ? frozenOriginShape.source
+        : (Array.isArray(animation.vars?.keyframes) ? animation.vars.keyframes : null);
+      const containsBucket = (list) => list.some((entry) => entry
+        && (bucketSet.has(entry) || (entry.css && bucketSet.has(entry.css))));
+      // Our OWN inner children walk through the nested global list too — they
+      // reference our buckets by construction and must not self-flag.
+      const ownRaw = gsapInnerTimelineChildren(animation);
+      const ownChildren = new Set(Array.isArray(ownRaw) ? ownRaw : []);
+      // Recursive descent through the WHOLE inner tree of every other tween:
+      // segments can live arbitrarily deep (a stagger facade's children have
+      // their OWN inner timelines — the grandchildren hold the entries), and
+      // deleted/emptied sources leave those descendants as the only witnesses
+      // of the sharing (Sol r46–r49).
+      const sharesThroughTree = (root) => {
+        const stack = [root];
+        const seen = new Set();
+        while (stack.length) {
+          const node = stack.pop();
+          if (!node || seen.has(node)) continue;
+          seen.add(node);
+          // GSAP animates ARBITRARY objects: a bucket used as another tween's
+          // TARGET appears only in targets(), never in vars (Sol r80).
+          if (typeof node.targets === 'function') {
+            let nodeTargets;
+            try { nodeTargets = node.targets(); } catch (_) { return 'unknown'; }
+            if (Array.isArray(nodeTargets)) {
+              if (nodeTargets.some((nodeTarget) => nodeTarget && bucketSet.has(nodeTarget))) return 'shared';
+            } else if (nodeTargets) {
+              return 'unknown';
+            }
+          }
+          const nodeVars = node.vars;
+          if (nodeVars && typeof nodeVars === 'object') {
+            // Identity walk over the WHOLE authored value graph of this vars
+            // (root included — Sol r50): buckets can hide at any depth —
+            // startAt, entry-level css, PLUGIN wrappers (startAt:{attr:
+            // bucket}), arrays (Sol r51/r52). Cycle-safe. CONTEXTUAL backedge
+            // suppression (Sol r121): only the injected ROOT `parent` is
+            // skipped — `_phase` is animatable at the root (r111/r113) and
+            // `attr.parent` is animated inside a namespace (r100), so those
+            // edges are walked; objects under nested parent/_* are authored
+            // containers here (this graph never enters GSAP's own tree from a
+            // vars root). visited is keyed per (object, context).
+            const valueStack = [{ value: nodeVars, isRoot: true }];
+            const visited = new Map();
+            while (valueStack.length) {
+              const valueFrame = valueStack.pop();
+              const candidate = valueFrame.value;
+              if (!candidate || typeof candidate !== 'object') continue;
+              const walkContext = valueFrame.isRoot ? 'r' : 'n';
+              let seenContexts = visited.get(candidate);
+              if (seenContexts && seenContexts.has(walkContext)) continue;
+              if (!seenContexts) {
+                seenContexts = new Set();
+                visited.set(candidate, seenContexts);
+              }
+              seenContexts.add(walkContext);
+              if (bucketSet.has(candidate)) return 'shared';
+              if (authoritativeKeyframes && candidate === authoritativeKeyframes) return 'shared';
+              // Never EXECUTE accessors: a getter/proxy is inscrutable and the
+              // outer catch fails CLOSED — an inspection failure must never
+              // become write permission (Sol r53). for..in mirror: GSAP also
+              // processes INHERITED enumerable keys — a rider tween whose
+              // startAt is inherited still shares the bucket (Sol r120).
+              let candidateKeys;
+              try {
+                candidateKeys = [];
+                // eslint-disable-next-line guard-for-in
+                for (const enumeratedKey in candidate) candidateKeys.push(enumeratedKey);
+              } catch (_) { return 'unknown'; }
+              for (let keyIndex = 0; keyIndex < candidateKeys.length; keyIndex += 1) {
+                const key = candidateKeys[keyIndex];
+                const chainLookup = gsapChainDescriptor(candidate, key);
+                if (chainLookup.unknown) return 'unknown';
+                const propertyDescriptor = chainLookup.descriptor;
+                if (!propertyDescriptor) continue;
+                if (propertyDescriptor.get || propertyDescriptor.set) return 'unknown';
+                const propertyValue = propertyDescriptor.value;
+                if (key === 'parent' || key.charCodeAt(0) === 95) {
+                  if (propertyValue && typeof propertyValue === 'object') {
+                    if (valueFrame.isRoot && key === 'parent') continue; // injected root backedge
+                    // IDENTITY check WITHOUT descent (Sol r121): descending
+                    // would enter GSAP's own tree via injected entry.parent
+                    // (self-flag on every real tween); the direct alias
+                    // (vars._phase = bucket, attr.parent = bucket) is caught
+                    // right here. A bucket nested DEEPER under a
+                    // backedge-named container stays a documented residual.
+                    if (bucketSet.has(propertyValue)
+                      || (authoritativeKeyframes && propertyValue === authoritativeKeyframes)) return 'shared';
+                    continue;
+                  }
+                  valueStack.push({ value: propertyValue, isRoot: false });
+                  continue;
+                }
+                valueStack.push({ value: propertyValue, isRoot: false });
+              }
+            }
+          }
+          if (node.timeline) {
+            // Fail CLOSED: an uninspectable inner timeline may hide the
+            // sharing (the r47–r49 class) — a swallowed failure must never
+            // unlock (Sol r54). A truthy timeline WITHOUT getChildren hides
+            // its subtree just the same — unknown, not "not shared" (Sol r81).
+            if (typeof node.timeline.getChildren !== 'function') return 'unknown';
+            try { node.timeline.getChildren().forEach((descendant) => stack.push(descendant)); } catch (_) { return 'unknown'; }
+          }
+        }
+        return false;
+      };
+      // Tri-state per other tween: PROVEN identity ('shared') is remembered
+      // forever; inscrutable state ('unknown') locks only THIS inspection —
+      // transient uncertainty must never contaminate the durable memory
+      // (Sol r59).
+      let sawUnknown = false;
+      const others = timeline.getChildren(true, true, true);
+      for (let otherIndex = 0; otherIndex < others.length; otherIndex += 1) {
+        const other = others[otherIndex];
+        if (!other || other === animation || ownChildren.has(other)) continue;
+        const otherOrigin = gsapKeyframesOriginShapes.get(other);
+        if (otherOrigin && Array.isArray(otherOrigin.source) && containsBucket(otherOrigin.source)) return markContested();
+        const verdict = sharesThroughTree(other);
+        if (verdict === 'shared') return markContested();
+        if (verdict === 'unknown') sawUnknown = true;
+      }
+      return sawUnknown;
+    } catch (_) {
+      // Fail CLOSED: if the inspection itself blows up (proxies, hostile
+      // getters, dead objects), "cannot prove it is NOT shared" must lock the
+      // plan — never grant a write on an aborted scan (Sol r53).
+      return true;
+    }
+  }
+
+  // GSAP processes vars with for..in — INHERITED enumerable properties are
+  // real carriers/config (Sol r117). These helpers mirror that enumeration,
+  // descriptor-based (no getter execution), failing CLOSED on proxies.
+  function gsapChainDescriptor(owner, key) {
+    // Walks the WHOLE chain including Object.prototype — a page can add
+    // enumerable keys there and GSAP's for..in would see them (Sol r118).
+    let current = owner;
+    const seenLevels = new Set();
+    while (current && !seenLevels.has(current)) {
+      seenLevels.add(current);
+      let levelDescriptor;
+      try { levelDescriptor = Object.getOwnPropertyDescriptor(current, key); } catch (_) {
+        return { descriptor: null, unknown: true };
+      }
+      if (levelDescriptor) return { descriptor: levelDescriptor, unknown: false };
+      try { current = Object.getPrototypeOf(current); } catch (_) {
+        return { descriptor: null, unknown: true };
+      }
+    }
+    return { descriptor: null, unknown: false };
+  }
+
+  // True when the key is enumerable ANYWHERE on the chain — GSAP's for..in
+  // would process it. Inscrutable state fails closed (counts as present).
+  function gsapHasEnumerableProp(owner, key) {
+    if (!owner || typeof owner !== 'object') return false;
+    const { descriptor, unknown } = gsapChainDescriptor(owner, key);
+    if (unknown) return true;
+    return Boolean(descriptor && descriptor.enumerable);
+  }
+
+  // Timeline-INDEPENDENT disqualifiers — directly observable on vars even
+  // while the inner timeline is uninspectable. Consulted by the plan header
+  // AND by the frozen-binding validation, so a carrier appearing post-binding
+  // (vars.x=50 → both-places probe-H resurrection on invalidate) voids the
+  // restore lane during an outage too (Sol r85).
+  function gsapEntryBindingDisqualified(animation, property) {
+    const vars = animation?.vars;
+    if (!vars) return true;
+    if (vars.keyframes && !Array.isArray(vars.keyframes)) return true;
+    if (vars.stagger != null || vars.runBackwards) return true;
+    if (gsapHasEnumerableProp(vars, property)) return true; // for..in mirror (Sol r117)
+    const wrapper = vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css) ? vars.css : null;
+    if (wrapper && gsapHasEnumerableProp(wrapper, property)) return true;
+    if (gsapDescriptorComponentKeys(property).length) return true;
+    if (gsapRegisteredPluginVars().has(property)) return true;
+    return false;
+  }
+
+  // random(...) ANYWHERE on the animation is a REINIT hazard for every
+  // channel: invalidatePreservingStart reinitializes the whole tween and
+  // re-rolls every randomized PropTween — editing x re-rolls y (Sol r98).
+  // Scans top-level vars (startAt/css recursed), plus every canonical entry
+  // and its css wrapper.
+  // POSITIVE provenance, remembered per animation: once random() was observed
+  // the PropTweens hold rolled ends even if the page later swaps the authored
+  // value without invalidating — a live re-read would lie (Sol r103). EVERY
+  // caller's positive observation feeds it (binding validation and plan
+  // included — a spliced entry lives only in binding.allEntries, Sol r104);
+  // transient 'unknown' (accessors, scan failures) fails closed WITHOUT
+  // contaminating the durable memory (the r59 principle). A new tween
+  // identity naturally starts clean (WeakSet); no in-place clearing.
+  const gsapRandomObservedAnimations = new WeakSet();
+
+  // Per-animation durable memory of properties OBSERVED function-valued at
+  // the top level: the page can swap the function for a concrete value
+  // without invalidating while its PropTween still holds the rolled result
+  // (same provenance logic as random — Sol r103/r115). Monotonic union.
+  const gsapTopFunctionProps = new WeakMap();
+
+  function gsapHasRandomizedValue(animation, entries, editedProperty) {
+    if (animation && gsapRandomObservedAnimations.has(animation)) return true;
+    const collector = [];
+    const verdict = gsapScanRandomizedValue(animation, entries, collector);
+    if (animation && collector.length) {
+      let observedProps = gsapTopFunctionProps.get(animation);
+      if (!observedProps) {
+        observedProps = new Set();
+        gsapTopFunctionProps.set(animation, observedProps);
+      }
+      collector.forEach((propName) => observedProps.add(propName));
+    }
+    if (verdict === 'observed') {
+      if (animation) gsapRandomObservedAnimations.add(animation);
+      return true;
+    }
+    if (verdict === 'unknown') return true;
+    // Sibling-aware: a top-level function on ANY property other than the one
+    // being edited re-executes on the invalidate (Sol r115). The edited
+    // property's own function stays covered by the function-model writer.
+    const rememberedProps = animation ? gsapTopFunctionProps.get(animation) : null;
+    if (rememberedProps) {
+      for (const propName of rememberedProps) {
+        if (propName !== editedProperty) return true;
+      }
+    }
+    return false;
+  }
+
+  function gsapScanRandomizedValue(animation, entries, functionPropCollector) {
+    // Recursive, cycle-safe, descriptor-based walk of ALL authored containers
+    // — plugin namespaces (attr:{}), wrappers, startAt, arrays — skipping only
+    // GSAP backedges (parent/_*). Tri-state: 'observed' | 'unknown'
+    // (accessors, scan failures — fail closed transiently) | 'clean'
+    // (Sol r99/r104). vars.keyframes raw slots are skipped at the root: the
+    // canonical entries arrive via `entries` (raw appended slots are inert).
+    // CONTEXT TRAVELS WITH THE PATH, not the object identity: an entry reused
+    // as a namespace (e1.attr = sharedEntry) is walked AGAIN in its nested
+    // context, where its `parent` key is an animated channel — visited is
+    // keyed per (object, context) (Sol r114).
+    try {
+      const stack = []; // frames: { value, inEntry, isRoot }
+      const visited = new Map(); // object -> Set(contextKey)
+      let sawUnknown = false;
+      // FUNCTION-valued ANIMATED properties inside the keyframes entries are
+      // a reinit hazard like random(): every invalidate re-executes them and
+      // a stateful function drifts — no exact rollback (Sol r109). Scoped to
+      // the ENTRY subtree: top-level flat function values keep their existing
+      // function-model machinery, and vars.startAt is preserved by
+      // construction (invalidatePreservingStart pins starts). Config keys
+      // (GSAP_CONFIG_VARS — ease/duration/callbacks, injected into processed
+      // entries) are benign, and only at the entry ROOT — inside animated
+      // namespaces a subkey merely NAMED like a reserved key is an animated
+      // channel (Sol r110).
+      let sawFunctionValue = false;
+      // TOP-LEVEL animated function props (vars root and its css wrapper) are
+      // collected BY NAME instead of hard-locking: only the property covered
+      // by the function-model writer is exempt from its own function —
+      // SIBLING functions re-execute on every invalidate and are a hazard
+      // for every other property (Sol r115). vars.startAt stays exempt
+      // (preserved by construction); deeper vars containers (plugin
+      // namespaces) lock unconditionally.
+      const topFunctionProps = [];
+      const pushValue = (value, inEntry, zone) => stack.push({ value, inEntry, isRoot: false, zone: zone || null });
+      const pushOwn = (owner, skipKeyframes, inEntry, isRoot, isStructuralRoot, zone) => {
+        // Every reflective read is isolated per candidate/key: a Proxy trap
+        // throwing on keys/descriptor must degrade only THIS node to unknown
+        // — never abort a positive observation already stacked (Sol r107).
+        // for..in mirror: GSAP also processes INHERITED enumerable keys
+        // (Sol r117). for..in itself never executes getters; descriptors are
+        // then resolved along the chain, per-key fail-closed.
+        let ownerKeys;
+        try {
+          ownerKeys = [];
+          // eslint-disable-next-line guard-for-in
+          for (const enumeratedKey in owner) ownerKeys.push(enumeratedKey);
+        } catch (_) { sawUnknown = true; return; }
+        for (let keyIndex = 0; keyIndex < ownerKeys.length; keyIndex += 1) {
+          const key = ownerKeys[keyIndex];
+          if (skipKeyframes && key === 'keyframes') continue;
+          const chainLookup = gsapChainDescriptor(owner, key);
+          if (chainLookup.unknown) {
+            sawUnknown = true;
+            continue;
+          }
+          const propertyDescriptor = chainLookup.descriptor;
+          if (!propertyDescriptor) continue;
+          if (propertyDescriptor.get || propertyDescriptor.set) {
+            sawUnknown = true; // inscrutable — keep scanning the rest
+            continue;
+          }
+          if (key === 'parent' || key.charCodeAt(0) === 95) {
+            const backedgeValue = propertyDescriptor.value;
+            if (backedgeValue && typeof backedgeValue === 'object') {
+              // Only the PROVEN structural backedge is suppressed: `parent`
+              // at a structural root (the GSAP-injected timeline reference).
+              // `_...` keys are NOT reserved — an authored
+              // _phase:['random(...)'] is animatable and its object must be
+              // walked at any depth (Sol r112/r113).
+              if (isStructuralRoot && key === 'parent') continue;
+              pushValue(backedgeValue, inEntry);
+              continue;
+            }
+            if (typeof backedgeValue === 'function') {
+              // An authored FUNCTION under a key named parent/_* is an
+              // animated value, not a backedge (Sol r110) — including a
+              // _-prefixed expando at the entry ROOT (Sol r111). Same
+              // contextual predicate as the normal branch.
+              if (inEntry && (!isRoot || !GSAP_CONFIG_VARS.has(key))) sawFunctionValue = true;
+              else if (!inEntry && (zone === 'vars-root' || zone === 'vars-css')) topFunctionProps.push(key);
+              else if (!inEntry && zone === 'vars-nested') sawFunctionValue = true;
+              continue;
+            }
+            pushValue(backedgeValue, inEntry, zone === 'vars-root' ? 'vars-nested' : zone);
+            continue;
+          }
+          const ownValue = propertyDescriptor.value;
+          if (typeof ownValue === 'function') {
+            if (inEntry) {
+              if (!isRoot || !GSAP_CONFIG_VARS.has(key)) sawFunctionValue = true;
+            } else if (zone === 'vars-root') {
+              if (!GSAP_CONFIG_VARS.has(key)) topFunctionProps.push(key); // sibling-aware (Sol r115)
+            } else if (zone === 'vars-css') {
+              topFunctionProps.push(key);
+            } else if (zone === 'vars-nested') {
+              sawFunctionValue = true; // plugin namespaces — no writer covers these
+            }
+            continue; // functions are never stacked
+          }
+          let childZone = null;
+          if (zone === 'vars-root') {
+            childZone = key === 'css' ? 'vars-css' : key === 'startAt' ? 'vars-startat' : 'vars-nested';
+          } else if (zone === 'vars-css' || zone === 'vars-nested') {
+            childZone = 'vars-nested';
+          } else if (zone === 'vars-startat') {
+            childZone = 'vars-startat';
+          }
+          pushValue(ownValue, inEntry, childZone);
+        }
+      };
+      if (animation?.vars && typeof animation.vars === 'object') {
+        pushOwn(animation.vars, true, false, false, true, 'vars-root');
+      }
+      try {
+        (Array.isArray(entries) ? entries : []).forEach((entry) => {
+          if (entry && typeof entry === 'object') stack.push({ value: entry, inEntry: true, isRoot: true });
+        });
+      } catch (_) {
+        sawUnknown = true;
+      }
+      while (stack.length) {
+        const frame = stack.pop();
+        const candidate = frame.value;
+        if (typeof candidate === 'string') {
+          if (/random\(/i.test(candidate)) return 'observed';
+          continue;
+        }
+        if (!candidate || typeof candidate !== 'object') continue;
+        const contextKey = `${frame.inEntry ? 1 : 0}${frame.isRoot ? 1 : 0}:${frame.zone || ''}`;
+        let seenContexts = visited.get(candidate);
+        if (seenContexts && seenContexts.has(contextKey)) continue;
+        if (!seenContexts) {
+          seenContexts = new Set();
+          visited.set(candidate, seenContexts);
+        }
+        seenContexts.add(contextKey);
+        // A REVOKED Proxy makes Array.isArray itself throw — the node
+        // degrades alone, never the scan (Sol r108).
+        let candidateIsArray;
+        try { candidateIsArray = Array.isArray(candidate); } catch (_) {
+          sawUnknown = true;
+          continue;
+        }
+        if (candidateIsArray) {
+          // Descriptor-based like objects: candidate[i] would EXECUTE an
+          // index getter, and a throwing one must degrade only THIS node to
+          // unknown — never abort a positive observation already stacked
+          // (Sol r106). length/descriptor reads go through Proxy traps that
+          // can throw too — isolated the same way (Sol r107).
+          let arrayLength;
+          try { arrayLength = candidate.length; } catch (_) {
+            sawUnknown = true;
+            continue;
+          }
+          for (let itemIndex = 0; itemIndex < arrayLength; itemIndex += 1) {
+            let itemDescriptor;
+            try { itemDescriptor = Object.getOwnPropertyDescriptor(candidate, itemIndex); } catch (_) {
+              sawUnknown = true;
+              continue;
+            }
+            if (!itemDescriptor) continue;
+            if (itemDescriptor.get || itemDescriptor.set) {
+              sawUnknown = true;
+              continue;
+            }
+            const itemValue = itemDescriptor.value;
+            if (typeof itemValue === 'function') {
+              if (frame.inEntry) sawFunctionValue = true;
+              else if (frame.zone === 'vars-nested' || frame.zone === 'vars-css') sawFunctionValue = true;
+              continue;
+            }
+            pushValue(itemValue, frame.inEntry, frame.zone);
+          }
+          continue;
+        }
+        pushOwn(candidate, false, frame.inEntry, frame.isRoot, frame.isRoot, frame.zone);
+      }
+      if (Array.isArray(functionPropCollector)) topFunctionProps.forEach((propName) => functionPropCollector.push(propName));
+      if (sawFunctionValue) return 'observed';
+      return sawUnknown ? 'unknown' : 'clean';
+    } catch (_) {
+      return 'unknown'; // fail CLOSED — an aborted scan must never grant a write
+    }
+  }
+
+  // Animation-level random hazard: ANY invalidating writer re-rolls every
+  // randomized value on the tween — including edits to a FLAT rides-along
+  // property beside randomized keyframes (Sol r101). Consulted by the plan
+  // (via values), by every writer that invalidates, and by the classifier.
+  function gsapAnimationRandomHazard(animation, editedProperty) {
+    if (!animation) return false;
+    if (gsapRandomObservedAnimations.has(animation)) return true;
+    const vars = animation.vars;
+    if (!vars) return false;
+    const origin = gsapKeyframesOrigin(animation, vars);
+    let entries = null;
+    if (origin && origin.shape === 'array') {
+      entries = gsapAuthoredOwnershipEntries(animation, vars, origin.source);
+    } else if (vars.keyframes && typeof vars.keyframes === 'object') {
+      entries = [vars.keyframes];
+    }
+    return gsapHasRandomizedValue(animation, entries, editedProperty);
+  }
+
+  // Entry-level temporal modifiers (repeat/yoyo at minimum) make the entry's
+  // RENDERED end diverge from its authored value ({x:200,repeat:1,yoyo:true}
+  // renders back to the segment start) — editing "the end" would move an
+  // intermediate peak while reporting success (Sol r93). Own-key presence
+  // fails closed; GSAP does not inject these into processed entries.
+  function gsapEntryHasTemporalModifier(entry, child) {
+    if (Object.prototype.hasOwnProperty.call(entry, 'repeat')
+      || Object.prototype.hasOwnProperty.call(entry, 'yoyo')) return true;
+    // The EFFECTIVE state lives on the child: _repeat/_yoyo (r94) and the
+    // forward-active trio _ts/_rts/_ps (r95 — reversed(true) flips the
+    // timeScales negative, paused(true) sets _ps and _ts=0, timeScale(0)
+    // zeroes both) — all settable without touching vars, all making the
+    // rendered end diverge from the authored end. Reading them needs no
+    // timeline — the child reference was captured at inspection. When the
+    // child IS confrontable it alone decides paused/reversed: authored
+    // `paused:false`/`reversed:false` are benign (GSAP only applies truthy
+    // setters) and key presence must not lock (Sol r96). The authored keys
+    // are a TRUTHY fallback only while no child can be confronted.
+    const effective = child || gsapEntryChildTweens.get(entry);
+    if (effective) {
+      if (effective._repeat || effective._yoyo || effective._ps) return true;
+      if (typeof effective._rts === 'number' && effective._rts < 0) return true;
+      if (typeof effective._ts === 'number' && effective._ts <= 0) return true;
+      return false;
+    }
+    return Boolean(entry.paused || entry.reversed);
+  }
+
+  // Namespace of a property on ONE entry — 'top' | 'css' | 'both' | 'none'.
+  // Frozen per entry in the binding and revalidated without the timeline.
+  function gsapEntryPropertyNamespace(entry, property) {
+    const cssWrap = entry.css && typeof entry.css === 'object' && !Array.isArray(entry.css) ? entry.css : null;
+    const inCss = Boolean(cssWrap && gsapHasEnumerableProp(cssWrap, property));
+    const inTop = gsapHasEnumerableProp(entry, property); // for..in mirror (Sol r117)
+    return inTop && inCss ? 'both' : inCss ? 'css' : inTop ? 'top' : 'none';
+  }
+
+  // A bucket reachable in the animation's OWN authored vars graph OUTSIDE the
+  // canonical keyframes source (vars.startAt = terminalEntry, nested aliases in
+  // wrappers): writing the bucket would simultaneously write that other slot,
+  // and invalidatePreservingStart would materialize it (Sol r88). Cycle-safe,
+  // descriptor-based, accessors fail closed. Directly observable — needs no
+  // timeline, so it runs in ALL plan modes and in the binding validation.
+  function gsapBucketsAliasedInOwnVars(animation, buckets, liveEntries, canonicalCssPairs) {
+    try {
+      const vars = animation?.vars;
+      if (!vars || typeof vars !== 'object') return false;
+      const bucketSet = new Set(buckets);
+      const stack = [];
+      let directBackedgeAlias = false;
+      const pushOwnValues = (owner, skipKeyframes) => {
+        // for..in mirror: inherited enumerable keys (an inherited startAt
+        // aliasing an entry) are processed by GSAP too (Sol r118).
+        let ownerKeys;
+        try {
+          ownerKeys = [];
+          // eslint-disable-next-line guard-for-in
+          for (const enumeratedKey in owner) ownerKeys.push(enumeratedKey);
+        } catch (_) { return false; }
+        for (let keyIndex = 0; keyIndex < ownerKeys.length; keyIndex += 1) {
+          const key = ownerKeys[keyIndex];
+          if (skipKeyframes && key === 'keyframes') continue;
+          if (key === 'parent' || key.charCodeAt(0) === 95) {
+            // _-keys are ANIMATABLE (r111/r113): the edge gets at least the
+            // direct identity check before any suppression — vars._phase =
+            // terminalEntry is a live alias (Sol r123). Only the structural
+            // root `parent` is a proven backedge; descent stays off (the
+            // injected entry.parent would walk GSAP's own tree).
+            if (key === 'parent' && skipKeyframes) continue;
+            const backedgeLookup = gsapChainDescriptor(owner, key);
+            if (backedgeLookup.unknown) return false;
+            const backedgeDescriptor = backedgeLookup.descriptor;
+            if (!backedgeDescriptor) continue;
+            if (backedgeDescriptor.get || backedgeDescriptor.set) return false;
+            const backedgeValue = backedgeDescriptor.value;
+            if (backedgeValue && typeof backedgeValue === 'object') {
+              // Outside the structural ROOT parent (already skipped above),
+              // BOTH nested `parent` and `_...` get the identity check —
+              // vars.attr.parent = terminalEntry is authored/animated, not a
+              // backedge (Sol r124). Descent stays off.
+              if (bucketSet.has(backedgeValue)) directBackedgeAlias = true;
+              continue;
+            }
+            continue; // scalars under backedge-named keys carry no identity
+          }
+          const chainLookup = gsapChainDescriptor(owner, key);
+          if (chainLookup.unknown) return false; // inscrutable
+          const propertyDescriptor = chainLookup.descriptor;
+          if (!propertyDescriptor) continue;
+          if (propertyDescriptor.get || propertyDescriptor.set) return false; // inscrutable
+          stack.push(propertyDescriptor.value);
+        }
+        return true;
+      };
+      if (!pushOwnValues(vars, true)) return true;
+      if (directBackedgeAlias) return true;
+      // The keyframes subtree is walked EDGE-SENSITIVELY, not skipped: each
+      // entry is a full to() vars (entry.startAt is ACTIVE), so a bucket is
+      // allowed only at its canonical occurrence — the array slot itself and
+      // the entry's direct `css` edge. Every OTHER field of every canonical
+      // entry (source slots ∪ live entries) is walked, and any re-encounter
+      // of a bucket is an active alias (Sol r89).
+      const canonicalEntries = new Set();
+      if (Array.isArray(vars.keyframes)) {
+        vars.keyframes.forEach((entry) => {
+          if (entry && typeof entry === 'object') canonicalEntries.add(entry);
+        });
+      } else if (vars.keyframes && typeof vars.keyframes === 'object') {
+        stack.push(vars.keyframes); // object/percent forms carry no buckets
+      }
+      if (Array.isArray(liveEntries)) {
+        liveEntries.forEach((entry) => {
+          if (entry && typeof entry === 'object') canonicalEntries.add(entry);
+        });
+      }
+      for (const entry of canonicalEntries) {
+        let entryKeys;
+        try {
+          entryKeys = [];
+          // eslint-disable-next-line guard-for-in
+          for (const enumeratedKey in entry) entryKeys.push(enumeratedKey); // for..in mirror (Sol r118)
+        } catch (_) { return true; }
+        for (let keyIndex = 0; keyIndex < entryKeys.length; keyIndex += 1) {
+          const key = entryKeys[keyIndex];
+          if (key === 'parent' || key.charCodeAt(0) === 95) {
+            // Entry-root `parent` is the injected backedge; `_...` keys are
+            // animatable and get the direct identity check (Sol r123).
+            if (key === 'parent') continue;
+            const backedgeLookup = gsapChainDescriptor(entry, key);
+            if (backedgeLookup.unknown) return true;
+            const backedgeDescriptor = backedgeLookup.descriptor;
+            if (!backedgeDescriptor) continue;
+            if (backedgeDescriptor.get || backedgeDescriptor.set) return true;
+            const backedgeValue = backedgeDescriptor.value;
+            if (backedgeValue && typeof backedgeValue === 'object' && bucketSet.has(backedgeValue)) return true;
+            continue;
+          }
+          const chainLookup = gsapChainDescriptor(entry, key);
+          if (chainLookup.unknown) return true;
+          const propertyDescriptor = chainLookup.descriptor;
+          if (!propertyDescriptor) continue;
+          if (propertyDescriptor.get || propertyDescriptor.set) return true;
+          if (key === 'css') {
+            const wrapper = propertyDescriptor.value;
+            if (wrapper && typeof wrapper === 'object') {
+              // The css edge is canonical ONLY for the exact frozen
+              // (carrier, bucket) pair — a shared wrapper on any OTHER entry
+              // is an active alias: the invalidate would materialize the
+              // property into that entry's segment too (Sol r91).
+              const canonicalPair = canonicalCssPairs
+                ? canonicalCssPairs.get(entry) === wrapper
+                : !bucketSet.has(wrapper);
+              if (!canonicalPair && bucketSet.has(wrapper)) return true;
+              if (!pushOwnValues(wrapper, false)) return true;
+              if (directBackedgeAlias) return true; // consumed HERE (Sol r125)
+            }
+            continue;
+          }
+          stack.push(propertyDescriptor.value);
+        }
+      }
+      const visited = new Set();
+      while (stack.length) {
+        const candidate = stack.pop();
+        if (!candidate || typeof candidate !== 'object' || visited.has(candidate)) continue;
+        visited.add(candidate);
+        if (bucketSet.has(candidate)) return true;
+        if (!pushOwnValues(candidate, false)) return true;
+        if (directBackedgeAlias) return true;
+      }
+      return directBackedgeAlias; // belt — no consumption gap survives (Sol r125)
+    } catch (_) {
+      return true; // fail CLOSED — an aborted scan must never grant a write
+    }
+  }
+
+  function gsapArrayKeyframePlan(animation, property, options) {
     const vars = animation?.vars;
     if (!vars) return null;
-    if (vars.keyframes && !Array.isArray(vars.keyframes)) return null;
-    if (vars.stagger != null || vars.runBackwards) return null;
-    if (Object.prototype.hasOwnProperty.call(vars, property)) return null;
-    const wrapper = vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css) ? vars.css : null;
-    if (wrapper && property in wrapper) return null;
-    if (gsapDescriptorComponentKeys(property).length) return null;
-    if (gsapRegisteredPluginVars().has(property)) return null;
-    if (gsapResurrectionHazard(animation)) return null;
+    if (gsapEntryBindingDisqualified(animation, property)) return null;
+    if (!(options && options.structuralOnly) && gsapResurrectionHazard(animation)) return null;
     const orderedEntries = gsapLiveKeyframeEntries(animation) || [];
+    if (orderedEntries.some((entry) => gsapEntryHasTemporalModifier(entry))) return null;
+    if (gsapHasRandomizedValue(animation, orderedEntries)) return null;
     const buckets = [];
+    const carriers = [];
     let nestedCarrier = false;
     let hiddenLiveCarrier = false;
     orderedEntries.forEach((entry) => {
       const child = gsapEntryChildTweens.get(entry);
-      const carriesInCss = entry.css && typeof entry.css === 'object' && !Array.isArray(entry.css) && property in entry.css;
-      if (!carriesInCss && !Object.prototype.hasOwnProperty.call(entry, property)) {
+      const carriesInCss = entry.css && typeof entry.css === 'object' && !Array.isArray(entry.css)
+        && gsapHasEnumerableProp(entry.css, property);
+      const carriesTop = gsapHasEnumerableProp(entry, property); // for..in mirror (Sol r117)
+      // NAMESPACE SIGNATURE, frozen per (entry, property): with css:{} the
+      // CSSPlugin drives the wrapper while top-level rides the generic writer
+      // — entry.x AND entry.css.x are TWO writers of homonymous channels
+      // (Sol r61), and deleting one namespace post-init leaves its PropTween
+      // rendering invisibly (Sol r62). 'both' locks for the tween's life; any
+      // signature CHANGE (namespace lost/moved without proof of rebuild)
+      // locks too.
+      const currentSignature = carriesInCss && carriesTop ? 'both'
+        : carriesInCss ? 'css'
+          : carriesTop ? 'top' : 'none';
+      let signatures = gsapEntryNamespaceSignatures.get(entry);
+      if (!signatures) {
+        signatures = new Map();
+        gsapEntryNamespaceSignatures.set(entry, signatures);
+      }
+      const frozenSignature = signatures.get(property);
+      if (!frozenSignature && currentSignature !== 'none') signatures.set(property, currentSignature);
+      if (currentSignature === 'both' || frozenSignature === 'both'
+        || (frozenSignature && frozenSignature !== currentSignature)) {
+        nestedCarrier = true;
+        return;
+      }
+      if (!carriesInCss && !carriesTop) {
         // An entry that no longer DECLARES the property may still ANIMATE it:
         // deleting the key in place leaves the child's PropTween alive until
         // the next invalidate (probe _probe-r27.mjs — the end still renders).
@@ -922,14 +1807,43 @@ function nativeMotionRuntimeBridge() {
         return;
       }
       buckets.push(carriesInCss ? entry.css : entry);
+      carriers.push({ entry, namespace: carriesInCss ? 'css' : 'top', bucket: carriesInCss ? entry.css : entry });
     });
     if (nestedCarrier) return null;
     if (hiddenLiveCarrier) return null;
     if (!buckets.length) return null;
+    // A bucket aliased in the tween's OWN vars graph (outside keyframes) makes
+    // every write a double-write — locks in ALL modes (Sol r88).
+    {
+      const canonicalCssPairs = new Map();
+      carriers.forEach((carrier) => {
+        if (carrier.namespace === 'css') canonicalCssPairs.set(carrier.entry, carrier.bucket);
+      });
+      if (gsapBucketsAliasedInOwnVars(animation, buckets, orderedEntries, canonicalCssPairs)) return null;
+    }
+    // ALIASED entries — the same object at two positions — make positional
+    // writes impossible: editing the trailing bucket also mutates the earlier
+    // occurrence through shared identity, breaking the non-trailing-duplicate
+    // guarantee ([300,100,300] — Sol r43). Any repeated identity locks.
+    if (new Set(buckets).size !== buckets.length) return null;
+    // Sharing BETWEEN tweens locks too: GSAP preserves identity, so writing
+    // A's bucket rewrites B's source and B re-renders the edit on its next
+    // invalidate — a patch aimed at one motionId silently mutating another
+    // animation (Sol r45). Writers re-plan before writing, so this check also
+    // guards the write path. STRUCTURAL consumers (binding validity, pruning)
+    // skip it: a transient 'unknown' must lock writes without reading as
+    // structural staleness — pruning the frozen binding on uncertainty would
+    // flatten a collision undo after the uncertainty clears (Sol r60).
+    if (!(options && options.structuralOnly)
+      && gsapBucketsSharedWithOtherTween(animation, buckets)) return null;
     const values = buckets.map((bucket) => bucket[property]);
+    // random(...) re-resolves on every PropTween init and re-rolls on
+    // invalidate: textually equal strings are NOT a hold and a verbatim
+    // rollback re-rolls instead of restoring (Sol r97).
     const unsafe = values.some((value) =>
       (typeof value !== 'string' && typeof value !== 'number')
-      || /^[+-]=/.test(String(value).trim()));
+      || /^[+-]=/.test(String(value).trim())
+      || /random\(/i.test(String(value)));
     if (unsafe) return null;
     // Trailing run membership by NUMERIC equivalence, not textual: GSAP renders
     // 200, "200.0" and "0200" identically, so a textual run would edit only the
@@ -944,8 +1858,14 @@ function nativeMotionRuntimeBridge() {
       start -= 1;
     }
     // `buckets` (ALL carrying buckets, in order) is exposed so a frozen binding
-    // can verify it is still the trailing suffix of the CURRENT structure.
-    return { run: buckets.slice(start), buckets };
+    // can verify it is still the trailing suffix of the CURRENT structure;
+    // `carriers` freezes each carrying ENTRY and its namespace so the binding
+    // can revalidate entry-level state (runBackwards, top/css moves) without
+    // the timeline (Sol r86).
+    // `allEntries` persists EVERY live entry the plan walked — carriers or
+    // not: a spliced non-carrier can still alias a bucket through its own
+    // sub-fields and must stay visible to the binding validation (Sol r90).
+    return { run: buckets.slice(start), buckets, carriers, allEntries: orderedEntries };
   }
 
   function gsapEditableTracks(animation, vars, target, animatedProps) {
@@ -1053,8 +1973,8 @@ function nativeMotionRuntimeBridge() {
         // hides a live writer, and they are locked below.
         const cssWrapper = vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css) ? vars.css : null;
         const topLevelProps = (cssWrapper
-          ? Object.keys(cssWrapper).concat(Object.keys(vars).filter((property) => gsapPluginOwnedVar(vars, property)))
-          : Object.keys(vars))
+          ? gsapForInKeys(cssWrapper).concat(gsapForInKeys(vars).filter((property) => gsapPluginOwnedVar(vars, property)))
+          : gsapForInKeys(vars))
           .filter((property, index, list) => !ignored.has(property) && list.indexOf(property) === index);
         // Surface keyframe-driven properties as tracks too — but remember which they
         // are: no safe writeback exists for them (probe 2026-07-29: editing vars or
@@ -1076,7 +1996,7 @@ function nativeMotionRuntimeBridge() {
         // A killed writer haunting ANY entry locks EVERY channel of this
         // animation — even rides-along top-level props: their plain write also
         // fires invalidate, which resurrects the dead writer (Sol r29).
-        const resurrectionHazard = gsapResurrectionHazard(animation);
+        const resurrectionHazardOnly = gsapResurrectionHazard(animation);
         const animatedProps = topLevelProps.concat(
           Array.from(keyframeDriven).filter((property) => !topLevelProps.includes(property)));
         const sampled = gsapEditableTracks(animation, vars, primaryTarget, animatedProps);
@@ -1131,13 +2051,21 @@ function nativeMotionRuntimeBridge() {
           // itself excludes stagger/wrapper/plugin/both-places, so the later
           // reasons stay accurate for it.
           const entryPlan = keyframeDriven.has(track.property) ? gsapArrayKeyframePlan(animation, track.property) : null;
+          // Per-track and PER-CHANNEL (Sol r115/r116): on retarget.final the
+          // function prop itself keeps its function-model writer (sibling
+          // functions still lock); on the keyframe channel ANY top-level
+          // function — the property's own included — locks, because that
+          // writer replaces vars[prop] and would destroy the authored
+          // function without a restorable readback.
+          const retargetDynamicHazard = resurrectionHazardOnly || gsapAnimationRandomHazard(animation, track.property);
+          const keyframeDynamicHazard = resurrectionHazardOnly || gsapAnimationRandomHazard(animation);
           // Per PROPERTY on the step channel too: a plain top-level prop beside
           // keyframes of ANOTHER prop keeps its plain writer (probe
           // _probe-rides-along.mjs: vars.x/startAt.x writes preserve y's path
           // completely — Sol r13).
           const keyframeEditReason = !sampled.keyframes ? 'sampling'
             : vars.runBackwards ? 'from'
-              : resurrectionHazard ? 'keyframes'
+              : keyframeDynamicHazard ? 'keyframes'
               : keyframeDriven.has(track.property) && !entryPlan ? 'keyframes'
                 : vars.stagger != null ? 'stagger'
                   // vars.startAt is ONE shared object: an offset-0 edit
@@ -1164,7 +2092,7 @@ function nativeMotionRuntimeBridge() {
               // Keyframe-driven props unlock ONLY through the array-form entry
               // plan, and only for the ABSOLUTE model — the loop (additive-base)
               // and relative/function write paths have no entry equivalent.
-              retargetable: sampled.keyframes && !vars.runBackwards && !resurrectionHazard && functionSupported && scopeSafe && (!keyframeDriven.has(track.property) || (entryPlan != null && writeModel === 'absolute')) && !cssWriteUnproven && !pluginOwned,
+              retargetable: sampled.keyframes && !vars.runBackwards && !retargetDynamicHazard && functionSupported && scopeSafe && (!keyframeDriven.has(track.property) || (entryPlan != null && writeModel === 'absolute')) && !cssWriteUnproven && !pluginOwned,
               sourceValue: safeSourceValue(rawValue),
               targetCount,
               stagger: vars.stagger != null ? { mode: 'staggered', targetCount } : null,
@@ -1412,7 +2340,10 @@ function nativeMotionRuntimeBridge() {
         // editing it moves all of them. Surface that link so the UI can show
         // (and break) the chain. Scroll-driven groups are not offered: a clone
         // without the ScrollTrigger would freeze instead of animating.
-        const sharedLinkId = !trigger && elementTargets.length > 1 ? tweenKey : null;
+        // Randomized tweens never publish the chain — unchain would re-roll
+        // them in both directions (Sol r102).
+        const sharedLinkId = !trigger && elementTargets.length > 1
+          && !gsapAnimationRandomHazard(tween) ? tweenKey : null;
         targets.forEach((target) => {
           if (!(target instanceof Element)) return;
           const record = entryFor(target);
@@ -2432,6 +3363,22 @@ function nativeMotionRuntimeBridge() {
   // edit), per (animation, property) — the render-equivalent rollback target
   // for startAt edits (Sol r18).
   const gsapStartAtRetargets = new WeakMap();
+
+  // True when a frozen binding exists for the property and the desired value
+  // LANDS on the original end — a restore. Restores route to the writer BEFORE
+  // the routers' hazard/plan gates: the payload is exactly the authored state,
+  // safe by construction, so undo stays reachable during an outage (Sol r74).
+  function gsapFrozenRestoreCandidate(animation, property, desired) {
+    // VALIDATED state, never the raw map: a stale binding (externally mutated
+    // bucket) must not open the restore lane (Sol r84).
+    const binding = entryBindingState(animation, property).binding;
+    if (!binding) return false;
+    const desiredParsed = numericCss(String(desired));
+    const authoredEnd = binding.originals[binding.originals.length - 1];
+    return Boolean((binding.end && desiredParsed
+      && desiredParsed.unit === binding.end.unit && desiredParsed.value === binding.end.value)
+      || gsapValueEquivalence(property, String(desired), authoredEnd) === 'equal');
+  }
   // A frozen binding is only authoritative while it still DESCRIBES the tween.
   // It is validated against a FRESH plan: every plan guard must still hold
   // (vars[property] appearing post-binding reopens the probe-H both-places
@@ -2455,7 +3402,62 @@ function nativeMotionRuntimeBridge() {
     const bindings = gsapKeyframeEntryRetargets.get(animation);
     const binding = bindings?.get(property);
     if (!binding) return { binding: null, stale: false };
-    const plan = gsapArrayKeyframePlan(animation, property);
+    // Timeline-independent disqualifiers run FIRST — a top-level/css carrier
+    // or plugin/stagger state appearing post-binding is observable without
+    // the timeline and voids the binding even mid-outage (Sol r85).
+    if (gsapEntryBindingDisqualified(animation, property)) return { binding: null, stale: true };
+    if (gsapHasRandomizedValue(animation, binding.allEntries
+      || (binding.carriers ? binding.carriers.map((carrier) => carrier.entry) : null), property)) {
+      return { binding: null, stale: true };
+    }
+    {
+      const frozenCssPairs = new Map();
+      (binding.carriers || []).forEach((carrier) => {
+        if (carrier.namespace === 'css') frozenCssPairs.set(carrier.entry, carrier.bucket);
+      });
+      if (gsapBucketsAliasedInOwnVars(animation, binding.allBuckets,
+        binding.allEntries || (binding.carriers ? binding.carriers.map((carrier) => carrier.entry) : null),
+        frozenCssPairs)) return { binding: null, stale: true };
+    }
+    // Carrier-ENTRY state is frozen too: a runBackwards flag or a namespace
+    // move on a frozen carrier reverses/reroutes the restored path even when
+    // the values still match — both observable without the timeline (Sol r86).
+    const carriersIntact = !binding.carriers || binding.carriers.every(({ entry, namespace, bucket }) => {
+      if (!entry || typeof entry !== 'object' || entry.runBackwards) return false;
+      const cssWrap = entry.css && typeof entry.css === 'object' && !Array.isArray(entry.css) ? entry.css : null;
+      if (gsapEntryPropertyNamespace(entry, property) !== namespace) return false;
+      // BUCKET IDENTITY is frozen too: a replaced css wrapper detaches the
+      // frozen bucket — writing it changes nothing that renders (Sol r87).
+      return (namespace === 'css' ? cssWrap : entry) === bucket;
+    });
+    if (!carriersIntact) return { binding: null, stale: true };
+    // The namespace of EVERY planned entry is frozen — including 'none': a
+    // non-carrier gaining the property (css.x appearing mid-outage) is a
+    // brand-new writer our invalidate would materialize (Sol r92, the r36
+    // class). runBackwards is absolute — no entry had it at freeze time (the
+    // hazard scan locks the plan otherwise).
+    const entryStatesIntact = !binding.allEntryStates || binding.allEntryStates.every(({ entry, namespace, child }) => {
+      if (!entry || typeof entry !== 'object' || entry.runBackwards) return false;
+      if (gsapEntryHasTemporalModifier(entry, child)) return false; // absolute — none existed at freeze (Sol r93/r94)
+      return gsapEntryPropertyNamespace(entry, property) === namespace;
+    });
+    if (!entryStatesIntact) return { binding: null, stale: true };
+    // The VALUE check needs no timeline — the buckets are held by identity.
+    // An externally mutated bucket is OBSERVABLE staleness even while the
+    // topology is uninspectable: the frozen restore would wipe the page's
+    // write (Sol r84). Only the topology stays 'unknown' during an outage.
+    const valuesIntact = binding.allBuckets.every((bucket, index) => bucket[property] === binding.allExpected[index]);
+    if (!valuesIntact) return { binding: null, stale: true };
+    // A transient timeline outage is UNKNOWN, not structural staleness: the
+    // binding survives (writes are refused elsewhere by the full plan) and
+    // only a PROVEN structural mismatch after inspection recovers may prune
+    // (Sol r69).
+    const bindingChildren = gsapInnerTimelineChildren(animation);
+    if (bindingChildren === 'uninspectable'
+      || (bindingChildren === null && gsapLiveObservedAnimations.has(animation))) {
+      return { binding, stale: false };
+    }
+    const plan = gsapArrayKeyframePlan(animation, property, { structuralOnly: true });
     // The WHOLE carrying set is frozen — identity AND expected values (updated
     // only for buckets the bridge itself writes). Watching just the run bucket
     // misses an external mutation of a NEIGHBOR that creates a live hold: the
@@ -2482,6 +3484,11 @@ function nativeMotionRuntimeBridge() {
     if (/^[+-]=/.test(String(desired ?? '').trim())) {
       throw bridgeError('unsupported_value', 'Relative values cannot be written into GSAP keyframes entries.');
     }
+    // random(...) re-rolls on every init/invalidate — written into an entry it
+    // is neither stable nor restorable (Sol r97).
+    if (/random\(/i.test(String(desired ?? ''))) {
+      throw bridgeError('unsupported_value', 'Randomized values cannot be written into GSAP keyframes entries.');
+    }
     // Binding FIRST: once an edit run is frozen, later writes — rollbacks above
     // all — must keep working even if a fresh plan would no longer validate
     // (e.g. the page mutated an unrelated entry). Only a first write needs a plan.
@@ -2505,6 +3512,13 @@ function nativeMotionRuntimeBridge() {
         originals: plan.run.map((bucket) => bucket[property]),
         allBuckets: plan.buckets,
         allExpected: plan.buckets.map((bucket) => bucket[property]),
+        carriers: plan.carriers,
+        allEntries: plan.allEntries,
+        allEntryStates: plan.allEntries.map((frozenEntry) => ({
+          entry: frozenEntry,
+          namespace: gsapEntryPropertyNamespace(frozenEntry, property),
+          child: gsapEntryChildTweens.get(frozenEntry) || null,
+        })),
         end: numericCss(sampleGsapValue(record, property, 1)),
       };
       bindings.set(property, binding);
@@ -2523,14 +3537,38 @@ function nativeMotionRuntimeBridge() {
       && desiredParsed.unit === binding.end.unit && desiredParsed.value === binding.end.value)
       || gsapValueEquivalence(property, desired, authoredEnd) === 'equal';
     if (landsOnOriginal) {
+      // Revalidated HERE, immediately before restore+invalidate: a restore may
+      // traverse an outage ('unknown') but never a PROVEN hazard — the
+      // invalidate would resurrect the killed writer on OTHER channels even
+      // though this channel's payload is authored (Sol r75).
+      if (gsapResurrectionHazardVerdict(animation) === 'proven') {
+        throw bridgeError('unsupported_patch', "Part of this animation was killed by the page — restoring would bring the dead writer back.");
+      }
+      // Sharing that arose AFTER the binding froze: another tween riding on
+      // these buckets would be silently rewritten by the restore (the r45
+      // cross-motionId corruption). Proven sharing or an uncertain inspection
+      // fails closed; the binding stays for a later attempt. The global
+      // timeline is an independent API — a mere inner-timeline outage (r74)
+      // still restores when no sharing is found (Sol r79).
+      if (gsapBucketsSharedWithOtherTween(animation, binding.allBuckets)) {
+        throw bridgeError('unsupported_patch', 'These keyframes are shared with another animation and cannot be restored safely.');
+      }
       binding.buckets.forEach((bucket, index) => { bucket[property] = binding.originals[index]; });
     } else {
+      // FULL plan demanded immediately before a NON-RESTORE mutation
+      // (defense-in-depth TOCTOU guard — Sol r70): if any disqualifier
+      // appeared since the router's gate, refuse; the frozen binding stays
+      // for a later restore. Landing on the original (above) remains a
+      // restore-only path through the frozen buckets.
+      const plan = gsapArrayKeyframePlan(animation, property);
+      if (!plan) {
+        throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be retargeted safely yet.');
+      }
       // PRE-SIMULATE the write: a desired that lands beside a same-number,
       // different-unit neighbor ('100' beside '100px') would turn the next
       // plan AMBIGUOUS -> null, stranding the applied edit beyond any rollback
       // (the r2 failure class — Sol r21). Reject BEFORE mutating.
-      const plan = gsapArrayKeyframePlan(animation, property);
-      if (plan) {
+      {
         const simulated = plan.buckets.map((bucket) =>
           (binding.buckets.includes(bucket) ? coerceFor(bucket) : bucket[property]));
         for (let index = simulated.length - 1; index > 0; index -= 1) {
@@ -2556,10 +3594,24 @@ function nativeMotionRuntimeBridge() {
     if (GSAP_CONFIG_VARS.has(descriptor.runtimeProperty)) {
       throw bridgeError('unsupported_patch', 'This is a GSAP configuration key — not an animatable property.');
     }
+    // Frozen-binding RESTORES bypass the gates below — the writer's own
+    // restore path (frozen buckets, authored payload) is safe by construction
+    // and must stay reachable during an outage (Sol r74).
+    if (descriptor.writeModel === 'absolute' && !descriptor.component
+      && gsapFrozenRestoreCandidate(record.animation, descriptor.runtimeProperty, descriptor.value)) {
+      applyGsapKeyframeEntryEdit(record, descriptor.runtimeProperty, descriptor.value);
+      return;
+    }
     // ANY write here ends in invalidate — refuse while a killed writer haunts
     // the animation (Sol r28/r29).
     if (gsapResurrectionHazard(record.animation)) {
       throw bridgeError('unsupported_patch', "Part of this animation was killed by the page — editing it would bring the dead writer back.");
+    }
+    // The invalidate also re-rolls every randomized value on the tween —
+    // animation-level, so flat rides-along edits refuse too (Sol r101);
+    // sibling-aware for top-level functions (Sol r115).
+    if (gsapAnimationRandomHazard(record.animation, descriptor.runtimeProperty)) {
+      throw bridgeError('unsupported_patch', 'This animation uses randomized values — any edit would re-roll them.');
     }
     // Defense in depth: every write model funnels into vars/startAt writes, which are
     // unsafe on keyframes-driven properties (probe 2026-07-29: path-start corruption
@@ -2603,10 +3655,31 @@ function nativeMotionRuntimeBridge() {
     if (GSAP_CONFIG_VARS.has(property)) {
       throw new Error('This is a GSAP configuration key — not an animatable property.');
     }
+    // A randomized desired is refused BEFORE the offset branching: the
+    // offset-0 lane writes vars.startAt directly and would otherwise bypass
+    // the entry-edit writer's guard (Sol r98).
+    if (/random\(/i.test(String(descriptor?.value ?? ''))) {
+      throw bridgeError('unsupported_value', 'Randomized values cannot be written into GSAP keyframes.');
+    }
+    // Frozen-binding RESTORES bypass the gates below (Sol r74).
+    if (Number(descriptor?.offset) >= 0.999 && descriptor?.exists !== false
+      && gsapFrozenRestoreCandidate(animation, property, String(descriptor?.value ?? ''))) {
+      applyGsapKeyframeEntryEdit(record, property, String(descriptor?.value ?? ''));
+      return;
+    }
     // ANY write here ends in invalidate — refuse while a killed writer haunts
     // the animation (Sol r28/r29).
     if (gsapResurrectionHazard(animation)) {
       throw new Error("Part of this animation was killed by the page — editing it would bring the dead writer back.");
+    }
+    // The invalidate also re-rolls every randomized value on the tween (Sol r101).
+    // NO self-exemption on this channel: keyframe.<prop> writes vars[prop]
+    // directly, destroying an authored function (the reader only captured
+    // String(fn) — a rollback would write source code as a string). Any
+    // top-level function, the edited property's own included, blocks
+    // (Sol r116).
+    if (gsapAnimationRandomHazard(animation)) {
+      throw bridgeError('unsupported_patch', 'This animation uses randomized values — any edit would re-roll them.');
     }
     if (vars.runBackwards) {
       throw new Error('gsap.from() keyframes are read-only — vars hold the start, not the end.');
@@ -2658,12 +3731,27 @@ function nativeMotionRuntimeBridge() {
         // A naive delete is a FALSE rollback: GSAP materializes _startAt on
         // first render and deleting vars.startAt does not un-materialize it —
         // the edited start keeps rendering while the ack reports restored
-        // (probe _probe-startat-rollback.mjs — Sol r18). Writing the ORIGINAL
-        // start value (sampled at progress 0 before the first edit) back is
-        // the render-equivalent restore.
-        const binding = gsapStartAtRetargets.get(animation)?.get(property);
-        if (binding) vars.startAt = { ...vars.startAt, [property]: binding.original };
-        else delete vars.startAt[property];
+        // (probe _probe-startat-rollback.mjs — Sol r18). The binding restores
+        // the AUTHORED value verbatim when one existed (function identity
+        // included — Sol r41), else the render-equivalent sampled original.
+        const bindings = gsapStartAtRetargets.get(animation);
+        let binding = bindings?.get(property);
+        if (binding) {
+          // Same staleness rule as the write path (Sol r42): a live value the
+          // bridge did not leave there means the page rebased the start.
+          const live = vars.startAt[property];
+          const expected = 'lastWritten' in binding ? binding.lastWritten : binding.authored;
+          if (live !== expected) {
+            bindings.delete(property);
+            binding = null;
+          }
+        }
+        if (binding) {
+          vars.startAt = { ...vars.startAt, [property]: binding.hadKey ? binding.authored : binding.original };
+          binding.lastWritten = vars.startAt[property];
+        } else {
+          delete vars.startAt[property];
+        }
       }
       invalidatePreservingStart(animation);
       return;
@@ -2681,10 +3769,35 @@ function nativeMotionRuntimeBridge() {
         bindings = new Map();
         gsapStartAtRetargets.set(animation, bindings);
       }
-      if (!bindings.has(property)) {
-        bindings.set(property, { original: String(sampleGsapValue(record, property, 0)) });
+      // STALENESS: the binding only describes reality while the live startAt
+      // holds what the bridge last wrote (or the authored value, pre-write).
+      // If the page replaced it (fnA -> fnB), a frozen binding would roll the
+      // next transaction back to fnA — REBASE from the live state instead
+      // (Sol r42).
+      const existing = bindings.get(property);
+      if (existing) {
+        const live = vars.startAt ? vars.startAt[property] : undefined;
+        const expected = 'lastWritten' in existing ? existing.lastWritten : existing.authored;
+        if (live !== expected) bindings.delete(property);
       }
-      vars.startAt = { ...(vars.startAt || {}), [property]: value }; // explicit start
+      if (!bindings.has(property)) {
+        bindings.set(property, {
+          original: String(sampleGsapValue(record, property, 0)),
+          hadKey: Boolean(vars.startAt && Object.prototype.hasOwnProperty.call(vars.startAt, property)),
+          authored: vars.startAt ? vars.startAt[property] : undefined,
+        });
+      }
+      // Landing back on the original start restores the AUTHORED value
+      // verbatim — a function keeps its identity; its stringification must
+      // never be written over it (Sol r41).
+      const binding = bindings.get(property);
+      if (binding && binding.hadKey
+        && (value === binding.original || value === String(binding.authored))) {
+        vars.startAt = { ...(vars.startAt || {}), [property]: binding.authored };
+      } else {
+        vars.startAt = { ...(vars.startAt || {}), [property]: value }; // explicit start
+      }
+      if (binding) binding.lastWritten = vars.startAt[property];
     } else {
       throw new Error('Intermediate GSAP keyframes are not editable on this tween yet.');
     }
@@ -2704,6 +3817,12 @@ function nativeMotionRuntimeBridge() {
     const tween = record.animation;
     if (!gsap || !tween || typeof tween.targets !== 'function') {
       throw new Error('This animation cannot be detached.');
+    }
+    // The clone re-resolves authored vars (re-rolling random()) and the
+    // sibling relink invalidates — a randomized tween cannot unchain safely
+    // in either direction (Sol r102).
+    if (gsapAnimationRandomHazard(tween)) {
+      throw bridgeError('unsupported_patch', 'This animation uses randomized values — unchaining would re-roll them.');
     }
     if (tween.scrollTrigger || tween.vars?.scrollTrigger) {
       throw new Error('This group rides a scroll trigger — unchaining scroll-driven groups is not supported yet.');
@@ -2768,6 +3887,12 @@ function nativeMotionRuntimeBridge() {
   // staggered unchain is honestly irreversible without a reload.
   function relinkElementToSharedTween(record, element) {
     const tween = record.animation;
+    // Mirror of the detach gate: the relink's invalidate re-rolls every
+    // randomized value on BOTH targets (Sol r102). Unreachable while detach
+    // refuses, kept as defense in depth (random could appear post-detach).
+    if (gsapAnimationRandomHazard(tween)) {
+      throw bridgeError('unsupported_patch', 'This animation uses randomized values — re-chaining would re-roll them.');
+    }
     const set = detachedTargets.get(tween);
     const rowTargets = set ? Array.from(set).filter((item) => item === element || element.contains(item)) : [];
     if (!rowTargets.length) throw new Error('This element is not detached from this animation.');
@@ -3608,6 +4733,13 @@ function nativeMotionRuntimeBridge() {
       const vars = animation.vars || {};
       if (offset <= 0.001) {
         if (vars.startAt?.[trackProperty] == null) return { offset, exists: false };
+        // A FUNCTION-valued startAt must never be stringified into the
+        // descriptor — the rollback would write the garbage string back over
+        // the function (Sol r41). Report the SAMPLED rendered start instead;
+        // the writer's binding restores the authored function verbatim.
+        if (typeof vars.startAt[trackProperty] === 'function') {
+          return { offset, value: String(sampleGsapValue(record, trackProperty, 0)), exists: true };
+        }
         return { offset, value: String(vars.startAt[trackProperty]), exists: true };
       }
       if (offset >= 0.999) {
@@ -3620,6 +4752,16 @@ function nativeMotionRuntimeBridge() {
         if (entryPlan) {
           const bucket = entryPlan.run[entryPlan.run.length - 1];
           return { offset, value: String(bucket[trackProperty]), exists: true };
+        }
+        // During an outage the plan is unavailable but a FROZEN binding still
+        // describes the trailing run it froze — report its current bucket so
+        // transactional history stays truthful (300→200). {exists:false} on
+        // both sides would persist an inverse that no-ops forever (Sol r83).
+        const bindingRead = entryBindingState(animation, trackProperty);
+        if (bindingRead.binding) {
+          const bindingBuckets = bindingRead.binding.buckets;
+          const bindingBucket = bindingBuckets[bindingBuckets.length - 1];
+          return { offset, value: String(bindingBucket[trackProperty]), exists: true };
         }
         if (vars[trackProperty] == null) return { offset, exists: false };
         return { offset, value: String(vars[trackProperty]), exists: true };
@@ -3958,8 +5100,51 @@ function nativeMotionRuntimeBridge() {
     if (rollbackError) throw bridgeError('rollback_failed', 'The transaction could not be restored.');
   }
 
+  // A frozen-binding restore is the ONLY lane when the normal entry plan is
+  // unavailable (outage): it can be APPLIED but never ROLLED BACK — writing
+  // the pre-transaction (non-original) value back is a blocked non-restore.
+  // Inside an atomic transaction that asymmetry breaks atomicity, so such a
+  // patch is rejected BEFORE the first mutation (Sol r82). The last patch of
+  // a commit (restore=false) never needs its own rollback and stays allowed —
+  // the single-patch undo lane of r74 is untouched.
+  function patchIrreversibleUnderOutage(patch) {
+    try {
+      if (!patch || patch.kind !== 'motion' || typeof patch.property !== 'string') return false;
+      const record = motionRegistry.get(patch.motionId);
+      if (!record || record.type === 'browser' || !record.animation) return false;
+      let property = null;
+      let desired = null;
+      if (patch.property === 'retarget.final') {
+        const value = patch.value;
+        if (!value || value.schemaVersion !== 2 || !value.runtimeProperty) return false;
+        if (value.writeModel !== 'absolute' || value.component) return false;
+        property = value.runtimeProperty;
+        desired = String(value.value ?? '');
+      } else if (patch.property.startsWith('keyframe.')) {
+        const descriptor = patch.value;
+        if (!(Number(descriptor?.offset) >= 0.999) || descriptor?.exists === false) return false;
+        property = patch.property.slice('keyframe.'.length);
+        desired = String(descriptor?.value ?? '');
+      } else {
+        return false;
+      }
+      if (!gsapFrozenRestoreCandidate(record.animation, property, desired)) return false;
+      // Reversible only when the NORMAL write lane is open too: a full plan
+      // must exist to write the pre-transaction value back.
+      return !gsapArrayKeyframePlan(record.animation, property);
+    } catch (_) {
+      return false; // resolution failures surface through the normal apply path
+    }
+  }
+
   function applyAtomicTransaction(transaction, { restore = false } = {}) {
     assertTransaction(transaction);
+    transaction.patches.forEach((patch, patchIndex) => {
+      const needsOwnRollback = restore || patchIndex < transaction.patches.length - 1;
+      if (needsOwnRollback && patchIrreversibleUnderOutage(patch)) {
+        throw bridgeError('unsupported_patch', 'This restore cannot be rolled back while the animation is uninspectable.');
+      }
+    });
     const startedAt = performance.now();
     const applied = [];
     try {
