@@ -16,6 +16,8 @@
     "refs:migrate:isolated": "node scripts/reference-bank/migrate.mjs --isolated",
     "refs:import": "node scripts/reference-bank/import-seed.mjs",
     "refs:import:isolated": "node scripts/reference-bank/import-seed.mjs --isolated",
+    "refs:rate-source:isolated": "node scripts/reference-bank/rate-aggregator.mjs --isolated",
+    "refs:rate-source:shared": "node scripts/reference-bank/rate-aggregator.mjs --shared",
     "evals:gen": "node evals/gen-prompt.mjs",
     "evals": "node evals/gen-prompt.mjs && promptfoo eval -c evals/promptfooconfig.yaml",
     "evals:view": "promptfoo view"

@@ -1,6 +1,6 @@
 # Start from a Ref: reference intelligence architecture
 
-**Status:** persistent catalog, private manual curation, and retrieval shadow mode implemented on `codex/start-from-ref`
+**Status:** persistent catalog, frozen review cohorts, multidimensional weighting, and retrieval shadow mode implemented on `codex/start-from-ref`
 
 **Base:** `main` at `ec297fff`
 
@@ -23,8 +23,9 @@ The first product surface is the authenticated `Start from a Ref` catalog. The e
 - Initial snapshot: 1,720 raw appearances normalized into 1,636 canonical references, with 84 cross-reference duplicates merged. The source appearance counts are Codrops 863, Pafolios 816, SiteInspire 41.
 - An additive, idempotent shared-database migration for canonical sites, provenance appearances, private user reviews, and shadow-plan audit records.
 - A shared-database import with 1,636 canonical sites and 1,704 unique provenance appearances. Sixteen raw appearances shared the same canonical site, source, and source-record identity and are deliberately collapsed at the persistence boundary.
-- A 24-reference Working Table review queue with private per-user verdict, taste score, intended role, business/visual/motion tags, and notes.
-- A deterministic retrieval shadow planner that consumes only manually reviewed `keep`/`maybe` references, chooses exactly one chassis and one to three bounded donors, and records approval or rejection without generating a site or spending model credits.
+- A frozen 24-reference `Cohort v1` Working Table with private per-user verdict, required 1–5 taste score, intended role, business/visual/motion tags, and notes.
+- Progressive 4–5 strength profiles for visual craft, structure, motion, originality, transferability, commercial clarity, chassis potential, and donor potential.
+- A deterministic retrieval shadow planner that consumes only manually reviewed `keep`/`maybe` references, applies business-sensitive weights, chooses exactly one chassis and one to three bounded donors, and records approval or rejection without generating a site or spending model credits.
 
 This is now a real persistent discovery and curation catalog with a safe planner rehearsal. The 24 entries are review candidates, not a pre-approved gold set. Deep capture/enrichment and Demarcelizer materialization remain gated on human review.
 
@@ -38,6 +39,29 @@ Use **one dominant chassis** and up to three donors.
 - If two references both need to own the page spine, they are incompatible. The planner must choose one instead of averaging them.
 
 This produces the requested 2 to 4 reference mix while preventing a collage of unrelated sections.
+
+## Rating, cohort, and weighting contract
+
+Verdict, quality, and fit are separate signals:
+
+- `keep`, `maybe`, and `pass` control eligibility. A high numerical score never revives a `pass`.
+- The required overall rating uses stable anchors: 1 discardable, 2 one useful idea, 3 good but familiar, 4 very strong, 5 reference-defining.
+- Detailed dimensions are optional and appear only for ratings 4–5. Below that threshold they are cleared rather than treated as negative evidence.
+- Review cohorts are immutable membership snapshots. `Cohort v1` remains fixed while new aggregators enter the wider catalog, so calibration results do not drift.
+- Aggregators have 1–5 operational/editorial profiles, but source confidence contributes at most 5% of a planner score. Cross-aggregator consensus is capped inside that small component.
+
+Planner v2 scores each chassis/donor role independently:
+
+```text
+35% brief fit
+25% manual quality
+15% composition compatibility
+10% motion fit
+10% transferability
+ 5% source confidence
+```
+
+The manual-quality dimension vector changes with the inferred business. Finance emphasizes structure and commercial clarity; culture, portfolios, and agencies emphasize visual craft, motion, and originality; commerce emphasizes conversion and transferability; technology and industry emphasize structure, motion, transferability, and clarity. The vector and component breakdown are stored in every shadow recipe for inspection.
 
 ## End-to-end architecture
 
@@ -149,6 +173,8 @@ The shared database now includes:
 
 - `reference_sites`: canonical URL, host, availability, manual weight, lifecycle state.
 - `reference_appearances`: source, source record, listing/detail URL, source taxonomy, thumbnail, last seen.
+- `reference_aggregators`: bounded 1–5 source-quality signals, lifecycle state, and neutral defaults for newly imported sources.
+- `reference_review_cohorts` and `reference_review_cohort_members`: frozen calibration membership independent of global catalog rank.
 - `reference_preferences`: private per-user ratings, roles, tags, notes, and exclusions, separate from global records.
 - `generation_reference_uses`: audited shadow recipes and their approval/rejection state.
 
@@ -175,10 +201,11 @@ Manual decisions are intentionally private to the signed-in user in this slice. 
 
 1. **Catalog slice (done):** real data, deduplication, browse/search/filter UI.
 2. **Persistent curation foundation (done):** additive shared tables, idempotent import, private manual review, plan audit.
-3. **Retrieval shadow mode v1 (done):** deterministic brief matching over reviewed references, chassis/donor recipes, human approval, zero generation.
-4. **Top-reference enrichment (next):** capture only the approved `keep` subset, then produce section/motion/runtime manifests and versioned visual evidence.
-5. **Demarcelizer integration:** execute approved plans with one chassis and bounded donors.
-6. **Automated validation and learning:** visual/motion gates, provenance, novelty, approval/rework signals.
+3. **Weighted retrieval shadow mode v2 (done):** frozen cohort, progressive 1–5 rubric, business-sensitive scoring, inspectable chassis/donor breakdown, human approval, zero generation.
+4. **Aggregator expansion and Cohort v2 (next):** import the next source batch with neutral priors, audit noise/metadata/motion density, then create a new diverse cohort without rewriting Cohort v1.
+5. **Top-reference enrichment:** capture only the approved `keep` subset, then produce section/motion/runtime manifests and versioned visual evidence.
+6. **Demarcelizer integration:** execute approved plans with one chassis and bounded donors.
+7. **Automated validation and learning:** visual/motion gates, provenance, novelty, approval/rework signals.
 
 This order avoids spending model and capture cost on thousands of low-value references before the retrieval rubric is proven.
 

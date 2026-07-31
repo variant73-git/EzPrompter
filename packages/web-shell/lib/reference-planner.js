@@ -51,28 +51,112 @@ function overlap(left = [], right = []) {
   return left.filter((value) => other.has(value));
 }
 
-function scoreCandidate(candidate, profile, role) {
+const SCORE_WEIGHTS = {
+  briefFit: 0.35,
+  manualQuality: 0.25,
+  compositionCompatibility: 0.15,
+  motion: 0.10,
+  transferability: 0.10,
+  sourceConfidence: 0.05,
+};
+
+const DIMENSION_PROFILES = {
+  balanced: {
+    visualQuality: 0.18, structureQuality: 0.15, motionQuality: 0.14, originality: 0.12,
+    transferability: 0.15, commercialClarity: 0.10, chassisPotential: 0.08, donorPotential: 0.08,
+  },
+  precision: {
+    visualQuality: 0.12, structureQuality: 0.22, motionQuality: 0.08, originality: 0.06,
+    transferability: 0.16, commercialClarity: 0.22, chassisPotential: 0.08, donorPotential: 0.06,
+  },
+  expressive: {
+    visualQuality: 0.22, structureQuality: 0.10, motionQuality: 0.18, originality: 0.18,
+    transferability: 0.12, commercialClarity: 0.06, chassisPotential: 0.08, donorPotential: 0.06,
+  },
+  conversion: {
+    visualQuality: 0.16, structureQuality: 0.18, motionQuality: 0.10, originality: 0.07,
+    transferability: 0.17, commercialClarity: 0.20, chassisPotential: 0.06, donorPotential: 0.06,
+  },
+  technical: {
+    visualQuality: 0.14, structureQuality: 0.20, motionQuality: 0.15, originality: 0.08,
+    transferability: 0.16, commercialClarity: 0.15, chassisPotential: 0.07, donorPotential: 0.05,
+  },
+};
+
+function normalizedRating(value, fallback = 3) {
+  const rating = Number(value ?? fallback);
+  return Math.min(1, Math.max(0, (rating - 1) / 4));
+}
+
+function dimensionValue(preference, key) {
+  return normalizedRating(preference.dimensionRatings?.[key], preference.rating || 3);
+}
+
+export function getBriefWeightProfile(profile) {
+  const business = new Set(profile.businessTags || []);
+  let name = 'balanced';
+  if (business.has('finance')) name = 'precision';
+  else if (['culture', 'portfolio', 'agency'].some((tag) => business.has(tag))) name = 'expressive';
+  else if (['commerce', 'hospitality'].some((tag) => business.has(tag))) name = 'conversion';
+  else if (['technology', 'industrial'].some((tag) => business.has(tag))) name = 'technical';
+  return { name, dimensions: DIMENSION_PROFILES[name] };
+}
+
+function manualQuality(preference, weighting) {
+  const dimensionScore = Object.entries(weighting.dimensions)
+    .reduce((total, [key, weight]) => total + dimensionValue(preference, key) * weight, 0);
+  const overall = normalizedRating(preference.rating);
+  const decisionConfidence = preference.decision === 'keep' ? 1 : 0.55;
+  return overall * 0.35 + dimensionScore * 0.55 + decisionConfidence * 0.10;
+}
+
+function fitScore(matches, expected) {
+  return expected.length ? matches.length / expected.length : null;
+}
+
+export function scoreReferenceCandidate(candidate, profile, role) {
   const preference = candidate.preference || {};
   const business = overlap(preference.businessTags, profile.businessTags);
   const visual = overlap(preference.visualTags, profile.visualTags);
   const motion = overlap(preference.motionTags, profile.motionTags);
-  let score = Number(candidate.curationWeight || 0);
-  score += Number(preference.rating || 0) * 1.4;
-  score += preference.decision === 'keep' ? 4 : 1;
-  score += business.length * 3;
-  score += visual.length * 2;
-  score += motion.length * 2.4;
-  if (preference.preferredRole === role) score += 2.5;
-  if (preference.preferredRole === 'either') score += 0.75;
-  if (role === 'chassis' && preference.motionTags?.some((tag) => ['scroll-driven', 'pinned', 'video-led', 'webgl'].includes(tag))) score += 1.5;
+  const fitParts = [
+    fitScore(business, profile.businessTags),
+    fitScore(visual, profile.visualTags),
+    fitScore(motion, profile.motionTags),
+  ].filter((value) => value != null);
+  const briefFit = fitParts.length ? fitParts.reduce((total, value) => total + value, 0) / fitParts.length : 0.5;
+  const weighting = profile.weighting || getBriefWeightProfile(profile);
+  const quality = manualQuality(preference, weighting);
+  const roleMatch = preference.preferredRole === role ? 1 : preference.preferredRole === 'either' ? 0.72 : 0.15;
+  const rolePotential = dimensionValue(preference, role === 'chassis' ? 'chassisPotential' : 'donorPotential');
+  const motionOwnerBoost = role === 'chassis' && preference.motionTags?.some((tag) => ['scroll-driven', 'pinned', 'video-led', 'webgl'].includes(tag)) ? 0.1 : 0;
+  const compositionCompatibility = Math.min(1, roleMatch * 0.62 + rolePotential * 0.38 + motionOwnerBoost);
+  const motionTagFit = profile.motionTags.length ? motion.length / profile.motionTags.length : 0.5;
+  const motionScore = motionTagFit * 0.55 + dimensionValue(preference, 'motionQuality') * 0.45;
+  const transferability = dimensionValue(preference, 'transferability');
+  const sourceConfidence = Math.min(1, Math.max(0, Number(candidate.sourceConfidence ?? 0.6)));
+  const components = {
+    briefFit,
+    manualQuality: quality,
+    compositionCompatibility,
+    motion: motionScore,
+    transferability,
+    sourceConfidence,
+  };
+  const score = Object.entries(SCORE_WEIGHTS)
+    .reduce((total, [key, weight]) => total + components[key] * weight, 0) * 100;
+  const breakdown = Object.fromEntries(Object.entries(components).map(([key, value]) => [key, Math.round(value * 100)]));
   const reasons = [
     preference.decision === 'keep' ? 'explicitly kept during review' : 'kept as a possible ingredient',
     preference.rating ? `taste score ${preference.rating}/5` : null,
     business.length ? `business match: ${business.join(', ')}` : null,
     visual.length ? `visual match: ${visual.join(', ')}` : null,
     motion.length ? `motion match: ${motion.join(', ')}` : null,
+    `weighted fit ${breakdown.briefFit}%`,
+    `quality ${breakdown.manualQuality}%`,
+    `composition ${breakdown.compositionCompatibility}%`,
   ].filter(Boolean);
-  return { candidate, score: Number(score.toFixed(2)), reasons };
+  return { candidate, score: Number(score.toFixed(2)), breakdown, reasons };
 }
 
 function donorOwnership(candidate, index) {
@@ -84,20 +168,21 @@ function donorOwnership(candidate, index) {
 }
 
 export function createReferencePlan({ brief, candidates, maxReferences = 4 }) {
-  const profile = inferReferenceBrief(brief);
+  const inferredProfile = inferReferenceBrief(brief);
+  const profile = { ...inferredProfile, weighting: getBriefWeightProfile(inferredProfile) };
   const eligible = (candidates || []).filter((candidate) => ['keep', 'maybe'].includes(candidate.preference?.decision));
   if (profile.text.length < 12) return { ok: false, error: 'brief_too_short' };
   if (eligible.length < 2) return { ok: false, error: 'review_required', required: 2, current: eligible.length };
 
   const chassisPool = eligible.filter((candidate) => candidate.preference.preferredRole !== 'donor');
   const chassis = (chassisPool.length ? chassisPool : eligible)
-    .map((candidate) => scoreCandidate(candidate, profile, 'chassis'))
-    .sort((a, b) => b.score - a.score || a.candidate.title.localeCompare(b.candidate.title))[0];
+    .map((candidate) => scoreReferenceCandidate(candidate, profile, 'chassis'))
+    .sort((a, b) => b.score - a.score || Number(b.candidate.curationWeight || 0) - Number(a.candidate.curationWeight || 0) || a.candidate.title.localeCompare(b.candidate.title))[0];
   const donorLimit = Math.max(1, Math.min(3, Number(maxReferences || 4) - 1));
   const donors = eligible
     .filter((candidate) => candidate.id !== chassis.candidate.id && candidate.preference.preferredRole !== 'chassis')
-    .map((candidate) => scoreCandidate(candidate, profile, 'donor'))
-    .sort((a, b) => b.score - a.score || a.candidate.title.localeCompare(b.candidate.title))
+    .map((candidate) => scoreReferenceCandidate(candidate, profile, 'donor'))
+    .sort((a, b) => b.score - a.score || Number(b.candidate.curationWeight || 0) - Number(a.candidate.curationWeight || 0) || a.candidate.title.localeCompare(b.candidate.title))
     .slice(0, donorLimit);
   if (!donors.length) return { ok: false, error: 'donor_required' };
 
@@ -108,6 +193,7 @@ export function createReferencePlan({ brief, candidates, maxReferences = 4 }) {
       url: chassis.candidate.url,
       role: 'chassis',
       score: chassis.score,
+      scoreBreakdown: chassis.breakdown,
       owns: 'section order, layout rhythm, scroll model, primary motion system, and layering',
       reasons: chassis.reasons,
     },
@@ -117,6 +203,7 @@ export function createReferencePlan({ brief, candidates, maxReferences = 4 }) {
       url: donor.candidate.url,
       role: 'donor',
       score: donor.score,
+      scoreBreakdown: donor.breakdown,
       owns: donorOwnership(donor.candidate, index),
       reasons: donor.reasons,
     })),
@@ -125,11 +212,12 @@ export function createReferencePlan({ brief, candidates, maxReferences = 4 }) {
   return {
     ok: true,
     plan: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       mode: 'shadow',
       generationTriggered: false,
       briefProfile: profile,
       rule: 'One dominant chassis and bounded donors. No competing page spines.',
+      scoringWeights: SCORE_WEIGHTS,
       selectedReferences,
       composition: {
         preserve: ['chassis section order', 'chassis scroll model', 'chassis primary motion and layering'],

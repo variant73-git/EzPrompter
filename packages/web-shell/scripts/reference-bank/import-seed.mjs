@@ -79,6 +79,17 @@ const appearances = [...new Map(seed.references.flatMap((reference) => (referenc
   return [`${record.reference_site_id}\u0000${record.source_id}\u0000${record.source_record_id}`, record];
 }))).values()];
 
+const aggregators = [...new Map(appearances.map((appearance) => [appearance.source_id, {
+  id: appearance.source_id,
+  name: appearance.source_name,
+}])).values()];
+await sql`
+  INSERT INTO reference_aggregators (id, name)
+  SELECT item.id, item.name
+  FROM jsonb_to_recordset(${JSON.stringify(aggregators)}::jsonb) AS item(id VARCHAR, name TEXT)
+  ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = NOW()
+`;
+
 for (let offset = 0; offset < appearances.length; offset += batchSize) {
   const records = appearances.slice(offset, offset + batchSize);
   await sql`
@@ -102,10 +113,33 @@ for (let offset = 0; offset < appearances.length; offset += batchSize) {
   `;
 }
 
+await sql`
+  INSERT INTO reference_review_cohorts (
+    id, name, rubric_version, status, selection_snapshot, frozen_at
+  ) VALUES (
+    'cohort_v1', 'Cohort v1', 2, 'frozen',
+    '{"basis":"initial_curation_rank","size":24,"purpose":"rating_calibration"}'::jsonb,
+    NOW()
+  )
+  ON CONFLICT (id) DO NOTHING
+`;
+await sql`
+  INSERT INTO reference_review_cohort_members (
+    cohort_id, reference_site_id, rank, selection_score, selection_reason
+  )
+  SELECT
+    'cohort_v1', id, curation_rank::smallint, curation_weight,
+    '{"basis":"initial_curation_rank"}'::jsonb
+  FROM reference_sites
+  WHERE curation_rank BETWEEN 1 AND 24
+  ON CONFLICT DO NOTHING
+`;
+
 const [counts] = await sql`
   SELECT
     (SELECT COUNT(*)::int FROM reference_sites) AS sites,
     (SELECT COUNT(*)::int FROM reference_appearances) AS appearances,
-    (SELECT COUNT(*)::int FROM reference_sites WHERE curation_rank <= 24) AS review_candidates
+    (SELECT COUNT(*)::int FROM reference_review_cohort_members WHERE cohort_id = 'cohort_v1') AS review_candidates,
+    (SELECT COUNT(*)::int FROM reference_aggregators) AS aggregators
 `;
 console.log(JSON.stringify({ target, imported: true, counts }, null, 2));

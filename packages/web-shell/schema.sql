@@ -342,6 +342,44 @@ CREATE TABLE IF NOT EXISTS reference_appearances (
 CREATE INDEX IF NOT EXISTS reference_appearances_site ON reference_appearances(reference_site_id);
 CREATE INDEX IF NOT EXISTS reference_appearances_source ON reference_appearances(source_id, reference_site_id);
 
+CREATE TABLE IF NOT EXISTS reference_aggregators (
+  id VARCHAR(32) PRIMARY KEY,
+  name TEXT NOT NULL,
+  homepage_url TEXT,
+  overall_rating SMALLINT NOT NULL DEFAULT 3 CHECK (overall_rating BETWEEN 1 AND 5),
+  editorial_quality SMALLINT CHECK (editorial_quality BETWEEN 1 AND 5),
+  motion_density SMALLINT CHECK (motion_density BETWEEN 1 AND 5),
+  metadata_quality SMALLINT CHECK (metadata_quality BETWEEN 1 AND 5),
+  noise_control SMALLINT CHECK (noise_control BETWEEN 1 AND 5),
+  status VARCHAR(16) NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','retired')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS reference_review_cohorts (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  rubric_version SMALLINT NOT NULL DEFAULT 2,
+  status VARCHAR(16) NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','frozen','retired')),
+  selection_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  frozen_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS reference_review_cohort_members (
+  cohort_id TEXT NOT NULL REFERENCES reference_review_cohorts(id) ON DELETE CASCADE,
+  reference_site_id TEXT NOT NULL REFERENCES reference_sites(id) ON DELETE CASCADE,
+  rank SMALLINT NOT NULL CHECK (rank > 0),
+  selection_score NUMERIC(7,3),
+  selection_reason JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (cohort_id, reference_site_id),
+  UNIQUE (cohort_id, rank)
+);
+CREATE INDEX IF NOT EXISTS reference_review_cohort_members_site
+  ON reference_review_cohort_members(reference_site_id, cohort_id);
+
 CREATE TABLE IF NOT EXISTS reference_preferences (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -353,6 +391,14 @@ CREATE TABLE IF NOT EXISTS reference_preferences (
   business_tags TEXT[] NOT NULL DEFAULT '{}',
   visual_tags TEXT[] NOT NULL DEFAULT '{}',
   motion_tags TEXT[] NOT NULL DEFAULT '{}',
+  visual_quality SMALLINT CHECK (visual_quality BETWEEN 1 AND 5),
+  structure_quality SMALLINT CHECK (structure_quality BETWEEN 1 AND 5),
+  motion_quality SMALLINT CHECK (motion_quality BETWEEN 1 AND 5),
+  originality SMALLINT CHECK (originality BETWEEN 1 AND 5),
+  transferability SMALLINT CHECK (transferability BETWEEN 1 AND 5),
+  commercial_clarity SMALLINT CHECK (commercial_clarity BETWEEN 1 AND 5),
+  chassis_potential SMALLINT CHECK (chassis_potential BETWEEN 1 AND 5),
+  donor_potential SMALLINT CHECK (donor_potential BETWEEN 1 AND 5),
   notes TEXT CHECK (notes IS NULL OR char_length(notes) <= 4000),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -365,7 +411,7 @@ CREATE INDEX IF NOT EXISTS reference_preferences_site ON reference_preferences(r
 CREATE TABLE IF NOT EXISTS generation_reference_uses (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  schema_version SMALLINT NOT NULL DEFAULT 1 CHECK (schema_version = 1),
+  schema_version SMALLINT NOT NULL DEFAULT 1 CHECK (schema_version IN (1,2)),
   mode VARCHAR(16) NOT NULL DEFAULT 'shadow' CHECK (mode IN ('shadow','generation')),
   status VARCHAR(16) NOT NULL DEFAULT 'shadow'
     CHECK (status IN ('shadow','approved','rejected','executed','failed')),

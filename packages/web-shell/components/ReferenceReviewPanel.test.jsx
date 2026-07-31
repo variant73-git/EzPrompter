@@ -17,11 +17,24 @@ describe('ReferenceReviewPanel', () => {
     });
     render(<ReferenceReviewPanel reference={reference} onSaved={onSaved} />);
     await user.click(screen.getByRole('button', { name: 'keep' }));
-    await user.click(screen.getByRole('button', { name: '5' }));
+    await user.click(screen.getByRole('button', { name: 'Taste score: 5' }));
+    expect(screen.getByText('Strength profile')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Visual craft: 5' }));
     await user.click(screen.getByRole('button', { name: 'chassis' }));
     await user.click(screen.getByRole('button', { name: 'immersive' }));
     await user.click(screen.getByRole('button', { name: 'Save review' }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
     expect(global.fetch).toHaveBeenCalledWith('/api/references/ref_one/preference', expect.objectContaining({ method: 'PUT' }));
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toMatchObject({ rating: 5, dimensionRatings: { visualQuality: 5 } });
+  });
+
+  it('keeps deep weighting progressive and requires the general score', async () => {
+    const user = userEvent.setup();
+    render(<ReferenceReviewPanel reference={reference} />);
+    expect(screen.getByRole('button', { name: 'Save review' })).toBeDisabled();
+    expect(screen.queryByText('Strength profile')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Taste score: 3' }));
+    expect(screen.getByRole('button', { name: 'Save review' })).toBeEnabled();
+    expect(screen.queryByText('Strength profile')).not.toBeInTheDocument();
   });
 });

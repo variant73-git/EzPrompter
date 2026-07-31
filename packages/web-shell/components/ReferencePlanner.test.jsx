@@ -14,6 +14,8 @@ const shadowRecord = {
         title: 'Bureau Rouge',
         url: 'https://bureau-rouge.com',
         role: 'chassis',
+        score: 88.48,
+        scoreBreakdown: { briefFit: 83, manualQuality: 95, compositionCompatibility: 100, motion: 73, transferability: 100, sourceConfidence: 64 },
         owns: 'section order and primary motion system',
         reasons: ['explicitly kept during review'],
       },
@@ -50,6 +52,7 @@ describe('ReferencePlanner', () => {
     await user.click(screen.getByRole('button', { name: 'Build shadow plan' }));
 
     expect(await screen.findByText('Bureau Rouge')).toBeInTheDocument();
+    expect(screen.getByLabelText('Score breakdown for Bureau Rouge')).toBeInTheDocument();
     expect(screen.getByText('The Red')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Approve recipe' }));
     await waitFor(() => expect(screen.getByText('approved')).toBeInTheDocument());

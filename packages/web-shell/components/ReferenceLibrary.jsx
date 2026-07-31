@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, BookOpenCheck, LayoutGrid, Search, SlidersHorizontal, WandSparkles, X } from 'lucide-react';
+import { ArrowUpRight, BookOpenCheck, LayoutGrid, Lock, Search, SlidersHorizontal, WandSparkles, X } from 'lucide-react';
 import ReferencePlanner from './ReferencePlanner.jsx';
 import ReferenceReviewPanel from './ReferenceReviewPanel.jsx';
 
@@ -41,8 +41,9 @@ export function ReferenceGridCard({ reference, reviewMode = false, onReview }) {
         <p className="ref-card-consensus">Found in {reference.editorialConsensus} curated sources</p>
       )}
       {(reviewMode || reference.preference) && (
-        <button type="button" className="ref-card-review" onClick={() => onReview?.(reference)}>
+        <button type="button" className="ref-card-review" aria-label={`${reference.preference ? 'Edit review for' : 'Review'} ${reference.title}`} onClick={() => onReview?.(reference)}>
           <span data-decision={reference.preference?.decision || 'unreviewed'}>{reference.preference?.decision || 'unreviewed'}</span>
+          {reference.preference?.rating && <b>{reference.preference.rating}/5</b>}
           {reference.preference ? 'Edit review' : 'Review'}
         </button>
       )}
@@ -73,6 +74,7 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [reviewStats, setReviewStats] = useState(initialPage.reviewStats || { total: 24, reviewed: 0, keep: 0, maybe: 0, pass: 0 });
+  const [reviewCohort, setReviewCohort] = useState(initialPage.reviewCohort || { id: 'cohort_v1', name: 'Cohort v1', status: 'frozen', rubricVersion: 2 });
   const [selectedReference, setSelectedReference] = useState(null);
   const firstRun = useRef(true);
 
@@ -103,6 +105,7 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       setTotal(page.total);
       setHasMore(page.hasMore);
       setReviewStats(page.reviewStats || reviewStats);
+      setReviewCohort(page.reviewCohort || reviewCohort);
       if (view === 'review' && !append) {
         setSelectedReference((current) => page.items.find((item) => item.id === current?.id) || page.items[0] || null);
       }
@@ -145,6 +148,8 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       if (!previous) next.reviewed += 1;
       if (previous?.decision) next[previous.decision] = Math.max(0, Number(next[previous.decision] || 0) - 1);
       next[preference.decision] = Number(next[preference.decision] || 0) + 1;
+      if (Number(previous?.rating || 0) < 4 && Number(preference.rating || 0) >= 4) next.highQuality = Number(next.highQuality || 0) + 1;
+      if (Number(previous?.rating || 0) >= 4 && Number(preference.rating || 0) < 4) next.highQuality = Math.max(0, Number(next.highQuality || 0) - 1);
       return next;
     });
   }
@@ -192,7 +197,8 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       </div>
 
       <div className="ref-results-heading" aria-live="polite">
-        <p>{loading ? 'Updating references…' : view === 'review' ? `${reviewStats.reviewed} of ${reviewStats.total} candidates reviewed` : `${total.toLocaleString()} ${total === 1 ? 'reference' : 'references'}`}</p>
+        <p>{loading ? 'Updating references…' : view === 'review' ? `${reviewStats.reviewed} of ${reviewStats.total} candidates reviewed${reviewStats.highQuality ? ` · ${reviewStats.highQuality} rated 4+` : ''}` : `${total.toLocaleString()} ${total === 1 ? 'reference' : 'references'}`}</p>
+        {view === 'review' && reviewCohort && <span className="ref-cohort-status"><Lock aria-hidden="true" />{reviewCohort.name} · {reviewCohort.status}</span>}
         {filtersActive && <button type="button" onClick={clearFilters}>Clear filters</button>}
       </div>
 

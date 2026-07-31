@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapReferenceRow, queryPersistentReferenceCatalog } from './reference-bank-store.js';
+import { calculateSourceConfidence, mapReferenceRow, queryPersistentReferenceCatalog } from './reference-bank-store.js';
 
 describe('persistent reference row mapping', () => {
   it('keeps provenance and private review metadata separate', () => {
@@ -10,20 +10,30 @@ describe('persistent reference row mapping', () => {
       host: 'antinomy.studio',
       categories: ['Studio'],
       tags: ['Motion'],
-      sources: [{ id: 'codrops', name: 'Codrops' }, { id: 'siteinspire', name: 'SiteInspire' }],
+      sources: [{ id: 'codrops', name: 'Codrops', overallRating: 4 }, { id: 'siteinspire', name: 'SiteInspire', overallRating: 3 }],
       editorial_consensus: 2,
       curation_weight: '1.6',
       curation_rank: 3,
+      cohort_rank: 3,
       preference_decision: 'keep',
       preference_rating: 5,
       preference_role: 'chassis',
       preference_business_tags: ['agency'],
       preference_visual_tags: ['immersive'],
       preference_motion_tags: ['scroll-driven'],
+      preference_visual_quality: 5,
+      preference_transferability: 4,
     });
     expect(reference.sourceIds).toEqual(['codrops', 'siteinspire']);
     expect(reference.reviewCandidate).toBe(true);
     expect(reference.preference).toMatchObject({ decision: 'keep', rating: 5, preferredRole: 'chassis' });
+    expect(reference.preference.dimensionRatings).toMatchObject({ visualQuality: 5, transferability: 4 });
+    expect(reference.sourceConfidence).toBeGreaterThan(0.7);
+  });
+
+  it('caps aggregator consensus so source provenance remains a weak signal', () => {
+    expect(calculateSourceConfidence([{ overallRating: 5 }, { overallRating: 5 }, { overallRating: 5 }])).toBe(1);
+    expect(calculateSourceConfidence([])).toBe(0.6);
   });
 
   it('limits the seed fallback review queue to the same 24 candidates as persistence', async () => {
@@ -35,6 +45,7 @@ describe('persistent reference row mapping', () => {
       expect(page.total).toBe(24);
       expect(page.items).toHaveLength(24);
       expect(page.items.every((item) => item.reviewCandidate)).toBe(true);
+      expect(page.reviewCohort).toMatchObject({ id: 'cohort_v1', status: 'frozen', rubricVersion: 2 });
     } finally {
       if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = previousDatabaseUrl;

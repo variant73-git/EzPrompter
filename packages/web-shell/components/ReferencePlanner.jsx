@@ -3,6 +3,15 @@
 import { useState } from 'react';
 import { ArrowUpRight, Check, X } from 'lucide-react';
 
+const SCORE_LABELS = {
+  briefFit: 'Fit',
+  manualQuality: 'Quality',
+  compositionCompatibility: 'Compose',
+  motion: 'Motion',
+  transferability: 'Transfer',
+  sourceConfidence: 'Source',
+};
+
 function errorCopy(error) {
   if (error === 'review_required') return 'Review and keep at least two references before asking for a composition.';
   if (error === 'donor_required') return 'Keep at least one reference that can act as a donor.';
@@ -83,15 +92,24 @@ export default function ReferencePlanner({ reviewStats }) {
         ) : (
           <>
             <div className="ref-plan-head">
-              <div><span>Shadow recipe</span><h2>{record.plan.rule}</h2></div>
+              <div>
+                <span>Shadow recipe</span>
+                <h2>{record.plan.rule}</h2>
+                {record.plan.briefProfile?.weighting?.name && <p>{record.plan.briefProfile.weighting.name} weighting · source confidence capped at 5%</p>}
+              </div>
               <b data-status={record.status}>{record.status}</b>
             </div>
             <ol className="ref-plan-refs">
               {record.plan.selectedReferences.map((reference) => (
                 <li key={reference.id}>
-                  <div><span>{reference.role}</span><strong>{reference.title}</strong></div>
+                  <div><span>{reference.role} · {reference.score}/100</span><strong>{reference.title}</strong></div>
                   <p>{reference.owns}</p>
                   <small>{reference.reasons.join(' · ')}</small>
+                  {reference.scoreBreakdown && (
+                    <div className="ref-plan-score" aria-label={`Score breakdown for ${reference.title}`}>
+                      {Object.entries(SCORE_LABELS).map(([key, label]) => <span key={key}><b>{reference.scoreBreakdown[key]}</b>{label}</span>)}
+                    </div>
+                  )}
                   <a href={reference.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${reference.title}`}><ArrowUpRight aria-hidden="true" /></a>
                 </li>
               ))}
