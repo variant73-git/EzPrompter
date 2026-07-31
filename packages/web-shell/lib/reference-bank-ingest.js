@@ -1,0 +1,235 @@
+import { createHash } from 'node:crypto';
+import { parseHTML } from 'linkedom';
+import { canonicalizeReferenceUrl, uniqueText } from './reference-bank-normalize.js';
+
+const SOURCE_PRIORITY = {
+  codrops: 3,
+  siteinspire: 2,
+  pafolios: 1,
+};
+
+function stableReferenceId(canonicalKey) {
+  return `ref_${createHash('sha256').update(canonicalKey).digest('hex').slice(0, 16)}`;
+}
+
+function parseNextFlight(rawHtml) {
+  const decoded = [];
+  const pattern = /<script>self\.__next_f\.push\((\[[\s\S]*?\])\)<\/script>/g;
+  for (const match of String(rawHtml || '').matchAll(pattern)) {
+    try {
+      const payload = JSON.parse(match[1]);
+      if (typeof payload?.[1] === 'string') decoded.push(payload[1]);
+    } catch {
+      // A malformed or unrelated flight chunk must not poison the whole source.
+    }
+  }
+  return decoded.join('\n');
+}
+
+function jsonArrayAfter(text, marker) {
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex < 0) return [];
+  const start = text.indexOf('[', markerIndex + marker.length);
+  if (start < 0) return [];
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '[') depth += 1;
+    else if (char === ']') {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, index + 1));
+        } catch {
+          return [];
+        }
+      }
+    }
+  }
+  return [];
+}
+
+function appearance(source, item) {
+  return {
+    ...item,
+    source: {
+      id: source.id,
+      name: source.name,
+      listingUrl: source.listingUrl,
+      recordId: String(item.sourceRecordId || item.url || ''),
+    },
+  };
+}
+
+export function parseCodropsPayload(payload, listingUrl = 'https://tympanus.net/codrops/webzibition/') {
+  const { document } = parseHTML(String(payload?.rawHtml || ''));
+  return [...document.querySelectorAll('article.ct-webzibition')].flatMap((article) => {
+    const target = article.querySelector('a.ct-latest-thumb-webzibition');
+    const titleLink = article.querySelector('.title-archive a');
+    const image = target?.querySelector('img');
+    const url = target?.getAttribute('href');
+    if (!url) return [];
+    return [appearance(
+      { id: 'codrops', name: 'Codrops Webzibition', listingUrl },
+      {
+        sourceRecordId: article.getAttribute('id') || url,
+        title: titleLink?.textContent?.trim() || new URL(url).hostname,
+        url,
+        description: 'Selected for the Codrops Webzibition showcase.',
+        thumbnailUrl: image?.getAttribute('src') || '',
+        categories: ['Creative website'],
+        tags: ['Codrops', 'Webzibition'],
+        featured: true,
+      },
+    )];
+  });
+}
+
+export function parsePafoliosPayload(payload, listingUrl = 'https://pafolios.com') {
+  const flight = parseNextFlight(payload?.rawHtml);
+  const portfolios = jsonArrayAfter(flight, '"portfolios":');
+  return portfolios.flatMap((item) => {
+    if (!item?.websiteUrl) return [];
+    return [appearance(
+      { id: 'pafolios', name: 'Pafolios', listingUrl },
+      {
+        sourceRecordId: item.slug || item.id || item.websiteUrl,
+        title: item.title || new URL(item.websiteUrl).hostname,
+        url: item.websiteUrl,
+        description: item.description || '',
+        thumbnailUrl: item.imageUrl ? new URL(item.imageUrl, listingUrl).href : '',
+        categories: uniqueText(item.categories),
+        tags: uniqueText(item.tags),
+        publishedAt: item.date || null,
+        featured: Boolean(item.featured),
+      },
+    )];
+  });
+}
+
+function siteInspireThumbnail(image) {
+  const filename = String(image || '').split('?')[0].split('/').pop();
+  if (!filename) return '';
+  return `https://r2.siteinspire.com/cdn-cgi/image/width=960,height=600,quality=75,format=auto,metadata=none,gravity=top,fit=crop,compress=true/${filename}`;
+}
+
+export function parseSiteInspirePayload(payload, listingUrl = 'https://www.siteinspire.com') {
+  const { document } = parseHTML(String(payload?.rawHtml || ''));
+  const collections = [...document.querySelectorAll('script[type="application/ld+json"]')]
+    .flatMap((script) => {
+      try {
+        const value = JSON.parse(script.textContent || '{}');
+        return value?.['@type'] === 'CollectionPage' ? [value] : [];
+      } catch {
+        return [];
+      }
+    });
+  const parts = collections.flatMap((collection) => collection.hasPart || []);
+  const links = Array.isArray(payload?.links) ? payload.links : [];
+
+  return parts.flatMap((item) => {
+    const detailUrl = new URL(item.url || '', listingUrl).href;
+    const linkIndex = links.findIndex((link) => link === detailUrl);
+    const nextDetail = linkIndex < 0
+      ? links.length
+      : links.findIndex((link, index) => index > linkIndex && /siteinspire\.com\/website\//.test(link));
+    const end = nextDetail < 0 ? links.length : nextDetail;
+    const targetUrl = links.slice(Math.max(0, linkIndex + 1), end).find((link) => {
+      try {
+        return !new URL(link).hostname.replace(/^www\./, '').endsWith('siteinspire.com');
+      } catch {
+        return false;
+      }
+    });
+    if (!targetUrl) return [];
+    const recordId = detailUrl.match(/\/website\/(\d+)/)?.[1] || detailUrl;
+    return [appearance(
+      { id: 'siteinspire', name: 'SiteInspire', listingUrl },
+      {
+        sourceRecordId: recordId,
+        title: item.name || new URL(targetUrl).hostname,
+        url: targetUrl,
+        description: 'Featured in the SiteInspire website collection.',
+        thumbnailUrl: siteInspireThumbnail(item.image),
+        categories: ['Website'],
+        tags: ['SiteInspire'],
+        publishedAt: item.datePublished || null,
+        featured: true,
+        sourceDetailUrl: detailUrl,
+      },
+    )];
+  });
+}
+
+function bestText(items, field) {
+  return [...items]
+    .filter((item) => item[field])
+    .sort((a, b) => {
+      const priority = (SOURCE_PRIORITY[b.source.id] || 0) - (SOURCE_PRIORITY[a.source.id] || 0);
+      if (field === 'description' && Math.abs(String(b[field]).length - String(a[field]).length) > 40) {
+        return String(b[field]).length - String(a[field]).length;
+      }
+      return priority;
+    })[0]?.[field] || '';
+}
+
+export function mergeReferenceAppearances(appearances, generatedAt = new Date().toISOString()) {
+  const groups = new Map();
+  for (const item of appearances || []) {
+    const canonical = canonicalizeReferenceUrl(item.url);
+    if (!canonical) continue;
+    const current = groups.get(canonical.canonicalKey) || { canonical, items: [] };
+    current.items.push(item);
+    groups.set(canonical.canonicalKey, current);
+  }
+
+  return [...groups.values()].map(({ canonical, items }) => {
+    const sourceIds = uniqueText(items.map((item) => item.source.id));
+    const sourceNames = uniqueText(items.map((item) => item.source.name));
+    const featured = items.some((item) => item.featured);
+    const publishedAt = items.map((item) => item.publishedAt).filter(Boolean).sort().at(-1) || null;
+    const thumbnailUrl = [...items]
+      .filter((item) => item.thumbnailUrl)
+      .sort((a, b) => (SOURCE_PRIORITY[b.source.id] || 0) - (SOURCE_PRIORITY[a.source.id] || 0))[0]?.thumbnailUrl || '';
+    const editorialConsensus = sourceIds.length;
+    const curationWeight = Number((1 + (editorialConsensus - 1) * 0.4 + (featured ? 0.2 : 0)).toFixed(2));
+
+    return {
+      id: stableReferenceId(canonical.canonicalKey),
+      title: bestText(items, 'title') || canonical.host,
+      description: bestText(items, 'description'),
+      url: canonical.canonicalUrl,
+      host: canonical.host,
+      thumbnailUrl,
+      categories: uniqueText(items.flatMap((item) => item.categories || [])),
+      tags: uniqueText(items.flatMap((item) => item.tags || [])),
+      sourceIds,
+      sourceNames,
+      sources: items.map((item) => ({
+        ...item.source,
+        detailUrl: item.sourceDetailUrl || null,
+        thumbnailUrl: item.thumbnailUrl || null,
+      })),
+      editorialConsensus,
+      curationWeight,
+      featured,
+      publishedAt,
+      generatedAt,
+      analysisStatus: 'listed',
+    };
+  }).sort((a, b) => (
+    b.curationWeight - a.curationWeight
+    || String(b.publishedAt || '').localeCompare(String(a.publishedAt || ''))
+    || a.title.localeCompare(b.title)
+  ));
+}

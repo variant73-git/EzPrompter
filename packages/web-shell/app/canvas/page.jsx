@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { db } from '../../lib/db.js';
 import { getAuthUser } from '../../lib/auth.js';
+import { getReferenceCatalog } from '../../lib/reference-bank.js';
 import BoardsList from '../../components/BoardsList.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -38,6 +39,7 @@ export default async function CanvasIndex() {
       boards={boards}
       savedWorkflows={savedWorkflows}
       assets={assets}
+      references={getReferenceCatalog({ limit: 4 })}
       userName={user.name}
       userEmail={user.email}
       userPlan={user.plan}

@@ -23,13 +23,14 @@ import {
   layoutWorkflowNodes,
   savedWorkflowToTemplate,
 } from '../lib/workflow-templates.js';
-import { COMMUNITY_EXAMPLES, REFERENCE_SITES } from '../lib/workspace-library.js';
+import { COMMUNITY_EXAMPLES } from '../lib/workspace-library.js';
 import CreditsPill from './CreditsPill.jsx';
+import ReferenceLibrary from './ReferenceLibrary.jsx';
 import UserPill from './UserPill.jsx';
 
 const NAV_ITEMS = [
   { id: 'projects', label: 'Projects', Icon: FolderKanban },
-  { id: 'references', label: 'References', Icon: Bookmark },
+  { id: 'references', label: 'Start from a Ref', Icon: Bookmark },
   { id: 'workflows', label: 'Workflows', Icon: Workflow },
   { id: 'assets', label: 'Assets', Icon: ImageIcon },
   { id: 'community', label: 'Community', Icon: Users },
@@ -37,7 +38,7 @@ const NAV_ITEMS = [
 
 const LIBRARY_META = {
   projects: { title: 'Projects', copy: 'Every canvas, from the latest experiment to the work you keep returning to.' },
-  references: { title: 'References', copy: 'Curated sites worth collecting, taking apart, and transforming into something of your own.' },
+  references: { title: 'Start from a Ref', copy: 'Explore a living catalog of remarkable websites, then use their strongest visual and motion decisions as ingredients for something new.' },
   workflows: { title: 'Workflows', copy: 'Reusable node chains that expose the path to a result without making you invent the graph first.' },
   assets: { title: 'Assets', copy: 'Images, components, code, type, and fragments collected from across the web.' },
   community: { title: 'Community', copy: 'See what others built when the web became their raw material.' },
@@ -188,13 +189,16 @@ function ProjectCard({ board }) {
 function ReferenceCard({ reference, href }) {
   return (
     <a className="hub-reference-card" href={href || `/canvas/library/references#${reference.id}`} id={href ? undefined : reference.id}>
-      <div className={`hub-reference-preview tone-${reference.tone}`} style={{ '--reference-accent': reference.accent }} aria-hidden="true">
-        <span /><span /><span />
-        <b>{reference.category}</b>
+      <div className="hub-reference-preview">
+        {reference.thumbnailUrl
+          // eslint-disable-next-line @next/next/no-img-element
+          ? <img src={reference.thumbnailUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
+          : <span className="ref-image-fallback" aria-hidden="true">{reference.host?.charAt(0)?.toUpperCase() || 'R'}</span>}
+        <b>{reference.categories?.[0] || 'Website'}</b>
       </div>
       <div className="hub-card-meta">
-        <h3>{reference.name}</h3>
-        <p>{reference.source}</p>
+        <h3>{reference.title}</h3>
+        <p>{reference.host}</p>
       </div>
     </a>
   );
@@ -303,7 +307,7 @@ function HomeDashboard({ boards, workflows, references, onLaunchWorkflow, onCrea
       </section>
 
       <section className="hub-section" aria-labelledby="hub-references-title">
-        <SectionHeading id="hub-references-title" title="Start from a reference" href="/canvas/library/references" action="See all References" />
+        <SectionHeading id="hub-references-title" title="Start from a Ref" href="/canvas/library/references" action="Open catalog" />
         <div className="hub-five-grid">
           {references.slice(0, 4).map((reference) => <ReferenceCard reference={reference} key={reference.id} />)}
           <SeeAllCard href="/canvas/library/references" label="See all References" count="Curated web" />
@@ -313,7 +317,7 @@ function HomeDashboard({ boards, workflows, references, onLaunchWorkflow, onCrea
   );
 }
 
-function LibraryPage({ section, boards, workflows, assets, onCreateBoard, onLaunchWorkflow, onCreateWorkflow, launching, creatingBoard, creatingWorkflow }) {
+function LibraryPage({ section, boards, workflows, assets, referencePage, onCreateBoard, onLaunchWorkflow, onCreateWorkflow, launching, creatingBoard, creatingWorkflow }) {
   const meta = LIBRARY_META[section];
   return (
     <>
@@ -342,7 +346,7 @@ function LibraryPage({ section, boards, workflows, assets, onCreateBoard, onLaun
       )}
 
       {section === 'references' && (
-        <div className="hub-library-grid">{REFERENCE_SITES.map((item) => <ReferenceCard key={item.id} reference={item} />)}</div>
+        <ReferenceLibrary initialPage={referencePage} />
       )}
 
       {section === 'assets' && (
@@ -365,6 +369,8 @@ export default function BoardsList({
   userPlan,
   savedWorkflows = [],
   assets = [],
+  references = [],
+  referencePage = null,
   view = 'home',
 }) {
   const [boards] = useState(initial);
@@ -460,7 +466,7 @@ export default function BoardsList({
             <HomeDashboard
               boards={boards}
               workflows={workflows}
-              references={REFERENCE_SITES}
+              references={references}
               onLaunchWorkflow={launchWorkflow}
               onCreateWorkflow={createWorkflow}
               launching={launching}
@@ -474,6 +480,7 @@ export default function BoardsList({
               boards={boards}
               workflows={workflows}
               assets={assets}
+              referencePage={referencePage}
               onCreateBoard={createBoard}
               onLaunchWorkflow={launchWorkflow}
               onCreateWorkflow={createWorkflow}

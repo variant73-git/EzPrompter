@@ -15,9 +15,13 @@ node_modules/
 
 # Build output
 .next/
+.next-*/
 out/
 build/
 dist/
+
+# Untrusted crawler output and local research artifacts
+.firecrawl/
 
 # Lockfiles other than the workspace root bun.lock
 **/package-lock.json

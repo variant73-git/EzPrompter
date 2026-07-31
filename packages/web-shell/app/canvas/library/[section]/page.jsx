@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { db } from '../../../../lib/db.js';
 import { getAuthUser } from '../../../../lib/auth.js';
+import { queryReferenceCatalog } from '../../../../lib/reference-bank.js';
 import BoardsList from '../../../../components/BoardsList.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -38,12 +39,14 @@ export default async function WorkspaceLibraryPage({ params }) {
      ORDER BY created_at DESC
      LIMIT 100
   `;
+  const referencePage = section === 'references' ? queryReferenceCatalog({ limit: 48 }) : null;
 
   return (
     <BoardsList
       boards={boards}
       savedWorkflows={savedWorkflows}
       assets={assets}
+      referencePage={referencePage}
       userName={user.name}
       userEmail={user.email}
       userPlan={user.plan}
