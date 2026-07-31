@@ -911,11 +911,12 @@ describe('native motion runtime bridge', () => {
     const { motion } = grabMotion(target, messages);
     const xTrack = motion.tracks.find((track) => track.property === 'x');
     expect(xTrack.steps).toEqual([
-      { entryIndex: 0, offset: null, value: '100' },
-      { entryIndex: 2, offset: null, value: '300' },
+      { entryIndex: 0, offset: null, value: '100', editable: true },
+      { entryIndex: 2, offset: null, value: '300', editable: false, reason: 'final' },
     ]);
     const opacityTrack = motion.tracks.find((track) => track.property === 'opacity');
-    expect(opacityTrack.steps).toEqual([{ entryIndex: 1, offset: null, value: '0.5' }]);
+    // Carrier único = o próprio run: sem step intermediário, edita pelo end.
+    expect(opacityTrack.steps).toEqual([{ entryIndex: 1, offset: null, value: '0.5', editable: false, reason: 'final' }]);
 
     delete window.gsap;
     window.postMessage = originalPostMessage;
@@ -956,9 +957,9 @@ describe('native motion runtime bridge', () => {
     const { motion } = grabMotion(target, messages);
     const xTrack = motion.tracks.find((track) => track.property === 'x');
     expect(xTrack.steps).toEqual([
-      { entryIndex: 0, offset: 0.5, value: '100' },
-      { entryIndex: 1, offset: 0.5, value: '200' },
-      { entryIndex: 2, offset: 1, value: '300' },
+      { entryIndex: 0, offset: 0.5, value: '100', editable: true },
+      { entryIndex: 1, offset: 0.5, value: '200', editable: true },
+      { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final' },
     ]);
 
     delete window.gsap;
@@ -990,8 +991,8 @@ describe('native motion runtime bridge', () => {
     const { motion } = grabMotion(target, messages);
     const xTrack = motion.tracks.find((track) => track.property === 'x');
     expect(xTrack.steps).toEqual([
-      { entryIndex: 0, offset: null, value: '100' },
-      { entryIndex: 1, offset: null, value: '200' },
+      { entryIndex: 0, offset: null, value: '100', editable: true },
+      { entryIndex: 1, offset: null, value: '200', editable: false, reason: 'final' },
     ]);
 
     delete window.gsap;

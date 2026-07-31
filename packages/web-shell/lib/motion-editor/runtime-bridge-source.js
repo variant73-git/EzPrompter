@@ -2118,11 +2118,19 @@ function nativeMotionRuntimeBridge() {
             // (raw position in the live entry order); offset positions the
             // diamond only and may be null/duplicated (zero-duration cases).
             ...(entryPlan && Array.isArray(entryPlan.steps) ? {
-              steps: entryPlan.steps.map((step) => ({
-                entryIndex: step.rawEntryIndex,
-                offset: step.endOffset,
-                value: String(step.bucket[track.property]),
-              })),
+              steps: entryPlan.steps.map((step) => {
+                // Frozen-run members belong to the END writer (journal
+                // separation) — their diamond points at the end edit.
+                const runMember = entryPlan.run.includes(step.bucket);
+                const editable = keyframeEditReason == null && !runMember;
+                return {
+                  entryIndex: step.rawEntryIndex,
+                  offset: step.endOffset,
+                  value: String(step.bucket[track.property]),
+                  editable,
+                  ...(runMember ? { reason: 'final' } : keyframeEditReason ? { reason: keyframeEditReason } : {}),
+                };
+              }),
             } : {}),
             ownership: writerOwnership({
               clipId: id,
