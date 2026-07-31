@@ -1632,11 +1632,22 @@ export function TimelinePanel({
             numeric offset: Number(null) coerces to 0 and a zero-duration shape
             publishes null/duplicated offsets (Sol r4). A null offset falls
             back to even spacing by order. */}
-        {(track.steps || [])
-          .filter((step) => !step.isEnd)
-          .map((step, index, list) => {
+        {(() => {
+          const renderedSteps = (track.steps || []).filter((step) => !step.isEnd);
+          const seenOffsets = new Map();
+          return renderedSteps.map((step, index, list) => {
             const fallback = (index + 1) / (list.length + 1);
-            const displayOffset = step.offset == null ? fallback : Number(step.offset);
+            const realOffset = step.offset == null ? fallback : Number(step.offset);
+            // DUPLICATE numeric offsets (zero-duration entries) would stack
+            // the absolute buttons — the later covering the earlier, which
+            // becomes unclickable (Sol r8). Each duplicate gets a fixed
+            // visual nudge (flipped left near the track end); the REAL
+            // offset still drives seek and selection.
+            const offsetKey = realOffset.toFixed(4);
+            const duplicateIndex = seenOffsets.get(offsetKey) || 0;
+            seenOffsets.set(offsetKey, duplicateIndex + 1);
+            let displayOffset = realOffset + duplicateIndex * 0.02;
+            if (displayOffset > 1) displayOffset = Math.max(0, realOffset - duplicateIndex * 0.02);
             const left = keyframeLeft(displayOffset);
             const isSelected = selectedKeyframe?.motionId === motion.id
               && selectedKeyframe.property === track.property
@@ -1657,12 +1668,13 @@ export function TimelinePanel({
                 aria-pressed={isSelected}
                 onClick={() => {
                   if (suppressKeyframeClick.current) return;
-                  onSelectKeyframe({ motionId: motion.id, property: track.property, entryIndex: step.entryIndex, offset: displayOffset });
-                  onSeek(delay + displayOffset * clipDuration);
+                  onSelectKeyframe({ motionId: motion.id, property: track.property, entryIndex: step.entryIndex, offset: realOffset });
+                  onSeek(delay + realOffset * clipDuration);
                 }}
               />
             );
-          })}
+          });
+        })()}
       </div>
     );
   }

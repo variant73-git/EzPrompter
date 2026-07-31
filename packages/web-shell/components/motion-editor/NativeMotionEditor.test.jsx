@@ -752,6 +752,40 @@ describe('adapter (GSAP) keyframes on the timeline', () => {
     expect(parseFloat(step2.style.left)).toBeGreaterThan(parseFloat(step1.style.left));
   });
 
+  it('separates diamonds with DUPLICATE numeric offsets so each index stays clickable (Sol r8)', () => {
+    // zero-dur no meio: dois steps intermediários com offset 0.5 — sem
+    // separação visual o posterior cobre o anterior (mesmo left absoluto) e o
+    // índice de baixo fica inacessível por clique.
+    const dupMotion = {
+      ...adapterMotion,
+      id: 'gsap-dup',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: null },
+          { offset: 1, value: '300', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: 0.5, value: '100', editable: true },
+          { entryIndex: 1, offset: 0.5, value: '200', editable: true },
+          { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final', isEnd: true },
+        ],
+      }],
+    };
+    const onStep = vi.fn();
+    render(<TimelineHarness motion={dupMotion} onChangeStepValue={onStep} />);
+    const step1 = screen.getByRole('button', { name: 'x step 1' });
+    const step2 = screen.getByRole('button', { name: 'x step 2' });
+    // Posições distintas — hit-tests separados.
+    expect(step1.style.left).not.toBe(step2.style.left);
+    // Cada índice seleciona e edita separadamente.
+    fireEvent.click(step1);
+    expect(screen.getByLabelText('x step value').value).toBe('100');
+    fireEvent.click(step2);
+    expect(screen.getByLabelText('x step value').value).toBe('200');
+  });
+
   it('single-animation rows carry no chevron; selecting them still reveals their tracks', () => {
     const soloRows = [{ elementId: 'el-solo', label: 'Solo', kind: 'text', top: 0, count: 1, engines: ['WAAPI'], driver: 'time', delayMs: 0, durationMs: 1000, marks: [] }];
     const { container, rerender } = render(
