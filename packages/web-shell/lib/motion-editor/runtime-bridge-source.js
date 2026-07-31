@@ -3785,6 +3785,26 @@ function nativeMotionRuntimeBridge() {
       if (gsapBucketsSharedWithOtherTween(animation, binding.allBuckets)) {
         throw bridgeError('unsupported_patch', 'These keyframes are shared with another animation and cannot be restored safely.');
       }
+      // The RESTORE pre-simulates too (Sol r13): a restore's validity when the
+      // value was journaled does not survive LATER edits that moved the
+      // trailing walk's stopping point — an out-of-order restore can land on
+      // a state whose walk crosses a now-held neighbor into a cross-unit pair
+      // (['10px','50%','100%'] → idx0='20%' → idx1='100%' → restore idx0 →
+      // ambiguous px×% → plan null → binding stale → the restore's own undo
+      // refused). Simulated against the FROZEN binding buckets (identity-held,
+      // readable through an outage). LIFO undo is never affected: reverse-
+      // order restores recreate states each write's own pre-sim validated.
+      {
+        const simulated = binding.allBuckets.map((bucket) =>
+          (bucket === carrier.bucket ? original : bucket[property]));
+        for (let index = simulated.length - 1; index > 0; index -= 1) {
+          const relation = gsapValueEquivalence(property, simulated[index - 1], simulated[simulated.length - 1]);
+          if (relation === 'ambiguous') {
+            throw bridgeError('unsupported_patch', 'Undo the later keyframe edits first — restoring this step now would make the animation uneditable.');
+          }
+          if (relation === 'different') break;
+        }
+      }
       carrier.bucket[property] = original;
     } else {
       // WRITE lane — the full plan is demanded immediately before a
