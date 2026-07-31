@@ -2156,16 +2156,20 @@ function nativeMotionRuntimeBridge() {
               // (fingerprint — persisted patches replay after a reload).
               const nextEntries = new Map(entryPlan.steps.map((step) => [step.rawEntryIndex, step.entry]));
               const exposureShape = gsapStepExposureShape(entryPlan.allEntries);
-              const exposureToken = gsapStepExposureToken(exposureShape);
-              exposures.set(track.property, {
-                token: exposureToken,
-                shape: exposureShape,
-                entries: nextEntries,
-                // Per-entry shapes for the FIRST-TOUCH gate (Sol r24): the
-                // full shape drifts legitimately with the bridge's own edits,
-                // but each UNTOUCHED entry must still match what the UI saw.
-                entryShapes: new Map(entryPlan.steps.map((step) => [step.rawEntryIndex, gsapStepEntryShape(step.entry)])),
-              });
+              const exposureToken = exposureShape === null ? null : gsapStepExposureToken(exposureShape);
+              if (exposureToken === null) {
+                gsapStepExposures.get(animation)?.delete(track.property);
+              } else {
+                exposures.set(track.property, {
+                  token: exposureToken,
+                  shape: exposureShape,
+                  entries: nextEntries,
+                  // Per-entry shapes for the FIRST-TOUCH gate (Sol r24): the
+                  // full shape drifts legitimately with the bridge's own edits,
+                  // but each UNTOUCHED entry must still match what the UI saw.
+                  entryShapes: new Map(entryPlan.steps.map((step) => [step.rawEntryIndex, gsapStepEntryShape(step.entry)])),
+                });
+              }
               return { steps: entryPlan.steps.map((step, stepIndex, list) => {
                 // Frozen-run members belong to the END writer (journal
                 // separation) — their diamond points at the end edit. The
@@ -2179,19 +2183,21 @@ function nativeMotionRuntimeBridge() {
                 const runMember = frozenBinding
                   ? frozenBinding.buckets.includes(step.bucket)
                   : entryPlan.run.includes(step.bucket);
-                const editable = keyframeEditReason == null && !runMember;
+                // No stable shape → no token → the writer's gate can never
+                // pass: publish the truth (locked) instead of a doomed input.
+                const editable = keyframeEditReason == null && !runMember && exposureToken !== null;
                 return {
                   entryIndex: step.rawEntryIndex,
                   offset: step.endOffset,
                   value: String(step.bucket[track.property]),
                   editable,
-                  ...(runMember ? { reason: 'final' } : keyframeEditReason ? { reason: keyframeEditReason } : {}),
+                  ...(runMember ? { reason: 'final' } : keyframeEditReason ? { reason: keyframeEditReason } : exposureToken === null ? { reason: 'keyframes' } : {}),
                   // The TERMINAL step by identity (last carrier = the end the
                   // offset-1 diamond already shows). The UI hides it by this
                   // flag — never by numeric offset, which is null/duplicated
                   // in zero-duration shapes (Sol r4).
                   ...(stepIndex === list.length - 1 ? { isEnd: true } : {}),
-                  token: exposureToken,
+                  ...(exposureToken === null ? {} : { token: exposureToken }),
                 };
               }) };
             })() : {}),
@@ -3489,20 +3495,47 @@ function nativeMotionRuntimeBridge() {
   // Deterministic across bridges when the page reloads identically; any
   // observable reorder/shape change (the r19 class) changes it. Enumeration
   // via the for..in mirror; `parent` is GSAP's mutable backedge, excluded.
+  // DEEP canonical typed serialization (Sol r26): a shallow String(value)
+  // collapses every nested container ("[object Object]") — entries that
+  // differ only inside attr/plugin namespaces would share a shape and a
+  // retained patch could cross a swap. Descriptor-based along the prototype
+  // chain (for..in mirror); accessors, cycles and over-deep nests have NO
+  // stable representation → null → the property exposes without a token and
+  // its steps lock (fail closed).
   function gsapStepEntryShape(entry) {
-    return JSON.stringify(gsapForInKeys(entry)
-      .filter((key) => key !== 'parent')
-      .sort()
-      .map((key) => {
-        const value = entry[key];
-        if (key === 'css' && value && typeof value === 'object' && !Array.isArray(value)) {
-          return ['css', gsapForInKeys(value).sort().map((cssKey) => [cssKey, String(value[cssKey])])];
+    try {
+      const seen = new Set();
+      const serialize = (value, depth) => {
+        if (typeof value === 'function') return 'fn';
+        if (value === null) return 'null';
+        if (typeof value !== 'object') return `${typeof value}:${String(value)}`;
+        if (seen.has(value) || depth > 6) return null;
+        seen.add(value);
+        const keys = gsapForInKeys(value).filter((key) => key !== 'parent').sort();
+        const out = [];
+        for (const key of keys) {
+          let owner = value;
+          let slot = null;
+          while (owner && !(slot = Object.getOwnPropertyDescriptor(owner, key))) {
+            owner = Object.getPrototypeOf(owner);
+          }
+          if (!slot || !('value' in slot)) return null; // accessor — unstable
+          const child = serialize(slot.value, depth + 1);
+          if (child === null) return null;
+          out.push([key, child]);
         }
-        return [key, typeof value === 'function' ? 'fn' : String(value)];
-      }));
+        seen.delete(value);
+        return out;
+      };
+      const shape = serialize(entry, 0);
+      return shape === null ? null : JSON.stringify(shape);
+    } catch (_) {
+      return null;
+    }
   }
   function gsapStepExposureShape(entries) {
-    return JSON.stringify(entries.map((entry) => gsapStepEntryShape(entry)));
+    const shapes = entries.map((entry) => gsapStepEntryShape(entry));
+    return shapes.some((shape) => shape === null) ? null : JSON.stringify(shapes);
   }
   function gsapStepExposureToken(shape) {
     // The token IS the exact serialized shape (Sol r25): a 32-bit non-crypto

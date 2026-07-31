@@ -2055,29 +2055,22 @@ describe('native motion runtime bridge', () => {
     // tentativas). Geramos DOIS valores de x cujos shapes colidem sob o hash:
     // mutação + re-inspeção manteria o token idêntico e o patch retido
     // passaria, sobrescrevendo a mutação. O token deve ser o SHAPE exato.
+    // Par pré-computado cujos SHAPES (formato canônico atual) colidem sob
+    // FNV-1a 32-bit — prova que hash não implementa o contrato exato.
     const fnv = (value) => {
       let result = 2166136261;
       for (let index = 0; index < value.length; index += 1) {
         result ^= value.charCodeAt(index);
         result = Math.imul(result, 16777619);
       }
-      return (result >>> 0).toString(36);
+      return result >>> 0;
     };
-    const entryShape = (entry) => JSON.stringify(Object.keys(entry).filter((k) => k !== 'parent').sort()
-      .map((k) => [k, String(entry[k])]));
-    const shapeFor = (headX) => JSON.stringify([
-      entryShape({ x: headX, duration: 1 }),
-      entryShape({ x: 500001, duration: 1 }),
-      entryShape({ x: 1000001, duration: 1 }),
-    ]);
-    const seen = new Map();
-    let xA = null; let xB = null;
-    for (let candidate = 1; candidate < 5000000; candidate += 1) {
-      const digest = fnv(shapeFor(candidate));
-      if (seen.has(digest)) { xA = seen.get(digest); xB = candidate; break; }
-      seen.set(digest, candidate);
-    }
-    expect(xA).not.toBeNull();
+    const entryShape = (n) => JSON.stringify([['duration', 'number:1'], ['x', `number:${n}`]]);
+    const shapeFor = (headX) => JSON.stringify([entryShape(headX), entryShape(500001), entryShape(1000001)]);
+    const xA = 220809;
+    const xB = 1012896;
+    expect(fnv(shapeFor(xA))).toBe(fnv(shapeFor(xB))); // colisão real
+    expect(shapeFor(xA)).not.toBe(shapeFor(xB)); // shapes exatos divergem
 
     const vars = {
       keyframes: [
@@ -2103,6 +2096,46 @@ describe('native motion runtime bridge', () => {
     sendStep(selection, motion, 'x', 0, '777');
     expect(vars.keyframes[0].x).toBe(xB);
     expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('the shape serializes NESTED namespaces deeply — attr-only differences distinguish entries (Sol r26)', () => {
+    document.body.innerHTML = '<main><div id="ksn2"></div></main>';
+    const target = document.getElementById('ksn2');
+    // A e B diferem SÓ em attr.data-owner: um serializer raso colapsa ambos em
+    // "[object Object]" → shapes idênticos → swap atravessa o gate e o patch
+    // retido edita outra entry.
+    const entryA = { x: 100, attr: { 'data-owner': 'A' }, duration: 1, parent: {} };
+    const entryB = { x: 100, attr: { 'data-owner': 'B' }, duration: 1, parent: {} };
+    const entryC = { x: 300, duration: 1, parent: {} };
+    const vars = { keyframes: [entryA, entryB, entryC], duration: 3 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // Página troca A/B; UI re-inspeciona (token re-mintado da verdade nova).
+    vars.keyframes[0] = entryB;
+    vars.keyframes[1] = entryA;
+    grabMotion(target, messages);
+
+    // Patch retido da exposição VELHA — token deve divergir → recusa.
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 0, '777');
+    expect(entryA.x).toBe(100);
+    expect(entryB.x).toBe(100);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // Exposição fresca edita o ocupante atual do índice.
+    const regrab = grabMotion(target, messages);
+    sendStep(regrab.selection, regrab.motion, 'x', 0, '777');
+    expect(entryB.x).toBe(777);
+    expect(entryA.x).toBe(100);
 
     delete window.gsap;
     window.postMessage = originalPostMessage;
