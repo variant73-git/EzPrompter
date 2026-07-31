@@ -2120,8 +2120,17 @@ function nativeMotionRuntimeBridge() {
             ...(entryPlan && Array.isArray(entryPlan.steps) ? {
               steps: entryPlan.steps.map((step, stepIndex, list) => {
                 // Frozen-run members belong to the END writer (journal
-                // separation) — their diamond points at the end edit.
-                const runMember = entryPlan.run.includes(step.bucket);
+                // separation) — their diamond points at the end edit. The
+                // OWNERSHIP truth is the FROZEN binding's run once one exists
+                // (Sol r6): a collision edit widens the recomputed run, but
+                // the writers keep their frozen split — locking the collided
+                // step here would refuse a valid edit and point the user at
+                // the end, which edits a DIFFERENT bucket. The fresh plan's
+                // run only decides ownership before the first write.
+                const frozenBinding = entryBindingState(animation, track.property).binding;
+                const runMember = frozenBinding
+                  ? frozenBinding.buckets.includes(step.bucket)
+                  : entryPlan.run.includes(step.bucket);
                 const editable = keyframeEditReason == null && !runMember;
                 return {
                   entryIndex: step.rawEntryIndex,

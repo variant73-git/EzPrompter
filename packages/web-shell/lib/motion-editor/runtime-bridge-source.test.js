@@ -1188,6 +1188,50 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('keeps a collided step editable after re-inspection — UI ownership follows the FROZEN run (Sol r6)', () => {
+    document.body.innerHTML = '<main><div id="ksf"></div></main>';
+    const target = document.getElementById('ksf');
+    // [100,200,300] → step idx1 = 300 (colide com o end): o plano FRESCO
+    // engloba 1–2 no run, mas o binding congelou o run = [idx2] e o writer
+    // segue aceitando idx1. A UI deve seguir o run CONGELADO — senão trava
+    // um step editável e aponta pro end, que edita OUTRO bucket.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 300, 300]);
+
+    // RE-INSPEÇÃO pós-colisão: o step 1 continua editável (run congelado),
+    // só o terminal é 'final'.
+    const regrab = grabMotion(target, messages);
+    const xTrack = regrab.motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.steps.map((step) => ({ entryIndex: step.entryIndex, editable: step.editable }))).toEqual([
+      { entryIndex: 0, editable: true },
+      { entryIndex: 1, editable: true },
+      { entryIndex: 2, editable: false },
+    ]);
+
+    // E o rollback do step segue funcionando.
+    sendStep(regrab.selection ?? selection, regrab.motion, 'x', 1, '200');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200, 300]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
