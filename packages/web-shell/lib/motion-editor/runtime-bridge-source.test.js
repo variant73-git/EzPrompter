@@ -2179,6 +2179,53 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('same-SOURCE closure swaps are caught by function IDENTITY — pre-write and post-binding (Sol r28)', () => {
+    document.body.innerHTML = '<main><div id="ksc2"></div></main>';
+    const target = document.getElementById('ksc2');
+    // makeEase(1) e makeEase(2) têm o MESMO source — o token não muda, mas o
+    // invalidate re-renderiza com a curva nova, deslocando canal INTOCADO que
+    // o journal não desfaz. Identidade === registrada na exposição e congelada
+    // no binding pega o swap nos dois momentos.
+    const makeEase = (power) => (p) => p ** power;
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, ease: makeEase(1), duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // Swap silencioso pré-1º-write (mesmo source): recusa.
+    vars.keyframes[1].ease = makeEase(2);
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 0, '150');
+    expect(vars.keyframes[0].x).toBe(100);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // Re-inspeção destrava; edit + binding congelam as identidades novas.
+    const regrab = grabMotion(target, messages);
+    sendStep(regrab.selection, regrab.motion, 'x', 0, '150');
+    expect(vars.keyframes[0].x).toBe(150);
+
+    // Swap PÓS-binding: o restore (journal-hit) também recusa via staleness.
+    vars.keyframes[1].ease = makeEase(3);
+    tween.invalidate.mockClear();
+    sendStep(regrab.selection, regrab.motion, 'x', 0, '100');
+    expect(vars.keyframes[0].x).toBe(150);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

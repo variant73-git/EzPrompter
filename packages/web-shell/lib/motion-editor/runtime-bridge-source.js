@@ -2168,6 +2168,10 @@ function nativeMotionRuntimeBridge() {
                   // full shape drifts legitimately with the bridge's own edits,
                   // but each UNTOUCHED entry must still match what the UI saw.
                   entryShapes: new Map(entryPlan.steps.map((step) => [step.rawEntryIndex, gsapStepEntryShape(step.entry)])),
+                  // Function IDENTITIES over ALL live entries (Sol r28): a
+                  // swapped same-source closure on ANY entry re-renders on
+                  // the next invalidate — collateral to untouched channels.
+                  allEntryConfigFns: entryPlan.allEntries.map((planEntry) => gsapEntryConfigFns(planEntry)),
                 });
               }
               return { steps: entryPlan.steps.map((step, stepIndex, list) => {
@@ -3545,6 +3549,29 @@ function nativeMotionRuntimeBridge() {
       return null;
     }
   }
+  // Entry-root CONFIG function identities (Sol r28): same-source closures
+  // (makeEase(1) vs makeEase(2)) share a shape but render differently — the
+  // invalidate would shift an UNTOUCHED channel the journal cannot undo.
+  // Identity (===) is recorded at exposure and frozen in the binding, and
+  // revalidated before every invalidating operation.
+  function gsapEntryConfigFns(entry) {
+    const fns = new Map();
+    try {
+      gsapForInKeys(entry).forEach((key) => {
+        if (GSAP_CONFIG_VARS.has(key) && typeof entry[key] === 'function') fns.set(key, entry[key]);
+      });
+    } catch (_) {}
+    return fns;
+  }
+  function gsapConfigFnsMatch(entry, recorded) {
+    const current = gsapEntryConfigFns(entry);
+    if (current.size !== recorded.size) return false;
+    for (const [key, fn] of recorded) {
+      if (current.get(key) !== fn) return false;
+    }
+    return true;
+  }
+
   function gsapStepExposureShape(entries) {
     const shapes = entries.map((entry) => gsapStepEntryShape(entry));
     return shapes.some((shape) => shape === null) ? null : JSON.stringify(shapes);
@@ -3674,9 +3701,12 @@ function nativeMotionRuntimeBridge() {
     // brand-new writer our invalidate would materialize (Sol r92, the r36
     // class). runBackwards is absolute — no entry had it at freeze time (the
     // hazard scan locks the plan otherwise).
-    const entryStatesIntact = !binding.allEntryStates || binding.allEntryStates.every(({ entry, namespace, child }) => {
+    const entryStatesIntact = !binding.allEntryStates || binding.allEntryStates.every(({ entry, namespace, child, configFns }) => {
       if (!entry || typeof entry !== 'object' || entry.runBackwards) return false;
       if (gsapEntryHasTemporalModifier(entry, child)) return false; // absolute — none existed at freeze (Sol r93/r94)
+      // Config-fn identity frozen too (Sol r28): a swapped same-source
+      // closure would re-render collaterally on the next invalidate.
+      if (configFns && !gsapConfigFnsMatch(entry, configFns)) return false;
       // The frozen entry must still BE the live child's vars (Sol r17): a
       // replaced child.vars detaches the bucket — a restore would write the
       // DEAD object (the reader lies) while invalidate reprocesses the NEW
@@ -3753,6 +3783,7 @@ function nativeMotionRuntimeBridge() {
         entry: frozenEntry,
         namespace: gsapEntryPropertyNamespace(frozenEntry, property),
         child: gsapEntryChildTweens.get(frozenEntry) || null,
+        configFns: gsapEntryConfigFns(frozenEntry),
       })),
       end: numericCss(sampleGsapValue(record, property, 1)),
       stepOriginals: new Map(),
@@ -3990,7 +4021,14 @@ function nativeMotionRuntimeBridge() {
       if (!exposure || !exposureToken || exposureToken !== exposure.token
         || exposure.entries.get(entryIndex) !== frozenEntry
         || !exposure.entryShapes
-        || gsapStepEntryShape(frozenEntry) !== exposure.entryShapes.get(entryIndex)) {
+        || gsapStepEntryShape(frozenEntry) !== exposure.entryShapes.get(entryIndex)
+        // Config-fn IDENTITY across ALL entries (Sol r28): a same-source
+        // closure swap anywhere re-renders collaterally on our invalidate.
+        || !exposure.allEntryConfigFns
+        || !binding.allEntries
+        || binding.allEntries.length !== exposure.allEntryConfigFns.length
+        || !binding.allEntries.every((sibling, siblingIndex) =>
+          gsapConfigFnsMatch(sibling, exposure.allEntryConfigFns[siblingIndex]))) {
         throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
       }
     }
