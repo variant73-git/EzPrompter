@@ -3675,6 +3675,26 @@ function nativeMotionRuntimeBridge() {
       if (gsapBucketsSharedWithOtherTween(animation, binding.allBuckets)) {
         throw bridgeError('unsupported_patch', 'These keyframes are shared with another animation and cannot be restored safely.');
       }
+      // The END restore pre-simulates too (Sol r14, the r13 class): a step
+      // edit that landed on the ORIGINAL end extends the restored hold, so
+      // the walk crosses it into a pair the writes never examined
+      // (['10px','50px','100px'] → idx0='20%' → END='200px' → idx1='100px' →
+      // restore END → ['20%','100px','100px'] walks into %×px → plan null →
+      // binding stale → the restore's own inverse refused). Simulated over
+      // the FROZEN buckets with the run replaced by its originals.
+      {
+        const simulated = binding.allBuckets.map((bucket) => {
+          const runIndex = binding.buckets.indexOf(bucket);
+          return runIndex >= 0 ? binding.originals[runIndex] : bucket[property];
+        });
+        for (let index = simulated.length - 1; index > 0; index -= 1) {
+          const relation = gsapValueEquivalence(property, simulated[index - 1], simulated[simulated.length - 1]);
+          if (relation === 'ambiguous') {
+            throw bridgeError('unsupported_patch', 'Undo the later keyframe edits first — restoring this value now would make the animation uneditable.');
+          }
+          if (relation === 'different') break;
+        }
+      }
       binding.buckets.forEach((bucket, index) => { bucket[property] = binding.originals[index]; });
     } else {
       // FULL plan demanded immediately before a NON-RESTORE mutation

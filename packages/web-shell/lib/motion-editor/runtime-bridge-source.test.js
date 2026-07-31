@@ -1511,6 +1511,53 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('pre-simulates the END restore too — a restore whose hold reaches a cross-unit step refuses; LIFO works (Sol r14)', () => {
+    document.body.innerHTML = '<main><div id="ksy"></div></main>';
+    const target = document.getElementById('ksy');
+    // ['10px','50px','100px'] → step idx0='20%' (abaixo do break) → END='200px'
+    // → step idx1='100px' (= end ORIGINAL). Restore do END pra '100px' criaria
+    // ['20%','100px','100px']: o walk atravessa o hold novo e examina %×px no
+    // idx0 → plano null → binding stale → a inversa do restore ('200px') seria
+    // recusada. O restore do END pré-simula (run congelado → originals).
+    const vars = {
+      keyframes: [
+        { x: '10px', duration: 1, parent: {} },
+        { x: '50px', duration: 1, parent: {} },
+        { x: '100px', duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 0, '20%');
+    sendRetarget(selection, motion, '200px');
+    sendStep(selection, motion, 'x', 1, '100px');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['20%', '100px', '200px']);
+
+    // Passo 5: restore do END fora de ordem — recusa ANTES de mutar.
+    tween.invalidate.mockClear();
+    sendRetarget(selection, motion, '100px');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['20%', '100px', '200px']);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // LIFO: idx1 → END → idx0, tudo verbatim.
+    sendStep(selection, motion, 'x', 1, '50px');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['20%', '50px', '200px']);
+    sendRetarget(selection, motion, '100px');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['20%', '50px', '100px']);
+    sendStep(selection, motion, 'x', 0, '10px');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['10px', '50px', '100px']);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
