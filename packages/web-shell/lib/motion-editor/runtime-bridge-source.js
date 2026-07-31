@@ -1865,7 +1865,41 @@ function nativeMotionRuntimeBridge() {
     // `allEntries` persists EVERY live entry the plan walked — carriers or
     // not: a spliced non-carrier can still alias a bucket through its own
     // sub-fields and must stay visible to the binding validation (Sol r90).
-    return { run: buckets.slice(start), buckets, carriers, allEntries: orderedEntries };
+    // `steps` — the phase-2 addressable view of the SAME carriers: the
+    // canonical transactional address is rawEntryIndex (position in the LIVE
+    // entry order — allEntries), never an offset. endOffset is POSITIONING
+    // metadata only: the child's rendered endpoint normalized by the inner
+    // timeline's own duration (the embedded timeline is stretched to the
+    // parent's duration, so the parent duration would misplace every diamond);
+    // duplicate endpoints (duration:0 entries) and a zero total duration make
+    // offsets non-unique/undefined — Sol r2 blocker, probe _probe-phase2-zerodur.mjs.
+    const timelineTotal = (() => {
+      try {
+        const timeline = animation.timeline;
+        if (!timeline || typeof timeline.duration !== 'function') return null;
+        const total = timeline.duration();
+        return Number.isFinite(total) && total > 0 ? total : null;
+      } catch (_) { return null; }
+    })();
+    const steps = carriers.map((carrier) => {
+      let endOffset = null;
+      const child = gsapEntryChildTweens.get(carrier.entry);
+      if (child && timelineTotal != null
+        && typeof child.startTime === 'function' && typeof child.duration === 'function') {
+        try {
+          const end = child.startTime() + child.duration();
+          if (Number.isFinite(end)) endOffset = Math.max(0, Math.min(1, end / timelineTotal));
+        } catch (_) {}
+      }
+      return {
+        rawEntryIndex: orderedEntries.indexOf(carrier.entry),
+        entry: carrier.entry,
+        bucket: carrier.bucket,
+        namespace: carrier.namespace,
+        endOffset,
+      };
+    });
+    return { run: buckets.slice(start), buckets, carriers, allEntries: orderedEntries, steps };
   }
 
   function gsapEditableTracks(animation, vars, target, animatedProps) {
@@ -2080,6 +2114,16 @@ function nativeMotionRuntimeBridge() {
             ...track,
             keyframeEditable: keyframeEditReason == null,
             ...(keyframeEditReason ? { keyframeEditReason } : {}),
+            // Phase-2 addressable steps: entryIndex is the canonical address
+            // (raw position in the live entry order); offset positions the
+            // diamond only and may be null/duplicated (zero-duration cases).
+            ...(entryPlan && Array.isArray(entryPlan.steps) ? {
+              steps: entryPlan.steps.map((step) => ({
+                entryIndex: step.rawEntryIndex,
+                offset: step.endOffset,
+                value: String(step.bucket[track.property]),
+              })),
+            } : {}),
             ownership: writerOwnership({
               clipId: id,
               animation,

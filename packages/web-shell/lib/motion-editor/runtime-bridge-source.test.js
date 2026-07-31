@@ -882,6 +882,122 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  // ---- FASE-2 timeline: steps[] endereçáveis por rawEntryIndex ------------------
+  // Design-lock Sol r0–r3 (2026-07-31): endereço canônico transacional =
+  // rawEntryIndex (índice na ordem VIVA das entries — allEntries do plano);
+  // endOffset = endpoint renderizado do child / tl.duration(), POSICIONAMENTO
+  // apenas (probe zero-dur: endpoints duplicam; total-zero: 0/0 → null).
+
+  it('exposes addressable steps with RAW entry indexes (missing-prop entries keep their slot)', () => {
+    document.body.innerHTML = '<main><div id="kst"></div></main>';
+    const target = document.getElementById('kst');
+    // [{x:100},{opacity:.5},{x:300}] — o 2º carrier de x é a entry RAW 2 (probe E):
+    // um índice de bucket filtrado leria/escreveria a entry errada.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { opacity: 0.5, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.steps).toEqual([
+      { entryIndex: 0, offset: null, value: '100' },
+      { entryIndex: 2, offset: null, value: '300' },
+    ]);
+    const opacityTrack = motion.tracks.find((track) => track.property === 'opacity');
+    expect(opacityTrack.steps).toEqual([{ entryIndex: 1, offset: null, value: '0.5' }]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('positions steps at the child RENDERED ENDPOINT normalized by the inner timeline duration', () => {
+    document.body.innerHTML = '<main><div id="kso"></div></main>';
+    const target = document.getElementById('kso');
+    // Probe B/zero-dur: endpoints vêm de startTime()+duration() dos children,
+    // normalizados por tl.duration() (NUNCA pelo duration do parent — stretch);
+    // duration:0 no meio duplica o endpoint (offsets iguais, entryIndex distintos).
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 0, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 2,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const childFor = (entry, start, dur) => ({
+      vars: entry, startTime: () => start, duration: () => dur, _initted: true,
+    });
+    tween.timeline = {
+      duration: () => 2,
+      getChildren: () => [
+        childFor(vars.keyframes[0], 0, 1),
+        childFor(vars.keyframes[1], 1, 0),
+        childFor(vars.keyframes[2], 1, 1),
+      ],
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.steps).toEqual([
+      { entryIndex: 0, offset: 0.5, value: '100' },
+      { entryIndex: 1, offset: 0.5, value: '200' },
+      { entryIndex: 2, offset: 1, value: '300' },
+    ]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('reports null step offsets when the inner timeline duration is zero (0/0 has no address)', () => {
+    document.body.innerHTML = '<main><div id="ksz"></div></main>';
+    const target = document.getElementById('ksz');
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 0, parent: {} },
+        { x: 200, duration: 0, parent: {} },
+      ],
+      duration: 0,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+    const childFor = (entry) => ({ vars: entry, startTime: () => 0, duration: () => 0, _initted: true });
+    tween.timeline = {
+      duration: () => 0,
+      getChildren: () => [childFor(vars.keyframes[0]), childFor(vars.keyframes[1])],
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.steps).toEqual([
+      { entryIndex: 0, offset: null, value: '100' },
+      { entryIndex: 1, offset: null, value: '200' },
+    ]);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE desired values on entry-edits before any mutation (Sol r2)', () => {
     document.body.innerHTML = '<main><div id="kfr"></div></main>';
     const target = document.getElementById('kfr');
