@@ -3516,7 +3516,10 @@ function nativeMotionRuntimeBridge() {
         if (typeof value !== 'object') return `${typeof value}:${String(value)}`;
         if (seen.has(value) || depth > 6) return null;
         seen.add(value);
-        const keys = gsapForInKeys(value).filter((key) => key !== 'parent').sort();
+        // Only the GSAP backedge is excluded — by LOCATION (entry root), not
+        // by name: a nested `parent` (attr.parent) is a legitimate animated
+        // data key (fase-1 r110/r114) and must enter the shape (Sol r30).
+        const keys = gsapForInKeys(value).filter((key) => !(depth === 0 && key === 'parent')).sort();
         const out = [];
         for (const key of keys) {
           let owner = value;

@@ -2277,6 +2277,42 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('NESTED parent keys are DATA and enter the shape — only the root backedge is excluded (Sol r30)', () => {
+    document.body.innerHTML = '<main><div id="ksp"></div></main>';
+    const target = document.getElementById('ksp');
+    // attr.parent é canal animado legítimo (r110/r114 fase-1) — a exclusão do
+    // backedge só vale na RAIZ da entry. Mutar attr.parent pré-write deve
+    // divergir o shape e recusar o patch retido.
+    const vars = {
+      keyframes: [
+        { x: 100, attr: { parent: 'A' }, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    vars.keyframes[0].attr.parent = 'B'; // mutação de DADO aninhado
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 0, '150');
+    expect(vars.keyframes[0].x).toBe(100);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    const regrab = grabMotion(target, messages);
+    sendStep(regrab.selection, regrab.motion, 'x', 0, '150');
+    expect(vars.keyframes[0].x).toBe(150);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

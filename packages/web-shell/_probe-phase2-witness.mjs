@@ -12,7 +12,7 @@ import { getRuntimeBridgeSource } from './lib/motion-editor/runtime-bridge-sourc
 const gsapSrc = readFileSync('/Users/adilsonporto/Desktop/IA/Unspirit-Clone-1to1/site/assets/gsap/3.15.0/gsap.min.js', 'utf8');
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
-const ids = ['st', 'ed', 'hold', 'raw', 'lifo', 'zd', 'col', 'px'];
+const ids = ['st', 'ed', 'hold', 'raw', 'lifo', 'zd', 'col', 'px', 'ap'];
 await page.setContent(ids.map((id) => `<div id="${id}" style="width:50px;height:50px"></div>`).join(''));
 await page.addScriptTag({ content: gsapSrc });
 await page.evaluate(() => {
@@ -25,6 +25,7 @@ await page.evaluate(() => {
   gsap.to('#zd', { keyframes: [{ x: 100, duration: 1 }, { x: 200, duration: 0 }, { x: 300, duration: 1 }] });
   gsap.to('#col', { keyframes: [{ x: 100 }, { x: 200 }, { x: 300 }], duration: 300 });
   gsap.to('#px', { keyframes: [{ x: '100px' }, { x: '200px' }, { x: '300px' }], duration: 300 });
+  gsap.to('#ap', { keyframes: [{ x: 100, attr: { parent: 'A' } }, { x: 200 }, { x: 300 }], duration: 300 });
 });
 
 const captured = await page.evaluate((src) => {
@@ -164,6 +165,20 @@ const captured = await page.evaluate((src) => {
     sendStep(grabbed, motion.id, 'x', 1, '200px');
     out.pxRestored = entriesX('px');
   }
+  // [ap] Sol r30: attr.parent é DADO — mutação pós-exposição recusa o patch
+  // retido antes de journal/mutação/invalidate; re-inspeção destrava.
+  {
+    const grabbed = grab('ap');
+    const motion = grabbed.motion[0];
+    const tween = tweenOf('ap');
+    tween.vars.keyframes[0].attr.parent = 'B';
+    sendStep(grabbed, motion.id, 'x', 0, '150');
+    out.apRefused = entriesX('ap');
+    out.apAttr = tween.vars.keyframes[0].attr.parent;
+    const regrabbed = grab('ap');
+    sendStep(regrabbed, regrabbed.motion[0].id, 'x', 0, '150');
+    out.apApplied = entriesX('ap');
+  }
   return out;
 }, getRuntimeBridgeSource());
 
@@ -215,6 +230,10 @@ console.log('\n[px] pré-simulação cross-unit (Sol r5)');
 check("'250' (sem unidade) recusa antes de mutar", JSON.stringify(captured.pxRefused) === '["100px","200px","300px"]', JSON.stringify(captured.pxRefused));
 check("'250px' escreve", JSON.stringify(captured.pxWritten) === '["100px","250px","300px"]', JSON.stringify(captured.pxWritten));
 check("rollback '200px' verbatim", JSON.stringify(captured.pxRestored) === '["100px","200px","300px"]', JSON.stringify(captured.pxRestored));
+
+console.log('\n[ap] attr.parent como DADO no shape (Sol r30)');
+check('mutação pós-exposição recusa o patch retido', JSON.stringify(captured.apRefused) === '[100,200,300]' && captured.apAttr === 'B', JSON.stringify({ entries: captured.apRefused, attr: captured.apAttr }));
+check('re-inspeção destrava (x=150)', JSON.stringify(captured.apApplied) === '[150,200,300]', JSON.stringify(captured.apApplied));
 
 console.log(failures === 0 ? '\nWITNESS: TUDO VERDE' : `\nWITNESS: ${failures} FALHAS`);
 process.exit(failures === 0 ? 0 : 1);
