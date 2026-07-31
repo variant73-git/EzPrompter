@@ -2157,7 +2157,15 @@ function nativeMotionRuntimeBridge() {
               const nextEntries = new Map(entryPlan.steps.map((step) => [step.rawEntryIndex, step.entry]));
               const exposureShape = gsapStepExposureShape(entryPlan.allEntries);
               const exposureToken = gsapStepExposureToken(exposureShape);
-              exposures.set(track.property, { token: exposureToken, shape: exposureShape, entries: nextEntries });
+              exposures.set(track.property, {
+                token: exposureToken,
+                shape: exposureShape,
+                entries: nextEntries,
+                // Per-entry shapes for the FIRST-TOUCH gate (Sol r24): the
+                // full shape drifts legitimately with the bridge's own edits,
+                // but each UNTOUCHED entry must still match what the UI saw.
+                entryShapes: new Map(entryPlan.steps.map((step) => [step.rawEntryIndex, gsapStepEntryShape(step.entry)])),
+              });
               return { steps: entryPlan.steps.map((step, stepIndex, list) => {
                 // Frozen-run members belong to the END writer (journal
                 // separation) — their diamond points at the end edit. The
@@ -3481,8 +3489,8 @@ function nativeMotionRuntimeBridge() {
   // Deterministic across bridges when the page reloads identically; any
   // observable reorder/shape change (the r19 class) changes it. Enumeration
   // via the for..in mirror; `parent` is GSAP's mutable backedge, excluded.
-  function gsapStepExposureShape(entries) {
-    return JSON.stringify(entries.map((entry) => gsapForInKeys(entry)
+  function gsapStepEntryShape(entry) {
+    return JSON.stringify(gsapForInKeys(entry)
       .filter((key) => key !== 'parent')
       .sort()
       .map((key) => {
@@ -3491,7 +3499,10 @@ function nativeMotionRuntimeBridge() {
           return ['css', gsapForInKeys(value).sort().map((cssKey) => [cssKey, String(value[cssKey])])];
         }
         return [key, typeof value === 'function' ? 'fn' : String(value)];
-      })));
+      }));
+  }
+  function gsapStepExposureShape(entries) {
+    return JSON.stringify(entries.map((entry) => gsapStepEntryShape(entry)));
   }
   function gsapStepExposureToken(shape) {
     return `sx-${hash(shape)}`;
@@ -3918,6 +3929,22 @@ function nativeMotionRuntimeBridge() {
       throw bridgeError('unsupported_patch', 'This step holds the final value — edit it from the end keyframe.');
     }
     const journal = binding.stepOriginals;
+    // FIRST TOUCH of an index runs the exposure gate REGARDLESS of who
+    // created the shared binding (Sol r24): the END writer can freeze a
+    // binding over a post-reorder order, and a retained step patch (stale
+    // token) would otherwise skip the gate and edit an entry the UI never
+    // showed. Identity + token + PER-ENTRY shape (the full shape drifts
+    // legitimately with the bridge's own edits elsewhere).
+    if (!journal.has(entryIndex)) {
+      const exposure = gsapStepExposures.get(animation)?.get(property);
+      const exposureToken = typeof descriptor?.token === 'string' ? descriptor.token : null;
+      if (!exposure || !exposureToken || exposureToken !== exposure.token
+        || exposure.entries.get(entryIndex) !== frozenEntry
+        || !exposure.entryShapes
+        || gsapStepEntryShape(frozenEntry) !== exposure.entryShapes.get(entryIndex)) {
+        throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
+      }
+    }
     const original = journal.has(entryIndex) ? journal.get(entryIndex) : carrier.bucket[property];
     if (gsapJournalValueMatches(desired, original)) {
       // RESTORE lane — binding-first, never a fresh plan (a rollback must

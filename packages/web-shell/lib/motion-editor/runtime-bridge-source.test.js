@@ -1541,19 +1541,22 @@ describe('native motion runtime bridge', () => {
 
     const { selection, motion } = grabMotion(target, messages);
     sendStep(selection, motion, 'width', 0, '20%');
-    sendStep(selection, motion, 'width', 1, '100%');
+    // A UI relê o payload refrescado entre edits (token por estado-da-verdade).
+    const grab2 = grabMotion(target, messages);
+    sendStep(grab2.selection, grab2.motion, 'width', 1, '100%');
     expect(vars.keyframes.map((entry) => entry.width)).toEqual(['20%', '100%', '100%']);
 
     // Fora de ordem: recusa ANTES de mutar.
     tween.invalidate.mockClear();
-    sendStep(selection, motion, 'width', 0, '10px');
+    sendStep(grab2.selection, grab2.motion, 'width', 0, '10px');
     expect(vars.keyframes.map((entry) => entry.width)).toEqual(['20%', '100%', '100%']);
     expect(tween.invalidate).not.toHaveBeenCalled();
 
-    // LIFO: idx1 primeiro, depois idx0 — ambos restauram verbatim.
-    sendStep(selection, motion, 'width', 1, '50%');
+    // LIFO: idx1 primeiro, depois idx0 — ambos restauram verbatim (journal
+    // já tocado → gate de exposição não se aplica).
+    sendStep(grab2.selection, grab2.motion, 'width', 1, '50%');
     expect(vars.keyframes.map((entry) => entry.width)).toEqual(['20%', '50%', '100%']);
-    sendStep(selection, motion, 'width', 0, '10px');
+    sendStep(grab2.selection, grab2.motion, 'width', 0, '10px');
     expect(vars.keyframes.map((entry) => entry.width)).toEqual(['10px', '50%', '100%']);
 
     delete window.gsap;
@@ -1586,21 +1589,22 @@ describe('native motion runtime bridge', () => {
     const { selection, motion } = grabMotion(target, messages);
     sendStep(selection, motion, 'x', 0, '20%');
     sendRetarget(selection, motion, '200px');
-    sendStep(selection, motion, 'x', 1, '100px');
+    const grab2 = grabMotion(target, messages);
+    sendStep(grab2.selection, grab2.motion, 'x', 1, '100px');
     expect(vars.keyframes.map((entry) => entry.x)).toEqual(['20%', '100px', '200px']);
 
     // Passo 5: restore do END fora de ordem — recusa ANTES de mutar.
     tween.invalidate.mockClear();
-    sendRetarget(selection, motion, '100px');
+    sendRetarget(grab2.selection, grab2.motion, '100px');
     expect(vars.keyframes.map((entry) => entry.x)).toEqual(['20%', '100px', '200px']);
     expect(tween.invalidate).not.toHaveBeenCalled();
 
-    // LIFO: idx1 → END → idx0, tudo verbatim.
-    sendStep(selection, motion, 'x', 1, '50px');
+    // LIFO: idx1 → END → idx0, tudo verbatim (journal já tocado).
+    sendStep(grab2.selection, grab2.motion, 'x', 1, '50px');
     expect(vars.keyframes.map((entry) => entry.x)).toEqual(['20%', '50px', '200px']);
-    sendRetarget(selection, motion, '100px');
+    sendRetarget(grab2.selection, grab2.motion, '100px');
     expect(vars.keyframes.map((entry) => entry.x)).toEqual(['20%', '50px', '100px']);
-    sendStep(selection, motion, 'x', 0, '10px');
+    sendStep(grab2.selection, grab2.motion, 'x', 0, '10px');
     expect(vars.keyframes.map((entry) => entry.x)).toEqual(['10px', '50px', '100px']);
 
     delete window.gsap;
@@ -1998,6 +2002,47 @@ describe('native motion runtime bridge', () => {
     expect(vars.keyframes[1].x).toBe(30);
     sendStep(regrab.selection, regrab.motion, 'x', 1, '20');
     expect(vars.keyframes[1].x).toBe(20);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('the exposure gate runs at the FIRST TOUCH of each index even on an END-created binding (Sol r24)', () => {
+    document.body.innerHTML = '<main><div id="ksx"></div></main>';
+    const target = document.getElementById('ksx');
+    // [A{10}, B{10}, C{100}]: patch do step idx0 retido (token T); página troca
+    // A/B; o END cria o binding fresco sobre [B,A,C]; o patch retido chegava
+    // com binding existente e pulava o gate — editando B com a UI tendo
+    // mostrado A. O gate roda no 1º toque de cada índice.
+    const entryA = { x: 10, duration: 1, parent: {} };
+    const entryB = { x: 10, duration: 2, parent: {} };
+    const entryC = { x: 100, duration: 1, parent: {} };
+    const vars = { keyframes: [entryA, entryB, entryC], duration: 4 };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // Página troca A/B ANTES de qualquer write.
+    vars.keyframes[0] = entryB;
+    vars.keyframes[1] = entryA;
+    // END cria o binding compartilhado sobre a ordem NOVA.
+    sendRetarget(selection, motion, '200');
+    expect(entryC.x).toBe(200);
+
+    // Patch retido do step idx0 (token da exposição VELHA) — recusa.
+    sendStep(selection, motion, 'x', 0, '20');
+    expect(entryA.x).toBe(10);
+    expect(entryB.x).toBe(10);
+
+    // Re-inspeção destrava o índice novo.
+    const regrab = grabMotion(target, messages);
+    sendStep(regrab.selection, regrab.motion, 'x', 0, '20');
+    expect(entryB.x).toBe(20); // idx0 atual = B
+    expect(entryA.x).toBe(10);
 
     delete window.gsap;
     window.postMessage = originalPostMessage;
