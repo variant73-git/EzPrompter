@@ -1717,6 +1717,48 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('random/função TOP-LEVEL irmã surgindo pós-freeze também stala — restores recusam (Sol r18)', () => {
+    document.body.innerHTML = '<main><div id="kst2"></div></main>';
+    const target = document.getElementById('kst2');
+    // Vetores restantes da classe r16/r18: random STRING e FUNÇÃO em var
+    // top-level IRMÃ (vars.y), sem tocar buckets congelados. O scan de
+    // staleness caminha o vars root (r103/r115) → stale → recusa.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '500');
+    expect(vars.keyframes[1].x).toBe(500);
+
+    vars.y = 'random(0,100)'; // string random irmã
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 1, '200');
+    expect(vars.keyframes[1].x).toBe(500);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete vars.y;
+    // Mesmo removida, a memória POSITIVA durável (r103) mantém o hazard: o
+    // PropTween pode segurar o valor sorteado. Segue recusando.
+    sendStep(selection, motion, 'x', 1, '200');
+    expect(vars.keyframes[1].x).toBe(500);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
