@@ -1856,6 +1856,38 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('clamped equivalence never masks a step WRITE as restore — opacity 2→3 edits the ramp (Sol r21)', () => {
+    document.body.innerHTML = '<main><div id="ksop"></div></main>';
+    const target = document.getElementById('ksop');
+    // O clamp visual (2≡3 no ENDPOINT renderizado) é correto pro walk/pré-sim,
+    // mas num step INTERMEDIÁRIO o valor cru molda a RAMPA (a 1/4 de 0→2 a
+    // opacidade é 0.5; de 0→3 seria 0.75). Detecção de restore usa igualdade
+    // SEM clamp do valor journalado.
+    const vars = {
+      keyframes: [
+        { opacity: 0, duration: 1, parent: {} },
+        { opacity: 2, duration: 1, parent: {} },
+        { opacity: 0, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'opacity', 1, '3');
+    expect(vars.keyframes[1].opacity).toBe(3); // WRITE, nunca no-op de restore
+    sendStep(selection, motion, 'opacity', 1, '2');
+    expect(vars.keyframes[1].opacity).toBe(2); // rollback verbatim (número)
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

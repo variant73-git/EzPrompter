@@ -3494,6 +3494,20 @@ function nativeMotionRuntimeBridge() {
       && desiredParsed.unit === binding.end.unit && desiredParsed.value === binding.end.value)
       || gsapValueEquivalence(property, String(desired), authoredEnd) === 'equal');
   }
+  // UNCLAMPED storage identity for the step journal (Sol r21): the visual
+  // clamp (opacity 2 ≡ 3 at a rendered ENDPOINT) is correct for the trailing
+  // walk and pre-simulation, but an INTERMEDIATE step's raw value shapes the
+  // RAMP — clamped equivalence would misread a genuine write (2→3) as a
+  // restore and silently no-op it. Textual identity, else same-unit numeric.
+  function gsapJournalValueMatches(desired, original) {
+    if (String(desired) === String(original)) return true;
+    const desiredParsed = numericCss(String(desired));
+    const originalParsed = numericCss(String(original));
+    return Boolean(desiredParsed && originalParsed
+      && desiredParsed.unit === originalParsed.unit
+      && desiredParsed.value === originalParsed.value);
+  }
+
   // Step-channel analog of the frozen-restore candidate: a desired landing on
   // the journal original (or the untouched bucket value) for a NON-RUN index
   // opens the binding-first restore lane. Validated state only (Sol r84).
@@ -3507,7 +3521,7 @@ function nativeMotionRuntimeBridge() {
     if (!carrier || binding.buckets.includes(carrier.bucket)) return false;
     const journal = binding.stepOriginals;
     const original = journal && journal.has(entryIndex) ? journal.get(entryIndex) : carrier.bucket[property];
-    return gsapValueEquivalence(property, String(desired), String(original)) === 'equal';
+    return gsapJournalValueMatches(desired, original);
   }
 
   // A frozen binding is only authoritative while it still DESCRIBES the tween.
@@ -3874,7 +3888,7 @@ function nativeMotionRuntimeBridge() {
     }
     const journal = binding.stepOriginals;
     const original = journal.has(entryIndex) ? journal.get(entryIndex) : carrier.bucket[property];
-    if (gsapValueEquivalence(property, desired, String(original)) === 'equal') {
+    if (gsapJournalValueMatches(desired, original)) {
       // RESTORE lane — binding-first, never a fresh plan (a rollback must
       // traverse an outage). Same terminal guards as the entry-edit restore:
       // a PROVEN resurrection hazard or cross-tween sharing refuses (Sol
