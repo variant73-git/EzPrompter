@@ -1406,6 +1406,66 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a post-edit authored mutation stales the binding — a step restore in a transaction refuses BEFORE mutating (Sol r12)', () => {
+    document.body.innerHTML = '<main><div id="ksm"></div></main>';
+    const target = document.getElementById('ksm');
+    // Caminho representativo do contraexemplo r12: mutação autoral pós-edit
+    // (runBackwards) que faria o WRITE do inverso recusar. O binding estala
+    // (gsapEntryBindingDisqualified) → candidato-restore falso → o writer
+    // recusa ANTES de mutar; a transação fica atômica com o edit preservado.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '500');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 300]);
+
+    vars.runBackwards = true; // página muda o modo autoral pós-edit
+    tween.invalidate.mockClear();
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'validate-transaction',
+        payload: {
+          transaction: {
+            id: 'tx-ks-runb',
+            patches: [{
+              id: 'p-ks-runb',
+              elementId: selection.payload.element.id,
+              kind: 'motion',
+              motionId: motion.id,
+              property: 'keyframeStep.x',
+              before: { entryIndex: 1, value: '500', exists: true },
+              value: { entryIndex: 1, value: '200', exists: true },
+            }],
+          },
+        },
+      },
+    }));
+    const validation = messages.filter((message) => message.type === 'validation-result').pop();
+    expect(validation.payload.valid).toBe(false);
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 300]); // intocado
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
