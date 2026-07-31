@@ -1631,6 +1631,46 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('random() surgindo pós-freeze em OUTRA propriedade stales o binding — restores de STEP e END recusam (Sol r16)', () => {
+    document.body.innerHTML = '<main><div id="ksr2"></div></main>';
+    const target = document.getElementById('ksr2');
+    // O invalidate do restore re-sortearia o random da página. A guarda vive
+    // na STALENESS (gsapHasRandomizedValue nas entries congeladas, r103/104):
+    // random observado → stale → recusa antes de assignment/invalidate.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '500');
+    sendRetarget(selection, motion, '350');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 350]);
+
+    // Página adiciona random noutra propriedade de uma entry viva congelada.
+    vars.keyframes[0].opacity = 'random(0,1)';
+    tween.invalidate.mockClear();
+
+    sendStep(selection, motion, 'x', 1, '200'); // undo do step
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 350]);
+    sendRetarget(selection, motion, '300'); // undo do end
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 500, 350]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
