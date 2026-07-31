@@ -668,7 +668,7 @@ describe('adapter (GSAP) keyframes on the timeline', () => {
         steps: [
           { entryIndex: 0, offset: 1 / 3, value: '100', editable: true },
           { entryIndex: 1, offset: 2 / 3, value: '200', editable: true },
-          { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final' },
+          { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final', isEnd: true },
         ],
       }],
     };
@@ -704,7 +704,7 @@ describe('adapter (GSAP) keyframes on the timeline', () => {
         steps: [
           { entryIndex: 0, offset: 1 / 3, value: '100', editable: true },
           { entryIndex: 1, offset: 2 / 3, value: '200', editable: false, reason: 'final' },
-          { entryIndex: 2, offset: 1, value: '200', editable: false, reason: 'final' },
+          { entryIndex: 2, offset: 1, value: '200', editable: false, reason: 'final', isEnd: true },
         ],
       }],
     };
@@ -718,6 +718,38 @@ describe('adapter (GSAP) keyframes on the timeline', () => {
     expect(screen.queryByLabelText('x step value')).toBeNull();
 
     delete window.gsap;
+  });
+
+  it('spaces NULL-offset steps evenly and hides the terminal by identity, not by offset (Sol r4)', () => {
+    // Total-zero duration: o bridge publica offset null em TODOS os steps.
+    // Number(null) === 0 — sem tratar null explicitamente, tudo empilha em 0%
+    // e o step final (offset null) escapa do filtro numérico e duplica o end.
+    const zeroMotion = {
+      ...adapterMotion,
+      id: 'gsap-zero',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: null },
+          { offset: 1, value: '300', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: null, value: '100', editable: true },
+          { entryIndex: 1, offset: null, value: '200', editable: true },
+          { entryIndex: 2, offset: null, value: '300', editable: false, reason: 'final', isEnd: true },
+        ],
+      }],
+    };
+    render(<TimelineHarness motion={zeroMotion} onChangeStepValue={vi.fn()} />);
+    // Terminal escondido por identidade (isEnd), nunca por offset numérico.
+    expect(screen.queryByRole('button', { name: 'x step 3' })).toBeNull();
+    const step1 = screen.getByRole('button', { name: 'x step 1' });
+    const step2 = screen.getByRole('button', { name: 'x step 2' });
+    // Espaçamento uniforme — posições distintas, nunca empilhadas em 0%.
+    expect(step1.style.left).not.toBe(step2.style.left);
+    expect(parseFloat(step1.style.left)).toBeGreaterThan(0);
+    expect(parseFloat(step2.style.left)).toBeGreaterThan(parseFloat(step1.style.left));
   });
 
   it('single-animation rows carry no chevron; selecting them still reveals their tracks', () => {

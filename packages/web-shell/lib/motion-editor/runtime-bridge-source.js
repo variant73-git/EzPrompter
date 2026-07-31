@@ -2118,7 +2118,7 @@ function nativeMotionRuntimeBridge() {
             // (raw position in the live entry order); offset positions the
             // diamond only and may be null/duplicated (zero-duration cases).
             ...(entryPlan && Array.isArray(entryPlan.steps) ? {
-              steps: entryPlan.steps.map((step) => {
+              steps: entryPlan.steps.map((step, stepIndex, list) => {
                 // Frozen-run members belong to the END writer (journal
                 // separation) — their diamond points at the end edit.
                 const runMember = entryPlan.run.includes(step.bucket);
@@ -2129,6 +2129,11 @@ function nativeMotionRuntimeBridge() {
                   value: String(step.bucket[track.property]),
                   editable,
                   ...(runMember ? { reason: 'final' } : keyframeEditReason ? { reason: keyframeEditReason } : {}),
+                  // The TERMINAL step by identity (last carrier = the end the
+                  // offset-1 diamond already shows). The UI hides it by this
+                  // flag — never by numeric offset, which is null/duplicated
+                  // in zero-duration shapes (Sol r4).
+                  ...(stepIndex === list.length - 1 ? { isEnd: true } : {}),
                 };
               }),
             } : {}),

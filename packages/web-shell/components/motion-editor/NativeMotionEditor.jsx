@@ -1627,14 +1627,16 @@ export function TimelinePanel({
           );
         })}
         {/* Fase-2: one diamond per addressable ENTRY (rawEntryIndex is the
-            address; offset only positions). The final step coincides with the
-            end diamond above and is not duplicated; a null offset (zero total
-            duration) falls back to even spacing by order. */}
+            address; offset only positions). The terminal step is hidden by
+            IDENTITY (isEnd — the end diamond above already shows it), never by
+            numeric offset: Number(null) coerces to 0 and a zero-duration shape
+            publishes null/duplicated offsets (Sol r4). A null offset falls
+            back to even spacing by order. */}
         {(track.steps || [])
-          .filter((step) => !(Number.isFinite(Number(step.offset)) && Number(step.offset) >= 0.999))
+          .filter((step) => !step.isEnd)
           .map((step, index, list) => {
             const fallback = (index + 1) / (list.length + 1);
-            const displayOffset = Number.isFinite(Number(step.offset)) ? Number(step.offset) : fallback;
+            const displayOffset = step.offset == null ? fallback : Number(step.offset);
             const left = keyframeLeft(displayOffset);
             const isSelected = selectedKeyframe?.motionId === motion.id
               && selectedKeyframe.property === track.property

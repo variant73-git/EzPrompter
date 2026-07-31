@@ -912,11 +912,11 @@ describe('native motion runtime bridge', () => {
     const xTrack = motion.tracks.find((track) => track.property === 'x');
     expect(xTrack.steps).toEqual([
       { entryIndex: 0, offset: null, value: '100', editable: true },
-      { entryIndex: 2, offset: null, value: '300', editable: false, reason: 'final' },
+      { entryIndex: 2, offset: null, value: '300', editable: false, reason: 'final', isEnd: true },
     ]);
     const opacityTrack = motion.tracks.find((track) => track.property === 'opacity');
     // Carrier único = o próprio run: sem step intermediário, edita pelo end.
-    expect(opacityTrack.steps).toEqual([{ entryIndex: 1, offset: null, value: '0.5', editable: false, reason: 'final' }]);
+    expect(opacityTrack.steps).toEqual([{ entryIndex: 1, offset: null, value: '0.5', editable: false, reason: 'final', isEnd: true }]);
 
     delete window.gsap;
     window.postMessage = originalPostMessage;
@@ -959,7 +959,7 @@ describe('native motion runtime bridge', () => {
     expect(xTrack.steps).toEqual([
       { entryIndex: 0, offset: 0.5, value: '100', editable: true },
       { entryIndex: 1, offset: 0.5, value: '200', editable: true },
-      { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final' },
+      { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final', isEnd: true },
     ]);
 
     delete window.gsap;
@@ -992,7 +992,7 @@ describe('native motion runtime bridge', () => {
     const xTrack = motion.tracks.find((track) => track.property === 'x');
     expect(xTrack.steps).toEqual([
       { entryIndex: 0, offset: null, value: '100', editable: true },
-      { entryIndex: 1, offset: null, value: '200', editable: false, reason: 'final' },
+      { entryIndex: 1, offset: null, value: '200', editable: false, reason: 'final', isEnd: true },
     ]);
 
     delete window.gsap;
