@@ -1232,6 +1232,108 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('keeps RAW addressing exact around an aliased NON-carrier entry (Sol r7)', () => {
+    document.body.innerHTML = '<main><div id="ksn"></div></main>';
+    const target = document.getElementById('ksn');
+    // [a, shared, shared, z] — o MESMO objeto (sem x) ocupa os índices 1 e 2.
+    // Os carriers de x (a=raw 0, z=raw 3) devem manter seus índices exatos;
+    // editar raw 0 nunca toca os aliased.
+    const shared = { opacity: 0.5, duration: 1, parent: {} };
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        shared,
+        shared,
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 4,
+    };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.steps.map((step) => step.entryIndex)).toEqual([0, 3]);
+    sendStep(selection, motion, 'x', 0, '150');
+    expect(vars.keyframes[0].x).toBe(150);
+    expect(vars.keyframes[1]).toBe(shared);
+    expect(vars.keyframes[2]).toBe(shared);
+    expect(shared.x).toBeUndefined();
+    sendStep(selection, motion, 'x', 0, '100');
+    expect(vars.keyframes[0].x).toBe(100);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks the plan when an aliased entry CARRIES the property — no steps, no writes (Sol r7)', () => {
+    document.body.innerHTML = '<main><div id="ksb"></div></main>';
+    const target = document.getElementById('ksb');
+    // A MESMA entry carregando x em dois índices: identidade repetida de
+    // bucket tranca o plano inteiro (guarda r43) — sem steps e o writer
+    // recusa qualquer índice.
+    const shared = { x: 200, duration: 1, parent: {} };
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        shared,
+        shared,
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.steps).toBeUndefined();
+    sendStep(selection, motion, 'x', 1, '250');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200, 200]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('locks the plan when DISTINCT entries share one css bucket — no steps, no writes (Sol r7)', () => {
+    document.body.innerHTML = '<main><div id="ksc"></div></main>';
+    const target = document.getElementById('ksc');
+    // Duas entries distintas apontando pro MESMO objeto css: escrever uma
+    // etapa mudaria as duas — bucket repetido tranca o plano (r43).
+    const sharedCss = { x: 60 };
+    const vars = {
+      keyframes: [
+        { css: sharedCss, duration: 1, parent: {} },
+        { css: sharedCss, duration: 1, parent: {} },
+      ],
+      duration: 2,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack?.steps).toBeUndefined();
+    sendStep(selection, motion, 'x', 0, '90');
+    expect(sharedCss.x).toBe(60);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

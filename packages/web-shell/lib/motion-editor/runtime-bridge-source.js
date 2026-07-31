@@ -1757,7 +1757,7 @@ function nativeMotionRuntimeBridge() {
     const carriers = [];
     let nestedCarrier = false;
     let hiddenLiveCarrier = false;
-    orderedEntries.forEach((entry) => {
+    orderedEntries.forEach((entry, entryPosition) => {
       const child = gsapEntryChildTweens.get(entry);
       const carriesInCss = entry.css && typeof entry.css === 'object' && !Array.isArray(entry.css)
         && gsapHasEnumerableProp(entry.css, property);
@@ -1807,7 +1807,11 @@ function nativeMotionRuntimeBridge() {
         return;
       }
       buckets.push(carriesInCss ? entry.css : entry);
-      carriers.push({ entry, namespace: carriesInCss ? 'css' : 'top', bucket: carriesInCss ? entry.css : entry });
+      // The occurrence index is carried FROM the traversal (Sol r7): indexOf
+      // would collapse aliased occurrences to the first. Aliased CARRIERS are
+      // locked below by repeated bucket identity either way — this keeps the
+      // address correct by construction, not by that guard.
+      carriers.push({ entry, namespace: carriesInCss ? 'css' : 'top', bucket: carriesInCss ? entry.css : entry, rawEntryIndex: entryPosition });
     });
     if (nestedCarrier) return null;
     if (hiddenLiveCarrier) return null;
@@ -1892,7 +1896,7 @@ function nativeMotionRuntimeBridge() {
         } catch (_) {}
       }
       return {
-        rawEntryIndex: orderedEntries.indexOf(carrier.entry),
+        rawEntryIndex: carrier.rawEntryIndex,
         entry: carrier.entry,
         bucket: carrier.bucket,
         namespace: carrier.namespace,
