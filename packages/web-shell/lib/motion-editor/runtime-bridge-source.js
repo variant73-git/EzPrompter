@@ -3775,10 +3775,28 @@ function nativeMotionRuntimeBridge() {
       if (plan.allEntries[entryIndex] !== frozenEntry) {
         throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
       }
-      if (!journal.has(entryIndex)) journal.set(entryIndex, carrier.bucket[property]);
-      carrier.bucket[property] = (typeof carrier.bucket[property] === 'number' && Number.isFinite(Number(desired)))
+      const coerced = (typeof carrier.bucket[property] === 'number' && Number.isFinite(Number(desired)))
         ? Number(desired)
         : desired;
+      // PRE-SIMULATE the write with the end writer's exact trailing walk
+      // (Sol r5): a desired that turns the NEXT plan ambiguous → null would
+      // also fail entryBindingState's structural re-plan, marking the binding
+      // stale and stranding the applied edit beyond its own rollback (the r2
+      // class — the router is binding-first, but staleness validation is a
+      // plan consumer too). Reject BEFORE journaling or mutating.
+      {
+        const simulated = plan.buckets.map((bucket) =>
+          (bucket === carrier.bucket ? coerced : bucket[property]));
+        for (let index = simulated.length - 1; index > 0; index -= 1) {
+          const relation = gsapValueEquivalence(property, simulated[index - 1], simulated[simulated.length - 1]);
+          if (relation === 'ambiguous') {
+            throw bridgeError('unsupported_value', 'Mixed units around this keyframe make the edit unsafe.');
+          }
+          if (relation === 'different') break;
+        }
+      }
+      if (!journal.has(entryIndex)) journal.set(entryIndex, carrier.bucket[property]);
+      carrier.bucket[property] = coerced;
     }
     binding.allExpected = binding.allBuckets.map((bucket) => bucket[property]);
     invalidatePreservingStart(animation);

@@ -12,7 +12,7 @@ import { getRuntimeBridgeSource } from './lib/motion-editor/runtime-bridge-sourc
 const gsapSrc = readFileSync('/Users/adilsonporto/Desktop/IA/Unspirit-Clone-1to1/site/assets/gsap/3.15.0/gsap.min.js', 'utf8');
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
-const ids = ['st', 'ed', 'hold', 'raw', 'lifo', 'zd', 'col'];
+const ids = ['st', 'ed', 'hold', 'raw', 'lifo', 'zd', 'col', 'px'];
 await page.setContent(ids.map((id) => `<div id="${id}" style="width:50px;height:50px"></div>`).join(''));
 await page.addScriptTag({ content: gsapSrc });
 await page.evaluate(() => {
@@ -24,6 +24,7 @@ await page.evaluate(() => {
   gsap.to('#lifo', { keyframes: [{ x: 100 }, { x: 200 }, { x: 300 }], duration: 300 });
   gsap.to('#zd', { keyframes: [{ x: 100, duration: 1 }, { x: 200, duration: 0 }, { x: 300, duration: 1 }] });
   gsap.to('#col', { keyframes: [{ x: 100 }, { x: 200 }, { x: 300 }], duration: 300 });
+  gsap.to('#px', { keyframes: [{ x: '100px' }, { x: '200px' }, { x: '300px' }], duration: 300 });
 });
 
 const captured = await page.evaluate((src) => {
@@ -145,6 +146,18 @@ const captured = await page.evaluate((src) => {
     sendStep(grabbed, motion.id, 'x', 1, '200');
     out.col2 = entriesX('col');
   }
+  // [px] pré-simulação (Sol r5): '250' cross-unit recusa ANTES de mutar;
+  // '250px' escreve e o rollback restaura verbatim
+  {
+    const grabbed = grab('px');
+    const motion = grabbed.motion[0];
+    sendStep(grabbed, motion.id, 'x', 1, '250');
+    out.pxRefused = entriesX('px');
+    sendStep(grabbed, motion.id, 'x', 1, '250px');
+    out.pxWritten = entriesX('px');
+    sendStep(grabbed, motion.id, 'x', 1, '200px');
+    out.pxRestored = entriesX('px');
+  }
   return out;
 }, getRuntimeBridgeSource());
 
@@ -191,6 +204,11 @@ check('rollback [100,200,300]', JSON.stringify(captured.zdRestored) === '[100,20
 console.log('\n[col] colisão com o end isolada pelo índice congelado');
 check('edit idx1=300 (colide): [100,300,300]', JSON.stringify(captured.col1) === '[100,300,300]', JSON.stringify(captured.col1));
 check('rollback exato [100,200,300] — nunca o run recomputado', JSON.stringify(captured.col2) === '[100,200,300]', JSON.stringify(captured.col2));
+
+console.log('\n[px] pré-simulação cross-unit (Sol r5)');
+check("'250' (sem unidade) recusa antes de mutar", JSON.stringify(captured.pxRefused) === '["100px","200px","300px"]', JSON.stringify(captured.pxRefused));
+check("'250px' escreve", JSON.stringify(captured.pxWritten) === '["100px","250px","300px"]', JSON.stringify(captured.pxWritten));
+check("rollback '200px' verbatim", JSON.stringify(captured.pxRestored) === '["100px","200px","300px"]', JSON.stringify(captured.pxRestored));
 
 console.log(failures === 0 ? '\nWITNESS: TUDO VERDE' : `\nWITNESS: ${failures} FALHAS`);
 process.exit(failures === 0 ? 0 : 1);

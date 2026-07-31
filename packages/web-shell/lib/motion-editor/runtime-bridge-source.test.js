@@ -1151,6 +1151,43 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('pre-simulates step writes — a cross-unit value that would null the next plan refuses BEFORE mutating (Sol r5)', () => {
+    document.body.innerHTML = '<main><div id="ksa"></div></main>';
+    const target = document.getElementById('ksa');
+    // ['100px','200px','300px']: escrever '250' (sem unidade) no idx1 faz o
+    // walk do PRÓXIMO plano comparar '250'×'300px' → ambiguous → plano null →
+    // entryBindingState (re-plan structuralOnly) marca o binding stale → o
+    // rollback pra '200px' é recusado: mutação aplicada sem inversa (classe r2).
+    const vars = {
+      keyframes: [
+        { x: '100px', duration: 1, parent: {} },
+        { x: '200px', duration: 1, parent: {} },
+        { x: '300px', duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // Recusa SEM invalidate e sem journal.
+    sendStep(selection, motion, 'x', 1, '250');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['100px', '200px', '300px']);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+    // Mesmo número COM unidade escreve e o rollback restaura verbatim.
+    sendStep(selection, motion, 'x', 1, '250px');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['100px', '250px', '300px']);
+    sendStep(selection, motion, 'x', 1, '200px');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual(['100px', '200px', '300px']);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
