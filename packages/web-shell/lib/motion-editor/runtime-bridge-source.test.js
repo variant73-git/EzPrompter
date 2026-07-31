@@ -1334,6 +1334,40 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('locks the plan when an entry value is a NON-FINITE number — NaN breaks staleness forever (Sol r10)', () => {
+    document.body.innerHTML = '<main><div id="ksz2"></div></main>';
+    const target = document.getElementById('ksz2');
+    // [NaN, 100, 200]: NaN passa em typeof==='number', mas allExpected com NaN
+    // faz valuesIntact falhar SEMPRE (NaN!==NaN) → binding stale após o 1º
+    // write → rollback recusado com o edit aplicado (quebra de atomicidade).
+    // O plano deve falhar FECHADO pra número não-finito: sem steps, sem writes.
+    const vars = {
+      keyframes: [
+        { x: NaN, duration: 1, parent: {} },
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.steps).toBeUndefined();
+    sendStep(selection, motion, 'x', 1, '150');
+    expect(vars.keyframes[1].x).toBe(100);
+    expect(vars.keyframes[2].x).toBe(200);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

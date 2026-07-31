@@ -1846,6 +1846,10 @@ function nativeMotionRuntimeBridge() {
     // rollback re-rolls instead of restoring (Sol r97).
     const unsafe = values.some((value) =>
       (typeof value !== 'string' && typeof value !== 'number')
+      // A non-finite number poisons the binding forever: allExpected carries
+      // NaN and NaN===NaN is false, so valuesIntact fails after the FIRST
+      // write — rollback refused with the edit applied (Sol r10). Fail closed.
+      || (typeof value === 'number' && !Number.isFinite(value))
       || /^[+-]=/.test(String(value).trim())
       || /random\(/i.test(String(value)));
     if (unsafe) return null;
