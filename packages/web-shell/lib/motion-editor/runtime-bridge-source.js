@@ -3693,6 +3693,100 @@ function nativeMotionRuntimeBridge() {
     return true;
   }
 
+  // Descriptor-based shape of EVERY field an invalidate re-reads in ONE entry
+  // EXCEPT the binding's own property (top-level AND its css namespace) — the
+  // value the bridge legitimately edits (Sol r40). A latent page change to a
+  // SIBLING channel inside the entries (entry.opacity beside the edited
+  // entry.x) would otherwise be materialized by our step/END invalidate onto
+  // an unjournaled channel. Entry-root config functions (ease) are frozen by
+  // IDENTITY elsewhere (r28) and skipped here; any other function → null
+  // (hazard-locked upstream anyway). Returns null when unserializable.
+  function gsapEntryOtherFieldsShape(entry, excludeProperty) {
+    if (!entry || typeof entry !== 'object') return `absent:${String(entry)}`;
+    try {
+      const seen = new Set();
+      const serialize = (value, depth) => {
+        if (value === null) return 'null';
+        if (typeof value !== 'object') return `${typeof value}:${String(value)}`;
+        if (seen.has(value) || depth > 6) return null;
+        seen.add(value);
+        const parts = [];
+        for (const key of gsapForInKeys(value).sort()) {
+          if (depth === 0 && key === 'parent') continue;
+          const slot = gsapOwnDataSlot(value, key);
+          if (slot.kind !== 'data') return null;
+          if (typeof slot.value === 'function') return null;
+          const child = serialize(slot.value, depth + 1);
+          if (child === null) return null;
+          parts.push([key, child]);
+        }
+        seen.delete(value);
+        return JSON.stringify(parts);
+      };
+      const parts = [];
+      for (const key of gsapForInKeys(entry).sort()) {
+        if (key === 'parent' || key === excludeProperty) continue;
+        const slot = gsapOwnDataSlot(entry, key);
+        if (slot.kind !== 'data') return null;
+        if (typeof slot.value === 'function') {
+          // entry-root config fn (ease) — frozen by identity (r28), skip.
+          if (GSAP_CONFIG_VARS.has(key)) continue;
+          return null;
+        }
+        if (key === 'css' && slot.value && typeof slot.value === 'object' && !Array.isArray(slot.value)) {
+          const cssParts = [];
+          for (const cssKey of gsapForInKeys(slot.value).sort()) {
+            if (cssKey === excludeProperty) continue;
+            const cssSlot = gsapOwnDataSlot(slot.value, cssKey);
+            if (cssSlot.kind !== 'data') return null;
+            if (typeof cssSlot.value === 'function') return null;
+            const child = serialize(cssSlot.value, 1);
+            if (child === null) return null;
+            cssParts.push([cssKey, child]);
+          }
+          parts.push(['css', JSON.stringify(cssParts)]);
+          continue;
+        }
+        const child = serialize(slot.value, 1);
+        if (child === null) return null;
+        parts.push([key, child]);
+      }
+      return JSON.stringify(parts);
+    } catch (_) { return null; }
+  }
+  function gsapEntryOtherShapesFor(entries, property) {
+    return (entries || []).map((entry) => gsapEntryOtherFieldsShape(entry, property));
+  }
+  function gsapEntryOtherShapesMatch(binding, property) {
+    if (!binding.entryOtherShapes || !binding.allEntries) return true;
+    if (binding.entryOtherShapes.length !== binding.allEntries.length) return false;
+    return binding.allEntries.every((entry, index) => {
+      const current = gsapEntryOtherFieldsShape(entry, property);
+      const frozen = binding.entryOtherShapes[index];
+      return current !== null && frozen !== null && current === frozen;
+    });
+  }
+  // After a legit bridge edit of ONE keyframe channel, refresh the sibling
+  // entry-field snapshot on every OTHER step binding valid before it — its own
+  // property's value moved, which those bindings froze as a sibling field
+  // (Sol r40, r33 pattern). Capture validity BEFORE the edit.
+  function captureValidEntryBindings(animation) {
+    const bindings = gsapKeyframeEntryRetargets.get(animation);
+    if (!bindings) return [];
+    return Array.from(bindings.keys()).filter((property) => !entryBindingState(animation, property).stale);
+  }
+  function refreshEntryOtherShapes(animation, editedProperty, validProperties) {
+    const bindings = gsapKeyframeEntryRetargets.get(animation);
+    if (!bindings) return;
+    validProperties.forEach((property) => {
+      if (property === editedProperty) return;
+      const binding = bindings.get(property);
+      if (binding && binding.entryOtherShapes) {
+        binding.entryOtherShapes = gsapEntryOtherShapesFor(binding.allEntries, property);
+      }
+    });
+  }
+
   function gsapStepExposureShape(entries) {
     const shapes = entries.map((entry) => gsapStepEntryShape(entry));
     return shapes.some((shape) => shape === null) ? null : JSON.stringify(shapes);
@@ -3896,6 +3990,13 @@ function nativeMotionRuntimeBridge() {
     if (binding.collateralState && !gsapVarsCollateralMatches(animation.vars, binding.collateralState)) {
       return { binding: null, stale: true };
     }
+    // Sibling channels INSIDE the entries frozen too (Sol r40): a latent
+    // change to entry.opacity beside the edited entry.x would be materialized
+    // by our invalidate onto an unjournaled channel. Observable without the
+    // timeline — the entries are held by identity.
+    if (!gsapEntryOtherShapesMatch(binding, property)) {
+      return { binding: null, stale: true };
+    }
     // The VALUE check needs no timeline — the buckets are held by identity.
     // An externally mutated bucket is OBSERVABLE staleness even while the
     // topology is uninspectable: the frozen restore would wipe the page's
@@ -3956,6 +4057,8 @@ function nativeMotionRuntimeBridge() {
     // Unserializable collateral vars (accessor / nested fn) cannot be
     // fingerprinted either — same permanent-staleness hazard (Sol r38).
     if (gsapVarsCollateralState(animation.vars).shape === null) return null;
+    // Unserializable sibling entry fields (accessor) — same hazard (Sol r40).
+    if (gsapEntryOtherShapesFor(plan.allEntries, property).some((shape) => shape === null)) return null;
     let bindings = gsapKeyframeEntryRetargets.get(animation);
     if (!bindings) {
       bindings = new Map();
@@ -3978,6 +4081,7 @@ function nativeMotionRuntimeBridge() {
       stepOriginals: new Map(),
       startAtState: gsapStartAtState(animation.vars),
       collateralState: gsapVarsCollateralState(animation.vars),
+      entryOtherShapes: gsapEntryOtherShapesFor(plan.allEntries, property),
     };
     bindings.set(property, binding);
     return binding;
@@ -4053,6 +4157,9 @@ function nativeMotionRuntimeBridge() {
     if (!binding) {
       throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be retargeted safely yet.');
     }
+    // This END edit moves property's values in the entries — a sibling field
+    // for every OTHER step binding. Refresh their snapshot after (Sol r40).
+    const otherValidBindings = captureValidEntryBindings(animation);
     const coerceFor = (bucket) => (typeof bucket[property] === 'number' && Number.isFinite(Number(desired))
       ? Number(desired)
       : String(desired));
@@ -4133,6 +4240,7 @@ function nativeMotionRuntimeBridge() {
     }
     binding.allExpected = binding.allBuckets.map((bucket) => bucket[property]);
     invalidatePreservingStart(animation);
+    refreshEntryOtherShapes(animation, property, otherValidBindings);
   }
 
   // Phase-2 step writer: edits ONE intermediate entry of the ARRAY keyframes
@@ -4245,6 +4353,9 @@ function nativeMotionRuntimeBridge() {
     if (binding.buckets.includes(carrier.bucket)) {
       throw bridgeError('unsupported_patch', 'This step holds the final value — edit it from the end keyframe.');
     }
+    // This step edit moves property's value in one entry — a sibling field for
+    // every OTHER step binding. Refresh their snapshot after (Sol r40).
+    const otherValidBindings = captureValidEntryBindings(animation);
     const journal = binding.stepOriginals;
     // FIRST TOUCH of an index runs the exposure gate REGARDLESS of who
     // created the shared binding (Sol r24): the END writer can freeze a
@@ -4353,6 +4464,7 @@ function nativeMotionRuntimeBridge() {
     }
     binding.allExpected = binding.allBuckets.map((bucket) => bucket[property]);
     invalidatePreservingStart(animation);
+    refreshEntryOtherShapes(animation, property, otherValidBindings);
   }
 
   function applyGsapRetarget(record, descriptor) {

@@ -2772,6 +2772,82 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a latent SIBLING-channel mutation inside the entries stales the step binding (Sol r40)', () => {
+    document.body.innerHTML = '<main><div id="ksib"></div></main>';
+    const target = document.getElementById('ksib');
+    // Entries carregam x E opacity. Editar step-x congela o binding; a página
+    // muda entry.opacity sem invalidar; o undo de x materializaria essa
+    // mudança latente de opacity (canal fora do journal). O estado dos campos
+    // colaterais DENTRO das entries é congelado e validado na staleness.
+    const vars = {
+      keyframes: [
+        { x: 100, opacity: 0.1, duration: 1, parent: {} },
+        { x: 200, opacity: 0.5, duration: 1, parent: {} },
+        { x: 300, opacity: 1, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '250');
+    expect(vars.keyframes[1].x).toBe(250);
+
+    // Página muda opacity latente (mesma entry).
+    vars.keyframes[1].opacity = 0.9;
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 1, '200'); // undo do step
+    expect(vars.keyframes[1].x).toBe(250); // recusado — não materializa opacity
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
+  it('a LEGIT bridge edit of another keyframe channel keeps the step binding usable (Sol r40 cross)', () => {
+    document.body.innerHTML = '<main><div id="ksib2"></div></main>';
+    const target = document.getElementById('ksib2');
+    // Editar opacity via o próprio bridge (step-opacity) é esperado — o undo
+    // de x depois continua funcionando (refresh cruzado dos entryOtherShapes).
+    const vars = {
+      keyframes: [
+        { x: 100, opacity: 0.1, duration: 1, parent: {} },
+        { x: 200, opacity: 0.5, duration: 1, parent: {} },
+        { x: 300, opacity: 1, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '250');
+    expect(vars.keyframes[1].x).toBe(250);
+
+    // A UI re-inspeciona entre edits (token fresco por estado-da-verdade).
+    const r2 = grabMotion(target, messages);
+    // Edição LEGÍTIMA de opacity (step-opacity, índice 0 = intermediário).
+    sendStep(r2.selection, r2.motion, 'opacity', 0, '0.3');
+    expect(vars.keyframes[0].opacity).toBe(0.3);
+
+    // Undo de x segue funcionando (entryOtherShapes de x refrescado pela
+    // edição própria do bridge em opacity).
+    sendStep(r2.selection, r2.motion, 'x', 1, '200');
+    expect(vars.keyframes[1].x).toBe(200);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
