@@ -139,6 +139,7 @@ export function parseLandbookListingPayload(payload, listingUrl = payload?.metad
   const document = payloadDocument(payload);
   const appearances = [];
   const websiteCandidates = [];
+  const websiteRecords = [];
   const templates = [];
   const advertisements = [];
   const rejections = [];
@@ -193,7 +194,7 @@ export function parseLandbookListingPayload(payload, listingUrl = payload?.metad
 
     const target = detailTarget(card, recordId, normalizedListingUrl, true);
     if (!target) {
-      websiteCandidates.push({
+      const candidate = {
         lane: 'website_candidate',
         sourceRecordId: recordId,
         listingUrl: normalizedListingUrl,
@@ -207,11 +208,13 @@ export function parseLandbookListingPayload(payload, listingUrl = payload?.metad
           listingPage: page,
           targetRequiresDetail: true,
         },
-      });
+      };
+      websiteCandidates.push(candidate);
+      websiteRecords.push(candidate);
       continue;
     }
 
-    appearances.push(sourceAppearance(normalizedListingUrl, {
+    const appearance = sourceAppearance(normalizedListingUrl, {
       sourceRecordId: recordId,
       title: title || new URL(target.getAttribute('href')).hostname,
       url: target.getAttribute('href'),
@@ -226,7 +229,9 @@ export function parseLandbookListingPayload(payload, listingUrl = payload?.metad
         lane: 'website',
         listingPage: page,
       },
-    }));
+    });
+    appearances.push(appearance);
+    websiteRecords.push(appearance);
   }
 
   return {
@@ -234,6 +239,7 @@ export function parseLandbookListingPayload(payload, listingUrl = payload?.metad
     listingUrl: normalizedListingUrl,
     appearances,
     websiteCandidates,
+    websiteRecords,
     templates,
     advertisements,
     rejections,

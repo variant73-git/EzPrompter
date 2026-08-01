@@ -11,8 +11,12 @@ const seedPath = seedFlag >= 0 ? process.argv[seedFlag + 1] : null;
 if (!seedPath) throw new Error('--seed <path> is required.');
 
 const seed = JSON.parse(await readFile(path.resolve(seedPath), 'utf8'));
-if (seed?.stats?.proof?.scope !== 'bounded-landbook-thumbnail-link-pilot') {
-  throw new Error('The supplied seed is not the bounded Landbook thumbnail-and-link pilot.');
+const approvedScopes = new Set([
+  'bounded-landbook-thumbnail-link-pilot',
+  'bounded-landbook-pages-6-10',
+]);
+if (!approvedScopes.has(seed?.stats?.proof?.scope)) {
+  throw new Error('The supplied seed is not an approved bounded Landbook slice.');
 }
 const expected = new Map((seed.references || []).map((reference) => [reference.id, reference]));
 if (!expected.size) throw new Error('Landbook pilot seed has no references to query.');

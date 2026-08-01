@@ -20,6 +20,8 @@
     "refs:incremental:import:isolated": "node scripts/reference-bank/import-proof.mjs --isolated --seed ../../.firecrawl/reference-increment-1/reference-bank.increment.seed.json",
     "refs:landbook:import:isolated": "bun scripts/reference-bank/import-proof.mjs --isolated --seed ../../.firecrawl/reference-landbook-pilot/reference-bank.landbook.seed.json",
     "refs:landbook:query:isolated": "bun scripts/reference-bank/query-landbook-pilot.mjs --isolated --seed ../../.firecrawl/reference-landbook-pilot/reference-bank.landbook.seed.json",
+    "refs:landbook:pages-6-10:import:isolated": "bun scripts/reference-bank/import-proof.mjs --isolated --seed ../../.firecrawl/reference-landbook-pages-6-10/reference-bank.landbook-pages-6-10.seed.json",
+    "refs:landbook:pages-6-10:query:isolated": "bun scripts/reference-bank/query-landbook-pilot.mjs --isolated --seed ../../.firecrawl/reference-landbook-pages-6-10/reference-bank.landbook-pages-6-10.seed.json",
     "refs:rate-source:isolated": "node scripts/reference-bank/rate-aggregator.mjs --isolated",
     "refs:rate-source:shared": "node scripts/reference-bank/rate-aggregator.mjs --shared",
     "evals:gen": "node evals/gen-prompt.mjs",

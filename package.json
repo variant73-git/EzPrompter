@@ -19,6 +19,9 @@
     "refs:incremental:collect": "node scripts/reference-bank/collect-two-source-increment.mjs",
     "refs:incremental:build": "node scripts/reference-bank/build-two-source-increment.mjs",
     "refs:landbook:collect": "node scripts/reference-bank/collect-landbook-pilot.mjs",
-    "refs:landbook:build": "node scripts/reference-bank/build-landbook-pilot.mjs"
+    "refs:landbook:build": "node scripts/reference-bank/build-landbook-pilot.mjs",
+    "refs:landbook:pages-6-10:freeze": "node scripts/reference-bank/collect-landbook-pilot.mjs --slice=pages-6-10 --freeze-only",
+    "refs:landbook:pages-6-10:collect": "node scripts/reference-bank/collect-landbook-pilot.mjs --slice=pages-6-10",
+    "refs:landbook:pages-6-10:build": "node scripts/reference-bank/build-landbook-pilot.mjs --slice=pages-6-10"
   }
 }

@@ -96,6 +96,7 @@ describe('Landbook source adapter', () => {
       sourceDetailUrl: 'https://land-book.com/websites/99999-missing-target',
       thumbnailUrl: 'missing.webp',
     })]);
+    expect(parsed.websiteRecords.map((item) => item.sourceRecordId)).toEqual(['98186', '99999']);
     expect(parsed.rejections).toEqual([]);
   });
 

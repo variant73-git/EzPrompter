@@ -6,13 +6,44 @@ import { mergeReferenceAppearances } from '../../packages/web-shell/lib/referenc
 import { canonicalizeReferenceUrl } from '../../packages/web-shell/lib/reference-bank-normalize.js';
 
 const root = process.cwd();
-const pilotDir = path.join(root, '.firecrawl', 'reference-landbook-pilot');
-const manifestPath = path.join(pilotDir, 'collection-manifest.json');
-const resultPath = path.join(pilotDir, 'collection-result.json');
-const outputSeedPath = path.join(pilotDir, 'reference-bank.landbook.seed.json');
-const outputReportPath = path.join(pilotDir, 'reference-bank.landbook.report.json');
-const approvedPages = [1, 2];
-const approvedMaximum = 100;
+const slice = process.argv.includes('--slice=pages-6-10') ? 'pages-6-10' : 'pilot';
+const profiles = {
+  pilot: {
+    scope: 'bounded-landbook-thumbnail-link-pilot',
+    directory: 'reference-landbook-pilot',
+    outputName: 'reference-bank.landbook',
+    approvedPages: [1, 2],
+    approvedMaximum: 100,
+    expectedSelectedRecords: null,
+    expectedLaneCounts: null,
+    taxonomy: { minimalPilot: 'thumbnail-link-v1' },
+  },
+  'pages-6-10': {
+    scope: 'bounded-landbook-pages-6-10',
+    directory: 'reference-landbook-pages-6-10',
+    outputName: 'reference-bank.landbook-pages-6-10',
+    approvedPages: [6, 7, 8, 9, 10],
+    approvedMaximum: 100,
+    expectedSelectedRecords: 77,
+    expectedLaneCounts: {
+      websiteCards: 77,
+      uniqueWebsiteCards: 77,
+      selectedWebsiteCards: 77,
+      templates: 23,
+      advertisements: 4,
+      rejections: 0,
+    },
+    priorSelectionHash: '0a0b85c7a5552a0bf527f5466b268c20081e118cc1766c566745ad050d790f4e',
+    taxonomy: { boundedSlice: 'pages-6-10' },
+  },
+};
+const profile = profiles[slice];
+const collectionDir = path.join(root, '.firecrawl', profile.directory);
+const manifestPath = path.join(collectionDir, 'collection-manifest.json');
+const resultPath = path.join(collectionDir, 'collection-result.json');
+const outputSeedPath = path.join(collectionDir, `${profile.outputName}.seed.json`);
+const outputReportPath = path.join(collectionDir, `${profile.outputName}.report.json`);
+const { approvedPages, approvedMaximum } = profile;
 
 function digest(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -57,14 +88,14 @@ const [manifestText, resultText] = await Promise.all([
 ]);
 const manifest = JSON.parse(manifestText);
 const result = JSON.parse(resultText);
-if (manifest.scope !== 'bounded-landbook-thumbnail-link-pilot') {
-  throw new Error(`Unexpected Landbook pilot scope: ${manifest.scope}`);
+if (manifest.scope !== profile.scope) {
+  throw new Error(`Unexpected Landbook ${slice} scope: ${manifest.scope}`);
 }
 if (JSON.stringify(manifest.listingPages) !== JSON.stringify(approvedPages)) {
-  throw new Error('Landbook pilot must remain limited to public listing pages 1 and 2.');
+  throw new Error(`Landbook ${slice} must remain limited to its approved public listing pages.`);
 }
 if (manifest.maximumWebsiteRecords !== approvedMaximum || manifest.selectedRecords.length > approvedMaximum) {
-  throw new Error(`Landbook pilot must remain capped at ${approvedMaximum} website records.`);
+  throw new Error(`Landbook ${slice} must remain capped at ${approvedMaximum} website records.`);
 }
 if (
   manifest.constraints?.detailDepth !== 1
@@ -73,7 +104,22 @@ if (
   || manifest.constraints?.templatesImportable !== false
   || manifest.constraints?.advertisementsImportable !== false
   || manifest.constraints?.generationTriggered !== false
-) throw new Error('Landbook pilot constraints no longer match the approved minimal scope.');
+) throw new Error(`Landbook ${slice} constraints no longer match the approved scope.`);
+if (
+  profile.expectedSelectedRecords != null
+  && manifest.selectedRecords.length !== profile.expectedSelectedRecords
+) throw new Error(`Landbook ${slice} must contain exactly ${profile.expectedSelectedRecords} selected records.`);
+if (
+  profile.expectedLaneCounts
+  && JSON.stringify(manifest.laneCounts) !== JSON.stringify(profile.expectedLaneCounts)
+) throw new Error(`Landbook ${slice} lane counts no longer match the approved envelope.`);
+if (
+  profile.priorSelectionHash
+  && (
+    manifest.priorSelectionExclusion?.selectedRecordIdsSha256 !== profile.priorSelectionHash
+    || manifest.priorSelectionExclusion?.overlap !== 0
+  )
+) throw new Error(`Landbook ${slice} prior-selection exclusion is invalid.`);
 if (result.scope !== manifest.scope || result.manifestSha256 !== digest(manifestText)) {
   throw new Error('Landbook collection result does not match the frozen manifest.');
 }
@@ -119,7 +165,7 @@ for (const selected of manifest.selectedRecords) {
     sourceTaxonomy: {
       lane: 'website',
       listingPage: selected.listingPage,
-      minimalPilot: 'thumbnail-link-v1',
+      ...profile.taxonomy,
     },
   };
   const [parsed] = parseLandbookDetailPayload(payload, fallback);
@@ -138,7 +184,7 @@ for (const selected of manifest.selectedRecords) {
   const taxonomy = {
     lane: 'website',
     listingPage: selected.listingPage,
-    minimalPilot: 'thumbnail-link-v1',
+    ...profile.taxonomy,
   };
   appearances.push({
     ...parsed,
@@ -153,7 +199,7 @@ for (const selected of manifest.selectedRecords) {
     },
   });
 }
-if (!appearances.length) throw new Error('Landbook pilot produced no consultable thumbnail-and-link references.');
+if (!appearances.length) throw new Error(`Landbook ${slice} produced no consultable thumbnail-and-link references.`);
 
 const references = mergeReferenceAppearances(appearances, manifest.generatedAt);
 const duplicates = duplicateGroups(appearances);
@@ -179,7 +225,7 @@ const seed = {
     references: references.length,
     duplicatesMerged: appearances.length - references.length,
     sources: { landbook: appearances.length },
-    landbookPilot: stats,
+    ...(slice === 'pilot' ? { landbookPilot: stats } : { landbookPages6To10: stats }),
   },
   references,
 };
@@ -196,6 +242,9 @@ const report = {
     listingPages: manifest.listingPages,
     maximumWebsiteRecords: manifest.maximumWebsiteRecords,
     selectedRecordIdsSha256: manifest.selectedRecordIdsSha256,
+    ...(manifest.priorSelectionExclusion
+      ? { priorSelectionExclusion: manifest.priorSelectionExclusion }
+      : {}),
   },
   laneCounts: manifest.laneCounts,
   stats,
