@@ -3592,13 +3592,33 @@ function nativeMotionRuntimeBridge() {
     return true;
   }
 
+  // An OWN or inherited DATA slot, without invoking accessors (Sol r36):
+  // reading vars.startAt or startAt[key] directly would run a page getter —
+  // a stateful accessor could pass exposure/creation then change on invalidate,
+  // and merely inspecting would execute page code. { kind: data|accessor|missing }.
+  function gsapOwnDataSlot(obj, key) {
+    let owner = obj;
+    let slot = null;
+    while (owner && !(slot = Object.getOwnPropertyDescriptor(owner, key))) {
+      owner = Object.getPrototypeOf(owner);
+    }
+    if (!slot) return { kind: 'missing' };
+    if (!('value' in slot)) return { kind: 'accessor' };
+    return { kind: 'data', value: slot.value };
+  }
+
   // Descriptor-based state of vars.startAt (Sol r31): a LATENT startAt
   // injected by the page does not render until the next invalidate — a
   // restore would MATERIALIZE it and shift the segment before the step.
   // Container identity + shape with fn placeholders + fn identities; the
-  // bridge's own START writer refreshes the expected state.
+  // bridge's own START writer refreshes the expected state. Read via
+  // descriptors only — an accessor anywhere fails closed WITHOUT invocation
+  // (Sol r36).
   function gsapStartAtState(vars) {
-    const startAt = vars ? vars.startAt : undefined;
+    if (!vars) return { ref: undefined, shape: 'absent:undefined', fns: new Map() };
+    const startAtSlot = gsapOwnDataSlot(vars, 'startAt');
+    if (startAtSlot.kind === 'accessor') return { ref: undefined, shape: null, fns: new Map() };
+    const startAt = startAtSlot.kind === 'data' ? startAtSlot.value : undefined;
     if (!startAt || typeof startAt !== 'object') {
       return { ref: startAt, shape: `absent:${String(startAt)}`, fns: new Map() };
     }
@@ -3606,7 +3626,9 @@ function nativeMotionRuntimeBridge() {
     let shape = null;
     try {
       const parts = gsapForInKeys(startAt).sort().map((key) => {
-        const value = startAt[key];
+        const slot = gsapOwnDataSlot(startAt, key);
+        if (slot.kind !== 'data') return [key, null]; // accessor/missing — no invocation
+        const value = slot.value;
         if (typeof value === 'function') { fns.set(key, value); return [key, 'fn']; }
         if (value !== null && typeof value === 'object') return [key, gsapStepEntryShape(value, false)];
         return [key, `${typeof value}:${String(value)}`];

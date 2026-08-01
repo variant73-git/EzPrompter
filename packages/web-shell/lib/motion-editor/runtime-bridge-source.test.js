@@ -2550,6 +2550,50 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a startAt ACCESSOR is fingerprinted without invocation — shape null, writers locked, zero getter calls (Sol r36)', () => {
+    document.body.innerHTML = '<main><div id="ksac"></div></main>';
+    const target = document.getElementById('ksac');
+    // gsapStartAtState lia vars.startAt direto (invoca getter) e um accessor
+    // retornando primitivo dava shape não-nulo → token + binding, furando o
+    // fechamento r35. Descriptor-based: accessor → shape null SEM invocar; e
+    // uma leitura do editor jamais executa código stateful da página.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+      ],
+      duration: 2,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+    let getterCalls = 0;
+    Object.defineProperty(vars, 'startAt', {
+      configurable: true,
+      enumerable: true,
+      get() { getterCalls += 1; return 0; },
+    });
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // Inspeção JAMAIS executou o getter da página (descriptor-based em toda
+    // parte: o plano fail-fecha no accessor sem invocar; gsapStartAtState idem).
+    expect(getterCalls).toBe(0);
+    // O plano tranca inteiro no accessor → sem steps.
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.steps).toBeUndefined();
+    // END-write recusado antes de binding/mutação, ainda sem invocar o getter.
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+    expect(getterCalls).toBe(0);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
