@@ -3537,14 +3537,19 @@ function nativeMotionRuntimeBridge() {
   // length + each index's descriptor (hole / accessor / data) explicitly.
   // `serializeChild(value)` returns the child shape string or null to lock.
   function gsapSerializeArrayShape(value, serializeChild) {
-    const parts = [`len:${value.length}`];
+    // STRUCTURAL tuple encoding, JSON-serialized — a `join(',')` of raw
+    // template strings is NOT injective: a child string carrying the
+    // delimiters (`"x,1:hole"`) collides with a hole→data transition, the very
+    // case r43 guards (Sol r44). JSON.stringify escapes the child strings and
+    // the tuple tags ('len'/'i'/'hole'/'k') keep positions unambiguous.
+    const parts = [['len', value.length]];
     for (let index = 0; index < value.length; index += 1) {
       const descriptor = Object.getOwnPropertyDescriptor(value, index);
-      if (!descriptor) { parts.push(`${index}:hole`); continue; }
+      if (!descriptor) { parts.push(['hole', index]); continue; }
       if (!('value' in descriptor)) return null; // accessor index — unstable
       const child = serializeChild(descriptor.value);
       if (child === null) return null;
-      parts.push(`${index}:${child}`);
+      parts.push(['i', index, child]);
     }
     // Non-index own keys on the array (e.g. a stashed property) also matter.
     for (const key of gsapForInKeys(value)) {
@@ -3553,9 +3558,9 @@ function nativeMotionRuntimeBridge() {
       if (slot.kind !== 'data') return null;
       const child = serializeChild(slot.value);
       if (child === null) return null;
-      parts.push(`k:${key}:${child}`);
+      parts.push(['k', key, child]);
     }
-    return `arr[${parts.join(',')}]`;
+    return `arr:${JSON.stringify(parts)}`;
   }
 
   function gsapStepEntryShape(entry, isEntryRoot = true) {

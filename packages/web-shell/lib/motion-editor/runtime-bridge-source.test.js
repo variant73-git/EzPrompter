@@ -2971,6 +2971,46 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('the array shape encoding is INJECTIVE — a hole→data swap with delimiter-laden strings is caught (Sol r44)', () => {
+    document.body.innerHTML = '<main><div id="ksinj"></div></main>';
+    const target = document.getElementById('ksinj');
+    // join(',') com strings não-escapadas colidia: ["x,1:string:y", <hole>] e
+    // ["x","y,1:hole"] davam o mesmo shape — a transição hole→data (o próprio
+    // caso da r43) passava. Encoding estrutural (JSON.stringify de tuplas)
+    // torna a codificação injetiva.
+    const a = new Array(2);
+    a[0] = 'x,1:string:y'; // índice 1 = hole
+    const vars = {
+      keyframes: [
+        { x: 100, endArray: a, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '250');
+    expect(vars.keyframes[1].x).toBe(250);
+
+    // Estado colidente sob o encoding antigo: hole→data com delimitadores.
+    a[0] = 'x';
+    a[1] = 'y,1:hole';
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 1, '200'); // undo
+    expect(vars.keyframes[1].x).toBe(250); // recusado — encoding distingue os estados
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
