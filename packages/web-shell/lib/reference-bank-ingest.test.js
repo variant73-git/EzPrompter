@@ -9,6 +9,7 @@ import {
   parseSiteOfSitesDetailPayload,
   parseSiteOfSitesListingPayload,
   parseSiteInspirePayload,
+  selectSiteOfSitesSitemapIncrement,
 } from './reference-bank-ingest.js';
 
 describe('reference bank normalization', () => {
@@ -160,6 +161,47 @@ describe('reference source adapters', () => {
       title: 'The List',
       publishedAt: '2026-07-21',
       thumbnailUrl: 'https://static.wixstatic.com/the-list-detail.png',
+    });
+  });
+
+  it('selects a bounded Site of Sites sitemap increment in source order', () => {
+    expect(selectSiteOfSitesSitemapIncrement([
+      { url: 'https://www.siteofsites.co/' },
+      { url: 'https://www.siteofsites.co/websites/' },
+      { url: 'https://www.siteofsites.co/websites/nested/child' },
+      { url: 'https://www.siteofsites.co/websites/already-seen' },
+      { url: 'https://www.siteofsites.co/websites/next-one?preview=true' },
+      { url: 'http://siteofsites.co/websites/next-one/' },
+      { url: 'https://www.siteofsites.co/websites/next-two' },
+      { url: 'https://example.com/websites/not-this-source' },
+      { url: 'https://www.siteofsites.co/websites/outside-the-limit' },
+    ], [
+      'https://www.siteofsites.co/websites/already-seen/',
+    ], 2)).toEqual([
+      'https://www.siteofsites.co/websites/next-one',
+      'https://www.siteofsites.co/websites/next-two',
+    ]);
+  });
+
+  it('extracts a Site of Sites sitemap-selected detail without listing metadata', () => {
+    const [detail] = parseSiteOfSitesDetailPayload({
+      metadata: { sourceURL: 'https://www.siteofsites.co/websites/from-sitemap' },
+      html: `
+        <h1>From Sitemap</h1><p>Jul 20, 2026</p>
+        <a aria-label="Live Site" href="https://from-sitemap.example/">Live Site</a>
+        <img alt="From Sitemap" src="https://static.wixstatic.com/from-sitemap.png">
+      `,
+    });
+
+    expect(detail).toMatchObject({
+      title: 'From Sitemap',
+      url: 'https://from-sitemap.example/',
+      publishedAt: '2026-07-20',
+      source: {
+        id: 'siteofsites',
+        recordId: 'from-sitemap',
+        listingUrl: 'https://www.siteofsites.co/',
+      },
     });
   });
 

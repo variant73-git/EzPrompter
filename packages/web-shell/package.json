@@ -17,6 +17,7 @@
     "refs:import": "node scripts/reference-bank/import-seed.mjs",
     "refs:import:isolated": "node scripts/reference-bank/import-seed.mjs --isolated",
     "refs:proof:import:isolated": "node scripts/reference-bank/import-proof.mjs --isolated --seed ../../.firecrawl/reference-proof/reference-bank.proof.seed.json",
+    "refs:incremental:import:isolated": "node scripts/reference-bank/import-proof.mjs --isolated --seed ../../.firecrawl/reference-increment-1/reference-bank.increment.seed.json",
     "refs:rate-source:isolated": "node scripts/reference-bank/rate-aggregator.mjs --isolated",
     "refs:rate-source:shared": "node scripts/reference-bank/rate-aggregator.mjs --shared",
     "evals:gen": "node evals/gen-prompt.mjs",

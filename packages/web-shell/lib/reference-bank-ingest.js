@@ -343,6 +343,41 @@ export function parseSiteOfSitesListingPayload(
   return [...records.values()];
 }
 
+export function selectSiteOfSitesSitemapIncrement(
+  links,
+  excludedDetailUrls = [],
+  limit = 36,
+) {
+  if (!Number.isInteger(limit) || limit < 1) return [];
+
+  const normalize = (value) => {
+    try {
+      const url = new URL(typeof value === 'string' ? value : value?.url);
+      if (url.hostname.replace(/^www\./, '').toLowerCase() !== 'siteofsites.co') return null;
+      if (!/^\/websites\/[^/]+\/?$/.test(url.pathname)) return null;
+      url.protocol = 'https:';
+      url.hostname = 'www.siteofsites.co';
+      url.hash = '';
+      url.search = '';
+      url.pathname = url.pathname.replace(/\/$/, '');
+      return url.href;
+    } catch {
+      return null;
+    }
+  };
+  const excluded = new Set(excludedDetailUrls.map(normalize).filter(Boolean));
+  const seen = new Set();
+  const selected = [];
+  for (const link of links || []) {
+    const url = normalize(link);
+    if (!url || excluded.has(url) || seen.has(url)) continue;
+    seen.add(url);
+    selected.push(url);
+    if (selected.length === limit) break;
+  }
+  return selected;
+}
+
 export function parseSiteOfSitesDetailPayload(payload, fallback = {}) {
   const document = payloadDocument(payload);
   const detailUrl = sourceDetailUrl(payload, fallback);
