@@ -2376,6 +2376,47 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a PRE-FIRST-WRITE startAt injection is caught by the exposure gate — token stale, no binding created (Sol r32)', () => {
+    document.body.innerHTML = '<main><div id="ksj2"></div></main>';
+    const target = document.getElementById('ksj2');
+    // Diferente da r31 (binding já criado): aqui a injeção acontece ANTES do
+    // 1º sendStep. O token velho (sem startAt) casa com o registro velho e o
+    // recompute só cobria o shape das ENTRIES — a injeção do startAt escapava
+    // e o binding congelava o startAt já injetado. O gate do 1º toque deve
+    // revalidar o startAt vivo contra o exposto.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // Injeção ANTES de qualquer write — token na mão é o antigo (sem startAt).
+    vars.startAt = { x: 50 };
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 1, '250');
+    expect(vars.keyframes[1].x).toBe(200); // nada escrito
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // Re-inspeção (startAt agora exposto) → edit funciona.
+    delete vars.startAt;
+    const regrab = grabMotion(target, messages);
+    sendStep(regrab.selection, regrab.motion, 'x', 1, '250');
+    expect(vars.keyframes[1].x).toBe(250);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

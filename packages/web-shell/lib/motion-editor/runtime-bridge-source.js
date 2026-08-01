@@ -2177,6 +2177,12 @@ function nativeMotionRuntimeBridge() {
                   // swapped same-source closure on ANY entry re-renders on
                   // the next invalidate — collateral to untouched channels.
                   allEntryConfigFns: exposureConfigFns,
+                  // vars.startAt state at exposure (Sol r32): the FIRST-WRITE
+                  // gate must reject a startAt injected AFTER exposure but
+                  // before the binding exists — the entries shape recompute
+                  // alone never sees it, and the invalidate would materialize
+                  // it, shifting the segment before the step.
+                  startAtState: exposureStartAt,
                 });
               }
               return { steps: entryPlan.steps.map((step, stepIndex, list) => {
@@ -4048,6 +4054,14 @@ function nativeMotionRuntimeBridge() {
       if (gsapStepExposureShape(firstPlan.allEntries) !== exposure.shape) {
         throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
       }
+      // vars.startAt injected AFTER exposure but before the binding exists
+      // (Sol r32): the entries-shape recompute above never sees it, yet the
+      // invalidate would materialize it. Revalidate the LIVE startAt against
+      // the exposed one BEFORE freezing the binding — never freeze an already-
+      // injected startAt.
+      if (!gsapStartAtStateMatches(animation.vars, exposure.startAtState)) {
+        throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
+      }
       binding = createFrozenEntryBinding(record, property, firstPlan);
     }
     if (!binding.stepOriginals) binding.stepOriginals = new Map();
@@ -4086,7 +4100,9 @@ function nativeMotionRuntimeBridge() {
         || !binding.allEntries
         || binding.allEntries.length !== exposure.allEntryConfigFns.length
         || !binding.allEntries.every((sibling, siblingIndex) =>
-          gsapConfigFnsMatch(sibling, exposure.allEntryConfigFns[siblingIndex]))) {
+          gsapConfigFnsMatch(sibling, exposure.allEntryConfigFns[siblingIndex]))
+        // Live startAt must still match what the UI showed (Sol r32).
+        || !gsapStartAtStateMatches(animation.vars, exposure.startAtState)) {
         throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
       }
     }
