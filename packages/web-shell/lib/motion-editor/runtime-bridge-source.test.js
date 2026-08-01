@@ -2848,6 +2848,53 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a nested FUNCTION in a sibling entry field fails closed — no undoable-less END edit (Sol r41)', () => {
+    document.body.innerHTML = '<main><div id="ksnf"></div></main>';
+    const target = document.getElementById('ksnf');
+    // Entry carrega y + modifiers:{x:fn} (função ANINHADA num campo irmão).
+    // Serializar fn por String(value) deixaria f1/f2 same-source com o mesmo
+    // shape → o invalidate incorporaria o modifier novo fora do journal.
+    // Fail closed: função aninhada → shape null → o binding recusa.
+    const makeModifier = (power) => (value) => value * power;
+    const vars = {
+      keyframes: [
+        { y: 10, modifiers: { x: makeModifier(1) }, duration: 1, parent: {} },
+        { y: 20, duration: 1, parent: {} },
+      ],
+      duration: 2,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+    // getProperty reporta y (o x é dirigido por modifiers).
+    window.gsap.getProperty = (element, prop) => String(prop === 'y' ? 0 : 0);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // END de y recusado — sem binding, sem mutação (função aninhada = fail closed).
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'apply-patch',
+        payload: { patch: {
+          elementId: selection.payload.element.id, kind: 'motion', motionId: motion.id,
+          property: 'retarget.final',
+          before: { schemaVersion: 2, semanticProperty: 'y', runtimeProperty: 'y', value: '20' },
+          value: { schemaVersion: 2, semanticProperty: 'y', runtimeProperty: 'y', value: '99',
+            writeModel: 'absolute', responsiveScope: 'shared',
+            owner: { channelId: `${motion.id}:y`, motionId: motion.id }, keyframe: { position: 'final-existing' } },
+        } },
+      },
+    }));
+    expect(vars.keyframes.map((entry) => entry.y)).toEqual([10, 20]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

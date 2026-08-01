@@ -3706,6 +3706,12 @@ function nativeMotionRuntimeBridge() {
     try {
       const seen = new Set();
       const serialize = (value, depth) => {
+        // A function has no stable representation (same-source closures diverge
+        // behaviorally — Sol r41): fail closed BEFORE the primitive branch,
+        // never String(fn). Belt-and-suspenders — the loop below already
+        // returns null for function-valued keys, and the upstream function
+        // hazard scan locks any entry carrying one, so this is defence in depth.
+        if (typeof value === 'function') return null;
         if (value === null) return 'null';
         if (typeof value !== 'object') return `${typeof value}:${String(value)}`;
         if (seen.has(value) || depth > 6) return null;
