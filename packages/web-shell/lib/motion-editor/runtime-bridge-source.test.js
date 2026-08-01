@@ -2473,6 +2473,46 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a NESTED startAt mutation (startAt.attr.parent) stales the binding — restore refuses (Sol r34)', () => {
+    document.body.innerHTML = '<main><div id="ksna"></div></main>';
+    const target = document.getElementById('ksna');
+    // gsapStartAtState serializava objetos aninhados do startAt via
+    // gsapStepEntryShape, cuja exclusão de 'parent' na RAIZ colapsava
+    // startAt.attr.parent — 'A' e 'B' davam o mesmo shape. O restore
+    // materializaria B num canal fora do journal. A exclusão de parent só
+    // vale numa entry GSAP real; objetos de startAt incluem parent.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      startAt: { attr: { parent: 'A' } },
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '250');
+    expect(vars.keyframes[1].x).toBe(250);
+
+    // Mutação aninhada IN-PLACE (mesma ref de container e de attr): só o valor
+    // profundo muda.
+    vars.startAt.attr.parent = 'B';
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 1, '200');
+    expect(vars.keyframes[1].x).toBe(250); // restore recusado
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

@@ -3517,7 +3517,13 @@ function nativeMotionRuntimeBridge() {
   // chain (for..in mirror); accessors, cycles and over-deep nests have NO
   // stable representation → null → the property exposes without a token and
   // its steps lock (fail closed).
-  function gsapStepEntryShape(entry) {
+  // `isEntryRoot` = the argument is a real GSAP keyframe entry (its root
+  // `parent` is GSAP's injected backedge and its root config functions like
+  // ease are benign). Nested startAt config objects reuse this serializer
+  // WITHOUT those root semantics (Sol r34): a startAt.attr.parent is data and
+  // must enter the shape, and a function inside startAt has no stable
+  // representation (→ null → locked).
+  function gsapStepEntryShape(entry, isEntryRoot = true) {
     try {
       const seen = new Set();
       const serialize = (value, depth) => {
@@ -3525,10 +3531,12 @@ function nativeMotionRuntimeBridge() {
         if (typeof value !== 'object') return `${typeof value}:${String(value)}`;
         if (seen.has(value) || depth > 6) return null;
         seen.add(value);
-        // Only the GSAP backedge is excluded — by LOCATION (entry root), not
-        // by name: a nested `parent` (attr.parent) is a legitimate animated
-        // data key (fase-1 r110/r114) and must enter the shape (Sol r30).
-        const keys = gsapForInKeys(value).filter((key) => !(depth === 0 && key === 'parent')).sort();
+        const atEntryRoot = isEntryRoot && depth === 0;
+        // Only a REAL GSAP entry's root backedge is excluded — by LOCATION,
+        // not by name: a nested `parent` (attr.parent) is legitimate animated
+        // data (fase-1 r110/r114 — Sol r30), and startAt config objects have
+        // no backedge at all (Sol r34).
+        const keys = gsapForInKeys(value).filter((key) => !(atEntryRoot && key === 'parent')).sort();
         const out = [];
         for (const key of keys) {
           let owner = value;
@@ -3540,13 +3548,11 @@ function nativeMotionRuntimeBridge() {
           let child;
           if (typeof slot.value === 'function') {
             // A blanket 'fn' let a swapped easing slip through the token
-            // (Sol r27). Config-key functions at the ENTRY ROOT (ease etc.)
+            // (Sol r27). Config-key functions at a real ENTRY ROOT (ease etc.)
             // are benign for the plan and stay editable — serialized by
             // SOURCE so a swap diverges the shape. Functions anywhere else
-            // have no stable representation (they are hazard-locked upstream
-            // anyway) → null. Residual: same-source different-closure config
-            // swaps are unobservable — accepted class.
-            if (depth === 0 && GSAP_CONFIG_VARS.has(key)) child = `fn:${String(slot.value)}`;
+            // (including inside startAt) have no stable representation → null.
+            if (atEntryRoot && GSAP_CONFIG_VARS.has(key)) child = `fn:${String(slot.value)}`;
             else return null;
           } else {
             child = serialize(slot.value, depth + 1);
@@ -3602,7 +3608,7 @@ function nativeMotionRuntimeBridge() {
       const parts = gsapForInKeys(startAt).sort().map((key) => {
         const value = startAt[key];
         if (typeof value === 'function') { fns.set(key, value); return [key, 'fn']; }
-        if (value !== null && typeof value === 'object') return [key, gsapStepEntryShape(value)];
+        if (value !== null && typeof value === 'object') return [key, gsapStepEntryShape(value, false)];
         return [key, `${typeof value}:${String(value)}`];
       });
       shape = parts.some(([, part]) => part === null) ? null : JSON.stringify(parts);
