@@ -2655,6 +2655,47 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a latent vars.ease mutation stales the binding — the step invalidate cannot materialize collateral (Sol r38)', () => {
+    document.body.innerHTML = '<main><div id="ksez"></div></main>';
+    const target = document.getElementById('ksez');
+    // vars.ease (ease do TWEEN) fora do token/binding: a página troca ease sem
+    // invalidar; o invalidate do step materializaria a nova ease, mudando
+    // canais top-level intocados (z) que o journal não cobre. Estado colateral
+    // de vars (tudo menos keyframes/startAt) congelado e validado.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      z: 100,
+      ease: 'none',
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // Página troca a ease do tween SEM invalidar.
+    vars.ease = 'power4.in';
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 0, '150');
+    expect(vars.keyframes[0].x).toBe(100); // recusado, sem materializar a ease
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // Re-inspeção sob a ease nova destrava.
+    const regrab = grabMotion(target, messages);
+    sendStep(regrab.selection, regrab.motion, 'x', 0, '150');
+    expect(vars.keyframes[0].x).toBe(150);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

@@ -2158,11 +2158,13 @@ function nativeMotionRuntimeBridge() {
               const exposureShape = gsapStepExposureShape(entryPlan.allEntries);
               const exposureConfigFns = entryPlan.allEntries.map((planEntry) => gsapEntryConfigFns(planEntry));
               const exposureStartAt = gsapStartAtState(vars);
-              const exposureSessionBound = exposureConfigFns.some((fns) => fns.size > 0) || exposureStartAt.fns.size > 0;
-              const exposureFnSignature = gsapExposureFnSignature(exposureConfigFns, exposureStartAt.fns);
-              const exposureToken = exposureShape === null || exposureStartAt.shape === null
+              const exposureCollateral = gsapVarsCollateralState(vars);
+              const exposureSessionBound = exposureConfigFns.some((fns) => fns.size > 0)
+                || exposureStartAt.fns.size > 0 || exposureCollateral.fns.size > 0;
+              const exposureFnSignature = `${gsapExposureFnSignature(exposureConfigFns, exposureStartAt.fns)}#${gsapExposureFnSignature([exposureCollateral.fns], null)}`;
+              const exposureToken = exposureShape === null || exposureStartAt.shape === null || exposureCollateral.shape === null
                 ? null
-                : gsapStepExposureToken(`${exposureShape}|startAt:${exposureStartAt.shape}`, exposureSessionBound, exposureFnSignature);
+                : gsapStepExposureToken(`${exposureShape}|startAt:${exposureStartAt.shape}|vars:${exposureCollateral.shape}`, exposureSessionBound, exposureFnSignature);
               if (exposureToken === null) {
                 gsapStepExposures.get(animation)?.delete(track.property);
               } else {
@@ -2184,6 +2186,10 @@ function nativeMotionRuntimeBridge() {
                   // alone never sees it, and the invalidate would materialize
                   // it, shifting the segment before the step.
                   startAtState: exposureStartAt,
+                  // Collateral top-level vars state (Sol r38): a latent ease/
+                  // channel mutation the first write's invalidate would
+                  // materialize.
+                  collateralState: exposureCollateral,
                 });
               }
               return { steps: entryPlan.steps.map((step, stepIndex, list) => {
@@ -3651,6 +3657,42 @@ function nativeMotionRuntimeBridge() {
     return true;
   }
 
+  // Everything invalidate() RE-READS besides the separately-frozen keyframes
+  // and startAt (Sol r38): the tween-level ease and every other top-level
+  // channel/config (z:100, duration, ...). A latent page change here is
+  // materialized by our step/END invalidate, hitting collateral channels the
+  // journal never covers. Descriptor-based (accessor → null → fail closed);
+  // functions (a custom ease) captured by identity like startAt.
+  function gsapVarsCollateralState(vars) {
+    if (!vars || typeof vars !== 'object') return { shape: `absent:${String(vars)}`, fns: new Map() };
+    const fns = new Map();
+    let shape = null;
+    try {
+      const parts = gsapForInKeys(vars).sort().map((key) => {
+        if (key === 'keyframes' || key === 'startAt' || key === 'parent') return null;
+        const slot = gsapOwnDataSlot(vars, key);
+        if (slot.kind !== 'data') return 'ACCESSOR';
+        const value = slot.value;
+        if (typeof value === 'function') { fns.set(key, value); return [key, 'fn']; }
+        if (value !== null && typeof value === 'object') return [key, gsapStepEntryShape(value, false)];
+        return [key, `${typeof value}:${String(value)}`];
+      }).filter((part) => part !== null);
+      shape = parts.some((part) => part === 'ACCESSOR' || part[1] === null) ? null : JSON.stringify(parts);
+    } catch (_) { shape = null; }
+    return { shape, fns };
+  }
+  function gsapVarsCollateralMatches(vars, frozen) {
+    if (!frozen) return true;
+    const current = gsapVarsCollateralState(vars);
+    if (frozen.shape === null || current.shape === null) return false;
+    if (current.shape !== frozen.shape) return false;
+    if (current.fns.size !== frozen.fns.size) return false;
+    for (const [key, fn] of frozen.fns) {
+      if (current.fns.get(key) !== fn) return false;
+    }
+    return true;
+  }
+
   function gsapStepExposureShape(entries) {
     const shapes = entries.map((entry) => gsapStepEntryShape(entry));
     return shapes.some((shape) => shape === null) ? null : JSON.stringify(shapes);
@@ -3848,6 +3890,12 @@ function nativeMotionRuntimeBridge() {
     if (binding.startAtState && !gsapStartAtStateMatches(animation.vars, binding.startAtState)) {
       return { binding: null, stale: true };
     }
+    // Collateral top-level vars (tween ease, other channels) frozen too
+    // (Sol r38): a latent change our invalidate would materialize onto
+    // untouched channels. Observable without the timeline.
+    if (binding.collateralState && !gsapVarsCollateralMatches(animation.vars, binding.collateralState)) {
+      return { binding: null, stale: true };
+    }
     // The VALUE check needs no timeline — the buckets are held by identity.
     // An externally mutated bucket is OBSERVABLE staleness even while the
     // topology is uninspectable: the frozen restore would wipe the page's
@@ -3905,6 +3953,9 @@ function nativeMotionRuntimeBridge() {
     // entry writers (END and step) refuse. The step channel already locks via
     // the null exposure token; this closes the END writer too.
     if (gsapStartAtState(animation.vars).shape === null) return null;
+    // Unserializable collateral vars (accessor / nested fn) cannot be
+    // fingerprinted either — same permanent-staleness hazard (Sol r38).
+    if (gsapVarsCollateralState(animation.vars).shape === null) return null;
     let bindings = gsapKeyframeEntryRetargets.get(animation);
     if (!bindings) {
       bindings = new Map();
@@ -3926,6 +3977,7 @@ function nativeMotionRuntimeBridge() {
       end: numericCss(sampleGsapValue(record, property, 1)),
       stepOriginals: new Map(),
       startAtState: gsapStartAtState(animation.vars),
+      collateralState: gsapVarsCollateralState(animation.vars),
     };
     bindings.set(property, binding);
     return binding;
@@ -3949,6 +4001,18 @@ function nativeMotionRuntimeBridge() {
     validProperties.forEach((property) => {
       const binding = bindings.get(property);
       if (binding) binding.startAtState = nextState;
+    });
+  }
+  // The bridge's own timing/ease edit is expected, not page tampering
+  // (Sol r38): refresh the collateral vars snapshot on the bindings valid
+  // before the edit.
+  function refreshCollateralBindings(animation, vars, validProperties) {
+    const bindings = gsapKeyframeEntryRetargets.get(animation);
+    if (!bindings) return;
+    const nextState = gsapVarsCollateralState(vars);
+    validProperties.forEach((property) => {
+      const binding = bindings.get(property);
+      if (binding) binding.collateralState = nextState;
     });
   }
 
@@ -4156,7 +4220,8 @@ function nativeMotionRuntimeBridge() {
       // invalidate would materialize it. Revalidate the LIVE startAt against
       // the exposed one BEFORE freezing the binding — never freeze an already-
       // injected startAt.
-      if (!gsapStartAtStateMatches(animation.vars, exposure.startAtState)) {
+      if (!gsapStartAtStateMatches(animation.vars, exposure.startAtState)
+        || !gsapVarsCollateralMatches(animation.vars, exposure.collateralState)) {
         throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
       }
       binding = createFrozenEntryBinding(record, property, firstPlan);
@@ -4202,7 +4267,9 @@ function nativeMotionRuntimeBridge() {
         || !binding.allEntries.every((sibling, siblingIndex) =>
           gsapConfigFnsMatch(sibling, exposure.allEntryConfigFns[siblingIndex]))
         // Live startAt must still match what the UI showed (Sol r32).
-        || !gsapStartAtStateMatches(animation.vars, exposure.startAtState)) {
+        || !gsapStartAtStateMatches(animation.vars, exposure.startAtState)
+        // Collateral top-level vars (ease etc.) too (Sol r38).
+        || !gsapVarsCollateralMatches(animation.vars, exposure.collateralState)) {
         throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
       }
     }
@@ -4682,6 +4749,12 @@ function nativeMotionRuntimeBridge() {
     }
 
     const animation = record.animation;
+    // The bridge's OWN timing/ease/scroll edits change top-level vars the step
+    // bindings freeze as collateral (Sol r38, r33 pattern): capture which
+    // bindings are valid BEFORE, refresh their collateral AFTER — the edit is
+    // expected, not page tampering. Keyframe edits never touch collateral vars.
+    const touchesCollateral = !patch.property.startsWith('keyframe');
+    const validCollateralBindings = touchesCollateral ? captureValidStartAtBindings(animation) : [];
     if (patch.property.startsWith('keyframeStep.')) {
       applyGsapKeyframeStep(record, patch.property.slice('keyframeStep.'.length), value);
     } else if (patch.property.startsWith('keyframe.')) {
@@ -4720,6 +4793,9 @@ function nativeMotionRuntimeBridge() {
       else relinkElementToSharedTween(record, element);
     } else {
       throw new Error(`Unsupported GSAP motion property: ${patch.property}`);
+    }
+    if (touchesCollateral && validCollateralBindings.length) {
+      refreshCollateralBindings(animation, animation.vars, validCollateralBindings);
     }
     record.scrollTrigger?.refresh?.();
   }
