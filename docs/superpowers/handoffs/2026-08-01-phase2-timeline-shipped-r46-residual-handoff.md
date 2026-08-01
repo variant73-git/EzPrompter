@@ -1,0 +1,72 @@
+# Handoff 2026-08-01 — Fase-2 timeline (step-edit de etapas individuais) SHIPPED · r46 residual
+
+> **Para a próxima sessão.** Frente `live-animated-clone-editing`, branch `codex/live-animated-clone-editing`.
+> Estado ao escrever: HEAD `6870f314` · suíte **1530/1530** (10 skip) · witness fase-2 **29/29** · witness caminho-seguro **114/114** · witness furo #2 **37/37**. Working tree limpo (probes `_probe-*.mjs` untracked por convenção).
+
+## 1. O que fechou
+
+A **fase-2 timeline** — editar o VALOR de **etapas individuais** (entradas intermediárias) da forma ARRAY de `vars.keyframes`, não só o END (trailing run) e o START (startAt). Era o próximo item da fila desde o fechamento do caminho-seguro (item 170).
+
+**Implementação (5 commits de feature + 42 rodadas de auditoria do Sol):**
+- **Bridge** (`lib/motion-editor/runtime-bridge-source.js`): canal novo `keyframeStep.<prop>`, endereço canônico = **rawEntryIndex** (não offset — offsets duplicam com `duration:0` e somem com total zero). Plano expõe `steps[]` `{entryIndex, offset, value, editable, reason?, isEnd?, token}`. Writer `applyGsapKeyframeStep`, binding/journal ÚNICO por (animation, property) compartilhado com o END writer (`ensureFrozenEntryBinding`/`createFrozenEntryBinding`). Reader transacional + pre-flight r82 por índice.
+- **Controller** (`useNativeMotionController.js`): `changeStepValue`.
+- **UI** (`NativeMotionEditor.jsx`): diamantes por entrada na TimelinePanel (terminal escondido por `isEnd`, alocação GLOBAL de slots pra offsets duplicados), edição de valor pelo label; `NativeMotionTimelineDock.jsx` plumbing.
+- **Witness real** `_probe-phase2-witness.mjs` (29 checks no GSAP 3.15 real).
+
+## 2. O método (mesmo do caminho-seguro): veto adversarial nas duas direções
+
+**46 rodadas do Sol** (Codex, `--mode prose`, effort max/high), cada achado verificado por probe/RED antes de aceitar. Placar: **36 bloqueadores corrigidos + 5 refutados com evidência (r18, r36, r41, r42 + r12 adjudicado)**. Minhas duas refutações que CAÍRAM (r12→r13, r16→r17) — o Sol produziu a sequência, RED confirmou, corrigi. Veto vale nas duas direções.
+
+A invariante central que emergiu: **congelar TUDO que `invalidate()` relê; mutação latente da página estala o binding, edição própria do bridge refresca (padrão captura-antes/refresca-depois)**. Rodadas por camada dessa invariante:
+- Núcleo (r4–r24): endereçamento, pré-simulação de unidade nos restores STEP e END, identity `child.vars===entry`, `allEntries` INTEGRAL, gate no 1º toque de cada índice, token de exposição.
+- Token/serialização (r25–r30, r43–r45): shape EXATO (hash forjável → serialização literal), profunda descriptor-based parametrizada (entry-root vs nested), backedge por LOCALIZAÇÃO, arrays por length+descriptor, encoding INJETIVO, encoder **realm-safe** (`gsapEncNode`, sem `JSON.stringify` — honrava `toJSON` envenenado).
+- Funções (r27–r29, r37): serializa por source + identidade `===` na exposição/binding + session-bound + identidade de sessão dobrada no token.
+- startAt (r31–r35): estado no token/binding/gate, START(y) não envenena binding de x, não-serializável tranca.
+- Colateral (r38–r42): `gsapVarsCollateralState` (ease + canais top-level), `retarget.final` no ciclo, `gsapEntryOtherFieldsShape` (campos irmãos dentro das entries).
+
+Detalhe de cada rodada: nas mensagens de commit `git log 3732a2f0..6870f314` (uma linha `Sol rNN` por commit).
+
+## 3. RESIDUAL ACEITO — r46 (decisão do Adilson: parar aqui)
+
+**Sol r46 (não implementado, decisão de produto):** os serializers/gates de segurança usam métodos de `Array.prototype` (`.map/.some/.filter/.sort/.every/.push`) e intrinsics (`Object.getOwnPropertyDescriptor`, `for-in`) do realm da página. Um site clonado **adversarial** poderia envenenar cirurgicamente `Array.prototype.map` (detectando o callback por `Function.prototype.toString`) pra colapsar dois shapes distintos e furar o gate por token — materializando uma mutação colateral não-journalada num undo.
+
+**Por que aceito como residual, não fix de loop:**
+- É a MESMA classe de realm-hostilidade das r36 (accessor) e r45 (`toJSON`) — mas essas foram **fixes bounded** (evitar UMA API). A r46 é **hardening ilimitado**: cobrir map/some/filter/sort/every/push + transitivamente `Object.*`/`for-in` exige **intrinsics prístinos de um realm confiável** (tipo SES).
+- O bridge é injetado **DEPOIS** do conteúdo clonado rodar no iframe → capturar intrinsics no load do bridge é tarde demais (a página já pôde envenenar). Defesa real = realm separado/confiável = **infraestrutura**, não fix de serializer.
+- Consequência do ataque: undo mis-journalado num cenário raro de sabotagem deliberada do site clonado. **NÃO é falha de segurança** (sem exfiltração/escalação).
+
+**Mitigação (se retomar deliberadamente):** capturar intrinsics prístinos (`Array.prototype.*`, `Object.getOwnPropertyDescriptor/getPrototypeOf`, `Reflect.ownKeys`) de um realm confiável — p.ex. um iframe `about:blank` criado pela extensão ANTES do conteúdo clonado — e usá-los em todos os serializers/gates; ou rodar os gates de segurança fora do realm da página. É um trabalho de infra deliberado.
+
+## 4. Como retomar (mecânica)
+
+```bash
+cd ~/Desktop/IA/Uncraft && git checkout codex/live-animated-clone-editing
+cd packages/web-shell
+npx vitest run lib/motion-editor/runtime-bridge-source.test.js   # 267 testes do bridge
+node _probe-phase2-witness.mjs                                   # 29 checks — GSAP real
+node _probe-entryedit-witness.mjs                                # 114 (caminho-seguro)
+node _probe-furo2-witness.mjs                                    # 37
+```
+- Witnesses rodam de DENTRO de `packages/web-shell` (fixture GSAP em `~/Desktop/IA/Unspirit-Clone-1to1/site`).
+- Sol: `~/.claude/bin/codex-adversary.sh --mode prose --timeout 1400` com **bundle enxuto** (só o diff da última rodada + histórico compacto de 1 linha — o diff cumulativo de 1405 linhas estourou o contexto do Codex na r41, morreu sem veredito).
+- Modelo de coordenação: **Sol dirige a frente; Claude executa/revisa (lead) + faz o [SALVAR]**.
+
+## 5. Fila restante (depois da fase-2)
+
+1. **r46 realm-hardening** — se/quando o Adilson decidir investir na infra de realm confiável (§3).
+2. **Furo #4** — multi-target / split-text ownership (item 168 do CLAUDE.md); coordenar com a Task 12 do gate (fixture do chooser = Entrance+Hover).
+3. **Fila da Task 16** (gate persistido `/canvas`) — Tasks 12–20, env Neon isolado `ep-orange-frost-acaedcil` (NUNCA produção).
+
+## 6. Lições operacionais desta frente (valem pras próximas)
+
+1. **Bundle enxuto quando o diff cresce** — diff só da última rodada + histórico 1-linha; o cumulativo (~1405 linhas) matou o Codex sem veredito na r41. Sempre conferir que o processo TERMINOU (output não-vazio) antes de ler o veredito.
+2. **Witness real freia o próprio fix** — rodar os 3 witnesses a CADA green, não só no fim.
+3. **RED pelo motivo certo** — várias vezes um teste passou/falhou por um caminho diferente do pretendido (r36 getter nunca invocado; r40 cross precisava re-inspeção; r43 test passava pelo hazard scan). Confirmar o mecanismo, não só o resultado.
+4. **Refutar com evidência é tratar o achado** — 5 refutações verificadas por teste (o cenário já era fail-closed a montante). Aplicar a guarda defensiva prescrita mesmo quando refutando (hardening estrito).
+5. **Serialização de segurança é traiçoeira** — for..in omite length/holes/não-enumeráveis de arrays; `join` não é injetivo; `JSON.stringify` honra `toJSON` do realm. Encoder length-prefixed próprio (`gsapEncNode`) é o piso; realm-safe total precisa de intrinsics prístinos (r46).
+
+## 7. Referências
+
+- Handoff anterior (caminho-seguro fechado): `docs/superpowers/handoffs/2026-07-31-safe-path-closed-next-phase2-timeline-handoff.md`
+- Memória: `[[checkpoint_2026-08-01_phase2-timeline]]`
+- Commits: `git log 3732a2f0..6870f314` (47 commits: 5 feature + 42 rodadas Sol)
