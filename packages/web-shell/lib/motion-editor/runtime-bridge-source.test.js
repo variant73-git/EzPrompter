@@ -2513,6 +2513,43 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('an UNSERIALIZABLE nested startAt locks the entry writers — no undoable-less edit (Sol r35)', () => {
+    document.body.innerHTML = '<main><div id="ksu2"></div></main>';
+    const target = document.getElementById('ksu2');
+    // startAt com função ANINHADA (attr.title) → shape null → o binding
+    // nasceria permanentemente stale e o END-undo seria recusado (edição sem
+    // desfazer). Fail closed: sem shape estável do startAt, os writers de
+    // entrada (END e step) recusam a criação do binding — nada é mutado.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+      ],
+      startAt: { attr: { title: () => 'x' } },
+      duration: 2,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // END-write recusado — sem binding, sem mutação, sem invalidate.
+    sendRetarget(selection, motion, '300');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([100, 200]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // Step channel já travado pelo token null: steps publicados mas nenhum
+    // editável e sem token.
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    expect(xTrack.steps.every((step) => step.editable === false && step.token === undefined)).toBe(true);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

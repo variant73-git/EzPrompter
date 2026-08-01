@@ -3836,6 +3836,13 @@ function nativeMotionRuntimeBridge() {
   // stale binding — never silently replaces it (Sol r5).
   function createFrozenEntryBinding(record, property, plan) {
     const animation = record.animation;
+    // An UNSERIALIZABLE startAt (a nested function, accessor or cycle) cannot
+    // be fingerprinted, so a frozen binding would be born permanently stale
+    // (gsapStartAtStateMatches fails on a null shape) and its own undo refused
+    // — an edit with no rollback (Sol r35). Fail closed: no binding, so BOTH
+    // entry writers (END and step) refuse. The step channel already locks via
+    // the null exposure token; this closes the END writer too.
+    if (gsapStartAtState(animation.vars).shape === null) return null;
     let bindings = gsapKeyframeEntryRetargets.get(animation);
     if (!bindings) {
       bindings = new Map();
@@ -3894,6 +3901,7 @@ function nativeMotionRuntimeBridge() {
       const plan = gsapArrayKeyframePlan(animation, property);
       if (!plan) return null;
       binding = createFrozenEntryBinding(record, property, plan);
+      if (!binding) return null; // unserializable startAt — fail closed (Sol r35)
     }
     if (!binding.stepOriginals) binding.stepOriginals = new Map();
     return binding;
@@ -4090,6 +4098,9 @@ function nativeMotionRuntimeBridge() {
         throw bridgeError('unsupported_patch', "This animation's keyframes were changed by the page — reselect the layer to edit them again.");
       }
       binding = createFrozenEntryBinding(record, property, firstPlan);
+      if (!binding) { // unserializable startAt appeared post-exposure (Sol r35)
+        throw bridgeError('unsupported_patch', 'This value is driven by GSAP keyframes and cannot be edited safely yet.');
+      }
     }
     if (!binding.stepOriginals) binding.stepOriginals = new Map();
     // Address against the FROZEN binding (identity — Sol F2): the raw index
