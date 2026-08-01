@@ -4717,8 +4717,19 @@ function nativeMotionRuntimeBridge() {
       if (value.owner?.motionId && value.owner.motionId !== patch.motionId) {
         throw bridgeError('motion_owner_mismatch', 'The selected motion no longer owns this value.');
       }
-      if (record.type === 'browser') applyBrowserRetarget(record, value);
-      else applyGsapRetarget(record, value);
+      if (record.type === 'browser') { applyBrowserRetarget(record, value); return; }
+      // A GSAP retarget of a top-level channel writes vars (a plain prop) or
+      // vars.startAt (the loop/additive-base model) — the bridge's OWN edit,
+      // not page tampering (Sol r39). Refresh the collateral/startAt snapshot
+      // of every OTHER step binding valid before it, or their next LIFO undo
+      // would read this legit change as external staleness and be pruned.
+      const gsapAnimation = record.animation;
+      const validBefore = captureValidStartAtBindings(gsapAnimation);
+      applyGsapRetarget(record, value);
+      if (validBefore.length) {
+        refreshCollateralBindings(gsapAnimation, gsapAnimation.vars, validBefore);
+        refreshStartAtBindings(gsapAnimation, gsapAnimation.vars, validBefore);
+      }
       return;
     }
 

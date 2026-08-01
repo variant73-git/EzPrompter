@@ -2696,6 +2696,82 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a top-level retarget refreshes the step binding collateral — LIFO undo step(x) after retarget(z) restores x (Sol r39)', () => {
+    document.body.innerHTML = '<main><div id="ksrz"></div></main>';
+    const target = document.getElementById('ksrz');
+    // O retarget de z (canal top-level) muta vars.z; sem refrescar o colateral
+    // do binding de x, a edição PRÓPRIA do bridge era lida como mutação da
+    // página e o undo do step de x era recusado. O retarget.final entra no
+    // mesmo ciclo capture-before/refresh-after.
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      z: 10,
+      duration: 3,
+    };
+    const rendered = { x: 0, z: 0 };
+    const tween = {
+      targets: () => [target],
+      vars,
+      duration: () => 3,
+      delay: () => 0, repeat: () => 0, repeatDelay: () => 0,
+      yoyo: () => false, reversed: () => false, paused: () => false,
+      scrollTrigger: null,
+      progress: vi.fn(function progressMock(p) {
+        if (p === undefined) return progressMock.current || 0;
+        progressMock.current = p;
+        return tween;
+      }),
+      invalidate: vi.fn(() => tween),
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (element, prop) => String(prop === 'z' ? vars.z : rendered[prop] ?? ''),
+    };
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // (2) step x[0]: 100 → 150.
+    sendStep(selection, motion, 'x', 0, '150');
+    expect(vars.keyframes[0].x).toBe(150);
+
+    // (3) retarget z: 10 → 20 (canal top-level, muta vars.z).
+    const retargetZ = (before, after) => window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'apply-patch',
+        payload: { patch: {
+          elementId: selection.payload.element.id, kind: 'motion', motionId: motion.id,
+          property: 'retarget.final',
+          before: { schemaVersion: 2, semanticProperty: 'z', runtimeProperty: 'z', value: before },
+          value: { schemaVersion: 2, semanticProperty: 'z', runtimeProperty: 'z', value: after,
+            writeModel: 'absolute', responsiveScope: 'shared',
+            owner: { channelId: `${motion.id}:z`, motionId: motion.id } },
+        } },
+      },
+    }));
+    retargetZ('10', '20');
+    expect(Number(vars.z)).toBe(20);
+
+    // (4) undo z: 20 → 10.
+    retargetZ('20', '10');
+    expect(Number(vars.z)).toBe(10);
+
+    // (5) undo step x: 150 → 100 (binding-x não podado nem stale).
+    sendStep(selection, motion, 'x', 0, '100');
+    expect(vars.keyframes[0].x).toBe(100);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
