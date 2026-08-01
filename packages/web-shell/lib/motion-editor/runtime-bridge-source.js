@@ -2159,9 +2159,10 @@ function nativeMotionRuntimeBridge() {
               const exposureConfigFns = entryPlan.allEntries.map((planEntry) => gsapEntryConfigFns(planEntry));
               const exposureStartAt = gsapStartAtState(vars);
               const exposureSessionBound = exposureConfigFns.some((fns) => fns.size > 0) || exposureStartAt.fns.size > 0;
+              const exposureFnSignature = gsapExposureFnSignature(exposureConfigFns, exposureStartAt.fns);
               const exposureToken = exposureShape === null || exposureStartAt.shape === null
                 ? null
-                : gsapStepExposureToken(`${exposureShape}|startAt:${exposureStartAt.shape}`, exposureSessionBound);
+                : gsapStepExposureToken(`${exposureShape}|startAt:${exposureStartAt.shape}`, exposureSessionBound, exposureFnSignature);
               if (exposureToken === null) {
                 gsapStepExposures.get(animation)?.delete(track.property);
               } else {
@@ -3660,13 +3661,52 @@ function nativeMotionRuntimeBridge() {
   // replayed through a fresh bridge refuses and demands a conscious
   // re-inspection. Function-free exposures stay replay-stable (r22).
   const gsapStepSessionNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  function gsapStepExposureToken(shape, sessionBound) {
+  // Session-local monotonic id per object/function IDENTITY (Sol r37): two
+  // same-source closures (String(f1) === String(f2)) serialize identically,
+  // so their tokens would collide and a re-inspection would silently overwrite
+  // the exposure record under the same token — a retained patch authorized
+  // under f1 would then pass under f2. Folding a distinct id per identity
+  // re-versions the token on any swap. Session-local only (never persisted);
+  // a fresh bridge starts empty, which is fine — function exposures are
+  // already session-bound (r29).
+  const gsapSessionIdentityIds = new WeakMap();
+  let gsapSessionIdentityCounter = 0;
+  function gsapSessionIdentityId(value) {
+    if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return 'x';
+    let id = gsapSessionIdentityIds.get(value);
+    if (id === undefined) {
+      gsapSessionIdentityCounter += 1;
+      id = gsapSessionIdentityCounter;
+      gsapSessionIdentityIds.set(value, id);
+    }
+    return id;
+  }
+  // A stable signature of every FUNCTION identity in the exposure (entry-root
+  // config fns per entry + startAt top-level fns) — the source string cannot
+  // distinguish same-source closures, so identity ids do (Sol r37).
+  function gsapExposureFnSignature(configFnsPerEntry, startAtFns) {
+    const parts = [];
+    configFnsPerEntry.forEach((fnMap, entryIndex) => {
+      Array.from(fnMap.keys()).sort().forEach((key) => {
+        parts.push(`${entryIndex}.${key}=${gsapSessionIdentityId(fnMap.get(key))}`);
+      });
+    });
+    if (startAtFns) {
+      Array.from(startAtFns.keys()).sort().forEach((key) => {
+        parts.push(`sa.${key}=${gsapSessionIdentityId(startAtFns.get(key))}`);
+      });
+    }
+    return parts.join('|');
+  }
+  function gsapStepExposureToken(shape, sessionBound, fnSignature) {
     // The token IS the exact serialized shape (Sol r25): a 32-bit non-crypto
     // hash is forgeable by an adversarial page (birthday ≈ 77k tries), and a
     // collision would smuggle a stale patch through the gate. Exact equality
     // by construction; deterministic across bridges (r22 replay) unless the
-    // truth carries functions (session-bound — Sol r29).
-    return sessionBound ? `sxs:${gsapStepSessionNonce}:${shape}` : `sx:${shape}`;
+    // truth carries functions (session-bound — Sol r29), which also fold in
+    // the session-local IDENTITY signature so a same-source swap re-versions
+    // the token (Sol r37).
+    return sessionBound ? `sxs:${gsapStepSessionNonce}:${fnSignature || ''}:${shape}` : `sx:${shape}`;
   }
   // Original start values (sampled at progress 0 before the FIRST offset-0
   // edit), per (animation, property) — the render-equivalent rollback target

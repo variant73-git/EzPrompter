@@ -2594,6 +2594,67 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a same-source config-fn swap re-versions the token — a retained patch under f1 refuses under f2 (Sol r37)', () => {
+    document.body.innerHTML = '<main><div id="ksv3"></div></main>';
+    const target = document.getElementById('ksv3');
+    // O token de sessão usava String(fn) — f1 e f2 same-source davam o mesmo
+    // token, e a re-inspeção sobrescrevia allEntryConfigFns com f2, lavando o
+    // registro. Identidade de SESSÃO (id monotônico por ===) dobrada no token:
+    // swap → token novo → patch retido sob f1 recusa.
+    const makeEase = (power) => (p) => p ** power;
+    const f1 = makeEase(1);
+    const f2 = makeEase(2);
+    expect(String(f1)).toBe(String(f2)); // same source, closures distintos
+    const vars = {
+      keyframes: [
+        { x: 100, ease: f1, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const grabbed = grabMotion(target, messages);
+    const track = grabbed.motion.tracks.find((candidate) => candidate.property === 'x');
+    const retainedToken = track.steps.find((step) => step.entryIndex === 0).token;
+    const retainedPatch = {
+      elementId: grabbed.selection.payload.element.id,
+      kind: 'motion',
+      motionId: grabbed.motion.id,
+      property: 'keyframeStep.x',
+      before: { entryIndex: 0, token: retainedToken, value: '100', exists: true },
+      value: { entryIndex: 0, token: retainedToken, value: '150', exists: true },
+    };
+
+    // Swap same-source + re-inspeção (token seria lavado sob a source igual).
+    vars.keyframes[0].ease = f2;
+    grabMotion(target, messages);
+
+    // Patch retido sob f1 — recusa (token re-versionado).
+    tween.invalidate.mockClear();
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'host', type: 'apply-patch', payload: { patch: retainedPatch } },
+    }));
+    expect(vars.keyframes[0].x).toBe(100);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    // Re-inspeção sob f2 emite token novo → edit consciente funciona.
+    const regrab = grabMotion(target, messages);
+    const freshToken = regrab.motion.tracks.find((candidate) => candidate.property === 'x')
+      .steps.find((step) => step.entryIndex === 0).token;
+    expect(freshToken).not.toBe(retainedToken);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
