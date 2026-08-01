@@ -2417,6 +2417,62 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a START edit of ANOTHER property does not poison the step binding — step(x) -> START(y) -> restore(x) (Sol r33)', () => {
+    document.body.innerHTML = '<main><div id="ksxy"></div></main>';
+    const target = document.getElementById('ksxy');
+    // A escrita de START(y) troca o container vars.startAt inteiro; o snapshot
+    // de x (que congela vars.startAt por referência) ficava stale e recusava
+    // o restore de x como "página mudou". A escrita PRÓPRIA do bridge é
+    // esperada: refresca o startAtState de todos os bindings ainda válidos.
+    const vars = {
+      keyframes: [
+        { x: 100, y: 10, duration: 1, parent: {} },
+        { x: 200, y: 20, duration: 1, parent: {} },
+        { x: 300, y: 30, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    // step(x) cria o binding de x.
+    sendStep(selection, motion, 'x', 1, '250');
+    expect(vars.keyframes[1].x).toBe(250);
+
+    // START(y) — escrita própria do bridge, troca vars.startAt.
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: selection.payload.element.id,
+            kind: 'motion',
+            motionId: motion.id,
+            property: 'keyframe.y',
+            before: { offset: 0, value: '', exists: true },
+            value: { offset: 0, value: '5', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.startAt).toEqual({ y: '5' });
+
+    // restore(x) — o binding de x NÃO deve estar envenenado.
+    sendStep(selection, motion, 'x', 1, '200');
+    expect(vars.keyframes[1].x).toBe(200);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

@@ -3856,6 +3856,27 @@ function nativeMotionRuntimeBridge() {
     return binding;
   }
 
+  // A START write (keyframe.<prop> offset 0) swaps the WHOLE vars.startAt
+  // container, so it would stale EVERY other property's entry binding, whose
+  // startAtState froze the old container by reference (Sol r33). The bridge's
+  // own START write is expected state: capture which entry bindings are valid
+  // BEFORE the mutation (never refresh one already stale for another reason),
+  // then refresh their startAtState AFTER.
+  function captureValidStartAtBindings(animation) {
+    const bindings = gsapKeyframeEntryRetargets.get(animation);
+    if (!bindings) return [];
+    return Array.from(bindings.keys()).filter((property) => !entryBindingState(animation, property).stale);
+  }
+  function refreshStartAtBindings(animation, vars, validProperties) {
+    const bindings = gsapKeyframeEntryRetargets.get(animation);
+    if (!bindings) return;
+    const nextState = gsapStartAtState(vars);
+    validProperties.forEach((property) => {
+      const binding = bindings.get(property);
+      if (binding) binding.startAtState = nextState;
+    });
+  }
+
   function ensureFrozenEntryBinding(record, property) {
     const animation = record.animation;
     const state = entryBindingState(animation, property);
@@ -4331,6 +4352,9 @@ function nativeMotionRuntimeBridge() {
     const offset = Math.max(0, Math.min(1, Number(descriptor?.offset) || 0));
     if (descriptor?.exists === false) {
       if (offset <= 0.001 && vars.startAt) {
+        // Capture the OTHER properties' valid entry bindings before mutating
+        // the shared vars.startAt container (Sol r33).
+        const validStartAtBindings = captureValidStartAtBindings(animation);
         // A naive delete is a FALSE rollback: GSAP materializes _startAt on
         // first render and deleting vars.startAt does not un-materialize it —
         // the edited start keeps rendering while the ack reports restored
@@ -4355,8 +4379,9 @@ function nativeMotionRuntimeBridge() {
         } else {
           delete vars.startAt[property];
         }
-        const entryBinding = gsapKeyframeEntryRetargets.get(animation)?.get(property);
-        if (entryBinding) entryBinding.startAtState = gsapStartAtState(vars);
+        // Refresh startAtState on ALL entry bindings valid before this write —
+        // the bridge's own START edit is expected, not page tampering (Sol r33).
+        refreshStartAtBindings(animation, vars, validStartAtBindings);
       }
       invalidatePreservingStart(animation);
       return;
@@ -4369,6 +4394,9 @@ function nativeMotionRuntimeBridge() {
       }
       vars[property] = value; // end target
     } else if (offset <= 0.001) {
+      // Capture OTHER properties' valid entry bindings before mutating the
+      // shared vars.startAt container (Sol r33).
+      const validStartAtBindings = captureValidStartAtBindings(animation);
       let bindings = gsapStartAtRetargets.get(animation);
       if (!bindings) {
         bindings = new Map();
@@ -4404,9 +4432,9 @@ function nativeMotionRuntimeBridge() {
       }
       if (binding) binding.lastWritten = vars.startAt[property];
       // The bridge's OWN startAt write is expected state, not staleness —
-      // refresh the frozen step/entry binding's snapshot (Sol r31).
-      const entryBinding = gsapKeyframeEntryRetargets.get(animation)?.get(property);
-      if (entryBinding) entryBinding.startAtState = gsapStartAtState(vars);
+      // refresh ALL entry bindings valid before this write, not just this
+      // property's (a START(y) edit swaps the shared container — Sol r31/r33).
+      refreshStartAtBindings(animation, vars, validStartAtBindings);
     } else {
       throw new Error('Intermediate GSAP keyframes are not editable on this tween yet.');
     }
