@@ -2931,6 +2931,46 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('a non-enumerable ARRAY index mutation in a sibling field stales the binding (Sol r43)', () => {
+    document.body.innerHTML = '<main><div id="ksar"></div></main>';
+    const target = document.getElementById('ksar');
+    // endArray:[10,20] num campo irmão. for...in omite length/holes/índices
+    // não-enumeráveis — defineProperty(a,2,{enumerable:false}) muda a.length
+    // pra 3 mas o shape via for...in fica igual; o invalidate reinicia o
+    // EndArrayPlugin que percorre length → cria o writer do índice 2 fora do
+    // journal. O serializer trata arrays por length + descriptor por índice.
+    const a = [10, 20];
+    const vars = {
+      keyframes: [
+        { x: 100, endArray: a, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '250');
+    expect(vars.keyframes[1].x).toBe(250);
+
+    // Índice não-enumerável adicionado ao array irmão (length 2 → 3).
+    Object.defineProperty(a, 2, { value: 30, enumerable: false, writable: true, configurable: true });
+    expect(a.length).toBe(3);
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 1, '200'); // undo
+    expect(vars.keyframes[1].x).toBe(250); // recusado — não materializa o índice 2
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

@@ -3530,6 +3530,34 @@ function nativeMotionRuntimeBridge() {
   // WITHOUT those root semantics (Sol r34): a startAt.attr.parent is data and
   // must enter the shape, and a function inside startAt has no stable
   // representation (→ null → locked).
+  // Arrays serialized via for...in miss `length`, holes and non-enumerable
+  // indices (Sol r43): a GSAP endArray whose length grows through a
+  // non-enumerable index would keep an identical for...in shape while the
+  // EndArrayPlugin re-inits over `length` and materializes a new writer. Walk
+  // length + each index's descriptor (hole / accessor / data) explicitly.
+  // `serializeChild(value)` returns the child shape string or null to lock.
+  function gsapSerializeArrayShape(value, serializeChild) {
+    const parts = [`len:${value.length}`];
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, index);
+      if (!descriptor) { parts.push(`${index}:hole`); continue; }
+      if (!('value' in descriptor)) return null; // accessor index — unstable
+      const child = serializeChild(descriptor.value);
+      if (child === null) return null;
+      parts.push(`${index}:${child}`);
+    }
+    // Non-index own keys on the array (e.g. a stashed property) also matter.
+    for (const key of gsapForInKeys(value)) {
+      if (String(Number(key)) === key && Number(key) >= 0) continue; // index, handled above
+      const slot = gsapOwnDataSlot(value, key);
+      if (slot.kind !== 'data') return null;
+      const child = serializeChild(slot.value);
+      if (child === null) return null;
+      parts.push(`k:${key}:${child}`);
+    }
+    return `arr[${parts.join(',')}]`;
+  }
+
   function gsapStepEntryShape(entry, isEntryRoot = true) {
     try {
       const seen = new Set();
@@ -3538,6 +3566,11 @@ function nativeMotionRuntimeBridge() {
         if (typeof value !== 'object') return `${typeof value}:${String(value)}`;
         if (seen.has(value) || depth > 6) return null;
         seen.add(value);
+        if (Array.isArray(value)) {
+          const arrShape = gsapSerializeArrayShape(value, (child) => serialize(child, depth + 1));
+          seen.delete(value);
+          return arrShape;
+        }
         const atEntryRoot = isEntryRoot && depth === 0;
         // Only a REAL GSAP entry's root backedge is excluded — by LOCATION,
         // not by name: a nested `parent` (attr.parent) is legitimate animated
@@ -3716,6 +3749,11 @@ function nativeMotionRuntimeBridge() {
         if (typeof value !== 'object') return `${typeof value}:${String(value)}`;
         if (seen.has(value) || depth > 6) return null;
         seen.add(value);
+        if (Array.isArray(value)) {
+          const arrShape = gsapSerializeArrayShape(value, (child) => serialize(child, depth + 1));
+          seen.delete(value);
+          return arrShape;
+        }
         const parts = [];
         for (const key of gsapForInKeys(value).sort()) {
           if (depth === 0 && key === 'parent') continue;
