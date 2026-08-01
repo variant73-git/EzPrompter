@@ -23,6 +23,7 @@
         "@anthropic-ai/sdk": "latest",
         "@google/genai": "latest",
         "@neondatabase/serverless": "^0.10",
+        "@next/env": "15.5.15",
         "@uncraft/editor-core": "*",
         "@upstash/redis": "^1.34",
         "bcryptjs": "^2.4.3",

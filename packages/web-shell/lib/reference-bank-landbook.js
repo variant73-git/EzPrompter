@@ -138,6 +138,7 @@ export function parseLandbookListingPayload(payload, listingUrl = payload?.metad
   const normalizedListingUrl = landbookListingPageUrl(page);
   const document = payloadDocument(payload);
   const appearances = [];
+  const websiteCandidates = [];
   const templates = [];
   const advertisements = [];
   const rejections = [];
@@ -172,7 +173,9 @@ export function parseLandbookListingPayload(payload, listingUrl = payload?.metad
     }
 
     const title = cardTitle(card, detail.url);
-    const thumbnailUrl = card.querySelector('.website-item-picture img[src]')?.getAttribute('src') || '';
+    const thumbnailUrl = card.querySelector('.website-item-picture img[src]')?.getAttribute('src')
+      || card.querySelector('img[src]')?.getAttribute('src')
+      || '';
     const categories = listingCategories(card, normalizedListingUrl);
     if (explicitTemplate(card, normalizedListingUrl)) {
       templates.push({
@@ -190,11 +193,20 @@ export function parseLandbookListingPayload(payload, listingUrl = payload?.metad
 
     const target = detailTarget(card, recordId, normalizedListingUrl, true);
     if (!target) {
-      rejections.push({
-        lane: 'website',
+      websiteCandidates.push({
+        lane: 'website_candidate',
         sourceRecordId: recordId,
+        listingUrl: normalizedListingUrl,
         sourceDetailUrl: detail.url,
-        reason: 'missing_target_url',
+        title,
+        thumbnailUrl,
+        categories: uniqueText(['Website', ...categories]),
+        tags: [],
+        sourceTaxonomy: {
+          lane: 'website',
+          listingPage: page,
+          targetRequiresDetail: true,
+        },
       });
       continue;
     }
@@ -221,6 +233,7 @@ export function parseLandbookListingPayload(payload, listingUrl = payload?.metad
     page,
     listingUrl: normalizedListingUrl,
     appearances,
+    websiteCandidates,
     templates,
     advertisements,
     rejections,

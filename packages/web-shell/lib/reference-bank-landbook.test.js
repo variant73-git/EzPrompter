@@ -90,11 +90,13 @@ describe('Landbook source adapter', () => {
       targetUrl: 'https://framer.link/campaign',
       sponsored: true,
     })]);
-    expect(parsed.rejections).toEqual([expect.objectContaining({
-      lane: 'website',
+    expect(parsed.websiteCandidates).toEqual([expect.objectContaining({
+      lane: 'website_candidate',
       sourceRecordId: '99999',
-      reason: 'missing_target_url',
+      sourceDetailUrl: 'https://land-book.com/websites/99999-missing-target',
+      thumbnailUrl: 'missing.webp',
     })]);
+    expect(parsed.rejections).toEqual([]);
   });
 
   it('rejects filtered listing URLs before parsing cards', () => {
@@ -166,5 +168,35 @@ describe('Landbook source adapter', () => {
     };
     expect(parseLandbookDetailPayload(payload, { lane: 'template' })).toEqual([]);
     expect(parseLandbookDetailPayload(payload, { sourceRecordId: '99999' })).toEqual([]);
+  });
+
+  it('resolves a listing candidate only after its matching detail exposes the external target', () => {
+    const [candidate] = parseLandbookListingPayload({
+      html: `
+        <div class="website-item" data-analytics-item-id="99999">
+          <div class="website-item-picture"><a data-website-link href="/websites/99999-detail-only"><img src="listing.webp"></a></div>
+          <a class="fw-bold" href="/websites/99999-detail-only">Detail only</a>
+        </div>
+      `,
+    }).websiteCandidates;
+    const [resolved] = parseLandbookDetailPayload({
+      metadata: { sourceURL: 'https://land-book.com/websites/99999-detail-only' },
+      html: `
+        <h1>Detail only</h1>
+        <a data-analytics-link-type="visit_button" data-analytics-website-id="99999" href="https://detail-only.example/">Visit</a>
+        <img data-website-img src="detail.webp">
+      `,
+    }, candidate);
+
+    expect(resolved).toMatchObject({
+      sourceRecordId: '99999',
+      url: 'https://detail-only.example/',
+      thumbnailUrl: 'detail.webp',
+      source: {
+        id: 'landbook',
+        recordId: '99999',
+        listingUrl: 'https://land-book.com/',
+      },
+    });
   });
 });

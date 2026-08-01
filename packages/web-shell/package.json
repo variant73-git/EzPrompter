@@ -18,6 +18,8 @@
     "refs:import:isolated": "node scripts/reference-bank/import-seed.mjs --isolated",
     "refs:proof:import:isolated": "node scripts/reference-bank/import-proof.mjs --isolated --seed ../../.firecrawl/reference-proof/reference-bank.proof.seed.json",
     "refs:incremental:import:isolated": "node scripts/reference-bank/import-proof.mjs --isolated --seed ../../.firecrawl/reference-increment-1/reference-bank.increment.seed.json",
+    "refs:landbook:import:isolated": "bun scripts/reference-bank/import-proof.mjs --isolated --seed ../../.firecrawl/reference-landbook-pilot/reference-bank.landbook.seed.json",
+    "refs:landbook:query:isolated": "bun scripts/reference-bank/query-landbook-pilot.mjs --isolated --seed ../../.firecrawl/reference-landbook-pilot/reference-bank.landbook.seed.json",
     "refs:rate-source:isolated": "node scripts/reference-bank/rate-aggregator.mjs --isolated",
     "refs:rate-source:shared": "node scripts/reference-bank/rate-aggregator.mjs --shared",
     "evals:gen": "node evals/gen-prompt.mjs",
@@ -25,6 +27,7 @@
     "evals:view": "promptfoo view"
   },
   "dependencies": {
+    "@next/env": "15.5.15",
     "@anthropic-ai/sdk": "latest",
     "@google/genai": "latest",
     "@neondatabase/serverless": "^0.10",

@@ -1,6 +1,7 @@
 import { neon } from '@neondatabase/serverless';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { loadIsolatedDatabaseConfig } from './isolated-env.mjs';
 
 if (!process.argv.includes('--isolated')) {
   throw new Error('Proof import refuses shared targets. Pass --isolated and configure E2E_ISOLATED_DATABASE_URL.');
@@ -8,12 +9,7 @@ if (!process.argv.includes('--isolated')) {
 const seedFlag = process.argv.indexOf('--seed');
 const seedPath = seedFlag >= 0 ? process.argv[seedFlag + 1] : null;
 if (!seedPath) throw new Error('--seed <path> is required.');
-const databaseUrl = process.env.E2E_ISOLATED_DATABASE_URL;
-if (!databaseUrl) throw new Error('E2E_ISOLATED_DATABASE_URL is required.');
-const sharedDatabaseUrl = process.env.DATABASE_URL;
-if (sharedDatabaseUrl && databaseUrl.trim() === sharedDatabaseUrl.trim()) {
-  throw new Error('Proof import refuses an isolated database URL that matches DATABASE_URL.');
-}
+const { databaseUrl } = loadIsolatedDatabaseConfig();
 
 const seed = JSON.parse(await readFile(path.resolve(seedPath), 'utf8'));
 if (seed?.stats?.proof == null) throw new Error('The supplied seed is not a bounded proof seed.');
@@ -88,6 +84,7 @@ const appearances = [...new Map(seed.references.flatMap((reference) => (referenc
   return [`${record.reference_site_id}\u0000${record.source_id}\u0000${record.source_record_id}`, record];
 }))).values()];
 const homepageUrls = {
+  landbook: 'https://land-book.com/',
   minimalgallery: 'https://minimal.gallery/',
   siteofsites: 'https://www.siteofsites.co/',
 };
