@@ -3,7 +3,11 @@ import { canonicalizeReferenceUrl } from './reference-bank-normalize.js';
 import {
   mergeReferenceAppearances,
   parseCodropsPayload,
+  parseMinimalGalleryDetailPayload,
+  parseMinimalGalleryListingPayload,
   parsePafoliosPayload,
+  parseSiteOfSitesDetailPayload,
+  parseSiteOfSitesListingPayload,
   parseSiteInspirePayload,
 } from './reference-bank-ingest.js';
 
@@ -33,6 +37,25 @@ describe('reference bank normalization', () => {
     expect(reference.url).toBe('https://antinomy.studio');
     expect(reference.editorialConsensus).toBe(2);
     expect(reference.sourceIds).toEqual(['codrops', 'siteinspire']);
+    expect(reference.sources).toHaveLength(2);
+  });
+
+  it('keeps one canonical site when two real aggregators use different referral URLs', () => {
+    const [reference] = mergeReferenceAppearances([
+      {
+        title: 'Celtic Sea Salt',
+        url: 'https://celticseasalt.com/?ref=minimal.gallery',
+        source: { id: 'minimalgallery', name: 'Minimal Gallery', listingUrl: 'https://minimal.gallery', recordId: '1' },
+      },
+      {
+        title: 'Celtic Sea Salt',
+        url: 'https://celticseasalt.com/',
+        source: { id: 'siteofsites', name: 'Site of Sites', listingUrl: 'https://www.siteofsites.co', recordId: 'celtic-sea-salt' },
+      },
+    ], '2026-07-31T00:00:00.000Z');
+
+    expect(reference.url).toBe('https://celticseasalt.com');
+    expect(reference.sourceIds).toEqual(['minimalgallery', 'siteofsites']);
     expect(reference.sources).toHaveLength(2);
   });
 });
@@ -71,5 +94,104 @@ describe('reference source adapters', () => {
     });
     expect(items[0]).toMatchObject({ title: 'Example', url: 'https://example.com/?ref=siteinspire', sourceRecordId: '42' });
     expect(items[0].thumbnailUrl).toContain('/thumb.jpg');
+  });
+
+  it('extracts a Minimal Gallery listing card and exact detail metadata', () => {
+    const listing = parseMinimalGalleryListingPayload({ html: `
+      <div id="post-27340" class="post website">
+        <div class="media">
+          <a href="https://minimal.gallery/felix-peault/"><img src="https://minimal.gallery/felix-card.jpg"></a>
+          <a class="site-button" title="Visit website" href="https://www.felixpeault.com/?ref=minimal.gallery"></a>
+        </div>
+        <h3><a href="https://minimal.gallery/felix-peault/">Félix Péault</a></h3>
+        <time datetime="2026-07-30T17:05:12+08:00">today</time>
+      </div>
+    ` })[0];
+    const [detail] = parseMinimalGalleryDetailPayload({
+      metadata: { sourceURL: 'https://minimal.gallery/felix-peault/' },
+      html: `
+        <h1>Félix Péault</h1>
+        <a class="single-post-breadcrumbs-button" title="Visit website" href="https://www.felixpeault.com/?ref=minimal.gallery"></a>
+        <div class="meta-tags-list"><a>Portfolio</a><a>Photography</a></div>
+        <div class="meta-date"><div class="meta-col">Published</div><div class="meta-col">July 30, 2026</div></div>
+        <div class="single-post-media">
+          <span class="desktop"><img src="https://minimal.gallery/felix-desktop.jpg"></span>
+          <span class="mobile"><img src="https://minimal.gallery/felix-mobile.jpg"></span>
+        </div>
+      `,
+    }, listing);
+
+    expect(listing).toMatchObject({
+      sourceRecordId: '27340',
+      title: 'Félix Péault',
+      publishedAt: '2026-07-30',
+    });
+    expect(detail).toMatchObject({
+      url: 'https://www.felixpeault.com/?ref=minimal.gallery',
+      tags: ['Portfolio', 'Photography'],
+      publishedAt: '2026-07-30',
+      thumbnailUrl: 'https://minimal.gallery/felix-desktop.jpg',
+      source: { taxonomy: { mobileThumbnailUrl: 'https://minimal.gallery/felix-mobile.jpg' } },
+    });
+  });
+
+  it('extracts a Site of Sites listing item and exact detail metadata', () => {
+    const listing = parseSiteOfSitesListingPayload({ html: `
+      <div role="listitem">
+        <a href="https://www.siteofsites.co/websites/the-list"><img alt="The List" src="https://static.wixstatic.com/the-list-card.png"></a>
+        <p>The List</p><p>07/2026</p><a href="https://thelist.design/"></a>
+      </div>
+    ` })[0];
+    const [detail] = parseSiteOfSitesDetailPayload({
+      metadata: { sourceURL: 'https://www.siteofsites.co/websites/the-list' },
+      html: `
+        <h1>The List</h1><p>Jul 21, 2026</p>
+        <a aria-label="Live Site" href="https://thelist.design/">Live Site</a>
+        <img alt="The List" src="https://static.wixstatic.com/the-list-detail.png">
+      `,
+    }, listing);
+
+    expect(listing).toMatchObject({
+      sourceRecordId: 'the-list',
+      url: 'https://thelist.design/',
+      publishedAt: '2026-07',
+    });
+    expect(detail).toMatchObject({
+      title: 'The List',
+      publishedAt: '2026-07-21',
+      thumbnailUrl: 'https://static.wixstatic.com/the-list-detail.png',
+    });
+  });
+
+  it('uses a Site of Sites detail page when the listing omits its external target', () => {
+    const listing = parseSiteOfSitesListingPayload({ html: `
+      <div role="listitem">
+        <a href="https://www.siteofsites.co/websites/verenika-perla"><img alt="Verenika Perla" src="https://static.wixstatic.com/verenika.png"></a>
+        <p>Verenika Perla</p><p>11/2023</p>
+      </div>
+    ` })[0];
+    const [detail] = parseSiteOfSitesDetailPayload({
+      metadata: { sourceURL: 'https://www.siteofsites.co/websites/verenika-perla' },
+      html: '<h1>Verenika Perla</h1><p>Nov 8, 2023</p><a aria-label="Live Site" href="https://verenikaperla.com/">Live Site</a>',
+    }, listing);
+
+    expect(listing.source.taxonomy).toEqual({ targetMissingFromListing: true });
+    expect(detail.url).toBe('https://verenikaperla.com/');
+  });
+
+  it('rejects a Site of Sites record when both listing and detail omit its destination', () => {
+    const listing = parseSiteOfSitesListingPayload({ html: `
+      <div role="listitem">
+        <a href="https://www.siteofsites.co/websites/no-destination"><img alt="No Destination" src="https://static.wixstatic.com/no-destination.png"></a>
+        <p>No Destination</p><p>07/2026</p>
+      </div>
+    ` })[0];
+    const detail = parseSiteOfSitesDetailPayload({
+      metadata: { sourceURL: 'https://www.siteofsites.co/websites/no-destination' },
+      html: '<h1>No Destination</h1><p>Jul 31, 2026</p>',
+    }, listing);
+
+    expect(listing.source.taxonomy).toEqual({ targetMissingFromListing: true });
+    expect(detail).toEqual([]);
   });
 });

@@ -5,7 +5,24 @@ import { canonicalizeReferenceUrl, uniqueText } from './reference-bank-normalize
 const SOURCE_PRIORITY = {
   codrops: 3,
   siteinspire: 2,
+  minimalgallery: 1,
+  siteofsites: 1,
   pafolios: 1,
+};
+
+const MONTHS = {
+  jan: '01',
+  feb: '02',
+  mar: '03',
+  apr: '04',
+  may: '05',
+  jun: '06',
+  jul: '07',
+  aug: '08',
+  sep: '09',
+  oct: '10',
+  nov: '11',
+  dec: '12',
 };
 
 function stableReferenceId(canonicalKey) {
@@ -67,8 +84,35 @@ function appearance(source, item) {
       name: source.name,
       listingUrl: source.listingUrl,
       recordId: String(item.sourceRecordId || item.url || ''),
+      taxonomy: item.sourceTaxonomy || {},
     },
   };
+}
+
+function payloadDocument(payload) {
+  return parseHTML(String(payload?.rawHtml || payload?.html || '')).document;
+}
+
+function normalizedDate(value) {
+  const text = String(value || '').trim();
+  const iso = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) return iso[1];
+  const named = text.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),\s+(\d{4})$/);
+  if (!named) return null;
+  const month = MONTHS[named[1].slice(0, 3).toLowerCase()];
+  return month ? `${named[3]}-${month}-${named[2].padStart(2, '0')}` : null;
+}
+
+function sourceDetailUrl(payload, fallback) {
+  return payload?.metadata?.sourceURL || fallback?.sourceDetailUrl || null;
+}
+
+function detailRecordId(detailUrl) {
+  try {
+    return new URL(detailUrl).pathname.split('/').filter(Boolean).at(-1) || detailUrl;
+  } catch {
+    return detailUrl;
+  }
 }
 
 export function parseCodropsPayload(payload, listingUrl = 'https://tympanus.net/codrops/webzibition/') {
@@ -171,6 +215,177 @@ export function parseSiteInspirePayload(payload, listingUrl = 'https://www.sitei
   });
 }
 
+export function parseMinimalGalleryListingPayload(
+  payload,
+  listingUrl = 'https://minimal.gallery/websites/',
+) {
+  const document = payloadDocument(payload);
+  return [...document.querySelectorAll('.post.website')].flatMap((post) => {
+    const detail = post.querySelector('h3 a[href]');
+    const target = post.querySelector('a.site-button[title="Visit website"]');
+    const image = post.querySelector('.media img');
+    const detailUrl = detail?.getAttribute('href');
+    const url = target?.getAttribute('href');
+    if (!detailUrl || !url) return [];
+    return [appearance(
+      { id: 'minimalgallery', name: 'Minimal Gallery', listingUrl },
+      {
+        sourceRecordId: post.getAttribute('id')?.replace(/^post-/, '') || detailRecordId(detailUrl),
+        title: detail.textContent?.trim() || new URL(url).hostname,
+        url,
+        description: 'Featured in the Minimal Gallery website collection.',
+        thumbnailUrl: image?.getAttribute('src') || '',
+        categories: ['Website'],
+        tags: [],
+        publishedAt: normalizedDate(post.querySelector('time')?.getAttribute('datetime')),
+        featured: true,
+        sourceDetailUrl: detailUrl,
+      },
+    )];
+  });
+}
+
+export function parseMinimalGalleryDetailPayload(payload, fallback = {}) {
+  const document = payloadDocument(payload);
+  const detailUrl = sourceDetailUrl(payload, fallback);
+  const target = document.querySelector('a.single-post-breadcrumbs-button[title="Visit website"]')
+    || document.querySelector('.single-post-meta a.button[href]')
+    || document.querySelector('.single-post-media-link[href]');
+  const url = target?.getAttribute('href') || fallback.url;
+  if (!detailUrl || !url) return [];
+
+  const desktopImage = document.querySelector('.single-post-media .desktop img')
+    || document.querySelector('.single-post-media img');
+  const mobileImage = document.querySelector('.single-post-media .mobile img')
+    || [...document.querySelectorAll('.single-post-media img')]
+      .find((image) => /mobile/i.test(image.getAttribute('alt') || image.getAttribute('src') || ''));
+  const published = document.querySelector('.meta-date .meta-col:last-child')?.textContent;
+  const title = document.querySelector('h1')?.textContent?.trim()
+    || fallback.title
+    || new URL(url).hostname;
+  const recordId = fallback.source?.recordId || detailRecordId(detailUrl);
+
+  return [appearance(
+    {
+      id: 'minimalgallery',
+      name: 'Minimal Gallery',
+      listingUrl: fallback.source?.listingUrl || 'https://minimal.gallery/websites/',
+    },
+    {
+      sourceRecordId: recordId,
+      title,
+      url,
+      description: fallback.description || 'Featured in the Minimal Gallery website collection.',
+      thumbnailUrl: desktopImage?.getAttribute('src') || fallback.thumbnailUrl || '',
+      categories: uniqueText([...(fallback.categories || []), 'Website']),
+      tags: uniqueText([...document.querySelectorAll('.meta-tags-list a')].map((tag) => tag.textContent)),
+      publishedAt: normalizedDate(published) || fallback.publishedAt || null,
+      featured: true,
+      sourceDetailUrl: detailUrl,
+      sourceTaxonomy: {
+        ...(fallback.source?.taxonomy || {}),
+        ...(mobileImage?.getAttribute('src')
+          ? { mobileThumbnailUrl: mobileImage.getAttribute('src') }
+          : {}),
+      },
+    },
+  )];
+}
+
+function externalLinkWithin(element, sourceHost) {
+  return [...element.querySelectorAll('a[href]')].find((link) => {
+    try {
+      const host = new URL(link.getAttribute('href')).hostname.replace(/^www\./, '');
+      return host !== sourceHost && !/(^|\.)instagram\.com$/.test(host);
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function parseSiteOfSitesListingPayload(
+  payload,
+  listingUrl = 'https://www.siteofsites.co/',
+) {
+  const document = payloadDocument(payload);
+  const records = new Map();
+  for (const detail of document.querySelectorAll('a[href*="siteofsites.co/websites/"]')) {
+    const item = detail.closest('[role="listitem"]');
+    const detailUrl = detail.getAttribute('href');
+    if (!item || !detailUrl) continue;
+    const target = externalLinkWithin(item, 'siteofsites.co');
+    const url = target?.getAttribute('href') || detailUrl;
+    const image = item.querySelector('img');
+    const texts = [...item.querySelectorAll('p')].map((node) => node.textContent?.trim()).filter(Boolean);
+    const publishedAt = texts.map((text) => {
+      const match = text.match(/^(\d{2})\/(\d{4})$/);
+      return match ? `${match[2]}-${match[1]}` : null;
+    }).find(Boolean) || null;
+    const recordId = detailRecordId(detailUrl);
+    if (records.has(recordId)) continue;
+    records.set(recordId, appearance(
+      { id: 'siteofsites', name: 'Site of Sites', listingUrl },
+      {
+        sourceRecordId: recordId,
+        title: image?.getAttribute('alt') || texts[0] || new URL(url).hostname,
+        url,
+        description: 'Featured in the Site of Sites website collection.',
+        thumbnailUrl: image?.getAttribute('src') || '',
+        categories: [],
+        tags: [],
+        publishedAt,
+        featured: true,
+        sourceDetailUrl: detailUrl,
+        sourceTaxonomy: target ? {} : { targetMissingFromListing: true },
+      },
+    ));
+  }
+  return [...records.values()];
+}
+
+export function parseSiteOfSitesDetailPayload(payload, fallback = {}) {
+  const document = payloadDocument(payload);
+  const detailUrl = sourceDetailUrl(payload, fallback);
+  const target = document.querySelector('a[aria-label="Live Site"][href]');
+  const url = target?.getAttribute('href')
+    || (fallback.source?.taxonomy?.targetMissingFromListing ? null : fallback.url);
+  if (!detailUrl || !url) return [];
+
+  const title = document.querySelector('h1')?.textContent?.trim()
+    || fallback.title
+    || new URL(url).hostname;
+  const publishedAt = [...document.querySelectorAll('p')]
+    .map((node) => normalizedDate(node.textContent))
+    .find(Boolean)
+    || fallback.publishedAt
+    || null;
+  const primaryImage = [...document.querySelectorAll('img')]
+    .find((image) => image.getAttribute('alt')?.trim() === title)
+    || document.querySelector('img[src*="static.wixstatic.com/media/"]');
+  const recordId = fallback.source?.recordId || detailRecordId(detailUrl);
+
+  return [appearance(
+    {
+      id: 'siteofsites',
+      name: 'Site of Sites',
+      listingUrl: fallback.source?.listingUrl || 'https://www.siteofsites.co/',
+    },
+    {
+      sourceRecordId: recordId,
+      title,
+      url,
+      description: fallback.description || 'Featured in the Site of Sites website collection.',
+      thumbnailUrl: primaryImage?.getAttribute('src') || fallback.thumbnailUrl || '',
+      categories: fallback.categories || [],
+      tags: fallback.tags || [],
+      publishedAt,
+      featured: true,
+      sourceDetailUrl: detailUrl,
+      sourceTaxonomy: fallback.source?.taxonomy || {},
+    },
+  )];
+}
+
 function bestText(items, field) {
   return [...items]
     .filter((item) => item[field])
@@ -219,6 +434,7 @@ export function mergeReferenceAppearances(appearances, generatedAt = new Date().
         ...item.source,
         detailUrl: item.sourceDetailUrl || null,
         thumbnailUrl: item.thumbnailUrl || null,
+        taxonomy: item.sourceTaxonomy || item.source.taxonomy || {},
       })),
       editorialConsensus,
       curationWeight,

@@ -13,6 +13,8 @@
     "build:ext": "bash scripts/build-editor.sh",
     "dev:web": "npm run build:editor && npm run dev --workspace=@uncraft/web-shell",
     "build:web": "npm run build:editor && npm run build --workspace=@uncraft/web-shell",
-    "start:web": "npm run start --workspace=@uncraft/web-shell"
+    "start:web": "npm run start --workspace=@uncraft/web-shell",
+    "refs:proof:collect": "node scripts/reference-bank/collect-two-source-proof.mjs",
+    "refs:proof:build": "node scripts/reference-bank/build-two-source-proof.mjs"
   }
 }
