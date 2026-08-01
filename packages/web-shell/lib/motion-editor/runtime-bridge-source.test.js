@@ -2313,6 +2313,69 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('an EXTERNAL startAt mutation stales the binding — restores refuse; the own START writer does not stale (Sol r31)', () => {
+    document.body.innerHTML = '<main><div id="kss"></div></main>';
+    const target = document.getElementById('kss');
+    // startAt latente injetado pela página não re-renderiza até o PRÓXIMO
+    // invalidate — o restore o materializaria, deslocando o segmento anterior
+    // (rollback inexato). O estado do startAt entra no binding e é revalidado;
+    // o writer de START do próprio bridge atualiza o esperado (não estala).
+    const vars = {
+      keyframes: [
+        { x: 100, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    sendStep(selection, motion, 'x', 1, '250');
+    expect(vars.keyframes[1].x).toBe(250);
+
+    // Página injeta startAt SEM invalidar: restore deve recusar.
+    vars.startAt = { x: 50 };
+    tween.invalidate.mockClear();
+    sendStep(selection, motion, 'x', 1, '200');
+    expect(vars.keyframes[1].x).toBe(250);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+    delete vars.startAt;
+
+    // O writer de START do bridge (keyframe.x offset 0) atualiza o esperado —
+    // o step continua editável/restaurável depois.
+    const regrab = grabMotion(target, messages);
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'apply-patch',
+        payload: {
+          patch: {
+            elementId: regrab.selection.payload.element.id,
+            kind: 'motion',
+            motionId: regrab.motion.id,
+            property: 'keyframe.x',
+            before: { offset: 0, value: '', exists: true },
+            value: { offset: 0, value: '40', exists: true },
+          },
+        },
+      },
+    }));
+    expect(vars.startAt).toEqual({ x: '40' });
+    sendStep(regrab.selection, regrab.motion, 'x', 1, '200');
+    expect(vars.keyframes[1].x).toBe(200);
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');

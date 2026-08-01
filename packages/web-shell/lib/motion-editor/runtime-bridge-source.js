@@ -2157,8 +2157,11 @@ function nativeMotionRuntimeBridge() {
               const nextEntries = new Map(entryPlan.steps.map((step) => [step.rawEntryIndex, step.entry]));
               const exposureShape = gsapStepExposureShape(entryPlan.allEntries);
               const exposureConfigFns = entryPlan.allEntries.map((planEntry) => gsapEntryConfigFns(planEntry));
-              const exposureSessionBound = exposureConfigFns.some((fns) => fns.size > 0);
-              const exposureToken = exposureShape === null ? null : gsapStepExposureToken(exposureShape, exposureSessionBound);
+              const exposureStartAt = gsapStartAtState(vars);
+              const exposureSessionBound = exposureConfigFns.some((fns) => fns.size > 0) || exposureStartAt.fns.size > 0;
+              const exposureToken = exposureShape === null || exposureStartAt.shape === null
+                ? null
+                : gsapStepExposureToken(`${exposureShape}|startAt:${exposureStartAt.shape}`, exposureSessionBound);
               if (exposureToken === null) {
                 gsapStepExposures.get(animation)?.delete(track.property);
               } else {
@@ -3577,6 +3580,42 @@ function nativeMotionRuntimeBridge() {
     return true;
   }
 
+  // Descriptor-based state of vars.startAt (Sol r31): a LATENT startAt
+  // injected by the page does not render until the next invalidate — a
+  // restore would MATERIALIZE it and shift the segment before the step.
+  // Container identity + shape with fn placeholders + fn identities; the
+  // bridge's own START writer refreshes the expected state.
+  function gsapStartAtState(vars) {
+    const startAt = vars ? vars.startAt : undefined;
+    if (!startAt || typeof startAt !== 'object') {
+      return { ref: startAt, shape: `absent:${String(startAt)}`, fns: new Map() };
+    }
+    const fns = new Map();
+    let shape = null;
+    try {
+      const parts = gsapForInKeys(startAt).sort().map((key) => {
+        const value = startAt[key];
+        if (typeof value === 'function') { fns.set(key, value); return [key, 'fn']; }
+        if (value !== null && typeof value === 'object') return [key, gsapStepEntryShape(value)];
+        return [key, `${typeof value}:${String(value)}`];
+      });
+      shape = parts.some(([, part]) => part === null) ? null : JSON.stringify(parts);
+    } catch (_) { shape = null; }
+    return { ref: startAt, shape, fns };
+  }
+  function gsapStartAtStateMatches(vars, frozen) {
+    if (!frozen) return true;
+    const current = gsapStartAtState(vars);
+    if (current.ref !== frozen.ref) return false;
+    if (frozen.shape === null || current.shape === null) return false;
+    if (current.shape !== frozen.shape) return false;
+    if (current.fns.size !== frozen.fns.size) return false;
+    for (const [key, fn] of frozen.fns) {
+      if (current.fns.get(key) !== fn) return false;
+    }
+    return true;
+  }
+
   function gsapStepExposureShape(entries) {
     const shapes = entries.map((entry) => gsapStepEntryShape(entry));
     return shapes.some((shape) => shape === null) ? null : JSON.stringify(shapes);
@@ -3729,6 +3768,12 @@ function nativeMotionRuntimeBridge() {
       return gsapEntryPropertyNamespace(entry, property) === namespace;
     });
     if (!entryStatesIntact) return { binding: null, stale: true };
+    // vars.startAt is frozen state too (Sol r31): a latent injected startAt
+    // would be MATERIALIZED by any invalidating write/restore, shifting the
+    // segment before the step with no undo. Observable without the timeline.
+    if (binding.startAtState && !gsapStartAtStateMatches(animation.vars, binding.startAtState)) {
+      return { binding: null, stale: true };
+    }
     // The VALUE check needs no timeline — the buckets are held by identity.
     // An externally mutated bucket is OBSERVABLE staleness even while the
     // topology is uninspectable: the frozen restore would wipe the page's
@@ -3799,6 +3844,7 @@ function nativeMotionRuntimeBridge() {
       })),
       end: numericCss(sampleGsapValue(record, property, 1)),
       stepOriginals: new Map(),
+      startAtState: gsapStartAtState(animation.vars),
     };
     bindings.set(property, binding);
     return binding;
@@ -4293,6 +4339,8 @@ function nativeMotionRuntimeBridge() {
         } else {
           delete vars.startAt[property];
         }
+        const entryBinding = gsapKeyframeEntryRetargets.get(animation)?.get(property);
+        if (entryBinding) entryBinding.startAtState = gsapStartAtState(vars);
       }
       invalidatePreservingStart(animation);
       return;
@@ -4339,6 +4387,10 @@ function nativeMotionRuntimeBridge() {
         vars.startAt = { ...(vars.startAt || {}), [property]: value }; // explicit start
       }
       if (binding) binding.lastWritten = vars.startAt[property];
+      // The bridge's OWN startAt write is expected state, not staleness —
+      // refresh the frozen step/entry binding's snapshot (Sol r31).
+      const entryBinding = gsapKeyframeEntryRetargets.get(animation)?.get(property);
+      if (entryBinding) entryBinding.startAtState = gsapStartAtState(vars);
     } else {
       throw new Error('Intermediate GSAP keyframes are not editable on this tween yet.');
     }
