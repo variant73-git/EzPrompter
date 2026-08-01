@@ -3530,6 +3530,22 @@ function nativeMotionRuntimeBridge() {
   // WITHOUT those root semantics (Sol r34): a startAt.attr.parent is data and
   // must enter the shape, and a function inside startAt has no stable
   // representation (→ null → locked).
+  // Realm-safe injective encoder (Sol r45): JSON.stringify honors an INHERITED
+  // toJSON, so a page poisoning Array.prototype.toJSON could collapse two
+  // different shapes to one string and defeat the token gates. This encoder
+  // never invokes a realm hook — each string is length-prefixed (self-
+  // delimiting, so concatenation is unambiguously decodable and thus
+  // injective), and nodes are tagged 'N'/'s'/'a'. A `node` is null, a string,
+  // or an array of nodes.
+  function gsapEncStr(str) { return `${str.length}~${str}`; }
+  function gsapEncNode(node) {
+    if (node === null) return 'N';
+    if (typeof node === 'string') return `s${gsapEncStr(node)}`;
+    let out = `a${node.length}~`;
+    for (let index = 0; index < node.length; index += 1) out += gsapEncStr(gsapEncNode(node[index]));
+    return out;
+  }
+
   // Arrays serialized via for...in miss `length`, holes and non-enumerable
   // indices (Sol r43): a GSAP endArray whose length grows through a
   // non-enumerable index would keep an identical for...in shape while the
@@ -3537,19 +3553,20 @@ function nativeMotionRuntimeBridge() {
   // length + each index's descriptor (hole / accessor / data) explicitly.
   // `serializeChild(value)` returns the child shape string or null to lock.
   function gsapSerializeArrayShape(value, serializeChild) {
-    // STRUCTURAL tuple encoding, JSON-serialized — a `join(',')` of raw
-    // template strings is NOT injective: a child string carrying the
-    // delimiters (`"x,1:hole"`) collides with a hole→data transition, the very
-    // case r43 guards (Sol r44). JSON.stringify escapes the child strings and
-    // the tuple tags ('len'/'i'/'hole'/'k') keep positions unambiguous.
-    const parts = [['len', value.length]];
+    // STRUCTURAL tuple nodes, realm-safe encoded — a `join(',')` of raw
+    // template strings is NOT injective (a child string carrying the delimiters
+    // `"x,1:hole"` collides with a hole→data transition — Sol r44), and
+    // JSON.stringify honors a poisoned toJSON (Sol r45). Tuple tags
+    // ('len'/'i'/'hole'/'k') keep positions unambiguous; gsapEncNode is
+    // hook-free and injective.
+    const nodes = [['len', `${value.length}`]];
     for (let index = 0; index < value.length; index += 1) {
       const descriptor = Object.getOwnPropertyDescriptor(value, index);
-      if (!descriptor) { parts.push(['hole', index]); continue; }
+      if (!descriptor) { nodes.push(['hole', `${index}`]); continue; }
       if (!('value' in descriptor)) return null; // accessor index — unstable
       const child = serializeChild(descriptor.value);
       if (child === null) return null;
-      parts.push(['i', index, child]);
+      nodes.push(['i', `${index}`, child]);
     }
     // Non-index own keys on the array (e.g. a stashed property) also matter.
     for (const key of gsapForInKeys(value)) {
@@ -3558,9 +3575,9 @@ function nativeMotionRuntimeBridge() {
       if (slot.kind !== 'data') return null;
       const child = serializeChild(slot.value);
       if (child === null) return null;
-      parts.push(['k', key, child]);
+      nodes.push(['k', key, child]);
     }
-    return `arr:${JSON.stringify(parts)}`;
+    return `arr${gsapEncNode(nodes)}`;
   }
 
   function gsapStepEntryShape(entry, isEntryRoot = true) {
@@ -3609,7 +3626,7 @@ function nativeMotionRuntimeBridge() {
         return out;
       };
       const shape = serialize(entry, 0);
-      return shape === null ? null : JSON.stringify(shape);
+      return shape === null ? null : gsapEncNode(shape);
     } catch (_) {
       return null;
     }
@@ -3678,7 +3695,7 @@ function nativeMotionRuntimeBridge() {
         if (value !== null && typeof value === 'object') return [key, gsapStepEntryShape(value, false)];
         return [key, `${typeof value}:${String(value)}`];
       });
-      shape = parts.some(([, part]) => part === null) ? null : JSON.stringify(parts);
+      shape = parts.some(([, part]) => part === null) ? null : gsapEncNode(parts);
     } catch (_) { shape = null; }
     return { ref: startAt, shape, fns };
   }
@@ -3715,7 +3732,7 @@ function nativeMotionRuntimeBridge() {
         if (value !== null && typeof value === 'object') return [key, gsapStepEntryShape(value, false)];
         return [key, `${typeof value}:${String(value)}`];
       }).filter((part) => part !== null);
-      shape = parts.some((part) => part === 'ACCESSOR' || part[1] === null) ? null : JSON.stringify(parts);
+      shape = parts.some((part) => part === 'ACCESSOR' || part[1] === null) ? null : gsapEncNode(parts);
     } catch (_) { shape = null; }
     return { shape, fns };
   }
@@ -3770,7 +3787,7 @@ function nativeMotionRuntimeBridge() {
           parts.push([key, child]);
         }
         seen.delete(value);
-        return JSON.stringify(parts);
+        return gsapEncNode(parts);
       };
       const parts = [];
       for (const key of gsapForInKeys(entry).sort()) {
@@ -3793,14 +3810,14 @@ function nativeMotionRuntimeBridge() {
             if (child === null) return null;
             cssParts.push([cssKey, child]);
           }
-          parts.push(['css', JSON.stringify(cssParts)]);
+          parts.push(['css', gsapEncNode(cssParts)]);
           continue;
         }
         const child = serialize(slot.value, 1);
         if (child === null) return null;
         parts.push([key, child]);
       }
-      return JSON.stringify(parts);
+      return gsapEncNode(parts);
     } catch (_) { return null; }
   }
   function gsapEntryOtherShapesFor(entries, property) {
@@ -3838,7 +3855,7 @@ function nativeMotionRuntimeBridge() {
 
   function gsapStepExposureShape(entries) {
     const shapes = entries.map((entry) => gsapStepEntryShape(entry));
-    return shapes.some((shape) => shape === null) ? null : JSON.stringify(shapes);
+    return shapes.some((shape) => shape === null) ? null : gsapEncNode(shapes);
   }
   // Per-bridge-instance nonce: exposures whose truth carries a config
   // FUNCTION have no stable cross-session identity (same source, different

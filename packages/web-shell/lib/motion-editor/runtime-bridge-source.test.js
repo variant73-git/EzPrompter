@@ -3011,6 +3011,51 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('the shape encoding survives a poisoned Array.prototype.toJSON — realm-hostile page (Sol r45)', () => {
+    document.body.innerHTML = '<main><div id="ksrh"></div></main>';
+    const target = document.getElementById('ksrh');
+    // A página compartilha o realm; JSON.stringify consulta toJSON herdado.
+    // Envenenar Array.prototype.toJSON colapsaria dois shapes distintos no
+    // mesmo string, furando os gates por token. Encoder próprio length-prefixed
+    // sem hooks de realm.
+    const a = [10, 20];
+    const vars = {
+      keyframes: [
+        { x: 100, endArray: a, duration: 1, parent: {} },
+        { x: 200, duration: 1, parent: {} },
+        { x: 300, duration: 1, parent: {} },
+      ],
+      duration: 3,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    // Página envenena toJSON ANTES de congelar — assim frozen E current
+    // colapsam pra 'same' sob JSON.stringify e uma mutação real escaparia.
+    Object.defineProperty(Array.prototype, 'toJSON', { configurable: true, value: () => 'same' });
+    try {
+      const { selection, motion } = grabMotion(target, messages);
+      sendStep(selection, motion, 'x', 1, '250'); // congela o binding sob veneno
+      expect(vars.keyframes[1].x).toBe(250);
+
+      // Mutação real do array irmão (length 2 → 3).
+      a.push(30);
+      tween.invalidate.mockClear();
+      sendStep(selection, motion, 'x', 1, '200'); // undo
+      expect(vars.keyframes[1].x).toBe(250); // recusado — encoding não usa toJSON
+      expect(tween.invalidate).not.toHaveBeenCalled();
+    } finally {
+      delete Array.prototype.toJSON;
+    }
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
