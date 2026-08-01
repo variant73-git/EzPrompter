@@ -2895,6 +2895,42 @@ describe('native motion runtime bridge', () => {
     window.postMessage = originalPostMessage;
   });
 
+  it('an entry carrying the property in BOTH top-level and css locks the plan — no binding forms (Sol r42)', () => {
+    document.body.innerHTML = '<main><div id="ksbo"></div></main>';
+    const target = document.getElementById('ksbo');
+    // {x:10, css:{x:30}}: com css:{} presente, o top-level x vira writer
+    // genérico (el.x) e css.x é a transform — DOIS writers homônimos vivos.
+    // A assinatura 'both' tranca o plano (r61/r62) ANTES de qualquer binding,
+    // então gsapEntryOtherFieldsShape (que exclui x dos dois namespaces) nunca
+    // é chamado pra uma entry 'both'. Fail closed por construção.
+    const vars = {
+      keyframes: [
+        { x: 10, css: { x: 30 }, duration: 1, parent: {} },
+        { x: 20, css: { x: 60 }, duration: 1, parent: {} },
+      ],
+      duration: 2,
+    };
+    const tween = buildArrayKeyframesTween(target, vars);
+
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+
+    const { selection, motion } = grabMotion(target, messages);
+    const xTrack = motion.tracks.find((track) => track.property === 'x');
+    // Sem steps expostos (plano trancado por 'both').
+    expect(xTrack?.steps).toBeUndefined();
+    // END recusado — nada mutado.
+    sendRetarget(selection, motion, '99');
+    expect(vars.keyframes.map((entry) => entry.x)).toEqual([10, 20]);
+    expect(vars.keyframes.map((entry) => entry.css.x)).toEqual([30, 60]);
+    expect(tween.invalidate).not.toHaveBeenCalled();
+
+    delete window.gsap;
+    window.postMessage = originalPostMessage;
+  });
+
   it('refuses RELATIVE and RANDOM values on step edits before any mutation', () => {
     document.body.innerHTML = '<main><div id="ksg"></div></main>';
     const target = document.getElementById('ksg');
