@@ -26,16 +26,30 @@ A invariante central que emergiu: **congelar TUDO que `invalidate()` relê; muta
 
 Detalhe de cada rodada: nas mensagens de commit `git log 3732a2f0..6870f314` (uma linha `Sol rNN` por commit).
 
-## 3. RESIDUAL ACEITO — r46 (decisão do Adilson: parar aqui)
+## 3. RESIDUAL ACEITO — r46 (decisão do Adilson: parar; adjudicada com advise do Sol)
 
-**Sol r46 (não implementado, decisão de produto):** os serializers/gates de segurança usam métodos de `Array.prototype` (`.map/.some/.filter/.sort/.every/.push`) e intrinsics (`Object.getOwnPropertyDescriptor`, `for-in`) do realm da página. Um site clonado **adversarial** poderia envenenar cirurgicamente `Array.prototype.map` (detectando o callback por `Function.prototype.toString`) pra colapsar dois shapes distintos e furar o gate por token — materializando uma mutação colateral não-journalada num undo.
+**Owner:** Adilson (decisão de arquitetura de produto). **Revisão:** disparada por gatilho (§ abaixo), não por calendário.
 
-**Por que aceito como residual, não fix de loop:**
-- É a MESMA classe de realm-hostilidade das r36 (accessor) e r45 (`toJSON`) — mas essas foram **fixes bounded** (evitar UMA API). A r46 é **hardening ilimitado**: cobrir map/some/filter/sort/every/push + transitivamente `Object.*`/`for-in` exige **intrinsics prístinos de um realm confiável** (tipo SES).
-- O bridge é injetado **DEPOIS** do conteúdo clonado rodar no iframe → capturar intrinsics no load do bridge é tarde demais (a página já pôde envenenar). Defesa real = realm separado/confiável = **infraestrutura**, não fix de serializer.
-- Consequência do ataque: undo mis-journalado num cenário raro de sabotagem deliberada do site clonado. **NÃO é falha de segurança** (sem exfiltração/escalação).
+**Sol r46 (não implementado):** os serializers/gates de segurança usam métodos de `Array.prototype` (`.map/.some/.filter/.sort/.every/.push`) e intrinsics (`Object.getOwnPropertyDescriptor`, `for-in`) do realm da página. Um site clonado **adversarial** poderia envenenar cirurgicamente `Array.prototype.map` (detectando o callback por `Function.prototype.toString`) pra colapsar dois shapes distintos e furar o gate por token → **undo mis-journalado**.
 
-**Mitigação (se retomar deliberadamente):** capturar intrinsics prístinos (`Array.prototype.*`, `Object.getOwnPropertyDescriptor/getPrototypeOf`, `Reflect.ownKeys`) de um realm confiável — p.ex. um iframe `about:blank` criado pela extensão ANTES do conteúdo clonado — e usá-los em todos os serializers/gates; ou rodar os gates de segurança fora do realm da página. É um trabalho de infra deliberado.
+**Consequência (corrigida pelo advise do Sol — NÃO chamar de "cosmético"):** é **integridade do undo**, não estético. Um "desfazer" que não restaura exato pode **corromper trabalho salvo** e gerar custo de suporte. Continua **não sendo breach** (sem exfiltração, escalação ou execução além do que a página já podia) — mas a régua é perda-de-trabalho, não vaidade.
+
+**Por que deferir a obra grande (SES/realm confiável), confirmado pelo Sol:**
+- Construir realm blindado product-wide agora "porque um dia será necessário" **amplia superfície e risco de regressão hoje**, e pode nunca ser necessário no modelo de ameaça real (designer inspecionando sites; sem segredo do usuário no realm; sem clone compartilhado entre usuários).
+- O bridge carrega **DEPOIS** do conteúdo clonado → capturar intrinsics no load do bridge é tarde. Defesa robusta exige captura **antes** do conteúdo rodar (ver spike abaixo) OU rodar os gates fora do realm da página (Worker/isolated world) — infraestrutura deliberada.
+
+**Correção de escopo (advise do Sol — meu "fix só na fase-2 = falsa segurança" estava forte demais):** fechar só os serializers da fase-2 NÃO fecha a classe product-wide, MAS como **defesa em profundidade** tem valor real (elimina o bypass conhecido + protege contra quebra ACIDENTAL — um polyfill mal-comportado do próprio site, não só malícia). Escopo limitado ≠ valor zero. Só é "falsa segurança" se for **vendido como** fechamento da classe.
+
+**Caminho BARATO a avaliar PRIMEIRO (antes do SES), se um gatilho acender:** um **bootstrap mínimo em `document_start`** — a extensão captura os intrinsics usados pelos serializers/gates (`Array.prototype.*`, `Object.getOwnPropertyDescriptor/getPrototypeOf`, `Reflect.ownKeys`) **ANTES** dos scripts do conteúdo clonado rodarem, e os serializers passam a usar essas referências capturadas. **Pré-condição (provar antes de implementar):** que a arquitetura garante a extensão rodando ANTES do conteúdo (checar a ordem de carregamento do native bundle/iframe). Se NÃO houver garantia de ordem, **não fazer remendo tardio** (falso conforto) — aí sim é decisão arquitetural (SES/Worker). Um teste adversarial de ordem-de-carregamento é parte do spike.
+
+**Gatilhos que MUDAM a conta (vigiar — se qualquer um acender, reabrir a decisão):**
+1. Segredos do usuário no mesmo realm do conteúdo clonado (chaves/API/pagamento/tokens).
+2. Clones **compartilhados/publicados/exportados** entre usuários (multi-tenant — autor malicioso ataca quem VÊ o clone) — inclui persistir/reabrir clones.
+3. Importação de **URLs arbitrárias não confiáveis**.
+4. O bridge ganhar **RPC privilegiado, filesystem, rede ou credenciais**.
+5. **Mutações automáticas em lote** (aí um undo corrompido escala o dano).
+6. Evidência de monkeypatch real no campo (mesmo não malicioso — quebra acidental).
+7. Uncraft **prometer undo exato** como garantia de produto (aumenta o impacto de perda de trabalho).
 
 ## 4. Como retomar (mecânica)
 
