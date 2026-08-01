@@ -65,11 +65,26 @@ node _probe-furo2-witness.mjs                                    # 37
 - Sol: `~/.claude/bin/codex-adversary.sh --mode prose --timeout 1400` com **bundle enxuto** (só o diff da última rodada + histórico compacto de 1 linha — o diff cumulativo de 1405 linhas estourou o contexto do Codex na r41, morreu sem veredito).
 - Modelo de coordenação: **Sol dirige a frente; Claude executa/revisa (lead) + faz o [SALVAR]**.
 
-## 5. Fila restante (depois da fase-2)
+## 5. PRÓXIMOS PASSOS (ordem acordada com o Adilson — começar por 0)
 
-1. **r46 realm-hardening** — se/quando o Adilson decidir investir na infra de realm confiável (§3).
-2. **Furo #4** — multi-target / split-text ownership (item 168 do CLAUDE.md); coordenar com a Task 12 do gate (fixture do chooser = Entrance+Hover).
-3. **Fila da Task 16** (gate persistido `/canvas`) — Tasks 12–20, env Neon isolado `ep-orange-frost-acaedcil` (NUNCA produção).
+### 0. Checagem `document_start` (PRIMEIRO — ~1h, decide o seguro barato da r46) — NÃO é a obra
+**Objetivo:** descobrir se a extensão consegue rodar código **ANTES** do conteúdo clonado carregar no iframe/native bundle. Isso decide se o hardening BOUNDED barato da r46 (defesa em profundidade — §3) é sequer possível, ou se a r46 fica 100% deferida pra decisão arquitetural.
+- **Onde olhar:** ordem de injeção/carregamento do native bundle e do bridge (`runtime-bridge-source.js` é injetado via `getRuntimeBridgeSource()` — ver quem chama e QUANDO relativo ao conteúdo clonado; `manifest.json` `run_at`/content scripts da extensão; como o iframe do runtime é populado).
+- **Resultado A (roda antes):** existe janela pra capturar intrinsics prístinos (`Array.prototype.map/some/filter/sort/every/push`, `Object.getOwnPropertyDescriptor/getPrototypeOf`, `Reflect.ownKeys`) num bootstrap mínimo → hardening bounded vale a pena (barato, fecha o bypass conhecido + quebra acidental de site real). Escrever probe adversarial de ordem-de-carregamento antes de implementar.
+- **Resultado B (não há garantia de ordem):** remendo tardio = falso conforto → **não implementar**; r46 fica deferida pros gatilhos do §3 (decisão arquitetural SES/Worker).
+- **Custo confirmado:** ZERO impacto no tempo de clone (a serialização da fase-2 roda só no editor ao editar animação; o bootstrap é captura de ~6 referências uma vez no load). Medido/raciocinado nesta sessão.
+
+### 1. Furo #4 — multi-target / split-text ownership (item de trabalho REAL principal)
+Do audit de ownership (item 168 do CLAUDE.md). **Estado atual:** o canal step (e o retarget) TRANCA multi-target com `reason: 'multi-target'` — `vars.startAt` é UM objeto compartilhado, um edit offset-0 achata os starts distintos por-target e um rollback de valor único não restaura (`[10,20]→[10,10]`, probe `_probe-r19.mjs`). O furo #4 é a **solução de ownership real por-target**: destravar edição independente de cada target de um tween multi-target / split-text.
+- **Coordenar com a Task 12 do gate** (`/canvas`): fixture do chooser = **Entrance+Hover** (item 168; x+x e CSS drift+pulse são ambiguidade falsa — o chooser real é 2 motions distintos no mesmo canal).
+- **Infra reusável:** a malha per-track do furo #2 + o journal/binding da fase-2 (per-(animation,property)); o furo #4 estende pra per-(animation,property,**target**). O detach de target já existe (`detachElementFromSharedTween` — stagger chains); ver se o caminho é "detach + edit independente" ou "ownership per-target no binding".
+- **Método:** igual às frentes anteriores — probe no GSAP real ANTES de assumir semântica de write per-target, TDD estrito (RED observado), bundle enxuto pro Sol a cada rodada, witness real, até MERGE OK.
+
+### 2. Fila da Task 16 (gate persistido `/canvas`)
+Tasks 12–20 (Task 14 = seam de fault em código de PROD, server-only fail-closed). Env Neon isolado `ep-orange-frost-acaedcil` — **NUNCA produção**. Plano `docs/superpowers/plans/2026-07-28-task16-persisted-e2e-gate-implementation.md` + lições das Tasks 10/11 no CLAUDE.md.
+
+### r46 realm-hardening (deferido — só reabre por gatilho)
+Ver §3. Não é próximo passo; é decisão arquitetural disparada pelos 7 gatilhos. A checagem (0) só decide se há um seguro barato intermediário — não é começar a obra.
 
 ## 6. Lições operacionais desta frente (valem pras próximas)
 
