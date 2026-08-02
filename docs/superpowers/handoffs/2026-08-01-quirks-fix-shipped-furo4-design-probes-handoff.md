@@ -116,7 +116,7 @@ compartilhada com o pai nem entre irmãos — probe H1). Caminho que funciona: `
 > funciona" — era erro do probe: eu renderizava `progress(1)` sem voltar a 0, então não havia re-init.
 > Ao validar um edit de `vars` num tween GSAP 3.15 já instanciado, renderizar a partir do início.
 
-### 3.3 O hazard de parent-invalidate que eu inventei — REFUTADO
+### 3.3 O hazard de parent-invalidate que eu declarei — NÃO REPRODUZIDO
 
 Uma versão anterior deste handoff afirmava que `invalidate()` no pai apagava os edits por-filho e
 elegia isso como "o eixo do desenho". **O Sol pegou que nenhum probe demonstrava isso** e estava
@@ -133,7 +133,8 @@ Re-probe com o edit **comprovadamente aplicado** (`_probe-furo4-parent-invalidat
 | pai parado no meio (progress 0.5) | sobrevive, e o final também |
 | `child.vars.x` após o invalidate do pai | segue `400`, sem divergir do renderizado |
 
-**Conclusão: o hazard não existe** nessa fixture. Isso torna o furo #4 mais simples do que eu havia
+**Conclusão: o hazard NÃO FOI REPRODUZIDO** nesses três casos, nessa fixture. Um experimento
+inválido derruba a evidência anterior; não prova inexistência — não tratar como "resolvido". Isso torna o furo #4 mais simples do que eu havia
 documentado, não mais difícil — e apaga a suposta necessidade de replay de journal e de tocar todos os
 writers. Nada disso deve ser levado adiante como premissa.
 
