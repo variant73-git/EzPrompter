@@ -3,10 +3,15 @@
 > **Para a próxima sessão.** Frente `live-animated-clone-editing`, branch `codex/live-animated-clone-editing`.
 > HEAD ao escrever: `ed0809a3` · suíte **1536/1536** (10 skip).
 > Probes desta sessão (untracked por convenção, em `packages/web-shell/`):
-> `_probe-docstart-order.mjs`, `_probe-docstart-anchor-attack.mjs`, `_probe-docstart-stash-bypass.mjs`,
-> `_probe-docstart-stash-call.mjs`, `_probe-docstart-sw.mjs`, `_probe-gateway-anchor-fix.mjs`,
-> `_probe-gateway-charset.mjs`, `_probe-furo4-multitarget.mjs`, `_probe-furo4-splittext.mjs`,
-> `_probe-furo4-stagger-children.mjs`, `_probe-furo4-stagger-why.mjs`.
+> spike r46: `_probe-docstart-order.mjs`, `_probe-docstart-anchor-attack.mjs`,
+> `_probe-docstart-stash-bypass.mjs`, `_probe-docstart-stash-call.mjs`, `_probe-docstart-sw.mjs`.
+> gateway: `_probe-gateway-anchor-fix.mjs`, `_probe-gateway-charset.mjs`.
+> furo #4: `_probe-furo4-multitarget.mjs`, `_probe-furo4-splittext.mjs`, `_probe-furo4-splittext-real.mjs`,
+> `_probe-furo4-stagger-children.mjs`, `_probe-furo4-stagger-why.mjs`, `_probe-furo4-parent-invalidate.mjs`,
+> `_probe-furo4-provenance.mjs`.
+> detach: `_probe-detach-real-path.mjs` (witness assertivo), `_probe-detach-blockers.mjs`,
+> `_probe-detach-blockers-r2.mjs`, `_probe-detach-blockers-r3.mjs`, `_probe-furo4-detach-continuity.mjs`,
+> `_probe-funcdur-isolated.mjs`, `_probe-v4-culprit.mjs`.
 
 ## 1. Passo 0 do handoff anterior — CONCLUÍDO (spike `document_start`)
 
@@ -132,7 +137,7 @@ Re-probe com o edit **comprovadamente aplicado** (`_probe-furo4-parent-invalidat
 documentado, não mais difícil — e apaga a suposta necessidade de replay de journal e de tocar todos os
 writers. Nada disso deve ser levado adiante como premissa.
 
-### 3.3b Pré-requisito 1 CUMPRIDO — SplitText REAL (`_probe-furo4-splittext-real.mjs`)
+### 3.3b Pré-requisito 1, PARCIAL — SplitText REAL (`_probe-furo4-splittext-real.mjs`)
 
 Rodado com o `SplitText.min.js` do fixture (GSAP 3.15 Club). O que o fixture à mão escondia:
 
@@ -161,7 +166,7 @@ sobreviver seria **errado** — aplicaria edits de caractere à frase errada. Po
 que eu havia derivado (journal sobreviver à substituição do tween) **não está demonstrado como
 requisito**, e no único caso real observado seria um anti-requisito.
 
-### 3.3c Pré-requisito 2 CUMPRIDO — a conversão escalar→função SE AUTO-TRANCA (`_probe-furo4-provenance.mjs`)
+### 3.3c Pré-requisito 2, PARCIAL — a conversão escalar→função bate no classificador ATUAL (`_probe-furo4-provenance.mjs`)
 
 Medido pelo bridge REAL, lendo a `keyframeEditReason` que a inspeção publica:
 
@@ -241,19 +246,48 @@ divergia do `gsapPluginOwnedVar` em chaves herdadas.
 
 Na combinação final do predicado (guarda estrutural + checagem de valor + consulta direta ao registro
 de plugins), o **controle positivo também foi recusado** — o tween simples deixou de ser corrigido, ou
-seja, o gate virou no-op. ⚠️ **Não isolei a causa.** O trace mostra `tween.timeline` FALSO num tween
-puro, então a guarda estrutural sozinha não explica a recusa; havia outra condição na mesma leva
-(candidata mais provável: a troca de `gsapPluginOwnedVar` por consulta direta ao registro). Portanto
-**a abordagem estrutural NÃO foi refutada** — ficou por avaliar. Isolar isso é o caminho barato que
-sobra, e não muda a decisão de parar a frente agora.
+seja, o gate virou no-op.
+
+✅ **CAUSA DO NO-OP ISOLADA** (`_probe-v4-culprit.mjs`) — mas leia a ressalva junto:
+
+```
+culprit: "controle FUNCIONAL:ease"      inner (guarda estrutural): false
+```
+
+Neste controle positivo, `vars.ease` era uma **função** e a minha regra "chave de controle com valor
+função → recusa" o derrubou. `inner` mediu `false`, então **não** foi a guarda estrutural que recusou
+este caso.
+
+> ⚠️ **Três correções da auditoria seguinte, todas confirmadas por probe
+> (`_probe-callbacks-inner.mjs`) — eu tinha generalizado demais outra vez:**
+>
+> 1. **`vars.ease` NÃO é sempre função.** Só vira função quando o autor não declarou ease (o GSAP
+>    preenche o default); `ease:'none'` e `ease:'power2.out'` permanecem **string**, e a função
+>    parseada vai pra `_ease`. Minha frase "toda tween renderizada tem `ease: function`" era falsa.
+> 2. **A regra funcional NÃO era redundante.** Os callbacks (`onUpdate`, `onStart`, …) são controles
+>    funcionais e **não** criam timeline interna — medido `inner:false` num tween com `onUpdate`. O
+>    GSAP só cria timeline interna pra `keyframes`, `stagger` e `duration`/`delay` funcionais. Remover
+>    a regra inteira reabriria um buraco que o `!inner` não enxerga.
+> 3. **Isolamento do detach é frágil por baixo:** após `tween.kill(alvo)`, `tween.targets()` **ainda
+>    contém os dois alvos** — e o detach remove callbacks só do CLONE, deixando os do tween original
+>    ativos sobre o elemento supostamente isolado. Defeito próprio, pré-existente.
+>
+> **Conclusão correta, sem esticar:** o probe isolou a causa da recusa NESTE controle positivo (`ease`,
+> não `inner`). Isso **não** estabelece que a guarda estrutural esteja intacta nem validada — ela
+> segue **candidata, não validada**.
+>
+> **Pista para a próxima tentativa, a demonstrar e não assumir:** o rewind usa `progress(_, true)`,
+> que **suprime eventos**, então callbacks não disparam durante ele. Isso sugere uma exceção
+> ESTREITA — talvez só pra `ease`, talvez também pra callbacks — mas precisa ser demonstrada com
+> negativos próprios, não deduzida.
 
 **O que sobrou de valor, e é real:**
 
 1. ⭐ **Candidato estrutural observado:** `tween.timeline` (com `getChildren`) mediu **falso** num
    tween puro e **verdadeiro** em stagger, `duration` funcional e `delay` funcional. Quatro formas
    não provam que seja "a assinatura" da classe inteira — trate como **candidato promissor a
-   discriminador**, não como fronteira de segurança estabelecida. Ainda assim é o ponto de partida
-   mais promissor pra uma tentativa futura, porque endereça uma CLASSE em vez de nomes.
+   discriminador**, não como fronteira de segurança estabelecida. E ele comprovadamente **não** cobre
+   controles funcionais como callbacks (`inner:false` com `onUpdate`), então nunca será gate único.
 2. **A causa raiz está entendida:** uma tween grava os valores de início no PRIMEIRO RENDER, não na
    criação; o clone nasce lendo o DOM já renderizado e recebe `progress()` por cima.
 3. **Os probes ficam** (`_probe-detach-real-path.mjs` como witness assertivo,
@@ -295,49 +329,75 @@ cálculo de `keyframeEditReason`. `detachElementFromSharedTween` (linha ~4776) j
 mas é honestamente irreversível pra tweens staggered (o próprio código diz "reload the page to
 restore it") — por isso o caminho de ownership é preferível a detach.
 
-## 4. RECOMENDAÇÃO para a próxima sessão
+## 4. PRÓXIMOS PASSOS (ordem acordada com o Adilson)
 
-**Fechar a investigação antes de decidir arquitetura — e só então escrever o plano.** A sessão passada
-mostrou que declarar "decidido" cedo demais custa caro: eu elegi um eixo de desenho que não existia.
+### 0. Retomar o `detach` pela causa isolada (PRIMEIRO — pequeno, mas NÃO trivial)
 
-Pré-requisitos de evidência:
+A causa de a tentativa anterior ter virado no-op está isolada (§3.3e): naquele controle positivo,
+`vars.ease` era função e a regra "controle funcional → recusa" o derrubou; `inner` era `false`.
 
-1. 🟡 **PARCIAL — SplitText REAL** (§3.3b). Sabemos que `split()` substitui os elementos e órfã o
-   tween, e que não há identidade de referência DOM. **Falta separar os três casos**: (a) resize real
-   com `autoSplit:true` + `onSplit`; (b) re-split manual com o texto PRESERVADO; (c) substituição
-   semântica do texto. Medir chars/words/lines em cada um. A política de endereçamento sai daí — e um
-   endereço **lógico** `(heading, charIndex)` continua candidato, ao contrário do que escrevi antes.
-2. 🟡 **PARCIAL — proveniência/token** (§3.3c). Temos o **baseline do classificador atual**: qualquer
-   função top-level cai no hazard do canal keyframe. **Falta o probe do writer proposto**: escalar →
-   função com identidade própria → invalidate → reinspeção → segundo edit → undo exato, incluindo
-   tentativa da página de **trocar/forjar** a função. Só isso decide se a terceira alternativa
-   (identidade em `WeakSet`/binding, escalar journalado) fecha sem reabrir a política.
-3. ⬜ **PENDENTE — caminho de escrita real**: os probes editam `vars` direto; o bridge escreve por
-   canais com guardas, transação e journal. Provar pela via real, não pela sintética.
-4. ⬜ **PENDENTE — validar o `detach`** (§3.3d) em progresso 0/meio/1, reprodução ativa, reverse e
-   timeline-pai, exigindo continuidade visual e trajetória equivalente. Hoje ele **não** preserva o
-   estado; sem isso não é candidato.
+⚠️ **O que NÃO fazer:** remover a regra funcional inteira. A auditoria mostrou que callbacks
+(`onUpdate` etc.) são controles funcionais **sem** timeline interna, então `!inner` não os cobre e a
+remoção reabriria um buraco.
 
-> ❌ **Um "pré-requisito" que eu havia inventado e foi retirado:** "o journal precisa sobreviver à
-> substituição do tween". Não está demonstrado como requisito — e no único caso real observado
-> (re-split após troca de texto) sobreviver seria **errado**.
+**O passo é:** avaliar uma exceção **estreita** — começando por `ease`, e só depois considerando
+callbacks — sustentada por medição. A pista a favor é que o rewind usa `progress(_, true)`, que
+suprime eventos; a pista contra é que isolamento pós-`kill` já é frágil (o alvo continua em
+`targets()` e os callbacks do original seguem ativos). **Demonstrar, não deduzir.**
 
-**A decisão de arquitetura ainda não está madura.** As três opções seguem vivas e nenhuma validada.
-Quando amadurecer, a pergunta pro Adilson será de PRODUTO: **vale a identidade registrada (que mexe
-na política do canal keyframe) para ter edição per-target sem detach, ou aceitamos a semântica de
-detach — o alvo vira uma animação própria — depois de consertar a continuidade?**
+Antes de qualquer código, montar o witness com **controle positivo desde o início** — foi a sua
+ausência que deixou um gate no-op passar por seguro:
 
-Coordenar com a **Task 12 do gate** (`/canvas`): fixture do chooser = **Entrance+Hover** (item 168 —
-`x`+`x` e CSS drift+pulse são ambiguidade falsa; o chooser real são 2 motions distintos no mesmo canal).
+- ⭐ **controle POSITIVO**: tween puro destacável, nos 3 estados de parada, com alvos próprios;
+- ⭐ **stagger**: o consumidor shipado que motivou o `detach`;
+- negativos: `from`/`runBackwards`, `runBackwards` dentro de `keyframes`, `clearProps`, duração/delay
+  funcionais, **callbacks top-level**, **ease custom/stateful**, `easeReverse`/`yoyoEase` (ainda
+  **não reproduzido localmente**), timeline-pai, reverse e reprodução ativa;
+- **cada caso com alvos próprios** — alvos compartilhados contaminaram uma medição minha e me fizeram
+  ler "sem regressão" de resultado sujo.
 
-## 5. Fila depois do furo #4
+**Regra de parada acordada:** se uma rodada de auditoria encontrar mais uma regressão CONFIRMADA em
+comportamento shipado, reverter e deixar o defeito documentado, em vez de emendar de novo. Já foram 4
+rodadas; o valor é um papercut e a produção hoje está intacta.
+
+**Por que vale a pena mesmo assim:** a guarda estrutural é candidata a mecanismo do **furo #4** (§3.3c
+opção b), então as duas frentes se encontram aqui — o que se aprender vale duas vezes.
+
+### 1. Furo #4 — fechar evidência antes de arquitetura
+
+Fork **aberto**, três opções vivas, nenhuma validada (§3.3c). Pré-requisitos:
+
+1. 🟡 **PARCIAL — SplitText real** (§3.3b): falta separar (a) resize com `autoSplit:true`+`onSplit`,
+   (b) re-split manual com texto PRESERVADO, (c) troca semântica de texto.
+2. 🟡 **PARCIAL — proveniência/token** (§3.3c): temos o baseline do classificador. Falta o probe do
+   writer proposto: escalar → função com identidade própria → invalidate → reinspeção → segundo edit →
+   undo exato, incluindo tentativa da página de **forjar** a função. Isso decide se a terceira
+   alternativa (identidade em `WeakSet`/binding, escalar journalado) fecha sem reabrir a política do
+   canal keyframe.
+3. ⬜ **Caminho de escrita real**: provar pela via do bridge (guardas, transação, journal), não por
+   `vars` direto.
+4. ⬜ **Validar o `detach`** como mecanismo — depende do passo 0 acima.
+
+Quando amadurecer, a decisão é de **produto**: vale a identidade registrada (que mexe na política
+auditada do canal keyframe) para ter edição per-target sem detach, ou aceitamos a semântica de detach?
+
+Coordenar com a **Task 12 do gate** (`/canvas`): fixture do chooser = **Entrance+Hover** (item 168).
+
+### 2. Residual do `</body>` no injetor (independente, bounded)
+
+`injectRuntimeBridge` ainda posiciona o script do bridge por `/<\/body>/i`. Classe mais ampla que
+comentário: um `<script>const x = "</body>";</script>` derruba a injeção dentro do script do site, e
+documentos com `<frameset>` não têm `</body>`. Pede política própria de posicionamento — a mesma
+lógica de preâmbulo do fix de quirks não serve aqui.
+
+## 5. Fila depois disso
 
 **Task 16 / gate persistido `/canvas`** — Tasks 12–20 (Task 14 = seam de fault em código de PROD,
 server-only fail-closed). Env Neon isolado `ep-orange-frost-acaedcil` — **NUNCA produção**. Plano
 `docs/superpowers/plans/2026-07-28-task16-persisted-e2e-gate-implementation.md`.
 
 **r46** — deferida, dono Adilson, 7 gatilhos no handoff anterior §3. Reabre por gatilho, não por
-calendário.
+calendário. Pré-requisitos registrados em §1.
 
 ## 6. Lições de método desta sessão
 
