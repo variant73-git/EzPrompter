@@ -132,6 +132,87 @@ Re-probe com o edit **comprovadamente aplicado** (`_probe-furo4-parent-invalidat
 documentado, não mais difícil — e apaga a suposta necessidade de replay de journal e de tocar todos os
 writers. Nada disso deve ser levado adiante como premissa.
 
+### 3.3b Pré-requisito 1 CUMPRIDO — SplitText REAL (`_probe-furo4-splittext-real.mjs`)
+
+Rodado com o `SplitText.min.js` do fixture (GSAP 3.15 Club). O que o fixture à mão escondia:
+
+| | resultado |
+|---|---|
+| chars produzidos | `DIV` **sem classe e sem id** — só `aria-hidden` e `style` |
+| contiguidade por linha | **confirmada** (o fixture à mão acertou por acaso) |
+| re-split substitui elementos? | **SIM — 0 de 25** dos antigos permanecem no documento |
+| tween construído antes do re-split | **ÓRFÃO** — os 25 alvos ficam fora do DOM |
+| `revert()` | devolve o DOM original byte a byte |
+
+**Constraint real, já corrigido pela auditoria do Sol:** não há identidade de **referência DOM** — a
+referência não sobrevive a um `split()`. Mas duas conclusões que eu tirei daí estavam
+**sobre-declaradas**:
+
+- ❌ *"um resize com `type:"lines"` refaz tudo"* — **falso**. `autoSplit` é `false` por padrão e a
+  reconstrução da animação exige `onSplit`. O fixture real cria SplitText **sem nenhum dos dois**
+  (`index.html:630, 657, 1308`). Reflow muda o agrupamento de **linhas**, não a sequência nem a
+  contagem de caracteres de um texto inalterado.
+- ❌ *"não há identidade estável"* — forte demais. Não há identidade de referência DOM, mas um
+  **endereço lógico** `(heading, charIndex)` é estável enquanto o texto não muda.
+
+O único re-split do fixture real é **manual e depois de trocar o texto** (`index.html:1650`:
+`heading.innerHTML = "Now you can see the results."`). Nesse caso, fazer um journal per-char
+sobreviver seria **errado** — aplicaria edits de caractere à frase errada. Portanto o "pré-requisito"
+que eu havia derivado (journal sobreviver à substituição do tween) **não está demonstrado como
+requisito**, e no único caso real observado seria um anti-requisito.
+
+### 3.3c Pré-requisito 2 CUMPRIDO — a conversão escalar→função SE AUTO-TRANCA (`_probe-furo4-provenance.mjs`)
+
+Medido pelo bridge REAL, lendo a `keyframeEditReason` que a inspeção publica:
+
+| tween | reason |
+|---|---|
+| multi-target, escalar | `multi-target` (a tranca que queremos remover) |
+| multi-target, **função por alvo** | **`keyframes`** — o hazard de função dinâmica dispara |
+| single-target, escalar | *(destravado)* |
+| single-target, **função** | **`keyframes`** — a função sozinha já tranca, mesmo com 1 alvo |
+
+**O que isso prova, com precisão (delimitado pela auditoria do Sol):** o **classificador ATUAL** manda
+qualquer função top-level pro hazard do canal keyframe (`runtime-bridge-source.js:2118`), antes mesmo
+da tranca `multi-target`. O contraste single-target escalar × função isola a variável — não há
+explicação alternativa material.
+
+**O que isso NÃO prova:** que uma função **criada e registrada pelo bridge** tenha que permanecer
+indistinguível. O probe nunca converte o mesmo tween de escalar pra função, nem exercita writer,
+binding, token, journal, rollback ou reinspeção pós-write. Existe uma **terceira alternativa ainda não
+refutada** (apontada pelo Sol): identidade guardada num `WeakSet`/binding com o escalar original
+journalado — o que manteria funções **autorais** bloqueadas sem reabrir a política inteira.
+
+**Opções pro caso multi-target simples** (um tween assim não tem filhos pra editar — não há timeline
+interna, é um tween com N alvos e `_ptLookup`):
+
+- **(a)** conversão pra função com identidade registrada → não refutada; precisa do probe do writer;
+- **(b)** **detach** do alvo pra um tween próprio → **hipótese NÃO validada** (ver §3.3d);
+- **(c)** outra coisa ainda não mapeada.
+
+O fork **não está decidido** e nenhuma das opções está pronta pra virar arquitetura.
+
+### 3.3d ⚠️ O `detach` existente NÃO preserva o estado (defeito latente no código shipado)
+
+Eu havia elevado o detach a "candidato forte". O Sol derrubou, e o probe
+(`_probe-furo4-detach-continuity.mjs`) confirma — a réplica da sequência do bridge
+(`runtime-bridge-source.js:4799-4820`) num tween `x:0→100`:
+
+| estado do tween | antes do detach | logo após | trajetória do clone |
+|---|---|---|---|
+| parado em 0 | 0 | 0 | `0→100` ✅ |
+| parado em 0.5 | 75 | **93,75** — salto visível | `75→100` ❌ |
+| parado em 1 | 100 | 100 | `100→100` (clone morto) ❌ |
+| rodando | — | — | clone nasce **`paused:true`** |
+
+A causa: o clone é criado a partir do valor **já renderizado** no DOM (from implícito) e depois recebe
+`progress(parked)` — então o ponto de partida vira o valor corrente e o progresso é aplicado **de
+novo** sobre ele. (Com o ease padrão `power1.out`, 0.5 renderiza 75, não 50 — por isso o salto é
+maior que a aritmética linear sugeriria.)
+
+⚠️ **Isso não é só um problema do furo #4:** esse é o caminho de `link.detach` **já shipado**, usado
+hoje pra desacorrentar stagger. Vale investigar como defeito próprio, independente desta frente.
+
 ### 3.4 Endereçamento — parcialmente observado, NÃO resolvido
 
 A função recebe `(índice, elemento, listaDeAlvos)`; cada filho de stagger expõe `targets()` com
@@ -155,19 +236,32 @@ restore it") — por isso o caminho de ownership é preferível a detach.
 **Fechar a investigação antes de decidir arquitetura — e só então escrever o plano.** A sessão passada
 mostrou que declarar "decidido" cedo demais custa caro: eu elegi um eixo de desenho que não existia.
 
-Pré-requisitos de evidência, na ordem (nenhum deles está feito):
+Pré-requisitos de evidência:
 
-1. **SplitText REAL**, incluindo re-split e substituição de elementos — a fixture atual é feita à mão
-   e não prova nada sobre endereçamento estável (§3.4).
-2. **Proveniência congelada / token da fase-2**: converter escalar → função muda o *shape* de `vars`,
-   e essa malha existe justamente pra detectar mudança de shape. Ela vai reclamar. Não é impeditivo —
-   é provavelmente onde o trabalho está. **Medir antes de qualquer desenho.**
-3. **Cobertura do caminho de escrita real**: os probes editam `vars` direto; o bridge escreve por
-   canais com guardas, transação e journal. Provar o comportamento pela via real, não pela sintética.
+1. 🟡 **PARCIAL — SplitText REAL** (§3.3b). Sabemos que `split()` substitui os elementos e órfã o
+   tween, e que não há identidade de referência DOM. **Falta separar os três casos**: (a) resize real
+   com `autoSplit:true` + `onSplit`; (b) re-split manual com o texto PRESERVADO; (c) substituição
+   semântica do texto. Medir chars/words/lines em cada um. A política de endereçamento sai daí — e um
+   endereço **lógico** `(heading, charIndex)` continua candidato, ao contrário do que escrevi antes.
+2. 🟡 **PARCIAL — proveniência/token** (§3.3c). Temos o **baseline do classificador atual**: qualquer
+   função top-level cai no hazard do canal keyframe. **Falta o probe do writer proposto**: escalar →
+   função com identidade própria → invalidate → reinspeção → segundo edit → undo exato, incluindo
+   tentativa da página de **trocar/forjar** a função. Só isso decide se a terceira alternativa
+   (identidade em `WeakSet`/binding, escalar journalado) fecha sem reabrir a política.
+3. ⬜ **PENDENTE — caminho de escrita real**: os probes editam `vars` direto; o bridge escreve por
+   canais com guardas, transação e journal. Provar pela via real, não pela sintética.
+4. ⬜ **PENDENTE — validar o `detach`** (§3.3d) em progresso 0/meio/1, reprodução ativa, reverse e
+   timeline-pai, exigindo continuidade visual e trajetória equivalente. Hoje ele **não** preserva o
+   estado; sem isso não é candidato.
 
-Só com isso: (a) plano escrito com as duas semânticas de escrita e a decisão de se o **target** entra
-na CHAVE do binding (hoje per-(animation, property)) ou vira dimensão do valor; (b) TDD por camada,
-rodada do Sol a cada camada, witness real a cada green, até MERGE OK.
+> ❌ **Um "pré-requisito" que eu havia inventado e foi retirado:** "o journal precisa sobreviver à
+> substituição do tween". Não está demonstrado como requisito — e no único caso real observado
+> (re-split após troca de texto) sobreviver seria **errado**.
+
+**A decisão de arquitetura ainda não está madura.** As três opções seguem vivas e nenhuma validada.
+Quando amadurecer, a pergunta pro Adilson será de PRODUTO: **vale a identidade registrada (que mexe
+na política do canal keyframe) para ter edição per-target sem detach, ou aceitamos a semântica de
+detach — o alvo vira uma animação própria — depois de consertar a continuidade?**
 
 Coordenar com a **Task 12 do gate** (`/canvas`): fixture do chooser = **Entrance+Hover** (item 168 —
 `x`+`x` e CSS drift+pulse são ambiguidade falsa; o chooser real são 2 motions distintos no mesmo canal).
