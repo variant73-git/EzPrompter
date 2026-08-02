@@ -211,7 +211,71 @@ novo** sobre ele. (Com o ease padrão `power1.out`, 0.5 renderiza 75, não 50 �
 maior que a aritmética linear sugeriria.)
 
 ⚠️ **Isso não é só um problema do furo #4:** esse é o caminho de `link.detach` **já shipado**, usado
-hoje pra desacorrentar stagger. Vale investigar como defeito próprio, independente desta frente.
+hoje pra desacorrentar stagger.
+
+### 3.3e Tentativa de consertar o `detach` — ABANDONADA após 4 rodadas (produção intocada)
+
+Tentei consertar e **revertí**. A produção está byte-idêntica ao shipado; o defeito segue lá,
+documentado aqui. Vale ler antes de tentar de novo.
+
+**A ideia** era rebobinar o tween compartilhado pra `progress 0`, deixar o clone gravar o início
+verdadeiro, e devolver os dois. Funciona pro caso simples (witness verde nos 3 estados de parada).
+**O problema é o perímetro de segurança**: rebobinar só é válido se re-renderizar o compartilhado for
+uma re-interpolação PURA, e eu errei esse perímetro quatro vezes seguidas.
+
+Cada rodada de auditoria produziu regressão em comportamento shipado. As quatro primeiras linhas
+foram **confirmadas por A/B local** (arquivo shipado × meu fix, com alvos isolados); a última é relato
+do auditor que eu não reproduzi:
+
+| forma | shipado | com o fix | rodada |
+|---|---|---|---|
+| `gsap.from` parado em .5 | 25→43,75; clone 100→25 | 25→**100**; clone **morto** | 1 |
+| `runBackwards` dentro de entrada de `keyframes` | 50→75; clone 100→50 | 50→**100**; clone **morto** | 2 |
+| `clearProps:'all'` | estilo posterior do irmão sobrevive | estilo do irmão **apagado** | 2 |
+| `duration: i => i+1` | [100,50]; clone 100→100 | [**50**,50]; clone 0→100 | 3 |
+| `easeReverse`/`yoyoEase` | irmão em 62,5 | irmão movido pra 75 | 3 — ⚠️ **relato do auditor, NÃO reproduzido localmente** |
+
+Trocar a blacklist por um "predicado positivo" **não resolveu** — a versão positiva ainda deixava
+passar `duration` funcional (tratava a chave como controle benigno sem olhar o valor) e ainda
+divergia do `gsapPluginOwnedVar` em chaves herdadas.
+
+Na combinação final do predicado (guarda estrutural + checagem de valor + consulta direta ao registro
+de plugins), o **controle positivo também foi recusado** — o tween simples deixou de ser corrigido, ou
+seja, o gate virou no-op. ⚠️ **Não isolei a causa.** O trace mostra `tween.timeline` FALSO num tween
+puro, então a guarda estrutural sozinha não explica a recusa; havia outra condição na mesma leva
+(candidata mais provável: a troca de `gsapPluginOwnedVar` por consulta direta ao registro). Portanto
+**a abordagem estrutural NÃO foi refutada** — ficou por avaliar. Isolar isso é o caminho barato que
+sobra, e não muda a decisão de parar a frente agora.
+
+**O que sobrou de valor, e é real:**
+
+1. ⭐ **Candidato estrutural observado:** `tween.timeline` (com `getChildren`) mediu **falso** num
+   tween puro e **verdadeiro** em stagger, `duration` funcional e `delay` funcional. Quatro formas
+   não provam que seja "a assinatura" da classe inteira — trate como **candidato promissor a
+   discriminador**, não como fronteira de segurança estabelecida. Ainda assim é o ponto de partida
+   mais promissor pra uma tentativa futura, porque endereça uma CLASSE em vez de nomes.
+2. **A causa raiz está entendida:** uma tween grava os valores de início no PRIMEIRO RENDER, não na
+   criação; o clone nasce lendo o DOM já renderizado e recebe `progress()` por cima.
+3. **Os probes ficam** (`_probe-detach-real-path.mjs` como witness assertivo,
+   `_probe-detach-blockers*.mjs`, `_probe-funcdur-isolated.mjs`) com A/B pronto.
+
+**Por que parei:** o valor é um papercut (detach no meio da animação salta), e cada tentativa
+introduziu quebra em comportamento shipado e auditado. Continuar era trocar um defeito conhecido e
+contido por defeitos novos e desconhecidos. **Se for retomado, começar pela guarda estrutural, não
+por lista de nomes** — e tratar como frente própria, com witness cobrindo desde o início:
+
+- ⭐ **controle POSITIVO** — tween puro destacável, nos 3 estados de parada. Sem ele, um gate que vira
+  no-op passa a matriz negativa inteira, que foi exatamente o que aconteceu comigo;
+- ⭐ **stagger** — o consumidor shipado que motivou o `detach`; sem ele o witness não exercita o
+  caminho real;
+- `from`/`runBackwards`, `runBackwards` dentro de `keyframes`, `clearProps`, duração/delay funcionais,
+  `easeReverse`/`yoyoEase`, timeline-pai, reverse e reprodução ativa;
+- **cada caso com alvos próprios** — alvos compartilhados entre casos contaminam a medição.
+
+> **Erro de método que me custou duas rodadas aqui:** medi o caso de `duration` funcional num probe
+> onde blocos anteriores tinham criado e matado tweens **nos mesmos elementos**, e li "sem regressão"
+> de um resultado contaminado. Isolado, a regressão aparece exatamente como o auditor descreveu.
+> Cada caso de A/B precisa de alvos próprios.
 
 ### 3.4 Endereçamento — parcialmente observado, NÃO resolvido
 
