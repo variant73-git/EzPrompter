@@ -1,4 +1,74 @@
-# `link.detach` — 5ª tentativa: REVERTIDA pela regra de parada (2026-08-02)
+# `link.detach` — 5ª e 6ª tentativas REVERTIDAS; o instrumento tem ponto cego aberto (2026-08-02/03)
+
+> **⚠️ LEIA A §0 PRIMEIRO.** A 6ª tentativa consertou tudo que matou a 5ª — e três auditorias
+> seguintes acharam mais quatro defeitos. O padrão, não os bugs individuais, é o achado.
+
+## 0. Conclusão da 6ª tentativa (2026-08-03)
+
+O Adilson autorizou uma passada focada: provar o instrumento de rebobinagem e, se provasse,
+terminar a tentativa. **O instrumento foi provado** e as duas regressões da 5ª foram consertadas —
+mas o desenho caiu por outro motivo, e desta vez o motivo é estrutural.
+
+**O instrumento (provado, e o resultado fica):** `_probe-detach-instrumento.mjs`, 11 formas × 5
+instrumentos, com verdade INDEPENDENTE (o estado do elemento antes de o tween existir) e controle
+de sensibilidade. Só o **vai-e-vem em coordenada TOTAL** (`totalTime(ε)` → `totalTime(alvo)`)
+acerta as 11 formas **e** de fato renderiza — dois eixos, porque um instrumento que não faz nada
+"acerta" o valor por omissão. `progress` é posição DENTRO da iteração (num `repeat:2` na 2ª
+passagem, `progress 0` é a virada e renderiza o valor FINAL); `render(t,_,force)` mente em
+timeline interna. Correção lateral: o GSAP representa `repeat:-1` como `totalDuration` **1e10**,
+não `Infinity` — meu raciocínio de que isso cairia no fallback estava errado.
+
+Com o instrumento novo, o discriminador estrutural do `innerChild`
+(`targets().length === 1 && targets()[0] === rowTargets[0]`, que abarca stagger E duração/delay
+funcionais, coisa que testar `vars.stagger != null` não fazia) e a exclusão da linha multi-alvo:
+**30 casos, 0 regressões, 17 melhorias.** Salto do `keyframes` array: 24,75 → **0**.
+
+**E aí três auditorias acharam mais quatro defeitos, todos confirmados rodando:**
+
+1. **Sol** — falso positivo em tween misto CSS + `attr`: o `cssText` vê o lado CSS bater nas duas
+   pontas e carimba `verified`, enquanto o atributo sai errado. Salto do atributo 29,7 → **54**.
+   Corrigido com um gate (`gsapWritesOnlyCss`) que recusa quando há var de plugin.
+2. **Sol, rodada 2** — o MESMO falso positivo por outra porta: o CSSPlugin do GSAP, quando a chave
+   não existe em `style` mas existe no alvo, anima `target[key]` DIRETO (`scrollTop`, `scrollLeft`,
+   `value`). Meu gate presumia que toda chave escalar não-registrada é CSS.
+3. **Agente Claude** — `repeatRefresh`: o detach move IRMÃOS que o usuário nunca tocou, de forma
+   permanente (`[75,75,75]` → `[100,100,100]`; com `+=100` → `[175,175,175]`), porque as buscas
+   até as pontas cruzam TODAS as fronteiras de repetição, coisa que o perímetro shipado nunca
+   fazia. O `finally` restaura pixels e tempo, não os valores de início gravados DENTRO do tween.
+4. **Agente Claude** — o clone verificado fica estacionado na ÚLTIMA iteração, então a inspeção
+   passa a reportar a linha desacorrentada como **morta** (`0=100 → 1=100`). Trocar "início
+   errado" por "linha sem movimento" é qualitativamente pior, e pega justo o caso mais comum
+   (barras em loop, `repeat:-1`).
+
+⭐ **O achado que importa não é nenhum desses quatro — é o que eles têm em comum.** Os defeitos 1
+e 2 são a mesma classe por portas diferentes: **"o `cssText` enxerga tudo que o tween escreve"
+não é uma propriedade que dê pra estabelecer por enumeração.** Eu tapei a porta dos plugins e a
+das propriedades diretas estava aberta; o CSSPlugin tem fallback documentado pra propriedade do
+alvo, plugins se registram em tempo de execução, e não há lista que feche isso. O instrumento tem
+**ponto cego de tamanho desconhecido**, e cada rodada acha outra porta.
+
+**Por isso revertí de novo em vez de aplicar as quatro correções.** Os defeitos 3 e 4 têm conserto
+claro (recusar `repeatRefresh`; estacionar o clone por `totalTime`). Os 1 e 2 não têm — têm
+remendo.
+
+### O desenho que fecharia a classe (não construído)
+
+Parar de adivinhar quais canais existem e **perguntar ao próprio GSAP**: a cadeia viva de
+PropTweens (`pt.d._pt`) entrega `{propriedade, início, variação, unidade}` e o objeto-alvo de
+cada escrita. Usada como **mapa de cobertura** — só pra saber QUAIS canais observar, não pra
+reconstruir valores — ela fecha a classe por construção, porque a lista vem do GSAP e não da
+minha enumeração. É diferente do "leitor de internals" que descartei no dia 2 (aquele
+reconstruía VALORES e falhava calado em cor/`boxShadow`); aqui os valores continuam vindo da
+medição. É trabalho novo, com probes e auditoria próprios.
+
+### A alternativa de produto, que segue na mesa
+
+Recusar o `detach` nas formas que não conseguimos reproduzir, em vez de prometer "tween
+equivalente" e entregar salto. Decisão do Adilson.
+
+---
+
+# Registro da 5ª tentativa (2026-08-02)
 
 > Passo 0 do handoff de entrada (`2026-08-02-next-session-handoff.md`).
 > **Produção INTOCADA** — `git diff HEAD -- packages/` é vazio. O defeito segue lá.
