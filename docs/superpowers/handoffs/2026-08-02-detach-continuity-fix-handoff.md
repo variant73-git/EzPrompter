@@ -3,6 +3,39 @@
 > **⚠️ LEIA A §0 PRIMEIRO.** A 6ª tentativa consertou tudo que matou a 5ª — e três auditorias
 > seguintes acharam mais quatro defeitos. O padrão, não os bugs individuais, é o achado.
 
+## 0b. FIX SHIPADO (2026-08-03): o dano temporal da INSPEÇÃO — o residual §6 — está consertado
+
+`1ada4a7b` — a causa isolada do §6 virou fix de produção, autorizado pelo Adilson como "fix
+rápido da causa isolada". **Selecionar um elemento não danifica mais o estado temporal de tweens
+com `repeat`/`yoyo`** (antes: yoyo na volta passava a andar pra frente, looping voltava uma
+batida, a cada clique). Bônus: as trilhas publicadas agora carregam o início VERDADEIRO (antes
+saíam com início "100" para tweens de repetição selecionados numa volta posterior).
+
+Mecânica: salvar/restaurar por `totalTime`; início amostrado por `totalTime(0)`; fim segue
+`progress(1)` de propósito (valor "to" autoral). Classe **UNSAMPLEABLE** fail-closed:
+`repeatRefresh`/`yoyoEase`/`easeReverse` não podem ser amostrados sem mutar a animação
+(medidos: +200px permanente; 75→87,5 numa seleção) → end-only + lock de retarget. Veredito
+recursivo descriptor-based sobre vars **+ filhos vivos** da timeline (entrada removida do array
+segue renderizando — fato r8), `parent` como backedge (item 170), accessor = terminal opaco sem
+dereferência.
+
+Witness: `_probe-inspect-witness.mjs` (9 casos, página selecionada vs referência nunca
+selecionada, dano medido nos 2 ticks seguintes; 27 RED contra o shipado antigo). **Audit Sol,
+9 rodadas: 5 achados dele REPRODUZIDOS e corrigidos** — incluindo `easeReverse`, que corrige um
+"não reproduzido localmente" desta mesma frente (§ registro da 5ª tentativa: o probe de lá não
+tinha a forma certa) — + 3 blindagens simétricas adotadas. A/B de getters sob accessors: fix
+estritamente MELHOR que o shipado (ease 8→4). **Dissenso final do Sol registrado**: ele
+bloquearia até endurecer todas as leituras pré-existentes de vars sob página adversarial —
+classe r46, deferida com gatilhos; fechado como lead.
+
+Residual da mesma classe (caminho de ESCRITA, fora do seam): `sampleGsapValue` e
+`invalidatePreservingStart` mantêm o padrão progress-restore. O baseline do witness do detach
+foi regravado desta produção (11 RED limpos = só o contrato do defeito do detach).
+
+⭐ Consequência pro detach (§0): o argumento "a produção já rebobina a cada seleção" agora
+aponta pra um rebobinador CORRETO — quem retomar o detach deve reusar ESTE seam (verdict +
+totalTime + unsampleable), não reconstruir outro.
+
 ## 0. Conclusão da 6ª tentativa (2026-08-03)
 
 O Adilson autorizou uma passada focada: provar o instrumento de rebobinagem e, se provasse,
