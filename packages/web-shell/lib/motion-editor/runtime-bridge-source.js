@@ -1926,8 +1926,114 @@ function nativeMotionRuntimeBridge() {
     return { run: buckets.slice(start), buckets, carriers, allEntries: orderedEntries, steps };
   }
 
+  // True when any nesting level of a vars value carries a key whose runtime
+  // state makes the animation unsampleable (see the call site in
+  // gsapEditableTracks). Walks arrays and plain bags alike via for..in
+  // (inherited enumerables count — GSAP processes them); skips Elements and
+  // functions; a cycle or a structure deeper/wider than any real vars object
+  // returns TRUE (fail closed: worst case is a lock, never page damage).
+  // Classifies a vars value for the sampling guard. Three verdicts:
+  //   false      — plain data, sampling may proceed;
+  //   'adaptive' — a repeatRefresh/yoyoEase/easeReverse DATA key somewhere:
+  //                unsampleable, but endOnly() may read vars (data reads);
+  //   'opaque'   — an ACCESSOR (or cycle/runaway/throwing structure) anywhere:
+  //                unsampleable AND vars must not be dereferenced at all — the
+  //                caller takes a terminal that never reads it. Routing an
+  //                accessor verdict into endOnly() would create the very
+  //                invocation the walk avoided (Sol r5): endOnly reads
+  //                vars.css / wrapper[property] / vars[property], reads the
+  //                shipped SAMPLED path never made.
+  // 'opaque' outranks 'adaptive', so the scan finishes the structure instead
+  // of stopping at the first adaptive key. DESCRIPTOR-BASED, never `bag[key]`
+  // (r36 — the audited suite counts getter calls); for..in mirrors GSAP's own
+  // key processing (inherited enumerables count).
+  const GSAP_ADAPTIVE_SAMPLING_KEYS = new Set(['repeatRefresh', 'yoyoEase', 'easeReverse']);
+  function gsapAdaptiveSamplingVerdict(root) {
+    const seen = new Set();
+    const descriptorFor = (bag, key) => {
+      let cursor = bag;
+      while (cursor) {
+        const descriptor = Object.getOwnPropertyDescriptor(cursor, key);
+        if (descriptor) return descriptor;
+        cursor = Object.getPrototypeOf(cursor);
+      }
+      return null;
+    };
+    let adaptive = false;
+    const walk = (bag) => {
+      if (!bag || typeof bag !== 'object' || bag instanceof Element) return false;
+      if (seen.has(bag)) return false;
+      seen.add(bag);
+      if (seen.size > 128) return true;
+      try {
+        for (const key in bag) {
+          // `parent` is a STRUCTURAL BACKEDGE, never authored payload: GSAP
+          // stamps the internal timeline onto every keyframes entry at runtime,
+          // and descending into it walks the whole animation graph — the
+          // runaway cap then flags a perfectly plain tween as opaque (this
+          // locked the safe-path witness). Same rule every walker in this file
+          // follows (item 170).
+          if (key === 'parent') continue;
+          const descriptor = descriptorFor(bag, key);
+          if (!descriptor) continue;
+          if (descriptor.get || descriptor.set) return true;
+          const value = descriptor.value;
+          if (GSAP_ADAPTIVE_SAMPLING_KEYS.has(key) && value) adaptive = true;
+          if (value && typeof value === 'object' && walk(value)) return true;
+        }
+      } catch (_) { return true; }
+      return false;
+    };
+    if (walk(root)) return 'opaque';
+    return adaptive ? 'adaptive' : false;
+  }
+
   function gsapEditableTracks(animation, vars, target, animatedProps) {
     const gsap = window.gsap;
+    // The verdict comes FIRST, before any `vars.*` read and before the no-gsap
+    // fallback (Sol r7): an opaque vars must exit through the no-deref terminal
+    // without even the `ease` read — on that path this function now makes
+    // strictly FEWER page-object reads than the shipped code did.
+    // It aggregates the AUTHORED vars with every LIVE child's vars: splicing an
+    // entry out of vars.keyframes does not kill its child — it keeps rendering
+    // (the repo's own r8 fact), so an adaptive entry removed after creation
+    // escapes a source-only scan while progress(0/1) still renders it
+    // (measured: selection moved 50 -> 87.5). An uninspectable timeline fails
+    // closed as opaque.
+    let samplingVerdict = gsapAdaptiveSamplingVerdict(vars);
+    if (samplingVerdict !== 'opaque' && animation.timeline && typeof animation.timeline.getChildren === 'function') {
+      try {
+        for (const child of animation.timeline.getChildren(true, true, true)) {
+          // `vars` read via descriptor, same discipline as the walk: on a real
+          // GSAP tween it is a plain own data property; anything else (an
+          // accessor planted on the child, a proxy trap throwing) is opaque
+          // without being invoked (Sol r8).
+          let childVars = null;
+          if (child && typeof child === 'object') {
+            let cursor = child; let descriptor = null;
+            while (cursor && !descriptor) {
+              descriptor = Object.getOwnPropertyDescriptor(cursor, 'vars');
+              cursor = Object.getPrototypeOf(cursor);
+            }
+            if (!descriptor) { childVars = null; } else if (descriptor.get || descriptor.set) {
+              samplingVerdict = 'opaque'; break;
+            } else { childVars = descriptor.value; }
+          }
+          const childVerdict = gsapAdaptiveSamplingVerdict(childVars);
+          if (childVerdict === 'opaque') { samplingVerdict = 'opaque'; break; }
+          if (childVerdict === 'adaptive') samplingVerdict = 'adaptive';
+        }
+      } catch (_) { samplingVerdict = 'opaque'; }
+    }
+    if (samplingVerdict === 'opaque') {
+      return {
+        keyframes: false,
+        tracks: animatedProps.map((property) => ({
+          property,
+          keyframes: [{ offset: 1, value: '', easing: null }],
+        })),
+      };
+    }
     const ease = typeof vars.ease === 'string' ? vars.ease : null;
     const endOnly = () => ({
       keyframes: false,
@@ -1946,6 +2052,33 @@ function nativeMotionRuntimeBridge() {
     if (!gsap || typeof gsap.getProperty !== 'function' || typeof animation.progress !== 'function') {
       return endOnly();
     }
+    // Some authored forms cannot be SAMPLED without mutating the animation —
+    // for those, leave the tween untouched and publish the authored end only
+    // (the same endOnly lane as a missing GSAP). Truthiness on every flag, not
+    // === true — GSAP stores some as 1.
+    //
+    // - repeatRefresh re-resolves start values from the DOM on every
+    //   iteration-boundary crossing, and sampling rewinds across boundaries:
+    //   measured, one selection sent the element 200px off, permanently.
+    //   Guarded in every authored slot that can carry it (top level; stagger
+    //   OBJECT form; keyframes entries — the entry/stagger shapes are auditor
+    //   findings not reproduced locally, guarded anyway: the guard's failure
+    //   mode is a lock, the sampled path's is permanent page damage).
+    // - yoyoEase and easeReverse keep ADAPTIVE ease state: sampling re-renders
+    //   them wrong — measured on the real bridge path, selection alone moved
+    //   the element 75 -> 87.5 and the following ticks diverged from a
+    //   never-selected reference. easeReverse damages even WITHOUT repeat/yoyo
+    //   (measured), so both are unconditional.
+    //
+    // The scan is RECURSIVE over the whole vars value, not an enumeration of
+    // authored slots: GSAP nests these keys through stagger objects, keyframes
+    // entries, entry-level stagger, defaults — and enumerating slots lost this
+    // whack-a-mole three rounds in a row (the last escape, an easeReverse
+    // inside a keyframes entry's stagger, moved the element 70 -> 97.3 on a
+    // single selection). Two terminals by verdict: adaptive DATA keys take
+    // endOnly (data reads); the ACCESSOR/opaque terminal exited above, before
+    // any vars read (Sol r5/r7).
+    if (samplingVerdict === 'adaptive') return endOnly();
     // Sampling RENDERS the tween. suppressEvents silences callbacks, not plugin
     // side effects: a `clearProps` tween wipes style.cssText when it completes, and
     // restoring progress cannot rebuild unrelated inline styles. So snapshot every
@@ -1962,15 +2095,34 @@ function nativeMotionRuntimeBridge() {
       touched.forEach(([item, cssText]) => { try { item.style.cssText = cssText; } catch (_) {} });
     };
 
+    // Save and restore the TOTAL time, never the progress: `progress()` is the
+    // position WITHIN the current iteration, so a repeat/yoyo tween parked on a
+    // later pass came back on the wrong iteration — a yoyo mid-return resumed
+    // FORWARD, and every selection knocked looping tweens one beat back. The
+    // restored cssText hid it until the next tick (probe
+    // `_probe-inspect-witness.mjs`, reference = a page never selected).
+    //
+    // The start sample seeks TOTAL 0 for the same reason: `progress(0)` from a
+    // later iteration lands on the boundary, which renders the END value — the
+    // published track opened with start "100". The end sample stays
+    // `progress(1)` on purpose: it reads the iteration end, which is the
+    // authored "to" value (a yoyo tween's total end is its resting start).
+    // Real GSAP always exposes totalTime(); the guard is for harness doubles
+    // that only stub progress() — those keep the legacy coordinates. Resolved
+    // INSIDE the try (Sol r9): a hostile accessor on `totalTime` then degrades
+    // to endOnly like every other sampling failure, instead of escaping to
+    // gsapAnimationsFor's catch and wiping all GSAP clips.
+    let hasTotal = false;
     let restore = null;
     try {
-      const current = animation.progress();
+      hasTotal = typeof animation.totalTime === 'function';
+      const current = hasTotal ? animation.totalTime() : animation.progress();
       restore = Number.isFinite(current) ? current : 0;
-      animation.progress(0, true);
+      if (hasTotal) animation.totalTime(0, true); else animation.progress(0, true);
       const startValues = animatedProps.map((property) => String(gsap.getProperty(target, property)));
       animation.progress(1, true);
       const endValues = animatedProps.map((property) => String(gsap.getProperty(target, property)));
-      animation.progress(restore, true);
+      if (hasTotal) animation.totalTime(restore, true); else animation.progress(restore, true);
       restoreInlineStyles();
       return {
         keyframes: true,
@@ -1983,7 +2135,9 @@ function nativeMotionRuntimeBridge() {
         })),
       };
     } catch (_) {
-      if (restore != null) { try { animation.progress(restore, true); } catch (_) {} }
+      if (restore != null) {
+        try { if (hasTotal) animation.totalTime(restore, true); else animation.progress(restore, true); } catch (_) {}
+      }
       restoreInlineStyles();
       return endOnly();
     }
