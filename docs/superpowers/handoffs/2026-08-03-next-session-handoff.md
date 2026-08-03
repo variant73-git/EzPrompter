@@ -61,24 +61,42 @@ tooltip), e o detach é rebaixado a operação avançada ou removido.
   NÃO validado como mecanismo (agora com 6 evidências contra).
 - UX: o que a corrente mostra quando há override ativo (ex.: corrente + ponto), e onde vive o
   "reset to group".
+- **Variante de promessa cumprível, a considerar no brainstorm:** redefinir o que a corrente
+  promete. "Desacorrentar" hoje promete *"animação independente e EQUIVALENTE"* — a promessa
+  impossível. *"Este elemento passa a ser meu daqui em diante"* (congela onde está, vira
+  editável, o grupo segue sem ele) é **sempre cumprível**, em qualquer forma autoral, com zero
+  recusa. Menos poderosa, 100% previsível.
 
-### Opção B — barata, pode acompanhar a A: recusa honesta no detach
+### Recusa nas formas não comprovadas — DEMOVIDA de opção de produto a GUARDA INTERNA da A
 
-Enquanto o detach existir, **recusar as formas não comprovadas** em vez de prometer equivalência
-e entregar salto. O witness do detach (30 casos) já diz exatamente quais formas saltam; a recusa
-usa a mesma UX de lock acionável do item 168 (#3). Pequena, sem risco, e elimina a mentira hoje.
-Já estava "na mesa" como decisão de produto — esta sessão só reforçou o caso.
+> ⭐ **Decisão de produto do Adilson (2026-08-03), contrariando a proposta original deste
+> handoff:** recusa voltada ao usuário ("isso não funciona nesse caso") é inaceitável — a
+> condição da recusa é *como o site original escreveu a animação* (`from` vs `to`,
+> `repeatRefresh`…), invisível e imprevisível pro usuário do Uncraft; a funcionalidade viraria
+> loteria. Bate com a regra de produto do item 168 (nunca bloqueio sem escolha). A distinção
+> que salva os locks do 168: lá o lock tranca um CAMPO com motivo acionável e caminho; aqui
+> trancaria a FUNCIONALIDADE inteira condicionada a fator oculto.
+
+O mecanismo continua valendo, mas **por dentro**: saber com precisão quais formas não podem ser
+divididas com equivalência (o witness de 30 casos já diz) é o **roteador interno** da A — quando
+o grupo não pode ser dividido de verdade, o clique na corrente devolve o override por cima, que
+funciona sempre. O usuário vê UMA capacidade consistente ("posso sempre editar só esta camada");
+a decisão dividir-vs-editar-por-cima fica invisível, onde inconsistência não machuca. **Nenhuma
+recusa jamais chega ao usuário.**
 
 ### Opção C — só se o produto EXIGIR detach universal: mapa de cobertura por PropTweens
 
 Perguntar ao próprio GSAP quais canais existem (cadeia viva `pt.d._pt` como **mapa de
 cobertura** — os VALORES continuam vindo da medição; difere do leitor de internals descartado,
-que reconstruía valores). Fecha o ponto cego por construção, mas é a obra cara — handoff do
-detach §"O desenho que fecharia a classe". Não começar por aqui.
+que reconstruía valores). Fecha o ponto cego por construção, mas: não cobre as formas
+adaptativas (continuam não-amostráveis), apoia-se em internals com falha já medida pra plugins
+(furo #2 v10) e variáveis entre versões de GSAP, e no melhor caso converge pra "guarda interna
+com mais cobertura" — pagando caro por ela. Handoff do detach §"O desenho que fecharia a
+classe". Não começar por aqui.
 
-**Ordem recomendada: A (explorar produto, junto com o fork do furo #4) + B (stopgap imediato).
-C só se A morrer.** Se a sessão for de exploração da A, começar por brainstorm de produto com o
-Adilson (regra dele decide o desenho — precedente do item 162), não por código.
+**Ordem recomendada: A (explorar produto, junto com o fork do furo #4), com a guarda interna
+como roteador. C só se A morrer.** Se a sessão for de exploração da A, começar por brainstorm de
+produto com o Adilson (regra dele decide o desenho — precedente do item 162), não por código.
 
 ## Fila depois
 
