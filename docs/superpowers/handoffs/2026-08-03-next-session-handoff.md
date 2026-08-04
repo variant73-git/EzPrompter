@@ -37,7 +37,15 @@ promessa, não o mecanismo:
 **Ideia:** "quero mexer só nesta barra" deixa de significar *quebrar o vínculo* (irreversível
 pra stagger) e passa a significar *editar por cima* — um override por-alvo, **reversível**, com
 o compartilhado intacto por baixo. A corrente continua existindo como INDICADOR de grupo (com
-tooltip), e o detach é rebaixado a operação avançada ou removido.
+tooltip).
+
+⚠️ **Disposição do detach — DECIDIDA, não reabrir como pergunta:** o detach NÃO é removido nem
+vira item de menu avançado. Ele deixa de existir como OPERAÇÃO VISÍVEL (com promessa própria) e
+o mecanismo sobrevive como ROTA INTERNA do override (ver "guarda interna" abaixo): onde o
+witness prova equivalência, o clique divide de verdade por baixo; onde não prova, o mesmo clique
+entrega o override. UMA capacidade, zero recusa, decisão interna invisível. "Remover de vez"
+descartaria a rota provada à toa; "menu avançado" reintroduziria a recusa visível que o Adilson
+vetou. Até a A existir, o comportamento shipado de hoje permanece (defeito documentado, aceito).
 
 **Por que é viável — o que JÁ existe apontando pra cá:**
 1. O retarget **por-componente/por-alvo já funciona** para canais single-owner (itens 167/168):
