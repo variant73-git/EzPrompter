@@ -12939,24 +12939,41 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
-    it('(b) recusa v3 num tween com repeat: 2', () => {
+    it('(b) v3 num tween repeat:2 COMMITA — chave B5 (repeat inteiro finito, sem yoyo)', () => {
       const [elA, elB] = setupFlatTargets();
-      makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
       const runtime = bootV2Runtime();
       const { elementId, motionId } = selectMotion(runtime, elA);
-      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor());
-      expect(rejected?.payload?.error).toBe('Per-target overrides on repeating or yoyo animations are not supported yet.');
+      sendV3(runtime, elementId, motionId, v3Descriptor({ value: 160 }), 'b5-commit');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(typeof tween.vars.x).toBe('function');
+      expect(tween.vars.x(0, elA)).toBe(160);
+      expect(tween.vars.x(1, elB)).toBe(100);
       delete window.gsap;
       runtime.restore();
     });
 
-    it('(c) recusa v3 num tween com yoyo: true', () => {
+    it('(c) v3 num tween repeat:3 + yoyo COMMITA — chave B6', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 3, yoyo: true, duration: 1 }, repeat: 3, yoyo: true });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, elementId, motionId, v3Descriptor({ value: 160 }), 'b6-commit');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(typeof tween.vars.x).toBe('function');
+      expect(tween.vars.x(0, elA)).toBe(160);
+      expect(tween.vars.x(1, elB)).toBe(100);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(c2) yoyo SEM repeat segue recusado com mensagem própria (linha removida da Tabela B — probe vácuo)', () => {
       const [elA, elB] = setupFlatTargets();
       makeFlatTweenDouble([elA, elB], { vars: { x: 100, yoyo: true, duration: 1 }, yoyo: true });
       const runtime = bootV2Runtime();
       const { elementId, motionId } = selectMotion(runtime, elA);
       const rejected = sendV3(runtime, elementId, motionId, v3Descriptor());
-      expect(rejected?.payload?.error).toBe('Per-target overrides on repeating or yoyo animations are not supported yet.');
+      expect(rejected?.payload?.error).toBe('Per-target overrides on yoyo animations without repeats are not supported yet.');
       delete window.gsap;
       runtime.restore();
     });
@@ -13005,13 +13022,14 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
-    it("(h) writeModel 'per-target-absolute' enviado pelo host NÃO desbloqueia um tween repeat (chave B5)", () => {
+    it("(h) writeModel 'per-target-absolute' enviado pelo host NÃO desbloqueia um tween infinito (fronteira permanente)", () => {
       const [elA, elB] = setupFlatTargets();
-      makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: -1, duration: 1 } });
+      tween.repeat = () => -1;
       const runtime = bootV2Runtime();
       const { elementId, motionId } = selectMotion(runtime, elA);
       const rejected = sendV3(runtime, elementId, motionId, v3Descriptor({ writeModel: 'per-target-absolute' }));
-      expect(rejected?.payload?.error).toBe('Per-target overrides on repeating or yoyo animations are not supported yet.');
+      expect(rejected?.payload?.error).toBe('Per-target overrides are not available on endlessly repeating animations.');
       delete window.gsap;
       runtime.restore();
     });
@@ -13030,6 +13048,163 @@ describe('native motion runtime bridge', () => {
       expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
       expect(tween.vars.x).toBe(160);
       expect(tween.invalidate).toHaveBeenCalled();
+      delete window.gsap;
+      runtime.restore();
+    });
+  });
+
+  // Fase 1 / B5+B6 — classificador temporal (advise Sol 2026-08-05). As chaves
+  // abrem como PREDICADOS QUANTIFICADOS: repeat INTEIRO positivo finito, sem
+  // outros modificadores temporais; yoyo discrimina B5×B6. Fatos probe-grounded
+  // (GSAP 3.15 real, _probe-b5b6-gsap-claims.mjs): repeat() devolve NULL pra
+  // Infinity/-2 autorais (e -1 pra -1); repeat:0.5 é ACEITO pelo GSAP (meia
+  // iteração) — não-inteiro recusa; o marcador de infinito é totalDuration()
+  // === 1e10, que É finito — por isso o discriminador é Number.isSafeInteger,
+  // nunca finitude de totalDuration; repeatDelay via SETTER deixa vars ausente
+  // — só o getter vivo enxerga. Cada recusa por MENSAGEM própria.
+  describe('retarget.final v3 — classificador temporal (chaves B5/B6)', () => {
+    it('(t-a) repeat:-1 → recusa infinito', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: -1, duration: 1 } });
+      tween.repeat = () => -1;
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-a');
+      expect(rejected?.payload?.error).toBe('Per-target overrides are not available on endlessly repeating animations.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-b) repeat() devolvendo null (Infinity/-2 autoral no GSAP real) → recusa infinito', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: Infinity, duration: 1 } });
+      tween.repeat = () => null;
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-b');
+      expect(rejected?.payload?.error).toBe('Per-target overrides are not available on endlessly repeating animations.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-c) repeat fracionário (0.5 — o GSAP aceita meia iteração) → recusa não-inteiro', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 0.5, duration: 1 } });
+      tween.repeat = () => 0.5;
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-c');
+      expect(rejected?.payload?.error).toBe('Per-target overrides need a whole-number repeat count.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-d) repeatDelay pelo GETTER vivo (vars ausente — setter do GSAP não escreve vars) → recusa', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      tween.repeatDelay = () => 0.4;
+      expect(tween.vars.repeatDelay).toBeUndefined();
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-d');
+      expect(rejected?.payload?.error).toBe('Per-target overrides on animations with a repeat delay are not supported yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-d2) repeatDelay AUTORAL explícito (mesmo 0 no getter mas presente em vars) → recusa (presença, não valor)', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, repeatDelay: 0, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-d2');
+      expect(rejected?.payload?.error).toBe('Per-target overrides on animations with a repeat delay are not supported yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-e) repeatRefresh → recusa própria (re-roll na fronteira de iteração)', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, repeatRefresh: true, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-e');
+      expect(rejected?.payload?.error).toBe('This animation re-rolls its values on each repeat — per-target overrides are not available.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-f) yoyoEase → recusa adaptativa (curva muda entre pernas)', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, yoyo: true, yoyoEase: true, duration: 1 }, repeat: 2, yoyo: true });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-f');
+      expect(rejected?.payload?.error).toBe('This animation changes its easing between legs — per-target overrides are not available.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-g) easeReverse (var real do GSAP, já em GSAP_ADAPTIVE_SAMPLING_KEYS) → recusa adaptativa', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, easeReverse: true, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-g');
+      expect(rejected?.payload?.error).toBe('This animation changes its easing between legs — per-target overrides are not available.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-h) repeat>0 com duração ZERO → recusa (clock degenerado, fora da matriz provada)', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 0 }, repeat: 2, duration: 0 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-h');
+      expect(rejected?.payload?.error).toBe('Per-target overrides on zero-duration animations are not supported yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-i) ScrollTrigger presente → recusa (clock dirigido por scroll, não do tween)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      tween.scrollTrigger = { vars: {} };
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-i');
+      expect(rejected?.payload?.error).toBe('Per-target overrides on scroll-driven animations are not supported yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-j) tween dentro de timeline-pai (parent ≠ timeline raiz) → recusa — flat não é standalone', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      tween.parent = { getChildren: () => [tween] };
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-j');
+      expect(rejected?.payload?.error).toBe('Per-target overrides inside timelines are not supported yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-k) publicação: perTarget PRESENTE pra repeat:2 e repeat:3+yoyo; AUSENTE pra repeat:-1', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      selectMotion(runtime, elA);
+      let selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      let track = selection.payload.element.motion[0].tracks.find((entry) => entry.property === 'x');
+      expect(track.ownership.perTarget?.available).toBe(true);
+      // Drift pra infinito: perTarget some da publicação seguinte.
+      tween.repeat = () => -1;
+      selectMotion(runtime, elA);
+      selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      track = selection.payload.element.motion[0].tracks.find((entry) => entry.property === 'x');
+      expect(track.ownership.perTarget).toBeUndefined();
       delete window.gsap;
       runtime.restore();
     });
@@ -13300,9 +13475,10 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
-    it('tween INELEGÍVEL (repeat) → sem perTarget', () => {
+    it('tween INELEGÍVEL (repeat INFINITO — repeat:2 agora é B5 elegível) → sem perTarget', () => {
       const [elA, elB] = setupFlatTargets();
-      makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: -1, duration: 1 } });
+      tween.repeat = () => -1;
       const runtime = bootV2Runtime();
       const { track } = trackFor(runtime, elA, 'x');
       expect(track).toBeTruthy();
@@ -13569,18 +13745,19 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
-    it('(D) clear/reset continua alcançável quando a página muta o shape depois do canal ativo (repeat adicionado)', () => {
+    it('(D) clear/reset continua alcançável quando a página muta o shape depois do canal ativo (repeat infinito adicionado)', () => {
       const [elA, elB] = setupFlatTargets();
       const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
       const runtime = bootV2Runtime();
       const { elementId: idA, motionId } = selectMotion(runtime, elA);
       sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
-      // Página muta o shape DEPOIS do canal ativo: repeat vira 2.
-      tween.repeat = () => 2;
-      tween.vars.repeat = 2;
-      // Override novo recusa (chave B5 fechada)...
+      // Página muta o shape DEPOIS do canal ativo pra forma que SEGUE proibida:
+      // repeat vira -1 (infinito — repeat:2 agora é B5 elegível, não serve de drift).
+      tween.repeat = () => -1;
+      tween.vars.repeat = -1;
+      // Override novo recusa (forma infinita, fronteira permanente)...
       const refused = sendV3(runtime, idA, motionId, v3Descriptor({ value: 170 }), 'b4-audit-d1');
-      expect(refused?.payload?.error).toBe('Per-target overrides on repeating or yoyo animations are not supported yet.');
+      expect(refused?.payload?.error).toBe('Per-target overrides are not available on endlessly repeating animations.');
       // ...mas o CLEAR (mesma classe do colapso de teardown, que é incondicional)
       // continua alcançável — o override não fica preso até reload.
       sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'b4-audit-d2');

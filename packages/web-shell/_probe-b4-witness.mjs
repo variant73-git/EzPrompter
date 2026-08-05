@@ -483,13 +483,16 @@ const clearCarrier = await (async () => {
   return out;
 })();
 
-// (j) repeat:2 na MESMA página é recusado (chave B5 fechada) + publicação sem perTarget.
+// (j) repeat INFINITO na MESMA página é recusado (fronteira PERMANENTE da
+// família B5/B6 — advise 2026-08-05: repeat:2 deixou de ser fronteira quando a
+// chave B5 abriu; a evidência do repeat finito vive no witness B5) + publicação
+// sem perTarget.
 const repeatRefusal = await (async () => {
   const page = await newCasePage();
   const out = await page.evaluate(() => {
     /* eslint-disable no-undef */
     const H = window.__H;
-    const tw = gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1, ease: 'none', repeat: 2, paused: true });
+    const tw = gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1, ease: 'none', repeat: -1, paused: true });
     H.boot();
     const A = H.select('a');
     const ownership = A.track && A.track.ownership;
@@ -636,7 +639,7 @@ check('render mid-flight byte-intacto (A/B)', eq(clearCarrier.renderedAfter, cle
   `antes=${JSON.stringify(clearCarrier.renderedBefore)} depois=${JSON.stringify(clearCarrier.renderedAfter)}`);
 check('canal segue ativo', clearCarrier.varsXType === 'function');
 
-console.log('(j) repeat:2 recusado (chave B5 fechada)');
+console.log('(j) repeat infinito recusado (fronteira permanente — repeat finito é B5/B6)');
 check('publicação sem perTarget', repeatRefusal.perTargetPublished === false);
 check('v3 → transaction-rejected', repeatRefusal.tx.committed === false, JSON.stringify(repeatRefusal.tx.ack));
 

@@ -4835,7 +4835,16 @@ function nativeMotionRuntimeBridge() {
   const B4_REFUSAL_MESSAGES = {
     membership: 'This element is not part of the selected animation.',
     'not-flat-multi': 'Per-target overrides need a shared flat animation with multiple elements.',
-    loop: 'Per-target overrides on repeating or yoyo animations are not supported yet.',
+    'infinite-loop': 'Per-target overrides are not available on endlessly repeating animations.',
+    'fractional-repeat': 'Per-target overrides need a whole-number repeat count.',
+    'repeat-delay': 'Per-target overrides on animations with a repeat delay are not supported yet.',
+    'repeat-refresh': 'This animation re-rolls its values on each repeat — per-target overrides are not available.',
+    'adaptive-ease': 'This animation changes its easing between legs — per-target overrides are not available.',
+    'yoyo-without-repeat': 'Per-target overrides on yoyo animations without repeats are not supported yet.',
+    'zero-duration': 'Per-target overrides on zero-duration animations are not supported yet.',
+    'scroll-driven': 'Per-target overrides on scroll-driven animations are not supported yet.',
+    'nested-timeline': 'Per-target overrides inside timelines are not supported yet.',
+    'temporal-unreadable': "This animation's timing cannot be read safely — per-target overrides are not available.",
     keyframes: 'This value is driven by GSAP keyframes and cannot be overridden per element yet.',
     'css-wrapper': "This value lives in the tween's css wrapper and cannot be overridden per element yet.",
     'authored-function': 'This value is computed by the page and cannot be overridden per element.',
@@ -4865,6 +4874,66 @@ function nativeMotionRuntimeBridge() {
       }
     } catch (_) { return true; }
     return false;
+  }
+
+  // Temporal shape classifier for the per-target keys (B5/B6 quantified
+  // predicates — advise 2026-08-05). Probe-grounded on real GSAP 3.15
+  // (_probe-b5b6-gsap-claims.mjs): repeat() returns NULL for authored
+  // Infinity/-2 (and -1 for -1); repeat:0.5 is ACCEPTED by GSAP (half an
+  // iteration renders) so non-integers refuse; GSAP's infinite marker is
+  // totalDuration() === 1e10 — a FINITE number — which is why the
+  // discriminator is Number.isSafeInteger on repeat(), never totalDuration
+  // finiteness; repeatDelay set through the live SETTER leaves vars without
+  // the key, so only the getter sees it (authored presence refuses
+  // regardless of value — no doctrine line normalizes an explicit zero).
+  // Scroll-driven and timeline-nested tweens refuse: their clock is not the
+  // tween's own and no Tabela B line covers them ("flat" is not
+  // "standalone"). Any getter that throws fail-closes as unreadable.
+  function gsapPerTargetTemporalRefusal(record, animation, vars) {
+    try {
+      if (record.scrollTrigger || animation.scrollTrigger) return 'scroll-driven';
+    } catch (_) { return 'temporal-unreadable'; }
+    try {
+      const root = window.gsap && window.gsap.globalTimeline;
+      if (root && animation.parent && animation.parent !== root) return 'nested-timeline';
+    } catch (_) { return 'temporal-unreadable'; }
+    let repeatCount;
+    try {
+      repeatCount = typeof animation.repeat === 'function' ? animation.repeat() : (vars.repeat ?? 0);
+    } catch (_) { return 'temporal-unreadable'; }
+    if (repeatCount == null) return 'infinite-loop';
+    repeatCount = Number(repeatCount);
+    if (!Number.isSafeInteger(repeatCount)) {
+      return Number.isFinite(repeatCount) ? 'fractional-repeat' : 'infinite-loop';
+    }
+    if (repeatCount < 0) return 'infinite-loop';
+    let repeatDelay;
+    try {
+      repeatDelay = typeof animation.repeatDelay === 'function' ? Number(animation.repeatDelay()) : 0;
+    } catch (_) { return 'temporal-unreadable'; }
+    let authoredDelay = false;
+    try { authoredDelay = 'repeatDelay' in vars; } catch (_) { return 'temporal-unreadable'; }
+    if ((repeatDelay || 0) !== 0 || authoredDelay) return 'repeat-delay';
+    // Adaptive keys via the for..in mirror (GSAP honors inherited enumerables).
+    try {
+      for (const key in vars) {
+        if (key === 'repeatRefresh' && vars[key]) return 'repeat-refresh';
+        if ((key === 'yoyoEase' || key === 'easeReverse') && vars[key]) return 'adaptive-ease';
+      }
+    } catch (_) { return 'temporal-unreadable'; }
+    let yoyoOn = false;
+    try {
+      yoyoOn = Boolean(typeof animation.yoyo === 'function' ? animation.yoyo() : vars.yoyo);
+    } catch (_) { return 'temporal-unreadable'; }
+    if (repeatCount === 0 && yoyoOn) return 'yoyo-without-repeat';
+    if (repeatCount > 0) {
+      let duration = NaN;
+      try {
+        duration = typeof animation.duration === 'function' ? Number(animation.duration()) : NaN;
+      } catch (_) { return 'temporal-unreadable'; }
+      if (!(duration > 0)) return 'zero-duration';
+    }
+    return null;
   }
 
   function gsapPerTargetEligibility(record, element, descriptor, options = {}) {
@@ -4908,11 +4977,8 @@ function nativeMotionRuntimeBridge() {
       return { eligible: false, reason: 'not-flat-multi' };
     }
     if (vars.runBackwards) return { eligible: false, reason: 'run-backwards' };
-    let repeatCount = 0;
-    try { repeatCount = Number(animation?.repeat?.() ?? vars.repeat ?? 0) || 0; } catch (_) { repeatCount = Number(vars.repeat) || 0; }
-    let yoyoOn = false;
-    try { yoyoOn = Boolean(animation?.yoyo?.() ?? vars.yoyo); } catch (_) { yoyoOn = Boolean(vars.yoyo); }
-    if (repeatCount !== 0 || yoyoOn || vars.repeatRefresh) return { eligible: false, reason: 'loop' };
+    const temporalRefusal = gsapPerTargetTemporalRefusal(record, animation, vars);
+    if (temporalRefusal) return { eligible: false, reason: temporalRefusal };
     // Keyframes union (authored + live children + detection) mirrors the
     // retarget gate — plus bare presence of vars.keyframes (strict key).
     const liveEntries = gsapLiveKeyframeEntries(animation);
