@@ -5080,23 +5080,27 @@ function nativeMotionRuntimeBridge() {
 
   function applyGsapPerTargetOverride(record, element, descriptor) {
     const animation = record.animation;
-    const vars = animation.vars || (animation.vars = {});
     const property = descriptor.runtimeProperty;
+    // Idempotent NO-OP clear FIRST (Sol r5/r6): nothing to remove for THIS
+    // element → return before EVERY gate, state capture, mutation or
+    // invalidate — including the resurrection gate (a clear that does nothing
+    // has nothing to resurrect). Replay and rollback lanes depend on this
+    // committing unconditionally.
+    const existingChannels = gsapOverrideChannels.get(animation);
+    const existingChannel = existingChannels ? existingChannels.get(property) : null;
+    if (descriptor.intent === 'clear' && (!existingChannel || !existingChannel.overrides.has(element))) return;
+    const vars = animation.vars || (animation.vars = {});
     // Every write here ends in invalidate — same terminal guard as the
     // retarget writer (a killed writer must never be resurrected).
     if (gsapResurrectionHazard(animation)) {
       throw bridgeError('unsupported_patch', "Part of this animation was killed by the page — editing it would bring the dead writer back.");
     }
-    let channels = gsapOverrideChannels.get(animation);
+    let channels = existingChannels;
     if (!channels) {
       channels = new Map();
       gsapOverrideChannels.set(animation, channels);
     }
-    let channel = channels.get(property);
-    // Idempotent NO-OP clear (Sol r5): nothing to remove for THIS element →
-    // return before any state capture, mutation or invalidate. Replay and
-    // rollback lanes depend on this committing unconditionally.
-    if (descriptor.intent === 'clear' && (!channel || !channel.overrides.has(element))) return;
+    let channel = existingChannel;
     // Pre-state snapshot for the post-write verification (Sol audit #1/#3):
     // if the projected write cannot be CONFIRMED (unknown value-mutating
     // carrier, unwritable slot), every internal mutation is undone and the

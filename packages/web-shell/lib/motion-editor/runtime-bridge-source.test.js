@@ -13811,6 +13811,32 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
+    it('(Sol-r6#1) clear no-op COMMITA sob hazard de ressurreição (v2 transaction) — nenhum gate antes do short-circuit', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      // Página injeta keyframes + children com PropTween morto (setup r28):
+      // hazard de ressurreição PROVADO na animação.
+      const e1 = { x: 100, duration: 1, parent: {} };
+      tween.vars.keyframes = [e1];
+      tween.timeline = { getChildren: () => [{ vars: e1, _initted: true, _ptLookup: [{}] }] };
+      tween.invalidate.mockClear();
+      // clear sem canal/entrada via transaction: replay/rollback exigem commit.
+      runtime.send('apply-transaction', {
+        transaction: {
+          id: 'tx-b4-r6',
+          patches: [{ id: 'p-r6', elementId: idA, kind: 'motion', motionId, property: 'retarget.final', before: null, value: v3Descriptor({ intent: 'clear', value: undefined }) }],
+        },
+      }, 'req-b4-r6');
+      const ack = runtime.messages.filter((message) => ['transaction-committed', 'transaction-rejected'].includes(message.type)).pop();
+      expect(ack?.type).toBe('transaction-committed');
+      expect(tween.invalidate).not.toHaveBeenCalled();
+      expect(tween.vars.x).toBe(100);
+      delete window.gsap;
+      runtime.restore();
+    });
+
     it('(F) override com value null/"" é invalid_value — nunca coage pra 0', () => {
       const [elA, elB] = setupFlatTargets();
       const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
