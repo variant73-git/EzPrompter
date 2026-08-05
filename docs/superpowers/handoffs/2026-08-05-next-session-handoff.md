@@ -1,5 +1,9 @@
 # Handoff — próxima sessão (escrito em 2026-08-05, atualizado no fim da sessão)
 
+> ⚠️ **SUPERADO em 2026-08-05 (2ª sessão).** O plano B4 que este handoff mandava executar
+> foi **executado inteiro, auditado até MERGE OK (Sol r6) e promovido**. A porta de
+> entrada atual é **`2026-08-05-next-session-handoff-b4-done.md`** — não use este.
+
 > **Porta de entrada.** Substitui `2026-08-03-next-session-handoff.md`.
 > **A PRÓXIMA AÇÃO É EXECUTAR UM PLANO JÁ PRONTO E AUDITADO POR ADVISE:**
 > `docs/superpowers/plans/2026-08-05-fase1-b4-per-target-writer.md` (Tasks 1–9, inline via
