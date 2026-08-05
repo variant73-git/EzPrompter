@@ -318,6 +318,7 @@ function nativeMotionRuntimeBridge() {
     sourceValue = null,
     targetCount = 1,
     stagger = null,
+    perTarget = null,
   }) {
     const normalized = semanticProperty(property);
     return {
@@ -334,6 +335,7 @@ function nativeMotionRuntimeBridge() {
       sourceValue,
       affectedTargetCount: Math.max(1, targetCount),
       ...(stagger ? { stagger } : {}),
+      ...(perTarget ? { perTarget } : {}),
     };
   }
 
@@ -2244,10 +2246,21 @@ function nativeMotionRuntimeBridge() {
           const rawValue = cssWrapper && track.property in cssWrapper
             ? cssWrapper[track.property]
             : vars[track.property];
+          // OverrideChannel (fase-1 B4): the wrapper in the slot is
+          // PROJECTION, not authorship — the channel check runs BEFORE
+          // gsapWriteModel so the published model is the LOGICAL one (the
+          // absolute scalar `shared`), never function-offset. A stale channel
+          // (page tampered with the slot) publishes from the raw slot instead
+          // — the eligibility recomposition below refuses it anyway.
+          const overrideChannel = gsapOverrideChannelFor(animation, track.property);
+          const overrideChannelLive = Boolean(overrideChannel && overrideChannel.state === 'active'
+            && !gsapOverrideChannelStale(animation, track.property, overrideChannel));
+          const logicalValue = overrideChannelLive ? overrideChannel.shared : rawValue;
           const looping = iterations === Infinity;
-          const writeModel = gsapWriteModel(rawValue, looping);
-          const targetCount = Math.max(1, targets.filter((target) => target instanceof Element).length);
-          const functionSupported = typeof rawValue !== 'function' || targetCount === 1;
+          const writeModel = gsapWriteModel(logicalValue, looping);
+          const elementTargets = targets.filter((target) => target instanceof Element);
+          const targetCount = Math.max(1, elementTargets.length);
+          const functionSupported = typeof logicalValue !== 'function' || targetCount === 1;
           const scopeSafe = targetCount === 1;
           // css:{}-wrapped values: only the ABSOLUTE wrapper write is probe-proven.
           // The relative/function/loop write paths write top-level vars/startAt,
@@ -2403,9 +2416,32 @@ function nativeMotionRuntimeBridge() {
               // plan, and only for the ABSOLUTE model — the loop (additive-base)
               // and relative/function write paths have no entry equivalent.
               retargetable: sampled.keyframes && !vars.runBackwards && !retargetDynamicHazard && functionSupported && scopeSafe && (!keyframeDriven.has(track.property) || (entryPlan != null && writeModel === 'absolute')) && !cssWriteUnproven && !pluginOwned,
-              sourceValue: safeSourceValue(rawValue),
+              sourceValue: safeSourceValue(logicalValue),
               targetCount,
               stagger: vars.stagger != null ? { mode: 'staggered', targetCount } : null,
+              // Per-target availability is RECOMPOSED from the strict B4 key
+              // (live channel, or an eligible shape for a first override) —
+              // never from a write-model name. States are honest three-state:
+              // override (with value) / inherit (explicit entry) / none.
+              perTarget: (() => {
+                const eligible = overrideChannelLive
+                  || gsapPerTargetEligibility(
+                    { animation, target: primaryTarget, targets: elementTargets },
+                    primaryTarget,
+                    { runtimeProperty: track.property },
+                  ).eligible;
+                if (!eligible) return null;
+                return {
+                  available: true,
+                  states: elementTargets.map((targetElement) => {
+                    const entry = overrideChannelLive ? overrideChannel.overrides.get(targetElement) : null;
+                    if (entry && entry.intent === 'override') {
+                      return { elementId: ensureElementId(targetElement), intent: 'override', value: entry.value };
+                    }
+                    return { elementId: ensureElementId(targetElement), intent: entry ? 'inherit' : 'none' };
+                  }),
+                };
+              })(),
             }),
           };
         });

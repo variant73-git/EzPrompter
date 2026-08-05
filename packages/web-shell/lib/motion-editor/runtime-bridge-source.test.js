@@ -13254,4 +13254,61 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
   });
+
+  // Fase 1 / B4 — a re-inspeção publica o modelo LÓGICO do canal: o wrapper
+  // no slot é PROJEÇÃO, não autoria. writeModel 'absolute' (nunca
+  // function-offset), sourceValue = shared, e ownership.perTarget com o
+  // estado por alvo (consumido pela UI na Task 7 e pelo witness na Task 8).
+  describe('re-inspeção publica o modelo lógico do canal (B4)', () => {
+    function trackFor(runtime, element, property) {
+      element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      const selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      const motion = selection.payload.element.motion[0];
+      return { track: motion?.tracks?.find((item) => item.property === property), elementId: selection.payload.element.id };
+    }
+
+    it('canal ativo → writeModel absolute (nunca function-offset), perTarget.states e sourceValue = shared', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      const { elementId: idB } = selectMotion(runtime, elB);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      const { track } = trackFor(runtime, elA, 'x');
+      expect(track).toBeTruthy();
+      expect(track.ownership.writeModel).toBe('absolute');
+      expect(track.ownership.sourceValue).toBe(100);
+      expect(track.ownership.perTarget?.available).toBe(true);
+      const states = Object.fromEntries((track.ownership.perTarget?.states || []).map((state) => [state.elementId, state]));
+      expect(states[idA]).toMatchObject({ intent: 'override', value: 160 });
+      expect(states[idB]).toMatchObject({ intent: 'none' });
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('tween B4-elegível SEM canal → perTarget.available true com states none (a UI precisa disso pro 1º override)', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { track } = trackFor(runtime, elA, 'x');
+      expect(track).toBeTruthy();
+      expect(track.ownership.writeModel).toBe('absolute');
+      expect(track.ownership.perTarget?.available).toBe(true);
+      expect((track.ownership.perTarget?.states || []).every((state) => state.intent === 'none')).toBe(true);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('tween INELEGÍVEL (repeat) → sem perTarget', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { track } = trackFor(runtime, elA, 'x');
+      expect(track).toBeTruthy();
+      expect(track.ownership.perTarget).toBeUndefined();
+      delete window.gsap;
+      runtime.restore();
+    });
+  });
 });
