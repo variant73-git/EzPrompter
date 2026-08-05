@@ -4887,6 +4887,13 @@ function nativeMotionRuntimeBridge() {
     // (fail-closed, monotonic doctrine); teardown still collapses the slot
     // without invalidating.
     if (options.lane === 'clear') {
+      // A clear with NOTHING to remove (no channel, or no entry for THIS
+      // element) is a replay-safe idempotent NO-OP — manifest replay and
+      // rollbacks of never-applied overrides depend on it committing (Sol
+      // r5). The writer returns before any mutation/invalidate, so there is
+      // nothing to guard.
+      const clearChannel = gsapOverrideChannelFor(animation, property);
+      if (!clearChannel || !clearChannel.overrides.has(element)) return { eligible: true, reason: null };
       if (gsapAnimationRandomHazard(animation, property)) return { eligible: false, reason: 'random' };
       // Carriers are NOT structural (Sol r4): a clear under a snap-like
       // carrier would invalidate, materialize the carrier mid-render and then
@@ -5086,6 +5093,10 @@ function nativeMotionRuntimeBridge() {
       gsapOverrideChannels.set(animation, channels);
     }
     let channel = channels.get(property);
+    // Idempotent NO-OP clear (Sol r5): nothing to remove for THIS element →
+    // return before any state capture, mutation or invalidate. Replay and
+    // rollback lanes depend on this committing unconditionally.
+    if (descriptor.intent === 'clear' && (!channel || !channel.overrides.has(element))) return;
     // Pre-state snapshot for the post-write verification (Sol audit #1/#3):
     // if the projected write cannot be CONFIRMED (unknown value-mutating
     // carrier, unwritable slot), every internal mutation is undone and the

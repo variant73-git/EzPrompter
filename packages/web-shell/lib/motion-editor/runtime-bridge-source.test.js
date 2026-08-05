@@ -13778,6 +13778,39 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
+    it('(Sol-r5#1) clear sem canal/entrada é no-op IDEMPOTENTE mesmo sob carrier (replay/rollback nunca recusa à toa)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, snap: { x: 10 }, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      tween.invalidate.mockClear();
+      // clear sem canal nenhum: replay de manifest / rollback de override que
+      // nunca aplicou — tem que COMMITAR como no-op, sem invalidate.
+      sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'b4-sol-r5-1');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(tween.invalidate).not.toHaveBeenCalled();
+      expect(tween.vars.x).toBe(100);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(Sol-r5#2) clear sem entrada DESTE alvo (canal ativo com outro alvo) é no-op sem invalidate', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      const { elementId: idB } = selectMotion(runtime, elB);
+      sendV3(runtime, idB, motionId, v3Descriptor({ value: 140 }), 'b4-r5-override-b');
+      tween.invalidate.mockClear();
+      sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'b4-sol-r5-2');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(tween.invalidate).not.toHaveBeenCalled(); // nada a remover → nada muta
+      expect(typeof tween.vars.x).toBe('function');
+      expect(tween.vars.x(1, elB)).toBe(140); // canal de B intacto
+      delete window.gsap;
+      runtime.restore();
+    });
+
     it('(F) override com value null/"" é invalid_value — nunca coage pra 0', () => {
       const [elA, elB] = setupFlatTargets();
       const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
