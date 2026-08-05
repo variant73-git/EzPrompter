@@ -47,10 +47,13 @@
   publica token** (`tokenExposto:false`) e edit recusa. Adversarial: recusado — mas
   SOBRE-DETERMINADO (o 3b mostra que pós-conversão tudo recusa, com ou sem mutação; o caso
   não isola o detector).
-- **Veredito:** **provado (comportamento da malha estabelecido)** — a conversão SEM protocolo
-  é tratada como tampering da página e **fail-closa a edição inteira da animação** (função em
-  var = hazard animation-level, item 170e; canal keyframe some da exposição). Nunca cega:
-  falha na direção segura.
+- **Veredito (reclassificado no audit consolidado do Sol, aceito):** quanto ao COMPORTAMENTO
+  DA MALHA hoje — **provado**: a conversão SEM protocolo é tratada como tampering e
+  **fail-closa a edição inteira** (função em var = hazard animation-level, item 170e; canal
+  keyframe some da exposição); nunca cega, falha na direção segura. Quanto à PERGUNTA
+  ORIGINAL (o caminho real refresca a proveniência após conversão própria) — **não
+  estabelecido**: o protocolo positivo não existe pra ser testado; a Fase 1 o constrói e a
+  prova é o probe combinado (ver Gate da Fase 1 abaixo da tabela).
 - **Consequência pro degrau:** o writer da conversão (degrau 3, Fase 1) NÃO pode só escrever a
   função — precisa do protocolo de edição própria: registrar proveniência POSITIVA da função
   introduzida (o registro por-animação+por-propriedade do item 170e), refrescar
@@ -92,12 +95,13 @@
   chega em 160 pelo ease), b byte-igual à referência. caso-rollback: `vars.x` volta ao escalar
   100, trajetória inteira byte-igual à referência. caso-sensibilidade: b contaminado (end=160)
   detectado.
-- **Veredito:** **provado** — a conversão escalar→função por alvo num tween vivo isola o alvo,
-  preserva o início, não toca o irmão, e o rollback restaura byte-igual.
-- **Consequência pro degrau:** o degrau 3 (override) tem mecanismo provado pra multi-target
-  plano SEM filho interno. Delta pra Fase 1: funnelar essa escrita por `applyGsapRetarget`
-  (novo write model per-target; hoje `scope_mismatch` — ver P3) e regravar `sourceValue`/
-  proveniência (P2).
+- **Veredito (escopo apertado no audit consolidado do Sol, aceito):** **provado como
+  VIABILIDADE NO MOTOR** — a conversão escalar→função num tween vivo isola o alvo, preserva o
+  início, não toca o irmão, e o rollback restaura byte-igual, usando a primitiva replicada.
+  NÃO é prova do "fluxo de edição real": o canal per-target não existe no bridge (P3,
+  `scope_mismatch`) — a interação writer+proveniência+temporal nunca foi exercitada junta.
+- **Consequência pro degrau:** o mecanismo candidato do degrau 3 é viável no motor. A prova
+  de degrau é o probe combinado do Gate da Fase 1 (abaixo da tabela).
 
 ## P5 — Transplante da instância viva
 
@@ -124,20 +128,26 @@
   - `callbacks` 📋: `onComplete` fica na fachada; completar o pai ainda dispara o dele (1×,
     caminho sem suppress); o transplantado não dispara nada — "quem herda o callback" segue
     decisão de produto da Fase 1 (a pergunta do Sol), agora com baseline medido.
-  - `repeatRefresh-child` 📋⭐: o valor random JÁ RESOLVIDO sobrevive ao transplante
-    byte-igual (74.3269 = 74.3269); cruzar fronteira de repetição no relógio novo não erra e
-    re-rolla finito — **o caminho de promoção das formas adaptativas existe**: o transplante
-    preserva o estado resolvido que a amostragem nunca conseguiu reconstruir.
+  - `repeatRefresh-child` 📋 (CORRIGIDO na rodada 7 do audit consolidado + probe de dono
+    2026-08-05): o valor random JÁ RESOLVIDO sobrevive ao transplante byte-igual
+    (74.3269 = 74.3269) — esse fato FICA e é o que a amostragem nunca conseguiu. MAS o
+    claim original "cruzar fronteira re-rolla finito" era **VÁCUO**: o dono do
+    `repeat`/`repeatRefresh` é a FACHADA (medido: `childRepeat=0`,
+    `childRepeatRefresh=false`, `childTotalDur=1`) — o filho transplantado não tem
+    fronteira nenhuma; `totalTime(0.9×1)` não cruzou nada. Re-roll pós-transplante: ZERO
+    evidência; o ciclo é semântica de fachada que o wrapper teria que reproduzir.
   - `splittext-stagger` 📋: existe filho interno POR CHAR de SplitText real e o transplante
     funciona; o re-split orfana o filho transplantado (consistente com P1 — substituição
     total) → transplante em SplitText exige re-resolução por índice no ciclo de re-split.
-- **Veredito:** **provado no núcleo** (continuidade + isolamento + independência de playhead,
-  com sensibilidade); semânticas de herança (repeat/yoyo, timeScale, callbacks) são PROJETÁVEIS
-  e mapeadas — decisão de wrapper na Fase 1.
-- **Consequência pro degrau:** degrau 1 é REAL pra stagger com filho por alvo — inclusive como
-  rota de promoção de `repeatRefresh` (estado resolvido preservado). O wrapper da Fase 1
-  precisa projetar: repeat/yoyo/timeScale da fachada, política de callbacks, e (SplitText)
-  re-resolução por índice pós-re-split.
+- **Veredito (escopo apertado no audit consolidado do Sol, aceito):** **provado no núcleo
+  ESTREITO** — continuidade + isolamento + independência de playhead, com sensibilidade, no
+  stagger SIMPLES com relógios avançados manualmente. O MESMO probe mediu que repeat/yoyo,
+  timeScale e callbacks ficam na fachada e SE PERDEM no transplante cru — "projetável" é
+  hipótese de wrapper, não prova (violaria a indistinguibilidade se promovido já). SplitText:
+  provada a ORFANDADE pós-re-split, não o re-engate.
+- **Consequência pro degrau:** o transplante é o mecanismo CANDIDATO mais forte pro degrau 1
+  em stagger; a promoção exige o wrapper real preservando fachada/lifecycle/ticks (Gate da
+  Fase 1). `repeatRefresh`: estado resolvido preservado = a candidatura de promoção existe.
 
 ## P6 — Caminho de escrita: dano temporal em repeat/yoyo (witness + fix)
 
@@ -176,12 +186,94 @@
 - **Estado final:** witness 0 RED (baseline agora congela o comportamento CORRETO — RED daqui
   pra frente é regressão); suíte 1538/1538; vizinhos verdes; detach 11 FAIL byte-idênticos ao
   HEAD (A/B).
-- **Consequência pro degrau:** formas `repeat`/loop seguras pro degrau 3 (override), inclusive
-  o modelo `additive-base`. Lição de instrumento: **witness que força um write model não cobre
-  o classificador** — derivar sempre da publicação.
+- **Consequência pro degrau (escopo apertado no audit consolidado):** o WRITER ATUAL
+  (full-scope) é temporalmente seguro em `repeat`/loop, incluindo `additive-base` — é
+  pré-requisito NECESSÁRIO do degrau 3, não a prova dele (o writer per-target da Fase 1 herda
+  o padrão e re-prova no probe combinado). Lição de instrumento: **witness que força um write
+  model não cobre o classificador** — derivar sempre da publicação.
 
-## Tabela final — forma → degrau (entrada da Fase 1)
+## Roteador forma → degrau (entrada da Fase 1 — REFORMULADO no audit consolidado do Sol)
 
-| Forma autoral | Degrau | Prova que sustenta | Fica pra Fase 1 |
+> Escada (spec §2): 1=transplante da instância viva · 2=divisão real (universo controlado) ·
+> 3=override per-target · 4=congelar-e-assumir. Obrigação de indistinguibilidade vale em todos.
+>
+> ⭐ **Formato exigido pelo audit (aceito): PREDICADOS ORDENADOS, primeira regra que casa
+> decide.** Regra mestra: **qualquer eixo NÃO PROVADO da animação força o degrau 4** — uma
+> forma composta (`stagger + SplitText + repeatRefresh + callback`) desce pro degrau mais
+> conservador entre os eixos presentes, nunca herda o mais otimista. E como NENHUM degrau
+> 1–3 foi provado end-to-end na Fase 0, **o estado honesto de hoje é: toda edição per-target
+> em camada acorrentada roteia pro degrau 4** até o Gate da Fase 1 promover cada predicado.
+
+**Avaliação (corrigida na rodada 2 do audit — o Sol pegou que "primeira que casa" deixava um
+plano+`repeatRefresh` herdar a candidatura de transplante, cuja evidência é de FILHO DE
+STAGGER, estrutura que o plano não tem):**
+
+1. O roteador coleta **TODOS os eixos aplicáveis** da animação (estrutural + modificadores),
+   não para na primeira regra.
+2. Exceção única: canal single-owner sem grupo = edição direta (shipada, 167/168).
+3. Se o conjunto de eixos contém plugin/callback arbitrário → **4**, sem candidatura
+   (fronteira aceita, veredito do advise).
+4. Senão, o degrau HOJE é **4**, sem exceção. Promoção acima de 4 SÓ quando uma linha da
+   **Tabela B (hipóteses)** for provada pelo probe único correspondente com **assinatura
+   completa** — estrutura + modificadores + `targetScope` + caminho (patch real). A Tabela A
+   registra fatos, não autoriza degrau; nada herda de eixo isolado nem de escopo diferente.
+
+**Rodada 3 do audit (aceita): a assinatura exata inclui `targetScope` (full-scope vs
+per-target) e `caminho` (motor-cru / primitiva-replicada / patch-real) — misturar prova
+full-scope com prova per-target-no-motor era a mesma herança conjuntiva que este roteador
+elimina. Consequência estrutural: separar o que FOI provado do que é hipótese.**
+
+**Tabela A — combinações PROVADAS (assinatura completa; NADA aqui autoriza degrau — são os
+fatos que as hipóteses citam):**
+
+| # | Estrutura + modificadores | targetScope | Caminho | Fato provado |
+|---|---|---|---|---|
+| A1 | Stagger filho-por-alvo, sem mod. | per-target | motor cru (relógios manuais) | Transplante: continuidade/isolamento/playhead + sensibilidade (P5) |
+| A2 | Stagger filho-por-alvo + `repeat: 1, repeatRefresh: true` **owner=FACHADA** (medido: `childRepeat=0`, `childTotalDur=1` — probe de dono 2026-08-05); parado mid-1ª-iteração | per-target | motor cru | Valor resolvido sobrevive ao transplante byte-igual NO INSTANTE. Fronteira/re-roll: NADA provado (o filho transplantado não tem ciclo — claim original era vácuo, corrigido r7) |
+| A3 | SplitText (estrutura) | — | biblioteca real | Re-split substitui tudo; identidade = índice; `revert()` exato (P1) |
+| A4 | SplitText + stagger | per-target | motor cru | Filho por char existe e transplanta; ÓRFÃO no re-split (P5) |
+| A5 | Multi-target plano, sem mod. | per-target | primitiva replicada | Conversão isola alvo, início preservado, rollback byte-igual (P4) |
+| A6 | Multi-target plano, `repeat`/loop | **full-scope** | patch REAL | Writer atual temporal-inócuo incl. `additive-base` (P6a+P6b, MERGE OK) |
+| A7 | Multi-target plano, `yoyoEase` | **full-scope** | patch REAL | Retarget absoluto aplica com temporal intacto (P6, registro) |
+
+**Tabela B — HIPÓTESES de promoção (nada aqui é provado; degrau HOJE = 4 pra todas).**
+Rodada 4 do audit (aceita): **linhas ATÔMICAS — uma chave exata
+`{estrutura, modificadores, targetScope, caminho}` por linha, um probe por linha; o roteador
+promove SÓ a chave exata provada.** Nenhum "±"/curinga: provar uma linha não promove nenhuma
+outra (provar stagger simples não promove `repeatRefresh`; provar `repeat` não promove
+`yoyo`).
+
+| # | Chave exata (estrutura · modificadores · targetScope · caminho=patch real) | Degrau hipotético | Fragmentos (Tabela A) |
 |---|---|---|---|
-| (preencher na Task 8) | | | |
+| B1 | stagger filho-por-alvo · nenhum · per-target | 1 | A1 |
+| B2a | stagger filho-por-alvo · `repeat: 1, repeatRefresh: true` **owner=fachada** (top-level; medido: filho perde o ciclo no transplante cru) · per-target | 1 | A1, A2 |
+| B2b | stagger filho-por-alvo · `stagger: { repeat: 1, repeatRefresh: true }` **owner=child** (r8 do audit, ownership CONFIRMADO por probe ANTES do transplante: `childRepeat=1`, `childRepeatRefresh=true`, `childTotalDur=2`; a PRESERVAÇÃO disso no transplante NÃO foi estabelecida) · per-target | 1 | A1; ownership pré-transplante (probe r8). Sobrevivência do ciclo/fase/re-roll/isolamento/rollback = obrigações do probe combinado |
+| B3 | stagger+SplitText · nenhum · per-target | 1 | A3, A4 |
+| B4 | multi-target plano · nenhum · per-target | 3 | A5 |
+| B5 | multi-target plano · `repeat: 2, yoyo: false` (parado em iteração posterior) · per-target | 3 | A5, A6 |
+| B6 | multi-target plano · `repeat: 3, yoyo: true` (parado numa perna de VOLTA) · per-target | 3 | A5, A6 |
+| B7 | multi-target plano · `yoyo: true, repeat: 1, yoyoEase` · per-target end-only | 3 end-only | A5, A7 |
+
+> Rodada 5 do audit (aceita): a linha "`yoyo` sozinho" foi REMOVIDA — yoyo sem `repeat > 0`
+> não produz perna de volta e o probe seria vacuamente verde (probe sem sensibilidade). As
+> chaves com repetição explicitam o `n` e a POSIÇÃO de estacionamento que torna o probe
+> sensível (iteração posterior / perna de volta).
+
+Probe de cada linha: o do Gate abaixo, instanciado NAQUELA chave (B1–B3 somam o wrapper de
+fachada/lifecycle/ticks; B2a soma o wrapper reproduzindo `repeat`+`repeatRefresh` DA FACHADA
+no relógio novo, com re-roll na fronteira AFIRMADO — hoje zero evidência disso; B2b cruza a
+fronteira do PRÓPRIO filho transplantado e afirma re-roll+continuidade+isolamento+rollback;
+B3 soma re-engate no re-split; B7 mantém end-only+lock da UI).
+Combinação fora de B1–B7 = degrau 4, e entra na tabela só com linha e probe próprios.
+⭐ Lição r8 (probe de dono 2): o MESMO par de opções muda de dono conforme ONDE é autorado
+(top-level vs dentro de `stagger{}`) — a assinatura exata inclui o LOCAL de autoria.
+
+## Gate da Fase 1 (prescrição do audit, aceita)
+
+A promoção de QUALQUER predicado exige o **probe combinado pelo caminho de patch REAL**, por
+predicado, cobrindo junto: alvo parcial; proveniência positiva registrada; mutação POSTERIOR
+da página ainda detectável (o protocolo não pode cegar o detector); re-exposição; rollback
+exato; irmão intacto; repeat/yoyo com `additive-base`. Pro degrau 1, adicionalmente:
+indistinguibilidade com a fachada (repeat/yoyo/timeScale/callbacks projetados) e, pra
+SplitText, re-split sobrevivido. Witness por predicado, padrão desta Fase 0 (referência
+intocada, sensibilidade, tick seguinte, write model DERIVADO da publicação).
