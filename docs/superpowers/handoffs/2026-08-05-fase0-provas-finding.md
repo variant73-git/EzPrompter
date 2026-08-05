@@ -35,10 +35,28 @@
 
 - **Pergunta:** o caminho de escrita real refresca a proveniência após conversão própria, sem
   cegar o detector de mutação latente da página?
-- **Forma testada:** (pendente)
-- **Resultado bruto:** (pendente)
-- **Veredito:** (pendente)
-- **Consequência pro degrau:** (pendente)
+- **Forma testada:** `_probe-fase0-p2-provenance.mjs` (2026-08-05) — bridge real (harness P3),
+  tween `keyframes` de x + `y` top-level; conversão crua de y escalar→função (mecânica do
+  writer candidato, SEM protocolo de proveniência) + step edits `keyframeStep.x` por token da
+  exposição corrente + `retarget.final` de x pelo caminho real. 5 casos: controle-vivo,
+  conversão-própria (token pré), retarget-irmão, ⭐ controle de sobre-determinação
+  (pós-conversão, exposição fresca, SEM mutação) e adversarial-pós-conversão.
+- **Resultado bruto:** controle: edit aplica ([100,500,300]) e mutação da página é recusada
+  (`patch-rejected`) — detector vivo. Conversão crua → step edit com token pré recusado;
+  retarget.final do IRMÃO x recusado; ⭐ pós-conversão SEM mutação: exposição fresca **nem
+  publica token** (`tokenExposto:false`) e edit recusa. Adversarial: recusado — mas
+  SOBRE-DETERMINADO (o 3b mostra que pós-conversão tudo recusa, com ou sem mutação; o caso
+  não isola o detector).
+- **Veredito:** **provado (comportamento da malha estabelecido)** — a conversão SEM protocolo
+  é tratada como tampering da página e **fail-closa a edição inteira da animação** (função em
+  var = hazard animation-level, item 170e; canal keyframe some da exposição). Nunca cega:
+  falha na direção segura.
+- **Consequência pro degrau:** o writer da conversão (degrau 3, Fase 1) NÃO pode só escrever a
+  função — precisa do protocolo de edição própria: registrar proveniência POSITIVA da função
+  introduzida (o registro por-animação+por-propriedade do item 170e), refrescar
+  bindings/colateral (padrão `captureValidStartAtBindings`/`refreshCollateralBindings` do
+  `retarget.final`) e re-expor. Sem isso o override tranca a animação inteira — pior que não
+  existir.
 
 ## P3 — Caminho de escrita REAL do bridge (harness)
 
