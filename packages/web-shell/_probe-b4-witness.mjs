@@ -288,6 +288,40 @@ const sensibilidade = await runCase(`
   return { trajA: H.trajectory(tw, 'a'), trajB: H.trajectory(tw, 'b') };
 `);
 
+// (k) AUDIT r1 (achados A+B do review adversarial): rollback de GROUP-EDIT
+// por transaction com canal ativo replaya o shared LÓGICO (nunca a amostra
+// do alvo overridado), e o redo pós-colapso ressincroniza o shared com o
+// slot ATUAL (o tombstone nunca ressuscita um shared morto).
+const auditRollback = await runCase(`
+  const A = H.select('a');
+  const ownership = A.track && A.track.ownership;
+  const tx1 = H.applyTx('tx-b4-k1', A.elementId, A.motionId, H.v3(ownership, 'override', 160));
+  // group-edit POR TRANSACTION (o before canônico tem que ser shared=100)
+  const groupTx = (() => {
+    const replies = H.sendV2('apply-transaction', {
+      transaction: {
+        id: 'tx-b4-k2',
+        patches: [{ id: 'tx-b4-k2:p1', elementId: A.elementId, kind: 'motion', motionId: A.motionId, property: 'retarget.final', before: null,
+          value: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: 120, writeModel: 'absolute', affectedTargetCount: 2 } }],
+      },
+    });
+    const ack = replies.filter((m) => ['transaction-committed', 'transaction-rejected'].includes(m.type)).pop();
+    const patch = ack && ack.payload && ack.payload.transaction ? ack.payload.transaction.patches[0] : null;
+    return { committed: ack?.type === 'transaction-committed', beforeValue: patch ? patch.before.value : null, valueValue: patch ? patch.value.value : null };
+  })();
+  const afterGroup = { trajA: H.trajectory(tw, 'a'), trajB: H.trajectory(tw, 'b') };
+  // rollback do group-edit → shared volta a 100; A segue 160
+  const rbGroup = H.rollbackTx('tx-b4-k2');
+  const afterGroupUndo = { trajA: H.trajectory(tw, 'a'), trajB: H.trajectory(tw, 'b') };
+  // undo do override → colapso no slot ATUAL (100, nunca 120)
+  const rbOverride = H.rollbackTx('tx-b4-k1');
+  const afterOverrideUndo = { varsX: tw.vars.x, varsXType: typeof tw.vars.x };
+  // redo do override → tombstone reativado ressincroniza shared=100
+  const redo = H.applyTx('tx-b4-k3', A.elementId, A.motionId, H.v3(ownership, 'override', 160));
+  const afterRedo = { trajA: H.trajectory(tw, 'a'), trajB: H.trajectory(tw, 'b') };
+  return { tx1, groupTx, afterGroup, rbGroup, afterGroupUndo, rbOverride, afterOverrideUndo, redo, afterRedo };
+`);
+
 // (j) repeat:2 na MESMA página é recusado (chave B5 fechada) + publicação sem perTarget.
 const repeatRefusal = await (async () => {
   const page = await newCasePage();
@@ -308,7 +342,7 @@ const repeatRefusal = await (async () => {
 
 await browser.close();
 
-const observado = { referencia, referenciaGrupo120, principal, tampering, sensibilidade, repeatRefusal };
+const observado = { referencia, referenciaGrupo120, principal, tampering, sensibilidade, auditRollback, repeatRefusal };
 
 if (RECORD) {
   console.log(JSON.stringify(observado, null, 2));
@@ -383,6 +417,24 @@ console.log('(i) controle de sensibilidade: escalar cru contamina o irmão E o i
 check('write ingênuo contamina B (≠ referência)', !eq(sensibilidade.trajB, referencia.trajB),
   `B=${JSON.stringify(sensibilidade.trajB)} — se igual à referência, o instrumento é cego`);
 check('write ingênuo move A e B juntos', eq(sensibilidade.trajA, sensibilidade.trajB));
+
+console.log('(k) audit r1: rollback de grupo lógico + tombstone ressincronizado');
+check('group-edit por transaction commitou com before = shared (100)',
+  auditRollback.groupTx.committed === true && auditRollback.groupTx.beforeValue === '100' && auditRollback.groupTx.valueValue === '120',
+  `before=${auditRollback.groupTx.beforeValue} value=${auditRollback.groupTx.valueValue}`);
+check('rollback do grupo: B volta a 0→100, A segue 0→160',
+  auditRollback.rbGroup.committed === true
+  && eq(auditRollback.afterGroupUndo.trajB, referencia.trajB)
+  && eq(auditRollback.afterGroupUndo.trajA, [0, 40, 80, 120, 160]),
+  `B=${JSON.stringify(auditRollback.afterGroupUndo.trajB)} A=${JSON.stringify(auditRollback.afterGroupUndo.trajA)}`);
+check('undo do override colapsa no slot ATUAL (100, nunca o 120 morto)',
+  auditRollback.rbOverride.committed === true && auditRollback.afterOverrideUndo.varsXType === 'number' && auditRollback.afterOverrideUndo.varsX === 100,
+  `vars.x=${auditRollback.afterOverrideUndo.varsX}`);
+check('redo reativa o tombstone com shared ressincronizado (B em 0→100)',
+  auditRollback.redo.committed === true
+  && eq(auditRollback.afterRedo.trajA, [0, 40, 80, 120, 160])
+  && eq(auditRollback.afterRedo.trajB, referencia.trajB),
+  `A=${JSON.stringify(auditRollback.afterRedo.trajA)} B=${JSON.stringify(auditRollback.afterRedo.trajB)}`);
 
 console.log('(j) repeat:2 recusado (chave B5 fechada)');
 check('publicação sem perTarget', repeatRefusal.perTargetPublished === false);

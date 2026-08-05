@@ -13489,4 +13489,120 @@ describe('native motion runtime bridge', () => {
       second.restore();
     });
   });
+
+  // Audit da Fase 1 (review adversarial Claude, 2026-08-05) — bloqueadores
+  // reproduzidos e corrigidos.
+  describe('audit B4 — tombstone/readback-v2/atestação (fixes)', () => {
+    function sendV2Tx(runtime, txId, elementId, motionId, value) {
+      runtime.send('apply-transaction', {
+        transaction: {
+          id: txId,
+          patches: [{
+            id: `${txId}:p1`, elementId, kind: 'motion', motionId, property: 'retarget.final', before: null,
+            value: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value, writeModel: 'absolute', affectedTargetCount: 2 },
+          }],
+        },
+      }, `req-${txId}`);
+      return runtime.messages.filter((message) => ['transaction-committed', 'transaction-rejected'].includes(message.type)).pop();
+    }
+
+    it('(A) reativação do tombstone ressincroniza o shared com o slot ATUAL (undo de grupo entre colapso e redo)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      // 1. override A=160 por transaction
+      runtime.send('apply-transaction', {
+        transaction: {
+          id: 'tx-audit-a1',
+          patches: [{ id: 'pa1', elementId: idA, kind: 'motion', motionId, property: 'retarget.final', before: null, value: v3Descriptor({ value: 160 }) }],
+        },
+      }, 'req-audit-a1');
+      // 2. group-edit → shared=120 (por transaction, pra ter rollback)
+      sendV2Tx(runtime, 'tx-audit-a2', idA, motionId, 120);
+      // 3. undo do override → colapso (vars.x=120), tombstone retém shared=120
+      runtime.send('rollback-transaction', { targetTransactionId: 'tx-audit-a1' }, 'req-audit-a3');
+      expect(tween.vars.x).toBe(120);
+      // 4. undo do group-edit (canal colapsado → lane normal) → vars.x=100
+      runtime.send('rollback-transaction', { targetTransactionId: 'tx-audit-a2' }, 'req-audit-a4');
+      expect(tween.vars.x).toBe(100);
+      // 5. redo do override → tombstone reusado; o shared TEM que ser o slot
+      // ATUAL (100), nunca o 120 ressuscitado do tombstone.
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }), 'b4-audit-a5');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(typeof tween.vars.x).toBe('function');
+      expect(tween.vars.x(0, elA)).toBe(160);
+      expect(tween.vars.x(1, elB)).toBe(100); // herdeiro na verdade atual, não no shared morto
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(B) readback v2 com canal ativo devolve o shared LÓGICO — o rollback do group-edit não vaza o override de A pros herdeiros', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      // group-edit v2 POR TRANSACTION com canal ativo: o before canônico tem
+      // que ser o shared (100), nunca a amostra de A (160).
+      const ack = sendV2Tx(runtime, 'tx-audit-b1', idA, motionId, 120);
+      expect(ack?.type).toBe('transaction-committed');
+      const canonical = ack.payload.transaction.patches[0];
+      expect(canonical.before.value).toBe('100');
+      expect(canonical.value.value).toBe('120');
+      // rollback → shared volta a 100; herdeiro B em 100, override de A intacto
+      runtime.send('rollback-transaction', { targetTransactionId: 'tx-audit-b1' }, 'req-audit-b2');
+      expect(tween.vars.x(1, elB)).toBe(100);
+      expect(tween.vars.x(0, elA)).toBe(160);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(C) autoral com unidade relativa (%/vw/rem) é recusado pela chave B4 — a atestação não sabe medir', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: '100%', duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor({ value: '50%' }), 'b4-audit-c1');
+      expect(rejected?.payload?.error).toBe('This value uses a relative unit and cannot be overridden per element yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(D) clear/reset continua alcançável quando a página muta o shape depois do canal ativo (repeat adicionado)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      // Página muta o shape DEPOIS do canal ativo: repeat vira 2.
+      tween.repeat = () => 2;
+      tween.vars.repeat = 2;
+      // Override novo recusa (chave B5 fechada)...
+      const refused = sendV3(runtime, idA, motionId, v3Descriptor({ value: 170 }), 'b4-audit-d1');
+      expect(refused?.payload?.error).toBe('Per-target overrides on repeating or yoyo animations are not supported yet.');
+      // ...mas o CLEAR (mesma classe do colapso de teardown, que é incondicional)
+      // continua alcançável — o override não fica preso até reload.
+      sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'b4-audit-d2');
+      const rejectedAfter = runtime.messages.filter((message) => message.type === 'patch-rejected').pop();
+      expect(rejectedAfter?.payload?.patch?.value?.intent).not.toBe('clear');
+      expect(tween.vars.x).toBe(100);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(F) override com value null/"" é invalid_value — nunca coage pra 0', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      const rejectedNull = sendV3(runtime, idA, motionId, v3Descriptor({ value: null }), 'b4-audit-f1');
+      expect(rejectedNull?.payload?.error).toBe('The per-target patch is invalid.');
+      const rejectedEmpty = sendV3(runtime, idA, motionId, v3Descriptor({ value: '' }), 'b4-audit-f2');
+      expect(rejectedEmpty?.payload?.error).toBe('The per-target patch is invalid.');
+      expect(tween.vars.x).toBe(100); // nada aplicado
+      delete window.gsap;
+      runtime.restore();
+    });
+  });
 });

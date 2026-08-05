@@ -3627,6 +3627,19 @@ function nativeMotionRuntimeBridge() {
       }
       return canonical;
     }
+    // v2 full-scope readback with a LIVE channel (audit B): the truth of the
+    // group value is `shared` — sampling record.target would capture the
+    // PRIMARY's override as the group's before/value, and the rollback would
+    // replay it into `shared`, teleporting every inheritor to that target's
+    // override. Component paths can't reach here with a channel (the group
+    // lane refuses them before writing).
+    {
+      const liveChannel = gsapOverrideChannelFor(record.animation, property);
+      if (liveChannel && liveChannel.state === 'active' && !descriptor.component
+        && !gsapOverrideChannelStale(record.animation, property, liveChannel)) {
+        return { ...cloneValue(descriptor), value: String(liveChannel.shared ?? '') };
+      }
+    }
     let value;
     if (descriptor.component === 'transformOriginX' || descriptor.component === 'transformOriginY') {
       value = runtimeOriginComponent(sampleGsapValue(record, property, 1), descriptor.component);
@@ -4833,9 +4846,10 @@ function nativeMotionRuntimeBridge() {
     'config-var': 'This is a GSAP configuration key — not an animatable property.',
     'run-backwards': 'gsap.from() values are read-only — vars hold the start, not the end.',
     'not-authored': 'This value is not authored on the animation and cannot be overridden per element.',
+    unit: 'This value uses a relative unit and cannot be overridden per element yet.',
   };
 
-  function gsapPerTargetEligibility(record, element, descriptor) {
+  function gsapPerTargetEligibility(record, element, descriptor, options = {}) {
     const animation = record.animation;
     const property = descriptor.runtimeProperty;
     if (descriptor.component) return { eligible: false, reason: 'component' };
@@ -4846,6 +4860,13 @@ function nativeMotionRuntimeBridge() {
     if (!targets.length) targets = record.targets || [];
     // Membership by IDENTITY — elementId resolution alone never qualifies.
     if (!targets.some((item) => item === element)) return { eligible: false, reason: 'membership' };
+    // The CLEAR lane skips the shape recomposition (audit D): removing our own
+    // entry and collapsing to `shared` is the same write class as the teardown
+    // collapse, which runs unconditionally — a page that mutates the tween's
+    // shape AFTER the channel went live (repeat added, css:{} injected) must
+    // not trap the user's override forever. Membership/identity above and the
+    // writer's stale/attestation checks still guard it.
+    if (options.lane === 'clear') return { eligible: true, reason: null };
     let innerChildren = null;
     try { innerChildren = animation?.timeline?.getChildren?.() || null; } catch (_) { innerChildren = null; }
     if (targets.length < 2 || vars.stagger != null || (innerChildren && innerChildren.length)) {
@@ -4891,9 +4912,19 @@ function nativeMotionRuntimeBridge() {
     // a re-roll hazard.
     if (gsapAnimationRandomHazard(animation, property)) return { eligible: false, reason: 'random' };
     if (!slotIsOwnWrapper) {
-      const scalar = typeof slot === 'number'
-        || (typeof slot === 'string' && slot.trim() !== '' && !/random\(/i.test(slot));
-      if (!scalar) return { eligible: false, reason: 'not-authored' };
+      if (typeof slot !== 'number') {
+        if (typeof slot !== 'string' || slot.trim() === '' || /random\(/i.test(slot)) {
+          return { eligible: false, reason: 'not-authored' };
+        }
+        // The endpoint attestation measures via gsap.getProperty, which
+        // materializes px numbers — a relative-unit authored value (%/vw/rem)
+        // would false-positive the attestation and trap the channel (audit C).
+        // Only px-compatible scalars are in the proven B4 key; anything else
+        // waits for its own witness.
+        const parsed = numericCss(slot);
+        if (!parsed) return { eligible: false, reason: 'not-authored' };
+        if (parsed.unit !== '' && parsed.unit !== 'px') return { eligible: false, reason: 'unit' };
+      }
     }
     return { eligible: true, reason: null };
   }
@@ -5040,6 +5071,12 @@ function nativeMotionRuntimeBridge() {
       channel = created;
       channels.set(property, channel);
       gsapOverrideChannelRegistry.add({ animation, property, channel });
+    } else if (channel.state === 'collapsed' && descriptor.intent !== 'clear') {
+      // Tombstone REACTIVATION (audit A): the slot may have legitimately moved
+      // while the channel was collapsed (a group-edit's rollback, the page's
+      // own writes) — resync `shared` with the CURRENT slot. Reusing the dead
+      // shared would silently teleport every inheritor to a stale group value.
+      channel.shared = vars[property];
     } else if (channel.state === 'active') {
       // The channel was live before this write: validate the projection
       // (stale = the page swapped/removed the wrapper) and attest the
@@ -5466,16 +5503,21 @@ function nativeMotionRuntimeBridge() {
         // first; then the bridge RECOMPOSES the strict B4 key by its own
         // inspection — the host's writeModel never unlocks anything.
         // `clear` is the removal form (what a rollback of the first override
-        // replays); value is present iff intent is `override`.
+        // replays); value is present iff intent is `override`, and an
+        // override value must be a real scalar — null/'' would silently
+        // coerce to 0 in the writer (audit F).
+        const overrideValue = value.value;
+        const validOverrideValue = (typeof overrideValue === 'number' && Number.isFinite(overrideValue))
+          || (typeof overrideValue === 'string' && overrideValue.trim() !== '');
         if (value.targetScope?.mode !== 'single'
           || !['override', 'inherit', 'clear'].includes(value.intent)
-          || (value.intent === 'override') !== (value.value !== undefined)) {
+          || (value.intent === 'override' ? !validOverrideValue : overrideValue !== undefined)) {
           throw bridgeError('invalid_value', 'The per-target patch is invalid.');
         }
         if (record.type !== 'gsap') {
           throw bridgeError('unsupported_patch', 'Per-target overrides are only available for GSAP animations.');
         }
-        const eligibility = gsapPerTargetEligibility(record, element, value);
+        const eligibility = gsapPerTargetEligibility(record, element, value, value.intent === 'clear' ? { lane: 'clear' } : {});
         if (!eligibility.eligible) {
           throw bridgeError('unsupported_patch', B4_REFUSAL_MESSAGES[eligibility.reason] || 'Per-target overrides are not available for this animation yet.');
         }

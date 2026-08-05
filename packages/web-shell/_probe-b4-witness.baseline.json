@@ -266,6 +266,93 @@
       160
     ]
   },
+  "auditRollback": {
+    "tx1": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "groupTx": {
+      "committed": true,
+      "beforeValue": "100",
+      "valueValue": "120"
+    },
+    "afterGroup": {
+      "trajA": [
+        0,
+        40,
+        80,
+        120,
+        160
+      ],
+      "trajB": [
+        0,
+        30,
+        60,
+        90,
+        120
+      ]
+    },
+    "rbGroup": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterGroupUndo": {
+      "trajA": [
+        0,
+        40,
+        80,
+        120,
+        160
+      ],
+      "trajB": [
+        0,
+        25,
+        50,
+        75,
+        100
+      ]
+    },
+    "rbOverride": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterOverrideUndo": {
+      "varsX": 100,
+      "varsXType": "number"
+    },
+    "redo": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterRedo": {
+      "trajA": [
+        0,
+        40,
+        80,
+        120,
+        160
+      ],
+      "trajB": [
+        0,
+        25,
+        50,
+        75,
+        100
+      ]
+    }
+  },
   "repeatRefusal": {
     "perTargetPublished": false,
     "tx": {
