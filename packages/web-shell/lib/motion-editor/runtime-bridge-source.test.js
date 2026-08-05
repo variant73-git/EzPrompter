@@ -12689,4 +12689,130 @@ describe('native motion runtime bridge', () => {
     expect(JSON.stringify(failure.payload)).not.toMatch(/secret|private|credential|site\.js/i);
     runtime.restore();
   });
+
+  // Fase 0 / P6b — o caminho de ESCRITA estaciona/restaura por `progress`
+  // (posição DENTRO da iteração): num tween repeat parado numa iteração
+  // posterior, a edição teleporta o relógio uma iteração pra trás (witness
+  // _probe-editwrite-witness.mjs: 1.5→0.5 no GSAP 3.15 real). O double abaixo
+  // modela a semântica REAL medida: setar progress(p) colapsa pra 1ª iteração;
+  // setar totalTime(t) preserva a coordenada total.
+  function makeRepeatTweenDouble(target, { vars, duration = 1, repeat = 2, parkedTotalTime = 1.5, getProperty }) {
+    const totalDuration = duration * (repeat + 1);
+    const state = { progress: 0, totalTime: 0, paused: true, log: [] };
+    const tween = {
+      targets: () => [target],
+      vars,
+      duration: () => duration,
+      totalDuration: () => totalDuration,
+      delay: () => 0,
+      repeat: () => repeat,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: vi.fn(() => false),
+      paused: vi.fn(() => state.paused),
+      timeScale: vi.fn(() => 1),
+      progress: vi.fn((value, suppress) => {
+        if (value === undefined) return state.progress;
+        state.log.push(['progress', value, suppress]);
+        state.progress = value;
+        state.totalTime = value * duration;   // semântica medida: colapsa pra iteração 0
+        return tween;
+      }),
+      totalProgress: vi.fn((value) => {
+        if (value === undefined) return state.totalTime / totalDuration;
+        state.log.push(['totalProgress', value]);
+        state.totalTime = value * totalDuration;
+        state.progress = Math.min(1, (state.totalTime % duration) || (value === 1 ? 1 : 0));
+        return tween;
+      }),
+      time: vi.fn(() => state.totalTime % duration),
+      totalTime: vi.fn((value, suppress) => {
+        if (value === undefined) return state.totalTime;
+        state.log.push(['totalTime', value, suppress]);
+        state.totalTime = value;
+        state.progress = Math.min(1, state.totalTime % duration || (value >= totalDuration ? 1 : 0));
+        return tween;
+      }),
+      pause: vi.fn(() => { state.paused = true; return tween; }),
+      play: vi.fn(() => { state.paused = false; return tween; }),
+      invalidate: vi.fn(() => tween),
+    };
+    tween.totalTime(parkedTotalTime, true);
+    state.log.length = 0;
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: getProperty || (() => 0),
+    };
+    return { tween, state };
+  }
+
+  // A seleção pode assentar o clock (modelo C — auto-assentar no look final);
+  // o que o fix garante é que a EDIÇÃO é inócua em relação ao estado
+  // PÓS-SELEÇÃO: qualquer park interno dos seams devolve o relógio TOTAL
+  // exatamente onde a seleção o deixou — nunca colapsado pra 1ª iteração.
+  function selectThenPatch(runtime, target, state, patchValue) {
+    target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+    const elementId = selection.payload.element.id;
+    const motionId = selection.payload.element.motion[0].id;
+    const clockAfterSelection = state.totalTime;
+    state.log.length = 0;
+    runtime.send('apply-patch', {
+      patch: {
+        elementId, kind: 'motion', motionId,
+        property: 'retarget.final', before: null,
+        value: patchValue,
+      },
+    }, 'fase0-p6b');
+    return { clockAfterSelection };
+  }
+
+  it('retarget on a repeat tween parked past the first iteration keeps the total clock (P6b: invalidatePreservingStart)', () => {
+    const title = document.getElementById('hero-title');
+    title.getBoundingClientRect = () => ({ left: 40, top: 40, right: 240, bottom: 140, width: 200, height: 100 });
+    document.getAnimations = () => [];
+    title.getAnimations = () => [];
+    const { tween, state } = makeRepeatTweenDouble(title, { vars: { x: 100, duration: 1 } });
+
+    const runtime = bootV2Runtime();
+    const { clockAfterSelection } = selectThenPatch(runtime, title, state, {
+      schemaVersion: 2, runtimeProperty: 'x', value: 160, writeModel: 'absolute', affectedTargetCount: 1,
+    });
+
+    expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+    expect(tween.vars.x).toBe(160);
+    expect(tween.invalidate).toHaveBeenCalled();
+    // O park interno do retarget aconteceu (o clock foi a 0 e voltou)...
+    expect(state.log.some(([method, value]) => value === 0)).toBe(true);
+    // ...e devolveu o relógio TOTAL exatamente onde a seleção o deixou — com
+    // a semântica de progress (colapso pra iteração 0) isso é impossível
+    // sempre que clockAfterSelection não cair na 1ª iteração.
+    expect(state.totalTime).toBe(clockAfterSelection);
+    delete window.gsap;
+    runtime.restore();
+  });
+
+  it('component sampling inside the write path parks by the total clock on repeat tweens (P6b: sampleGsapValue)', () => {
+    const title = document.getElementById('hero-title');
+    title.getBoundingClientRect = () => ({ left: 40, top: 40, right: 240, bottom: 140, width: 200, height: 100 });
+    document.getAnimations = () => [];
+    title.getAnimations = () => [];
+    const { state } = makeRepeatTweenDouble(title, {
+      vars: { scale: 2, duration: 1 },
+      getProperty: (element, property) => (property === 'scaleY' || property === 'scaleX' ? 1 : 0),
+    });
+
+    const runtime = bootV2Runtime();
+    const { clockAfterSelection } = selectThenPatch(runtime, title, state, {
+      schemaVersion: 2, runtimeProperty: 'scale', component: 'scaleX', value: 3, writeModel: 'absolute', affectedTargetCount: 1,
+    });
+
+    expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+    // O sampling do componente irmão moveu o clock (progress do sample)...
+    expect(state.log.length).toBeGreaterThan(0);
+    // ...e o restore devolveu o relógio TOTAL ao estado pós-seleção.
+    expect(state.totalTime).toBe(clockAfterSelection);
+    delete window.gsap;
+    runtime.restore();
+  });
 });

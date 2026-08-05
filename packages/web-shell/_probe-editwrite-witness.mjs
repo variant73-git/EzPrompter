@@ -18,13 +18,14 @@
 //   - forma adaptativa: o edit é RECUSADO (unsampleable lock) → inócuo por
 //     construção, registrado.
 //
-// Estado MEDIDO HOJE (baseline congelado, 2026-08-05): 6 RED — repeat2 (3:
-// totalTime teleporta 1.5→0.5, iteração inteira perdida) e repeat-∞ (3:
-// 2.5→1.5, a batida perdida da classe da inspeção). yoyo simples NÃO
-// reproduziu nesta forma (verde; registrado, não refutado). yoyoEase: o
-// retarget absoluto APLICA (lock unsampleable é end-only na UI, não no
-// bridge) e o temporal fica intacto. O fix do plano fase-0 Task 7 vira os 6
-// RED verdes e re-grava o baseline.
+// HISTÓRICO: em 2026-08-05 este witness congelou 6 RED — repeat2 (totalTime
+// teleportava 1.5→0.5, iteração inteira perdida) e repeat-∞ (2.5→1.5, a
+// batida perdida da classe da inspeção). O fix fase-0 Task 7 (park/restore
+// por totalTime nos dois seams) virou tudo VERDE e o baseline atual congela
+// o comportamento CORRETO — qualquer RED daqui pra frente é regressão.
+// Notas de medição que ficam: yoyo simples nunca reproduziu (forma anotada
+// no caso); yoyoEase: o retarget absoluto APLICA (lock unsampleable é
+// end-only na UI, não no bridge) e o temporal fica intacto.
 //
 // Uso:
 //   node _probe-editwrite-witness.mjs            # assertivo (baseline + contagem RED)
@@ -47,7 +48,7 @@ const CASES = [
   },
   {
     id: 'repeat2-na-2a-iteracao',
-    esperadoHoje: 'RED',
+    esperadoHoje: 'verde (pós-fix; era RED)',
     criar: `gsap.to([E('a'), E('b')], { x: 100, duration: 1, repeat: 2, paused: true })`,
     posicionar: `tw.totalTime(1.5, true)`,
   },
@@ -62,8 +63,23 @@ const CASES = [
   },
   {
     id: 'repeat-infinito-3a-volta',
-    esperadoHoje: 'RED',
+    esperadoHoje: 'verde (pós-fix; era RED)',
     criar: `gsap.to([E('a'), E('b')], { x: 100, duration: 1, repeat: -1, paused: true })`,
+    posicionar: `tw.totalTime(2.5, true)`,
+  },
+  {
+    // Bloqueador do Sol (audit P6b, 2026-08-05), REPRODUZIDO: o writeModel
+    // PUBLICADO pra loop é 'additive-base', e o start desse modelo era lido
+    // com progress(0) — que numa iteração posterior renderiza o FIM da
+    // iteração anterior (probado: totalTime 2.5 → progress(0) dá x=100, não
+    // 0). Num loop 0→100 com frame visível 50 editado pra 160, o modelo
+    // gravava startAt=210/vars.x=210 e renderizava 210. Este caso DERIVA o
+    // writeModel da publicação (nunca força absolute) e checa frame visível,
+    // endpoints (startAt/vars) e rollback.
+    id: 'repeat-infinito-additive-base',
+    esperadoHoje: 'verde (pós-fix; era RED)',
+    additive: true,
+    criar: `gsap.to([E('a'), E('b')], { x: 100, duration: 1, ease: 'none', repeat: -1, paused: true })`,
     posicionar: `tw.totalTime(2.5, true)`,
   },
   {
@@ -85,7 +101,7 @@ async function runPage(kase, editar) {
   const page = await browser.newPage();
   await page.setContent(['a', 'b'].map((id) => `<div id="${id}" style="width:40px;height:40px"></div>`).join(''));
   await page.addScriptTag({ content: gsapSrc });
-  const out = await page.evaluate(([bridge, criar, posicionar, doEdit]) => {
+  const out = await page.evaluate(([bridge, criar, posicionar, doEdit, additive]) => {
     /* eslint-disable no-undef */
     const messages = [];
     window.postMessage = (m) => messages.push(m);
@@ -108,8 +124,11 @@ async function runPage(kase, editar) {
     const elementId = sel?.payload?.element?.id;
     const motionId = (sel?.payload?.element?.motion || [])[0]?.id;
 
-    let edicao = null;
-    if (doEdit) {
+    // O writeModel vem da PUBLICAÇÃO (nunca forçado) no caso additive — o
+    // bloqueador do Sol era exatamente o modelo publicado não exercitado.
+    const trackX = (sel?.payload?.element?.motion?.[0]?.tracks || []).find((tr) => tr.property === 'x');
+    const writeModel = additive ? trackX?.ownership?.writeModel : 'absolute';
+    const enviarPatch = (valor) => {
       const marca = messages.length;
       window.dispatchEvent(new MessageEvent('message', {
         source: window,
@@ -118,13 +137,34 @@ async function runPage(kase, editar) {
           payload: { patch: {
             elementId, kind: 'motion', motionId,
             property: 'retarget.final', before: null,
-            value: { schemaVersion: 2, runtimeProperty: 'x', value: 160, writeModel: 'absolute', affectedTargetCount: 2 },
+            value: { schemaVersion: 2, runtimeProperty: 'x', value: valor, writeModel, affectedTargetCount: 2 },
           } },
         },
       }));
       const err = messages.slice(marca)
         .filter((m) => m.type === 'patch-rejected' || m.type === 'error').pop();
-      edicao = { aplicou: !err, erro: err ? (err.payload?.message || err.type) : null };
+      return { aplicou: !err, erro: err ? (err.payload?.message || err.type) : null };
+    };
+
+    let edicao = null;
+    let loopBase = null;
+    if (doEdit) {
+      edicao = enviarPatch(160);
+      edicao.writeModelUsado = writeModel;
+      if (additive && edicao.aplicou) {
+        const frameVisivel = X(E('a'));
+        const varsX = tw.vars.x;
+        const startAtX = tw.vars.startAt ? tw.vars.startAt.x : null;
+        const rollback = enviarPatch(50);
+        loopBase = {
+          frameVisivel, varsX, startAtX,
+          rollback: {
+            aplicou: rollback.aplicou, erro: rollback.erro,
+            frameVisivel: X(E('a')), varsX: tw.vars.x,
+            startAtX: tw.vars.startAt ? tw.vars.startAt.x : null,
+          },
+        };
+      }
     }
     const depois = { ...temporal(tw), alvoX: X(E('a')) };
 
@@ -135,8 +175,9 @@ async function runPage(kase, editar) {
     const tick2 = { ...temporal(tw), alvoX: X(E('a')) };
 
     // A edição tem que TER acontecido: end novo renderizando do início.
+    // (No caso additive o rollback já rodou — o end é checado via loopBase.)
     let endRenderizado = null;
-    if (doEdit && edicao?.aplicou) {
+    if (doEdit && edicao?.aplicou && !additive) {
       const parked = tw.totalTime();
       tw.totalTime(0, true);
       tw.totalTime(tw.duration(), true);   // fim da 1ª ida
@@ -144,8 +185,8 @@ async function runPage(kase, editar) {
       tw.totalTime(parked, true);
     }
 
-    return { antes, edicao, depois, tick1, tick2, endRenderizado };
-  }, [bridgeSrc, kase.criar, kase.posicionar, editar]);
+    return { antes, edicao, depois, tick1, tick2, endRenderizado, loopBase };
+  }, [bridgeSrc, kase.criar, kase.posicionar, editar, Boolean(kase.additive)]);
   await page.close();
   return out;
 }
@@ -181,6 +222,26 @@ for (const kase of CASES) {
     continue;
   }
   check('edição aplicou', editado.edicao?.aplicou === true, JSON.stringify(editado.edicao));
+  if (kase.additive) {
+    const lb = editado.loopBase || {};
+    check('writeModel derivado da publicação = additive-base', editado.edicao?.writeModelUsado === 'additive-base',
+      `writeModel=${editado.edicao?.writeModelUsado}`);
+    check('frame visível editado = 160', lb.frameVisivel === 160, `frame=${lb.frameVisivel}`);
+    check('endpoints do loop deslocados (vars.x=210, startAt.x=110)',
+      String(lb.varsX) === '210' && String(lb.startAtX) === '110',
+      `vars.x=${lb.varsX} startAt.x=${lb.startAtX}`);
+    check('rollback: frame visível volta a 50', lb.rollback?.frameVisivel === 50, `frame=${lb.rollback?.frameVisivel}`);
+    check('rollback: endpoints restaurados (vars.x=100, startAt.x=0)',
+      String(lb.rollback?.varsX) === '100' && String(lb.rollback?.startAtX) === '0',
+      `vars.x=${lb.rollback?.varsX} startAt.x=${lb.rollback?.startAtX}`);
+    check('estado temporal intacto no instante', igual(editado.depois, referencia.depois),
+      `${JSON.stringify(t(editado.depois))} vs ref ${JSON.stringify(t(referencia.depois))}`);
+    check('estado temporal intacto no tick 1', igual(editado.tick1, referencia.tick1),
+      `${JSON.stringify(t(editado.tick1))} vs ref ${JSON.stringify(t(referencia.tick1))}`);
+    check('estado temporal intacto no tick 2', igual(editado.tick2, referencia.tick2),
+      `${JSON.stringify(t(editado.tick2))} vs ref ${JSON.stringify(t(referencia.tick2))}`);
+    continue;
+  }
   check('end novo renderiza (160)', editado.endRenderizado === 160, `end=${editado.endRenderizado}`);
   check('estado temporal intacto no instante', igual(editado.depois, referencia.depois),
     `${JSON.stringify(t(editado.depois))} vs ref ${JSON.stringify(t(referencia.depois))}`);

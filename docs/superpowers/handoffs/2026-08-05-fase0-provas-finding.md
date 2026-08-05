@@ -160,10 +160,25 @@
     intacto — registrado como fato.
 - **Veredito (parte a):** **provado** — o defeito existe no caminho de escrita, classe
   restauração-por-progress, formas repeat≥1 em iteração posterior. Contrato congelado no
-  baseline; fix (parte b) pendente.
-- **Consequência pro degrau:** o degrau 3 não é seguro pra formas repeat em iteração
-  posterior até o fix `progress`→`totalTime` nos dois seams (`sampleGsapValue`,
-  `invalidatePreservingStart`).
+  baseline.
+- **Parte b (fix) — SHIPPED com MERGE OK do Sol em 2 rodadas:** park/restore por `totalTime`
+  nos dois seams, com o padrão de guarda do rebobinador auditado (inspeção intocada — delta
+  deliberado aceito). ⭐ **Rodada 1 = VETO com bloqueador real, reproduzido número a número:**
+  a amostra de INÍCIO (`sampleGsapValue(..., 0)`) via `progress(0)` numa iteração posterior
+  renderiza o FIM da iteração anterior (probe GSAP 3.15: totalTime 2.5 → progress(0) dá
+  totalTime=2/progress=1/x=100) — e o writeModel PUBLICADO pra loop é `additive-base`, cujo
+  writer lê o início assim: editar frame visível 50→160 num loop 0→100 gravava
+  `startAt=210/vars.x=210` e renderizava 210. Meus DOIS instrumentos (witness + vitest)
+  tinham o mesmo ponto cego: forçavam `absolute`. Fix: amostra 0 = início semântico →
+  `totalTime(0,true)`; endpoint segue `progress(1)`; caso novo no witness DERIVA o writeModel
+  da publicação (`ownership.writeModel`) e checa frame/endpoints/rollback. A/B: corrupção
+  exata sem o fix, verde com. Rodada 2: MERGE OK explícito.
+- **Estado final:** witness 0 RED (baseline agora congela o comportamento CORRETO — RED daqui
+  pra frente é regressão); suíte 1538/1538; vizinhos verdes; detach 11 FAIL byte-idênticos ao
+  HEAD (A/B).
+- **Consequência pro degrau:** formas `repeat`/loop seguras pro degrau 3 (override), inclusive
+  o modelo `additive-base`. Lição de instrumento: **witness que força um write model não cobre
+  o classificador** — derivar sempre da publicação.
 
 ## Tabela final — forma → degrau (entrada da Fase 1)
 

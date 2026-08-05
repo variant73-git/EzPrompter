@@ -3480,17 +3480,27 @@ function nativeMotionRuntimeBridge() {
   // (probe-verified on GSAP 3.15: start 10 became 55). Render the true start
   // BEFORE invalidating, then restore the parked position.
   function invalidatePreservingStart(animation) {
+    // Park/restore by the TOTAL clock (same guard pattern as the audited
+    // inspection rewinder): `progress` is the position INSIDE one iteration —
+    // parking and restoring by it teleports a repeat tween parked past the
+    // first iteration back to it (witness _probe-editwrite-witness.mjs on
+    // real GSAP 3.15: totalTime 1.5→0.5, 2.5→1.5). `progress` stays as the
+    // fallback for doubles without totalTime.
     let parked = null;
+    let hasTotal = false;
     try {
-      const current = animation.progress?.();
+      hasTotal = typeof animation.totalTime === 'function';
+      const current = hasTotal ? animation.totalTime() : animation.progress?.();
       if (Number.isFinite(current) && current > 0) {
         parked = current;
-        animation.progress(0, true);
+        if (hasTotal) animation.totalTime(0, true); else animation.progress(0, true);
       }
     } catch (_) {}
     animation.invalidate?.();
     if (parked != null) {
-      try { animation.progress(parked, true); } catch (_) {}
+      try {
+        if (hasTotal) animation.totalTime(parked, true); else animation.progress(parked, true);
+      } catch (_) {}
     }
   }
 
@@ -3504,17 +3514,37 @@ function nativeMotionRuntimeBridge() {
         touched.push([item, item.style.cssText]);
       }
     });
+    // The SAMPLE position stays in iteration-progress (that is the sampling
+    // contract: `progress = 1` reads the end of one iteration) — but the
+    // PARK/RESTORE runs on the TOTAL clock, or a repeat tween parked past the
+    // first iteration is teleported back to it (same class as the inspection
+    // defect; witness _probe-editwrite-witness.mjs).
     let parked = null;
+    let hasTotal = false;
     try {
-      parked = animation.progress?.();
-      if (Number.isFinite(progress)) animation.progress?.(progress, true);
+      hasTotal = typeof animation.totalTime === 'function';
+      parked = hasTotal ? animation.totalTime() : animation.progress?.();
+      if (Number.isFinite(progress)) {
+        // `progress = 0` means the semantic START — and progress(0) on a tween
+        // parked in a later iteration renders the boundary as the END of the
+        // previous iteration (GSAP setter semantics; Sol blocker 2026-08-05,
+        // reproduced on real 3.15: totalTime 2.5 → progress(0) lands
+        // totalTime=2/progress=1/x=end, corrupting the loop-base start read).
+        // The true start is only reachable through the TOTAL clock.
+        // `progress = 1` (end of one iteration) and fractional positions keep
+        // the iteration-progress contract.
+        if (progress === 0 && hasTotal) animation.totalTime(0, true);
+        else animation.progress?.(progress, true);
+      }
       let value;
       if (gsap && typeof gsap.getProperty === 'function' && target) value = gsap.getProperty(target, property);
       else value = animation.vars?.[property];
       return value;
     } finally {
       if (Number.isFinite(parked)) {
-        try { animation.progress?.(parked, true); } catch (_) {}
+        try {
+          if (hasTotal) animation.totalTime(parked, true); else animation.progress?.(parked, true);
+        } catch (_) {}
       }
       touched.forEach(([element, cssText]) => {
         try { element.style.cssText = cssText; } catch (_) {}
