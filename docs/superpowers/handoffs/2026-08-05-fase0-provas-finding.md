@@ -249,7 +249,7 @@ outra (provar stagger simples não promove `repeatRefresh`; provar `repeat` não
 | B2a | stagger filho-por-alvo · `repeat: 1, repeatRefresh: true` **owner=fachada** (top-level; medido: filho perde o ciclo no transplante cru) · per-target | 1 | A1, A2 |
 | B2b | stagger filho-por-alvo · `stagger: { repeat: 1, repeatRefresh: true }` **owner=child** (r8 do audit, ownership CONFIRMADO por probe ANTES do transplante: `childRepeat=1`, `childRepeatRefresh=true`, `childTotalDur=2`; a PRESERVAÇÃO disso no transplante NÃO foi estabelecida) · per-target | 1 | A1; ownership pré-transplante (probe r8). Sobrevivência do ciclo/fase/re-roll/isolamento/rollback = obrigações do probe combinado |
 | B3 | stagger+SplitText · nenhum · per-target | 1 | A3, A4 |
-| B4 | multi-target plano · nenhum · per-target | 3 | A5 |
+| B4 | multi-target plano · nenhum · per-target | **3 — PROMOVIDO 2026-08-05** (prova: witness `_probe-b4-witness.mjs`, 55 checks no GSAP 3.15 real pelo protocolo v2; MERGE OK do Sol na r6 da audit da Fase 1 — plano `2026-08-05-fase1-b4-per-target-writer.md`) | A5 |
 | B5 | multi-target plano · `repeat: 2, yoyo: false` (parado em iteração posterior) · per-target | 3 | A5, A6 |
 | B6 | multi-target plano · `repeat: 3, yoyo: true` (parado numa perna de VOLTA) · per-target | 3 | A5, A6 |
 | B7 | multi-target plano · `yoyo: true, repeat: 1, yoyoEase` · per-target end-only | 3 end-only | A5, A7 |
@@ -258,6 +258,23 @@ outra (provar stagger simples não promove `repeatRefresh`; provar `repeat` não
 > não produz perna de volta e o probe seria vacuamente verde (probe sem sensibilidade). As
 > chaves com repetição explicitam o `n` e a POSIÇÃO de estacionamento que torna o probe
 > sensível (iteração posterior / perna de volta).
+
+> **Addendum 2026-08-05 (promoção B4).** A chave B4 foi promovida pelo probe combinado do
+> Gate via witness real (`_probe-b4-witness.mjs`): alvo parcial, proveniência positiva
+> (WeakMap contextual + atestação de endpoints), mutação posterior detectável (impostora,
+> wrapper roubado, carriers pós-canal), re-exposição, rollback exato (incl. colapso pro
+> shared ATUAL e tombstone ressincronizado), irmão byte-intacto, controle de sensibilidade.
+> Audit da Fase 1: review Claude (5 achados) + Sol r2–r6 (7 achados) = 12 corrigidos com RED
+> observado; MERGE OK na r6. **Estreitamentos da chave descobertos na audit** (recusas, não
+> promoções): unidade relativa (%/vw/rem) FORA (atestação mede px); carriers de modificador
+> (snap/roundProps/modifiers) FORA, com verificação pós-write fail-closed pra carrier
+> desconhecido; slot precisa ser próprio/data/gravável. **Adiamentos aceitos pelo Sol**: o
+> marcador estável do serializer colateral NÃO conta como evidência B4/B5/B6 (wrapper e
+> maquinaria de keyframes não coexistem sob a chave estrita). **Residuais documentados**:
+> lock monotônico permanente quando a página desloca o wrapper (doutrina fail-closed r103 —
+> recuperação verificável por atestação seria decisão de produto); clear sob hazard de
+> função recusa (fail-closed; teardown colapsa o slot SEM invalidar — não executa função da
+> página); registro forte de canais retém animations até teardown (bounded por edits).
 
 Probe de cada linha: o do Gate abaixo, instanciado NAQUELA chave (B1–B3 somam o wrapper de
 fachada/lifecycle/ticks; B2a soma o wrapper reproduzindo `repeat`+`repeatRefresh` DA FACHADA
