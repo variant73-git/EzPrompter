@@ -3601,8 +3601,32 @@ function nativeMotionRuntimeBridge() {
     }
   }
 
-  function readGsapRetarget(record, descriptor) {
+  function readGsapRetarget(record, descriptor, element) {
     const property = descriptor.runtimeProperty;
+    if (descriptor.schemaVersion === 3) {
+      // LOGICAL per-target readback: the channel map is the truth for the
+      // SCOPED element — never a DOM sample of record.target (editing B must
+      // never capture A's value into history — the advise's latent bug).
+      // Presence is part of the readback: absence canonicalizes as `clear`
+      // (what a rollback of a first override replays), explicit inherit stays
+      // inherit, and an override equal to the group KEEPS its intent.
+      const channel = gsapOverrideChannelFor(record.animation, property);
+      const canonical = cloneValue(descriptor);
+      const entry = channel && channel.state === 'active' && element
+        ? channel.overrides.get(element)
+        : null;
+      if (!entry) {
+        canonical.intent = 'clear';
+        delete canonical.value;
+      } else if (entry.intent === 'inherit') {
+        canonical.intent = 'inherit';
+        delete canonical.value;
+      } else {
+        canonical.intent = 'override';
+        canonical.value = entry.value;
+      }
+      return canonical;
+    }
     let value;
     if (descriptor.component === 'transformOriginX' || descriptor.component === 'transformOriginY') {
       value = runtimeOriginComponent(sampleGsapValue(record, property, 1), descriptor.component);
@@ -6220,12 +6244,15 @@ function nativeMotionRuntimeBridge() {
     }
     if (property === 'retarget.final') {
       const descriptor = patch.value && typeof patch.value === 'object' ? patch.value : patch.before;
-      if (!descriptor || descriptor.schemaVersion !== 2 || !descriptor.runtimeProperty) {
+      if (!descriptor || ![2, 3].includes(descriptor.schemaVersion) || !descriptor.runtimeProperty) {
         throw bridgeError('invalid_value', 'The final-target patch is invalid.');
+      }
+      if (descriptor.schemaVersion === 3 && record.type !== 'gsap') {
+        throw bridgeError('unsupported_patch', 'Per-target overrides are only available for GSAP animations.');
       }
       return record.type === 'browser'
         ? readBrowserRetarget(record, descriptor)
-        : readGsapRetarget(record, descriptor);
+        : readGsapRetarget(record, descriptor, element);
     }
     if (property.startsWith('keyframeStep.')) {
       const trackProperty = property.slice('keyframeStep.'.length);

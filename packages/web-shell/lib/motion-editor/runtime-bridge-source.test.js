@@ -13311,4 +13311,117 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
   });
+
+  // Fase 1 / B4 — readback LÓGICO por alvo + transações v2: o `before` de um
+  // patch v3 vem do CANAL (intent+value do alvo escopado), nunca de amostra
+  // do DOM de record.target — editar B jamais captura A (⭐ bug do advise).
+  // Presença/ausência (intent clear) é parte do readback transacional.
+  describe('read/apply escopados + transações v2 (B4)', () => {
+    function sendTransaction(runtime, type, payload, requestId) {
+      runtime.send(type, payload, requestId);
+      return runtime.messages.filter((message) => ['transaction-committed', 'transaction-rejected', 'validation-result'].includes(message.type)).pop();
+    }
+
+    function v3Patch(elementId, motionId, descriptor, patchId = 'p-b4') {
+      return {
+        id: patchId, elementId, kind: 'motion', motionId,
+        property: 'retarget.final', before: null, value: descriptor,
+      };
+    }
+
+    it('(a) ⭐ validate-transaction de patch em B captura o estado de B — nunca amostra A', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      const { elementId: idB } = selectMotion(runtime, elB);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      const validation = sendTransaction(runtime, 'validate-transaction', {
+        transaction: { id: 'tx-b4-validate', patches: [v3Patch(idB, motionId, v3Descriptor({ value: 140 }))] },
+      }, 'b4-tx-validate');
+      expect(validation?.type).toBe('validation-result');
+      expect(validation?.payload?.valid).toBe(true);
+      // O validate restaurou: B segue herdando, A segue 160.
+      expect(tween.vars.x(0, elA)).toBe(160);
+      expect(tween.vars.x(1, elB)).toBe(100);
+      // O before canônico do apply captura o estado de B (ausência = clear) —
+      // nunca o valor de A (160).
+      const ack = sendTransaction(runtime, 'apply-transaction', {
+        transaction: { id: 'tx-b4-apply-b', patches: [v3Patch(idB, motionId, v3Descriptor({ value: 140 }))] },
+      }, 'b4-tx-apply-b');
+      expect(ack?.type).toBe('transaction-committed');
+      const canonical = ack.payload.transaction.patches[0];
+      expect(canonical.before.intent).toBe('clear');
+      expect(JSON.stringify(canonical.before)).not.toContain('160');
+      expect(canonical.value).toMatchObject({ intent: 'override', value: 140 });
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(b) apply-transaction v2 com patch v3 aplica e commita', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      const ack = sendTransaction(runtime, 'apply-transaction', {
+        transaction: { id: 'tx-b4-apply', patches: [v3Patch(idA, motionId, v3Descriptor({ value: 160 }))] },
+      }, 'b4-tx-apply');
+      expect(ack?.type).toBe('transaction-committed');
+      expect(typeof tween.vars.x).toBe('function');
+      expect(tween.vars.x(0, elA)).toBe(160);
+      expect(tween.vars.x(1, elB)).toBe(100);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(c) rollback-transaction restaura o canal EXATO (valor anterior; colapso com shared atual)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendTransaction(runtime, 'apply-transaction', {
+        transaction: { id: 'tx-b4-c1', patches: [v3Patch(idA, motionId, v3Descriptor({ value: 160 }), 'p-c1')] },
+      }, 'b4-tx-c1');
+      sendTransaction(runtime, 'apply-transaction', {
+        transaction: { id: 'tx-b4-c2', patches: [v3Patch(idA, motionId, v3Descriptor({ value: 170 }), 'p-c2')] },
+      }, 'b4-tx-c2');
+      expect(tween.vars.x(0, elA)).toBe(170);
+      // Rollback do 2º → valor anterior (160), entrada preservada.
+      const rb2 = sendTransaction(runtime, 'rollback-transaction', { targetTransactionId: 'tx-b4-c2' }, 'b4-rb-c2');
+      expect(rb2?.type).toBe('transaction-committed');
+      expect(tween.vars.x(0, elA)).toBe(160);
+      // Grupo muda com o canal ativo; rollback do 1º remove a entrada que não
+      // existia → colapso pro shared ATUAL (120), tipo number.
+      runtime.send('apply-patch', {
+        patch: {
+          elementId: idA, kind: 'motion', motionId, property: 'retarget.final', before: null,
+          value: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: 120, writeModel: 'absolute', affectedTargetCount: 2 },
+        },
+      }, 'b4-group-120');
+      const rb1 = sendTransaction(runtime, 'rollback-transaction', { targetTransactionId: 'tx-b4-c1' }, 'b4-rb-c1');
+      expect(rb1?.type).toBe('transaction-committed');
+      expect(tween.vars.x).toBe(120);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(d) override explícito IGUAL ao grupo preserva o intent no ack e o undo restaura a ausência', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      const ack = sendTransaction(runtime, 'apply-transaction', {
+        transaction: { id: 'tx-b4-same', patches: [v3Patch(idA, motionId, v3Descriptor({ value: 100 }), 'p-same')] },
+      }, 'b4-tx-same');
+      expect(ack?.type).toBe('transaction-committed');
+      // O ack preserva o INTENT explícito (não vira herda por value === shared).
+      expect(ack.payload.transaction.patches[0].value).toMatchObject({ intent: 'override', value: 100 });
+      expect(typeof tween.vars.x).toBe('function'); // canal ativo com entrada explícita
+      const rollback = sendTransaction(runtime, 'rollback-transaction', { targetTransactionId: 'tx-b4-same' }, 'b4-rb-same');
+      expect(rollback?.type).toBe('transaction-committed');
+      expect(tween.vars.x).toBe(100); // ausência restaurada → colapso
+      delete window.gsap;
+      runtime.restore();
+    });
+  });
 });
