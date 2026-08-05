@@ -143,10 +143,27 @@
 
 - **Pergunta:** edição via caminho real danifica o estado temporal de tweens repeat/yoyo
   (restauração por `progress`)? Fix por `totalTime` fecha?
-- **Forma testada:** (pendente)
-- **Resultado bruto:** (pendente)
-- **Veredito:** (pendente)
-- **Consequência pro degrau:** (pendente)
+- **Forma testada:** `_probe-editwrite-witness.mjs` + baseline tracked (2026-08-05) — template
+  do witness da inspeção: edição REAL (`retarget.final` absoluto via clique+apply-patch),
+  referência = página SELECIONADA-não-editada (isola o dano da edição; seleção inócua pelo
+  `1ada4a7b`), comparação SÓ de estado temporal (totalTime/progress/reversed) no instante +
+  2 ticks; "edição aplicou" provado por render do início (end=160).
+- **Resultado bruto (witness parte a):** **6 RED congelados** —
+  - `repeat2-na-2a-iteracao`: totalTime **teleporta 1.5→0.5** (iteração inteira perdida) no
+    instante e nos 2 ticks;
+  - `repeat-infinito-3a-volta`: **2.5→1.5** (a batida perdida, a classe da inspeção);
+  - `controle-tween-simples`: verde (progress descreve o estado inteiro — restauração exata);
+  - `yoyo-na-perna-de-volta`: **NÃO reproduzido nesta forma** (verde; registrado, não
+    refutado — forma anotada no caso);
+  - `adaptativa-yoyoEase`: ⭐ contra minha previsão, o retarget absoluto **APLICA** (não
+    amostra nada; o lock unsampleable é end-only NA UI, não no bridge) e o temporal fica
+    intacto — registrado como fato.
+- **Veredito (parte a):** **provado** — o defeito existe no caminho de escrita, classe
+  restauração-por-progress, formas repeat≥1 em iteração posterior. Contrato congelado no
+  baseline; fix (parte b) pendente.
+- **Consequência pro degrau:** o degrau 3 não é seguro pra formas repeat em iteração
+  posterior até o fix `progress`→`totalTime` nos dois seams (`sampleGsapValue`,
+  `invalidatePreservingStart`).
 
 ## Tabela final — forma → degrau (entrada da Fase 1)
 
