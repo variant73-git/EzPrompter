@@ -13693,6 +13693,74 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
+    it('(Sol-r3#1) clear sob hazard de função é RECUSADO com zero execuções (a lane estrutural não pula o hazard)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      let executions = 0;
+      tween.vars.z = () => { executions += 1; return 38.5; };
+      tween.invalidate.mockClear();
+      executions = 0;
+      const rejected = sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'b4-sol-r3-1');
+      expect(rejected?.payload?.error).toBe('This animation uses randomized values — any edit would re-roll them.');
+      expect(tween.invalidate).not.toHaveBeenCalled();
+      expect(executions).toBe(0);
+      expect(typeof tween.vars.x).toBe('function'); // canal segue ativo, nada mutado
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(Sol-r3#2a) group-edit com canal ativo recusa carrier adicionado pós-canal (snap)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 163 }));
+      tween.vars.snap = { x: 10 }; // página adiciona o carrier DEPOIS do canal
+      runtime.send('apply-patch', {
+        patch: {
+          elementId: idA, kind: 'motion', motionId, property: 'retarget.final', before: null,
+          value: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: 125, writeModel: 'absolute', affectedTargetCount: 2 },
+        },
+      }, 'b4-sol-r3-2a');
+      const rejected = runtime.messages.filter((message) => message.type === 'patch-rejected').pop();
+      expect(rejected?.payload?.error).toBe('This animation uses value modifiers and cannot be overridden per element yet.');
+      expect(tween.vars.x(1, elB)).toBe(100); // shared intacto
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(Sol-r3#2b) group-edit com canal ativo: endpoint pós-write divergente → shared restaurado e recusa (carrier desconhecido)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      // Materialização passa a snapar pra múltiplos de 50 SEM carrier declarado
+      // (modificador desconhecido) — o pré-attest ainda bate (160/100 são
+      // múltiplos... não são; usar snap de 20: 160/100 múltiplos de 20 ✓,
+      // grupo→125 materializa 120 ≠ 125 → pós-write pega).
+      window.gsap.getProperty = (target, property) => {
+        const raw = typeof tween.vars[property] === 'function'
+          ? tween.vars[property]([elA, elB].indexOf(target), target)
+          : tween.vars[property];
+        return Math.round(Number(raw) / 20) * 20;
+      };
+      runtime.send('apply-patch', {
+        patch: {
+          elementId: idA, kind: 'motion', motionId, property: 'retarget.final', before: null,
+          value: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: 125, writeModel: 'absolute', affectedTargetCount: 2 },
+        },
+      }, 'b4-sol-r3-2b');
+      const rejected = runtime.messages.filter((message) => message.type === 'patch-rejected').pop();
+      expect(rejected?.payload?.error).toBe('This animation changes the value as it renders — the edit cannot be confirmed.');
+      expect(tween.vars.x(1, elB)).toBe(100); // shared RESTAURADO, não 125
+      delete window.gsap;
+      runtime.restore();
+    });
+
     it('(F) override com value null/"" é invalid_value — nunca coage pra 0', () => {
       const [elA, elB] = setupFlatTargets();
       const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });

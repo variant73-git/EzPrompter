@@ -4878,13 +4878,18 @@ function nativeMotionRuntimeBridge() {
     if (!targets.length) targets = record.targets || [];
     // Membership by IDENTITY — elementId resolution alone never qualifies.
     if (!targets.some((item) => item === element)) return { eligible: false, reason: 'membership' };
-    // The CLEAR lane skips the shape recomposition (audit D): removing our own
-    // entry and collapsing to `shared` is the same write class as the teardown
-    // collapse, which runs unconditionally — a page that mutates the tween's
-    // shape AFTER the channel went live (repeat added, css:{} injected) must
-    // not trap the user's override forever. Membership/identity above and the
-    // writer's stale/attestation checks still guard it.
-    if (options.lane === 'clear') return { eligible: true, reason: null };
+    // The CLEAR lane skips only the STRUCTURAL recomposition (audit D): a page
+    // that mutates the tween's shape AFTER the channel went live (repeat
+    // added, css:{} injected) must not trap the user's override forever. The
+    // HAZARD gate is NOT skippable (Sol r3#1): the clear's own invalidate
+    // would re-execute a sibling page function — the exact materialization
+    // the teardown fix refuses. Under a live hazard the clear refuses
+    // (fail-closed, monotonic doctrine); teardown still collapses the slot
+    // without invalidating.
+    if (options.lane === 'clear') {
+      if (gsapAnimationRandomHazard(animation, property)) return { eligible: false, reason: 'random' };
+      return { eligible: true, reason: null };
+    }
     let innerChildren = null;
     try { innerChildren = animation?.timeline?.getChildren?.() || null; } catch (_) { innerChildren = null; }
     if (targets.length < 2 || vars.stagger != null || (innerChildren && innerChildren.length)) {
@@ -5261,12 +5266,34 @@ function nativeMotionRuntimeBridge() {
         if (descriptor.component || (descriptor.writeModel && descriptor.writeModel !== 'absolute')) {
           throw bridgeError('unsupported_patch', 'This value has per-element overrides — only plain group edits are supported.');
         }
+        // Carriers added AFTER the channel went live (Sol r3#2): a group edit
+        // through a snap-like carrier would confirm a value that renders
+        // differently — same false-history class as the v3 lane.
+        if (gsapHasValueModifierCarrier(record.animation.vars)) {
+          throw bridgeError('unsupported_patch', 'This animation uses value modifiers and cannot be overridden per element yet.');
+        }
         gsapAttestOverrideEndpoints(record, overrideChannel, descriptor.runtimeProperty);
         const desired = descriptor.value;
+        const sharedBefore = overrideChannel.shared;
         overrideChannel.shared = typeof overrideChannel.shared === 'number' && Number.isFinite(Number(desired))
           ? Number(desired)
           : desired;
         invalidatePreservingStart(record.animation);
+        // POST-WRITE verification, mirroring the v3 writer (Sol r3#2): an
+        // UNKNOWN carrier renders something else — restore `shared` and
+        // refuse instead of committing an unrendered group value.
+        let verified = false;
+        try {
+          if (record.animation.vars?.[descriptor.runtimeProperty] === overrideChannel.wrapper) {
+            gsapAttestOverrideEndpoints(record, overrideChannel, descriptor.runtimeProperty);
+            verified = true;
+          }
+        } catch (_) { /* endpoint divergence — handled below */ }
+        if (!verified) {
+          overrideChannel.shared = sharedBefore;
+          try { invalidatePreservingStart(record.animation); } catch (_) {}
+          throw bridgeError('unsupported_patch', 'This animation changes the value as it renders — the edit cannot be confirmed.');
+        }
         return;
       }
     }

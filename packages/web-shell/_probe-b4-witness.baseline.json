@@ -397,6 +397,45 @@
     "executionsAfterTeardown": 0,
     "zAfterTeardown": 0
   },
+  "clearHazard": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "clear": {
+      "committed": false,
+      "ack": {
+        "type": "transaction-rejected",
+        "code": "unsupported_patch"
+      }
+    },
+    "executions": 0,
+    "varsXType": "function",
+    "zRendered": 0
+  },
+  "groupCarrier": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "group": {
+      "applied": false,
+      "error": "This animation uses value modifiers and cannot be overridden per element yet."
+    },
+    "trajB": [
+      0,
+      25,
+      50,
+      75,
+      100
+    ]
+  },
   "repeatRefusal": {
     "perTargetPublished": false,
     "tx": {

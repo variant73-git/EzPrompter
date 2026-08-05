@@ -401,6 +401,54 @@ const teardownHazard = await (async () => {
   return out;
 })();
 
+// (o) AUDIT r3 (Sol r3#1): clear sob hazard de função é recusado com ZERO
+// execuções da função da página (a lane estrutural não pula o hazard).
+const clearHazard = await (async () => {
+  const page = await newCasePage();
+  const out = await page.evaluate(() => {
+    /* eslint-disable no-undef */
+    const H = window.__H;
+    const tw = gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1, ease: 'none', paused: true });
+    H.boot();
+    const A = H.select('a');
+    const ownership = A.track && A.track.ownership;
+    const tx = H.applyTx('tx-b4-o1', A.elementId, A.motionId, H.v3(ownership, 'override', 160));
+    let executions = 0;
+    tw.vars.z = () => { executions += 1; return 38.5; };
+    executions = 0;
+    const clear = H.applyTx('tx-b4-o2', A.elementId, A.motionId, H.v3(ownership, 'clear'));
+    return {
+      tx,
+      clear,
+      executions,
+      varsXType: typeof tw.vars.x, // canal segue ativo (nada mutado)
+      zRendered: Number(gsap.getProperty(document.getElementById('a'), 'z')),
+    };
+  });
+  await page.close();
+  return out;
+})();
+
+// (p) AUDIT r3 (Sol r3#2): carrier (snap) adicionado APÓS o canal ativo —
+// group-edit recusa; shared/valores intactos.
+const groupCarrier = await (async () => {
+  const page = await newCasePage();
+  const out = await page.evaluate(() => {
+    /* eslint-disable no-undef */
+    const H = window.__H;
+    const tw = gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1, ease: 'none', paused: true });
+    H.boot();
+    const A = H.select('a');
+    const ownership = A.track && A.track.ownership;
+    const tx = H.applyTx('tx-b4-p1', A.elementId, A.motionId, H.v3(ownership, 'override', 163));
+    tw.vars.snap = { x: 10 }; // página adiciona o carrier DEPOIS
+    const group = H.groupEditV2(A.elementId, A.motionId, 125);
+    return { tx, group, trajB: H.trajectory(tw, 'b') };
+  });
+  await page.close();
+  return out;
+})();
+
 // (j) repeat:2 na MESMA página é recusado (chave B5 fechada) + publicação sem perTarget.
 const repeatRefusal = await (async () => {
   const page = await newCasePage();
@@ -421,7 +469,7 @@ const repeatRefusal = await (async () => {
 
 await browser.close();
 
-const observado = { referencia, referenciaGrupo120, principal, tampering, sensibilidade, auditRollback, snapRefusal, unwritableRefusal, teardownHazard, repeatRefusal };
+const observado = { referencia, referenciaGrupo120, principal, tampering, sensibilidade, auditRollback, snapRefusal, unwritableRefusal, teardownHazard, clearHazard, groupCarrier, repeatRefusal };
 
 if (RECORD) {
   console.log(JSON.stringify(observado, null, 2));
@@ -533,6 +581,18 @@ check('teardown colapsa o slot (escalar 100)', teardownHazard.varsXType === 'num
 check('função da página NÃO executada no teardown', teardownHazard.executionsAfterTeardown === teardownHazard.executionsBeforeTeardown,
   `antes=${teardownHazard.executionsBeforeTeardown} depois=${teardownHazard.executionsAfterTeardown}`);
 check('z nunca materializado (0)', teardownHazard.zAfterTeardown === 0, `z=${teardownHazard.zAfterTeardown}`);
+
+console.log('(o) audit r3 Sol#1: clear sob hazard recusado com zero execuções');
+check('override commitou antes do hazard', clearHazard.tx.committed === true, JSON.stringify(clearHazard.tx.ack));
+check('clear → rejected (hazard não pulável)', clearHazard.clear.committed === false, JSON.stringify(clearHazard.clear.ack));
+check('função da página NUNCA executada', clearHazard.executions === 0, `execuções=${clearHazard.executions}`);
+check('canal segue ativo, z nunca materializado', clearHazard.varsXType === 'function' && clearHazard.zRendered === 0,
+  `varsXType=${clearHazard.varsXType} z=${clearHazard.zRendered}`);
+
+console.log('(p) audit r3 Sol#2: carrier pós-canal recusa o group-edit');
+check('override 163 commitou antes do carrier', groupCarrier.tx.committed === true, JSON.stringify(groupCarrier.tx.ack));
+check('group-edit com snap → rejected', groupCarrier.group.applied === false, groupCarrier.group.error);
+check('herdeiro intacto (0→100)', eq(groupCarrier.trajB, referencia.trajB), JSON.stringify(groupCarrier.trajB));
 
 console.log('(j) repeat:2 recusado (chave B5 fechada)');
 check('publicação sem perTarget', repeatRefusal.perTargetPublished === false);
