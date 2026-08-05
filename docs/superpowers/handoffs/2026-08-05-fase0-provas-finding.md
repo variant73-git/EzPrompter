@@ -103,10 +103,41 @@
 
 - **Pergunta:** reparentear o filho interno vivo de um stagger preserva continuidade, isola o
   alvo, dá playhead independente — e o que o wrapper precisa projetar do pai?
-- **Forma testada:** (pendente)
-- **Resultado bruto:** (pendente)
-- **Veredito:** (pendente — por linha da matriz)
-- **Consequência pro degrau:** (pendente)
+- **Forma testada:** `_probe-fase0-p5-transplant.mjs` (2026-08-05) — GSAP 3.15 puro (sem
+  bridge; mecânica do motor). Transplante = capturar tempo LOCAL do filho →
+  `tween.timeline.remove(child)` → `gsap.timeline({paused:true}).add(child, 0)` →
+  `tl.totalTime(local, true)`. Stagger 0.2/duration 1/ease none, parado em 0.7 (i1 local 0.5,
+  x=50 — vida provada). Referência intocada em página própria; avanço IGUAL nos dois relógios;
+  sensibilidade = transplante sem restaurar o tempo.
+- **Resultado bruto (por linha):**
+  - `plain-midflight` ✅ ASSERTADO: no instante byte-igual à referência (alvo E irmãos);
+    após avanço igual (Δ0.2) byte-igual (i0=90/i1=70/i2=50); independência real — avançar SÓ o
+    relógio novo move só i1, irmãos congelados.
+  - `sensibilidade` ✅: transplante errado é INVISÍVEL no instante (`totalTime(0)` em relógio
+    já em 0 = no-op de render, x fica 50) e salta no TICK SEGUINTE (x=1) — o instrumento
+    detecta; ⭐ lição de método reconfirmada: dano temporal se mede no tick seguinte.
+  - `pai-repeat-yoyo` 📋: repeat/yoyo vivem na FACHADA (child repeat=0/yoyo=false, pai
+    repeat=2, totalDur pai 4.2 vs child 1) → o filho transplantado PERDE o ciclo — o wrapper
+    precisa projetar repeat/yoyo.
+  - `pai-timescale` 📋: timeScale vive na fachada (child/tl = 1) → wrapper precisa copiar;
+    sem salto no instante (15=15).
+  - `callbacks` 📋: `onComplete` fica na fachada; completar o pai ainda dispara o dele (1×,
+    caminho sem suppress); o transplantado não dispara nada — "quem herda o callback" segue
+    decisão de produto da Fase 1 (a pergunta do Sol), agora com baseline medido.
+  - `repeatRefresh-child` 📋⭐: o valor random JÁ RESOLVIDO sobrevive ao transplante
+    byte-igual (74.3269 = 74.3269); cruzar fronteira de repetição no relógio novo não erra e
+    re-rolla finito — **o caminho de promoção das formas adaptativas existe**: o transplante
+    preserva o estado resolvido que a amostragem nunca conseguiu reconstruir.
+  - `splittext-stagger` 📋: existe filho interno POR CHAR de SplitText real e o transplante
+    funciona; o re-split orfana o filho transplantado (consistente com P1 — substituição
+    total) → transplante em SplitText exige re-resolução por índice no ciclo de re-split.
+- **Veredito:** **provado no núcleo** (continuidade + isolamento + independência de playhead,
+  com sensibilidade); semânticas de herança (repeat/yoyo, timeScale, callbacks) são PROJETÁVEIS
+  e mapeadas — decisão de wrapper na Fase 1.
+- **Consequência pro degrau:** degrau 1 é REAL pra stagger com filho por alvo — inclusive como
+  rota de promoção de `repeatRefresh` (estado resolvido preservado). O wrapper da Fase 1
+  precisa projetar: repeat/yoyo/timeScale da fachada, política de callbacks, e (SplitText)
+  re-resolução por índice pós-re-split.
 
 ## P6 — Caminho de escrita: dano temporal em repeat/yoyo (witness + fix)
 
