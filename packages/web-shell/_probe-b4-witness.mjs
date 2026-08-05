@@ -322,6 +322,85 @@ const auditRollback = await runCase(`
   return { tx1, groupTx, afterGroup, rbGroup, afterGroupUndo, rbOverride, afterOverrideUndo, redo, afterRedo };
 `);
 
+// (l) AUDIT r2 (Sol #1): snap com valor não-múltiplo — o carrier recusa a
+// chave (nunca um commit de valor que não renderiza).
+const snapRefusal = await (async () => {
+  const page = await newCasePage();
+  const out = await page.evaluate(() => {
+    /* eslint-disable no-undef */
+    const H = window.__H;
+    const tw = gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, snap: { x: 10 }, duration: 1, ease: 'none', paused: true });
+    H.boot();
+    const A = H.select('a');
+    const ownership = A.track && A.track.ownership;
+    const perTargetPublished = Boolean(ownership && ownership.perTarget && ownership.perTarget.available);
+    const tx = H.applyTx('tx-b4-l', A.elementId, A.motionId, H.v3(ownership, 'override', 163));
+    // nada mudou: slot autoral intacto
+    return { perTargetPublished, tx, varsX: tw.vars.x, varsXType: typeof tw.vars.x };
+  });
+  await page.close();
+  return out;
+})();
+
+// (m) AUDIT r2 (Sol #3): slot não-gravável — recusa, nunca falso commit.
+const unwritableRefusal = await (async () => {
+  const page = await newCasePage();
+  const out = await page.evaluate(() => {
+    /* eslint-disable no-undef */
+    const H = window.__H;
+    const vars = { x: 100, duration: 1, ease: 'none', paused: true };
+    const tw = gsap.to([document.getElementById('a'), document.getElementById('b')], vars);
+    Object.defineProperty(tw.vars, 'x', { value: 100, enumerable: true, writable: false, configurable: true });
+    H.boot();
+    const A = H.select('a');
+    const ownership = A.track && A.track.ownership;
+    const tx = H.applyTx('tx-b4-m', A.elementId, A.motionId, H.v3(ownership, 'override', 160));
+    return { tx, varsX: tw.vars.x, trajA: H.trajectory(tw, 'a') };
+  });
+  await page.close();
+  return out;
+})();
+
+// (n) AUDIT r2 (Sol #4): teardown com hazard de função irmã NÃO executa a
+// função da página (colapsa o slot sem invalidar).
+const teardownHazard = await (async () => {
+  const page = await newCasePage();
+  const out = await page.evaluate(() => {
+    /* eslint-disable no-undef */
+    const H = window.__H;
+    const tw = gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, y: 10, duration: 1, ease: 'none', paused: true });
+    H.boot();
+    const A = H.select('a');
+    const ownership = A.track && A.track.ownership;
+    const tx = H.applyTx('tx-b4-n', A.elementId, A.motionId, H.v3(ownership, 'override', 160));
+    // página adiciona função hazard em z DEPOIS do canal ativo
+    let executions = 0;
+    tw.vars.z = () => { executions += 1; return 38.5; };
+    // observa o hazard (edição de y recusada — memória armada)
+    const yReplies = H.sendV2('apply-patch', {
+      patch: {
+        elementId: A.elementId, kind: 'motion', motionId: A.motionId, property: 'retarget.final', before: null,
+        value: { schemaVersion: 2, semanticProperty: 'translateY', runtimeProperty: 'y', value: 30, writeModel: 'absolute', affectedTargetCount: 2 },
+      },
+    });
+    const yRejected = yReplies.filter((m) => m.type === 'patch-rejected').pop();
+    const yRefused = Boolean(yRejected);
+    const executionsBeforeTeardown = executions;
+    window.__uncraftMotionBridge.teardown();
+    return {
+      tx,
+      yRefused,
+      varsXAfterTeardown: tw.vars.x,
+      varsXType: typeof tw.vars.x,
+      executionsBeforeTeardown,
+      executionsAfterTeardown: executions,
+      zAfterTeardown: Number(gsap.getProperty(document.getElementById('a'), 'z')),
+    };
+  });
+  await page.close();
+  return out;
+})();
+
 // (j) repeat:2 na MESMA página é recusado (chave B5 fechada) + publicação sem perTarget.
 const repeatRefusal = await (async () => {
   const page = await newCasePage();
@@ -342,7 +421,7 @@ const repeatRefusal = await (async () => {
 
 await browser.close();
 
-const observado = { referencia, referenciaGrupo120, principal, tampering, sensibilidade, auditRollback, repeatRefusal };
+const observado = { referencia, referenciaGrupo120, principal, tampering, sensibilidade, auditRollback, snapRefusal, unwritableRefusal, teardownHazard, repeatRefusal };
 
 if (RECORD) {
   console.log(JSON.stringify(observado, null, 2));
@@ -435,6 +514,25 @@ check('redo reativa o tombstone com shared ressincronizado (B em 0→100)',
   && eq(auditRollback.afterRedo.trajA, [0, 40, 80, 120, 160])
   && eq(auditRollback.afterRedo.trajB, referencia.trajB),
   `A=${JSON.stringify(auditRollback.afterRedo.trajA)} B=${JSON.stringify(auditRollback.afterRedo.trajB)}`);
+
+console.log('(l) audit r2 Sol#1: snap com valor não-múltiplo recusa a chave');
+check('publicação sem perTarget (carrier presente)', snapRefusal.perTargetPublished === false);
+check('v3 → rejected, slot autoral intacto', snapRefusal.tx.committed === false && snapRefusal.varsXType === 'number' && snapRefusal.varsX === 100,
+  `vars.x=${snapRefusal.varsX} (${snapRefusal.varsXType})`);
+
+console.log('(m) audit r2 Sol#3: slot não-gravável recusa — nunca falso commit');
+check('v3 → rejected', unwritableRefusal.tx.committed === false, JSON.stringify(unwritableRefusal.tx.ack));
+check('slot e trajetória intactos (100)', unwritableRefusal.varsX === 100 && eq(unwritableRefusal.trajA, referencia.trajA),
+  `vars.x=${unwritableRefusal.varsX} trajA=${JSON.stringify(unwritableRefusal.trajA)}`);
+
+console.log('(n) audit r2 Sol#4: teardown sob hazard não executa a função da página');
+check('override commitou antes do hazard', teardownHazard.tx.committed === true, JSON.stringify(teardownHazard.tx.ack));
+check('hazard observado (edição de y recusada)', teardownHazard.yRefused === true);
+check('teardown colapsa o slot (escalar 100)', teardownHazard.varsXType === 'number' && teardownHazard.varsXAfterTeardown === 100,
+  `vars.x=${teardownHazard.varsXAfterTeardown}`);
+check('função da página NÃO executada no teardown', teardownHazard.executionsAfterTeardown === teardownHazard.executionsBeforeTeardown,
+  `antes=${teardownHazard.executionsBeforeTeardown} depois=${teardownHazard.executionsAfterTeardown}`);
+check('z nunca materializado (0)', teardownHazard.zAfterTeardown === 0, `z=${teardownHazard.zAfterTeardown}`);
 
 console.log('(j) repeat:2 recusado (chave B5 fechada)');
 check('publicação sem perTarget', repeatRefusal.perTargetPublished === false);

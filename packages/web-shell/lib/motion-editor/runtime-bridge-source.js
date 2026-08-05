@@ -4847,7 +4847,25 @@ function nativeMotionRuntimeBridge() {
     'run-backwards': 'gsap.from() values are read-only — vars hold the start, not the end.',
     'not-authored': 'This value is not authored on the animation and cannot be overridden per element.',
     unit: 'This value uses a relative unit and cannot be overridden per element yet.',
+    modifier: 'This animation uses value modifiers and cannot be overridden per element yet.',
   };
+
+  // Value-mutating carrier vars (Sol audit #1): snap/roundProps/modifiers
+  // remap the RENDERED value away from the authored scalar — a confirmed
+  // override of 163 would render 160 and the next attestation would trap the
+  // channel. Presence via the for..in mirror (GSAP honors inherited
+  // enumerables). This list covers the KNOWN core carriers; the post-write
+  // endpoint verification in the writer fail-closes any unknown one.
+  const GSAP_VALUE_MODIFIER_VARS = ['snap', 'roundProps', 'modifiers'];
+
+  function gsapHasValueModifierCarrier(vars) {
+    try {
+      for (const key in vars) {
+        if (GSAP_VALUE_MODIFIER_VARS.includes(key) && vars[key] != null) return true;
+      }
+    } catch (_) { return true; }
+    return false;
+  }
 
   function gsapPerTargetEligibility(record, element, descriptor, options = {}) {
     const animation = record.animation;
@@ -4890,6 +4908,7 @@ function nativeMotionRuntimeBridge() {
     if (vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css)) {
       return { eligible: false, reason: 'css-wrapper' };
     }
+    if (gsapHasValueModifierCarrier(vars)) return { eligible: false, reason: 'modifier' };
     if (gsapPluginOwnedVar(vars, property)) return { eligible: false, reason: 'plugin' };
     // The channel's OWN wrapper occupying the expected slot of its own
     // property is the one function that stays eligible — the authored scalar
@@ -4912,6 +4931,15 @@ function nativeMotionRuntimeBridge() {
     // a re-roll hazard.
     if (gsapAnimationRandomHazard(animation, property)) return { eligible: false, reason: 'random' };
     if (!slotIsOwnWrapper) {
+      // The projection writes `vars[prop] = wrapper`: the slot must be an OWN
+      // WRITABLE DATA slot (Sol audit #3) — a non-writable slot fails the
+      // assignment silently (false commit, impossible undo), an accessor runs
+      // page code, an inherited slot has crossed provenance.
+      let slotDescriptor = null;
+      try { slotDescriptor = Object.getOwnPropertyDescriptor(vars, property); } catch (_) { slotDescriptor = null; }
+      if (!slotDescriptor || !('value' in slotDescriptor) || slotDescriptor.writable === false) {
+        return { eligible: false, reason: 'not-authored' };
+      }
       if (typeof slot !== 'number') {
         if (typeof slot !== 'string' || slot.trim() === '' || /random\(/i.test(slot)) {
           return { eligible: false, reason: 'not-authored' };
@@ -4955,7 +4983,15 @@ function nativeMotionRuntimeBridge() {
         if (vars && vars[property] === channel.wrapper) vars[property] = channel.shared;
         channel.state = 'collapsed';
         channel.overrides.clear();
-        try { invalidatePreservingStart(animation); } catch (_) {}
+        // The invalidate re-reads EVERY var — including a hazard function the
+        // page added after the channel went live, which the writers refuse to
+        // touch. Materializing it at teardown would execute page code the
+        // edit lanes fail-closed on (Sol audit #4: a sibling function ran
+        // twice and moved its channel). Under a hazard the slot is restored
+        // but the rendered state is left to the page's own next invalidate.
+        if (!gsapAnimationRandomHazard(animation)) {
+          try { invalidatePreservingStart(animation); } catch (_) {}
+        }
       } catch (_) {}
     });
   }
@@ -5040,6 +5076,20 @@ function nativeMotionRuntimeBridge() {
       gsapOverrideChannels.set(animation, channels);
     }
     let channel = channels.get(property);
+    // Pre-state snapshot for the post-write verification (Sol audit #1/#3):
+    // if the projected write cannot be CONFIRMED (unknown value-mutating
+    // carrier, unwritable slot), every internal mutation is undone and the
+    // patch refuses — a confirmed-but-unrendered override is a false history.
+    const preState = channel ? {
+      created: false,
+      state: channel.state,
+      shared: channel.shared,
+      hadEntry: channel.overrides.has(element),
+      entry: channel.overrides.get(element) || null,
+    } : { created: true };
+    let slotBefore;
+    try { slotBefore = vars[property]; } catch (_) { slotBefore = undefined; }
+    let createdRegistryEntry = null;
     if (!channel) {
       if (descriptor.intent === 'clear') return; // nothing to clear — replay-safe no-op
       let authoredDescriptor;
@@ -5070,7 +5120,8 @@ function nativeMotionRuntimeBridge() {
       });
       channel = created;
       channels.set(property, channel);
-      gsapOverrideChannelRegistry.add({ animation, property, channel });
+      createdRegistryEntry = { animation, property, channel };
+      gsapOverrideChannelRegistry.add(createdRegistryEntry);
     } else if (channel.state === 'collapsed' && descriptor.intent !== 'clear') {
       // Tombstone REACTIVATION (audit A): the slot may have legitimately moved
       // while the channel was collapsed (a group-edit's rollback, the page's
@@ -5110,6 +5161,34 @@ function nativeMotionRuntimeBridge() {
       channel.state = 'active';
     }
     invalidatePreservingStart(animation);
+    // POST-WRITE verification (Sol audit #1/#3): the projection must have
+    // LANDED (writable slot) and the materialized endpoints must MATCH what
+    // the channel promises — an unknown value-mutating carrier (snap-like)
+    // renders something else and would leave a confirmed override that never
+    // happened. Any divergence restores every internal mutation and refuses.
+    let verified = false;
+    try {
+      const expectedProjection = channel.state === 'active' ? channel.wrapper : channel.shared;
+      if (vars[property] === expectedProjection) {
+        gsapAttestOverrideEndpoints(record, channel, property);
+        verified = true;
+      }
+    } catch (_) { /* endpoint divergence — handled below */ }
+    if (!verified) {
+      channel.overrides.delete(element);
+      if (preState.hadEntry) channel.overrides.set(element, preState.entry);
+      if (!preState.created) {
+        channel.shared = preState.shared;
+        channel.state = preState.state;
+      }
+      try { vars[property] = slotBefore; } catch (_) {}
+      if (preState.created) {
+        channels.delete(property);
+        if (createdRegistryEntry) gsapOverrideChannelRegistry.delete(createdRegistryEntry);
+      }
+      try { invalidatePreservingStart(animation); } catch (_) {}
+      throw bridgeError('unsupported_patch', 'This animation changes the value as it renders — the override cannot be confirmed.');
+    }
   }
 
   function applyGsapRetarget(record, descriptor) {

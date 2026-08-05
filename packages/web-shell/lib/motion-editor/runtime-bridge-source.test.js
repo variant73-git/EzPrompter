@@ -13591,6 +13591,108 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
+    it('(Sol#1) carriers de modificador (snap/roundProps/modifiers) recusam a chave B4', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, snap: { x: 10 }, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor({ value: 163 }), 'b4-sol1a');
+      expect(rejected?.payload?.error).toBe('This animation uses value modifiers and cannot be overridden per element yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(Sol#1b) endpoint pós-write divergente do pedido → recusa E estado interno restaurado (fail-closed pra carrier desconhecido)', () => {
+      const [elA, elB] = setupFlatTargets();
+      // Double que SNAPA a materialização pra múltiplos de 10 sem nenhum
+      // carrier declarado em vars — modela um modificador desconhecido que a
+      // recomposição por lista não enxerga.
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const materializedSnap = new Map();
+      window.gsap.getProperty = (target, property) => {
+        const raw = typeof tween.vars[property] === 'function'
+          ? tween.vars[property]([elA, elB].indexOf(target), target)
+          : tween.vars[property];
+        const snapped = Math.round(Number(raw) / 10) * 10;
+        materializedSnap.set(target, snapped);
+        return snapped;
+      };
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor({ value: 163 }), 'b4-sol1b');
+      expect(rejected?.payload?.error).toBe("This animation changes the value as it renders — the override cannot be confirmed.");
+      // Estado interno restaurado: slot segue escalar 100, sem canal ativo.
+      expect(tween.vars.x).toBe(100);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(Sol#3) slot não-gravável / accessor / herdado recusa a chave (nunca falso commit)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      Object.defineProperty(tween.vars, 'x', { value: 100, enumerable: true, writable: false, configurable: true });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor({ value: 160 }), 'b4-sol3');
+      expect(rejected?.payload?.error).toBe('This value is not authored on the animation and cannot be overridden per element.');
+      expect(tween.vars.x).toBe(100);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(Sol#4) teardown com hazard de função irmã NÃO invalida (não executa a função da página); sem hazard, invalida', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, y: 10, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      // Página adiciona função hazard em z DEPOIS do canal ativo (o clear
+      // comum recusaria — o teardown não pode materializar o que os writers
+      // recusam tocar).
+      let executions = 0;
+      tween.vars.z = () => { executions += 1; return 38.5; };
+      // Observa o hazard (edição de y recusada) — memória monotônica armada.
+      runtime.send('apply-patch', {
+        patch: {
+          elementId: idA, kind: 'motion', motionId, property: 'retarget.final', before: null,
+          value: { schemaVersion: 2, semanticProperty: 'translateY', runtimeProperty: 'y', value: 30, writeModel: 'absolute', affectedTargetCount: 2 },
+        },
+      }, 'b4-sol4-observe');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').pop()?.payload?.error)
+        .toBe('This animation uses randomized values — any edit would re-roll them.');
+      tween.invalidate.mockClear();
+      executions = 0;
+      window.__uncraftMotionBridge.teardown();
+      // Colapso do slot acontece (wrapper nunca órfão)...
+      expect(tween.vars.x).toBe(100);
+      // ...mas SEM invalidate (que re-executaria a função da página).
+      expect(tween.invalidate).not.toHaveBeenCalled();
+      expect(executions).toBe(0);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(Sol#4b) o teste que faltava do 3(d): função da página adicionada PÓS-colapso segue hazard', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, y: 10, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'b4-sol4b-clear');
+      expect(tween.vars.x).toBe(100); // colapso limpo
+      tween.vars.z = () => 7; // função da página pós-colapso
+      runtime.send('apply-patch', {
+        patch: {
+          elementId: idA, kind: 'motion', motionId, property: 'retarget.final', before: null,
+          value: { schemaVersion: 2, semanticProperty: 'translateY', runtimeProperty: 'y', value: 30, writeModel: 'absolute', affectedTargetCount: 2 },
+        },
+      }, 'b4-sol4b-edit');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').pop()?.payload?.error)
+        .toBe('This animation uses randomized values — any edit would re-roll them.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
     it('(F) override com value null/"" é invalid_value — nunca coage pra 0', () => {
       const [elA, elB] = setupFlatTargets();
       const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });

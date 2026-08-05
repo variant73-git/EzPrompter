@@ -353,6 +353,50 @@
       ]
     }
   },
+  "snapRefusal": {
+    "perTargetPublished": false,
+    "tx": {
+      "committed": false,
+      "ack": {
+        "type": "transaction-rejected",
+        "code": "unsupported_patch"
+      }
+    },
+    "varsX": 100,
+    "varsXType": "number"
+  },
+  "unwritableRefusal": {
+    "tx": {
+      "committed": false,
+      "ack": {
+        "type": "transaction-rejected",
+        "code": "unsupported_patch"
+      }
+    },
+    "varsX": 100,
+    "trajA": [
+      0,
+      25,
+      50,
+      75,
+      100
+    ]
+  },
+  "teardownHazard": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "yRefused": true,
+    "varsXAfterTeardown": 100,
+    "varsXType": "number",
+    "executionsBeforeTeardown": 0,
+    "executionsAfterTeardown": 0,
+    "zAfterTeardown": 0
+  },
   "repeatRefusal": {
     "perTargetPublished": false,
     "tx": {
