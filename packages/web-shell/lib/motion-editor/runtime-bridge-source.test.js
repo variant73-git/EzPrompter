@@ -13473,6 +13473,32 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
+    it('(r4-a) rota de PUBLICAÇÃO do NaN (audit r4): terminal opaque (vars.data >128 objetos) pula a amostragem → perTarget AUSENTE', () => {
+      // O Sol reproduziu no bridge real: com vars.data volumoso o verdict
+      // 'opaque' retorna ANTES de qualquer amostragem, então um NaN parkeado
+      // ANTES da seleção SOBREVIVE até o perTarget — em d93d43b0 (pré-predicado, fix r2)
+      // publicava available/writable true (RED medido em worktree; verde em
+      // 965672b5, onde o predicado entrou, e no HEAD); o predicado de clock na elegibilidade normal
+      // fecha também essa rota de publicação (não só o patch-time).
+      const [elA, elB] = setupFlatTargets();
+      const made = makeStatefulTemporalDouble([elA, elB], {
+        vars: { x: 100, repeat: 2, duration: 1, data: Array.from({ length: 129 }, () => ({})) },
+        repeat: 2,
+      });
+      const { state } = made;
+      state.totalTime = NaN; // ANTES da seleção — o caminho opaque não cura
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      const track = selection.payload.element.motion[0].tracks.find((entry) => entry.property === 'x');
+      expect(track).toBeTruthy();
+      expect(track.ownership.perTarget).toBeUndefined();
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'r4-a');
+      expect(rejected?.payload?.error).toBe("This animation's timing cannot be read safely — per-target overrides are not available.");
+      delete window.gsap;
+      runtime.restore();
+    });
+
     it('(l2-a) group-edit v2 com canal ativo + drift repeatRefresh → recusa temporal recomposta; shared intacto', () => {
       const [elA, elB] = setupFlatTargets();
       const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });

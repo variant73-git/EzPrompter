@@ -693,6 +693,15 @@
       "varsXType": "number"
     }
   },
+  "nanPublication": {
+    "nanSurvivedSelection": true,
+    "trackPresent": true,
+    "perTargetAbsent": true,
+    "write": {
+      "applied": false,
+      "error": "This animation's timing cannot be read safely — per-target overrides are not available."
+    }
+  },
   "adaptiveDrift": {
     "tx": {
       "committed": true,

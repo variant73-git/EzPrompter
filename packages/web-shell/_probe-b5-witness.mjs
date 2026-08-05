@@ -513,6 +513,37 @@ const clockDrift = await runCase(`
   return { tx, durationZero, negativeDelay, nanClock, recovered };
 `);
 
+// ---- ROTA DE PUBLICAÇÃO DO NaN (audit r4, reproduzida pelo Sol): vars.data
+// com >128 objetos → verdict 'opaque' retorna ANTES da amostragem → um NaN
+// parkeado ANTES da seleção SOBREVIVE até o perTarget. Em d93d43b0
+// (pré-predicado, fix r2) a publicação anunciava available/writable true
+// (RED medido em worktree; verde a partir de 965672b5); o predicado de clock na
+// elegibilidade normal fecha também ESTA rota (não só o patch-time).
+const nanPublication = await (async () => {
+  const page = await newCasePage();
+  const out = await page.evaluate(() => {
+    /* eslint-disable no-undef */
+    const H = window.__H;
+    const tw = gsap.to([document.getElementById('a'), document.getElementById('b')], {
+      x: 100, duration: 1, ease: 'none', repeat: 2, paused: true,
+      data: Array.from({ length: 129 }, () => ({})),
+    });
+    tw.totalTime(1.5, true);
+    tw.totalTime(NaN, true); // ANTES da seleção
+    H.boot();
+    const A = H.select('a');
+    const ownership = A.track && A.track.ownership;
+    return {
+      nanSurvivedSelection: Number.isNaN(tw.totalTime()),
+      trackPresent: Boolean(A.track),
+      perTargetAbsent: !(ownership && ownership.perTarget),
+      write: H.applyPatch(A.elementId, A.motionId, 'retarget.final', H.v3(ownership, 'override', 160)),
+    };
+  });
+  await page.close();
+  return out;
+})();
+
 // ---- DRIFT ADAPTATIVO (audit r1#3): repeatRefresh pós-canal → o clear REAL
 // recusaria, então a publicação NÃO pode anunciar available.
 const adaptiveDrift = await runCase(`
@@ -535,7 +566,7 @@ await browser.close();
 
 const observado = {
   referencia, principal, matrizN1, matrizN5, fronteiras, running, callbacks,
-  tampering, sensibilidade, sensibilidadeInvalidate, boundaries, timingEDrift, clockDrift, adaptiveDrift,
+  tampering, sensibilidade, sensibilidadeInvalidate, boundaries, timingEDrift, clockDrift, nanPublication, adaptiveDrift,
 };
 
 if (RECORD) {
@@ -677,6 +708,10 @@ check('duration(0): available FALSE + clear recusado no gate (mensagem de timing
 check('repeatDelay(-0.5) ACEITO pelo GSAP: available FALSE + clear recusado no gate', clockDrift.negativeDelay.acceptedBySetter === true && clockDrift.negativeDelay.available === false && clockDrift.negativeDelay.clear.applied === false && clockDrift.negativeDelay.clear.error === "This animation's timing cannot be read safely — per-target overrides are not available.", JSON.stringify(clockDrift.negativeDelay.clear));
 check('totalTime(NaN) PERSISTE e write+clear recusam no gate (r3), canal intacto', clockDrift.nanClock.sticks === true && clockDrift.nanClock.write.applied === false && clockDrift.nanClock.write.error === "This animation's timing cannot be read safely — per-target overrides are not available." && clockDrift.nanClock.clear.applied === false && clockDrift.nanClock.wrapperIntact === true, JSON.stringify(clockDrift.nanClock));
 check('clock recuperado: available volta TRUE e o clear commit+colapsa', clockDrift.recovered.available === true && clockDrift.recovered.clear.committed === true && clockDrift.recovered.varsXType === 'number', JSON.stringify(clockDrift.recovered));
+
+console.log('(np) rota de publicação do NaN (r4: terminal opaque preserva o NaN)');
+check('NaN SOBREVIVE à seleção (opaque pula a amostragem) e a track publica', nanPublication.nanSurvivedSelection === true && nanPublication.trackPresent === true, JSON.stringify(nanPublication));
+check('perTarget AUSENTE (a publicação não mente) e write recusado por timing', nanPublication.perTargetAbsent === true && nanPublication.write.applied === false && nanPublication.write.error === "This animation's timing cannot be read safely — per-target overrides are not available.", JSON.stringify(nanPublication.write));
 
 console.log('(ad) drift adaptativo (r1#3: available = removibilidade EFETIVA)');
 check('override commitou antes do drift', adaptiveDrift.tx.committed === true);
