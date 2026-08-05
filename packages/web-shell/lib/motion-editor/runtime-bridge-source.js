@@ -2424,15 +2424,21 @@ function nativeMotionRuntimeBridge() {
               // never from a write-model name. States are honest three-state:
               // override (with value) / inherit (explicit entry) / none.
               perTarget: (() => {
-                const eligible = overrideChannelLive
-                  || gsapPerTargetEligibility(
-                    { animation, target: primaryTarget, targets: elementTargets },
-                    primaryTarget,
-                    { runtimeProperty: track.property },
-                  ).eligible;
-                if (!eligible) return null;
+                // Split capability (advise Q5): `available` = the channel is
+                // reachable (live, so clears/resets work) OR the shape takes a
+                // first override; `writable` = the CURRENT shape accepts a NEW
+                // write. A page drift after the channel went live keeps the
+                // existing state removable without advertising writes the v3
+                // lane would refuse.
+                const eligibleNow = gsapPerTargetEligibility(
+                  { animation, target: primaryTarget, targets: elementTargets },
+                  primaryTarget,
+                  { runtimeProperty: track.property },
+                ).eligible;
+                if (!overrideChannelLive && !eligibleNow) return null;
                 return {
                   available: true,
+                  writable: eligibleNow,
                   states: elementTargets.map((targetElement) => {
                     const entry = overrideChannelLive ? overrideChannel.overrides.get(targetElement) : null;
                     if (entry && entry.intent === 'override') {
@@ -4876,6 +4882,51 @@ function nativeMotionRuntimeBridge() {
     return false;
   }
 
+  // Adaptive vars re-shape the tween's INTERIOR on invalidate — repeatRefresh
+  // re-rolls values at iteration boundaries, yoyoEase/easeReverse change the
+  // curve between legs — without necessarily diverging the ENDPOINTS the
+  // attestation measures (advise Q5). Any lane that would invalidate under
+  // them (clear with a real entry, teardown) treats them like the random
+  // hazard: fail-closed. For..in mirror; a throwing accessor reads as hazard.
+  function gsapAdaptiveInvalidateHazard(animation) {
+    try {
+      const vars = animation?.vars;
+      if (!vars) return false;
+      for (const key in vars) {
+        if ((key === 'repeatRefresh' || key === 'yoyoEase' || key === 'easeReverse') && vars[key]) return true;
+      }
+      return false;
+    } catch (_) { return true; }
+  }
+
+  // The bridge's OWN timing lane mutates the tween through live setters
+  // (playbackMode 'loop' calls repeat(-1)) — a route that can turn an ACTIVE
+  // override channel's animation into a refused temporal shape without ever
+  // passing the v3 gate (advise Q5, lane 1). Post-mutation verify against the
+  // SAME classifier, revert on refusal: verification closes the class, a
+  // per-property list would only close instances (B4 lesson).
+  function guardChannelTemporalMutation(record, animation, mutate) {
+    let hasActive = false;
+    try {
+      const channels = gsapOverrideChannels.get(animation);
+      if (channels) channels.forEach((channel) => { if (channel.state === 'active') hasActive = true; });
+    } catch (_) { hasActive = true; }
+    if (!hasActive) { mutate(); return; }
+    const prior = {};
+    try { prior.repeat = animation.repeat?.(); } catch (_) {}
+    try { prior.yoyo = animation.yoyo?.(); } catch (_) {}
+    try { prior.repeatDelay = animation.repeatDelay?.(); } catch (_) {}
+    try { prior.duration = animation.duration?.(); } catch (_) {}
+    mutate();
+    const refusal = gsapPerTargetTemporalRefusal(record, animation, animation.vars || {});
+    if (!refusal) return;
+    try { if (prior.repeat !== undefined) animation.repeat?.(prior.repeat); } catch (_) {}
+    try { if (prior.yoyo !== undefined) animation.yoyo?.(prior.yoyo); } catch (_) {}
+    try { if (prior.repeatDelay !== undefined) animation.repeatDelay?.(prior.repeatDelay); } catch (_) {}
+    try { if (prior.duration !== undefined) animation.duration?.(prior.duration); } catch (_) {}
+    throw new Error('This timing change would break the per-target overrides on this animation — reset them first.');
+  }
+
   // Temporal shape classifier for the per-target keys (B5/B6 quantified
   // predicates — advise 2026-08-05). Probe-grounded on real GSAP 3.15
   // (_probe-b5b6-gsap-claims.mjs): repeat() returns NULL for authored
@@ -4964,6 +5015,16 @@ function nativeMotionRuntimeBridge() {
       const clearChannel = gsapOverrideChannelFor(animation, property);
       if (!clearChannel || !clearChannel.overrides.has(element)) return { eligible: true, reason: null };
       if (gsapAnimationRandomHazard(animation, property)) return { eligible: false, reason: 'random' };
+      // Adaptive keys are NOT structural either (advise Q5): the clear's own
+      // invalidate would re-roll the interior (repeatRefresh) or re-shape the
+      // legs (yoyoEase/easeReverse) without diverging the endpoints the
+      // attestation measures. Refuse before any invalidate can run.
+      try {
+        for (const key in vars) {
+          if (key === 'repeatRefresh' && vars[key]) return { eligible: false, reason: 'repeat-refresh' };
+          if ((key === 'yoyoEase' || key === 'easeReverse') && vars[key]) return { eligible: false, reason: 'adaptive-ease' };
+        }
+      } catch (_) { return { eligible: false, reason: 'temporal-unreadable' }; }
       // Carriers are NOT structural (Sol r4): a clear under a snap-like
       // carrier would invalidate, materialize the carrier mid-render and then
       // fail its own post-write attestation — a REJECTED operation that
@@ -5072,7 +5133,7 @@ function nativeMotionRuntimeBridge() {
         // edit lanes fail-closed on (Sol audit #4: a sibling function ran
         // twice and moved its channel). Under a hazard the slot is restored
         // but the rendered state is left to the page's own next invalidate.
-        if (!gsapAnimationRandomHazard(animation)) {
+        if (!gsapAnimationRandomHazard(animation) && !gsapAdaptiveInvalidateHazard(animation)) {
           try { invalidatePreservingStart(animation); } catch (_) {}
         }
       } catch (_) {}
@@ -5357,6 +5418,16 @@ function nativeMotionRuntimeBridge() {
         // differently — same false-history class as the v3 lane.
         if (gsapHasValueModifierCarrier(record.animation.vars)) {
           throw bridgeError('unsupported_patch', 'This animation uses value modifiers and cannot be overridden per element yet.');
+        }
+        // Temporal recomposition (advise Q5): the endpoint attestation cannot
+        // see a drift to repeatRefresh/yoyoEase/infinite repeat — the write's
+        // invalidate would re-roll the interior or re-base the loop with the
+        // channel live. Same fail-closed boundary as the v3 lane.
+        {
+          const temporalRefusal = gsapPerTargetTemporalRefusal(record, record.animation, record.animation.vars || {});
+          if (temporalRefusal) {
+            throw bridgeError('unsupported_patch', B4_REFUSAL_MESSAGES[temporalRefusal] || 'Per-target overrides are not available for this animation yet.');
+          }
         }
         gsapAttestOverrideEndpoints(record, overrideChannel, descriptor.runtimeProperty);
         const desired = descriptor.value;
@@ -5781,13 +5852,17 @@ function nativeMotionRuntimeBridge() {
       applyGsapKeyframe(record, patch.property.slice('keyframe.'.length), value);
     } else if (patch.property === 'timing.playbackMode') {
       const playbackMode = ['loop', 'ping-pong'].includes(value) ? value : 'once';
-      animation.repeat?.(playbackMode === 'once' ? 0 : -1);
-      animation.yoyo?.(playbackMode === 'ping-pong');
-    } else if (patch.property === 'timing.duration') { animation.duration?.(Math.max(0, Number(value)) / 1000); refreshIntroLatch(animation); }
-    else if (patch.property === 'timing.delay') { animation.delay?.(Number(value) / 1000); refreshIntroLatch(animation); }
-    else if (patch.property === 'timing.iterations') animation.repeat?.(Math.max(0, Number(value) - 1));
-    else if (patch.property === 'timing.repeatDelay') animation.repeatDelay?.(Math.max(0, Number(value)) / 1000);
-    else if (patch.property === 'timing.yoyo') animation.yoyo?.(Boolean(value));
+      guardChannelTemporalMutation(record, animation, () => {
+        animation.repeat?.(playbackMode === 'once' ? 0 : -1);
+        animation.yoyo?.(playbackMode === 'ping-pong');
+      });
+    } else if (patch.property === 'timing.duration') {
+      guardChannelTemporalMutation(record, animation, () => { animation.duration?.(Math.max(0, Number(value)) / 1000); });
+      refreshIntroLatch(animation);
+    } else if (patch.property === 'timing.delay') { animation.delay?.(Number(value) / 1000); refreshIntroLatch(animation); }
+    else if (patch.property === 'timing.iterations') guardChannelTemporalMutation(record, animation, () => { animation.repeat?.(Math.max(0, Number(value) - 1)); });
+    else if (patch.property === 'timing.repeatDelay') guardChannelTemporalMutation(record, animation, () => { animation.repeatDelay?.(Math.max(0, Number(value)) / 1000); });
+    else if (patch.property === 'timing.yoyo') guardChannelTemporalMutation(record, animation, () => { animation.yoyo?.(Boolean(value)); });
     else if (patch.property === 'scroll.start' || patch.property === 'scroll.end') {
       // Verified on real GSAP 3.15 (probe-scrolltrigger-range.mjs): numeric px in
       // vars.start/end + refresh() retargets the trigger and the tween tracks the

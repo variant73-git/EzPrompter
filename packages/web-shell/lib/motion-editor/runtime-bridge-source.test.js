@@ -13210,6 +13210,228 @@ describe('native motion runtime bridge', () => {
     });
   });
 
+  // Fase 1 / B5+B6 — as LANES que atravessam o gate temporal (advise Sol Q5;
+  // lição r3–r6 do B4: fix num gate exige re-examinar todas as lanes). A lane
+  // de timing do PRÓPRIO bridge usa setters vivos (playbackMode 'loop' chama
+  // repeat(-1)!) e pode transformar um canal ativo em forma proibida sem
+  // passar pelo gate v3; o group-edit com canal precisa recompor a
+  // elegibilidade temporal (endpoint não detecta repeatRefresh/yoyoEase);
+  // publicação separa "canal removível" (available) de "aceita write novo"
+  // (writable); clear/teardown tratam chaves adaptativas como hazard de
+  // invalidate (re-roll interior sem divergir endpoints).
+  describe('lanes temporais com canal ativo (B5/B6)', () => {
+    function makeStatefulTemporalDouble(targets, opts = {}) {
+      const made = makeFlatTweenDouble(targets, opts);
+      const timing = { repeat: opts.repeat ?? 0, yoyo: opts.yoyo ?? false, repeatDelay: 0 };
+      made.tween.repeat = (value) => {
+        if (value === undefined) return timing.repeat;
+        timing.repeat = value; return made.tween;
+      };
+      made.tween.yoyo = (value) => {
+        if (value === undefined) return timing.yoyo;
+        timing.yoyo = value; return made.tween;
+      };
+      made.tween.repeatDelay = (value) => {
+        if (value === undefined) return timing.repeatDelay;
+        timing.repeatDelay = value; return made.tween;
+      };
+      return { ...made, timing };
+    }
+
+    function sendTiming(runtime, elementId, motionId, property, value, requestId) {
+      runtime.send('apply-patch', {
+        patch: { elementId, kind: 'motion', motionId, property, before: null, value },
+      }, requestId);
+      return runtime.messages.filter((message) => message.type === 'patch-rejected').pop();
+    }
+
+    it("(l1-a) timing.playbackMode 'loop' com canal ativo → recusa (repeat(-1) tornaria a forma infinita); repeat e wrapper intactos", () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeStatefulTemporalDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, elementId, motionId, v3Descriptor({ value: 160 }), 'l1-a-override');
+      expect(typeof tween.vars.x).toBe('function');
+      const rejected = sendTiming(runtime, elementId, motionId, 'timing.playbackMode', 'loop', 'l1-a-timing');
+      expect(rejected?.payload?.error).toBe('This timing change would break the per-target overrides on this animation — reset them first.');
+      expect(tween.repeat()).toBe(2);
+      expect(typeof tween.vars.x).toBe('function');
+      expect(tween.vars.x(0, elA)).toBe(160);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(l1-b) timing.yoyo true num repeat:2 com canal ativo → PERMITIDO (segue dentro da família B5/B6)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeStatefulTemporalDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, elementId, motionId, v3Descriptor({ value: 160 }), 'l1-b-override');
+      const rejected = sendTiming(runtime, elementId, motionId, 'timing.yoyo', true, 'l1-b-timing');
+      expect(rejected).toBeUndefined();
+      expect(tween.yoyo()).toBe(true);
+      expect(typeof tween.vars.x).toBe('function');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(l1-c) timing.repeatDelay 400 com canal ativo → recusa; repeatDelay volta a 0', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeStatefulTemporalDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, elementId, motionId, v3Descriptor({ value: 160 }), 'l1-c-override');
+      const rejected = sendTiming(runtime, elementId, motionId, 'timing.repeatDelay', 400, 'l1-c-timing');
+      expect(rejected?.payload?.error).toBe('This timing change would break the per-target overrides on this animation — reset them first.');
+      expect(tween.repeatDelay()).toBe(0);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it("(l1-d) timing.playbackMode 'loop' SEM canal → segue funcionando (não-regressão)", () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeStatefulTemporalDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendTiming(runtime, elementId, motionId, 'timing.playbackMode', 'loop', 'l1-d-timing');
+      expect(rejected).toBeUndefined();
+      expect(tween.repeat()).toBe(-1);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(l1-e) timing.yoyo true num repeat:0 com canal ativo → recusa (pós-estado = yoyo sem repeat)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeStatefulTemporalDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, elementId, motionId, v3Descriptor({ value: 160 }), 'l1-e-override');
+      const rejected = sendTiming(runtime, elementId, motionId, 'timing.yoyo', true, 'l1-e-timing');
+      expect(rejected?.payload?.error).toBe('This timing change would break the per-target overrides on this animation — reset them first.');
+      expect(tween.yoyo()).toBe(false);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(l2-a) group-edit v2 com canal ativo + drift repeatRefresh → recusa temporal recomposta; shared intacto', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, elementId, motionId, v3Descriptor({ value: 160 }), 'l2-a-override');
+      tween.vars.repeatRefresh = true; // drift da página DEPOIS do canal
+      runtime.send('apply-patch', {
+        patch: {
+          elementId, kind: 'motion', motionId, property: 'retarget.final', before: null,
+          value: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: 120, writeModel: 'absolute', affectedTargetCount: 2 },
+        },
+      }, 'l2-a-group');
+      const rejected = runtime.messages.filter((message) => message.type === 'patch-rejected').pop();
+      expect(rejected?.payload?.error).toBe('This animation re-rolls its values on each repeat — per-target overrides are not available.');
+      expect(tween.vars.x(1, elB)).toBe(100); // shared NÃO mudou
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(l3-a) publicação: canal ativo → writable true; drift infinito → available true + writable false + states preservados', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }), 'l3-a-override');
+      let selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      selectMotion(runtime, elA);
+      selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      let track = selection.payload.element.motion[0].tracks.find((entry) => entry.property === 'x');
+      expect(track.ownership.perTarget?.available).toBe(true);
+      expect(track.ownership.perTarget?.writable).toBe(true);
+      // Página drifta pra infinito: canal segue removível, write novo não.
+      tween.repeat = () => -1;
+      selectMotion(runtime, elA);
+      selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      track = selection.payload.element.motion[0].tracks.find((entry) => entry.property === 'x');
+      expect(track.ownership.perTarget?.available).toBe(true);
+      expect(track.ownership.perTarget?.writable).toBe(false);
+      const states = Object.fromEntries((track.ownership.perTarget?.states || []).map((state) => [state.elementId, state]));
+      expect(states[idA]).toMatchObject({ intent: 'override', value: 160 });
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(l4-a) clear com entrada real sob drift repeatRefresh → recusa (invalidate re-rollaria o interior); no-op clear segue commitando', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }), 'l4-a-override');
+      tween.vars.repeatRefresh = true; // drift
+      const refused = sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'l4-a-clear');
+      expect(refused?.payload?.error).toBe('This animation re-rolls its values on each repeat — per-target overrides are not available.');
+      expect(typeof tween.vars.x).toBe('function'); // canal intacto
+      // No-op clear (elemento SEM entrada) segue commitando antes de qualquer gate.
+      const { elementId: idB } = selectMotion(runtime, elB);
+      const priorRejected = runtime.messages.filter((message) => message.type === 'patch-rejected').length;
+      sendV3(runtime, idB, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'l4-a-noop');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(priorRejected);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(l4-b) teardown sob chave adaptativa → colapsa o slot SEM invalidar (render fica pro próximo invalidate da página)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }), 'l4-b-override');
+      tween.vars.repeatRefresh = true; // drift DEPOIS do canal
+      const invalidatesBefore = tween.invalidate.mock.calls.length;
+      window.__uncraftMotionBridge.teardown();
+      expect(tween.vars.x).toBe(100); // colapsou pro shared
+      expect(tween.invalidate.mock.calls.length).toBe(invalidatesBefore); // SEM invalidate sob hazard adaptativo
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(l5-a) validate-transaction com v3 em repeat:2 → valid, e o estado volta ao original (aplica+restaura)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      runtime.send('validate-transaction', {
+        transaction: {
+          id: 'tx-l5-a',
+          patches: [{ id: 'p-l5-a', elementId, kind: 'motion', motionId, property: 'retarget.final', before: null, value: v3Descriptor({ value: 160 }) }],
+        },
+      }, 'l5-a-validate');
+      const result = runtime.messages.filter((message) => message.type === 'validation-result').pop();
+      expect(result?.payload?.valid).toBe(true);
+      expect(tween.vars.x).toBe(100); // restaurado — escalar autoral
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(l5-b) multipatch: override v3 verificado + 2º patch inválido → transação rejeitada e rollback reverso restaura o escalar', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      runtime.send('apply-transaction', {
+        transaction: {
+          id: 'tx-l5-b',
+          patches: [
+            { id: 'p-l5-b1', elementId, kind: 'motion', motionId, property: 'retarget.final', before: null, value: v3Descriptor({ value: 160 }) },
+            { id: 'p-l5-b2', elementId, kind: 'motion', motionId, property: 'retarget.final', before: null, value: { schemaVersion: 3, runtimeProperty: 'x', targetScope: { mode: 'single' }, intent: 'override', value: null } },
+          ],
+        },
+      }, 'l5-b-tx');
+      const ack = runtime.messages.filter((message) => ['transaction-committed', 'transaction-rejected'].includes(message.type)).pop();
+      expect(ack?.type).toBe('transaction-rejected');
+      expect(tween.vars.x).toBe(100); // rollback reverso: escalar autoral de volta
+      delete window.gsap;
+      runtime.restore();
+    });
+  });
+
   // Fase 1 / B4 — OverrideChannel: máquina de estados do writer per-target.
   // O canal é durável por animação+propriedade: slot autoral verbatim,
   // `shared` vivo (muda com edição de grupo), mapa de overrides por Element,
