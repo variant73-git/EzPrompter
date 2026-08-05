@@ -43,10 +43,21 @@
 ## P3 — Caminho de escrita REAL do bridge (harness)
 
 - **Pergunta:** o helper de probe dirige patches pelo MESMO seam da UI, e detecta quando não?
-- **Forma testada:** (pendente)
-- **Resultado bruto:** (pendente)
-- **Veredito:** (pendente)
-- **Consequência pro degrau:** (pendente)
+- **Forma testada:** `_probe-fase0-harness.mjs` (self-test, 2026-08-05) — mecânica extraída do
+  witness do detach (intocado): captura de `postMessage`, `eval` do bridge real, seleção por
+  CLIQUE, patch por `MessageEvent` protocolo `uncraft-motion-editor/v1`. Caso 1 (sensibilidade):
+  `retarget.final` com value `{}` → erro `invalid_value` DO BRIDGE (o harness não valida nada
+  por conta própria — atalho passaria silencioso). Caso 2: retarget absoluto de `x`→160 num
+  single-target → render 0→1 dá 160.
+- **Resultado bruto:** `HARNESS OK (2/2)`.
+- **Veredito:** **provado** — caminho real estabelecido e sensível nos dois lados.
+- **Consequência pro degrau:** todos os probes de edição da Fase 0 usam este harness. ⚠️
+  Descoberta de escopo no caminho: `applyGsapRetarget` hoje RECUSA por `scope_mismatch`
+  qualquer retarget que não declare TODOS os alvos (`affectedTargetCount !== targetCount`) —
+  o canal per-target NÃO existe no bridge; é exatamente o writer que a Fase 1 construiria.
+  Logo P4/P2 provam a MECÂNICA do writer candidato replicando as primitivas reais
+  (`invalidatePreservingStart` com semântica EXATA — precedente do item 168), e registram o
+  delta pro caminho completo.
 
 ## P4 — Função-por-alvo no fluxo de edição real (multi-target simples)
 
