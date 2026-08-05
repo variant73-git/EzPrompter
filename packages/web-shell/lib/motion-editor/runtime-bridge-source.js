@@ -2440,7 +2440,8 @@ function nativeMotionRuntimeBridge() {
                 const removable = overrideChannelLive
                   && !gsapAnimationRandomHazard(animation, track.property)
                   && !gsapAdaptiveInvalidateHazard(animation)
-                  && !gsapHasValueModifierCarrier(vars);
+                  && !gsapHasValueModifierCarrier(vars)
+                  && !gsapOverrideClockUnsampleable(animation);
                 if (!overrideChannelLive && !eligibleNow) return null;
                 return {
                   available: removable || eligibleNow,
@@ -4906,6 +4907,27 @@ function nativeMotionRuntimeBridge() {
     } catch (_) { return true; }
   }
 
+  // Clock-sampleability — ONE predicate for the whole clear/removal domain
+  // (audit r2#1): the endpoint attestation samples at totalTime(duration()),
+  // so any page drift that breaks that probe (zero/non-finite duration,
+  // non-finite parked clock, a repeat delay of EITHER sign — real 3.15
+  // accepts repeatDelay(-0.5) and totalTime(duration) then lands at
+  // iteration 2/time 0, the START) makes a clear UNVERIFIABLE. Publication
+  // (`available`), the clear gate and the sampler share THIS predicate, or
+  // the publication advertises a clear the sampler will refuse.
+  function gsapOverrideClockUnsampleable(animation) {
+    try {
+      const duration = typeof animation.duration === 'function' ? animation.duration() : null;
+      if (duration == null || !Number.isFinite(Number(duration)) || !(Number(duration) > 0)) return true;
+      if (typeof animation.totalTime !== 'function') return true;
+      const parked = animation.totalTime();
+      if (parked == null || !Number.isFinite(Number(parked))) return true;
+      const delay = typeof animation.repeatDelay === 'function' ? Number(animation.repeatDelay()) : 0;
+      if ((delay || 0) !== 0) return true;
+      return false;
+    } catch (_) { return true; }
+  }
+
   // The bridge's OWN timing lane mutates the tween through live setters
   // (playbackMode 'loop' calls repeat(-1)) — a route that can turn an ACTIVE
   // override channel's animation into a refused temporal shape without ever
@@ -4948,14 +4970,17 @@ function nativeMotionRuntimeBridge() {
 
   // Temporal shape classifier for the per-target keys (B5/B6 quantified
   // predicates — advise 2026-08-05). Probe-grounded on real GSAP 3.15
-  // (_probe-b5b6-gsap-claims.mjs): repeat() returns NULL for authored
-  // Infinity/-2 (and -1 for -1); repeat:0.5 is ACCEPTED by GSAP (half an
-  // iteration renders) so non-integers refuse; GSAP's infinite marker is
-  // totalDuration() === 1e10 — a FINITE number — which is why the
-  // discriminator is Number.isSafeInteger on repeat(), never totalDuration
-  // finiteness; repeatDelay set through the live SETTER leaves vars without
-  // the key, so only the getter sees it (authored presence refuses
-  // regardless of value — no doctrine line normalizes an explicit zero).
+  // (re-probed r2#3 with EXPLICIT serialization — JSON.stringify masks
+  // Infinity as null, the first probe's evidence error): repeat() returns
+  // NUMERIC Infinity for authored Infinity/-2 (and -1 for -1); repeat:0.5 is
+  // ACCEPTED by GSAP (half an iteration renders) so non-integers refuse;
+  // GSAP's infinite REPEAT marker is totalDuration() === 1e10 — a FINITE
+  // number — which is why the discriminator is Number.isSafeInteger on
+  // repeat(), never totalDuration finiteness (the null-guard below is
+  // defensive for harness doubles only); repeatDelay set through the live
+  // SETTER leaves vars without the key, so only the getter sees it (authored
+  // presence refuses regardless of value — no doctrine line normalizes an
+  // explicit zero).
   // Scroll-driven and timeline-nested tweens refuse: their clock is not the
   // tween's own and no Tabela B line covers them ("flat" is not
   // "standalone"). Any getter that throws fail-closes as unreadable.
@@ -5060,6 +5085,12 @@ function nativeMotionRuntimeBridge() {
           if ((key === 'yoyoEase' || key === 'easeReverse') && vars[key]) return { eligible: false, reason: 'adaptive-ease' };
         }
       } catch (_) { return { eligible: false, reason: 'temporal-unreadable' }; }
+      // Clock drift (audit r2#1): a clear of a real entry ends in the endpoint
+      // attestation — if the page drifted the clock into unsampleable shape
+      // (zero/non-finite duration, non-finite parked time, any repeat delay),
+      // refuse HERE with the same predicate the publication uses, never let
+      // the sampler be the one to fail an advertised clear.
+      if (gsapOverrideClockUnsampleable(animation)) return { eligible: false, reason: 'temporal-unreadable' };
       // Carriers are NOT structural (Sol r4): a clear under a snap-like
       // carrier would invalidate, materialize the carrier mid-render and then
       // fail its own post-write attestation — a REJECTED operation that
@@ -5231,11 +5262,15 @@ function nativeMotionRuntimeBridge() {
   // shape (plain/repeat/yoyo) AND correct on a drifted-infinite tween.
   function sampleGsapEndpointValue(record, property, target) {
     const animation = record.animation;
-    let duration = null;
-    try { duration = typeof animation.duration === 'function' ? animation.duration() : null; } catch (_) { duration = null; }
-    if (duration == null || !Number.isFinite(Number(duration)) || !(Number(duration) > 0)) {
-      // No finite iteration clock to sample — indistinguishable from a
-      // poisoned endpoint; fail closed.
+    // Shared clock predicate FIRST (audit r2#1): the sampler must refuse the
+    // exact same domain the publication and the clear gate refuse — no
+    // progress() fallback (it is not a valid endpoint probe under drift) and
+    // no playhead movement before the parked clock is known finite.
+    if (gsapOverrideClockUnsampleable(animation)) {
+      throw bridgeError('unsupported_patch', "This animation's overrides were changed by the page — reselect the layer to edit them again.");
+    }
+    let duration;
+    try { duration = Number(animation.duration()); } catch (_) {
       throw bridgeError('unsupported_patch', "This animation's overrides were changed by the page — reselect the layer to edit them again.");
     }
     const gsap = window.gsap;
@@ -5246,21 +5281,16 @@ function nativeMotionRuntimeBridge() {
       }
     });
     let parked = null;
-    let hasTotal = false;
     try {
-      hasTotal = typeof animation.totalTime === 'function';
-      parked = hasTotal ? animation.totalTime() : animation.progress?.();
-      if (hasTotal) animation.totalTime(Number(duration), true);
-      else animation.progress?.(1, true);
+      parked = animation.totalTime();
+      animation.totalTime(duration, true);
       let value;
       if (gsap && typeof gsap.getProperty === 'function' && target) value = gsap.getProperty(target, property);
       else value = animation.vars?.[property];
       return value;
     } finally {
       if (Number.isFinite(parked)) {
-        try {
-          if (hasTotal) animation.totalTime(parked, true); else animation.progress?.(parked, true);
-        } catch (_) {}
+        try { animation.totalTime(parked, true); } catch (_) {}
       }
       touched.forEach(([element, cssText]) => {
         try { element.style.cssText = cssText; } catch (_) {}

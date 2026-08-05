@@ -443,6 +443,17 @@
         "a": 0,
         "b": 0
       },
+      "trajA": [
+        0,
+        55,
+        220,
+        165,
+        0,
+        55,
+        220,
+        165,
+        0
+      ],
       "trajB": [
         0,
         25,
@@ -455,6 +466,45 @@
         0
       ]
     }
+  },
+  "fimN2": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "atRest": {
+      "temporal": {
+        "totalTime": 3,
+        "progress": 1,
+        "iteration": 3,
+        "reversed": false
+      },
+      "render": {
+        "a": 230,
+        "b": 100
+      }
+    },
+    "trajA": [
+      0,
+      57.5,
+      230,
+      172.5,
+      0,
+      57.5,
+      230
+    ],
+    "trajB": [
+      0,
+      25,
+      100,
+      75,
+      0,
+      25,
+      100
+    ]
   },
   "running": {
     "wasPlaying": true,

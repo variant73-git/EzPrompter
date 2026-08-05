@@ -13369,10 +13369,12 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
-    it('(t-m) duration NÃO-FINITA (getter null no GSAP real pra Infinity autoral) → recusa própria (audit Sol r1#4)', () => {
+    it('(t-m) duration NÃO-FINITA (getter devolve Infinity NUMÉRICO no GSAP real — r2#3 corrigiu a evidência) → recusa própria', () => {
+      // ⚠️ Evidência corrigida na r2 do Sol: o probe antigo mascarava Infinity
+      // como null via JSON.stringify. O GSAP real devolve Infinity numérico.
       const [elA, elB] = setupFlatTargets();
       const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: Infinity }, repeat: 2 });
-      tween.duration = () => null; // GSAP real devolve null pra duration Infinity (probe 2026-08-05)
+      tween.duration = () => Infinity;
       const runtime = bootV2Runtime();
       const { elementId, motionId } = selectMotion(runtime, elA);
       const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-m');
@@ -13381,14 +13383,51 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
-    it('(t-n) totalDuration em OVERFLOW (duration finita × repeat → Infinity) → recusa não-finita (audit Sol r1#4)', () => {
+    it('(t-n) OVERFLOW real de totalDuration (duration 1e300 FINITA × repeat 1e8 → Infinity) → recusa não-finita (r2#3)', () => {
+      // O caso 1e308 NÃO exercita este ramo (o GSAP normaliza duration() pra
+      // Infinity já no getter). 1e300 × (1e8+1) = Infinity com duration finita.
       const [elA, elB] = setupFlatTargets();
-      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1e308 }, repeat: 2, duration: 1e308 });
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 1e8, duration: 1e300 }, repeat: 1e8, duration: 1e300 });
       tween.totalDuration = () => Infinity;
       const runtime = bootV2Runtime();
       const { elementId, motionId } = selectMotion(runtime, elA);
       const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-n');
       expect(rejected?.payload?.error).toBe('Per-target overrides need a finite animation duration.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(r2-a) drift duration(0) com canal ativo: publicação available FALSE e clear recusado no GATE (domínio único — r2#1)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }), 'r2-a-override');
+      tween.duration = () => 0; // drift da página
+      selectMotion(runtime, elA);
+      const selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      const track = selection.payload.element.motion[0].tracks.find((entry) => entry.property === 'x');
+      expect(track.ownership.perTarget?.available).toBe(false);
+      const refused = sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'r2-a-clear');
+      expect(refused?.payload?.error).toBe("This animation's timing cannot be read safely — per-target overrides are not available.");
+      expect(typeof tween.vars.x).toBe('function'); // nada mutado
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(r2-b) drift repeatDelay(-0.5) com canal ativo: available FALSE e clear recusado no GATE (o sampler leria o START — r2#1)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }), 'r2-b-override');
+      tween.repeatDelay = () => -0.5; // GSAP real ACEITA delay negativo (probe r2)
+      selectMotion(runtime, elA);
+      const selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      const track = selection.payload.element.motion[0].tracks.find((entry) => entry.property === 'x');
+      expect(track.ownership.perTarget?.available).toBe(false);
+      const refused = sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'r2-b-clear');
+      expect(refused?.payload?.error).toBe("This animation's timing cannot be read safely — per-target overrides are not available.");
       delete window.gsap;
       runtime.restore();
     });

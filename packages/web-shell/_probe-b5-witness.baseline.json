@@ -515,6 +515,11 @@
       "applied": false,
       "error": "Per-target overrides need a finite animation duration."
     },
+    "durationNormalizedInfinity": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides need a finite animation duration."
+    },
     "durationOverflow": {
       "perTargetPublished": false,
       "applied": false,
@@ -638,6 +643,41 @@
     },
     "afterClear": {
       "varsX": 100,
+      "varsXType": "number"
+    }
+  },
+  "clockDrift": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "durationZero": {
+      "available": false,
+      "clear": {
+        "applied": false,
+        "error": "This animation's timing cannot be read safely — per-target overrides are not available."
+      }
+    },
+    "negativeDelay": {
+      "acceptedBySetter": true,
+      "available": false,
+      "clear": {
+        "applied": false,
+        "error": "This animation's timing cannot be read safely — per-target overrides are not available."
+      }
+    },
+    "recovered": {
+      "available": true,
+      "clear": {
+        "committed": true,
+        "ack": {
+          "type": "transaction-committed",
+          "code": null
+        }
+      },
       "varsXType": "number"
     }
   },

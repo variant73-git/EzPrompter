@@ -1,5 +1,10 @@
 // PROBE — verifica as afirmações GSAP do advise do Sol (2026-08-05) antes de
 // virarem gate (veto assimétrico nas duas direções):
+// ⚠️ EVIDÊNCIA CORRIGIDA (audit r2#3): a serialização original via
+// JSON.stringify MASCARAVA Infinity como null — c2/c3 na verdade devolvem
+// Infinity NUMÉRICO (não null). A verdade com typeof/finitude explícitos
+// está em _probe-audit-r2-repro.mjs; o comportamento do gate não muda
+// (isSafeInteger(Infinity) === false), só a descrição do fato.
 //  C1  repeat:0.5 é aceito? o que repeat()/totalDuration() devolvem?
 //  C2  repeat:Infinity → tratado como infinito?
 //  C3  repeat:-2 → tratado como infinito?

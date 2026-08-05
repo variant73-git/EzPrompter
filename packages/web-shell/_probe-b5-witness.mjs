@@ -416,7 +416,11 @@ async function boundaryCase(setup, { useTimeline = false } = {}) {
 
 const boundaries = {
   durationInfinity: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: Infinity, ease: 'none', repeat: 2, paused: true });`),
-  durationOverflow: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1e308, ease: 'none', repeat: 2, paused: true });`),
+  // ⚠️ r2#3: duration:1e308 NÃO exercita o ramo de overflow — o GSAP normaliza
+  // o próprio duration() pra Infinity. O overflow REAL (duration finita ×
+  // repeat → totalDuration Infinity) é 1e300 × 1e8.
+  durationNormalizedInfinity: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1e308, ease: 'none', repeat: 2, paused: true });`),
+  durationOverflow: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1e300, ease: 'none', repeat: 1e8, paused: true });`),
   infinito: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1, ease: 'none', repeat: -1, paused: true });`),
   infinityAutoral: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1, ease: 'none', repeat: Infinity, paused: true });`),
   fracionario: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1, ease: 'none', repeat: 0.5, paused: true });`),
@@ -459,6 +463,45 @@ const timingEDrift = await runCase(`
   return { tx, loopPatch, afterLoop, delayPatch, afterDelay, durationPatch, afterDuration, wrapperIntact, drift, writeRefused, clear, afterClear };
 `);
 
+// ---- DRIFT DE CLOCK (audit r2#1): duration(0) e repeatDelay(-0.5) —
+// GSAP real ACEITA delay negativo — quebram o probe de endpoint; publicação,
+// gate do clear e sampler recusam pelo MESMO predicado (domínio único).
+const clockDrift = await runCase(`
+  const A = H.select('a');
+  const ownership = A.track && A.track.ownership;
+  const tx = H.applyTx('tx-b5-ck', A.elementId, A.motionId, H.v3(ownership, 'override', 160));
+  // (a) drift duration(0)
+  tw.duration(0);
+  let reA = H.select('a');
+  let reOwnership = reA.track && reA.track.ownership;
+  const durationZero = {
+    available: Boolean(reOwnership && reOwnership.perTarget && reOwnership.perTarget.available),
+    clear: H.applyPatch(A.elementId, A.motionId, 'retarget.final', H.v3(reOwnership, 'clear')),
+  };
+  tw.duration(1);
+  tw.totalTime(1.5, true);
+  // (b) drift repeatDelay(-0.5)
+  tw.repeatDelay(-0.5);
+  reA = H.select('a');
+  reOwnership = reA.track && reA.track.ownership;
+  const negativeDelay = {
+    acceptedBySetter: tw.repeatDelay() === -0.5,
+    available: Boolean(reOwnership && reOwnership.perTarget && reOwnership.perTarget.available),
+    clear: H.applyPatch(A.elementId, A.motionId, 'retarget.final', H.v3(reOwnership, 'clear')),
+  };
+  tw.repeatDelay(0);
+  tw.totalTime(1.5, true);
+  // recuperação: com o clock são de volta, o clear volta a funcionar
+  reA = H.select('a');
+  reOwnership = reA.track && reA.track.ownership;
+  const recovered = {
+    available: Boolean(reOwnership && reOwnership.perTarget && reOwnership.perTarget.available),
+    clear: H.applyTx('tx-b5-ck-clear', A.elementId, A.motionId, H.v3(reOwnership, 'clear')),
+    varsXType: typeof tw.vars.x,
+  };
+  return { tx, durationZero, negativeDelay, recovered };
+`);
+
 // ---- DRIFT ADAPTATIVO (audit r1#3): repeatRefresh pós-canal → o clear REAL
 // recusaria, então a publicação NÃO pode anunciar available.
 const adaptiveDrift = await runCase(`
@@ -481,7 +524,7 @@ await browser.close();
 
 const observado = {
   referencia, principal, matrizN1, matrizN5, fronteiras, running, callbacks,
-  tampering, sensibilidade, sensibilidadeInvalidate, boundaries, timingEDrift, adaptiveDrift,
+  tampering, sensibilidade, sensibilidadeInvalidate, boundaries, timingEDrift, clockDrift, adaptiveDrift,
 };
 
 if (RECORD) {
@@ -595,8 +638,9 @@ check('escalar cru CONTAMINA o irmão (instrumento vê)', !eq(sensibilidade.rawS
 check('invalidate cru CORROMPE o loop (início vira o parkeado — P6b)', sensibilidadeInvalidate.corrupted.renderStart.a !== 0, JSON.stringify(sensibilidadeInvalidate.corrupted));
 
 console.log('(bx) boundaries por mensagem');
-check('duration:Infinity (getter null) recusa não-finita', boundaries.durationInfinity.applied === false && boundaries.durationInfinity.error === 'Per-target overrides need a finite animation duration.' && boundaries.durationInfinity.perTargetPublished === false, boundaries.durationInfinity.error);
-check('duration:1e308 (totalDuration overflow) recusa não-finita', boundaries.durationOverflow.applied === false && boundaries.durationOverflow.error === 'Per-target overrides need a finite animation duration.', boundaries.durationOverflow.error);
+check('duration:Infinity (getter devolve Infinity NUMÉRICO — r2#3) recusa não-finita', boundaries.durationInfinity.applied === false && boundaries.durationInfinity.error === 'Per-target overrides need a finite animation duration.' && boundaries.durationInfinity.perTargetPublished === false, boundaries.durationInfinity.error);
+check('duration:1e308 (GSAP normaliza duration() pra Infinity) recusa não-finita', boundaries.durationNormalizedInfinity.applied === false && boundaries.durationNormalizedInfinity.error === 'Per-target overrides need a finite animation duration.', boundaries.durationNormalizedInfinity.error);
+check('OVERFLOW real: duration 1e300 FINITA × repeat 1e8 → totalDuration Infinity recusa', boundaries.durationOverflow.applied === false && boundaries.durationOverflow.error === 'Per-target overrides need a finite animation duration.', boundaries.durationOverflow.error);
 check('repeat:-1 recusa infinito', boundaries.infinito.applied === false && boundaries.infinito.error === 'Per-target overrides are not available on endlessly repeating animations.' && boundaries.infinito.perTargetPublished === false, boundaries.infinito.error);
 check('repeat:Infinity autoral (repeat() null) recusa infinito', boundaries.infinityAutoral.applied === false && boundaries.infinityAutoral.error === 'Per-target overrides are not available on endlessly repeating animations.', boundaries.infinityAutoral.error);
 check('repeat:0.5 recusa não-inteiro', boundaries.fracionario.applied === false && boundaries.fracionario.error === 'Per-target overrides need a whole-number repeat count.', boundaries.fracionario.error);
@@ -615,6 +659,12 @@ check('wrapper intacto após as 3 recusas', timingEDrift.wrapperIntact === true)
 check('drift infinito: available true (clear ok) / writable false', timingEDrift.drift.available === true && timingEDrift.drift.writable === false, JSON.stringify(timingEDrift.drift));
 check('write novo sob drift → recusado', timingEDrift.writeRefused.applied === false, timingEDrift.writeRefused.error || '');
 check('clear sob drift commitou e colapsou (escalar)', timingEDrift.clear.committed === true && timingEDrift.afterClear.varsXType === 'number', JSON.stringify(timingEDrift.afterClear));
+
+console.log('(ck) drift de clock (r2#1: publicação/gate/sampler = UM domínio)');
+check('override commitou antes dos drifts', clockDrift.tx.committed === true);
+check('duration(0): available FALSE + clear recusado no gate (mensagem de timing)', clockDrift.durationZero.available === false && clockDrift.durationZero.clear.applied === false && clockDrift.durationZero.clear.error === "This animation's timing cannot be read safely — per-target overrides are not available.", JSON.stringify(clockDrift.durationZero.clear));
+check('repeatDelay(-0.5) ACEITO pelo GSAP: available FALSE + clear recusado no gate', clockDrift.negativeDelay.acceptedBySetter === true && clockDrift.negativeDelay.available === false && clockDrift.negativeDelay.clear.applied === false && clockDrift.negativeDelay.clear.error === "This animation's timing cannot be read safely — per-target overrides are not available.", JSON.stringify(clockDrift.negativeDelay.clear));
+check('clock recuperado: available volta TRUE e o clear commit+colapsa', clockDrift.recovered.available === true && clockDrift.recovered.clear.committed === true && clockDrift.recovered.varsXType === 'number', JSON.stringify(clockDrift.recovered));
 
 console.log('(ad) drift adaptativo (r1#3: available = removibilidade EFETIVA)');
 check('override commitou antes do drift', adaptiveDrift.tx.committed === true);

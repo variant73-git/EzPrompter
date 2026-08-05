@@ -312,9 +312,24 @@ const fronteiras = await runCase(`
   const atLastReturn = { temporal: H.temporal(tw), render: H.renderAt(tw, tw.totalTime()) };
   tw.totalTime(4.0, true);
   const tx4 = H.applyTx('tx-b6-f4', A.elementId, A.motionId, H.v3(ownership, 'override', 220));
-  const atEnd = { temporal: H.temporal(tw), render: H.renderAt(tw, tw.totalTime()), trajB: H.yoyoTrajectory(tw, 'b') };
+  // r2#2 (Sol): t=4 renderiza 0 pra QUALQUER endpoint (paridade par) — o
+  // commit sozinho não prova que 220 aplicou. A prova é a TRAJETÓRIA de A.
+  const atEnd = { temporal: H.temporal(tw), render: H.renderAt(tw, tw.totalTime()), trajA: H.yoyoTrajectory(tw, 'a'), trajB: H.yoyoTrajectory(tw, 'b') };
   return { tx1, atPeak, tx2, atValley, tx3, atLastReturn, tx4, atEnd };
 `, { repeat: 3, park: 0 });
+
+// ---- FIM ABSOLUTO de n=2 (r2#2): paridade ÍMPAR descansa no FIM — o endpoint
+// editado é DIRETAMENTE observável no descanso, sem depender de trajetória.
+const fimN2 = await runCase(`
+  const A = H.select('a');
+  const ownership = A.track && A.track.ownership;
+  tw.totalTime(3.0, true); // fim absoluto de repeat:2 (3 pernas)
+  const tx = H.applyTx('tx-b6-fn2', A.elementId, A.motionId, H.v3(ownership, 'override', 230));
+  const atRest = { temporal: H.temporal(tw), render: H.renderAt(tw, tw.totalTime()) };
+  const trajA = H.yoyoTrajectory(tw, 'a');
+  const trajB = H.yoyoTrajectory(tw, 'b');
+  return { tx, atRest, trajA, trajB };
+`, { repeat: 2, park: 0 });
 
 // ---- TWEEN RODANDO.
 const running = await (async () => {
@@ -409,7 +424,7 @@ const timing = await runCase(`
 await browser.close();
 
 const observado = {
-  referencia, principal, matrizN1, matrizN2, fronteiras, running, callbacks,
+  referencia, principal, matrizN1, matrizN2, fronteiras, fimN2, running, callbacks,
   sensibilidade, boundaries, timing,
 };
 
@@ -489,6 +504,11 @@ check('pico t=1: commit + renderiza fim da IDA (160)', fronteiras.tx1.committed 
 check('vale t=2: commit + renderiza início (0)', fronteiras.tx2.committed === true && fronteiras.atValley.temporal.totalTime === 2 && fronteiras.atValley.render.a === 0, JSON.stringify(fronteiras.atValley));
 check('última volta t=3.5: commit + espelho (a=100 de 200)', fronteiras.tx3.committed === true && fronteiras.atLastReturn.temporal.totalTime === 3.5 && fronteiras.atLastReturn.render.a === 100, JSON.stringify(fronteiras.atLastReturn));
 check('fim absoluto t=4 (paridade par → 0): commit + irmão intacto', fronteiras.tx4.committed === true && fronteiras.atEnd.temporal.totalTime === 4 && fronteiras.atEnd.render.a === 0 && eq(fronteiras.atEnd.trajB, REF), JSON.stringify(fronteiras.atEnd.render));
+check('tx4 APLICOU 220 — prova pela TRAJETÓRIA de A (r2#2, não pelo ack)', eq(fronteiras.atEnd.trajA, [0, 55, 220, 165, 0, 55, 220, 165, 0]), JSON.stringify(fronteiras.atEnd.trajA));
+
+console.log('(fn2) fim absoluto n=2 (paridade ÍMPAR — endpoint observável no descanso)');
+check('override 230 no descanso final commitou e o DESCANSO mostra 230 direto', fimN2.tx.committed === true && fimN2.atRest.temporal.totalTime === 3 && fimN2.atRest.render.a === 230 && fimN2.atRest.render.b === 100, JSON.stringify(fimN2.atRest));
+check('trajetória A ×2.3 e irmão intacto', eq(fimN2.trajA, [0, 57.5, 230, 172.5, 0, 57.5, 230]) && eq(fimN2.trajB, [0, 25, 100, 75, 0, 25, 100]), JSON.stringify(fimN2.trajA));
 
 console.log('(run) tween RODANDO');
 check('tocando no write, commit, segue tocando', running.wasPlaying === true && running.tx.committed === true && running.stillPlaying === true, JSON.stringify(running.tx.ack));
