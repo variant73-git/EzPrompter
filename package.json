@@ -22,6 +22,10 @@
     "refs:landbook:build": "node scripts/reference-bank/build-landbook-pilot.mjs",
     "refs:landbook:pages-6-10:freeze": "node scripts/reference-bank/collect-landbook-pilot.mjs --slice=pages-6-10 --freeze-only",
     "refs:landbook:pages-6-10:collect": "node scripts/reference-bank/collect-landbook-pilot.mjs --slice=pages-6-10",
-    "refs:landbook:pages-6-10:build": "node scripts/reference-bank/build-landbook-pilot.mjs --slice=pages-6-10"
+    "refs:landbook:pages-6-10:build": "node scripts/reference-bank/build-landbook-pilot.mjs --slice=pages-6-10",
+    "refs:experiment:manifest:validate": "node scripts/start-from-ref/validate-experiment-manifest.mjs",
+    "refs:experiment:references:validate": "node scripts/start-from-ref/validate-experiment-reference-bundles.mjs",
+    "refs:experiment:v2:manifest:validate": "node scripts/start-from-ref/validate-clone-first-v2-manifest.mjs",
+    "refs:experiment:v2:references:validate": "node scripts/start-from-ref/validate-clone-first-v2-reference-bundles.mjs"
   }
 }

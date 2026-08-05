@@ -55,6 +55,35 @@ describe('ChatPanel', () => {
     render(<ChatPanel messages={[]} activeToolCalls={[]} />);
     expect(screen.getByText(/start a conversation/i)).toBeInTheDocument();
   });
+
+  it('renders a visual brainstorm choice and sends its natural-language reply', async () => {
+    const onBrainstormChoice = vi.fn();
+    const visualMessage = {
+      id: 'visual-1',
+      role: 'assistant',
+      content: `Qual estrutura combina melhor?\n<uncraft-brainstorm>
+{"kind":"structure","options":[{"id":"offset","title":"Editorial deslocado","fit":"Serviços autorais","signal":"Preciso e confiante","reply":"Prefiro a direção editorial deslocada.","pattern":"offset"},{"id":"split","title":"Divisão equilibrada","fit":"Produtos digitais","signal":"Claro e funcional","reply":"Prefiro a divisão equilibrada.","pattern":"split"}]}
+</uncraft-brainstorm>`,
+    };
+    render(
+      <ChatPanel
+        messages={[visualMessage]}
+        activeToolCalls={[]}
+        onBrainstormChoice={onBrainstormChoice}
+      />
+    );
+
+    expect(screen.getByText('Qual estrutura combina melhor?')).toBeInTheDocument();
+    expect(screen.queryByText(/uncraft-brainstorm/)).not.toBeInTheDocument();
+    expect(screen.getByText('Serviços autorais')).toBeInTheDocument();
+    expect(screen.getByText('Preciso e confiante')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /choose editorial deslocado/i }));
+    expect(onBrainstormChoice).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'offset',
+      reply: 'Prefiro a direção editorial deslocada.',
+      kind: 'structure',
+    }));
+  });
 });
 
 describe('ChatPanel — soft pause', () => {

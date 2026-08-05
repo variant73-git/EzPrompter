@@ -309,6 +309,9 @@ CREATE TABLE IF NOT EXISTS reference_sites (
   curation_weight NUMERIC(7,3) NOT NULL DEFAULT 1,
   curation_rank INTEGER CHECK (curation_rank IS NULL OR curation_rank > 0),
   featured BOOLEAN NOT NULL DEFAULT FALSE,
+  is_private BOOLEAN NOT NULL DEFAULT FALSE,
+  privacy_reason VARCHAR(64),
+  template_platform VARCHAR(32),
   published_at TEXT,
   generated_at TIMESTAMPTZ,
   availability_status VARCHAR(16) NOT NULL DEFAULT 'unknown'
@@ -324,6 +327,8 @@ CREATE INDEX IF NOT EXISTS reference_sites_curated
 CREATE INDEX IF NOT EXISTS reference_sites_host ON reference_sites(host);
 CREATE INDEX IF NOT EXISTS reference_sites_categories ON reference_sites USING GIN(categories);
 CREATE INDEX IF NOT EXISTS reference_sites_tags ON reference_sites USING GIN(tags);
+CREATE INDEX IF NOT EXISTS reference_sites_visibility
+  ON reference_sites(is_private, lifecycle_state, curation_rank);
 
 CREATE TABLE IF NOT EXISTS reference_appearances (
   id BIGSERIAL PRIMARY KEY,
@@ -411,7 +416,7 @@ CREATE INDEX IF NOT EXISTS reference_preferences_site ON reference_preferences(r
 CREATE TABLE IF NOT EXISTS generation_reference_uses (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  schema_version SMALLINT NOT NULL DEFAULT 1 CHECK (schema_version IN (1,2)),
+  schema_version SMALLINT NOT NULL DEFAULT 1 CHECK (schema_version IN (1,2,3)),
   mode VARCHAR(16) NOT NULL DEFAULT 'shadow' CHECK (mode IN ('shadow','generation')),
   status VARCHAR(16) NOT NULL DEFAULT 'shadow'
     CHECK (status IN ('shadow','approved','rejected','executed','failed')),

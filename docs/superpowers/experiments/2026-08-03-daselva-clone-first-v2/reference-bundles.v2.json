@@ -1,0 +1,287 @@
+{
+  "schemaVersion": "start-from-ref-clone-first-reference-bundles-v2",
+  "experimentId": "daselva-pan-amazonian-clone-first-v2",
+  "gate": "B",
+  "status": "frozen_gate_b",
+  "frozenAt": "2026-08-03",
+  "manifest": {
+    "path": "docs/superpowers/experiments/2026-08-03-daselva-clone-first-v2/manifest.v2.json",
+    "sha256": "1b0fcd27f0992769db721f9a8228772875dc8f92a4efc8d40a7afca735a9e47e"
+  },
+  "candidatePool": {
+    "path": "docs/superpowers/experiments/2026-08-03-daselva-clone-first-v2/candidate-pool.v2.json",
+    "sha256": "2a4288c6661cdc48f8bae10248d0e8fc547e702a4d3c0d2f5af4a7be1cc166f1",
+    "candidateCount": 16,
+    "businessCategoryWeight": 0,
+    "postScoreAdjacentCategoryShare": 0
+  },
+  "gateAuthorization": {
+    "receivedToken": "START-DASELVA-V2-GATE-B-1B0FCD27F0992769",
+    "tokenMatchesManifest": true,
+    "authorizedWork": [
+      "category-blind read-only discovery",
+      "candidate scoring",
+      "reference selection and allocation",
+      "bounded desktop, mobile, motion, runtime, and provenance capture",
+      "Gate B documentation and validator fixtures"
+    ],
+    "notAuthorized": [
+      "clone, model, image, or website generation",
+      "credit spending",
+      "creation of the V2 output root",
+      "modification or deletion of V1 outputs or evidence",
+      "shared product, database, plan, board, node, preference, cohort, or assessment writes",
+      "commit, push, deployment, or production enablement"
+    ]
+  },
+  "strategyAllocations": [
+    {
+      "strategyId": "S",
+      "strategyName": "single-reference clone and asset swap",
+      "references": [
+        {
+          "referenceId": "ref_3c9fefc8b61c5543",
+          "role": "full_page_reference",
+          "cloneScope": "Clone the complete home-page geometry, section sequence, relative heights, image cropping logic, restrained type placement, navigation, native scrolling, and desktop-to-mobile transformation before any DaSelva swap."
+        }
+      ],
+      "allocationReason": "Cecilie Bahnsen is the highest-scoring complete single-page candidate and can carry the target's seven movements without donors or category-based normalization.",
+      "baselineExitCondition": "Matched 1440x1000 and 390x844 baselines meet the frozen geometry, scroll-length, responsive, and motion tolerances before target assets enter."
+    },
+    {
+      "strategyId": "C",
+      "strategyName": "primary chassis clone with bounded donor transplants",
+      "references": [
+        {
+          "referenceId": "ref_f44b5eddc9e64f5d",
+          "role": "primary_chassis",
+          "cloneScope": "Clone Playfight as the complete page: global navigation, floating-media opening field, white-space rhythm, long-form section order, responsive model, and scroll authority."
+        },
+        {
+          "referenceId": "ref_666384f011a91b0e",
+          "role": "bounded_donor_numbered_constellation",
+          "cloneScope": "Clone only the rounded overlapping media constellation with its 01/02/03 state navigation as one bounded scene. It does not own the global page, type, color, or scroll system."
+        },
+        {
+          "referenceId": "ref_3f9dd1212526b3a0",
+          "role": "bounded_donor_oversized_information_grid",
+          "cloneScope": "Clone only the oversized identity-to-information composition and asymmetric grid as one bounded editorial scene. It does not supply global typography, navigation, palette, or section rhythm."
+        }
+      ],
+      "documentedPrimaryGaps": [
+        "Playfight lacks one compact, stateful hero-to-signature-dish media constellation.",
+        "Playfight lacks one typographically forceful target-origin information scene that remains disciplined without animation."
+      ],
+      "ownershipRule": "Playfight owns the global spine. Each donor owns exactly one named scene, is cloned independently, and may enter only after the primary baseline passes.",
+      "baselineExitCondition": "The Playfight full-page baseline and both isolated donor-scene baselines pass their matched desktop/mobile checks before any transplant or target swap."
+    },
+    {
+      "strategyId": "W",
+      "strategyName": "scene-clone synthesis with a static taste stop",
+      "references": [
+        {
+          "referenceId": "ref_15c6c7030b4facd6",
+          "role": "scene_dark_floating_media_narrative",
+          "cloneScope": "Clone the dark floating-media opening and its pinned narrative cadence as W's first scene baseline."
+        },
+        {
+          "referenceId": "ref_0e47bc1d6a370765",
+          "role": "scene_full_bleed_banda_media",
+          "cloneScope": "Clone the full-bleed moving-image plane, quiet micro-navigation, and restrained overlay type as the Banda scene baseline."
+        },
+        {
+          "referenceId": "ref_2038e9f35d0adda8",
+          "role": "scene_perspective_type_chamber",
+          "cloneScope": "Clone the perspective typographic chamber and virtual state transition as W's high-risk transition scene baseline."
+        }
+      ],
+      "compatibilityHypothesis": "After target-owned swaps, the three scenes can share one static grammar: deep forest-green fields, terracotta emphasis, off-white type, large image planes, sparse navigation, and one deliberately theatrical transition. Category played no part in this hypothesis.",
+      "staticTasteRisk": "The Red's perspective chamber can overpower the quieter Ponder and Bureau Rouge scenes; W0 must prove hierarchy and restraint without motion.",
+      "mandatoryStop": "After independent scene baselines and target swaps, produce only motion-free desktop and mobile W0 boards. No W motion may begin without explicit human approval of every frozen taste dimension."
+    }
+  ],
+  "allocationAudit": {
+    "selectedReferenceCount": 7,
+    "exactReferenceReuseAcrossStrategies": false,
+    "selectedPrimaryAdjacentCategoryCount": 0,
+    "businessCategoryInfluencedAllocation": false,
+    "SReferenceCount": 1,
+    "CReferenceCount": 3,
+    "CPrimaryCount": 1,
+    "CDonorCount": 2,
+    "WReferenceCount": 3,
+    "result": "pass"
+  },
+  "references": [
+    {
+      "referenceId": "ref_3c9fefc8b61c5543",
+      "name": "Cecilie Bahnsen",
+      "url": "https://ceciliebahnsen.com",
+      "candidateAnonymousId": "C07",
+      "weightedScoreOutOf100": 91,
+      "strategyId": "S",
+      "capture": {
+        "desktop": { "viewport": "1440x1000", "scrollHeight": 6640, "horizontalOverflowPx": 0, "observedPattern": "full-bleed image-led hero followed by asymmetric editorial image-and-copy sections" },
+        "mobile": { "viewport": "390x844", "scrollHeight": 5777, "horizontalOverflowPx": 0, "loadedImages": 22, "totalImages": 22, "observedPattern": "single-column transformation preserves image hierarchy and content order" },
+        "motionEvidence": "Native PageDown changed the desktop stage from the full-image hero to the white asymmetric editorial section at scrollY 2820.",
+        "runtimeObservation": "A consent overlay initially blocked scroll and was accepted for capture. Third-party commerce code is source-only evidence and is excluded from reconstruction."
+      },
+      "evidence": [
+        { "kind": "scrape_markdown_links", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/cecilie-content.json", "sha256": "5b715e177d058b95adabd43cd9b070effcc0eebd5f04e611d5a068bae58e7fe5" },
+        { "kind": "runtime_html", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/cecilie-runtime.html", "sha256": "426380372848512db8724a8fbea15b325ab20a517aa76ec44fe8fcdba6eaa078" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/cecilie-desktop-hero-1440x1000.png", "sha256": "2492f04cf21a61b8954bac5a08d4cb976f9cdfb25926a0847bdc842df95547c4" },
+        { "kind": "desktop_motion_stage", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/cecilie-desktop-stage-1440x1000.png", "sha256": "a639176472af841c6683f4a3c2613a53f3ca2085b58e13a9fd7de00e5d4b831f" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/cecilie-mobile-hero-390x844.png", "sha256": "e843194fa84917658ab05592c911cbaed06b3dbcac6fc337e02bd1ca631ccbf3" }
+      ]
+    },
+    {
+      "referenceId": "ref_f44b5eddc9e64f5d",
+      "name": "Playfight",
+      "url": "https://letsplayfight.com",
+      "candidateAnonymousId": "C04",
+      "weightedScoreOutOf100": 90,
+      "strategyId": "C",
+      "capture": {
+        "desktop": { "viewport": "1440x1000", "scrollHeight": 8458, "sections": 6, "images": 27, "videos": 5, "canvas": 1, "horizontalOverflowPx": 0, "observedPattern": "sparse floating-media field around a centered editorial statement" },
+        "mobile": { "viewport": "390x844", "scrollHeight": 4374, "images": 27, "videos": 5, "canvas": 0, "horizontalOverflowPx": 0, "observedPattern": "media becomes a controlled vertical sequence while retaining generous whitespace" },
+        "motionEvidence": "Two PageDown interactions moved the page to scrollY 3729 and exposed a radically sparse service scene, demonstrating real section rhythm rather than a static hero only.",
+        "runtimeObservation": "The source has an approximately eight-second branded loader; evidence screenshots were recaptured after it cleared."
+      },
+      "evidence": [
+        { "kind": "scrape_markdown_links", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/playfight-content.json", "sha256": "6bc996c19bd43f054a2ba86b79d3ccf5d0344ab08743a57dd4a34714b1f63384" },
+        { "kind": "runtime_html", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/playfight-runtime.html", "sha256": "9ba469ec04363e8f317466cdee50990029dbdc361144a46996af843b9a273348" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/playfight-desktop-hero-1440x1000.png", "sha256": "4ee77c9aa63e0ea9db3e98e214629bfa3a6e90262b4358bb20e048bbc14df5ba" },
+        { "kind": "desktop_motion_stage", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/playfight-desktop-stage-1440x1000.png", "sha256": "0236eb067a212e770ac967faeaca19f534d712343f79b4901149946e8a633a43" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/playfight-mobile-hero-390x844.png", "sha256": "d17f03bf7a85e1a9f0e861564176a7cd4007fe68ba08de3268dc8f4384d35234" }
+      ]
+    },
+    {
+      "referenceId": "ref_666384f011a91b0e",
+      "name": "Order & Chaos",
+      "url": "https://ordernchaos.aiziza.com",
+      "candidateAnonymousId": "C11",
+      "weightedScoreOutOf100": 88,
+      "strategyId": "C",
+      "capture": {
+        "desktop": { "viewport": "1440x1000", "scrollHeight": 1000, "images": 7, "horizontalOverflowPx": 0, "observedPattern": "rounded overlapping image constellation with sparse corner navigation and numbered states" },
+        "mobile": { "viewport": "390x844", "scrollHeight": 844, "horizontalOverflowPx": 0, "observedPattern": "constellation reorders and scales without clipping; description and 01/02/03 controls remain visible" },
+        "motionEvidence": "The intro was explicitly skipped and state 02 was activated; the constellation reconfigured while the fixed-viewport geometry remained stable.",
+        "runtimeObservation": "The source is a virtual scene with an intro sequence and state buttons, so motion evidence is interaction-driven rather than document-scroll-driven."
+      },
+      "evidence": [
+        { "kind": "scrape_markdown_links", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/order-chaos-content.json", "sha256": "ef5c2b540cf598a5e012cca472eb7b4e615e11bd94165f6ce5d8cf1d52233bb2" },
+        { "kind": "runtime_html", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/order-chaos-runtime.html", "sha256": "c4b478493a2e7738a59322fa812f2546fe3802ee866cc75c9b18b6ccf857ea6b" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/order-chaos-desktop-hero-1440x1000.png", "sha256": "c0ff7bdb1b6e6dc857d8db775cacbe60b6ef6dd823f91959e4543ae2f580909c" },
+        { "kind": "desktop_motion_stage", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/order-chaos-desktop-stage-1440x1000.png", "sha256": "0d7f3e05f5cbf555fa478f66a43e01bb5e746fb415549d1da7d24e496d17a8c1" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/order-chaos-mobile-hero-390x844.png", "sha256": "33e32d753fae397a94b194bc1fa28aa6f76b14f3f8e0dc5f42a952ff8c84e98e" }
+      ]
+    },
+    {
+      "referenceId": "ref_3f9dd1212526b3a0",
+      "name": "Built for Archives",
+      "url": "https://builtforarchives.com",
+      "candidateAnonymousId": "C16",
+      "weightedScoreOutOf100": 90,
+      "strategyId": "C",
+      "capture": {
+        "desktop": { "viewport": "1440x1000", "scrollHeight": 5376, "sections": 3, "images": 5, "horizontalOverflowPx": 0, "observedPattern": "oversized mixed-serif identity line anchors an asymmetric information grid" },
+        "mobile": { "viewport": "390x844", "scrollHeight": 4290, "images": 5, "horizontalOverflowPx": 0, "observedPattern": "the asymmetry compresses into a deliberate two-column text composition before the oversized line" },
+        "motionEvidence": "Native scroll reached scrollY 1828 and exposed the two-column project grid while preserving the header and asymmetric rhythm.",
+        "runtimeObservation": "The source uses a short branded loader; evidence was recaptured after a seven-second settle."
+      },
+      "evidence": [
+        { "kind": "scrape_markdown_links", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/built-for-archives-content.json", "sha256": "41712ee034bbf15c89657c37fcaa021440c43d3ab78ad470bdfacefd0dfe2710" },
+        { "kind": "runtime_html", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/built-for-archives-runtime.html", "sha256": "9f8895423f5178222a659e83fc5a9d6eeb3bafc5ddd69d475fd97d7196fcb0f2" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/built-for-archives-desktop-hero-1440x1000.png", "sha256": "94ff6020d5fc6b167f0f4a5f33dedabc4831c58cf0ac6d9ec7f30b9361c6d25f" },
+        { "kind": "desktop_motion_stage", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/built-for-archives-desktop-stage-1440x1000.png", "sha256": "69e934b5204aa06e1f40001269868b09b34eafe6a2b0fe6171780af1542630da" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/built-for-archives-mobile-hero-390x844.png", "sha256": "a38d58a8c244e39071ff9d105bd0b0b240a46c532386a5d08b03fcb6c6d0b5c7" }
+      ]
+    },
+    {
+      "referenceId": "ref_15c6c7030b4facd6",
+      "name": "Ponder",
+      "url": "https://ponder.ai",
+      "candidateAnonymousId": "C06",
+      "weightedScoreOutOf100": 85,
+      "strategyId": "W",
+      "capture": {
+        "desktop": { "viewport": "1440x1000", "scrollHeight": 16254, "sections": 7, "images": 80, "videos": 6, "horizontalOverflowPx": 0, "observedPattern": "dark floating footage field followed by large pinned content cards" },
+        "mobile": { "viewport": "390x844", "scrollHeight": 14102, "images": 78, "videos": 2, "horizontalOverflowPx": 0, "observedPattern": "floating footage and large headings remain legible in a long single-column narrative" },
+        "motionEvidence": "At scrollY 2600 the floating-media hero had transformed into a pinned narrative stage with large 'What Ponder can do' typography.",
+        "runtimeObservation": "Source console emitted masterTrigger event-callback errors during capture. This gap lowers feasibility; no source runtime or code will be reused."
+      },
+      "evidence": [
+        { "kind": "scrape_markdown_links", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/ponder-content.json", "sha256": "3ef802e41808695b2d39d3a349de3a3ead6174f9e6e71ad214ab35013618983c" },
+        { "kind": "runtime_html", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/ponder-runtime.html", "sha256": "d86521c9a9fc95516f2c7878302270cd10974d18ee448a840f3f93682c9d11ea" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/ponder-desktop-hero-1440x1000.png", "sha256": "df4e4c428e2e0d058cd242a862fd8fb6c70be9ea74557d88877dd5957643b05a" },
+        { "kind": "desktop_motion_stage", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/ponder-desktop-stage-1440x1000.png", "sha256": "175c3187fe910702b697238a48c6ed31b3f717501584d5b35df66452e75a676d" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/ponder-mobile-hero-390x844.png", "sha256": "e47785e1bbd1ab9fae2e30473019a4cd2338d10f915778db7a29c2aced092a00" }
+      ]
+    },
+    {
+      "referenceId": "ref_0e47bc1d6a370765",
+      "name": "Bureau Rouge",
+      "url": "https://bureaurouge.com",
+      "candidateAnonymousId": "C03",
+      "weightedScoreOutOf100": 83,
+      "strategyId": "W",
+      "capture": {
+        "desktop": { "viewport": "1440x1000", "scrollHeight": 2644, "sections": 2, "images": 4, "videos": 4, "horizontalOverflowPx": 0, "observedPattern": "full-bleed architectural moving image with small spaced navigation and restrained overlay text" },
+        "mobile": { "viewport": "390x844", "scrollHeight": 5445, "horizontalOverflowPx": 0, "observedPattern": "full-bleed media becomes a substantially longer vertical sequence without horizontal clipping" },
+        "motionEvidence": "The settled desktop hero and a native-scroll stage at scrollY 899 capture distinct frames of the full-bleed media composition.",
+        "runtimeObservation": "The source is video-led and initially shows a loader; the desktop hero was recaptured after seven seconds."
+      },
+      "evidence": [
+        { "kind": "scrape_markdown_links", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/bureau-rouge-content.json", "sha256": "9304e1c7448d3f541685690d67c580b19a496e15a6f6693e9d9e7a9e9a4f9431" },
+        { "kind": "runtime_html", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/bureau-rouge-runtime.html", "sha256": "730960dabb4384fc9953641170a8abedb9b243b8b58ef9c5fb224d7115a91251" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/bureau-rouge-desktop-hero-1440x1000.png", "sha256": "cd2ccf56877b3522ab6c4c79d1aeab498ebf713a81c23f231abe8b98d7b75213" },
+        { "kind": "desktop_motion_stage", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/bureau-rouge-desktop-stage-1440x1000.png", "sha256": "ad67428015eb946be9fe117c268269ea108692b43f99e53c0ecd7cfe93bb6580" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/bureau-rouge-mobile-hero-390x844.png", "sha256": "6b601e2d440a9b9ed94627ca2e6f133669f1d4953015bba777df79a070c88dab" }
+      ]
+    },
+    {
+      "referenceId": "ref_2038e9f35d0adda8",
+      "name": "The Red",
+      "url": "https://333southwabash.com",
+      "candidateAnonymousId": "C02",
+      "weightedScoreOutOf100": 80,
+      "strategyId": "W",
+      "capture": {
+        "desktop": { "viewport": "1440x1000", "scrollHeight": 1000, "canvas": 1, "images": 16, "horizontalOverflowPx": 0, "observedPattern": "oversized red-and-black type wraps a perspective chamber in a fixed virtual viewport" },
+        "mobile": { "viewport": "390x844", "scrollHeight": 844, "horizontalOverflowPx": 0, "observedPattern": "the perspective chamber crops deliberately while retaining the typographic walls and central negative space" },
+        "motionEvidence": "Keyboard PageDown changed the virtual scene from a flat oversized-type frame to a full perspective chamber without document scroll.",
+        "runtimeObservation": "The source is WebGL/virtual-navigation-heavy and fixed-height, increasing clone risk; W0 is the required taste and complexity stop before motion."
+      },
+      "evidence": [
+        { "kind": "scrape_markdown_links", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/the-red-content.json", "sha256": "13aafe4d560b38560df774921d735ff1d2b967f81403d9f5b8e7d5a26e445cae" },
+        { "kind": "runtime_html", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/the-red-runtime.html", "sha256": "f1be608bdcbc8a42cd5cefb1b0091000b0ee0d03092637cdc2039734a0e25041" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/the-red-desktop-hero-1440x1000.png", "sha256": "71c989fd0de3061b259fdc35e80d8102e27a6f25e5a996a1b03254a6a81cf661" },
+        { "kind": "desktop_motion_stage", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/the-red-desktop-stage-1440x1000.png", "sha256": "19976814ea66a41199b719bd46e2ba46daaa74b7b28364310a58178929ff682e" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/the-red-mobile-hero-390x844.png", "sha256": "bd52002fe3ac01bd0160f36e70bf746fd00d27b51cc9bb0a980f80f07e91b197" }
+      ]
+    }
+  ],
+  "generationAccounting": {
+    "modelCalls": 0,
+    "imageCalls": 0,
+    "websiteOrCloneGenerations": 0,
+    "creditsSpent": 0,
+    "v2OutputRootCreated": false,
+    "sharedTargetMediaPackTouched": false,
+    "v1OutputsTouched": false
+  },
+  "gateC": {
+    "authorized": false,
+    "proposedCreditCeiling": 1425,
+    "newImageCallsAllowed": 0,
+    "reuseMediaPackSha256": "e21ee52d96adccd7200d1799622ed460262923dcceacea3ed54386a8f206019f",
+    "confirmationToken": "START-DASELVA-V2-GATE-C-1B0FCD27F0992769",
+    "requirements": [
+      "explicit approval of reference-bundles.lock.json bundleSha256",
+      "explicit approval of the 1,425-credit maximum",
+      "confirmation of the frozen media-pack reuse",
+      "the exact Gate C token"
+    ],
+    "tokenAloneAuthorizesExecution": false
+  }
+}

@@ -13,6 +13,7 @@ const sql = neon(databaseUrl);
 const migrationPaths = [
   'migrations/2026-07-31-reference-bank.sql',
   'migrations/2026-07-31-reference-weighting.sql',
+  'migrations/2026-08-05-reference-privacy.sql',
 ];
 
 for (const migrationPath of migrationPaths) {

@@ -48,12 +48,12 @@ export const CRITERIA = [
     note: 'decision 37/38: Inter/Bricolage/JetBrains stay out; Fraunces + Instrument Serif are NOT banned (edit mode covers them; Instrument Serif is Uncraft branding).',
     text: `- Avoid AI-tell typefaces: Inter, Bricolage Grotesque, and the rest of the AI-default set. Never a JetBrains-family font. (Fraunces and Instrument Serif are allowed.)` },
   { id: 'type-hierarchy', group: 'typography', mode: 'guardrails', on: true,
-    text: `- Control hierarchy with weight and color, not just oversized H1s.` },
+    text: `- Typography may be the protagonist. Oversized display type is valid when its line breaks, measure, tracking, and relationship to supporting copy are deliberate; do not use size as a substitute for hierarchy.` },
   { id: 'type-eyebrows', group: 'typography', mode: 'guardrails', on: true,
-    text: `- Eyebrows (small all-caps labels above headings) sparingly, and NEVER with wider-than-default letter-spacing.` },
+    text: `- Eyebrows (small labels above headings) are a block-level choice, not a reflex. When a reference uses one, preserve its exact case, measured letter-spacing, and offset, including deliberately wide tracking.` },
   { id: 'type-tracking', group: 'typography', mode: 'guardrails', on: true,
-    note: 'decision 42 (revised): negative tracking on large display only. Do NOT widen tracking on small text; eyebrows in particular never open up.',
-    text: `- Optical tracking: as display type gets large, tighten letter-spacing slightly (negative tracking). Do not open up (widen) tracking on body, captions, small text, or labels. Eyebrows in particular never widen (see the eyebrow rule).` },
+    note: 'updated 2026-08-05: reference measurements override generic tracking priors; no automatic tightening.',
+    text: `- Treat letter-spacing and line-height as measured source data. Copy computed values from the reference when available; never automatically tighten a display or widen a label because of a generic typography rule.` },
   { id: 'type-no-italic', group: 'typography', mode: 'guardrails', on: true,
     text: `- No italic by default (a common AI tell — do not set names, labels, headings, numbers, or body in italic decoratively). Use italic ONLY for genuine emphasis / highlights, or when a provided source clearly uses it as a system. When in doubt, upright.` },
   { id: 'type-serif-default', group: 'typography', mode: 'guardrails', on: true,
@@ -84,10 +84,12 @@ export const CRITERIA = [
     text: `- Atmospheric grain/noise textures and gradient meshes are allowed when they serve the composition (kept subtle, on fixed non-interactive layers).` },
   { id: 'layout-proportions', group: 'layout', mode: 'guardrails', on: true,
     text: `- Respect the source's proportions: the size of text relative to its buttons, pills, and containers, and especially the internal padding (the gap between content and the container's edges). When a source is provided, reproduce these; never tighten or inflate them.` },
+  { id: 'layout-mobile-stable', group: 'layout', mode: 'guardrails', on: true,
+    text: `- Mobile quality is a hard gate. Preserve the structure's reading order, hierarchy, and anchoring logic on narrow screens; when independent viewport anchors no longer fit, convert them into a deliberate vertical flow instead of shrinking desktop geometry until it breaks.` },
   { id: 'layout-cards-lazy', group: 'layout', mode: 'guardrails', on: true,
-    text: `- Cards are the lazy answer: group with whitespace or hairlines first; nested cards never. Avoid identical 3-equal-card rows (prefer asymmetric grids, 2-column zig-zag, or bento).` },
+    text: `- Cards are the lazy answer: group with whitespace or hairlines first; nested cards never. Do not invent identical 3-column rows by reflex, but preserve a clean equal-column structure when the reference or content system genuinely calls for one.` },
   { id: 'layout-asymmetric-hero', group: 'layout', mode: 'guardrails', on: true,
-    text: `- Resist the centered hero-over-image default; prefer an asymmetric or split composition.` },
+    text: `- Prefer controlled asymmetry when inventing, but treat centered, split, and offset heroes as equally valid structural patterns when selected deliberately or measured from a reference.` },
   { id: 'layout-constrain-containers', group: 'layout', mode: 'guardrails', on: true,
     text: `- Constrain outer containers (max-w-7xl mx-auto / max-w-[1400px]). Hero sections use min-h-[100dvh], never h-screen.` },
 
@@ -138,28 +140,26 @@ export const CRITERIA = [
 
   // ── ABSORB (source provided) ─────────────────────────────────────────────
   { id: 'absorb-block', group: 'absorb', mode: 'absorb', on: true,
-    text: `STYLE ABSORPTION — when a style source is provided (an HTML reference, a design.md, or an extracted image brief), IT is the SOLE authority for how the result looks. Absorb EVERY visual characteristic from it and take NOTHING from your own defaults:
-- font family, font-STYLE (upright vs italic — match it exactly), weight, case, letter-spacing
-- color: surface, text, and every accent/role — exact values, not approximations
-- corner radius (per element type: cards vs buttons vs pills), and border presence/width/color
-- shadow presence + softness + tint (none if the source has none), and overall elevation
-- spacing rhythm AND internal padding (the gap between content and each container's edges)
-- the OUTER spacing between sibling containers vs the INNER padding — reproduce the source's exact density; if it packs containers TIGHT, keep them tight (never loosen)
-- WHERE each fill/gradient lives — a background gradient stays on the BACKGROUND, never relocated onto a card/container; flat container fills stay flat
-- the distinct container VARIANTS/STATES (opaque vs translucent "glass" vs tinted) — reproduce EACH, do not flatten them to one surface
-- the heading↔subheading relationship (size ratio, weight, colour, margin to the container's edges)
-- the size of text RELATIVE to buttons, pills, and containers
-- overall proportions and density
-These STRUCTURAL relationships ARE part of the style — the source's brief carries them like a "DOM", and you reproduce them on the target's CONTENT. Do NOT re-derive spacing, layering, or treatment placement from the target's own structure or your defaults. The CONTENT keeps its own words and numbers; EVERYTHING visual — tokens AND structure — comes from the style source. If the style source does not pin a property, derive it from the style source's own system — NEVER from a generic AI default. A characteristic the style source has must appear in the output; one it lacks must NOT be invented.` },
+    text: `REFERENCE USE — first decide whether the user requested faithful transfer or inspiration.
+- Faithful transfer: the named source is the visual authority; reproduce its measured tokens, proportions, and responsive behavior while preserving the target's semantic truth.
+- Inspiration / Start from a Ref: decompose every chosen section into (A) reusable structure and (B) replaceable treatment. Preserve section topology, alignment and anchoring logic, media-to-copy proportions, scroll axis/pinning, and density rhythm. Treat colors, decorative overlays, background blocks, imagery, logos, copy, item count, and brand-specific motion as variables unless the user explicitly preserves them.
+- Typography is ground truth, not a guess: capture computed font-size, line-height, letter-spacing, weight, max-width, and offsets. With one reference, keep type and media scale within 15% of it. With two or three references, choose one scale owner that best fits the brief and use it consistently across the page.
+- Identity does not come from copying the bank. Apply a coherent identity layer derived from the brief and your independent art direction after the structural choices are sound.
+- Componentize the art direction into independently chosen ingredients: structure/wireframe, text-block composition and alignment, palette strategy, typography character, and motion register. A reference may inform one ingredient without controlling the others.
+- Never transplant a semantically specific animation merely because it is impressive. Preserve its structure only when the interaction story remains meaningful for the new content.
+- Mobile behavior is part of the source structure. A pattern that cannot remain coherent on mobile is ineligible.` },
 
   // ── INVENT (no source provided) ──────────────────────────────────────────
   { id: 'invent-block', group: 'invent', mode: 'invent', on: true,
     text: `WHEN INVENTING DESIGN FROM A PROMPT (only when NO HTML or design.md source is provided)
 - Decide register first: brand (design IS the product: landing, campaign, portfolio) vs product (design SERVES it: app, dashboard, tool).
+- Identify brand personality separately from business category: playful, extroverted, sober, neutral, corporate, authoritative, approachable, bold, technical, premium, rebellious, or warm. Do not infer personality from industry alone.
 - Theme is never a default: write one sentence of physical scene (who uses it, where, what light, what mood) and let it force light vs dark.
 - Pick a color strategy before colors: restrained (tinted neutrals + one accent <=10%), committed (one color carries 30-60% of the surface), full palette (3-4 named roles), or drenched (the surface IS the color). Do not collapse everything to restrained by reflex.
 - Reach for a deliberate, characterful typeface outside the AI-default set. Serif only for editorial, never on clean dashboards.
-- Vary spacing for rhythm; lead with an asymmetric or split composition over a centered one.` },
+- For sparse brand/landing prompts, default to large media with anchored text, controlled asymmetry, alternating density and breathing room, and protagonist typography that does not depend on effects.
+- Build the direction as a five-ingredient combination: structure + text composition/alignment + palette + typography + motion. Choose each ingredient from the brand attributes and audience rather than applying one monolithic style preset.
+- Vary spacing for rhythm; use centered, split, or asymmetric compositions according to the content, and make the result remain strong on mobile.` },
 ];
 
 // ── Group headers, in render order ─────────────────────────────────────────

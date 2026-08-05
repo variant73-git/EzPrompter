@@ -69,6 +69,9 @@ export function mapReferenceRow(row) {
     cohortRank: row.cohort_rank == null ? null : Number(row.cohort_rank),
     reviewCandidate: row.cohort_rank != null,
     featured: Boolean(row.featured),
+    isPrivate: Boolean(row.is_private ?? row.isPrivate),
+    privacyReason: row.privacy_reason || row.privacyReason || null,
+    templatePlatform: row.template_platform || row.templatePlatform || null,
     publishedAt: row.published_at || null,
     generatedAt: row.generated_at || null,
     analysisStatus: row.analysis_status || 'listed',
@@ -80,10 +83,10 @@ export function mapReferenceRow(row) {
 }
 
 function fallbackPage(options) {
-  const catalog = getReferenceCatalog();
+  const catalog = getReferenceCatalog({ includePrivate: options.includePrivate });
   const rankById = new Map(catalog.map((item, index) => [item.id, index + 1]));
   const reviewIds = options.view === 'review' ? catalog.slice(0, 24).map((item) => item.id) : null;
-  const page = queryReferenceCatalog({ ...options, referenceIds: reviewIds });
+  const page = queryReferenceCatalog({ ...options, referenceIds: reviewIds, includePrivate: options.includePrivate });
   return {
     ...page,
     items: page.items.map((item) => ({
@@ -107,15 +110,16 @@ export async function queryPersistentReferenceCatalog({
   category = 'all',
   sort = 'curated',
   view = 'browse',
+  includePrivate = false,
   offset = 0,
   limit = 48,
 } = {}) {
   const safeOffset = Math.max(0, Number(offset) || 0);
   const safeLimit = Math.min(96, Math.max(1, Number(limit) || 48));
-  const safeView = view === 'review' ? 'review' : 'browse';
+  const safeView = ['review', 'curate'].includes(view) ? view : 'browse';
   const safeSort = ['curated', 'newest', 'name'].includes(sort) ? sort : 'curated';
   const trimmedQuery = String(query || '').trim();
-  if (!process.env.DATABASE_URL) return fallbackPage({ query, source, category, sort: safeSort, view: safeView, offset: safeOffset, limit: safeLimit });
+  if (!process.env.DATABASE_URL) return fallbackPage({ query, source, category, sort: safeSort, view: safeView, includePrivate, offset: safeOffset, limit: safeLimit });
 
   const pattern = `%${trimmedQuery}%`;
   const [rows, sourceFacets, categoryFacets, reviewRows, cohortRows] = await Promise.all([
@@ -165,6 +169,7 @@ export async function queryPersistentReferenceCatalog({
         LEFT JOIN reference_review_cohort_members cohort_member
           ON cohort_member.reference_site_id = site.id AND cohort_member.cohort_id = ${DEFAULT_REVIEW_COHORT_ID}
         WHERE site.lifecycle_state <> 'removed'
+          AND (${Boolean(includePrivate)} OR site.is_private = FALSE)
           AND (${safeView} <> 'review' OR cohort_member.reference_site_id IS NOT NULL)
           AND (${source} = 'all' OR EXISTS (
             SELECT 1 FROM reference_appearances source_appearance
@@ -182,7 +187,7 @@ export async function queryPersistentReferenceCatalog({
       SELECT filtered.*, COUNT(*) OVER()::int AS filtered_total
       FROM filtered
       ORDER BY
-        CASE WHEN ${safeView} = 'review' AND preference_decision IS NULL THEN 0 ELSE 1 END ASC,
+        CASE WHEN ${safeView} IN ('review','curate') AND preference_decision IS NULL THEN 0 ELSE 1 END ASC,
         CASE WHEN ${safeSort} = 'name' THEN LOWER(title) END ASC,
         CASE WHEN ${safeSort} = 'newest' THEN published_at END DESC NULLS LAST,
         CASE WHEN ${safeSort} = 'curated' THEN preference_rating END DESC NULLS LAST,
@@ -195,13 +200,15 @@ export async function queryPersistentReferenceCatalog({
     sql`
       SELECT source_id AS value, COUNT(DISTINCT reference_site_id)::int AS count
       FROM reference_appearances
+      JOIN reference_sites site ON site.id = reference_appearances.reference_site_id
+      WHERE (${Boolean(includePrivate)} OR site.is_private = FALSE)
       GROUP BY source_id
       ORDER BY count DESC, value ASC
     `,
     sql`
       SELECT category AS value, COUNT(*)::int AS count
       FROM reference_sites, LATERAL unnest(categories) AS category
-      WHERE lifecycle_state <> 'removed'
+      WHERE lifecycle_state <> 'removed' AND (${Boolean(includePrivate)} OR is_private = FALSE)
       GROUP BY category
       ORDER BY count DESC, value ASC
     `,
@@ -218,7 +225,9 @@ export async function queryPersistentReferenceCatalog({
       JOIN reference_sites site ON site.id = member.reference_site_id
       LEFT JOIN reference_preferences preference
         ON preference.reference_site_id = site.id AND preference.user_id = ${userId}
-      WHERE member.cohort_id = ${DEFAULT_REVIEW_COHORT_ID} AND site.lifecycle_state <> 'removed'
+      WHERE member.cohort_id = ${DEFAULT_REVIEW_COHORT_ID}
+        AND site.lifecycle_state <> 'removed'
+        AND (${Boolean(includePrivate)} OR site.is_private = FALSE)
     `,
     sql`
       SELECT id, name, status, rubric_version, frozen_at
@@ -333,7 +342,27 @@ export async function saveReferencePreference(userId, referenceSiteId, preferenc
   };
 }
 
-export async function getReviewedPlanningCandidates(userId) {
+export async function saveReferencePrivacy(referenceSiteId, isPrivate) {
+  const rows = await sql`
+    UPDATE reference_sites
+    SET
+      is_private = ${Boolean(isPrivate)},
+      privacy_reason = CASE WHEN ${Boolean(isPrivate)} THEN COALESCE(privacy_reason, 'manual-curation') ELSE NULL END,
+      updated_at = NOW()
+    WHERE id = ${referenceSiteId}
+    RETURNING id, is_private, privacy_reason, template_platform, updated_at
+  `;
+  if (!rows[0]) return null;
+  return {
+    referenceId: rows[0].id,
+    isPrivate: Boolean(rows[0].is_private),
+    privacyReason: rows[0].privacy_reason || null,
+    templatePlatform: rows[0].template_platform || null,
+    updatedAt: rows[0].updated_at,
+  };
+}
+
+export async function getReviewedPlanningCandidates(userId, { includePrivate = false } = {}) {
   if (!process.env.DATABASE_URL) return [];
   const rows = await sql`
     SELECT
@@ -375,7 +404,9 @@ export async function getReviewedPlanningCandidates(userId) {
       ON preference.reference_site_id = site.id AND preference.user_id = ${userId}
     LEFT JOIN reference_review_cohort_members cohort_member
       ON cohort_member.reference_site_id = site.id AND cohort_member.cohort_id = ${DEFAULT_REVIEW_COHORT_ID}
-    WHERE preference.decision IN ('keep','maybe') AND site.lifecycle_state <> 'removed'
+    WHERE preference.decision IN ('keep','maybe')
+      AND site.lifecycle_state <> 'removed'
+      AND (${Boolean(includePrivate)} OR site.is_private = FALSE)
     ORDER BY
       CASE preference.decision WHEN 'keep' THEN 0 ELSE 1 END,
       preference.rating DESC NULLS LAST,

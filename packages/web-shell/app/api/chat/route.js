@@ -10,7 +10,7 @@ import { callAnthropic } from '../../../lib/agent/llm-anthropic.js';
 import { callOpenAI }    from '../../../lib/agent/llm-openai.js';
 import { callGemini }    from '../../../lib/agent/llm-gemini.js';
 import { breakerFor }    from '../../../lib/agent/circuit.js';
-import { BOARD_AGENT, EDIT_IMAGE_SYSTEM } from '../../../lib/agent/prompts.js';
+import { BOARD_AGENT, EDIT_IMAGE_SYSTEM, withInteractionMode } from '../../../lib/agent/prompts.js';
 import { buildBoardSummary } from '../../../lib/agent/board-summary.js';
 import { createSseStream, SSE_HEADERS } from '../../../lib/agent/sse-bridge.js';
 import { registerRun, unregisterRun } from '../../../lib/agent/run-map.js';
@@ -367,9 +367,13 @@ export async function POST(request) {
     attachments = null,
     activeContexts = null,
     modelId = null,        // chat dropdown pick — drives the assistant model
+    interactionMode = 'default',
   } = body || {};
 
   if (!boardId) return NextResponse.json({ error: 'boardId required' }, { status: 400 });
+  if (!['default', 'brainstorm'].includes(interactionMode)) {
+    return NextResponse.json({ error: 'invalid interactionMode' }, { status: 400 });
+  }
   const hasText = !!message?.trim();
   const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
   if (!hasText && !hasAttachments) return NextResponse.json({ error: 'message or attachments required' }, { status: 400 });
@@ -512,7 +516,7 @@ export async function POST(request) {
   // Asset-scoped chats (Smart Edit) get the asset registry (safe + createImage) —
   // they can't delete/runFlow/editSite from there. Board chats get the full registry.
   const registry = threadScope === 'asset' ? buildAssetRegistry() : buildFullRegistry();
-  const systemPrompt = PROMPT_KEYS[systemPromptKey] || PROMPT_KEYS.BOARD_AGENT;
+  const systemPrompt = withInteractionMode(PROMPT_KEYS[systemPromptKey] || PROMPT_KEYS.BOARD_AGENT, interactionMode);
 
   // Persist image attachments BEFORE building the LLM message. For each one
   // we create BOTH an `assets` row (so it has an id the agent can pass to

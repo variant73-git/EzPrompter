@@ -23,12 +23,20 @@ describe('persistent reference row mapping', () => {
       preference_motion_tags: ['scroll-driven'],
       preference_visual_quality: 5,
       preference_transferability: 4,
+      is_private: true,
+      privacy_reason: 'webbuilder-template',
+      template_platform: 'framer',
     });
     expect(reference.sourceIds).toEqual(['codrops', 'siteinspire']);
     expect(reference.reviewCandidate).toBe(true);
     expect(reference.preference).toMatchObject({ decision: 'keep', rating: 5, preferredRole: 'chassis' });
     expect(reference.preference.dimensionRatings).toMatchObject({ visualQuality: 5, transferability: 4 });
     expect(reference.sourceConfidence).toBeGreaterThan(0.7);
+    expect(reference).toMatchObject({
+      isPrivate: true,
+      privacyReason: 'webbuilder-template',
+      templatePlatform: 'framer',
+    });
   });
 
   it('caps aggregator consensus so source provenance remains a weak signal', () => {

@@ -55,8 +55,145 @@ body.rb-ed-light .chat-thinking-dot {
   background: transparent;
   color: var(--text-primary, #f5f5f5);
 }
+.chat-bubble-wide {
+  width: 100%;
+  max-width: 100%;
+}
 .chat-bubble-content { white-space: pre-wrap; }
 .chat-bubble-children { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+
+/* Brainstorm visual choices: one compact comparison surface, not a nested
+   dashboard. The agent can select content, but never inject styles or markup. */
+.brainstorm-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+.brainstorm-choice-card {
+  min-width: 0;
+  padding: 7px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+.brainstorm-choice-card:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.075);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.brainstorm-choice-card:focus-visible {
+  outline: 2px solid #fbbf24;
+  outline-offset: 2px;
+}
+.brainstorm-choice-card.is-selected {
+  border-color: rgba(251, 191, 36, 0.72);
+}
+.brainstorm-choice-card:disabled { cursor: default; opacity: 0.58; }
+.brainstorm-choice-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.brainstorm-choice-check { color: #fbbf24; }
+.brainstorm-choice-caption {
+  display: grid;
+  gap: 1px;
+  margin-top: 4px;
+  color: rgba(245, 245, 245, 0.56);
+  font-size: 10.5px;
+  line-height: 1.3;
+}
+.brainstorm-choice-caption span {
+  overflow-wrap: anywhere;
+}
+
+.brainstorm-wireframe,
+.brainstorm-type-preview,
+.brainstorm-palette-preview {
+  height: 62px;
+  overflow: hidden;
+  background: #20201f;
+  border-radius: 4px;
+}
+.brainstorm-wireframe {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.brainstorm-wireframe span { position: absolute; display: block; border-radius: 1px; }
+.brainstorm-wireframe-nav { top: 6px; left: 7px; width: 22%; height: 2px; background: rgba(255,255,255,.6); }
+.brainstorm-wireframe-title { top: 22px; left: 7px; width: 52%; height: 6px; background: rgba(255,255,255,.86); }
+.brainstorm-wireframe-copy { top: 32px; left: 7px; width: 41%; height: 3px; background: rgba(255,255,255,.32); box-shadow: 0 5px 0 rgba(255,255,255,.2); }
+.brainstorm-wireframe-action { top: 49px; left: 7px; width: 20%; height: 5px; background: #fbbf24; }
+.brainstorm-wireframe-media { right: 6px; bottom: 6px; width: 38%; height: 41px; background: #353533; }
+.brainstorm-wireframe-side { display: none; }
+
+.brainstorm-wireframe-media-anchored .brainstorm-wireframe-media { inset: 13px 5px 5px; width: auto; height: auto; background: #343432; }
+.brainstorm-wireframe-media-anchored .brainstorm-wireframe-title,
+.brainstorm-wireframe-media-anchored .brainstorm-wireframe-copy,
+.brainstorm-wireframe-media-anchored .brainstorm-wireframe-action { z-index: 1; }
+.brainstorm-wireframe-media-anchored .brainstorm-wireframe-title { top: 26px; width: 48%; }
+.brainstorm-wireframe-centered .brainstorm-wireframe-title { top: 22px; left: 22%; width: 56%; }
+.brainstorm-wireframe-centered .brainstorm-wireframe-copy { top: 33px; left: 31%; width: 38%; }
+.brainstorm-wireframe-centered .brainstorm-wireframe-action { top: 49px; left: 40%; width: 20%; }
+.brainstorm-wireframe-centered .brainstorm-wireframe-media { display: none; }
+.brainstorm-wireframe-offset .brainstorm-wireframe-title { top: 18px; left: 31%; width: 55%; }
+.brainstorm-wireframe-offset .brainstorm-wireframe-copy { top: 31px; left: 31%; width: 42%; }
+.brainstorm-wireframe-offset .brainstorm-wireframe-action { left: 31%; }
+.brainstorm-wireframe-offset .brainstorm-wireframe-media { left: 6px; right: auto; bottom: 6px; width: 19%; height: 28px; }
+.brainstorm-wireframe-edge-distributed .brainstorm-wireframe-title { top: 18px; left: 7px; width: 42%; }
+.brainstorm-wireframe-edge-distributed .brainstorm-wireframe-copy { top: auto; bottom: 8px; left: auto; right: 7px; width: 34%; }
+.brainstorm-wireframe-edge-distributed .brainstorm-wireframe-action,
+.brainstorm-wireframe-edge-distributed .brainstorm-wireframe-media { display: none; }
+.brainstorm-wireframe-editorial-grid .brainstorm-wireframe-media { top: 17px; right: 7px; bottom: auto; width: 31%; height: 20px; }
+.brainstorm-wireframe-editorial-grid .brainstorm-wireframe-title { width: 45%; }
+.brainstorm-wireframe-editorial-grid .brainstorm-wireframe-side { display: block; left: 55%; bottom: 7px; width: 38%; height: 11px; background: rgba(255,255,255,.12); box-shadow: -51px 0 0 rgba(255,255,255,.12); }
+.brainstorm-wireframe-stacked .brainstorm-wireframe-title { width: 72%; }
+.brainstorm-wireframe-stacked .brainstorm-wireframe-copy { width: 58%; }
+.brainstorm-wireframe-stacked .brainstorm-wireframe-media { display: none; }
+.brainstorm-wireframe-horizontal-sequence .brainstorm-wireframe-title { top: 16px; width: 41%; }
+.brainstorm-wireframe-horizontal-sequence .brainstorm-wireframe-copy,
+.brainstorm-wireframe-horizontal-sequence .brainstorm-wireframe-action { display: none; }
+.brainstorm-wireframe-horizontal-sequence .brainstorm-wireframe-media { top: 31px; left: 7px; bottom: auto; width: 27%; height: 22px; box-shadow: 38px 0 0 #353533, 76px 0 0 #353533; }
+
+.brainstorm-type-preview {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 9px;
+  color: #f5f5f5;
+}
+.brainstorm-type-preview span { font-size: 32px; line-height: 1; letter-spacing: -0.045em; }
+.brainstorm-type-preview i { max-width: 38px; color: rgba(245,245,245,.4); font-size: 7px; font-style: normal; line-height: 1.2; }
+.brainstorm-type-neutral-sans,
+.brainstorm-type-geometric-sans { font-family: Inter, Arial, sans-serif; }
+.brainstorm-type-humanist-sans { font-family: Optima, Candara, system-ui, sans-serif; }
+.brainstorm-type-editorial-serif { font-family: Georgia, 'Times New Roman', serif; }
+.brainstorm-type-display-serif { font-family: Didot, Bodoni 72, Georgia, serif; }
+.brainstorm-type-condensed-sans { font-family: 'Arial Narrow', Impact, sans-serif; font-stretch: condensed; }
+
+.brainstorm-palette-preview { display: flex; }
+.brainstorm-palette-preview span { flex: 1; min-width: 0; }
+
+body.rb-ed-light .brainstorm-choice-card {
+  background: rgba(0, 0, 0, 0.035);
+  border-color: rgba(0, 0, 0, 0.09);
+}
+body.rb-ed-light .brainstorm-choice-card:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.22);
+}
+body.rb-ed-light .brainstorm-choice-caption { color: rgba(31, 31, 31, 0.56); }
 
 .tool-chip {
   display: inline-flex;

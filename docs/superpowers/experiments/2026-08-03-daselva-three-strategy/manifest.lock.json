@@ -1,0 +1,8 @@
+{
+  "manifestFile": "manifest.v1.json",
+  "manifestSha256": "cf085ae35c450969b930d79c0cf9af66a2d7e39d9a6c0ce5bf6ccc9615a3964b",
+  "sourceContentSha256": "b456f98b0fecd1616603a9e2ea9fd3e20ec285be6f5f438f4500c1eee7e6661b",
+  "gateCConfirmationToken": "START-DASELVA-GATE-C-CF085AE35C450969",
+  "tokenDoesNotAuthorizeExecution": true,
+  "authorizationRule": "The product owner must explicitly repeat this token after approving the frozen Gate B reference bundles, target-media-pack hash, and 1545-credit ceiling."
+}

@@ -1,0 +1,503 @@
+{
+  "schemaVersion": "start-from-ref-reference-bundles-v1",
+  "experimentId": "daselva-pan-amazonian-three-strategy-v1",
+  "frozenAt": "2026-08-03T13:30:00.000Z",
+  "parentManifest": {
+    "path": "docs/superpowers/experiments/2026-08-03-daselva-three-strategy/manifest.v1.json",
+    "sha256": "cf085ae35c450969b930d79c0cf9af66a2d7e39d9a6c0ce5bf6ccc9615a3964b"
+  },
+  "gate": {
+    "authorizedGate": "B",
+    "status": "frozen_gate_b",
+    "mode": "bounded_read_only_retrieval",
+    "authorizedScope": [
+      "read-only catalog lookup",
+      "bounded scrape of shortlisted public references",
+      "desktop and mobile visual inspection",
+      "runtime signature inspection",
+      "reference-bundle documentation and validation"
+    ],
+    "notAuthorized": [
+      "model or image-generation calls",
+      "credit spending",
+      "target-media generation",
+      "website generation",
+      "shared database, plan, board, node, preference, cohort, or assessment writes",
+      "push, deployment, or production enablement"
+    ]
+  },
+  "catalogSnapshot": {
+    "capturedAt": "2026-08-03T13:21:29.241Z",
+    "readMode": "SELECT-only",
+    "siteCount": 1919,
+    "appearanceCount": 2019,
+    "persistenceWrites": 0
+  },
+  "selectionRules": [
+    "DaSelva target truth, content arc, palette, routes, and commercial behavior remain authoritative.",
+    "A reference is selected for contextual capabilities, not assigned a permanent catalog role.",
+    "A capability may be reused only inside the named strategy boundary.",
+    "Reference imagery, copy, brand marks, source code, offers, claims, and booking mechanics may not be copied.",
+    "Observed desktop behavior must have a documented mobile interpretation or be excluded.",
+    "When an observed runtime is heavier than the DaSelva need, the idea must be re-authored with the lightest sufficient implementation."
+  ],
+  "references": {
+    "amici": {
+      "catalog": {
+        "id": "ref_e5e9e23d4013960d",
+        "name": "Amici",
+        "url": "https://restaurant-amici.com",
+        "host": "restaurant-amici.com",
+        "curationRank": 238,
+        "availabilityAtSnapshot": "unknown",
+        "sourceAppearance": {
+          "source": "Codrops Webzibition",
+          "sourceRecordId": "post-80685",
+          "listingUrl": "https://tympanus.net/codrops/webzibition/page/12/",
+          "thumbnailUrl": "https://codrops-1f606.kxcdn.com/codrops/wp-content/uploads/2024/09/restaurantamici-800x433.jpg?x48895"
+        }
+      },
+      "observedCapabilities": [
+        "restaurant-specific hero with an immediate statement",
+        "warm editorial food and interior collage",
+        "marquee-like appetite pacing",
+        "clear food-philosophy movement",
+        "locations and reservation close",
+        "normal vertical document flow with a sticky header"
+      ],
+      "liveEvidence": {
+        "desktop1440x1000": {
+          "capturedAt": "2026-08-03T13:28:27.356Z",
+          "document": { "width": 1425, "clientWidth": 1425, "height": 4535 },
+          "counts": { "images": 38, "video": 0, "canvas": 0, "sections": 4, "animations": 0 },
+          "headingTops": [250, 2150, 3545]
+        },
+        "mobile390x844": {
+          "capturedAt": "2026-08-03T13:28:32.729Z",
+          "document": { "width": 375, "clientWidth": 375, "height": 3737 },
+          "counts": { "images": 38, "video": 0, "canvas": 0, "sections": 4, "animations": 2 },
+          "headingTops": [82, 1696, 2623],
+          "horizontalOverflowObserved": false
+        }
+      },
+      "runtimeObservations": {
+        "script": "https://restaurant-amici.com/wp-content/themes/beaucoup/public/js/app.5293f7.js",
+        "signaturesPresent": ["GSAP", "ScrollTrigger", "Lenis"],
+        "interpretation": "Runtime names are provenance evidence, not permission or a requirement to reproduce the bundle."
+      },
+      "forbiddenReuse": [
+        "photography and illustrations",
+        "French or Italian copy and brand voice",
+        "logo, colors, fonts, and identity marks",
+        "source code or minified runtime",
+        "location and reservation data"
+      ],
+      "knownGaps": [
+        "Some lazy media remained unloaded in the full-page mobile capture.",
+        "No interaction video or performance trace was recorded.",
+        "The reference has four primary sections, so its observed length does not override the seven-movement DaSelva content envelope."
+      ],
+      "evidence": [
+        { "kind": "content_markdown", "path": ".firecrawl/restaurant-amici.com.md", "sha256": "ce1e7122f21914b18948c22db9d2ca83822de8c7f7bf97c80c400e4d89c6b7e6" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-gate-b/amici-desktop-hero-1440x1000.png", "sha256": "e579d3cffe0f619ffc52c1f82f63c22232ef7d542bb2160d09f7d05de6d3df2a" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-gate-b/amici-mobile-hero-390x844.png", "sha256": "f238b0649c4382b18c6cb0a98c22b631b86a1949e8eddec052b7a5ecc24a3e9f" },
+        { "kind": "mobile_full_page", "path": ".firecrawl/start-from-ref-daselva-gate-b/amici-mobile-390x844-full.png", "sha256": "6d954285e7f24d55f9519701d58fdc34512dc1fa85012c277f88b9fe5ffbbee7" },
+        { "kind": "runtime_snapshot", "path": ".firecrawl/start-from-ref-daselva-gate-b/amici-runtime.js", "sha256": "60a41061d1c14562cd58b73299b185f44797bdb7edf38c730781518f47765069" }
+      ]
+    },
+    "hotel_odisej": {
+      "catalog": {
+        "id": "ref_71ea04e87955c484",
+        "name": "Hotel Odisej",
+        "url": "https://hotelodisej.com",
+        "host": "hotelodisej.com",
+        "curationRank": 543,
+        "availabilityAtSnapshot": "unknown",
+        "sourceAppearance": {
+          "source": "Codrops Webzibition",
+          "sourceRecordId": "post-76398",
+          "listingUrl": "https://tympanus.net/codrops/webzibition/page/19/",
+          "thumbnailUrl": "https://codrops-1f606.kxcdn.com/codrops/wp-content/uploads/2023/07/Hotel-Odisej-800x439-1.jpg?x48895"
+        }
+      },
+      "observedCapabilities": [
+        "nature-led hospitality pacing",
+        "asymmetric dining cards with rounded photography",
+        "dark-field editorial section with an organic wave transition",
+        "large restrained serif paired with compact explanatory copy"
+      ],
+      "liveEvidence": {
+        "desktop1440x1000": {
+          "capturedAt": "2026-08-03T13:24:49.439Z",
+          "document": { "width": 1425, "clientWidth": 1425, "height": 15026 },
+          "counts": { "images": 28, "video": 0, "canvas": 0, "sections": 10, "animations": 20 },
+          "diningHeadingTop": 5984,
+          "capturedStageScrollY": 6499
+        },
+        "mobile390x844": {
+          "capturedAt": "2026-08-03T13:24:55.636Z",
+          "reportedDocument": { "width": 390, "clientWidth": 390, "height": 844 },
+          "visualContentExtentByHeadingTop": 10330,
+          "counts": { "images": 28, "video": 0, "canvas": 0, "sections": 10, "animations": 24 },
+          "interpretation": "The discrepancy between reported document height and transformed heading positions confirms a custom smooth or virtual scroll surface."
+        }
+      },
+      "runtimeObservations": {
+        "script": "https://hotelodisej.com/wp-content/themes/alh-hotel-odisej-web-2023/static/dist/bundle.js?ver=1.65.1764856186",
+        "signaturesPresent": ["GSAP", "ScrollTrigger", "Lenis", "Swiper", "Barba"],
+        "interpretation": "The heavy navigation and virtual-scroll stack is excluded; only bounded visual pacing may inform the composition strategy."
+      },
+      "forbiddenReuse": [
+        "hotel, room, amenity, and destination commerce structure",
+        "photography and island identity",
+        "custom smooth-scroll authority",
+        "source code or runtime bundle",
+        "copy, locations, and booking mechanics"
+      ],
+      "knownGaps": [
+        "Consent UI obscures part of the stored screenshots.",
+        "The mobile scroll extent cannot be treated as native document height.",
+        "No room-detail or booking flow was followed."
+      ],
+      "evidence": [
+        { "kind": "content_markdown", "path": ".firecrawl/hotelodisej.com.md", "sha256": "7881ed14d037096560a1a1ca7e974e3616115c5e738b9f9c7c89b211f53d1fd3" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-gate-b/hotel-desktop-hero.png", "sha256": "0b5f17e5a6392faa6d12a42fe128ef4afbd094aceece35beca704013ee5a9cbb" },
+        { "kind": "desktop_dining_stage", "path": ".firecrawl/start-from-ref-daselva-gate-b/hotel-desktop-stage.png", "sha256": "2c091b0b414199606690dc95d93c389886c78ac0b2d4f94e055a37589047fbb3" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-gate-b/hotel-mobile-hero.png", "sha256": "b041feba871aeefeb05d1bb4c2bcd58eae6d83c3f78b2aa2dd6b4c93ac3427d5" },
+        { "kind": "runtime_snapshot", "path": ".firecrawl/start-from-ref-daselva-gate-b/hotel-runtime.js", "sha256": "5d6fe4bdab38133e134154b149fa9a37c607ff865bf5dbc0469cddce60eed46d" }
+      ]
+    },
+    "museum_department": {
+      "catalog": {
+        "id": "ref_6cec29b7bd0673f6",
+        "name": "Museum Department",
+        "url": "https://museumdepartment.com",
+        "host": "museumdepartment.com",
+        "curationRank": 42,
+        "availabilityAtSnapshot": "unknown",
+        "sourceAppearance": {
+          "source": "SiteInspire",
+          "sourceRecordId": "13464",
+          "listingUrl": "https://www.siteinspire.com",
+          "detailUrl": "https://www.siteinspire.com/website/13464-museum-department",
+          "thumbnailUrl": "https://r2.siteinspire.com/cdn-cgi/image/width=960,height=600,quality=75,format=auto,metadata=none,gravity=top,fit=crop,compress=true/NVvtsdZiuW93.jpg"
+        }
+      },
+      "observedCapabilities": [
+        "large indexed editorial statement",
+        "offset two-column image index on desktop",
+        "clear one-column ordering on mobile",
+        "sticky minimal navigation",
+        "typographic hierarchy with generous negative space"
+      ],
+      "liveEvidence": {
+        "desktop1440x1000": {
+          "capturedAt": "2026-08-03T13:24:58.815Z",
+          "document": { "width": 1425, "clientWidth": 1425, "height": 7894 },
+          "counts": { "images": 16, "video": 0, "canvas": 0, "sections": 3, "animations": 0 },
+          "indexedHeadingRange": { "firstTop": 1221, "lastTop": 4430 }
+        },
+        "mobile390x844": {
+          "capturedAt": "2026-08-03T13:25:04.145Z",
+          "document": { "width": 375, "clientWidth": 375, "height": 7961 },
+          "counts": { "images": 16, "video": 0, "canvas": 0, "sections": 3, "animations": 0 },
+          "indexedHeadingRange": { "firstTop": 759, "lastTop": 5628 },
+          "horizontalOverflowObserved": false
+        }
+      },
+      "runtimeObservations": {
+        "framework": "Next.js chunks observed",
+        "motionEvidence": "No active Web Animations API animation was observed at either viewport.",
+        "interpretation": "Use as static editorial and responsive-layout evidence, not as a motion donor."
+      },
+      "forbiddenReuse": [
+        "archive content and product imagery",
+        "interviews, fonts catalog, and newsletter mechanics",
+        "brand identity and exact typography",
+        "source code or framework chunks"
+      ],
+      "knownGaps": [
+        "A newsletter panel obscures part of the stored mid-page screenshot.",
+        "Search and menu panels were not opened.",
+        "No deeper detail route was followed."
+      ],
+      "evidence": [
+        { "kind": "content_markdown", "path": ".firecrawl/museumdepartment.com.md", "sha256": "028d53333992dba96ffaf5435c26215b85ea5b20d31b66d55034859f397cbc10" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-gate-b/museum-desktop-hero.png", "sha256": "6e4da0c9943a918a2d87321393a49e84bcdb8795ccf11bbac5ca4ffbbae639f2" },
+        { "kind": "desktop_mid_page", "path": ".firecrawl/start-from-ref-daselva-gate-b/museum-desktop-stage.png", "sha256": "4c1cfb5a21cfe49ec59faa1e989f010f89a8f96d7adede2c38d74d5cf92cc00e" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-gate-b/museum-mobile-hero.png", "sha256": "7ce3761cf992cdb1a38649832e08a81156ae32405e34a2c7d9de27a37445349d" }
+      ]
+    },
+    "root_food": {
+      "catalog": {
+        "id": "ref_d30738b156593f09",
+        "name": "Root Food",
+        "url": "https://root-food.com",
+        "host": "root-food.com",
+        "curationRank": 834,
+        "availabilityAtSnapshot": "unknown",
+        "sourceAppearance": {
+          "source": "Codrops Webzibition",
+          "sourceRecordId": "post-76360",
+          "listingUrl": "https://tympanus.net/codrops/webzibition/page/18/",
+          "thumbnailUrl": "https://codrops-1f606.kxcdn.com/codrops/wp-content/uploads/2023/08/Root-Food-800x435-1.jpg?x48895"
+        }
+      },
+      "observedCapabilities": [
+        "chapter-based editorial food narrative",
+        "strong alternating photographic scale",
+        "ingredient and cultivation imagery used as narrative material",
+        "fixed chapter cues and band-like scene divisions"
+      ],
+      "liveEvidence": {
+        "desktop1440x1000": {
+          "capturedAt": "2026-08-03T13:25:08.781Z",
+          "document": { "width": 28070, "clientWidth": 1440, "height": 1000 },
+          "counts": { "images": 65, "video": 0, "canvas": 0, "sections": 25, "animations": 0 },
+          "capturedStageScrollX": 10000,
+          "interpretation": "The desktop site is a horizontal narrative surface and is incompatible with the DaSelva global vertical scroll envelope."
+        },
+        "mobile390x844": {
+          "capturedAt": "2026-08-03T13:25:16.361Z",
+          "document": { "width": 390, "clientWidth": 390, "height": 22348 },
+          "counts": { "images": 65, "video": 0, "canvas": 0, "sections": 25, "animations": 0 },
+          "horizontalOverflowObserved": false,
+          "interpretation": "The mobile surface reorders into a long native vertical flow; its length is evidence for compensation, not a target length."
+        }
+      },
+      "runtimeObservations": {
+        "framework": "Nuxt chunks observed",
+        "signaturesPresent": ["ScrollTrigger", "Lenis", "Swiper"],
+        "interpretation": "Only the idea of a bounded chapter is eligible. Global horizontal scrolling and the runtime bundle are excluded."
+      },
+      "forbiddenReuse": [
+        "global horizontal scroll authority",
+        "photography and source assets",
+        "private-chef offer, biography, and claims",
+        "source code or Nuxt chunks",
+        "exact chapter numbering and transitions"
+      ],
+      "knownGaps": [
+        "Consent UI obscures part of the stored screenshots.",
+        "No complete horizontal interaction recording was captured.",
+        "The desktop hero can remain in a loading or minimal state until the first navigation gesture."
+      ],
+      "evidence": [
+        { "kind": "content_markdown", "path": ".firecrawl/root-food.com.md", "sha256": "a32e5327dfc54c3e00b993ca860edd63e897979fea0d4240893143cd4d5ae075" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-gate-b/root-desktop-hero.png", "sha256": "7146286ad84dd58791551bb09a5f2c42eea6d1c1c8757c72958c2500824448c3" },
+        { "kind": "desktop_horizontal_stage", "path": ".firecrawl/start-from-ref-daselva-gate-b/root-desktop-stage.png", "sha256": "bb0540127d8d29d0584a9b64cf73352c7e8674e945f34e2d29fb90a25d5b8dab" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-gate-b/root-mobile-hero.png", "sha256": "c9fe77b46d3c4d4abd1bc5b7c5c51c62d7c6b712967d257438227cfcc1c3eefc" },
+        { "kind": "runtime_snapshot", "path": ".firecrawl/start-from-ref-daselva-gate-b/root-runtime-main.js", "sha256": "eaa0c50968590f666d2a03628d12cc95789bbb1122e4f824cabc1a0c2f5353ea" }
+      ]
+    },
+    "mun": {
+      "catalog": {
+        "id": "ref_55725fccf979b6f2",
+        "name": "Mùn Rooftop Cocktail Bar",
+        "url": "https://munrooftoprome.com",
+        "host": "munrooftoprome.com",
+        "curationRank": 698,
+        "availabilityAtSnapshot": "unknown",
+        "sourceAppearance": {
+          "source": "Codrops Webzibition",
+          "sourceRecordId": "post-99225",
+          "listingUrl": "https://tympanus.net/codrops/webzibition/page/6/",
+          "thumbnailUrl": "https://codrops-1f606.kxcdn.com/codrops/wp-content/uploads/2025/08/munrooftoprome.com_-1-800x433.jpg?x48895"
+        }
+      },
+      "observedCapabilities": [
+        "temporal hero with a central changing subject",
+        "large chapter-like typographic bands",
+        "sticky long-form paragraph internals",
+        "persistent circular reservation cue",
+        "dark atmospheric field with restrained accent color"
+      ],
+      "liveEvidence": {
+        "desktop1440x1000": {
+          "capturedAt": "2026-08-03T13:26:12.126Z",
+          "document": { "width": 1440, "clientWidth": 1425, "height": 10367 },
+          "counts": { "images": 76, "video": 1, "canvas": 0, "sections": 9, "animations": 32 },
+          "capturedStageScrollY": 4500
+        },
+        "mobile390x844": {
+          "capturedAt": "2026-08-03T13:26:21.283Z",
+          "document": { "width": 390, "clientWidth": 375, "height": 10099 },
+          "counts": { "images": 76, "video": 1, "canvas": 0, "sections": 9, "animations": 28 },
+          "headingTops": [335, 2028, 4580, 5581, 8089]
+        }
+      },
+      "runtimeObservations": {
+        "script": "https://munrooftoprome.com/dist/assets/main.js",
+        "signaturesPresent": ["GSAP", "ScrollTrigger", "Lenis", "Barba"],
+        "contentSnapshotObservation": "The scraped document references a numbered moon-image sequence extending to 596 files.",
+        "interpretation": "The temporal concept may be re-authored with DaSelva media; the moon sequence, video, and site runtime may not be reused."
+      },
+      "forbiddenReuse": [
+        "moon sequence and all reference media",
+        "596-frame asset strategy as a default implementation",
+        "cocktail, district, rooftop, or Rome content",
+        "source code and runtime bundle",
+        "contact form, reCAPTCHA, analytics, and booking mechanics"
+      ],
+      "knownGaps": [
+        "Consent UI obscures part of the stored screenshots.",
+        "No full frame-by-frame sequence recording or throttled performance profile was captured.",
+        "The observed video and sequential-image dependencies are too heavy to adopt without a separately justified DaSelva media plan."
+      ],
+      "evidence": [
+        { "kind": "content_markdown", "path": ".firecrawl/munrooftoprome.com.md", "sha256": "e40aabe3b75bfcaa475eca1244b88b41450cb8cd698cd19632346777d640c8cf" },
+        { "kind": "desktop_hero", "path": ".firecrawl/start-from-ref-daselva-gate-b/mun-desktop-hero.png", "sha256": "673b3efcc930fdfd88d355f37120ae2ffeb31cd4a5dc70c3b1222c8a1a6447b9" },
+        { "kind": "desktop_mid_page", "path": ".firecrawl/start-from-ref-daselva-gate-b/mun-desktop-stage.png", "sha256": "d4ac383ccbc649d7ce580b6da122c69354d606521e8b163a8be68267d63194f4" },
+        { "kind": "mobile_hero", "path": ".firecrawl/start-from-ref-daselva-gate-b/mun-mobile-hero.png", "sha256": "5b8116ef55b2c1581a91eb67f7afde2628a09350c19b94cf59184b8063db287e" },
+        { "kind": "runtime_snapshot", "path": ".firecrawl/start-from-ref-daselva-gate-b/mun-runtime.js", "sha256": "f601e7402ac9681d1737aea47b42207cfcc9a256f637ece64a2f8262254defc5" }
+      ]
+    }
+  },
+  "strategies": [
+    {
+      "id": "S",
+      "name": "single-reference transformation control",
+      "referenceKeys": ["amici"],
+      "contextualPlan": [
+        {
+          "referenceKey": "amici",
+          "scope": "whole-page composition control",
+          "eligibleCapabilities": [
+            "vertical restaurant spine",
+            "statement-led hero",
+            "food and interior collage pacing",
+            "philosophy-to-reservation progression"
+          ],
+          "requiredTransformation": "Expand the four observed reference movements into the seven frozen DaSelva movements while preserving DaSelva palette, copy, routes, media, and scroll envelope."
+        }
+      ],
+      "conflictResolution": "The manifest overrides every reference fact and aesthetic decision. Amici supplies only documented composition and interaction logic.",
+      "copycatRisk": "medium",
+      "copycatMitigation": "Re-author section geometry, typography, media, palette, and motion timing; keep a ledger of every preserved, adapted, and replaced influence."
+    },
+    {
+      "id": "C",
+      "name": "contextual chassis/donor",
+      "referenceKeys": ["amici", "hotel_odisej", "museum_department"],
+      "contextualPlan": [
+        {
+          "referenceKey": "amici",
+          "scope": "global page authority for this strategy only",
+          "eligibleCapabilities": [
+            "vertical restaurant spine",
+            "responsive structure",
+            "primary transition and reservation cadence"
+          ]
+        },
+        {
+          "referenceKey": "hotel_odisej",
+          "scope": "bounded Dieta Amazônica and origem media pacing",
+          "eligibleCapabilities": [
+            "asymmetric nature-and-dining cards",
+            "organic section transition",
+            "editorial image-and-copy grouping"
+          ],
+          "excludedCapabilities": ["hotel commerce", "virtual scroll", "global navigation", "room hierarchy"]
+        },
+        {
+          "referenceKey": "museum_department",
+          "scope": "bounded ingredientes-cardapio index",
+          "eligibleCapabilities": [
+            "offset desktop index",
+            "linear mobile reordering",
+            "large ingredient-name typography"
+          ],
+          "excludedCapabilities": ["archive navigation", "newsletter", "interview and font content"]
+        }
+      ],
+      "conflictResolution": "Amici owns the page spine and responsive authority. Hotel Odisej and Museum Department are limited to their named sections and may not introduce a second global grid, scroll system, navigation, or palette.",
+      "copycatRisk": "medium-low",
+      "copycatMitigation": "Donor use is dimension-bounded and must be reconciled into the DaSelva token and motion system before implementation."
+    },
+    {
+      "id": "W",
+      "name": "static-first motion-aware scene synthesis",
+      "referenceKeys": ["root_food", "mun", "museum_department"],
+      "contextualPlan": [
+        {
+          "referenceKey": "root_food",
+          "scope": "chapter capability for the Banda and origem scenes",
+          "eligibleCapabilities": ["food-story chapter framing", "alternating media scale", "band-like scene division"],
+          "excludedCapabilities": ["global horizontal scroll", "22k-pixel mobile length", "private-chef content"]
+        },
+        {
+          "referenceKey": "mun",
+          "scope": "temporal hero and bounded pinned Banda scene",
+          "eligibleCapabilities": ["central changing subject", "persistent reservation cue", "sticky narrative emphasis"],
+          "excludedCapabilities": ["moon assets", "596-frame implementation", "video dependency", "Rome and cocktail content"]
+        },
+        {
+          "referenceKey": "museum_department",
+          "scope": "static ingredient index and typography counterweight",
+          "eligibleCapabilities": ["indexed ingredient grid", "negative space", "desktop-to-mobile ordering"],
+          "excludedCapabilities": ["archive identity", "newsletter and search UI"]
+        }
+      ],
+      "preImplementationRequirements": [
+        "one unified DaSelva visual grammar",
+        "full-page desktop composition board",
+        "full-page mobile composition board",
+        "temporal storyboard with scroll ranges, pin durations, exits, reduced-motion states, and mobile fallbacks",
+        "asset budget based only on the shared target-media pack"
+      ],
+      "conflictResolution": "No reference owns the global page. Every eligible capability must be redrawn into one static composition and temporal storyboard before code; any unreconciled conflict is excluded.",
+      "copycatRisk": "high",
+      "copycatMitigation": "Do not reproduce any full sequence, geometry, branded scene, or runtime. Build the target grammar first and document scene-level provenance and transformation."
+    }
+  ],
+  "rejectedCandidates": [
+    {
+      "name": "COB",
+      "url": "https://cobfoods.com",
+      "reason": "The e-commerce catalog, loud product conversion system, and health-claim burden conflict with a DaSelva restaurant landing page and would require unsupported offers and proof."
+    },
+    {
+      "name": "Bragg",
+      "url": "https://bragg.com",
+      "reason": "Product commerce, prices, testimonials, and health claims would introduce target content that the source does not authorize."
+    },
+    {
+      "name": "Celtic Sea Salt",
+      "url": "https://celticseasalt.com",
+      "reason": "The shopping and health-claim spine is incompatible with DaSelva's reservation goal and the no-invention constraint."
+    },
+    {
+      "name": "Root Food as S or C global authority",
+      "url": "https://root-food.com",
+      "reason": "Its 28,070-pixel desktop horizontal surface conflicts with the target's vertical scroll envelope. It remains eligible only as a bounded W scene capability."
+    },
+    {
+      "name": "Hotel Odisej as global authority",
+      "url": "https://hotelodisej.com",
+      "reason": "Its virtual-scroll and hotel-commerce spine is heavier and semantically incompatible. It remains eligible only as a bounded C donor."
+    },
+    {
+      "name": "Mùn as a global system",
+      "url": "https://munrooftoprome.com",
+      "reason": "The numbered moon sequence, video, forms, reCAPTCHA, and heavy runtime create cost and copycat risk. Only the temporal scene idea remains eligible in W."
+    }
+  ],
+  "knownCrossBundleGaps": [
+    "No target photography, logo, menu file, or approved booking destination exists in the shared target-media pack yet.",
+    "Consent overlays obscure portions of several screenshots; they are documented rather than removed.",
+    "No reference licensing conclusion is inferred from public availability.",
+    "No throttled performance, accessibility tree, or complete interaction video was captured.",
+    "Reference pages are live and may drift; the hashes above freeze only the local evidence observed in this gate."
+  ],
+  "gateCState": {
+    "ready": false,
+    "blockingConditions": [
+      "shared target-media pack is absent and unhashed",
+      "Gate C has not received separate approval of these exact bundles and the 1,545-credit ceiling",
+      "the manifest confirmation token has not been re-presented as part of a Gate C approval"
+    ],
+    "generationCallsMade": 0,
+    "generationCreditsSpent": 0,
+    "generatedOutputDirectoriesCreated": 0
+  }
+}

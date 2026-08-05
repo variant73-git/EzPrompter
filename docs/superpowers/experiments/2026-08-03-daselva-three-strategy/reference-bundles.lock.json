@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "start-from-ref-reference-bundles-lock-v1",
+  "experimentId": "daselva-pan-amazonian-three-strategy-v1",
+  "manifestSha256": "cf085ae35c450969b930d79c0cf9af66a2d7e39d9a6c0ce5bf6ccc9615a3964b",
+  "referenceBundlesSha256": "3260b0e019bb7482339fb898a5023b9905533316f1ce33af5503213bfb5ec9ff",
+  "evidenceArtifactCount": 24,
+  "evidenceAggregateSha256": "f4012df0ddb74a862dfd319ac861a6fa3a67cb85ddd5e3d5c446ade06b614382",
+  "authorizedGate": "B",
+  "gateCReady": false,
+  "lockDoesNotAuthorizeGeneration": true,
+  "frozenAt": "2026-08-03T13:30:00.000Z"
+}

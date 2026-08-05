@@ -1,0 +1,300 @@
+{
+  "schemaVersion": "start-from-ref-clone-first-candidate-pool-v2",
+  "experimentId": "daselva-pan-amazonian-clone-first-v2",
+  "gate": "B",
+  "status": "frozen_gate_b",
+  "frozenAt": "2026-08-03",
+  "manifestPath": "docs/superpowers/experiments/2026-08-03-daselva-clone-first-v2/manifest.v2.json",
+  "manifestSha256": "1b0fcd27f0992769db721f9a8228772875dc8f92a4efc8d40a7afca735a9e47e",
+  "selectionMethod": {
+    "businessCategoryWeight": 0,
+    "categoryUsedDuringScoring": false,
+    "categoryUsedToFilterOrAssignRoles": false,
+    "categoryUsedToBreakTies": false,
+    "sequence": [
+      "capability-only discovery",
+      "freeze anonymous 16-candidate contact sheet",
+      "score composition, cloneability, motion, responsive behavior, content capacity, and runtime feasibility",
+      "reveal and audit category distribution",
+      "allocate non-overlapping references by strategy constraints"
+    ],
+    "capabilityQueries": [
+      "radical full-page grid with preserved mobile transformation",
+      "cinematic image-led hero with measurable temporal choreography",
+      "unusual navigation and oversized type with coherent section rhythm",
+      "vertical storytelling with pinned or native-scroll fallback"
+    ],
+    "prohibitedQueryTermsUsed": []
+  },
+  "scoreWeights": {
+    "staticTaste": 25,
+    "cloneability": 25,
+    "motionEvidence": 20,
+    "responsiveQuality": 15,
+    "contentCapacity": 10,
+    "runtimeFeasibility": 5
+  },
+  "scoreScale": {
+    "minimum": 1,
+    "maximum": 5,
+    "totalFormula": "sum(score / 5 * dimensionWeight)"
+  },
+  "discoveryEvidence": [
+    {
+      "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/search-radical-grid.json",
+      "sha256": "0dda9f7216c564c217a850b4c25e764c4fb669a7fb49b409dd09dd9fbdbad44d"
+    },
+    {
+      "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/search-cinematic-scroll.json",
+      "sha256": "a3aa3a1ea2a5a856bda997c8725c9fbfaa64ec68bb04dd2f4c48833ea19ba0f1"
+    },
+    {
+      "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/search-unusual-navigation.json",
+      "sha256": "58a5af9fcdd14105148755d060a389a5c0fbc8af2370165285cca1d20ac02b99"
+    },
+    {
+      "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/search-vertical-storytelling.json",
+      "sha256": "6a2fae47d3d7d4744331e5f7309f3963d07b9ae5b32f6ff99db28ddda3edb40a"
+    },
+    {
+      "path": ".firecrawl/start-from-ref-daselva-v2-gate-b/candidate-contact-sheet.html",
+      "sha256": "985401c446066dba15024966cfe6c23ad21c1c475bc667e09cf5a2769afc2742"
+    }
+  ],
+  "candidates": [
+    {
+      "anonymousId": "C01",
+      "referenceId": "ref_18bd74d49a04e2e1",
+      "name": "AND2ES™",
+      "url": "https://and2es.com",
+      "categoryAudit": "industrial design and creative studio",
+      "categoryGroup": "creative services",
+      "adjacentCategory": false,
+      "availability": "live_http_200",
+      "scores": { "staticTaste": 4, "cloneability": 4, "motionEvidence": 3, "responsiveQuality": 4, "contentCapacity": 4, "runtimeFeasibility": 4 },
+      "weightedTotalOutOf100": 76,
+      "decision": "not_selected",
+      "decisionReason": "Strong all-round candidate, but less distinctive in motion than the role-specific finalists."
+    },
+    {
+      "anonymousId": "C02",
+      "referenceId": "ref_2038e9f35d0adda8",
+      "name": "The Red",
+      "url": "https://333southwabash.com",
+      "categoryAudit": "commercial real estate and architecture",
+      "categoryGroup": "built environment",
+      "adjacentCategory": false,
+      "availability": "live_http_200",
+      "scores": { "staticTaste": 5, "cloneability": 3, "motionEvidence": 5, "responsiveQuality": 4, "contentCapacity": 3, "runtimeFeasibility": 2 },
+      "weightedTotalOutOf100": 80,
+      "decision": "selected_W",
+      "decisionReason": "Distinctive typographic perspective chamber supplies a high-risk scene with a legible mobile transformation."
+    },
+    {
+      "anonymousId": "C03",
+      "referenceId": "ref_0e47bc1d6a370765",
+      "name": "Bureau Rouge",
+      "url": "https://bureaurouge.com",
+      "categoryAudit": "photography and film production studio",
+      "categoryGroup": "creative services",
+      "adjacentCategory": false,
+      "availability": "live_http_200",
+      "scores": { "staticTaste": 5, "cloneability": 4, "motionEvidence": 4, "responsiveQuality": 4, "contentCapacity": 3, "runtimeFeasibility": 4 },
+      "weightedTotalOutOf100": 83,
+      "decision": "selected_W",
+      "decisionReason": "Full-bleed media, quiet micro-navigation, and disciplined overlay typography create W's restrained counterweight."
+    },
+    {
+      "anonymousId": "C04",
+      "referenceId": "ref_f44b5eddc9e64f5d",
+      "name": "Playfight",
+      "url": "https://letsplayfight.com",
+      "categoryAudit": "creative story and production studio",
+      "categoryGroup": "creative services",
+      "adjacentCategory": false,
+      "availability": "live_http_200",
+      "scores": { "staticTaste": 5, "cloneability": 4, "motionEvidence": 5, "responsiveQuality": 4, "contentCapacity": 5, "runtimeFeasibility": 3 },
+      "weightedTotalOutOf100": 90,
+      "decision": "selected_C_primary",
+      "decisionReason": "Complete long-form spine, confident whitespace, floating media field, and sufficient capacity make it the strongest C chassis."
+    },
+    {
+      "anonymousId": "C05",
+      "referenceId": "ref_f34016d82fe05b0e",
+      "name": "Cantor8",
+      "url": "https://cantor8.io",
+      "categoryAudit": "AI software",
+      "categoryGroup": "software",
+      "adjacentCategory": false,
+      "availability": "live_http_200",
+      "scores": { "staticTaste": 4, "cloneability": 4, "motionEvidence": 4, "responsiveQuality": 4, "contentCapacity": 4, "runtimeFeasibility": 4 },
+      "weightedTotalOutOf100": 80,
+      "decision": "not_selected",
+      "decisionReason": "Coherent and feasible, but not as compositionally daring as the selected allocations."
+    },
+    {
+      "anonymousId": "C06",
+      "referenceId": "ref_15c6c7030b4facd6",
+      "name": "Ponder",
+      "url": "https://ponder.ai",
+      "categoryAudit": "video editing software",
+      "categoryGroup": "software",
+      "adjacentCategory": false,
+      "availability": "live_http_200_with_observed_console_gap",
+      "scores": { "staticTaste": 4, "cloneability": 4, "motionEvidence": 5, "responsiveQuality": 4, "contentCapacity": 5, "runtimeFeasibility": 3 },
+      "weightedTotalOutOf100": 85,
+      "decision": "selected_W",
+      "decisionReason": "Its dark floating-media opening and pinned narrative cadence establish W's temporal spine; source runtime errors are documented and will not be copied."
+    },
+    {
+      "anonymousId": "C07",
+      "referenceId": "ref_3c9fefc8b61c5543",
+      "name": "Cecilie Bahnsen",
+      "url": "https://ceciliebahnsen.com",
+      "categoryAudit": "fashion",
+      "categoryGroup": "fashion",
+      "adjacentCategory": false,
+      "availability": "live_http_200_with_consent_overlay",
+      "scores": { "staticTaste": 5, "cloneability": 5, "motionEvidence": 3, "responsiveQuality": 5, "contentCapacity": 5, "runtimeFeasibility": 4 },
+      "weightedTotalOutOf100": 91,
+      "decision": "selected_S",
+      "decisionReason": "Highest-scoring complete page: image-led, editorial, responsive, long enough for the seven-movement target arc, and independently coherent without donors."
+    },
+    {
+      "anonymousId": "C08",
+      "referenceId": "ref_119a36213519b16e",
+      "name": "Wwake",
+      "url": "https://wwake.com",
+      "categoryAudit": "jewelry",
+      "categoryGroup": "jewelry",
+      "adjacentCategory": false,
+      "availability": "live_http_200",
+      "scores": { "staticTaste": 4, "cloneability": 4, "motionEvidence": 3, "responsiveQuality": 4, "contentCapacity": 4, "runtimeFeasibility": 4 },
+      "weightedTotalOutOf100": 76,
+      "decision": "not_selected",
+      "decisionReason": "Tasteful image treatment, but less structural and temporal distinction than the selected pages."
+    },
+    {
+      "anonymousId": "C09",
+      "referenceId": "ref_6a264ee200c47555",
+      "name": "Longbow",
+      "url": "https://longbowmotors.com",
+      "categoryAudit": "automotive",
+      "categoryGroup": "automotive",
+      "adjacentCategory": false,
+      "availability": "catalog_evidence_live_http_403",
+      "scores": { "staticTaste": 4, "cloneability": 3, "motionEvidence": 4, "responsiveQuality": 3, "contentCapacity": 4, "runtimeFeasibility": 1 },
+      "weightedTotalOutOf100": 69,
+      "decision": "not_selected",
+      "decisionReason": "Catalog evidence was promising, but the live 403 prevents bounded responsive and runtime verification."
+    },
+    {
+      "anonymousId": "C10",
+      "referenceId": "ref_a06778ec1ead90b7",
+      "name": "Off Mute",
+      "url": "https://offmute.basedesign.com",
+      "categoryAudit": "media showcase",
+      "categoryGroup": "media",
+      "adjacentCategory": false,
+      "availability": "live_http_200_with_react_hydration_error",
+      "scores": { "staticTaste": 4, "cloneability": 3, "motionEvidence": 4, "responsiveQuality": 2, "contentCapacity": 3, "runtimeFeasibility": 1 },
+      "weightedTotalOutOf100": 64,
+      "decision": "not_selected",
+      "decisionReason": "Removed from C donor consideration after a reproducible React hydration failure and weak responsive evidence."
+    },
+    {
+      "anonymousId": "C11",
+      "referenceId": "ref_666384f011a91b0e",
+      "name": "Order & Chaos",
+      "url": "https://ordernchaos.aiziza.com",
+      "categoryAudit": "experimental editorial design",
+      "categoryGroup": "experimental culture",
+      "adjacentCategory": false,
+      "availability": "live_http_200_virtual_scene",
+      "scores": { "staticTaste": 5, "cloneability": 4, "motionEvidence": 5, "responsiveQuality": 5, "contentCapacity": 2, "runtimeFeasibility": 4 },
+      "weightedTotalOutOf100": 88,
+      "decision": "selected_C_donor",
+      "decisionReason": "A bounded rounded-media constellation and numbered state navigation repair one named C scene without owning the page."
+    },
+    {
+      "anonymousId": "C12",
+      "referenceId": "ref_72b8dd5592032667",
+      "name": "TILToooTILT - Everything Has Weight",
+      "url": "https://tiltoootilt.tote.co.jp",
+      "categoryAudit": "interactive art and cultural experiment",
+      "categoryGroup": "experimental culture",
+      "adjacentCategory": false,
+      "availability": "live_http_200",
+      "scores": { "staticTaste": 4, "cloneability": 2, "motionEvidence": 5, "responsiveQuality": 2, "contentCapacity": 2, "runtimeFeasibility": 2 },
+      "weightedTotalOutOf100": 62,
+      "decision": "not_selected",
+      "decisionReason": "Memorable motion, but insufficient content capacity and responsive confidence for this clone-first round."
+    },
+    {
+      "anonymousId": "C13",
+      "referenceId": "ref_6bfc20a5cf79b0e8",
+      "name": "Bruno Simon",
+      "url": "https://bruno-simon.com",
+      "categoryAudit": "developer portfolio",
+      "categoryGroup": "developer portfolio",
+      "adjacentCategory": false,
+      "availability": "live_http_200",
+      "scores": { "staticTaste": 5, "cloneability": 2, "motionEvidence": 5, "responsiveQuality": 3, "contentCapacity": 2, "runtimeFeasibility": 2 },
+      "weightedTotalOutOf100": 70,
+      "decision": "not_selected",
+      "decisionReason": "Highly distinctive 3D interaction, but its interaction model would dominate target content and exceed bounded reconstruction risk."
+    },
+    {
+      "anonymousId": "C14",
+      "referenceId": "ref_7579be5999303d44",
+      "name": "Index Georgia",
+      "url": "https://index-georgia.com",
+      "categoryAudit": "cultural directory and archive",
+      "categoryGroup": "cultural archive",
+      "adjacentCategory": false,
+      "availability": "live_http_200",
+      "scores": { "staticTaste": 4, "cloneability": 4, "motionEvidence": 3, "responsiveQuality": 4, "contentCapacity": 5, "runtimeFeasibility": 4 },
+      "weightedTotalOutOf100": 78,
+      "decision": "not_selected",
+      "decisionReason": "Excellent capacity and information rhythm, but lower cinematic and scene-level distinction than the selected set."
+    },
+    {
+      "anonymousId": "C15",
+      "referenceId": "ref_39ef36f9498ddca1",
+      "name": "Aarke Official Website",
+      "url": "https://aarke.com/en-roe",
+      "categoryAudit": "consumer appliances",
+      "categoryGroup": "consumer appliances",
+      "adjacentCategory": false,
+      "availability": "live_http_200",
+      "scores": { "staticTaste": 4, "cloneability": 5, "motionEvidence": 3, "responsiveQuality": 5, "contentCapacity": 5, "runtimeFeasibility": 4 },
+      "weightedTotalOutOf100": 86,
+      "decision": "not_selected",
+      "decisionReason": "Strong complete commercial page, but less distinctive motion and no unique role-specific repair relative to the selected bundle."
+    },
+    {
+      "anonymousId": "C16",
+      "referenceId": "ref_3f9dd1212526b3a0",
+      "name": "Built for Archives",
+      "url": "https://builtforarchives.com",
+      "categoryAudit": "digital design agency",
+      "categoryGroup": "creative services",
+      "adjacentCategory": false,
+      "availability": "live_http_200",
+      "scores": { "staticTaste": 5, "cloneability": 5, "motionEvidence": 3, "responsiveQuality": 5, "contentCapacity": 4, "runtimeFeasibility": 5 },
+      "weightedTotalOutOf100": 90,
+      "decision": "selected_C_donor",
+      "decisionReason": "Its bounded oversized type-and-asymmetric information grid is highly cloneable and supplies a disciplined editorial counterpoint to C."
+    }
+  ],
+  "postScoreCategoryAudit": {
+    "candidateCount": 16,
+    "distinctBusinessCategoryCount": 11,
+    "adjacentCategoryCount": 0,
+    "adjacentCategoryShare": 0,
+    "maximumAllowedAdjacentCategoryShare": 0.25,
+    "selectedPrimaryAdjacentCategoryCount": 0,
+    "biasStopRequired": false,
+    "result": "pass"
+  }
+}

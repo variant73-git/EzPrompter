@@ -4,24 +4,23 @@ import { useState } from 'react';
 import { ArrowUpRight, Check, X } from 'lucide-react';
 
 const SCORE_LABELS = {
-  briefFit: 'Fit',
+  briefHints: 'Hints',
   manualQuality: 'Quality',
-  compositionCompatibility: 'Compose',
+  structuralPortability: 'Structure',
+  visualQuality: 'Visual',
   motion: 'Motion',
-  transferability: 'Transfer',
   sourceConfidence: 'Source',
 };
 
 function errorCopy(error) {
-  if (error === 'review_required') return 'Review and keep at least two references before asking for a composition.';
-  if (error === 'donor_required') return 'Keep at least one reference that can act as a donor.';
+  if (error === 'review_required') return 'Review at least one reference before asking for a composition.';
   if (error === 'brief_too_short') return 'Add a little more business and audience context.';
   return 'The shadow plan could not be created.';
 }
 
 export default function ReferencePlanner({ reviewStats }) {
   const [brief, setBrief] = useState('');
-  const [maxReferences, setMaxReferences] = useState(4);
+  const [maxReferences, setMaxReferences] = useState(3);
   const [record, setRecord] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -74,9 +73,9 @@ export default function ReferencePlanner({ reviewStats }) {
         <label className="ref-planner-count">
           <span>References in the recipe</span>
           <select value={maxReferences} onChange={(event) => setMaxReferences(Number(event.target.value))}>
+            <option value="1">1 reference</option>
             <option value="2">2 references</option>
             <option value="3">3 references</option>
-            <option value="4">4 references</option>
           </select>
         </label>
         <div className="ref-planner-submit">
@@ -88,7 +87,7 @@ export default function ReferencePlanner({ reviewStats }) {
 
       <section className={`ref-plan-output${record ? ' ready' : ''}`} aria-live="polite">
         {!record ? (
-          <div className="ref-plan-empty"><span>Recipe output</span><h2>One chassis. Bounded donors.</h2><p>Your reviewed taste becomes an inspectable plan before any generation happens.</p></div>
+          <div className="ref-plan-empty"><span>Recipe output</span><h2>One scale owner. Bounded section sources.</h2><p>Your reviewed taste becomes an inspectable plan before any generation happens.</p></div>
         ) : (
           <>
             <div className="ref-plan-head">
@@ -102,7 +101,7 @@ export default function ReferencePlanner({ reviewStats }) {
             <ol className="ref-plan-refs">
               {record.plan.selectedReferences.map((reference) => (
                 <li key={reference.id}>
-                  <div><span>{reference.role} · {reference.score}/100</span><strong>{reference.title}</strong></div>
+                  <div><span>{reference.influence} · {reference.score}/100</span><strong>{reference.title}</strong></div>
                   <p>{reference.owns}</p>
                   <small>{reference.reasons.join(' · ')}</small>
                   {reference.scoreBreakdown && (

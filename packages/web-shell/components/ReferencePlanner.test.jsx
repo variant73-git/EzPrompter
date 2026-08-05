@@ -7,30 +7,30 @@ const shadowRecord = {
   id: 'plan_one',
   status: 'shadow',
   plan: {
-    rule: 'One dominant chassis and bounded donors. No competing page spines.',
+    rule: 'No fixed roles per site. One contextual scale owner; optional references contribute bounded section structures.',
     selectedReferences: [
       {
         id: 'ref_one',
-        title: 'Bureau Rouge',
-        url: 'https://bureau-rouge.com',
-        role: 'chassis',
+        title: 'Fancy',
+        url: 'https://fancy.design',
+        influence: 'scale-owner',
         score: 88.48,
-        scoreBreakdown: { briefFit: 83, manualQuality: 95, compositionCompatibility: 100, motion: 73, transferability: 100, sourceConfidence: 64 },
-        owns: 'section order and primary motion system',
+        scoreBreakdown: { briefHints: 83, manualQuality: 95, structuralPortability: 100, visualQuality: 91, motion: 73, sourceConfidence: 64 },
+        owns: 'page-wide type and media scale, spacing cadence, and responsive consistency',
         reasons: ['explicitly kept during review'],
       },
       {
         id: 'ref_two',
-        title: 'The Red',
-        url: 'https://333southwabash.com',
-        role: 'donor',
-        owns: 'typography and component language',
-        reasons: ['taste score 4/5'],
+        title: 'Neverhack',
+        url: 'https://neverhack.com',
+        influence: 'section-source',
+        owns: 'one compatible section structure',
+        reasons: ['optional taste calibration 4/5'],
       },
     ],
     composition: {
-      preserve: ['chassis scroll model'],
-      adapt: ['The Red: typography and component language'],
+      preserve: ['alignment and anchoring logic'],
+      adapt: ['Neverhack: one compatible section structure'],
       replace: ['brand identity'],
     },
   },
@@ -51,9 +51,9 @@ describe('ReferencePlanner', () => {
     await user.selectOptions(screen.getByLabelText('References in the recipe'), '2');
     await user.click(screen.getByRole('button', { name: 'Build shadow plan' }));
 
-    expect(await screen.findByText('Bureau Rouge')).toBeInTheDocument();
-    expect(screen.getByLabelText('Score breakdown for Bureau Rouge')).toBeInTheDocument();
-    expect(screen.getByText('The Red')).toBeInTheDocument();
+    expect(await screen.findByText('Fancy')).toBeInTheDocument();
+    expect(screen.getByLabelText('Score breakdown for Fancy')).toBeInTheDocument();
+    expect(screen.getByText('Neverhack')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Approve recipe' }));
     await waitFor(() => expect(screen.getByText('approved')).toBeInTheDocument());
 

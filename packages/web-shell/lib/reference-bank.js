@@ -1,7 +1,7 @@
 import seed from './reference-bank.seed.json';
 
-export function getReferenceCatalog({ limit } = {}) {
-  const references = seed.references || [];
+export function getReferenceCatalog({ limit, includePrivate = false } = {}) {
+  const references = (seed.references || []).filter((reference) => includePrivate || !reference.isPrivate);
   return Number.isFinite(limit) ? references.slice(0, Math.max(0, limit)) : references;
 }
 
@@ -36,8 +36,9 @@ export function queryReferenceCatalog({
   offset = 0,
   limit = 48,
   referenceIds = null,
+  includePrivate = false,
 } = {}) {
-  const references = seed.references || [];
+  const references = (seed.references || []).filter((reference) => includePrivate || !reference.isPrivate);
   const allowedIds = referenceIds ? new Set(referenceIds) : null;
   const filtered = references.filter((reference) => (
     (!allowedIds || allowedIds.has(reference.id))

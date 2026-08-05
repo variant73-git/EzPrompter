@@ -9447,6 +9447,22 @@ nextjs-portal { display: none !important; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ref-card-private {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: rgba(24, 24, 22, 0.92);
+  color: #D1D0CA;
+  font-size: 8px;
+  font-weight: 620;
+}
+.ref-card-private svg { width: 9px; height: 9px; }
 .ref-card-open {
   position: absolute;
   right: 8px;
@@ -9585,6 +9601,50 @@ nextjs-portal { display: none !important; }
 .ref-review-head > a { height: 26px; display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; border-radius: 6px; color: #B5B3AC; font-size: 9px; text-decoration: none; }
 .ref-review-head > a:hover { background: var(--hover-bg); color: #F1F0EB; }
 .ref-review-head > a svg { width: 11px; height: 11px; }
+.ref-privacy-control {
+  position: relative;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 9px 10px;
+  border: 1px solid #3A3935;
+  border-radius: 8px;
+  background: #20201E;
+}
+.ref-privacy-control > div { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.ref-privacy-control > div > svg { width: 13px; height: 13px; flex: none; color: #96948D; }
+.ref-privacy-control > div span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ref-privacy-control strong { color: #D1D0CA; font-size: 9px; font-weight: 620; }
+.ref-privacy-control small { color: #77756F; font-size: 8px; line-height: 1.25; text-transform: capitalize; }
+.ref-switch { position: relative; width: 30px; height: 18px; flex: none; cursor: pointer; }
+.ref-switch input { position: absolute; opacity: 0; pointer-events: none; }
+.ref-switch i {
+  position: absolute;
+  inset: 0;
+  border: 1px solid #55544D;
+  border-radius: 999px;
+  background: #292926;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.ref-switch i::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #96948D;
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), background 140ms ease;
+}
+.ref-switch input:checked + i { border-color: #EFEEE8; background: #EFEEE8; }
+.ref-switch input:checked + i::after { background: #20201E; transform: translateX(12px); }
+.ref-switch input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ref-switch input:disabled + i { cursor: wait; opacity: .5; }
+.ref-privacy-message { position: absolute; top: calc(100% + 4px); right: 0; color: #96948D; font-size: 8px; }
 .ref-review-fieldset { min-width: 0; margin: 14px 0 0; padding: 0; border: 0; }
 .ref-review-fieldset legend,
 .ref-review-notes > span,
@@ -9629,6 +9689,7 @@ nextjs-portal { display: none !important; }
 .ref-dimension-scale button[aria-pressed='true'] { border-color: #EFEEE8; background: #EFEEE8; color: #20201E; }
 .ref-review-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .ref-review-tags button { min-height: 25px; padding: 0 7px; border: 1px solid #3A3935; }
+.ref-review-tags button:disabled { cursor: not-allowed; opacity: .34; }
 .ref-review-notes { display: block; margin-top: 14px; }
 .ref-review-notes textarea,
 .ref-planner-brief textarea,
@@ -9814,7 +9875,9 @@ body.rb-ed-active.rb-ed-canvas .canvas-minimap { display: none !important; }
   .ref-card-preview,
   .ref-card-preview > img,
   .ref-card-review,
-  .ref-view-tabs button { transition: none; }
+  .ref-view-tabs button,
+  .ref-switch i,
+  .ref-switch i::after { transition: none; }
   .ref-skeleton > span,
   .ref-skeleton > i { animation: none; }
 }

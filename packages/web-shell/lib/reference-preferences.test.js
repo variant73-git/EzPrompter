@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { normalizeReferencePreference } from './reference-preferences.js';
 
 describe('reference preference contract', () => {
-  it('keeps only bounded ratings, roles, tags, and notes', () => {
+  it('keeps only bounded ratings, product/style tags, and notes', () => {
     const result = normalizeReferencePreference({
       decision: 'keep',
       rating: 5,
       preferredRole: 'chassis',
-      businessTags: ['technology', 'unknown'],
-      visualTags: ['immersive', 'immersive'],
+      productTypes: ['saas', 'unknown'],
+      styleTags: ['soft-tech', 'soft-tech', 'corporate', 'playful'],
       motionTags: ['scroll-driven'],
       dimensionRatings: { visualQuality: 5, transferability: 4 },
       notes: '  Preserve the pinned hero.  ',
@@ -18,9 +18,9 @@ describe('reference preference contract', () => {
       value: {
         decision: 'keep',
         rating: 5,
-        preferredRole: 'chassis',
-        businessTags: ['technology'],
-        visualTags: ['immersive'],
+        preferredRole: 'either',
+        businessTags: ['saas'],
+        visualTags: ['soft-tech', 'corporate'],
         motionTags: ['scroll-driven'],
         dimensionRatings: {
           visualQuality: 5,
@@ -29,17 +29,15 @@ describe('reference preference contract', () => {
           originality: null,
           transferability: 4,
           commercialClarity: null,
-          chassisPotential: null,
-          donorPotential: null,
         },
         notes: 'Preserve the pinned hero.',
       },
     });
   });
 
-  it('rejects invalid decisions and ratings', () => {
+  it('accepts a verdict without forcing a score and rejects invalid scores', () => {
     expect(normalizeReferencePreference({ decision: 'approve' })).toMatchObject({ ok: false, error: 'invalid_decision' });
-    expect(normalizeReferencePreference({ decision: 'maybe' })).toMatchObject({ ok: false, error: 'rating_required' });
+    expect(normalizeReferencePreference({ decision: 'maybe' })).toMatchObject({ ok: true, value: { rating: null } });
     expect(normalizeReferencePreference({ decision: 'maybe', rating: 7 })).toMatchObject({ ok: false, error: 'invalid_rating' });
     expect(normalizeReferencePreference({ decision: 'keep', rating: 5, dimensionRatings: { motionQuality: 9 } })).toMatchObject({ ok: false, error: 'invalid_dimension_rating' });
   });

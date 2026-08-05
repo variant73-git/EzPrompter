@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, Check } from 'lucide-react';
+import { ArrowUpRight, Check, Lock } from 'lucide-react';
 import { REFERENCE_DIMENSIONS, REFERENCE_RATING_LABELS, REFERENCE_TAGS } from '../lib/reference-preferences.js';
+import { getReferenceTagPreset, MAX_STYLE_TAGS } from '../lib/reference-design-taxonomy.js';
 
 const EMPTY_DIMENSIONS = Object.fromEntries(Object.keys(REFERENCE_DIMENSIONS).map((key) => [key, null]));
 
@@ -17,8 +18,9 @@ const EMPTY = {
   notes: '',
 };
 
-function TagGroup({ label, values, selected, onChange }) {
+function TagGroup({ label, values, selected, onChange, max = Infinity }) {
   function toggle(value) {
+    if (!selected.includes(value) && selected.length >= max) return;
     onChange(selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value]);
   }
   return (
@@ -26,7 +28,7 @@ function TagGroup({ label, values, selected, onChange }) {
       <legend>{label}</legend>
       <div className="ref-review-tags">
         {values.map((value) => (
-          <button type="button" key={value} aria-pressed={selected.includes(value)} onClick={() => toggle(value)}>{value}</button>
+          <button type="button" key={value} aria-pressed={selected.includes(value)} disabled={!selected.includes(value) && selected.length >= max} onClick={() => toggle(value)}>{value}</button>
         ))}
       </div>
     </fieldset>
@@ -37,24 +39,33 @@ function RatingScale({ label, value, onChange, compact = false }) {
   return (
     <div className={compact ? 'ref-dimension-scale' : 'ref-rating'} aria-label={`${label} from 1 to 5`}>
       {[1, 2, 3, 4, 5].map((score) => (
-        <button type="button" key={score} aria-label={`${label}: ${score}`} aria-pressed={value === score} onClick={() => onChange(score)}>{score}</button>
+        <button type="button" key={score} aria-label={`${label}: ${score}`} aria-pressed={value === score} onClick={() => onChange(value === score ? null : score)}>{score}</button>
       ))}
     </div>
   );
 }
 
-export default function ReferenceReviewPanel({ reference, onSaved }) {
+export default function ReferenceReviewPanel({ reference, canManagePrivateReferences = false, onSaved, onPrivacyChanged }) {
   const [draft, setDraft] = useState(EMPTY);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [privacySaving, setPrivacySaving] = useState(false);
+  const [privacyMessage, setPrivacyMessage] = useState('');
 
   useEffect(() => {
+    const preset = getReferenceTagPreset(reference?.url || reference?.host);
     setDraft(reference?.preference ? {
       ...EMPTY,
       ...reference.preference,
       dimensionRatings: { ...EMPTY_DIMENSIONS, ...reference.preference.dimensionRatings },
-    } : { ...EMPTY, dimensionRatings: { ...EMPTY_DIMENSIONS } });
+    } : {
+      ...EMPTY,
+      businessTags: preset?.productTypes || [],
+      visualTags: preset?.styleTags || [],
+      dimensionRatings: { ...EMPTY_DIMENSIONS },
+    });
     setMessage('');
+    setPrivacyMessage('');
   }, [reference]);
 
   if (!reference) {
@@ -88,12 +99,56 @@ export default function ReferenceReviewPanel({ reference, onSaved }) {
     }
   }
 
+  async function changePrivacy(isPrivate) {
+    setPrivacySaving(true);
+    setPrivacyMessage('');
+    try {
+      const response = await fetch(`/api/references/${reference.id}/privacy`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ isPrivate }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Could not update privacy.');
+      onPrivacyChanged?.(reference.id, payload.privacy);
+      setPrivacyMessage(isPrivate ? 'Hidden from customer catalog' : 'Visible in customer catalog');
+    } catch (error) {
+      setPrivacyMessage(error.message);
+    } finally {
+      setPrivacySaving(false);
+    }
+  }
+
   return (
     <aside className="ref-review-panel" aria-label={`Review ${reference.title}`}>
       <div className="ref-review-head">
         <div><span>Cohort rank {reference.cohortRank || reference.curationRank || ''}</span><h2>{reference.title}</h2><p>{reference.host}</p></div>
         <a href={reference.url} target="_blank" rel="noopener noreferrer">Visit<ArrowUpRight aria-hidden="true" /></a>
       </div>
+
+      {canManagePrivateReferences && (
+        <div className="ref-privacy-control">
+          <div>
+            <Lock aria-hidden="true" />
+            <span>
+              <strong>Private reference</strong>
+              <small>{reference.templatePlatform ? `${reference.templatePlatform} template` : 'Internal curation only'}</small>
+            </span>
+          </div>
+          <label className="ref-switch">
+            <span className="sr-only">Private reference</span>
+            <input
+              type="checkbox"
+              role="switch"
+              checked={Boolean(reference.isPrivate)}
+              disabled={privacySaving}
+              onChange={(event) => changePrivacy(event.target.checked)}
+            />
+            <i aria-hidden="true" />
+          </label>
+          {privacyMessage && <small className="ref-privacy-message" role="status">{privacyMessage}</small>}
+        </div>
+      )}
 
       <fieldset className="ref-review-fieldset">
         <legend>Verdict</legend>
@@ -111,20 +166,11 @@ export default function ReferenceReviewPanel({ reference, onSaved }) {
           rating,
           dimensionRatings: rating >= 4 ? current.dimensionRatings : { ...EMPTY_DIMENSIONS },
         }))} />
-        <p className="ref-rating-meaning">{draft.rating ? `${draft.rating}/5 · ${REFERENCE_RATING_LABELS[draft.rating]}` : 'Required for ranking'}</p>
+        <p className="ref-rating-meaning">{draft.rating ? `${draft.rating}/5 · ${REFERENCE_RATING_LABELS[draft.rating]}` : 'Optional calibration; verdict is enough'}</p>
       </fieldset>
 
-      <fieldset className="ref-review-fieldset">
-        <legend>Best role</legend>
-        <div className="ref-segmented">
-          {['chassis', 'donor', 'either'].map((value) => (
-            <button type="button" key={value} aria-pressed={draft.preferredRole === value} onClick={() => setDraft((current) => ({ ...current, preferredRole: value }))}>{value}</button>
-          ))}
-        </div>
-      </fieldset>
-
-      <TagGroup label="Business fit" values={REFERENCE_TAGS.business} selected={draft.businessTags} onChange={(businessTags) => setDraft((current) => ({ ...current, businessTags }))} />
-      <TagGroup label="Visual traits" values={REFERENCE_TAGS.visual} selected={draft.visualTags} onChange={(visualTags) => setDraft((current) => ({ ...current, visualTags }))} />
+      <TagGroup label="Product / site type" values={REFERENCE_TAGS.product} selected={draft.businessTags} onChange={(businessTags) => setDraft((current) => ({ ...current, businessTags }))} />
+      <TagGroup label="Style · choose up to 2" values={REFERENCE_TAGS.style} selected={draft.visualTags} max={MAX_STYLE_TAGS} onChange={(visualTags) => setDraft((current) => ({ ...current, visualTags }))} />
       <TagGroup label="Motion" values={REFERENCE_TAGS.motion} selected={draft.motionTags} onChange={(motionTags) => setDraft((current) => ({ ...current, motionTags }))} />
 
       {draft.rating >= 4 && (
@@ -151,13 +197,13 @@ export default function ReferenceReviewPanel({ reference, onSaved }) {
       )}
 
       <label className="ref-review-notes">
-        <span>What is worth borrowing?</span>
-        <textarea value={draft.notes} maxLength={4000} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Pinning, hero geometry, media treatment, typography…" />
+        <span>Optional: what is worth borrowing?</span>
+        <textarea value={draft.notes} maxLength={4000} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Section structure, text anchoring, media treatment, typography…" />
       </label>
 
       <div className="ref-review-actions">
-        <button type="button" onClick={save} disabled={saving || !draft.rating}>{saving ? 'Saving…' : 'Save review'}</button>
-        <span role="status">{message ? message === 'Review saved' ? <><Check aria-hidden="true" />{message}</> : message : !draft.rating ? 'Choose a score to save' : null}</span>
+        <button type="button" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save review'}</button>
+        <span role="status">{message ? message === 'Review saved' ? <><Check aria-hidden="true" />{message}</> : message : null}</span>
       </div>
     </aside>
   );

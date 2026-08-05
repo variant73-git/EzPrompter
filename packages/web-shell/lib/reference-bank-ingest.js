@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parseHTML } from 'linkedom';
 import { canonicalizeReferenceUrl, uniqueText } from './reference-bank-normalize.js';
+import { referencePrivacy } from './reference-privacy.js';
 
 const SOURCE_PRIORITY = {
   codrops: 3,
@@ -454,6 +455,21 @@ export function mergeReferenceAppearances(appearances, generatedAt = new Date().
     const editorialConsensus = sourceIds.length;
     const curationWeight = Number((1 + (editorialConsensus - 1) * 0.4 + (featured ? 0.2 : 0)).toFixed(2));
 
+    const sources = items.map((item) => ({
+      ...item.source,
+      detailUrl: item.sourceDetailUrl || null,
+      thumbnailUrl: item.thumbnailUrl || null,
+      taxonomy: item.sourceTaxonomy || item.source.taxonomy || {},
+    }));
+    const privacy = referencePrivacy({
+      url: canonical.canonicalUrl,
+      sources,
+      isPrivate: items.find((item) => typeof item.isPrivate === 'boolean')?.isPrivate,
+      privacyReason: items.find((item) => item.privacyReason)?.privacyReason,
+      templatePlatform: items.find((item) => item.templatePlatform)?.templatePlatform,
+      templateListingUrl: items.find((item) => item.templateListingUrl)?.templateListingUrl,
+    });
+
     return {
       id: stableReferenceId(canonical.canonicalKey),
       title: bestText(items, 'title') || canonical.host,
@@ -465,18 +481,16 @@ export function mergeReferenceAppearances(appearances, generatedAt = new Date().
       tags: uniqueText(items.flatMap((item) => item.tags || [])),
       sourceIds,
       sourceNames,
-      sources: items.map((item) => ({
-        ...item.source,
-        detailUrl: item.sourceDetailUrl || null,
-        thumbnailUrl: item.thumbnailUrl || null,
-        taxonomy: item.sourceTaxonomy || item.source.taxonomy || {},
-      })),
+      sources,
       editorialConsensus,
       curationWeight,
       featured,
       publishedAt,
       generatedAt,
       analysisStatus: 'listed',
+      isPrivate: privacy.isPrivate,
+      privacyReason: privacy.privacyReason,
+      templatePlatform: privacy.templatePlatform,
     };
   }).sort((a, b) => (
     b.curationWeight - a.curationWeight

@@ -1,15 +1,19 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, BookOpenCheck, LayoutGrid, Lock, Search, SlidersHorizontal, WandSparkles, X } from 'lucide-react';
+import { ArrowUpRight, BookOpenCheck, LayoutGrid, ListChecks, Lock, Search, SlidersHorizontal, WandSparkles, X } from 'lucide-react';
 import ReferencePlanner from './ReferencePlanner.jsx';
 import ReferenceReviewPanel from './ReferenceReviewPanel.jsx';
 
 const SOURCE_LABELS = {
   all: 'All sources',
   codrops: 'Codrops',
+  landbook: 'Landbook',
+  minimalgallery: 'Minimal Gallery',
   pafolios: 'Pafolios',
+  siteofsites: 'Site of Sites',
   siteinspire: 'SiteInspire',
+  'user-calibration': 'Taste calibration',
 };
 
 function ReferenceImage({ reference }) {
@@ -28,6 +32,7 @@ export function ReferenceGridCard({ reference, reviewMode = false, onReview }) {
       <a className="ref-card-preview" href={reference.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${reference.title}`}>
         <ReferenceImage reference={reference} />
         <span className="ref-card-source">{reference.sourceNames?.[0] || 'Curated'}</span>
+        {reference.isPrivate && <span className="ref-card-private"><Lock aria-hidden="true" />Private</span>}
         <span className="ref-card-open" aria-hidden="true"><ArrowUpRight /></span>
       </a>
       <div className="ref-card-meta">
@@ -76,6 +81,7 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
   const [reviewStats, setReviewStats] = useState(initialPage.reviewStats || { total: 24, reviewed: 0, keep: 0, maybe: 0, pass: 0 });
   const [reviewCohort, setReviewCohort] = useState(initialPage.reviewCohort || { id: 'cohort_v1', name: 'Cohort v1', status: 'frozen', rubricVersion: 2 });
   const [selectedReference, setSelectedReference] = useState(null);
+  const [canManagePrivateReferences, setCanManagePrivateReferences] = useState(Boolean(initialPage.canManagePrivateReferences));
   const firstRun = useRef(true);
 
   const sourceOptions = useMemo(() => [
@@ -93,7 +99,7 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       source,
       category,
       sort,
-      view: view === 'review' ? 'review' : 'browse',
+      view: ['review', 'curate'].includes(view) ? view : 'browse',
       offset: append ? String(items.length) : '0',
       limit: '48',
     });
@@ -106,7 +112,8 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       setHasMore(page.hasMore);
       setReviewStats(page.reviewStats || reviewStats);
       setReviewCohort(page.reviewCohort || reviewCohort);
-      if (view === 'review' && !append) {
+      setCanManagePrivateReferences(Boolean(page.canManagePrivateReferences));
+      if (['review', 'curate'].includes(view) && !append) {
         setSelectedReference((current) => page.items.find((item) => item.id === current?.id) || page.items[0] || null);
       }
     } catch (nextError) {
@@ -154,11 +161,17 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
     });
   }
 
+  function savePrivacy(referenceId, privacy) {
+    setItems((current) => current.map((item) => item.id === referenceId ? { ...item, ...privacy } : item));
+    setSelectedReference((current) => current?.id === referenceId ? { ...current, ...privacy } : current);
+  }
+
   return (
     <section className="ref-library" aria-label="Reference catalog">
       <div className="ref-view-tabs" aria-label="Reference workspace">
         <button type="button" aria-pressed={view === 'browse'} onClick={() => setView('browse')}><LayoutGrid aria-hidden="true" />Browse</button>
         <button type="button" aria-pressed={view === 'review'} onClick={() => setView('review')}><BookOpenCheck aria-hidden="true" />Review queue<span>{reviewStats.reviewed}/{reviewStats.total}</span></button>
+        {canManagePrivateReferences && <button type="button" aria-pressed={view === 'curate'} onClick={() => setView('curate')}><ListChecks aria-hidden="true" />Curate</button>}
         <button type="button" aria-pressed={view === 'plan'} onClick={() => setView('plan')}><WandSparkles aria-hidden="true" />Plan<span>shadow</span></button>
       </div>
 
@@ -197,17 +210,22 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       </div>
 
       <div className="ref-results-heading" aria-live="polite">
-        <p>{loading ? 'Updating references…' : view === 'review' ? `${reviewStats.reviewed} of ${reviewStats.total} candidates reviewed${reviewStats.highQuality ? ` · ${reviewStats.highQuality} rated 4+` : ''}` : `${total.toLocaleString()} ${total === 1 ? 'reference' : 'references'}`}</p>
+        <p>{loading ? 'Updating references…' : view === 'review' ? `${reviewStats.reviewed} of ${reviewStats.total} candidates reviewed${reviewStats.highQuality ? ` · ${reviewStats.highQuality} rated 4+` : ''}` : view === 'curate' ? `${total.toLocaleString()} references available for internal curation` : `${total.toLocaleString()} ${total === 1 ? 'reference' : 'references'}`}</p>
         {view === 'review' && reviewCohort && <span className="ref-cohort-status"><Lock aria-hidden="true" />{reviewCohort.name} · {reviewCohort.status}</span>}
         {filtersActive && <button type="button" onClick={clearFilters}>Clear filters</button>}
       </div>
 
       {loading ? <ReferenceSkeletons /> : items.length ? (
-        <div className={view === 'review' ? 'ref-review-layout' : undefined}>
+        <div className={['review', 'curate'].includes(view) ? 'ref-review-layout' : undefined}>
           <div className="ref-grid">
-            {items.map((reference) => <ReferenceGridCard reference={reference} reviewMode={view === 'review'} onReview={setSelectedReference} key={reference.id} />)}
+            {items.map((reference) => <ReferenceGridCard reference={reference} reviewMode={['review', 'curate'].includes(view)} onReview={setSelectedReference} key={reference.id} />)}
           </div>
-          {view === 'review' && <ReferenceReviewPanel reference={selectedReference || items[0]} onSaved={savePreference} />}
+          {['review', 'curate'].includes(view) && <ReferenceReviewPanel
+            reference={selectedReference || items[0]}
+            canManagePrivateReferences={canManagePrivateReferences}
+            onSaved={savePreference}
+            onPrivacyChanged={savePrivacy}
+          />}
         </div>
       ) : (
         <div className="ref-empty">

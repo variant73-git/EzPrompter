@@ -1,0 +1,439 @@
+{
+  "schemaVersion": "start-from-ref-clone-first-manifest-v2",
+  "experiment": {
+    "id": "daselva-pan-amazonian-clone-first-v2",
+    "name": "DaSelva category-blind clone-first comparison V2",
+    "status": "frozen_gate_a",
+    "createdAt": "2026-08-03",
+    "owner": "Adilson Porto",
+    "authorizedGate": "A",
+    "authorizedScope": "V2 document and validation-fixture work only",
+    "preserveV1": true,
+    "notAuthorized": [
+      "reference retrieval, selection, or capture",
+      "model, image, clone, or website generation",
+      "credit spending",
+      "creation of the V2 output root",
+      "modification or deletion of V1 outputs and evidence",
+      "shared database, plan, board, node, preference, cohort, or assessment writes",
+      "commit, push, deployment, or production enablement"
+    ]
+  },
+  "baseFixture": {
+    "manifestPath": "docs/superpowers/experiments/2026-08-03-daselva-three-strategy/manifest.v1.json",
+    "manifestSha256": "cf085ae35c450969b930d79c0cf9af66a2d7e39d9a6c0ce5bf6ccc9615a3964b",
+    "sourceContentSha256": "b456f98b0fecd1616603a9e2ea9fd3e20ec285be6f5f438f4500c1eee7e6661b",
+    "inheritsWithoutChange": [
+      "DaSelva semantic authority and source precedence",
+      "pre-INPI publication mode",
+      "green, off-white, and terracotta target palette",
+      "seven-movement home content arc",
+      "Banda prominence and dedicated route",
+      "word-count and scroll-capacity envelopes",
+      "claim, proof, location, menu, pricing, and booking exclusions",
+      "required routes, anchors, accessibility, and runtime constraints"
+    ],
+    "authorityRule": "The base fixture remains semantic authority. V2 changes only reference selection, fidelity method, strategy construction, taste gates, scoring, budget, and isolated output paths."
+  },
+  "userCalibration": {
+    "v1Assessment": "C showed the best taste and consistency, but no strategy clearly won because each had meaningful strengths and weaknesses.",
+    "wFailure": "W lost visual taste by the end of the process. Motion ambition did not compensate for a weak final static design.",
+    "methodCorrection": "The desired output starts from a close clone of the reference and then replaces key assets: typography, palette, imagery, identity, target copy, and commercial behavior.",
+    "categoryFinding": "V1 retained a latent food and hospitality bias. V2 gives business category zero scoring weight and audits the candidate pool before role allocation."
+  },
+  "experimentQuestion": "Under the same DaSelva target truth and media, which clone-first construction strategy preserves the strongest recognizable reference geometry and motion while producing the most tasteful, coherent target transformation?",
+  "referenceSelection": {
+    "gateBOnly": true,
+    "businessCategoryWeight": 0,
+    "categoryMayFilterOrAssignRole": false,
+    "categoryMayBreakTies": false,
+    "selectionOrder": [
+      "retrieve by observable composition, motion, responsive, and art-direction capabilities",
+      "freeze a diverse candidate pool before strategy allocation",
+      "score candidates without a category dimension",
+      "audit category distribution after scoring",
+      "assign strategy roles from the scored evidence and compatibility constraints"
+    ],
+    "prohibitedDiscoveryShortcuts": [
+      "restaurant website inspiration",
+      "food website inspiration",
+      "hotel website inspiration",
+      "hospitality website inspiration",
+      "sites like DaSelva"
+    ],
+    "capabilityQueries": [
+      "radical full-page grid with preserved mobile transformation",
+      "cinematic image-led hero with measurable temporal choreography",
+      "unusual but coherent navigation and section rhythm",
+      "strong static composition before animation",
+      "sticky or pinned narrative with native-scroll fallback",
+      "distinctive type-scale geometry that survives a font swap",
+      "content capacity for seven target movements without template repetition"
+    ],
+    "candidatePool": {
+      "minimum": 12,
+      "maximum": 18,
+      "minimumDistinctBusinessCategories": 5,
+      "maximumAdjacentCategoryShare": 0.25,
+      "adjacentCategoriesForAuditOnly": [
+        "restaurant",
+        "food and beverage",
+        "hotel",
+        "hospitality"
+      ],
+      "rule": "Diversity is an anti-bias audit, not a relevance score. A candidate is never promoted because its category resembles DaSelva."
+    },
+    "scoreWeights": [
+      {
+        "dimension": "static visual taste and compositional confidence",
+        "weight": 25
+      },
+      {
+        "dimension": "cloneability of geometry and responsive structure",
+        "weight": 25
+      },
+      {
+        "dimension": "motion distinctiveness and evidence quality",
+        "weight": 20
+      },
+      {
+        "dimension": "responsive transformation quality",
+        "weight": 15
+      },
+      {
+        "dimension": "content capacity without generic repetition",
+        "weight": 10
+      },
+      {
+        "dimension": "runtime independence and local reconstruction feasibility",
+        "weight": 5
+      }
+    ],
+    "allocationRules": [
+      "No exact reference may appear in more than one strategy.",
+      "S receives the strongest complete single-page candidate, not the most category-adjacent candidate.",
+      "C receives one primary whose global spine is sufficiently complete without donors; donors repair only documented subsystem gaps.",
+      "W receives two or three scene references only when their post-swap static geometries can share one target-owned visual grammar.",
+      "If category-adjacent references exceed one of the three primaries, stop for a written bias audit before freezing Gate B."
+    ]
+  },
+  "cloneFirstContract": {
+    "baselineCloneRequiredBeforeSwap": true,
+    "baselineRule": "Reconstruct the selected reference page or scene locally at high fidelity before applying DaSelva assets. The baseline is a method artifact, not a publishable deliverable.",
+    "evidenceViewports": [
+      {
+        "width": 1440,
+        "height": 1000,
+        "label": "desktop"
+      },
+      {
+        "width": 390,
+        "height": 844,
+        "label": "mobile"
+      }
+    ],
+    "preserve": [
+      "page and scene geometry",
+      "section order and relative heights",
+      "grid, proportions, anchoring, overlap, density, and whitespace rhythm",
+      "navigation placement and responsive transformation",
+      "scroll authority, pinning, trigger positions, choreography, tempo, and easing character",
+      "media framing, cropping logic, and focal hierarchy",
+      "unusual or risky decisions that give the reference its identity"
+    ],
+    "replaceAfterBaseline": [
+      "brand name, logo, marks, copy, and factual content",
+      "typography and font files",
+      "palette and color roles",
+      "all photography, video, illustration, iconography, and decorative source assets",
+      "commercial destinations, forms, booking behavior, addresses, claims, proof, and product identity"
+    ],
+    "geometry": {
+      "sectionOrderMustMatch": true,
+      "medianNormalizedDriftPercentMax": 8,
+      "heroDominantBoxDriftPercentMax": 6,
+      "majorSectionHeightDriftPercentMax": 10,
+      "rule": "Measure against matched reference screenshots before asset swap. Content-fit exceptions require a named divergence record rather than silent normalization."
+    },
+    "scrollLengthPercentDriftMax": 10,
+    "motion": {
+      "triggerPositionPercentViewportDriftMax": 10,
+      "pinnedDurationPercentDriftMax": 15,
+      "relativeSequenceOrderMustMatch": true,
+      "fallbackRule": "Reduced-motion and unsupported-runtime paths preserve target content and conversion even when the reference lacks an equivalent fallback."
+    },
+    "adaptationPolicy": {
+      "allowed": [
+        "target content fit",
+        "WCAG correction",
+        "unsupported or unavailable source runtime",
+        "removal of source-specific commerce or identity",
+        "mobile compensation required to preserve content order"
+      ],
+      "notAllowed": [
+        "making the reference more conventional",
+        "replacing distinctive geometry with a familiar landing-page pattern",
+        "simplifying motion because the implementation is difficult",
+        "borrowing a repair from another strategy after seeing its output",
+        "using target business category as a reason to normalize the reference"
+      ],
+      "divergenceRule": "If target truth cannot fit without exceeding a fidelity tolerance or losing essential content, stop and ask how to proceed."
+    },
+    "finalSourceCodeReuseAllowed": false,
+    "finalReferenceAssetReuseAllowed": false,
+    "finalRuntimeHotlinksAllowed": false,
+    "provenanceRule": "Each output preserves baseline evidence, an asset-swap ledger, a Reference Influence Ledger, and an explicit divergence log."
+  },
+  "strategies": [
+    {
+      "id": "S",
+      "slug": "s-single-reference-clone",
+      "name": "single-reference clone and asset swap",
+      "referenceCount": 1,
+      "contract": "Clone one full reference closely, validate the baseline, then replace target-owned assets and content without redesigning the reference into a conventional restaurant page.",
+      "requiredMethodArtifacts": [
+        "baseline desktop and mobile clone",
+        "matched overlay or geometry report",
+        "asset-swap ledger",
+        "final divergence log"
+      ]
+    },
+    {
+      "id": "C",
+      "slug": "c-chassis-donors-clone",
+      "name": "primary chassis clone with bounded donor transplants",
+      "referenceCount": {
+        "minimum": 2,
+        "maximum": 3
+      },
+      "primaryChassisCount": 1,
+      "maximumDonors": 2,
+      "contract": "Clone the primary reference as the complete global page. A donor enters only after its named subsystem is independently cloned and only when the primary has a documented gap.",
+      "ownership": {
+        "primaryOwns": [
+          "global grid and page spine",
+          "section order and height rhythm",
+          "navigation and responsive model",
+          "scroll authority and primary motion"
+        ],
+        "donorMayOwn": [
+          "one named bounded scene",
+          "one media-framing technique",
+          "one index, navigation, or transition subsystem"
+        ],
+        "donorMayNotOwn": [
+          "global page spine",
+          "global typography",
+          "global color system",
+          "global scroll authority",
+          "more than one major subsystem per donor"
+        ]
+      },
+      "requiredMethodArtifacts": [
+        "primary baseline clone",
+        "donor subsystem baseline clones",
+        "ownership map",
+        "matched overlay or geometry report",
+        "asset-swap ledger",
+        "final divergence log"
+      ]
+    },
+    {
+      "id": "W",
+      "slug": "w-scene-clone-synthesis",
+      "name": "scene-clone synthesis with a static taste stop",
+      "referenceCount": {
+        "minimum": 2,
+        "maximum": 3
+      },
+      "contract": "Clone each selected scene before synthesis. Apply target swaps, compose one motion-free desktop and mobile page, and stop for taste approval before implementing any motion.",
+      "staticTasteGate": {
+        "id": "W0",
+        "humanApprovalRequired": true,
+        "motionMayStartBeforeApproval": false,
+        "motionHiddenDuringReview": true,
+        "requiredBoards": [
+          "full-page desktop board with final target typography, palette, media, and copy",
+          "full-page mobile board with final target typography, palette, media, and copy",
+          "hero, Banda, and one cross-scene transition detail at native review size"
+        ],
+        "dimensions": [
+          "compositional confidence",
+          "typographic discipline",
+          "palette and image integration",
+          "cross-scene coherence",
+          "specificity and absence of generic AI patterns"
+        ],
+        "minimumScorePerDimension": 4,
+        "minimumAverageOutOf5": 4.2,
+        "failureRule": "If W0 fails, preserve it as a V2 result. Do not add motion, polish through animation, or borrow C's design system. A new W board requires a separately labeled round."
+      },
+      "requiredMethodArtifacts": [
+        "independent baseline clone for every selected scene",
+        "scene compatibility map",
+        "motion-free W0 desktop and mobile boards",
+        "recorded human taste decision",
+        "motion storyboard created only after W0 approval",
+        "asset-swap ledger",
+        "final divergence log"
+      ]
+    }
+  ],
+  "sharedTargetMediaPolicy": {
+    "reuseExistingFrozenPack": true,
+    "existingLockPath": "/Users/adilsonporto/Desktop/IA/Uncraft-start-from-ref-experiments/daselva-pan-amazonian-v1/shared/media-pack.lock.json",
+    "mediaPackSha256": "e21ee52d96adccd7200d1799622ed460262923dcceacea3ed54386a8f206019f",
+    "assetAggregateSha256": "56a437f8111593d10f9db81434fb81ebe3c01a748919401d56f48647fc555190",
+    "newImageCallsAllowed": 0,
+    "rule": "All V2 strategies receive byte-identical copies of the existing pack. Crop and placement may follow each reference, but no strategy may generate or receive extra target media."
+  },
+  "equalConditions": {
+    "codingModel": "gpt-5.6-sol",
+    "reasoningEffort": "high",
+    "locale": "pt-BR",
+    "maxBillableModelCallsPerStrategy": 6,
+    "perStrategyCallEnvelope": [
+      "one baseline clone construction",
+      "one target asset-and-content swap",
+      "up to four bounded fidelity, responsive, or polish repairs"
+    ],
+    "maximumSharedImageCalls": 0,
+    "maximumBillableCallsTotal": 18,
+    "timeLimit": {
+      "perStrategyMinutes": 180,
+      "gateCTotalMinutes": 600,
+      "wStaticTastePauseExcludedFromElapsedTime": true
+    },
+    "costCeiling": {
+      "unit": "Uncraft credits",
+      "perStrategyCredits": 475,
+      "sharedMediaPackCredits": 0,
+      "totalCredits": 1425,
+      "usdEquivalent": 14.25,
+      "rule": "This is a proposed hard ceiling, not spending approval. Gate C requires the frozen Gate B bundle, explicit budget approval, and the exact Gate C token."
+    }
+  },
+  "qualityRubric": {
+    "hardValidity": [
+      "baseline clone evidence exists before target swap",
+      "clone fidelity tolerances pass or every divergence is explicitly approved",
+      "production build and both target routes work",
+      "target semantic authority and prohibited-claim rules pass",
+      "no source identity, copy, asset, code, or runtime hotlink remains in the final output",
+      "all target media is local and byte-identical to the shared pack",
+      "no broken images, unexpected external runtime requests, console errors, or page-level overflow",
+      "keyboard, focus, reduced-motion, and responsive behavior preserve content and conversion",
+      "W cannot proceed past its static W0 board without human approval"
+    ],
+    "weightedScore": [
+      {
+        "dimension": "reference fidelity",
+        "weight": 30
+      },
+      {
+        "dimension": "static visual taste and art direction",
+        "weight": 20
+      },
+      {
+        "dimension": "target transformation and semantic fit",
+        "weight": 15
+      },
+      {
+        "dimension": "system coherence",
+        "weight": 15
+      },
+      {
+        "dimension": "motion fidelity and purpose",
+        "weight": 10
+      },
+      {
+        "dimension": "responsive behavior and accessibility",
+        "weight": 10
+      }
+    ],
+    "qualityFloor": {
+      "minimumTotalOutOf100": 85,
+      "minimumDimensionScoreOutOf5": 3,
+      "minimumCriticalDimensionScoreOutOf5": {
+        "reference fidelity": 4,
+        "static visual taste and art direction": 4,
+        "system coherence": 4
+      },
+      "rule": "Motion cannot raise a failing static-taste score. A hard-validity failure disqualifies the output even when its weighted total passes."
+    },
+    "comparisonRule": "Judge baseline fidelity first, static target taste second, and motion third. Never let animation conceal a weak still frame."
+  },
+  "gateSequence": {
+    "A": {
+      "scope": "Freeze this contract, rubric, budgets, output paths, and failure policy.",
+      "exit": "Manifest parses, validates, and has a stable external lock."
+    },
+    "B": {
+      "scope": "Run category-blind read-only retrieval, score the frozen candidate pool, select references, and capture bounded visual, responsive, motion, runtime, and provenance evidence.",
+      "exit": "One reviewed reference bundle with exact IDs, URLs, evidence, allocation, and bias audit. No clone or generated site."
+    },
+    "C": {
+      "scope": "Build baseline clones, verify fidelity, swap target assets, and produce three isolated outputs. W pauses at W0 for explicit human approval before motion.",
+      "exit": "S and C are runnable; W is runnable after W0 approval or preserved as a static failed/inconclusive result."
+    },
+    "D": {
+      "scope": "Capture matched evidence and compare fidelity, taste, target fit, coherence, motion, accessibility, cost, provenance, and complexity.",
+      "exit": "Evidence-backed ranking or an explicit inconclusive result."
+    },
+    "E": {
+      "scope": "Choose a product direction without inferring deployment or production enablement.",
+      "exit": "One recorded decision and separately scoped implementation follow-up."
+    }
+  },
+  "outputIsolation": {
+    "root": "/Users/adilsonporto/Desktop/IA/Uncraft-start-from-ref-experiments/daselva-pan-amazonian-clone-first-v2",
+    "strategies": {
+      "S": "/Users/adilsonporto/Desktop/IA/Uncraft-start-from-ref-experiments/daselva-pan-amazonian-clone-first-v2/s-single-reference-clone",
+      "C": "/Users/adilsonporto/Desktop/IA/Uncraft-start-from-ref-experiments/daselva-pan-amazonian-clone-first-v2/c-chassis-donors-clone",
+      "W": "/Users/adilsonporto/Desktop/IA/Uncraft-start-from-ref-experiments/daselva-pan-amazonian-clone-first-v2/w-scene-clone-synthesis"
+    },
+    "ports": {
+      "S": 4321,
+      "C": 4322,
+      "W": 4323
+    },
+    "rules": [
+      "V1 remains immutable and available on ports 4311, 4312, and 4313.",
+      "No V2 directory may be created during Gate A or Gate B.",
+      "Every baseline clone and final target output has its own subdirectory and provenance record.",
+      "No strategy output, plan, token set, component, or repair advice may be copied into another strategy.",
+      "Do not commit, push, deploy, or write shared product state without separate approval."
+    ]
+  },
+  "failureAndRollback": {
+    "failClosedWhen": [
+      "the base manifest, target source, or shared media hash drifts",
+      "the Gate B candidate pool was selected with category terms or category scoring",
+      "a selected reference lacks desktop, mobile, or claimed motion evidence",
+      "a baseline clone exceeds fidelity tolerances without an approved divergence",
+      "target content cannot fit without material semantic loss",
+      "W static boards fail taste review",
+      "a strategy would exceed its call, time, or credit ceiling",
+      "an output path or port is owned by unknown work"
+    ],
+    "onFailure": [
+      "stop only the affected strategy",
+      "preserve baseline, target output, evidence, costs, and failure state",
+      "do not donate budget or references to another strategy",
+      "do not repair by copying the most successful strategy",
+      "label any retry as a new comparison round"
+    ],
+    "rollback": [
+      "All V2 generated work remains outside the product worktree.",
+      "V1 outputs are never overwritten or deleted.",
+      "No shared database or production rollback is expected because those writes are forbidden."
+    ]
+  },
+  "gateTransitions": {
+    "gateAExit": "The V2 manifest validates and its lock hash is stable.",
+    "gateBRequires": "Separate explicit approval using the exact Gate B token from manifest.lock.json.",
+    "gateCRequires": "Approved Gate B reference bundle hash, confirmed reuse of the frozen target-media pack, approved 1,425-credit ceiling, and the exact Gate C token.",
+    "gateDRequires": "Three preserved V2 results, including an explicitly failed or inconclusive W when W0 does not pass.",
+    "gateERequires": "Completed evidence-backed V2 comparison."
+  }
+}

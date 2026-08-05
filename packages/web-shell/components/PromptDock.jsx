@@ -914,6 +914,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
         modelId,
         attachments: attachments && attachments.length ? attachments : undefined,
         activeContexts: contextList.length > 0 ? contextList : undefined,
+        interactionMode: showBrain ? 'brainstorm' : 'default',
       }),
     });
 
@@ -1492,6 +1493,7 @@ const PromptDock = forwardRef(function PromptDock({ boardId, onAddUrl, onUploadM
             const res = await postConfirm({ runId: chat.activeRun?.runId, toolCallId, action: 'confirm', choice: choiceId });
             if (res.ok) dispatchChat({ type: 'TOOL_RESUMED', id: toolCallId });
           }}
+          onBrainstormChoice={(option) => sendChatMessage(option.reply)}
           onSoftContinue={async () => {
             const res = await postContinue({ runId: chat.activeRun?.runId, action: 'continue' });
             if (res.ok) dispatchChat({ type: 'RUN_CONTINUED' });

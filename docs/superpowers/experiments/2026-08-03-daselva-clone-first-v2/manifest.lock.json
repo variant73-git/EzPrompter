@@ -1,0 +1,11 @@
+{
+  "manifestFile": "manifest.v2.json",
+  "manifestSha256": "1b0fcd27f0992769db721f9a8228772875dc8f92a4efc8d40a7afca735a9e47e",
+  "baseManifestSha256": "cf085ae35c450969b930d79c0cf9af66a2d7e39d9a6c0ce5bf6ccc9615a3964b",
+  "sourceContentSha256": "b456f98b0fecd1616603a9e2ea9fd3e20ec285be6f5f438f4500c1eee7e6661b",
+  "sharedMediaPackSha256": "e21ee52d96adccd7200d1799622ed460262923dcceacea3ed54386a8f206019f",
+  "gateBConfirmationToken": "START-DASELVA-V2-GATE-B-1B0FCD27F0992769",
+  "gateCConfirmationToken": "START-DASELVA-V2-GATE-C-1B0FCD27F0992769",
+  "tokensDoNotAuthorizeExecution": true,
+  "authorizationRule": "Gate B requires explicit approval of this manifest and the exact Gate B token. Gate C later requires a frozen Gate B reference-bundle hash, confirmed shared-media reuse, explicit approval of the 1,425-credit ceiling, and the exact Gate C token."
+}

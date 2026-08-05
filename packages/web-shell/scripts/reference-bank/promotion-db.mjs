@@ -46,6 +46,9 @@ function siteJsonRows(sites) {
     curation_weight: String(site.curationWeight),
     curation_rank: site.curationRank == null ? null : Number(site.curationRank),
     featured: Boolean(site.featured),
+    is_private: Boolean(site.isPrivate),
+    privacy_reason: site.privacyReason || null,
+    template_platform: site.templatePlatform || null,
     published_at: site.publishedAt || null,
     generated_at: site.generatedAt || null,
     availability_status: site.availabilityStatus,
@@ -93,6 +96,7 @@ const SITE_RECORDSET = `
   id TEXT, canonical_url TEXT, host TEXT, title TEXT, description TEXT,
   thumbnail_url TEXT, categories TEXT[], tags TEXT[], editorial_consensus SMALLINT,
   curation_weight NUMERIC, curation_rank INTEGER, featured BOOLEAN,
+  is_private BOOLEAN, privacy_reason VARCHAR, template_platform VARCHAR,
   published_at TEXT, generated_at TIMESTAMPTZ, availability_status VARCHAR,
   lifecycle_state VARCHAR, analysis_status VARCHAR
 `;
@@ -123,6 +127,9 @@ function siteProjection(alias = 'site') {
     ${alias}.curation_weight::text AS "curationWeight",
     ${alias}.curation_rank AS "curationRank",
     ${alias}.featured,
+    ${alias}.is_private AS "isPrivate",
+    ${alias}.privacy_reason AS "privacyReason",
+    ${alias}.template_platform AS "templatePlatform",
     ${alias}.published_at AS "publishedAt",
     CASE WHEN ${alias}.generated_at IS NULL THEN NULL
       ELSE to_char(${alias}.generated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
@@ -243,13 +250,15 @@ function siteMatchPredicate(siteAlias, expectedAlias) {
     ${siteAlias}.canonical_url, ${siteAlias}.host, ${siteAlias}.title, ${siteAlias}.description,
     ${siteAlias}.thumbnail_url, ${siteAlias}.categories, ${siteAlias}.tags,
     ${siteAlias}.editorial_consensus, ${siteAlias}.curation_weight, ${siteAlias}.curation_rank,
-    ${siteAlias}.featured, ${siteAlias}.published_at, ${siteAlias}.generated_at,
+    ${siteAlias}.featured, ${siteAlias}.is_private, ${siteAlias}.privacy_reason,
+    ${siteAlias}.template_platform, ${siteAlias}.published_at, ${siteAlias}.generated_at,
     ${siteAlias}.availability_status, ${siteAlias}.lifecycle_state, ${siteAlias}.analysis_status
   ) IS NOT DISTINCT FROM ROW(
     ${expectedAlias}.canonical_url, ${expectedAlias}.host, ${expectedAlias}.title, ${expectedAlias}.description,
     ${expectedAlias}.thumbnail_url, ${expectedAlias}.categories, ${expectedAlias}.tags,
     ${expectedAlias}.editorial_consensus, ${expectedAlias}.curation_weight, ${expectedAlias}.curation_rank,
-    ${expectedAlias}.featured, ${expectedAlias}.published_at, ${expectedAlias}.generated_at,
+    ${expectedAlias}.featured, ${expectedAlias}.is_private, ${expectedAlias}.privacy_reason,
+    ${expectedAlias}.template_platform, ${expectedAlias}.published_at, ${expectedAlias}.generated_at,
     ${expectedAlias}.availability_status, ${expectedAlias}.lifecycle_state, ${expectedAlias}.analysis_status
   )`;
 }
@@ -427,13 +436,15 @@ export async function applyPromotionPlan(sql, catalog, plan, {
     tx(`
       INSERT INTO ${sitesTable} (
         id, canonical_url, host, title, description, thumbnail_url, categories, tags,
-        editorial_consensus, curation_weight, curation_rank, featured, published_at,
-        generated_at, availability_status, lifecycle_state, analysis_status, updated_at
+        editorial_consensus, curation_weight, curation_rank, featured, is_private,
+        privacy_reason, template_platform, published_at, generated_at,
+        availability_status, lifecycle_state, analysis_status, updated_at
       )
       SELECT
         item.id, item.canonical_url, item.host, item.title, item.description,
         item.thumbnail_url, item.categories, item.tags, item.editorial_consensus,
-        item.curation_weight, item.curation_rank, item.featured, item.published_at,
+        item.curation_weight, item.curation_rank, item.featured, item.is_private,
+        item.privacy_reason, item.template_platform, item.published_at,
         item.generated_at, item.availability_status, item.lifecycle_state,
         item.analysis_status, NOW()
       FROM jsonb_to_recordset($1::jsonb) AS item(${SITE_RECORDSET})
