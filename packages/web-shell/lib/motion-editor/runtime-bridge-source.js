@@ -4972,9 +4972,15 @@ function nativeMotionRuntimeBridge() {
         if ((key === 'yoyoEase' || key === 'easeReverse') && vars[key]) return 'adaptive-ease';
       }
     } catch (_) { return 'temporal-unreadable'; }
+    // Yoyo reads BOTH the live getter and the authored var: real GSAP
+    // normalizes yoyo-without-repeat to yoyo() === false (probe 2026-08-05)
+    // while vars.yoyo stays true — and authored presence refuses at repeat 0
+    // (parity with repeatDelay: an inert authored modifier is not normalized
+    // away without its own doctrine line).
     let yoyoOn = false;
     try {
-      yoyoOn = Boolean(typeof animation.yoyo === 'function' ? animation.yoyo() : vars.yoyo);
+      const liveYoyo = typeof animation.yoyo === 'function' ? Boolean(animation.yoyo()) : false;
+      yoyoOn = liveYoyo || Boolean(vars.yoyo);
     } catch (_) { return 'temporal-unreadable'; }
     if (repeatCount === 0 && yoyoOn) return 'yoyo-without-repeat';
     if (repeatCount > 0) {

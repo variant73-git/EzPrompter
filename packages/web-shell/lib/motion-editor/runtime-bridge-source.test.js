@@ -13191,6 +13191,21 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
+    it('(t-l) yoyo AUTORAL com getter false (GSAP real normaliza yoyo-sem-repeat pra false) → recusa pela PRESENÇA', () => {
+      // Fato probe 2026-08-05: gsap.to({yoyo:true, repeat:0}) → tw.yoyo() === false
+      // mas vars.yoyo === true. A recusa é pela presença AUTORAL (paridade com
+      // repeatDelay: efetivo zero não normaliza presença sem regra doutrinária).
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, yoyo: true, duration: 1 } });
+      tween.yoyo = () => false; // getter efetivo normalizado, como o GSAP real
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-l');
+      expect(rejected?.payload?.error).toBe('Per-target overrides on yoyo animations without repeats are not supported yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
     it('(t-k) publicação: perTarget PRESENTE pra repeat:2 e repeat:3+yoyo; AUSENTE pra repeat:-1', () => {
       const [elA, elB] = setupFlatTargets();
       const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
