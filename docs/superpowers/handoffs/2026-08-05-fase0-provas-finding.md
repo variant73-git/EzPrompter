@@ -250,8 +250,8 @@ outra (provar stagger simples não promove `repeatRefresh`; provar `repeat` não
 | B2b | stagger filho-por-alvo · `stagger: { repeat: 1, repeatRefresh: true }` **owner=child** (r8 do audit, ownership CONFIRMADO por probe ANTES do transplante: `childRepeat=1`, `childRepeatRefresh=true`, `childTotalDur=2`; a PRESERVAÇÃO disso no transplante NÃO foi estabelecida) · per-target | 1 | A1; ownership pré-transplante (probe r8). Sobrevivência do ciclo/fase/re-roll/isolamento/rollback = obrigações do probe combinado |
 | B3 | stagger+SplitText · nenhum · per-target | 1 | A3, A4 |
 | B4 | multi-target plano · nenhum · per-target | **3 — PROMOVIDO 2026-08-05** (prova: witness `_probe-b4-witness.mjs`, 55 checks no GSAP 3.15 real pelo protocolo v2; MERGE OK do Sol na r6 da audit da Fase 1 — plano `2026-08-05-fase1-b4-per-target-writer.md`) | A5 |
-| B5 | multi-target plano · `repeat: 2, yoyo: false` (parado em iteração posterior) · per-target | 3 | A5, A6 |
-| B6 | multi-target plano · `repeat: 3, yoyo: true` (parado numa perna de VOLTA) · per-target | 3 | A5, A6 |
+| B5 | multi-target plano · **repeat INTEIRO positivo finito** (predicado quantificado — ver emenda abaixo), `yoyo: false`, sem outros modificadores temporais · per-target | **3 — PROMOVIDO 2026-08-05** (witness `_probe-b5-witness.mjs`, MATRIZ n=1/n=2-iteração-posterior/n=5, 96 checks GSAP 3.15 real, protocolo v2; audit Sol r1–r6, MERGE OK POR CHAVE na r6) | A5, A6 |
+| B6 | multi-target plano · **repeat INTEIRO positivo finito**, `yoyo: true`, mesmas exclusões · per-target | **3 — PROMOVIDO 2026-08-05** (witness `_probe-b6-witness.mjs`, MATRIZ de paridade n=1-par/n=2-ímpar/n=3-canônico-parado-na-VOLTA, amostragem direcional por quartos de perna; mesma audit, MERGE OK POR CHAVE na r6) | A5, A6 |
 | B7 | multi-target plano · `yoyo: true, repeat: 1, yoyoEase` · per-target end-only | 3 end-only | A5, A7 |
 
 > Rodada 5 do audit (aceita): a linha "`yoyo` sozinho" foi REMOVIDA — yoyo sem `repeat > 0`
@@ -275,6 +275,40 @@ outra (provar stagger simples não promove `repeatRefresh`; provar `repeat` não
 > recuperação verificável por atestação seria decisão de produto); clear sob hazard de
 > função recusa (fail-closed; teardown colapsa o slot SEM invalidar — não executa função da
 > página); registro forte de canais retém animations até teardown (bounded por edits).
+
+> **Addendum 2026-08-05 (promoção B5+B6 — MERGE OK POR CHAVE do Sol na r6).**
+> ⚠️ **EMENDA DOUTRINÁRIA (recomendação do advise do Sol; PENDENTE ciência do Adilson):**
+> as linhas B5/B6 viram **predicados quantificados provados por MATRIZ** — o `n` numérico
+> da chave original era a instanciação SENSÍVEL do probe, não o suporte do produto; a
+> promoção da família exigiu matriz (B5: n=1 mínimo, n=2 iteração posterior, n=5 → n>2;
+> B6: n=1 paridade PAR, n=2 ÍMPAR, n=3 canônico parado na volta). Nada além da matriz
+> promove: repeatDelay (getter vivo, QUALQUER sinal — GSAP aceita negativo — e presença
+> autoral), repeatRefresh, yoyoEase, easeReverse, infinito (repeat() devolve Infinity
+> NUMÉRICO pra Infinity/-2 autorais — o marcador via totalDuration 1e10 é FINITO e não
+> discrimina), fração (0.5 = meia iteração real), duração zero/não-finita (duration()
+> devolve Infinity pra Infinity E pra 1e308 — normalizado no getter; overflow real =
+> 1e300×1e8), clock não-finito (totalTime NaN persiste), ScrollTrigger e timeline-pai
+> SEGUEM recusados por mensagem própria. **Write model per-target `additive-base` NÃO
+> promovido** (repeat finito publica absolute; additive-base é exclusivo do infinito).
+>
+> Entregue: classificador temporal ÚNICO (`gsapPerTargetTemporalRefusal` +
+> `gsapOverrideClockUnsampleable`) servindo UM domínio em QUATRO lanes — publicação
+> (`available` = removibilidade EFETIVA pelos gates do clear real; `writable` = forma
+> atual aceita write; split do advise), gate do clear, sampler da atestação e
+> elegibilidade normal; guard da lane de timing (pós-verify + revert + RESTORE do clock —
+> setters re-mapeiam totalTime, r1#1 reproduzido número a número); teardown/clear tratam
+> adaptativos como hazard de invalidate. ⭐ Colateral exposto: a atestação via
+> `progress(1,true)` era INVÁLIDA sob repeat infinito (totalTime 5e9 → renderiza START) —
+> o verde antigo do clear-sob-drift era path-dependent (bisect em worktree provou);
+> sampler novo = fronteira da 1ª iteração pelo clock TOTAL, equivalência probada nas 4
+> formas. Witness B4 check (j): fronteira permanente = repeat:-1.
+>
+> Audit (6 rodadas, effort max): r1 4 achados + r2 3 + r3 1 + r4 1 (rota de PUBLICAÇÃO do
+> NaN via terminal opaque — o Sol REPRODUZIU e derrubou meu claim de alcance) + r5 1
+> (procedência do RED→GREEN: par correto d93d43b0-RED / 965672b5-verde, medido dos dois
+> lados) = **10 aceitos/corrigidos, todos com RED/repro observado antes do fix**; 2 claims
+> meus derrubados por reprodução dele; 2 correções de evidência minha (JSON.stringify
+> mascara Infinity como null; "commit pai" impreciso). Commits `c329b0aa`→`454c316b`.
 
 Probe de cada linha: o do Gate abaixo, instanciado NAQUELA chave (B1–B3 somam o wrapper de
 fachada/lifecycle/ticks; B2a soma o wrapper reproduzindo `repeat`+`repeatRefresh` DA FACHADA

@@ -1,5 +1,9 @@
 # Handoff — próxima sessão (escrito em 2026-08-05, fim do dia)
 
+> ⚠️ **SUPERADO (2026-08-05, noite).** A fila deste handoff foi executada: B5/B6 shipped
+> com MERGE OK POR CHAVE (r6). Porta de entrada agora é
+> **`2026-08-05-next-session-handoff-b5b6-done.md`**.
+
 > **Porta de entrada.** Substitui `2026-08-05-next-session-handoff.md` (aquele mandava
 > EXECUTAR o plano B4 — **feito**: executado inteiro, auditado até MERGE OK, promovido).
 
