@@ -122,7 +122,12 @@ function candidateFor(clip, track, trackIndex, clipIndex, requestedProperty, tar
     sequenceId: ownership.sequenceId || null,
     relationship: ownership.relationship || (ownership.sequenceId ? 'sequential' : 'independent'),
     order: Number.isFinite(ownership.order) ? ownership.order : clipIndex,
-    retargetable: ownership.retargetable !== false && transformSafe && clip.editability !== 'code',
+    // A per-target channel makes the field editable even when the full-scope
+    // retarget is unsafe (multi-target): the write goes out as a v3 override
+    // scoped to this element only (fase-1 B4).
+    retargetable: (ownership.retargetable !== false || Boolean(ownership.perTarget?.available))
+      && transformSafe && clip.editability !== 'code',
+    perTarget: ownership.perTarget?.available ? ownership.perTarget : null,
     editability: clip.editability || 'code',
     writeModel: ownership.writeModel || 'absolute',
     sourceValue: ownership.sourceValue ?? finalValue,

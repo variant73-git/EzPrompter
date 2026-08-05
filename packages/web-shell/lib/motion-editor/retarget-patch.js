@@ -7,6 +7,7 @@ import {
 } from './transform-components.js';
 
 export const RETARGET_PATCH_SCHEMA_VERSION = 2;
+export const RETARGET_PATCH_SCHEMA_VERSION_PER_TARGET = 3;
 export const OWNERSHIP_HINT_SCHEMA_VERSION = 1;
 
 function cssProperty(property) {
@@ -41,6 +42,38 @@ function retargetDescriptor({ property, value, owner }) {
   };
 }
 
+// Schema v3 (per-target override): targetScope + intent; `value` present only
+// for `override`. v2 metadata fields are preserved. The bridge recomposes the
+// strict B4 eligibility on its own — this descriptor never unlocks anything.
+function perTargetDescriptor({ property, owner, intent, value }) {
+  const semanticProperty = normalizeSemanticProperty(property);
+  return {
+    schemaVersion: RETARGET_PATCH_SCHEMA_VERSION_PER_TARGET,
+    semanticProperty,
+    runtimeProperty: owner.runtimeProperty || semanticProperty,
+    targetScope: { mode: 'single' },
+    intent,
+    ...(intent === 'override' ? { value } : {}),
+    writeModel: owner.writeModel || 'absolute',
+    responsiveScope: owner.responsiveScope || 'shared',
+    owner: ownerDescriptor(owner),
+    ...(owner.sourceValue != null ? { sourceValue: owner.sourceValue } : {}),
+    affectedTargetCount: owner.affectedTargetCount || 1,
+    keyframe: { position: 'final-existing' },
+  };
+}
+
+// The `before` of a per-target patch is the target's LOGICAL state from the
+// published perTarget.states — presence included: no entry canonicalizes as
+// `clear` (what an undo of a first override replays), never the UI's visible
+// value.
+function perTargetBeforeState(owner, elementId) {
+  const state = (owner.perTarget?.states || []).find((item) => item.elementId === elementId) || null;
+  if (state?.intent === 'override') return { intent: 'override', value: state.value };
+  if (state?.intent === 'inherit') return { intent: 'inherit' };
+  return { intent: 'clear' };
+}
+
 function directTransformPatch({
   elementId,
   property,
@@ -69,9 +102,24 @@ export function buildFinalTargetPatch({
   owner = null,
   transform = null,
   transformOrigin = null,
+  intent = 'override',
 }) {
   if (!elementId) throw new TypeError('A retarget patch requires an element ID');
   const semanticProperty = normalizeSemanticProperty(property);
+  if (owner?.perTarget?.available) {
+    if (!owner.motionId || !owner.channelId) throw new TypeError('A retarget owner requires motion and channel IDs');
+    const beforeState = perTargetBeforeState(owner, elementId);
+    return {
+      elementId,
+      kind: 'motion',
+      motionId: owner.motionId,
+      property: 'retarget.final',
+      before: perTargetDescriptor({ property: semanticProperty, owner, ...beforeState }),
+      value: intent === 'override'
+        ? perTargetDescriptor({ property: semanticProperty, owner, intent: 'override', value })
+        : perTargetDescriptor({ property: semanticProperty, owner, intent }),
+    };
+  }
   if (!owner) {
     if (propertyHasTransformSemantics(semanticProperty)) {
       return directTransformPatch({

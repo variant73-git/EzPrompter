@@ -1351,6 +1351,32 @@ export function useNativeMotionController({
     applyResponsiveEdit(property, value, [createPatch(patch)]);
   }
 
+  // Per-target reset (fase-1 B4): removes THIS element's override entry via a
+  // v3 intent-removal patch — the group value and every other target's
+  // override stay untouched. The visual affordance (field mark / context
+  // menu) lands in its own UI phase; this is the command it will call.
+  function resetOverride(property) {
+    if (!selected) return;
+    const semanticProperty = normalizeSemanticProperty(property);
+    const ownership = propertyOwnership[semanticProperty] || analyzeMotionOwnership({
+      motion,
+      property: semanticProperty,
+      targetId: motionElementId,
+      ownershipHint: ownershipHints[semanticProperty],
+    });
+    const owner = ownership.owner;
+    if (!owner?.perTarget?.available) return;
+    const patch = buildFinalTargetPatch({
+      elementId: ownership.status === 'owned' ? motionElementId : selected.id,
+      property: semanticProperty,
+      before: null,
+      value: null,
+      owner,
+      intent: 'clear',
+    });
+    applyPatches([createPatch(patch)]);
+  }
+
   function focusOwnership(property) {
     const semanticProperty = normalizeSemanticProperty(property);
     const ownership = propertyOwnership[semanticProperty] || analyzeMotionOwnership({
@@ -1948,6 +1974,7 @@ export function useNativeMotionController({
     cancelResponsiveScopeChange,
     focusOwnership,
     chooseOwnership,
+    resetOverride,
     clearOwnership: () => setOwnershipConflict(null),
     applyText,
     applyAttribute,

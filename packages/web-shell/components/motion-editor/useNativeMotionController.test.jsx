@@ -676,6 +676,156 @@ describe('useNativeMotionController', () => {
     });
   });
 
+  it('emits a v3 per-target patch when the owner publishes an available per-target channel', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    frame.contentWindow.postMessage.mockClear();
+
+    // Fase 1 / B4: multi-target plano — retargetable é false (full-scope não
+    // é seguro), mas o canal per-target está disponível → o campo edita e o
+    // builder emite v3 com before derivado do perTarget.states do alvo.
+    const motion = [{
+      id: 'cards-slide',
+      engine: 'GSAP',
+      editability: 'adapter',
+      timing: {},
+      tracks: [{
+        property: 'opacity',
+        keyframes: [{ offset: 1, value: '1' }],
+        ownership: {
+          channelId: 'cards-slide:opacity',
+          behavior: 'entrance',
+          relationship: 'independent',
+          targetId: 'hero',
+          runtimeProperty: 'opacity',
+          writeModel: 'absolute',
+          retargetable: false,
+          affectedTargetCount: 2,
+          perTarget: {
+            available: true,
+            states: [
+              { elementId: 'hero', intent: 'none' },
+              { elementId: 'sibling', intent: 'none' },
+            ],
+          },
+        },
+      }],
+    }];
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'selection-changed',
+        payload: {
+          element: {
+            id: 'hero',
+            label: 'Hero',
+            styles: { opacity: '0.8', transform: 'none', transformOrigin: '50% 50%' },
+            motion,
+          },
+        },
+      },
+    })));
+
+    act(() => result.current.commands.applyStyle('opacity', '0.7', '1'));
+    expect(result.current.ownershipConflict).toBeNull();
+    const message = frame.contentWindow.postMessage.mock.calls
+      .map(([value]) => value)
+      .findLast((value) => value.type === 'apply-patch');
+    expect(message).toBeTruthy();
+    expect(message.payload.patch).toMatchObject({
+      elementId: 'hero',
+      kind: 'motion',
+      motionId: 'cards-slide',
+      property: 'retarget.final',
+      value: {
+        schemaVersion: 3,
+        targetScope: { mode: 'single' },
+        intent: 'override',
+        value: '0.7',
+      },
+      before: {
+        schemaVersion: 3,
+        intent: 'clear',
+      },
+    });
+    expect(message.payload.patch.before).not.toHaveProperty('value');
+  });
+
+  it('resetOverride emits an intent-removal v3 patch for the selected target', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    frame.contentWindow.postMessage.mockClear();
+
+    const motion = [{
+      id: 'cards-slide',
+      engine: 'GSAP',
+      editability: 'adapter',
+      timing: {},
+      tracks: [{
+        property: 'opacity',
+        keyframes: [{ offset: 1, value: '1' }],
+        ownership: {
+          channelId: 'cards-slide:opacity',
+          behavior: 'entrance',
+          relationship: 'independent',
+          targetId: 'hero',
+          runtimeProperty: 'opacity',
+          writeModel: 'absolute',
+          retargetable: false,
+          affectedTargetCount: 2,
+          perTarget: {
+            available: true,
+            states: [
+              { elementId: 'hero', intent: 'override', value: '0.7' },
+              { elementId: 'sibling', intent: 'none' },
+            ],
+          },
+        },
+      }],
+    }];
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'runtime',
+        type: 'selection-changed',
+        payload: {
+          element: {
+            id: 'hero',
+            label: 'Hero',
+            styles: { opacity: '0.7', transform: 'none', transformOrigin: '50% 50%' },
+            motion,
+          },
+        },
+      },
+    })));
+
+    act(() => result.current.commands.resetOverride('opacity'));
+    const message = frame.contentWindow.postMessage.mock.calls
+      .map(([value]) => value)
+      .findLast((value) => value.type === 'apply-patch');
+    expect(message).toBeTruthy();
+    expect(message.payload.patch).toMatchObject({
+      elementId: 'hero',
+      kind: 'motion',
+      motionId: 'cards-slide',
+      property: 'retarget.final',
+      value: { schemaVersion: 3, intent: 'clear' },
+      before: { schemaVersion: 3, intent: 'override', value: '0.7' },
+    });
+    expect(message.payload.patch.value).not.toHaveProperty('value');
+  });
+
   it('refuses keyframe edits on a track the writer will reject — no patch leaves the controller', async () => {
     const frame = runtimeFrame();
     const iframeRef = createRef();

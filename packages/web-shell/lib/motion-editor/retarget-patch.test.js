@@ -98,6 +98,100 @@ describe('retarget patches', () => {
     });
   });
 
+  it('emits a v3 per-target descriptor when the owner has an available per-target channel', () => {
+    const perTargetOwner = {
+      ...owner,
+      semanticProperty: 'translateX',
+      runtimeProperty: 'x',
+      channelId: 'follow-up:translateX',
+      affectedTargetCount: 2,
+      perTarget: {
+        available: true,
+        states: [
+          { elementId: 'hero', intent: 'override', value: 160 },
+          { elementId: 'sibling', intent: 'none' },
+        ],
+      },
+    };
+    const patch = buildFinalTargetPatch({
+      elementId: 'hero',
+      property: 'translateX',
+      before: '100',
+      value: 170,
+      owner: perTargetOwner,
+    });
+    expect(patch).toMatchObject({
+      elementId: 'hero',
+      kind: 'motion',
+      motionId: 'follow-up',
+      property: 'retarget.final',
+      value: {
+        schemaVersion: 3,
+        runtimeProperty: 'x',
+        targetScope: { mode: 'single' },
+        intent: 'override',
+        value: 170,
+      },
+      // O before vem do perTarget.states do ALVO (estado override 160), não
+      // do argumento `before` da UI.
+      before: {
+        schemaVersion: 3,
+        targetScope: { mode: 'single' },
+        intent: 'override',
+        value: 160,
+      },
+    });
+
+    // Alvo sem entrada (none): before = intent clear SEM chave value.
+    const sibling = buildFinalTargetPatch({
+      elementId: 'sibling',
+      property: 'translateX',
+      before: '100',
+      value: 140,
+      owner: perTargetOwner,
+    });
+    expect(sibling.before).toMatchObject({ schemaVersion: 3, intent: 'clear' });
+    expect(sibling.before).not.toHaveProperty('value');
+  });
+
+  it('emits an intent-removal v3 descriptor for a per-target reset', () => {
+    const perTargetOwner = {
+      ...owner,
+      semanticProperty: 'translateX',
+      runtimeProperty: 'x',
+      channelId: 'follow-up:translateX',
+      affectedTargetCount: 2,
+      perTarget: {
+        available: true,
+        states: [{ elementId: 'hero', intent: 'override', value: 160 }],
+      },
+    };
+    const patch = buildFinalTargetPatch({
+      elementId: 'hero',
+      property: 'translateX',
+      before: null,
+      value: null,
+      owner: perTargetOwner,
+      intent: 'clear',
+    });
+    expect(patch.value).toMatchObject({ schemaVersion: 3, intent: 'clear', targetScope: { mode: 'single' } });
+    expect(patch.value).not.toHaveProperty('value');
+    expect(patch.before).toMatchObject({ schemaVersion: 3, intent: 'override', value: 160 });
+  });
+
+  it('keeps the v2 descriptor untouched for owners without a per-target channel', () => {
+    const patch = buildFinalTargetPatch({
+      elementId: 'hero',
+      property: 'opacity',
+      before: '1',
+      value: '0.7',
+      owner,
+    });
+    expect(patch.value.schemaVersion).toBe(2);
+    expect(patch.value).not.toHaveProperty('targetScope');
+    expect(patch.value).not.toHaveProperty('intent');
+  });
+
   it('persists and rehydrates the selected ownership channel from manifest patches', () => {
     const hint = buildOwnershipHintPatch({
       elementId: 'hero',
