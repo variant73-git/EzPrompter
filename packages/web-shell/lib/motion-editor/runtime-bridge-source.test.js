@@ -12825,6 +12825,24 @@ describe('native motion runtime bridge', () => {
   function makeFlatTweenDouble(targets, { vars, repeat = 0, yoyo = false, duration = 1, getProperty } = {}) {
       const totalDuration = duration * (repeat + 1);
       const state = { progress: 0, totalTime: 0, paused: true };
+      // Materialização (semântica real do GSAP aproximada): invalidate()
+      // reconstrói os PropTweens a partir das vars ATUAIS — funções são
+      // avaliadas por alvo NAQUELE momento. getProperty devolve o valor
+      // materializado no ÚLTIMO invalidate, não o vivo — é o que permite ao
+      // teste de atestação modelar a impostora (troca → invalidate →
+      // restaura sem invalidate ⇒ endpoints seguem os da impostora).
+      const materialized = new Map();
+      const materialize = () => {
+        targets.forEach((target, index) => {
+          const endpoints = {};
+          for (const key in vars) {
+            const slot = vars[key];
+            endpoints[key] = typeof slot === 'function' ? slot(index, target, targets) : slot;
+          }
+          materialized.set(target, endpoints);
+        });
+      };
+      materialize();
       const tween = {
         targets: () => targets.slice(),
         vars,
@@ -12857,11 +12875,14 @@ describe('native motion runtime bridge', () => {
         }),
         pause: vi.fn(() => { state.paused = true; return tween; }),
         play: vi.fn(() => { state.paused = false; return tween; }),
-        invalidate: vi.fn(() => tween),
+        invalidate: vi.fn(() => { materialize(); return tween; }),
       };
       window.gsap = {
         globalTimeline: { getChildren: () => [tween] },
-        getProperty: getProperty || (() => 0),
+        getProperty: getProperty || ((target, property) => {
+          const endpoints = materialized.get(target);
+          return endpoints && property in endpoints ? endpoints[property] : 0;
+        }),
       };
       return { tween, state };
     }
@@ -13129,6 +13150,106 @@ describe('native motion runtime bridge', () => {
       sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'b4-clear-verbatim');
       expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
       expect(tween.vars.x).toBe('100px');
+      delete window.gsap;
+      runtime.restore();
+    });
+  });
+
+  // Fase 1 / B4 — proveniência CONTEXTUAL do wrapper (nunca WeakSet global):
+  // a função só é segura quando {mesma animação, mesma property, mesmo
+  // container, no slot esperado, canal ACTIVE}. Fora disso = tampering
+  // (hazard). Atestação de endpoints: antes de qualquer invalidate, os
+  // endpoints MATERIALIZADOS de todos os alvos são conferidos contra
+  // shared/overrides — a impostora que agiu e devolveu o wrapper não passa.
+  describe('proveniência contextual + atestação de endpoints (B4)', () => {
+    function sendV2Edit(runtime, elementId, motionId, runtimeProperty, value, requestId) {
+      runtime.send('apply-patch', {
+        patch: {
+          elementId, kind: 'motion', motionId, property: 'retarget.final', before: null,
+          value: { schemaVersion: 2, semanticProperty: runtimeProperty, runtimeProperty, value, writeModel: 'absolute', affectedTargetCount: 2 },
+        },
+      }, requestId);
+      return runtime.messages.filter((message) => message.type === 'patch-rejected').pop();
+    }
+
+    it('(a) canal ativo em x NÃO bloqueia retarget normal de y (a exceção do scan é cirúrgica)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, y: 10, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      const wrapper = tween.vars.x;
+      sendV2Edit(runtime, idA, motionId, 'y', 30, 'b4-prov-edit-y');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(tween.vars.y).toBe(30);
+      expect(tween.vars.x).toBe(wrapper);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(b) página aliasa vars.y = vars.x (wrapper em prop errada) → qualquer edição recusa', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, y: 10, z: 5, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      tween.vars.y = tween.vars.x; // tampering: nossa wrapper fora da property dela
+      const rejected = sendV2Edit(runtime, idA, motionId, 'z', 9, 'b4-prov-alias');
+      expect(rejected?.payload?.error).toBe('This animation uses randomized values — any edit would re-roll them.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(c) impostora no slot: v3 e edição de grupo recusam (canal stale), seleção segue inócua', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      tween.vars.x = () => 999; // impostora da página no slot do canal
+      const { elementId: idB } = selectMotion(runtime, elB);
+      const rejectedV3 = sendV3(runtime, idB, motionId, v3Descriptor({ value: 140 }), 'b4-impostor-v3');
+      expect(rejectedV3?.payload?.error).toBe('This value is computed by the page and cannot be overridden per element.');
+      const rejectedGroup = sendV2Edit(runtime, idA, motionId, 'x', 120, 'b4-impostor-group');
+      expect(rejectedGroup?.payload?.error).toBe("This animation's overrides were changed by the page — reselect the layer to edit them again.");
+      // Seleção nunca lança — re-selecionar continua funcionando.
+      const { elementId: reselected } = selectMotion(runtime, elA);
+      expect(reselected).toBe(idA);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(d) a exceção é contextual: wrapper roubado re-instalado com canal COLAPSADO = hazard (e função da página idem)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, y: 10, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      const stolenWrapper = tween.vars.x;
+      sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'b4-ctx-clear');
+      expect(tween.vars.x).toBe(100); // colapsado
+      tween.vars.x = stolenWrapper;   // página re-instala a wrapper tombstonada
+      const rejected = sendV2Edit(runtime, idA, motionId, 'y', 30, 'b4-ctx-stolen');
+      expect(rejected?.payload?.error).toBe('This animation uses randomized values — any edit would re-roll them.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(e) atestação: impostora agiu (invalidate) e devolveu o wrapper — endpoints divergem → recusa', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      // A página troca, invalida (PropTweens da impostora materializam) e
+      // devolve o wrapper — identidade "legítima", endpoints envenenados.
+      const legitWrapper = tween.vars.x;
+      tween.vars.x = () => 999;
+      tween.invalidate();
+      tween.vars.x = legitWrapper;
+      const { elementId: idB } = selectMotion(runtime, elB);
+      const rejected = sendV3(runtime, idB, motionId, v3Descriptor({ value: 140 }), 'b4-attest');
+      expect(rejected?.payload?.error).toBe("This animation's overrides were changed by the page — reselect the layer to edit them again.");
       delete window.gsap;
       runtime.restore();
     });

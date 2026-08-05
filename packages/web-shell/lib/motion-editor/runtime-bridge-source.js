@@ -1444,8 +1444,15 @@ function nativeMotionRuntimeBridge() {
               // _-prefixed expando at the entry ROOT (Sol r111). Same
               // contextual predicate as the normal branch.
               if (inEntry && (!isRoot || !GSAP_CONFIG_VARS.has(key))) sawFunctionValue = true;
-              else if (!inEntry && (zone === 'vars-root' || zone === 'vars-css')) topFunctionProps.push(key);
-              else if (!inEntry && zone === 'vars-nested') sawFunctionValue = true;
+              else if (!inEntry && (zone === 'vars-root' || zone === 'vars-css')) {
+                // OverrideChannel wrapper: valid-in-context is the ONE exempt
+                // function (surgical — never collected, so it cannot poison
+                // the monotonic memory); OUR wrapper anywhere else is proven
+                // tampering (fase-1 B4).
+                const placement = gsapOverrideWrapperPlacement(animation, owner, key, backedgeValue);
+                if (placement === 'misplaced') sawFunctionValue = true;
+                else if (placement !== 'valid') topFunctionProps.push(key);
+              } else if (!inEntry && zone === 'vars-nested') sawFunctionValue = true;
               continue;
             }
             pushValue(backedgeValue, inEntry, zone === 'vars-root' ? 'vars-nested' : zone);
@@ -1455,10 +1462,16 @@ function nativeMotionRuntimeBridge() {
           if (typeof ownValue === 'function') {
             if (inEntry) {
               if (!isRoot || !GSAP_CONFIG_VARS.has(key)) sawFunctionValue = true;
-            } else if (zone === 'vars-root') {
-              if (!GSAP_CONFIG_VARS.has(key)) topFunctionProps.push(key); // sibling-aware (Sol r115)
-            } else if (zone === 'vars-css') {
-              topFunctionProps.push(key);
+            } else if (zone === 'vars-root' || zone === 'vars-css') {
+              // OverrideChannel wrapper: valid-in-context is exempt (surgical
+              // — never collected, never poisons the monotonic memory); OUR
+              // wrapper anywhere else is proven tampering (fase-1 B4). Page
+              // functions keep the sibling-aware name collection (Sol r115).
+              const placement = gsapOverrideWrapperPlacement(animation, owner, key, ownValue);
+              if (placement === 'misplaced') sawFunctionValue = true;
+              else if (placement !== 'valid' && (zone === 'vars-css' || !GSAP_CONFIG_VARS.has(key))) {
+                topFunctionProps.push(key);
+              }
             } else if (zone === 'vars-nested') {
               sawFunctionValue = true; // plugin namespaces — no writer covers these
             }
@@ -3504,9 +3517,9 @@ function nativeMotionRuntimeBridge() {
     }
   }
 
-  function sampleGsapValue(record, property, progress = 1) {
+  function sampleGsapValue(record, property, progress = 1, targetOverride = null) {
     const animation = record.animation;
-    const target = record.target || record.targets?.[0];
+    const target = targetOverride || record.target || record.targets?.[0];
     const gsap = window.gsap;
     const touched = [];
     (record.targets || [target]).forEach((item) => {
@@ -4814,9 +4827,69 @@ function nativeMotionRuntimeBridge() {
   // collapsed (never the original — the group may have moved meanwhile).
   const gsapOverrideChannels = new WeakMap(); // animation -> Map(property -> channel)
 
+  // CONTEXTUAL provenance (never a global membership set): the wrapper maps to
+  // the full context it was minted for. It is safe ONLY as {same animation,
+  // same property, same container, in the expected slot, channel ACTIVE} —
+  // anywhere else (aliased to another property, another tween's vars, put back
+  // after a collapse) it is page tampering and must read as a hazard.
+  const gsapOverrideProvenance = new WeakMap(); // wrapper -> { kind, animation, property, container, channel }
+
   function gsapOverrideChannelFor(animation, property) {
     const channels = animation ? gsapOverrideChannels.get(animation) : null;
     return channels ? channels.get(property) || null : null;
+  }
+
+  // 'none' = not ours (page function) · 'valid' = our wrapper in its exact
+  // context · 'misplaced' = our wrapper anywhere else (tampering).
+  function gsapOverrideWrapperPlacement(animation, container, property, candidate) {
+    const provenance = gsapOverrideProvenance.get(candidate);
+    if (!provenance) return 'none';
+    if (provenance.kind === 'pure-target-override-v1'
+      && provenance.animation === animation
+      && provenance.property === property
+      && provenance.container === container
+      && provenance.channel
+      && provenance.channel.wrapper === candidate
+      && provenance.channel.state === 'active') return 'valid';
+    return 'misplaced';
+  }
+
+  // Stale is a VERDICT of validation, never a recorded state: an 'active'
+  // channel whose wrapper is not the one projected in vars was tampered with.
+  function gsapOverrideChannelStale(animation, property, channel) {
+    if (!channel || channel.state !== 'active') return false;
+    const vars = animation?.vars;
+    return !vars || vars[property] !== channel.wrapper;
+  }
+
+  function gsapEndpointMatches(sampled, expected) {
+    if (sampled === expected) return true;
+    const sampledParsed = numericCss(sampled);
+    const expectedParsed = numericCss(expected);
+    if (sampledParsed && expectedParsed) {
+      if (sampledParsed.unit && expectedParsed.unit && sampledParsed.unit !== expectedParsed.unit) return false;
+      return Math.abs(sampledParsed.value - expectedParsed.value) < 0.001;
+    }
+    return String(sampled ?? '') === String(expected ?? '');
+  }
+
+  // Anti-impostor attestation (advise §3): an impostor that swapped in, let an
+  // invalidate materialize its PropTweens, and swapped the legit wrapper back
+  // leaves the identity intact but the ENDPOINTS poisoned. Before any write
+  // that would invalidate on top of that state, every target's materialized
+  // endpoint must match what the channel would produce.
+  function gsapAttestOverrideEndpoints(record, channel, property) {
+    const animation = record.animation;
+    let targets;
+    try { targets = animation.targets?.() || []; } catch (_) { targets = record.targets || []; }
+    for (const target of targets) {
+      const entry = channel.overrides.get(target);
+      const expected = entry && entry.intent === 'override' ? entry.value : channel.shared;
+      const sampled = sampleGsapValue(record, property, 1, target);
+      if (!gsapEndpointMatches(sampled, expected)) {
+        throw bridgeError('unsupported_patch', "This animation's overrides were changed by the page — reselect the layer to edit them again.");
+      }
+    }
   }
 
   function applyGsapPerTargetOverride(record, element, descriptor) {
@@ -4855,8 +4928,23 @@ function nativeMotionRuntimeBridge() {
         const entry = created.overrides.get(target);
         return entry && entry.intent === 'override' ? entry.value : created.shared;
       };
+      gsapOverrideProvenance.set(created.wrapper, {
+        kind: 'pure-target-override-v1',
+        animation,
+        property,
+        container: vars,
+        channel: created,
+      });
       channel = created;
       channels.set(property, channel);
+    } else if (channel.state === 'active') {
+      // The channel was live before this write: validate the projection
+      // (stale = the page swapped/removed the wrapper) and attest the
+      // materialized endpoints (anti-impostor) BEFORE mutating anything.
+      if (gsapOverrideChannelStale(animation, property, channel)) {
+        throw bridgeError('unsupported_patch', "This animation's overrides were changed by the page — reselect the layer to edit them again.");
+      }
+      gsapAttestOverrideEndpoints(record, channel, property);
     }
     if (descriptor.intent === 'clear') {
       channel.overrides.delete(element);
@@ -4948,9 +5036,13 @@ function nativeMotionRuntimeBridge() {
     {
       const overrideChannel = gsapOverrideChannelFor(record.animation, descriptor.runtimeProperty);
       if (overrideChannel && overrideChannel.state === 'active') {
+        if (gsapOverrideChannelStale(record.animation, descriptor.runtimeProperty, overrideChannel)) {
+          throw bridgeError('unsupported_patch', "This animation's overrides were changed by the page — reselect the layer to edit them again.");
+        }
         if (descriptor.component || (descriptor.writeModel && descriptor.writeModel !== 'absolute')) {
           throw bridgeError('unsupported_patch', 'This value has per-element overrides — only plain group edits are supported.');
         }
+        gsapAttestOverrideEndpoints(record, overrideChannel, descriptor.runtimeProperty);
         const desired = descriptor.value;
         overrideChannel.shared = typeof overrideChannel.shared === 'number' && Number.isFinite(Number(desired))
           ? Number(desired)
