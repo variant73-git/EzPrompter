@@ -491,6 +491,17 @@ const clockDrift = await runCase(`
   };
   tw.repeatDelay(0);
   tw.totalTime(1.5, true);
+  // (c) drift totalTime(NaN) — audit r3: persiste no GSAP real com todos os
+  // outros getters sãos; aplicado no PATCH-TIME (sem re-seleção — a amostragem
+  // da inspeção não restaura parked NaN e deixaria o clock finito).
+  tw.totalTime(NaN, true);
+  const nanClock = {
+    sticks: Number.isNaN(tw.totalTime()),
+    write: H.applyPatch(A.elementId, A.motionId, 'retarget.final', H.v3(ownership, 'override', 175)),
+    clear: H.applyPatch(A.elementId, A.motionId, 'retarget.final', H.v3(ownership, 'clear')),
+    wrapperIntact: typeof tw.vars.x === 'function',
+  };
+  tw.totalTime(1.5, true);
   // recuperação: com o clock são de volta, o clear volta a funcionar
   reA = H.select('a');
   reOwnership = reA.track && reA.track.ownership;
@@ -499,7 +510,7 @@ const clockDrift = await runCase(`
     clear: H.applyTx('tx-b5-ck-clear', A.elementId, A.motionId, H.v3(reOwnership, 'clear')),
     varsXType: typeof tw.vars.x,
   };
-  return { tx, durationZero, negativeDelay, recovered };
+  return { tx, durationZero, negativeDelay, nanClock, recovered };
 `);
 
 // ---- DRIFT ADAPTATIVO (audit r1#3): repeatRefresh pós-canal → o clear REAL
@@ -664,6 +675,7 @@ console.log('(ck) drift de clock (r2#1: publicação/gate/sampler = UM domínio)
 check('override commitou antes dos drifts', clockDrift.tx.committed === true);
 check('duration(0): available FALSE + clear recusado no gate (mensagem de timing)', clockDrift.durationZero.available === false && clockDrift.durationZero.clear.applied === false && clockDrift.durationZero.clear.error === "This animation's timing cannot be read safely — per-target overrides are not available.", JSON.stringify(clockDrift.durationZero.clear));
 check('repeatDelay(-0.5) ACEITO pelo GSAP: available FALSE + clear recusado no gate', clockDrift.negativeDelay.acceptedBySetter === true && clockDrift.negativeDelay.available === false && clockDrift.negativeDelay.clear.applied === false && clockDrift.negativeDelay.clear.error === "This animation's timing cannot be read safely — per-target overrides are not available.", JSON.stringify(clockDrift.negativeDelay.clear));
+check('totalTime(NaN) PERSISTE e write+clear recusam no gate (r3), canal intacto', clockDrift.nanClock.sticks === true && clockDrift.nanClock.write.applied === false && clockDrift.nanClock.write.error === "This animation's timing cannot be read safely — per-target overrides are not available." && clockDrift.nanClock.clear.applied === false && clockDrift.nanClock.wrapperIntact === true, JSON.stringify(clockDrift.nanClock));
 check('clock recuperado: available volta TRUE e o clear commit+colapsa', clockDrift.recovered.available === true && clockDrift.recovered.clear.committed === true && clockDrift.recovered.varsXType === 'number', JSON.stringify(clockDrift.recovered));
 
 console.log('(ad) drift adaptativo (r1#3: available = removibilidade EFETIVA)');

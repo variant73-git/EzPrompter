@@ -13432,6 +13432,47 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
+    it('(r3-a) clock estacionado em NaN no PATCH-TIME (repeat simples): elegibilidade NORMAL recusa o 1º override (audit r3)', () => {
+      // GSAP real: totalTime(NaN, true) deixa totalTime() === NaN com todos os
+      // outros getters sãos (probe 2026-08-05). O NaN precisa estar presente
+      // NA HORA DO PATCH: a amostragem da inspeção não restaura um parked NaN
+      // (Number.isFinite guard) e deixa o clock finito — por isso o drift é
+      // aplicado DEPOIS da seleção, como uma página real faria.
+      const [elA, elB] = setupFlatTargets();
+      const made = makeStatefulTemporalDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const { state } = made;
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      state.totalTime = NaN; // drift APÓS a seleção, antes do patch
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'r3-a');
+      expect(rejected?.payload?.error).toBe("This animation's timing cannot be read safely — per-target overrides are not available.");
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(r3-b) canal ativo + drift do clock pra NaN no patch-time (yoyo): write novo E clear recusados no gate (audit r3)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const made = makeStatefulTemporalDouble([elA, elB], { vars: { x: 100, repeat: 3, yoyo: true, duration: 1 }, repeat: 3, yoyo: true });
+      const { tween, state } = made;
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }), 'r3-b-override');
+      state.totalTime = NaN; // drift da página após o canal
+      const rejectedWrite = sendV3(runtime, idA, motionId, v3Descriptor({ value: 170 }), 'r3-b-write');
+      expect(rejectedWrite?.payload?.error).toBe("This animation's timing cannot be read safely — per-target overrides are not available.");
+      const rejectedClear = sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'r3-b-clear');
+      expect(rejectedClear?.payload?.error).toBe("This animation's timing cannot be read safely — per-target overrides are not available.");
+      expect(typeof tween.vars.x).toBe('function'); // nada mutado
+      // recuperação: clock são de volta → clear commit+colapsa (não fica preso)
+      state.totalTime = 1.5;
+      const priorRejected = runtime.messages.filter((message) => message.type === 'patch-rejected').length;
+      sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'r3-b-recover');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(priorRejected);
+      expect(tween.vars.x).toBe(100);
+      delete window.gsap;
+      runtime.restore();
+    });
+
     it('(l2-a) group-edit v2 com canal ativo + drift repeatRefresh → recusa temporal recomposta; shared intacto', () => {
       const [elA, elB] = setupFlatTargets();
       const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });

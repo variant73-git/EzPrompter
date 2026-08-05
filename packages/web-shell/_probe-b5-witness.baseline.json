@@ -669,6 +669,18 @@
         "error": "This animation's timing cannot be read safely — per-target overrides are not available."
       }
     },
+    "nanClock": {
+      "sticks": true,
+      "write": {
+        "applied": false,
+        "error": "This animation's timing cannot be read safely — per-target overrides are not available."
+      },
+      "clear": {
+        "applied": false,
+        "error": "This animation's timing cannot be read safely — per-target overrides are not available."
+      },
+      "wrapperIntact": true
+    },
     "recovered": {
       "available": true,
       "clear": {

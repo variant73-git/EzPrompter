@@ -5044,6 +5044,12 @@ function nativeMotionRuntimeBridge() {
       } catch (_) { return 'temporal-unreadable'; }
       if (rawTotal != null && !Number.isFinite(Number(rawTotal))) return 'non-finite-duration';
     }
+    // Clock-sampleability closes the NORMAL lane too (audit r3): a page can
+    // park the clock at NaN (`totalTime(NaN, true)` sticks on real 3.15)
+    // with every other getter healthy — publication would then advertise a
+    // write the attestation must refuse. Same predicate as the clear gate,
+    // the publication `removable` and the sampler: ONE domain, four lanes.
+    if (gsapOverrideClockUnsampleable(animation)) return 'temporal-unreadable';
     return null;
   }
 
