@@ -3985,7 +3985,27 @@ function nativeMotionRuntimeBridge() {
         const slot = gsapOwnDataSlot(vars, key);
         if (slot.kind !== 'data') return 'ACCESSOR';
         const value = slot.value;
-        if (typeof value === 'function') { fns.set(key, value); return [key, 'fn']; }
+        if (typeof value === 'function') {
+          // The OverrideChannel wrapper in its OWN valid context serializes as
+          // a STABLE MARKER instead of a session-bound function identity — the
+          // channel's internal edits are the bridge's own (refreshed like any
+          // collateral), while a swapped/misplaced function still lands in
+          // `fns` and diverges. Defense in depth: under the strict B4 key a
+          // wrapper never coexists with the keyframes machinery that consumes
+          // this state (vars.keyframes is refused), but B5/B6 will.
+          const provenance = gsapOverrideProvenance.get(value);
+          if (provenance
+            && provenance.kind === 'pure-target-override-v1'
+            && provenance.property === key
+            && provenance.container === vars
+            && provenance.channel && provenance.channel.wrapper === value
+            && provenance.channel.state === 'active'
+            && provenance.animation && provenance.animation.vars === vars) {
+            return [key, `[uncraft-override-v1:${key}]`];
+          }
+          fns.set(key, value);
+          return [key, 'fn'];
+        }
         if (value !== null && typeof value === 'object') return [key, gsapStepEntryShape(value, false)];
         return [key, `${typeof value}:${String(value)}`];
       }).filter((part) => part !== null);
@@ -4886,6 +4906,28 @@ function nativeMotionRuntimeBridge() {
   // vars[prop] = wrapper while active; the CURRENT `shared` scalar when
   // collapsed (never the original — the group may have moved meanwhile).
   const gsapOverrideChannels = new WeakMap(); // animation -> Map(property -> channel)
+  // Iterable side registry for teardown (WeakMaps can't be walked): every
+  // channel ever created, so the teardown collapse leaves NO wrapper orphaned
+  // in a page that outlives the bridge. Bounded by user edits.
+  const gsapOverrideChannelRegistry = new Set(); // { animation, property, channel }
+
+  // Reinjection policy (advise §4, explicit): teardown COLLAPSES every active
+  // channel — vars gets the CURRENT shared scalar back, the wrapper never
+  // survives its bridge — and a fresh bridge rebuilds the channels by
+  // REPLAYING the manifest's transactions (the item-155 replay-on-pass
+  // convention the host already follows on injection).
+  function collapseOverrideChannelsForTeardown() {
+    gsapOverrideChannelRegistry.forEach(({ animation, property, channel }) => {
+      try {
+        if (channel.state !== 'active') return;
+        const vars = animation?.vars;
+        if (vars && vars[property] === channel.wrapper) vars[property] = channel.shared;
+        channel.state = 'collapsed';
+        channel.overrides.clear();
+        try { invalidatePreservingStart(animation); } catch (_) {}
+      } catch (_) {}
+    });
+  }
 
   // CONTEXTUAL provenance (never a global membership set): the wrapper maps to
   // the full context it was minted for. It is safe ONLY as {same animation,
@@ -4997,6 +5039,7 @@ function nativeMotionRuntimeBridge() {
       });
       channel = created;
       channels.set(property, channel);
+      gsapOverrideChannelRegistry.add({ animation, property, channel });
     } else if (channel.state === 'active') {
       // The channel was live before this write: validate the projection
       // (stale = the page swapped/removed the wrapper) and attest the
@@ -7567,6 +7610,7 @@ function nativeMotionRuntimeBridge() {
     window.__uncraftMotionBridge = {
       teardown() {
         releaseEditState();
+        collapseOverrideChannelsForTeardown();
         activeGestures.forEach((gesture) => {
           cancelGestureFrame(gesture);
           try { applyPatchOrThrow({ ...gesture.patch, value: cloneValue(gesture.before) }); } catch (_) {}

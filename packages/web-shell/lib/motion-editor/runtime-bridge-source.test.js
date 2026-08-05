@@ -13424,4 +13424,69 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
   });
+
+  // Fase 1 / B4 — política de reinjeção EXPLÍCITA (advise §4): teardown
+  // COLAPSA os canais (vars volta ao escalar shared atual — wrapper nunca
+  // fica órfão de bridge); o bridge novo reconstrói por REPLAY das
+  // transactions do manifest (convenção replay-on-pass do item 155).
+  // Nota (a) do plano: o marcador estável do serializer colateral está
+  // implementado, mas wrapper+exposição-fase-2 não coexistem sob a chave B4
+  // estrita (vars.keyframes recusado) — cenário e2e inalcançável por
+  // construção; adjudicação na audit da Task 9.
+  describe('teardown colapsa canais + replay reconstrói (B4)', () => {
+    it('(b) teardown() com canal ativo → vars.x volta ao shared ATUAL, sem wrapper órfão', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      runtime.send('apply-patch', {
+        patch: {
+          elementId: idA, kind: 'motion', motionId, property: 'retarget.final', before: null,
+          value: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: 120, writeModel: 'absolute', affectedTargetCount: 2 },
+        },
+      }, 'b4-teardown-group');
+      expect(typeof tween.vars.x).toBe('function');
+      window.__uncraftMotionBridge.teardown();
+      expect(tween.vars.x).toBe(120); // shared ATUAL, tipo number — nunca o wrapper
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(c) re-eval do bridge + replay do patch v3 reconstrói o canal com o MESMO estado lógico', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const first = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(first, elA);
+      first.send('apply-transaction', {
+        transaction: {
+          id: 'tx-b4-replay',
+          patches: [{ id: 'p-replay', elementId: idA, kind: 'motion', motionId, property: 'retarget.final', before: null, value: v3Descriptor({ value: 160 }) }],
+        },
+      }, 'b4-replay-tx');
+      first.restore(); // teardown: colapsa
+      expect(tween.vars.x).toBe(100);
+      document.querySelectorAll('[data-uncraft-runtime-config]').forEach((node) => node.remove());
+      const second = bootV2Runtime();
+      const { elementId: idA2, motionId: motionId2 } = selectMotion(second, elA);
+      second.send('apply-transaction', {
+        transaction: {
+          id: 'tx-b4-replay',
+          patches: [{ id: 'p-replay', elementId: idA2, kind: 'motion', motionId: motionId2, property: 'retarget.final', before: null, value: v3Descriptor({ value: 160 }) }],
+        },
+      }, 'b4-replay-tx-2');
+      const ack = second.messages.filter((message) => ['transaction-committed', 'transaction-rejected'].includes(message.type)).pop();
+      expect(ack?.type).toBe('transaction-committed');
+      expect(typeof tween.vars.x).toBe('function');
+      expect(tween.vars.x(0, elA)).toBe(160);
+      expect(tween.vars.x(1, elB)).toBe(100);
+      // Edição segue funcionando no bridge novo.
+      const { elementId: idB } = selectMotion(second, elB);
+      sendV3(second, idB, motionId2, v3Descriptor({ value: 140 }), 'b4-replay-edit-b');
+      expect(second.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(tween.vars.x(1, elB)).toBe(140);
+      delete window.gsap;
+      second.restore();
+    });
+  });
 });
