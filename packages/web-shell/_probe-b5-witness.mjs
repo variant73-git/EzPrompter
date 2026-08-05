@@ -415,6 +415,8 @@ async function boundaryCase(setup, { useTimeline = false } = {}) {
 }
 
 const boundaries = {
+  durationInfinity: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: Infinity, ease: 'none', repeat: 2, paused: true });`),
+  durationOverflow: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1e308, ease: 'none', repeat: 2, paused: true });`),
   infinito: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1, ease: 'none', repeat: -1, paused: true });`),
   infinityAutoral: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1, ease: 'none', repeat: Infinity, paused: true });`),
   fracionario: await boundaryCase(`return gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1, ease: 'none', repeat: 0.5, paused: true });`),
@@ -425,16 +427,25 @@ const boundaries = {
   nestedTimeline: await boundaryCase(`const tl = gsap.timeline({ paused: true }); const tw = gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 100, duration: 1, ease: 'none', repeat: 2 }); tl.add(tw); return tw;`),
 };
 
-// ---- LANE DE TIMING guardada + SPLIT available/writable sob drift.
+// ---- LANE DE TIMING guardada (audit r1#1: CADA mutação recusada é
+// side-effect-free — clock E render intactos, estacionado em iteração
+// posterior) + SPLIT available/writable sob drift.
 const timingEDrift = await runCase(`
   const A = H.select('a');
   const ownership = A.track && A.track.ownership;
   const tx = H.applyTx('tx-b5-tm', A.elementId, A.motionId, H.v3(ownership, 'override', 160));
-  // playbackMode 'loop' chamaria repeat(-1) com canal ativo → recusa + revert
+  // (1) playbackMode 'loop' chamaria repeat(-1) com canal ativo → recusa + revert
   const loopPatch = H.applyPatch(A.elementId, A.motionId, 'timing.playbackMode', 'loop');
-  const repeatAfterGuard = tw.repeat();
+  const afterLoop = { temporal: H.temporal(tw), render: H.renderAt(tw, tw.totalTime()), repeat: tw.repeat() };
+  // (2) repeatDelay 400ms → recusa; no GSAP real o setter re-mapeia o clock
+  // (1.5 → 0.5/iteração 1) e o guard TEM que restaurar (repro r1#1).
+  const delayPatch = H.applyPatch(A.elementId, A.motionId, 'timing.repeatDelay', 400);
+  const afterDelay = { temporal: H.temporal(tw), render: H.renderAt(tw, tw.totalTime()), repeatDelay: tw.repeatDelay() };
+  // (3) duration 0 → recusa (zero-duration com repeat>0); clock restaurado.
+  const durationPatch = H.applyPatch(A.elementId, A.motionId, 'timing.duration', 0);
+  const afterDuration = { temporal: H.temporal(tw), render: H.renderAt(tw, tw.totalTime()), duration: tw.duration() };
   const wrapperIntact = typeof tw.vars.x === 'function';
-  // drift REAL da página pra infinito: publicação separa available de writable
+  // (4) drift REAL da página pra infinito: available (clear ok) sem writable
   tw.repeat(-1);
   const reA = H.select('a');
   const reOwnership = reA.track && reA.track.ownership;
@@ -445,14 +456,32 @@ const timingEDrift = await runCase(`
   const writeRefused = H.applyPatch(A.elementId, A.motionId, 'retarget.final', H.v3(reOwnership, 'override', 170));
   const clear = H.applyTx('tx-b5-tm-clear', A.elementId, A.motionId, H.v3(reOwnership, 'clear'));
   const afterClear = { varsX: tw.vars.x, varsXType: typeof tw.vars.x };
-  return { tx, loopPatch, repeatAfterGuard, wrapperIntact, drift, writeRefused, clear, afterClear };
+  return { tx, loopPatch, afterLoop, delayPatch, afterDelay, durationPatch, afterDuration, wrapperIntact, drift, writeRefused, clear, afterClear };
+`);
+
+// ---- DRIFT ADAPTATIVO (audit r1#3): repeatRefresh pós-canal → o clear REAL
+// recusaria, então a publicação NÃO pode anunciar available.
+const adaptiveDrift = await runCase(`
+  const A = H.select('a');
+  const ownership = A.track && A.track.ownership;
+  const tx = H.applyTx('tx-b5-ad', A.elementId, A.motionId, H.v3(ownership, 'override', 160));
+  tw.vars.repeatRefresh = true; // drift da página DEPOIS do canal
+  const reA = H.select('a');
+  const reOwnership = reA.track && reA.track.ownership;
+  const published = {
+    available: Boolean(reOwnership && reOwnership.perTarget && reOwnership.perTarget.available),
+    writable: Boolean(reOwnership && reOwnership.perTarget && reOwnership.perTarget.writable),
+    statesPresent: Boolean(reOwnership && reOwnership.perTarget && reOwnership.perTarget.states && reOwnership.perTarget.states.length === 2),
+  };
+  const clearRefused = H.applyPatch(A.elementId, A.motionId, 'retarget.final', H.v3(reOwnership, 'clear'));
+  return { tx, published, clearRefused };
 `);
 
 await browser.close();
 
 const observado = {
   referencia, principal, matrizN1, matrizN5, fronteiras, running, callbacks,
-  tampering, sensibilidade, sensibilidadeInvalidate, boundaries, timingEDrift,
+  tampering, sensibilidade, sensibilidadeInvalidate, boundaries, timingEDrift, adaptiveDrift,
 };
 
 if (RECORD) {
@@ -566,6 +595,8 @@ check('escalar cru CONTAMINA o irmão (instrumento vê)', !eq(sensibilidade.rawS
 check('invalidate cru CORROMPE o loop (início vira o parkeado — P6b)', sensibilidadeInvalidate.corrupted.renderStart.a !== 0, JSON.stringify(sensibilidadeInvalidate.corrupted));
 
 console.log('(bx) boundaries por mensagem');
+check('duration:Infinity (getter null) recusa não-finita', boundaries.durationInfinity.applied === false && boundaries.durationInfinity.error === 'Per-target overrides need a finite animation duration.' && boundaries.durationInfinity.perTargetPublished === false, boundaries.durationInfinity.error);
+check('duration:1e308 (totalDuration overflow) recusa não-finita', boundaries.durationOverflow.applied === false && boundaries.durationOverflow.error === 'Per-target overrides need a finite animation duration.', boundaries.durationOverflow.error);
 check('repeat:-1 recusa infinito', boundaries.infinito.applied === false && boundaries.infinito.error === 'Per-target overrides are not available on endlessly repeating animations.' && boundaries.infinito.perTargetPublished === false, boundaries.infinito.error);
 check('repeat:Infinity autoral (repeat() null) recusa infinito', boundaries.infinityAutoral.applied === false && boundaries.infinityAutoral.error === 'Per-target overrides are not available on endlessly repeating animations.', boundaries.infinityAutoral.error);
 check('repeat:0.5 recusa não-inteiro', boundaries.fracionario.applied === false && boundaries.fracionario.error === 'Per-target overrides need a whole-number repeat count.', boundaries.fracionario.error);
@@ -575,12 +606,20 @@ check('yoyoEase recusa adaptativo', boundaries.yoyoEase.applied === false && bou
 check('yoyo sem repeat recusa', boundaries.yoyoSemRepeat.applied === false && boundaries.yoyoSemRepeat.error === 'Per-target overrides on yoyo animations without repeats are not supported yet.', boundaries.yoyoSemRepeat.error);
 check('tween em timeline-pai recusa', boundaries.nestedTimeline.applied === false && boundaries.nestedTimeline.error === 'Per-target overrides inside timelines are not supported yet.', boundaries.nestedTimeline.error);
 
-console.log('(tm) lane de timing + drift');
+console.log('(tm) lane de timing + drift (r1#1: recusa é side-effect-free)');
 check('override commitou', timingEDrift.tx.committed === true);
-check("playbackMode 'loop' com canal → recusa e revert (repeat segue 2)", timingEDrift.loopPatch.applied === false && timingEDrift.repeatAfterGuard === 2 && timingEDrift.wrapperIntact === true, `${timingEDrift.loopPatch.error} repeat=${timingEDrift.repeatAfterGuard}`);
-check('drift infinito: available true / writable false', timingEDrift.drift.available === true && timingEDrift.drift.writable === false, JSON.stringify(timingEDrift.drift));
+check("playbackMode 'loop' → recusa; clock 1.5/iter 2 e render a=80 INTACTOS", timingEDrift.loopPatch.applied === false && timingEDrift.afterLoop.temporal.totalTime === 1.5 && timingEDrift.afterLoop.temporal.iteration === 2 && timingEDrift.afterLoop.render.a === 80 && timingEDrift.afterLoop.repeat === 2, JSON.stringify(timingEDrift.afterLoop));
+check('repeatDelay 400 → recusa; clock restaurado (o setter re-mapeava pra 0.5)', timingEDrift.delayPatch.applied === false && timingEDrift.afterDelay.temporal.totalTime === 1.5 && timingEDrift.afterDelay.temporal.iteration === 2 && timingEDrift.afterDelay.render.a === 80 && timingEDrift.afterDelay.repeatDelay === 0, JSON.stringify(timingEDrift.afterDelay));
+check('duration 0 → recusa; clock e duração restaurados', timingEDrift.durationPatch.applied === false && timingEDrift.afterDuration.temporal.totalTime === 1.5 && timingEDrift.afterDuration.render.a === 80 && timingEDrift.afterDuration.duration === 1, JSON.stringify(timingEDrift.afterDuration));
+check('wrapper intacto após as 3 recusas', timingEDrift.wrapperIntact === true);
+check('drift infinito: available true (clear ok) / writable false', timingEDrift.drift.available === true && timingEDrift.drift.writable === false, JSON.stringify(timingEDrift.drift));
 check('write novo sob drift → recusado', timingEDrift.writeRefused.applied === false, timingEDrift.writeRefused.error || '');
 check('clear sob drift commitou e colapsou (escalar)', timingEDrift.clear.committed === true && timingEDrift.afterClear.varsXType === 'number', JSON.stringify(timingEDrift.afterClear));
+
+console.log('(ad) drift adaptativo (r1#3: available = removibilidade EFETIVA)');
+check('override commitou antes do drift', adaptiveDrift.tx.committed === true);
+check('repeatRefresh pós-canal: available FALSE + writable FALSE + states publicados', adaptiveDrift.published.available === false && adaptiveDrift.published.writable === false && adaptiveDrift.published.statesPresent === true, JSON.stringify(adaptiveDrift.published));
+check('clear real sob adaptativo → recusado (coerência com a publicação)', adaptiveDrift.clearRefused.applied === false && adaptiveDrift.clearRefused.error === 'This animation re-rolls its values on each repeat — per-target overrides are not available.', adaptiveDrift.clearRefused.error);
 
 // Baseline congelado.
 let baseline = null;

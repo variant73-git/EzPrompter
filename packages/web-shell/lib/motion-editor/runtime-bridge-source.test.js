@@ -13328,6 +13328,71 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
+    it('(l1-f) mutação de timing RECUSADA restaura o CLOCK (audit Sol r1#1 — setters do GSAP re-mapeiam totalTime e o revert sozinho não desfaz)', () => {
+      // Reproduzido no GSAP real: repeatDelay(0.4) parado em totalTime 1.5 →
+      // clock vira 0.5/iteração 1; reverter o setter NÃO restaura. O guard tem
+      // que capturar totalTime antes e restaurar DEPOIS do revert.
+      const [elA, elB] = setupFlatTargets();
+      const made = makeStatefulTemporalDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const { tween, state } = made;
+      // Emula o re-mapeio do GSAP real: o setter de repeatDelay corrompe o clock.
+      const baseRepeatDelay = tween.repeatDelay;
+      tween.repeatDelay = (value) => {
+        if (value === undefined) return baseRepeatDelay();
+        state.totalTime = 0.5;
+        return baseRepeatDelay(value);
+      };
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, elementId, motionId, v3Descriptor({ value: 160 }), 'l1-f-override');
+      tween.totalTime(1.5);
+      const rejected = sendTiming(runtime, elementId, motionId, 'timing.repeatDelay', 400, 'l1-f-timing');
+      expect(rejected?.payload?.error).toBe('This timing change would break the per-target overrides on this animation — reset them first.');
+      expect(tween.totalTime()).toBe(1.5); // clock restaurado — operação recusada é side-effect-free
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(l3-b) drift pra chave ADAPTATIVA (repeatRefresh): available vira FALSE — clear real recusaria (audit Sol r1#3)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }), 'l3-b-override');
+      tween.vars.repeatRefresh = true; // drift: o clear com entrada real recusa sob adaptativo
+      selectMotion(runtime, elA);
+      const selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      const track = selection.payload.element.motion[0].tracks.find((entry) => entry.property === 'x');
+      expect(track.ownership.perTarget?.available).toBe(false);
+      expect(track.ownership.perTarget?.writable).toBe(false);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-m) duration NÃO-FINITA (getter null no GSAP real pra Infinity autoral) → recusa própria (audit Sol r1#4)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: Infinity }, repeat: 2 });
+      tween.duration = () => null; // GSAP real devolve null pra duration Infinity (probe 2026-08-05)
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-m');
+      expect(rejected?.payload?.error).toBe('Per-target overrides need a finite animation duration.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(t-n) totalDuration em OVERFLOW (duration finita × repeat → Infinity) → recusa não-finita (audit Sol r1#4)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1e308 }, repeat: 2, duration: 1e308 });
+      tween.totalDuration = () => Infinity;
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor(), 'b5-t-n');
+      expect(rejected?.payload?.error).toBe('Per-target overrides need a finite animation duration.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
     it('(l2-a) group-edit v2 com canal ativo + drift repeatRefresh → recusa temporal recomposta; shared intacto', () => {
       const [elA, elB] = setupFlatTargets();
       const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });

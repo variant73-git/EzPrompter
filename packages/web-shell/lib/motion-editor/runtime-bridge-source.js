@@ -2424,20 +2424,26 @@ function nativeMotionRuntimeBridge() {
               // never from a write-model name. States are honest three-state:
               // override (with value) / inherit (explicit entry) / none.
               perTarget: (() => {
-                // Split capability (advise Q5): `available` = the channel is
-                // reachable (live, so clears/resets work) OR the shape takes a
-                // first override; `writable` = the CURRENT shape accepts a NEW
-                // write. A page drift after the channel went live keeps the
-                // existing state removable without advertising writes the v3
-                // lane would refuse.
+                // Split capability (advise Q5 + audit r1#3): `available` = the
+                // channel is EFFECTIVELY reachable — a live channel counts only
+                // if the clear lane's hazard gates would actually let a removal
+                // through (random/adaptive/carrier drift refuses the real clear,
+                // so advertising it would lie); `writable` = the CURRENT shape
+                // accepts a NEW write. States stay published for a live channel
+                // even when both are false (the UI can show trapped state
+                // without offering actions).
                 const eligibleNow = gsapPerTargetEligibility(
                   { animation, target: primaryTarget, targets: elementTargets },
                   primaryTarget,
                   { runtimeProperty: track.property },
                 ).eligible;
+                const removable = overrideChannelLive
+                  && !gsapAnimationRandomHazard(animation, track.property)
+                  && !gsapAdaptiveInvalidateHazard(animation)
+                  && !gsapHasValueModifierCarrier(vars);
                 if (!overrideChannelLive && !eligibleNow) return null;
                 return {
-                  available: true,
+                  available: removable || eligibleNow,
                   writable: eligibleNow,
                   states: elementTargets.map((targetElement) => {
                     const entry = overrideChannelLive ? overrideChannel.overrides.get(targetElement) : null;
@@ -4848,6 +4854,7 @@ function nativeMotionRuntimeBridge() {
     'adaptive-ease': 'This animation changes its easing between legs — per-target overrides are not available.',
     'yoyo-without-repeat': 'Per-target overrides on yoyo animations without repeats are not supported yet.',
     'zero-duration': 'Per-target overrides on zero-duration animations are not supported yet.',
+    'non-finite-duration': 'Per-target overrides need a finite animation duration.',
     'scroll-driven': 'Per-target overrides on scroll-driven animations are not supported yet.',
     'nested-timeline': 'Per-target overrides inside timelines are not supported yet.',
     'temporal-unreadable': "This animation's timing cannot be read safely — per-target overrides are not available.",
@@ -4917,6 +4924,17 @@ function nativeMotionRuntimeBridge() {
     try { prior.yoyo = animation.yoyo?.(); } catch (_) {}
     try { prior.repeatDelay = animation.repeatDelay?.(); } catch (_) {}
     try { prior.duration = animation.duration?.(); } catch (_) {}
+    // GSAP's timing setters RE-MAP the clock (audit Sol r1#1, reproduced on
+    // real 3.15: repeatDelay(0.4) parked at totalTime 1.5 lands 0.5/iteration
+    // 1, and reverting the setter alone does NOT undo it). A refused mutation
+    // must be side-effect-free: capture the parked total clock and restore it
+    // AFTER the setters are reverted (recipe probe-verified — clock and
+    // render both exact).
+    let parkedTotal = null;
+    try {
+      const current = typeof animation.totalTime === 'function' ? animation.totalTime() : null;
+      if (Number.isFinite(current)) parkedTotal = current;
+    } catch (_) {}
     mutate();
     const refusal = gsapPerTargetTemporalRefusal(record, animation, animation.vars || {});
     if (!refusal) return;
@@ -4924,6 +4942,7 @@ function nativeMotionRuntimeBridge() {
     try { if (prior.yoyo !== undefined) animation.yoyo?.(prior.yoyo); } catch (_) {}
     try { if (prior.repeatDelay !== undefined) animation.repeatDelay?.(prior.repeatDelay); } catch (_) {}
     try { if (prior.duration !== undefined) animation.duration?.(prior.duration); } catch (_) {}
+    try { if (parkedTotal != null) animation.totalTime?.(parkedTotal, true); } catch (_) {}
     throw new Error('This timing change would break the per-target overrides on this animation — reset them first.');
   }
 
@@ -4984,11 +5003,21 @@ function nativeMotionRuntimeBridge() {
     } catch (_) { return 'temporal-unreadable'; }
     if (repeatCount === 0 && yoyoOn) return 'yoyo-without-repeat';
     if (repeatCount > 0) {
-      let duration = NaN;
+      // Finite clock required (audit Sol r1#4). Real GSAP returns NULL from
+      // duration() for an authored Infinity (probe 2026-08-05) — same
+      // convention as repeat(); and a finite duration × finite repeat can
+      // still overflow totalDuration() to Infinity. Both refuse.
+      let rawDuration;
       try {
-        duration = typeof animation.duration === 'function' ? Number(animation.duration()) : NaN;
+        rawDuration = typeof animation.duration === 'function' ? animation.duration() : undefined;
       } catch (_) { return 'temporal-unreadable'; }
-      if (!(duration > 0)) return 'zero-duration';
+      if (rawDuration == null || !Number.isFinite(Number(rawDuration))) return 'non-finite-duration';
+      if (!(Number(rawDuration) > 0)) return 'zero-duration';
+      let rawTotal;
+      try {
+        rawTotal = typeof animation.totalDuration === 'function' ? animation.totalDuration() : undefined;
+      } catch (_) { return 'temporal-unreadable'; }
+      if (rawTotal != null && !Number.isFinite(Number(rawTotal))) return 'non-finite-duration';
     }
     return null;
   }
@@ -5192,6 +5221,53 @@ function nativeMotionRuntimeBridge() {
     return String(sampled ?? '') === String(expected ?? '');
   }
 
+  // Endpoint sample at the FIRST iteration boundary by the TOTAL clock. The
+  // old progress(1, true) probe is NOT valid once the page drifts the tween
+  // to infinite repeat (real 3.15: it lands totalTime 5e9 and renders the
+  // START — the pre-r1 green of clear-under-drift was path-dependent cache
+  // luck, exposed the moment the timing guard started restoring the clock).
+  // The boundary renders as the END of the iteration (lesson 173), so this
+  // is probe-verified byte-equivalent to progress(1) on every finite proven
+  // shape (plain/repeat/yoyo) AND correct on a drifted-infinite tween.
+  function sampleGsapEndpointValue(record, property, target) {
+    const animation = record.animation;
+    let duration = null;
+    try { duration = typeof animation.duration === 'function' ? animation.duration() : null; } catch (_) { duration = null; }
+    if (duration == null || !Number.isFinite(Number(duration)) || !(Number(duration) > 0)) {
+      // No finite iteration clock to sample — indistinguishable from a
+      // poisoned endpoint; fail closed.
+      throw bridgeError('unsupported_patch', "This animation's overrides were changed by the page — reselect the layer to edit them again.");
+    }
+    const gsap = window.gsap;
+    const touched = [];
+    (record.targets || [target]).forEach((item) => {
+      if (item instanceof Element && !touched.some(([element]) => element === item)) {
+        touched.push([item, item.style.cssText]);
+      }
+    });
+    let parked = null;
+    let hasTotal = false;
+    try {
+      hasTotal = typeof animation.totalTime === 'function';
+      parked = hasTotal ? animation.totalTime() : animation.progress?.();
+      if (hasTotal) animation.totalTime(Number(duration), true);
+      else animation.progress?.(1, true);
+      let value;
+      if (gsap && typeof gsap.getProperty === 'function' && target) value = gsap.getProperty(target, property);
+      else value = animation.vars?.[property];
+      return value;
+    } finally {
+      if (Number.isFinite(parked)) {
+        try {
+          if (hasTotal) animation.totalTime(parked, true); else animation.progress?.(parked, true);
+        } catch (_) {}
+      }
+      touched.forEach(([element, cssText]) => {
+        try { element.style.cssText = cssText; } catch (_) {}
+      });
+    }
+  }
+
   // Anti-impostor attestation (advise §3): an impostor that swapped in, let an
   // invalidate materialize its PropTweens, and swapped the legit wrapper back
   // leaves the identity intact but the ENDPOINTS poisoned. Before any write
@@ -5204,7 +5280,7 @@ function nativeMotionRuntimeBridge() {
     for (const target of targets) {
       const entry = channel.overrides.get(target);
       const expected = entry && entry.intent === 'override' ? entry.value : channel.shared;
-      const sampled = sampleGsapValue(record, property, 1, target);
+      const sampled = sampleGsapEndpointValue(record, property, target);
       if (!gsapEndpointMatches(sampled, expected)) {
         throw bridgeError('unsupported_patch', "This animation's overrides were changed by the page — reselect the layer to edit them again.");
       }

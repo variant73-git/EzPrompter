@@ -510,6 +510,16 @@
     }
   },
   "boundaries": {
+    "durationInfinity": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides need a finite animation duration."
+    },
+    "durationOverflow": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides need a finite animation duration."
+    },
     "infinito": {
       "perTargetPublished": false,
       "applied": false,
@@ -563,7 +573,53 @@
       "applied": false,
       "error": "This timing change would break the per-target overrides on this animation — reset them first."
     },
-    "repeatAfterGuard": 2,
+    "afterLoop": {
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      },
+      "render": {
+        "a": 80,
+        "b": 50
+      },
+      "repeat": 2
+    },
+    "delayPatch": {
+      "applied": false,
+      "error": "This timing change would break the per-target overrides on this animation — reset them first."
+    },
+    "afterDelay": {
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      },
+      "render": {
+        "a": 80,
+        "b": 50
+      },
+      "repeatDelay": 0
+    },
+    "durationPatch": {
+      "applied": false,
+      "error": "This timing change would break the per-target overrides on this animation — reset them first."
+    },
+    "afterDuration": {
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      },
+      "render": {
+        "a": 80,
+        "b": 50
+      },
+      "duration": 1
+    },
     "wrapperIntact": true,
     "drift": {
       "available": true,
@@ -583,6 +639,24 @@
     "afterClear": {
       "varsX": 100,
       "varsXType": "number"
+    }
+  },
+  "adaptiveDrift": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "published": {
+      "available": false,
+      "writable": false,
+      "statesPresent": true
+    },
+    "clearRefused": {
+      "applied": false,
+      "error": "This animation re-rolls its values on each repeat — per-target overrides are not available."
     }
   }
 }

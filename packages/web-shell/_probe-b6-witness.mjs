@@ -401,9 +401,9 @@ const timing = await runCase(`
   const yoyoOff = H.applyPatch(A.elementId, A.motionId, 'timing.yoyo', false);
   const yoyoAfter = tw.yoyo();
   const pingPong = H.applyPatch(A.elementId, A.motionId, 'timing.playbackMode', 'ping-pong');
-  const repeatAfter = tw.repeat();
+  const afterPingPong = { temporal: H.temporal(tw), repeat: tw.repeat() };
   const wrapperIntact = typeof tw.vars.x === 'function';
-  return { tx, yoyoOff, yoyoAfter, pingPong, repeatAfter, wrapperIntact };
+  return { tx, yoyoOff, yoyoAfter, pingPong, afterPingPong, wrapperIntact };
 `);
 
 await browser.close();
@@ -507,7 +507,7 @@ check('yoyo+repeat:-1 recusa infinito', boundaries.yoyoInfinito.applied === fals
 
 console.log('(tm) lane de timing');
 check('desligar yoyo com canal (B6→B5) PERMITIDO', timing.yoyoOff.applied === true && timing.yoyoAfter === false, timing.yoyoOff.error || '');
-check("ping-pong (repeat -1) com canal → recusa e revert", timing.pingPong.applied === false && timing.repeatAfter === 3 && timing.wrapperIntact === true, `${timing.pingPong.error} repeat=${timing.repeatAfter}`);
+check("ping-pong (repeat -1) com canal → recusa side-effect-free (repeat 3, clock intacto)", timing.pingPong.applied === false && timing.afterPingPong.repeat === 3 && timing.afterPingPong.temporal.totalTime === 1.5 && timing.wrapperIntact === true, JSON.stringify(timing.afterPingPong));
 
 let baseline = null;
 try { baseline = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')); } catch (_) { baseline = null; }

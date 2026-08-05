@@ -553,7 +553,15 @@
       "applied": false,
       "error": "This timing change would break the per-target overrides on this animation — reset them first."
     },
-    "repeatAfter": 3,
+    "afterPingPong": {
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      },
+      "repeat": 3
+    },
     "wrapperIntact": true
   }
 }
