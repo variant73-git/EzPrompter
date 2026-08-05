@@ -12822,8 +12822,7 @@ describe('native motion runtime bridge', () => {
   // enviado pelo host NUNCA desbloqueia. Cada recusa tem mensagem própria —
   // assertar a mensagem (não só a rejeição) é o que impede o gate genérico de
   // schemaVersion tornar estes testes verdes por vácuo.
-  describe('retarget.final v3 — chave B4 recomposta (recusas)', () => {
-    function makeFlatTweenDouble(targets, { vars, repeat = 0, yoyo = false, duration = 1, getProperty } = {}) {
+  function makeFlatTweenDouble(targets, { vars, repeat = 0, yoyo = false, duration = 1, getProperty } = {}) {
       const totalDuration = duration * (repeat + 1);
       const state = { progress: 0, totalTime: 0, paused: true };
       const tween = {
@@ -12906,6 +12905,7 @@ describe('native motion runtime bridge', () => {
       ...overrides,
     });
 
+  describe('retarget.final v3 — chave B4 recomposta (recusas)', () => {
     it('(a) recusa v3 cujo elemento não está em targets() por identidade (mesmo com elementId válido)', () => {
       const [elA, , elC] = setupFlatTargets();
       makeFlatTweenDouble([elA, document.getElementById('card-b')], { vars: { x: 100, duration: 1 } });
@@ -13009,6 +13009,126 @@ describe('native motion runtime bridge', () => {
       expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
       expect(tween.vars.x).toBe(160);
       expect(tween.invalidate).toHaveBeenCalled();
+      delete window.gsap;
+      runtime.restore();
+    });
+  });
+
+  // Fase 1 / B4 — OverrideChannel: máquina de estados do writer per-target.
+  // O canal é durável por animação+propriedade: slot autoral verbatim,
+  // `shared` vivo (muda com edição de grupo), mapa de overrides por Element,
+  // wrapper de identidade ESTÁVEL projetado em vars[prop] quando active, e
+  // colapso pro `shared` ATUAL (nunca o original) quando o mapa esvazia.
+  describe('OverrideChannel — máquina de estados (B4)', () => {
+    function sendV2FullScope(runtime, elementId, motionId, value) {
+      runtime.send('apply-patch', {
+        patch: {
+          elementId, kind: 'motion', motionId, property: 'retarget.final', before: null,
+          value: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value, writeModel: 'absolute', affectedTargetCount: 2 },
+        },
+      }, `b4-group-${value}`);
+    }
+
+    it('(a) 1º override: vars.x vira função (canal active) que devolve 160 pro alvo e 100 pro irmão', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, elementId, motionId, v3Descriptor({ value: 160 }));
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(typeof tween.vars.x).toBe('function');
+      expect(tween.vars.x(0, elA)).toBe(160);
+      expect(tween.vars.x(1, elB)).toBe(100);
+      expect(tween.invalidate).toHaveBeenCalled();
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(b) 2º alvo NÃO muda a identidade da função projetada em vars.x', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      const wrapperAfterFirst = tween.vars.x;
+      const { elementId: idB } = selectMotion(runtime, elB);
+      sendV3(runtime, idB, motionId, v3Descriptor({ value: 140 }), 'b4-second-target');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(tween.vars.x).toBe(wrapperAfterFirst);
+      expect(tween.vars.x(0, elA)).toBe(160);
+      expect(tween.vars.x(1, elB)).toBe(140);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(c) edição de GRUPO (v2 full-scope) com canal ativo: shared vira 120, override intacto, herdeiro recebe 120', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      const wrapper = tween.vars.x;
+      sendV2FullScope(runtime, idA, motionId, 120);
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(tween.vars.x).toBe(wrapper);
+      expect(tween.vars.x(0, elA)).toBe(160);
+      expect(tween.vars.x(1, elB)).toBe(120);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(d) intent inherit: entrada PRESENTE devolvendo shared — canal segue active (distinto de ausência)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'inherit', value: undefined }), 'b4-inherit');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      // A entrada inherit é PRESENÇA: o canal não colapsa (vars.x segue função)
+      // — se inherit fosse remoção, o slot teria voltado a escalar.
+      expect(typeof tween.vars.x).toBe('function');
+      expect(tween.vars.x(0, elA)).toBe(100);
+      expect(tween.vars.x(1, elB)).toBe(100);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(e) clear do último override colapsa pro shared ATUAL (grupo 100→120 durante o override) e o próximo override REUSA o wrapper', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 160 }));
+      const wrapper = tween.vars.x;
+      sendV2FullScope(runtime, idA, motionId, 120);
+      sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'b4-clear');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      // ⭐ caso do advise: colapso restaura o shared ATUAL (120, tipo number) —
+      // nunca o escalar original (100).
+      expect(tween.vars.x).toBe(120);
+      // Tombstone: o próximo override reusa a MESMA identidade de wrapper.
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 170 }), 'b4-reopen');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(tween.vars.x).toBe(wrapper);
+      expect(tween.vars.x(0, elA)).toBe(170);
+      expect(tween.vars.x(1, elB)).toBe(120);
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(f) authoredSlot verbatim: colapso com shared === original restaura byte-igual (string com unidade)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: '100px', duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: '160px' }));
+      expect(typeof tween.vars.x).toBe('function');
+      expect(tween.vars.x(0, elA)).toBe('160px');
+      expect(tween.vars.x(1, elB)).toBe('100px');
+      sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'b4-clear-verbatim');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(tween.vars.x).toBe('100px');
       delete window.gsap;
       runtime.restore();
     });

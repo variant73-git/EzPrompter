@@ -4777,24 +4777,111 @@ function nativeMotionRuntimeBridge() {
       return { eligible: false, reason: 'css-wrapper' };
     }
     if (gsapPluginOwnedVar(vars, property)) return { eligible: false, reason: 'plugin' };
+    // The channel's OWN wrapper occupying the expected slot of its own
+    // property is the one function that stays eligible — the authored scalar
+    // lives in channel.authoredSlot and the strict key was recomposed when
+    // the channel was created. Identity-checked: any OTHER function (page
+    // impostor included) refuses.
+    const channel = gsapOverrideChannelFor(animation, property);
+    const slot = vars[property];
+    const slotIsOwnWrapper = Boolean(channel && channel.wrapper && slot === channel.wrapper);
     // The edited slot's own shape reads first — an authored function on the
     // edited property is refused as such (the animation-level random hazard
     // also fires on top-level functions, but 'authored-function' is the
     // truthful user-facing reason for this slot).
-    const slot = vars[property];
-    if (typeof slot === 'function') return { eligible: false, reason: 'authored-function' };
-    if (typeof slot === 'string' && /^[+-]=/.test(slot.trim())) return { eligible: false, reason: 'relative' };
-    if (gsapAnimationRandomHazard(animation)) return { eligible: false, reason: 'random' };
-    const scalar = typeof slot === 'number'
-      || (typeof slot === 'string' && slot.trim() !== '' && !/random\(/i.test(slot));
-    if (!scalar) return { eligible: false, reason: 'not-authored' };
+    if (!slotIsOwnWrapper) {
+      if (typeof slot === 'function') return { eligible: false, reason: 'authored-function' };
+      if (typeof slot === 'string' && /^[+-]=/.test(slot.trim())) return { eligible: false, reason: 'relative' };
+    }
+    // Sibling-aware (r115 semantics): the edited property's own top-level
+    // function is covered by this writer; functions on OTHER properties are
+    // a re-roll hazard.
+    if (gsapAnimationRandomHazard(animation, property)) return { eligible: false, reason: 'random' };
+    if (!slotIsOwnWrapper) {
+      const scalar = typeof slot === 'number'
+        || (typeof slot === 'string' && slot.trim() !== '' && !/random\(/i.test(slot));
+      if (!scalar) return { eligible: false, reason: 'not-authored' };
+    }
     return { eligible: true, reason: null };
   }
 
+  // OverrideChannel — one durable channel per animation+property. The channel
+  // holds the authored slot VERBATIM, the live `shared` group value (group
+  // edits land here while overridden), the per-Element override map, and ONE
+  // stable wrapper function whose identity never changes for the channel's
+  // lifetime (tombstoned on collapse, reused on the next override). Projection:
+  // vars[prop] = wrapper while active; the CURRENT `shared` scalar when
+  // collapsed (never the original — the group may have moved meanwhile).
+  const gsapOverrideChannels = new WeakMap(); // animation -> Map(property -> channel)
+
+  function gsapOverrideChannelFor(animation, property) {
+    const channels = animation ? gsapOverrideChannels.get(animation) : null;
+    return channels ? channels.get(property) || null : null;
+  }
+
   function applyGsapPerTargetOverride(record, element, descriptor) {
-    // Task 1 stub — the OverrideChannel writer lands in Task 2. Reaching this
-    // point means the descriptor passed the strict B4 recomposition.
-    throw bridgeError('unsupported_patch', 'Per-target overrides are not available yet.');
+    const animation = record.animation;
+    const vars = animation.vars || (animation.vars = {});
+    const property = descriptor.runtimeProperty;
+    // Every write here ends in invalidate — same terminal guard as the
+    // retarget writer (a killed writer must never be resurrected).
+    if (gsapResurrectionHazard(animation)) {
+      throw bridgeError('unsupported_patch', "Part of this animation was killed by the page — editing it would bring the dead writer back.");
+    }
+    let channels = gsapOverrideChannels.get(animation);
+    if (!channels) {
+      channels = new Map();
+      gsapOverrideChannels.set(animation, channels);
+    }
+    let channel = channels.get(property);
+    if (!channel) {
+      if (descriptor.intent === 'clear') return; // nothing to clear — replay-safe no-op
+      let authoredDescriptor;
+      try { authoredDescriptor = Object.getOwnPropertyDescriptor(vars, property); } catch (_) { authoredDescriptor = undefined; }
+      let capturedTargets;
+      try { capturedTargets = new Set(animation.targets?.() || []); } catch (_) { capturedTargets = new Set(record.targets || []); }
+      const created = {
+        state: 'collapsed',
+        authoredSlot: { value: vars[property], descriptor: authoredDescriptor },
+        shared: vars[property],
+        overrides: new Map(),
+        wrapper: null,
+        targetSet: capturedTargets,
+      };
+      // The wrapper reads PRESENCE explicitly through the entry — never
+      // `get() ?? shared` (an override whose value is legitimately nullish
+      // must not silently fall back to the group).
+      created.wrapper = function uncraftPerTargetOverride(index, target) {
+        const entry = created.overrides.get(target);
+        return entry && entry.intent === 'override' ? entry.value : created.shared;
+      };
+      channel = created;
+      channels.set(property, channel);
+    }
+    if (descriptor.intent === 'clear') {
+      channel.overrides.delete(element);
+    } else if (descriptor.intent === 'inherit') {
+      channel.overrides.set(element, { intent: 'inherit' });
+    } else {
+      const desired = descriptor.value;
+      const value = typeof channel.shared === 'number' && Number.isFinite(Number(desired))
+        ? Number(desired)
+        : desired;
+      channel.overrides.set(element, { intent: 'override', value });
+    }
+    if (channel.overrides.size === 0) {
+      // Collapse projects the CURRENT shared (the advise's keystone case:
+      // group 100→120 during an override → the collapse restores 120, as a
+      // scalar of the shared's own type). The channel object stays in the
+      // map as a tombstone so the next override reuses the same wrapper
+      // identity.
+      vars[property] = channel.shared;
+      channel.state = 'collapsed';
+    } else {
+      vars[property] = channel.wrapper;
+      channel.state = 'active';
+    }
+    invalidatePreservingStart(animation);
   }
 
   function applyGsapRetarget(record, descriptor) {
@@ -4851,6 +4938,26 @@ function nativeMotionRuntimeBridge() {
     // them corrupts the plugin's config — no write path is proven (Sol v6/v7).
     if (gsapPluginOwnedVar(record.animation?.vars, descriptor.runtimeProperty)) {
       throw bridgeError('unsupported_patch', 'This value is driven by a GSAP plugin and cannot be retargeted safely yet.');
+    }
+    // A property with an ACTIVE OverrideChannel routes the group edit through
+    // the channel: the new value lands in `shared` (reaching every inheritor
+    // through the wrapper) and the wrapper stays projected in vars — a plain
+    // scalar write here would clobber it and stomp every override. Only the
+    // plain absolute model applies (the B4 key guarantees the underlying slot
+    // was an absolute scalar).
+    {
+      const overrideChannel = gsapOverrideChannelFor(record.animation, descriptor.runtimeProperty);
+      if (overrideChannel && overrideChannel.state === 'active') {
+        if (descriptor.component || (descriptor.writeModel && descriptor.writeModel !== 'absolute')) {
+          throw bridgeError('unsupported_patch', 'This value has per-element overrides — only plain group edits are supported.');
+        }
+        const desired = descriptor.value;
+        overrideChannel.shared = typeof overrideChannel.shared === 'number' && Number.isFinite(Number(desired))
+          ? Number(desired)
+          : desired;
+        invalidatePreservingStart(record.animation);
+        return;
+      }
     }
     if (descriptor.writeModel === 'relative') applyGsapRelative(record, descriptor);
     else if (descriptor.writeModel === 'function-offset') applyGsapFunctionOffset(record, descriptor);
@@ -5163,8 +5270,10 @@ function nativeMotionRuntimeBridge() {
         // Schema v3 = per-target override (Fase 1 / B4). Structural validation
         // first; then the bridge RECOMPOSES the strict B4 key by its own
         // inspection — the host's writeModel never unlocks anything.
+        // `clear` is the removal form (what a rollback of the first override
+        // replays); value is present iff intent is `override`.
         if (value.targetScope?.mode !== 'single'
-          || !['override', 'inherit'].includes(value.intent)
+          || !['override', 'inherit', 'clear'].includes(value.intent)
           || (value.intent === 'override') !== (value.value !== undefined)) {
           throw bridgeError('invalid_value', 'The per-target patch is invalid.');
         }
@@ -5175,7 +5284,17 @@ function nativeMotionRuntimeBridge() {
         if (!eligibility.eligible) {
           throw bridgeError('unsupported_patch', B4_REFUSAL_MESSAGES[eligibility.reason] || 'Per-target overrides are not available for this animation yet.');
         }
+        // The channel write mutates vars[prop] (scalar↔wrapper) — the
+        // bridge's OWN edit, not page tampering: refresh the step bindings'
+        // collateral like the v2 lane does (defensive — B4 excludes
+        // keyframes tweens, so this is a no-op today by construction).
+        const overriddenAnimation = record.animation;
+        const validBeforeOverride = captureValidStartAtBindings(overriddenAnimation);
         applyGsapPerTargetOverride(record, element, value);
+        if (validBeforeOverride.length) {
+          refreshCollateralBindings(overriddenAnimation, overriddenAnimation.vars, validBeforeOverride);
+          refreshStartAtBindings(overriddenAnimation, overriddenAnimation.vars, validBeforeOverride);
+        }
         return;
       }
       if (record.type === 'browser') { applyBrowserRetarget(record, value); return; }
