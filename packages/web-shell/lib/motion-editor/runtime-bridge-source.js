@@ -4888,6 +4888,11 @@ function nativeMotionRuntimeBridge() {
     // without invalidating.
     if (options.lane === 'clear') {
       if (gsapAnimationRandomHazard(animation, property)) return { eligible: false, reason: 'random' };
+      // Carriers are NOT structural (Sol r4): a clear under a snap-like
+      // carrier would invalidate, materialize the carrier mid-render and then
+      // fail its own post-write attestation — a REJECTED operation that
+      // mutated the tween. Refuse before any invalidate can run.
+      if (gsapHasValueModifierCarrier(vars)) return { eligible: false, reason: 'modifier' };
       return { eligible: true, reason: null };
     }
     let innerChildren = null;

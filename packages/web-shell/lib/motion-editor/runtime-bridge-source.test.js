@@ -13761,6 +13761,23 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
 
+    it('(Sol-r4#1) clear com carrier pós-canal recusa ANTES de qualquer invalidate (rejeição não muta o tween)', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idA, motionId } = selectMotion(runtime, elA);
+      sendV3(runtime, idA, motionId, v3Descriptor({ value: 163 }));
+      tween.vars.snap = { x: 10 }; // carrier adicionado DEPOIS do canal ativo
+      tween.invalidate.mockClear();
+      const rejected = sendV3(runtime, idA, motionId, v3Descriptor({ intent: 'clear', value: undefined }), 'b4-sol-r4-1');
+      expect(rejected?.payload?.error).toBe('This animation uses value modifiers and cannot be overridden per element yet.');
+      expect(tween.invalidate).not.toHaveBeenCalled(); // zero invalidates — o carrier nunca materializa
+      expect(typeof tween.vars.x).toBe('function');    // canal intacto
+      expect(tween.vars.x(0, elA)).toBe(163);
+      delete window.gsap;
+      runtime.restore();
+    });
+
     it('(F) override com value null/"" é invalid_value — nunca coage pra 0', () => {
       const [elA, elB] = setupFlatTargets();
       const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });

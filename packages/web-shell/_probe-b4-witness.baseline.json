@@ -436,6 +436,32 @@
       100
     ]
   },
+  "clearCarrier": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "clear": {
+      "committed": false,
+      "ack": {
+        "type": "transaction-rejected",
+        "code": "unsupported_patch"
+      }
+    },
+    "invalidates": 0,
+    "renderedBefore": {
+      "a": 81.5,
+      "b": 51.5
+    },
+    "renderedAfter": {
+      "a": 81.5,
+      "b": 51.5
+    },
+    "varsXType": "function"
+  },
   "repeatRefusal": {
     "perTargetPublished": false,
     "tx": {

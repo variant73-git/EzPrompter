@@ -449,6 +449,40 @@ const groupCarrier = await (async () => {
   return out;
 })();
 
+// (q) AUDIT r4 (Sol): clear com carrier pós-canal recusa ANTES de qualquer
+// invalidate — a rejeição não muta o tween (render mid-flight intacto).
+const clearCarrier = await (async () => {
+  const page = await newCasePage();
+  const out = await page.evaluate(() => {
+    /* eslint-disable no-undef */
+    const H = window.__H;
+    const tw = gsap.to([document.getElementById('a'), document.getElementById('b')], { x: 103, duration: 1, ease: 'none', paused: true });
+    H.boot();
+    const A = H.select('a');
+    const ownership = A.track && A.track.ownership;
+    const tx = H.applyTx('tx-b4-q1', A.elementId, A.motionId, H.v3(ownership, 'override', 163));
+    // tween parado no meio (t=0.5) — é onde a materialização do carrier apareceria
+    tw.totalTime(0.5, true);
+    const renderedBefore = {
+      a: Number(Number(gsap.getProperty(document.getElementById('a'), 'x')).toFixed(4)),
+      b: Number(Number(gsap.getProperty(document.getElementById('b'), 'x')).toFixed(4)),
+    };
+    tw.vars.snap = { x: 10 }; // carrier adicionado DEPOIS do canal
+    const originalInvalidate = tw.invalidate.bind(tw);
+    let invalidates = 0;
+    tw.invalidate = (...args) => { invalidates += 1; return originalInvalidate(...args); };
+    const clear = H.applyTx('tx-b4-q2', A.elementId, A.motionId, H.v3(ownership, 'clear'));
+    tw.invalidate = originalInvalidate;
+    const renderedAfter = {
+      a: Number(Number(gsap.getProperty(document.getElementById('a'), 'x')).toFixed(4)),
+      b: Number(Number(gsap.getProperty(document.getElementById('b'), 'x')).toFixed(4)),
+    };
+    return { tx, clear, invalidates, renderedBefore, renderedAfter, varsXType: typeof tw.vars.x };
+  });
+  await page.close();
+  return out;
+})();
+
 // (j) repeat:2 na MESMA página é recusado (chave B5 fechada) + publicação sem perTarget.
 const repeatRefusal = await (async () => {
   const page = await newCasePage();
@@ -469,7 +503,7 @@ const repeatRefusal = await (async () => {
 
 await browser.close();
 
-const observado = { referencia, referenciaGrupo120, principal, tampering, sensibilidade, auditRollback, snapRefusal, unwritableRefusal, teardownHazard, clearHazard, groupCarrier, repeatRefusal };
+const observado = { referencia, referenciaGrupo120, principal, tampering, sensibilidade, auditRollback, snapRefusal, unwritableRefusal, teardownHazard, clearHazard, groupCarrier, clearCarrier, repeatRefusal };
 
 if (RECORD) {
   console.log(JSON.stringify(observado, null, 2));
@@ -593,6 +627,14 @@ console.log('(p) audit r3 Sol#2: carrier pós-canal recusa o group-edit');
 check('override 163 commitou antes do carrier', groupCarrier.tx.committed === true, JSON.stringify(groupCarrier.tx.ack));
 check('group-edit com snap → rejected', groupCarrier.group.applied === false, groupCarrier.group.error);
 check('herdeiro intacto (0→100)', eq(groupCarrier.trajB, referencia.trajB), JSON.stringify(groupCarrier.trajB));
+
+console.log('(q) audit r4: clear com carrier — zero invalidates, render mid-flight intacto');
+check('override 163 commitou antes do carrier', clearCarrier.tx.committed === true, JSON.stringify(clearCarrier.tx.ack));
+check('clear → rejected', clearCarrier.clear.committed === false, JSON.stringify(clearCarrier.clear.ack));
+check('ZERO invalidates (o carrier nunca materializa)', clearCarrier.invalidates === 0, `invalidates=${clearCarrier.invalidates}`);
+check('render mid-flight byte-intacto (A/B)', eq(clearCarrier.renderedAfter, clearCarrier.renderedBefore),
+  `antes=${JSON.stringify(clearCarrier.renderedBefore)} depois=${JSON.stringify(clearCarrier.renderedAfter)}`);
+check('canal segue ativo', clearCarrier.varsXType === 'function');
 
 console.log('(j) repeat:2 recusado (chave B5 fechada)');
 check('publicação sem perTarget', repeatRefusal.perTargetPublished === false);
