@@ -12815,4 +12815,202 @@ describe('native motion runtime bridge', () => {
     delete window.gsap;
     runtime.restore();
   });
+
+  // Fase 1 / B4 — retarget.final schema v3 (per-target override). A chave B4 é
+  // ESTRITA e recomposta pelo bridge por inspeção própria: escalar absoluto
+  // top-level num tween multi-target PLANO, nenhum modificador. O writeModel
+  // enviado pelo host NUNCA desbloqueia. Cada recusa tem mensagem própria —
+  // assertar a mensagem (não só a rejeição) é o que impede o gate genérico de
+  // schemaVersion tornar estes testes verdes por vácuo.
+  describe('retarget.final v3 — chave B4 recomposta (recusas)', () => {
+    function makeFlatTweenDouble(targets, { vars, repeat = 0, yoyo = false, duration = 1, getProperty } = {}) {
+      const totalDuration = duration * (repeat + 1);
+      const state = { progress: 0, totalTime: 0, paused: true };
+      const tween = {
+        targets: () => targets.slice(),
+        vars,
+        duration: () => duration,
+        totalDuration: () => totalDuration,
+        delay: () => 0,
+        repeat: () => repeat,
+        repeatDelay: () => 0,
+        yoyo: () => yoyo,
+        reversed: vi.fn(() => false),
+        paused: vi.fn(() => state.paused),
+        timeScale: vi.fn(() => 1),
+        progress: vi.fn((value) => {
+          if (value === undefined) return state.progress;
+          state.progress = value;
+          state.totalTime = value * duration;
+          return tween;
+        }),
+        totalProgress: vi.fn((value) => {
+          if (value === undefined) return totalDuration ? state.totalTime / totalDuration : 0;
+          state.totalTime = value * totalDuration;
+          return tween;
+        }),
+        time: vi.fn(() => state.totalTime % duration),
+        totalTime: vi.fn((value) => {
+          if (value === undefined) return state.totalTime;
+          state.totalTime = value;
+          state.progress = Math.min(1, state.totalTime % duration || (value >= totalDuration ? 1 : 0));
+          return tween;
+        }),
+        pause: vi.fn(() => { state.paused = true; return tween; }),
+        play: vi.fn(() => { state.paused = false; return tween; }),
+        invalidate: vi.fn(() => tween),
+      };
+      window.gsap = {
+        globalTimeline: { getChildren: () => [tween] },
+        getProperty: getProperty || (() => 0),
+      };
+      return { tween, state };
+    }
+
+    function setupFlatTargets() {
+      document.body.innerHTML = '<main><div id="card-a">Alpha</div><div id="card-b">Beta</div><div id="card-c">Gamma</div></main>';
+      const elements = ['card-a', 'card-b', 'card-c'].map((id) => document.getElementById(id));
+      elements.forEach((element, index) => {
+        element.getBoundingClientRect = () => ({
+          left: 40, top: 40 + index * 120, right: 240, bottom: 140 + index * 120, width: 200, height: 100,
+        });
+        element.getAnimations = () => [];
+      });
+      document.getAnimations = () => [];
+      return elements;
+    }
+
+    function selectMotion(runtime, element) {
+      element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      const selection = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      return {
+        elementId: selection.payload.element.id,
+        motionId: selection.payload.element.motion[0]?.id,
+      };
+    }
+
+    function sendV3(runtime, elementId, motionId, descriptor, requestId = 'b4-refusal') {
+      runtime.send('apply-patch', {
+        patch: { elementId, kind: 'motion', motionId, property: 'retarget.final', before: null, value: descriptor },
+      }, requestId);
+      return runtime.messages.filter((message) => message.type === 'patch-rejected').pop();
+    }
+
+    const v3Descriptor = (overrides = {}) => ({
+      schemaVersion: 3,
+      semanticProperty: 'translateX',
+      runtimeProperty: 'x',
+      targetScope: { mode: 'single' },
+      intent: 'override',
+      value: 160,
+      ...overrides,
+    });
+
+    it('(a) recusa v3 cujo elemento não está em targets() por identidade (mesmo com elementId válido)', () => {
+      const [elA, , elC] = setupFlatTargets();
+      makeFlatTweenDouble([elA, document.getElementById('card-b')], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId: idC } = selectMotion(runtime, elC);
+      const { motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, idC, motionId, v3Descriptor());
+      expect(rejected?.payload?.error).toBe('This element is not part of the selected animation.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(b) recusa v3 num tween com repeat: 2', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor());
+      expect(rejected?.payload?.error).toBe('Per-target overrides on repeating or yoyo animations are not supported yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(c) recusa v3 num tween com yoyo: true', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, yoyo: true, duration: 1 }, yoyo: true });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor());
+      expect(rejected?.payload?.error).toBe('Per-target overrides on repeating or yoyo animations are not supported yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(d) recusa v3 num tween dirigido por vars.keyframes', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { keyframes: [{ x: 50 }, { x: 100 }], duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor());
+      expect(rejected?.payload?.error).toBe('This value is driven by GSAP keyframes and cannot be overridden per element yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(e) recusa v3 num tween com wrapper css:{}', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { css: { x: 100 }, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor());
+      expect(rejected?.payload?.error).toBe("This value lives in the tween's css wrapper and cannot be overridden per element yet.");
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(f) recusa v3 sobre função autoral em vars.x', () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: () => 50, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor());
+      expect(rejected?.payload?.error).toBe('This value is computed by the page and cannot be overridden per element.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it("(g) recusa v3 sobre valor relativo '+=50'", () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: '+=50', duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor());
+      expect(rejected?.payload?.error).toBe('Relative animation values cannot be overridden per element yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it("(h) writeModel 'per-target-absolute' enviado pelo host NÃO desbloqueia um tween repeat (chave B5)", () => {
+      const [elA, elB] = setupFlatTargets();
+      makeFlatTweenDouble([elA, elB], { vars: { x: 100, repeat: 2, duration: 1 }, repeat: 2 });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      const rejected = sendV3(runtime, elementId, motionId, v3Descriptor({ writeModel: 'per-target-absolute' }));
+      expect(rejected?.payload?.error).toBe('Per-target overrides on repeating or yoyo animations are not supported yet.');
+      delete window.gsap;
+      runtime.restore();
+    });
+
+    it('(i) não-regressão: v2 full-scope com affectedTargetCount: 2 num tween plano segue funcionando', () => {
+      const [elA, elB] = setupFlatTargets();
+      const { tween } = makeFlatTweenDouble([elA, elB], { vars: { x: 100, duration: 1 } });
+      const runtime = bootV2Runtime();
+      const { elementId, motionId } = selectMotion(runtime, elA);
+      runtime.send('apply-patch', {
+        patch: {
+          elementId, kind: 'motion', motionId, property: 'retarget.final', before: null,
+          value: { schemaVersion: 2, semanticProperty: 'translateX', runtimeProperty: 'x', value: 160, writeModel: 'absolute', affectedTargetCount: 2 },
+        },
+      }, 'b4-v2-fullscope');
+      expect(runtime.messages.filter((message) => message.type === 'patch-rejected').length).toBe(0);
+      expect(tween.vars.x).toBe(160);
+      expect(tween.invalidate).toHaveBeenCalled();
+      delete window.gsap;
+      runtime.restore();
+    });
+  });
 });

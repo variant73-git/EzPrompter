@@ -4717,6 +4717,86 @@ function nativeMotionRuntimeBridge() {
     refreshEntryOtherShapes(animation, property, otherValidBindings);
   }
 
+  // ---- Fase 1 / B4: per-target override (retarget.final schema v3) ----------------
+  // The B4 key is STRICT and recomposed by the bridge's OWN inspection — the
+  // host's writeModel string never unlocks anything. In scope: a top-level
+  // absolute scalar on a FLAT multi-target tween with no modifiers. Everything
+  // else refuses with its own user-facing message: stagger/inner children,
+  // keyframes, css:{} wrapper (even empty), plugin vars, authored functions,
+  // relative values, randomized values, repeat/yoyo, gsap.from, transform
+  // components. Promotion of any refused shape needs its own witness (B5/B6/…
+  // are NOT consequences of B4).
+  const B4_REFUSAL_MESSAGES = {
+    membership: 'This element is not part of the selected animation.',
+    'not-flat-multi': 'Per-target overrides need a shared flat animation with multiple elements.',
+    loop: 'Per-target overrides on repeating or yoyo animations are not supported yet.',
+    keyframes: 'This value is driven by GSAP keyframes and cannot be overridden per element yet.',
+    'css-wrapper': "This value lives in the tween's css wrapper and cannot be overridden per element yet.",
+    'authored-function': 'This value is computed by the page and cannot be overridden per element.',
+    relative: 'Relative animation values cannot be overridden per element yet.',
+    random: 'This animation uses randomized values — any edit would re-roll them.',
+    plugin: 'This value is driven by a GSAP plugin and cannot be overridden per element yet.',
+    component: 'Transform components cannot be overridden per element yet.',
+    'config-var': 'This is a GSAP configuration key — not an animatable property.',
+    'run-backwards': 'gsap.from() values are read-only — vars hold the start, not the end.',
+    'not-authored': 'This value is not authored on the animation and cannot be overridden per element.',
+  };
+
+  function gsapPerTargetEligibility(record, element, descriptor) {
+    const animation = record.animation;
+    const property = descriptor.runtimeProperty;
+    if (descriptor.component) return { eligible: false, reason: 'component' };
+    if (GSAP_CONFIG_VARS.has(property)) return { eligible: false, reason: 'config-var' };
+    const vars = animation?.vars || {};
+    let targets = [];
+    try { targets = animation?.targets?.() || []; } catch (_) { targets = []; }
+    if (!targets.length) targets = record.targets || [];
+    // Membership by IDENTITY — elementId resolution alone never qualifies.
+    if (!targets.some((item) => item === element)) return { eligible: false, reason: 'membership' };
+    let innerChildren = null;
+    try { innerChildren = animation?.timeline?.getChildren?.() || null; } catch (_) { innerChildren = null; }
+    if (targets.length < 2 || vars.stagger != null || (innerChildren && innerChildren.length)) {
+      return { eligible: false, reason: 'not-flat-multi' };
+    }
+    if (vars.runBackwards) return { eligible: false, reason: 'run-backwards' };
+    let repeatCount = 0;
+    try { repeatCount = Number(animation?.repeat?.() ?? vars.repeat ?? 0) || 0; } catch (_) { repeatCount = Number(vars.repeat) || 0; }
+    let yoyoOn = false;
+    try { yoyoOn = Boolean(animation?.yoyo?.() ?? vars.yoyo); } catch (_) { yoyoOn = Boolean(vars.yoyo); }
+    if (repeatCount !== 0 || yoyoOn || vars.repeatRefresh) return { eligible: false, reason: 'loop' };
+    // Keyframes union (authored + live children + detection) mirrors the
+    // retarget gate — plus bare presence of vars.keyframes (strict key).
+    const liveEntries = gsapLiveKeyframeEntries(animation);
+    if (vars.keyframes != null
+      || gsapAuthoredKeyframeProps(animation, GSAP_CONFIG_VARS).includes(property)
+      || (liveEntries && gsapKeyframeProps(liveEntries, GSAP_CONFIG_VARS).includes(property))
+      || gsapDetectionKeyframeProps(animation, GSAP_CONFIG_VARS).includes(property)) {
+      return { eligible: false, reason: 'keyframes' };
+    }
+    if (vars.css && typeof vars.css === 'object' && !Array.isArray(vars.css)) {
+      return { eligible: false, reason: 'css-wrapper' };
+    }
+    if (gsapPluginOwnedVar(vars, property)) return { eligible: false, reason: 'plugin' };
+    // The edited slot's own shape reads first — an authored function on the
+    // edited property is refused as such (the animation-level random hazard
+    // also fires on top-level functions, but 'authored-function' is the
+    // truthful user-facing reason for this slot).
+    const slot = vars[property];
+    if (typeof slot === 'function') return { eligible: false, reason: 'authored-function' };
+    if (typeof slot === 'string' && /^[+-]=/.test(slot.trim())) return { eligible: false, reason: 'relative' };
+    if (gsapAnimationRandomHazard(animation)) return { eligible: false, reason: 'random' };
+    const scalar = typeof slot === 'number'
+      || (typeof slot === 'string' && slot.trim() !== '' && !/random\(/i.test(slot));
+    if (!scalar) return { eligible: false, reason: 'not-authored' };
+    return { eligible: true, reason: null };
+  }
+
+  function applyGsapPerTargetOverride(record, element, descriptor) {
+    // Task 1 stub — the OverrideChannel writer lands in Task 2. Reaching this
+    // point means the descriptor passed the strict B4 recomposition.
+    throw bridgeError('unsupported_patch', 'Per-target overrides are not available yet.');
+  }
+
   function applyGsapRetarget(record, descriptor) {
     const targetCount = Math.max(1, record.targets?.length || 1);
     if (targetCount > 1 && Number(descriptor.affectedTargetCount || 1) !== targetCount) {
@@ -5073,11 +5153,30 @@ function nativeMotionRuntimeBridge() {
     }
 
     if (patch.property === 'retarget.final') {
-      if (!value || value.schemaVersion !== 2 || !value.runtimeProperty) {
+      if (!value || ![2, 3].includes(value.schemaVersion) || !value.runtimeProperty) {
         throw bridgeError('invalid_value', 'The final-target patch is invalid.');
       }
       if (value.owner?.motionId && value.owner.motionId !== patch.motionId) {
         throw bridgeError('motion_owner_mismatch', 'The selected motion no longer owns this value.');
+      }
+      if (value.schemaVersion === 3) {
+        // Schema v3 = per-target override (Fase 1 / B4). Structural validation
+        // first; then the bridge RECOMPOSES the strict B4 key by its own
+        // inspection — the host's writeModel never unlocks anything.
+        if (value.targetScope?.mode !== 'single'
+          || !['override', 'inherit'].includes(value.intent)
+          || (value.intent === 'override') !== (value.value !== undefined)) {
+          throw bridgeError('invalid_value', 'The per-target patch is invalid.');
+        }
+        if (record.type !== 'gsap') {
+          throw bridgeError('unsupported_patch', 'Per-target overrides are only available for GSAP animations.');
+        }
+        const eligibility = gsapPerTargetEligibility(record, element, value);
+        if (!eligibility.eligible) {
+          throw bridgeError('unsupported_patch', B4_REFUSAL_MESSAGES[eligibility.reason] || 'Per-target overrides are not available for this animation yet.');
+        }
+        applyGsapPerTargetOverride(record, element, value);
+        return;
       }
       if (record.type === 'browser') { applyBrowserRetarget(record, value); return; }
       // A GSAP retarget of a top-level channel writes vars (a plain prop) or
