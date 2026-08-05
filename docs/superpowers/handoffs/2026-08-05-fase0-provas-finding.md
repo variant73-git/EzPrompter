@@ -63,10 +63,23 @@
 
 - **Pergunta:** conversão escalar→função num tween VIVO, pelo caminho real, isola o alvo com
   rollback exato?
-- **Forma testada:** (pendente)
-- **Resultado bruto:** (pendente)
-- **Veredito:** (pendente)
-- **Consequência pro degrau:** (pendente)
+- **Forma testada:** `_probe-fase0-p4-multitarget.mjs` (2026-08-05) — página com bridge REAL
+  vivo (harness P3); `gsap.to(['#a','#b'], { x:100, duration:1 })` parado em 0.5; conversão
+  `vars.x` escalar→`(i, target) => target === a ? 160 : 100` + semântica EXATA de
+  `invalidatePreservingStart` (park→0 com render, invalidate, volta). Referência intocada em
+  página própria; trajetória completa em 5 amostras renderizando DO INÍCIO; asserção de vida
+  antes (x=75 em 0.5 — ease default power1.out); sensibilidade = escalar cru TEM que
+  contaminar o irmão e o instrumento TEM que ver.
+- **Resultado bruto:** `P4 OK (3/3)`. caso-basico: a=[0,70,120,150,160] (início preservado,
+  chega em 160 pelo ease), b byte-igual à referência. caso-rollback: `vars.x` volta ao escalar
+  100, trajetória inteira byte-igual à referência. caso-sensibilidade: b contaminado (end=160)
+  detectado.
+- **Veredito:** **provado** — a conversão escalar→função por alvo num tween vivo isola o alvo,
+  preserva o início, não toca o irmão, e o rollback restaura byte-igual.
+- **Consequência pro degrau:** o degrau 3 (override) tem mecanismo provado pra multi-target
+  plano SEM filho interno. Delta pra Fase 1: funnelar essa escrita por `applyGsapRetarget`
+  (novo write model per-target; hoje `scope_mismatch` — ver P3) e regravar `sourceValue`/
+  proveniência (P2).
 
 ## P5 — Transplante da instância viva
 
