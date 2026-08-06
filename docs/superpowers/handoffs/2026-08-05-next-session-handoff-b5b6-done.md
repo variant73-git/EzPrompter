@@ -20,7 +20,11 @@
   detalhe no checkpoint `checkpoint_2026-08-05_fase1-b5-b6-shipped` e nos commits
   `c329b0aa`→`454c316b`.
 
-## ⚠️ PENDENTE DE CIÊNCIA DO ADILSON
+## ~~⚠️ PENDENTE DE CIÊNCIA DO ADILSON~~ → RESOLVIDO (2026-08-05)
+
+> **Adilson deu ciência e manteve a emenda** (sessão de 2026-08-05, noite): predicados
+> quantificados ficam; sem rollback. Decisões da mesma sessão: callback de conclusão do
+> grupo vai pro Sol como advise antes do martelo; fila retomada pelo item 1 (transplante).
 
 **Emenda doutrinária na Tabela B** (finding doc `2026-08-05-fase0-provas-finding.md`,
 addendum B5+B6): as linhas B5/B6 deixaram de ser chaves literais (`repeat: 2` / `repeat:
