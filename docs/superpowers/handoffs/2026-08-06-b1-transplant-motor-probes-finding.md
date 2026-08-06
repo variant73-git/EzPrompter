@@ -120,12 +120,89 @@ Cirurgia provada: `remove(child)` do inner → `wrap = gsap.timeline()` →
   r4 — a versão anterior do controle mudava `kids` e as durações JUNTOS, logo
   passaria mesmo com o canônico cego aos campos externos.)
 
+## 3b. Caminho REAL do bridge — probes 9+12 (núcleo)
+
+`_probe-b1-bridge-publication.mjs` (protocolo v2 real: negotiate +
+apply-transaction; publicação como verdade; DOM verificado). **0 RED.**
+
+- **Um stagger publica UMA animação lógica** (não N por alvo) — consistente
+  com a regra "one tween staggering 40 letters is ONE animation".
+- **Estado atual pinado** (regressão fica visível; nenhum é "desejado pra
+  sempre" — o degrau 1 muda os últimos): `capabilities.keyframes=false`;
+  `keyframeEditable=false` com `keyframeEditReason='stagger'` em cada canal.
+- ⭐ **ONDE O GATE REALMENTE VIVE — correção de um erro meu**: eu havia
+  escrito que "o stagger não publica ownership". **Falso** — eu estava lendo
+  no lugar errado (`motion.ownership`, que não existe; a ownership vive **por
+  TRACK**). O que a publicação de fato diz, medido: o track do stagger traz
+  ownership completa com `retargetable: false`, `affectedTargetCount: 3` e um
+  descritor `stagger: { mode: 'staggered', targetCount: 3 }` — e,
+  decisivamente, **SEM o bloco `perTarget`**, enquanto o shape plano
+  equivalente (mesmos 3 alvos, mesma propriedade, só sem `stagger`) publica
+  `perTarget: { available: true, writable: true, states: [...] }`. Ou seja: o
+  gate de hoje é a **ausência de `perTarget` na publicação** — a UI nunca
+  ganha a afordância —, e a recusa na transação é defesa em profundidade.
+  Isso muda o alvo do degrau 1: abrir B1 é fazer o stagger publicar
+  `perTarget`, não só destravar o writer.
+- **Patch per-target num stagger é RECUSADO sem escrever nada** — a tranca do
+  item 172 está viva e fail-closed. Prova em duas dimensões (endurecida no
+  audit): **trajetória dos 3 alvos comparada ANTES vs DEPOIS** (amostrada
+  renderizando, não só o valor estacionado) + **MutationObserver de `style`
+  durante a transação** = 0 escritas, o que exclui também escrita transitória
+  desfeita. Ambos os instrumentos com controle de sensibilidade próprio (o
+  watcher vê uma escrita real; o comparador vê uma mudança real da animação).
+  **As duas provas usam o MESMO objeto descriptor** — o provado em §"descriptor
+  não-fabricado" (Sol r4: demonstrar "recusa" com um descriptor e "não escreve"
+  com outro não compõe o claim). O helper que fabricava descriptor v3 foi
+  REMOVIDO do probe, para que esse caminho não volte por descuido.
+- **Descriptor NÃO-FABRICADO** (exigência do audit): o v3 per-target usado
+  contra o stagger é construído a partir da ownership PUBLICADA e **provado
+  commitando** no shape plano equivalente — mesmos 3 alvos, mesma propriedade,
+  mesmo `affectedTargetCount`, só sem `stagger`. Assim a única variável entre
+  "commita" e "recusa" é o stagger, e a recusa é atribuível a ele. (Antes eu
+  preenchia `writeModel`/`affectedTargetCount` na mão, e o Sol mostrou que a
+  recusa podia ser do descriptor inventado.)
+- ⚠️ **OBRIGAÇÃO DE DESIGN — MEDIDA com isolamento**: duas condições
+  genuinamente diferentes colapsam no mesmo catch-all com **payload canônico
+  idêntico** (idêntico após remover `transactionId` e `diagnostics.fingerprint`
+  — não "byte-idêntico"): (1) per-target num stagger (com o descriptor provado
+  acima) e (3) **operação de patch desconhecida** num motion plano EDITÁVEL,
+  onde o mesmo descriptor com a operação conhecida acabou de COMMITAR
+  (controle) — só a operação muda, então a classe está isolada. Já `motion inexistente` tem código próprio
+  (`motion_missing`), o que mostra que o sistema SABE carregar código por
+  classe: a lacuna é específica do `unsupported_patch`. E a `fingerprint` das
+  diagnósticas **não** serve de discriminador: medida na MESMA classe em
+  transações diferentes e em alvos irmãos, ela muda
+  (`kruxou`/`r6looh`/`zfv2xu`) — é por-transação, não por-classe. Conclusão:
+  quando B1 abrir, o gate precisa de discriminador transacional estável e
+  legível por máquina (código ou subcódigo — não precisa ser texto), senão o
+  witness não consegue provar que a recusa acontece pelo motivo certo e uma
+  regressão que recuse por outro motivo fica invisível.
+  ⭐ **Caminho errado registrado**: minha primeira classe 3 foi
+  "propriedade não suportada" com `skewZ` — e o probe mediu que **`skewZ`
+  COMMITA** (o bridge cria o canal; é propriedade suportada). Antes disso, a
+  versão inicial mandava `skewZ` com `targetScope:'single'` no próprio
+  stagger, repetindo a condição inválida da classe 1 — o Sol pegou que
+  payloads iguais ali não provavam nada. Duas iterações até uma classe
+  realmente independente.
+- **Duas animações no mesmo elemento** (stagger em `x` + tween plano em `y`):
+  ambas publicadas, com **IDs distintos e associação exata verificada**
+  (o canal `x` sai da animação com razão `'stagger'`; o `y`, da plana sem
+  razão) — a regra de produto do Adilson ("elemento com 2 animações → ambas
+  sempre disponíveis") está satisfeita hoje, ANTES do transplante; o degrau 1
+  não pode regredir isso. **Editar a plana COMMITA** (descriptor v2) e **não
+  contamina** a trajetória do stagger — com controle: a edição de fato mudou
+  o canal `y` (senão a não-contaminação seria vácua; foi exatamente o RED que
+  o controle pegou na primeira versão, onde a edição nunca aplicava).
+
 ## 4. O que estes probes NÃO estabelecem (fronteira honesta)
 
-- **Nada do caminho do bridge**: patch v2/v3 real, publicação, proveniência/
-  token, hazard tri-state, teardown/replay, 4 lanes do classificador,
-  convivência com OverrideChannel — probes 8–12 do advise, pendentes; são
-  pré-design segundo o Sol e ficam ANTES de qualquer implementação.
+- **Do caminho do bridge, só o NÚCLEO dos probes 9+12** (§3b: publicação,
+  recusa fail-closed, duas animações). **Seguem pendentes**: probe 8
+  (token/proveniência/hazard sob mutação posterior da página), probe 10
+  (gestures/teardown/replay/preview-cancel), probe 11 (as 4 lanes do
+  classificador sob clock NaN/duração zero/repeat/drift/ScrollTrigger) e o
+  resto do 12 (colisão de registries com o OverrideChannel). São pré-design
+  segundo o Sol e ficam ANTES de qualquer implementação.
 - **Nada fora da assinatura**: sem SplitText (B3), sem repeat/yoyo/
   repeatRefresh (B2a/B2b), sem timeScale≠1 como suporte (B1t futura — aqui só
   o fato de linhagem), sem callbacks autorais no shape promovível (decisão de
@@ -178,6 +255,16 @@ Cirurgia provada: `remove(child)` do inner → `wrap = gsap.timeline()` →
   outro campo. ⭐ Corolário da lição acima: num serializador canônico, **todo
   campo que participa da chave de ordenação precisa de controle
   posição-preservante** — do contrário o teste do campo vira teste da ordem.
+- **Sol no probe do BRIDGE (§3b): 5 rodadas, 5 bloqueadores, MERGE OK na r5**
+  — (r1) preservação não testada, obrigação não decorria do probe, verdes
+  falsos na publicação; (r2) classe 3 não isolada (repetia a condição inválida
+  da classe 1); (r3) descriptor v3 FABRICADO — a recusa podia ser dele, não do
+  stagger; (r4) composição inválida (recusa provada com um descriptor,
+  ausência-de-escrita com outro); (r5) limpo. ⭐ O achado da r3 expôs um **erro
+  factual meu já escrito no doc** ("stagger não publica ownership") causado por
+  ler no lugar errado — e a correção mudou o alvo do degrau 1 (o gate vive na
+  publicação). ⭐ Colateral: `skewZ` COMMITA (não é propriedade não suportada),
+  derrubando a premissa da minha primeira classe 3.
 - **Lado Claude do review: DEGRADADO** — o agente revisor independente caiu no
   limite mensal de spend da API; o único olhar Claude foi o do AUTOR dos
   probes (self-review, mais fraco). Registrado com honestidade; os rounds
