@@ -15009,4 +15009,69 @@ describe('native motion runtime bridge', () => {
     restore();
   });
 
+
+  it('recusa seek disparado por trap de Proxy DURANTE a restauração (TOCTOU)', () => {
+    // `defineProperty`/`delete` da restauração acionam traps do site. Um seek
+    // disparado de dentro de um trap rodaria ENTRE a nossa checagem e a nossa
+    // escrita, e a escrita seguinte apagaria o callback que ele instalasse.
+    //
+    // ⚠️ A fase de restauração é reconhecida por DENTRO do trap: silenciar
+    // define `undefined`, restaurar define uma FUNÇÃO. Marcar por fora cobriria
+    // o seek inteiro e contaria os relógios do próprio seek externo.
+    let motionId = null;
+    let trapDisparou = false;
+    let relogiosDepoisDoTrap = 0;
+
+    const original = () => {};
+    const alvo = { x: 100, duration: 1, ease: 'none', onComplete: original, onUpdate: () => {} };
+    const varsProxy = new Proxy(alvo, {
+      defineProperty(t, k, d) {
+        const restaurandoAgora = typeof d.value === 'function';
+        const resultado = Reflect.defineProperty(t, k, d);
+        if (restaurandoAgora && motionId && !trapDisparou) {
+          trapDisparou = true;
+          seek(motionId, 300);            // seek de dentro do trap de restauração
+        }
+        return resultado;
+      },
+    });
+
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const rendered = { x: 0 };
+    let current = 0;
+    const tween = {
+      targets: () => [tab], vars: varsProxy,
+      duration: () => 1, totalDuration: () => 1, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), tween)),
+      scrollTrigger: null, invalidate: () => tween, pause: () => tween,
+      time: (value) => {
+        if (value === undefined) return current;
+        if (trapDisparou) relogiosDepoisDoTrap += 1;
+        current = value; rendered.x = current * 100;
+        return tween;
+      },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    motionId = motion.id;
+    seek(motionId, 1000);
+
+    // o trap chegou a pedir um seek durante a restauração...
+    expect(trapDisparou).toBe(true);
+    // ...e o bridge RECUSOU: nenhum relógio foi mexido depois disso
+    expect(relogiosDepoisDoTrap).toBe(0);
+    expect(alvo.onComplete).toBe(original);
+
+    delete window.gsap;
+    restore();
+  });
+
 });

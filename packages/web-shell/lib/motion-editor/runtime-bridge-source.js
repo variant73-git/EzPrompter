@@ -7581,6 +7581,12 @@ function nativeMotionRuntimeBridge() {
   // sob reentrância). Este contador serve só para saber se ainda há janela
   // aberta acima de nós, e adiar o que não pode observar `vars` divergente.
   let seekWindowDepth = 0;
+  // Durante a FASE DE RESTAURAÇÃO nenhum seek pode rodar. `defineProperty` e
+  // `delete` acionam traps de `Proxy` do site, e um seek disparado de dentro de
+  // um trap instalaria um callback novo ENTRE a nossa checagem e a nossa escrita
+  // — a escrita seguinte o apagaria (TOCTOU). Recusar é fail-closed: perde-se um
+  // seek patológico, não uma reação do site.
+  let seekRestoring = false;
 
   function withSeekLifecycleSilenced(animation, write) {
     const scope = collectSeekScope(animation);
@@ -7614,6 +7620,7 @@ function nativeMotionRuntimeBridge() {
       // seek síncrono de dentro de um trap (`defineProperty`, `deleteProperty`,
       // `getOwnPropertyDescriptor`). Se a profundidade já estivesse zerada, esse
       // seek registraria/emitiria estado com callback anulado.
+      seekRestoring = true;
       try {
       saved.forEach((entry) => {
         // O site pode ter instalado o próprio callback de dentro do `onUpdate`,
@@ -7634,6 +7641,7 @@ function nativeMotionRuntimeBridge() {
         } catch (_) {}
       });
       } finally {
+        seekRestoring = false;
         seekWindowDepth -= 1;
       }
     }
@@ -7644,6 +7652,7 @@ function nativeMotionRuntimeBridge() {
     // novo aqui rodaria a inspeção (que lê `vars` inteiro) e publicaria uma
     // forma que não é a do site. Fail closed: um seek reentrante só é atendido
     // para motion JÁ conhecido.
+    if (seekRestoring) return;
     if (seekWindowDepth > 0 && !motionRegistry.has(motionId)) return;
     const record = timelineRecord(motionId);
     if (!record) return;
