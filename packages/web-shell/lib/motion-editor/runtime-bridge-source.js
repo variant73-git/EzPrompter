@@ -7559,6 +7559,13 @@ function nativeMotionRuntimeBridge() {
       return write();
     } finally {
       saved.forEach((entry) => {
+        // O site pode ter instalado o próprio callback de dentro do `onUpdate`,
+        // que roda com a janela aberta. Essa escrita é DELE — nunca pintar por
+        // cima (finding N5, face b). Só restauramos o slot que continua como
+        // deixamos: `undefined`.
+        let current = null;
+        try { current = Object.getOwnPropertyDescriptor(entry.vars, entry.key); } catch (_) { return; }
+        if (current && 'value' in current && current.value !== undefined) return;
         try {
           if (entry.own) Object.defineProperty(entry.vars, entry.key, entry.descriptor);
           else delete entry.vars[entry.key];

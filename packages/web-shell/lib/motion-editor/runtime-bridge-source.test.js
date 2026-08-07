@@ -14682,4 +14682,69 @@ describe('native motion runtime bridge', () => {
     restore();
   });
 
+
+  it('não sobrescreve o callback que o site instalou dentro da janela', () => {
+    const fires = { nova: 0 };
+    const original = () => {};
+    const nova = () => { fires.nova += 1; };
+    let fixture = null;
+    fixture = makeSeekFixture({
+      vars: {
+        onComplete: original,
+        onUpdate: function () { fixture.vars.onComplete = nova; },   // o site repõe a própria reação
+      },
+    });
+    const { motion, restore } = bootAndSelect(fixture.tab);
+
+    seek(motion.id, 1000);
+
+    // resíduo ACEITO (decisão 2026-08-07): a reposta do site dispara.
+    // O que NÃO pode acontecer é a restauração apagar a escrita dele.
+    expect(fixture.vars.onComplete).toBe(nova);
+
+    delete window.gsap;
+    restore();
+  });
+
+  it('restaura os callbacks mesmo se o desenho do site lançar', () => {
+    const original = () => {};
+    const { tab, vars } = makeSeekFixture({
+      vars: { onComplete: original, onUpdate: () => { throw new Error('desenho do site quebrou'); } },
+    });
+    const { motion, restore } = bootAndSelect(tab);
+
+    // o bridge não pode deixar o site sem ciclo de vida por causa de um erro dele
+    expect(() => seek(motion.id, 1000)).not.toThrow();
+    expect(vars.onComplete).toBe(original);
+
+    delete window.gsap;
+    restore();
+  });
+
+  it('sobrevive a um seek reentrante disparado de dentro do desenho do site', () => {
+    const original = () => {};
+    let reentrou = false;
+    let motionId = null;
+    const { tab, vars } = makeSeekFixture({
+      vars: {
+        onComplete: original,
+        onUpdate: () => {
+          if (reentrou || !motionId) return;
+          reentrou = true;
+          seek(motionId, 500);          // seek ANINHADO, de dentro da janela
+        },
+      },
+    });
+    const { motion, restore } = bootAndSelect(tab);
+    motionId = motion.id;
+
+    seek(motion.id, 1000);
+
+    expect(reentrou).toBe(true);
+    expect(vars.onComplete).toBe(original);   // o estado salvo é da CHAMADA
+
+    delete window.gsap;
+    restore();
+  });
+
 });
