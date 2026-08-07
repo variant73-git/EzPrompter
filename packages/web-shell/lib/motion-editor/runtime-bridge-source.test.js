@@ -14970,4 +14970,36 @@ describe('native motion runtime bridge', () => {
     delete window.gsap;
   });
 
+
+  it('RESIDUAL MEDIDO: se o site REMOVE a reação dentro da janela, a restauração a ressuscita', () => {
+    // A restauração distingue a escrita do site comparando o descritor corrente
+    // com o temporário que instalamos. Uma escrita que produz EXATAMENTE o mesmo
+    // estado — `vars.onComplete = undefined`, ou seja, o site removendo a
+    // própria reação — é indistinguível, e o callback antigo volta.
+    //
+    // Fechar isso exigiria interceptar as escritas durante a janela, que é
+    // justamente o remédio recusado na decisão de produto de 2026-08-07 (mexer
+    // na FORMA de `vars` aciona a malha de proveniência). Fica como residual
+    // ACEITO — e este teste existe para que ele seja medido, não suposto, e para
+    // avisar se o comportamento mudar.
+    const original = () => {};
+    let removeu = 0;
+    let fixture = null;
+    fixture = makeSeekFixture({
+      vars: {
+        onComplete: original,
+        onUpdate: () => { if (removeu) return; removeu = 1; fixture.vars.onComplete = undefined; },
+      },
+    });
+    const { motion, restore } = bootAndSelect(fixture.tab);
+
+    seek(motion.id, 1000);
+
+    expect(removeu).toBe(1);
+    expect(fixture.vars.onComplete).toBe(original);   // ressuscitado — residual conhecido
+
+    delete window.gsap;
+    restore();
+  });
+
 });
