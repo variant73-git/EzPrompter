@@ -14922,4 +14922,52 @@ describe('native motion runtime bridge', () => {
     restore();
   });
 
+
+  it('nenhuma emissão de estado acontece com os callbacks anulados (reentrância)', () => {
+    let fixture = null;
+    let reentrou = false;
+    let motionId = null;
+    fixture = makeSeekFixture({
+      vars: {
+        onComplete: () => {},
+        onUpdate: () => {
+          if (reentrou || !motionId) return;
+          reentrou = true;
+          seek(motionId, 500);           // seek ANINHADO, com a janela externa ABERTA
+        },
+      },
+    });
+
+    // Grava, para CADA mensagem emitida, como estava o slot naquele instante.
+    const observado = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => {
+      observado.push({ type: message.type, slot: typeof fixture.vars.onComplete });
+    };
+    window.eval(getRuntimeBridgeSource());
+    fixture.tab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = observado.length; // marca
+    const messages = [];
+    window.postMessage = (message) => {
+      messages.push(message);
+      observado.push({ type: message.type, slot: typeof fixture.vars.onComplete });
+    };
+    // pega o motionId pela seleção
+    fixture.tab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const sel = messages.find((m) => m.type === 'selection-changed');
+    motionId = sel.payload.element.motion.find((c) => c.engine === 'GSAP').id;
+
+    const marca = observado.length;
+    seek(motionId, 1000);
+
+    const durante = observado.slice(marca).filter((o) => o.slot === 'undefined');
+    expect(reentrou).toBe(true);
+    // o contrato §4.3 diz que a janela é tão estreita quanto a escrita de
+    // relógio; se alguma emissão sai com o slot anulado, ela não é.
+    expect(durante.map((o) => o.type)).toEqual([]);
+
+    window.postMessage = originalPostMessage;
+    delete window.gsap;
+  });
+
 });

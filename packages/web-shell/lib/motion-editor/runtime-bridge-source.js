@@ -7576,6 +7576,12 @@ function nativeMotionRuntimeBridge() {
   // um seek reentrante (o `onUpdate` do site roda aqui dentro e pode disparar
   // outro seek) e as duas restaurações devolveriam `undefined`, deixando o site
   // sem ciclo de vida para sempre.
+  // Profundidade da janela. NÃO é o estado salvo — esse continua sendo local de
+  // cada chamada (um slot de módulo para o SALVO mataria o ciclo de vida do site
+  // sob reentrância). Este contador serve só para saber se ainda há janela
+  // aberta acima de nós, e adiar o que não pode observar `vars` divergente.
+  let seekWindowDepth = 0;
+
   function withSeekLifecycleSilenced(animation, write) {
     const scope = collectSeekScope(animation);
     const shared = seekSharedVarsNodes(scope);
@@ -7592,6 +7598,7 @@ function nativeMotionRuntimeBridge() {
       if (!plan || !plan.length) return;        // forma inesperada ⇒ nó fica de fora
       planos.push({ vars, plan });
     });
+    seekWindowDepth += 1;
     try {
       planos.forEach(({ vars, plan }) => {
         plan.forEach((slot) => {
@@ -7602,6 +7609,7 @@ function nativeMotionRuntimeBridge() {
       });
       return write();
     } finally {
+      seekWindowDepth -= 1;
       saved.forEach((entry) => {
         // O site pode ter instalado o próprio callback de dentro do `onUpdate`,
         // que roda com a janela aberta. Essa escrita é DELE — nunca pintar por
@@ -7624,6 +7632,11 @@ function nativeMotionRuntimeBridge() {
   }
 
   function seekTimeline(motionId, nextTime) {
+    // Dentro de uma janela aberta, `vars` está divergente. Registrar um motion
+    // novo aqui rodaria a inspeção (que lê `vars` inteiro) e publicaria uma
+    // forma que não é a do site. Fail closed: um seek reentrante só é atendido
+    // para motion JÁ conhecido.
+    if (seekWindowDepth > 0 && !motionRegistry.has(motionId)) return;
     const record = timelineRecord(motionId);
     if (!record) return;
     const snapshot = timelineSnapshot(motionId);
@@ -7643,7 +7656,11 @@ function nativeMotionRuntimeBridge() {
       });
     }
     activeTimelineId = motionId;
-    emitTimelineState(true);
+    // Com janela ainda aberta acima (seek reentrante disparado pelo `onUpdate`
+    // do site), emitir aqui publicaria estado lido com `vars` divergente. A
+    // chamada mais externa emite depois de restaurar — e o estado dela já é o
+    // final, então nada se perde.
+    if (seekWindowDepth === 0) emitTimelineState(true);
   }
 
   function validNegotiation(message) {
