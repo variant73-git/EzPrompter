@@ -22,7 +22,7 @@
 | # | Hipótese | Veredito | Evidência |
 |---|---|---|---|
 | B1 | Anular o ciclo de vida impede o disparo e o `onUpdate` segue desenhando | **SUSTENTADA para `onStart` e `onComplete`, com uma fronteira medida**: um callback volta a disparar se o slot DELE receber uma função **antes do ponto de despacho dele** naquele render — medido para `onComplete` reinstalado pelo `onUpdate`, e **independente da identidade da função**. Reescrever depois do despacho, ou escrever outra chave, **não** reabre (ver N5) | C2/C3 (com **pré-render suprimido** antes da janela, e `preRenderMoveu` provando que houve render): `onStart=0 onComplete=0`, `onUpdate=10`, desenho derivado chega a 100. B2 (audit): no tween **já renderizado**, levado de volta ao início, o `onStart` **volta a disparar** sem janela (controle=1) e **não dispara** com ela (0) — é isto que prova a supressão do `onStart`, não o C9 |
-| B1 (`onRepeat`) | idem para `onRepeat` | **SUSTENTADA — e `onRepeat` FICA na janela** | Alcançável pelo seek de **timeline**: `tl.time(1.5/2.5/0.2, false)` sobre uma timeline com um filho `repeat: 2` dispara o `onRepeat` do filho **1, 2 e 3 vezes** (inclusive voltando) — a duração da timeline é a **total do filho** (3), então o clamp não protege. Com a janela na descendência: **0**, e o filho segue desenhando. Os **dois braços pré-renderizam** (`time(0.2,false)`, `0` disparos em ambos) antes de qualquer janela, senão o zero provaria só "inicializou sem callback" e não supressão pós-inicialização; e **depois de restaurar volta a disparar** (`1`), o que separa suprimir de destruir. **Só o tween repetido seekado DIRETAMENTE é inalcançável** (aí o clamp é `delay + animation.duration()` = a **iteração**, `:7415`/`:7427`; e mesmo forçando `time(2.5)` o GSAP enrola para dentro da iteração sem disparar nada) |
+| B1 (`onRepeat`) | idem para `onRepeat` | **SUSTENTADA no motor; a rota do produto é OUTRA** | No MOTOR: `tl.time(1.5/2.5/0.2, false)` sobre uma timeline com filho `repeat: 2` dispara o `onRepeat` do filho **1, 2 e 3 vezes**, e com a janela na descendência, **0** (com pré-render nos dois braços e disparo de volta depois do restore). ⚠️ **Correção trazida pelo witness da implementação (2026-08-07):** pelo caminho REAL do bridge quem é seekado é sempre um **tween**, nunca a timeline — o registro de motion vem de animações que têm alvo, e a duração publicada é a da **iteração** (1000 ms medidos). Logo a justificativa "é alcançável ao seekar a timeline" vale para o motor e **não** para o produto de hoje. O callback fica na lista e **tem cobertura própria**: um filho cujo `onRepeat` é despachado pelo render do pai é silenciado pela janela da descendência (vitest com procedência medida — tirar `onRepeat` da lista deixa o teste vermelho). A perda do span repetido no scrub é problema separado, do resolver/relógio do bridge |
 | B2 | A restauração devolve `vars` idêntico | **REFUTADA nas duas formas ingênuas; sustentada só na janela ciente de `hasOwn`** | ver §2 |
 | B3 | Seekar a fachada não dispara o ciclo de vida dos FILHOS | **REFUTADA** | T2: timeline, janela só na fachada → filhos vazaram. E1 (audit): **`stagger` em forma de OBJETO dá callback PRÓPRIO a cada filho** (2 de 2) e a janela só na fachada **vaza os 2**. O veredito anterior ("para stagger a fachada basta") valia só para `stagger: <número>` |
 | B3 (cobertura) | Cobrir a descendência silencia sem matar o desenho | **SUSTENTADA só com a travessia da §4.2** — as DUAS versões anteriores vazavam (a do texto original: 1 nó de 5, 2 disparos; a da r3: 4 nós de 5, 1 disparo pela timeline interna) | T3 (filhos diretos), T7 (timeline **aninhada**: neto silenciado e ainda desenhando), T8 (callback herdado por `defaults` é **copiado** para a `vars` do filho na criação), F1 (tween de **duração zero** de um `.set()` está no traversal e é silenciado). ⚠️ H1: uma **fachada de tween** (stagger) **não tem `getChildren`** — a travessia passa por `.timeline` |
@@ -173,9 +173,10 @@ disparo já aconteceu.
    bridge): vira witness na implementação.
 4. ✅ **Partilha de `vars` (N2): FAIL-CLOSED** — detectar e não abrir a janela.
 5. ✅ **A lista de silêncio tem QUATRO**: `onStart`, `onComplete`, `onRepeat`,
-   `onReverseComplete`. O `onRepeat` fica porque é alcançável quando o que se
-   seeka é a timeline que contém um filho repetido (só o tween repetido seekado
-   direto é que não).
+   `onReverseComplete`. O `onRepeat` fica com cobertura própria: o render do pai
+   despacha o `onRepeat` de um filho, e a janela da descendência o silencia.
+   ⚠️ A rota "seekar a timeline" **não existe no bridge de hoje** — ele sempre
+   seeka um tween, clampado à iteração (ver §1).
 6. **O estado salvo pertence à chamada** (N4).
 7. ✅ **N5 — DECIDIDO pelo Adilson (2026-08-07): ACEITAR como residual
    documentado.** Interceptar as reposições fecharia o escape (a), mas exigiria
@@ -189,13 +190,33 @@ disparo já aconteceu.
    dependência indireta; sem o witness, "nenhum consumidor nosso depende" segue
    sendo meia prova.
 
+## 4b. Residuais da implementação (SHIPPED em 2026-08-07)
+
+A janela está implementada (`withSeekLifecycleSilenced`, acima de `seekTimeline`),
+com auditoria do Sol. Três coisas ficam explicitamente ABERTAS:
+
+1. **Animações destacadas são invisíveis ao inventário.** A detecção de partilha
+   usa `gsap.globalTimeline.getChildren(...)`. Uma animação que o site removeu do
+   relógio global mas continua dirigindo por conta própria (a rota reentrante do
+   N2) **não aparece** ali — se ela partilhar `vars` com um nó do escopo, a janela
+   abre e o dano do N2 acontece. Não há registro autoritativo de animações no
+   GSAP; fechar isso exigiria o bridge manter o próprio. **Residual aceito.**
+2. **O fail-closed é POR NÓ**, não pelo seek inteiro — decisão do Adilson de
+   2026-08-07, com a consequência conhecida: dentro do mesmo arrasto, uma parte
+   pode reagir enquanto as irmãs ficam quietas.
+3. ⚠️ **B5 (§4.8) SEGUE ABERTO.** O witness prova que o `onUpdate` continua
+   desenhando, **não** que nenhum consumidor NOSSO dependia indiretamente de um
+   efeito do ciclo de vida. Enquanto esse witness não existir, B5 é PARCIAL e a
+   feature não pode ser declarada fechada.
+
 ## 5. Adjacência aberta (não medida, não afirmada)
 
-**Colateral do clamp (fato, fora deste fork):** quando o alvo é o **tween**
-repetido em si, o seek é clampado à duração da **iteração**, e a régua percorre só
-uma iteração — o resto do ciclo não é alcançável pelo scrubber. (Quando o alvo é a
-**timeline** que o contém, não há esse limite: a duração dela inclui o span
-repetido inteiro.) Não é o assunto deste fork, mas foi medido aqui.
+**Colateral do clamp (fato, fora deste fork):** o bridge sempre seeka um **tween**
+e clampa à duração da **iteração**, então a régua de uma animação com `repeat`
+percorre só uma iteração — o resto do ciclo não é alcançável pelo scrubber, nem
+quando o tween está dentro de uma timeline (medido no witness da implementação:
+duração publicada 1000 ms para um filho `repeat: 2` de span 3 s). Não é o assunto
+deste fork; é do resolver/relógio do bridge.
 
 A régua do editor **rola a página**. Rolar é outro caminho, e ScrollTrigger tem
 callbacks próprios (`onEnter`/`onToggle`/…) que este fork não toca. Se a regra de

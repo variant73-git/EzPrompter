@@ -14747,4 +14747,179 @@ describe('native motion runtime bridge', () => {
     restore();
   });
 
+
+  it('não deixa slot anulado se a inspeção de outro slot lançar (mutação transacional)', () => {
+    const original = () => {};
+    // `vars` com um `onComplete` HERDADO cujo getter lança. Ler esse slot para
+    // decidir se há o que silenciar acontece DEPOIS de já ter anulado o
+    // `onStart` — sem pré-voo, a exceção escapa antes do try/finally existir.
+    const proto = {};
+    Object.defineProperty(proto, 'onComplete', {
+      get() { throw new Error('getter hostil do site'); },
+      configurable: true,
+    });
+    const vars = Object.create(proto);
+    Object.assign(vars, { x: 100, duration: 1, ease: 'none', onStart: original, onUpdate: () => {} });
+
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const rendered = { x: 0 };
+    let current = 0;
+    const tween = {
+      targets: () => [tab], vars,
+      duration: () => 1, totalDuration: () => 1, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), tween)),
+      scrollTrigger: null, invalidate: () => tween, pause: () => tween,
+      time: (value) => { if (value === undefined) return current; current = value; rendered.x = current * 100; return tween; },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    seek(motion.id, 1000);
+
+    // o slot que chegamos a tocar TEM que voltar — nada de site corrompido
+    expect(vars.onStart).toBe(original);
+
+    delete window.gsap;
+    restore();
+  });
+
+  it('não sobrescreve quando o site troca o slot por um accessor dentro da janela', () => {
+    const original = () => {};
+    let instalado = 0;
+    let fixture = null;
+    fixture = makeSeekFixture({
+      vars: {
+        onComplete: original,
+        onUpdate: function () {
+          if (instalado) return;
+          instalado = 1;
+          // o site substitui o slot por um ACCESSOR (não por um valor)
+          Object.defineProperty(fixture.vars, 'onComplete', { get: () => original, configurable: true });
+        },
+      },
+    });
+    const { motion, restore } = bootAndSelect(fixture.tab);
+
+    seek(motion.id, 1000);
+
+    const depois = Object.getOwnPropertyDescriptor(fixture.vars, 'onComplete');
+    expect(typeof depois.get).toBe('function');   // a escrita do site sobreviveu
+
+    delete window.gsap;
+    restore();
+  });
+
+  it('expande cada nó por filhos DIRETOS — pedir a árvore aninhada de cada um é quadrático', () => {
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    // ⚠️ contar CHAMADAS não enxerga o problema (cada nó é chamado uma vez pelo
+    // `Set` de visitados). O custo está na QUANTIDADE de nós devolvidos: pedir a
+    // subárvore inteira em cada nó de uma cadeia soma n+(n-1)+… = O(n²).
+    const devolvidos = { total: 0 };
+    const rendered = { x: 0 };
+    const folha = { vars: { x: 100, onComplete: () => {} }, targets: () => [tab] };
+    const cadeia = [];
+    for (let i = 0; i < 8; i += 1) cadeia.push({ vars: {}, nome: 't' + i });
+    cadeia.forEach((no, i) => {
+      const diretos = i + 1 < cadeia.length ? [cadeia[i + 1]] : [folha];
+      const subarvore = cadeia.slice(i + 1).concat([folha]);
+      no.getChildren = (nested) => {
+        const saida = nested ? subarvore : diretos;
+        devolvidos.total += saida.length;
+        return saida;
+      };
+    });
+    let current = 0;
+    const raiz = {
+      targets: () => [tab],
+      vars: { x: 100, duration: 1, ease: 'none', onUpdate: () => {} },
+      getChildren: (nested) => {
+        const saida = nested ? [cadeia[0]].concat(cadeia.slice(1)).concat([folha]) : [cadeia[0]];
+        devolvidos.total += saida.length;
+        return saida;
+      },
+      duration: () => 1, totalDuration: () => 1, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), raiz)),
+      scrollTrigger: null, invalidate: () => raiz, pause: () => raiz,
+      time: (value) => { if (value === undefined) return current; current = value; rendered.x = current * 100; return raiz; },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [raiz] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    devolvidos.total = 0;
+    seek(motion.id, 1000);
+
+    // 10 nós na cadeia: linear devolve ~10; a versão aninhada devolve ~50.
+    expect(devolvidos.total).toBeLessThanOrEqual(20);
+
+    delete window.gsap;
+    restore();
+  });
+
+
+  it('silencia o onRepeat de um filho quando o render do pai cruza a repetição', () => {
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const fires = { repeat: 0 };
+    const rendered = { x: 0 };
+    // filho com repeat: quem despacha o onRepeat dele é o render do PAI
+    const filhoVars = { x: 100, onRepeat: () => { fires.repeat += 1; } };
+    const filho = { vars: filhoVars, targets: () => [tab] };
+    let current = 0;
+    const pai = {
+      targets: () => [tab],
+      vars: { x: 100, duration: 3, ease: 'none', onUpdate: () => {} },
+      getChildren: () => [filho],
+      duration: () => 3, totalDuration: () => 3, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current / 3,
+      progress: (p) => (p === undefined ? current / 3 : ((current = p * 3), pai)),
+      scrollTrigger: null, invalidate: () => pai, pause: () => pai,
+      time: (value, suppressEvents) => {
+        if (value === undefined) return current;
+        const anterior = current;
+        current = value;
+        rendered.x = (current / 3) * 100;
+        if (suppressEvents === true) return pai;
+        if (typeof pai.vars.onUpdate === 'function') pai.vars.onUpdate();
+        // cruzou a fronteira da iteração do filho
+        if (Math.floor(current) > Math.floor(anterior) && typeof filhoVars.onRepeat === 'function') filhoVars.onRepeat();
+        return pai;
+      },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [pai] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    pai.time(0.2, true);                       // pré-render suprimido
+    seek(motion.id, 1500);                     // cruza a fronteira
+
+    expect(fires.repeat).toBe(0);
+    expect(typeof filhoVars.onRepeat).toBe('function');
+
+    // CONTROLE: o mesmo cruzamento fora da janela dispara — o zero não é vácuo
+    pai.time(0.2, true);
+    pai.time(1.5, false);
+    expect(fires.repeat).toBe(1);
+
+    delete window.gsap;
+    restore();
+  });
+
 });

@@ -409,7 +409,7 @@ if (!iguais) {
 console.log('--- leitura ---');
 console.log(out.caso3.dirigeOSpanRepetido
   ? `caso3: o bridge dirige o span repetido (${out.caso3.duracaoPublicada}ms) e a supressão do onRepeat está exercitada`
-  : `caso3: o bridge dirige a ITERAÇÃO (${out.caso3.duracaoPublicada}ms) — a fronteira de repetição não é alcançável por esta rota, então o zero NÃO é evidência de supressão. onRepeat segue na lista por defesa, e quem o exercita é o vitest da descendência.`);
+  : `caso3: o bridge dirige a ITERAÇÃO (${out.caso3.duracaoPublicada}ms) — a fronteira de repetição não é alcançável por ESTA rota (tween seekado, clampado à iteração), então o zero daqui NÃO é evidência de supressão. Quem exercita o onRepeat é o vitest "silencia o onRepeat de um filho quando o render do pai cruza a repetição", cuja procedência foi medida: tirar onRepeat de SEEK_SILENCED_CALLBACKS deixa aquele teste vermelho.`);
 
 console.log(falhas.length ? `${falhas.length} PROBLEMA(S):\n- ${falhas.join('\n- ')}` : 'witness OK — comportamento bate com o baseline');
 process.exit(falhas.length ? 1 : 0);

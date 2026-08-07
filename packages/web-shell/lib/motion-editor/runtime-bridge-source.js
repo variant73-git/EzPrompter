@@ -7483,8 +7483,11 @@ function nativeMotionRuntimeBridge() {
       seen.add(node);
       scope.push(node);
       if (typeof node.getChildren === 'function') {
+        // Filhos DIRETOS: pedir a subárvore aninhada em cada nó soma
+        // n+(n-1)+… = O(n²) numa cadeia de timelines, e isto roda a cada
+        // escrita de relógio do arrasto (medido: 45 nós devolvidos contra 10).
         let kids = null;
-        try { kids = node.getChildren(true, true, true); } catch (_) { kids = null; }
+        try { kids = node.getChildren(false, true, true); } catch (_) { kids = null; }
         (kids || []).forEach(walk);
       } else if (node.timeline) {
         walk(node.timeline);
@@ -7530,42 +7533,88 @@ function nativeMotionRuntimeBridge() {
   // um seek reentrante (o `onUpdate` do site roda aqui dentro e pode disparar
   // outro seek) e as duas restaurações devolveriam `undefined`, deixando o site
   // sem ciclo de vida para sempre.
+  // Pré-voo de UM nó: decide, SEM mutar e SEM invocar getter do site, o que dá
+  // para silenciar ali. Percorre a cadeia de protótipos com descritores — ler
+  // `vars[key]` invocaria um getter herdado, que pode lançar (e lançaria DEPOIS
+  // de já termos anulado outro slot, deixando o site corrompido) ou ter efeito
+  // colateral.
+  function seekSilencePlan(vars) {
+    const plan = [];
+    for (let i = 0; i < SEEK_SILENCED_CALLBACKS.length; i += 1) {
+      const key = SEEK_SILENCED_CALLBACKS[i];
+      let holder = vars;
+      let descriptor = null;
+      try {
+        while (holder && !descriptor) {
+          descriptor = Object.getOwnPropertyDescriptor(holder, key);
+          if (!descriptor) holder = Object.getPrototypeOf(holder);
+        }
+      } catch (_) { return null; }              // cadeia hostil ⇒ nó inteiro fora
+      if (!descriptor) continue;                // nada declarado: nada a silenciar
+      // Accessor (próprio ou herdado) é maquinaria do site: escrever por ele é
+      // efeito colateral a que não temos direito.
+      if (!('value' in descriptor)) return null;
+      if (typeof descriptor.value !== 'function') continue;
+      const own = holder === vars;
+      if (own) {
+        // Trocar o valor exige poder redefinir e poder VOLTAR ao original.
+        if (!descriptor.writable && !descriptor.configurable) return null;
+        if (!descriptor.configurable) return null;
+      } else {
+        // Sombra própria por cima do herdado — precisa poder acrescentar chave.
+        let extensivel = false;
+        try { extensivel = Object.isExtensible(vars); } catch (_) { extensivel = false; }
+        if (!extensivel) return null;
+      }
+      plan.push({ key, own, descriptor, enumerable: own ? descriptor.enumerable : true });
+    }
+    return plan;
+  }
+
+  // Silencia o ciclo de vida do site em volta de UMA escrita de relógio.
+  // O estado salvo é LOCAL da chamada: um slot de módulo seria sobrescrito por
+  // um seek reentrante (o `onUpdate` do site roda aqui dentro e pode disparar
+  // outro seek) e as duas restaurações devolveriam `undefined`, deixando o site
+  // sem ciclo de vida para sempre.
   function withSeekLifecycleSilenced(animation, write) {
     const scope = collectSeekScope(animation);
     const shared = seekSharedVarsNodes(scope);
     const saved = [];
+    // PRIMEIRO planeja tudo, DEPOIS muta — e a mutação já nasce dentro do
+    // try/finally. Sem isso, uma exceção no meio do planejamento deixaria os
+    // slots já anulados anulados para sempre, e o seek nem aconteceria.
+    const planos = [];
     scope.forEach((node) => {
       if (shared.has(node)) return;
       const vars = node && node.vars;
       if (!vars || typeof vars !== 'object') return;
-      SEEK_SILENCED_CALLBACKS.forEach((key) => {
-        let descriptor = null;
-        try { descriptor = Object.getOwnPropertyDescriptor(vars, key); } catch (_) { return; }
-        // Accessor é maquinaria do próprio site: escrever por ele é efeito
-        // colateral a que não temos direito. Fail closed.
-        if (descriptor && !('value' in descriptor)) return;
-        const own = Boolean(descriptor);
-        if (own && descriptor.writable === false && descriptor.configurable === false) return;
-        // Só mexe onde HÁ o que silenciar. Chave ausente não vira propriedade
-        // própria — anular por atribuição criaria uma chave que o autor nunca
-        // escreveu, e ela sobreviveria à restauração (medido, finding §2).
-        const effective = own ? descriptor.value : vars[key];
-        if (typeof effective !== 'function') return;
-        try { vars[key] = undefined; } catch (_) { return; }
-        saved.push({ vars, key, own, descriptor });
-      });
+      const plan = seekSilencePlan(vars);
+      if (!plan || !plan.length) return;        // forma inesperada ⇒ nó fica de fora
+      planos.push({ vars, plan });
     });
     try {
+      planos.forEach(({ vars, plan }) => {
+        plan.forEach((slot) => {
+          const temporario = { value: undefined, writable: true, enumerable: slot.enumerable, configurable: true };
+          try { Object.defineProperty(vars, slot.key, temporario); } catch (_) { return; }
+          saved.push({ vars, key: slot.key, own: slot.own, descriptor: slot.descriptor, temporario });
+        });
+      });
       return write();
     } finally {
       saved.forEach((entry) => {
         // O site pode ter instalado o próprio callback de dentro do `onUpdate`,
         // que roda com a janela aberta. Essa escrita é DELE — nunca pintar por
-        // cima (finding N5, face b). Só restauramos o slot que continua como
-        // deixamos: `undefined`.
-        let current = null;
-        try { current = Object.getOwnPropertyDescriptor(entry.vars, entry.key); } catch (_) { return; }
-        if (current && 'value' in current && current.value !== undefined) return;
+        // cima (finding N5, face b). Só restauramos o slot que continua sendo
+        // EXATAMENTE o temporário que instalamos; qualquer diferença (valor
+        // novo, accessor novo, chave removida) é escrita do site e fica.
+        let atual = null;
+        try { atual = Object.getOwnPropertyDescriptor(entry.vars, entry.key); } catch (_) { return; }
+        if (!atual || !('value' in atual)) return;
+        if (atual.value !== undefined
+          || atual.writable !== entry.temporario.writable
+          || atual.enumerable !== entry.temporario.enumerable
+          || atual.configurable !== entry.temporario.configurable) return;
         try {
           if (entry.own) Object.defineProperty(entry.vars, entry.key, entry.descriptor);
           else delete entry.vars[entry.key];
