@@ -14960,11 +14960,18 @@ describe('native motion runtime bridge', () => {
     const marca = observado.length;
     seek(motionId, 1000);
 
-    const durante = observado.slice(marca).filter((o) => o.slot === 'undefined');
+    const emitidas = observado.slice(marca);
+    const durante = emitidas.filter((o) => o.slot === 'undefined');
     expect(reentrou).toBe(true);
     // o contrato §4.3 diz que a janela é tão estreita quanto a escrita de
     // relógio; se alguma emissão sai com o slot anulado, ela não é.
     expect(durante.map((o) => o.type)).toEqual([]);
+    // ⚠️ e o zero acima seria VÁCUO se simplesmente ninguém emitisse: exigir que
+    // a chamada mais externa TENHA emitido o estado, já com o slot restaurado
+    // (senão apagar a emissão inteira manteria este teste verde).
+    const estado = emitidas.filter((o) => o.type === 'timeline-changed');
+    expect(estado.length).toBeGreaterThan(0);
+    expect(estado.every((o) => o.slot === 'function')).toBe(true);
 
     window.postMessage = originalPostMessage;
     delete window.gsap;

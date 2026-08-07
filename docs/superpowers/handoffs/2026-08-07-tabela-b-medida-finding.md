@@ -204,7 +204,12 @@ com auditoria do Sol. Três coisas ficam explicitamente ABERTAS:
 2. **O fail-closed é POR NÓ**, não pelo seek inteiro — decisão do Adilson de
    2026-08-07, com a consequência conhecida: dentro do mesmo arrasto, uma parte
    pode reagir enquanto as irmãs ficam quietas.
-3. ⚠️ **B5 (§4.8) SEGUE ABERTO.** O witness prova que o `onUpdate` continua
+3. **Remoção indistinguível ressuscita a reação.** Se o site fizer
+   `vars.onComplete = undefined` dentro da janela — removendo a própria reação —
+   isso produz EXATAMENTE o estado do nosso temporário, e a restauração devolve o
+   callback antigo, que pode disparar depois. Medido e fixado por teste.
+   **Residual aceito** (fechar exigiria a interceptação recusada).
+4. ⚠️ **B5 (§4.8) SEGUE ABERTO.** O witness prova que o `onUpdate` continua
    desenhando, **não** que nenhum consumidor NOSSO dependia indiretamente de um
    efeito do ciclo de vida. Enquanto esse witness não existir, B5 é PARCIAL e a
    feature não pode ser declarada fechada.

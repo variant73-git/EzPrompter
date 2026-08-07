@@ -7609,7 +7609,12 @@ function nativeMotionRuntimeBridge() {
       });
       return write();
     } finally {
-      seekWindowDepth -= 1;
+      // ⚠️ O decremento vem DEPOIS de toda a restauração. Enquanto ela roda,
+      // `vars` ainda está divergente — e um `Proxy` do site pode disparar um
+      // seek síncrono de dentro de um trap (`defineProperty`, `deleteProperty`,
+      // `getOwnPropertyDescriptor`). Se a profundidade já estivesse zerada, esse
+      // seek registraria/emitiria estado com callback anulado.
+      try {
       saved.forEach((entry) => {
         // O site pode ter instalado o próprio callback de dentro do `onUpdate`,
         // que roda com a janela aberta. Essa escrita é DELE — nunca pintar por
@@ -7628,6 +7633,9 @@ function nativeMotionRuntimeBridge() {
           else delete entry.vars[entry.key];
         } catch (_) {}
       });
+      } finally {
+        seekWindowDepth -= 1;
+      }
     }
   }
 
