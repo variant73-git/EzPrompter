@@ -14616,4 +14616,70 @@ describe('native motion runtime bridge', () => {
     restore();
   });
 
+
+  it('não abre a janela quando o site partilha a configuração entre animações', () => {
+    document.body.innerHTML = '<main><div id="tab"></div><div id="outro"></div></main>';
+    const tab = document.getElementById('tab');
+    const outroEl = document.getElementById('outro');
+    const fires = { compartilhado: 0 };
+    const rendered = { x: 0 };
+    // UM objeto de configuração, DUAS animações (padrão real de site)
+    const cfg = { x: 100, duration: 1, ease: 'none', onUpdate: () => {}, onComplete: () => { fires.compartilhado += 1; } };
+
+    let current = 0;
+    const alvo = {
+      targets: () => [tab],
+      vars: cfg,
+      duration: () => 1, totalDuration: () => 1, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), alvo)),
+      scrollTrigger: null, invalidate: () => alvo, pause: () => alvo,
+      time: (value, suppressEvents) => {
+        if (value === undefined) return current;
+        current = value;
+        rendered.x = current * 100;
+        if (suppressEvents === true) return alvo;
+        if (typeof cfg.onUpdate === 'function') cfg.onUpdate();
+        if (current >= 1 && typeof cfg.onComplete === 'function') cfg.onComplete();
+        return alvo;
+      },
+    };
+    const vizinha = { targets: () => [outroEl], vars: cfg };   // MESMO objeto
+    window.gsap = {
+      globalTimeline: { getChildren: () => [alvo, vizinha] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    seek(motion.id, 1000);
+
+    // fail-closed: a janela NÃO abriu, então o seek se comporta como antes.
+    // O preço é este disparo; o ganho é nunca silenciar a vizinha.
+    expect(fires.compartilhado).toBe(1);
+    expect(typeof cfg.onComplete).toBe('function');
+
+    delete window.gsap;
+    restore();
+  });
+
+  it('fail-closed também quando não dá para enumerar as animações', () => {
+    const fires = { onComplete: 0 };
+    const { tab, vars } = makeSeekFixture({
+      vars: { onUpdate: () => {}, onComplete: () => { fires.onComplete += 1; } },
+    });
+    const { motion, restore } = bootAndSelect(tab);
+    // depois do boot, o inventário global some (site trocou o gsap, teardown…)
+    window.gsap.globalTimeline = { getChildren: () => { throw new Error('sem inventário'); } };
+
+    seek(motion.id, 1000);
+
+    expect(fires.onComplete).toBe(1);      // não provou exclusividade ⇒ não mexeu
+    expect(typeof vars.onComplete).toBe('function');
+
+    delete window.gsap;
+    restore();
+  });
+
 });

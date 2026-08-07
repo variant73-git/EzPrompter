@@ -7494,8 +7494,35 @@ function nativeMotionRuntimeBridge() {
     return scope;
   }
 
-  function seekSharedVarsNodes() {
-    return new Set();
+  // O GSAP guarda a REFERÊNCIA do objeto de configuração do autor, então um site
+  // que reusa a config (`const cfg = {...}; gsap.to(a, cfg); gsap.to(b, cfg)`)
+  // faz duas animações partilharem a MESMA `vars`. Silenciar numa silencia a
+  // outra — e o disparo que a vizinha perde no meio não volta com a restauração
+  // (medido, finding N2). Decisão de produto de 2026-08-07: fail closed.
+  function seekSharedVarsNodes(scope) {
+    const shared = new Set();
+    const inScope = new Set(scope);
+    let all = null;
+    try { all = window.gsap?.globalTimeline?.getChildren?.(true, true, true); } catch (_) { all = null; }
+    // Sem inventário não há como provar exclusividade — logo, ninguém é seguro.
+    if (!Array.isArray(all)) {
+      scope.forEach((node) => shared.add(node));
+      return shared;
+    }
+    const owners = new Map();
+    all.forEach((animation) => {
+      const vars = animation && animation.vars;
+      if (!vars || typeof vars !== 'object') return;
+      if (!owners.has(vars)) owners.set(vars, []);
+      owners.get(vars).push(animation);
+    });
+    scope.forEach((node) => {
+      const vars = node && node.vars;
+      if (!vars || typeof vars !== 'object') return;
+      const list = owners.get(vars);
+      if (list && list.some((animation) => !inScope.has(animation))) shared.add(node);
+    });
+    return shared;
   }
 
   // Silencia o ciclo de vida do site em volta de UMA escrita de relógio.
