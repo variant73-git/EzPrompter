@@ -7467,8 +7467,31 @@ function nativeMotionRuntimeBridge() {
   // `onUpdate` NUNCA entra: é ele que desenha.
   const SEEK_SILENCED_CALLBACKS = ['onStart', 'onComplete', 'onRepeat', 'onReverseComplete'];
 
+  // Todo nó que a escrita de relógio pode renderizar. Duas regras, ambas
+  // medidas (finding §4.2):
+  //   - filhos quando o nó os expõe (`getChildren(true, true, true)`);
+  //   - a PRÓPRIA `node.timeline` como NÓ quando ele não expõe — uma fachada de
+  //     stagger não tem `getChildren`, e um callback instalado na timeline
+  //     interna dela escapa se descermos só nos filhos dessa timeline.
+  // O `Set` de visitados é obrigatório: a `.timeline` de um filho aponta de
+  // volta para o pai, e sem ele a descida entra em laço.
   function collectSeekScope(animation) {
-    return animation ? [animation] : [];
+    const scope = [];
+    const seen = new Set();
+    const walk = (node) => {
+      if (!node || typeof node !== 'object' || seen.has(node)) return;
+      seen.add(node);
+      scope.push(node);
+      if (typeof node.getChildren === 'function') {
+        let kids = null;
+        try { kids = node.getChildren(true, true, true); } catch (_) { kids = null; }
+        (kids || []).forEach(walk);
+      } else if (node.timeline) {
+        walk(node.timeline);
+      }
+    };
+    walk(animation);
+    return scope;
   }
 
   function seekSharedVarsNodes() {

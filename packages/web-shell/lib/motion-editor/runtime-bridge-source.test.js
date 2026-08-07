@@ -14551,4 +14551,69 @@ describe('native motion runtime bridge', () => {
     delete window.gsap;
   });
 
+
+  it('silencia a descendência: filhos, timeline interna de fachada e netos', () => {
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const fires = { filho: 0, interna: 0 };
+    const rendered = { x: 0 };
+
+    // filho de uma fachada (o que o stagger cria): tem `vars` PRÓPRIA
+    const filhoVars = { x: 100, onComplete: () => { fires.filho += 1; } };
+    const filho = { vars: filhoVars, targets: () => [tab] };
+    // a timeline INTERNA da fachada: um callback aqui escapa se a travessia só
+    // descer nos FILHOS dela (medido — finding §4.2)
+    const internaVars = { onComplete: () => { fires.interna += 1; } };
+    const interna = { vars: internaVars, getChildren: () => [filho] };
+
+    let current = 0;
+    const fachada = {
+      targets: () => [tab],
+      vars: { x: 100, duration: 1, ease: 'none', onUpdate: () => {} },
+      timeline: interna,              // fachada NÃO tem getChildren
+      duration: () => 1,
+      totalDuration: () => 1,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => true,
+      isActive: () => false,
+      timeScale: () => 1,
+      totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), fachada)),
+      scrollTrigger: null,
+      invalidate: () => fachada,
+      pause: () => fachada,
+      time: (value, suppressEvents) => {
+        if (value === undefined) return current;
+        current = value;
+        rendered.x = current * 100;
+        if (suppressEvents === true) return fachada;
+        if (typeof fachada.vars.onUpdate === 'function') fachada.vars.onUpdate();
+        // o render da fachada renderiza a descendência
+        if (typeof internaVars.onComplete === 'function') internaVars.onComplete();
+        if (typeof filhoVars.onComplete === 'function') filhoVars.onComplete();
+        return fachada;
+      },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [fachada] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    seek(motion.id, 1000);
+
+    expect(fires.filho).toBe(0);
+    expect(fires.interna).toBe(0);
+    // e nada da descendência ficou anulado depois
+    expect(typeof filhoVars.onComplete).toBe('function');
+    expect(typeof internaVars.onComplete).toBe('function');
+
+    delete window.gsap;
+    restore();
+  });
+
 });
