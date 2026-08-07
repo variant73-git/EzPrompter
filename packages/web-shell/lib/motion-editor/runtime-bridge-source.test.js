@@ -14436,4 +14436,119 @@ describe('native motion runtime bridge', () => {
       runtime.restore();
     });
   });
+
+  // ---- seek silencioso -------------------------------------------------
+  // Fake fiel nos DOIS fatos medidos no GSAP 3.15 de que esta feature depende
+  // (finding 2026-08-07, §1 e N3):
+  //   - o slot do callback é lido de `vars` NA HORA DO DISPARO, não cacheado;
+  //   - `time(v, suppressEvents)` renderiza dos dois jeitos, e só despacha o
+  //     ciclo de vida quando `suppressEvents` é falso.
+  function makeSeekFixture({ vars: extraVars = {}, duration = 1 } = {}) {
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const rendered = { x: 0 };
+    let current = 0;
+    const vars = { x: 100, duration, ease: 'none', ...extraVars };
+    const tween = {
+      targets: () => [tab],
+      vars,
+      duration: () => duration,
+      totalDuration: () => duration,
+      delay: () => 0,
+      repeat: () => 0,
+      repeatDelay: () => 0,
+      yoyo: () => false,
+      reversed: () => false,
+      paused: () => true,
+      isActive: () => false,
+      timeScale: () => 1,
+      totalProgress: () => current / duration,
+      progress: (p) => (p === undefined ? current / duration : ((current = p * duration), tween)),
+      scrollTrigger: null,
+      invalidate: () => tween,
+      pause: () => tween,
+      time: (value, suppressEvents) => {
+        if (value === undefined) return current;
+        const previous = current;
+        current = value;
+        rendered.x = (current / duration) * 100;
+        if (suppressEvents === true) return tween;
+        if (previous === 0 && current > 0 && typeof vars.onStart === 'function') vars.onStart();
+        if (typeof vars.onUpdate === 'function') vars.onUpdate();
+        if (current >= duration && typeof vars.onComplete === 'function') vars.onComplete();
+        if (current === 0 && previous > 0 && typeof vars.onReverseComplete === 'function') vars.onReverseComplete();
+        return tween;
+      },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+    return { tab, tween, vars, rendered };
+  }
+
+  function bootAndSelect(tab) {
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+    tab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const selection = messages.find((message) => message.type === 'selection-changed');
+    const motion = selection.payload.element.motion.find((clip) => clip.engine === 'GSAP');
+    return { messages, motion, restore: () => { window.postMessage = originalPostMessage; } };
+  }
+
+  function seek(motionId, currentTime) {
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'seek-motion',
+        payload: { motionId, currentTime },
+      },
+    }));
+  }
+
+  it('silencia o ciclo de vida do site no seek e mantém o onUpdate desenhando', () => {
+    const fires = { onStart: 0, onUpdate: 0, onComplete: 0, onReverseComplete: 0 };
+    const { tab, vars, rendered } = makeSeekFixture({
+      vars: {
+        onStart: () => { fires.onStart += 1; },
+        onUpdate: () => { fires.onUpdate += 1; },
+        onComplete: () => { fires.onComplete += 1; },
+        onReverseComplete: () => { fires.onReverseComplete += 1; },
+      },
+    });
+    const antesKeys = Object.keys(vars);
+    const antesFns = [vars.onStart, vars.onComplete, vars.onReverseComplete];
+    const { motion, restore } = bootAndSelect(tab);
+
+    seek(motion.id, 1000);   // o payload é em MILISSEGUNDOS
+
+    expect(fires.onStart).toBe(0);
+    expect(fires.onComplete).toBe(0);
+    expect(fires.onUpdate).toBeGreaterThan(0);
+    expect(rendered.x).toBe(100);
+    expect(Object.keys(vars)).toEqual(antesKeys);
+    expect([vars.onStart, vars.onComplete, vars.onReverseComplete]).toEqual(antesFns);
+
+    seek(motion.id, 0);      // seek pra trás: o quarto callback
+    expect(fires.onReverseComplete).toBe(0);
+
+    delete window.gsap;
+    restore();
+  });
+
+  it('CONTROLE: sem a janela, o mesmo caminho dispararia — o fake não é cego', () => {
+    const fires = { onComplete: 0 };
+    const { tween, vars } = makeSeekFixture({
+      vars: { onUpdate: () => {}, onComplete: () => { fires.onComplete += 1; } },
+    });
+    tween.time(1, false);
+    expect(fires.onComplete).toBe(1);
+    expect(typeof vars.onComplete).toBe('function');
+    delete window.gsap;
+  });
+
 });

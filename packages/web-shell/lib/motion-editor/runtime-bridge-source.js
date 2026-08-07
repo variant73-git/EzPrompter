@@ -7459,6 +7459,64 @@ function nativeMotionRuntimeBridge() {
     monitorTimeline();
   }
 
+  // Os quatro callbacks de ciclo de vida que o editor silencia em volta de uma
+  // escrita de relógio. `onRepeat` está aqui porque seekar uma TIMELINE cruza a
+  // fronteira de repetição de um filho; `onReverseComplete` porque seekar para 0
+  // o dispara na forma mais simples do call-site, sem o site ter revertido nada.
+  // Medido no GSAP 3.15 em 2026-08-07 (finding "Tabela B medida", §1 e N1).
+  // `onUpdate` NUNCA entra: é ele que desenha.
+  const SEEK_SILENCED_CALLBACKS = ['onStart', 'onComplete', 'onRepeat', 'onReverseComplete'];
+
+  function collectSeekScope(animation) {
+    return animation ? [animation] : [];
+  }
+
+  function seekSharedVarsNodes() {
+    return new Set();
+  }
+
+  // Silencia o ciclo de vida do site em volta de UMA escrita de relógio.
+  // O estado salvo é LOCAL da chamada: um slot de módulo seria sobrescrito por
+  // um seek reentrante (o `onUpdate` do site roda aqui dentro e pode disparar
+  // outro seek) e as duas restaurações devolveriam `undefined`, deixando o site
+  // sem ciclo de vida para sempre.
+  function withSeekLifecycleSilenced(animation, write) {
+    const scope = collectSeekScope(animation);
+    const shared = seekSharedVarsNodes(scope);
+    const saved = [];
+    scope.forEach((node) => {
+      if (shared.has(node)) return;
+      const vars = node && node.vars;
+      if (!vars || typeof vars !== 'object') return;
+      SEEK_SILENCED_CALLBACKS.forEach((key) => {
+        let descriptor = null;
+        try { descriptor = Object.getOwnPropertyDescriptor(vars, key); } catch (_) { return; }
+        // Accessor é maquinaria do próprio site: escrever por ele é efeito
+        // colateral a que não temos direito. Fail closed.
+        if (descriptor && !('value' in descriptor)) return;
+        const own = Boolean(descriptor);
+        if (own && descriptor.writable === false && descriptor.configurable === false) return;
+        // Só mexe onde HÁ o que silenciar. Chave ausente não vira propriedade
+        // própria — anular por atribuição criaria uma chave que o autor nunca
+        // escreveu, e ela sobreviveria à restauração (medido, finding §2).
+        const effective = own ? descriptor.value : vars[key];
+        if (typeof effective !== 'function') return;
+        try { vars[key] = undefined; } catch (_) { return; }
+        saved.push({ vars, key, own, descriptor });
+      });
+    });
+    try {
+      return write();
+    } finally {
+      saved.forEach((entry) => {
+        try {
+          if (entry.own) Object.defineProperty(entry.vars, entry.key, entry.descriptor);
+          else delete entry.vars[entry.key];
+        } catch (_) {}
+      });
+    }
+  }
+
   function seekTimeline(motionId, nextTime) {
     const record = timelineRecord(motionId);
     if (!record) return;
@@ -7472,7 +7530,11 @@ function nativeMotionRuntimeBridge() {
     } else {
       const delay = Math.max(0, finite(record.animation.delay?.()) * 1000);
       record.animation.pause?.();
-      record.animation.time?.(Math.max(0, time - delay) / 1000, false);
+      // A janela cobre APENAS a escrita de relógio: enquanto ela está aberta a
+      // forma de `vars` diverge, e `emitTimelineState` (logo abaixo) lê estado.
+      withSeekLifecycleSilenced(record.animation, () => {
+        record.animation.time?.(Math.max(0, time - delay) / 1000, false);
+      });
     }
     activeTimelineId = motionId;
     emitTimelineState(true);
