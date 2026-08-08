@@ -7581,12 +7581,14 @@ function nativeMotionRuntimeBridge() {
   // sob reentrância). Este contador serve só para saber se ainda há janela
   // aberta acima de nós, e adiar o que não pode observar `vars` divergente.
   let seekWindowDepth = 0;
-  // Durante a FASE DE RESTAURAÇÃO nenhum seek pode rodar. `defineProperty` e
-  // `delete` acionam traps de `Proxy` do site, e um seek disparado de dentro de
-  // um trap instalaria um callback novo ENTRE a nossa checagem e a nossa escrita
-  // — a escrita seguinte o apagaria (TOCTOU). Recusar é fail-closed: perde-se um
-  // seek patológico, não uma reação do site.
-  let seekRestoring = false;
+  // Enquanto a janela MEXE em `vars` — tanto instalando os temporários quanto
+  // restaurando —, nenhum seek pode rodar. `defineProperty` e `delete` acionam
+  // traps de `Proxy` do site, e um seek disparado de dentro de um trap
+  // instalaria um callback novo ENTRE a nossa decisão e a nossa escrita; a
+  // escrita seguinte o apagaria (TOCTOU, simétrico nas duas fases). A guarda cai
+  // apenas em volta da escrita de relógio, que é onde o site PRECISA rodar.
+  // Recusar é fail-closed: perde-se um seek patológico, não uma reação do site.
+  let seekMutating = false;
 
   function withSeekLifecycleSilenced(animation, write) {
     const scope = collectSeekScope(animation);
@@ -7605,6 +7607,7 @@ function nativeMotionRuntimeBridge() {
       planos.push({ vars, plan });
     });
     seekWindowDepth += 1;
+    seekMutating = true;
     try {
       planos.forEach(({ vars, plan }) => {
         plan.forEach((slot) => {
@@ -7613,6 +7616,7 @@ function nativeMotionRuntimeBridge() {
           saved.push({ vars, key: slot.key, own: slot.own, descriptor: slot.descriptor, temporario });
         });
       });
+      seekMutating = false;
       return write();
     } finally {
       // ⚠️ O decremento vem DEPOIS de toda a restauração. Enquanto ela roda,
@@ -7620,7 +7624,7 @@ function nativeMotionRuntimeBridge() {
       // seek síncrono de dentro de um trap (`defineProperty`, `deleteProperty`,
       // `getOwnPropertyDescriptor`). Se a profundidade já estivesse zerada, esse
       // seek registraria/emitiria estado com callback anulado.
-      seekRestoring = true;
+      seekMutating = true;
       try {
       saved.forEach((entry) => {
         // O site pode ter instalado o próprio callback de dentro do `onUpdate`,
@@ -7641,7 +7645,7 @@ function nativeMotionRuntimeBridge() {
         } catch (_) {}
       });
       } finally {
-        seekRestoring = false;
+        seekMutating = false;
         seekWindowDepth -= 1;
       }
     }
@@ -7652,7 +7656,7 @@ function nativeMotionRuntimeBridge() {
     // novo aqui rodaria a inspeção (que lê `vars` inteiro) e publicaria uma
     // forma que não é a do site. Fail closed: um seek reentrante só é atendido
     // para motion JÁ conhecido.
-    if (seekRestoring) return;
+    if (seekMutating) return;
     if (seekWindowDepth > 0 && !motionRegistry.has(motionId)) return;
     const record = timelineRecord(motionId);
     if (!record) return;

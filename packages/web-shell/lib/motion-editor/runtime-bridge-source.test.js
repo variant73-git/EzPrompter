@@ -15074,4 +15074,71 @@ describe('native motion runtime bridge', () => {
     restore();
   });
 
+
+  it('recusa seek disparado por trap de Proxy DURANTE a instalação (TOCTOU simétrico)', () => {
+    // Simétrico ao da restauração: silenciar também escreve, também aciona trap,
+    // e um seek disparado ANTES de aplicarmos o temporário instalaria um
+    // callback que a nossa escrita seguinte apagaria.
+    //
+    // ⚠️ O que se mede é se o seek aninhado CHEGA A RODAR. A 1ª versão deste
+    // teste olhava quem estava em `vars` no fim — e o fake chama o `onUpdate` do
+    // site em toda escrita de relógio, então o resultado era o mesmo com e sem a
+    // guarda: instrumento cego.
+    let motionId = null;
+    let trapDisparou = false;
+    let relogios = 0;
+    let relogiosNoTrap = 0;
+
+    const original = () => {};
+    const alvo = { x: 100, duration: 1, ease: 'none', onComplete: original, onUpdate: () => {} };
+    const varsProxy = new Proxy(alvo, {
+      defineProperty(t, k, d) {
+        // fase de INSTALAÇÃO: o valor sendo escrito é `undefined`
+        if (d && 'value' in d && d.value === undefined && motionId && !trapDisparou) {
+          trapDisparou = true;
+          const antes = relogios;
+          seek(motionId, 300);              // ANTES de aplicarmos o temporário
+          relogiosNoTrap = relogios - antes;
+        }
+        return Reflect.defineProperty(t, k, d);
+      },
+    });
+
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const rendered = { x: 0 };
+    let current = 0;
+    const tween = {
+      targets: () => [tab], vars: varsProxy,
+      duration: () => 1, totalDuration: () => 1, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), tween)),
+      scrollTrigger: null, invalidate: () => tween, pause: () => tween,
+      time: (value) => {
+        if (value === undefined) return current;
+        relogios += 1;
+        current = value; rendered.x = current * 100;
+        return tween;
+      },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    motionId = motion.id;
+    seek(motionId, 1000);
+
+    expect(trapDisparou).toBe(true);
+    expect(relogiosNoTrap).toBe(0);          // o seek aninhado foi RECUSADO
+    expect(relogios).toBeGreaterThan(0);     // e o seek externo aconteceu de fato
+    expect(alvo.onComplete).toBe(original);
+
+    delete window.gsap;
+    restore();
+  });
+
 });

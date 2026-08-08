@@ -204,12 +204,14 @@ com auditoria do Sol. Três coisas ficam explicitamente ABERTAS:
 2. **O fail-closed é POR NÓ**, não pelo seek inteiro — decisão do Adilson de
    2026-08-07, com a consequência conhecida: dentro do mesmo arrasto, uma parte
    pode reagir enquanto as irmãs ficam quietas.
-3. **Nenhum seek roda durante a restauração** (`seekRestoring`). `defineProperty`
-   e `delete` acionam traps de `Proxy` do site; um seek disparado de dentro de um
-   trap instalaria um callback ENTRE a checagem e a escrita, e a escrita seguinte
-   o apagaria (TOCTOU). Recusar o seek é fail-closed — perde-se um seek
-   patológico, não uma reação do site. Procedência medida: tirar a guarda deixa o
-   teste do `Proxy` vermelho.
+3. **Nenhum seek roda enquanto a janela MEXE em `vars`** (`seekMutating`) — nas
+   DUAS fases, instalar os temporários e restaurar. `defineProperty` e `delete`
+   acionam traps de `Proxy` do site; um seek disparado de dentro de um trap
+   instalaria um callback ENTRE a nossa decisão e a nossa escrita, e a escrita
+   seguinte o apagaria (TOCTOU simétrico). A guarda cai apenas em volta da
+   escrita de relógio, que é onde o site precisa rodar. Recusar é fail-closed —
+   perde-se um seek patológico, não uma reação do site. Procedência medida nas
+   duas fases: sem a guarda, os testes de `Proxy` ficam vermelhos.
 4. **Remoção indistinguível ressuscita a reação.** Se o site fizer
    `vars.onComplete = undefined` dentro da janela — removendo a própria reação —
    isso produz EXATAMENTE o estado do nosso temporário, e a restauração devolve o
