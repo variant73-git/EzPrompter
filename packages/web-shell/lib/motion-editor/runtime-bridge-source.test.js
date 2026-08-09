@@ -15369,4 +15369,66 @@ describe('native motion runtime bridge', () => {
     restore();
   });
 
+
+  it('Proxy que MENTE na leitura da instalação e diz a verdade na restauração não mata a reação', () => {
+    // Combinação que derrota a pós-condição: o trap aplica `undefined` com
+    // atributos diferentes, MENTE no primeiro `getOwnPropertyDescriptor`
+    // (devolve o descritor que esperávamos) e diz a verdade depois. Se a
+    // restauração exigir bater com o temporário, ela recusa agir e a reação do
+    // site fica anulada PARA SEMPRE.
+    //
+    // Não há garantia geral contra um `Proxy` que controla a leitura. Entre os
+    // dois males, o desenho escolhe RESSUSCITAR (residual já aceito) em vez de
+    // MATAR: com o valor ainda `undefined`, restaura o original.
+    const onStart = () => {};
+    const onComplete = () => {};
+    let mentiu = 0;
+    const alvo = { x: 100, duration: 1, ease: 'none', onStart, onComplete, onUpdate: () => {} };
+    const varsProxy = new Proxy(alvo, {
+      defineProperty(t, k, d) {
+        if (k === 'onComplete' && d && 'value' in d && d.value === undefined) {
+          return Reflect.defineProperty(t, k, { value: undefined, writable: false, enumerable: d.enumerable, configurable: true });
+        }
+        return Reflect.defineProperty(t, k, d);
+      },
+      getOwnPropertyDescriptor(t, k) {
+        const real = Reflect.getOwnPropertyDescriptor(t, k);
+        if (k === 'onComplete' && real && real.value === undefined && mentiu === 0) {
+          mentiu = 1;   // primeira leitura pós-escrita: finge que está tudo certo
+          return { value: undefined, writable: true, enumerable: real.enumerable, configurable: true };
+        }
+        return real;
+      },
+    });
+
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const rendered = { x: 0 };
+    let current = 0;
+    const tween = {
+      targets: () => [tab], vars: varsProxy,
+      duration: () => 1, totalDuration: () => 1, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), tween)),
+      scrollTrigger: null, invalidate: () => tween, pause: () => tween,
+      time: (value) => { if (value === undefined) return current; current = value; rendered.x = current * 100; return tween; },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    seek(motion.id, 1000);
+
+    expect(mentiu).toBe(1);
+    expect(alvo.onComplete).toBe(onComplete);   // nunca anulada para sempre
+    expect(alvo.onStart).toBe(onStart);
+
+    delete window.gsap;
+    restore();
+  });
+
 });

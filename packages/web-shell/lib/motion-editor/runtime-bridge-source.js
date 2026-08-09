@@ -7602,11 +7602,16 @@ function nativeMotionRuntimeBridge() {
     let atual = null;
     try { atual = Object.getOwnPropertyDescriptor(entry.vars, entry.key); } catch (_) { atual = null; }
     if (!force) {
+      // O critério é o VALOR, não os atributos. Contra um `Proxy` que controla
+      // também a LEITURA não há garantia: ele pode mentir na conferência da
+      // instalação e dizer a verdade aqui. Exigir que os atributos batam faria a
+      // restauração recusar agir e a reação do site ficaria anulada PARA SEMPRE.
+      // Entre os dois males, o desenho escolhe RESSUSCITAR — que já é residual
+      // aceito (o site removendo a própria reação é indistinguível da nossa
+      // anulação) — em vez de MATAR. Escrita distinguível do site (valor novo ou
+      // accessor) continua intocada.
       if (!atual || !('value' in atual)) return;
-      if (atual.value !== undefined
-        || atual.writable !== entry.temporario.writable
-        || atual.enumerable !== entry.temporario.enumerable
-        || atual.configurable !== entry.temporario.configurable) return;
+      if (atual.value !== undefined) return;
     }
     try {
       if (entry.own) Object.defineProperty(entry.vars, entry.key, entry.descriptor);

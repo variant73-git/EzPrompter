@@ -237,8 +237,15 @@ com auditoria do Sol. Três coisas ficam explicitamente ABERTAS:
    INSTALAÇÃO é **forçada** (restaura o original mesmo sem bater com o
    temporário), porque ali fomos nós que acabamos de escrever — o site ainda não
    teve chance de escrever legitimamente; na restauração final vale o contrário.
-   ⚠️ **Residual:** contra um `Proxy` que também recuse a RESTAURAÇÃO não há
-   garantia possível — a reversão é best-effort.
+   ⚠️ **Limite estrutural, não conserto:** contra um `Proxy` que controla também
+   a LEITURA não há garantia — ele mente na conferência da instalação e diz a
+   verdade na restauração. Diante disso o desenho escolhe entre dois males: a
+   restauração final devolve o original sempre que o valor corrente ainda for
+   `undefined`, **independente dos atributos**. Ou seja, prefere **ressuscitar**
+   (que já é o residual do item 5, o site removendo a própria reação) a **matar**
+   permanentemente uma reação do site. Escrita distinguível — valor novo ou
+   accessor — continua intocada. E contra um `Proxy` que recuse a própria
+   restauração, a reversão é best-effort.
 5. **Remoção indistinguível ressuscita a reação.** Se o site fizer
    `vars.onComplete = undefined` dentro da janela — removendo a própria reação —
    isso produz EXATAMENTE o estado do nosso temporário, e a restauração devolve o
