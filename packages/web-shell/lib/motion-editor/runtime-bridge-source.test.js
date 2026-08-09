@@ -15318,4 +15318,55 @@ describe('native motion runtime bridge', () => {
     restore();
   });
 
+
+  it('trap que aplica o valor mas TROCA os atributos não deixa a reação anulada', () => {
+    // Pós-condição frouxa (só o valor) aceitaria isto como "silenciado"; depois
+    // a restauração compararia os quatro campos, veria diferença, e recusaria —
+    // deixando o callback anulado PARA SEMPRE. E isso nem é o residual do
+    // `Proxy` que recusa restaurar: aqui ela sequer chega a ser tentada.
+    const onStart = () => {};
+    const onComplete = () => {};
+    let trocou = 0;
+    const alvo = { x: 100, duration: 1, ease: 'none', onStart, onComplete, onUpdate: () => {} };
+    const varsProxy = new Proxy(alvo, {
+      defineProperty(t, k, d) {
+        if (k === 'onComplete' && d && 'value' in d && d.value === undefined) {
+          trocou += 1;
+          // aplica o VALOR pedido, mas com atributos diferentes
+          return Reflect.defineProperty(t, k, { value: undefined, writable: false, enumerable: d.enumerable, configurable: true });
+        }
+        return Reflect.defineProperty(t, k, d);
+      },
+    });
+
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const rendered = { x: 0 };
+    let current = 0;
+    const tween = {
+      targets: () => [tab], vars: varsProxy,
+      duration: () => 1, totalDuration: () => 1, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), tween)),
+      scrollTrigger: null, invalidate: () => tween, pause: () => tween,
+      time: (value) => { if (value === undefined) return current; current = value; rendered.x = current * 100; return tween; },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    seek(motion.id, 1000);
+
+    expect(trocou).toBeGreaterThan(0);
+    expect(alvo.onComplete).toBe(onComplete);   // não pode ficar anulado
+    expect(alvo.onStart).toBe(onStart);
+
+    delete window.gsap;
+    restore();
+  });
+
 });

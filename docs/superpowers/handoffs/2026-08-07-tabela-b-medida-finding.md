@@ -224,8 +224,15 @@ com auditoria do Sol. Três coisas ficam explicitamente ABERTAS:
    anulado sem entrada de volta), e cada `defineProperty` é conferido lendo de
    volta (um `Proxy` pode ACEITAR e não aplicar). Se qualquer slot do nó falhar,
    o nó inteiro é revertido — silenciar metade dele faria o site reagir por um
-   canal e não por outro. ⚠️ **Residual:** contra um `Proxy` que também recuse a
-   RESTAURAÇÃO não há garantia possível — a reversão é best-effort.
+   canal e não por outro. A pós-condição confere o **descritor inteiro**, não só
+   o valor: um `Proxy` que aplica `undefined` trocando `writable`/`enumerable`/
+   `configurable` seria contado como silenciado e depois a restauração final
+   recusaria agir, deixando a reação anulada para sempre. E a reversão da
+   INSTALAÇÃO é **forçada** (restaura o original mesmo sem bater com o
+   temporário), porque ali fomos nós que acabamos de escrever — o site ainda não
+   teve chance de escrever legitimamente; na restauração final vale o contrário.
+   ⚠️ **Residual:** contra um `Proxy` que também recuse a RESTAURAÇÃO não há
+   garantia possível — a reversão é best-effort.
 5. **Remoção indistinguível ressuscita a reação.** Se o site fizer
    `vars.onComplete = undefined` dentro da janela — removendo a própria reação —
    isso produz EXATAMENTE o estado do nosso temporário, e a restauração devolve o

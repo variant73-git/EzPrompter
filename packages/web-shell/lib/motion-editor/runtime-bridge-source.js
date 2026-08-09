@@ -7593,14 +7593,21 @@ function nativeMotionRuntimeBridge() {
   // Devolve UM slot ao original — mas só se ele ainda for EXATAMENTE o
   // temporário que instalamos. Qualquer diferença (valor novo, accessor novo,
   // chave sumida) é escrita do site e fica.
-  function restoreSeekSlot(entry) {
+  // `force` é para a reversão da INSTALAÇÃO, onde nós acabamos de escrever e o
+  // site ainda não teve chance de escrever legitimamente: ali restaurar é sempre
+  // certo, mesmo que o estado corrente não bata com o temporário (um `Proxy`
+  // pode ter aplicado o valor com outros atributos). Na restauração final o
+  // contrário vale: qualquer divergência é escrita do site e fica.
+  function restoreSeekSlot(entry, force) {
     let atual = null;
-    try { atual = Object.getOwnPropertyDescriptor(entry.vars, entry.key); } catch (_) { return; }
-    if (!atual || !('value' in atual)) return;
-    if (atual.value !== undefined
-      || atual.writable !== entry.temporario.writable
-      || atual.enumerable !== entry.temporario.enumerable
-      || atual.configurable !== entry.temporario.configurable) return;
+    try { atual = Object.getOwnPropertyDescriptor(entry.vars, entry.key); } catch (_) { atual = null; }
+    if (!force) {
+      if (!atual || !('value' in atual)) return;
+      if (atual.value !== undefined
+        || atual.writable !== entry.temporario.writable
+        || atual.enumerable !== entry.temporario.enumerable
+        || atual.configurable !== entry.temporario.configurable) return;
+    }
     try {
       if (entry.own) Object.defineProperty(entry.vars, entry.key, entry.descriptor);
       else delete entry.vars[entry.key];
@@ -7653,12 +7660,20 @@ function nativeMotionRuntimeBridge() {
             Object.defineProperty(vars, slot.key, temporario);
             // Pós-condição: um `Proxy` pode ACEITAR e não aplicar. Sem conferir,
             // acreditaríamos ter silenciado o que continua vivo.
+            // Pós-condição pelo descritor INTEIRO: conferir só o valor deixaria
+            // passar um `Proxy` que aplica `undefined` trocando os atributos —
+            // e aí a restauração final recusaria agir, deixando a reação anulada
+            // para sempre.
             const conferido = Object.getOwnPropertyDescriptor(vars, slot.key);
-            if (!conferido || !('value' in conferido) || conferido.value !== undefined) { completo = false; break; }
+            if (!conferido || !('value' in conferido)
+              || conferido.value !== undefined
+              || conferido.writable !== temporario.writable
+              || conferido.enumerable !== temporario.enumerable
+              || conferido.configurable !== temporario.configurable) { completo = false; break; }
           } catch (_) { completo = false; break; }
         }
         if (completo) { doNo.forEach((entry) => saved.push(entry)); return; }
-        doNo.forEach(restoreSeekSlot);
+        doNo.forEach((entry) => restoreSeekSlot(entry, true));
       });
       seekMutating = false;
       return write();
@@ -7670,7 +7685,7 @@ function nativeMotionRuntimeBridge() {
       // seek registraria/emitiria estado com callback anulado.
       seekMutating = true;
       try {
-        saved.forEach(restoreSeekSlot);
+        saved.forEach((entry) => restoreSeekSlot(entry, false));
       } finally {
         seekMutating = false;
         seekWindowDepth -= 1;
