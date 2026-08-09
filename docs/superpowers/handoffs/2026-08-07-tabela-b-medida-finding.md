@@ -235,7 +235,10 @@ com auditoria do Sol. Três coisas ficam explicitamente ABERTAS:
    aplica `undefined` trocando `writable`/`enumerable`/`configurable` seria
    contado como silenciado, e o nó ficaria meio calado durante a escrita de
    relógio. Conferindo, ele é revertido por inteiro e as reações dele voltam a
-   disparar. (Procedência medida: afrouxar para só o valor deixa o teste dos
+   disparar. A conferência acontece **duas vezes**: por slot, logo após a
+   escrita, e de novo no **nó inteiro** depois da última instalação — porque o
+   trap de um slot pode RESSUSCITAR outro já instalado, e as conferências
+   individuais passariam com o nó meio calado. (Procedência medida: afrouxar para só o valor deixa o teste dos
    atributos vermelho. ⚠️ A justificativa anterior — "senão a reação fica anulada
    para sempre" — **é falsa** desde a mudança do item 5: a restauração final
    devolve o original sempre que o valor ainda for `undefined`.) E a reversão da

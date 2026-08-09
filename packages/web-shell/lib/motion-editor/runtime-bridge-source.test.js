@@ -15448,4 +15448,67 @@ describe('native motion runtime bridge', () => {
     restore();
   });
 
+
+  it('trap de um slot que RESSUSCITA o anterior faz o nó inteiro ser revertido', () => {
+    // A conferência slot a slot, feita logo após cada escrita, é enganável: o
+    // trap do `onComplete` devolve o `onStart` original. As duas conferências
+    // individuais passam, e a escrita de relógio aconteceria com `onStart` VIVO
+    // e `onComplete` calado — exatamente o meio-silêncio que a atomicidade nega.
+    const fires = { start: 0, complete: 0 };
+    const onStart = () => { fires.start += 1; };
+    const onComplete = () => { fires.complete += 1; };
+    let ressuscitou = 0;
+    const alvo = { x: 100, duration: 1, ease: 'none', onStart, onComplete, onUpdate: () => {} };
+    const varsProxy = new Proxy(alvo, {
+      defineProperty(t, k, d) {
+        const ok = Reflect.defineProperty(t, k, d);
+        if (k === 'onComplete' && d && 'value' in d && d.value === undefined && !ressuscitou) {
+          ressuscitou = 1;
+          Reflect.defineProperty(t, 'onStart', { value: onStart, writable: true, enumerable: true, configurable: true });
+        }
+        return ok;
+      },
+    });
+
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const rendered = { x: 0 };
+    let current = 0;
+    const tween = {
+      targets: () => [tab], vars: varsProxy,
+      duration: () => 1, totalDuration: () => 1, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), tween)),
+      scrollTrigger: null, invalidate: () => tween, pause: () => tween,
+      time: (value, suppressEvents) => {
+        if (value === undefined) return current;
+        const anterior = current;
+        current = value; rendered.x = current * 100;
+        if (suppressEvents === true) return tween;
+        if (anterior === 0 && current > 0 && typeof alvo.onStart === 'function') alvo.onStart();
+        if (typeof alvo.onUpdate === 'function') alvo.onUpdate();
+        if (current >= 1 && typeof alvo.onComplete === 'function') alvo.onComplete();
+        return tween;
+      },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    seek(motion.id, 1000);
+
+    expect(ressuscitou).toBe(1);
+    // atomicidade: nunca EXATAMENTE um. O nó foi revertido, os dois dispararam.
+    expect(fires.start).toBe(fires.complete);
+    expect(alvo.onStart).toBe(onStart);
+    expect(alvo.onComplete).toBe(onComplete);
+
+    delete window.gsap;
+    restore();
+  });
+
 });

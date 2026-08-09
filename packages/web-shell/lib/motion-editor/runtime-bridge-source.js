@@ -7677,6 +7677,22 @@ function nativeMotionRuntimeBridge() {
               || conferido.configurable !== temporario.configurable) { completo = false; break; }
           } catch (_) { completo = false; break; }
         }
+        // Revalidação do NÓ INTEIRO depois da última instalação: conferir cada
+        // slot logo após escrevê-lo é enganável — o trap de um slot pode
+        // RESSUSCITAR outro já instalado, e as conferências individuais passam
+        // enquanto o nó fica meio calado na escrita de relógio.
+        if (completo) {
+          for (let i = 0; i < doNo.length; i += 1) {
+            const entry = doNo[i];
+            let conferido = null;
+            try { conferido = Object.getOwnPropertyDescriptor(entry.vars, entry.key); } catch (_) { conferido = null; }
+            if (!conferido || !('value' in conferido)
+              || conferido.value !== undefined
+              || conferido.writable !== entry.temporario.writable
+              || conferido.enumerable !== entry.temporario.enumerable
+              || conferido.configurable !== entry.temporario.configurable) { completo = false; break; }
+          }
+        }
         if (completo) { doNo.forEach((entry) => saved.push(entry)); return; }
         doNo.forEach((entry) => restoreSeekSlot(entry, true));
       });
