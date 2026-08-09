@@ -7663,12 +7663,12 @@ function nativeMotionRuntimeBridge() {
           doNo.push(entry);
           try {
             Object.defineProperty(vars, slot.key, temporario);
-            // Pós-condição: um `Proxy` pode ACEITAR e não aplicar. Sem conferir,
-            // acreditaríamos ter silenciado o que continua vivo.
-            // Pós-condição pelo descritor INTEIRO: conferir só o valor deixaria
-            // passar um `Proxy` que aplica `undefined` trocando os atributos —
-            // e aí a restauração final recusaria agir, deixando a reação anulada
-            // para sempre.
+            // Pós-condição pelo descritor INTEIRO: um `Proxy` pode ACEITAR e
+            // não aplicar, ou aplicar o valor trocando os atributos. Sem
+            // conferir, acreditaríamos ter silenciado o que continua vivo. O que
+            // isto sustenta é a ATOMICIDADE por nó: silenciado exatamente como
+            // pedimos, ou revertido por inteiro — nunca meio calado durante a
+            // escrita de relógio.
             const conferido = Object.getOwnPropertyDescriptor(vars, slot.key);
             if (!conferido || !('value' in conferido)
               || conferido.value !== undefined

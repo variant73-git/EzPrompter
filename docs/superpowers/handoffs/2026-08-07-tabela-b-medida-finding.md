@@ -231,9 +231,14 @@ com auditoria do Sol. Três coisas ficam explicitamente ABERTAS:
    volta (um `Proxy` pode ACEITAR e não aplicar). Se qualquer slot do nó falhar,
    o nó inteiro é revertido — silenciar metade dele faria o site reagir por um
    canal e não por outro. A pós-condição confere o **descritor inteiro**, não só
-   o valor: um `Proxy` que aplica `undefined` trocando `writable`/`enumerable`/
-   `configurable` seria contado como silenciado e depois a restauração final
-   recusaria agir, deixando a reação anulada para sempre. E a reversão da
+   o valor, e o que ela sustenta é a **atomicidade por nó**: um `Proxy` que
+   aplica `undefined` trocando `writable`/`enumerable`/`configurable` seria
+   contado como silenciado, e o nó ficaria meio calado durante a escrita de
+   relógio. Conferindo, ele é revertido por inteiro e as reações dele voltam a
+   disparar. (Procedência medida: afrouxar para só o valor deixa o teste dos
+   atributos vermelho. ⚠️ A justificativa anterior — "senão a reação fica anulada
+   para sempre" — **é falsa** desde a mudança do item 5: a restauração final
+   devolve o original sempre que o valor ainda for `undefined`.) E a reversão da
    INSTALAÇÃO é **forçada** (restaura o original mesmo sem bater com o
    temporário), porque ali fomos nós que acabamos de escrever — o site ainda não
    teve chance de escrever legitimamente; na restauração final vale o contrário.
