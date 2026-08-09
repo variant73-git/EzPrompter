@@ -15319,20 +15319,23 @@ describe('native motion runtime bridge', () => {
   });
 
 
-  it('trap que aplica o valor mas TROCA os atributos não deixa a reação anulada', () => {
-    // Pós-condição frouxa (só o valor) aceitaria isto como "silenciado"; depois
-    // a restauração compararia os quatro campos, veria diferença, e recusaria —
-    // deixando o callback anulado PARA SEMPRE. E isso nem é o residual do
-    // `Proxy` que recusa restaurar: aqui ela sequer chega a ser tentada.
-    const onStart = () => {};
-    const onComplete = () => {};
+  it('trap que aplica o valor mas TROCA os atributos faz o nó inteiro ser revertido', () => {
+    // ⚠️ A justificativa ANTIGA deste teste ("senão a reação fica anulada para
+    // sempre") caiu com a mudança da r10: a restauração final passou a devolver
+    // o original sempre que o valor ainda for `undefined`, então afrouxar a
+    // pós-condição já não mata a reação — e o teste ficava verde provando outra
+    // coisa. O que a pós-condição INTEGRAL sustenta é o fail-closed: um nó que
+    // não pôde ser silenciado como pedimos é revertido POR INTEIRO, e as reações
+    // dele voltam a disparar no seek em vez de ficarem meio caladas.
+    const fires = { start: 0, complete: 0 };
+    const onStart = () => { fires.start += 1; };
+    const onComplete = () => { fires.complete += 1; };
     let trocou = 0;
     const alvo = { x: 100, duration: 1, ease: 'none', onStart, onComplete, onUpdate: () => {} };
     const varsProxy = new Proxy(alvo, {
       defineProperty(t, k, d) {
         if (k === 'onComplete' && d && 'value' in d && d.value === undefined) {
           trocou += 1;
-          // aplica o VALOR pedido, mas com atributos diferentes
           return Reflect.defineProperty(t, k, { value: undefined, writable: false, enumerable: d.enumerable, configurable: true });
         }
         return Reflect.defineProperty(t, k, d);
@@ -15351,7 +15354,16 @@ describe('native motion runtime bridge', () => {
       timeScale: () => 1, totalProgress: () => current,
       progress: (p) => (p === undefined ? current : ((current = p), tween)),
       scrollTrigger: null, invalidate: () => tween, pause: () => tween,
-      time: (value) => { if (value === undefined) return current; current = value; rendered.x = current * 100; return tween; },
+      time: (value, suppressEvents) => {
+        if (value === undefined) return current;
+        const anterior = current;
+        current = value; rendered.x = current * 100;
+        if (suppressEvents === true) return tween;
+        if (anterior === 0 && current > 0 && typeof alvo.onStart === 'function') alvo.onStart();
+        if (typeof alvo.onUpdate === 'function') alvo.onUpdate();
+        if (current >= 1 && typeof alvo.onComplete === 'function') alvo.onComplete();
+        return tween;
+      },
     };
     window.gsap = {
       globalTimeline: { getChildren: () => [tween] },
@@ -15362,7 +15374,12 @@ describe('native motion runtime bridge', () => {
     seek(motion.id, 1000);
 
     expect(trocou).toBeGreaterThan(0);
-    expect(alvo.onComplete).toBe(onComplete);   // não pode ficar anulado
+    // o nó foi revertido POR INTEIRO: as duas reações dispararam, nenhuma ficou
+    // meio silenciada
+    expect(fires.start).toBe(1);
+    expect(fires.complete).toBe(1);
+    // e nada ficou anulado depois
+    expect(alvo.onComplete).toBe(onComplete);
     expect(alvo.onStart).toBe(onStart);
 
     delete window.gsap;
