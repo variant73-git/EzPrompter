@@ -219,12 +219,19 @@ com auditoria do Sol. Três coisas ficam explicitamente ABERTAS:
    recusaria todo seek seguinte). Procedência medida nas TRÊS portas — leitura do
    pré-voo, escrita da instalação e escrita da restauração: sem a guarda, cada
    teste de `Proxy` fica vermelho.
-4. **Remoção indistinguível ressuscita a reação.** Se o site fizer
+4. **Instalação atômica por nó, com pós-condição.** A intenção de restaurar é
+   registrada ANTES da escrita (um trap que aplica e depois lança deixaria o slot
+   anulado sem entrada de volta), e cada `defineProperty` é conferido lendo de
+   volta (um `Proxy` pode ACEITAR e não aplicar). Se qualquer slot do nó falhar,
+   o nó inteiro é revertido — silenciar metade dele faria o site reagir por um
+   canal e não por outro. ⚠️ **Residual:** contra um `Proxy` que também recuse a
+   RESTAURAÇÃO não há garantia possível — a reversão é best-effort.
+5. **Remoção indistinguível ressuscita a reação.** Se o site fizer
    `vars.onComplete = undefined` dentro da janela — removendo a própria reação —
    isso produz EXATAMENTE o estado do nosso temporário, e a restauração devolve o
    callback antigo, que pode disparar depois. Medido e fixado por teste.
    **Residual aceito** (fechar exigiria a interceptação recusada).
-5. ⚠️ **B5 (§4.8) SEGUE ABERTO.** O witness prova que o `onUpdate` continua
+6. ⚠️ **B5 (§4.8) SEGUE ABERTO.** O witness prova que o `onUpdate` continua
    desenhando, **não** que nenhum consumidor NOSSO dependia indiretamente de um
    efeito do ciclo de vida. Enquanto esse witness não existir, B5 é PARCIAL e a
    feature não pode ser declarada fechada.

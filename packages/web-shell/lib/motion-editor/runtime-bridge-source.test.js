@@ -15204,4 +15204,118 @@ describe('native motion runtime bridge', () => {
     restore();
   });
 
+
+  function fixtureProxy(handler, extraVars = {}) {
+    const alvo = { x: 100, duration: 1, ease: 'none', onUpdate: () => {}, ...extraVars };
+    const varsProxy = new Proxy(alvo, handler);
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const rendered = { x: 0 };
+    let current = 0;
+    const tween = {
+      targets: () => [tab], vars: varsProxy,
+      duration: () => 1, totalDuration: () => 1, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), tween)),
+      scrollTrigger: null, invalidate: () => tween, pause: () => tween,
+      time: (value) => { if (value === undefined) return current; current = value; rendered.x = current * 100; return tween; },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+    return { alvo, tab };
+  }
+
+  it('trap que ESCREVE e depois LANÇA não deixa a reação anulada', () => {
+    // A intenção tem que ser registrada ANTES da escrita: se o trap aplica e
+    // depois lança, o `catch` acontece com o slot já anulado — sem entrada de
+    // restauração, a reação do site morre ali.
+    const onStart = () => {};
+    const onComplete = () => {};
+    let lancou = 0;
+    const { alvo, tab } = fixtureProxy({
+      defineProperty(t, k, d) {
+        Reflect.defineProperty(t, k, d);
+        if (k === 'onComplete' && d.value === undefined && !lancou) { lancou = 1; throw new Error('trap hostil'); }
+        return true;
+      },
+    }, { onStart, onComplete });
+
+    const { motion, restore } = bootAndSelect(tab);
+    seek(motion.id, 1000);
+
+    expect(lancou).toBe(1);
+    expect(alvo.onComplete).toBe(onComplete);
+    expect(alvo.onStart).toBe(onStart);
+
+    delete window.gsap;
+    restore();
+  });
+
+  it('trap que MENTE (aceita e não aplica) faz o nó inteiro ficar de fora', () => {
+    // Silenciamento PARCIAL contradiz o fail-closed por nó. ⚠️ E ele só é
+    // visível DURANTE a janela: olhar o estado final dá verde trivial, porque no
+    // fim tudo volta ao original de um jeito ou de outro (erro do meu primeiro
+    // instrumento aqui). O que se mede é quem DISPAROU no seek.
+    const fires = { start: 0, complete: 0 };
+    const onStart = () => { fires.start += 1; };
+    const onComplete = () => { fires.complete += 1; };
+    let mentiu = 0;
+
+    const alvo = {
+      x: 100, duration: 1, ease: 'none',
+      onStart, onComplete, onUpdate: () => {},
+    };
+    const varsProxy = new Proxy(alvo, {
+      defineProperty(t, k, d) {
+        if (k === 'onComplete' && d && 'value' in d && d.value === undefined) { mentiu += 1; return true; }
+        return Reflect.defineProperty(t, k, d);
+      },
+    });
+
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const rendered = { x: 0 };
+    let current = 0;
+    const tween = {
+      targets: () => [tab], vars: varsProxy,
+      duration: () => 1, totalDuration: () => 1, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), tween)),
+      scrollTrigger: null, invalidate: () => tween, pause: () => tween,
+      time: (value, suppressEvents) => {
+        if (value === undefined) return current;
+        const anterior = current;
+        current = value; rendered.x = current * 100;
+        if (suppressEvents === true) return tween;
+        if (anterior === 0 && current > 0 && typeof alvo.onStart === 'function') alvo.onStart();
+        if (typeof alvo.onUpdate === 'function') alvo.onUpdate();
+        if (current >= 1 && typeof alvo.onComplete === 'function') alvo.onComplete();
+        return tween;
+      },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    seek(motion.id, 1000);
+
+    expect(mentiu).toBeGreaterThan(0);
+    // nunca EXATAMENTE um: ou o nó inteiro foi silenciado, ou nenhum foi
+    expect(fires.start).toBe(fires.complete);
+    // e nada ficou anulado depois
+    expect(alvo.onComplete).toBe(onComplete);
+    expect(alvo.onStart).toBe(onStart);
+
+    delete window.gsap;
+    restore();
+  });
+
 });

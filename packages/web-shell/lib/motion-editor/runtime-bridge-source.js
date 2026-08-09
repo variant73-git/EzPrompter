@@ -7590,6 +7590,23 @@ function nativeMotionRuntimeBridge() {
   // Recusar é fail-closed: perde-se um seek patológico, não uma reação do site.
   let seekMutating = false;
 
+  // Devolve UM slot ao original — mas só se ele ainda for EXATAMENTE o
+  // temporário que instalamos. Qualquer diferença (valor novo, accessor novo,
+  // chave sumida) é escrita do site e fica.
+  function restoreSeekSlot(entry) {
+    let atual = null;
+    try { atual = Object.getOwnPropertyDescriptor(entry.vars, entry.key); } catch (_) { return; }
+    if (!atual || !('value' in atual)) return;
+    if (atual.value !== undefined
+      || atual.writable !== entry.temporario.writable
+      || atual.enumerable !== entry.temporario.enumerable
+      || atual.configurable !== entry.temporario.configurable) return;
+    try {
+      if (entry.own) Object.defineProperty(entry.vars, entry.key, entry.descriptor);
+      else delete entry.vars[entry.key];
+    } catch (_) {}
+  }
+
   function withSeekLifecycleSilenced(animation, write) {
     // A guarda sobe ANTES de qualquer coisa: montar o escopo (`getChildren`),
     // detectar partilha e o pré-voo (`getOwnPropertyDescriptor`,
@@ -7621,11 +7638,27 @@ function nativeMotionRuntimeBridge() {
     seekWindowDepth += 1;
     try {
       planos.forEach(({ vars, plan }) => {
-        plan.forEach((slot) => {
+        // Intenção registrada ANTES da escrita: um trap que aplica e DEPOIS
+        // lança deixaria o slot anulado sem entrada de restauração. E a
+        // instalação é atômica POR NÓ — silenciar metade dele contradiz o
+        // fail-closed (o site reagiria por um canal e não por outro).
+        const doNo = [];
+        let completo = true;
+        for (let i = 0; i < plan.length; i += 1) {
+          const slot = plan[i];
           const temporario = { value: undefined, writable: true, enumerable: slot.enumerable, configurable: true };
-          try { Object.defineProperty(vars, slot.key, temporario); } catch (_) { return; }
-          saved.push({ vars, key: slot.key, own: slot.own, descriptor: slot.descriptor, temporario });
-        });
+          const entry = { vars, key: slot.key, own: slot.own, descriptor: slot.descriptor, temporario };
+          doNo.push(entry);
+          try {
+            Object.defineProperty(vars, slot.key, temporario);
+            // Pós-condição: um `Proxy` pode ACEITAR e não aplicar. Sem conferir,
+            // acreditaríamos ter silenciado o que continua vivo.
+            const conferido = Object.getOwnPropertyDescriptor(vars, slot.key);
+            if (!conferido || !('value' in conferido) || conferido.value !== undefined) { completo = false; break; }
+          } catch (_) { completo = false; break; }
+        }
+        if (completo) { doNo.forEach((entry) => saved.push(entry)); return; }
+        doNo.forEach(restoreSeekSlot);
       });
       seekMutating = false;
       return write();
@@ -7637,24 +7670,7 @@ function nativeMotionRuntimeBridge() {
       // seek registraria/emitiria estado com callback anulado.
       seekMutating = true;
       try {
-      saved.forEach((entry) => {
-        // O site pode ter instalado o próprio callback de dentro do `onUpdate`,
-        // que roda com a janela aberta. Essa escrita é DELE — nunca pintar por
-        // cima (finding N5, face b). Só restauramos o slot que continua sendo
-        // EXATAMENTE o temporário que instalamos; qualquer diferença (valor
-        // novo, accessor novo, chave removida) é escrita do site e fica.
-        let atual = null;
-        try { atual = Object.getOwnPropertyDescriptor(entry.vars, entry.key); } catch (_) { return; }
-        if (!atual || !('value' in atual)) return;
-        if (atual.value !== undefined
-          || atual.writable !== entry.temporario.writable
-          || atual.enumerable !== entry.temporario.enumerable
-          || atual.configurable !== entry.temporario.configurable) return;
-        try {
-          if (entry.own) Object.defineProperty(entry.vars, entry.key, entry.descriptor);
-          else delete entry.vars[entry.key];
-        } catch (_) {}
-      });
+        saved.forEach(restoreSeekSlot);
       } finally {
         seekMutating = false;
         seekWindowDepth -= 1;
