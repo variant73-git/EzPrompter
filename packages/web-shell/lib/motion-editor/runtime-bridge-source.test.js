@@ -15141,4 +15141,67 @@ describe('native motion runtime bridge', () => {
     restore();
   });
 
+
+  it('recusa seek disparado por trap de LEITURA no pré-voo (TOCTOU do planejamento)', () => {
+    // O pré-voo lê descritores (`getOwnPropertyDescriptor`, `getPrototypeOf`,
+    // `isExtensible`) — num `Proxy` isso também é código do site. Um trap de
+    // LEITURA pode disparar um seek aninhado que instala um callback novo e
+    // devolver o descritor ANTIGO; o plano externo então anula o novo e restaura
+    // o antigo. É o mesmo TOCTOU, pela porta da leitura.
+    let motionId = null;
+    let trapDisparou = false;
+    let relogios = 0;
+    let relogiosNoTrap = 0;
+
+    const original = () => {};
+    const alvo = { x: 100, duration: 1, ease: 'none', onComplete: original, onUpdate: () => {} };
+    const varsProxy = new Proxy(alvo, {
+      getOwnPropertyDescriptor(t, k) {
+        if (k === 'onComplete' && motionId && !trapDisparou) {
+          trapDisparou = true;
+          const antes = relogios;
+          seek(motionId, 300);
+          relogiosNoTrap = relogios - antes;
+        }
+        return Reflect.getOwnPropertyDescriptor(t, k);
+      },
+    });
+
+    document.body.innerHTML = '<main><div id="tab"></div></main>';
+    const tab = document.getElementById('tab');
+    const rendered = { x: 0 };
+    let current = 0;
+    const tween = {
+      targets: () => [tab], vars: varsProxy,
+      duration: () => 1, totalDuration: () => 1, delay: () => 0,
+      repeat: () => 0, repeatDelay: () => 0, yoyo: () => false,
+      reversed: () => false, paused: () => true, isActive: () => false,
+      timeScale: () => 1, totalProgress: () => current,
+      progress: (p) => (p === undefined ? current : ((current = p), tween)),
+      scrollTrigger: null, invalidate: () => tween, pause: () => tween,
+      time: (value) => {
+        if (value === undefined) return current;
+        relogios += 1;
+        current = value; rendered.x = current * 100;
+        return tween;
+      },
+    };
+    window.gsap = {
+      globalTimeline: { getChildren: () => [tween] },
+      getProperty: (target, prop) => String(rendered[prop]),
+    };
+
+    const { motion, restore } = bootAndSelect(tab);
+    motionId = motion.id;
+    seek(motionId, 1000);
+
+    expect(trapDisparou).toBe(true);
+    expect(relogiosNoTrap).toBe(0);          // o seek aninhado foi RECUSADO
+    expect(relogios).toBeGreaterThan(0);     // e o externo aconteceu
+    expect(alvo.onComplete).toBe(original);
+
+    delete window.gsap;
+    restore();
+  });
+
 });

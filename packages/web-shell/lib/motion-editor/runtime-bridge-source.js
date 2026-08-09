@@ -7591,23 +7591,34 @@ function nativeMotionRuntimeBridge() {
   let seekMutating = false;
 
   function withSeekLifecycleSilenced(animation, write) {
-    const scope = collectSeekScope(animation);
-    const shared = seekSharedVarsNodes(scope);
-    const saved = [];
-    // PRIMEIRO planeja tudo, DEPOIS muta — e a mutação já nasce dentro do
-    // try/finally. Sem isso, uma exceção no meio do planejamento deixaria os
-    // slots já anulados anulados para sempre, e o seek nem aconteceria.
-    const planos = [];
-    scope.forEach((node) => {
-      if (shared.has(node)) return;
-      const vars = node && node.vars;
-      if (!vars || typeof vars !== 'object') return;
-      const plan = seekSilencePlan(vars);
-      if (!plan || !plan.length) return;        // forma inesperada ⇒ nó fica de fora
-      planos.push({ vars, plan });
-    });
-    seekWindowDepth += 1;
+    // A guarda sobe ANTES de qualquer coisa: montar o escopo (`getChildren`),
+    // detectar partilha e o pré-voo (`getOwnPropertyDescriptor`,
+    // `getPrototypeOf`, `isExtensible`) já são código do site num `Proxy`. Um
+    // trap de LEITURA pode disparar um seek aninhado que instala um callback e
+    // devolver o descritor antigo — o mesmo TOCTOU, pela porta da leitura.
+    if (seekMutating) return write();
     seekMutating = true;
+    const saved = [];
+    const planos = [];
+    try {
+      const scope = collectSeekScope(animation);
+      const shared = seekSharedVarsNodes(scope);
+      scope.forEach((node) => {
+        if (shared.has(node)) return;
+        const vars = node && node.vars;
+        if (!vars || typeof vars !== 'object') return;
+        const plan = seekSilencePlan(vars);
+        if (!plan || !plan.length) return;      // forma inesperada ⇒ nó fica de fora
+        planos.push({ vars, plan });
+      });
+    } catch (_) {
+      // Qualquer coisa que lance no planejamento (traps do site) desliga a
+      // janela e deixa o seek acontecer como antes. Sem isto a guarda ficaria
+      // presa em `true` e TODO seek seguinte seria recusado.
+      seekMutating = false;
+      return write();
+    }
+    seekWindowDepth += 1;
     try {
       planos.forEach(({ vars, plan }) => {
         plan.forEach((slot) => {
