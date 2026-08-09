@@ -1,7 +1,11 @@
 # Finding — Tabela B medida (supressão seletiva de callbacks no seek)
 
-> **Estado:** ZERO código de produção. **Auditoria fechada com MERGE OK do Sol na
-> rodada 13** (12 achados dele, todos procedentes e corrigidos com medição; 1 meu).
+> **Estado (2026-08-09):** a Tabela B foi medida e **a janela está IMPLEMENTADA**
+> (`withSeekLifecycleSilenced`, em `runtime-bridge-source.js`, acima de
+> `seekTimeline`) — os residuais e o que segue aberto estão na §4b.
+>
+> Duas auditorias distintas: a **da Tabela B** fechou com MERGE OK na rodada 13
+> (12 achados do Sol + 1 meu); a **da implementação** segue em curso.
 > **As três decisões de produto foram tomadas pelo Adilson em 2026-08-07** e estão
 > marcadas ✅ ao lado de cada uma. Este documento fecha a Tabela B do
 > handoff `2026-08-07-supressao-seletiva-de-callbacks-handoff.md` com medição no
@@ -15,7 +19,9 @@
 > `_probe-b3-descendencia.mjs` (9 casos), `_probe-b1b-audit.mjs` (11 casos, um por
 > achado da rodada 1), `_probe-r2-repeat-timeline.mjs` (bloqueador da rodada 2) e
 > `_probe-r3-stagger-em-timeline.mjs` (travessia composta), todos em
-> `packages/web-shell/`. Suíte no baseline: **1623 passed | 10 skipped**.
+> `packages/web-shell/`, mais `_probe-seek-silence-witness.mjs` (witness da
+> implementação). Suíte: **1623** no baseline da medição, **1643 passed |
+> 10 skipped** com a implementação.
 
 ## 1. Veredito da Tabela B
 
