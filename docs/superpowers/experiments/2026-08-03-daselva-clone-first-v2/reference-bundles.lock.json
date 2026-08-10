@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "start-from-ref-clone-first-reference-bundles-lock-v2",
+  "experimentId": "daselva-pan-amazonian-clone-first-v2",
+  "gate": "B",
+  "status": "frozen_gate_b",
+  "manifestPath": "docs/superpowers/experiments/2026-08-03-daselva-clone-first-v2/manifest.v2.json",
+  "manifestSha256": "1b0fcd27f0992769db721f9a8228772875dc8f92a4efc8d40a7afca735a9e47e",
+  "candidatePoolPath": "docs/superpowers/experiments/2026-08-03-daselva-clone-first-v2/candidate-pool.v2.json",
+  "candidatePoolSha256": "2a4288c6661cdc48f8bae10248d0e8fc547e702a4d3c0d2f5af4a7be1cc166f1",
+  "bundlePath": "docs/superpowers/experiments/2026-08-03-daselva-clone-first-v2/reference-bundles.v2.json",
+  "bundleSha256": "d724f9071eb4d551f1339f187926e4c64aee99fbc0233b5d13b99b2f73fc6a3f",
+  "evidenceAggregateSha256": "43812735d3b91415c81ec05c22f2fa12ea857a24bde2974500a5d0ab9817e295",
+  "selectedReferenceIds": [
+    "ref_3c9fefc8b61c5543",
+    "ref_f44b5eddc9e64f5d",
+    "ref_666384f011a91b0e",
+    "ref_3f9dd1212526b3a0",
+    "ref_15c6c7030b4facd6",
+    "ref_0e47bc1d6a370765",
+    "ref_2038e9f35d0adda8"
+  ],
+  "generationAccounting": {
+    "modelCalls": 0,
+    "imageCalls": 0,
+    "websiteOrCloneGenerations": 0,
+    "creditsSpent": 0,
+    "v2OutputRootCreated": false
+  },
+  "gateC": {
+    "authorized": false,
+    "proposedMaximumCredits": 1425,
+    "newImageCallsAllowed": 0,
+    "mediaPackSha256": "e21ee52d96adccd7200d1799622ed460262923dcceacea3ed54386a8f206019f",
+    "confirmationToken": "START-DASELVA-V2-GATE-C-1B0FCD27F0992769",
+    "explicitBundleHashApprovalRequired": true,
+    "explicitBudgetApprovalRequired": true,
+    "explicitMediaPackReuseConfirmationRequired": true,
+    "tokenAloneAuthorizesExecution": false
+  }
+}

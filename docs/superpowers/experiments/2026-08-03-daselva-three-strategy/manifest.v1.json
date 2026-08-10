@@ -1,0 +1,601 @@
+{
+  "schemaVersion": "start-from-ref-real-output-manifest-v1",
+  "experiment": {
+    "id": "daselva-pan-amazonian-three-strategy-v1",
+    "name": "DaSelva pan-Amazonian real-output comparison",
+    "status": "frozen_gate_a",
+    "createdAt": "2026-08-03",
+    "owner": "Adilson Porto",
+    "authorizedGate": "A",
+    "authorizedScope": "Document and test-fixture work only",
+    "notAuthorized": [
+      "reference retrieval or selection",
+      "destination-site capture",
+      "model or image-generation calls",
+      "credit spending",
+      "website generation",
+      "shared database, plan, board, node, preference, cohort, or assessment writes",
+      "push, deployment, or production enablement"
+    ]
+  },
+  "authority": {
+    "precedence": [
+      "userBrief",
+      "contentSource",
+      "manifestEditorialDecisions",
+      "later reference evidence"
+    ],
+    "userBrief": {
+      "language": "pt-BR",
+      "verbatim": "faça uma landing page para um restaurante de culinária \"pan-amazônica\" chamado DaSelva. O prato principal é a banda de tambaqui e então precisa ter algum destaque. O conteúdo principal precisa ser extraido do documento anexo e adequado a uma boa medida de comprimento de scroll, ou seja, dosar o conteúdo extraindo o que importa para uma landing page. O site deve seguir as cores verde, offwhite e terracota."
+    },
+    "contentSource": {
+      "fileName": "Site_Copys_Proposta_v0.1.html",
+      "pathAtFreeze": "/Users/adilsonporto/Downloads/Site_Copys_Proposta_v0.1.html",
+      "sha256": "b456f98b0fecd1616603a9e2ea9fd3e20ec285be6f5f438f4500c1eee7e6661b",
+      "documentTitle": "daselva.com — Proposta de Copys",
+      "documentVersion": "v0.1 proposta",
+      "documentDate": "2026-07-14",
+      "publicationStatus": "internal_until_approval",
+      "sourceFamiliesNamedByDocument": [
+        "Arsenal_de_Copies_v6.0",
+        "DaSelva_Manifesto_v4_PT",
+        "Dossiê da Banda v1.0",
+        "IDA v1.3",
+        "Brief_Captura_Busca_Banda_v1.0"
+      ]
+    },
+    "conflictRule": "Target truth always wins. A reference may influence composition or behavior, but it may not add, negate, or rewrite DaSelva facts, claims, identity, offers, locations, proof, or commercial mechanics."
+  },
+  "target": {
+    "brand": "DaSelva",
+    "business": "Restaurante de culinária pan-amazônica em São Paulo",
+    "offer": "Experiência de mesa pan-amazônica com a banda de tambaqui como prato e ritual central",
+    "primaryAudience": [
+      "pessoas em São Paulo buscando uma experiência gastronômica autoral",
+      "grupos que compartilham o almoço de fim de semana",
+      "pessoas curiosas ou ainda céticas em relação a peixe"
+    ],
+    "primaryGoal": "Levar o visitante a reservar uma mesa",
+    "secondaryGoals": [
+      "estabelecer a Banda como assinatura memorável da casa",
+      "explicar a Dieta Amazônica sem transformar a landing page em manifesto longo",
+      "dar confiança sobre origem, ritual e preparo sem prometer o que não foi validado"
+    ],
+    "primaryCTA": {
+      "label": "Reservar mesa",
+      "target": "#reservas",
+      "externalBookingUrlSupplied": false
+    },
+    "secondaryCTA": {
+      "label": "Conhecer a Banda",
+      "target": "/banda-de-tambaqui"
+    },
+    "emotionalRegister": [
+      "generoso",
+      "sensorial",
+      "amazônico sem folclorização",
+      "contemporâneo",
+      "convicto sem superlativos"
+    ],
+    "palette": {
+      "deepGreen": "#173F35",
+      "offWhite": "#F4F0E6",
+      "terracotta": "#B65F43",
+      "supportingInk": "#1F241F",
+      "usageRule": "Deep green and off-white own the large fields; terracotta is an accent for action, heat, and editorial punctuation. No strategy may replace this target palette with a reference palette."
+    },
+    "publicationMode": {
+      "variant": "A_pre_INPI",
+      "rule": "Use ‘a Banda’ or descriptive ‘banda de tambaqui’. Do not publish ‘Banda de Tambaqui DaSelva’ as a protected product name until the INPI condition is resolved.",
+      "experimentOnly": true
+    },
+    "assetsAtFreeze": {
+      "providedBrandAssets": [],
+      "providedPhotography": [],
+      "providedMenuFiles": [],
+      "policy": "No visual asset was supplied in Gate A. Before any strategy build, Gate C must freeze one shared target-media pack and hash it. The same pack must be available to all strategies. Reference assets may not stand in for DaSelva assets."
+    }
+  },
+  "contentPlan": {
+    "language": "pt-BR",
+    "homeVisibleWordTarget": {
+      "min": 280,
+      "max": 420,
+      "excludes": [
+        "navigation labels",
+        "legal text",
+        "accessibility-only copy",
+        "dedicated Banda route"
+      ]
+    },
+    "scrollEnvelope": {
+      "desktop1440x1000": {
+        "targetViewportHeights": {
+          "min": 6.5,
+          "max": 9.5
+        }
+      },
+      "mobile390x844": {
+        "targetViewportHeights": {
+          "min": 10,
+          "max": 15
+        }
+      },
+      "rule": "The envelope is a content-capacity guard, not a demand for blank space or artificially stretched motion. A strategy may exceed it only when a documented pinned or scrubbed scene adds meaningful information and remains coherent on mobile."
+    },
+    "bandaProminence": {
+      "mustAppearInHeroSupportCopyOrCTA": true,
+      "dedicatedHomeSceneMustBeginBeforeScrollPercent": 35,
+      "mustReceiveLargestOrJointLargestFoodMediaMoment": true,
+      "dedicatedRouteRequired": true
+    },
+    "homeArc": [
+      {
+        "order": 1,
+        "id": "hero",
+        "purpose": "Position the category, São Paulo presence, and reservation action immediately.",
+        "requiredCopy": {
+          "headline": "A mesa amazônica de São Paulo.",
+          "support": "Culinária pan-amazônica em duas casas — Centro e Vila Nova Conceição. Do tucupi ao jambu, do tambaqui à castanha: a Dieta Amazônica servida para partilhar.",
+          "primaryCTA": "Reservar mesa",
+          "secondaryCTA": "Conhecer a Banda"
+        },
+        "adaptation": "Line breaks and microcopy may adapt to geometry; meaning, locations, category, and CTA intent may not change."
+      },
+      {
+        "order": 2,
+        "id": "banda",
+        "purpose": "Make the banda de tambaqui the unmistakable protagonist and explain its shared-table ritual.",
+        "requiredCopy": {
+          "headline": "Tem mesa que é de pizza. Tem mesa que é de churrasco. Esta é a mesa da banda.",
+          "core": "A metade do tambaqui, assada inteira e servida aberta no centro da mesa. Todo mundo serve todo mundo. O almoço de fim de semana que Manaus pratica há gerações chegou à sua mesa.",
+          "ritual": "Fim de semana, no Centro. Inteira, a banda vem no fim de semana; durante a semana, seus derivados atravessam o cardápio.",
+          "CTA": "Reservar para o fim de semana"
+        },
+        "adaptation": "The home keeps the ritual concise. Detailed fish, cut, season, and search-intent content belongs on /banda-de-tambaqui. Do not say ‘sem espinhas’."
+      },
+      {
+        "order": 3,
+        "id": "dieta-amazonica",
+        "purpose": "Explain the restaurant’s larger point of view without reproducing the full manifesto.",
+        "requiredCopy": {
+          "headline": "O sistema alimentar global é uma máquina de entropia. Nós somos sintropia.",
+          "core": "A DaSelva chama de Dieta Amazônica a cozinha de um bioma inteiro: peixes que exigem a floresta em pé, frutos que só existem onde há mata e técnicas que atravessaram gerações.",
+          "close": "Da comunidade ao prato. Cada passo verificado."
+        },
+        "adaptation": "Keep one compact explanatory paragraph. Do not use ‘laboratório’, ‘alquimia’, unsupported health superlatives, or sustainability shorthand."
+      },
+      {
+        "order": 4,
+        "id": "ingredientes-cardapio",
+        "purpose": "Create appetite and show breadth without reproducing a full menu that was not supplied.",
+        "requiredCopy": {
+          "marquee": [
+            "Pirarucu",
+            "Tambaqui",
+            "Tucupi",
+            "Jambu",
+            "Cumaru",
+            "Açaí",
+            "Cupuaçu",
+            "Castanha-do-Pará",
+            "Pimenta Murupi",
+            "Maniçoba"
+          ],
+          "headline": "Da floresta, com nome e caminho.",
+          "core": "Pratos que traduzem o bioma — tacacá, moqueca, pirarucu de casaca e os derivados da banda — com origem identificada e estação respeitada. O cardápio muda com o rio, não contra ele."
+        },
+        "adaptation": "Do not invent dish descriptions, prices, availability, or a complete menu. Scientific names may appear only if verified from the source package before Gate C."
+      },
+      {
+        "order": 5,
+        "id": "origem",
+        "purpose": "Support trust with traceability language already present in the source.",
+        "requiredCopy": {
+          "headline": "2.800 km. E a gente sabe o nome de quem começou a viagem.",
+          "core": "Cada banda servida aqui é um peixe individual, com origem identificada: comunidade, produtor, jornada e cadeia de frio. Duas origens, dois caminhos, um padrão: a floresta em pé."
+        },
+        "adaptation": "Do not name Tamanicuá without confirmed authorization. Do not introduce QR codes, audit systems, technical equipment, or unverified logistics detail."
+      },
+      {
+        "order": 6,
+        "id": "casas-reservas",
+        "purpose": "Convert interest into a clear choice of house and reservation intent.",
+        "requiredCopy": {
+          "headline": "Sente-se à mesa da floresta.",
+          "houses": [
+            {
+              "name": "Centro",
+              "description": "A casa-mãe, onde o ritual da banda acontece no fim de semana."
+            },
+            {
+              "name": "Vila Nova Conceição",
+              "description": "A casa nova, a dez minutos do Ibirapuera."
+            }
+          ],
+          "CTA": "Reservar mesa"
+        },
+        "adaptation": "Show neighborhoods and reservation intent only. Street addresses, hours, phone numbers, WhatsApp links, booking URLs, availability, and ‘fila há três anos’ stay out until operational validation."
+      },
+      {
+        "order": 7,
+        "id": "assinatura",
+        "purpose": "Close with the brand’s institutional signature and verified public contact handles from the source.",
+        "requiredCopy": {
+          "signature": "Culinária Pan-Amazônica · Dieta Amazônica · São Paulo, BR",
+          "line": "Da comunidade ao prato. Cada passo verificado.",
+          "email": "contato@daselva.com",
+          "social": "@daselva_br",
+          "copyright": "© 2026 DaSelva"
+        }
+      }
+    ],
+    "dedicatedBandaRoute": {
+      "path": "/banda-de-tambaqui",
+      "h1": "Banda de tambaqui em São Paulo",
+      "purpose": "Expand the ritual, fish profile, cut explanation, weekend timing, and reservation action without overloading the home.",
+      "requiredTopics": [
+        "the shared-table ritual",
+        "the descriptive pre-INPI name",
+        "Colossoma macropomum and the fish’s food relationship with the flooded forest",
+        "the cut’s relationship with the Y-bone without claiming ‘sem espinhas’",
+        "Saturday and Sunday timing at Centro",
+        "reservation CTA"
+      ],
+      "visibleWordTarget": {
+        "min": 260,
+        "max": 460
+      },
+      "seo": {
+        "title": "Banda de tambaqui em São Paulo — DaSelva",
+        "description": "A metade do tambaqui, assada inteira, servida para partilhar. O ritual de fim de semana da DaSelva no Centro. Reserve."
+      }
+    },
+    "excludedFromThisFixture": [
+      {
+        "item": "Desafio ‘se não gostar, não paga’",
+        "reason": "The source says the mechanics require a complete rule, but no rules URL or operational text was supplied."
+      },
+      {
+        "item": "Banda de Tambaqui DaSelva as a protected product name",
+        "reason": "Post-INPI variant B is not authorized at freeze time."
+      },
+      {
+        "item": "Tamanicuá by name",
+        "reason": "Current community-name authorization was not confirmed."
+      },
+      {
+        "item": "Street addresses, hours, phone numbers, WhatsApp and booking links",
+        "reason": "The source requires operational validation and the user supplied no live reservation destination."
+      },
+      {
+        "item": "Complete menu, prices, testimonials, awards or commercial proof",
+        "reason": "No authoritative current data was supplied."
+      },
+      {
+        "item": "Health superlatives, collagen claims, ‘sem espinhas’, QR promises, laboratory, equipment, competitors, brasa and sustainability shorthand",
+        "reason": "Explicit source prohibitions or unresolved validation gates."
+      }
+    ]
+  },
+  "routesAndInteractions": {
+    "requiredRoutes": [
+      "/",
+      "/banda-de-tambaqui"
+    ],
+    "homeAnchors": [
+      "#banda",
+      "#cardapio",
+      "#origem",
+      "#reservas"
+    ],
+    "requiredInteractions": [
+      "keyboard-accessible navigation to home sections",
+      "hero reservation CTA that lands on #reservas",
+      "hero Banda CTA that opens /banda-de-tambaqui",
+      "Banda route CTA that returns to the home reservation section",
+      "clear focus states",
+      "meaningful hover states only on devices that support hover",
+      "reduced-motion fallback that preserves content order and CTA access",
+      "working navigation with JavaScript disabled where technically reasonable"
+    ],
+    "forbiddenInteractions": [
+      "fake booking confirmation",
+      "non-functional form submission",
+      "invented WhatsApp or telephone destination",
+      "scroll hijacking that blocks native navigation",
+      "motion that obscures copy or delays CTA access",
+      "pointer-only essential interaction"
+    ]
+  },
+  "sharedTargetMediaPolicy": {
+    "gateCPreflightRequired": true,
+    "maximumGeneratedImages": 6,
+    "requiredShotList": [
+      "hero: overhead shared table centered on banda de tambaqui",
+      "Banda detail: the open half-fish and shared serving gesture",
+      "ingredients: Amazonian ingredients in restrained editorial still life",
+      "origin: river or supply-chain atmosphere without depicting an invented named community",
+      "houses: hospitality/interior atmosphere without inventing a real address-specific room",
+      "mobile-safe crop alternatives derived from the same approved images"
+    ],
+    "rules": [
+      "Freeze and hash the shared pack before the first strategy-specific build call.",
+      "Use identical original media files for S, C, and W; crop and composition may differ and must be disclosed.",
+      "No source-reference asset may be copied into the target media pack.",
+      "No image may imply a named community, award, celebrity, exact venue, or operational fact not supplied by the authority sources.",
+      "All runtime media must be local; no third-party hotlinks."
+    ]
+  },
+  "strategies": [
+    {
+      "id": "S",
+      "slug": "s-single-reference",
+      "name": "single-reference transformation control",
+      "referenceCount": 1,
+      "contract": "One observed reference may supply documented composition and interaction logic; all target semantics, identity, copy, palette, media, routes, and business behavior remain DaSelva-owned."
+    },
+    {
+      "id": "C",
+      "slug": "c-contextual-chassis-donor",
+      "name": "contextual chassis/donor",
+      "referenceCount": {
+        "min": 2,
+        "max": 3
+      },
+      "contract": "One contextual chassis owns page spine, global grid, scroll authority, primary motion and responsive structure. Donors are bounded to named compatible dimensions and may not compete for global ownership."
+    },
+    {
+      "id": "W",
+      "slug": "w-scene-synthesis",
+      "name": "static-first motion-aware scene synthesis",
+      "referenceCount": {
+        "min": 2,
+        "max": 3
+      },
+      "contract": "Create a unified shared grammar, full-page desktop/mobile composition boards and a temporal storyboard before implementation. Re-author patterns into one layout and motion system."
+    }
+  ],
+  "referenceSelectionConstraints": {
+    "selectionOwner": "agent",
+    "businessCategoryWeight": "weak_hint_only",
+    "businessCategoryMayFilterOrExclude": false,
+    "motionFromThumbnailOrTextMayBeInferred": false,
+    "requiredRetrievalCapabilities": [
+      "shared-table or food-media art direction",
+      "editorial rhythm",
+      "content capacity for seven home movements",
+      "clear reservation conversion",
+      "responsive media treatment",
+      "scroll and motion behavior",
+      "strong mobile compensation"
+    ],
+    "requiredFrozenEvidencePerReference": [
+      "catalog ID",
+      "canonical URL",
+      "exact page or scene",
+      "capture timestamp",
+      "desktop and mobile visual evidence",
+      "motion or interaction evidence when claimed",
+      "observed technologies and runtime dependencies",
+      "confidence",
+      "known gaps",
+      "rights and asset-reuse boundary"
+    ],
+    "copycatProtection": [
+      "No source brand, copy, identifying media, logo, product name, address, or commercial proof may enter an output.",
+      "Every preserved subsystem needs a PRESERVE, ADAPT, or REPLACE decision before implementation.",
+      "Direct source code or localized runtime assets must be disclosed and separately permitted.",
+      "If the target content cannot fit without essential loss or invented proof, stop for a divergence decision."
+    ]
+  },
+  "equalConditions": {
+    "codingModel": "gpt-5.6-sol",
+    "reasoningEffort": "high",
+    "locale": "pt-BR",
+    "sharedInput": "This exact manifest plus the later frozen reference bundle and shared target-media pack",
+    "maxBillableModelCallsPerStrategy": 6,
+    "perStrategyCallEnvelope": [
+      "1 composition or construction plan",
+      "1 initial implementation",
+      "up to 4 bounded repair or polish calls"
+    ],
+    "maximumSharedImageCalls": 6,
+    "maximumBillableCallsTotal": 24,
+    "timeLimit": {
+      "sharedMediaPackMinutes": 60,
+      "perStrategyMinutes": 180,
+      "gateCTotalMinutes": 600
+    },
+    "costCeiling": {
+      "unit": "Uncraft credits",
+      "creditValue": "1 credit = USD 0.01 according to the current repository billing contract",
+      "perStrategyCredits": 475,
+      "sharedMediaPackCredits": 120,
+      "totalCredits": 1545,
+      "usdEquivalent": 15.45,
+      "derivation": "Per strategy: compose 75 + reconstruct 200 + up to four edit calls at 50 each. Shared media: up to six Gemini image generations at 20 credits each.",
+      "rule": "This is a hard ceiling, not approval to spend. Gate C requires a separate confirmation and actual cost must be recorded per call."
+    },
+    "allowedRuntime": {
+      "base": [
+        "Vite",
+        "React",
+        "local CSS",
+        "local fonts with documented license or system fallbacks"
+      ],
+      "motion": [
+        "CSS or WAAPI",
+        "GSAP",
+        "ScrollTrigger",
+        "Lenis only when it does not replace native accessibility behavior"
+      ],
+      "conditional": [
+        "video",
+        "WebGL or canvas"
+      ],
+      "conditionalRule": "Video, WebGL or canvas requires exact reference evidence, a performance reason, mobile compensation, reduced-motion handling and a no-video/no-WebGL fallback."
+    },
+    "crossStrategyLeakage": {
+      "allowedShared": [
+        "this manifest",
+        "frozen target-media pack",
+        "content source",
+        "non-visual build and QA utilities"
+      ],
+      "forbiddenShared": [
+        "generated layout",
+        "composition board",
+        "motion storyboard",
+        "CSS design system",
+        "component geometry",
+        "strategy-specific prompt",
+        "repair advice derived from another strategy output"
+      ]
+    }
+  },
+  "outputIsolation": {
+    "root": "/Users/adilsonporto/Desktop/IA/Uncraft-start-from-ref-experiments/daselva-pan-amazonian-v1",
+    "shared": "/Users/adilsonporto/Desktop/IA/Uncraft-start-from-ref-experiments/daselva-pan-amazonian-v1/shared",
+    "strategies": {
+      "S": "/Users/adilsonporto/Desktop/IA/Uncraft-start-from-ref-experiments/daselva-pan-amazonian-v1/s-single-reference",
+      "C": "/Users/adilsonporto/Desktop/IA/Uncraft-start-from-ref-experiments/daselva-pan-amazonian-v1/c-contextual-chassis-donor",
+      "W": "/Users/adilsonporto/Desktop/IA/Uncraft-start-from-ref-experiments/daselva-pan-amazonian-v1/w-scene-synthesis"
+    },
+    "evidence": "/Users/adilsonporto/Desktop/IA/Uncraft-start-from-ref-experiments/daselva-pan-amazonian-v1/evidence",
+    "ports": {
+      "S": 4311,
+      "C": 4312,
+      "W": 4313
+    },
+    "rules": [
+      "Never overwrite another strategy directory.",
+      "Confirm listener ownership and served title before using a port.",
+      "No strategy output may be copied forward as the starting point for another.",
+      "Every output must preserve its dependency lockfile, build log, cost log and provenance ledger."
+    ]
+  },
+  "qualityRubric": {
+    "hardValidity": [
+      "production build exits successfully",
+      "local page returns HTTP 200 and the correct DaSelva title",
+      "both required routes work",
+      "all required CTA destinations work within the frozen limitations",
+      "target copy and claims remain within this manifest",
+      "Banda prominence contract is satisfied",
+      "no broken images or unexpected external runtime requests",
+      "no console errors",
+      "no page-level horizontal overflow at 1440×1000 or 390×844",
+      "keyboard navigation and visible focus work",
+      "reduced-motion and unsupported-runtime fallbacks preserve content and conversion",
+      "reference influence ledger and transformation-distance audit are complete"
+    ],
+    "weightedScore": [
+      {
+        "dimension": "visual craft and art direction",
+        "weight": 25
+      },
+      {
+        "dimension": "brief fit and content authority",
+        "weight": 20
+      },
+      {
+        "dimension": "system coherence",
+        "weight": 20
+      },
+      {
+        "dimension": "interaction and motion quality",
+        "weight": 15
+      },
+      {
+        "dimension": "responsive behavior and accessibility",
+        "weight": 10
+      },
+      {
+        "dimension": "originality and transformation distance",
+        "weight": 10
+      }
+    ],
+    "scoringScale": "Each dimension is scored 1–5 with written evidence, then normalized to its percentage weight.",
+    "qualityFloor": {
+      "minimumTotalOutOf100": 80,
+      "minimumDimensionScoreOutOf5": 3,
+      "minimumCriticalDimensionScoreOutOf5": {
+        "visual craft and art direction": 4,
+        "brief fit and content authority": 4,
+        "system coherence": 4
+      },
+      "rule": "A hard-validity failure is disqualifying regardless of weighted score. Originality cannot rescue a result below the quality floor."
+    },
+    "tieBreak": [
+      "lower copycat risk and greater conscious transformation",
+      "higher system coherence",
+      "lower actual cost",
+      "lower implementation and maintenance complexity"
+    ]
+  },
+  "qaProtocol": {
+    "viewports": [
+      {
+        "width": 1440,
+        "height": 1000,
+        "label": "desktop"
+      },
+      {
+        "width": 390,
+        "height": 844,
+        "label": "mobile"
+      }
+    ],
+    "requiredEvidencePerStrategy": [
+      "production build log",
+      "HTTP status and served title",
+      "full-page desktop screenshot",
+      "full-page mobile screenshot",
+      "matched scroll-stage screenshots",
+      "desktop and mobile full-scroll recording when motion is material",
+      "navigation, hover, pin, scrub, video or WebGL interaction checks as applicable",
+      "reduced-motion and unsupported-runtime evidence",
+      "network, console, broken-image and overflow report",
+      "performance observations under equal conditions",
+      "Reference Influence Ledger",
+      "transformation-distance audit",
+      "model-call, credit and elapsed-time log",
+      "known limitations"
+    ],
+    "comparisonRule": "Do not tune one strategy after seeing another without freezing and labeling a new comparison round for all affected strategies."
+  },
+  "failureAndRollback": {
+    "failClosedWhen": [
+      "the manifest hash or source-document hash does not match",
+      "the shared media pack is absent or not identically available to all strategies",
+      "the exact reference bundle is not frozen before generation",
+      "the coding model or reasoning level cannot be held equal",
+      "a strategy would exceed its call, time or credit ceiling",
+      "required target truth depends on unresolved invention",
+      "a reference requires unapproved asset or source-code reuse",
+      "output directories or ports are owned by unknown work"
+    ],
+    "onStrategyFailure": [
+      "stop only the failing strategy",
+      "preserve its last runnable state, logs, costs and partial evidence",
+      "do not donate its remaining budget to another strategy",
+      "record the failure as an experiment result",
+      "request a new round if retrying would change conditions"
+    ],
+    "rollback": [
+      "All generated work stays outside the product worktree in the frozen output root.",
+      "A failed output may be archived by renaming its strategy directory with a round and failure suffix; do not delete evidence.",
+      "No shared database or production rollback is expected because those writes are forbidden.",
+      "Remove or deploy nothing without separate approval."
+    ]
+  },
+  "gateTransitions": {
+    "gateAExit": "This manifest parses, validates, and has a stable external SHA-256 lock.",
+    "gateBRequires": "Separate explicit approval for read-only retrieval, reference selection and bounded evidence capture.",
+    "gateCRequires": "Approved manifest hash, frozen reference bundles, frozen target-media-pack hash, approved 1545-credit ceiling and the exact confirmation token from manifest.lock.json.",
+    "gateDRequires": "Three preserved runnable outputs or an explicitly recorded failed/inconclusive Gate C result.",
+    "gateERequires": "Evidence-backed comparison complete; no production direction is inferred automatically."
+  }
+}

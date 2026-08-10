@@ -2,6 +2,8 @@ import { notFound, redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { db } from '../../../../lib/db.js';
 import { getAuthUser } from '../../../../lib/auth.js';
+import { queryPersistentReferenceCatalog } from '../../../../lib/reference-bank-store.js';
+import { canCuratePrivateReferences } from '../../../../lib/reference-privacy.js';
 import BoardsList from '../../../../components/BoardsList.jsx';
 
 export const dynamic = 'force-dynamic';
@@ -38,12 +40,19 @@ export default async function WorkspaceLibraryPage({ params }) {
      ORDER BY created_at DESC
      LIMIT 100
   `;
+  const referencePage = section === 'references'
+    ? {
+        ...await queryPersistentReferenceCatalog({ userId: user.id, limit: 48 }),
+        canManagePrivateReferences: canCuratePrivateReferences(user),
+      }
+    : null;
 
   return (
     <BoardsList
       boards={boards}
       savedWorkflows={savedWorkflows}
       assets={assets}
+      referencePage={referencePage}
       userName={user.name}
       userEmail={user.email}
       userPlan={user.plan}

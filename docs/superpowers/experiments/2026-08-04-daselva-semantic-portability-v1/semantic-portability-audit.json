@@ -1,0 +1,145 @@
+{
+  "schemaVersion": "start-from-ref-semantic-portability-audit-v1",
+  "experimentId": "daselva-semantic-portability-v1",
+  "createdAt": "2026-08-04",
+  "status": "complete_read_only_selection_test",
+  "scope": {
+    "frozenReferenceBundle": "../2026-08-03-daselva-clone-first-v2/reference-bundles.v2.json",
+    "frozenTargetAuthority": "../2026-08-03-daselva-three-strategy/manifest.v1.json",
+    "strategyUnderTest": "W",
+    "newDiscovery": false,
+    "newCapture": false,
+    "generation": false,
+    "creditsUsed": 0,
+    "existingOutputsMutated": false
+  },
+  "rules": {
+    "siteIsAtomic": false,
+    "categorySelectsReference": false,
+    "categoryMayBeWeakContextHint": true,
+    "sourceMeaningRequired": true,
+    "targetEquivalentEvidenceRequired": true,
+    "postHocAnalogyAllowed": false,
+    "highCouplingNoEquivalenceDecision": "reject",
+    "highCouplingPartialEquivalenceDecision": "human_calibration_required"
+  },
+  "targetNarrativeEvidence": [
+    {
+      "id": "hero",
+      "meaning": "Position the pan-Amazonian table in Sao Paulo and expose reservation and Banda actions."
+    },
+    {
+      "id": "banda",
+      "meaning": "Make the Banda the protagonist and explain its shared-table ritual."
+    },
+    {
+      "id": "dieta-amazonica",
+      "meaning": "Connect fish, fruit, forest, people, and knowledge without turning the page into a long manifesto."
+    },
+    {
+      "id": "origem",
+      "meaning": "Build trust through the traceable journey from community and producer to Sao Paulo."
+    },
+    {
+      "id": "casas-reservas",
+      "meaning": "Convert interest into a house choice and reservation intent."
+    }
+  ],
+  "influenceAudits": [
+    {
+      "reference": {
+        "name": "Ponder",
+        "url": "https://ponder.ai"
+      },
+      "influence": "dark field, sparse spacing, and restrained contrast",
+      "sourceMeaning": "Provides a focused visual field for footage and editorial product claims.",
+      "semanticCoupling": "low",
+      "targetEquivalent": "DaSelva can use the same restraint to establish atmosphere and focus the central thesis.",
+      "targetEquivalenceStrength": "strong",
+      "visualPortability": "high",
+      "decision": "allow_with_adaptation",
+      "reason": "These formal attributes remain coherent after source media, copy, product identity, and motion are removed."
+    },
+    {
+      "reference": {
+        "name": "Ponder",
+        "url": "https://ponder.ai"
+      },
+      "influence": "scattered footage distributed around the hero",
+      "sourceMeaning": "Represents multiple raw video clips before editorial organization.",
+      "semanticCoupling": "high",
+      "targetEquivalent": "The frozen DaSelva hero has multiple ingredients and places, but it does not define them as disordered material awaiting organization.",
+      "targetEquivalenceStrength": "partial",
+      "visualPortability": "medium",
+      "decision": "reject_as_organizing_idea",
+      "reason": "The static arrangement may survive as decoration, but decoration is not sufficient justification for a high-impact hero system."
+    },
+    {
+      "reference": {
+        "name": "Ponder",
+        "url": "https://ponder.ai"
+      },
+      "influence": "scattered footage converges into a timeline or editable narrative",
+      "sourceMeaning": "Communicates the product promise that raw footage becomes a structured, editable cut.",
+      "semanticCoupling": "high",
+      "targetEquivalent": "No timeline, editing, sorting, or organization event exists in the frozen DaSelva content.",
+      "targetEquivalenceStrength": "none",
+      "visualPortability": "low",
+      "decision": "reject",
+      "reason": "Reusing the choreography would faithfully reproduce an effect that tells the wrong story."
+    },
+    {
+      "reference": {
+        "name": "Bureau Rouge",
+        "url": "https://bureaurouge.com"
+      },
+      "influence": "full-bleed moving-image plane with quiet navigation and restrained overlay type",
+      "sourceMeaning": "Lets photographic and film work remain the protagonist while interface and explanation recede.",
+      "semanticCoupling": "medium",
+      "targetEquivalent": "The frozen DaSelva plan requires the Banda to receive the largest or joint-largest food-media moment while concise text explains the shared-table ritual.",
+      "targetEquivalenceStrength": "strong",
+      "visualPortability": "high",
+      "decision": "allow",
+      "reason": "Source and target share the same causal hierarchy: the primary media carries the experience and the text supports it."
+    },
+    {
+      "reference": {
+        "name": "The Red",
+        "url": "https://333southwabash.com"
+      },
+      "influence": "perspective typographic chamber as a cross-scene transition",
+      "sourceMeaning": "Turns the identity and spatial character of a landmark building into an immersive virtual passage.",
+      "semanticCoupling": "high",
+      "targetEquivalent": "DaSelva has an evidenced journey from river and origin to the Sao Paulo table, but the content does not require a literal spatial chamber or an aggressive identity tunnel.",
+      "targetEquivalenceStrength": "partial",
+      "visualPortability": "medium",
+      "decision": "human_calibration_required",
+      "reason": "The analogy is plausible but not necessary, while the influence can dominate quieter target-owned scenes."
+    }
+  ],
+  "referenceLevelOutcome": [
+    {
+      "reference": "Ponder",
+      "siteQualityChanged": false,
+      "outcome": "Remain eligible in the reference bank. Reject only the context-bound hero narrative and motion for this DaSelva allocation."
+    },
+    {
+      "reference": "Bureau Rouge",
+      "siteQualityChanged": false,
+      "outcome": "Retain the bounded Banda allocation."
+    },
+    {
+      "reference": "The Red",
+      "siteQualityChanged": false,
+      "outcome": "Remain eligible in the bank, but require explicit calibration for this high-coupling transition."
+    }
+  ],
+  "strategyDecision": {
+    "originalWAllocationPasses": false,
+    "unchangedInfluencesAllowed": 1,
+    "adaptedInfluencesAllowed": 1,
+    "rejectedInfluences": 2,
+    "humanCalibrationRequired": 1,
+    "nextAction": "Stop before generation. Run a separately authorized bounded selection round for a semantically portable W contribution or reduce W only when two references still own material justified subsystems."
+  }
+}
