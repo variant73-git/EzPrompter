@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
+    "test:refs:promotion-artifacts": "RUN_REFERENCE_PROMOTION_ARTIFACT_TESTS=1 vitest run lib/reference-bank-promotion.artifacts.integration.test.js",
     "e2e:native-motion": "node e2e/native-motion-editing.spec.js",
     "smoke:motion-controls": "node scripts/smoke-motion-controls.mjs",
     "refs:migrate": "node scripts/reference-bank/migrate.mjs",

@@ -1,78 +1,77 @@
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
-  REVIEWED_ARTIFACTS,
   buildPromotionPlan,
-  loadReviewedPromotion,
+  sha256,
+  stableStringify,
 } from './reference-bank-promotion.js';
 import {
   PROMOTION_PROTECTED_TABLES,
   PROMOTION_WRITE_TABLES,
-  summarizePromotionIdentities,
 } from '../scripts/reference-bank/promotion-db.mjs';
 import { assertDistinctDatabaseTargets } from '../scripts/reference-bank/isolated-env.mjs';
 
-const testDir = path.dirname(fileURLToPath(import.meta.url));
-const worktreeRoot = path.resolve(testDir, '../../..');
-
-function siteFromSeed(reference, index) {
+function candidate(id) {
   return {
-    id: reference.id,
-    canonicalUrl: reference.url,
-    host: reference.host,
-    title: reference.title,
-    description: reference.description || '',
-    thumbnailUrl: reference.thumbnailUrl || null,
-    categories: reference.categories || [],
-    tags: reference.tags || [],
-    editorialConsensus: Number(reference.editorialConsensus || 1),
-    curationWeight: String(reference.curationWeight || 1),
-    curationRank: index + 1,
-    featured: Boolean(reference.featured),
-    isPrivate: Boolean(reference.isPrivate),
-    privacyReason: reference.privacyReason || null,
-    templatePlatform: reference.templatePlatform || null,
-    publishedAt: reference.publishedAt || null,
-    generatedAt: reference.generatedAt || null,
+    id,
+    canonicalUrl: `https://${id}.example/`,
+    host: `${id}.example`,
+    title: id.toUpperCase(),
+    description: `${id} description`,
+    thumbnailUrl: null,
+    categories: ['landing-page'],
+    tags: ['fixture'],
+    editorialConsensus: 1,
+    curationWeight: '1',
+    featured: false,
+    isPrivate: false,
+    privacyReason: null,
+    templatePlatform: null,
+    publishedAt: null,
+    generatedAt: null,
     availabilityStatus: 'unknown',
     lifecycleState: 'listed',
-    analysisStatus: reference.analysisStatus || 'listed',
+    analysisStatus: 'listed',
   };
 }
 
-function uniqueAppearanceCount(seed) {
-  const keys = new Set();
-  for (const reference of seed.references) {
-    for (const source of reference.sources || []) {
-      keys.add([
-        reference.id,
-        source.id,
-        String(source.recordId || source.detailUrl || reference.url),
-      ].join('\u0000'));
-    }
-  }
-  return keys.size;
+function appearance(referenceSiteId, sourceId) {
+  return {
+    referenceSiteId,
+    sourceId,
+    sourceName: sourceId === 'source-a' ? 'Source A' : 'Source B',
+    sourceRecordId: `${sourceId}:${referenceSiteId}`,
+    listingUrl: `https://${sourceId}.example/list`,
+    detailUrl: `https://${sourceId}.example/${referenceSiteId}`,
+    thumbnailUrl: null,
+    sourceTaxonomy: { lane: 'ordinary' },
+  };
 }
 
-async function baselineSnapshot(overrides = {}) {
-  const seed = JSON.parse(await readFile(
-    path.join(worktreeRoot, 'packages/web-shell/lib/reference-bank.seed.json'),
-    'utf8',
-  ));
-  const sites = seed.references.map(siteFromSeed);
+function reviewedCatalog() {
+  const references = [candidate('alpha'), candidate('beta'), candidate('gamma')];
+  const appearances = [appearance('alpha', 'source-a'), appearance('beta', 'source-a'), appearance('gamma', 'source-b')];
+  const aggregators = [
+    { id: 'source-a', name: 'Source A', homepageUrl: 'https://source-a.example/' },
+    { id: 'source-b', name: 'Source B', homepageUrl: 'https://source-b.example/' },
+  ];
+  const body = { version: 1, references, appearances, aggregators };
+  return { ...body, catalogSha256: sha256(stableStringify(body)) };
+}
+
+function snapshotSite(id, curationRank) {
+  return {
+    ...candidate(id),
+    curationRank,
+  };
+}
+
+function baselineSnapshot(overrides = {}) {
   return {
     version: 1,
-    target: 'isolated',
+    target: 'isolated-fixture',
     capturedAt: '2026-08-01T12:00:00.000Z',
-    counts: {
-      sites: sites.length,
-      appearances: uniqueAppearanceCount(seed),
-      aggregators: 3,
-      maxRank: sites.length,
-    },
-    sites,
+    counts: { sites: 2, appearances: 0, aggregators: 0, maxRank: 9 },
+    sites: [snapshotSite('alpha', 4), snapshotSite('legacy', 9)],
     appearances: [],
     aggregators: [],
     protected: [
@@ -83,52 +82,18 @@ async function baselineSnapshot(overrides = {}) {
   };
 }
 
-describe('reviewed reference delta artifacts', () => {
-  it('accepts only the eight exact reviewed artifacts and reconstructs the bounded union', async () => {
-    const reviewed = await loadReviewedPromotion(worktreeRoot);
-
-    expect(Object.keys(reviewed.artifacts)).toHaveLength(8);
-    expect(Object.values(reviewed.artifacts).map((artifact) => artifact.sha256)).toEqual(
-      REVIEWED_ARTIFACTS.map((artifact) => artifact.sha256),
-    );
-    expect(summarizePromotionIdentities(reviewed.catalog)).toEqual({
-      sites: 305,
-      appearances: 315,
-      sourceCounts: {
-        siteofsites: 71,
-        minimalgallery: 92,
-        landbook: 152,
-      },
-    });
-  });
-});
-
-describe('shared-safe reference delta planning', () => {
-  it('plans exactly 283 append-only sites and 315 appearances from the landed baseline', async () => {
-    const reviewed = await loadReviewedPromotion(worktreeRoot);
-    const snapshot = await baselineSnapshot();
-    const plan = buildPromotionPlan(reviewed.catalog, snapshot);
+describe('shared-safe reference delta planning with portable fixtures', () => {
+  it('plans append-only sites, provenance, aggregators, and reversible operations', () => {
+    const plan = buildPromotionPlan(reviewedCatalog(), baselineSnapshot());
 
     expect(plan.summary).toEqual({
-      targetBefore: {
-        sites: 1636,
-        appearances: 1704,
-        aggregators: 3,
-        maxRank: 1636,
-      },
-      sites: { candidates: 305, insert: 283, preserve: 22 },
-      appearances: { reviewed: 315, insert: 315, update: 0, noop: 0 },
-      aggregators: { reviewed: 3, insert: 3, preserve: 0 },
-      targetAfter: {
-        sites: 1919,
-        appearances: 2019,
-        aggregators: 6,
-        maxRank: 1919,
-      },
+      targetBefore: { sites: 2, appearances: 0, aggregators: 0, maxRank: 9 },
+      sites: { candidates: 3, insert: 2, preserve: 1 },
+      appearances: { reviewed: 3, insert: 3, update: 0, noop: 0 },
+      aggregators: { reviewed: 2, insert: 2, preserve: 0 },
+      targetAfter: { sites: 4, appearances: 3, aggregators: 2, maxRank: 11 },
     });
-    expect(plan.operations.insertSites.map((site) => site.curationRank)).toEqual(
-      Array.from({ length: 283 }, (_, index) => 1637 + index),
-    );
+    expect(plan.operations.insertSites.map((site) => site.curationRank)).toEqual([10, 11]);
     expect(plan.rollback).toMatchObject({
       order: [
         'deleteInsertedAppearances',
@@ -137,90 +102,84 @@ describe('shared-safe reference delta planning', () => {
         'deleteInsertedAggregators',
       ],
       restoreUpdatedAppearances: [],
+      deleteInsertedSites: ['beta', 'gamma'],
+      deleteInsertedAggregators: ['source-a', 'source-b'],
     });
-    expect(plan.rollback.deleteInsertedAppearances).toHaveLength(315);
-    expect(plan.rollback.deleteInsertedSites).toHaveLength(283);
-    expect(plan.rollback.deleteInsertedAggregators).toHaveLength(3);
+    expect(plan.rollback.deleteInsertedAppearances).toHaveLength(3);
   });
 
-  it('preserves every existing canonical field and rank instead of accepting seed drift', async () => {
-    const reviewed = await loadReviewedPromotion(worktreeRoot);
-    const snapshot = await baselineSnapshot();
-    const existing = snapshot.sites.find((site) => reviewed.catalog.references.some((candidate) => candidate.id === site.id));
+  it('preserves every existing canonical field and rank instead of accepting catalog drift', () => {
+    const snapshot = baselineSnapshot();
+    const existing = snapshot.sites.find((site) => site.id === 'alpha');
     existing.title = 'Shared title wins';
     existing.description = 'Shared description wins';
     existing.curationWeight = '4.875';
     existing.availabilityStatus = 'available';
     existing.lifecycleState = 'enriched';
     existing.analysisStatus = 'complete';
-    const plan = buildPromotionPlan(reviewed.catalog, snapshot);
-    const preserved = plan.operations.preserveSites.find((site) => site.id === existing.id);
 
-    expect(preserved).toEqual(existing);
+    const plan = buildPromotionPlan(reviewedCatalog(), snapshot);
+    expect(plan.operations.preserveSites).toContainEqual(existing);
     expect(plan.operations.insertSites.some((site) => site.id === existing.id)).toBe(false);
   });
 
-  it('reports a second identical run as all no-ops', async () => {
-    const reviewed = await loadReviewedPromotion(worktreeRoot);
-    const firstPlan = buildPromotionPlan(reviewed.catalog, await baselineSnapshot());
+  it('reports an identical second run as no-ops', () => {
+    const catalog = reviewedCatalog();
+    const firstPlan = buildPromotionPlan(catalog, baselineSnapshot());
     const secondSnapshot = {
       version: 1,
-      target: 'isolated',
+      target: 'isolated-fixture',
       capturedAt: '2026-08-01T12:05:00.000Z',
       counts: firstPlan.summary.targetAfter,
       sites: [...firstPlan.snapshot.sites, ...firstPlan.operations.insertSites],
-      appearances: reviewed.catalog.appearances,
+      appearances: catalog.appearances,
       aggregators: firstPlan.operations.insertAggregators,
       protected: firstPlan.snapshot.protected,
     };
-    const secondPlan = buildPromotionPlan(reviewed.catalog, secondSnapshot);
+    const secondPlan = buildPromotionPlan(catalog, secondSnapshot);
 
-    expect(secondPlan.summary.sites).toEqual({ candidates: 305, insert: 0, preserve: 305 });
-    expect(secondPlan.summary.appearances).toEqual({ reviewed: 315, insert: 0, update: 0, noop: 315 });
-    expect(secondPlan.summary.aggregators).toEqual({ reviewed: 3, insert: 0, preserve: 3 });
+    expect(secondPlan.summary.sites).toEqual({ candidates: 3, insert: 0, preserve: 3 });
+    expect(secondPlan.summary.appearances).toEqual({ reviewed: 3, insert: 0, update: 0, noop: 3 });
+    expect(secondPlan.summary.aggregators).toEqual({ reviewed: 2, insert: 0, preserve: 2 });
     expect(secondPlan.summary.targetAfter).toEqual(firstPlan.summary.targetAfter);
   });
 
-  it('plans source-specific appearance repair without changing canonical site metadata', async () => {
-    const reviewed = await loadReviewedPromotion(worktreeRoot);
-    const firstPlan = buildPromotionPlan(reviewed.catalog, await baselineSnapshot());
-    const appearances = structuredClone(reviewed.catalog.appearances);
+  it('plans source-specific appearance repair without changing canonical site metadata', () => {
+    const catalog = reviewedCatalog();
+    const firstPlan = buildPromotionPlan(catalog, baselineSnapshot());
+    const appearances = structuredClone(catalog.appearances);
     appearances[0].sourceTaxonomy = { drifted: true };
-    const snapshot = {
+    const repairPlan = buildPromotionPlan(catalog, {
       version: 1,
-      target: 'isolated',
+      target: 'isolated-fixture',
       capturedAt: '2026-08-01T12:05:00.000Z',
       counts: firstPlan.summary.targetAfter,
       sites: [...firstPlan.snapshot.sites, ...firstPlan.operations.insertSites],
       appearances,
       aggregators: firstPlan.operations.insertAggregators,
       protected: firstPlan.snapshot.protected,
-    };
-    const repairPlan = buildPromotionPlan(reviewed.catalog, snapshot);
+    });
 
-    expect(repairPlan.summary.appearances).toEqual({ reviewed: 315, insert: 0, update: 1, noop: 314 });
+    expect(repairPlan.summary.appearances).toEqual({ reviewed: 3, insert: 0, update: 1, noop: 2 });
     expect(repairPlan.summary.sites.insert).toBe(0);
   });
 
-  it('fails closed when an existing canonical URL belongs to another id', async () => {
-    const reviewed = await loadReviewedPromotion(worktreeRoot);
-    const snapshot = await baselineSnapshot();
-    const candidate = reviewed.catalog.references.find(
-      (reference) => !snapshot.sites.some((site) => site.id === reference.id),
-    );
-    snapshot.sites[0].canonicalUrl = candidate.canonicalUrl;
+  it('fails closed when an existing canonical URL belongs to another id', () => {
+    const catalog = reviewedCatalog();
+    const snapshot = baselineSnapshot();
+    snapshot.sites.find((site) => site.id === 'legacy').canonicalUrl = catalog.references.find((site) => site.id === 'beta').canonicalUrl;
 
-    expect(() => buildPromotionPlan(reviewed.catalog, snapshot)).toThrow(/already belongs to target id/);
+    expect(() => buildPromotionPlan(catalog, snapshot)).toThrow(/already belongs to target id/);
   });
 
-  it('keeps the plan approval hash stable when only capture time changes', async () => {
-    const reviewed = await loadReviewedPromotion(worktreeRoot);
-    const snapshot = await baselineSnapshot();
+  it('keeps the approval hash stable when only capture time changes', () => {
+    const catalog = reviewedCatalog();
+    const snapshot = baselineSnapshot();
     const later = structuredClone(snapshot);
     later.capturedAt = '2026-08-01T12:10:00.000Z';
 
-    expect(buildPromotionPlan(reviewed.catalog, snapshot).planSha256)
-      .toBe(buildPromotionPlan(reviewed.catalog, later).planSha256);
+    expect(buildPromotionPlan(catalog, snapshot).planSha256)
+      .toBe(buildPromotionPlan(catalog, later).planSha256);
   });
 });
 
