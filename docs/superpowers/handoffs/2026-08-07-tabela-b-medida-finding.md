@@ -264,6 +264,48 @@ com auditoria do Sol. Três coisas ficam explicitamente ABERTAS:
    efeito do ciclo de vida. Enquanto esse witness não existir, B5 é PARCIAL e a
    feature não pode ser declarada fechada.
 
+## 4c. Auditoria da implementação — ENCERRADA por decisão de escopo (2026-08-09)
+
+**13 rodadas, 17 achados do Sol, todos procedentes e corrigidos com medição.**
+Quatro eram bloqueadores estruturais (mutação não-transacional, emissão sob
+reentrância, custo quadrático no arrasto, TOCTOU nas três portas de acesso a
+`vars`); os demais, refinamentos e justificativas minhas que excediam a medição.
+
+**A partir da rodada 8 todos os achados são a MESMA classe**: um site clonado
+**adversarial** que instala um `Proxy` na configuração das próprias animações e
+mente para o editor. A rodada 10 estabeleceu que contra um `Proxy` que controla
+também a LEITURA **não há garantia possível** — cada correção revela a variante
+seguinte, e a classe não fecha.
+
+✅ **Decisão do Adilson (2026-08-09): site adversarial fica FORA do modelo de
+ameaça desta feature**, coerente com o residual r46 do item 171 (que ele já havia
+deferido pelo mesmo raciocínio). Fundamento medido, não presumido:
+
+1. **A janela não alcança nada nosso.** Busca dirigida no corpo dela e nas três
+   funções que chama: nenhuma referência a manifesto, transação, histórico,
+   snapshot ou `postMessage`. Ela lê objetos do GSAP e escreve nas quatro chaves
+   de reação do próprio site. O `seekTimeline` em volta pausa, move o relógio e
+   emite estado **fora** da janela.
+2. **Não há capacidade nova.** O código do site já roda no mesmo realm o tempo
+   todo — o `onUpdate` dele fica vivo por desenho, deliberadamente. Um trap dá
+   **momento** (rodar dentro da nossa chamada), não poder novo; e o momento já
+   está fechado (seek reentrante recusado nas três portas).
+3. **O dano medido é o site hostil sabotando o clone de si mesmo** dentro do
+   editor. Não foi demonstrado nenhum caminho até o trabalho salvo do usuário —
+   e a régua do r46 é justamente perda-de-trabalho.
+
+**Gatilhos:** esta classe passa a ser vigiada pelos **mesmos sete gatilhos do
+r46** (handoff `2026-08-01-phase2-timeline-shipped-r46-residual-handoff.md` §3).
+Se qualquer um acender — segredos do usuário no realm do clone, clones
+compartilhados/publicados entre usuários, importação de URL não confiável, bridge
+com rede/credenciais, mutações automáticas em lote, monkeypatch real em campo, ou
+a Uncraft prometer desfazer exato — reabre as DUAS decisões de uma vez.
+
+**O que fica valendo do trabalho dessas rodadas:** as correções protegem também
+contra `Proxy` **acidental** (polyfill, biblioteca ou framework do próprio site),
+que é caso comum e não-malicioso. Escopo limitado ≠ valor zero — só seria falsa
+segurança se fosse **vendido** como fechamento da classe, e não é.
+
 ## 5. Adjacência aberta (não medida, não afirmada)
 
 **Colateral do clamp (fato, fora deste fork):** o bridge sempre seeka um **tween**
