@@ -741,3 +741,49 @@ versiona e serve o bundle. O lado **produtor** não: nada no repositório emite
 `kind: 'native'`, então `producer = reconstructPage` segue sendo o único caminho real.
 
 A tarefa da l.332 ficou **pela metade**, e é ela que liga tudo o que já existe.
+
+---
+
+## 9. ⚠️ CORREÇÃO — os 13% não são fidelidade de clone, e nem são o alcance do editor
+
+Pergunta do Adilson: *"os 13% de alcance do bridge significam a porcentagem de sites que
+conseguimos entregar o clone fiel?"* **Não** — e a pergunta expôs duas imprecisões minhas.
+
+### Erro 1: eu misturei dois eixos independentes
+
+| eixo | o que é | o que está medido |
+|---|---|---|
+| **fidelidade do clone** | o clone se parece com o site | **UM site** (farmminerals, SSIM 0,96, altura exata). **Sem número de população.** |
+| **alcance do editor** | o editor enxerga o movimento | ver abaixo |
+
+São independentes: o processo do clone bom **não depende de `window.gsap`** — ele baixa
+assets e preserva scripts. Um site sem GSAP nenhum pode ter clone perfeito.
+
+⚠️ **A fidelidade de clone na população-alvo NUNCA foi medida.** Uma amostra do banco com a
+régua ancorada fecharia isso, e não foi feita.
+
+### Erro 2: "a máquina é em formato GSAP" é FALSO
+
+O bridge tem um caminho de **animação do navegador** (WAAPI/CSS) além do de GSAP:
+
+- registra com `type: 'browser'` (l.473);
+- inventaria **por elemento**, com `element.getAnimations({ subtree: true })` (l.2959-2960,
+  6381-6382) — não precisa de nenhum global;
+- tem escritor próprio, `applyBrowserRetarget` (l.5918);
+- `timelineSnapshot` e o seek têm ramo `browser` dedicado (l.3003, 7396+).
+
+Então os **13%** medem só **onde o inventário de GSAP funciona** (`window.gsap` alcançável).
+**Não** medem o alcance do editor, que inclui o caminho do navegador — presente em 39% dos
+sites da amostra por WAAPI, mais os de `@keyframes` CSS.
+
+**O alcance real do editor está NÃO MEDIDO, e é maior que 13%.** Medir exige cuidado:
+`getAnimations()` devolve o que está **ativo naquele instante**, então uma varredura ingênua
+subestima.
+
+### O que isto muda na ordem do próximo passo
+
+A medição que eu havia proposto (rodar o processo do clone bom num site de GSAP empacotado)
+continua válida, mas **deixa de ser a que decide o escopo** — porque o teto de 13% não era o
+teto do editor. Antes dela vem uma medição mais barata e mais decisiva: **rodar o inventário
+REAL do bridge** (GSAP + navegador) sobre a amostra do banco, e ver quanto do movimento ele
+enxerga de fato. É a mesma amostra e o mesmo harness; muda só o que se conta.
