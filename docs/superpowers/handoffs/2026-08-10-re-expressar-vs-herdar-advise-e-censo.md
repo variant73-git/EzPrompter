@@ -296,3 +296,62 @@ si, um achado pequeno: em alguns sites a régua nem consegue voltar para onde pe
 
 Uma posição por site (metade da página), um viewport, uma repetição. Assentamento de 1,2s
 pode ser curto para animação longa — o que **subestima** o dano, não o contrário.
+
+---
+
+## 3d. PASSO ZERO e TEMPO DE CLONAGEM (2026-08-11)
+
+### Passo zero: não há uso real para validar os 13%
+
+Consulta **somente leitura** à produção (`ep-lingering-shadow-achloaoq`, nenhum write):
+**57 nodes, 10 URLs distintas**, das quais a maioria é fixture de teste
+(`target.example.com`, `qa.test`, `reference.example.com`, `golden-match.vercel.app`).
+Sites externos reais: **três** (farmminerals, curriculum.com.br, gistr.so).
+
+**Conclusão:** o corpus de uso real não existe — o produto é pré-lançamento. Os 13% de
+alcance **não podem ser confrontados com a realidade**, e essa ressalva fica de pé até
+haver uso. Do lado positivo: sem uso que o contradiga, o banco curado não é um proxy do
+alvo — ele **é** a declaração curada de qual é o alvo.
+
+### Tempo: medido, não estimado
+
+`_probe-tempo-clonagem.mjs`, mesma máquina, mesmos sites, partes que existem hoje.
+
+| site | captura de hoje | + traces | + verificação | total |
+|---|---|---|---|---|
+| farmminerals.com/promo | 35,9s | 12,2s | 14,9s | 63,0s |
+| gistr.so | 24,1s | 19,1s | 22,1s | 65,3s |
+| ueno.co | 9,5s | 7,1s | 12,8s | 29,4s |
+| **média** | **23,2s** | 12,8s | 16,6s | **52,6s** |
+
+**O acréscimo é ~2,3× — cerca de 30s por clone.** Não é 10×, não é segundos.
+
+⚠️ **É PISO, não custo cheio.** Sem as 3 repetições e sem o segundo viewport que o
+protocolo do Sol exige (seriam ~6× os traces, algo como 2 minutos por clone), e **sem a
+etapa de compilar, que não existe e portanto não está na conta.** Ela entra como incógnita
+declarada, nunca como zero.
+
+### ⭐ O que isso faz pela quarta solução do Adilson
+
+A proposta dele: saber de antemão quais sites rejeitariam o caminho rápido e mandar só
+esses para o caminho caro, avisando que vai demorar mais.
+
+O precedente do próprio projeto (item 160) diz para **não prever**: preditor por sinais
+nunca é perfeito, e o exemplo daquela decisão foi literalmente "GSAP empacotado é
+invisível" — medido aqui em **28%**. Mas a ideia sobrevive na forma **verificar**, e os
+números fecham:
+
+- **verificação custa 16,6s** (e é teto — a régua atual gasta 3,6s só em esperas de
+  assentamento e pode ser bem mais enxuta);
+- **84% dos sites passam** na verificação de reversibilidade (§3c).
+
+Logo a escada fica:
+
+| | quem paga | custo |
+|---|---|---|
+| sinal direto e barato (nada alcançável?) | todos | ~3s |
+| captura + **verificação** | todos | 23s + 17s ≈ **40s** (1,7× hoje) |
+| traces completos + compilar | **~15%** | o custo cheio, só no resíduo |
+
+E o aviso ao usuário fica **honesto**, porque vem depois de uma checagem real: "verificamos
+e este site precisou de uma passada mais funda". Não é adivinhação.
