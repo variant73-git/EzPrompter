@@ -230,3 +230,69 @@ pelo compilado antes do gate de fidelidade.
 
 **A formulação dele, que eu adoto:** native como oráculo e fallback; Motion Program como
 destino; verificação como gate; **nunca dois motores com autoridade simultânea**.
+
+---
+
+## 3c. AS REAÇÕES MACHUCAM? — reversibilidade em 54 sites (2026-08-11)
+
+A §3b mediu que 52% dos sites-alvo **reagem** quando a régua rola. Isso não dizia se
+importa. Instrumento: `_probe-reversibilidade-rolagem.mjs`, mesma amostra sorteada.
+
+**A pergunta na forma exata:** quando a régua volta para a mesma posição, o designer vê a
+mesma coisa?
+
+**Desenho, com braço de controle:** mede-se a mesma posição **três vezes sem sair** — a
+maior diferença entre elas é o **ruído próprio do site** (vídeo tocando, loop ocioso).
+Depois sai-se e volta-se à mesma posição. Só conta como efeito da régua o que **excede o
+ruído**. Sem isso, todo site com um marquee daria "dano enorme". Três amostras e não duas
+porque um par único pode pegar o site num momento quieto, subestimar o piso e transformar
+respiração normal em dano — falso positivo que condenaria o caminho herdado sem razão.
+
+A impressão digital é do DOM (classe, opacidade, caixa, transform, visibilidade), não de
+pixels — o que ignora de graça o conteúdo interno de vídeo e canvas.
+
+### ⭐ Resultado
+
+| | sites | % |
+|---|---|---|
+| **volta idêntico** (excedente zero) | **44 de 52** | **84%** |
+| algum excedente acima do ruído | 8 de 52 | 15% |
+| dano claro (≥2× o ruído) | 5 de 52 | ~10% |
+
+Excedente: **mediana 0**, média 3,5, máximo 58. Como fração dos elementos visíveis:
+**mediana 0%**, máximo 27,8%.
+
+**Quando machuca, machuca feio:**
+
+| site | elementos diferentes ao voltar |
+|---|---|
+| neverbeforeseen.co | **27%** |
+| makedesign.tech | **22%** |
+| dextersulit.com | 12% |
+| harkcap.com | 10% |
+
+⭐ **Reação alta ≠ dano.** `byld.dev` fez **1464 trocas de classe** numa passada de
+rolagem e volta **perfeitamente idêntico** — as reações dele ligam ao entrar e desligam ao
+sair. A contagem de reações do §3b **não prevê** o dano; só a reversibilidade prevê.
+
+### O que isso corrige na minha própria ênfase
+
+Eu tratei a porta aberta do ScrollTrigger como o problema central da régua. A medição diz
+que a porta aberta é, na maioria, **inofensiva**: o site reage e desfaz. O problema real
+tem forma de **cauda longa** — some em 84% dos casos e é grave em ~10%.
+
+Consequência prática: **o silêncio na rolagem deixa de ser bloqueador e vira limitação de
+raio conhecido.** Com um botão de recarregar, o caminho herdado sobrevive a isso
+honestamente. **O que não sobrevive é o alcance de 13%** (§3b) — esse continua sendo o
+argumento forte, e é outro.
+
+### ⚠️ Limites
+
+Das 69 linhas brutas, **54 eram JSON válido** e 15 ficaram ilegíveis e foram descartadas —
+então a contagem de falhas **não está estabelecida**, e sites que quebraram podem ter
+sumido em silêncio. Dois sites (`rajeshshankar.com`, `felixlesouef.com`) **não pousaram na
+mesma posição** ao voltar (âncora, snap ou rolagem suave) e foram excluídos — o que é, por
+si, um achado pequeno: em alguns sites a régua nem consegue voltar para onde pediu.
+
+Uma posição por site (metade da página), um viewport, uma repetição. Assentamento de 1,2s
+pode ser curto para animação longa — o que **subestima** o dano, não o contrário.
