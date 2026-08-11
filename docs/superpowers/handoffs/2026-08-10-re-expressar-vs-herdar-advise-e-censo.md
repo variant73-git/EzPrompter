@@ -713,3 +713,31 @@ settled"* e devolve um HTML da aparência **assentada**. Medido na saída de hoj
 **O produto detecta que o site é animado e, por causa disso, o encaminha para o caminho que
 descarta o movimento.** Aí o motion editor — que só sabe editar movimento vivo — não tem o
 que editar. Esse é o nó, e ele é de roteamento, não do editor.
+
+### Addendum 2 — o iter9 nunca foi instrução desta frente, e o plano já apontava o buraco
+
+O Adilson: *"o editor nunca deveria ter trabalhado sobre o iter9. Nunca dei essa instrução e
+nunca sequer tocamos no assunto do iter9 no spec."* Verificado, e procede.
+
+**Cronologia:** o roteamento para iter9 entrou em **2026-05-24** (`1f2bce49`), **dois meses
+antes** da frente de motion editor (2026-07-18/19). É herança, não decisão desta frente. O
+primeiro spec (`2026-07-18-motion-editor-redesign-and-handoff.md`) menciona iter9 **zero**
+vezes.
+
+**No plano de 2026-07-26 o iter9 aparece só para ser deixado em paz:**
+
+- l.62 — *"Deferred reconstruction currently produces Iter9 HTML. Animation detection alone
+  is therefore not proof that a node has a native editable bundle."* → **o plano já nomeava
+  exatamente o buraco medido hoje**;
+- l.332 — *"Extend deferred reconstruction with an explicit native result kind. **Keep the
+  current Iter9 result path unchanged.**"*;
+- l.344 (portão de saída) — *"A real clone can produce a validated immutable descriptor
+  through a non-UI API"*;
+- l.1441 (fora de escopo) — *"Converting all native clones to Iter9 HTML."*
+
+**Onde parou, medido no código:** o lado **receptor** foi construído —
+`normalizeReconstructionOutput` aceita `kind: 'native'` e `lib/native-clone/` registra,
+versiona e serve o bundle. O lado **produtor** não: nada no repositório emite
+`kind: 'native'`, então `producer = reconstructPage` segue sendo o único caminho real.
+
+A tarefa da l.332 ficou **pela metade**, e é ela que liga tudo o que já existe.
