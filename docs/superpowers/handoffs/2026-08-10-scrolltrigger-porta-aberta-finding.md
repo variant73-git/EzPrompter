@@ -219,3 +219,23 @@ Antes de desenhar qualquer coisa, três medições valem mais que qualquer arqui
 E a pergunta de produto que o Adilson decide, não eu: **"o editor é silencioso" vale para
 a rolagem, ou a régua é assumidamente uma visita à página?** Hoje o produto promete a
 primeira e entrega a segunda.
+
+---
+
+## 5. DECIDIDO (2026-08-10) — silencioso também na rolagem
+
+**Decisão do Adilson: o silêncio vale TAMBÉM na rolagem.** A régua é instrumento de
+observação, não uma visita à página.
+
+Com o **motor herdado**, essa regra é cara e talvez não alcançável: as duas saídas óbvias
+morreram na medição acima (C3 e C4), e as reações **sem callback** (`toggleClass`, `pin`,
+`snap`, `once`) nem sequer seriam cobertas por supressão de callback.
+
+Com **runtime próprio** (ver `2026-08-10-re-expressar-vs-herdar-advise-e-censo.md`) a regra
+sai **por construção** — não há código alheio para calar. Isso torna a decisão de produto e
+a decisão de arquitetura a mesma decisão.
+
+⚠️ Três consequências que **ainda não são decisões**: o clone nativo de fallback só honra a
+regra se for **somente visualização**; preservar canvas/WebGL **re-executando** o código
+reabre a porta, e preservar como **superfície gravada** não; e o nosso runtime passa a
+precisar de dois modos, edição e visitante.
