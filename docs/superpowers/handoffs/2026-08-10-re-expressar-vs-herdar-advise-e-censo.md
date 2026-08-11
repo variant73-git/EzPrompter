@@ -355,3 +355,72 @@ Logo a escada fica:
 
 E o aviso ao usuário fica **honesto**, porque vem depois de uma checagem real: "verificamos
 e este site precisou de uma passada mais funda". Não é adivinhação.
+
+---
+
+## 4. SPIKE de re-expressão — o ingênuo FALHOU, e o gargalo é outro (2026-08-11)
+
+`_spike-reexpressao.mjs`, um site por grupo. Quatro etapas: **observar** o site vivo em 21
+posições de rolagem, **compilar** trilhas só do que muda, **reproduzir** sobre o DOM
+capturado com um runtime nosso de ~40 linhas, e **medir** em **10 posições retidas** — no
+meio das amostradas, nunca coincidentes (medir onde se amostrou seria ajustar ao gabarito).
+
+### ⚠️ O erro de método que eu cometi e o instrumento pegou
+
+A primeira versão tinha **dois** braços e devolveu `1.902` para ueno.co. Eu ia atribuir isso
+à re-expressão. Era da **captura**: o clone de ueno.co sai com **124580px contra 2821px
+reais**, 44×. Foi exatamente o que o Sol exigiu separar com os três braços, e eu tinha
+construído dois. Refeito com O (original), H (clone de hoje) e R (clone + nosso runtime).
+
+### Resultado
+
+| site | altura O→H | erro da captura O→H | nosso runtime H→R | total O→R | aproximou? |
+|---|---|---|---|---|---|
+| farmminerals.com/promo | **1×** | 0,549 | 0,61 | **0,701** | **não — piorou** |
+| byld.dev | 1,04× | 1,43 | 0,282 | 1,448 | não |
+| ueno.co | **44×** | 1,902 | 0,028 | 1,902 | não |
+
+**Em nenhum dos três o nosso runtime aproximou o clone do original.** No único site onde a
+captura é dimensionalmente fiel (farmminerals, altura 1×), a re-expressão **piorou**
+medidamente: 0,549 → 0,701.
+
+### O que MORREU, e o que não morreu
+
+Morreu a versão ingênua: **amostrar por posição de rolagem e reproduzir**. A causa
+provável é de desenho, não de princípio — o compilador trata **toda** animação como se
+fosse dirigida pela rolagem. Uma animação de tempo (loop, Lottie, vídeo) amostrada em 21
+posições de rolagem vira trilha sem sentido, e escrever isso de volta com `!important` em
+426 elementos corrompe o que estava certo. Some-se a interpolação de `transform` por
+vizinho mais próximo, que já estava declarada como limitação.
+
+**Não morreu** a compilação por observação em geral. Morreu esta implementação, e ela
+estabelece um requisito mínimo: **separar movimento dirigido por rolagem de movimento
+dirigido por tempo ANTES de amostrar.**
+
+### ⭐ O achado maior: o gargalo pode não ser o movimento
+
+**O→H foi medido pela primeira vez: 0,549 a 1,902.** Ou seja, o clone estático de hoje já
+difere do site vivo em 55% a 190% dos elementos visíveis, nas posições de rolagem. E em
+todos os três sites **O→H domina O→R** — o erro da captura é maior que qualquer coisa que
+o movimento acrescente.
+
+Descoberta colateral que reformula a discussão: **`captureSnapshot` já remove TODOS os
+scripts** (`lib/snapshot.js:236-238`). O clone estático de hoje **já não tem motor nenhum
+do site** — o motor herdado vive só no caminho do native bundle, que é o que o motion
+editor usa. Logo "re-expressar" não é construir um pipeline novo: é **colocar movimento
+nosso num artefato sem scripts que já existe**.
+
+### ⚠️ Limites do número
+
+A régua é **estrita**: conta como diferente qualquer elemento cuja classe, opacidade,
+caixa (ao pixel), transform ou visibilidade mude. `0,549` **não** quer dizer "o clone
+parece 55% errado para um humano" — quer dizer "55% dos elementos diferem em pelo menos um
+desses campos com precisão de pixel". O número é válido para **comparar os braços entre
+si**, que é para o que ele existe; não é medida perceptual. Um viewport, uma repetição,
+três sites.
+
+### Próximo passo que estes números indicam
+
+Antes de escolher arquitetura de movimento, **medir e atacar a fidelidade da captura** —
+porque ela domina o erro total nos três sites. O Sol pediu o braço O→H justamente para não
+atribuir defeito velho ao compilador; medido, o defeito velho **é** o termo maior.
