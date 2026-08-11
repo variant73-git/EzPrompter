@@ -21,6 +21,44 @@ if (!url) {
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+
+// ⚠️ BURACO QUE O ADILSON EXPÔS: contar callbacks de GSAP/ScrollTrigger só mede
+// a porta no mundo GSAP. Nos sites de CSS/WAAPI o mecanismo de reação é OUTRO —
+// tipicamente IntersectionObserver ligando classes. Sem medir isso, "zero
+// ScrollTriggers" seria lido como "porta fechada" quando pode ser porta aberta
+// por outro mecanismo. O contador de MUDANÇA DE CLASSE é agnóstico de mecanismo:
+// é a assinatura clássica do "revelar ao entrar na tela", qualquer que seja a
+// biblioteca. Mudança de ESTILO não serve — o desenho da animação ligada à
+// rolagem também mexe em estilo, e é justamente o que se quer manter vivo.
+await page.addInitScript(() => {
+  window.__reacoes = { ioCriados: 0, ioCallbacks: 0, classeMutacoes: 0, classeElementos: new Set(), contando: false };
+  const IO = window.IntersectionObserver;
+  if (IO) {
+    window.IntersectionObserver = class extends IO {
+      constructor(cb, opts) {
+        window.__reacoes.ioCriados += 1;
+        super((entradas, obs) => {
+          if (window.__reacoes.contando) window.__reacoes.ioCallbacks += 1;
+          return cb(entradas, obs);
+        }, opts);
+      }
+    };
+  }
+  const ligaMutacoes = () => {
+    try {
+      new MutationObserver((muts) => {
+        if (!window.__reacoes.contando) return;
+        for (const m of muts) {
+          window.__reacoes.classeMutacoes += 1;
+          window.__reacoes.classeElementos.add(m.target);
+        }
+      }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['class'] });
+    } catch (_) {}
+  };
+  if (document.documentElement) ligaMutacoes();
+  else document.addEventListener('DOMContentLoaded', ligaMutacoes);
+});
+
 await page.goto(url, { waitUntil: 'load', timeout: 60000 });
 await page.waitForTimeout(2500);
 
@@ -29,12 +67,21 @@ await page.waitForTimeout(2500);
 // Censar sem rolar dá um PISO, não um total — e o piso pareceria "o site tem
 // pouco movimento". Percorre-se a página inteira antes de contar.
 const altura = await page.evaluate(() => document.body.scrollHeight);
+// A contagem de reacao vale APENAS durante a rolagem: o que acontece na carga
+// da pagina nao e resposta ao arrasto da regua e contaria como ruido.
+await page.evaluate(() => { window.__reacoes.contando = true; });
 for (let y = 0; y < altura; y += 700) {
   await page.evaluate((v) => window.scrollTo(0, v), y);
   await page.waitForTimeout(180);
 }
 await page.evaluate(() => window.scrollTo(0, 0));
 await page.waitForTimeout(1200);
+const reacoes = await page.evaluate(() => ({
+  ioCriados: window.__reacoes.ioCriados,
+  ioCallbacksNaRolagem: window.__reacoes.ioCallbacks,
+  classeMutacoesNaRolagem: window.__reacoes.classeMutacoes,
+  classeElementosDistintos: window.__reacoes.classeElementos.size,
+}));
 
 const censo = await page.evaluate(() => {
   const g = window.gsap;
@@ -192,6 +239,7 @@ a.forEach((x) => x.props.forEach((p) => props.set(p, (props.get(p) || 0) + 1)));
 
 console.log(JSON.stringify({ resumo: {
   url,
+  reacoes,
   pistaGsapEmpacotado: censo.pistaDeGsapEmpacotado,
   gsap: censo.plugins.versaoGsap,
   pluginsRegistrados: censo.plugins.registrados,

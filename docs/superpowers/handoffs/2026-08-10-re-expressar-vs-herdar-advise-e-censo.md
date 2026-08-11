@@ -116,6 +116,76 @@ animação só nasce na rolagem.
 animados. É prova de existência, não amostra. O Sol pede 20 capturas recentes **não
 selecionadas** justamente pra isso, e ele está certo.
 
+→ **Isso foi resolvido na §3b.**
+
+---
+
+## 3b. PREVALÊNCIA — 60 sorteados do banco de referências (2026-08-11)
+
+O Adilson lembrou que o banco de referências curado já existe: **1636 sites**
+(`packages/web-shell/lib/reference-bank.seed.json` — codrops 863, pafolios 816,
+siteinspire 41). É a **população-alvo de verdade**, melhor que os "20 aleatórios" do Sol
+no abstrato. Sorteio com **semente fixa** (`20260811`), 60 URLs, sem escolha a dedo.
+Dados crus em `_censo-banco-60.jsonl`, amostra em `_censo-banco-60.urls.txt`.
+
+**Tentados 59** (o 60º não foi lido — o arquivo da amostra não tinha quebra de linha
+final); **54 mediram**, 5 não carregaram.
+
+### ⭐ Alcance — quanto do que construímos alcança o alvo
+
+| | sites | % |
+|---|---|---|
+| GSAP **alcançável** por `window.gsap` | 7 | **13%** |
+| GSAP presente mas **empacotado** (só `_gsap` nos elementos) | 15 | 28% |
+| nenhum vestígio de GSAP | 32 | 59% |
+
+⚠️ **Os 28% empacotados são invisíveis para o nosso editor.** Verifiquei: **todos** os
+caminhos de descoberta do bridge passam por `window.gsap`/`globalTimeline`
+(`runtime-bridge-source.js` linhas 1125, 2163, 2688, 4992) — não existe rota por `_gsap`.
+Então a máquina que construímos alcança **13% da população-alvo**, não 41%.
+
+### Profundidade — nos 7 que alcançamos, os sites são pequenos
+
+- tweens: **mediana 7** (máx. 204)
+- propriedades distintas: **mediana 4** (máx. 16)
+- ScrollTriggers: mediana 7 (máx. 47)
+
+E as formas exóticas, em **54 sites**:
+
+| forma | sites | onde ela consumiu tempo |
+|---|---|---|
+| `vars.keyframes` | **0** | furo #1, caminho-seguro (126 rodadas), fase-2 timeline (42 rodadas) |
+| wrapper `css:{}` | **0** | furo #2 (12 rodadas) |
+| função em `vars` | 2 | hazard de proveniência dinâmica |
+| `pin` | 2 | — |
+| `toggleClass` / `snap` / `once` | **0** | — |
+
+### ⭐ A porta da rolagem, agnóstica de mecanismo
+
+| | sites | mediana | máx. |
+|---|---|---|---|
+| disparos de IntersectionObserver na rolagem | **28 de 54 (52%)** | 1,5 | 99 |
+| trocas de classe na rolagem | **28 de 54 (52%)** | 1 | **1464** |
+| nenhuma reação detectada | 17 de 54 (31%) | — | — |
+
+Os extremos não são sites GSAP: `byld.dev` fez **1464 trocas de classe** e 39 disparos de
+observer numa passada de rolagem, **sem GSAP algum**. Ou seja, **a porta principal da
+rolagem, na população-alvo, não é o ScrollTrigger** — é IntersectionObserver ligando
+classes, que o nosso editor não vê.
+
+### Superfície opaca — comum, não exceção
+
+vídeo em 22 sites (41%), canvas em 15 (28%), Lenis em 16 (30%), WAAPI em 21 (39%),
+Lottie em 3.
+
+### ⚠️ Limites desta amostra
+
+Um viewport (1440×900), desktop, **uma** passada de rolagem em passos de 700px, ~25s por
+site, sem interação e sem resize. "Nenhuma reação detectada" pode ser sub-detecção. Os 5
+que não carregaram podem ser justamente os mais pesados. E o banco é de vitrines
+(codrops/pafolios/siteinspire) — é a população certa, mas puxa para portfólio e agência,
+o que combina com a mediana de 7 tweens.
+
 ---
 
 ## 4. O menor experimento que decide (desenho do Sol)
