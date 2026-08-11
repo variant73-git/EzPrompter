@@ -555,3 +555,82 @@ Se ~metade da altura e três blocos de texto perdidos é aceitável **é decisã
 não achado técnico. O CLAUDE.md registra fidelidade esperada de 85–93% "com DESIGN.md rico";
 o que medi hoje parece abaixo disso, mas **não estabeleci** se o DESIGN.md rico está sendo
 usado nesta rota. Essa é a próxima medição desta linha.
+
+---
+
+## 7. ⭐ O CLONE BOM EXISTE, E O PRODUTO NUNCA FEZ AQUELE PROCESSO (2026-08-11)
+
+O Adilson insistiu: o clone **já funcionou perfeitamente**, começou com "um prompt que eu
+enviei + visita ao site + gravação de vídeo". Estava certo, e o registro existe no repo:
+a pasta **`Clone/`**.
+
+### O que está guardado lá
+
+`Clone/VISUAL_COMPARISON_REPORT.json`, de **2026-07-17**:
+
+| | |
+|---|---|
+| altura da fonte | 20942px |
+| altura do clone | **20942px — exata** |
+| SSIM por posição | 0,956 / **1,0** / 0,842 / 0,999 / **1,0** |
+| SSIM médio | **0,96** |
+| assets baixados | **369** (33MB), 100% offline |
+
+Mais `OFFLINE_QA_REPORT.json` (bloqueia toda requisição externa e percorre a página) e
+`INDEPENDENCE_REPORT.md`.
+
+### Comparação direta, medida hoje com a mesma régua
+
+| | Clone/ (17/jul) | produto 22/jul | produto hoje |
+|---|---|---|---|
+| altura | **20942** (= original) | 8960 | 9284 |
+| "Effortlessly integrative" | **presente** | ausente | ausente |
+| "Zero manufacturing emissions" | **presente** | ausente | ausente |
+| "reaches your crops" | presente | presente | presente |
+| bytes | 135207 + 33MB de assets | 72392 | 73301 |
+
+(“Smaller than a plant cell” está ausente nos três — pode ser texto dinâmico ou falha do meu
+casamento exato; não estabelecido.)
+
+### ⭐ Por que a diferença: são processos diferentes, não uma regressão
+
+`Clone/CLONE_PROMPT.md` tem **144 linhas** e exige, ANTES de escrever qualquer código:
+
+1. **Gravar um vídeo NOVO** da navegação — 1440×1200, DPR 1, começando antes do
+   carregamento para pegar o preloader, **um único scroll contínuo** do topo ao fim, sem
+   reverter, mais um arquivo de metadados (FPS, duração, altura total, distância de scroll);
+2. **Inventário documentado**: estrutura do hero e camadas, sequência do preloader,
+   ordem/altura/composição de todas as seções, distâncias de scroll, estados inicial/
+   intermediário/final de cada animação, valores de duração/delay/easing/scrub/pin/stagger,
+   transições, z-index, regras de sticky/pinned/reveal/parallax/scale/fade/clip/mask/wipe,
+   lógica de hover/clique/menu/slider/vídeo/formulário;
+3. **Baixar os arquivos** para independência total do domínio, CDNs e fontes remotas;
+4. **Verificar**: QA offline + comparação visual por SSIM.
+
+O caminho do produto (`reconstructPage`) é **uma chamada de visão** sobre telas de paradas
+de rolagem, rasterizando canvas/vídeo, **sem** vídeo de referência, **sem** etapa de
+inventário, **sem** baixar assets e **sem** verificação.
+
+**Conclusão: nada quebrou.** O produto **nunca implementou** o processo que produziu o clone
+bom. Aquele clone foi um agente seguindo uma especificação de 144 linhas — não um pipeline.
+A comparação 22/jul × hoje (§6) mostrou estabilidade porque comparou o pipeline com ele
+mesmo; o padrão de qualidade está em outro lugar.
+
+### Sobre o "DESIGN.md rico"
+
+Serve de **verdade de referência** para o modelo não inventar: tema, valores exatos de cor,
+papéis tipográficos, vocabulário de movimento, grade de layout e regras de componente. É a
+camada anti-slop — o CLAUDE.md registra fidelidade de ~65-75% sem ela e ~85-93% com ela.
+
+⚠️ Mas o `Clone/DESIGN.md` guardado descreve um sistema **cobalto/clorofila** ("FLUX Visual
+System"), e o farmminerals é oliva e bege. Ou seja, **esse DESIGN.md não é o do farmminerals**
+— é resíduo de outro projeto na mesma pasta, e o clone bom **não dependeu dele**. O que
+produziu a fidelidade foi o vídeo + inventário + assets + verificação, não o DESIGN.md.
+
+### O que isto implica
+
+A meta "tão fiel quanto as primeiras versões" é **alcançável e já foi alcançada** — com
+SSIM 0,96 e altura exata. O caminho para lá não é ajustar o prompt de visão: é o produto
+executar as quatro etapas acima. As duas primeiras (vídeo de referência e inventário) são
+exatamente o que o Sol chamou de **"compilar por OBSERVAÇÃO"** na §2 — a mesma ideia,
+chegando por outro lado.
