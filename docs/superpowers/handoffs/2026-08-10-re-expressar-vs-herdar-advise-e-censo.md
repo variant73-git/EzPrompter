@@ -424,3 +424,71 @@ três sites.
 Antes de escolher arquitetura de movimento, **medir e atacar a fidelidade da captura** —
 porque ela domina o erro total nos três sites. O Sol pediu o braço O→H justamente para não
 atribuir defeito velho ao compilador; medido, o defeito velho **é** o termo maior.
+
+---
+
+## 5. FIDELIDADE ANCORADA — o que o clone estático perde (2026-08-11)
+
+O Adilson observou que **visualmente o clone do FarmMinerals já parece bom**, contra o meu
+número de 55%. Ele estava certo, e a observação derrubou minha conclusão de §4.
+
+### ⚠️ Quatro réguas seguidas mediram ALINHAMENTO, não qualidade
+
+1. impressão digital de elementos (§4) — 55%;
+2. pixels da viewport inteira — 50,9%;
+3. altura de página — 44× no ueno.co;
+4. recorte ancorado, primeira versão — comparou fundo com fundo.
+
+Todas comparavam "posição de rolagem N no original" com "posição N no clone". **Posição de
+rolagem não é coordenada comparável** entre um site dirigido por JS e um clone sem JS: o
+original está sempre em algum estado de animação e o clone está congelado. **Retiro a
+conclusão de §4 de que "o gargalo é a captura"** — ela vinha de um número que não media
+aparência.
+
+### A régua que funciona: âncora por ELEMENTO + dois controles
+
+`_probe-fidelidade-ancorada.mjs`: acha o mesmo elemento nos dois lados **pelo texto**, leva
+cada arm até ele e compara **um recorte da caixa dele** — o deslocamento vertical some por
+construção. Dois controles: (a) o mesmo recorte do original contra ele mesmo (o site pode
+estar em movimento, e isso não é defeito do clone); (b) **contraste mínimo no recorte** —
+um recorte liso é fundo, e comparar fundo com fundo não mede nada. O controle (b) foi
+acrescentado depois de ele ter deixado passar uma âncora invisível.
+
+### Resultado no FarmMinerals
+
+| âncora | excedente sobre o ruído |
+|---|---|
+| Effortlessly integrative | **3,6%** |
+| Zero manufacturing emissions | **4,7%** |
+| Smaller than a plant cell | **5,9%** |
+| "reaches your crops. It evaporates…" | **84,5%** |
+| "washes away, or gets locked in" | **99,7%** |
+| "the soil — leaving you with lower" | **99,8%** |
+| "yields, more spraying, and higher" | **100%** |
+
+**Onde o conteúdo é estático, o clone é fiel** (3,6–5,9% — antialiasing e compressão).
+**Onde o conteúdo é revelado na rolagem, o texto simplesmente NÃO EXISTE no clone.** As
+telas mostram o parágrafo legível no original e um retângulo verde vazio no clone.
+
+### Mecanismo, confirmado e não inferido
+
+No clone, o texto tem `opacity: 1` mas **`visibility: hidden`** herdado, em elementos de
+classe `gsap_split_line` / `gsap_split_line-mask` / `texts-animation-description`.
+
+`lib/snapshot.js` **já tem** mitigação para isso — `ANIM_FORCE_SHOW_CSS` força
+`opacity/visibility` em seletores conhecidos de Webflow IX3, AOS, Framer e convenções GSAP.
+Mas ela é **por LISTA**: cobre `.gsap-fade` e `.gsap-reveal`, e não `gsap_split_line`
+(sublinhado, outra convenção). Passa batido.
+
+Isto é a lição já registrada no item 174, aplicada a outro lugar: **lista fecha instâncias,
+verificação fecha classes.** O remédio geral não é uma lista maior — é conferir, depois da
+captura, se o texto visível no original está visível no clone, e resolver o resíduo. O
+probe acima **é** esse verificador.
+
+### ⚠️ Distinção que muda quem é afetado
+
+Isto vale para o **caminho estático** (`captureSnapshot`), que remove todos os scripts. O
+motion editor **não** usa esse caminho — usa o **native bundle**, que preserva o JS do site
+e portanto revela o texto normalmente. A impressão de "o clone parece bom" provavelmente é
+do native bundle. Qual dos dois o usuário vê em cada tela **não foi verificado aqui** e é
+pergunta em aberto.
