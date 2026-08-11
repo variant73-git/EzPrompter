@@ -132,8 +132,17 @@ out.descartadas = descartadas;
 await pageO.close();
 
 // ---- H: o clone de hoje -----------------------------------------------------
-const cap = await captureSnapshot(url, { viewport: { width: LARGURA, height: ALTURA } });
-const html = cap?.html || '';
+// CLONE_HTML permite medir um artefato JA produzido (por exemplo o do caminho
+// REAL de clone, reconstructPage) em vez de refazer a captura estatica.
+let html;
+if (process.env.CLONE_HTML) {
+  html = (await import('node:fs')).readFileSync(process.env.CLONE_HTML, 'utf8');
+  out.fonteDoClone = process.env.CLONE_HTML;
+} else {
+  const cap = await captureSnapshot(url, { viewport: { width: LARGURA, height: ALTURA } });
+  html = cap?.html || '';
+  out.fonteDoClone = 'captureSnapshot (caminho estatico)';
+}
 const servidor = createServer((_, res) => { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(html); });
 await new Promise((r) => servidor.listen(0, r));
 const porta = servidor.address().port;

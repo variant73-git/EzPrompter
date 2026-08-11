@@ -492,3 +492,66 @@ motion editor **não** usa esse caminho — usa o **native bundle**, que preserv
 e portanto revela o texto normalmente. A impressão de "o clone parece bom" provavelmente é
 do native bundle. Qual dos dois o usuário vê em cada tela **não foi verificado aqui** e é
 pergunta em aberto.
+
+---
+
+## 6. QUAL É O CAMINHO REAL DO CLONE — e não houve regressão (2026-08-11)
+
+O Adilson corrigiu duas premissas minhas: (a) ele **não tem acesso visual ao projeto há
+semanas**, então "o clone parecia bom" é memória, não observação atual — é hipótese de
+**regressão**, o mesmo padrão do item 163; (b) o processo de clone que ele conhece é
+"captura de vídeo + visita ao site + prompt", que **não é** o `captureSnapshot` que eu vinha
+medindo.
+
+### Eu media o caminho errado
+
+Traçado no código: `Edit` → `editorKindForNode` → `needsDeferredReconstruction` →
+`api.reconstructNode` → **`reconstructPage`** (`lib/reconstruct.js`): paradas de rolagem,
+rasterização de canvas/vídeo/SVG em PNG, **prompt de visão**, e pós-processo inlinando os
+assets. É exatamente o processo que ele descreveu.
+
+`captureSnapshot` é a **captura de referência gratuita**, não o clone. Toda a §5 (e o número
+de tempo de 23,2s da §3d) media esse caminho secundário.
+
+### ✅ O motion editor NÃO desviou o clone
+
+`editorKindForNode` só devolve `NATIVE` se `NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT` for
+verdadeira. Essa variável **não está no `.env.local`** — só no `.env.example`, como `false`.
+`resolveNodeEditorKind` devolve `LEGACY` sempre que a flag é falsa, então a ramificação
+NATIVE **nunca dispara** e o Edit segue para a reconstrução normalmente. (Não verificado no
+ambiente de produção da Vercel — fica em aberto.)
+
+### Tempo real do clone: ~3 minutos, não 23 segundos
+
+Rodado de verdade no farmminerals: **177s**, 73301 bytes. Etapas: navegar → **capturar 19s**
+→ rasterizar → **pensar 132s** (a chamada de visão) → finalizar. ⚠️ Isto **corrige a tabela
+de tempo da §3d**, que media a captura de referência e não o clone.
+
+### O que o clone perde — e desde quando
+
+Três âncoras de texto do original (**"Effortlessly integrative"**, **"Zero manufacturing
+emissions"**, **"Smaller than a plant cell"**) **não existem** no clone reconstruído. Altura
+9284px contra 17792px do original — cerca de metade. Visualmente: cabeçalho repetido várias
+vezes ao longo da página e regiões inteiras em branco.
+
+⭐ **Teste direto de regressão, pelo banco:** existem snapshots `reconstruct` guardados de
+**2026-07-22**, três semanas antes. Renderizado e comparado:
+
+| | 22/jul | hoje |
+|---|---|---|
+| bytes | 72392 | 73301 |
+| altura | 8960px | 9284px |
+| "Effortlessly integrative" | **ausente** | ausente |
+| "Zero manufacturing emissions" | **ausente** | ausente |
+| "Smaller than a plant cell" | **ausente** | ausente |
+
+**Não houve regressão.** A perda de conteúdo é característica do caminho de reconstrução por
+visão — ele **reconstrói**, não fotocopia — e estava igual antes do trabalho de motion
+editor. O que mudou foi só o meu entendimento de qual caminho medir.
+
+### O que fica em aberto
+
+Se ~metade da altura e três blocos de texto perdidos é aceitável **é decisão de produto**,
+não achado técnico. O CLAUDE.md registra fidelidade esperada de 85–93% "com DESIGN.md rico";
+o que medi hoje parece abaixo disso, mas **não estabeleci** se o DESIGN.md rico está sendo
+usado nesta rota. Essa é a próxima medição desta linha.
