@@ -691,3 +691,25 @@ O Adilson estava certo de que começou aqui. O vault tem
 `Reconstrução de site animado (VISION_SYSTEM).md` (URL → visão) — os prompts **do produto**.
 A especificação de 144 linhas que produziu o clone bom é outra coisa, mais forte, e **nunca
 entrou no produto**.
+
+### ⚠️ Addendum — o iter9 é DISPARADO por site animado e ENTREGA um site sem movimento
+
+Pergunta do Adilson: "o iter9 só funciona pra sites estáticos?" — é o inverso, e a distinção
+é o nó da frente inteira.
+
+O prompt no vault (`Reconstrução de site animado (VISION_SYSTEM).md`) diz por que ele
+existe: *"quando a captura detecta um site construído em Webflow/Framer com animações
+pesadas, a fotocópia do DOM não funciona — o site precisa ser reconstruído"*. Ou seja, o
+iter9 é exatamente a rota **para site animado**.
+
+Só que ele recebe *"scroll-stop screenshots … captured AFTER scroll-triggered animations
+settled"* e devolve um HTML da aparência **assentada**. Medido na saída de hoje:
+
+| | GSAP / `@keyframes` / `animation:` |
+|---|---|
+| saída do iter9 | **0** |
+| clone bom / fixture | **16** |
+
+**O produto detecta que o site é animado e, por causa disso, o encaminha para o caminho que
+descarta o movimento.** Aí o motion editor — que só sabe editar movimento vivo — não tem o
+que editar. Esse é o nó, e ele é de roteamento, não do editor.
