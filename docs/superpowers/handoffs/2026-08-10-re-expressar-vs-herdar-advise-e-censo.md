@@ -634,3 +634,60 @@ SSIM 0,96 e altura exata. O caminho para lá não é ajustar o prompt de visão:
 executar as quatro etapas acima. As duas primeiras (vídeo de referência e inventário) são
 exatamente o que o Sol chamou de **"compilar por OBSERVAÇÃO"** na §2 — a mesma ideia,
 chegando por outro lado.
+
+---
+
+## 8. ⭐ NÃO É CATÁSTROFE — o editor foi construído sobre o clone BOM (2026-08-11)
+
+O Adilson concluiu: "tudo o que fizemos no editor foi sobre o clone errado, isso parece uma
+catástrofe". **Medido, é o contrário.** Também corrigiu, com razão, que FLUX é a frente de
+**transferência de estilo**, não de clone — o `Clone/DESIGN.md` era resíduo dela.
+
+### O artefato do editor É o clone bom
+
+| | fixture do motion editor | `Clone/dist` (o clone bom) |
+|---|---|---|
+| caminho | `~/Desktop/IA/Unspirit-Clone-1to1/site` | `Uncraft/Clone/dist` |
+| arquivos | **369** | **369** |
+| tamanho | **33MB** | **33MB** |
+| "Effortlessly integrative" | presente | presente |
+| "Zero manufacturing emissions" | presente | presente |
+
+A pasta da fixture ainda traz `recordings/` (o vídeo de referência),
+`INDEPENDENCE-REPORT.md` e `validation/`. É o **mesmo processo**: vídeo → inventário →
+assets baixados → verificação.
+
+**O motion editor nunca foi desenvolvido contra o clone degradado.** Foi desenvolvido contra
+o artefato de maior fidelidade que este projeto já produziu.
+
+### O que de fato falta: o PRODUTOR
+
+Medido no código:
+
+1. `reconstructSiteNode` tem `producer = reconstructPage` como padrão, e **nenhum chamador
+   passa outro** (`app/api/nodes/[id]/reconstruct/route.js`, `app/api/nodes/[id]/run/route.js`);
+2. `reconstructPage` sempre devolve `{ html }` → `kind: 'iter9'`. **O produto nunca produz um
+   native bundle**, embora o código para registrá-lo exista (`lib/native-clone/`);
+3. `NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT` é falsa, então o canvas nem rotearia para o
+   editor nativo se houvesse bundle.
+
+Ou seja: existe o **consumidor** (o editor), existe o **contrato** (`native-clone/`), existe
+a **receita** (`Clone/CLONE_PROMPT.md`, 144 linhas) e existe a **prova** (SSIM 0,96, altura
+exata). Falta a peça que liga a URL ao artefato dentro do produto.
+
+Isso não invalida o trabalho do editor — ele está esperando um produtor que ainda não foi
+escrito.
+
+### O que continua sendo problema de verdade
+
+Independente de tudo acima, e medido na §3b: **o bridge descobre GSAP só por `window.gsap`**,
+o que alcança **13%** da população-alvo. Essa limitação vale para qualquer clone que o
+alimente, inclusive o bom. É o problema a se preocupar, não o clone.
+
+### Origem, confirmada
+
+O Adilson estava certo de que começou aqui. O vault tem
+`Brain/Uncraft/Prompts/Clone de site.md` (screenshot → HTML) e
+`Reconstrução de site animado (VISION_SYSTEM).md` (URL → visão) — os prompts **do produto**.
+A especificação de 144 linhas que produziu o clone bom é outra coisa, mais forte, e **nunca
+entrou no produto**.
