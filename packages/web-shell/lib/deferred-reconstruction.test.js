@@ -56,11 +56,42 @@ describe('chooseReconstructionProducer — qual clone o produto faz', () => {
     }
   });
 
+  it('o limite de "edit" e deliberado: /run continua no iter9 porque compoe por TEXTO', async () => {
+    const { chooseReconstructionProducer } = await import('./deferred-reconstruction.js');
+    const { reconstructPage } = await import('./reconstruct.js');
+    // Razões REAIS da rota /run (reconstruction-policy.js), não inventadas — foi
+    // o que meu primeiro teste errou e o Sol pegou. Elas alimentam runCompose
+    // com `reconstructed.html`; um bundle nativo é diretório e nao tem html.
+    for (const reason of ['transform-target', 'runtime-source']) {
+      expect(chooseReconstructionProducer(reason)).toBe(reconstructPage);
+    }
+  });
+
   it('tem interruptor de desligamento sem reverter código', async () => {
     const { chooseReconstructionProducer } = await import('./deferred-reconstruction.js');
     const { reconstructPage } = await import('./reconstruct.js');
     expect(chooseReconstructionProducer('edit', { UNCRAFT_NATIVE_CLONE_PRODUCER: 'off' })).toBe(reconstructPage);
     expect(chooseReconstructionProducer('edit', { UNCRAFT_NATIVE_CLONE_PRODUCER: 'OFF' })).toBe(reconstructPage);
+  });
+});
+
+describe('reconstructSiteNode — quem e chamado no Edit', () => {
+  it('chama o produtor NATIVO, nao o iter9, quando ninguem injeta produtor', async () => {
+    const { captureNativeBundle } = await import('./native-clone/capture-bundle.js');
+    const { reconstructPage } = await import('./reconstruct.js');
+    captureNativeBundle.mockClear();
+    reconstructPage.mockClear();
+
+    const sql = makeSql({ currentId: 'snap-current', currentSource: 'capture' });
+    await reconstructSiteNode({
+      sql, userId: 42,
+      node: { id: 'node-edit', board_id: 'b1', origin_url: 'https://x.com' },
+      reason: 'edit', idemKey: 'k-edit',
+    });
+
+    // A rota /reconstruct chama exatamente assim: sem `producer`.
+    expect(captureNativeBundle).toHaveBeenCalledWith('https://x.com');
+    expect(reconstructPage).not.toHaveBeenCalled();
   });
 });
 

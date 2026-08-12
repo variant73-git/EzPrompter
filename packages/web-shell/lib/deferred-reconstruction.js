@@ -153,6 +153,18 @@ export async function materializeReconstructionOutput(output, { bundleStore = nu
  *
  * `UNCRAFT_NATIVE_CLONE_PRODUCER=off` desliga e devolve o comportamento antigo,
  * sem precisar reverter código.
+ *
+ * ⚠️ POR QUE SÓ 'edit', E NÃO 'transform-target'/'runtime-source'
+ *   O Sol apontou que a rota `/run` usa essas duas razões justamente para
+ *   dependências declaradas como runtime editável, e que elas caem no iter9
+ *   perdendo o movimento. A OBSERVAÇÃO procede; a prescrição de ampliar, não:
+ *   `/run` alimenta `runCompose` com `reconstructed.html`, e um bundle nativo é
+ *   um DIRETÓRIO, sem `html` — ampliar deixaria a composição sem entrada.
+ *
+ *   Logo o limite é deliberado, e o buraco fica NOMEADO: uma aresta que pede
+ *   "preserve o movimento" ainda recebe uma fonte iter9 sem movimento, porque a
+ *   composição é textual. Fechar isso exige compor sobre bundle, que é outra
+ *   feature — não fiação. Fixado pelo teste "o limite de 'edit' e deliberado".
  */
 export function chooseReconstructionProducer(reason, env = process.env) {
   if (String(env.UNCRAFT_NATIVE_CLONE_PRODUCER || '').toLowerCase() === 'off') return reconstructPage;
