@@ -859,3 +859,50 @@ relacionado; amostra **aleatória**; e um numerador que meça **edição conclu�
 publicação de clipe.
 
 É trabalho de dias, não de uma tarde. **Não iniciado** — decisão do Adilson.
+
+---
+
+## 11. ⭐ O EDITOR FUNCIONA — verificado visualmente sobre o clone bom (2026-08-12)
+
+O Adilson: *"não tenho visibilidade real (visual) do estado que está e isso é agonizante…
+preciso entender se ainda existe chance desse editor funcionar."* Parei de medir e liguei.
+
+**Comando:** `UNCRAFT_NATIVE_CLONE_ROOT=~/Desktop/IA/Unspirit-Clone-1to1/site npm run dev:motion`
+→ `http://localhost:3032/motion-editor`.
+
+**Resultado, capturado em imagem:**
+
+- o editor abre sobre o clone bom e mostra **"Runtime connected"**, com **zero erros de
+  console**;
+- detecta 15 cores do documento; o clone renderiza correto (tipografia, cores, hero, imagem);
+- selecionando o `h2` *"How much could you grow — if nothing was wasted?"*, a aba **Motion**
+  lê a animação **real do site**: engine **GSAP**, adaptador **Known**, driver **Time**,
+  **delay 500ms**, **duração 1060ms**, iterações 1, curva **power2.out** com a curva
+  desenhada, e **`autoAlpha` com 2 keyframes**;
+- a **timeline** embaixo lista as trilhas do site (`Fertilizer, Rei…`, `100 kg of fer…`,
+  `How much could yo…`, `We found a bette…`, `Smaller than …`) com marcas de keyframe e
+  cabeçote;
+- e mostra um aviso honesto: *"Text is split by the animation runtime. A production save
+  must rebuild its split instance."*
+
+**Isto encerra a dúvida sobre viabilidade.** O editor lê e apresenta movimento real de um
+site real, sobre o clone de maior fidelidade do projeto. Não é protótipo nem fixture
+sintética — é o clone com 369 assets e GSAP 3.15 de verdade.
+
+### O que separa isso do produto
+
+Duas coisas, ambas nomeadas e pequenas perto do que já existe:
+
+1. **o produtor** — nada emite `kind: 'native'`, então o Edit do canvas cai no iter9, que
+   descarta o movimento (§6, §7). O lado receptor, o contrato e o armazenamento já existem, e
+   `registerNativeBundle` aceita **`sourceRoot`**: apontar para um diretório já é suficiente;
+2. **a flag** — `NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT` é falsa, então o canvas não roteia
+   para o editor nativo mesmo havendo bundle.
+
+### Nota de método para as próximas sessões
+
+As quatro réguas erradas desta sessão (§4, §5, §9, §10) custaram horas de leitura do Adilson
+e **não mediram o produto** — mediram alinhamento entre coordenadas incomparáveis. O que
+respondeu a pergunta dele em vinte minutos foi **abrir o programa e tirar uma foto**.
+Regra: quando a pergunta é "isto funciona?", a primeira tentativa é executar e mostrar, não
+instrumentar.
