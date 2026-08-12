@@ -787,3 +787,75 @@ continua válida, mas **deixa de ser a que decide o escopo** — porque o teto d
 teto do editor. Antes dela vem uma medição mais barata e mais decisiva: **rodar o inventário
 REAL do bridge** (GSAP + navegador) sobre a amostra do banco, e ver quanto do movimento ele
 enxerga de fato. É a mesma amostra e o mesmo harness; muda só o que se conta.
+
+---
+
+## 10. ALCANCE DO EDITOR — o que sobrevive, e por que o número NÃO vale (2026-08-12)
+
+Pedido do Adilson: *"pro usuário não importa se é GSAP ou WAAPI, ele vê animação e quer
+editar — preciso saber quanto o editor alcança."*
+
+Instrumento: `_probe-alcance-editor.mjs`. Denominador = elementos cuja aparência própria
+muda em 7 posições de rolagem × 2 instantes. Numerador = clicar no elemento (como o usuário
+faria) e ver se `selection-changed` traz `element.motion`. Controle = clicar em elementos
+parados.
+
+### Medido em 8 sites
+
+| site | se mexem | alcance na amostra | motores |
+|---|---|---|---|
+| gsap.com | 318/1507 | 50% | GSAP |
+| byld.dev | 41/373 | 30% | **CSS + WAAPI** |
+| microdot.vision | 91/850 | 23% | **CSS + WAAPI** |
+| clone bom (farmminerals) | 967/2570 | 17% | GSAP |
+| linear.app | 56/3978 | 3% | CSS |
+| alfacharlie.co | 37/888 | 3% ⚠️ controle 6/15 | CSS |
+| stripe.com | 44/2641 | **0%** | — |
+| ueno.co | 9/326 | 0% | — |
+
+### ⭐ O que SOBREVIVE à auditoria (não depende do denominador)
+
+**O editor alcança CSS e WAAPI, não só GSAP.** byld.dev devolveu 8 clipes WAAPI + 1 CSS;
+microdot, 6 CSS; linear, 1 CSS. Isso é observação direta do que o bridge publicou, e
+**refuta definitivamente** a afirmação que eu vinha repetindo de que "a máquina é em formato
+GSAP" e de que o alcance seria os 13% de `window.gsap`.
+
+### ❌ O que NÃO vale: o percentual
+
+**Auditoria do Sol, e ele está certo em todos os pontos.**
+
+1. **O denominador não é métrica de produto.** Mede "nós cujo valor CSS mudou", não
+   "movimentos que o usuário percebe". E é **internamente inconsistente**: `visibility` é
+   herdada — um pai escondendo multiplica descendentes — enquanto `transform` e `opacity`
+   computados **não** são herdados. Também ficam de fora `clip-path`, filtro, geometria, SVG,
+   canvas e vídeo, e entram mudanças invisíveis e microscópicas sem limiar perceptual.
+   A unidade certa é o **episódio visual editável**, agrupado por sincronismo, trajetória e
+   gatilho — independentemente de como o editor agrupa — com validação humana cega.
+2. ❌ **Minha suspeita do SplitText estava mal fundamentada.** Eu li
+   `resolveuNoMesmoElemento = 1/5` como prova de que o agrupamento deprimia o número. Não
+   prova: como cada fragmento clicado pode resolver para o mesmo host e contar como sucesso,
+   a duplicação pode **inflar** tanto quanto deprimir.
+3. **O numerador é injusto E generoso ao mesmo tempo.** Injusto: observo primeiro e clico
+   segundos depois, quando one-shots já terminaram ou se destacaram; o bridge só é ligado
+   depois da observação. Generoso: `dispatchEvent` **não é clique real** (sem hit-test,
+   overlay, `pointer-events`); qualquer clipe do ancestral conta mesmo sem ser a causa do
+   movimento observado; e "existe clipe" ≠ "existe propriedade editável e persistível".
+4. **O controle é fraco.** 0 de 15 ainda admite ~18% de falso positivo no limite superior de
+   95%, e 5/30 contra 0/15 dá **Fisher unilateral ≈ 0,117** — não é significativo.
+5. **A amostra de 30 não é aleatória** — é sistemática pela ordem de inserção no `Set`,
+   vulnerável a agrupamentos do DOM.
+6. **O que 16,7% sustentaria, no melhor caso:** só "neste clone, neste viewport, nesta
+   execução e nesta unidade, ~1 em 6 episódios amostrados". Wilson ≈ **7,3%–33,6%**. Não
+   sustenta cobertura de produto, nem que os outros 83% sejam ineditáveis. E mede
+   **descoberta**, não **edição concluída**.
+
+### O que seria preciso para ter o número
+
+Unidade = episódio visual, definida antes e validada às cegas; observação e clique **no mesmo
+estado** (página nova por alvo); **clique real**, não evento sintético; verificar que o clipe
+publicado é de fato o **escritor** da mudança observada; controles **pareados** por seção,
+tag, profundidade e visibilidade, incluindo negativos cujo ancestral tenha movimento não
+relacionado; amostra **aleatória**; e um numerador que meça **edição concluída**, não
+publicação de clipe.
+
+É trabalho de dias, não de uma tarde. **Não iniciado** — decisão do Adilson.
