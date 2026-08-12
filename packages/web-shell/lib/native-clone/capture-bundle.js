@@ -21,6 +21,21 @@
  * domínio, com o runtime do site preservado, no formato que o editor consome.
  */
 import { createHash } from 'node:crypto';
+import { chromium as chromiumPadrao } from 'playwright-core';
+
+/**
+ * Mesma política de navegador do caminho de captura já existente: usa o
+ * Browserbase quando há chave, senão um Chromium local. Sem isto o produtor
+ * funcionaria no laboratório e falharia no servidor, que é o modo de falha que
+ * separou o editor do produto até agora.
+ */
+async function abrirNavegador(launcher) {
+  const chromium = launcher || chromiumPadrao;
+  if (!launcher && process.env.BROWSERBASE_API_KEY) {
+    return chromium.connectOverCDP(`wss://connect.browserbase.com?apiKey=${encodeURIComponent(process.env.BROWSERBASE_API_KEY)}`);
+  }
+  return chromium.launch({ headless: true });
+}
 
 const MAX_ASSETS = 1200;
 const MAX_BYTES_TOTAL = 220 * 1024 * 1024;
@@ -84,10 +99,9 @@ const TEXTUAL = /\.(html?|css|js|mjs|json|svg|txt|webmanifest)$/i;
  */
 export async function captureNativeBundle(url, opts = {}) {
   const { onProgress = () => {}, viewport = { width: 1440, height: 900 }, chromium } = opts;
-  if (!chromium) throw new TypeError('captureNativeBundle requires a chromium launcher');
 
   onProgress({ etapa: 'launching' });
-  const browser = await chromium.launch({ headless: true });
+  const browser = await abrirNavegador(chromium);
   const recursos = new Map();   // url absoluta -> { bytes, contentType }
   let bytesTotal = 0;
   const descartados = [];

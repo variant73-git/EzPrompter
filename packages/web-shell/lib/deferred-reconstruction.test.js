@@ -4,6 +4,13 @@ import { createMemoryBundleStore } from './native-clone/bundle-store.js';
 vi.mock('./reconstruct.js', () => ({
   reconstructPage: vi.fn(async () => ({ html: '<html>clone</html>', screenshotDataUrl: 'data:image/png;base64,X' })),
 }));
+// O produtor NATIVO abre um navegador de verdade. Estes testes são sobre o
+// tratamento de snapshot, não sobre qual produtor roda — sem este mock eles
+// passariam a depender da rede e do Chromium, e foi o que quebrou quando o
+// padrão do Edit deixou de ser o iter9.
+vi.mock('./native-clone/capture-bundle.js', () => ({
+  captureNativeBundle: vi.fn(async () => ({ html: '<html>clone</html>', screenshotDataUrl: 'data:image/png;base64,X' })),
+}));
 vi.mock('./billing/context.js', () => ({
   runBilledOperation: vi.fn(async (_opts, fn) => ({ result: await fn(), credits: 3, balanceAfter: 100 })),
   recordUsage: vi.fn(),
@@ -30,6 +37,32 @@ function makeSql({ currentId = null, currentSource = null } = {}) {
   sql._calls = calls;
   return sql;
 }
+
+describe('chooseReconstructionProducer — qual clone o produto faz', () => {
+  // Compara por IDENTIDADE e não por nome: os dois módulos estão mockados neste
+  // arquivo, então `.name` é 'Mock' para ambos e a asserção por nome não
+  // distinguiria nada.
+  it('Edit usa o produtor NATIVO, que preserva o site com os scripts vivos', async () => {
+    const { chooseReconstructionProducer } = await import('./deferred-reconstruction.js');
+    const { captureNativeBundle } = await import('./native-clone/capture-bundle.js');
+    expect(chooseReconstructionProducer('edit')).toBe(captureNativeBundle);
+  });
+
+  it('as demais razões continuam no iter9, intacto como o plano pedia', async () => {
+    const { chooseReconstructionProducer } = await import('./deferred-reconstruction.js');
+    const { reconstructPage } = await import('./reconstruct.js');
+    for (const reason of ['workflow', 'strict-dependency', undefined]) {
+      expect(chooseReconstructionProducer(reason)).toBe(reconstructPage);
+    }
+  });
+
+  it('tem interruptor de desligamento sem reverter código', async () => {
+    const { chooseReconstructionProducer } = await import('./deferred-reconstruction.js');
+    const { reconstructPage } = await import('./reconstruct.js');
+    expect(chooseReconstructionProducer('edit', { UNCRAFT_NATIVE_CLONE_PRODUCER: 'off' })).toBe(reconstructPage);
+    expect(chooseReconstructionProducer('edit', { UNCRAFT_NATIVE_CLONE_PRODUCER: 'OFF' })).toBe(reconstructPage);
+  });
+});
 
 describe('reconstructSiteNode — snapshot handling (item 3: no pre-clone history version)', () => {
   it('overwrites the plain capture IN PLACE so the clone becomes the default state, leaving no history version', async () => {

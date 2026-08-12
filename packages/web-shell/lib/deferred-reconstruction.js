@@ -2,6 +2,7 @@ import { reconstructPage } from './reconstruct.js';
 import { recordUsage, runBilledOperation } from './billing/context.js';
 import { createConfiguredBundleStore } from './native-clone/bundle-store.js';
 import { registerNativeBundle } from './native-clone/register-bundle.js';
+import { captureNativeBundle } from './native-clone/capture-bundle.js';
 import { generateControlsForReconstruction } from './motion-editor/control-generation.js';
 import { persistNativeBundleDescriptor } from './motion-editor/edit-session-store.js';
 import { createEmptyMotionManifest, parseMotionManifest } from './motion-editor/manifest.js';
@@ -137,6 +138,27 @@ export async function materializeReconstructionOutput(output, { bundleStore = nu
 // One implementation for every paid upgrade path. Capture stays free; edit
 // and strict workflow dependencies call this service only after the policy in
 // reconstruction-policy.js has approved the action.
+/**
+ * ESCOLHA DE PRODUTOR — a metade que faltava da l.332 do plano de 2026-07-26.
+ *
+ * Até aqui existia UM produtor: `reconstructPage`, que devolve HTML de visão e
+ * **descarta o movimento** (medido: zero gsap/@keyframes na saída). Como
+ * `needsDeferredReconstruction` manda TODA referência de URL para a
+ * reconstrução no Edit — animada ou não —, o iter9 virou o clone de tudo, que
+ * nunca foi o papel dele.
+ *
+ * Agora o Edit usa o produtor NATIVO, que preserva o site com os scripts vivos
+ * e é o formato que o editor consome. O iter9 continua alcançável e intacto para
+ * as demais razões, exatamente como o plano pedia.
+ *
+ * `UNCRAFT_NATIVE_CLONE_PRODUCER=off` desliga e devolve o comportamento antigo,
+ * sem precisar reverter código.
+ */
+export function chooseReconstructionProducer(reason, env = process.env) {
+  if (String(env.UNCRAFT_NATIVE_CLONE_PRODUCER || '').toLowerCase() === 'off') return reconstructPage;
+  return reason === 'edit' ? captureNativeBundle : reconstructPage;
+}
+
 export async function reconstructSiteNode({
   sql,
   userId,
@@ -144,7 +166,7 @@ export async function reconstructSiteNode({
   reason,
   idemKey = null,
   op = 'reconstruct',
-  producer = reconstructPage,
+  producer = null,
   bundleStore = null,
   generateControls = generateControlsForReconstruction,
   persistBundle = persistNativeBundleDescriptor,
@@ -161,7 +183,7 @@ export async function reconstructSiteNode({
       try {
         materialized = await materializeReconstructionOutput(
           await Promise.race([
-            producer(node.origin_url),
+            (producer || chooseReconstructionProducer(reason))(node.origin_url),
             aborted,
           ]),
           { bundleStore },

@@ -36,6 +36,12 @@ vi.mock('../../lib/run-flow.js', () => ({ runCompose: vi.fn(async () => ({ html:
 vi.mock('../../lib/reconstruct.js', () => ({
   reconstructPage: vi.fn(async () => ({ html: '<html>rebuilt</html>', screenshotDataUrl: null })),
 }));
+// O Edit passou a usar o produtor NATIVO, que abre navegador e registra bundle.
+// Este arquivo testa a COBRANÇA, não qual produtor roda — sem o mock ele passaria
+// a depender de rede, Chromium e do store de bundles.
+vi.mock('../../lib/native-clone/capture-bundle.js', () => ({
+  captureNativeBundle: vi.fn(async () => ({ html: '<html>rebuilt</html>', screenshotDataUrl: null })),
+}));
 vi.mock('../../lib/billing/ledger.js', () => ({
   holdCredits: (...a) => holdMock(...a),
   refundHold: (...a) => refundMock(...a),
