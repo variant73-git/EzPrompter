@@ -21,7 +21,47 @@
  * domínio, com o runtime do site preservado, no formato que o editor consome.
  */
 import { createHash } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { chromium as chromiumPadrao } from 'playwright-core';
+
+/**
+ * SSRF — o produtor GRAVA o corpo de cada resposta num bundle que o usuário vê.
+ * Sem este bloqueio, uma página pública pode pedir `169.254.169.254` ou um
+ * serviço interno e o conteúdo sai do outro lado. É diferente de só buscar a
+ * URL: aqui há EXFILTRAÇÃO. Achado P0 do Sol.
+ */
+const FAIXAS_PROIBIDAS = [
+  /^127\./, /^10\./, /^169\.254\./, /^192\.168\./, /^0\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,
+];
+function ipEhPrivado(ip) {
+  if (!ip) return true;
+  if (isIP(ip) === 6) {
+    const n = ip.toLowerCase();
+    return n === '::1' || n === '::' || n.startsWith('fc') || n.startsWith('fd')
+      || n.startsWith('fe80') || n.startsWith('::ffff:127.') || n.startsWith('::ffff:10.')
+      || n.startsWith('::ffff:169.254.') || n.startsWith('::ffff:192.168.');
+  }
+  return FAIXAS_PROIBIDAS.some((r) => r.test(ip));
+}
+const cacheHost = new Map();
+export async function hostEhPublico(hostname) {
+  if (cacheHost.has(hostname)) return cacheHost.get(hostname);
+  let ok = false;
+  try {
+    if (isIP(hostname)) ok = !ipEhPrivado(hostname);
+    else {
+      const enderecos = await lookup(hostname, { all: true });
+      // TODOS precisam ser públicos: um nome que resolve para público E privado
+      // é o vetor clássico de rebind.
+      ok = enderecos.length > 0 && enderecos.every((e) => !ipEhPrivado(e.address));
+    }
+  } catch (_) { ok = false; }
+  cacheHost.set(hostname, ok);
+  return ok;
+}
 
 /**
  * Mesma política de navegador do caminho de captura já existente: usa o
@@ -40,6 +80,8 @@ async function abrirNavegador(launcher) {
 const MAX_ASSETS = 1200;
 const MAX_BYTES_TOTAL = 220 * 1024 * 1024;
 const MAX_ASSET_BYTES = 40 * 1024 * 1024;
+// Página com altura absurda mantinha o navegador rolando por horas (P0 do Sol).
+const MAX_ALTURA_PX = 120000;
 
 const sha256 = (bytes) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 
@@ -98,30 +140,64 @@ const TEXTUAL = /\.(html?|css|js|mjs|json|svg|txt|webmanifest)$/i;
  * @returns {Promise<{kind:'native', bundle:object, relatorio:object}>}
  */
 export async function captureNativeBundle(url, opts = {}) {
-  const { onProgress = () => {}, viewport = { width: 1440, height: 900 }, chromium } = opts;
+  const { onProgress = () => {}, viewport = { width: 1440, height: 900 }, chromium, signal } = opts;
+
+  // A URL de ENTRADA passa pelo mesmo bloqueio dos subrecursos.
+  const alvo = new URL(url);
+  if (!/^https?:$/.test(alvo.protocol) || !(await hostEhPublico(alvo.hostname))) {
+    throw Object.assign(new Error('native_bundle_blocked_host'), { code: 'blocked_host' });
+  }
 
   onProgress({ etapa: 'launching' });
   const browser = await abrirNavegador(chromium);
   const recursos = new Map();   // url absoluta -> { bytes, contentType }
   let bytesTotal = 0;
   const descartados = [];
+  // ⚠️ Os handlers de `response` são assíncronos e ninguém os aguardava: a
+  // montagem do bundle podia rodar com corpos ainda em leitura, e eles sumiam
+  // sem sequer entrar em `descartados`. Achado P1 do Sol.
+  const emVoo = new Set();
+  // ⚠️ O `Promise.race` de fora rejeita, mas nada cancelava a captura — o
+  // navegador seguia rolando por horas numa página gigante. Achado P0 do Sol.
+  let cancelado = false;
+  const aoCancelar = () => { cancelado = true; browser.close().catch(() => {}); };
+  if (signal) {
+    if (signal.aborted) { await browser.close().catch(() => {}); throw Object.assign(new Error('native_bundle_aborted'), { code: 'aborted' }); }
+    signal.addEventListener('abort', aoCancelar, { once: true });
+  }
 
   try {
     const context = await browser.newContext({ viewport });
     const page = await context.newPage();
 
-    page.on('response', async (res) => {
-      try {
-        const u = res.url();
-        if (!/^https?:/i.test(u) || recursos.has(u)) return;
-        if (recursos.size >= MAX_ASSETS) { descartados.push({ u, motivo: 'limite de arquivos' }); return; }
-        const bytes = await res.body().catch(() => null);
-        if (!bytes) return;
-        if (bytes.byteLength > MAX_ASSET_BYTES) { descartados.push({ u, motivo: 'arquivo grande demais' }); return; }
-        if (bytesTotal + bytes.byteLength > MAX_BYTES_TOTAL) { descartados.push({ u, motivo: 'limite total' }); return; }
-        bytesTotal += bytes.byteLength;
-        recursos.set(u, { bytes, contentType: (res.headers()['content-type'] || '').split(';')[0].trim() });
-      } catch (_) { /* resposta que não dá corpo (redirect, 204) não é falha */ }
+    page.on('response', (res) => {
+      const tarefa = (async () => {
+        try {
+          const u = res.url();
+          if (cancelado || !/^https?:/i.test(u) || recursos.has(u)) return;
+          if (!(await hostEhPublico(new URL(u).hostname))) { descartados.push({ u, motivo: 'host nao publico' }); return; }
+          // RESERVA a vaga antes do await: sem isso, N respostas simultâneas
+          // passam pelo teste de limite antes de qualquer uma gravar.
+          if (recursos.size >= MAX_ASSETS) { descartados.push({ u, motivo: 'limite de arquivos' }); return; }
+          recursos.set(u, null);
+          // O tamanho é conferido pelo CABEÇALHO antes de bufferizar: `body()`
+          // carrega o arquivo inteiro na memória, então checar depois não limita
+          // nada. Achado P0 do Sol.
+          const declarado = Number(res.headers()['content-length'] || 0);
+          if (declarado > MAX_ASSET_BYTES || (declarado && bytesTotal + declarado > MAX_BYTES_TOTAL)) {
+            recursos.delete(u); descartados.push({ u, motivo: 'grande demais (declarado)' }); return;
+          }
+          const bytes = await res.body().catch(() => null);
+          if (!bytes) { recursos.delete(u); return; }
+          if (bytes.byteLength > MAX_ASSET_BYTES || bytesTotal + bytes.byteLength > MAX_BYTES_TOTAL) {
+            recursos.delete(u); descartados.push({ u, motivo: 'grande demais' }); return;
+          }
+          bytesTotal += bytes.byteLength;
+          recursos.set(u, { bytes, contentType: (res.headers()['content-type'] || '').split(';')[0].trim() });
+        } catch (_) { /* resposta sem corpo (redirect, 204, 304) não é falha */ }
+      })();
+      emVoo.add(tarefa);
+      tarefa.finally(() => emVoo.delete(tarefa));
     });
 
     onProgress({ etapa: 'navigating' });
@@ -131,15 +207,19 @@ export async function captureNativeBundle(url, opts = {}) {
     // Percorre a página inteira: recurso preguiçoso só é pedido quando entra na
     // tela, e sem isso o bundle sairia sem metade das imagens.
     onProgress({ etapa: 'scrolling' });
-    const altura = await page.evaluate(() => document.body.scrollHeight);
-    for (let y = 0; y < altura; y += 700) {
+    const altura = Math.min(await page.evaluate(() => document.body.scrollHeight), MAX_ALTURA_PX);
+    for (let y = 0; y < altura && !cancelado; y += 700) {
       await page.evaluate((v) => window.scrollTo(0, v), y);
       await page.waitForTimeout(160);
     }
+    if (cancelado) throw Object.assign(new Error('native_bundle_aborted'), { code: 'aborted' });
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.waitForTimeout(1200);
 
     onProgress({ etapa: 'collecting' });
+    // Espera os corpos que ainda estavam sendo lidos ANTES de montar o bundle.
+    await Promise.allSettled([...emVoo]);
+    for (const [u, v] of [...recursos]) if (!v) { recursos.delete(u); descartados.push({ u, motivo: 'corpo nao chegou' }); }
     const engines = await page.evaluate(() => ({
       gsap: Boolean(window.gsap),
       scrollTrigger: Boolean(window.ScrollTrigger || (window.gsap && window.gsap.plugins && window.gsap.plugins.ScrollTrigger)),
@@ -152,12 +232,32 @@ export async function captureNativeBundle(url, opts = {}) {
     // vivo já mutado pelos scripts, servido de novo COM os scripts, seria
     // processado duas vezes — animação de entrada partindo do estado final,
     // elementos duplicados. Preservar significa entregar o documento original.
-    const entradaOriginal = [...recursos.keys()].find((u) => u === page.url())
-      || [...recursos.keys()].find((u) => u.split('#')[0] === url.split('#')[0]);
+    // Respostas nunca carregam fragmento, mas `page.url()` pode — e depois de um
+    // redirect a URL original também não serve. Compara-se SEM fragmento dos
+    // dois lados, tentando a final antes da pedida. Achado P1 do Sol.
+    const semHash = (u) => u.split('#')[0];
+    const finalUrl = semHash(page.url());
+    const entradaOriginal = [...recursos.keys()].find((u) => semHash(u) === finalUrl)
+      || [...recursos.keys()].find((u) => semHash(u) === semHash(url));
     if (!entradaOriginal) throw new Error('native_bundle_entry_not_captured');
 
+    // ⚠️ Caminhos podem COLIDIR (`/a%20b.js` e `/a_20b.js` normalizam igual; o
+    // macOS ainda trata `A.js` e `a.js` como o mesmo arquivo). Sem desempate, o
+    // registrador aborta o clone inteiro. Desempata-se por conteúdo. Achado P1.
     const mapa = new Map();
-    for (const u of recursos.keys()) mapa.set(u, bundlePathForUrl(u, page.url()));
+    const usados = new Set();
+    for (const u of recursos.keys()) {
+      let caminho = bundlePathForUrl(u, page.url());
+      const chave = caminho.toLowerCase();
+      if (usados.has(chave)) {
+        const marca = createHash('sha1').update(u).digest('hex').slice(0, 10);
+        caminho = /\.[^./]+$/.test(caminho)
+          ? caminho.replace(/(\.[^./]+)$/, `.${marca}$1`)
+          : `${caminho}.${marca}`;
+      }
+      usados.add(caminho.toLowerCase());
+      mapa.set(u, caminho);
+    }
     // ⚠️ Uma URL como `/promo` vira o caminho `promo`, SEM extensão — e qualquer
     // servidor estático entrega isso como binário, então a página nunca abre.
     // Renomeia-se a entrada ANTES de reescrever, para que toda referência a ela
@@ -175,7 +275,12 @@ export async function captureNativeBundle(url, opts = {}) {
       const profundidade = caminho.split('/').length - 1;
       let corpo = bytes;
       if (TEXTUAL.test(caminho) || /^(text|application)\/(html|css|javascript|json|xml)/.test(contentType || '')) {
-        corpo = Buffer.from(rewriteReferences(bytes.toString('utf8'), mapa, profundidade), 'utf8');
+        let texto = rewriteReferences(bytes.toString('utf8'), mapa, profundidade);
+        // ⚠️ Reescrever o conteúdo invalida o hash de `integrity=`, e o browser
+        // passa a BLOQUEAR o próprio arquivo que acabamos de preservar — a
+        // página abriria sem script nenhum. Achado P1 do Sol.
+        if (/\.html?$/i.test(caminho)) texto = texto.replace(/\s+integrity=(["'])[^"']*\1/gi, '');
+        corpo = Buffer.from(texto, 'utf8');
       }
       assets.push({ path: caminho, body: new Uint8Array(corpo), contentType: contentType || undefined });
     }
@@ -194,6 +299,8 @@ export async function captureNativeBundle(url, opts = {}) {
           candidateControls: [],
         },
       },
+      // O relatório viaja com o resultado: sem ele o snapshot fica 'pronto'
+      // mesmo faltando script ou fonte, e a falta some. Achado P1 do Sol.
       relatorio: {
         arquivos: assets.length,
         bytes: bytesTotal,
