@@ -906,3 +906,70 @@ e **não mediram o produto** — mediram alinhamento entre coordenadas incompar�
 respondeu a pergunta dele em vinte minutos foi **abrir o programa e tirar uma foto**.
 Regra: quando a pergunta é "isto funciona?", a primeira tentativa é executar e mostrar, não
 instrumentar.
+
+---
+
+## 12. ⭐ FECHADO — o produtor existe, está ligado e endurecido (2026-08-12)
+
+O que estava desconectado desde sempre agora está conectado.
+
+### O que foi construído
+
+**`lib/native-clone/capture-bundle.js`** — o produtor que a l.332 do plano pedia e que nunca
+foi escrito. Faz o oposto do iter9: em vez de reconstruir a aparência por visão, **preserva o
+site** — intercepta cada resposta de rede, percorre a página para disparar recurso preguiçoso,
+reescreve referências para caminhos do bundle e mantém os scripts vivos.
+
+**`chooseReconstructionProducer(reason)`** em `deferred-reconstruction.js` — `reason: 'edit'`
+usa o produtor nativo; as demais razões continuam no iter9, intacto. Interruptor
+`UNCRAFT_NATIVE_CLONE_PRODUCER=off`.
+
+**`NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT=true`** no `.env.local`.
+
+### Medido, não afirmado
+
+| | iter9 (antes) | produtor nativo (agora) |
+|---|---|---|
+| tempo | 177s | **22s** |
+| saída | 73KB de HTML de visão | 323 arquivos preservados |
+| movimento na saída | **zero** | **184 tweens + 51 ScrollTriggers vivos** |
+| altura vs original | ~metade | o site inteiro |
+
+Editor sobre o bundle endurecido: **"Runtime connected"**, zero erros de página, 11 scripts
+carregando, 0 com `integrity` (a remoção funcionou e os scripts seguem carregando), elemento
+selecionado mostra `Animation: Editable`.
+
+### Auditoria do Sol — BLOQUEOU o merge, 6 achados corrigidos
+
+3 P0: **SSRF com exfiltração** (o produtor grava corpos num bundle que o usuário vê — bloqueio
+por DNS exigindo que TODOS os endereços resolvidos sejam públicos, contra rebind; verificado
+que o metadata da AWS devolve `blocked_host`); **timeout não cancelava** (agora `AbortSignal`
++ teto de altura); **limites não limitavam memória** (`res.body()` bufferizava antes da
+checagem; agora reserva a vaga antes do `await` e confere `content-length`).
+
+3 P1: corrida na coleta (handlers assíncronos não aguardados); entrada após redirect
+(comparação sem fragmento dos dois lados); colisão de caminho (`/a%20b.js` × `/a_20b.js`, e
+`A.js` × `a.js` no macOS) com desempate por hash; e **SRI** — reescrever o conteúdo invalidava
+`integrity=` e o browser bloquearia o script que acabamos de preservar.
+
+**MERGE OK dele no que já estava certo:** base64 real não contém o literal `https://`, então
+data-URI está protegida; `url()` do CSS preserva aspas; ordenar por comprimento evita corrupção
+de prefixo; traversal barrado; host externo isolado por path.
+
+### Um achado dele aceito na observação e refutado na prescrição
+
+O #10: `/run` passa `transform-target` e `runtime-source` — razões de "runtime editável" — e
+cai no iter9. **Observação procede.** Mas ampliar as razões quebraria: verificado no código que
+`/run` alimenta `runCompose` com `reconstructed.html`, e bundle nativo é diretório, sem `html`.
+O limite de `'edit'` fica **deliberado e nomeado no código**, com teste usando as razões REAIS
+da política — não as inventadas que eu tinha usado e que o Sol pegou.
+
+**Buraco que fica aberto, com causa:** uma aresta que pede "preserve o movimento" ainda recebe
+fonte iter9 sem movimento, porque a composição é textual. Fechar exige compor sobre bundle —
+outra feature, não fiação.
+
+### Estado
+
+Suíte **1748 passando**. O único arquivo vermelho é `lib/design/rubric.test.js`, que importa um
+`slop-checks.js` inexistente — trabalho não commitado de **outra** sessão, verificado por
+`git status`, não tocado aqui.
