@@ -29,6 +29,48 @@ Chromium real e diz quais das 39 regras do `house-style` ela quebrou.
 **Interruptor das regras:** `UNCRAFT_HOUSESTYLE=off` desliga a diretiva inteira na
 geração (10.488 caracteres → 0). `houseStyleEnabled()` diz de que lado a execução estava.
 
+## ✅ Estado em 2026-08-13, fim do dia
+
+As três peças foram feitas. O que segue abaixo é o plano original, mantido como registro.
+
+- **Peça 1 — feita** (`711cc4fd`): `packages/web-shell/scripts/check-house-style.mjs`. Recebe
+  arquivo ou endereço, sobe o Chromium, imprime legível. Arquivo local é SERVIDO por HTTP
+  (`lib/serve-folder.js`, com teste próprio contra escape de pasta). Auditoria do Sol: 6
+  achados, todos corrigidos — dois graves (o servidor podia entregar arquivo de fora da pasta;
+  os bytes conferidos podiam vir de outra requisição que não a medida).
+- **Peça 3 — feita** (`56bf9ea` no repo do Amigo Secreto): o `tools/slop.mjs` de lá virou casca
+  que só guarda o chão de verdade daquele projeto e chama o acionador do Uncraft. Saída
+  idêntica à de antes, verificada.
+- **Peça 2 — construída** (`edea08eb`), e o desenho mudou por dois achados:
+
+  1. ⚠️ **O banco não chegava na geração.** A rota de plano gravava em modo sombra e nada
+     injetava no prompt. Comparar "com banco" e "sem banco" mediria o vazio. Ligado em
+     `878b67eb`: `lib/design/reference-directive.js` + `runCompose({ referencePlan })`, com
+     interruptor `UNCRAFT_REFERENCES=off`.
+  2. ⚠️ **O interruptor levava junto o que não devia.** `UNCRAFT_HOUSESTYLE=off` desliga 37
+     guardrails **mais o bloco ABSORB** — e o ABSORB é a doutrina de referência ("REFERENCE
+     USE — preserve section topology…"), o mesmo vocabulário do plano do banco. Os dois lados
+     da comparação passavam a diferir em mais de uma coisa. Corrigido em `fb230977`: existe
+     agora `guardrails-off`, que é o estado que o experimento usa.
+
+  Isso já adianta parte da resposta: **as duas fontes se sobrepõem por desenho** — o
+  house-style diz COMO absorver uma referência, o banco diz QUAIS e com que papel.
+
+  ⭐ **Autoridade por dimensão declarada no prompt** (advise do Sol, contra a minha inclinação
+  de deixar ambíguo): a referência manda em estrutura, escala, ritmo e proporção; os guardrails
+  mandam em fonte, cor e detalhes banidos; pedido explícito do usuário ganha dos dois. Deixar
+  ambíguo faria o modelo resolver de um jeito diferente a cada geração, e a comparação mediria
+  esse sorteio.
+
+  **Como rodar:**
+  ```
+  node scripts/comparar-gosto-e-banco.mjs --brief-file brief.txt --seco        # sem gastar
+  node scripts/comparar-gosto-e-banco.mjs --brief-file brief.txt --k 3 --user-id 1
+  node scripts/relatorio-gosto-e-banco.mjs --pasta _comparacao-gosto-banco
+  ```
+
+---
+
 ## O que falta — três peças, em ordem
 
 ### 1. Um acionador dentro do Uncraft
