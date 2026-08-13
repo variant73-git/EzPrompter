@@ -2403,26 +2403,46 @@ export default function NativeMotionEditor({
 
     const campo = alvo.closest('input, select');
     if (campo) {
+      // Mesma lista e mesma ordem do menu de campo do Figma (anexo do Adilson):
+      // Undo, Redo · Cut, Copy, Paste · Select All, com os atalhos à direita.
       const ehSelect = campo.tagName === 'SELECT';
+      const escreve = (texto) => {
+        // Pelo setter NATIVO: atribuir `.value` direto não dispara o onChange do
+        // React, e a edição sumiria no próximo render.
+        const proto = Object.getPrototypeOf(campo);
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        setter ? setter.call(campo, texto) : (campo.value = texto);
+        campo.dispatchEvent(new Event('input', { bubbles: true }));
+        campo.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      const selecionado = () => {
+        if (ehSelect) return campo.value;
+        const { selectionStart: a, selectionEnd: b } = campo;
+        return a != null && b != null && a !== b ? campo.value.slice(a, b) : campo.value;
+      };
       return [
-        { label: 'Copy value', hint: campo.value, onSelect: () => copiar(campo.value) },
+        // Desabilitados como no Figma quando não há o que desfazer no campo.
+        { label: 'Undo', hint: '⌘Z', disabled: !canUndo, onSelect: () => commands.undo() },
+        { label: 'Redo', hint: '⇧⌘Z', disabled: !canRedo, onSelect: () => commands.redo() },
+        { separator: true },
         {
-          label: 'Paste value',
+          label: 'Cut',
+          hint: '⌘X',
+          disabled: ehSelect,
+          onSelect: () => { copiar(selecionado()); escreve(''); },
+        },
+        { label: 'Copy', hint: '⌘C', onSelect: () => copiar(selecionado()) },
+        {
+          label: 'Paste',
+          hint: '⌘V',
           disabled: ehSelect,
           onSelect: async () => {
             const texto = await navigator.clipboard?.readText?.().catch(() => null);
-            if (texto == null) return;
-            // Escreve pelo setter nativo para o React enxergar a mudança —
-            // atribuir `.value` direto não dispara o onChange dele.
-            const proto = Object.getPrototypeOf(campo);
-            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-            setter ? setter.call(campo, texto) : (campo.value = texto);
-            campo.dispatchEvent(new Event('input', { bubbles: true }));
-            campo.dispatchEvent(new Event('change', { bubbles: true }));
+            if (texto != null) escreve(texto);
           },
         },
         { separator: true },
-        { label: 'Select all', onSelect: () => campo.select?.() },
+        { label: 'Select All', hint: '⌘A', disabled: ehSelect, onSelect: () => campo.select?.() },
       ];
     }
 

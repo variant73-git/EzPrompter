@@ -33,14 +33,19 @@ export function ContextMenu({ x, y, items = [], onClose }) {
   useEffect(() => {
     const fecharPorTecla = (e) => { if (e.key === 'Escape') onClose?.(); };
     const fecharPorClique = (e) => { if (!ref.current?.contains(e.target)) onClose?.(); };
-    // `capture` para fechar antes de qualquer handler da página consumir o evento.
+    // ⚠️ Escuta `pointerdown`, NÃO `mousedown`. A timeline chama
+    // `preventDefault()` no `pointerdown` dela para arrastar sem selecionar
+    // texto — e isso SUPRIME o `mousedown` de compatibilidade que viria depois.
+    // Com `mousedown`, clicar numa faixa da timeline não fechava o menu:
+    // reproduzido com o clique 200px à esquerda do menu, sobre `rowTrack`.
+    // `capture` para rodar antes de qualquer handler da página consumir o evento.
     document.addEventListener('keydown', fecharPorTecla);
-    document.addEventListener('mousedown', fecharPorClique, true);
+    document.addEventListener('pointerdown', fecharPorClique, true);
     window.addEventListener('blur', onClose);
     window.addEventListener('resize', onClose);
     return () => {
       document.removeEventListener('keydown', fecharPorTecla);
-      document.removeEventListener('mousedown', fecharPorClique, true);
+      document.removeEventListener('pointerdown', fecharPorClique, true);
       window.removeEventListener('blur', onClose);
       window.removeEventListener('resize', onClose);
     };
