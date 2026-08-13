@@ -15,6 +15,7 @@
     "test:refs:promotion-artifacts": "RUN_REFERENCE_PROMOTION_ARTIFACT_TESTS=1 vitest run lib/reference-bank-promotion.artifacts.integration.test.js",
     "e2e:native-motion": "node e2e/native-motion-editing.spec.js",
     "smoke:motion-controls": "node scripts/smoke-motion-controls.mjs",
+    "gosto:check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-house-style.mjs",
     "refs:migrate": "node scripts/reference-bank/migrate.mjs",
     "refs:migrate:isolated": "node scripts/reference-bank/migrate.mjs --isolated",
     "refs:import": "node scripts/reference-bank/import-seed.mjs",
