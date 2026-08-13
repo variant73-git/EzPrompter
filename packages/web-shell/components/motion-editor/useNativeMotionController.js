@@ -778,7 +778,13 @@ export function useNativeMotionController({
     setMotionDetail((current) => ({ ...current, [selected.id]: (selected.motion || []).map(normalizeMotionClip) }));
     const rowId = selected.hostRowId || selected.id;
     lastAutoExpandedRef.current = rowId;
-    if (rowId !== selected.id && !motionDetailRef.current[rowId] && status === 'ready') {
+    // ⚠️ ANIMACAO FANTASMA. Antes so se pedia a descricao quando o cache estava
+    // VAZIO — ou seja, uma vez e nunca mais. Uma animacao que terminou some do
+    // `getAnimations()` da pagina, mas continuava no cache, e o painel a exibia e
+    // oferecia para editar. Medido: elemento com ZERO animacoes e o painel
+    // mostrando uma de 400ms; a escrita era registrada e nao tinha o que
+    // receber. Agora pede-se a cada selecao e a resposta sobrescreve o cache.
+    if (rowId !== selected.id && status === 'ready') {
       send('describe-element', { elementId: rowId });
     }
   }, [selected, send, status]);

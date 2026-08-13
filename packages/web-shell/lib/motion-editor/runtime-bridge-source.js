@@ -7382,12 +7382,51 @@ function nativeMotionRuntimeBridge() {
     emitTimelineState(true);
   }
 
+  // ⚠️ Uma animação do navegador que TERMINOU some do `getAnimations()` do
+  // elemento, mas continuava viva neste registro — e o editor seguia a
+  // oferecendo para edição, com escrita que não tinha o que atingir. Confere-se
+  // que ela ainda pertence ao alvo antes de devolver o registro.
+  // Vigia a seleção: uma animação do navegador que termina some do
+  // `getAnimations()`, e o painel continuaria exibindo a que existia no momento
+  // do clique. Compara-se o retrato publicado com o vivo e republica-se ao
+  // divergir. Intervalo folgado — não é caminho de gesto.
+  let ultimoRetratoDaSelecao = null;
+  function vigiarSelecao() {
+    try {
+      const selecionado = findElement(selectedId);
+      if (!selecionado || typeof selecionado.getAnimations !== 'function') return;
+      const vivas = selecionado.getAnimations({ subtree: true }).length;
+      const retrato = `${selectedId}:${vivas}`;
+      if (ultimoRetratoDaSelecao === null) { ultimoRetratoDaSelecao = retrato; return; }
+      if (retrato === ultimoRetratoDaSelecao) return;
+      ultimoRetratoDaSelecao = retrato;
+      emit('selection-changed', { element: describe(selecionado) });
+    } catch (_) { /* nunca derrubar o bridge por causa da vigia */ }
+  }
+  if (typeof window.setInterval === 'function') window.setInterval(vigiarSelecao, 500);
+
+  function browserAnimationAindaViva(record) {
+    if (!record || record.type !== 'browser') return true;
+    const alvo = record.target;
+    if (!alvo || typeof alvo.getAnimations !== 'function') return false;
+    try {
+      return alvo.getAnimations({ subtree: true }).includes(record.animation);
+    } catch (_) {
+      return false;
+    }
+  }
+
   function timelineRecord(motionId) {
     if (!motionRegistry.has(motionId)) {
       const selected = findElement(selectedId);
       if (selected) inspectMotion(selected);
     }
-    return motionRegistry.get(motionId) || null;
+    const record = motionRegistry.get(motionId) || null;
+    if (record && !browserAnimationAindaViva(record)) {
+      motionRegistry.delete(motionId);
+      return null;
+    }
+    return record;
   }
 
   function timelineSnapshot(motionId) {
@@ -7442,6 +7481,19 @@ function nativeMotionRuntimeBridge() {
   function monitorTimeline() {
     timelineFrame = null;
     if (!activeTimelineId) return;
+    // ⚠️ A animação publicada pode MORRER depois da seleção: uma animação do
+    // navegador que termina some do `getAnimations()`. Sem isto o painel seguia
+    // exibindo e oferecendo para editar uma animação que não existe mais, e a
+    // escrita não tinha o que atingir. Ao detectar, republica a seleção para o
+    // host se corrigir.
+    const registro = motionRegistry.get(activeTimelineId);
+    if (registro && !browserAnimationAindaViva(registro)) {
+      motionRegistry.delete(activeTimelineId);
+      activeTimelineId = null;
+      const selecionado = findElement(selectedId);
+      if (selecionado) emit('selection-changed', { element: describe(selecionado) });
+      return;
+    }
     emitTimelineState(false);
     if (typeof window.requestAnimationFrame === 'function') {
       timelineFrame = window.requestAnimationFrame(monitorTimeline);
