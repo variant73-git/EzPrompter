@@ -288,8 +288,21 @@ function Field({
   device = null,
   onScopeRequest,
 }) {
-  if (responsiveScope?.relevant === false) return null;
+  const inputRef = useRef(null);
   const effectiveValue = responsiveScope?.effectiveValue ?? defaultValue;
+  // ⚠️ O campo NÃO pode ser remontado enquanto está sendo digitado. Antes ele
+  // tinha `key={`${label}:${effectiveValue}`}`, e o editor recebe atualizações
+  // do site o tempo todo — a cada uma o valor mudava, a chave mudava, e o React
+  // destruía e recriava o input debaixo dos dedos do usuário, apagando o que
+  // ele tinha escrito antes de confirmar. Agora a chave é estável e o valor
+  // externo só é escrito quando o campo NÃO está com o foco.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el || document.activeElement === el) return;
+    const proximo = effectiveValue ?? '';
+    if (el.value !== String(proximo)) el.value = proximo;
+  }, [effectiveValue]);
+  if (responsiveScope?.relevant === false) return null;
   return (
     <label className={styles.field}>
       <span className={styles.controlLabel}>
@@ -308,7 +321,7 @@ function Field({
       </span>
       <span className={styles.fieldControl}>
         <input
-          key={`${label}:${effectiveValue}`}
+          ref={inputRef}
           type={type}
           defaultValue={effectiveValue ?? ''}
           disabled={disabled || responsiveScope?.mode === 'computed' || ownership?.status === 'unsupported'}
@@ -1254,14 +1267,18 @@ export function TimelinePanel({
 
   function beginKeyframeDrag(event, track, keyframe) {
     if (event.button !== 0) return;
-    if (!canAutoKeyframe && !adapterTimingDrag) return;
     const canvas = event.currentTarget.closest(`.${styles.rowTrack}`);
     if (!canvas) return;
     const offset = Number(keyframe.offset) || 0;
     event.preventDefault();
     event.stopPropagation();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    // ⚠️ SELECIONAR sempre funciona, mesmo onde ARRASTAR não é permitido. Antes
+    // a função desistia antes daqui, então o diamante não respondia a nada em
+    // trilhas travadas — e o usuário só conseguia selecionar pelas setas da
+    // linha da propriedade, que chamam isto direto.
     onSelectKeyframe({ motionId: motion.id, property: track.property, offset });
+    if (!canAutoKeyframe && !adapterTimingDrag) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     if (adapterTimingDrag) {
       const timingEdge = offset >= 0.999 ? 'duration' : offset <= 0.001 ? 'delay' : null;
       if (!timingEdge) return;
@@ -1634,7 +1651,13 @@ export function TimelinePanel({
                       : `${track.property}: ${keyframe.value}. This track is read-only.`}
               aria-label={`${track.property} keyframe at ${Math.round(offset * 100)} percent`}
               aria-pressed={isSelected}
-              disabled={!canSelectKeyframes}
+              // ⚠️ NÃO desabilitar por `canSelectKeyframes`. Essa capacidade diz
+              // se dá para ESCREVER na trilha; usá-la aqui fazia o botão inteiro
+              // ficar inerte, e um botão desabilitado não recebe evento nenhum —
+              // então em trilha somente-leitura o diamante não respondia a nada.
+              // Selecionar e inspecionar não exigem permissão de escrita; quem
+              // barra a edição é o writer, que já checa a capacidade.
+              data-readonly={!canSelectKeyframes || undefined}
               onClick={() => {
                 if (suppressKeyframeClick.current) return;
                 onSelectKeyframe({ motionId: motion.id, property: track.property, offset });
