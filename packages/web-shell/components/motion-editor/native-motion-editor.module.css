@@ -1100,7 +1100,16 @@
   z-index: 6; /* over strips and ruler, under the sticky label column */
   top: 0;
   bottom: 0;
-  width: 1.5px;
+  left: 0;
+  /* ⚠️ RASTRO PONTILHADO. Antes: largura fracionária (1.5px) movida por `left`.
+     Uma faixa de largura fracionária que se desloca não invalida a região
+     inteira em toda repintura, e sobra resíduo do quadro anterior — o "rastro".
+     Largura inteira + deslocamento por `transform` numa camada própria repinta
+     limpo. `will-change` fica ESTÁTICO no elemento (o que a lição 148b proíbe é
+     ligá-lo e desligá-lo durante o gesto). */
+  width: 2px;
+  margin-left: -1px;
+  will-change: transform;
   pointer-events: none;
   background: #6f95ea;
 }
@@ -1111,6 +1120,10 @@
   position: absolute;
   z-index: 2;
   top: 18px;
+  /* Posicionado em PORCENTAGEM da régua, então continua em `left`:
+     `translateX(%)` seria porcentagem da largura do PRÓPRIO elemento (10px) e
+     desalinharia o cap. A camada própria vem do translateZ(0) inline. */
+  will-change: transform;
   width: 10px;
   height: 8px;
   margin-left: -5px;

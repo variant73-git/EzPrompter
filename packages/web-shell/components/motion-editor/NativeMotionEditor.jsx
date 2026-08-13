@@ -1069,7 +1069,25 @@ export function TimelinePanel({
   // make the scrubber vanish whenever the user scrubs into a stretch with
   // nothing animated on screen, stranding them there.
   const scrollRuler = Boolean(page && page.maxScroll > 0);
-  const axisMax = scrollRuler ? Math.max(1, page.maxScroll) : duration;
+  // ⚠️ BUG DA RÉGUA QUE FOGE DO MOUSE. A largura da régua saía da altura VIVA da
+  // página, e arrastar a régua ROLA a página — em sites com elementos fixados a
+  // altura oscila durante a rolagem, então a régua mudava de tamanho enquanto
+  // estava sendo usada e as bordas ficavam impossíveis de clicar. Trava-se o
+  // eixo e só se aceita mudança SUBSTANCIAL, a mesma regra de 2% que o bridge já
+  // usa para não re-derivar pontos de revelação com o tremor do spacer.
+  //
+  // A trava vale SÓ para a régua de rolagem. Na régua de TEMPO, seguir a duração
+  // é o comportamento certo: quando o usuário muda a duração no painel, a régua
+  // deve acompanhar.
+  const eixoVivo = scrollRuler ? Math.max(1, page.maxScroll) : duration;
+  const [eixoTravado, setEixoTravado] = useState(eixoVivo);
+  useEffect(() => {
+    if (!scrollRuler) return;
+    setEixoTravado((antigo) => (
+      !antigo || Math.abs(eixoVivo - antigo) > Math.max(48, antigo * 0.02) ? eixoVivo : antigo
+    ));
+  }, [scrollRuler, eixoVivo]);
+  const axisMax = scrollRuler ? Math.max(1, eixoTravado) : duration;
   // §item-1: load-time animations (preloader, wipes, hero text) form an INTRO
   // segment BEFORE the page-scroll axis — a time sequence, laid out by the
   // page's own opening schedule, instead of a pile of strips on top of the hero.
@@ -1909,7 +1927,7 @@ export function TimelinePanel({
                 {ticks.map((tick, index) => <span key={index} data-intro={tick.intro || undefined} style={{ left: `${tick.left}%` }}><i />{tick.label}</span>)}
                 {/* The cap lives in the STICKY ruler row, so it stays visible
                     while the row list scrolls vertically. */}
-                <i className={styles.playheadCap} data-playhead-cap aria-hidden="true" style={{ left: `${playheadPercent}%` }} />
+                <i className={styles.playheadCap} data-playhead-cap aria-hidden="true" style={{ left: `${playheadPercent}%`, transform: 'translateZ(0)' }} />
               </div>
             </div>
 
@@ -2154,7 +2172,7 @@ export function TimelinePanel({
               className={styles.timelinePlayhead}
               data-timeline-playhead
               aria-hidden="true"
-              style={{ left: labelsWidth + TRACK_INSET + (playheadPercent / 100) * (timelineWidth - TRACK_INSET) }}
+              style={{ transform: `translateX(${Math.round(labelsWidth + TRACK_INSET + (playheadPercent / 100) * (timelineWidth - TRACK_INSET))}px)` }}
             />
           </div>
         </div>
