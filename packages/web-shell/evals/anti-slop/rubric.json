@@ -1,0 +1,424 @@
+{
+  "version": 1,
+  "source": "packages/web-shell/lib/design/house-style.js",
+  "generatedFrom": "CRITERIA (switchboard) — regenerate whenever a criterion changes",
+  "verdictModel": "compliance",
+  "calibration": {
+    "source": "the reference bank",
+    "selector": "sites the user marked 'keep' during review",
+    "why": "5 hand-picked gold references cannot represent good design — they are 5 examples out of millions, each tied to one client, one palette, one case. The bank already holds the user's own verdicts, each with a 1-5 rating and six dimension scores, and it grows with every review.",
+    "standingOrder": "a site marked 'keep' should become a gold-standard reference automatically — not yet wired"
+  },
+  "checks": [
+    {
+      "criterion": "content-exact-words",
+      "group": "content",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Use the source's exact words. Never paraphrase into AI cliches (\"Elevate\", \"Seamless\", \"Unleash\", \"Next-Gen\", \"Empower\", \"Transform\", \"Discover\", \"Revolutionize\"). Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Use the source's exact words. Never paraphrase into AI cliches (\"Elevate\", \"Seamless\", \"Unleash\", \"Next-Gen\", \"Empower\", \"Transform\", \"Discover\", \"Revolutionize\")."
+    },
+    {
+      "criterion": "content-real-numbers",
+      "group": "content",
+      "mode": "guardrails",
+      "decision": "53",
+      "note": "decision 53: literal from source; invent only where there is NO source (INVENT block).",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Keep real numbers, prices, percentages, dates, and proper nouns literal when they come from a source. No fake \"99%\", \"50%\", \"10x\", \"John Doe\", \"Sarah Chan\", \"Acme\", \"Nexus\", \"SmartFlow\". Only invent plausible content where no source supplies it. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Keep real numbers, prices, percentages, dates, and proper nouns literal when they come from a source. No fake \"99%\", \"50%\", \"10x\", \"John Doe\", \"Sarah Chan\", \"Acme\", \"Nexus\", \"SmartFlow\". Only invent plausible content where no source supplies it."
+    },
+    {
+      "criterion": "content-no-emoji-emdash",
+      "group": "content",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "alsoDeterministic": true,
+      "deterministicBlindSpot": "text inside images, canvas or CSS-generated content is not read",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: No emojis. No em dashes in copy (use commas, colons, semicolons, periods, or parentheses). Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- No emojis. No em dashes in copy (use commas, colons, semicolons, periods, or parentheses)."
+    },
+    {
+      "criterion": "type-no-mono",
+      "group": "typography",
+      "mode": "guardrails",
+      "decision": "38/39",
+      "note": "decision 38/39: monospace stays banned; numbers use tabular figures.",
+      "method": "judge",
+      "alsoDeterministic": true,
+      "deterministicBlindSpot": "whether the source authorised mono, and at what scope",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Never introduce a monospace font. If a provided source already uses mono, preserve it; otherwise set numbers with the body sans + tabular figures (font-variant-numeric: tabular-nums). Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Never introduce a monospace font. If a provided source already uses mono, preserve it; otherwise set numbers with the body sans + tabular figures (font-variant-numeric: tabular-nums)."
+    },
+    {
+      "criterion": "type-no-ai-fonts",
+      "group": "typography",
+      "mode": "guardrails",
+      "decision": "37/38",
+      "note": "decision 37/38: Inter/Bricolage/JetBrains stay out; Fraunces + Instrument Serif are NOT banned (edit mode covers them; Instrument Serif is Uncraft branding).",
+      "method": "judge",
+      "alsoDeterministic": true,
+      "deterministicBlindSpot": "the criterion bans \"the rest of the AI-default set\" — an OPEN set, against this closed list",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Avoid AI-tell typefaces: Inter, Bricolage Grotesque, and the rest of the AI-default set. Never a JetBrains-family font. (Fraunces and Instrument Serif are allowed.) Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Avoid AI-tell typefaces: Inter, Bricolage Grotesque, and the rest of the AI-default set. Never a JetBrains-family font. (Fraunces and Instrument Serif are allowed.)"
+    },
+    {
+      "criterion": "type-hierarchy",
+      "group": "typography",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Typography may be the protagonist. Oversized display type is valid when its line breaks, measure, tracking, and relationship to supporting copy are deliberate; do not use size as a substitute for hierarchy. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Typography may be the protagonist. Oversized display type is valid when its line breaks, measure, tracking, and relationship to supporting copy are deliberate; do not use size as a substitute for hierarchy."
+    },
+    {
+      "criterion": "type-eyebrows",
+      "group": "typography",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Eyebrows (small labels above headings) are a block-level choice, not a reflex. When a reference uses one, preserve its exact case, measured letter-spacing, and offset, including deliberately wide tracking. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Eyebrows (small labels above headings) are a block-level choice, not a reflex. When a reference uses one, preserve its exact case, measured letter-spacing, and offset, including deliberately wide tracking."
+    },
+    {
+      "criterion": "type-tracking",
+      "group": "typography",
+      "mode": "guardrails",
+      "decision": null,
+      "note": "updated 2026-08-05: reference measurements override generic tracking priors; no automatic tightening.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Treat letter-spacing and line-height as measured source data. Copy computed values from the reference when available; never automatically tighten a display or widen a label because of a generic typography rule. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Treat letter-spacing and line-height as measured source data. Copy computed values from the reference when available; never automatically tighten a display or widen a label because of a generic typography rule."
+    },
+    {
+      "criterion": "type-no-italic",
+      "group": "typography",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "alsoDeterministic": true,
+      "deterministicBlindSpot": "whether italic is genuine emphasis or decoration — a judgement, not a count",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: No italic by default (a common AI tell — do not set names, labels, headings, numbers, or body in italic decoratively). Use italic ONLY for genuine emphasis / highlights, or when a provided source clearly uses it as a system. When in doubt, upright. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- No italic by default (a common AI tell — do not set names, labels, headings, numbers, or body in italic decoratively). Use italic ONLY for genuine emphasis / highlights, or when a provided source clearly uses it as a system. When in doubt, upright."
+    },
+    {
+      "criterion": "type-serif-default",
+      "group": "typography",
+      "mode": "guardrails",
+      "decision": "49",
+      "note": "decision 49: serif+sans contrast is fine; discouraged as a reflexive default unless the brief personality warrants it.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Serif pairing (serif display + sans body) is allowed as deliberate contrast, but do not reach for serif as a reflexive default; use it when the brief's personality genuinely calls for it (editorial, luxury, heritage) or when asked. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Serif pairing (serif display + sans body) is allowed as deliberate contrast, but do not reach for serif as a reflexive default; use it when the brief's personality genuinely calls for it (editorial, luxury, heritage) or when asked."
+    },
+    {
+      "criterion": "color-no-pure-bw",
+      "group": "color",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "alsoDeterministic": true,
+      "deterministicBlindSpot": "the criterion also caps accent saturation below 80%, which nothing here measures",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Avoid pure #000000 (use #0a0a0a) and pure #ffffff (tint it slightly toward the palette). Saturation on accents below 80%. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Avoid pure #000000 (use #0a0a0a) and pure #ffffff (tint it slightly toward the palette). Saturation on accents below 80%."
+    },
+    {
+      "criterion": "color-accent-count",
+      "group": "color",
+      "mode": "guardrails",
+      "decision": "47",
+      "note": "decision 47: 1–3 accents (was \"one max\"); each accent must carry meaning, not decoration.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Use 1 to 3 accent colors, no more. Every accent must earn its place (status, action, identity) — gray builds structure, color communicates. Do not scatter unmotivated color. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Use 1 to 3 accent colors, no more. Every accent must earn its place (status, action, identity) — gray builds structure, color communicates. Do not scatter unmotivated color."
+    },
+    {
+      "criterion": "color-no-ai-gradients",
+      "group": "color",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: No \"AI purple/blue\" gradients, no oversaturated accents, no neon / outer glows. Shadows soft and tinted to the background hue. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- No \"AI purple/blue\" gradients, no oversaturated accents, no neon / outer glows. Shadows soft and tinted to the background hue."
+    },
+    {
+      "criterion": "color-gradients-brand",
+      "group": "color",
+      "mode": "guardrails",
+      "decision": "46",
+      "note": "decision 46: gradients allowed when brand-appropriate, not encouraged, prefer on explicit request.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Gradients (beyond the banned AI ones above) are permitted when brand-appropriate, but not encouraged: prefer them when the source or the request calls for one, not by reflex. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Gradients (beyond the banned AI ones above) are permitted when brand-appropriate, but not encouraged: prefer them when the source or the request calls for one, not by reflex."
+    },
+    {
+      "criterion": "layout-border-shadow-conditional",
+      "group": "layout",
+      "mode": "guardrails",
+      "decision": "41",
+      "note": "decision 41: neither border NOR shadow unless the source has it OR the user specifies.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Do NOT add a border/outline OR a drop-shadow behind cards/containers by reflex (both are common AI tells). Use a container border or shadow ONLY when a provided source actually has one, or when the user explicitly asks; otherwise separate with background fill and spacing alone. Source has none and no request → output has none. STRONG BIAS: a thin 1px card outline is the single most common thing you hallucinate — most modern UIs separate cards with fill/shadow/spacing, NOT a border. When you are not CERTAIN the source shows a distinct outline, assume there is NONE and emit no border. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Do NOT add a border/outline OR a drop-shadow behind cards/containers by reflex (both are common AI tells). Use a container border or shadow ONLY when a provided source actually has one, or when the user explicitly asks; otherwise separate with background fill and spacing alone. Source has none and no request → output has none. STRONG BIAS: a thin 1px card outline is the single most common thing you hallucinate — most modern UIs separate cards with fill/shadow/spacing, NOT a border. When you are not CERTAIN the source shows a distinct outline, assume there is NONE and emit no border."
+    },
+    {
+      "criterion": "layout-no-thick-border-hardshadow",
+      "group": "layout",
+      "mode": "guardrails",
+      "decision": "45",
+      "note": "decision 45: thick decorative borders and hard/harsh drop shadows banned.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Never use thick decorative borders or hard, harsh drop shadows. When a border or shadow is warranted, keep it hairline / soft and tinted to the surface. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Never use thick decorative borders or hard, harsh drop shadows. When a border or shadow is warranted, keep it hairline / soft and tinted to the surface."
+    },
+    {
+      "criterion": "layout-atmosphere-ok",
+      "group": "layout",
+      "mode": "guardrails",
+      "decision": "45",
+      "note": "decision 45: grain/noise textures and gradient meshes are allowed (not treated as tells).",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Atmospheric grain/noise textures and gradient meshes are allowed when they serve the composition (kept subtle, on fixed non-interactive layers). Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Atmospheric grain/noise textures and gradient meshes are allowed when they serve the composition (kept subtle, on fixed non-interactive layers)."
+    },
+    {
+      "criterion": "layout-proportions",
+      "group": "layout",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Respect the source's proportions: the size of text relative to its buttons, pills, and containers, and especially the internal padding (the gap between content and the container's edges). When a source is provided, reproduce these; never tighten or inflate them. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Respect the source's proportions: the size of text relative to its buttons, pills, and containers, and especially the internal padding (the gap between content and the container's edges). When a source is provided, reproduce these; never tighten or inflate them."
+    },
+    {
+      "criterion": "layout-mobile-stable",
+      "group": "layout",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Mobile quality is a hard gate. Preserve the structure's reading order, hierarchy, and anchoring logic on narrow screens; when independent viewport anchors no longer fit, convert them into a deliberate vertical flow instead of shrinking desktop geometry until it breaks. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Mobile quality is a hard gate. Preserve the structure's reading order, hierarchy, and anchoring logic on narrow screens; when independent viewport anchors no longer fit, convert them into a deliberate vertical flow instead of shrinking desktop geometry until it breaks."
+    },
+    {
+      "criterion": "layout-cards-lazy",
+      "group": "layout",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Cards are the lazy answer: group with whitespace or hairlines first; nested cards never. Do not invent identical 3-column rows by reflex, but preserve a clean equal-column structure when the reference or content system genuinely calls for one. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Cards are the lazy answer: group with whitespace or hairlines first; nested cards never. Do not invent identical 3-column rows by reflex, but preserve a clean equal-column structure when the reference or content system genuinely calls for one."
+    },
+    {
+      "criterion": "layout-asymmetric-hero",
+      "group": "layout",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Prefer controlled asymmetry when inventing, but treat centered, split, and offset heroes as equally valid structural patterns when selected deliberately or measured from a reference. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Prefer controlled asymmetry when inventing, but treat centered, split, and offset heroes as equally valid structural patterns when selected deliberately or measured from a reference."
+    },
+    {
+      "criterion": "layout-constrain-containers",
+      "group": "layout",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "alsoDeterministic": true,
+      "deterministicBlindSpot": "whether outer containers are constrained; only the 100vh hero unit is read",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Constrain outer containers (max-w-7xl mx-auto / max-w-[1400px]). Hero sections use min-h-[100dvh], never h-screen. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Constrain outer containers (max-w-7xl mx-auto / max-w-[1400px]). Hero sections use min-h-[100dvh], never h-screen."
+    },
+    {
+      "criterion": "banned-decorative-italic",
+      "group": "banned",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Default / decorative italic. Do NOT italicize titles, names, labels, numbers, or body. font-style is upright unless the change is true emphasis or a provided source already uses italic for that exact element. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Default / decorative italic. Do NOT italicize titles, names, labels, numbers, or body. font-style is upright unless the change is true emphasis or a provided source already uses italic for that exact element."
+    },
+    {
+      "criterion": "banned-side-stripe",
+      "group": "banned",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "alsoDeterministic": true,
+      "deterministicBlindSpot": "stripes drawn with pseudo-elements, shadows or background gradients",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Side-stripe accent borders (a colored border-left/right > 1px on cards, list items, callouts, alerts). Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Side-stripe accent borders (a colored border-left/right > 1px on cards, list items, callouts, alerts)."
+    },
+    {
+      "criterion": "banned-gradient-text",
+      "group": "banned",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "alsoDeterministic": true,
+      "deterministicBlindSpot": "gradient text painted by SVG or an image rather than background-clip",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Gradient text (background-clip:text + a gradient) on headings. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Gradient text (background-clip:text + a gradient) on headings."
+    },
+    {
+      "criterion": "banned-glassmorphism-default",
+      "group": "banned",
+      "mode": "guardrails",
+      "decision": "43",
+      "note": "decision 43: glassmorphism kept possible — only barred as a reflexive default, allowed with craft.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Glassmorphism as a reflexive default decoration. It is allowed when the aesthetic genuinely calls for it and it is executed with craft, but never as an automatic surface treatment. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Glassmorphism as a reflexive default decoration. It is allowed when the aesthetic genuinely calls for it and it is executed with craft, but never as an automatic surface treatment."
+    },
+    {
+      "criterion": "banned-hero-metric",
+      "group": "banned",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: The hero-metric template (big number / small label / supporting stats / gradient accent). Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- The hero-metric template (big number / small label / supporting stats / gradient accent)."
+    },
+    {
+      "criterion": "banned-keyline",
+      "group": "banned",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: A thin decorative metallic or contrasting keyline tracing a container's rounded corners (ornamental double-outline / corner frame). Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- A thin decorative metallic or contrasting keyline tracing a container's rounded corners (ornamental double-outline / corner frame)."
+    },
+    {
+      "criterion": "banned-modal-first",
+      "group": "banned",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Modal as the first thought. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Modal as the first thought."
+    },
+    {
+      "criterion": "cursor-user-gated",
+      "group": "banned",
+      "mode": "guardrails",
+      "decision": "44",
+      "note": "decision 44: custom cursors only when the user asks.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Custom mouse cursors only when the user explicitly requests them; never by default. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Custom mouse cursors only when the user explicitly requests them; never by default."
+    },
+    {
+      "criterion": "motion-transform-opacity",
+      "group": "motion",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "alsoDeterministic": true,
+      "deterministicBlindSpot": "JS-driven animation, and the easing/duration clauses of the criterion",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Animate only transform and opacity (never top, left, width, height). Strong ease-out curves, under 300ms for UI, never ease-in. Never animate from scale(0) (start ~0.95 + opacity). Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Animate only transform and opacity (never top, left, width, height). Strong ease-out curves, under 300ms for UI, never ease-in. Never animate from scale(0) (start ~0.95 + opacity)."
+    },
+    {
+      "criterion": "motion-feedback-always",
+      "group": "motion",
+      "mode": "guardrails",
+      "decision": "48",
+      "note": "decision 48: interaction feedback ALWAYS.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Pressable elements always get tactile :active feedback (scale ~0.97 or translate-y 1px). Provide loading (skeletons, not spinners), empty, and error states. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Pressable elements always get tactile :active feedback (scale ~0.97 or translate-y 1px). Provide loading (skeletons, not spinners), empty, and error states."
+    },
+    {
+      "criterion": "motion-entrance-contextual",
+      "group": "motion",
+      "mode": "guardrails",
+      "decision": "48",
+      "note": "decision 48 (revised): motion intensity by register — landing/brand (and sparse prompts) get committed motion; apps/systems get subtle motion; no-motion/minimal is opt-in by the user.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Motion intensity by register: landing and brand pages get committed, real motion at intensity — especially when the prompt is sparse (motion has to carry the page). Apps, systems, and tools get subtle motion only. Never claim movement and ship a static page. Minimal or no motion is opt-in: apply it only when the user asks for it. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Motion intensity by register: landing and brand pages get committed, real motion at intensity — especially when the prompt is sparse (motion has to carry the page). Apps, systems, and tools get subtle motion only. Never claim movement and ship a static page. Minimal or no motion is opt-in: apply it only when the user asks for it."
+    },
+    {
+      "criterion": "motion-stagger",
+      "group": "motion",
+      "mode": "guardrails",
+      "decision": "50",
+      "note": "decision 50: stagger 30–80ms, context-dependent.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Stagger grouped entrances by roughly 30 to 80ms per item, tuned to the context; exits faster and subtler than enters. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Stagger grouped entrances by roughly 30 to 80ms per item, tuned to the context; exits faster and subtler than enters."
+    },
+    {
+      "criterion": "states-hitarea",
+      "group": "motion",
+      "mode": "guardrails",
+      "decision": "38",
+      "note": "item 38 (blind-spot adopt): min hit area.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Interactive elements get at least a 44x44px hit area (40x40px in dense desktop UI); extend a smaller visible control with a pseudo-element rather than shrinking the target. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Interactive elements get at least a 44x44px hit area (40x40px in dense desktop UI); extend a smaller visible control with a pseudo-element rather than shrinking the target."
+    },
+    {
+      "criterion": "darkmode-conditional",
+      "group": "mode",
+      "mode": "guardrails",
+      "decision": "51",
+      "note": "decision 51: only handle dark mode when it exists; full dual-mode discipline only for system/SaaS/app work, not marketing/brand.",
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: Dark mode: only implement it when the source or brief actually has it. Reserve full dual-mode discipline (both themes designed from the start) for system/SaaS/app generations; marketing and brand pages ship the single intended theme. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- Dark mode: only implement it when the source or brief actually has it. Reserve full dual-mode discipline (both themes designed from the start) for system/SaaS/app generations; marketing and brand pages ship the single intended theme."
+    },
+    {
+      "criterion": "slop-test",
+      "group": "meta",
+      "mode": "guardrails",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: If someone could look at the result and say \"AI made that\" with no doubt, it failed. If theme + palette are guessable from the category alone (finance -> navy/gold, crypto -> neon-on-black, healthcare -> white/teal), rework until the answer is not obvious. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "- If someone could look at the result and say \"AI made that\" with no doubt, it failed. If theme + palette are guessable from the category alone (finance -> navy/gold, crypto -> neon-on-black, healthcare -> white/teal), rework until the answer is not obvious."
+    },
+    {
+      "criterion": "absorb-block",
+      "group": "absorb",
+      "mode": "absorb",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "alsoDeterministic": true,
+      "deterministicBlindSpot": "the whole reference doctrine except palette presence",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: REFERENCE USE — first decide whether the user requested faithful transfer or inspiration. - Faithful transfer: the named source is the visual authority; reproduce its measured tokens, proportions, and responsive behavior while preserving the target's semantic truth. - Inspiration / Start from a Ref: decompose every chosen section into (A) reusable structure and (B) replaceable treatment. Preserve section topology, alignment and anchoring logic, media-to-copy proportions, scroll axis/pinning, and density rhythm. Treat colors, decorative overlays, background blocks, imagery, logos, copy, item count, and brand-specific motion as variables unless the user explicitly preserves them. - Typography is ground truth, not a guess: capture computed font-size, line-height, letter-spacing, weight, max-width, and offsets. With one reference, keep type and media scale within 15% of it. With two or three references, choose one scale owner that best fits the brief and use it consistently across the page. - Identity does not come from copying the bank. Apply a coherent identity layer derived from the brief and your independent art direction after the structural choices are sound. - Componentize the art direction into independently chosen ingredients: structure/wireframe, text-block composition and alignment, palette strategy, typography character, and motion register. A reference may inform one ingredient without controlling the others. - Never transplant a semantically specific animation merely because it is impressive. Preserve its structure only when the interaction story remains meaningful for the new content. - Mobile behavior is part of the source structure. A pattern that cannot remain coherent on mobile is ineligible. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "REFERENCE USE — first decide whether the user requested faithful transfer or inspiration.\n- Faithful transfer: the named source is the visual authority; reproduce its measured tokens, proportions, and responsive behavior while preserving the target's semantic truth.\n- Inspiration / Start from a Ref: decompose every chosen section into (A) reusable structure and (B) replaceable treatment. Preserve section topology, alignment and anchoring logic, media-to-copy proportions, scroll axis/pinning, and density rhythm. Treat colors, decorative overlays, background blocks, imagery, logos, copy, item count, and brand-specific motion as variables unless the user explicitly preserves them.\n- Typography is ground truth, not a guess: capture computed font-size, line-height, letter-spacing, weight, max-width, and offsets. With one reference, keep type and media scale within 15% of it. With two or three references, choose one scale owner that best fits the brief and use it consistently across the page.\n- Identity does not come from copying the bank. Apply a coherent identity layer derived from the brief and your independent art direction after the structural choices are sound.\n- Componentize the art direction into independently chosen ingredients: structure/wireframe, text-block composition and alignment, palette strategy, typography character, and motion register. A reference may inform one ingredient without controlling the others.\n- Never transplant a semantically specific animation merely because it is impressive. Preserve its structure only when the interaction story remains meaningful for the new content.\n- Mobile behavior is part of the source structure. A pattern that cannot remain coherent on mobile is ineligible."
+    },
+    {
+      "criterion": "invent-block",
+      "group": "invent",
+      "mode": "invent",
+      "decision": null,
+      "note": null,
+      "method": "judge",
+      "question": "Looking ONLY at the rendered screenshot, does the design honour this rule? RULE: WHEN INVENTING DESIGN FROM A PROMPT (only when NO HTML or design.md source is provided) - Decide register first: brand (design IS the product: landing, campaign, portfolio) vs product (design SERVES it: app, dashboard, tool). - Identify brand personality separately from business category: playful, extroverted, sober, neutral, corporate, authoritative, approachable, bold, technical, premium, rebellious, or warm. Do not infer personality from industry alone. - Theme is never a default: write one sentence of physical scene (who uses it, where, what light, what mood) and let it force light vs dark. - Pick a color strategy before colors: restrained (tinted neutrals + one accent <=10%), committed (one color carries 30-60% of the surface), full palette (3-4 named roles), or drenched (the surface IS the color). Do not collapse everything to restrained by reflex. - Reach for a deliberate, characterful typeface outside the AI-default set. Serif only for editorial, never on clean dashboards. - For sparse brand/landing prompts, default to large media with anchored text, controlled asymmetry, alternating density and breathing room, and protagonist typography that does not depend on effects. - Build the direction as a five-ingredient combination: structure + text composition/alignment + palette + typography + motion. Choose each ingredient from the brand attributes and audience rather than applying one monolithic style preset. - Vary spacing for rhythm; use centered, split, or asymmetric compositions according to the content, and make the result remain strong on mobile. Answer pass or fail, then one sentence naming the specific element that decided it. If the rule does not apply to this page, answer n/a.",
+      "criterionText": "WHEN INVENTING DESIGN FROM A PROMPT (only when NO HTML or design.md source is provided)\n- Decide register first: brand (design IS the product: landing, campaign, portfolio) vs product (design SERVES it: app, dashboard, tool).\n- Identify brand personality separately from business category: playful, extroverted, sober, neutral, corporate, authoritative, approachable, bold, technical, premium, rebellious, or warm. Do not infer personality from industry alone.\n- Theme is never a default: write one sentence of physical scene (who uses it, where, what light, what mood) and let it force light vs dark.\n- Pick a color strategy before colors: restrained (tinted neutrals + one accent <=10%), committed (one color carries 30-60% of the surface), full palette (3-4 named roles), or drenched (the surface IS the color). Do not collapse everything to restrained by reflex.\n- Reach for a deliberate, characterful typeface outside the AI-default set. Serif only for editorial, never on clean dashboards.\n- For sparse brand/landing prompts, default to large media with anchored text, controlled asymmetry, alternating density and breathing room, and protagonist typography that does not depend on effects.\n- Build the direction as a five-ingredient combination: structure + text composition/alignment + palette + typography + motion. Choose each ingredient from the brand attributes and audience rather than applying one monolithic style preset.\n- Vary spacing for rhythm; use centered, split, or asymmetric compositions according to the content, and make the result remain strong on mobile."
+    }
+  ]
+}

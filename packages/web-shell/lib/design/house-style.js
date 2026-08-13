@@ -22,6 +22,38 @@
  * cross-read, validated by the 2026-06-25 side-by-side test
  * (docs/superpowers/specs/2026-06-25-anti-slop-test/).
  *
+ * PROVENANCE — READ BEFORE TRUSTING THE `note` FIELDS
+ *   This file IS the taste spine. Nothing upstream of it is a more complete
+ *   record; the raw list it was distilled from no longer exists.
+ *
+ *   - The source was a numbered list of 53 candidate criteria, produced by a
+ *     cross-read of 6 skills (taste-skill, interface-design, bencium,
+ *     baseline-ui, make-interfaces-feel-better, shadcn) on 2026-07-22.
+ *   - Items 37-53 were CONFLICTS the user adjudicated one by one. Each ruling is
+ *     written up in docs/superpowers/handoffs/
+ *     2026-07-22-skills-audit-housestyle-switchboard-handoff.md (section 2) and
+ *     carried here in the matching criterion's `note`.
+ *   - Items 1-36 were the CONSENSUS half. They were never persisted as a list —
+ *     that handoff states outright that consensus, redundancies and full
+ *     conflicts "ficaram na conversa da sessão". The ~22 note-less criteria
+ *     below are their only surviving descendants.
+ *   - That is BY DESIGN, not decay: this file is the DISTILLATION of those skills
+ *     into one criterion-per-switch, and the point of distilling was to make the
+ *     sources disposable. 4 of the 6 are gone from disk; the two locatable ones
+ *     are listed in the audit doc below. The only thing their absence costs is
+ *     the ability to check whether the distillation was faithful.
+ *   - Known gaps, do not assume they are covered: decision 40 (an outline on an
+ *     IMAGE is banned too — images are not an exception to the border rule) has
+ *     no explicit text here; decision 42's number was overwritten when
+ *     `type-tracking` was revised on 2026-08-05; decision 52 (at most one
+ *     question per turn) deliberately lives in lib/agent/prompts.js, not here.
+ *
+ *   Full audit of what survived, what drifted and what is unrecoverable:
+ *   docs/superpowers/specs/2026-08-12-anti-slop-lista-1-53-proveniencia.md
+ *
+ *   RULE: when a criterion changes, keep its decision number in the `note`.
+ *   Losing the number is how 42 became untraceable.
+ *
  * A criterion's `text` is the exact prompt fragment; `group` places it under a
  * header in the rendered directive. Reskin/restyle paths already pin the
  * reference's exact fonts/hex tokens; the INVENT block is gated to "no design

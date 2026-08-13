@@ -35,7 +35,9 @@
     "refs:rate-source:shared": "node scripts/reference-bank/rate-aggregator.mjs --shared",
     "evals:gen": "node evals/gen-prompt.mjs",
     "evals": "node evals/gen-prompt.mjs && promptfoo eval -c evals/promptfooconfig.yaml",
-    "evals:view": "promptfoo view"
+    "evals:view": "promptfoo view",
+    "evals:rubric": "node evals/anti-slop/build-rubric.mjs",
+    "evals:rubric:check": "node evals/anti-slop/build-rubric.mjs --check"
   },
   "dependencies": {
     "@next/env": "15.5.15",
@@ -58,7 +60,8 @@
     "react": "^19",
     "react-dom": "^19",
     "react-zoom-pan-pinch": "^3.6.0",
-    "stripe": "^17"
+    "stripe": "^17",
+    "@uncraft/design-eval": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.0",
