@@ -184,7 +184,7 @@
   border: 1px solid color-mix(in oklab, var(--text-secondary) 30%, transparent);
   border-radius: 999px;
   color: var(--text-secondary);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 650;
   line-height: 16px;
   padding: 0 6px;
@@ -232,13 +232,13 @@
 }
 
 .selectionCopy strong {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 650;
 }
 
 .selectionCopy small {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .layerList {
@@ -288,7 +288,7 @@
 
 .layerButton > small {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -297,7 +297,7 @@
   margin: 0;
   padding: 24px 14px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
@@ -395,7 +395,7 @@
 }
 
 .scopeDialog h2 {
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 650;
   letter-spacing: -0.01em;
 }
@@ -456,14 +456,14 @@
 }
 
 .ownershipChoiceCopy strong {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 650;
 }
 
 .ownershipChoiceCopy p {
   margin: 0;
   color: var(--text-secondary, #b5b3ac);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -508,19 +508,19 @@
 }
 
 .ownershipChannels span {
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .ownershipChannels small {
   color: var(--text-muted, #96948d);
-  font-size: 8px;
+  font-size: 12px;
 }
 
 @media (max-width: 899px) {
   .panelTabs button {
     padding: 0 5px;
-    font-size: 9px;
+    font-size: 12px;
   }
 
 }
