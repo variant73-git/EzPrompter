@@ -246,9 +246,43 @@ function isEnabled(c, opts) {
   return c.on;
 }
 
+/**
+ * De que lado a execucao esta, lido do ambiente.
+ *
+ * `off` desliga TUDO — e tudo inclui o bloco ABSORB, que e a doutrina de
+ * referencia ("REFERENCE USE — preserve section topology…"). Para a pergunta de
+ * produto (regras de gosto e banco de referencias se somam ou se anulam?) isso
+ * nao serve: os dois lados da comparacao passariam a diferir tambem em COMO usar
+ * uma referencia, e nao so nas 37 ordens de gosto. Por isso existe
+ * `guardrails-off`, que tira apenas os guardrails e deixa a doutrina de pe.
+ *
+ * Valor desconhecido devolve `on`: um interruptor mal escrito nao pode desligar
+ * regra nenhuma em silencio.
+ */
+export function houseStyleMode(env = process.env) {
+  const valor = String(env.UNCRAFT_HOUSESTYLE || '').trim().toLowerCase();
+  if (valor === 'off') return 'off';
+  if (valor === 'guardrails-off') return 'guardrails-off';
+  return 'on';
+}
+
+function envOpts(env = process.env) {
+  const modo = houseStyleMode(env);
+  if (modo === 'off') return { allOff: true };
+  if (modo === 'guardrails-off') {
+    return { off: CRITERIA.filter((c) => c.mode === 'guardrails').map((c) => c.id) };
+  }
+  return undefined;
+}
+
+/** O house-style do jeito que o ambiente pediu. */
+export function buildHouseStyleFromEnv(env = process.env) {
+  return buildHouseStyle(envOpts(env));
+}
+
 /** true quando o interruptor geral desligou tudo por ambiente. */
 function allOffFromEnv() {
-  return String(process.env.UNCRAFT_HOUSESTYLE || '').trim().toLowerCase() === 'off';
+  return houseStyleMode() === 'off';
 }
 
 /** HOUSE_STYLE_GUARDRAILS, rendered from currently-enabled guardrail criteria. */
@@ -284,7 +318,7 @@ export function buildHouseStyle(opts) {
 // ── Backward-compatible exports (assembled from default state at load) ───────
 // These freeze at import time. Toggle via `on` / env before boot (dev hot-reload
 // re-evaluates), or call the build*() functions for a live custom-toggled render.
-const ENV_OPTS = allOffFromEnv() ? { allOff: true } : undefined;
+const ENV_OPTS = envOpts();
 export const HOUSE_STYLE_GUARDRAILS = buildGuardrails(ENV_OPTS);
 export const HOUSE_STYLE_ABSORB = buildAbsorb(ENV_OPTS);
 export const HOUSE_STYLE_INVENT = buildInvent(ENV_OPTS);

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { buildAbsorb, buildGuardrails, buildHouseStyle, buildInvent } from './house-style.js';
+import {
+  buildAbsorb,
+  buildGuardrails,
+  buildHouseStyle,
+  buildHouseStyleFromEnv,
+  buildInvent,
+  houseStyleMode,
+  listCriteria,
+} from './house-style.js';
 
 describe('house style reference decomposition', () => {
   it('treats exact type metrics and mobile behavior as ground truth', () => {
@@ -47,5 +55,41 @@ describe('interruptor geral das regras', () => {
 
   it('ligado, continua entregando as regras', () => {
     expect(buildHouseStyle().length).toBeGreaterThan(500);
+  });
+
+  // MEDIDO 2026-08-13: `allOff` desliga 37 guardrails MAIS o bloco ABSORB — e o
+  // ABSORB e a doutrina de referencia ("REFERENCE USE — preserve section
+  // topology, alignment and anchoring logic, media-to-copy proportions"), o
+  // mesmo vocabulario do plano do banco de referencias. Comparar "regras
+  // ligadas x desligadas" com esse interruptor tira, junto, COMO usar uma
+  // referencia: os dois lados do 2x2 passam a diferir em mais de uma coisa.
+  const soGuardrailsFora = () => ({
+    off: listCriteria().filter((c) => c.mode === 'guardrails').map((c) => c.id),
+  });
+
+  it('isola os guardrails, mantendo a doutrina de referencia de pe', () => {
+    expect(buildGuardrails(soGuardrailsFora())).toBe('');
+    expect(buildAbsorb(soGuardrailsFora())).toMatch(/REFERENCE USE/);
+    expect(buildInvent(soGuardrailsFora())).not.toBe('');
+  });
+
+  it('desligar so os guardrails nao e o mesmo que desligar tudo', () => {
+    expect(buildHouseStyle(soGuardrailsFora())).not.toBe('');
+    expect(buildHouseStyle({ allOff: true })).toBe('');
+  });
+
+  it('o modo do interruptor fica legivel, para rotular a comparacao', () => {
+    expect(houseStyleMode({ UNCRAFT_HOUSESTYLE: 'off' })).toBe('off');
+    expect(houseStyleMode({ UNCRAFT_HOUSESTYLE: 'guardrails-off' })).toBe('guardrails-off');
+    expect(houseStyleMode({})).toBe('on');
+    // valor que ninguem reconhece nao pode virar "desligado" em silencio
+    expect(houseStyleMode({ UNCRAFT_HOUSESTYLE: 'talvez' })).toBe('on');
+  });
+
+  it('o interruptor de ambiente sabe tirar so os guardrails', () => {
+    expect(buildHouseStyleFromEnv({ UNCRAFT_HOUSESTYLE: 'guardrails-off' })).toMatch(/REFERENCE USE/);
+    expect(buildHouseStyleFromEnv({ UNCRAFT_HOUSESTYLE: 'guardrails-off' })).not.toMatch(/DESIGN GUARDRAILS/);
+    expect(buildHouseStyleFromEnv({ UNCRAFT_HOUSESTYLE: 'off' })).toBe('');
+    expect(buildHouseStyleFromEnv({})).toMatch(/DESIGN GUARDRAILS/);
   });
 });
