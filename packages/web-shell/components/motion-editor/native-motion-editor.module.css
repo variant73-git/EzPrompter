@@ -2779,3 +2779,50 @@
 @media (prefers-reduced-motion: reduce) {
   .customToggle i { transition: none; }
 }
+
+/* --- Menu de contexto ------------------------------------------------------
+   A ferramenta tem que parecer software: botão direito abre menu em qualquer
+   lugar. Área sem dados não abre menu, mas também não devolve o do navegador. */
+.contextMenu {
+  position: fixed;
+  z-index: 999;
+  min-width: 184px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(26, 26, 28, 0.96);
+  backdrop-filter: blur(28px) saturate(140%);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+}
+
+.contextMenuItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 13px;
+  text-align: left;
+  cursor: default;
+}
+
+.contextMenuItem:hover:not(:disabled) { background: rgba(111, 149, 234, 0.22); }
+.contextMenuItem:disabled { color: rgba(255, 255, 255, 0.32); }
+
+.contextMenuHint {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.contextMenuSeparator {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(255, 255, 255, 0.1);
+}

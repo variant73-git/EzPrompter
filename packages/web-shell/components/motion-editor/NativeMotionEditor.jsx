@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { ContextMenu, useContextMenu } from './ContextMenu.jsx';
 import Link from 'next/link';
 import {
   AlignCenter,
@@ -1618,6 +1619,9 @@ export function TimelinePanel({
               className={styles.timelineKeyframe}
               data-selected={isSelected || isDragging}
               data-duplicate={isDragging && draggingKeyframe.duplicate}
+              data-keyframe-property={track.property}
+              data-keyframe-value={String(keyframe.value ?? '')}
+              data-keyframe-offset={String(displayOffset)}
               style={{ left: `${left}%` }}
               title={canAutoKeyframe
                 ? `${track.property}: ${keyframe.value}. Drag to move, Option-drag to duplicate.`
@@ -2376,8 +2380,70 @@ export default function NativeMotionEditor({
     commands.toggleAutoKeyframe(nextValue);
   }
 
+  // ⚠️ Botão direito em QUALQUER lugar abre menu — regra de produto: a
+  // ferramenta tem que parecer software, não site. Área de painel SEM DADOS
+  // devolve lista vazia: nada aparece, e o menu do navegador continua bloqueado.
+  const menuContexto = useContextMenu((alvo) => {
+    if (!alvo || typeof alvo.closest !== 'function') return [];
+    const copiar = (texto) => navigator.clipboard?.writeText?.(String(texto ?? '')).catch(() => {});
+
+    const kf = alvo.closest('[data-keyframe-property]');
+    if (kf) {
+      const prop = kf.getAttribute('data-keyframe-property');
+      const valor = kf.getAttribute('data-keyframe-value');
+      return [
+        // Responde a pergunta "onde altero a opacidade de um keyframe?": o campo
+        // de valor da linha da propriedade escreve no keyframe sob o ponteiro.
+        { label: 'Move playhead here', hint: 'edits the value', onSelect: () => kf.click() },
+        { separator: true },
+        { label: `Copy value`, hint: valor, onSelect: () => copiar(valor) },
+        { label: 'Copy property name', hint: prop, onSelect: () => copiar(prop) },
+      ];
+    }
+
+    const campo = alvo.closest('input, select');
+    if (campo) {
+      const ehSelect = campo.tagName === 'SELECT';
+      return [
+        { label: 'Copy value', hint: campo.value, onSelect: () => copiar(campo.value) },
+        {
+          label: 'Paste value',
+          disabled: ehSelect,
+          onSelect: async () => {
+            const texto = await navigator.clipboard?.readText?.().catch(() => null);
+            if (texto == null) return;
+            // Escreve pelo setter nativo para o React enxergar a mudança —
+            // atribuir `.value` direto não dispara o onChange dele.
+            const proto = Object.getPrototypeOf(campo);
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+            setter ? setter.call(campo, texto) : (campo.value = texto);
+            campo.dispatchEvent(new Event('input', { bubbles: true }));
+            campo.dispatchEvent(new Event('change', { bubbles: true }));
+          },
+        },
+        { separator: true },
+        { label: 'Select all', onSelect: () => campo.select?.() },
+      ];
+    }
+
+    const linha = alvo.closest('[data-row-kind]');
+    if (linha && linha.getAttribute('data-row-kind') !== 'empty') {
+      const rotulo = (linha.textContent || '').trim().slice(0, 40);
+      return [
+        { label: 'Select this layer', onSelect: () => linha.querySelector('button')?.click() },
+        { separator: true },
+        { label: 'Copy layer name', hint: rotulo, onSelect: () => copiar(rotulo) },
+      ];
+    }
+
+    return [];
+  });
+
   return (
-    <main className={styles.editorShell}>
+    <main className={styles.editorShell} onContextMenu={menuContexto.aoAbrir}>
+      {menuContexto.menu ? (
+        <ContextMenu {...menuContexto.menu} onClose={menuContexto.fechar} />
+      ) : null}
       <header className={styles.topbar}>
         <div className={styles.topbarStart}>
           <Link href="/canvas" className={styles.iconButton} aria-label="Back to canvas"><ArrowLeft /></Link>
