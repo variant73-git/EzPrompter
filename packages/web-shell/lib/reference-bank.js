@@ -1,4 +1,4 @@
-import seed from './reference-bank.seed.json';
+import seed from './reference-bank.seed.json' with { type: 'json' };
 
 export function getReferenceCatalog({ limit, includePrivate = false } = {}) {
   const references = (seed.references || []).filter((reference) => includePrivate || !reference.isPrivate);
