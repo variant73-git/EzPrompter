@@ -144,3 +144,59 @@ describe('replaceMediaPlaceholders', () => {
     )).toBe('<img src="data:image/png;base64,A"><img src="data:image/png;base64,A"><video src="{{UNCRAFT_MEDIA_2}}">');
   });
 });
+
+
+// O banco de referencias escolhe QUAIS referencias e o papel de cada uma; ate
+// 2026-08-13 nada disso chegava na geracao (a rota de plano gravava em modo
+// sombra e `runCompose` nunca consultava o banco). Sem chegar, o braco do banco
+// no experimento 2x2 seria inerte e a comparacao mediria o vazio.
+describe('runCompose — a direcao do banco de referencias chega ao modelo', () => {
+  const plano = {
+    schemaVersion: 3,
+    rule: 'One contextual scale owner.',
+    selectedReferences: [{
+      id: 'ref-1',
+      title: 'Estudio Vinte',
+      url: 'https://estudiovinte.example',
+      influence: 'scale-owner',
+      scaleOwner: true,
+      owns: 'page-wide type and media scale',
+      reasons: ['tipo em escala grande'],
+    }],
+    composition: { preserve: ['section topology and reading order'], adapt: [], replace: ['brand identity'] },
+    warnings: [],
+  };
+  const sources = [{ kind: 'prompt', meta: { prompt: 'uma pagina de produto' } }];
+  const promptEnviado = () => anthropicStream.mock.calls.at(-1)[0];
+
+  it('injects the reference direction and says who is the authority for what', async () => {
+    await runCompose({ target, sources, referencePlan: plano });
+    const enviado = promptEnviado();
+    const tudo = `${enviado.system}\n${enviado.messages.map((m) => m.content).join('\n')}`;
+    expect(tudo).toContain('Estudio Vinte');
+    expect(tudo).toContain('page-wide type and media scale');
+    expect(tudo).toMatch(/structure, scale, rhythm and proportion/i);
+  });
+
+  it('leaves the prompt untouched when there is no plan', async () => {
+    await runCompose({ target, sources });
+    const enviado = promptEnviado();
+    const tudo = `${enviado.system}\n${enviado.messages.map((m) => m.content).join('\n')}`;
+    expect(tudo).not.toContain('REFERENCE DIRECTION');
+  });
+
+  // O interruptor existe para a comparacao: sem ele o braco "banco desligado"
+  // do 2x2 nao existe.
+  it('drops the direction when the bank is switched off', async () => {
+    process.env.UNCRAFT_REFERENCES = 'off';
+    try {
+      await runCompose({ target, sources, referencePlan: plano });
+      const enviado = promptEnviado();
+      const tudo = `${enviado.system}\n${enviado.messages.map((m) => m.content).join('\n')}`;
+      expect(tudo).not.toContain('Estudio Vinte');
+      expect(tudo).not.toContain('REFERENCE DIRECTION');
+    } finally {
+      delete process.env.UNCRAFT_REFERENCES;
+    }
+  });
+});
