@@ -46,9 +46,47 @@ logo depois o próprio site cria suas animações GSAP do zero, sobrescrevendo o
 isso, a correção é reaplicar **depois** de o runtime do site terminar de instalar, ou
 reaplicar de novo ao detectar que a animação foi recriada.
 
-**Como confirmar em 15 minutos:** instrumentar o bridge para registrar (a) quando a transação
-de replay é aplicada e (b) quando o GSAP do site cria o tween daquele alvo, e comparar a
-ordem. Se o tween nascer depois, está confirmado.
+#### Referências exatas do caminho de replay
+
+| peça | onde |
+|---|---|
+| adaptador do laboratório | `components/motion-editor/useNativeMotionController.js:188` `createLocalMotionPersistenceAdapter` — `save()` grava `JSON.stringify(patches)` cru; `load()` aceita array, `{patches}` ou `{transactions}` |
+| chave de armazenamento | `storageKey(source)` → observada como `uncraft:native-motion-patches:v1:/api/nati…` (207 bytes com um patch) |
+| carga | `useNativeMotionController.js:799` `await persistenceRef.current.load()` |
+| escopo por sessão | `loadedHistory(value, sessionId)` — aceita array puro via `sessionHistoryFromPatches`, então **o formato do laboratório não é o problema** |
+| filtro por dispositivo | `:817` `sessionHistoryPatches(scoped).filter(responsivePatchAppliesToDevice)` |
+| envio | `:831-838` fatia por `TRANSACTION_LIMITS.maxPatches`, `createTransaction({ patches, source: 'replay' })`, `send('apply-transaction', …)` |
+| recepção no bridge | `lib/motion-editor/runtime-bridge-source.js:8000` `message.type === 'apply-transaction'` |
+| adaptador do produto | `lib/motion-editor/native-edit-api.js` → `/api/nodes/{id}/motion-session` + `/commit`; grava snapshot novo com `motion_manifest` em `lib/motion-editor/edit-session-store.js:305,354` |
+
+#### Como confirmar a hipótese de ordem (roteiro)
+
+1. No bridge, logar com carimbo de tempo no ramo `apply-transaction` quando `source === 'replay'`
+   (l.8000), incluindo `motionId` e `property` de cada patch.
+2. No mesmo bridge, logar quando o GSAP do site cria o tween daquele alvo — o gancho barato é
+   `gsap.globalTimeline` já ter o filho no momento do replay: registrar
+   `gsap.globalTimeline.getChildren(true,true,true).length` antes e depois.
+3. Comparar. **Se a contagem de filhos subir DEPOIS do replay**, o site recriou a animação
+   por cima e a hipótese está confirmada.
+4. Verificação independente, sem instrumentar: no `_salvar.mjs` (removido, mas trivial de
+   refazer) medir a duração no site **imediatamente** após `apply-transaction` e de novo 3s
+   depois. Se ela for 888 no primeiro instante e 1500 no segundo, o site sobrescreveu.
+
+#### Correções candidatas, em ordem de custo
+
+1. **Adiar o replay** até o runtime do site assentar — o bridge já tem `runtime-ready` e a
+   noção de `historyReady` (`useNativeMotionController.js:240,553,586,747`); falta um sinal de
+   "o site terminou de instalar as animações". Barato, mas depende de um sinal confiável.
+2. **Reaplicar ao detectar recriação** — a vigia de seleção adicionada nesta sessão
+   (`runtime-bridge-source.js`, `vigiarSelecao`, intervalo de 500ms) já compara retrato
+   publicado × vivo; o mesmo mecanismo pode disparar re-replay do patch daquele alvo.
+3. **Escrever no autor, não na instância** — mudar `vars` em vez do tween vivo, para que a
+   recriação nasça já com o valor. É a mais robusta e a mais cara; encosta na malha de
+   proveniência congelada dos itens 168b–171.
+
+⚠️ **Não presumir que o problema é o mesmo nos dois adaptadores** antes de medir: no
+laboratório o replay ocorre no boot do editor; no produto, o `motion_manifest` é servido
+junto do bundle e pode ser aplicado por outro caminho.
 
 ⚠️ **Não confundir com o caminho do produto.** No laboratório o salvamento vai para o
 armazenamento do navegador. No canvas ele vai para o servidor (`/api/nodes/[id]/motion-session`
