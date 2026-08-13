@@ -1093,7 +1093,12 @@ export function TimelinePanel({
   // A trava vale SÓ para a régua de rolagem. Na régua de TEMPO, seguir a duração
   // é o comportamento certo: quando o usuário muda a duração no painel, a régua
   // deve acompanhar.
-  const eixoVivo = scrollRuler ? Math.max(1, page.maxScroll) : duration;
+  // Durante o arraste, a régua usa o valor SENDO arrastado. Antes, só a faixa
+  // arrastada se mexia e todo o resto pulava ao soltar.
+  const duracaoNoArraste = draggingStrip?.kind === 'duration' && Number.isFinite(draggingStrip.durationMs)
+    ? draggingStrip.durationMs
+    : duration;
+  const eixoVivo = scrollRuler ? Math.max(1, page.maxScroll) : duracaoNoArraste;
   const [eixoTravado, setEixoTravado] = useState(eixoVivo);
   useEffect(() => {
     if (!scrollRuler) return;
@@ -1401,7 +1406,33 @@ export function TimelinePanel({
     return Math.round((percent / 100) * axisMax);
   }
 
-  function updateStripDrag(event, row) {
+  // ⚠️ SUAVIDADE: o ponteiro dispara muito mais que o vídeo desenha. Sem
+  // coalescer, cada evento força um render e o arraste fica "duro" — a mesma
+  // razão pela qual o canvas trata o gesto como caminho sagrado. Guarda-se o
+  // último evento e aplica-se UM por quadro.
+  const quadroDoArraste = useRef(null);
+  const eventoPendente = useRef(null);
+  function updateStripDrag(eventoBruto, row) {
+    const evento = { clientX: eventoBruto.clientX, clientY: eventoBruto.clientY, pointerId: eventoBruto.pointerId };
+    // O PRIMEIRO movimento do quadro é aplicado na hora — resposta instantânea.
+    // Os seguintes só guardam o último e um único quadro os aplica, para não
+    // renderizar várias vezes entre dois desenhos da tela.
+    if (!quadroDoArraste.current) {
+      aplicaArrasteDeStrip(evento, row);
+      quadroDoArraste.current = requestAnimationFrame(() => {
+        quadroDoArraste.current = null;
+        const pendente = eventoPendente.current;
+        eventoPendente.current = null;
+        if (pendente) aplicaArrasteDeStrip(pendente, row);
+      });
+      return;
+    }
+    eventoPendente.current = evento;
+  }
+
+  useEffect(() => () => { if (quadroDoArraste.current) cancelAnimationFrame(quadroDoArraste.current); }, []);
+
+  function aplicaArrasteDeStrip(event, row) {
     if (!draggingStrip || event.pointerId !== draggingStrip.pointerId) return;
     if (draggingStrip.kind === 'duration') {
       // Delta px → delta ms: stretching right = longer = slower.
@@ -1856,7 +1887,17 @@ export function TimelinePanel({
           onPointerCancel={endHeightResize}
         />
       )}
-      <header className={styles.timelineHeader}>
+      <header
+        className={styles.timelineHeader}
+        // Clicar em QUALQUER lugar da aba abre e fecha a timeline. Só os
+        // controles de verdade ficam de fora — senão apertar "play" ou trocar o
+        // zoom fecharia o painel junto.
+        onClick={(event) => {
+          if (event.target.closest('button, select, input, a, [role="slider"], [role="menu"]')) return;
+          onToggle();
+        }}
+        title={open ? 'Collapse timeline' : 'Open timeline'}
+      >
         <button type="button" className={styles.timelineDisclosure} onClick={onToggle} aria-expanded={open} title={open ? 'Collapse timeline' : 'Open timeline'}>
           <ChevronDown />
           <strong>Timeline</strong>

@@ -425,6 +425,7 @@
   align-items: center;
   gap: 8px;
   padding: 0 8px;
+  cursor: pointer;
 }
 
 .timelineDisclosure,
