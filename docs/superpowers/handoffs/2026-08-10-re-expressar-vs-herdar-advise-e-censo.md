@@ -973,3 +973,43 @@ outra feature, não fiação.
 Suíte **1748 passando**. O único arquivo vermelho é `lib/design/rubric.test.js`, que importa um
 `slop-checks.js` inexistente — trabalho não commitado de **outra** sessão, verificado por
 `git status`, não tocado aqui.
+
+---
+
+## 13. A escrita do painel NÃO chega ao site quando a animação já acabou (2026-08-13)
+
+Pendência do item anterior: o valor digitado no painel chega ao site? Fechada, com uma
+resposta que é um bug.
+
+**O erro das tentativas anteriores** foi comparar coisas diferentes: eu digitava no campo e
+perguntava a duração de um elemento que **eu** tinha marcado, e de um motor que **eu**
+supunha. Corrigido em duas frentes: perguntar pelo elemento que o **próprio bridge** marca
+com `data-uncraft-selected`, e pelo motor que o **editor diz** estar editando.
+
+**Medido, na seleção que o editor fez sozinho** (`div.splide__slide`, motor **WAAPI**,
+duração exibida **400ms**):
+
+| | antes | depois de escrever 777 |
+|---|---|---|
+| animações WAAPI no elemento selecionado | **[]** | **[]** |
+| animações GSAP no mesmo host | [1500ms] | [1500ms] |
+| campo do painel | 400 | **1500** |
+| contador do editor | — | **1 change** |
+
+**O elemento não tem animação WAAPI nenhuma** — nem antes nem depois. O editor exibe e
+oferece para editar uma animação de 400ms que **não existe mais na página**:
+`getAnimations()` descarta animação já terminada que não preenche (`fill`), e o inventário
+guardou a que existia quando ele olhou.
+
+Consequência: a transação é registrada localmente (o contador vai a 1), mas não há o que
+receber a escrita; em seguida o painel re-inspeciona e passa a mostrar **outra** animação
+(a de GSAP, 1500ms), o que explica o número trocar sozinho depois de confirmar.
+
+⚠️ **Escopo do que ficou provado:** isto vale para **animação já terminada**. **Não** testei
+uma animação GSAP viva de ponta a ponta — nesta página todo clique resolve para o mesmo host
+de slider, e não consegui selecionar outra por este caminho. Então: *"a escrita não chega
+quando o alvo já acabou"* está estabelecido; *"a escrita nunca chega"* **não** está.
+
+**O que isto sugere consertar** (não feito): o inventário não deveria oferecer como editável
+uma animação que sumiu do elemento; e o painel não deveria trocar de animação em silêncio
+depois de um commit.
