@@ -10,6 +10,11 @@
  *
  * HOW TO TOGGLE
  *   - Per-item default: flip `on` on the entry below (hot-reloads in dev).
+ *   - MASTER SWITCH: env `UNCRAFT_HOUSESTYLE=off` turns the whole directive off,
+ *     so the same generation can be run with and without the taste rules and the
+ *     two outputs compared. That comparison is the point: it is how we find out
+ *     whether these rules and the reference bank ADD UP or FIGHT each other.
+ *     `houseStyleEnabled()` says which side a given run was on.
  *   - Without editing code: env `UNCRAFT_HOUSESTYLE_OFF="id1,id2"` (and/or
  *     `UNCRAFT_HOUSESTYLE_ON="id3"`) — comma-separated criterion ids.
  *   - Programmatic / future settings UI: `listCriteria()` to see the switchboard,
@@ -235,9 +240,15 @@ export function setCriterion(id, on) {
 
 // opts.off / opts.on: transient id lists overriding the stored `on` for this render only.
 function isEnabled(c, opts) {
+  if (opts?.allOff) return false;
   if (opts?.on?.includes(c.id)) return true;
   if (opts?.off?.includes(c.id)) return false;
   return c.on;
+}
+
+/** true quando o interruptor geral desligou tudo por ambiente. */
+function allOffFromEnv() {
+  return String(process.env.UNCRAFT_HOUSESTYLE || '').trim().toLowerCase() === 'off';
 }
 
 /** HOUSE_STYLE_GUARDRAILS, rendered from currently-enabled guardrail criteria. */
@@ -249,6 +260,9 @@ export function buildGuardrails(opts) {
     if (!items.length) continue;
     blocks.push(`${GROUP_HEADERS[group]}\n${items.map((c) => c.text).join('\n')}`);
   }
+  // Sem critério nenhum, devolve vazio em vez do cabeçalho sozinho: este texto vai
+  // direto para dentro do prompt, e cabeçalho sem regra embaixo é instrução vazia.
+  if (!blocks.length) return '';
   return `DESIGN GUARDRAILS (apply to every visual decision)\n\n${blocks.join('\n\n')}`;
 }
 
@@ -264,13 +278,19 @@ export function buildInvent(opts) {
 
 /** Full HOUSE_STYLE = guardrails + absorb + invent. */
 export function buildHouseStyle(opts) {
-  return `${buildGuardrails(opts)}\n\n${buildAbsorb(opts)}\n\n${buildInvent(opts)}`;
+  return [buildGuardrails(opts), buildAbsorb(opts), buildInvent(opts)].filter(Boolean).join('\n\n');
 }
 
 // ── Backward-compatible exports (assembled from default state at load) ───────
 // These freeze at import time. Toggle via `on` / env before boot (dev hot-reload
 // re-evaluates), or call the build*() functions for a live custom-toggled render.
-export const HOUSE_STYLE_GUARDRAILS = buildGuardrails();
-export const HOUSE_STYLE_ABSORB = buildAbsorb();
-export const HOUSE_STYLE_INVENT = buildInvent();
-export const HOUSE_STYLE = buildHouseStyle();
+const ENV_OPTS = allOffFromEnv() ? { allOff: true } : undefined;
+export const HOUSE_STYLE_GUARDRAILS = buildGuardrails(ENV_OPTS);
+export const HOUSE_STYLE_ABSORB = buildAbsorb(ENV_OPTS);
+export const HOUSE_STYLE_INVENT = buildInvent(ENV_OPTS);
+export const HOUSE_STYLE = buildHouseStyle(ENV_OPTS);
+
+/** As regras estão valendo nesta execução? Serve para rotular uma comparação. */
+export function houseStyleEnabled() {
+  return !allOffFromEnv();
+}
