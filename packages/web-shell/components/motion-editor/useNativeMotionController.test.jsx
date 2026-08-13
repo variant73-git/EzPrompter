@@ -1704,4 +1704,151 @@ describe('useNativeMotionController', () => {
       vi.useRealTimers();
     }
   });
+
+  // MEDIDO 2026-08-13 no editor real: ao RECARREGAR, o site vem do cache e
+  // anuncia `runtime-ready` 0,27s ANTES de o React ligar o ouvinte (na abertura
+  // fria o ouvinte estava ligado 5,9s antes). O anuncio e' unico e sem
+  // confirmacao: perdido ele, nao ha negociacao nem replay, e a alteracao
+  // salva nunca volta. O batimento ainda promovia o estado para "pronto", o que
+  // fazia o editor PARECER conectado.
+  it('asks the runtime to announce itself again when a heartbeat arrives before any handshake', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const hook = renderHook(() => useNativeMotionController({ iframeRef }));
+    try {
+      // o anuncio se perdeu: nada de runtime-ready, so o batimento
+      await act(async () => window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        origin: 'https://runtime.uncraft.test',
+        data: {
+          protocol: MOTION_EDITOR_PROTOCOL,
+          source: 'runtime',
+          type: 'heartbeat',
+          payload: { runtimeGeneration: 1 },
+        },
+      })));
+
+      expect(frame.contentWindow.postMessage.mock.calls.map(([message]) => message.type))
+        .toContain('request-announce');
+    } finally {
+      hook.unmount();
+    }
+  });
+
+  // Achado da auditoria (Codex, confirmado lendo `releaseSettled` e `save`):
+  // quando o site RECUSA o replay, os patches recusados saem do historico — e
+  // `save()` grava o historico atual. Como a identidade das animacoes hoje nao
+  // sobrevive a uma recarga (medido: 122 de 123 mudam), a recusa seria a regra,
+  // e o proximo "Save changes" apagaria o trabalho salvo. Recusar reaplicar nao
+  // pode ser o mesmo que esquecer.
+  it('keeps the saved change after the runtime refuses to replay it', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const salvo = {
+      id: 'patch-salvo',
+      elementId: 'hero',
+      kind: 'motion',
+      property: 'timing.duration',
+      motionId: 'gsap-antigo',
+      before: 620,
+      value: 888,
+      createdAt: '2026-08-13T10:00:00.000Z',
+    };
+    const persistenceAdapter = {
+      autosave: false,
+      load: vi.fn(async () => [salvo]),
+      save: vi.fn(async () => {}),
+      subscribe: vi.fn(() => () => {}),
+    };
+    const hook = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+    try {
+      await act(async () => window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        origin: 'https://runtime.uncraft.test',
+        data: {
+          protocol: MOTION_EDITOR_PROTOCOL,
+          source: 'runtime',
+          type: 'runtime-ready',
+          payload: { title: 'fixture', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT },
+        },
+      })));
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+      const replay = frame.contentWindow.postMessage.mock.calls
+        .map(([message]) => message)
+        .find((message) => message.type === 'apply-transaction');
+      expect(replay.payload.transaction.source).toBe('replay');
+
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-rejected', {
+        transactionId: replay.payload.transaction.id,
+        code: 'motion_missing',
+      }, replay.requestId)));
+
+      await act(async () => { await hook.result.current.commands.save(); });
+      const gravado = persistenceAdapter.save.mock.calls.at(-1)[0];
+      expect(gravado.patches.map((patch) => patch.id)).toContain('patch-salvo');
+    } finally {
+      hook.unmount();
+    }
+  });
+
+  // Achado da auditoria: sem teto e sem "um por vez", varios batimentos
+  // enfileiram varios anuncios; cada anuncio tratado zera o registro de
+  // transacoes e ainda avisa "o site reiniciou", o que nao aconteceu. E
+  // desistir tem que ser DITO, senao volta o estado com cara de conectado.
+  it('asks once per round trip, gives up out loud, and never asks forever', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const diagnostico = vi.fn();
+    window.addEventListener('uncraft:motion-diagnostic', diagnostico);
+    const hook = renderHook(() => useNativeMotionController({ iframeRef }));
+    const batimento = () => act(() => { window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'runtime', type: 'heartbeat', payload: {} },
+    })); });
+    const pedidos = () => frame.contentWindow.postMessage.mock.calls
+      .map(([message]) => message.type).filter((type) => type === 'request-announce').length;
+    try {
+      batimento();
+      expect(pedidos()).toBe(1);
+      batimento(); // este gasta-se esperando a resposta do anterior
+      expect(pedidos()).toBe(1);
+      for (let volta = 0; volta < 20; volta += 1) batimento();
+      expect(pedidos()).toBe(5);
+      expect(hook.result.current.patchError).toBe("This page didn't finish connecting to the editor. Reload to try again.");
+      expect(diagnostico.mock.calls.some(([evento]) => evento.detail.code === 'announce_unanswered')).toBe(true);
+    } finally {
+      hook.unmount();
+      window.removeEventListener('uncraft:motion-diagnostic', diagnostico);
+    }
+  });
+
+  it('stops asking for the announcement once the runtime handshake completed', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const hook = renderHook(() => useNativeMotionController({ iframeRef }));
+    try {
+      await act(async () => window.dispatchEvent(readyMessage(frame)));
+      frame.contentWindow.postMessage.mockClear();
+      await act(async () => window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow,
+        origin: 'https://runtime.uncraft.test',
+        data: {
+          protocol: MOTION_EDITOR_PROTOCOL,
+          source: 'runtime',
+          type: 'heartbeat',
+          payload: {},
+        },
+      })));
+
+      expect(frame.contentWindow.postMessage.mock.calls.map(([message]) => message.type))
+        .not.toContain('request-announce');
+    } finally {
+      hook.unmount();
+    }
+  });
 });
