@@ -25,7 +25,15 @@ async function jsonOrThrow(r) {
   // Surface the server's clean message (e.g. the extract route's timeout text)
   // — not only the generic `error` code — so a route-deadline timeout reads as
   // "timed out", not an opaque "extract_failed".
-  if (!r.ok) throw new Error(j?.detail || j?.message || j?.error || `${r.status} ${r.statusText}`);
+  if (!r.ok) {
+    const err = new Error(j?.detail || j?.message || j?.error || `${r.status} ${r.statusText}`);
+    // Codigo e estorno vem TIPADOS do servidor: so ele sabe se cancelou antes de
+    // cobrar. Ler a mensagem para adivinhar isso confundia uma desistencia do
+    // navegador com um cancelamento do servidor.
+    err.code = j?.error || err.code;
+    err.refunded = j?.refunded === true;
+    throw err;
+  }
   if (j?.balanceAfter != null && typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('uncraft:balance', { detail: { balance: j.balanceAfter } }));
   }

@@ -907,6 +907,22 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     if (undoStackRef.current.length > 100) undoStackRef.current.splice(0, undoStackRef.current.length - 100);
   }
 
+  // ⚠️ NAO EXISTE REFAZER, E E' DELIBERADO (2026-08-14).
+  //
+  // O Adilson pediu: desfez a imagem colada e o refazer nao a trouxe de volta.
+  // Construi um, e DUAS rodadas de auditoria mostraram que nesta arquitetura ele
+  // nao pode ser correto sem um historico transacional de verdade:
+  //   - a entrada de criacao guarda a LINHA do momento da criacao, entao refazer
+  //     um node editado depois traria a versao velha por cima da nova;
+  //   - qualquer invalidacao por "algo mudou" nao ve edicao de CONTEUDO (html,
+  //     meta, nome), que nao mexe em id nem posicao;
+  //   - a tela confirma antes do servidor, e `ON CONFLICT DO NOTHING` faz um
+  //     200 nao provar que o que voltou e' o que se pediu.
+  // Cada um desses destroi trabalho em silencio. Um refazer meio-certo e' pior
+  // do que nenhum: o usuario confia nele. Fazer direito e' um historico com
+  // estado antes/depois por operacao e confirmacao por objeto — obra propria,
+  // nao remendo. Ate' la', desfazer segue via unica.
+
   function nextNodePosition(opts = {}) {
     const newW = opts.width || 1280;
     const newH = opts.height || 800;
@@ -2703,9 +2719,41 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       else setEdges((prev) => prev.filter((e) => e.id !== tmpEdgeId));
       setTimeout(() => zoomToNode(node, 350, 1), 80);
     } catch (e) {
-      setNodes((prev) => prev.filter((n) => n.id !== tmpId));
-      setEdges((prev) => prev.filter((e) => e.id !== tmpEdgeId));
-      if (!handleBillingError(e)) toast.error(`Could not extract: ${e.message}`);
+      if (handleBillingError(e)) {
+        setNodes((prev) => prev.filter((n) => n.id !== tmpId));
+        setEdges((prev) => prev.filter((e) => e.id !== tmpEdgeId));
+        return;
+      }
+      // ⚠️ MEDIDO 2026-08-14 no log do servidor: um clone a partir de screenshot
+      // estourou o prazo da rota (148,5s) e voltou 502 — com estorno e sem node
+      // criado, que e' o desenho certo. Mas o placeholder era REMOVIDO e a
+      // unica noticia era um aviso passageiro, depois de dois minutos e meio de
+      // espera: da' exatamente a sensacao de "sumiu e nao disse nada".
+      // O placeholder FICA, dizendo o que houve, ate' o usuario apaga-lo — mesmo
+      // padrao ja usado quando a verificacao do site expira.
+      // Duas coisas diferentes, e confundi-las mente para o usuario:
+      //  - o SERVIDOR estourou o prazo -> ele aborta dentro do runBilledOperation,
+      //    devolve o hold e nao cria node. Ai' da' para afirmar que nao cobrou.
+      //  - o NAVEGADOR desistiu de esperar (AbortError) -> a rota pode estar
+      //    viva ainda, podendo persistir e cobrar. Prometer estorno seria chute.
+      // So o SERVIDOR sabe se cancelou antes de cobrar, e ele diz isso tipado
+      // (`extract_timeout` + `refunded`). Ler a mensagem para adivinhar
+      // classificava uma desistencia do navegador como cancelamento do servidor
+      // e prometia estorno sem base (achado da auditoria).
+      const cancelouLa = e?.code === 'extract_timeout' && e?.refunded === true;
+      const desistiuAqui = e?.name === 'AbortError' || /aborted|network|failed to fetch/i.test(String(e?.message || ''));
+      const rotulo = cancelouLa
+        ? 'Took too long — cancelled, and you were not charged.'
+        : desistiuAqui
+          ? "The wait ended here — it may still be finishing. Reload before trying again."
+          : `It did not work: ${String(e?.message || 'unknown').slice(0, 90)}`;
+      // `_failed` (nao `_loading` sozinho) e' o que o node le para PARAR: sem
+      // isso ele seguia com anel de progresso e mensagem animada por cima do
+      // rotulo, ou seja, dizendo que ainda estava gerando (achado da auditoria).
+      setNodes((prev) => prev.map((n) => (n.id === tmpId ? {
+        ...n, _failed: true, _failedLabel: rotulo,
+      } : n)));
+      toast.error(rotulo);
     }
   }
 
@@ -6642,6 +6690,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           checkClipboard={clipboardHasSupported}
+          copyEnabled={!!(selectedNodeId || selectedNodeIds.size)}
+          onPickCopy={() => {
+            setContextMenu(null);
+            // Mesmo caminho do Cmd+C: o payload dos nodes vai para a area de
+            // transferencia como texto, e o `paste` do canvas o reconhece.
+            const payload = copyFnsRef.current?.buildSelectionClipboardPayload?.();
+            if (!payload) { toast.error('Select a node first.'); return; }
+            navigator.clipboard?.writeText?.(JSON.stringify(payload))
+              .then(() => toast.info(`Copied ${payload.nodes.length} node${payload.nodes.length > 1 ? 's' : ''}.`))
+              .catch(() => toast.error("Couldn't reach the clipboard."));
+          }}
           onPickPaste={async () => {
             const m = contextMenu;
             setContextMenu(null);
@@ -6998,7 +7057,7 @@ function useClampedMenuPos(x, y, deps = []) {
   return [ref, pos];
 }
 
-function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onPickScreenshot, onPickPrompt, onPickCode, onPickBlankSite, onPickPaste, checkClipboard }) {
+function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onPickScreenshot, onPickPrompt, onPickCode, onPickBlankSite, onPickPaste, onPickCopy, copyEnabled = false, checkClipboard }) {
   const [mode, setMode] = useState('choices');
   const [url, setUrl] = useState('');
   // null = still probing the clipboard; true/false = supported payload present.
@@ -7046,9 +7105,26 @@ function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onP
           <button className="popup-menu-btn" onClick={onPickScreenshot}><MenuIcon.Image /><span>Add Screenshot</span></button>
           <button className="popup-menu-btn" onClick={onPickPrompt}><MenuIcon.Prompt /><span>Add Prompt</span></button>
           <button className="popup-menu-btn" onClick={onPickCode}><MenuIcon.Code /><span>Add Code</span></button>
-          {/* Paste from clipboard — enabled only when the clipboard holds a
-              supported payload (an image or a URL the async Clipboard API can
-              read). Files like .md/.html paste via Cmd+V only. */}
+          {/* Colar nao e' "adicionar ao quadro": e' trazer o que ja esta na
+              area de transferencia. Misturado com os "Add ...", a acao some no
+              meio de uma lista de coisas para CRIAR. Categoria propria. */}
+          <div className="popup-menu-sep" role="separator" />
+          <div className="popup-menu-title">Clipboard</div>
+          <button
+            className="popup-menu-btn"
+            onClick={onPickCopy}
+            disabled={!copyEnabled}
+            title={copyEnabled ? 'Copy the selected nodes' : 'Select a node first'}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="9" y="9" width="11" height="11" rx="2" />
+              <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+            </svg>
+            <span>Copy selection</span>
+          </button>
+          {/* Enabled only when the clipboard holds a supported payload (an image
+              or a URL the async Clipboard API can read). Files like .md/.html
+              paste via Cmd+V only. */}
           <button
             className="popup-menu-btn"
             onClick={onPickPaste}
@@ -7061,6 +7137,7 @@ function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onP
             </svg>
             <span>Paste from clipboard</span>
           </button>
+          <div className="popup-menu-sep" role="separator" />
           <button className="popup-menu-btn popup-menu-btn-cancel" onClick={onClose}>Cancel (Esc)</button>
         </>
       ) : (

@@ -1131,7 +1131,7 @@ export default function CanvasNode({
   // producing content (capture stream, run-flow, image gen). Excludes the
   // challenge state, which is "waiting for a human", not "working".
   const generating =
-    (node._loading && !node._challenge) ||
+    (node._loading && !node._challenge && !node._failed) ||
     node.meta?.status === 'generating' ||
     !!runStatus;
   const genPct = useGenerationProgress(generating, estimatedDurationMs(node));
@@ -1415,7 +1415,20 @@ export default function CanvasNode({
         </>)}
       </div>
       {node._loading ? (
-        node._challenge ? (
+        node._failed ? (
+          // Falhou: sem anel de progresso, sem mensagem animada, sem giro. O
+          // node PARA e diz o que houve. Achado da auditoria: manter o estado
+          // de "trabalhando" com um rotulo trocado deixava a tela dizendo que
+          // ainda estava gerando — que e' exatamente a queixa que este ramo
+          // existe para resolver.
+          <div className="cnode-loading cnode-loading-failed">
+            <svg className="cnode-loading-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 8v5" /><path d="M12 16.5v.01" />
+            </svg>
+            <span>{node._failedLabel || 'It did not work.'}</span>
+          </div>
+        ) : node._challenge ? (
           <div className="cnode-loading cnode-loading-challenge">
             {/* Shield icon — same family as the ChallengeModal, signals
                 "this is paused waiting for human verification" rather

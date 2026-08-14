@@ -10157,3 +10157,18 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
 }
 .prompt-dock.dock-left { left: var(--shell-gutter); }
 .prompt-dock.dock-right { right: var(--shell-gutter); }
+
+/* Separador entre categorias do menu de contexto do canvas. Colar nao e'
+   "adicionar ao quadro" — a linha existe para que a diferenca se veja. */
+.popup-menu-sep {
+  height: 1px;
+  margin: 6px 8px;
+  background: var(--border-frosted);
+}
+
+/* Node que falhou: para de parecer que esta trabalhando. */
+.cnode-loading-failed {
+  color: var(--text-secondary);
+  gap: 10px;
+}
+.cnode-loading-failed .cnode-loading-icon { color: #d97757; opacity: .9; }

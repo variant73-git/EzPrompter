@@ -21,7 +21,18 @@ export const runtime = 'nodejs';
 // so client(200s) − route(≤170s) leaves ~30s for billing settle + persistence
 // (which run AFTER the deadline) before the client would abort. Raise this and
 // the client EXTRACT_TIMEOUT_MS together if needed.
-const EXTRACT_ROUTE_DEADLINE_MS = Math.min(170_000, Math.max(1_000,
+// MEDIDO 2026-08-14: um clone a partir de screenshot bateu em 148,5s e foi
+// abortado a 1,5s do teto — a operacao e' a mais cara do conjunto (visao lendo a
+// imagem e escrevendo a pagina inteira).
+//
+// ⚠️ E NAO DA' PARA SO SUBIR O NUMERO. Subir para 170s consome inteira a folga
+// que o desenho reserva: a rota precisa de ~30s DEPOIS do prazo para acertar a
+// cobranca e persistir, e o cliente corta em 200s — 170+30 = 200 nao deixa nada
+// para rede e variacao, e o estado incerto que o prazo existe para evitar
+// voltaria (achado da auditoria). Subir de verdade exige mover os TRES tetos
+// juntos, com o pos-processamento medido, nao estimado. Fica em 150s ate' la';
+// o que muda agora e' que a falha aparece na tela em vez de sumir calada.
+const EXTRACT_ROUTE_DEADLINE_MS = Math.min(150_000, Math.max(1_000,
   Number(process.env.UNCRAFT_EXTRACT_ROUTE_DEADLINE_MS) || 150_000));
 export const maxDuration = 200;
 
@@ -138,6 +149,20 @@ export async function POST(request, { params }) {
       const payload = e.extractError;
       const status = payload.error === 'unsupported_combo' || payload.error === 'invalid_to' ? 400 : 409;
       return NextResponse.json(payload, { status });
+    }
+    // O prazo da rota dispara DENTRO do runBilledOperation, que devolve o hold e
+    // relanca: nesse caminho da' para afirmar que nao houve cobranca. Sai
+    // TIPADO, porque so o servidor sabe disso — o cliente lendo texto ("timed
+    // out") classificava errado uma desistencia do proprio navegador e prometia
+    // estorno sem base (achado da auditoria).
+    const foiPrazoDaRota = /deadline exceeded|extract\.route/i.test(String(e?.message || ''))
+      || e?.name === 'AbortError' && e?.deadlineLabel === 'extract.route';
+    if (foiPrazoDaRota) {
+      return NextResponse.json({
+        error: 'extract_timeout',
+        refunded: true,
+        message: 'The clone took longer than the time limit and was cancelled.',
+      }, { status: 504 });
     }
     return NextResponse.json({ error: 'extract_failed', message: String(e?.message || e) }, { status: 502 });
   }
