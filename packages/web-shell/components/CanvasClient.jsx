@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } fr
 import { createPortal } from 'react-dom';
 import { Check, CloudCheck, Monitor, Smartphone, Tablet, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { nodeOrigin, originColor } from '../lib/node-origin.js';
+import { imageUrlFromPastedHtml, looksLikeImageUrl } from '../lib/pasted-image.js';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
 import CanvasNodeItem from './CanvasNodeItem.jsx';
@@ -578,7 +579,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   // alone. The window listener is bound once and reads the latest handlers
   // through a ref so it never closes over stale `nodes`/state.
   const pasteFnsRef = useRef(null);
-  pasteFnsRef.current = { handleQueueFiles, handleAddUrl, handlePasteNodes };
+  pasteFnsRef.current = { handleQueueFiles, handleAddUrl, handlePasteNodes, handleAddImageUrl };
   // Consecutive pastes of the same payload step further out each time so
   // copies never stack invisibly. Reset on every fresh Cmd+C.
   const pasteSeqRef = useRef(0);
@@ -666,7 +667,25 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         return;
       }
 
-      // 4) A pasted URL → site node. Arbitrary text is left for normal paste.
+      // 4) An image copied from a web page. MEDIDO num Chromium real: copiar a
+      //    imagem SELECIONANDO-A não põe arquivo nenhum na área de
+      //    transferência — põe `text/plain` com o texto alternativo e
+      //    `text/html` com o `<img src>`. Sem ler o HTML, o único endereço
+      //    disponível era ignorado e nada acontecia.
+      const html = (cd.getData && cd.getData('text/html')) || '';
+      const doHtml = imageUrlFromPastedHtml(html);
+      if (doHtml) { e.preventDefault(); fns.handleAddImageUrl?.(doHtml); return; }
+
+      // 5) "Copiar endereço da imagem" entrega a URL em texto. Ela caía na
+      //    porta de qualquer link e virava node de SITE — o canvas tentava
+      //    clonar a imagem como se fosse uma página.
+      if (text && looksLikeImageUrl(text)) {
+        e.preventDefault();
+        fns.handleAddImageUrl?.(normalizeUrl(text) || text);
+        return;
+      }
+
+      // 6) A pasted URL → site node. Arbitrary text is left for normal paste.
       if (text && looksLikeUrl(text)) {
         const url = normalizeUrl(text);
         if (url) { e.preventDefault(); fns.handleAddUrl?.(url); }
@@ -1994,6 +2013,41 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       map.clear();
     };
   }, []);
+
+  /**
+   * Uma imagem colada por ENDEREÇO. Quem busca é o servidor: o navegador
+   * esbarraria em CORS na maioria dos sites, e o que interessa é o corpo.
+   *
+   * Se o endereço não for imagem de verdade, volta ao comportamento antigo em
+   * vez de deixar a colagem morrer em silêncio — a extensão pode mentir.
+   */
+  async function handleAddImageUrl(url, opts = {}) {
+    const aviso = toast.info('Bringing the image in…');
+    try {
+      const out = await api.addAssetFromUrl(url, board.id);
+      toast.dismiss?.(aviso);
+      // A rota devolve a LINHA criada, com os pixels em `meta.dataUrl` — que e'
+      // de onde o canvas desenha um asset. Remontar o node aqui, sem eles,
+      // daria um quadrado vazio ate' a proxima recarga.
+      const node = out?.node;
+      if (!node?.id) { toast.error("The image couldn't be brought in."); return; }
+      setNodes((prev) => (prev.some((n) => n.id === node.id) ? prev : [...prev, node]));
+      pushCreateUndo(node, null);
+      setSelectedNodeId(node.id);
+      toast.info('Image added.');
+    } catch (erro) {
+      toast.dismiss?.(aviso);
+      const codigo = erro?.body?.error || erro?.message || '';
+      if (/not_image|415/.test(String(codigo))) {
+        // não era imagem: segue o caminho de sempre
+        await handleAddUrl(url, opts);
+        return;
+      }
+      toast.error(/blocked_host/.test(String(codigo))
+        ? "That address isn't public, so the image can't be fetched."
+        : "The image couldn't be brought in.");
+    }
+  }
 
   async function handleAddUrl(url, opts = {}) {
     const id = `temp-${Date.now()}`;

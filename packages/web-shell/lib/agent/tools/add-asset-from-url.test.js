@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// A guarda de rede e' a mesma do produtor de clone nativo (achado P0 do Sol em
+// 2026-08-10): buscar um endereco interno e devolver o CORPO ao usuario nao e'
+// so buscar uma URL — e' exfiltracao. Esta ferramenta nao tinha a guarda, e a
+// colagem no canvas passou a ser um segundo jeito de dispara-la.
+vi.mock('../../native-clone/capture-bundle.js', () => ({
+  hostEhPublico: vi.fn(async (host) => !/^(127\.|10\.|169\.254\.|192\.168\.|localhost$)/.test(host)),
+}));
+
 vi.mock('../../db.js', () => {
   const sql = vi.fn();
   sql._reset = () => sql.mockReset();
@@ -128,5 +136,57 @@ describe('addAssetFromUrl tool', () => {
       { boardId: 'b1', userId: 42 },
     );
     expect(r.error).toBe('too_large');
+  });
+});
+
+
+describe('addAssetFromUrl — a guarda de rede', () => {
+  // Achado do Sol: checar so o primeiro endereco nao fecha nada. Um host
+  // PUBLICO pode responder 302 para um endereco interno, e o `redirect:
+  // 'follow'` seguia sem perguntar. A guarda tem que valer em cada salto.
+  it('refuses a public host that redirects into a private address', async () => {
+    const saltos = [];
+    globalThis.fetch = vi.fn(async (u) => {
+      saltos.push(String(u));
+      if (saltos.length === 1) {
+        return {
+          ok: false, status: 302,
+          headers: { get: (n) => (n.toLowerCase() === 'location' ? 'http://169.254.169.254/latest/meta-data/' : null) },
+          arrayBuffer: async () => new ArrayBuffer(0),
+        };
+      }
+      throw new Error('nao pode ter seguido');
+    });
+    sql.mockResolvedValueOnce([{ id: 'board-1' }]);
+    const out = await addAssetFromUrlTool.execute(
+      { url: 'https://exemplo.com/redireciona' },
+      { userId: 1, boardId: 'board-1' },
+    );
+    expect(out.error).toBe('blocked_host');
+    expect(saltos).toHaveLength(1);
+  });
+
+  it('refuses a host that resolves to a private address', async () => {
+    mockFetchPng();
+    sql.mockResolvedValueOnce([{ id: 'board-1' }]);
+    const out = await addAssetFromUrlTool.execute(
+      { url: 'http://169.254.169.254/latest/meta-data/iam/' },
+      { userId: 1, boardId: 'board-1' },
+    );
+    expect(out.error).toBe('blocked_host');
+    // e nao pode nem ter chegado a buscar
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('still ingests a public image', async () => {
+    mockFetchPng();
+    sql.mockResolvedValueOnce([{ id: 'board-1' }]);
+    sql.mockResolvedValueOnce([{ id: 'asset-1' }]);
+    const out = await addAssetFromUrlTool.execute(
+      { url: 'https://exemplo.com/foto.png', attachToBoard: false },
+      { userId: 1, boardId: 'board-1' },
+    );
+    expect(out.error).toBeUndefined();
+    expect(globalThis.fetch).toHaveBeenCalled();
   });
 });

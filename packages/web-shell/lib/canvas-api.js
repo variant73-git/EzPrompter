@@ -87,6 +87,14 @@ export const api = {
   deleteEdge: (id) => fetch(`/api/edges/${id}`, { ...COMMON, method: 'DELETE' }).then(jsonOrThrow),
   applyEdge: (id) => fetch(`/api/edges/${id}/apply`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
 
+  // Colar uma imagem da internet: o SERVIDOR busca. O navegador esbarraria em
+  // CORS na maioria dos sites, e o corpo da resposta e' o que vira o asset.
+  addAssetFromUrl: (url, boardId, name = null) => fetch('/api/assets/from-url', {
+    ...COMMON,
+    method: 'POST',
+    body: JSON.stringify({ url, boardId, name }),
+  }).then(jsonOrThrow),
+
   captureUrl: (url, nodeId = null) => fetch('/api/snapshot/capture', { ...COMMON, method: 'POST', body: JSON.stringify({ url, nodeId }) }).then(jsonOrThrow),
   checkUrlEmbed: (url) => fetch('/api/site/embed-policy', {
     ...COMMON,
