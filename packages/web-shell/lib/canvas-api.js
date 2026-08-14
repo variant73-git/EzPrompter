@@ -48,7 +48,10 @@ async function jsonOrThrow(r) {
 // leaving ~30s headroom for pre-work + persistence so the server's own clean,
 // refunded error always wins and the client never aborts a still-billing
 // request. Raise both together if you raise the route deadline.
-const EXTRACT_TIMEOUT_MS = 200_000;
+// Tem que ser MAIOR que o prazo da rota (240s) mais o acerto de cobranca e a
+// persistencia (~30s), que rodam depois dele — senao o navegador desiste
+// enquanto o servidor ainda esta terminando, e ninguem sabe se cobrou.
+const EXTRACT_TIMEOUT_MS = 290_000;
 
 async function fetchWithTimeout(url, opts = {}, ms = EXTRACT_TIMEOUT_MS) {
   const controller = new AbortController();

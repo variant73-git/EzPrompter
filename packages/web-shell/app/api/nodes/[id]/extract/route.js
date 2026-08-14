@@ -21,20 +21,34 @@ export const runtime = 'nodejs';
 // so client(200s) − route(≤170s) leaves ~30s for billing settle + persistence
 // (which run AFTER the deadline) before the client would abort. Raise this and
 // the client EXTRACT_TIMEOUT_MS together if needed.
-// MEDIDO 2026-08-14: um clone a partir de screenshot bateu em 148,5s e foi
-// abortado a 1,5s do teto — a operacao e' a mais cara do conjunto (visao lendo a
-// imagem e escrevendo a pagina inteira).
+// ⚠️ MITIGACAO EXPERIMENTAL, NAO CAUSA CORRIGIDA (a auditoria foi explicita, e
+// tem razao). O que esta MEDIDO: a chamada de visao sozinha levou 80,7s numa
+// pagina simples, e o incidente real bateu 148,5s no total. O que NAO esta
+// medido: o recorte, o acerto de cobranca, a persistencia, a distribuicao entre
+// screenshots, e quanto o caso que falhou precisaria para terminar. Logo, 240s
+// e' outro teto por extrapolacao — melhor que 150s, mas nao demonstrado.
+// O `[extract.clone]` em lib/extract.js agora registra visao e recorte separados:
+// a proxima falha traz o dado que falta para dimensionar por percentil, e ai' sim
+// isto vira correcao.
 //
-// ⚠️ E NAO DA' PARA SO SUBIR O NUMERO. Subir para 170s consome inteira a folga
-// que o desenho reserva: a rota precisa de ~30s DEPOIS do prazo para acertar a
-// cobranca e persistir, e o cliente corta em 200s — 170+30 = 200 nao deixa nada
-// para rede e variacao, e o estado incerto que o prazo existe para evitar
-// voltaria (achado da auditoria). Subir de verdade exige mover os TRES tetos
-// juntos, com o pos-processamento medido, nao estimado. Fica em 150s ate' la';
-// o que muda agora e' que a falha aparece na tela em vez de sumir calada.
-const EXTRACT_ROUTE_DEADLINE_MS = Math.min(150_000, Math.max(1_000,
-  Number(process.env.UNCRAFT_EXTRACT_ROUTE_DEADLINE_MS) || 150_000));
-export const maxDuration = 200;
+// POR QUE O CLONE FALHAVA. MEDIDO 2026-08-14: um clone a partir de screenshot
+// bateu em 148,5s e foi abortado a 1,5s do teto. A causa nao era travamento —
+// era o ORCAMENTO. Probe isolando as etapas: a chamada de VISAO sozinha levou
+// **80,7s** para uma pagina SIMPLES (saida de 6 KB). A duracao cresce com o
+// tamanho do HTML que ela escreve, e o teto de saida e' 16k tokens; um
+// screenshot denso escreve varias vezes mais. Somado ao recorte dos pixels
+// reais, 150s ficava abaixo do caso comum, nao acima.
+//
+// Os TRES tetos sobem JUNTOS, que e' o que o desenho exige — subir so um
+// inverte a ordem e devolve o estado incerto que o prazo existe para evitar:
+//   rota 240s  +  ~30s de acerto/persistencia  =  270s
+//   cliente 290s  (corta DEPOIS disso)
+//   maxDuration 300s  (o mesmo que /run e /reconstruct ja usam)
+// O clamp acompanha o padrao para que uma variavel de ambiente nao possa,
+// sozinha, reintroduzir a inversao.
+const EXTRACT_ROUTE_DEADLINE_MS = Math.min(240_000, Math.max(1_000,
+  Number(process.env.UNCRAFT_EXTRACT_ROUTE_DEADLINE_MS) || 240_000));
+export const maxDuration = 300;
 
 // POST /api/nodes/[id]/extract { to }
 // Creates a NEW node derived from node [id]. Mirrors extractDesign's persist
