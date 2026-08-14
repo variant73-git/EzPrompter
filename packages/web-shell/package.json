@@ -8,6 +8,8 @@
     "dev:keep": "next dev --port 3030",
     "dev:motion": "NEXT_DIST_DIR=.next-motion next dev --port 3032",
     "build": "next build",
+    "_comment_build_verify": "Verificar o build NAO pode usar a mesma pasta do servidor de dev: os dois escrevem em .next, o build troca os pedacos debaixo do dev e ele passa a pedir arquivo que nao existe mais (Cannot find module ./NNNN.js). Use este quando so quiser saber se compila.",
+    "build:verify": "NEXT_DIST_DIR=.next-verify next build",
     "start": "next start --port 3030",
     "test": "vitest run",
     "test:watch": "vitest",
