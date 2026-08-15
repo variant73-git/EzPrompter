@@ -2,6 +2,7 @@ import { generateDesignMd } from './design-md.js';
 import { extractContent } from './demarcelize.js';
 import { describeSiteAsPrompt, describeImageAsTokens, describeImageAsPrompt, cloneImageToHtml } from './extract-llm.js';
 import { embedClonedImageRegions } from './clone-images.js';
+import { measureCloneSimilarity } from './clone-similarity.js';
 
 // Render a standalone HTML string to a PNG data URL via headless Chromium.
 // Used for site→Screenshot extraction (the node's snapshot HTML, not a URL).
@@ -167,11 +168,18 @@ export async function runExtract({ to, node, model, signal }) {
         const tRecorte = Date.now();
         const html = await embedClonedImageRegions(raw, dataUrl, { signal });
         const msRecorte = Date.now() - tRecorte;
+        // ⭐ ACOMPANHAMENTO PERMANENTE (pedido do Adilson): o SSIM de CADA clone
+        // fica gravado no meta. Fail-open por contrato — a medicao nunca pode
+        // derrubar um clone que deu certo; falha vira `null` e o log conta.
+        const similarity = await measureCloneSimilarity(html, dataUrl, { signal })
+          .catch((e) => { console.warn(`[extract.clone] similarity falhou: ${String(e?.message || e).slice(0, 120)}`); return null; });
         console.log(`[extract.clone] visao=${msVisao}ms recorte=${msRecorte}ms total=${msVisao + msRecorte}ms `
-          + `htmlBruto=${raw.length}B htmlFinal=${html.length}B recortes=${(raw.match(/data-clone-crop=/g) || []).length}`);
+          + `htmlBruto=${raw.length}B htmlFinal=${html.length}B recortes=${(raw.match(/data-clone-crop=/g) || []).length}`
+          + ` ssim=${similarity ? similarity.ssim.toFixed(4) : 'null'}`);
         return result({ kind: 'site', html,
           meta: { name: `${name} — clone`, source: 'extract', extractTo: 'clone', sourceNodeId: node.id,
-            timings: { visaoMs: msVisao, recorteMs: msRecorte } } });
+            timings: { visaoMs: msVisao, recorteMs: msRecorte, similarityMs: similarity?.ms ?? null },
+            similarity: similarity ? { ssim: similarity.ssim, width: similarity.width, height: similarity.height } : null } });
       }
       case 'styleclone': {
         // Run the faithful clone (with real images embedded) in the background,
