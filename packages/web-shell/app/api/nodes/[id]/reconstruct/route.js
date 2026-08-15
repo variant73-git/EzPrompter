@@ -3,6 +3,7 @@ import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
 import { InsufficientCreditsError, OperationInProgressError } from '../../../../../lib/billing/context.js';
 import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
+import { CLONE_ENGINES } from '../../../../../lib/clone-router.js';
 import { reconstructSiteNode } from '../../../../../lib/deferred-reconstruction.js';
 import { shouldReconstructForAction } from '../../../../../lib/reconstruction-policy.js';
 import { canUseCloneEdit } from '../../../../../lib/clone-edit-access.js';
@@ -48,7 +49,25 @@ export async function POST(request, { params }) {
     return NextResponse.json({ error: 'no_origin_url', detail: 'node has no source URL to reconstruct from' }, { status: 400 });
   }
 
-  if (!shouldReconstructForAction({ node, role: 'edit' })) {
+  // Motor por NOME (doutrina em lib/clone-router.js): "clone" e' o animado;
+  // `{"engine":"iter9"}` no corpo pede o estatico historico nominalmente.
+  // Nome desconhecido e' 400 barulhento — nunca um default silencioso.
+  let engine = null;
+  try {
+    const corpo = await request.json().catch(() => ({}));
+    if (corpo?.engine != null) {
+      if (!CLONE_ENGINES.includes(corpo.engine)) {
+        return NextResponse.json({ error: 'unknown_clone_engine', engines: CLONE_ENGINES }, { status: 400 });
+      }
+      engine = corpo.engine;
+    }
+  } catch (_) { /* corpo vazio = default da doutrina */ }
+
+  // ⚠️ O pulo de "ja esta pronto" so vale para o pedido SEM motor: um motor
+  // pedido POR NOME tem que executar mesmo que exista snapshot utilizavel —
+  // e' justamente o caso "converter este clone para iter9" (achado da
+  // auditoria: o early-return engolia o pedido nominal e o 400 prometido).
+  if (engine == null && !shouldReconstructForAction({ node, role: 'edit' })) {
     return NextResponse.json({
       ok: true,
       skipped: true,
@@ -70,6 +89,7 @@ export async function POST(request, { params }) {
       userId: user.id,
       node,
       reason: 'edit',
+      engine,
       idemKey: idemKey.trim(),
       op: 'clone.edit',
     });

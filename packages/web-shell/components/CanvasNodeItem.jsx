@@ -59,6 +59,7 @@ function CanvasNodeItem({
       onSaveEdit={(html) => h().handleSaveNodeEdit(node.id, html)}
       onDiscardEdit={() => h().handleDiscardNodeEdit(node.id)}
       onDuplicate={() => h().handleDuplicateNode(node.id)}
+      onCloneIter9={() => h().handleCloneIter9(node.id)}
       onDownload={() => h().handleDownloadNode(node.id)}
       onStartEdge={(e, side) => h().startEdgeFromNode(node.id, e, side)}
       onSlotMouseDown={(...args) => h().onSlotMouseDown(...args)}

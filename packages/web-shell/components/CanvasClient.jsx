@@ -3444,6 +3444,30 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     }
   }
 
+  /**
+   * O iter9 pedido POR NOME (doutrina 2026-08-15: "clone" e' o animado; o
+   * iter9 — clonador estatico historico — fica a disposicao nominalmente).
+   * Converte ESTE node no clone iter9 — mesma semantica do Edit: o snapshot
+   * novo entra na frente e o estado anterior fica no historico de versoes
+   * (Saved versions), de onde se restaura.
+   */
+  async function handleCloneIter9(id) {
+    const node = nodes.find((n) => n.id === id);
+    if (!node?.origin_url) { toast.error('This node has no origin URL to clone.'); return; }
+    setNodeRunStatus(id, { step: 1, label: 'Cloning with iter9 (static)…', request: '' });
+    try {
+      const result = await api.reconstructNode(id, { engine: 'iter9' });
+      flashNodeDebit(id, result?.credits);
+      const preparedNode = applyReconstructionResultToNode(node, result);
+      setNodes((prev) => prev.map((candidate) => (candidate.id === id ? preparedNode : candidate)));
+      toast.info('iter9 clone ready.');
+    } catch (e) {
+      if (!handleBillingError(e)) toast.error(`iter9 clone failed: ${e.message}`);
+    } finally {
+      setNodeRunStatus(id, null);
+    }
+  }
+
   async function handleDuplicateNode(id) {
     // Node inside a multi-selection → duplicate the WHOLE selection (nodes +
     // internal cords) as a unit; the copies land offset beside the originals.
@@ -5959,6 +5983,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     handleSaveNodeEdit,
     handleDiscardNodeEdit,
     handleDuplicateNode,
+    handleCloneIter9,
     handleDownloadNode,
     startEdgeFromNode,
     onSlotMouseDown,

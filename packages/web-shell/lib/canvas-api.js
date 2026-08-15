@@ -186,8 +186,12 @@ export const api = {
   // Deferred billed upgrade of an animated free capture. Called when Edit
   // needs an editable runtime; strict workflow dependencies invoke the same
   // reconstruction service inside the server-side run route.
-  reconstructNode: (nodeId) => withTicket(`reconstruct:${nodeId}`, (ticket) =>
-    fetch(`/api/nodes/${nodeId}/reconstruct`, withIdemHeader({ ...COMMON, method: 'POST' }, ticket)).then(jsonOrThrow)),
+  // `engine` por NOME ('iter9' | 'native'); ausente = doutrina (o animado).
+  reconstructNode: (nodeId, { engine = null } = {}) => withTicket(`reconstruct:${nodeId}${engine ? `:${engine}` : ''}`, (ticket) =>
+    fetch(`/api/nodes/${nodeId}/reconstruct`, withIdemHeader({
+      ...COMMON, method: 'POST',
+      ...(engine ? { body: JSON.stringify({ engine }) } : {}),
+    }, ticket)).then(jsonOrThrow)),
   // Default: node row + current snapshot html (one round-trip when caller
   // actually wants content). `readyCheck:true`: tiny `{ready, snapshotId}`
   // probe used by the handoff poller — avoids transferring snapshot.html

@@ -1,4 +1,5 @@
 import { reconstructPage } from './reconstruct.js';
+import { resolveCloneEngine, producerForEngine } from './clone-router.js';
 import { recordUsage, runBilledOperation } from './billing/context.js';
 import { createConfiguredBundleStore } from './native-clone/bundle-store.js';
 import { registerNativeBundle } from './native-clone/register-bundle.js';
@@ -166,9 +167,13 @@ export async function materializeReconstructionOutput(output, { bundleStore = nu
  *   composição é textual. Fechar isso exige compor sobre bundle, que é outra
  *   feature — não fiação. Fixado pelo teste "o limite de 'edit' e deliberado".
  */
-export function chooseReconstructionProducer(reason, env = process.env) {
+export function chooseReconstructionProducer(reason, env = process.env, requested = null) {
   if (String(env.UNCRAFT_NATIVE_CLONE_PRODUCER || '').toLowerCase() === 'off') return reconstructPage;
-  return reason === 'edit' ? captureNativeBundle : reconstructPage;
+  // A doutrina vive em lib/clone-router.js (ordem do Adilson, 2026-08-15):
+  // "clone" e' UM — o animado; iter9 SOMENTE por nome; consumo textual
+  // (composicao) e' a excecao deliberada. Este wrapper existe para os
+  // chamadores antigos; a decisao em si mora la'.
+  return producerForEngine(resolveCloneEngine({ requested, reason }));
 }
 
 export async function reconstructSiteNode({
@@ -176,6 +181,7 @@ export async function reconstructSiteNode({
   userId,
   node,
   reason,
+  engine = null,
   idemKey = null,
   op = 'reconstruct',
   producer = null,
@@ -195,7 +201,7 @@ export async function reconstructSiteNode({
       try {
         materialized = await materializeReconstructionOutput(
           await Promise.race([
-            (producer || chooseReconstructionProducer(reason))(node.origin_url),
+            (producer || chooseReconstructionProducer(reason, process.env, engine))(node.origin_url),
             aborted,
           ]),
           { bundleStore },
