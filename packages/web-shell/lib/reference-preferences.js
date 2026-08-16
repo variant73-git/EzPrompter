@@ -1,4 +1,5 @@
 import { MAX_STYLE_TAGS, PRODUCT_TYPE_TAGS, STYLE_TAGS } from './reference-design-taxonomy.js';
+import { encodeReferenceGuidance } from './reference-guidance.js';
 
 export const REFERENCE_DECISIONS = ['keep', 'maybe', 'pass'];
 // Kept only for database compatibility with the first shadow-planner schema.
@@ -58,7 +59,10 @@ export function normalizeReferencePreference(input = {}) {
   const ratingWasProvided = input.rating != null && input.rating !== '';
   const numericRating = ratingWasProvided ? Number(input.rating) : null;
   const rating = ratingWasProvided && Number.isInteger(numericRating) && numericRating >= 1 && numericRating <= 5 ? numericRating : null;
-  const notes = String(input.notes || '').trim().slice(0, 4000) || null;
+  const hasStructuredGuidance = Object.hasOwn(input, 'worthBorrowing') || Object.hasOwn(input, 'avoid');
+  const notes = hasStructuredGuidance
+    ? encodeReferenceGuidance({ worthBorrowing: input.worthBorrowing, avoid: input.avoid })
+    : String(input.notes || '').trim().slice(0, 4000) || null;
   if (!decision) return { ok: false, error: 'invalid_decision' };
   if (ratingWasProvided && rating == null) return { ok: false, error: 'invalid_rating' };
   const dimensions = normalizeDimensionRatings(input.dimensionRatings, rating >= 4);

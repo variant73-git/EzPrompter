@@ -2,7 +2,7 @@ import { notFound, redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { db } from '../../../../lib/db.js';
 import { getAuthUser } from '../../../../lib/auth.js';
-import { queryPersistentReferenceCatalog } from '../../../../lib/reference-bank-store.js';
+import { getLatestApprovedReferencePlan, queryPersistentReferenceCatalog } from '../../../../lib/reference-bank-store.js';
 import { canCuratePrivateReferences } from '../../../../lib/reference-privacy.js';
 import BoardsList from '../../../../components/BoardsList.jsx';
 
@@ -46,6 +46,9 @@ export default async function WorkspaceLibraryPage({ params }) {
         canManagePrivateReferences: canCuratePrivateReferences(user),
       }
     : null;
+  const latestReferencePlan = section === 'references'
+    ? await getLatestApprovedReferencePlan(user.id)
+    : null;
 
   return (
     <BoardsList
@@ -53,6 +56,7 @@ export default async function WorkspaceLibraryPage({ params }) {
       savedWorkflows={savedWorkflows}
       assets={assets}
       referencePage={referencePage}
+      latestReferencePlan={latestReferencePlan}
       userName={user.name}
       userEmail={user.email}
       userPlan={user.plan}

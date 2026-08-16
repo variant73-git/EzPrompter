@@ -422,7 +422,7 @@ CREATE TABLE IF NOT EXISTS generation_reference_uses (
     CHECK (status IN ('shadow','approved','rejected','executed','failed')),
   brief TEXT NOT NULL CHECK (char_length(brief) BETWEEN 12 AND 6000),
   selected_reference_ids TEXT[] NOT NULL
-    CHECK (cardinality(selected_reference_ids) BETWEEN 2 AND 4),
+    CHECK (cardinality(selected_reference_ids) BETWEEN 1 AND 3),
   plan JSONB NOT NULL CHECK (jsonb_typeof(plan) = 'object'),
   board_id UUID REFERENCES boards(id) ON DELETE SET NULL,
   output_node_id UUID REFERENCES nodes(id) ON DELETE SET NULL,

@@ -25,16 +25,33 @@ function ReferenceImage({ reference }) {
   return <img src={reference.thumbnailUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
 }
 
-export function ReferenceGridCard({ reference, reviewMode = false, onReview }) {
+function isDecisivePreference(preference) {
+  return ['keep', 'pass'].includes(preference?.decision);
+}
+
+export function ReferenceGridCard({ reference, reviewMode = false, selected = false, savingDecision = '', onReview, onQuickDecision }) {
   const primaryCategory = reference.categories?.[0] || 'Website';
+  const preview = (
+    <>
+      <ReferenceImage reference={reference} />
+      <span className="ref-card-source">{reference.sourceNames?.[0] || 'Curated'}</span>
+      {reference.isPrivate && <span className="ref-card-private"><Lock aria-hidden="true" />Private</span>}
+    </>
+  );
   return (
-    <article className="ref-card" id={reference.id}>
-      <a className="ref-card-preview" href={reference.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${reference.title}`}>
-        <ReferenceImage reference={reference} />
-        <span className="ref-card-source">{reference.sourceNames?.[0] || 'Curated'}</span>
-        {reference.isPrivate && <span className="ref-card-private"><Lock aria-hidden="true" />Private</span>}
-        <span className="ref-card-open" aria-hidden="true"><ArrowUpRight /></span>
-      </a>
+    <article className={`ref-card${reviewMode ? ' ref-card-reviewable' : ''}${selected ? ' is-selected' : ''}`} id={reference.id}>
+      {reviewMode && (
+        <button
+          type="button"
+          className="ref-card-select"
+          aria-label={`Review ${reference.title}`}
+          aria-pressed={selected}
+          onClick={() => onReview?.(reference)}
+        />
+      )}
+      {reviewMode
+        ? <div className="ref-card-preview">{preview}</div>
+        : <a className="ref-card-preview" href={reference.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${reference.title}`}>{preview}</a>}
       <div className="ref-card-meta">
         <div>
           <h2>{reference.title}</h2>
@@ -45,13 +62,25 @@ export function ReferenceGridCard({ reference, reviewMode = false, onReview }) {
       {reference.editorialConsensus > 1 && (
         <p className="ref-card-consensus">Found in {reference.editorialConsensus} curated sources</p>
       )}
-      {(reviewMode || reference.preference) && (
-        <button type="button" className="ref-card-review" aria-label={`${reference.preference ? 'Edit review for' : 'Review'} ${reference.title}`} onClick={() => onReview?.(reference)}>
-          <span data-decision={reference.preference?.decision || 'unreviewed'}>{reference.preference?.decision || 'unreviewed'}</span>
-          {reference.preference?.rating && <b>{reference.preference.rating}/5</b>}
-          {reference.preference ? 'Edit review' : 'Review'}
-        </button>
-      )}
+      <div className="ref-card-actions">
+        <a className="ref-card-visit" href={reference.url} target="_blank" rel="noopener noreferrer" aria-label={`Visit ${reference.title}`}>Visit<ArrowUpRight aria-hidden="true" /></a>
+        {reviewMode && (
+          <label className="ref-card-use">
+            <span>Use</span>
+            <span className="ref-switch">
+              <input
+                type="checkbox"
+                role="switch"
+                aria-label={`Use ${reference.title}`}
+                checked={reference.preference?.decision === 'keep'}
+                disabled={Boolean(savingDecision)}
+                onChange={(event) => onQuickDecision?.(reference, event.target.checked ? 'keep' : 'pass')}
+              />
+              <i aria-hidden="true" />
+            </span>
+          </label>
+        )}
+      </div>
     </article>
   );
 }
@@ -66,7 +95,11 @@ function ReferenceSkeletons() {
   );
 }
 
-export default function ReferenceLibrary({ initialPage = { items: [], total: 0, hasMore: false, facets: { sources: [], categories: [] } } }) {
+export default function ReferenceLibrary({
+  initialPage = { items: [], total: 0, hasMore: false, facets: { sources: [], categories: [] } },
+  initialPlan = null,
+  projects = [],
+}) {
   const [items, setItems] = useState(initialPage.items || []);
   const [total, setTotal] = useState(initialPage.total || 0);
   const [hasMore, setHasMore] = useState(Boolean(initialPage.hasMore));
@@ -82,13 +115,15 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
   const [reviewCohort, setReviewCohort] = useState(initialPage.reviewCohort || { id: 'cohort_v1', name: 'Cohort v1', status: 'frozen', rubricVersion: 2 });
   const [selectedReference, setSelectedReference] = useState(null);
   const [canManagePrivateReferences, setCanManagePrivateReferences] = useState(Boolean(initialPage.canManagePrivateReferences));
+  const [facets, setFacets] = useState(initialPage.facets || { sources: [], categories: [] });
+  const [quickSaving, setQuickSaving] = useState('');
   const firstRun = useRef(true);
 
   const sourceOptions = useMemo(() => [
-    { value: 'all', count: initialPage.total || 0 },
-    ...(initialPage.facets?.sources || []),
-  ], [initialPage]);
-  const categoryOptions = useMemo(() => (initialPage.facets?.categories || []).slice(0, 36), [initialPage]);
+    { value: 'all', count: facets.all?.count ?? initialPage.total ?? 0, decided: facets.all?.decided || 0 },
+    ...(facets.sources || []),
+  ], [facets, initialPage.total]);
+  const categoryOptions = useMemo(() => (facets.categories || []).slice(0, 36), [facets]);
   const filtersActive = Boolean(query || source !== 'all' || category !== 'all' || sort !== 'curated');
 
   async function loadPage({ append = false, signal } = {}) {
@@ -113,6 +148,7 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       setReviewStats(page.reviewStats || reviewStats);
       setReviewCohort(page.reviewCohort || reviewCohort);
       setCanManagePrivateReferences(Boolean(page.canManagePrivateReferences));
+      if (page.facets) setFacets(page.facets);
       if (['review', 'curate'].includes(view) && !append) {
         setSelectedReference((current) => page.items.find((item) => item.id === current?.id) || page.items[0] || null);
       }
@@ -147,18 +183,60 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
   }
 
   function savePreference(referenceId, preference) {
-    const previous = items.find((item) => item.id === referenceId)?.preference;
+    const reference = items.find((item) => item.id === referenceId) || selectedReference;
+    const previous = reference?.preference;
+    const decisiveDelta = Number(isDecisivePreference(preference)) - Number(isDecisivePreference(previous));
+    const highQualityDelta = Number(isDecisivePreference(preference) && Number(preference.rating || 0) >= 4)
+      - Number(isDecisivePreference(previous) && Number(previous?.rating || 0) >= 4);
     setItems((current) => current.map((item) => item.id === referenceId ? { ...item, preference } : item));
     setSelectedReference((current) => current?.id === referenceId ? { ...current, preference } : current);
     setReviewStats((current) => {
       const next = { ...current };
-      if (!previous) next.reviewed += 1;
+      next.reviewed = Math.max(0, Number(next.reviewed || 0) + decisiveDelta);
       if (previous?.decision) next[previous.decision] = Math.max(0, Number(next[previous.decision] || 0) - 1);
       next[preference.decision] = Number(next[preference.decision] || 0) + 1;
-      if (Number(previous?.rating || 0) < 4 && Number(preference.rating || 0) >= 4) next.highQuality = Number(next.highQuality || 0) + 1;
-      if (Number(previous?.rating || 0) >= 4 && Number(preference.rating || 0) < 4) next.highQuality = Math.max(0, Number(next.highQuality || 0) - 1);
+      next.highQuality = Math.max(0, Number(next.highQuality || 0) + highQualityDelta);
       return next;
     });
+    if (decisiveDelta) {
+      const sourceIds = new Set(reference?.sourceIds || []);
+      setFacets((current) => ({
+        ...current,
+        all: { ...current.all, decided: Math.max(0, Number(current.all?.decided || 0) + decisiveDelta) },
+        sources: (current.sources || []).map((item) => sourceIds.has(item.value)
+          ? { ...item, decided: Math.max(0, Number(item.decided || 0) + decisiveDelta) }
+          : item),
+      }));
+    }
+  }
+
+  async function quickSavePreference(reference, decision) {
+    setQuickSaving(`${reference.id}:${decision}`);
+    setError('');
+    const current = reference.preference || {};
+    try {
+      const response = await fetch(`/api/references/${reference.id}/preference`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          decision,
+          rating: current.rating ?? null,
+          preferredRole: 'either',
+          businessTags: current.businessTags || [],
+          visualTags: current.visualTags || [],
+          motionTags: current.motionTags || [],
+          dimensionRatings: current.dimensionRatings || {},
+          notes: current.notes || '',
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Could not save this review.');
+      savePreference(reference.id, payload.preference);
+    } catch (nextError) {
+      setError(nextError.message);
+    } finally {
+      setQuickSaving('');
+    }
   }
 
   function savePrivacy(referenceId, privacy) {
@@ -172,10 +250,10 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
         <button type="button" aria-pressed={view === 'browse'} onClick={() => setView('browse')}><LayoutGrid aria-hidden="true" />Browse</button>
         <button type="button" aria-pressed={view === 'review'} onClick={() => setView('review')}><BookOpenCheck aria-hidden="true" />Review queue<span>{reviewStats.reviewed}/{reviewStats.total}</span></button>
         {canManagePrivateReferences && <button type="button" aria-pressed={view === 'curate'} onClick={() => setView('curate')}><ListChecks aria-hidden="true" />Curate</button>}
-        <button type="button" aria-pressed={view === 'plan'} onClick={() => setView('plan')}><WandSparkles aria-hidden="true" />Plan<span>shadow</span></button>
+        <button type="button" aria-pressed={view === 'plan'} onClick={() => setView('plan')}><WandSparkles aria-hidden="true" />Plan<span>chassis</span></button>
       </div>
 
-      {view === 'plan' ? <ReferencePlanner reviewStats={reviewStats} /> : <>
+      {view === 'plan' ? <ReferencePlanner reviewStats={reviewStats} initialRecord={initialPlan} projects={projects} /> : <>
       <div className="ref-toolbar">
         <label className="ref-search">
           <Search aria-hidden="true" />
@@ -204,13 +282,13 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       <div className="ref-source-row" aria-label="Filter by source">
         {sourceOptions.map((item) => (
           <button type="button" key={item.value} aria-pressed={source === item.value} onClick={() => setSource(item.value)}>
-            {SOURCE_LABELS[item.value] || item.value}<span>{item.count}</span>
+            {SOURCE_LABELS[item.value] || item.value}<span aria-label={`${item.count} total, ${item.decided || 0} decided`}>{item.count}/{item.decided || 0}</span>
           </button>
         ))}
       </div>
 
       <div className="ref-results-heading" aria-live="polite">
-        <p>{loading ? 'Updating references…' : view === 'review' ? `${reviewStats.reviewed} of ${reviewStats.total} candidates reviewed${reviewStats.highQuality ? ` · ${reviewStats.highQuality} rated 4+` : ''}` : view === 'curate' ? `${total.toLocaleString()} references available for internal curation` : `${total.toLocaleString()} ${total === 1 ? 'reference' : 'references'}`}</p>
+        <p>{loading ? 'Updating references…' : view === 'review' ? `${reviewStats.reviewed} of ${reviewStats.total} candidates decided` : view === 'curate' ? `${total.toLocaleString()} references available for internal curation` : `${total.toLocaleString()} ${total === 1 ? 'reference' : 'references'}`}</p>
         {view === 'review' && reviewCohort && <span className="ref-cohort-status"><Lock aria-hidden="true" />{reviewCohort.name} · {reviewCohort.status}</span>}
         {filtersActive && <button type="button" onClick={clearFilters}>Clear filters</button>}
       </div>
@@ -218,7 +296,15 @@ export default function ReferenceLibrary({ initialPage = { items: [], total: 0, 
       {loading ? <ReferenceSkeletons /> : items.length ? (
         <div className={['review', 'curate'].includes(view) ? 'ref-review-layout' : undefined}>
           <div className="ref-grid">
-            {items.map((reference) => <ReferenceGridCard reference={reference} reviewMode={['review', 'curate'].includes(view)} onReview={setSelectedReference} key={reference.id} />)}
+            {items.map((reference) => <ReferenceGridCard
+              reference={reference}
+              reviewMode={['review', 'curate'].includes(view)}
+              selected={(selectedReference || items[0])?.id === reference.id}
+              savingDecision={quickSaving.startsWith(`${reference.id}:`) ? quickSaving.split(':')[1] : ''}
+              onReview={setSelectedReference}
+              onQuickDecision={quickSavePreference}
+              key={reference.id}
+            />)}
           </div>
           {['review', 'curate'].includes(view) && <ReferenceReviewPanel
             reference={selectedReference || items[0]}

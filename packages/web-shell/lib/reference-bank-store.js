@@ -1,5 +1,6 @@
 import { sql } from './db.js';
 import { getReferenceCatalog, queryReferenceCatalog } from './reference-bank.js';
+import { decodeReferenceGuidance } from './reference-guidance.js';
 
 export const DEFAULT_REVIEW_COHORT_ID = 'cohort_v1';
 
@@ -13,6 +14,7 @@ function asArray(value) {
 
 function mapPreference(row) {
   if (!row.preference_decision) return null;
+  const notes = row.preference_notes || '';
   return {
     decision: row.preference_decision,
     rating: row.preference_rating == null ? null : Number(row.preference_rating),
@@ -30,7 +32,8 @@ function mapPreference(row) {
       chassisPotential: row.preference_chassis_potential == null ? null : Number(row.preference_chassis_potential),
       donorPotential: row.preference_donor_potential == null ? null : Number(row.preference_donor_potential),
     },
-    notes: row.preference_notes || '',
+    notes,
+    ...decodeReferenceGuidance(notes),
     updatedAt: row.preference_updated_at || null,
   };
 }
@@ -89,6 +92,11 @@ function fallbackPage(options) {
   const page = queryReferenceCatalog({ ...options, referenceIds: reviewIds, includePrivate: options.includePrivate });
   return {
     ...page,
+    facets: {
+      ...page.facets,
+      all: { count: catalog.length, decided: 0 },
+      sources: (page.facets?.sources || []).map((item) => ({ ...item, decided: 0 })),
+    },
     items: page.items.map((item) => ({
       ...item,
       curationRank: rankById.get(item.id) || null,
@@ -122,7 +130,7 @@ export async function queryPersistentReferenceCatalog({
   if (!process.env.DATABASE_URL) return fallbackPage({ query, source, category, sort: safeSort, view: safeView, includePrivate, offset: safeOffset, limit: safeLimit });
 
   const pattern = `%${trimmedQuery}%`;
-  const [rows, sourceFacets, categoryFacets, reviewRows, cohortRows] = await Promise.all([
+  const [rows, sourceFacets, categoryFacets, catalogRows, reviewRows, cohortRows] = await Promise.all([
     sql`
       WITH filtered AS (
         SELECT
@@ -187,7 +195,7 @@ export async function queryPersistentReferenceCatalog({
       SELECT filtered.*, COUNT(*) OVER()::int AS filtered_total
       FROM filtered
       ORDER BY
-        CASE WHEN ${safeView} IN ('review','curate') AND preference_decision IS NULL THEN 0 ELSE 1 END ASC,
+        CASE WHEN ${safeView} IN ('review','curate') AND (preference_decision IS NULL OR preference_decision = 'maybe') THEN 0 ELSE 1 END ASC,
         CASE WHEN ${safeSort} = 'name' THEN LOWER(title) END ASC,
         CASE WHEN ${safeSort} = 'newest' THEN published_at END DESC NULLS LAST,
         CASE WHEN ${safeSort} = 'curated' THEN preference_rating END DESC NULLS LAST,
@@ -198,10 +206,16 @@ export async function queryPersistentReferenceCatalog({
       LIMIT ${safeLimit} OFFSET ${safeOffset}
     `,
     sql`
-      SELECT source_id AS value, COUNT(DISTINCT reference_site_id)::int AS count
-      FROM reference_appearances
-      JOIN reference_sites site ON site.id = reference_appearances.reference_site_id
-      WHERE (${Boolean(includePrivate)} OR site.is_private = FALSE)
+      SELECT
+        appearance.source_id AS value,
+        COUNT(DISTINCT appearance.reference_site_id)::int AS count,
+        COUNT(DISTINCT appearance.reference_site_id) FILTER (WHERE preference.decision IN ('keep','pass'))::int AS decided
+      FROM reference_appearances appearance
+      JOIN reference_sites site ON site.id = appearance.reference_site_id
+      LEFT JOIN reference_preferences preference
+        ON preference.reference_site_id = site.id AND preference.user_id = ${userId}
+      WHERE site.lifecycle_state <> 'removed'
+        AND (${Boolean(includePrivate)} OR site.is_private = FALSE)
       GROUP BY source_id
       ORDER BY count DESC, value ASC
     `,
@@ -214,13 +228,23 @@ export async function queryPersistentReferenceCatalog({
     `,
     sql`
       SELECT
+        COUNT(*)::int AS count,
+        COUNT(*) FILTER (WHERE preference.decision IN ('keep','pass'))::int AS decided
+      FROM reference_sites site
+      LEFT JOIN reference_preferences preference
+        ON preference.reference_site_id = site.id AND preference.user_id = ${userId}
+      WHERE site.lifecycle_state <> 'removed'
+        AND (${Boolean(includePrivate)} OR site.is_private = FALSE)
+    `,
+    sql`
+      SELECT
         COUNT(*)::int AS total,
-        COUNT(preference.id)::int AS reviewed,
+        COUNT(*) FILTER (WHERE preference.decision IN ('keep','pass'))::int AS reviewed,
         COUNT(*) FILTER (WHERE preference.decision = 'keep')::int AS keep,
         COUNT(*) FILTER (WHERE preference.decision = 'maybe')::int AS maybe,
         COUNT(*) FILTER (WHERE preference.decision = 'pass')::int AS pass,
-        COUNT(*) FILTER (WHERE preference.rating >= 4)::int AS high_quality,
-        ROUND(AVG(preference.rating)::numeric, 2) AS average_rating
+        COUNT(*) FILTER (WHERE preference.decision IN ('keep','pass') AND preference.rating >= 4)::int AS high_quality,
+        ROUND((AVG(preference.rating) FILTER (WHERE preference.decision IN ('keep','pass')))::numeric, 2) AS average_rating
       FROM reference_review_cohort_members member
       JOIN reference_sites site ON site.id = member.reference_site_id
       LEFT JOIN reference_preferences preference
@@ -247,7 +271,18 @@ export async function queryPersistentReferenceCatalog({
     offset: safeOffset,
     limit: safeLimit,
     hasMore: safeOffset + items.length < total,
-    facets: { sources: sourceFacets, categories: categoryFacets },
+    facets: {
+      all: {
+        count: Number(catalogRows[0]?.count || 0),
+        decided: Number(catalogRows[0]?.decided || 0),
+      },
+      sources: sourceFacets.map((item) => ({
+        ...item,
+        count: Number(item.count || 0),
+        decided: Number(item.decided || 0),
+      })),
+      categories: categoryFacets,
+    },
     reviewStats: {
       total: Number(reviewStats.total || 0),
       reviewed: Number(reviewStats.reviewed || 0),
@@ -320,6 +355,7 @@ export async function saveReferencePreference(userId, referenceSiteId, preferenc
       commercial_clarity, chassis_potential, donor_potential, notes, updated_at
   `;
   const row = rows[0];
+  const notes = row.notes || '';
   return {
     decision: row.decision,
     rating: row.rating == null ? null : Number(row.rating),
@@ -337,7 +373,8 @@ export async function saveReferencePreference(userId, referenceSiteId, preferenc
       chassisPotential: row.chassis_potential == null ? null : Number(row.chassis_potential),
       donorPotential: row.donor_potential == null ? null : Number(row.donor_potential),
     },
-    notes: row.notes || '',
+    notes,
+    ...decodeReferenceGuidance(notes),
     updatedAt: row.updated_at,
   };
 }
@@ -404,14 +441,12 @@ export async function getReviewedPlanningCandidates(userId, { includePrivate = f
       ON preference.reference_site_id = site.id AND preference.user_id = ${userId}
     LEFT JOIN reference_review_cohort_members cohort_member
       ON cohort_member.reference_site_id = site.id AND cohort_member.cohort_id = ${DEFAULT_REVIEW_COHORT_ID}
-    WHERE preference.decision IN ('keep','maybe')
+    WHERE preference.decision = 'keep'
       AND site.lifecycle_state <> 'removed'
       AND (${Boolean(includePrivate)} OR site.is_private = FALSE)
     ORDER BY
-      CASE preference.decision WHEN 'keep' THEN 0 ELSE 1 END,
-      preference.rating DESC NULLS LAST,
       site.curation_rank ASC NULLS LAST
-    LIMIT 40
+    LIMIT 500
   `;
   return rows.map(mapReferenceRow);
 }
@@ -426,12 +461,114 @@ export async function saveShadowReferencePlan(userId, brief, plan) {
   return rows[0];
 }
 
+export async function saveApprovedReferencePlan(userId, brief, plan) {
+  const ids = plan.selectedReferences.map((reference) => reference.id);
+  const rows = await sql`
+    INSERT INTO generation_reference_uses (
+      user_id, schema_version, brief, selected_reference_ids, plan, status, reviewed_at
+    )
+    VALUES (
+      ${userId}, ${plan.schemaVersion || 1}, ${brief}, ${ids}, ${JSON.stringify(plan)}::jsonb, 'approved', NOW()
+    )
+    RETURNING id, status, created_at, reviewed_at
+  `;
+  return rows[0];
+}
+
 export async function updateShadowReferencePlan(userId, planId, status) {
   const rows = await sql`
     UPDATE generation_reference_uses
     SET status = ${status}, reviewed_at = NOW(), updated_at = NOW()
     WHERE id = ${planId} AND user_id = ${userId} AND mode = 'shadow' AND status = 'shadow'
     RETURNING id, status, reviewed_at
+  `;
+  return rows[0] || null;
+}
+
+export async function getShadowReferencePlan(userId, planId) {
+  const rows = await sql`
+    SELECT id, status, brief, plan, created_at, updated_at
+    FROM generation_reference_uses
+    WHERE id = ${planId} AND user_id = ${userId} AND mode = 'shadow'
+    LIMIT 1
+  `;
+  return rows[0] || null;
+}
+
+export async function getLatestApprovedReferencePlan(userId) {
+  const rows = await sql`
+    SELECT id, status, brief, plan, created_at, updated_at
+    FROM generation_reference_uses
+    WHERE user_id = ${userId}
+      AND mode = 'shadow'
+      AND status = 'approved'
+      AND plan ? 'chassisManifest'
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `;
+  return rows[0] || null;
+}
+
+export async function getOwnedBoardTarget(userId, boardId) {
+  const rows = await sql`
+    SELECT
+      b.id,
+      b.name,
+      b.updated_at,
+      (SELECT COUNT(*)::int FROM nodes n WHERE n.board_id = b.id) AS node_count,
+      (SELECT COUNT(*)::int FROM assets a WHERE a.project_id = b.id) AS asset_count,
+      (
+        SELECT n.origin_url
+        FROM nodes n
+        WHERE n.board_id = b.id AND n.origin_url IS NOT NULL
+        ORDER BY n.is_main DESC, n.created_at ASC
+        LIMIT 1
+      ) AS source_url,
+      (
+        SELECT s.html
+        FROM nodes n
+        JOIN snapshots s ON s.node_id = n.id
+        WHERE n.board_id = b.id AND s.html IS NOT NULL
+        ORDER BY (s.id = n.current_snapshot_id) DESC, s.created_at DESC
+        LIMIT 1
+      ) AS source_html,
+      (
+        SELECT s.design_md
+        FROM nodes n
+        JOIN snapshots s ON s.node_id = n.id
+        WHERE n.board_id = b.id AND s.design_md IS NOT NULL
+        ORDER BY (s.id = n.current_snapshot_id) DESC, s.created_at DESC
+        LIMIT 1
+      ) AS design_md
+    FROM boards b
+    WHERE b.id = ${boardId} AND b.user_id = ${userId}
+    LIMIT 1
+  `;
+  return rows[0] || null;
+}
+
+export async function saveShadowReferenceManifest(userId, planId, manifest) {
+  const rows = await sql`
+    UPDATE generation_reference_uses
+    SET plan = jsonb_set(plan, '{chassisManifest}', ${JSON.stringify(manifest)}::jsonb, true),
+        updated_at = NOW()
+    WHERE id = ${planId} AND user_id = ${userId} AND mode = 'shadow' AND status = 'approved'
+    RETURNING id, status, plan, updated_at
+  `;
+  return rows[0] || null;
+}
+
+export async function saveShadowReferenceTargetContract(userId, planId, contract) {
+  const rows = await sql`
+    UPDATE generation_reference_uses
+    SET plan = jsonb_set(plan, '{chassisTargetContract}', ${JSON.stringify(contract)}::jsonb, true),
+        updated_at = NOW()
+    WHERE id = ${planId}
+      AND user_id = ${userId}
+      AND mode = 'shadow'
+      AND status = 'approved'
+      AND plan->'chassisManifest'->>'hash' = ${contract.manifestHash}
+    RETURNING id, status, plan, updated_at
   `;
   return rows[0] || null;
 }

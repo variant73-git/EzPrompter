@@ -1,83 +1,30 @@
-import { getReferenceTagPreset } from './reference-design-taxonomy.js';
+import { createHash } from 'node:crypto';
+import { inferReferenceTypes } from './chassis-manifest.js';
+import { isPrivateReferenceHost } from './public-reference-url.js';
 
-const PRODUCT_SIGNALS = {
-  'landing-page': ['landing page', 'homepage', 'one-page'],
-  'corporate-site': ['corporate', 'institutional', 'business site', 'company site'],
-  portfolio: ['portfolio', 'case studies', 'personal site'],
-  'agency-site': ['agency', 'studio', 'consultancy'],
-  saas: ['saas', 'software service', 'platform'],
-  tool: ['tool', 'builder', 'editor', 'developer product'],
-  app: ['app', 'application', 'mobile product'],
-  ecommerce: ['ecommerce', 'e-commerce', 'shop', 'store'],
-  marketplace: ['marketplace', 'directory'],
-  editorial: ['editorial', 'magazine', 'publication'],
-  community: ['community', 'membership'],
-  'event-campaign': ['event', 'festival', 'campaign', 'launch'],
-  documentation: ['documentation', 'docs', 'developer portal'],
-};
-
-const STYLE_SIGNALS = {
-  'soft-tech': ['soft tech', 'soft-tech', 'calm tech', 'approachable tech'],
-  techy: ['techy', 'technical', 'developer'],
-  futuristic: ['futuristic', 'future-facing', 'sci-fi', 'frontier'],
-  fancy: ['fancy', 'polished', 'premium'],
-  corporate: ['corporate', 'business', 'institutional'],
-  playful: ['playful visual style', 'ludic composition', 'colorful'],
-  editorial: ['editorial', 'magazine'],
-  fashion: ['fashion', 'style-led'],
-  experimental: ['experimental', 'unconventional', 'artistic'],
-  luxury: ['luxury', 'exclusive'],
-  minimal: ['minimal', 'quiet', 'restrained'],
-};
-
-const MOTION_SIGNALS = {
-  subtle: ['subtle motion', 'restrained motion'],
-  'scroll-driven': ['animated', 'animation', 'scroll', 'motion'],
-  pinned: ['pinned', 'sticky'],
-  'video-led': ['video', 'film', 'cinematic'],
-  webgl: ['webgl', 'three.js', 'threejs', '3d'],
-  playful: ['playful motion', 'game-like', 'interactive'],
-};
-
-const BRAND_SIGNALS = {
-  playful: ['playful', 'fun', 'lúdico', 'lúdica', 'ludico', 'ludica', 'divertido', 'divertida', 'brincalhão', 'brincalhona'],
-  extroverted: ['extroverted', 'expressive', 'energetic', 'extrovertido', 'extrovertida', 'expressivo', 'expressiva', 'energético', 'energética'],
-  sober: ['sober', 'serious', 'restrained', 'sóbrio', 'sobrio', 'sério', 'serio', 'contido'],
-  neutral: ['neutral', 'clean', 'quiet', 'neutro', 'discreto'],
-  corporate: ['corporate', 'enterprise', 'business', 'corporativo', 'empresarial'],
-  authoritative: ['authoritative', 'trusted', 'expert', 'autoridade', 'confiável', 'especialista'],
-  approachable: ['approachable', 'friendly', 'human', 'acessível', 'amigável', 'humano'],
-  bold: ['bold', 'confident', 'ousado', 'marcante'],
-  technical: ['technical', 'complex', 'developer', 'técnico', 'tecnico', 'complexo'],
-  premium: ['premium', 'sophisticated', 'luxury', 'sofisticado', 'luxo'],
-  rebellious: ['rebellious', 'irreverent', 'rebelde', 'irreverente'],
-  warm: ['warm', 'welcoming', 'caloroso', 'acolhedor'],
-};
-
-function inferTags(text, dictionary) {
-  const normalized = text.toLowerCase();
-  const matches = (signal) => {
-    const escaped = signal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, 'iu').test(normalized);
-  };
-  return Object.entries(dictionary).flatMap(([tag, words]) => words.some(matches) ? [tag] : []);
-}
+export const CHASSIS_PREVIEW_PAGE_SIZE = 3;
+export const CHASSIS_PLANNER_CONTRACT_VERSION = 5;
 
 export function inferReferenceBrief(brief) {
   const text = String(brief || '').trim();
-  const productTypes = inferTags(text, PRODUCT_SIGNALS);
-  const styleTags = inferTags(text, STYLE_SIGNALS).slice(0, 2);
-  const motionTags = inferTags(text, MOTION_SIGNALS);
-  const brandAttributes = inferTags(text, BRAND_SIGNALS).slice(0, 3);
+  const productTypes = inferReferenceTypes({ brief: text });
+  return { text, productTypes, businessTags: productTypes };
+}
+
+export function createManualReferenceCandidate({ url, brief } = {}) {
+  let parsed;
+  try { parsed = new URL(String(url || '').trim()); } catch { throw new Error('invalid_reference_url'); }
+  if (!['http:', 'https:'].includes(parsed.protocol) || isPrivateReferenceHost(parsed.hostname)) throw new Error('invalid_reference_url');
+  parsed.hash = '';
+  const normalizedUrl = parsed.toString();
+  const productTypes = inferReferenceBrief(brief).productTypes;
   return {
-    text,
-    productTypes,
-    styleTags,
-    brandAttributes,
-    motionTags,
-    // Compatibility aliases for persisted v1/v2 plans and existing consumers.
-    businessTags: productTypes,
-    visualTags: styleTags,
+    id: `manual_${createHash('sha256').update(normalizedUrl).digest('hex').slice(0, 16)}`,
+    title: parsed.hostname.replace(/^www\./, ''),
+    url: normalizedUrl,
+    manual: true,
+    curationWeight: 0,
+    preference: { decision: 'keep', businessTags: productTypes, worthBorrowing: '', avoid: '' },
   };
 }
 
@@ -86,146 +33,165 @@ function overlap(left = [], right = []) {
   return left.filter((value) => other.has(value));
 }
 
-const SCORE_WEIGHTS = {
-  briefHints: 0.15,
-  manualQuality: 0.20,
-  structuralPortability: 0.30,
-  visualQuality: 0.20,
-  motion: 0.10,
-  sourceConfidence: 0.05,
-};
-
-const DIMENSION_PROFILES = {
-  balanced: { visualQuality: 0.24, structureQuality: 0.24, motionQuality: 0.12, originality: 0.12, transferability: 0.18, commercialClarity: 0.10 },
-  precision: { visualQuality: 0.18, structureQuality: 0.28, motionQuality: 0.07, originality: 0.07, transferability: 0.20, commercialClarity: 0.20 },
-  expressive: { visualQuality: 0.27, structureQuality: 0.17, motionQuality: 0.17, originality: 0.19, transferability: 0.14, commercialClarity: 0.06 },
-  conversion: { visualQuality: 0.21, structureQuality: 0.25, motionQuality: 0.08, originality: 0.08, transferability: 0.18, commercialClarity: 0.20 },
-  technical: { visualQuality: 0.19, structureQuality: 0.27, motionQuality: 0.12, originality: 0.08, transferability: 0.21, commercialClarity: 0.13 },
-};
-
-function normalizedRating(value, fallback = 3) {
-  const rating = Number(value ?? fallback);
-  return Math.min(1, Math.max(0, (rating - 1) / 4));
-}
-
-function dimensionValue(preference, key) {
-  return normalizedRating(preference.dimensionRatings?.[key], preference.rating ?? 3);
-}
-
-export function getBriefWeightProfile(profile) {
-  const products = new Set(profile.productTypes || profile.businessTags || []);
-  const styles = new Set(profile.styleTags || profile.visualTags || []);
-  const brand = new Set(profile.brandAttributes || []);
-  let name = 'balanced';
-  if (styles.has('experimental') || styles.has('fashion') || styles.has('playful') || ['playful', 'extroverted', 'bold', 'rebellious'].some((tag) => brand.has(tag)) || products.has('portfolio') || products.has('agency-site')) name = 'expressive';
-  else if (products.has('ecommerce') || products.has('marketplace')) name = 'conversion';
-  else if (products.has('corporate-site')) name = 'precision';
-  else if (products.has('saas') || products.has('tool') || products.has('app') || styles.has('techy') || styles.has('futuristic') || styles.has('soft-tech')) name = 'technical';
-  return { name, dimensions: DIMENSION_PROFILES[name] };
-}
-
-function dimensionQuality(preference, weighting) {
-  return Object.entries(weighting.dimensions)
-    .reduce((total, [key, weight]) => total + dimensionValue(preference, key) * weight, 0);
-}
-
-function fitScore(matches, expected) {
-  return expected.length ? matches.length / expected.length : null;
-}
-
 export function scoreReferenceCandidate(candidate, profile) {
+  if (candidate.manual) return { candidate, score: 100, breakdown: { typeFit: 100 }, reasons: ['direct reference supplied for this brief'] };
   const preference = candidate.preference || {};
-  const preset = getReferenceTagPreset(candidate.url || candidate.host);
-  const products = overlap(preference.businessTags, profile.productTypes || profile.businessTags);
-  const styles = overlap(preference.visualTags, profile.styleTags || profile.visualTags);
-  const motion = overlap(preference.motionTags, profile.motionTags);
-  const brand = overlap(preference.brandAttributes || preset?.brandAttributes, profile.brandAttributes);
-  const fitParts = [
-    fitScore(products, profile.productTypes || profile.businessTags),
-    fitScore(styles, profile.styleTags || profile.visualTags),
-    fitScore(motion, profile.motionTags),
-    fitScore(brand, profile.brandAttributes),
-  ].filter((value) => value != null);
-  const briefHints = fitParts.length ? fitParts.reduce((total, value) => total + value, 0) / fitParts.length : 0.5;
-  const weighting = profile.weighting || getBriefWeightProfile(profile);
-  const dimensions = dimensionQuality(preference, weighting);
-  const verdict = preference.decision === 'keep' ? 1 : 0.55;
-  const overall = preference.rating == null ? 0.5 : normalizedRating(preference.rating);
-  const manualQuality = overall * 0.55 + dimensions * 0.25 + verdict * 0.20;
-  const structuralPortability = dimensionValue(preference, 'structureQuality') * 0.55 + dimensionValue(preference, 'transferability') * 0.45;
-  const visualQuality = dimensionValue(preference, 'visualQuality') * 0.70 + dimensionValue(preference, 'originality') * 0.30;
-  const motionFit = profile.motionTags.length ? motion.length / profile.motionTags.length : 0.5;
-  const motionScore = motionFit * 0.35 + dimensionValue(preference, 'motionQuality') * 0.65;
-  const sourceConfidence = Math.min(1, Math.max(0, Number(candidate.sourceConfidence ?? 0.6)));
-  const components = { briefHints, manualQuality, structuralPortability, visualQuality, motion: motionScore, sourceConfidence };
-  const score = Object.entries(SCORE_WEIGHTS).reduce((total, [key, weight]) => total + components[key] * weight, 0) * 100;
-  const breakdown = Object.fromEntries(Object.entries(components).map(([key, value]) => [key, Math.round(value * 100)]));
-  const reasons = [
-    preference.decision === 'keep' ? 'explicitly kept during review' : 'retained as an uncertain candidate',
-    preference.rating ? `optional taste calibration ${preference.rating}/5` : null,
-    products.length ? `product hint: ${products.join(', ')}` : null,
-    styles.length ? `style hint: ${styles.join(', ')}` : null,
-    motion.length ? `motion hint: ${motion.join(', ')}` : null,
-    brand.length ? `brand personality hint: ${brand.join(', ')}` : null,
-    `structural portability ${breakdown.structuralPortability}%`,
-    `visual quality ${breakdown.visualQuality}%`,
-  ].filter(Boolean);
-  return { candidate, score: Number(score.toFixed(2)), breakdown, reasons };
+  const expectedTypes = profile.productTypes || profile.businessTags || [];
+  const candidateTypes = inferReferenceTypes({ ...candidate, businessTags: preference.businessTags });
+  const matches = overlap(candidateTypes, expectedTypes);
+  const typeFit = expectedTypes.length ? matches.length / expectedTypes.length : 0.5;
+  const score = Number((typeFit * 100).toFixed(2));
+  const reasons = matches.length
+    ? [`site type: ${matches.join(', ')}`]
+    : [expectedTypes.length ? 'kept chassis; site type needs visual verification' : 'kept chassis; site type was not explicit in the brief'];
+  return { candidate, score, breakdown: { typeFit: Math.round(typeFit * 100) }, reasons };
 }
 
-function supportingInfluence(candidate, index) {
-  const styles = candidate.preference?.visualTags || [];
-  const motion = candidate.preference?.motionTags || [];
-  if (motion.some((tag) => ['scroll-driven', 'pinned', 'video-led', 'webgl'].includes(tag))) return 'one semantically portable interaction or section rhythm';
-  if (styles.some((tag) => ['editorial', 'fashion', 'experimental'].includes(tag))) return 'one bounded text or media composition';
-  return index === 0 ? 'one compatible section structure' : 'one bounded structural alternative';
+function guidanceFor(candidate) {
+  return {
+    worthBorrowing: candidate.preference?.worthBorrowing || '',
+    avoid: candidate.preference?.avoid || '',
+  };
 }
 
-export function createReferencePlan({ brief, candidates, maxReferences = 3 }) {
-  const inferredProfile = inferReferenceBrief(brief);
-  const profile = { ...inferredProfile, weighting: getBriefWeightProfile(inferredProfile) };
-  const eligible = (candidates || []).filter((candidate) => ['keep', 'maybe'].includes(candidate.preference?.decision));
+function compositionFor(guidance) {
+  return {
+    preserve: [
+      'section topology and reading order',
+      'grid, alignment, proportions, and density rhythm',
+      'text anchoring and media-slot roles',
+      'animation and responsive composition logic',
+      ...(guidance.worthBorrowing ? [`Curator guidance: ${guidance.worthBorrowing}`] : []),
+    ],
+    adapt: ['copy length to the chassis capacity', 'motion semantics to the new content and audience'],
+    replace: [
+      'brand identity, typography, colors, copy, imagery, and decorative treatment',
+      ...(guidance.avoid ? [`Exclude from transfer: ${guidance.avoid}`] : []),
+    ],
+  };
+}
+
+function asPreviewOption(scored) {
+  const guidance = guidanceFor(scored.candidate);
+  return {
+    id: scored.candidate.id,
+    title: scored.candidate.title,
+    url: scored.candidate.url,
+    thumbnailUrl: scored.candidate.thumbnailUrl || '',
+    sourceNames: scored.candidate.sourceNames || [],
+    influence: 'chassis',
+    scaleOwner: true,
+    score: scored.score,
+    scoreBreakdown: scored.breakdown,
+    owns: 'section order, wireframe geometry, text composition, media roles, animation logic, and responsive structure',
+    guidance,
+    source: scored.candidate.manual ? 'direct-url' : 'curated-keep',
+    reasons: scored.reasons,
+    composition: compositionFor(guidance),
+  };
+}
+
+function compareOptions(left, right) {
+  const leftTitle = String(left.candidate.title || '').toLocaleLowerCase('en');
+  const rightTitle = String(right.candidate.title || '').toLocaleLowerCase('en');
+  if (leftTitle < rightTitle) return -1;
+  if (leftTitle > rightTitle) return 1;
+  return String(left.candidate.id).localeCompare(String(right.candidate.id));
+}
+
+function previewHashFor(preview) {
+  return createHash('sha256').update(JSON.stringify({
+    plannerContractVersion: preview.plannerContractVersion,
+    brief: preview.briefProfile.text,
+    selectionMode: preview.selectionMode,
+    scoringBasis: preview.scoringBasis,
+    optionOffset: preview.optionOffset,
+    options: preview.options,
+    totalOptions: preview.totalOptions,
+    bestScore: preview.bestScore,
+    warnings: preview.warnings,
+  })).digest('hex');
+}
+
+function normalizeOptionOffset(optionOffset, totalOptions) {
+  const requested = Math.max(0, Math.floor(Number(optionOffset) || 0));
+  const lastPageOffset = Math.max(0, Math.floor((totalOptions - 1) / CHASSIS_PREVIEW_PAGE_SIZE) * CHASSIS_PREVIEW_PAGE_SIZE);
+  return Math.min(requested - (requested % CHASSIS_PREVIEW_PAGE_SIZE), lastPageOffset);
+}
+
+export function createReferencePlanPreview({ brief, candidates, optionOffset = 0 }) {
+  const profile = inferReferenceBrief(brief);
+  const eligible = (candidates || []).filter((candidate) => candidate.preference?.decision === 'keep');
   if (profile.text.length < 12) return { ok: false, error: 'brief_too_short' };
   if (!eligible.length) return { ok: false, error: 'review_required', required: 1, current: 0 };
 
-  const limit = Math.max(1, Math.min(3, Number(maxReferences) || 3));
-  const ranked = eligible
-    .map((candidate) => scoreReferenceCandidate(candidate, profile))
-    .sort((a, b) => b.score - a.score || Number(b.candidate.curationWeight || 0) - Number(a.candidate.curationWeight || 0) || a.candidate.title.localeCompare(b.candidate.title))
-    .slice(0, limit);
-  const selectedReferences = ranked.map((entry, index) => ({
-    id: entry.candidate.id,
-    title: entry.candidate.title,
-    url: entry.candidate.url,
-    influence: index === 0 ? 'scale-owner' : 'section-source',
-    scaleOwner: index === 0,
-    score: entry.score,
-    scoreBreakdown: entry.breakdown,
-    owns: index === 0 ? 'page-wide type and media scale, spacing cadence, and responsive consistency' : supportingInfluence(entry.candidate, index - 1),
-    reasons: entry.reasons,
-  }));
+  const scored = eligible.map((candidate) => scoreReferenceCandidate(candidate, profile));
+  const bestScore = Math.max(...scored.map((item) => item.score));
+  const tied = scored.filter((item) => item.score === bestScore).sort(compareOptions);
+  const safeOffset = normalizeOptionOffset(optionOffset, tied.length);
+  const options = tied.slice(safeOffset, safeOffset + CHASSIS_PREVIEW_PAGE_SIZE).map(asPreviewOption);
+  const directReference = options[0]?.source === 'direct-url';
+  const preview = {
+    schemaVersion: 3,
+    plannerContractVersion: CHASSIS_PLANNER_CONTRACT_VERSION,
+    mode: 'preview',
+    strategy: 'single-chassis',
+    selectionMode: directReference ? 'direct-url' : 'curated-keeps',
+    generationTriggered: false,
+    briefProfile: profile,
+    rule: 'One approved chassis owns the wireframe; design system, content, and imagery are replaced.',
+    scoringBasis: directReference ? 'direct-reference' : 'site-type-only',
+    options,
+    optionOffset: safeOffset,
+    pageSize: CHASSIS_PREVIEW_PAGE_SIZE,
+    totalOptions: tied.length,
+    bestScore,
+    hasPrevious: safeOffset > 0,
+    hasMore: safeOffset + options.length < tied.length,
+    warnings: [
+      ...(!profile.productTypes.length ? ['Site type was not explicit; all kept chassis need visual verification.'] : []),
+      ...(bestScore === 0 ? ['No kept reference matched the requested site type; these fallback options need visual verification.'] : []),
+    ],
+  };
+  preview.previewHash = previewHashFor(preview);
+
+  return { ok: true, preview };
+}
+
+function finalizePlan(preview, selectedReferenceId) {
+  const selected = preview.options.find((option) => option.id === selectedReferenceId);
+  if (!selected) return { ok: false, error: 'invalid_preview_selection' };
+  const { composition, ...selectedReference } = selected;
 
   return {
     ok: true,
     plan: {
       schemaVersion: 3,
+      plannerContractVersion: CHASSIS_PLANNER_CONTRACT_VERSION,
       mode: 'shadow',
+      strategy: 'single-chassis',
+      selectionMode: preview.selectionMode,
       generationTriggered: false,
-      briefProfile: profile,
-      rule: 'No fixed roles per site. One contextual scale owner; optional references contribute bounded section structures.',
-      scoringWeights: SCORE_WEIGHTS,
-      selectedReferences,
-      composition: {
-        preserve: ['section topology and reading order', 'alignment and anchoring logic', 'media-to-copy proportions', 'density rhythm', 'mobile coherence'],
-        adapt: selectedReferences.slice(1).map((reference) => `${reference.title}: ${reference.owns}`),
-        replace: ['brand identity', 'copy', 'imagery', 'decorative treatment', 'semantically specific motion'],
-      },
-      warnings: [
-        ...(!profile.productTypes.length ? ['Product type was not explicit; use it only as a weak search hint.'] : []),
-        ...(!profile.styleTags.length ? ['Style was not explicit; brainstorm before treating a reference family as intentional.'] : []),
-        ...(!profile.brandAttributes.length ? ['Brand personality was not explicit; ask before defaulting from the business category.'] : []),
-        ...(selectedReferences.some((reference) => reference.scoreBreakdown.motion > 60) ? ['Validate motion for semantic portability before borrowing it.'] : []),
-      ],
+      briefProfile: preview.briefProfile,
+      rule: preview.rule,
+      scoringBasis: preview.scoringBasis,
+      selectedReferences: [selectedReference],
+      composition,
+      previewHash: preview.previewHash,
+      warnings: preview.warnings,
     },
   };
+}
+
+export function approveReferencePlanPreview({ brief, candidates, optionOffset = 0, previewHash, selectedReferenceId }) {
+  const result = createReferencePlanPreview({ brief, candidates, optionOffset });
+  if (!result.ok) return result;
+  if (!previewHash || previewHash !== result.preview.previewHash) return { ok: false, error: 'preview_stale' };
+  return finalizePlan(result.preview, selectedReferenceId);
+}
+
+export function createReferencePlan({ brief, candidates }) {
+  const result = createReferencePlanPreview({ brief, candidates });
+  if (!result.ok) return result;
+  return finalizePlan(result.preview, result.preview.options[0].id);
 }

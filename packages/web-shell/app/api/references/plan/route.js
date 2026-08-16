@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAuthUser } from '../../../../lib/auth.js';
-import { createReferencePlan } from '../../../../lib/reference-planner.js';
-import { getReviewedPlanningCandidates, saveShadowReferencePlan } from '../../../../lib/reference-bank-store.js';
+import { approveReferencePlanPreview, createManualReferenceCandidate } from '../../../../lib/reference-planner.js';
+import { getReviewedPlanningCandidates, saveApprovedReferencePlan } from '../../../../lib/reference-bank-store.js';
 import { canCuratePrivateReferences } from '../../../../lib/reference-privacy.js';
 
 export async function POST(request) {
@@ -13,17 +13,30 @@ export async function POST(request) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 });
   }
   const brief = String(input?.brief || '').trim();
-  const maxReferences = Math.min(3, Math.max(1, Number(input?.maxReferences) || 3));
-  const candidates = await getReviewedPlanningCandidates(user.id, {
-    includePrivate: canCuratePrivateReferences(user),
+  let candidates;
+  try {
+    candidates = input?.referenceUrl
+      ? [createManualReferenceCandidate({ url: input.referenceUrl, brief })]
+      : await getReviewedPlanningCandidates(user.id, {
+        includePrivate: canCuratePrivateReferences(user),
+      });
+  } catch (error) {
+    if (error.message === 'invalid_reference_url') return NextResponse.json({ error: 'invalid_reference_url' }, { status: 400 });
+    throw error;
+  }
+  const result = approveReferencePlanPreview({
+    brief,
+    candidates,
+    optionOffset: input?.optionOffset,
+    previewHash: input?.previewHash,
+    selectedReferenceId: input?.selectedReferenceId,
   });
-  const result = createReferencePlan({ brief, candidates, maxReferences });
   if (!result.ok) {
-    const status = result.error === 'review_required' ? 409 : 400;
+    const status = ['review_required', 'preview_stale'].includes(result.error) ? 409 : 400;
     return NextResponse.json(result, { status });
   }
 
-  const record = await saveShadowReferencePlan(user.id, brief, result.plan);
+  const record = await saveApprovedReferencePlan(user.id, brief, result.plan);
   return NextResponse.json({
     id: record.id,
     status: record.status,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { decodeReferenceGuidance } from './reference-guidance.js';
 import { normalizeReferencePreference } from './reference-preferences.js';
 
 describe('reference preference contract', () => {
@@ -40,6 +41,19 @@ describe('reference preference contract', () => {
     expect(normalizeReferencePreference({ decision: 'maybe' })).toMatchObject({ ok: true, value: { rating: null } });
     expect(normalizeReferencePreference({ decision: 'maybe', rating: 7 })).toMatchObject({ ok: false, error: 'invalid_rating' });
     expect(normalizeReferencePreference({ decision: 'keep', rating: 5, dimensionRatings: { motionQuality: 9 } })).toMatchObject({ ok: false, error: 'invalid_dimension_rating' });
+  });
+
+  it('stores structured transfer guidance without changing the database schema', () => {
+    const result = normalizeReferencePreference({
+      decision: 'keep',
+      worthBorrowing: 'The wireframe and image roles.',
+      avoid: 'The hero distortion.',
+    });
+    expect(result.ok).toBe(true);
+    expect(decodeReferenceGuidance(result.value.notes)).toEqual({
+      worthBorrowing: 'The wireframe and image roles.',
+      avoid: 'The hero distortion.',
+    });
   });
 
   it('drops deep weights below the high-quality threshold', () => {

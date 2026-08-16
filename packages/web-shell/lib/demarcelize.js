@@ -115,6 +115,38 @@ OUTPUT
 Single complete self-contained HTML5 document starting with <!DOCTYPE html>. No commentary, no markdown fences, no preface, no truncation.
 ${TASTE_PRINCIPLES}`;
 
+export const CHASSIS_TRANSPLANT_SYSTEM = `You receive an APPROVED CHASSIS TRANSFER CONTRACT, TARGET HTML, and REFERENCE HTML.
+
+AUTHORITIES
+- TARGET HTML is the sole authority for brand truth, copy, typography, color system, imagery, factual claims, and product identity.
+- REFERENCE HTML is the authority for the chassis: section order, hierarchy, grid, proportions, density rhythm, text anchoring, media-slot roles, animation logic, and responsive composition.
+- The approved contract defines explicit PRESERVE, ADAPT, REPLACE, and curator exclusions. It overrides generic guidance.
+
+TRANSPLANT
+1. Keep the reference chassis and its structural relationships.
+2. Replace every reference identity-bearing choice with the target's design system and content.
+3. Map target media into the recorded semantic slots. Preserve whether a slot behaves as a background, transparent foreground object, inline image, video, canvas, or other layer.
+4. Preserve animation drivers and spatial choreography, but adapt timing and semantics to the replacement content and media.
+5. Respect the target's real content capacity. Condense only by prioritizing existing target material. Never invent testimonials, prices, metrics, customers, capabilities, or commercial proof.
+6. Remove every item named in curator Avoid guidance. Prefer every applicable item named in Worth borrowing guidance.
+
+FAILURE CONDITIONS
+- Any visible reference brand, copy, palette, typography, or semantically specific imagery survives.
+- The target design system is replaced by the reference's style.
+- Section order, grid authority, media roles, responsive logic, or primary motion spine changes without an ADAPT directive.
+- New factual or commercial claims are invented.
+- The output ignores an explicit exclusion.
+
+OUTPUT
+One complete self-contained HTML5 document starting with <!DOCTYPE html>. No commentary, markdown fence, preface, or truncation.`;
+
+export function buildChassisTransplantPrompt({ targetHtml, referenceHtml, transferContract } = {}) {
+  if (!String(transferContract || '').trim()) throw new Error('transfer_contract_required');
+  if (!String(targetHtml || '').trim()) throw new Error('target_html_required');
+  if (!String(referenceHtml || '').trim()) throw new Error('reference_html_required');
+  return `APPROVED CHASSIS TRANSFER CONTRACT:\n${transferContract}\n\nTARGET HTML:\n${targetHtml}\n\nREFERENCE HTML:\n${referenceHtml}`;
+}
+
 async function callLLM({ model, system, user, maxTokens = 16000, temperature = 0.4 }) {
   // Fast-fail a misrouted model BEFORE any request (Anthropic or Gemini only here).
   // Dispatch on the provider the guard resolved so a name the guard accepts
@@ -188,5 +220,11 @@ export async function inject({ referenceHtml, content, model = DEFAULT_MODEL }) 
 export async function reskin({ targetHtml, referenceHtml, model = DEFAULT_MODEL }) {
   const prompt = `TARGET COPY:\n${targetHtml}\n\nREFERENCE TEMPLATE:\n${referenceHtml}`;
   const { text } = await callLLM({ model, system: RESKIN_SYSTEM, user: prompt, maxTokens: 32000, temperature: 0.4 });
+  return stripCodeFences(text);
+}
+
+export async function transplantChassis({ targetHtml, referenceHtml, transferContract, model = DEFAULT_MODEL }) {
+  const prompt = buildChassisTransplantPrompt({ targetHtml, referenceHtml, transferContract });
+  const { text } = await callLLM({ model, system: CHASSIS_TRANSPLANT_SYSTEM, user: prompt, maxTokens: 32000, temperature: 0.3 });
   return stripCodeFences(text);
 }

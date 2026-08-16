@@ -38,7 +38,7 @@ const NAV_ITEMS = [
 
 const LIBRARY_META = {
   projects: { title: 'Projects', copy: 'Every canvas, from the latest experiment to the work you keep returning to.' },
-  references: { title: 'Start from a Ref', copy: 'Explore a living catalog of remarkable websites, then use their strongest visual and motion decisions as ingredients for something new.' },
+  references: { title: 'Start from a Ref', copy: 'Explore a living catalog of remarkable websites, keep the strongest structural chassis, then adapt its wireframe to a new brand and content.' },
   workflows: { title: 'Workflows', copy: 'Reusable node chains that expose the path to a result without making you invent the graph first.' },
   assets: { title: 'Assets', copy: 'Images, components, code, type, and fragments collected from across the web.' },
   community: { title: 'Community', copy: 'See what others built when the web became their raw material.' },
@@ -317,7 +317,7 @@ function HomeDashboard({ boards, workflows, references, onLaunchWorkflow, onCrea
   );
 }
 
-function LibraryPage({ section, boards, workflows, assets, referencePage, onCreateBoard, onLaunchWorkflow, onCreateWorkflow, launching, creatingBoard, creatingWorkflow }) {
+function LibraryPage({ section, boards, workflows, assets, referencePage, latestReferencePlan, onCreateBoard, onLaunchWorkflow, onCreateWorkflow, launching, creatingBoard, creatingWorkflow }) {
   const meta = LIBRARY_META[section];
   return (
     <>
@@ -346,7 +346,7 @@ function LibraryPage({ section, boards, workflows, assets, referencePage, onCrea
       )}
 
       {section === 'references' && (
-        <ReferenceLibrary initialPage={referencePage} />
+        <ReferenceLibrary initialPage={referencePage} initialPlan={latestReferencePlan} projects={boards} />
       )}
 
       {section === 'assets' && (
@@ -371,6 +371,7 @@ export default function BoardsList({
   assets = [],
   references = [],
   referencePage = null,
+  latestReferencePlan = null,
   view = 'home',
 }) {
   const [boards] = useState(initial);
@@ -481,6 +482,7 @@ export default function BoardsList({
               workflows={workflows}
               assets={assets}
               referencePage={referencePage}
+              latestReferencePlan={latestReferencePlan}
               onCreateBoard={createBoard}
               onLaunchWorkflow={launchWorkflow}
               onCreateWorkflow={createWorkflow}

@@ -17,6 +17,8 @@
 import { chromium } from 'playwright-core';
 import { inflateSync, inflateRawSync } from 'node:zlib';
 import { classify, toMeta, extractVisibleText, extractMotion, visualDiff } from './classify-site.js';
+import { collectChassisEvidence } from './chassis-evidence.js';
+import { assertPublicReferenceUrl } from './public-reference-url.js';
 
 const NAV_TIMEOUT_MS = 25000;
 const RENDER_WAIT_MS = 2000;
@@ -460,8 +462,8 @@ function ensureBaseTag(html, baseUrl) {
 /**
  * Capture a URL into a self-contained, scrubbed HTML snapshot.
  * @param {string} url
- * @param {{viewport?: {width:number, height:number}}} opts
- * @returns {Promise<{html:string, screenshotDataUrl:string, title:string, baseUrl:string}>}
+ * @param {{viewport?: {width:number, height:number}, includeChassisEvidence?: boolean, publicNetworkOnly?: boolean}} opts
+ * @returns {Promise<{html:string, screenshotDataUrl:string, title:string, baseUrl:string, chassisEvidence?: object}>}
  */
 export async function captureSnapshot(url, opts = {}) {
   const viewport = opts.viewport || { width: 1280, height: 800 };
@@ -475,6 +477,22 @@ export async function captureSnapshot(url, opts = {}) {
       locale: 'en-US',
       timezoneId: 'America/Sao_Paulo'
     });
+    if (opts.publicNetworkOnly) {
+      const hostChecks = new Map();
+      await context.route('**/*', async (route) => {
+        const requestUrl = route.request().url();
+        let parsed;
+        try { parsed = new URL(requestUrl); } catch { return route.abort('blockedbyclient'); }
+        if (!['http:', 'https:'].includes(parsed.protocol)) return route.continue();
+        if (!hostChecks.has(parsed.hostname)) hostChecks.set(parsed.hostname, assertPublicReferenceUrl(parsed.origin));
+        try {
+          await hostChecks.get(parsed.hostname);
+          return route.continue();
+        } catch {
+          return route.abort('blockedbyclient');
+        }
+      });
+    }
     page = await context.newPage();
     await page.goto(url, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT_MS }).catch(async () => {
       // networkidle can hang on chatty sites; fall back to load.
@@ -528,6 +546,13 @@ export async function captureSnapshot(url, opts = {}) {
       }
       await sleep(settle);
     }, { step: SCROLL_STEP_PX, wait: SCROLL_STEP_WAIT_MS, settle: SCROLL_FINAL_SETTLE_MS });
+
+    // Runtime structural evidence is opt-in. Normal captures remain unchanged;
+    // the Start from a Ref analyzer requests it explicitly for desktop/mobile
+    // measurements and stores only the compact manifest, never the screenshot.
+    const chassisEvidence = opts.includeChassisEvidence
+      ? await page.evaluate(collectChassisEvidence, { referenceUrl: url })
+      : null;
 
     // Inject force-show CSS — defeats CSS rules like `[data-w-id] {opacity:0}`
     // that the stripped JS would normally toggle off via class addition.
@@ -730,6 +755,7 @@ export async function captureSnapshot(url, opts = {}) {
     return {
       html, screenshotDataUrl, title, baseUrl: url,
       animatedDetected: detection.detected,
+      ...(chassisEvidence ? { chassisEvidence } : {}),
       ...(classificationShadow ? { classificationShadow } : {}),
     };
   } finally {
