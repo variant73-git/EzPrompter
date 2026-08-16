@@ -2550,6 +2550,17 @@ html, body { overscroll-behavior: none; }
   overflow: visible;
 }
 
+/* While a node is being placed (ghost tracking the cursor), every node iframe
+   goes inert so the placement click reaches the window `click` listener that
+   commits the drop. Without this, a click landing over an already-mounted
+   cross-origin reference iframe (e.g. a selected live URL showing its page or
+   an X-Frame-Options block) dies inside that frame and the drop never fires —
+   the ghost stays glued to the cursor. Toggled by `canvas-placing` on <html>
+   from the placement effect in CanvasClient. */
+html.canvas-placing .cnode iframe {
+  pointer-events: none;
+}
+
 /* Beyond 30% zoom-out: node radii −20% (kept concentric across the three
    frame layers). Toggled by .canvas-zoom-below-30 on <html>. */
 html.canvas-zoom-below-30 .cnode {
@@ -9034,22 +9045,39 @@ nextjs-portal { display: none !important; }
    graph itself, not a repeated dashboard card, is the primary information.
    ═══════════════════════════════════════════════════════════════════════ */
 .hub-shell {
-  min-height: 100vh;
+  position: relative;
+  isolation: isolate;
+  min-height: 100dvh;
   display: grid;
   grid-template-columns: 216px minmax(0, 1fr);
-  background: #191917;
+  gap: var(--shell-panel-gap, 8px);
+  padding: var(--shell-gutter, 10px);
+  background: #10100F;
   color: var(--text-primary);
+}
+.hub-shell::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  border-radius: var(--shell-radius, 28px);
+  box-shadow:
+    inset 0 0 0 var(--shell-gutter, 10px) #10100F,
+    inset 0 0 18px rgba(0, 0, 0, 0.34);
 }
 .hub-sidebar {
   position: sticky;
-  top: 0;
-  height: 100vh;
+  top: var(--shell-gutter, 10px);
+  height: calc(100dvh - (var(--shell-gutter, 10px) * 2));
   z-index: 20;
   display: flex;
   flex-direction: column;
   padding: 18px 12px 14px;
-  border-right: 1px solid #34332F;
+  border-right: 0;
+  border-radius: var(--chrome-radius, 18px);
   background: #171715;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.3);
 }
 .hub-brand {
   height: 34px;
@@ -9096,10 +9124,14 @@ nextjs-portal { display: none !important; }
 .hub-main {
   position: relative;
   min-width: 0;
+  min-height: calc(100dvh - (var(--shell-gutter, 10px) * 2));
   width: 100%;
-  max-width: 1680px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
   padding: 48px clamp(24px, 4vw, 72px) 80px;
+  border-radius: var(--chrome-radius, 18px);
+  background: #191917;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.24);
 }
 .hub-global-actions { position: absolute; top: 22px; right: clamp(24px, 4vw, 72px); z-index: 3; }
 .hub-global-actions .credits-pill {
@@ -10145,10 +10177,10 @@ body.rb-ed-active.rb-ed-canvas .canvas-minimap { display: none !important; }
   .ref-review-layout > .ref-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 620px) {
-  .hub-shell { display: block; }
+  .hub-shell { display: block; padding: 6px; }
   .hub-sidebar {
     position: sticky;
-    top: 0;
+    top: 6px;
     width: 100%;
     height: auto;
     display: grid;
@@ -10156,13 +10188,14 @@ body.rb-ed-active.rb-ed-canvas .canvas-minimap { display: none !important; }
     gap: 10px;
     padding: 8px 10px;
     border-right: 0;
-    border-bottom: 1px solid #34332F;
+    border-bottom: 0;
+    border-radius: 14px;
   }
   .hub-brand { height: 34px; }
   .hub-nav { min-width: 0; flex-direction: row; gap: 3px; margin: 0; overflow-x: auto; }
   .hub-nav-item { flex: 0 0 36px; }
   .hub-sidebar-bottom { display: none; }
-  .hub-main { padding: 34px 16px 56px; }
+  .hub-main { min-height: calc(100dvh - 12px); margin-top: 6px; padding: 34px 16px 56px; border-radius: 14px; }
   .hub-global-actions { top: 14px; right: 16px; }
   .hub-home-header { padding-top: 42px; }
   .hub-prompt-title h1,

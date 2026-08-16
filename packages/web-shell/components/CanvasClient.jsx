@@ -1777,6 +1777,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   // starts (node creation awaits the server), so it never self-drops.
   useEffect(() => {
     if (!placingNodeId) return;
+    // While placing, all node iframes go inert (CSS: html.canvas-placing .cnode
+    // iframe { pointer-events:none }). Otherwise a placement click that lands
+    // over an already-mounted cross-origin reference iframe dies inside that
+    // iframe and never reaches the window `click` listener below, so the drop
+    // never commits — the ghost stays glued to the cursor. Twin of the editor's
+    // bindDragOnBothDocs cross-doc guard; here CSS is the tool since we can't
+    // add listeners inside a cross-origin frame.
+    document.documentElement.classList.add('canvas-placing');
     const onMove = (e) => {
       const node = placingNodeRef.current;
       if (!node) return;
@@ -1822,6 +1830,29 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       e.stopPropagation();
       drop();
     };
+    // Delete/Backspace DISCARDS the ghost being placed (the "+"-toolbar URL
+    // placeholder is local-only until drop, so removing it locally + clearing
+    // the pending ref is enough; the queue's prefetched node is reaped by
+    // cancelQueue). Fixes "Delete does nothing while placing": the ghost isn't
+    // in the selection set, so the main Delete handler had no target.
+    const cancelPlacing = () => {
+      const node = placingNodeRef.current;
+      // Only the "+"-toolbar URL placeholder is local-only (it persists on
+      // drop, tracked by pendingUrlReferenceRef). Every other placing ghost —
+      // a file-queue node — is ALREADY persisted on the server by the time it
+      // mounts, so discarding it must delete it server-side too or it orphans
+      // (reappears on reload). cancelQueue only reaps the PREFETCHED next node,
+      // not the current one.
+      const isLocalOnly = !!node && pendingUrlReferenceRef.current?.id === node.id;
+      if (placeQueueRef.current) cancelQueue();
+      pendingUrlReferenceRef.current = null;
+      placingNodeRef.current = null;
+      setPlacingNodeId(null);
+      if (node?.id) {
+        setNodes((prev) => prev.filter((n) => n.id !== node.id));
+        if (!isLocalOnly) api.deleteNode(node.id).catch(() => {});
+      }
+    };
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -1830,12 +1861,24 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         // queue and stops advancing).
         if (placeQueueRef.current) cancelQueue();
         drop();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Don't hijack destructive keys while the user is typing in a field —
+        // let the input/editor consume them (mirrors the main Delete handler).
+        const tag = e.target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable || e.isComposing) return;
+        // Discard the ghost. This listener is capture-phase and the main Delete
+        // handler is bubble-phase, so stopImmediatePropagation reliably stops
+        // that handler from also deleting the now-selected placeholder.
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        cancelPlacing();
       }
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('click', onClick, true);
     window.addEventListener('keydown', onKey, true);
     return () => {
+      document.documentElement.classList.remove('canvas-placing');
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('click', onClick, true);
       window.removeEventListener('keydown', onKey, true);
