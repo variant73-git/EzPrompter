@@ -21,9 +21,34 @@ export const runtime = 'nodejs';
 // so client(200s) − route(≤170s) leaves ~30s for billing settle + persistence
 // (which run AFTER the deadline) before the client would abort. Raise this and
 // the client EXTRACT_TIMEOUT_MS together if needed.
-const EXTRACT_ROUTE_DEADLINE_MS = Math.min(170_000, Math.max(1_000,
-  Number(process.env.UNCRAFT_EXTRACT_ROUTE_DEADLINE_MS) || 150_000));
-export const maxDuration = 200;
+// ⚠️ MITIGACAO EXPERIMENTAL, NAO CAUSA CORRIGIDA (a auditoria foi explicita, e
+// tem razao). O que esta MEDIDO: a chamada de visao sozinha levou 80,7s numa
+// pagina simples, e o incidente real bateu 148,5s no total. O que NAO esta
+// medido: o recorte, o acerto de cobranca, a persistencia, a distribuicao entre
+// screenshots, e quanto o caso que falhou precisaria para terminar. Logo, 240s
+// e' outro teto por extrapolacao — melhor que 150s, mas nao demonstrado.
+// O `[extract.clone]` em lib/extract.js agora registra visao e recorte separados:
+// a proxima falha traz o dado que falta para dimensionar por percentil, e ai' sim
+// isto vira correcao.
+//
+// POR QUE O CLONE FALHAVA. MEDIDO 2026-08-14: um clone a partir de screenshot
+// bateu em 148,5s e foi abortado a 1,5s do teto. A causa nao era travamento —
+// era o ORCAMENTO. Probe isolando as etapas: a chamada de VISAO sozinha levou
+// **80,7s** para uma pagina SIMPLES (saida de 6 KB). A duracao cresce com o
+// tamanho do HTML que ela escreve, e o teto de saida e' 16k tokens; um
+// screenshot denso escreve varias vezes mais. Somado ao recorte dos pixels
+// reais, 150s ficava abaixo do caso comum, nao acima.
+//
+// Os TRES tetos sobem JUNTOS, que e' o que o desenho exige — subir so um
+// inverte a ordem e devolve o estado incerto que o prazo existe para evitar:
+//   rota 240s  +  ~30s de acerto/persistencia  =  270s
+//   cliente 290s  (corta DEPOIS disso)
+//   maxDuration 300s  (o mesmo que /run e /reconstruct ja usam)
+// O clamp acompanha o padrao para que uma variavel de ambiente nao possa,
+// sozinha, reintroduzir a inversao.
+const EXTRACT_ROUTE_DEADLINE_MS = Math.min(240_000, Math.max(1_000,
+  Number(process.env.UNCRAFT_EXTRACT_ROUTE_DEADLINE_MS) || 240_000));
+export const maxDuration = 300;
 
 // POST /api/nodes/[id]/extract { to }
 // Creates a NEW node derived from node [id]. Mirrors extractDesign's persist
@@ -138,6 +163,20 @@ export async function POST(request, { params }) {
       const payload = e.extractError;
       const status = payload.error === 'unsupported_combo' || payload.error === 'invalid_to' ? 400 : 409;
       return NextResponse.json(payload, { status });
+    }
+    // O prazo da rota dispara DENTRO do runBilledOperation, que devolve o hold e
+    // relanca: nesse caminho da' para afirmar que nao houve cobranca. Sai
+    // TIPADO, porque so o servidor sabe disso — o cliente lendo texto ("timed
+    // out") classificava errado uma desistencia do proprio navegador e prometia
+    // estorno sem base (achado da auditoria).
+    const foiPrazoDaRota = /deadline exceeded|extract\.route/i.test(String(e?.message || ''))
+      || e?.name === 'AbortError' && e?.deadlineLabel === 'extract.route';
+    if (foiPrazoDaRota) {
+      return NextResponse.json({
+        error: 'extract_timeout',
+        refunded: true,
+        message: 'The clone took longer than the time limit and was cancelled.',
+      }, { status: 504 });
     }
     return NextResponse.json({ error: 'extract_failed', message: String(e?.message || e) }, { status: 502 });
   }

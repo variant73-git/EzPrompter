@@ -84,7 +84,12 @@ const NO_PERSISTENCE = Object.freeze({
   save: async () => {},
 });
 
+// Quantas vezes se pede o anuncio perdido antes de desistir. Um site com ponte
+// antiga nunca responde a esse pedido — o teto evita conversa infinita.
+const MAX_ANNOUNCE_REQUESTS = 5;
 const FAILED_MUTATION_COPY = "This change couldn't be applied. The previous value was restored.";
+const REPLAY_REFUSED_COPY = "Your saved changes couldn't be reapplied to this page. They are still saved.";
+const ANNOUNCE_UNANSWERED_COPY = "This page didn't finish connecting to the editor. Reload to try again.";
 const RECOVERED_WITH_DISABLED_CONTROL_COPY = 'The website was recovered. One unsupported control was disabled.';
 
 function requestId(prefix = 'request') {
@@ -223,6 +228,9 @@ export function useNativeMotionController({
   const runtimeRecoveredRef = useRef(false);
   const recoveryExecutorRef = useRef(null);
   const disposedRef = useRef(false);
+  const announceRequestsRef = useRef(0);
+  const replayRefusedRef = useRef(false);
+  const announcePendingRef = useRef(false);
   const persistenceRef = useRef(persistenceAdapter || NO_PERSISTENCE);
   const [status, setStatus] = useState('loading');
   const statusRef = useRef(status);
@@ -865,11 +873,12 @@ export function useNativeMotionController({
                 void beginRuntimeRecovery({ code: entry.payload?.code || 'replay_failed' });
               }
             } else {
-              const rejectedIds = new Set(entry.meta.patchIds || []);
-              updateHistory((current) => sessionHistoryFromPatches(
-                sessionHistoryPatches(current).filter((patch) => !rejectedIds.has(patch.id)),
-                { sessionId: current.sessionId },
-              ));
+              // NAO se apaga o que o usuario confirmou. `save()` grava o
+              // historico atual, entao podar aqui e depois salvar destruia o
+              // trabalho guardado — recusar reaplicar viraria esquecer (achado
+              // da auditoria, reproduzido em teste). A alteracao continua salva
+              // e o aviso abaixo diz que ela nao pode ser reaplicada AGORA.
+              replayRefusedRef.current = true;
             }
           }
           if (entry.meta.operation === 'undo' || entry.meta.operation === 'redo') {
@@ -966,6 +975,8 @@ export function useNativeMotionController({
         if (!context || !matchesRuntimeContext(event.data, context, event.origin)) return;
       }
       if (type === 'runtime-ready') {
+        announceRequestsRef.current = 0;
+        announcePendingRef.current = false;
         if (heartbeatTimeoutRef.current) window.clearTimeout(heartbeatTimeoutRef.current);
         heartbeatTimeoutRef.current = null;
         transitionEditor({ type: 'runtime-ready' });
@@ -1019,6 +1030,36 @@ export function useNativeMotionController({
       }
       if (type === 'heartbeat' || type === 'runtime-health') {
         armHeartbeatTimeout();
+        // O site anuncia-se UMA vez, sem confirmacao. Se este editor ligou o
+        // ouvinte depois do anuncio (MEDIDO ao recarregar: o site vem do cache
+        // e anuncia 0,27s antes), nao ha sessao — e sem sessao nao ha replay do
+        // que foi salvo, embora o batimento abaixo ainda deixe tudo com cara de
+        // conectado. O batimento prova que o site esta vivo e ouvindo: pedir o
+        // anuncio de volta aqui e' o unico momento em que se sabe as duas coisas.
+        //
+        // Um pedido por vez: dois anuncios em voo fariam o editor zerar o
+        // registro de transacoes duas vezes e ainda avisar que "o site
+        // reiniciou", o que nao aconteceu. Como o batimento e' de 1s, gasta-se
+        // um batimento esperando a resposta antes de insistir.
+        const semSessao = !runtimeContextRef.current;
+        if (!semSessao) {
+          announcePendingRef.current = false;
+        } else if (announcePendingRef.current) {
+          announcePendingRef.current = false;
+        } else if (announceRequestsRef.current < MAX_ANNOUNCE_REQUESTS) {
+          announceRequestsRef.current += 1;
+          announcePendingRef.current = true;
+          send('request-announce', {});
+          if (announceRequestsRef.current === MAX_ANNOUNCE_REQUESTS) {
+            // Desistir em silencio devolveria exatamente o estado que esta
+            // correcao existe para acabar: com cara de conectado e sem nunca
+            // reaplicar o que foi salvo. Entao a desistencia e' dita.
+            setPatchError(ANNOUNCE_UNANSWERED_COPY);
+            window.dispatchEvent(new CustomEvent('uncraft:motion-diagnostic', {
+              detail: { code: 'announce_unanswered', operation: 'request-announce', nodeScoped: true },
+            }));
+          }
+        }
         if (!runtimeRecoveryRef.current) {
           if (statusRef.current === 'recovering') {
             recoveryPolicyRef.current.recovered({ code: 'bridge_timeout' });
@@ -1044,10 +1085,15 @@ export function useNativeMotionController({
         window.setTimeout(() => send('refresh-inventory'), 80);
       }
       if (type === 'transaction-rejected') {
+        replayRefusedRef.current = false;
         if (payload.transactionId && transactionLedgerRef.current.has(payload.transactionId)) {
           releaseSettled(transactionLedgerRef.current.settle(payload.transactionId, 'rejected', payload));
         }
-        setPatchError(FAILED_MUTATION_COPY);
+        // Uma recusa de replay nao e' uma acao do usuario que falhou: nada foi
+        // "restaurado ao valor anterior". Dizer isso confundiria — o que houve
+        // e' que o site nao reconheceu o alvo desta vez.
+        setPatchError(replayRefusedRef.current ? REPLAY_REFUSED_COPY : FAILED_MUTATION_COPY);
+        replayRefusedRef.current = false;
       }
       if (type === 'control-recovery-result') {
         const pending = pendingControlRecoveryRef.current;
@@ -1916,6 +1962,8 @@ export function useNativeMotionController({
     runtimeRecoveredRef.current = false;
     runtimeRecoveryRef.current = null;
     runtimeContextRef.current = null;
+    announceRequestsRef.current = 0;
+    announcePendingRef.current = false;
     transactionLedgerRef.current = createTransactionLedger();
     lastAutoExpandedRef.current = null;
     setStatus('loading');

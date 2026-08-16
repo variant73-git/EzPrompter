@@ -25,7 +25,15 @@ async function jsonOrThrow(r) {
   // Surface the server's clean message (e.g. the extract route's timeout text)
   // — not only the generic `error` code — so a route-deadline timeout reads as
   // "timed out", not an opaque "extract_failed".
-  if (!r.ok) throw new Error(j?.detail || j?.message || j?.error || `${r.status} ${r.statusText}`);
+  if (!r.ok) {
+    const err = new Error(j?.detail || j?.message || j?.error || `${r.status} ${r.statusText}`);
+    // Codigo e estorno vem TIPADOS do servidor: so ele sabe se cancelou antes de
+    // cobrar. Ler a mensagem para adivinhar isso confundia uma desistencia do
+    // navegador com um cancelamento do servidor.
+    err.code = j?.error || err.code;
+    err.refunded = j?.refunded === true;
+    throw err;
+  }
   if (j?.balanceAfter != null && typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('uncraft:balance', { detail: { balance: j.balanceAfter } }));
   }
@@ -40,7 +48,10 @@ async function jsonOrThrow(r) {
 // leaving ~30s headroom for pre-work + persistence so the server's own clean,
 // refunded error always wins and the client never aborts a still-billing
 // request. Raise both together if you raise the route deadline.
-const EXTRACT_TIMEOUT_MS = 200_000;
+// Tem que ser MAIOR que o prazo da rota (240s) mais o acerto de cobranca e a
+// persistencia (~30s), que rodam depois dele — senao o navegador desiste
+// enquanto o servidor ainda esta terminando, e ninguem sabe se cobrou.
+const EXTRACT_TIMEOUT_MS = 290_000;
 
 async function fetchWithTimeout(url, opts = {}, ms = EXTRACT_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -86,6 +97,14 @@ export const api = {
   updateEdge: (id, body) => fetch(`/api/edges/${id}`, { ...COMMON, method: 'PATCH', body: JSON.stringify(body) }).then(jsonOrThrow),
   deleteEdge: (id) => fetch(`/api/edges/${id}`, { ...COMMON, method: 'DELETE' }).then(jsonOrThrow),
   applyEdge: (id) => fetch(`/api/edges/${id}/apply`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
+
+  // Colar uma imagem da internet: o SERVIDOR busca. O navegador esbarraria em
+  // CORS na maioria dos sites, e o corpo da resposta e' o que vira o asset.
+  addAssetFromUrl: (url, boardId, name = null) => fetch('/api/assets/from-url', {
+    ...COMMON,
+    method: 'POST',
+    body: JSON.stringify({ url, boardId, name }),
+  }).then(jsonOrThrow),
 
   captureUrl: (url, nodeId = null) => fetch('/api/snapshot/capture', { ...COMMON, method: 'POST', body: JSON.stringify({ url, nodeId }) }).then(jsonOrThrow),
   checkUrlEmbed: (url) => fetch('/api/site/embed-policy', {
@@ -167,8 +186,12 @@ export const api = {
   // Deferred billed upgrade of an animated free capture. Called when Edit
   // needs an editable runtime; strict workflow dependencies invoke the same
   // reconstruction service inside the server-side run route.
-  reconstructNode: (nodeId) => withTicket(`reconstruct:${nodeId}`, (ticket) =>
-    fetch(`/api/nodes/${nodeId}/reconstruct`, withIdemHeader({ ...COMMON, method: 'POST' }, ticket)).then(jsonOrThrow)),
+  // `engine` por NOME ('iter9' | 'native'); ausente = doutrina (o animado).
+  reconstructNode: (nodeId, { engine = null } = {}) => withTicket(`reconstruct:${nodeId}${engine ? `:${engine}` : ''}`, (ticket) =>
+    fetch(`/api/nodes/${nodeId}/reconstruct`, withIdemHeader({
+      ...COMMON, method: 'POST',
+      ...(engine ? { body: JSON.stringify({ engine }) } : {}),
+    }, ticket)).then(jsonOrThrow)),
   // Default: node row + current snapshot html (one round-trip when caller
   // actually wants content). `readyCheck:true`: tiny `{ready, snapshotId}`
   // probe used by the handoff poller — avoids transferring snapshot.html

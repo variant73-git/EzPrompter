@@ -48,12 +48,21 @@ describe('chooseReconstructionProducer — qual clone o produto faz', () => {
     expect(chooseReconstructionProducer('edit')).toBe(captureNativeBundle);
   });
 
-  it('as demais razões continuam no iter9, intacto como o plano pedia', async () => {
+  // ⚠️ DOUTRINA NOVA (ordem do Adilson, 2026-08-15): "clone" e' UM — o animado.
+  // Este teste prendia o desenho antigo ("tudo exceto edit fica no iter9");
+  // agora razao desconhecida ou ausente cai no NATIVO, e o iter9 entra por
+  // nome ou pela excecao textual (teste seguinte). Mudar isto de novo e' mudar
+  // uma ordem de produto.
+  it('razao desconhecida cai no clone — o animado — e o iter9 so por nome', async () => {
     const { chooseReconstructionProducer } = await import('./deferred-reconstruction.js');
     const { reconstructPage } = await import('./reconstruct.js');
+    const { captureNativeBundle } = await import('./native-clone/capture-bundle.js');
     for (const reason of ['workflow', 'strict-dependency', undefined]) {
-      expect(chooseReconstructionProducer(reason)).toBe(reconstructPage);
+      expect(chooseReconstructionProducer(reason)).toBe(captureNativeBundle);
     }
+    expect(chooseReconstructionProducer('edit', process.env, 'iter9')).toBe(reconstructPage);
+    // e o interruptor de emergencia continua mandando em tudo
+    expect(chooseReconstructionProducer('edit', { UNCRAFT_NATIVE_CLONE_PRODUCER: 'off' })).toBe(reconstructPage);
   });
 
   it('o limite de "edit" e deliberado: /run continua no iter9 porque compoe por TEXTO', async () => {

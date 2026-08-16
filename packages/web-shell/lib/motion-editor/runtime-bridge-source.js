@@ -161,17 +161,23 @@ function nativeMotionRuntimeBridge() {
     return parts.join('>');
   }
 
-  function ensureElementId(element) {
-    if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
-    if (element.dataset.uncraftId) return element.dataset.uncraftId;
+  // A semente e' DERIVADA do documento, nunca sorteada: o mesmo elemento na
+  // mesma pagina produz o mesmo identificador em outra sessao. E' isso que
+  // permite reencontrar, depois de recarregar, um alvo salvo ontem.
+  function elementIdSeed(element) {
     const webflowId = element.getAttribute('data-w-id');
     const authoredId = element.id;
-    const seed = webflowId
+    return webflowId
       ? `webflow:${webflowId}`
       : authoredId
         ? `id:${authoredId}`
         : `path:${domFingerprint(element)}`;
-    const id = `el-${hash(seed)}`;
+  }
+
+  function ensureElementId(element) {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
+    if (element.dataset.uncraftId) return element.dataset.uncraftId;
+    const id = `el-${hash(elementIdSeed(element))}`;
     element.dataset.uncraftId = id;
     return id;
   }
@@ -180,6 +186,47 @@ function nativeMotionRuntimeBridge() {
     if (!elementId) return null;
     return Array.from(document.querySelectorAll('[data-uncraft-id]'))
       .find((element) => element.dataset.uncraftId === elementId) || null;
+  }
+
+  // Alvo salvo em OUTRA sessao. O carimbo `data-uncraft-id` so nasce quando a
+  // ponte inspeciona, e ao recarregar so o que esta na tela foi inspecionado —
+  // entao um alvo salvo mais abaixo na pagina simplesmente nao existe para o
+  // `findElement`. Aqui ele e' reencontrado pela semente.
+  //
+  // DELIBERADAMENTE so as sementes que NAO dependem do DOM ao redor (id autoral
+  // e id do webflow). O caminho estrutural (`path:`) le a lista de classes VIVA
+  // do elemento e de ate 8 ancestrais: medido no clone real, 92% dos elementos
+  // mudariam de identidade se uma classe fosse ligada acima deles, e o proprio
+  // ScrollTrigger insere um ancestral novo ao fixar uma secao. Ele nao serve
+  // para atravessar sessoes, e usa-lo aqui trocaria uma recusa barulhenta por
+  // uma escrita silenciosa no elemento errado.
+  //
+  // Casamento tem que ser UNICO: com id duplicado na pagina, recusa-se.
+  function findSavedElement(elementId) {
+    if (!elementId) return null;
+    // Os JA CARIMBADOS entram na conta junto com os derivados. Olhar primeiro
+    // o carimbo e sair no primeiro que casa deixava a recusa por ambiguidade de
+    // fora exatamente no caminho real: o inventario do viewport roda antes do
+    // replay e carimba um dos gemeos, e ai' o outro nem era considerado
+    // (achado da auditoria, rodada 2).
+    const candidatos = [];
+    document.querySelectorAll('[data-uncraft-id]').forEach((element) => {
+      if (element.dataset.uncraftId === elementId) candidatos.push(element);
+    });
+    if (document.body) {
+      document.body.querySelectorAll('[id],[data-w-id]').forEach((element) => {
+        if (element.dataset.uncraftId) return;
+        if (`el-${hash(elementIdSeed(element))}` !== elementId) return;
+        candidatos.push(element);
+      });
+    }
+    if (candidatos.length !== 1) return null;
+    const achado = candidatos[0];
+    // Carimbar aqui devolve exatamente o id que `ensureElementId` produziria
+    // nesta sessao — a semente nao depende do contexto —, entao nao inventa
+    // identidade nova.
+    ensureElementId(achado);
+    return achado;
   }
 
   function rawText(element) {
@@ -2158,11 +2205,39 @@ function nativeMotionRuntimeBridge() {
     }
   }
 
+  // A semente da identidade de uma animacao GSAP. Ela precisa dar o MESMO nome
+  // a' mesma animacao autoral depois de recarregar a pagina — e' isso que
+  // permite reaplicar uma alteracao salva.
+  //
+  // MEDIDO 2026-08-13 no clone real (duas cargas do mesmo site): a semente
+  // antiga usava a POSICAO da animacao na lista global do GSAP e 122 de 123
+  // animacoes trocavam de nome ao recarregar — o site cria 184 numa carga e 189
+  // na outra, e toda posicao escorrega. Trocada pela lista de propriedades
+  // animadas mais a ordem entre as animacoes iguais do mesmo elemento:
+  // 114/114 estaveis e zero colisoes, incluindo o caso real (salvo depois de
+  // rolar a pagina x reaplicado 1s apos recarregar).
+  //
+  // A duracao NAO entra: e' justamente o que o usuario edita, e a identidade
+  // nao pode mudar de nome no primeiro ajuste.
+  function gsapMotionSeed(animation, elementId, ordinais) {
+    const vars = animation.vars || {};
+    if (vars.id) return `${elementId}:${vars.id}`;
+    const propriedades = Object.keys(vars)
+      .filter((chave) => !GSAP_CONFIG_VARS.has(chave) && !chave.startsWith('_'))
+      .sort()
+      .join(',');
+    const chave = `${elementId}:${propriedades}`;
+    const ordem = ordinais.get(chave) || 0;
+    ordinais.set(chave, ordem + 1);
+    return `${chave}#${ordem}`;
+  }
+
   function gsapAnimationsFor(element) {
     try {
       const timeline = window.gsap && window.gsap.globalTimeline;
       if (!timeline || typeof timeline.getChildren !== 'function') return [];
       const owner = safeHost(element);
+      const ordinais = new Map();
       return timeline.getChildren(true, true, true).flatMap((animation, index) => {
         const targets = (typeof animation.targets === 'function' ? animation.targets() : [])
           // A detached target no longer renders through this tween — its row
@@ -2183,7 +2258,11 @@ function nativeMotionRuntimeBridge() {
         const scrollTrigger = animation.scrollTrigger || vars.scrollTrigger || null;
         const engine = scrollTrigger ? 'ScrollTrigger' : 'GSAP';
         const primaryTarget = targets.find((target) => target instanceof Element) || element;
-        const id = motionIdFor(animation, engine === 'GSAP' ? 'gsap' : 'scroll', `${ensureElementId(primaryTarget)}:${vars.id || index}`);
+        const id = motionIdFor(
+          animation,
+          engine === 'GSAP' ? 'gsap' : 'scroll',
+          gsapMotionSeed(animation, ensureElementId(primaryTarget), ordinais),
+        );
         const ignored = GSAP_CONFIG_VARS;
         // css:{} wrapper (legacy GSAP-2 authoring): once it exists — even empty —
         // GSAP routes ONLY the wrapper through CSSPlugin; every SCALAR top-level
@@ -2685,6 +2764,7 @@ function nativeMotionRuntimeBridge() {
       });
     } catch (_) {}
     try {
+      const ordinaisDoInventario = new Map();
       (window.gsap?.globalTimeline?.getChildren?.(true, true, true) || []).forEach((tween, tweenIndex) => {
         const rawTargets = typeof tween.targets === 'function' ? tween.targets() : [];
         // Detached targets no longer render through this tween — skip them.
@@ -2692,9 +2772,18 @@ function nativeMotionRuntimeBridge() {
         const elementTargets = targets.filter((target) => target instanceof Element);
         if (!elementTargets.length) return;
         const trigger = tween.scrollTrigger || tween.vars?.scrollTrigger || null;
-        // Indexed fallback: two anonymous tweens on one element must never
-        // share an id (the WeakMap dedupes per OBJECT, not per seed).
-        const tweenKey = motionIdFor(tween, trigger ? 'scroll' : 'gsap', `${ensureElementId(elementTargets[0])}:${tween.vars?.id || `tween-${tweenIndex}`}`);
+        // ESTE e' o batismo que vale: o inventario do viewport roda antes de
+        // qualquer inspecao e `motionIdFor` guarda o nome por OBJETO — quem
+        // chega depois so le o cache. A semente estava usando a POSICAO da
+        // animacao na lista global, e por isso a identidade nao sobrevivia a uma
+        // recarga (medido: 122 de 123 trocavam de nome). `gsapMotionSeed`
+        // continua garantindo que duas animacoes anonimas do mesmo elemento nao
+        // compartilhem nome — o desempate agora e' por ordem entre IGUAIS.
+        const tweenKey = motionIdFor(
+          tween,
+          trigger ? 'scroll' : 'gsap',
+          gsapMotionSeed(tween, ensureElementId(elementTargets[0]), ordinaisDoInventario),
+        );
         // One TIME tween animating SEVERAL elements chains their rows together —
         // editing it moves all of them. Surface that link so the UI can show
         // (and break) the chain. Scroll-driven groups are not offered: a clone
@@ -6844,7 +6933,7 @@ function nativeMotionRuntimeBridge() {
   }
 
   function readPatchValue(patch) {
-    const element = findElement(patch?.elementId);
+    const element = findSavedElement(patch?.elementId);
     if (!element) throw bridgeError('target_missing', 'The target element is no longer present.');
     if (patch.kind === 'style') return element.style.getPropertyValue(patch.property);
     if (patch.kind === 'attribute') return element.getAttribute(patch.property) ?? '';
@@ -7062,7 +7151,7 @@ function nativeMotionRuntimeBridge() {
   }
 
   function applyPatchOrThrow(patch) {
-    let element = findElement(patch?.elementId);
+    let element = findSavedElement(patch?.elementId);
     if (!element) throw bridgeError('target_missing', 'The target element is no longer present.');
     try {
       if (patch.kind === 'style') {
@@ -8029,6 +8118,14 @@ function nativeMotionRuntimeBridge() {
       commitRuntimeGesture(message, payload);
     } else if (message.type === 'cancel-gesture') {
       cancelRuntimeGesture(message, payload);
+    } else if (message.type === 'request-announce') {
+      // O editor perdeu o anuncio de abertura (ver `announce`). SO antes de
+      // negociar: depois disso, reanunciar faz o editor zerar o registro de
+      // transacoes e reaplicar tudo, o que perde trabalho no meio da sessao.
+      // A guarda de cima ja descarta a forma v1 de uma sessao negociada, mas a
+      // forma v2 chega ate aqui — esta linha e' que fecha a porta (achado da
+      // auditoria: o comentario anterior afirmava uma protecao que nao existia).
+      if (negotiatedProtocol !== PROTOCOL_V2) announce();
     } else if (message.type === 'health-check') {
       reply(message, 'runtime-health', {
         status: 'healthy',
@@ -8149,6 +8246,28 @@ function nativeMotionRuntimeBridge() {
   function pixelTranslate(value) {
     const match = String(value || '').trim().match(/^(-?\d*\.?\d+)px(?:\s+(-?\d*\.?\d+)px)?$/);
     return match ? { x: Number(match[1]), y: Number(match[2] || 0) } : { x: 0, y: 0 };
+  }
+
+  // O anuncio e' a unica porta de entrada da sessao: sem ele o editor nao
+  // negocia, nao inspeciona e nao reaplica o que foi salvo. Ele parte uma vez
+  // no boot e o editor pode nao estar ouvindo ainda (MEDIDO 2026-08-13: ao
+  // recarregar, o site vem do cache e anuncia 0,27s antes de o editor ligar o
+  // ouvinte). Por isso o anuncio e' repetivel a pedido.
+  function announce() {
+    emit('runtime-ready', {
+      title: document.title || 'Animated website',
+      elementCount: document.querySelectorAll('*').length,
+      engines: detectedEngines(),
+      profile: collectDocumentProfile(),
+      assets: collectAssets(),
+      supportedProtocols: SUPPORTED_PROTOCOLS,
+      selectedProtocol: PROTOCOL,
+      sessionNonce,
+      runtimeGeneration,
+      bundleId,
+      sessionId: runtimeSessionId,
+      runtimeFingerprint,
+    });
   }
 
   function boot() {
@@ -8380,20 +8499,7 @@ function nativeMotionRuntimeBridge() {
         activeTimelineId = null;
       },
     };
-    emit('runtime-ready', {
-      title: document.title || 'Animated website',
-      elementCount: document.querySelectorAll('*').length,
-      engines: detectedEngines(),
-      profile: collectDocumentProfile(),
-      assets: collectAssets(),
-      supportedProtocols: SUPPORTED_PROTOCOLS,
-      selectedProtocol: PROTOCOL,
-      sessionNonce,
-      runtimeGeneration,
-      bundleId,
-      sessionId: runtimeSessionId,
-      runtimeFingerprint,
-    });
+    announce();
   }
 
   if (document.readyState === 'complete') boot();

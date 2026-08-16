@@ -10,6 +10,11 @@
  *
  * HOW TO TOGGLE
  *   - Per-item default: flip `on` on the entry below (hot-reloads in dev).
+ *   - MASTER SWITCH: env `UNCRAFT_HOUSESTYLE=off` turns the whole directive off,
+ *     so the same generation can be run with and without the taste rules and the
+ *     two outputs compared. That comparison is the point: it is how we find out
+ *     whether these rules and the reference bank ADD UP or FIGHT each other.
+ *     `houseStyleEnabled()` says which side a given run was on.
  *   - Without editing code: env `UNCRAFT_HOUSESTYLE_OFF="id1,id2"` (and/or
  *     `UNCRAFT_HOUSESTYLE_ON="id3"`) — comma-separated criterion ids.
  *   - Programmatic / future settings UI: `listCriteria()` to see the switchboard,
@@ -21,6 +26,38 @@
  * UI/UX skills (emil-design-eng, taste-skill, impeccable) + the 6-skill anti-slop
  * cross-read, validated by the 2026-06-25 side-by-side test
  * (docs/superpowers/specs/2026-06-25-anti-slop-test/).
+ *
+ * PROVENANCE — READ BEFORE TRUSTING THE `note` FIELDS
+ *   This file IS the taste spine. Nothing upstream of it is a more complete
+ *   record; the raw list it was distilled from no longer exists.
+ *
+ *   - The source was a numbered list of 53 candidate criteria, produced by a
+ *     cross-read of 6 skills (taste-skill, interface-design, bencium,
+ *     baseline-ui, make-interfaces-feel-better, shadcn) on 2026-07-22.
+ *   - Items 37-53 were CONFLICTS the user adjudicated one by one. Each ruling is
+ *     written up in docs/superpowers/handoffs/
+ *     2026-07-22-skills-audit-housestyle-switchboard-handoff.md (section 2) and
+ *     carried here in the matching criterion's `note`.
+ *   - Items 1-36 were the CONSENSUS half. They were never persisted as a list —
+ *     that handoff states outright that consensus, redundancies and full
+ *     conflicts "ficaram na conversa da sessão". The ~22 note-less criteria
+ *     below are their only surviving descendants.
+ *   - That is BY DESIGN, not decay: this file is the DISTILLATION of those skills
+ *     into one criterion-per-switch, and the point of distilling was to make the
+ *     sources disposable. 4 of the 6 are gone from disk; the two locatable ones
+ *     are listed in the audit doc below. The only thing their absence costs is
+ *     the ability to check whether the distillation was faithful.
+ *   - Known gaps, do not assume they are covered: decision 40 (an outline on an
+ *     IMAGE is banned too — images are not an exception to the border rule) has
+ *     no explicit text here; decision 42's number was overwritten when
+ *     `type-tracking` was revised on 2026-08-05; decision 52 (at most one
+ *     question per turn) deliberately lives in lib/agent/prompts.js, not here.
+ *
+ *   Full audit of what survived, what drifted and what is unrecoverable:
+ *   docs/superpowers/specs/2026-08-12-anti-slop-lista-1-53-proveniencia.md
+ *
+ *   RULE: when a criterion changes, keep its decision number in the `note`.
+ *   Losing the number is how 42 became untraceable.
  *
  * A criterion's `text` is the exact prompt fragment; `group` places it under a
  * header in the rendered directive. Reskin/restyle paths already pin the
@@ -203,9 +240,49 @@ export function setCriterion(id, on) {
 
 // opts.off / opts.on: transient id lists overriding the stored `on` for this render only.
 function isEnabled(c, opts) {
+  if (opts?.allOff) return false;
   if (opts?.on?.includes(c.id)) return true;
   if (opts?.off?.includes(c.id)) return false;
   return c.on;
+}
+
+/**
+ * De que lado a execucao esta, lido do ambiente.
+ *
+ * `off` desliga TUDO — e tudo inclui o bloco ABSORB, que e a doutrina de
+ * referencia ("REFERENCE USE — preserve section topology…"). Para a pergunta de
+ * produto (regras de gosto e banco de referencias se somam ou se anulam?) isso
+ * nao serve: os dois lados da comparacao passariam a diferir tambem em COMO usar
+ * uma referencia, e nao so nas 37 ordens de gosto. Por isso existe
+ * `guardrails-off`, que tira apenas os guardrails e deixa a doutrina de pe.
+ *
+ * Valor desconhecido devolve `on`: um interruptor mal escrito nao pode desligar
+ * regra nenhuma em silencio.
+ */
+export function houseStyleMode(env = process.env) {
+  const valor = String(env.UNCRAFT_HOUSESTYLE || '').trim().toLowerCase();
+  if (valor === 'off') return 'off';
+  if (valor === 'guardrails-off') return 'guardrails-off';
+  return 'on';
+}
+
+function envOpts(env = process.env) {
+  const modo = houseStyleMode(env);
+  if (modo === 'off') return { allOff: true };
+  if (modo === 'guardrails-off') {
+    return { off: CRITERIA.filter((c) => c.mode === 'guardrails').map((c) => c.id) };
+  }
+  return undefined;
+}
+
+/** O house-style do jeito que o ambiente pediu. */
+export function buildHouseStyleFromEnv(env = process.env) {
+  return buildHouseStyle(envOpts(env));
+}
+
+/** true quando o interruptor geral desligou tudo por ambiente. */
+function allOffFromEnv() {
+  return houseStyleMode() === 'off';
 }
 
 /** HOUSE_STYLE_GUARDRAILS, rendered from currently-enabled guardrail criteria. */
@@ -217,6 +294,9 @@ export function buildGuardrails(opts) {
     if (!items.length) continue;
     blocks.push(`${GROUP_HEADERS[group]}\n${items.map((c) => c.text).join('\n')}`);
   }
+  // Sem critério nenhum, devolve vazio em vez do cabeçalho sozinho: este texto vai
+  // direto para dentro do prompt, e cabeçalho sem regra embaixo é instrução vazia.
+  if (!blocks.length) return '';
   return `DESIGN GUARDRAILS (apply to every visual decision)\n\n${blocks.join('\n\n')}`;
 }
 
@@ -232,13 +312,19 @@ export function buildInvent(opts) {
 
 /** Full HOUSE_STYLE = guardrails + absorb + invent. */
 export function buildHouseStyle(opts) {
-  return `${buildGuardrails(opts)}\n\n${buildAbsorb(opts)}\n\n${buildInvent(opts)}`;
+  return [buildGuardrails(opts), buildAbsorb(opts), buildInvent(opts)].filter(Boolean).join('\n\n');
 }
 
 // ── Backward-compatible exports (assembled from default state at load) ───────
 // These freeze at import time. Toggle via `on` / env before boot (dev hot-reload
 // re-evaluates), or call the build*() functions for a live custom-toggled render.
-export const HOUSE_STYLE_GUARDRAILS = buildGuardrails();
-export const HOUSE_STYLE_ABSORB = buildAbsorb();
-export const HOUSE_STYLE_INVENT = buildInvent();
-export const HOUSE_STYLE = buildHouseStyle();
+const ENV_OPTS = envOpts();
+export const HOUSE_STYLE_GUARDRAILS = buildGuardrails(ENV_OPTS);
+export const HOUSE_STYLE_ABSORB = buildAbsorb(ENV_OPTS);
+export const HOUSE_STYLE_INVENT = buildInvent(ENV_OPTS);
+export const HOUSE_STYLE = buildHouseStyle(ENV_OPTS);
+
+/** As regras estão valendo nesta execução? Serve para rotular uma comparação. */
+export function houseStyleEnabled() {
+  return !allOffFromEnv();
+}

@@ -1,5 +1,11 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chromium } from 'playwright-core';
+
+// The pinDomViewportUnits cases drive a real Chromium. Since @uncraft/design-eval
+// added a second browser-driven file to this suite, the two compete and the default
+// 5s budget stopped being enough — these went red while passing in isolation.
+// Scoped here rather than raised globally.
+vi.setConfig({ testTimeout: 30000, hookTimeout: 60000 });
 import { pinViewportUnits, pinCssLengths, pinDomViewportUnits } from './snapshot.js';
 
 // Regression suite for the 2026-07-24 "pixelated hero" root cause: the old

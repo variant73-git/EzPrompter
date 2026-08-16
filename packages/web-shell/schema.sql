@@ -88,6 +88,15 @@ CREATE TABLE IF NOT EXISTS snapshots (
       AND motion_manifest->>'baseBundleId' = native_bundle_id::text)
   )
 );
+-- Reconciliacao para bancos ANTERIORES a estas colunas. `CREATE TABLE IF NOT
+-- EXISTS` nao acrescenta coluna em tabela que ja existe: num banco criado antes
+-- do editor de animacao a tabela ficava sem elas e o indice abaixo derrubava o
+-- boot inteiro com `column "native_bundle_id" does not exist`. As travas de
+-- integridade (chave estrangeira e formato do manifesto) vem na migracao
+-- 2026-07-26-native-motion-editing.sql, que so precisa rodar uma vez.
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS native_bundle_id UUID;
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS motion_manifest JSONB;
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS motion_manifest_version SMALLINT;
 CREATE INDEX IF NOT EXISTS idx_snapshots_node ON snapshots(node_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_snapshots_native_bundle ON snapshots(native_bundle_id) WHERE native_bundle_id IS NOT NULL;
 

@@ -29,6 +29,12 @@ commitado de outra sessão, confirmado por `git status`.
 
 ### 2.1 SALVAR: guarda, mas não volta
 
+> ✅ **RESOLVIDO na sessão seguinte (2026-08-13).** Eram TRÊS causas, e a hipótese de "ordem"
+> abaixo foi **refutada por medida** — o valor novo não aparece em nenhuma amostra depois de
+> recarregar, e nenhuma transação chegava a ser enviada. Ver
+> `2026-08-13-salvar-volta-tres-causas.md`. O texto abaixo fica como registro do que se
+> supunha.
+
 **Medido no laboratório:**
 
 | passo | resultado |

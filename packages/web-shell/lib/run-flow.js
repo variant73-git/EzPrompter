@@ -20,6 +20,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenAI } from '@google/genai';
 import OpenAI from 'openai';
 import { HOUSE_STYLE } from './design/house-style.js';
+import { buildReferenceDirective, referencesEnabled } from './design/reference-directive.js';
 import { extractStyleFromImage } from './design/style-extract.js';
 import { recordUsage } from './billing/context.js';
 
@@ -268,7 +269,7 @@ export function replaceMediaPlaceholders(html, bindings = []) {
   return output;
 }
 
-export async function runCompose({ target, sources, model, modelId, systemPromptOverride }) {
+export async function runCompose({ target, sources, model, modelId, systemPromptOverride, referencePlan = null, referenceEvidence = {} }) {
   // Caller can pass either the resolved provider model string (`model`)
   // or the picker's short id (`modelId`). resolveModel() maps the
   // short id to the SDK-friendly value via MODEL_ALIAS.
@@ -325,11 +326,20 @@ export async function runCompose({ target, sources, model, modelId, systemPrompt
   }
 
   const { text: userPrompt, images, mediaBindings } = assemblePrompt({ targetHtml: target.current_html, buckets });
+  // A direcao do banco de referencias entra na mensagem de USUARIO, junto dos
+  // artefatos conectados: ela e' evidencia DESTA execucao, nao regra do sistema.
+  // O contrato de quem manda em que dimensao viaja com ela (ver
+  // `reference-directive.js`) para que a autoridade nunca chegue sem o material
+  // a que ela se refere.
+  const referenceDirective = referencePlan && referencesEnabled()
+    ? buildReferenceDirective(referencePlan, { evidence: referenceEvidence })
+    : '';
+  const composedUserPrompt = referenceDirective ? `${referenceDirective}\n\n${userPrompt}` : userPrompt;
   const systemPrompt = systemPromptOverride || COMPOSE_SYSTEM;
   const { text } = await callLLM({
     model: effectiveModel,
     system: systemPrompt,
-    user: userPrompt,
+    user: composedUserPrompt,
     images,
     maxTokens: 32000,
     temperature: 0.4

@@ -8,6 +8,8 @@
     "dev:keep": "next dev --port 3030",
     "dev:motion": "NEXT_DIST_DIR=.next-motion next dev --port 3032",
     "build": "next build",
+    "_comment_build_verify": "Verificar o build NAO pode usar a mesma pasta do servidor de dev: os dois escrevem em .next, o build troca os pedacos debaixo do dev e ele passa a pedir arquivo que nao existe mais (Cannot find module ./NNNN.js). Use este quando so quiser saber se compila.",
+    "build:verify": "NEXT_DIST_DIR=.next-verify next build",
     "start": "next start --port 3030",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -15,6 +17,7 @@
     "test:refs:promotion-artifacts": "RUN_REFERENCE_PROMOTION_ARTIFACT_TESTS=1 vitest run lib/reference-bank-promotion.artifacts.integration.test.js",
     "e2e:native-motion": "node e2e/native-motion-editing.spec.js",
     "smoke:motion-controls": "node scripts/smoke-motion-controls.mjs",
+    "gosto:check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-house-style.mjs",
     "refs:migrate": "node scripts/reference-bank/migrate.mjs",
     "refs:migrate:isolated": "node scripts/reference-bank/migrate.mjs --isolated",
     "refs:import": "node scripts/reference-bank/import-seed.mjs",
@@ -37,7 +40,9 @@
     "refs:gate5:prove:isolated": "node scripts/start-from-ref/prove-gate-5-isolated.mjs",
     "evals:gen": "node evals/gen-prompt.mjs",
     "evals": "node evals/gen-prompt.mjs && promptfoo eval -c evals/promptfooconfig.yaml",
-    "evals:view": "promptfoo view"
+    "evals:view": "promptfoo view",
+    "evals:rubric": "node evals/anti-slop/build-rubric.mjs",
+    "evals:rubric:check": "node evals/anti-slop/build-rubric.mjs --check"
   },
   "dependencies": {
     "@next/env": "15.5.15",
@@ -60,7 +65,8 @@
     "react": "^19",
     "react-dom": "^19",
     "react-zoom-pan-pinch": "^3.6.0",
-    "stripe": "^17"
+    "stripe": "^17",
+    "@uncraft/design-eval": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.0",

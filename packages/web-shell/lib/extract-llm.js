@@ -62,7 +62,18 @@ async function callText({ model = DEFAULT_MODEL, system, user, maxTokens = 1200 
 }
 
 // Vision: dataUrl (base64) → text. Anthropic image block / Gemini inlineData.
-async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTokens = 1200 }) {
+// Esforco de raciocinio (so o ramo OpenAI honra; gpt-5.5 aceita low|medium|
+// high). E' OPCAO EXPLICITA por chamada, nunca lida de env aqui dentro: a
+// primeira versao lia `UNCRAFT_CLONE_REASONING` no callVision compartilhado e
+// vazava o interruptor para TODAS as chamadas de visao — tokens, prompt,
+// describe — contrariando o proprio nome (achado da auditoria). So o
+// cloneImageToHtml a envia.
+function reasoningEffortValido(v) {
+  const limpo = String(v || '').trim().toLowerCase();
+  return ['low', 'medium', 'high'].includes(limpo) ? limpo : null;
+}
+
+async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTokens = 1200, reasoningEffort = null }) {
   const [, mediaType, b64] = /^data:([^;]+);base64,(.+)$/.exec(dataUrl) || [];
   if (!b64) throw new Error('callVision: dataUrl must be base64');
   const provider = assertProvider(model, ['anthropic', 'openai', 'gemini']);
@@ -108,6 +119,7 @@ async function callVision({ model = DEFAULT_MODEL, system, user, dataUrl, maxTok
           ] },
         ],
         max_completion_tokens: maxTokens,
+        ...(reasoningEffortValido(reasoningEffort) ? { reasoning_effort: reasoningEffortValido(reasoningEffort) } : {}),
         stream: true,
         stream_options: { include_usage: true },
       }, { signal });
@@ -223,12 +235,17 @@ export async function cloneImageToHtml({ dataUrl, model }) {
   // palette and pin the exact hexes so the clone stops drifting colour.
   let truth = '';
   try { truth = await samplePalette({ imageDataUrl: dataUrl }); } catch { /* best-effort */ }
+  // MEDIDO 2026-08-14: o tempo do clone e' dominado pelo raciocinio invisivel
+  // antes da escrita — com `low` a mesma chamada cai de ~50-110s para ~18-33s
+  // sem perda visivel no A/B de tres densidades. O DEFAULT continua o do
+  // provedor: trocar o padrao e' decisao de produto do Adilson, pendente.
   const html = await callVision({
     model: model || STRONG_VISION_MODEL,
     system,
     user: 'Reproduce the website shown in this image as a single faithful, navigable HTML document.' + (truth || ''),
     dataUrl,
     maxTokens: 16000,
+    reasoningEffort: process.env.UNCRAFT_CLONE_REASONING,
   });
   return stripFences(html);
 }

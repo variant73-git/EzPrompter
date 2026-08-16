@@ -11515,6 +11515,124 @@ describe('native motion runtime bridge', () => {
     runtime.restore();
   });
 
+  // MEDIDO 2026-08-13 no editor real: com o anuncio recuperado, o replay chega
+  // e a ponte RECUSA com `motion_missing`. A causa e' anterior ao movimento — o
+  // `data-uncraft-id` e' carimbado so quando a ponte inspeciona, e ao recarregar
+  // so o topo da pagina foi inspecionado. Um alvo salvo que vive mais abaixo
+  // simplesmente nao existe para o `findElement`. O identificador, porem, e'
+  // DERIVADO de uma semente estavel (id autoral, id do webflow ou caminho no
+  // DOM) — entao ele pode ser reencontrado sem ter sido carimbado.
+  it('resolves a saved target that this session never inspected', () => {
+    document.body.innerHTML = '<main><section><div class="deep"><p id="alvo-salvo" style="opacity: 1">texto</p></div></section></main>';
+    const primeiro = bootV2Runtime();
+    // carimba o id pelo caminho real (clique = inspecao)
+    document.getElementById('alvo-salvo').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const idSalvo = document.getElementById('alvo-salvo').dataset.uncraftId;
+    expect(idSalvo).toMatch(/^el-/);
+    primeiro.restore();
+
+    // recarga: mesma pagina, nenhum carimbo — e' o estado real depois do F5
+    document.body.innerHTML = '<main><section><div class="deep"><p id="alvo-salvo" style="opacity: 1">texto</p></div></section></main>';
+    expect(document.querySelectorAll('[data-uncraft-id]')).toHaveLength(0);
+    const segundo = bootV2Runtime();
+    segundo.send('apply-transaction', {
+      transaction: {
+        id: 'tx-replay',
+        source: 'replay',
+        patches: [{ id: 'p1', elementId: idSalvo, kind: 'style', property: 'opacity', before: '1', value: '0.3' }],
+      },
+    }, 'request-replay');
+
+    expect(document.getElementById('alvo-salvo').style.opacity).toBe('0.3');
+    expect(segundo.messages.filter((message) => message.type === 'transaction-rejected')).toHaveLength(0);
+    segundo.restore();
+  });
+
+  // Achado da auditoria: reencontrar pelo id derivado pode casar o elemento
+  // ERRADO. Escrever em silencio no lugar errado e' pior do que recusar — com
+  // dois candidatos, recusa-se.
+  it('refuses a saved target when two elements answer to the same identity', () => {
+    document.body.innerHTML = '<main><p id="repetido" style="opacity: 1">um</p><p id="repetido" style="opacity: 1">dois</p></main>';
+    const primeiro = bootV2Runtime();
+    document.querySelectorAll('#repetido')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const idSalvo = document.querySelectorAll('#repetido')[1].dataset.uncraftId;
+    primeiro.restore();
+
+    document.body.innerHTML = '<main><p id="repetido" style="opacity: 1">um</p><p id="repetido" style="opacity: 1">dois</p></main>';
+    const segundo = bootV2Runtime();
+    segundo.send('apply-transaction', {
+      transaction: {
+        id: 'tx-ambiguo',
+        source: 'replay',
+        patches: [{ id: 'p1', elementId: idSalvo, kind: 'style', property: 'opacity', before: '1', value: '0.3' }],
+      },
+    }, 'request-ambiguo');
+
+    document.querySelectorAll('#repetido').forEach((element) => expect(element.style.opacity).toBe('1'));
+    expect(segundo.messages.filter((message) => message.type === 'transaction-rejected').pop().payload)
+      .toMatchObject({ code: 'target_missing' });
+    segundo.restore();
+  });
+
+  // Achado da auditoria (rodada 2): a recusa por ambiguidade ficava de fora no
+  // caminho REAL — a ponte inspeciona a tela antes do replay e carimba um dos
+  // gemeos; olhar o carimbo primeiro fazia o outro nem ser considerado.
+  it('still refuses an ambiguous saved target after one of the twins was inspected', () => {
+    document.body.innerHTML = '<main><p id="repetido" style="opacity: 1">um</p><p id="repetido" style="opacity: 1">dois</p></main>';
+    const primeiro = bootV2Runtime();
+    document.querySelectorAll('#repetido')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const idSalvo = document.querySelectorAll('#repetido')[1].dataset.uncraftId;
+    primeiro.restore();
+
+    document.body.innerHTML = '<main><p id="repetido" style="opacity: 1">um</p><p id="repetido" style="opacity: 1">dois</p></main>';
+    const segundo = bootV2Runtime();
+    // e' isto que muda: um dos gemeos ja foi inspecionado nesta sessao
+    document.querySelectorAll('#repetido')[0].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(document.querySelectorAll('#repetido')[0].dataset.uncraftId).toBe(idSalvo);
+
+    segundo.send('apply-transaction', {
+      transaction: {
+        id: 'tx-ambiguo-carimbado',
+        source: 'replay',
+        patches: [{ id: 'p1', elementId: idSalvo, kind: 'style', property: 'opacity', before: '1', value: '0.3' }],
+      },
+    }, 'request-ambiguo-carimbado');
+
+    document.querySelectorAll('#repetido').forEach((element) => expect(element.style.opacity).toBe('1'));
+    expect(segundo.messages.filter((message) => message.type === 'transaction-rejected').pop().payload)
+      .toMatchObject({ code: 'target_missing' });
+    segundo.restore();
+  });
+
+  // Limite DELIBERADO: um alvo sem id proprio depende do caminho estrutural, que
+  // le a lista de classes viva do elemento e dos ancestrais — medido no clone
+  // real: 92% dos elementos mudariam de identidade se uma classe fosse ligada
+  // acima deles, e o ScrollTrigger insere ancestral ao fixar uma secao. Esse
+  // alvo NAO e' reencontrado entre sessoes; ele falha de forma barulhenta.
+  it('does not guess a saved target whose identity comes from the DOM path', () => {
+    document.body.innerHTML = '<main><section><div><p style="opacity: 1">sem id</p></div></section></main>';
+    const primeiro = bootV2Runtime();
+    document.querySelector('p').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    const idSalvo = document.querySelector('p').dataset.uncraftId;
+    expect(idSalvo).toMatch(/^el-/);
+    primeiro.restore();
+
+    document.body.innerHTML = '<main><section><div><p style="opacity: 1">sem id</p></div></section></main>';
+    const segundo = bootV2Runtime();
+    segundo.send('apply-transaction', {
+      transaction: {
+        id: 'tx-caminho',
+        source: 'replay',
+        patches: [{ id: 'p1', elementId: idSalvo, kind: 'style', property: 'opacity', before: '1', value: '0.3' }],
+      },
+    }, 'request-caminho');
+
+    expect(document.querySelector('p').style.opacity).toBe('1');
+    expect(segundo.messages.filter((message) => message.type === 'transaction-rejected').pop().payload)
+      .toMatchObject({ code: 'target_missing' });
+    segundo.restore();
+  });
+
   it('rolls back every prior mutation when a transaction fails in the middle', () => {
     document.body.innerHTML = '<main><div data-uncraft-id="el-a" style="opacity: 1" title="original"></div><div data-uncraft-id="el-b"></div></main>';
     const runtime = bootV2Runtime();
@@ -12085,6 +12203,104 @@ describe('native motion runtime bridge', () => {
 
     expect(document.querySelector('[data-uncraft-id="el-a"]').style.opacity).toBe('1');
     expect(runtime.messages.filter((message) => message.type === 'transaction-committed')).toHaveLength(0);
+    runtime.restore();
+  });
+
+  // MEDIDO 2026-08-13: o anuncio e' unico e sem confirmacao. Ao recarregar, o
+  // editor liga o ouvinte depois dele e o perde para sempre — sem negociacao,
+  // sem replay, e a alteracao salva nao volta. A ponte precisa saber reanunciar
+  // quando o editor pedir.
+  it('announces itself again when the editor says it missed the first announcement', () => {
+    const messages = [];
+    const originalPostMessage = window.postMessage;
+    window.postMessage = (message) => messages.push(message);
+    window.eval(getRuntimeBridgeSource());
+    const primeiro = messages.filter((message) => message.type === 'runtime-ready');
+    expect(primeiro).toHaveLength(1);
+
+    window.dispatchEvent(new MessageEvent('message', {
+      source: window,
+      origin: 'https://app.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL,
+        source: 'host',
+        type: 'request-announce',
+        payload: {},
+      },
+    }));
+
+    const anuncios = messages.filter((message) => message.type === 'runtime-ready');
+    expect(anuncios).toHaveLength(2);
+    // o segundo anuncio tem que servir para negociar: mesma identidade de sessao
+    expect(anuncios[1].payload.sessionNonce).toBe(anuncios[0].payload.sessionNonce);
+    expect(anuncios[1].payload.runtimeGeneration).toBe(anuncios[0].payload.runtimeGeneration);
+    expect(anuncios[1].payload.supportedProtocols).toEqual(anuncios[0].payload.supportedProtocols);
+
+    window.__uncraftMotionBridge?.teardown?.();
+    window.postMessage = originalPostMessage;
+  });
+
+  // MEDIDO 2026-08-13 no clone real: a identidade da animacao vinha da POSICAO
+  // dela na lista global do GSAP, e 122 de 123 animacoes trocavam de nome ao
+  // recarregar (o site cria 184 numa carga e 189 na outra). Sem identidade
+  // estavel, nenhuma alteracao salva reencontra a sua animacao.
+  it('gives an animation the same identity after the page is loaded again', () => {
+    function inspecionar(quantasAntes) {
+      document.body.innerHTML = '<main><div id="alvo">alvo</div><div id="outro">outro</div></main>';
+      const alvo = document.getElementById('alvo');
+      const feitas = [];
+      // animacoes "de enfeite" que nascem ANTES da nossa: e' o que muda de uma
+      // carga para outra e o que empurrava a posicao global
+      for (let i = 0; i < quantasAntes; i += 1) {
+        feitas.push({ vars: { opacity: 1, duration: 0.2 }, alvo: document.getElementById('outro') });
+      }
+      feitas.push({ vars: { autoAlpha: 1, y: 0, duration: 0.62 }, alvo });
+      const kids = feitas.map((f) => ({
+        vars: f.vars,
+        targets: () => [f.alvo],
+        duration: () => f.vars.duration,
+        totalDuration: () => f.vars.duration,
+        progress: () => 0,
+        totalTime: () => 0,
+        delay: () => 0,
+        paused: () => false,
+        isActive: () => false,
+        eventCallback: () => null,
+      }));
+      window.gsap = {
+        globalTimeline: { getChildren: () => kids },
+        getProperty: () => '0',
+        parseEase: () => null,
+        core: { globals: () => ({}) },
+      };
+      const runtime = bootV2Runtime();
+      // O inventario do viewport roda ANTES de qualquer inspecao e e' ele quem
+      // batiza (o nome fica guardado por objeto; quem chega depois so le). Sem
+      // esta linha o teste mediria o caminho errado.
+      runtime.send('inspect-viewport', {}, 'req-inventario');
+      alvo.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      const selecao = runtime.messages.filter((message) => message.type === 'selection-changed').pop();
+      runtime.restore();
+      delete window.gsap;
+      // a linha lista tambem as animacoes vizinhas; o que importa e' a NOSSA
+      const clips = selecao?.payload?.element?.motion || [];
+      return clips.filter((clip) => Math.round(clip.timing.duration) === 620).map((clip) => clip.id);
+    }
+
+    const carga1 = inspecionar(2);
+    const carga2 = inspecionar(7); // o site criou 5 animacoes a mais desta vez
+    expect(carga1).toHaveLength(1);
+    expect(carga2).toEqual(carga1);
+  });
+
+  // Achado da auditoria: a guarda de mensagens v1 nao cobre um pedido em v2, e
+  // reanunciar no meio de uma sessao ja negociada faz o editor zerar o registro
+  // de transacoes e reaplicar tudo — perda de trabalho.
+  it('refuses to announce again once the session has been negotiated', () => {
+    const runtime = bootV2Runtime();
+    const antes = runtime.messages.filter((message) => message.type === 'runtime-ready').length;
+    runtime.send('request-announce', {}, 'request-anuncio-tardio');
+    expect(runtime.messages.filter((message) => message.type === 'runtime-ready')).toHaveLength(antes);
     runtime.restore();
   });
 

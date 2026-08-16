@@ -1,6 +1,7 @@
 import { neon } from '@neondatabase/serverless';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { splitSqlStatements } from './sql-statements.js';
 
 let _sql = null;
 let initialized = false;
@@ -26,12 +27,9 @@ export async function initDB() {
   if (initialized) return;
   const schemaPath = path.join(process.cwd(), 'schema.sql');
   const schema = await fs.readFile(schemaPath, 'utf8');
-  // Strip line comments before splitting so they don't gate later statements.
-  const stripped = schema.replace(/^\s*--.*$/gm, '');
-  const statements = stripped
-    .split(/;\s*(?:\n|$)/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  // Splitting on a bare semicolon breaks any `DO $$ ... END $$` block, whose
+  // body contains semicolons — `splitSqlStatements` keeps those whole.
+  const statements = splitSqlStatements(schema);
   const client = getSql();
   for (const stmt of statements) {
     // neon's tagged-template client also accepts plain string queries.

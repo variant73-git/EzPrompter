@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } fr
 import { createPortal } from 'react-dom';
 import { Check, CloudCheck, Monitor, Smartphone, Tablet, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { nodeOrigin, originColor } from '../lib/node-origin.js';
+import { imageUrlFromPastedHtml, looksLikeImageUrl } from '../lib/pasted-image.js';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
 import CanvasNodeItem from './CanvasNodeItem.jsx';
@@ -578,7 +579,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   // alone. The window listener is bound once and reads the latest handlers
   // through a ref so it never closes over stale `nodes`/state.
   const pasteFnsRef = useRef(null);
-  pasteFnsRef.current = { handleQueueFiles, handleAddUrl, handlePasteNodes };
+  pasteFnsRef.current = { handleQueueFiles, handleAddUrl, handlePasteNodes, handleAddImageUrl };
   // Consecutive pastes of the same payload step further out each time so
   // copies never stack invisibly. Reset on every fresh Cmd+C.
   const pasteSeqRef = useRef(0);
@@ -666,7 +667,25 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         return;
       }
 
-      // 4) A pasted URL → site node. Arbitrary text is left for normal paste.
+      // 4) An image copied from a web page. MEDIDO num Chromium real: copiar a
+      //    imagem SELECIONANDO-A não põe arquivo nenhum na área de
+      //    transferência — põe `text/plain` com o texto alternativo e
+      //    `text/html` com o `<img src>`. Sem ler o HTML, o único endereço
+      //    disponível era ignorado e nada acontecia.
+      const html = (cd.getData && cd.getData('text/html')) || '';
+      const doHtml = imageUrlFromPastedHtml(html);
+      if (doHtml) { e.preventDefault(); fns.handleAddImageUrl?.(doHtml); return; }
+
+      // 5) "Copiar endereço da imagem" entrega a URL em texto. Ela caía na
+      //    porta de qualquer link e virava node de SITE — o canvas tentava
+      //    clonar a imagem como se fosse uma página.
+      if (text && looksLikeImageUrl(text)) {
+        e.preventDefault();
+        fns.handleAddImageUrl?.(normalizeUrl(text) || text);
+        return;
+      }
+
+      // 6) A pasted URL → site node. Arbitrary text is left for normal paste.
       if (text && looksLikeUrl(text)) {
         const url = normalizeUrl(text);
         if (url) { e.preventDefault(); fns.handleAddUrl?.(url); }
@@ -887,6 +906,22 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     undoStackRef.current.push(entry);
     if (undoStackRef.current.length > 100) undoStackRef.current.splice(0, undoStackRef.current.length - 100);
   }
+
+  // ⚠️ NAO EXISTE REFAZER, E E' DELIBERADO (2026-08-14).
+  //
+  // O Adilson pediu: desfez a imagem colada e o refazer nao a trouxe de volta.
+  // Construi um, e DUAS rodadas de auditoria mostraram que nesta arquitetura ele
+  // nao pode ser correto sem um historico transacional de verdade:
+  //   - a entrada de criacao guarda a LINHA do momento da criacao, entao refazer
+  //     um node editado depois traria a versao velha por cima da nova;
+  //   - qualquer invalidacao por "algo mudou" nao ve edicao de CONTEUDO (html,
+  //     meta, nome), que nao mexe em id nem posicao;
+  //   - a tela confirma antes do servidor, e `ON CONFLICT DO NOTHING` faz um
+  //     200 nao provar que o que voltou e' o que se pediu.
+  // Cada um desses destroi trabalho em silencio. Um refazer meio-certo e' pior
+  // do que nenhum: o usuario confia nele. Fazer direito e' um historico com
+  // estado antes/depois por operacao e confirmacao por objeto — obra propria,
+  // nao remendo. Ate' la', desfazer segue via unica.
 
   function nextNodePosition(opts = {}) {
     const newW = opts.width || 1280;
@@ -1995,6 +2030,41 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     };
   }, []);
 
+  /**
+   * Uma imagem colada por ENDEREÇO. Quem busca é o servidor: o navegador
+   * esbarraria em CORS na maioria dos sites, e o que interessa é o corpo.
+   *
+   * Se o endereço não for imagem de verdade, volta ao comportamento antigo em
+   * vez de deixar a colagem morrer em silêncio — a extensão pode mentir.
+   */
+  async function handleAddImageUrl(url, opts = {}) {
+    const aviso = toast.info('Bringing the image in…');
+    try {
+      const out = await api.addAssetFromUrl(url, board.id);
+      toast.dismiss?.(aviso);
+      // A rota devolve a LINHA criada, com os pixels em `meta.dataUrl` — que e'
+      // de onde o canvas desenha um asset. Remontar o node aqui, sem eles,
+      // daria um quadrado vazio ate' a proxima recarga.
+      const node = out?.node;
+      if (!node?.id) { toast.error("The image couldn't be brought in."); return; }
+      setNodes((prev) => (prev.some((n) => n.id === node.id) ? prev : [...prev, node]));
+      pushCreateUndo(node, null);
+      setSelectedNodeId(node.id);
+      toast.info('Image added.');
+    } catch (erro) {
+      toast.dismiss?.(aviso);
+      const codigo = erro?.body?.error || erro?.message || '';
+      if (/not_image|415/.test(String(codigo))) {
+        // não era imagem: segue o caminho de sempre
+        await handleAddUrl(url, opts);
+        return;
+      }
+      toast.error(/blocked_host/.test(String(codigo))
+        ? "That address isn't public, so the image can't be fetched."
+        : "The image couldn't be brought in.");
+    }
+  }
+
   async function handleAddUrl(url, opts = {}) {
     const id = `temp-${Date.now()}`;
     const embedCheck = api.checkUrlEmbed(url).catch(() => ({
@@ -2649,9 +2719,41 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       else setEdges((prev) => prev.filter((e) => e.id !== tmpEdgeId));
       setTimeout(() => zoomToNode(node, 350, 1), 80);
     } catch (e) {
-      setNodes((prev) => prev.filter((n) => n.id !== tmpId));
-      setEdges((prev) => prev.filter((e) => e.id !== tmpEdgeId));
-      if (!handleBillingError(e)) toast.error(`Could not extract: ${e.message}`);
+      if (handleBillingError(e)) {
+        setNodes((prev) => prev.filter((n) => n.id !== tmpId));
+        setEdges((prev) => prev.filter((e) => e.id !== tmpEdgeId));
+        return;
+      }
+      // ⚠️ MEDIDO 2026-08-14 no log do servidor: um clone a partir de screenshot
+      // estourou o prazo da rota (148,5s) e voltou 502 — com estorno e sem node
+      // criado, que e' o desenho certo. Mas o placeholder era REMOVIDO e a
+      // unica noticia era um aviso passageiro, depois de dois minutos e meio de
+      // espera: da' exatamente a sensacao de "sumiu e nao disse nada".
+      // O placeholder FICA, dizendo o que houve, ate' o usuario apaga-lo — mesmo
+      // padrao ja usado quando a verificacao do site expira.
+      // Duas coisas diferentes, e confundi-las mente para o usuario:
+      //  - o SERVIDOR estourou o prazo -> ele aborta dentro do runBilledOperation,
+      //    devolve o hold e nao cria node. Ai' da' para afirmar que nao cobrou.
+      //  - o NAVEGADOR desistiu de esperar (AbortError) -> a rota pode estar
+      //    viva ainda, podendo persistir e cobrar. Prometer estorno seria chute.
+      // So o SERVIDOR sabe se cancelou antes de cobrar, e ele diz isso tipado
+      // (`extract_timeout` + `refunded`). Ler a mensagem para adivinhar
+      // classificava uma desistencia do navegador como cancelamento do servidor
+      // e prometia estorno sem base (achado da auditoria).
+      const cancelouLa = e?.code === 'extract_timeout' && e?.refunded === true;
+      const desistiuAqui = e?.name === 'AbortError' || /aborted|network|failed to fetch/i.test(String(e?.message || ''));
+      const rotulo = cancelouLa
+        ? 'Took too long — cancelled, and you were not charged.'
+        : desistiuAqui
+          ? "The wait ended here — it may still be finishing. Reload before trying again."
+          : `It did not work: ${String(e?.message || 'unknown').slice(0, 90)}`;
+      // `_failed` (nao `_loading` sozinho) e' o que o node le para PARAR: sem
+      // isso ele seguia com anel de progresso e mensagem animada por cima do
+      // rotulo, ou seja, dizendo que ainda estava gerando (achado da auditoria).
+      setNodes((prev) => prev.map((n) => (n.id === tmpId ? {
+        ...n, _failed: true, _failedLabel: rotulo,
+      } : n)));
+      toast.error(rotulo);
     }
   }
 
@@ -3339,6 +3441,30 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       await materializeCopies(items, links);
     } catch (err) {
       toast.error(`Paste failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * O iter9 pedido POR NOME (doutrina 2026-08-15: "clone" e' o animado; o
+   * iter9 — clonador estatico historico — fica a disposicao nominalmente).
+   * Converte ESTE node no clone iter9 — mesma semantica do Edit: o snapshot
+   * novo entra na frente e o estado anterior fica no historico de versoes
+   * (Saved versions), de onde se restaura.
+   */
+  async function handleCloneIter9(id) {
+    const node = nodes.find((n) => n.id === id);
+    if (!node?.origin_url) { toast.error('This node has no origin URL to clone.'); return; }
+    setNodeRunStatus(id, { step: 1, label: 'Cloning with iter9 (static)…', request: '' });
+    try {
+      const result = await api.reconstructNode(id, { engine: 'iter9' });
+      flashNodeDebit(id, result?.credits);
+      const preparedNode = applyReconstructionResultToNode(node, result);
+      setNodes((prev) => prev.map((candidate) => (candidate.id === id ? preparedNode : candidate)));
+      toast.info('iter9 clone ready.');
+    } catch (e) {
+      if (!handleBillingError(e)) toast.error(`iter9 clone failed: ${e.message}`);
+    } finally {
+      setNodeRunStatus(id, null);
     }
   }
 
@@ -5857,6 +5983,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     handleSaveNodeEdit,
     handleDiscardNodeEdit,
     handleDuplicateNode,
+    handleCloneIter9,
     handleDownloadNode,
     startEdgeFromNode,
     onSlotMouseDown,
@@ -6588,6 +6715,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           checkClipboard={clipboardHasSupported}
+          copyEnabled={!!(selectedNodeId || selectedNodeIds.size)}
+          onPickCopy={() => {
+            setContextMenu(null);
+            // Mesmo caminho do Cmd+C: o payload dos nodes vai para a area de
+            // transferencia como texto, e o `paste` do canvas o reconhece.
+            const payload = copyFnsRef.current?.buildSelectionClipboardPayload?.();
+            if (!payload) { toast.error('Select a node first.'); return; }
+            navigator.clipboard?.writeText?.(JSON.stringify(payload))
+              .then(() => toast.info(`Copied ${payload.nodes.length} node${payload.nodes.length > 1 ? 's' : ''}.`))
+              .catch(() => toast.error("Couldn't reach the clipboard."));
+          }}
           onPickPaste={async () => {
             const m = contextMenu;
             setContextMenu(null);
@@ -6944,7 +7082,7 @@ function useClampedMenuPos(x, y, deps = []) {
   return [ref, pos];
 }
 
-function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onPickScreenshot, onPickPrompt, onPickCode, onPickBlankSite, onPickPaste, checkClipboard }) {
+function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onPickScreenshot, onPickPrompt, onPickCode, onPickBlankSite, onPickPaste, onPickCopy, copyEnabled = false, checkClipboard }) {
   const [mode, setMode] = useState('choices');
   const [url, setUrl] = useState('');
   // null = still probing the clipboard; true/false = supported payload present.
@@ -6992,9 +7130,26 @@ function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onP
           <button className="popup-menu-btn" onClick={onPickScreenshot}><MenuIcon.Image /><span>Add Screenshot</span></button>
           <button className="popup-menu-btn" onClick={onPickPrompt}><MenuIcon.Prompt /><span>Add Prompt</span></button>
           <button className="popup-menu-btn" onClick={onPickCode}><MenuIcon.Code /><span>Add Code</span></button>
-          {/* Paste from clipboard — enabled only when the clipboard holds a
-              supported payload (an image or a URL the async Clipboard API can
-              read). Files like .md/.html paste via Cmd+V only. */}
+          {/* Colar nao e' "adicionar ao quadro": e' trazer o que ja esta na
+              area de transferencia. Misturado com os "Add ...", a acao some no
+              meio de uma lista de coisas para CRIAR. Categoria propria. */}
+          <div className="popup-menu-sep" role="separator" />
+          <div className="popup-menu-title">Clipboard</div>
+          <button
+            className="popup-menu-btn"
+            onClick={onPickCopy}
+            disabled={!copyEnabled}
+            title={copyEnabled ? 'Copy the selected nodes' : 'Select a node first'}
+          >
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="9" y="9" width="11" height="11" rx="2" />
+              <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+            </svg>
+            <span>Copy selection</span>
+          </button>
+          {/* Enabled only when the clipboard holds a supported payload (an image
+              or a URL the async Clipboard API can read). Files like .md/.html
+              paste via Cmd+V only. */}
           <button
             className="popup-menu-btn"
             onClick={onPickPaste}
@@ -7007,6 +7162,7 @@ function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onP
             </svg>
             <span>Paste from clipboard</span>
           </button>
+          <div className="popup-menu-sep" role="separator" />
           <button className="popup-menu-btn popup-menu-btn-cancel" onClick={onClose}>Cancel (Esc)</button>
         </>
       ) : (

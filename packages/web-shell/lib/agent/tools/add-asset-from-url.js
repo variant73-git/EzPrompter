@@ -1,7 +1,9 @@
 import { sql } from '../../db.js';
 import { placeStackDown } from '../../canvas-layout.js';
+import { hostEhPublico } from '../../native-clone/capture-bundle.js';
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB cap — keep base64 row size sane
+const MAX_REDIRECTS = 5;
 const ALLOWED_MIME_PREFIXES = ['image/'];
 
 function inferMimeFromExt(url) {
@@ -40,12 +42,46 @@ Safe (no charge), but does hit the network. If the URL isn't an image or the hos
     const owned = await sql`SELECT id FROM boards WHERE id = ${ctx.boardId} AND user_id = ${ctx.userId}`;
     if (!owned.length) return { error: 'forbidden', message: 'board not found or not owned' };
 
+    // Buscar um endereco interno e devolver o CORPO para o usuario nao e' so
+    // buscar uma URL — e' exfiltracao. Mesma guarda do produtor de clone
+    // nativo (achado P0 do Sol): o nome precisa resolver para enderecos
+    // PUBLICOS, todos eles, senao um nome que resolve para publico e privado
+    // vira o vetor classico de rebind.
+    let hostname;
+    try { hostname = new URL(url).hostname; } catch (_) { return { error: 'invalid_args', message: 'url invalida' }; }
+    if (!(await hostEhPublico(hostname))) {
+      return { error: 'blocked_host', message: 'esse endereco nao e publico' };
+    }
+    // RESIDUAL CONHECIDO: entre esta checagem e a conexao, o nome e' resolvido
+    // outra vez — um DNS que troca a resposta no meio (rebind) escapa. Fechar
+    // isso exige conectar no IP ja validado preservando o nome no SNI, que e'
+    // obra maior; o vetor pratico, o redirecionamento, esta fechado abaixo.
+
+    // ⚠️ SEGUIR REDIRECIONAMENTO A' CEGAS ANULA A GUARDA: um host publico pode
+    // responder 302 para `169.254.169.254`, e com `redirect: 'follow'` o fetch
+    // ia atras sem perguntar (achado do Sol — a versao anterior desta guarda
+    // checava so o primeiro endereco e eu a declarei fechada, o que era falso).
+    // Cada salto e' validado antes de ser seguido.
     let res;
+    let alvo = url;
     try {
-      res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; UncraftAgent/1.0)' },
-        redirect: 'follow',
-      });
+      for (let salto = 0; ; salto += 1) {
+        if (salto > MAX_REDIRECTS) return { error: 'fetch_failed', message: 'redirecionamentos demais' };
+        res = await fetch(alvo, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; UncraftAgent/1.0)' },
+          redirect: 'manual',
+        });
+        if (![301, 302, 303, 307, 308].includes(res.status)) break;
+        const destino = res.headers.get('location');
+        if (!destino) return { error: 'fetch_failed', message: `HTTP ${res.status} sem destino` };
+        let proximo;
+        try { proximo = new URL(destino, alvo); } catch (_) { return { error: 'fetch_failed', message: 'destino invalido' }; }
+        if (!/^https?:$/i.test(proximo.protocol)) return { error: 'blocked_host', message: 'destino nao e http(s)' };
+        if (!(await hostEhPublico(proximo.hostname))) {
+          return { error: 'blocked_host', message: 'o redirecionamento aponta para um endereco nao publico' };
+        }
+        alvo = proximo.toString();
+      }
     } catch (e) {
       return { error: 'fetch_failed', message: String(e?.message || e) };
     }
