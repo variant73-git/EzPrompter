@@ -2610,9 +2610,14 @@ html.canvas-zoom-below-30 .cnode-body {
   /* Working Table double ring (unspirit 2026-07-12): a canvas-coloured gap
      ring under the category ring — the selection reads as a floating halo
      detached from the frame, Figma-style. */
+  /* Counter-scale on --chrome-scale (the SAME basis the connector ports use),
+     not max(0.62,canvas-scale). The ports floor at 0.4 and the ring floored at
+     0.62, so they shrank on different schedules and the port dot drifted off
+     the coloured outline as you zoomed. Sharing the basis locks the dot on the
+     ring at every zoom. */
   box-shadow:
-    0 0 0 calc(3px / max(0.62, var(--canvas-scale, 1))) var(--bg-base),
-    0 0 0 calc(5px / max(0.62, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
+    0 0 0 calc(3px / var(--chrome-scale, 1)) var(--bg-base),
+    0 0 0 calc(5px / var(--chrome-scale, 1)) var(--cnode-port-fill, var(--accent)),
     0 14px 38px rgba(0, 0, 0, 0.3);
 }
 
@@ -2620,8 +2625,8 @@ html.canvas-zoom-below-30 .cnode-body {
    in the chrome, matching the mock's editing emphasis. */
 .cnode.selected.editing {
   box-shadow:
-    0 0 0 calc(5px / max(0.62, var(--canvas-scale, 1))) var(--bg-base),
-    0 0 0 calc(8px / max(0.62, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
+    0 0 0 calc(5px / var(--chrome-scale, 1)) var(--bg-base),
+    0 0 0 calc(8px / var(--chrome-scale, 1)) var(--cnode-port-fill, var(--accent)),
     0 20px 50px rgba(0, 0, 0, 0.42);
 }
 
