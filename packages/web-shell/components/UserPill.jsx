@@ -11,7 +11,7 @@ import { ChevronsUpDown } from 'lucide-react';
 // non-free string) so we never have to update this component when the
 // user upgrades.
 
-export default function UserPill({ name, email, plan = 'free', onSignOut, compact = false, workspaceMode = false }) {
+export default function UserPill({ name, email, plan = 'free', role = 'member', onSignOut, compact = false, workspaceMode = false }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -91,6 +91,15 @@ export default function UserPill({ name, email, plan = 'free', onSignOut, compac
             <div className="user-menu-divider" />
             <a className="user-menu-item" href="#billing" onClick={() => setOpen(false)}>Billing</a>
             <a className="user-menu-item" href="#preferences" onClick={() => setOpen(false)}>Preferences</a>
+            {role === 'admin' && (
+              <>
+                <div className="user-menu-divider" />
+                <span className="user-menu-group-label">Admin</span>
+                <a className="user-menu-item" href="/admin/motion-diagnostics" onClick={() => setOpen(false)}>
+                  Motion diagnostics
+                </a>
+              </>
+            )}
             <div className="user-menu-divider" />
             <button
               type="button"

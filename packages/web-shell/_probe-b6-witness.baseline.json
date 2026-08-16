@@ -1,0 +1,617 @@
+{
+  "referencia": {
+    "negotiatedTrack": true,
+    "trajA": [
+      0,
+      25,
+      100,
+      75,
+      0,
+      25,
+      100,
+      75,
+      0
+    ],
+    "trajB": [
+      0,
+      25,
+      100,
+      75,
+      0,
+      25,
+      100,
+      75,
+      0
+    ],
+    "temporal": {
+      "totalTime": 1.5,
+      "progress": 0.5,
+      "iteration": 2,
+      "reversed": false
+    },
+    "tickMinus": {
+      "a": 55,
+      "b": 55
+    },
+    "tickPlus": {
+      "a": 45,
+      "b": 45
+    },
+    "sweep": {
+      "onRepeat": 3,
+      "onUpdate": 16,
+      "onComplete": 1
+    }
+  },
+  "principal": {
+    "published": {
+      "writeModel": "absolute",
+      "perTargetAvailable": true,
+      "perTargetWritable": true
+    },
+    "tx1": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterOverride": {
+      "trajA": [
+        0,
+        40,
+        160,
+        120,
+        0,
+        40,
+        160,
+        120,
+        0
+      ],
+      "trajB": [
+        0,
+        25,
+        100,
+        75,
+        0,
+        25,
+        100,
+        75,
+        0
+      ],
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      },
+      "parkedRender": {
+        "a": 80,
+        "b": 50
+      },
+      "tickMinus": {
+        "a": 88,
+        "b": 55
+      },
+      "tickPlus": {
+        "a": 72,
+        "b": 45
+      },
+      "varsXType": "function"
+    },
+    "tick1": {
+      "totalTime": 1.6,
+      "progress": 0.4,
+      "iteration": 2,
+      "reversed": false
+    },
+    "tx2": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "identidadeMantida": true,
+    "afterSecond": {
+      "trajB": [
+        0,
+        35,
+        140,
+        105,
+        0,
+        35,
+        140,
+        105,
+        0
+      ]
+    },
+    "rbB": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "group": {
+      "applied": true,
+      "error": null
+    },
+    "afterGroup": {
+      "trajA": [
+        0,
+        40,
+        160,
+        120,
+        0,
+        40,
+        160,
+        120,
+        0
+      ],
+      "trajB": [
+        0,
+        30,
+        120,
+        90,
+        0,
+        30,
+        120,
+        90,
+        0
+      ],
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      }
+    },
+    "reexposure": {
+      "writeModel": "absolute",
+      "sourceValue": 120,
+      "writable": true,
+      "states": [
+        {
+          "elementId": "el-1oz6a1p",
+          "intent": "override",
+          "value": 160
+        },
+        {
+          "elementId": "el-1o57gys",
+          "intent": "none",
+          "value": null
+        }
+      ]
+    },
+    "rbA": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterUndo": {
+      "trajA": [
+        0,
+        30,
+        120,
+        90,
+        0,
+        30,
+        120,
+        90,
+        0
+      ],
+      "varsXType": "number",
+      "varsX": 120
+    },
+    "redo": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "clear": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterClear": {
+      "trajA": [
+        0,
+        30,
+        120,
+        90,
+        0,
+        30,
+        120,
+        90,
+        0
+      ],
+      "trajB": [
+        0,
+        30,
+        120,
+        90,
+        0,
+        30,
+        120,
+        90,
+        0
+      ],
+      "varsX": 120,
+      "varsXType": "number",
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      }
+    }
+  },
+  "matrizN1": {
+    "perTargetAvailable": true,
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "after": {
+      "trajA": [
+        0,
+        40,
+        160,
+        120,
+        0
+      ],
+      "trajB": [
+        0,
+        25,
+        100,
+        75,
+        0
+      ],
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      },
+      "restAtEnd": {
+        "a": 0,
+        "b": 0
+      }
+    },
+    "rb": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterUndo": {
+      "trajA": [
+        0,
+        25,
+        100,
+        75,
+        0
+      ],
+      "varsX": 100,
+      "varsXType": "number"
+    }
+  },
+  "matrizN2": {
+    "perTargetAvailable": true,
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "after": {
+      "trajA": [
+        0,
+        40,
+        160,
+        120,
+        0,
+        40,
+        160
+      ],
+      "trajB": [
+        0,
+        25,
+        100,
+        75,
+        0,
+        25,
+        100
+      ],
+      "temporal": {
+        "totalTime": 2.3,
+        "progress": 0.3,
+        "iteration": 3,
+        "reversed": false
+      },
+      "restAtEnd": {
+        "a": 160,
+        "b": 100
+      }
+    },
+    "rb": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterUndo": {
+      "trajA": [
+        0,
+        25,
+        100,
+        75,
+        0,
+        25,
+        100
+      ],
+      "varsX": 100,
+      "varsXType": "number"
+    }
+  },
+  "fronteiras": {
+    "tx1": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "atPeak": {
+      "temporal": {
+        "totalTime": 1,
+        "progress": 1,
+        "iteration": 1,
+        "reversed": false
+      },
+      "render": {
+        "a": 160,
+        "b": 100
+      }
+    },
+    "tx2": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "atValley": {
+      "temporal": {
+        "totalTime": 2,
+        "progress": 0,
+        "iteration": 2,
+        "reversed": false
+      },
+      "render": {
+        "a": 0,
+        "b": 0
+      }
+    },
+    "tx3": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "atLastReturn": {
+      "temporal": {
+        "totalTime": 3.5,
+        "progress": 0.5,
+        "iteration": 4,
+        "reversed": false
+      },
+      "render": {
+        "a": 100,
+        "b": 50
+      }
+    },
+    "tx4": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "atEnd": {
+      "temporal": {
+        "totalTime": 4,
+        "progress": 0,
+        "iteration": 4,
+        "reversed": false
+      },
+      "render": {
+        "a": 0,
+        "b": 0
+      },
+      "trajA": [
+        0,
+        55,
+        220,
+        165,
+        0,
+        55,
+        220,
+        165,
+        0
+      ],
+      "trajB": [
+        0,
+        25,
+        100,
+        75,
+        0,
+        25,
+        100,
+        75,
+        0
+      ]
+    }
+  },
+  "fimN2": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "atRest": {
+      "temporal": {
+        "totalTime": 3,
+        "progress": 1,
+        "iteration": 3,
+        "reversed": false
+      },
+      "render": {
+        "a": 230,
+        "b": 100
+      }
+    },
+    "trajA": [
+      0,
+      57.5,
+      230,
+      172.5,
+      0,
+      57.5,
+      230
+    ],
+    "trajB": [
+      0,
+      25,
+      100,
+      75,
+      0,
+      25,
+      100
+    ]
+  },
+  "running": {
+    "wasPlaying": true,
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "stillPlaying": true,
+    "after": {
+      "trajA": [
+        0,
+        40,
+        160,
+        120,
+        0,
+        40,
+        160,
+        120,
+        0
+      ],
+      "trajB": [
+        0,
+        25,
+        100,
+        75,
+        0,
+        25,
+        100,
+        75,
+        0
+      ],
+      "varsXType": "function",
+      "totalTimeAdvanced": true
+    }
+  },
+  "callbacks": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "sweep": {
+      "onRepeat": 3,
+      "onUpdate": 16,
+      "onComplete": 1
+    }
+  },
+  "sensibilidade": {
+    "corrupted": {
+      "renderParked": {
+        "a": 105,
+        "b": 75
+      },
+      "renderStart": {
+        "a": 50,
+        "b": 50
+      }
+    }
+  },
+  "boundaries": {
+    "yoyoEase": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "This animation changes its easing between legs — per-target overrides are not available."
+    },
+    "yoyoRepeatRefresh": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "This animation re-rolls its values on each repeat — per-target overrides are not available."
+    },
+    "yoyoInfinito": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides are not available on endlessly repeating animations."
+    }
+  },
+  "timing": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "yoyoOff": {
+      "applied": true,
+      "error": null
+    },
+    "yoyoAfter": false,
+    "pingPong": {
+      "applied": false,
+      "error": "This timing change would break the per-target overrides on this animation — reset them first."
+    },
+    "afterPingPong": {
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      },
+      "repeat": 3
+    },
+    "wrapperIntact": true
+  }
+}

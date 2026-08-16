@@ -1,0 +1,59 @@
+{
+  "caso1": {
+    "controle": {
+      "start": 1,
+      "complete": 1
+    },
+    "preRenderMoveu": true,
+    "preX": 20,
+    "silenciado": {
+      "start": 0,
+      "complete": 0
+    },
+    "desenhou": true,
+    "xFinal": 100,
+    "keysIguais": true,
+    "identidade": true
+  },
+  "caso2": {
+    "controle": 1,
+    "preRenderMoveu": true,
+    "silenciado": 0,
+    "aindaFuncao": true
+  },
+  "caso3": {
+    "controle": 3,
+    "preRenderMoveu": true,
+    "naJanela": 0,
+    "duracaoPublicada": 1000,
+    "dirigeOSpanRepetido": false,
+    "filhoAindaFuncao": true
+  },
+  "caso4": {
+    "controle": {
+      "filhos": 2,
+      "interna": 1
+    },
+    "preRenderMoveu": true,
+    "silenciado": {
+      "filhos": 0,
+      "interna": 0
+    },
+    "desenhouDeFato": true,
+    "internaAindaFuncao": true
+  },
+  "caso5": {
+    "partilha": true,
+    "preRenderMoveu": true,
+    "vizinhoDisparou": 1,
+    "configIntacta": true
+  },
+  "caso6": {
+    "preRenderMoveu": true,
+    "desenhouNaJanela": true,
+    "avancou": true,
+    "xAntes": 20,
+    "xDepois": 70,
+    "ultimoDesenhado": 70
+  }
+}

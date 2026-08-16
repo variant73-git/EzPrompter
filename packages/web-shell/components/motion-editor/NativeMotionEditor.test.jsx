@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { MotionPanel, TimelinePanel } from './NativeMotionEditor.jsx';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  MOTION_EDITOR_PROTOCOL,
+  MOTION_EDITOR_PROTOCOL_V2,
+  SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+} from '../../lib/motion-editor/protocol.js';
+import NativeMotionEditor, { MotionPanel, TimelinePanel } from './NativeMotionEditor.jsx';
 
 const motion = {
   id: 'waapi-fade',
@@ -93,6 +98,153 @@ function renderMotionPanel(props = {}) {
     />,
   );
 }
+
+describe('native motion editor protocol v2 integration', () => {
+  it('mounts with a caller-supplied runtime URL and persistence adapter', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    const persistenceAdapter = { load: vi.fn(async () => []), save: vi.fn(async () => {}) };
+    render(<NativeMotionEditor runtimeUrl="/runtime/custom.html" persistenceAdapter={persistenceAdapter} />);
+    expect(screen.getByTitle('Native animated website runtime').getAttribute('src')).toBe('/runtime/custom.html');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(persistenceAdapter.save).toHaveBeenCalledOnce());
+    vi.unstubAllGlobals();
+  });
+
+  it('uses the shared canvas device dimensions in the isolated lab', () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+    });
+    render(<NativeMotionEditor />);
+    expect(screen.getByText('1280 × 800')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Tablet' }));
+    expect(screen.getByText('768 × 920')).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+
+  it('negotiates v2 and adds history only after the runtime commits the transaction', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe() {}
+      disconnect() {}
+    });
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(),
+    });
+    render(<NativeMotionEditor />);
+    const iframe = screen.getByTitle('Native animated website runtime');
+    const postMessage = vi.spyOn(iframe.contentWindow, 'postMessage');
+    const origin = 'https://runtime.uncraft.test';
+    const context = {
+      sessionNonce: 'nonce-editor-123456',
+      runtimeGeneration: 2,
+      bundleId: 'bundle-editor',
+      sessionId: 'session-editor',
+    };
+    const runtimeMessage = (type, payload, requestId) => ({
+      protocol: MOTION_EDITOR_PROTOCOL_V2,
+      protocolVersion: MOTION_EDITOR_PROTOCOL_V2,
+      supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+      source: 'runtime',
+      type,
+      requestId,
+      ...context,
+      payload,
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: iframe.contentWindow,
+        origin,
+        data: {
+          protocol: MOTION_EDITOR_PROTOCOL,
+          source: 'runtime',
+          type: 'runtime-ready',
+          payload: {
+            title: 'Fixture',
+            supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+            ...context,
+          },
+        },
+      }));
+    });
+    const negotiation = postMessage.mock.calls.map(([message]) => message)
+      .find((message) => message.type === 'negotiate-protocol');
+    expect(negotiation).toMatchObject({ ...context, payload: { selectedProtocol: MOTION_EDITOR_PROTOCOL_V2 } });
+
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: iframe.contentWindow,
+        origin,
+        data: runtimeMessage('protocol-negotiated', { selectedProtocol: MOTION_EDITOR_PROTOCOL_V2 }, negotiation.requestId),
+      }));
+      window.dispatchEvent(new MessageEvent('message', {
+        source: iframe.contentWindow,
+        origin,
+        data: runtimeMessage('selection-changed', {
+          element: {
+            id: 'el-a', label: 'Hero', tag: 'div', classes: [], text: '', canEditText: false,
+            rect: {}, motion: [], warnings: [],
+            styles: { opacity: '1', color: 'rgb(0, 0, 0)', colorHex: '#000000', backgroundColor: 'rgba(0, 0, 0, 0)', backgroundColorHex: '#000000' },
+          },
+        }, 'runtime-selection-1'),
+      }));
+    });
+
+    const opacity = screen.getByLabelText('Opacity');
+    fireEvent.change(opacity, { target: { value: '0.4' } });
+    fireEvent.blur(opacity);
+    const apply = postMessage.mock.calls.map(([message]) => message)
+      .filter((message) => message.type === 'apply-transaction').pop();
+    expect(apply).toBeTruthy();
+    expect(screen.getByText('0 changes')).toBeTruthy();
+
+    const acknowledged = {
+      ...apply.payload.transaction,
+      patches: apply.payload.transaction.patches.map((patch) => ({ ...patch, before: '1', value: '0.4' })),
+    };
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: iframe.contentWindow,
+        origin,
+        data: runtimeMessage('transaction-committed', { transaction: acknowledged, operation: 'apply' }, apply.requestId),
+      }));
+    });
+    expect(screen.getByText('1 change')).toBeTruthy();
+
+    fireEvent.change(opacity, { target: { value: '0.2' } });
+    fireEvent.blur(opacity);
+    expect(postMessage.mock.calls.map(([message]) => message)
+      .filter((message) => message.type === 'apply-transaction')).toHaveLength(2);
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        source: iframe.contentWindow,
+        origin,
+        data: {
+          protocol: MOTION_EDITOR_PROTOCOL,
+          source: 'runtime',
+          type: 'runtime-ready',
+          payload: {
+            title: 'Fixture reloaded',
+            supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS,
+            ...context,
+            runtimeGeneration: context.runtimeGeneration + 1,
+          },
+        },
+      }));
+    });
+    expect(screen.getByText('1 change')).toBeTruthy();
+    expect(screen.getByRole('alert')).toHaveTextContent('The website restarted before a change was confirmed. The previous value was restored.');
+    vi.unstubAllGlobals();
+  });
+});
 
 describe('motion panel — properties of the active animation', () => {
   it('renders no transport and no animations list: the timeline owns the list', () => {
@@ -500,6 +652,195 @@ describe('adapter (GSAP) keyframes on the timeline', () => {
       { motionId: 'gsap-slide', property: 'x', offset: 1 },
       '160',
     );
+  });
+
+  it('renders intermediate STEP diamonds and edits an editable step via the label field (fase-2)', () => {
+    const steppedMotion = {
+      ...adapterMotion,
+      id: 'gsap-steps',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: 'power2.out' },
+          { offset: 1, value: '300', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: 1 / 3, value: '100', editable: true },
+          { entryIndex: 1, offset: 2 / 3, value: '200', editable: true },
+          { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final', isEnd: true },
+        ],
+      }],
+    };
+    const onStep = vi.fn();
+    render(<TimelineHarness motion={steppedMotion} onChangeStepValue={onStep} />);
+    // O step final coincide com o diamante de end — não duplica.
+    expect(screen.queryByRole('button', { name: 'x step 3' })).toBeNull();
+    // Steps intermediários têm diamantes próprios; selecionar aponta o campo
+    // do label pro valor do step.
+    const step2 = screen.getByRole('button', { name: 'x step 2' });
+    fireEvent.click(step2);
+    const valueField = screen.getByLabelText('x step value');
+    expect(valueField.value).toBe('200');
+    fireEvent.change(valueField, { target: { value: '500' } });
+    fireEvent.blur(valueField);
+    expect(onStep).toHaveBeenCalledWith(
+      { motionId: 'gsap-steps', property: 'x', entryIndex: 1 },
+      '500',
+    );
+  });
+
+  it('a LOCKED step diamond explains itself instead of editing (fase-2)', () => {
+    const heldMotion = {
+      ...adapterMotion,
+      id: 'gsap-held',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: 'power2.out' },
+          { offset: 1, value: '200', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: 1 / 3, value: '100', editable: true },
+          { entryIndex: 1, offset: 2 / 3, value: '200', editable: false, reason: 'final' },
+          { entryIndex: 2, offset: 1, value: '200', editable: false, reason: 'final', isEnd: true },
+        ],
+      }],
+    };
+    const onStep = vi.fn();
+    render(<TimelineHarness motion={heldMotion} onChangeStepValue={onStep} />);
+    // Membro NÃO-final do run congelado (offset < 1) aparece, travado.
+    const heldStep = screen.getByRole('button', { name: 'x step 2' });
+    expect(heldStep.title).toMatch(/final value/i);
+    fireEvent.click(heldStep);
+    // Sem campo editável — o valor mostra e explica a razão.
+    expect(screen.queryByLabelText('x step value')).toBeNull();
+
+    delete window.gsap;
+  });
+
+  it('spaces NULL-offset steps evenly and hides the terminal by identity, not by offset (Sol r4)', () => {
+    // Total-zero duration: o bridge publica offset null em TODOS os steps.
+    // Number(null) === 0 — sem tratar null explicitamente, tudo empilha em 0%
+    // e o step final (offset null) escapa do filtro numérico e duplica o end.
+    const zeroMotion = {
+      ...adapterMotion,
+      id: 'gsap-zero',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: null },
+          { offset: 1, value: '300', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: null, value: '100', editable: true },
+          { entryIndex: 1, offset: null, value: '200', editable: true },
+          { entryIndex: 2, offset: null, value: '300', editable: false, reason: 'final', isEnd: true },
+        ],
+      }],
+    };
+    render(<TimelineHarness motion={zeroMotion} onChangeStepValue={vi.fn()} />);
+    // Terminal escondido por identidade (isEnd), nunca por offset numérico.
+    expect(screen.queryByRole('button', { name: 'x step 3' })).toBeNull();
+    const step1 = screen.getByRole('button', { name: 'x step 1' });
+    const step2 = screen.getByRole('button', { name: 'x step 2' });
+    // Espaçamento uniforme — posições distintas, nunca empilhadas em 0%.
+    expect(step1.style.left).not.toBe(step2.style.left);
+    expect(parseFloat(step1.style.left)).toBeGreaterThan(0);
+    expect(parseFloat(step2.style.left)).toBeGreaterThan(parseFloat(step1.style.left));
+  });
+
+  it('separates diamonds with DUPLICATE numeric offsets so each index stays clickable (Sol r8)', () => {
+    // zero-dur no meio: dois steps intermediários com offset 0.5 — sem
+    // separação visual o posterior cobre o anterior (mesmo left absoluto) e o
+    // índice de baixo fica inacessível por clique.
+    const dupMotion = {
+      ...adapterMotion,
+      id: 'gsap-dup',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: null },
+          { offset: 1, value: '300', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: 0.5, value: '100', editable: true },
+          { entryIndex: 1, offset: 0.5, value: '200', editable: true },
+          { entryIndex: 2, offset: 1, value: '300', editable: false, reason: 'final', isEnd: true },
+        ],
+      }],
+    };
+    const onStep = vi.fn();
+    render(<TimelineHarness motion={dupMotion} onChangeStepValue={onStep} />);
+    const step1 = screen.getByRole('button', { name: 'x step 1' });
+    const step2 = screen.getByRole('button', { name: 'x step 2' });
+    // Posições distintas — hit-tests separados.
+    expect(step1.style.left).not.toBe(step2.style.left);
+    // Cada índice seleciona e edita separadamente.
+    fireEvent.click(step1);
+    expect(screen.getByLabelText('x step value').value).toBe('100');
+    fireEvent.click(step2);
+    expect(screen.getByLabelText('x step value').value).toBe('200');
+  });
+
+  it('resolves step positions GLOBALLY — cascades of near-duplicates never overlap (Sol r9)', () => {
+    // [0.50, 0.50, 0.52]: um nudge local empurraria o 2º pra cima do 3º.
+    const cascadeMotion = {
+      ...adapterMotion,
+      id: 'gsap-cascade',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: null },
+          { offset: 1, value: '400', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: 0.5, value: '100', editable: true },
+          { entryIndex: 1, offset: 0.5, value: '200', editable: true },
+          { entryIndex: 2, offset: 0.52, value: '300', editable: true },
+          { entryIndex: 3, offset: 1, value: '400', editable: false, reason: 'final', isEnd: true },
+        ],
+      }],
+    };
+    render(<TimelineHarness motion={cascadeMotion} onChangeStepValue={vi.fn()} />);
+    const lefts = [1, 2, 3].map((n) => screen.getByRole('button', { name: `x step ${n}` }).style.left);
+    expect(new Set(lefts).size).toBe(3);
+    // Cada índice seleciona o próprio valor.
+    fireEvent.click(screen.getByRole('button', { name: 'x step 2' }));
+    expect(screen.getByLabelText('x step value').value).toBe('200');
+    fireEvent.click(screen.getByRole('button', { name: 'x step 3' }));
+    expect(screen.getByLabelText('x step value').value).toBe('300');
+  });
+
+  it('a non-terminal step at offset 1 never sits on the END diamond (Sol r9)', () => {
+    // zero-dur no FIM: um step editável (não-run) cai exatamente em 1.0 — sem
+    // resolução global ele empilha com o diamante END da track.
+    const tailMotion = {
+      ...adapterMotion,
+      id: 'gsap-tail',
+      tracks: [{
+        property: 'x',
+        keyframeEditable: true,
+        keyframes: [
+          { offset: 0, value: '0', easing: null },
+          { offset: 1, value: '200', easing: null },
+        ],
+        steps: [
+          { entryIndex: 0, offset: 1, value: '100', editable: true },
+          { entryIndex: 1, offset: 1, value: '200', editable: false, reason: 'final', isEnd: true },
+        ],
+      }],
+    };
+    render(<TimelineHarness motion={tailMotion} onChangeStepValue={vi.fn()} />);
+    const step = screen.getByRole('button', { name: 'x step 1' });
+    const endDiamond = screen.getByRole('button', { name: 'x keyframe at 100 percent' });
+    expect(step.style.left).not.toBe(endDiamond.style.left);
+    fireEvent.click(step);
+    expect(screen.getByLabelText('x step value').value).toBe('100');
   });
 
   it('single-animation rows carry no chevron; selecting them still reveals their tracks', () => {

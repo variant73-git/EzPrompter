@@ -5,5 +5,5 @@ export const metadata = {
 };
 
 export default function MotionEditorPage() {
-  return <NativeMotionEditor />;
+  return <NativeMotionEditor runtimeUrl="/api/native-clone/index.html" />;
 }

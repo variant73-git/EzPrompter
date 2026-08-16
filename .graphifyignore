@@ -1,0 +1,37 @@
+# Exclusões do knowledge graph (graphify) — estilo .gitignore.
+#
+# Regra: o grafo deve refletir o SISTEMA (código de produto e suas decisões),
+# não os artefatos de pesquisa e de prova. Sem isto, o corpus vira ~8,8M de
+# palavras e as comunidades enchem de nodes fracamente ligados que parecem
+# "lacuna de documentação" mas são material autossuficiente por desenho.
+# (graphify já pula sozinho node_modules/, .git/, dist/, build/, graphify-out/.)
+
+# --- Pesquisa raspada da web (não é código, e domina a contagem de palavras) --
+.firecrawl/
+
+# --- Probes: evidência executável, cada um autossuficiente por DESENHO ------
+# Não são importados por ninguém e não devem ser: são a prova rodável de um
+# fato no GSAP/bridge real. Aparecem como nodes órfãos e é assim que tem que
+# ser — só não precisam entrar no grafo.
+packages/web-shell/_probe-*.mjs
+packages/web-shell/_probe-*.json
+packages/web-shell/_audit-*.txt
+
+# --- Saída de testes/relatórios -------------------------------------------
+packages/web-shell/test-results/
+packages/web-shell/playwright-report/
+**/coverage/
+
+# --- Histórico congelado ---------------------------------------------------
+# Archive do CLAUDE.md: texto integral já compactado, mantido só para consulta.
+docs/CLAUDE-ARCHIVE-*.md
+
+# NOTA deliberada sobre o que NÃO está excluído:
+# - docs/superpowers/ (handoffs, planos, specs) FICA: é onde vivem as decisões
+#   e o porquê delas. Liga-se por wiki-links, não por imports, então gera nodes
+#   pouco conectados — isso é a natureza do material, não um defeito.
+# - editor/ e packages/extension-shell/editor/mode-e*.js FICAM: as variantes do
+#   Mode E são backup/história intencional e NÃO compartilham código de
+#   propósito (cada uma é um retrato fiel do pipeline da sua época, para A/B).
+#   Coesão baixa ali é o resultado esperado — não refatorar, não excluir sem
+#   confirmação explícita baseada em teste (regra do CLAUDE.md).

@@ -1,0 +1,165 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+
+const changeDevice = vi.fn();
+const markRuntimeLoaded = vi.fn();
+const resetSession = vi.fn();
+const reportRuntimeRecoveryFailure = vi.fn();
+const iframeRef = { current: null };
+let controllerStatus = 'loading';
+let runtimeRecovery = null;
+let recoveryNotice = null;
+let patchError = null;
+
+vi.mock('./useNativeMotionController.js', () => ({
+  useNativeMotionController: vi.fn(() => ({
+    iframeRef,
+    status: controllerStatus,
+    runtimeRecovery,
+    recoveryNotice,
+    patchError,
+    mode: 'edit',
+    editState: { value: 'navigating' },
+    commands: { changeDevice, markRuntimeLoaded, resetSession, reportRuntimeRecoveryFailure },
+  })),
+}));
+
+const { default: NativeEditViewport } = await import('./NativeEditViewport.jsx');
+
+function runtimeResponse(nodeId) {
+  return {
+    ok: true,
+    json: async () => ({
+      runtime: {
+        url: `https://runtime.uncraft.test/api/runtime/token-${nodeId}/index.html`,
+        bundleId: '33333333-3333-4333-8333-333333333333',
+        runtimeFingerprint: `sha256:${'a'.repeat(64)}`,
+      },
+      session: { id: `session-${nodeId}`, baseSnapshotId: `snapshot-${nodeId}`, revision: 0 },
+    }),
+  };
+}
+
+beforeEach(() => {
+  changeDevice.mockReset();
+  markRuntimeLoaded.mockReset();
+  resetSession.mockReset();
+  reportRuntimeRecoveryFailure.mockReset();
+  iframeRef.current = null;
+  controllerStatus = 'loading';
+  runtimeRecovery = null;
+  recoveryNotice = null;
+  patchError = null;
+  vi.stubGlobal('fetch', vi.fn(async (url) => runtimeResponse(String(url).split('/')[3])));
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('NativeEditViewport', () => {
+  it('opens one short-lived node-scoped runtime session and keeps the clone sandbox isolated', async () => {
+    render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+
+    expect(screen.getByRole('status').textContent).toBe('Please wait — it’ll be worth the wait.');
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+
+    expect(fetch).toHaveBeenCalledWith('/api/nodes/node-a/runtime-session', expect.objectContaining({
+      method: 'POST',
+      credentials: 'include',
+    }));
+    const iframe = screen.getByTitle('Native animated website runtime');
+    expect(iframe.getAttribute('src')).toContain('/token-node-a/');
+    expect(iframe.getAttribute('sandbox')).toBe('allow-scripts allow-pointer-lock');
+    expect(iframe.getAttribute('sandbox')).not.toContain('allow-same-origin');
+    expect(iframe.getAttribute('referrerpolicy')).toBe('no-referrer');
+    fireEvent.load(iframe);
+    expect(markRuntimeLoaded).toHaveBeenCalledOnce();
+  });
+
+  it('uses a fixed canonical viewport, clips runtime overlays, and follows device changes', async () => {
+    const { rerender } = render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    const viewport = screen.getByLabelText('Native website editing viewport');
+    expect(viewport.dataset.viewportWidth).toBe('1280');
+    expect(viewport.dataset.viewportHeight).toBe('800');
+    expect(viewport.style.overflow).toBe('hidden');
+
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="tablet" />);
+    expect(viewport.dataset.viewportWidth).toBe('768');
+    expect(viewport.dataset.viewportHeight).toBe('920');
+    expect(changeDevice).toHaveBeenLastCalledWith('tablet');
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+  });
+
+  it('keeps two native nodes scoped to separate runtime sessions', async () => {
+    render(
+      <>
+        <NativeEditViewport nodeId="node-a" deviceId="desktop" />
+        <NativeEditViewport nodeId="node-b" deviceId="mobile" />
+      </>,
+    );
+    await waitFor(() => expect(screen.getAllByTitle('Native animated website runtime')).toHaveLength(2));
+    expect(fetch).toHaveBeenCalledWith('/api/nodes/node-a/runtime-session', expect.any(Object));
+    expect(fetch).toHaveBeenCalledWith('/api/nodes/node-b/runtime-session', expect.any(Object));
+    const sources = screen.getAllByTitle('Native animated website runtime').map((frame) => frame.getAttribute('src'));
+    expect(sources[0]).not.toBe(sources[1]);
+  });
+
+  it('closes the half-open editor with a non-technical failure when the runtime session cannot open', async () => {
+    fetch.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'not_available' }) });
+    const onUnavailable = vi.fn();
+    render(<NativeEditViewport nodeId="node-a" deviceId="desktop" onUnavailable={onUnavailable} />);
+
+    await waitFor(() => expect(onUnavailable).toHaveBeenCalledWith({
+      code: 'runtime_session_unavailable',
+    }));
+    expect(screen.getByRole('alert').textContent).toBe("This website couldn't be opened for editing.");
+    expect(screen.queryByTitle('Native animated website runtime')).toBeNull();
+  });
+
+  it('reports exhausted runtime recovery once so the canvas can restore its camera and geometry', async () => {
+    const onUnavailable = vi.fn();
+    const { rerender } = render(
+      <NativeEditViewport nodeId="node-a" deviceId="desktop" onUnavailable={onUnavailable} />,
+    );
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+
+    controllerStatus = 'unavailable';
+    runtimeRecovery = { requestId: 2, attempt: 2, exhausted: true };
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" onUnavailable={onUnavailable} />);
+    await waitFor(() => expect(onUnavailable).toHaveBeenCalledWith({ code: 'runtime_recovery_exhausted' }));
+    expect(onUnavailable).toHaveBeenCalledOnce();
+  });
+
+  it('reopens a signed runtime automatically and renders only non-technical recovery copy', async () => {
+    const { rerender } = render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+    fetch.mockClear();
+
+    controllerStatus = 'recovering';
+    runtimeRecovery = { requestId: 7, attempt: 1, exhausted: false };
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(fetch).toHaveBeenCalledWith('/api/nodes/node-a/runtime-session', expect.objectContaining({ method: 'POST' }));
+
+    recoveryNotice = 'The website was recovered. One unsupported control was disabled.';
+    controllerStatus = 'ready';
+    runtimeRecovery = null;
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    expect(screen.getByRole('status').textContent).toBe('The website was recovered. One unsupported control was disabled.');
+    patchError = "This change couldn't be applied. The previous value was restored.";
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    expect(screen.getByRole('alert').textContent).toBe("This change couldn't be applied. The previous value was restored.");
+    expect(screen.queryByText(/retry|repair|regenerate/i)).toBeNull();
+  });
+
+  it('returns a failed automatic reopen to the controller instead of exposing recovery choices', async () => {
+    const { rerender } = render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+    fetch.mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'not_available' }) });
+
+    controllerStatus = 'recovering';
+    runtimeRecovery = { requestId: 9, attempt: 1, exhausted: false };
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(reportRuntimeRecoveryFailure).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /retry|repair|regenerate/i })).toBeNull();
+  });
+});

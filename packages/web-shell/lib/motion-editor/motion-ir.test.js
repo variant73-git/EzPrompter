@@ -58,6 +58,26 @@ describe('motion IR', () => {
     expect(motionCapabilityLabel(MOTION_EDITABILITY.ADAPTER)).toBe('Adapter');
   });
 
+  it('normalizes the editability ladder while preserving writer ownership metadata', () => {
+    const ownership = {
+      channelId: 'hero:opacity',
+      relationship: 'sequential',
+      sequenceId: 'hero-sequence',
+      order: 10,
+    };
+    const normalized = normalizeMotionClip({
+      id: 'hero',
+      editability: 'adapter',
+      tracks: [{ property: 'opacity', keyframes: [], ownership }],
+    });
+
+    expect(normalized.editability).toBe('known');
+    expect(normalized.tracks[0].ownership).toEqual(ownership);
+    expect(motionCapabilityLabel('known')).toBe('Known');
+    expect(motionCapabilityLabel('declarative')).toBe('Declarative');
+    expect(motionCapabilityLabel('custom')).toBe('Custom');
+  });
+
   it('coerces numeric and toggle values before runtime writeback', () => {
     expect(coerceMotionValue('timing.duration', '1200')).toBe(1200);
     expect(coerceMotionValue('scroll.pin', 'true')).toBe(true);

@@ -1,13 +1,26 @@
 import { describe, it, expect, vi } from 'vitest';
+import { createMemoryBundleStore } from './native-clone/bundle-store.js';
 
 vi.mock('./reconstruct.js', () => ({
   reconstructPage: vi.fn(async () => ({ html: '<html>clone</html>', screenshotDataUrl: 'data:image/png;base64,X' })),
 }));
+// O produtor NATIVO abre um navegador de verdade. Estes testes são sobre o
+// tratamento de snapshot, não sobre qual produtor roda — sem este mock eles
+// passariam a depender da rede e do Chromium, e foi o que quebrou quando o
+// padrão do Edit deixou de ser o iter9.
+vi.mock('./native-clone/capture-bundle.js', () => ({
+  captureNativeBundle: vi.fn(async () => ({ html: '<html>clone</html>', screenshotDataUrl: 'data:image/png;base64,X' })),
+}));
 vi.mock('./billing/context.js', () => ({
   runBilledOperation: vi.fn(async (_opts, fn) => ({ result: await fn(), credits: 3, balanceAfter: 100 })),
+  recordUsage: vi.fn(),
 }));
 
-const { reconstructSiteNode } = await import('./deferred-reconstruction.js');
+const {
+  materializeReconstructionOutput,
+  normalizeReconstructionOutput,
+  reconstructSiteNode,
+} = await import('./deferred-reconstruction.js');
 
 // The helper RE-READS the current snapshot itself (never trusts the caller's
 // node fields — Codex #2), so the mock drives the guard via that SELECT.
@@ -24,6 +37,63 @@ function makeSql({ currentId = null, currentSource = null } = {}) {
   sql._calls = calls;
   return sql;
 }
+
+describe('chooseReconstructionProducer — qual clone o produto faz', () => {
+  // Compara por IDENTIDADE e não por nome: os dois módulos estão mockados neste
+  // arquivo, então `.name` é 'Mock' para ambos e a asserção por nome não
+  // distinguiria nada.
+  it('Edit usa o produtor NATIVO, que preserva o site com os scripts vivos', async () => {
+    const { chooseReconstructionProducer } = await import('./deferred-reconstruction.js');
+    const { captureNativeBundle } = await import('./native-clone/capture-bundle.js');
+    expect(chooseReconstructionProducer('edit')).toBe(captureNativeBundle);
+  });
+
+  it('as demais razões continuam no iter9, intacto como o plano pedia', async () => {
+    const { chooseReconstructionProducer } = await import('./deferred-reconstruction.js');
+    const { reconstructPage } = await import('./reconstruct.js');
+    for (const reason of ['workflow', 'strict-dependency', undefined]) {
+      expect(chooseReconstructionProducer(reason)).toBe(reconstructPage);
+    }
+  });
+
+  it('o limite de "edit" e deliberado: /run continua no iter9 porque compoe por TEXTO', async () => {
+    const { chooseReconstructionProducer } = await import('./deferred-reconstruction.js');
+    const { reconstructPage } = await import('./reconstruct.js');
+    // Razões REAIS da rota /run (reconstruction-policy.js), não inventadas — foi
+    // o que meu primeiro teste errou e o Sol pegou. Elas alimentam runCompose
+    // com `reconstructed.html`; um bundle nativo é diretório e nao tem html.
+    for (const reason of ['transform-target', 'runtime-source']) {
+      expect(chooseReconstructionProducer(reason)).toBe(reconstructPage);
+    }
+  });
+
+  it('tem interruptor de desligamento sem reverter código', async () => {
+    const { chooseReconstructionProducer } = await import('./deferred-reconstruction.js');
+    const { reconstructPage } = await import('./reconstruct.js');
+    expect(chooseReconstructionProducer('edit', { UNCRAFT_NATIVE_CLONE_PRODUCER: 'off' })).toBe(reconstructPage);
+    expect(chooseReconstructionProducer('edit', { UNCRAFT_NATIVE_CLONE_PRODUCER: 'OFF' })).toBe(reconstructPage);
+  });
+});
+
+describe('reconstructSiteNode — quem e chamado no Edit', () => {
+  it('chama o produtor NATIVO, nao o iter9, quando ninguem injeta produtor', async () => {
+    const { captureNativeBundle } = await import('./native-clone/capture-bundle.js');
+    const { reconstructPage } = await import('./reconstruct.js');
+    captureNativeBundle.mockClear();
+    reconstructPage.mockClear();
+
+    const sql = makeSql({ currentId: 'snap-current', currentSource: 'capture' });
+    await reconstructSiteNode({
+      sql, userId: 42,
+      node: { id: 'node-edit', board_id: 'b1', origin_url: 'https://x.com' },
+      reason: 'edit', idemKey: 'k-edit',
+    });
+
+    // A rota /reconstruct chama exatamente assim: sem `producer`.
+    expect(captureNativeBundle).toHaveBeenCalledWith('https://x.com');
+    expect(reconstructPage).not.toHaveBeenCalled();
+  });
+});
 
 describe('reconstructSiteNode — snapshot handling (item 3: no pre-clone history version)', () => {
   it('overwrites the plain capture IN PLACE so the clone becomes the default state, leaving no history version', async () => {
@@ -70,5 +140,119 @@ describe('reconstructSiteNode — snapshot handling (item 3: no pre-clone histor
     const queries = sql._calls.map((c) => c.query);
     expect(queries.some((q) => /INSERT INTO snapshots/i.test(q))).toBe(true);
     expect(out.snapshotId).toBe('snap-new');
+  });
+});
+
+describe('deferred reconstruction result kinds', () => {
+  const runtimeHash = `sha256:${'a'.repeat(64)}`;
+
+  it('keeps the existing untagged HTML result on the Iter9 path', async () => {
+    const current = { html: '<html>iter9</html>', screenshotDataUrl: null };
+    expect(normalizeReconstructionOutput(current)).toEqual({ kind: 'iter9', output: current });
+    expect(await materializeReconstructionOutput(current)).toEqual({ kind: 'iter9', output: current });
+  });
+
+  it('registers an explicit native producer result through the bundle boundary', async () => {
+    const store = createMemoryBundleStore();
+    const materialized = await materializeReconstructionOutput({
+      kind: 'native',
+      bundle: {
+        entryPath: 'index.html',
+        runtimeFingerprint: runtimeHash,
+        assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+        reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+      },
+    }, { bundleStore: store });
+
+    expect(materialized.kind).toBe('native');
+    expect(materialized.bundleDescriptor.entryPath).toBe('index.html');
+    expect(await store.listIndexedAssets(materialized.bundleDescriptor)).toHaveLength(1);
+  });
+
+  it('does not promote animation detection or malformed native output', async () => {
+    expect(() => normalizeReconstructionOutput({ animatedDetected: true })).toThrow(/output/i);
+    expect(() => normalizeReconstructionOutput({ kind: 'native', animatedDetected: true })).toThrow(/bundle/i);
+    await expect(materializeReconstructionOutput({ kind: 'native', bundle: {} }, {
+      bundleStore: createMemoryBundleStore(),
+    })).rejects.toThrow();
+  });
+
+  it('automatically validates controls and persists the native snapshot before billing can settle', async () => {
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const generated = vi.fn(async ({ descriptor }) => ({
+      manifest: {
+        schemaVersion: 1,
+        bundleId: descriptor.bundleId,
+        runtimeFingerprint: descriptor.runtimeFingerprint,
+        controls: [],
+      },
+      provider: { provider: 'openai', model: 'gpt-5.6-terra', repaired: false, costUsd: 0.01, usage: [] },
+      diagnostics: [],
+    }));
+    const producer = vi.fn(async () => ({
+      kind: 'native',
+      bundle: {
+        entryPath: 'index.html',
+        runtimeFingerprint: runtimeHash,
+        assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+        reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+      },
+      controlValidationTransport: vi.fn(),
+    }));
+
+    const result = await reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-1',
+      producer,
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: generated,
+    });
+
+    expect(generated).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ kind: 'native', snapshotId: 'snap-native', credits: 3 });
+    expect(result.motionManifest.controlManifest).toEqual(result.controlManifest);
+    const snapshotWrite = sql._calls.find((call) => /UPDATE snapshots/i.test(call.query));
+    expect(snapshotWrite.query).toMatch(/native_bundle_id[\s\S]+motion_manifest[\s\S]+motion_manifest_version/i);
+    expect(snapshotWrite.values).toContain(JSON.stringify(result.motionManifest));
+  });
+
+  it('does not return a partially valid native result when persistence fails after generation', async () => {
+    const store = createMemoryBundleStore();
+    const baseSql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const sql = (strings, ...values) => {
+      const query = strings.join('?');
+      if (/UPDATE snapshots/i.test(query)) throw new Error('persistence unavailable');
+      return baseSql(strings, ...values);
+    };
+    const generateControls = vi.fn(async ({ descriptor }) => ({
+      manifest: { schemaVersion: 1, bundleId: descriptor.bundleId, runtimeFingerprint: descriptor.runtimeFingerprint, controls: [] },
+      provider: { provider: 'openai', model: 'gpt-5.6-terra', repaired: false, costUsd: 0.01, usage: [] },
+      diagnostics: [],
+    }));
+
+    await expect(reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-fail',
+      producer: vi.fn(async () => ({
+        kind: 'native',
+        bundle: {
+          entryPath: 'index.html', runtimeFingerprint: runtimeHash,
+          assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+          reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
+        },
+      })),
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls,
+    })).rejects.toThrow('persistence unavailable');
+    expect(generateControls).toHaveBeenCalledTimes(1);
   });
 });

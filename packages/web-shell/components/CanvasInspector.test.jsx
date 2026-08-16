@@ -15,6 +15,14 @@ const site = {
   current_snapshot_id: 'snap-1',
 };
 
+const liveReference = {
+  ...site,
+  current_html: null,
+  current_snapshot_id: null,
+  origin_url: 'https://example.com',
+  meta: { name: 'Example', source: 'url-reference', referenceMode: 'live' },
+};
+
 describe('CanvasInspector', () => {
   it('returns the canvas space when there is no selection', () => {
     const { container } = render(<CanvasInspector node={null} onFrameChange={vi.fn()} />);
@@ -24,7 +32,7 @@ describe('CanvasInspector', () => {
   it('keeps website actions contextual while properties collapse and code remains inspectable', () => {
     const onEditSite = vi.fn();
     render(<CanvasInspector node={site} onFrameChange={vi.fn()} onEditSite={onEditSite} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Clone & Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     expect(onEditSite).toHaveBeenCalledOnce();
     expect(screen.getByRole('link', { name: 'Open in Browser' }).getAttribute('href')).toBe('/preview/site-1');
     expect(screen.getByText('Prototype result')).toBeTruthy();
@@ -32,6 +40,44 @@ describe('CanvasInspector', () => {
     expect(screen.queryByText('Prototype result')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Code' }));
     expect(screen.getByText(/<main>Portfolio<\/main>/)).toBeTruthy();
+  });
+
+  it('renders Clone & Edit as a holographic paid feature with a lightning icon and credit price', () => {
+    const onEditSite = vi.fn();
+    render(<CanvasInspector
+      node={liveReference}
+      plan="pro"
+      onFrameChange={vi.fn()}
+      onEditSite={onEditSite}
+      onUpgradeRequired={vi.fn()}
+    />);
+
+    const button = screen.getByRole('button', { name: 'Clone & Edit, 275 credits' });
+    expect(button).toHaveClass('cinsp-clone-edit');
+    expect(button).toHaveAttribute('data-subscriber-feature', 'available');
+    expect(button.querySelector('svg')).toBeTruthy();
+    expect(button).toHaveTextContent('Clone & Edit');
+    expect(button).toHaveTextContent('275 credits');
+    fireEvent.click(button);
+    expect(onEditSite).toHaveBeenCalledOnce();
+  });
+
+  it('opens upgrade for a free user without starting Clone & Edit', () => {
+    const onEditSite = vi.fn();
+    const onUpgradeRequired = vi.fn();
+    render(<CanvasInspector
+      node={liveReference}
+      plan="free"
+      onFrameChange={vi.fn()}
+      onEditSite={onEditSite}
+      onUpgradeRequired={onUpgradeRequired}
+    />);
+
+    const button = screen.getByRole('button', { name: 'Clone & Edit, paid plans only, 275 credits' });
+    expect(button).toHaveAttribute('data-subscriber-feature', 'locked');
+    fireEvent.click(button);
+    expect(onUpgradeRequired).toHaveBeenCalledOnce();
+    expect(onEditSite).not.toHaveBeenCalled();
   });
 
   it('renders "Open in Browser" as a real link when the node is idle', () => {

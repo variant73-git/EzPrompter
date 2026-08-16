@@ -8,6 +8,9 @@ export const MOTION_DRIVERS = Object.freeze({
 
 export const MOTION_EDITABILITY = Object.freeze({
   DIRECT: 'direct',
+  KNOWN: 'known',
+  DECLARATIVE: 'declarative',
+  CUSTOM: 'custom',
   ADAPTER: 'adapter',
   CODE: 'code',
 });
@@ -22,7 +25,22 @@ export const MOTION_PROPERTY_GROUPS = Object.freeze({
 export function motionCapabilityLabel(editability) {
   if (editability === MOTION_EDITABILITY.DIRECT) return 'Editable';
   if (editability === MOTION_EDITABILITY.ADAPTER) return 'Adapter';
+  if (editability === MOTION_EDITABILITY.KNOWN) return 'Known';
+  if (editability === MOTION_EDITABILITY.DECLARATIVE) return 'Declarative';
+  if (editability === MOTION_EDITABILITY.CUSTOM) return 'Custom';
   return 'Code only';
+}
+
+export function normalizeMotionEditability(editability) {
+  if (editability === MOTION_EDITABILITY.ADAPTER) return MOTION_EDITABILITY.KNOWN;
+  if ([
+    MOTION_EDITABILITY.DIRECT,
+    MOTION_EDITABILITY.KNOWN,
+    MOTION_EDITABILITY.DECLARATIVE,
+    MOTION_EDITABILITY.CUSTOM,
+    MOTION_EDITABILITY.CODE,
+  ].includes(editability)) return editability;
+  return MOTION_EDITABILITY.CODE;
 }
 
 export function motionDriverLabel(driver) {
@@ -93,13 +111,23 @@ export function buildStripEditPatches({ motion, row, next = {} }) {
   return patches;
 }
 
+// Per-track keyframe (step) editability. Clip-level `capabilities.keyframes`
+// says the CLIP accepts step edits; a track can still be refused by the
+// runtime's per-property writer guard (e.g. a css:{}-wrapper property on a
+// mixed GSAP tween). Adapters that publish the flag set it explicitly on every
+// track; adapters that don't (CSS/WAAPI direct paths) leave it absent, which
+// means editable — so absence keeps their behavior unchanged.
+export function trackKeyframeEditable(track) {
+  return track?.keyframeEditable !== false;
+}
+
 export function normalizeMotionClip(input = {}) {
   const timing = input.timing || {};
   return {
     id: String(input.id || ''),
     engine: input.engine || 'Unknown',
     name: input.name || 'Animation',
-    editability: input.editability || MOTION_EDITABILITY.CODE,
+    editability: normalizeMotionEditability(input.editability),
     driver: input.driver || { type: MOTION_DRIVERS.TIME },
     trigger: input.trigger || { type: 'load' },
     timing: {

@@ -44,5 +44,36 @@ describe('GET /api/nodes/[id]/snapshots', () => {
     expect(json.snapshots[1].hasScreenshot).toBe(true);
     // no html leaked
     expect(JSON.stringify(json)).not.toContain('html');
+    expect(json.snapshots[0]).not.toHaveProperty('nativeBundleId');
+    expect(json.snapshots[0]).not.toHaveProperty('motionManifestVersion');
+  });
+
+  it('adds native bundle metadata only to native snapshots', async () => {
+    sqlMock._results = [
+      [{ id: 'n1', current_snapshot_id: 'snap-native' }],
+      [{
+        id: 'snap-native', source: 'native-edit', created_at: '2026-07-26T02:00:00Z',
+        hasScreenshot: false, native_bundle_id: 'bundle-1', motion_manifest_version: 2,
+      }],
+    ];
+    const res = await GET(req(), params);
+    const json = await res.json();
+    expect(json.snapshots[0]).toMatchObject({
+      id: 'snap-native', nativeBundleId: 'bundle-1', motionManifestVersion: 2,
+    });
+  });
+
+  it('does not invent a manifest version for an unedited native base snapshot', async () => {
+    sqlMock._results = [
+      [{ id: 'n1', current_snapshot_id: 'snap-native' }],
+      [{
+        id: 'snap-native', source: 'native', created_at: '2026-07-26T01:00:00Z',
+        hasScreenshot: false, native_bundle_id: 'bundle-1', motion_manifest_version: null,
+      }],
+    ];
+    const res = await GET(req(), params);
+    const json = await res.json();
+    expect(json.snapshots[0].nativeBundleId).toBe('bundle-1');
+    expect(json.snapshots[0]).not.toHaveProperty('motionManifestVersion');
   });
 });

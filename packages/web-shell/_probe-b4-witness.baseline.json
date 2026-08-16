@@ -1,0 +1,475 @@
+{
+  "referencia": {
+    "negotiatedTrack": true,
+    "trajA": [
+      0,
+      25,
+      50,
+      75,
+      100
+    ],
+    "trajB": [
+      0,
+      25,
+      50,
+      75,
+      100
+    ],
+    "temporal": {
+      "totalTime": 0,
+      "progress": 0,
+      "reversed": false
+    }
+  },
+  "referenciaGrupo120": {
+    "applied": true,
+    "trajA": [
+      0,
+      30,
+      60,
+      90,
+      120
+    ],
+    "trajB": [
+      0,
+      30,
+      60,
+      90,
+      120
+    ],
+    "varsX": 120,
+    "varsXType": "number"
+  },
+  "principal": {
+    "published": {
+      "writeModel": "absolute",
+      "perTargetAvailable": true,
+      "statesBefore": [
+        {
+          "elementId": "el-1oz6a1p",
+          "intent": "none"
+        },
+        {
+          "elementId": "el-1o57gys",
+          "intent": "none"
+        }
+      ]
+    },
+    "tx1": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterOverride": {
+      "trajA": [
+        0,
+        40,
+        80,
+        120,
+        160
+      ],
+      "trajB": [
+        0,
+        25,
+        50,
+        75,
+        100
+      ],
+      "temporal": {
+        "totalTime": 0,
+        "progress": 0,
+        "reversed": false
+      },
+      "varsXType": "function"
+    },
+    "tick1": {
+      "totalTime": 0.1,
+      "progress": 0.1,
+      "reversed": false
+    },
+    "tx2": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "identidadeMantida": true,
+    "afterSecond": {
+      "trajA": [
+        0,
+        40,
+        80,
+        120,
+        160
+      ],
+      "trajB": [
+        0,
+        35,
+        70,
+        105,
+        140
+      ]
+    },
+    "rbB": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "group": {
+      "applied": true,
+      "error": null
+    },
+    "afterGroup": {
+      "trajA": [
+        0,
+        40,
+        80,
+        120,
+        160
+      ],
+      "trajB": [
+        0,
+        30,
+        60,
+        90,
+        120
+      ]
+    },
+    "reexposure": {
+      "writeModel": "absolute",
+      "sourceValue": 120,
+      "states": [
+        {
+          "elementId": "el-1oz6a1p",
+          "intent": "override",
+          "value": 160
+        },
+        {
+          "elementId": "el-1o57gys",
+          "intent": "none",
+          "value": null
+        }
+      ]
+    },
+    "rbA": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterUndo": {
+      "trajA": [
+        0,
+        30,
+        60,
+        90,
+        120
+      ],
+      "trajB": [
+        0,
+        30,
+        60,
+        90,
+        120
+      ],
+      "varsXType": "number",
+      "varsX": 120
+    },
+    "redo": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterRedo": {
+      "trajA": [
+        0,
+        40,
+        80,
+        120,
+        160
+      ],
+      "trajB": [
+        0,
+        30,
+        60,
+        90,
+        120
+      ]
+    },
+    "clear": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterClear": {
+      "trajA": [
+        0,
+        30,
+        60,
+        90,
+        120
+      ],
+      "trajB": [
+        0,
+        30,
+        60,
+        90,
+        120
+      ],
+      "varsX": 120,
+      "varsXType": "number"
+    }
+  },
+  "tampering": {
+    "tx1": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "editRefused": {
+      "committed": false,
+      "ack": {
+        "type": "transaction-rejected",
+        "code": "unsupported_patch"
+      }
+    },
+    "groupRefused": {
+      "applied": false,
+      "error": "This animation's overrides were changed by the page — reselect the layer to edit them again."
+    }
+  },
+  "sensibilidade": {
+    "trajA": [
+      0,
+      40,
+      80,
+      120,
+      160
+    ],
+    "trajB": [
+      0,
+      40,
+      80,
+      120,
+      160
+    ]
+  },
+  "auditRollback": {
+    "tx1": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "groupTx": {
+      "committed": true,
+      "beforeValue": "100",
+      "valueValue": "120"
+    },
+    "afterGroup": {
+      "trajA": [
+        0,
+        40,
+        80,
+        120,
+        160
+      ],
+      "trajB": [
+        0,
+        30,
+        60,
+        90,
+        120
+      ]
+    },
+    "rbGroup": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterGroupUndo": {
+      "trajA": [
+        0,
+        40,
+        80,
+        120,
+        160
+      ],
+      "trajB": [
+        0,
+        25,
+        50,
+        75,
+        100
+      ]
+    },
+    "rbOverride": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterOverrideUndo": {
+      "varsX": 100,
+      "varsXType": "number"
+    },
+    "redo": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterRedo": {
+      "trajA": [
+        0,
+        40,
+        80,
+        120,
+        160
+      ],
+      "trajB": [
+        0,
+        25,
+        50,
+        75,
+        100
+      ]
+    }
+  },
+  "snapRefusal": {
+    "perTargetPublished": false,
+    "tx": {
+      "committed": false,
+      "ack": {
+        "type": "transaction-rejected",
+        "code": "unsupported_patch"
+      }
+    },
+    "varsX": 100,
+    "varsXType": "number"
+  },
+  "unwritableRefusal": {
+    "tx": {
+      "committed": false,
+      "ack": {
+        "type": "transaction-rejected",
+        "code": "unsupported_patch"
+      }
+    },
+    "varsX": 100,
+    "trajA": [
+      0,
+      25,
+      50,
+      75,
+      100
+    ]
+  },
+  "teardownHazard": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "yRefused": true,
+    "varsXAfterTeardown": 100,
+    "varsXType": "number",
+    "executionsBeforeTeardown": 0,
+    "executionsAfterTeardown": 0,
+    "zAfterTeardown": 0
+  },
+  "clearHazard": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "clear": {
+      "committed": false,
+      "ack": {
+        "type": "transaction-rejected",
+        "code": "unsupported_patch"
+      }
+    },
+    "executions": 0,
+    "varsXType": "function",
+    "zRendered": 0
+  },
+  "groupCarrier": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "group": {
+      "applied": false,
+      "error": "This animation uses value modifiers and cannot be overridden per element yet."
+    },
+    "trajB": [
+      0,
+      25,
+      50,
+      75,
+      100
+    ]
+  },
+  "clearCarrier": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "clear": {
+      "committed": false,
+      "ack": {
+        "type": "transaction-rejected",
+        "code": "unsupported_patch"
+      }
+    },
+    "invalidates": 0,
+    "renderedBefore": {
+      "a": 81.5,
+      "b": 51.5
+    },
+    "renderedAfter": {
+      "a": 81.5,
+      "b": 51.5
+    },
+    "varsXType": "function"
+  },
+  "repeatRefusal": {
+    "perTargetPublished": false,
+    "tx": {
+      "committed": false,
+      "ack": {
+        "type": "transaction-rejected",
+        "code": "unsupported_patch"
+      }
+    }
+  }
+}

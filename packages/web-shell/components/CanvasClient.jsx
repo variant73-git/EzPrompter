@@ -22,6 +22,11 @@ import Minimap from './Minimap.jsx';
 import CanvasSidebar from './CanvasSidebar.jsx';
 import CanvasTools from './CanvasTools.jsx';
 import CanvasInspector from './CanvasInspector.jsx';
+import {
+  NativeMotionEditSessionProvider,
+  NativeMotionEditTopbarControls,
+  nativeMotionEditShellLayout,
+} from './motion-editor/NativeMotionEditChrome.jsx';
 import ChallengeModal from './ChallengeModal.jsx';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
@@ -29,6 +34,7 @@ import { findSectionTerminals, planIncrementalRun, planRunFromNode, nodeInputSig
 import { buildNodesClipboardPayload, parseNodesClipboardText, payloadToPasteItems } from '../lib/node-clipboard.js';
 import { estimateChain } from '../lib/billing/pricing.js';
 import { needsDeferredReconstruction } from '../lib/reconstruction-policy.js';
+import { canUseCloneEdit } from '../lib/clone-edit-access.js';
 import { clampToViewport } from '../lib/menu-position.js';
 import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
 import { createWheelBatcher } from '../lib/wheel-batch.js';
@@ -52,6 +58,18 @@ import {
   liveReferenceMeta,
   remapLiveReferenceSelection,
 } from '../lib/url-reference.js';
+import {
+  applyReconstructionResultToNode,
+  NODE_EDITOR_KIND,
+  resolveNodeEditorKind,
+  snapshotEditorMetadata,
+} from '../lib/node-editor-kind.js';
+import {
+  canonicalNativeEditNode,
+  computeNodeEditFrame,
+  nativeEditDeviceForNode,
+} from '../lib/node-viewport.js';
+import { applyNativeCommitSnapshot } from '../lib/motion-editor/native-edit-api.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -177,18 +195,35 @@ function sectionCoreRect(memberNodes) {
 // Stable empty array for nodes without incoming edges — a fresh [] per
 // render would defeat CanvasNodeItem's memo for every edge-less node.
 const EMPTY_EDGES = [];
+const NATIVE_MOTION_CANVAS_EDIT = /^(1|true)$/i.test(
+  String(process.env.NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT || ''),
+);
 
-export default function CanvasClient({ board, initialNodes, initialEdges, user }) {
+function editorKindForNode(node) {
+  return resolveNodeEditorKind(
+    node,
+    snapshotEditorMetadata(node),
+    { nativeMotionCanvasEdit: NATIVE_MOTION_CANVAS_EDIT },
+  );
+}
+
+export default function CanvasClient({ board, initialNodes, initialEdges, user, initialFocusNodeId = null }) {
   const [nodes, setNodes] = useState(initialNodes || []);
   const [edges, setEdges] = useState(initialEdges || []);
   const [boardName, setBoardName] = useState(board.name || 'Untitled');
-  const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const initialFocusedNode = initialFocusNodeId
+    ? initialNodes.find((node) => node.id === initialFocusNodeId)
+    : null;
+  const [selectedNodeId, setSelectedNodeId] = useState(initialFocusedNode?.id || null);
   const [selectedEdgeId, setSelectedEdgeId] = useState(null);
   const [draftEdge, setDraftEdge] = useState(null);  // {sourceNodeId, mouseX, mouseY}
   const [popupPos, setPopupPos] = useState(null);
   const [emptyDropMenu, setEmptyDropMenu] = useState(null);  // {sourceNodeId, x, y, worldX, worldY}
   const [contextMenu, setContextMenu] = useState(null);  // {x, y, worldX, worldY} — right-click on empty canvas
   const [editingNodeId, setEditingNodeId] = useState(null);
+  const nativeEditRestoreRef = useRef(null);
+  const editFrameTimerRef = useRef(null);
+  const nativeViewportFrameRafRef = useRef(null);
   const [editorActionBusy, setEditorActionBusy] = useState(false);
   const [workflowSaveState, setWorkflowSaveState] = useState('idle');
   const [showFirstNodeCoachmark, setShowFirstNodeCoachmark] = useState(false);
@@ -221,6 +256,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   const canvasViewReadyRef = useRef(false);
   const canvasViewSaveTimerRef = useRef(null);
   const CANVAS_VIEW_KEY = `uncraft-canvas-view:v2:${board.id}`;
+
+  useEffect(() => () => {
+    if (editFrameTimerRef.current) window.clearTimeout(editFrameTimerRef.current);
+    if (nativeViewportFrameRafRef.current) window.cancelAnimationFrame(nativeViewportFrameRafRef.current);
+    const session = nativeEditRestoreRef.current;
+    if (!session?.camera) return;
+    try {
+      localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(session.camera));
+    } catch { /* best-effort route-change restoration */ }
+    nativeEditRestoreRef.current = null;
+  }, [CANVAS_VIEW_KEY]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -680,8 +726,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const rect = wrapper.getBoundingClientRect();
       let cx = rect.width / 2, cy = rect.height / 2;
       if (editingNodeId) {
-        const left = document.getElementById('rb-editor-layers')?.getBoundingClientRect().width || 224;
-        const right = document.getElementById('rb-editor-inspector')?.getBoundingClientRect().width || 248;
+        const editingNode = nodes.find((node) => node.id === editingNodeId);
+        const { left, right } = editFrameReserves(editingNode);
         cx = left + Math.max(320, rect.width - left - right) / 2;
         cy = 46 + Math.max(240, rect.height - 64) / 2;
       }
@@ -728,8 +774,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         const inst = t.instance || t;
         const state = inst?.transformState || t.state || { positionX: 0, positionY: 0, scale: 1 };
         if (editingNodeId) {
-          const left = document.getElementById('rb-editor-layers')?.getBoundingClientRect().width || 224;
-          const right = document.getElementById('rb-editor-inspector')?.getBoundingClientRect().width || 248;
+          const editingNode = nodes.find((node) => node.id === editingNodeId);
+          const { left, right } = editFrameReserves(editingNode);
           cx = left + Math.max(320, window.innerWidth - left - right) / 2;
           cy = 46 + Math.max(240, window.innerHeight - 64) / 2;
         }
@@ -2905,10 +2951,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   async function handleRestoreVersion(id, snapshotId) {
     if (String(id).startsWith('temp-') || !snapshotId) return;
     try {
-      const { html, snapshot_id } = await api.restoreVersion(id, snapshotId);
+      const restored = await api.restoreVersion(id, snapshotId);
       setNodes((prev) => prev.map((n) =>
         n.id === id
-          ? { ...n, current_html: html, current_snapshot_id: snapshot_id, _resetTick: (n._resetTick || 0) + 1 }
+          ? {
+            ...n,
+            current_html: restored.html,
+            current_snapshot_id: restored.snapshot_id,
+            current_snapshot_source: restored.source || n.current_snapshot_source,
+            current_native_bundle_id: restored.native_bundle_id || null,
+            current_motion_manifest_version: restored.motion_manifest_version == null
+              ? null
+              : Number(restored.motion_manifest_version),
+            _resetTick: (n._resetTick || 0) + 1,
+          }
           : n
       ));
     } catch (e) {
@@ -3012,20 +3068,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         setNodes((prev) => prev.map((node) => {
           const reconstructed = byId.get(node.id);
           if (!reconstructed) return node;
-          return {
-            ...node,
-            current_html: reconstructed.html,
-            current_snapshot_id: reconstructed.snapshotId,
-            current_snapshot_source: 'reconstruct',
-            meta: {
-              ...(node.meta || {}),
-              ...(reconstructed.meta || {}),
-              animatedDetected: false,
-              animatedRuntime: true,
-              reconstructionEngine: 'iter9',
-            },
-            _resetTick: (node._resetTick || 0) + 1,
-          };
+          return applyReconstructionResultToNode(node, reconstructed);
         }));
       }
       setNodeRunStatus(id, { step: 3, label: 'Saving…', request });
@@ -4254,40 +4297,56 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     t.setTransform(posX, posY, scale, animationTime);
   }
 
-  // Full-site framing for edit mode. The node expands to the document's
-  // complete height, then both axes fit between the editor panels. Editing
-  // intentionally has no canvas pan, so the whole page must remain visible
-  // and zoomable without requiring navigation through the world.
-  function computeEditFrame(node) {
-    const PAD = 26;
-    const HEADER = 46;
-    const BOTTOM_PAD = 18;
-    const vw = window.innerWidth;
-    // Editor mounts layers panel (left) + inspector panel (right) into this
-    // host doc; reserve their widths so the node frames between them
-    // instead of slipping partially behind. Read live so panel resize /
-    // hide / undock are respected. Defaults match editor.css when the
-    // panels haven't mounted yet (first entry into edit).
+  function editFrameReserves(node) {
+    if (editorKindForNode(node) === NODE_EDITOR_KIND.NATIVE) {
+      return nativeMotionEditShellLayout(window.innerWidth);
+    }
     const layersEl = document.getElementById('rb-editor-layers');
-    const inspEl = document.getElementById('rb-editor-inspector');
-    const leftReserve = layersEl ? layersEl.getBoundingClientRect().width : 224;
-    const rightReserve = inspEl ? inspEl.getBoundingClientRect().width : 248;
-    const usableW = Math.max(320, vw - leftReserve - rightReserve);
-    const usableH = Math.max(240, window.innerHeight - HEADER - BOTTOM_PAD);
-    const nodeW = node.width + PAD * 2;
-    const nodeH = (node.height || 800) + PAD * 2;
-    const scale = Math.max(0.04, Math.min(usableW / nodeW, usableH / nodeH, 1.0));
-    const centerX = node.pos_x + node.width / 2;
-    const centerY = node.pos_y + (node.height || 800) / 2;
-    const positionX = (leftReserve + usableW / 2) - centerX * scale;
-    const positionY = (HEADER + usableH / 2) - centerY * scale;
-    return { positionX, positionY, scale };
+    const inspectorEl = document.getElementById('rb-editor-inspector');
+    return {
+      left: layersEl ? layersEl.getBoundingClientRect().width : 224,
+      right: inspectorEl ? inspectorEl.getBoundingClientRect().width : 248,
+    };
   }
 
-  function enterEditMode(node) {
+  // Legacy Edit frames the complete expanded page between its two panels.
+  // Native Edit keeps one canonical device rectangle and, until Task 7 adds
+  // canvas-level panels, centers it in the full free area below the topbar.
+  function computeEditFrame(node) {
+    const reserves = editFrameReserves(node);
+    return computeNodeEditFrame(node, {
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      leftReserve: reserves.left,
+      rightReserve: reserves.right,
+      bottom: reserves.bottom ?? 18,
+    });
+  }
+
+  function enterEditMode(node, editorKind = editorKindForNode(node)) {
+    if (editFrameTimerRef.current) window.clearTimeout(editFrameTimerRef.current);
+    let framedNode = node;
+    if (editorKind === NODE_EDITOR_KIND.NATIVE) {
+      const device = nativeEditDeviceForNode(node);
+      framedNode = canonicalNativeEditNode(node, device.id);
+      nativeEditRestoreRef.current = {
+        nodeId: node.id,
+        geometry: {
+          pos_x: node.pos_x,
+          pos_y: node.pos_y,
+          width: node.width,
+          height: node.height,
+        },
+        camera: window.__uncraftZoom?.getState?.() || null,
+      };
+      setNodes((current) => current.map((candidate) => (
+        candidate.id === node.id ? framedNode : candidate
+      )));
+    }
     setEditingNodeId(node.id);
-    setTimeout(() => {
-      const f = computeEditFrame(node);
+    editFrameTimerRef.current = window.setTimeout(() => {
+      editFrameTimerRef.current = null;
+      const f = computeEditFrame(framedNode);
       if (window.__uncraftZoom) {
         window.__uncraftZoom._editFrame = f;
         window.__uncraftZoom.setState?.(f, 350);
@@ -4295,12 +4354,52 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     }, 50);
   }
 
-  async function handleEditingToggle(nodeId, willEdit) {
+  function exitEditMode(nodeId, { reason = 'exit' } = {}) {
+    if (editFrameTimerRef.current) {
+      window.clearTimeout(editFrameTimerRef.current);
+      editFrameTimerRef.current = null;
+    }
+    if (nativeViewportFrameRafRef.current) {
+      window.cancelAnimationFrame(nativeViewportFrameRafRef.current);
+      nativeViewportFrameRafRef.current = null;
+    }
+    const session = nativeEditRestoreRef.current;
+    if (session?.nodeId === nodeId) {
+      if (session.camera) {
+        try {
+          localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(session.camera));
+        } catch { /* best-effort immediate restoration */ }
+      }
+      nativeEditRestoreRef.current = null;
+      setNodes((current) => current.map((candidate) => (
+        candidate.id === nodeId
+          ? { ...candidate, ...session.geometry }
+          : candidate
+      )));
+      if (session.camera) window.__uncraftZoom?.setState?.(session.camera, 280);
+    }
+    setEditingNodeId(null);
+    if (window.__uncraftZoom) window.__uncraftZoom._editFrame = null;
+    if (reason === 'runtime-unavailable') {
+      toast.error("This website couldn't be opened for editing.");
+    }
+  }
+
+  async function handleEditingToggle(nodeId, willEdit, details = {}) {
     if (willEdit) {
       const node = nodes.find((n) => n.id === nodeId);
       if (!node || editPreparationRef.current.has(nodeId)) return;
+      if (isLiveUrlReference(node) && !canUseCloneEdit(user?.plan)) {
+        setPlansOpen(true);
+        return;
+      }
+      const editorKind = editorKindForNode(node);
+      if (editorKind === NODE_EDITOR_KIND.NATIVE) {
+        enterEditMode(node, editorKind);
+        return;
+      }
       if (!needsDeferredReconstruction(node)) {
-        enterEditMode(node);
+        enterEditMode(node, editorKind);
         return;
       }
 
@@ -4309,25 +4408,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       try {
         const result = await api.reconstructNode(nodeId);
         flashNodeDebit(nodeId, result?.credits);
-        const preparedNode = result?.skipped && !result?.html ? node : {
-          ...node,
-          current_html: result.html,
-          current_snapshot_id: result.snapshotId,
-          current_snapshot_source: result.snapshotSource || 'reconstruct',
-          meta: {
-            ...(node.meta || {}),
-            ...(result.meta || {}),
-            ...(!result.skipped ? {
-              animatedDetected: false,
-              animatedRuntime: true,
-              reconstructionEngine: 'iter9',
-            } : {}),
-          },
-          _resetTick: (node._resetTick || 0) + 1,
-        };
+        const preparedNode = applyReconstructionResultToNode(node, result);
         setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? preparedNode : candidate));
         setNodeRunStatus(nodeId, null);
-        enterEditMode(preparedNode);
+        enterEditMode(preparedNode, editorKindForNode(preparedNode));
       } catch (e) {
         setNodeRunStatus(nodeId, null);
         if (!handleBillingError(e)) toast.error(`Could not prepare this site for editing: ${e.message}`);
@@ -4335,13 +4419,28 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         editPreparationRef.current.delete(nodeId);
       }
     } else {
-      setEditingNodeId(null);
-      // Drop the saved frame so a re-entry into edit mode captures fresh.
-      if (window.__uncraftZoom) window.__uncraftZoom._editFrame = null;
+      exitEditMode(nodeId, details);
     }
   }
 
   function applySiteViewport(node, width, height) {
+    if (editorKindForNode(node) === NODE_EDITOR_KIND.NATIVE) {
+      const resizedNode = { ...node, width, height };
+      setNodes((current) => current.map((candidate) => (
+        candidate.id === node.id ? resizedNode : candidate
+      )));
+      if (nativeViewportFrameRafRef.current) {
+        window.cancelAnimationFrame(nativeViewportFrameRafRef.current);
+      }
+      nativeViewportFrameRafRef.current = window.requestAnimationFrame(() => {
+        nativeViewportFrameRafRef.current = null;
+        const frame = computeEditFrame(resizedNode);
+        if (!window.__uncraftZoom) return;
+        window.__uncraftZoom._editFrame = frame;
+        window.__uncraftZoom.setState?.(frame, 280);
+      });
+      return;
+    }
     handleNodeResize(node, width, height);
     if (editingNodeId !== node.id) return;
     const resizedNode = { ...node, width, height };
@@ -4369,6 +4468,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     window.addEventListener('uncraft:editor-busy', handleEditorBusy);
     return () => window.removeEventListener('uncraft:editor-busy', handleEditorBusy);
   }, [editingNodeId]);
+
+  useEffect(() => {
+    if (!editingNodeId || nodes.some((node) => node.id === editingNodeId)) return;
+    exitEditMode(editingNodeId, { reason: 'node-removed' });
+  }, [editingNodeId, nodes]);
 
   // Frame ALL nodes into the viewport. Pure version — no
   // editing/selection branching, used by both fitToContent (smart
@@ -4639,9 +4743,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const transform = transformRef.current;
       if (!transform?.setTransform) return;
 
+      const requestedNode = initialFocusNodeId
+        ? initialNodes.find((node) => node.id === initialFocusNodeId)
+        : null;
       let saved = null;
       try { saved = parseCanvasView(localStorage.getItem(CANVAS_VIEW_KEY)); } catch {}
-      if (saved) {
+      if (requestedNode) {
+        setSelectedNodeId(requestedNode.id);
+        setSelectedNodeIds((current) => (current.size ? new Set() : current));
+        zoomToNode(requestedNode, 0);
+      } else if (saved) {
         transform.setTransform(saved.positionX, saved.positionY, saved.scale, 0);
       } else if (initialNodes?.length) {
         const focusNode = initialNodes.find((node) => node.is_main) || initialNodes[0];
@@ -4658,7 +4769,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       clearTimeout(timer);
       clearTimeout(canvasViewSaveTimerRef.current);
     };
-  }, [CANVAS_VIEW_KEY]);
+  }, [CANVAS_VIEW_KEY, initialFocusNodeId]);
 
   // Keyboard shortcuts: Esc clears selection. F fits all nodes. 0 resets to
   // 1:1 center. Pan is handled separately and exists only while Space is held.
@@ -5758,7 +5869,32 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     cancelNodeRemoval,
   };
 
+  const nativeEditing = Boolean(
+    editingNode && editorKindForNode(editingNode) === NODE_EDITOR_KIND.NATIVE
+  );
+
+  function finishNativeCommit(result) {
+    if (!editingNode?.id || !result?.snapshot?.id) return;
+    const nodeId = editingNode.id;
+    setNodes((current) => current.map((node) => (
+      node.id === nodeId
+        ? applyNativeCommitSnapshot(node, result)
+        : node
+    )));
+    exitEditMode(nodeId, { reason: 'native-commit' });
+  }
+
+  function finishNativeDiscard() {
+    if (editingNode?.id) exitEditMode(editingNode.id, { reason: 'native-discard' });
+  }
+
   return (
+    <NativeMotionEditSessionProvider
+      active={nativeEditing}
+      nodeId={nativeEditing ? editingNode.id : null}
+      onCommitted={finishNativeCommit}
+      onDiscarded={finishNativeDiscard}
+    >
     <div
       className={`canvas-shell${removingOutside ? ' removing-outside' : ''}`}
       onMouseDown={maybeStartMarquee}
@@ -5853,6 +5989,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               ))}
             </div>
             <div className="canvas-edit-actions">
+              {nativeEditing && <NativeMotionEditTopbarControls />}
               <button type="button" className="canvas-edit-cancel" onClick={() => sendEditorAction('cancel')} disabled={editorActionBusy}>
                 <X aria-hidden="true" />
                 Cancel
@@ -5936,6 +6073,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             name={user?.name}
             email={user?.email}
             plan={user?.plan}
+            role={user?.role}
             onSignOut={logout}
             workspaceMode
           />
@@ -5955,6 +6093,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
 
       <CanvasInspector
         node={selectedNode}
+        plan={user?.plan}
         // Busy = the same predicate the progress ring uses (active run,
         // generating, or loading), plus an unpersisted temp placeholder whose
         // /preview route has no row yet — "Open in Browser" is disabled then.
@@ -5965,6 +6104,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
           || String(selectedNode.id).startsWith('temp-')
         ))}
         onEditSite={() => selectedSiteNode && handleEditingToggle(selectedSiteNode.id, true)}
+        onUpgradeRequired={() => setPlansOpen(true)}
         onFrameChange={(id, patch) => {
           // Same path a drag/resize commit takes: optimistic local update +
           // debounced-enough single PATCH (field commits are discrete).
@@ -6193,6 +6333,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
               livePreviewActive={selectedNodeId === n.id}
               placing={placingNodeId === n.id || (altDupGhostIds?.has(n.id) ?? false)}
               editing={editingNodeId === n.id}
+              editorKind={editorKindForNode(n)}
               runStatus={runStatus.get(n.id) || null}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
               removing={removing?.nodeId === n.id}
@@ -6581,12 +6722,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             // in parallel; failures are silent (next mutation refetches).
             for (const nodeId of stalenessByNode.keys()) {
               api.getNode(nodeId).then(({ snapshot }) => {
-                if (!snapshot?.html) return;
+                if (!snapshot || (!snapshot.html && !snapshot.native_bundle_id)) return;
                 setNodes((prev) => prev.map((n) =>
                   n.id === nodeId ? {
                     ...n,
-                    current_html: snapshot.html,
+                    current_html: snapshot.html || null,
                     current_screenshot: snapshot.screenshot_url || null,
+                    current_snapshot_source: snapshot.source || null,
+                    current_native_bundle_id: snapshot.native_bundle_id || null,
+                    current_motion_manifest_version: snapshot.motion_manifest_version == null
+                      ? null
+                      : Number(snapshot.motion_manifest_version),
                   } : n
                 ));
               }).catch(() => {});
@@ -6696,7 +6842,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         }}
         onCancel={() => setInsufficientCredits(null)}
       />
-      <PlansModal open={plansOpen} onClose={() => setPlansOpen(false)} />
+      <PlansModal open={plansOpen} currentPlan={user?.plan} onClose={() => setPlansOpen(false)} />
 
       <ConfirmModal
         open={!!dropRejects}
@@ -6780,6 +6926,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         />
       )}
     </div>
+    </NativeMotionEditSessionProvider>
   );
 }
 

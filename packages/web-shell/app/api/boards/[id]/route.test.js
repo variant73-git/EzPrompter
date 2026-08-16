@@ -34,6 +34,8 @@ const fullNode = {
   current_design_md: '# Tokens',
   current_screenshot: 'https://example.com/shot.png',
   current_snapshot_source: 'capture',
+  current_native_bundle_id: '33333333-3333-4333-8333-333333333333',
+  current_motion_manifest_version: 2,
   original_snapshot_id: 'snap-orig',
 };
 
@@ -69,8 +71,12 @@ describe('GET /api/boards/[id]', () => {
     expect(n.current_design_md).toBe('# Tokens');
     expect(n.current_screenshot).toBe('https://example.com/shot.png');
     expect(n.current_snapshot_source).toBe('capture');
+    expect(n.current_native_bundle_id).toBe('33333333-3333-4333-8333-333333333333');
+    expect(n.current_motion_manifest_version).toBe(2);
     // Sanity: full query path should include the LEFT JOIN.
     expect(sqlMock._templates[1]).toMatch(/LEFT JOIN snapshots/);
+    expect(sqlMock._templates[1]).toMatch(/native_bundle_id AS current_native_bundle_id/);
+    expect(sqlMock._templates[1]).toMatch(/motion_manifest_version AS current_motion_manifest_version/);
   });
 
   it('?light=1 returns nodes WITH hasSnapshot but WITHOUT current_html / current_design_md / current_screenshot', async () => {

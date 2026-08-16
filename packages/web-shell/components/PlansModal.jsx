@@ -11,7 +11,6 @@ const PLANS = [
     price: '$0',
     period: '',
     blurb: '500 welcome credits · pay-as-you-go coming soon',
-    current: true,
   },
   {
     id: 'pro',
@@ -29,7 +28,7 @@ const PLANS = [
   },
 ];
 
-export default function PlansModal({ open, onClose }) {
+export default function PlansModal({ open, onClose, currentPlan = 'free' }) {
   const [toastMsg, setToastMsg] = useState(null);
 
   useEffect(() => {
@@ -47,6 +46,8 @@ export default function PlansModal({ open, onClose }) {
 
   if (!open) return null;
 
+  const normalizedCurrentPlan = String(currentPlan || 'free').trim().toLowerCase();
+
   const onPlanClick = (plan) => {
     console.info('[plans] click', plan.id);
     setToastMsg("You're on the list — plans are coming soon.");
@@ -58,21 +59,24 @@ export default function PlansModal({ open, onClose }) {
         <button type="button" className="plans-modal-close" aria-label="Close" onClick={onClose}>×</button>
         <div className="plans-modal-title">Plans</div>
         <div className="plans-modal-grid">
-          {PLANS.map((p) => (
-            <div className={`plans-modal-card${p.current ? ' current' : ''}`} key={p.id}>
-              {p.current && <div className="plans-modal-badge">Current plan</div>}
-              <div className="plans-modal-name">{p.name}</div>
-              <div className="plans-modal-price">
-                {p.price}<span className="plans-modal-period">{p.period}</span>
+          {PLANS.map((p) => {
+            const current = p.id === normalizedCurrentPlan;
+            return (
+              <div className={`plans-modal-card${current ? ' current' : ''}`} key={p.id}>
+                {current && <div className="plans-modal-badge">Current plan</div>}
+                <div className="plans-modal-name">{p.name}</div>
+                <div className="plans-modal-price">
+                  {p.price}<span className="plans-modal-period">{p.period}</span>
+                </div>
+                <div className="plans-modal-blurb">{p.blurb}</div>
+                {!current && (
+                  <button type="button" className="plans-modal-cta" onClick={() => onPlanClick(p)}>
+                    Coming soon
+                  </button>
+                )}
               </div>
-              <div className="plans-modal-blurb">{p.blurb}</div>
-              {!p.current && (
-                <button type="button" className="plans-modal-cta" onClick={() => onPlanClick(p)}>
-                  Coming soon
-                </button>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
         {toastMsg && <div className="plans-modal-toast">{toastMsg}</div>}
       </div>

@@ -27,6 +27,7 @@ export const MODEL_PRICES = {
   'claude-haiku-4-5-20251001': { inPerM:  1.00, outPerM:  5.00, cachedInPerM: 0.10,  cacheWritePerM:  1.25 },
   // OpenAI — 50% cached, no write surcharge
   'gpt-5.5':                   { inPerM:  5.00, outPerM: 15.00, cachedInPerM: 2.50 },
+  'gpt-5.6-terra':             { inPerM:  2.50, outPerM: 15.00, cachedInPerM: 0.25, cacheWritePerM: 3.125 },
   'gpt-4o-mini':               { inPerM:  0.15, outPerM:  0.60, cachedInPerM: 0.075 },
   // Google Gemini — 25% cached (implicit caching on 2.5 family), no write surcharge
   'gemini-3.1-pro-preview':    { inPerM:  1.25, outPerM:  5.00, cachedInPerM: 0.3125 },

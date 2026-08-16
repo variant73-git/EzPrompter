@@ -48,5 +48,42 @@ describe('POST /api/nodes/[id]/restore-version', () => {
     expect(json.html).toBe('<html>v1</html>');
     // the UPDATE that moves the pointer ran
     expect(sqlMock._templates.some((t) => /UPDATE nodes/.test(t) && /current_snapshot_id/.test(t))).toBe(true);
+    expect(sqlMock._templates.some((t) => /UPDATE native_motion_edit_sessions/.test(t) && /status = 'discarded'/.test(t))).toBe(true);
+  });
+
+  it('restores native bundle identity and manifest instead of captured live HTML', async () => {
+    const bundleId = '44444444-4444-4444-8444-444444444444';
+    const fingerprint = `sha256:${'a'.repeat(64)}`;
+    const motionManifest = {
+      schemaVersion: 2,
+      baseBundleId: bundleId,
+      transactions: [],
+      controlManifest: {},
+      responsiveManifest: {},
+      runtimeFingerprint: fingerprint,
+    };
+    sqlMock._results = [[{
+      id: 'snap-native',
+      html: null,
+      design_md: null,
+      screenshot_url: 'https://images.test/native.png',
+      source: 'native-edit',
+      native_bundle_id: bundleId,
+      motion_manifest: motionManifest,
+      motion_manifest_version: 2,
+      native_bundle_runtime_fingerprint: fingerprint,
+    }], []];
+
+    const res = await POST(post({ snapshotId: 'snap-native' }), params);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json).toMatchObject({
+      snapshot_id: 'snap-native',
+      html: null,
+      native_bundle_id: bundleId,
+      motion_manifest_version: 2,
+      motion_manifest: motionManifest,
+    });
   });
 });

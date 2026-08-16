@@ -5,6 +5,7 @@ import { InsufficientCreditsError, OperationInProgressError } from '../../../../
 import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
 import { reconstructSiteNode } from '../../../../../lib/deferred-reconstruction.js';
 import { shouldReconstructForAction } from '../../../../../lib/reconstruction-policy.js';
+import { canUseCloneEdit } from '../../../../../lib/clone-edit-access.js';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -16,13 +17,22 @@ export const maxDuration = 300;
 export async function POST(request, { params }) {
   const { user, error } = await requireUser(request);
   if (error) return error;
+  if (!canUseCloneEdit(user?.plan)) {
+    return NextResponse.json(
+      { error: 'paid_plan_required', feature: 'clone_edit' },
+      { status: 403 },
+    );
+  }
 
-  const { id } = await params;
-  const sql = await db();
   // The client (canvas-api.reconstructNode) sends an Idempotency-Key; read it so a
   // retry of a lost-response reconstruction dedups instead of charging twice
   // (Sol audit #2 — this route was silently dropping the ticket).
-  const idemKey = request.headers.get('idempotency-key') || null;
+  const idemKey = request.headers.get('idempotency-key');
+  if (typeof idemKey !== 'string' || !idemKey.trim()) {
+    return NextResponse.json({ error: 'idempotency_key_required' }, { status: 400 });
+  }
+  const { id } = await params;
+  const sql = await db();
 
   const [node] = await sql`
     SELECT n.id, n.kind, n.meta, n.board_id, n.origin_url,
@@ -55,8 +65,16 @@ export async function POST(request, { params }) {
   if (!rate.allowed) return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
 
   try {
-    const result = await reconstructSiteNode({ sql, userId: user.id, node, reason: 'edit', idemKey });
-    return NextResponse.json({ ...result, snapshotSource: 'reconstruct', node: { id: node.id } });
+    const result = await reconstructSiteNode({
+      sql,
+      userId: user.id,
+      node,
+      reason: 'edit',
+      idemKey: idemKey.trim(),
+      op: 'clone.edit',
+    });
+    const snapshotSource = result.kind === 'native' ? 'native-bundle' : 'reconstruct';
+    return NextResponse.json({ ...result, snapshotSource, node: { id: node.id } });
   } catch (e) {
     if (e instanceof InsufficientCreditsError) {
       return NextResponse.json({ error: 'insufficient_credits', estimate: e.estimate, balance: e.balance }, { status: 402 });
@@ -65,7 +83,19 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: 'in_progress' }, { status: 409 });
     }
     if (e?.code === 'no_output') return NextResponse.json({ error: 'no_output' }, { status: 502 });
+    if (['control_conversion_timeout', 'provider_timeout'].includes(e?.code)) {
+      return NextResponse.json({ error: 'conversion_timeout' }, { status: 504 });
+    }
+    if (['provider_unavailable', 'validator_unavailable'].includes(e?.code)) {
+      return NextResponse.json({ error: 'conversion_temporarily_unavailable' }, { status: 503 });
+    }
+    if (e?.code === 'reconstruction_snapshot_changed') {
+      return NextResponse.json({ error: 'snapshot_changed' }, { status: 409 });
+    }
+    if (['provider_cost_ceiling', 'structured_output_invalid', 'invalid_control_manifest'].includes(e?.code)) {
+      return NextResponse.json({ error: 'control_generation_failed' }, { status: 502 });
+    }
     console.error('reconstruct error', e);
-    return NextResponse.json({ error: 'reconstruct_failed', detail: String(e?.message || e) }, { status: 502 });
+    return NextResponse.json({ error: 'reconstruct_failed' }, { status: 502 });
   }
 }

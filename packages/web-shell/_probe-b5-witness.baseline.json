@@ -1,0 +1,723 @@
+{
+  "referencia": {
+    "negotiatedTrack": true,
+    "trajA": [
+      0,
+      75,
+      50,
+      25,
+      100
+    ],
+    "trajB": [
+      0,
+      75,
+      50,
+      25,
+      100
+    ],
+    "temporal": {
+      "totalTime": 1.5,
+      "progress": 0.5,
+      "iteration": 2,
+      "reversed": false
+    },
+    "tickMinus": {
+      "a": 45,
+      "b": 45
+    },
+    "tickPlus": {
+      "a": 55,
+      "b": 55
+    },
+    "sweep": {
+      "onRepeat": 2,
+      "onUpdate": 12,
+      "onComplete": 1
+    }
+  },
+  "principal": {
+    "published": {
+      "writeModel": "absolute",
+      "perTargetAvailable": true,
+      "perTargetWritable": true
+    },
+    "tx1": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterOverride": {
+      "trajA": [
+        0,
+        120,
+        80,
+        40,
+        160
+      ],
+      "trajB": [
+        0,
+        75,
+        50,
+        25,
+        100
+      ],
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      },
+      "parkedRender": {
+        "a": 80,
+        "b": 50
+      },
+      "tickMinus": {
+        "a": 72,
+        "b": 45
+      },
+      "tickPlus": {
+        "a": 88,
+        "b": 55
+      },
+      "varsXType": "function"
+    },
+    "tick1": {
+      "totalTime": 1.6,
+      "progress": 0.6,
+      "iteration": 2,
+      "reversed": false
+    },
+    "tx2": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "identidadeMantida": true,
+    "afterSecond": {
+      "trajA": [
+        0,
+        120,
+        80,
+        40,
+        160
+      ],
+      "trajB": [
+        0,
+        105,
+        70,
+        35,
+        140
+      ]
+    },
+    "rbB": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "group": {
+      "applied": true,
+      "error": null
+    },
+    "afterGroup": {
+      "trajA": [
+        0,
+        120,
+        80,
+        40,
+        160
+      ],
+      "trajB": [
+        0,
+        90,
+        60,
+        30,
+        120
+      ],
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      }
+    },
+    "reexposure": {
+      "writeModel": "absolute",
+      "sourceValue": 120,
+      "writable": true,
+      "states": [
+        {
+          "elementId": "el-1oz6a1p",
+          "intent": "override",
+          "value": 160
+        },
+        {
+          "elementId": "el-1o57gys",
+          "intent": "none",
+          "value": null
+        }
+      ]
+    },
+    "rbA": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterUndo": {
+      "trajA": [
+        0,
+        90,
+        60,
+        30,
+        120
+      ],
+      "trajB": [
+        0,
+        90,
+        60,
+        30,
+        120
+      ],
+      "varsXType": "number",
+      "varsX": 120
+    },
+    "redo": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterRedo": {
+      "trajA": [
+        0,
+        120,
+        80,
+        40,
+        160
+      ],
+      "trajB": [
+        0,
+        90,
+        60,
+        30,
+        120
+      ]
+    },
+    "clear": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterRedoClear": {
+      "trajA": [
+        0,
+        90,
+        60,
+        30,
+        120
+      ],
+      "trajB": [
+        0,
+        90,
+        60,
+        30,
+        120
+      ],
+      "varsX": 120,
+      "varsXType": "number",
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      }
+    }
+  },
+  "matrizN1": {
+    "perTargetAvailable": true,
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "after": {
+      "trajA": [
+        0,
+        80,
+        160,
+        80,
+        160
+      ],
+      "trajB": [
+        0,
+        50,
+        100,
+        50,
+        100
+      ],
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      }
+    },
+    "rb": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterUndo": {
+      "trajA": [
+        0,
+        50,
+        100,
+        50,
+        100
+      ],
+      "varsX": 100,
+      "varsXType": "number"
+    }
+  },
+  "matrizN5": {
+    "perTargetAvailable": true,
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "after": {
+      "trajA": [
+        0,
+        80,
+        160,
+        80,
+        160
+      ],
+      "trajB": [
+        0,
+        50,
+        100,
+        50,
+        100
+      ],
+      "temporal": {
+        "totalTime": 4.2,
+        "progress": 0.2,
+        "iteration": 5,
+        "reversed": false
+      }
+    },
+    "rb": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterUndo": {
+      "trajA": [
+        0,
+        50,
+        100,
+        50,
+        100
+      ],
+      "varsX": 100,
+      "varsXType": "number"
+    }
+  },
+  "fronteiras": {
+    "tx1": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "atBoundary": {
+      "temporal": {
+        "totalTime": 2,
+        "progress": 1,
+        "iteration": 2,
+        "reversed": false
+      },
+      "render": {
+        "a": 160,
+        "b": 100
+      }
+    },
+    "tx2": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "atEnd": {
+      "temporal": {
+        "totalTime": 3,
+        "progress": 1,
+        "iteration": 3,
+        "reversed": false
+      },
+      "render": {
+        "a": 180,
+        "b": 100
+      }
+    },
+    "tx3": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "atZero": {
+      "temporal": {
+        "totalTime": 0,
+        "progress": 0,
+        "iteration": 1,
+        "reversed": false
+      },
+      "render": {
+        "a": 0,
+        "b": 0
+      },
+      "trajA": [
+        0,
+        150,
+        100,
+        50,
+        200
+      ],
+      "trajB": [
+        0,
+        75,
+        50,
+        25,
+        100
+      ]
+    }
+  },
+  "running": {
+    "wasPlaying": true,
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "stillPlaying": true,
+    "after": {
+      "trajA": [
+        0,
+        120,
+        80,
+        40,
+        160
+      ],
+      "trajB": [
+        0,
+        75,
+        50,
+        25,
+        100
+      ],
+      "varsXType": "function",
+      "totalTimeAdvanced": true
+    }
+  },
+  "callbacks": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "sweep": {
+      "onRepeat": 2,
+      "onUpdate": 12,
+      "onComplete": 1
+    }
+  },
+  "tampering": {
+    "tx1": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "editRefused": {
+      "committed": false,
+      "ack": {
+        "type": "transaction-rejected",
+        "code": "unsupported_patch"
+      }
+    },
+    "groupRefused": {
+      "applied": false,
+      "error": "This animation's overrides were changed by the page — reselect the layer to edit them again."
+    }
+  },
+  "sensibilidade": {
+    "rawScalar": {
+      "trajA": [
+        50,
+        132.5,
+        105,
+        77.5,
+        160
+      ],
+      "trajB": [
+        50,
+        132.5,
+        105,
+        77.5,
+        160
+      ]
+    }
+  },
+  "sensibilidadeInvalidate": {
+    "corrupted": {
+      "renderParked": {
+        "a": 105,
+        "b": 75
+      },
+      "renderStart": {
+        "a": 50,
+        "b": 50
+      }
+    }
+  },
+  "boundaries": {
+    "durationInfinity": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides need a finite animation duration."
+    },
+    "durationNormalizedInfinity": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides need a finite animation duration."
+    },
+    "durationOverflow": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides need a finite animation duration."
+    },
+    "infinito": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides are not available on endlessly repeating animations."
+    },
+    "infinityAutoral": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides are not available on endlessly repeating animations."
+    },
+    "fracionario": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides need a whole-number repeat count."
+    },
+    "repeatDelaySetter": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides on animations with a repeat delay are not supported yet."
+    },
+    "repeatRefresh": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "This animation re-rolls its values on each repeat — per-target overrides are not available."
+    },
+    "yoyoEase": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "This animation changes its easing between legs — per-target overrides are not available."
+    },
+    "yoyoSemRepeat": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides on yoyo animations without repeats are not supported yet."
+    },
+    "nestedTimeline": {
+      "perTargetPublished": false,
+      "applied": false,
+      "error": "Per-target overrides inside timelines are not supported yet."
+    }
+  },
+  "timingEDrift": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "loopPatch": {
+      "applied": false,
+      "error": "This timing change would break the per-target overrides on this animation — reset them first."
+    },
+    "afterLoop": {
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      },
+      "render": {
+        "a": 80,
+        "b": 50
+      },
+      "repeat": 2
+    },
+    "delayPatch": {
+      "applied": false,
+      "error": "This timing change would break the per-target overrides on this animation — reset them first."
+    },
+    "afterDelay": {
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      },
+      "render": {
+        "a": 80,
+        "b": 50
+      },
+      "repeatDelay": 0
+    },
+    "durationPatch": {
+      "applied": false,
+      "error": "This timing change would break the per-target overrides on this animation — reset them first."
+    },
+    "afterDuration": {
+      "temporal": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "iteration": 2,
+        "reversed": false
+      },
+      "render": {
+        "a": 80,
+        "b": 50
+      },
+      "duration": 1
+    },
+    "wrapperIntact": true,
+    "drift": {
+      "available": true,
+      "writable": false
+    },
+    "writeRefused": {
+      "applied": false,
+      "error": "Per-target overrides are not available on endlessly repeating animations."
+    },
+    "clear": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "afterClear": {
+      "varsX": 100,
+      "varsXType": "number"
+    }
+  },
+  "clockDrift": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "durationZero": {
+      "available": false,
+      "clear": {
+        "applied": false,
+        "error": "This animation's timing cannot be read safely — per-target overrides are not available."
+      }
+    },
+    "negativeDelay": {
+      "acceptedBySetter": true,
+      "available": false,
+      "clear": {
+        "applied": false,
+        "error": "This animation's timing cannot be read safely — per-target overrides are not available."
+      }
+    },
+    "nanClock": {
+      "sticks": true,
+      "write": {
+        "applied": false,
+        "error": "This animation's timing cannot be read safely — per-target overrides are not available."
+      },
+      "clear": {
+        "applied": false,
+        "error": "This animation's timing cannot be read safely — per-target overrides are not available."
+      },
+      "wrapperIntact": true
+    },
+    "recovered": {
+      "available": true,
+      "clear": {
+        "committed": true,
+        "ack": {
+          "type": "transaction-committed",
+          "code": null
+        }
+      },
+      "varsXType": "number"
+    }
+  },
+  "nanPublication": {
+    "nanSurvivedSelection": true,
+    "trackPresent": true,
+    "perTargetAbsent": true,
+    "write": {
+      "applied": false,
+      "error": "This animation's timing cannot be read safely — per-target overrides are not available."
+    }
+  },
+  "adaptiveDrift": {
+    "tx": {
+      "committed": true,
+      "ack": {
+        "type": "transaction-committed",
+        "code": null
+      }
+    },
+    "published": {
+      "available": false,
+      "writable": false,
+      "statesPresent": true
+    },
+    "clearRefused": {
+      "applied": false,
+      "error": "This animation re-rolls its values on each repeat — per-target overrides are not available."
+    }
+  }
+}

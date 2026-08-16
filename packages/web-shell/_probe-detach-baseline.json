@@ -1,0 +1,301 @@
+{
+  "positivo-plain-parked-0": {
+    "erro": null,
+    "alvoAntes": 0,
+    "alvoDepois": 0,
+    "irmaoAntes": 0,
+    "irmaoDepois": 0,
+    "achouClone": true,
+    "clonePausado": true,
+    "cloneDe": 0,
+    "cloneAte": 100
+  },
+  "positivo-plain-parked-0.5": {
+    "erro": null,
+    "alvoAntes": 75,
+    "alvoDepois": 93.75,
+    "irmaoAntes": 75,
+    "irmaoDepois": 75,
+    "achouClone": true,
+    "clonePausado": true,
+    "cloneDe": 75,
+    "cloneAte": 100
+  },
+  "positivo-plain-parked-1": {
+    "erro": null,
+    "alvoAntes": 100,
+    "alvoDepois": 100,
+    "irmaoAntes": 100,
+    "irmaoDepois": 100,
+    "achouClone": true,
+    "clonePausado": true,
+    "cloneDe": 100,
+    "cloneAte": 100
+  },
+  "positivo-stagger-parked-0.5": {
+    "erro": null,
+    "alvoAntes": 99.75,
+    "alvoDepois": 99.9375,
+    "irmaoAntes": 87.75,
+    "irmaoDepois": 87.75,
+    "achouClone": true,
+    "clonePausado": true,
+    "cloneDe": 99.75,
+    "cloneAte": 100
+  },
+  "positivo-stagger-parked-0": {
+    "erro": null,
+    "alvoAntes": 0,
+    "alvoDepois": 0,
+    "irmaoAntes": 0,
+    "irmaoDepois": 0,
+    "achouClone": true,
+    "clonePausado": true,
+    "cloneDe": 0,
+    "cloneAte": 100
+  },
+  "positivo-stagger-barra-b": {
+    "erro": null,
+    "alvoAntes": 87.75,
+    "alvoDepois": 96.9375,
+    "irmaoAntes": 99.75,
+    "irmaoDepois": 99.75,
+    "achouClone": true,
+    "clonePausado": true,
+    "cloneDe": 87.75,
+    "cloneAte": 100
+  },
+  "positivo-stagger-barra-c": {
+    "erro": null,
+    "alvoAntes": 57.75,
+    "alvoDepois": 89.4375,
+    "irmaoAntes": 99.75,
+    "irmaoDepois": 99.75,
+    "achouClone": true,
+    "clonePausado": true,
+    "cloneDe": 57.75,
+    "cloneAte": 100
+  },
+  "positivo-stagger-barra-d": {
+    "erro": null,
+    "alvoAntes": 9.75,
+    "alvoDepois": 77.4375,
+    "irmaoAntes": 99.75,
+    "irmaoDepois": 99.75,
+    "achouClone": true,
+    "clonePausado": true,
+    "cloneDe": 9.75,
+    "cloneAte": 100
+  },
+  "negativo-independencia-apos-detach": {
+    "erro": null,
+    "cloneMoveOAlvo": true,
+    "irmaoImuneAoClone": true,
+    "alvoImuneAoCompartilhado": true,
+    "compartilhadoAindaMoveOIrmao": true
+  },
+  "controle-selecao-sozinha-yoyo": {
+    "alvoAntes": 93.75,
+    "alvoDepois": 93.75,
+    "irmaoAntes": 93.75,
+    "irmaoDepois": 93.75,
+    "selecaoMoveuAlgo": false
+  },
+  "negativo-keyframes-array-rebobina-certo": {
+    "erro": null,
+    "alvoAntes": 45,
+    "alvoYAntes": 0,
+    "alvoDepois": 69.75,
+    "irmaoAntes": 45,
+    "irmaoDepois": 45,
+    "achouClone": true,
+    "cloneXem0": 45,
+    "cloneYem0": 0,
+    "saltoDoAlvo": 24.75
+  },
+  "negativo-linha-multi-alvo": {
+    "erro": null,
+    "frag1Antes": 96,
+    "frag1Depois": 99.51,
+    "frag2Antes": 75,
+    "frag2Depois": 89.4375,
+    "foraAntes": 36,
+    "foraDepois": 36,
+    "salto1": 3.510000000000005,
+    "salto2": 14.4375
+  },
+  "negativo-repeat-estado-temporal": {
+    "erro": null,
+    "ttDepois": 1.5,
+    "iteracaoDepois": 2,
+    "revertidoDepois": false,
+    "irmaoNoProximoTick": 84
+  },
+  "negativo-yoyo-direcao-no-proximo-tick": {
+    "erro": null,
+    "irmaoAntes": 75,
+    "ttDepois": 1.5,
+    "irmaoNoProximoTick": 64,
+    "irmaoRecuou": true
+  },
+  "negativo-misto-css-e-attr": {
+    "erro": null,
+    "attrAntes": "46",
+    "attrDepois": "75.7",
+    "alvoAntes": 0,
+    "alvoDepois": 0,
+    "irmaoAntes": 0,
+    "irmaoDepois": 0,
+    "saltoDoAlvo": 0,
+    "saltoDoAtributo": 29.700000000000003
+  },
+  "negativo-repeat-infinito": {
+    "erro": null,
+    "alvoAntes": 75,
+    "alvoDepois": 93.75,
+    "irmaoAntes": 75,
+    "irmaoDepois": 75,
+    "achouClone": true,
+    "saltoDoAlvo": 18.75
+  },
+  "negativo-duracao-zero": {
+    "erro": null,
+    "alvoAntes": 100,
+    "alvoDepois": 100,
+    "irmaoAntes": 100,
+    "irmaoDepois": 100,
+    "achouClone": true,
+    "saltoDoAlvo": 0
+  },
+  "negativo-undo-relink-plain": {
+    "erroDetach": null,
+    "erroRelink": null,
+    "alvoAposRelink": 100,
+    "irmaoAposRelink": 75,
+    "alvoNoFim": 100,
+    "irmaoNoFim": 100,
+    "voltouAoCompartilhado": true
+  },
+  "negativo-undo-relink-stagger-recusa": {
+    "erroDetach": null,
+    "erroRelink": "patch-rejected"
+  },
+  "negativo-from-parked-0.5": {
+    "erro": null,
+    "alvoAntes": 25,
+    "alvoDepois": 43.75,
+    "irmaoAntes": 25,
+    "irmaoDepois": 25,
+    "achouClone": true,
+    "cloneDe": 100,
+    "cloneAte": 25
+  },
+  "negativo-keyframes-runBackwards": {
+    "erro": null,
+    "alvoAntes": 50,
+    "alvoDepois": 75,
+    "irmaoAntes": 50,
+    "irmaoDepois": 50,
+    "achouClone": true,
+    "cloneDe": 100,
+    "cloneAte": 50
+  },
+  "negativo-clearProps-estilo-posterior-do-irmao": {
+    "erro": null,
+    "irmaoYAntes": 33,
+    "irmaoYDepois": 33,
+    "irmaoBgAntes": "rgb(1, 2, 3)",
+    "irmaoBgDepois": "rgb(1, 2, 3)",
+    "estiloDoIrmaoSobreviveu": true
+  },
+  "negativo-duracao-funcional": {
+    "erro": null,
+    "alvoAntes": 100,
+    "alvoDepois": 100,
+    "irmaoAntes": 75,
+    "irmaoDepois": 75,
+    "achouClone": true,
+    "cloneDe": 100,
+    "cloneAte": 100
+  },
+  "negativo-delay-funcional": {
+    "erro": null,
+    "alvoAntes": 93.75,
+    "alvoDepois": 98.4375,
+    "irmaoAntes": 43.75,
+    "irmaoDepois": 43.75,
+    "achouClone": true,
+    "cloneDe": 93.75,
+    "cloneAte": 100
+  },
+  "negativo-callbacks-top-level": {
+    "erro": null,
+    "alvoAntes": 75,
+    "alvoDepois": 93.75,
+    "irmaoAntes": 75,
+    "irmaoDepois": 75,
+    "achouClone": true,
+    "callbacksAntes": {
+      "start": 0,
+      "update": 0,
+      "complete": 0,
+      "repeat": 0
+    },
+    "callbacksDepois": {
+      "start": 0,
+      "update": 0,
+      "complete": 0,
+      "repeat": 0
+    },
+    "callbacksDispararamNoDetach": false
+  },
+  "negativo-ease-funcional-com-estado": {
+    "erro": null,
+    "alvoAntes": 25,
+    "alvoDepois": 43.75,
+    "irmaoAntes": 25,
+    "irmaoDepois": 25,
+    "achouClone": true,
+    "cloneDe": 25,
+    "cloneAte": 100,
+    "easeChamadasNoDetach": 10
+  },
+  "negativo-yoyoEase": {
+    "erro": null,
+    "alvoAntes": 93.75,
+    "alvoDepois": 99.6094,
+    "irmaoAntes": 93.75,
+    "irmaoDepois": 93.75,
+    "achouClone": true,
+    "cloneDe": 93.75,
+    "cloneAte": 100
+  },
+  "negativo-timeline-pai": {
+    "erro": null,
+    "alvoAntes": 75,
+    "alvoDepois": 93.75,
+    "irmaoAntes": 75,
+    "irmaoDepois": 75,
+    "achouClone": true,
+    "cloneDe": 93.75,
+    "cloneAte": 93.75,
+    "paiProgresso": 0.5
+  },
+  "negativo-reverse": {
+    "erro": null,
+    "alvoAntes": 75,
+    "alvoDepois": 93.75,
+    "irmaoAntes": 75,
+    "irmaoDepois": 75,
+    "achouClone": true,
+    "revertidoAntes": true,
+    "revertidoDepois": true
+  },
+  "negativo-reproducao-ativa": {
+    "erro": null,
+    "pausadoAntes": false,
+    "pausadoDepois": false,
+    "achouClone": true,
+    "clonePausado": true
+  }
+}

@@ -1,0 +1,397 @@
+{
+  "controle-tween-simples": {
+    "editado": {
+      "antes": {
+        "totalTime": 0.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "edicao": {
+        "aplicou": true,
+        "erro": null,
+        "writeModelUsado": "absolute"
+      },
+      "depois": {
+        "totalTime": 0.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 120
+      },
+      "tick1": {
+        "totalTime": 0.6,
+        "progress": 0.6,
+        "reversed": false,
+        "alvoX": 134.4
+      },
+      "tick2": {
+        "totalTime": 0.7,
+        "progress": 0.7,
+        "reversed": false,
+        "alvoX": 145.6
+      },
+      "endRenderizado": 160,
+      "loopBase": null
+    },
+    "referencia": {
+      "antes": {
+        "totalTime": 0.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "edicao": null,
+      "depois": {
+        "totalTime": 0.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "tick1": {
+        "totalTime": 0.6,
+        "progress": 0.6,
+        "reversed": false,
+        "alvoX": 84
+      },
+      "tick2": {
+        "totalTime": 0.7,
+        "progress": 0.7,
+        "reversed": false,
+        "alvoX": 91
+      },
+      "endRenderizado": null,
+      "loopBase": null
+    }
+  },
+  "repeat2-na-2a-iteracao": {
+    "editado": {
+      "antes": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "edicao": {
+        "aplicou": true,
+        "erro": null,
+        "writeModelUsado": "absolute"
+      },
+      "depois": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 120
+      },
+      "tick1": {
+        "totalTime": 1.6,
+        "progress": 0.6,
+        "reversed": false,
+        "alvoX": 134.4
+      },
+      "tick2": {
+        "totalTime": 1.7,
+        "progress": 0.7,
+        "reversed": false,
+        "alvoX": 145.6
+      },
+      "endRenderizado": 160,
+      "loopBase": null
+    },
+    "referencia": {
+      "antes": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "edicao": null,
+      "depois": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "tick1": {
+        "totalTime": 1.6,
+        "progress": 0.6,
+        "reversed": false,
+        "alvoX": 84
+      },
+      "tick2": {
+        "totalTime": 1.7,
+        "progress": 0.7,
+        "reversed": false,
+        "alvoX": 91
+      },
+      "endRenderizado": null,
+      "loopBase": null
+    }
+  },
+  "yoyo-na-perna-de-volta": {
+    "editado": {
+      "antes": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "edicao": {
+        "aplicou": true,
+        "erro": null,
+        "writeModelUsado": "absolute"
+      },
+      "depois": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 120
+      },
+      "tick1": {
+        "totalTime": 1.6,
+        "progress": 0.4,
+        "reversed": false,
+        "alvoX": 102.4
+      },
+      "tick2": {
+        "totalTime": 1.7,
+        "progress": 0.3,
+        "reversed": false,
+        "alvoX": 81.6
+      },
+      "endRenderizado": 160,
+      "loopBase": null
+    },
+    "referencia": {
+      "antes": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "edicao": null,
+      "depois": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "tick1": {
+        "totalTime": 1.6,
+        "progress": 0.4,
+        "reversed": false,
+        "alvoX": 64
+      },
+      "tick2": {
+        "totalTime": 1.7,
+        "progress": 0.3,
+        "reversed": false,
+        "alvoX": 51
+      },
+      "endRenderizado": null,
+      "loopBase": null
+    }
+  },
+  "repeat-infinito-3a-volta": {
+    "editado": {
+      "antes": {
+        "totalTime": 2.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "edicao": {
+        "aplicou": true,
+        "erro": null,
+        "writeModelUsado": "absolute"
+      },
+      "depois": {
+        "totalTime": 2.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 120
+      },
+      "tick1": {
+        "totalTime": 2.6,
+        "progress": 0.6,
+        "reversed": false,
+        "alvoX": 134.4
+      },
+      "tick2": {
+        "totalTime": 2.7,
+        "progress": 0.7,
+        "reversed": false,
+        "alvoX": 145.6
+      },
+      "endRenderizado": 160,
+      "loopBase": null
+    },
+    "referencia": {
+      "antes": {
+        "totalTime": 2.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "edicao": null,
+      "depois": {
+        "totalTime": 2.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "tick1": {
+        "totalTime": 2.6,
+        "progress": 0.6,
+        "reversed": false,
+        "alvoX": 84
+      },
+      "tick2": {
+        "totalTime": 2.7,
+        "progress": 0.7,
+        "reversed": false,
+        "alvoX": 91
+      },
+      "endRenderizado": null,
+      "loopBase": null
+    }
+  },
+  "repeat-infinito-additive-base": {
+    "editado": {
+      "antes": {
+        "totalTime": 2.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 50
+      },
+      "edicao": {
+        "aplicou": true,
+        "erro": null,
+        "writeModelUsado": "additive-base"
+      },
+      "depois": {
+        "totalTime": 2.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 50
+      },
+      "tick1": {
+        "totalTime": 2.6,
+        "progress": 0.6,
+        "reversed": false,
+        "alvoX": 60
+      },
+      "tick2": {
+        "totalTime": 2.7,
+        "progress": 0.7,
+        "reversed": false,
+        "alvoX": 70
+      },
+      "endRenderizado": null,
+      "loopBase": {
+        "frameVisivel": 160,
+        "varsX": "210",
+        "startAtX": "110",
+        "rollback": {
+          "aplicou": true,
+          "erro": null,
+          "frameVisivel": 50,
+          "varsX": "100",
+          "startAtX": "0"
+        }
+      }
+    },
+    "referencia": {
+      "antes": {
+        "totalTime": 2.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 50
+      },
+      "edicao": null,
+      "depois": {
+        "totalTime": 2.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 50
+      },
+      "tick1": {
+        "totalTime": 2.6,
+        "progress": 0.6,
+        "reversed": false,
+        "alvoX": 60
+      },
+      "tick2": {
+        "totalTime": 2.7,
+        "progress": 0.7,
+        "reversed": false,
+        "alvoX": 70
+      },
+      "endRenderizado": null,
+      "loopBase": null
+    }
+  },
+  "adaptativa-yoyoEase": {
+    "editado": {
+      "antes": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "edicao": {
+        "aplicou": true,
+        "erro": null,
+        "writeModelUsado": "absolute"
+      },
+      "depois": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 120
+      },
+      "tick1": {
+        "totalTime": 1.6,
+        "progress": 0.4,
+        "reversed": false,
+        "alvoX": 119.04
+      },
+      "tick2": {
+        "totalTime": 1.7,
+        "progress": 0.3,
+        "reversed": false,
+        "alvoX": 112.32
+      },
+      "endRenderizado": 160,
+      "loopBase": null
+    },
+    "referencia": {
+      "antes": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "edicao": null,
+      "depois": {
+        "totalTime": 1.5,
+        "progress": 0.5,
+        "reversed": false,
+        "alvoX": 75
+      },
+      "tick1": {
+        "totalTime": 1.6,
+        "progress": 0.4,
+        "reversed": false,
+        "alvoX": 74.4
+      },
+      "tick2": {
+        "totalTime": 1.7,
+        "progress": 0.3,
+        "reversed": false,
+        "alvoX": 70.2
+      },
+      "endRenderizado": null,
+      "loopBase": null
+    }
+  }
+}

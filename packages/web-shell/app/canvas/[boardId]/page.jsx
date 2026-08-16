@@ -6,8 +6,10 @@ import CanvasClient from '../../../components/CanvasClient.jsx';
 
 export const dynamic = 'force-dynamic';
 
-export default async function CanvasBoardPage({ params }) {
+export default async function CanvasBoardPage({ params, searchParams }) {
   const { boardId } = await params;
+  const query = await searchParams;
+  const initialFocusNodeId = typeof query?.focusNode === 'string' ? query.focusNode : null;
   const h = await headers();
   const fakeReq = { headers: { get: (k) => h.get(k) } };
   const user = await getAuthUser(fakeReq);
@@ -19,7 +21,9 @@ export default async function CanvasBoardPage({ params }) {
 
   const nodes = await sql`
     SELECT n.*, s.html AS current_html, s.design_md AS current_design_md, s.screenshot_url AS current_screenshot,
-           s.source AS current_snapshot_source
+           s.source AS current_snapshot_source,
+           s.native_bundle_id AS current_native_bundle_id,
+           s.motion_manifest_version AS current_motion_manifest_version
       FROM nodes n
       LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
      WHERE n.board_id = ${boardId}
@@ -32,7 +36,14 @@ export default async function CanvasBoardPage({ params }) {
       board={board}
       initialNodes={nodes}
       initialEdges={edges}
-      user={{ id: user.id, email: user.email, name: user.name || null, plan: user.plan || 'free' }}
+      initialFocusNodeId={initialFocusNodeId}
+      user={{
+        id: user.id,
+        email: user.email,
+        name: user.name || null,
+        plan: user.plan || 'free',
+        role: user.role || 'member',
+      }}
     />
   );
 }

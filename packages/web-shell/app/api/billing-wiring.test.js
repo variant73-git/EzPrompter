@@ -27,7 +27,7 @@ const settleMock = vi.fn(async ({ chargeCredits }) => ({ balanceAfter: 500 - cha
 
 vi.mock('../../lib/db.js', () => ({ db: async () => currentSql, sql: (...a) => currentSql(...a) }));
 vi.mock('../../lib/auth.js', () => ({
-  requireUser: async () => ({ user: { id: 1 }, error: null }),
+  requireUser: async () => ({ user: { id: 1, plan: 'pro' }, error: null }),
   hashPassword: async () => 'hashed',
   createToken: () => 'tok',
   sessionCookieHeader: () => 'uncraft_session=tok; Path=/',
@@ -35,6 +35,12 @@ vi.mock('../../lib/auth.js', () => ({
 vi.mock('../../lib/run-flow.js', () => ({ runCompose: vi.fn(async () => ({ html: '<html>composed</html>' })) }));
 vi.mock('../../lib/reconstruct.js', () => ({
   reconstructPage: vi.fn(async () => ({ html: '<html>rebuilt</html>', screenshotDataUrl: null })),
+}));
+// O Edit passou a usar o produtor NATIVO, que abre navegador e registra bundle.
+// Este arquivo testa a COBRANÇA, não qual produtor roda — sem o mock ele passaria
+// a depender de rede, Chromium e do store de bundles.
+vi.mock('../../lib/native-clone/capture-bundle.js', () => ({
+  captureNativeBundle: vi.fn(async () => ({ html: '<html>rebuilt</html>', screenshotDataUrl: null })),
 }));
 vi.mock('../../lib/billing/ledger.js', () => ({
   holdCredits: (...a) => holdMock(...a),
@@ -64,7 +70,10 @@ const { POST: signupPost } = await import('./auth/signup/route.js');
 const { grantCredits: grantMock } = await import('../../lib/billing/ledger.js');
 const { reconstructPage: reconstructPageMock } = await import('../../lib/reconstruct.js');
 
-const makeRequest = (body = {}) => ({ json: async () => body, headers: { get: () => null } });
+const makeRequest = (body = {}) => ({
+  json: async () => body,
+  headers: { get: (name) => name.toLowerCase() === 'idempotency-key' ? 'billing-wiring-operation' : null },
+});
 const runParams = { params: Promise.resolve({ id: 'node-1' }) };
 
 beforeEach(() => {
@@ -139,7 +148,12 @@ describe('POST /api/nodes/[id]/reconstruct billing wrapper (Task 15)', () => {
     const json = await res.json();
     expect(res.status).toBe(200);
     expect(json.ok).toBe(true);
-    expect(holdMock).toHaveBeenCalledWith(expect.objectContaining({ credits: 200 })); // reconstruct estimate
+    expect(holdMock).toHaveBeenCalledWith(expect.objectContaining({ credits: 275 }));
+    expect(settleMock).toHaveBeenCalledWith(expect.objectContaining({
+      holdCredits: 275,
+      chargeCredits: 275,
+      op: 'clone.edit',
+    }));
   });
 
   it('returns 402 when the hold fails', async () => {
@@ -150,7 +164,7 @@ describe('POST /api/nodes/[id]/reconstruct billing wrapper (Task 15)', () => {
     const res = await reconstructPost(makeRequest(), runParams);
     const json = await res.json();
     expect(res.status).toBe(402);
-    expect(json).toMatchObject({ error: 'insufficient_credits', estimate: 200, balance: 5 });
+    expect(json).toMatchObject({ error: 'insufficient_credits', estimate: 275, balance: 5 });
   });
 });
 

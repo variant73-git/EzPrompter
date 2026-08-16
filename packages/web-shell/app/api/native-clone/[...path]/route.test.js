@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GET } from './route.js';
+import { GET, isLocalMotionLabEnabled } from './route.js';
 
 let root;
 
@@ -31,5 +31,11 @@ describe('native clone bundle route', () => {
   it('still 404s when neither the decoded nor the encoded name exists', async () => {
     const response = await GET(null, { params: { path: ['assets', 'missing file.svg'] } });
     expect(response.status).toBe(404);
+  });
+
+  it('keeps this filesystem gateway explicit and unavailable in production', () => {
+    expect(isLocalMotionLabEnabled({ environment: 'test', configuredRoot: root })).toBe(true);
+    expect(isLocalMotionLabEnabled({ environment: 'production', configuredRoot: root })).toBe(false);
+    expect(isLocalMotionLabEnabled({ environment: 'development', configuredRoot: '' })).toBe(false);
   });
 });

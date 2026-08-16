@@ -1,6 +1,7 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { ContextMenu, useContextMenu } from './ContextMenu.jsx';
 import Link from 'next/link';
 import {
   AlignCenter,
@@ -20,6 +21,7 @@ import {
   Inspect,
   Layers,
   Link2,
+  Lock,
   Monitor,
   Move,
   MousePointer2,
@@ -40,47 +42,49 @@ import {
   X,
 } from 'lucide-react';
 import {
-  command,
-  createPatch,
-  invertPatch,
-  isRuntimeMessage,
-  removeRejectedPatch,
-  storageKey,
-} from '../../lib/motion-editor/protocol.js';
-import {
-  buildStripEditPatches,
   coerceMotionValue,
   motionCapabilityLabel,
   motionDriverLabel,
   motionPlaybackMode,
-  normalizeMotionClip,
+  trackKeyframeEditable,
 } from '../../lib/motion-editor/motion-ir.js';
-import { applyStaggerDelays, groupMotionClips } from '../../lib/motion-editor/motion-groups.js';
+import { groupMotionClips } from '../../lib/motion-editor/motion-groups.js';
 import { buildFramerExport } from '../../lib/motion-editor/framer-export.js';
+import {
+  MOTION_EDITOR_DEVICE_ORDER,
+  MOTION_EDITOR_DEVICES,
+} from '../../lib/motion-editor/devices.js';
+import {
+  decomposeTransform,
+  transformComponentValue,
+} from '../../lib/motion-editor/transform-components.js';
+import {
+  createLocalMotionPersistenceAdapter,
+  useNativeMotionController,
+} from './useNativeMotionController.js';
+import MotionOwnershipChoice from './MotionOwnershipChoice.jsx';
+import PropertyScopeButton from './PropertyScopeButton.jsx';
 import styles from './native-motion-editor.module.css';
 
 const SOURCE = '/api/native-clone/index.html';
 
-const DEVICES = {
-  desktop: { label: 'Desktop', width: 1440, height: 900, Icon: Monitor },
-  tablet: { label: 'Tablet', width: 768, height: 900, Icon: Tablet },
-  mobile: { label: 'Mobile', width: 390, height: 844, Icon: Smartphone },
-};
-
-const AUTO_KEYFRAME_PROPERTIES = new Set([
-  'backgroundColor', 'borderRadius', 'color', 'filter', 'fontSize', 'fontWeight',
-  'letterSpacing', 'lineHeight', 'opacity', 'transform', 'translate',
-]);
+const DEVICE_ICONS = Object.freeze({
+  desktop: Monitor,
+  tablet: Tablet,
+  mobile: Smartphone,
+});
 
 function animationProperty(property) {
   return String(property || '').replace(/-([a-z])/g, (_, character) => character.toUpperCase());
 }
 
-function patchValuesEqual(first, second) {
-  if (typeof first === 'object' || typeof second === 'object') {
-    try { return JSON.stringify(first) === JSON.stringify(second); } catch (_) { return false; }
+function readLabPreference(key, fallback, minimum, maximum) {
+  try {
+    const stored = Number(window.localStorage.getItem(key));
+    return Number.isFinite(stored) && stored >= minimum && stored <= maximum ? stored : fallback;
+  } catch (_) {
+    return fallback;
   }
-  return String(first ?? '') === String(second ?? '');
 }
 
 const EASING_PRESETS = {
@@ -99,16 +103,6 @@ function parseEasing(value) {
 
 function formatBezier(values) {
   return `cubic-bezier(${values.map((value) => Number(value).toFixed(2).replace(/\.00$/, '')).join(', ')})`;
-}
-
-function keyframeDescriptor(keyframe, offset = keyframe?.offset) {
-  if (!keyframe) return { offset: Number(offset) || 0, exists: false };
-  return {
-    offset: Number(offset) || 0,
-    value: String(keyframe.value ?? ''),
-    ...(keyframe.easing ? { easing: keyframe.easing } : {}),
-    exists: true,
-  };
 }
 
 function CubicBezierEditor({ keyframe, nextKeyframe, onCommit, onClose }) {
@@ -222,16 +216,115 @@ function KeyframeMarker({ state }) {
   return <Diamond className={styles.fieldKeyframe} data-state={state} aria-label={state === 'current' ? 'Keyframe at current time' : 'Animated property'} />;
 }
 
-function Field({ label, defaultValue, suffix, onCommit, type = 'text', disabled = false, keyframeState = null }) {
+function OwnershipIndicator({ label, ownership, onOpen }) {
+  if (ownership?.status !== 'ambiguous' && ownership?.status !== 'unsupported') return null;
+  // Unsupported = a writer exists but cannot be edited safely (gsap.from, keyframes
+  // tweens, code-only). The field is disabled; this indicator carries the reason and
+  // routes to Motion for the full explanation — never a chooser with no choice.
+  const locked = ownership.status === 'unsupported';
+  return (
+    <button
+      type="button"
+      className={styles.ownershipIndicator}
+      data-ownership-locked={locked || undefined}
+      aria-label={locked
+        ? `${label} is driven by an animation — open Motion for details`
+        : `Choose controlling motion for ${label}`}
+      title={locked
+        ? 'Driven by an animation this editor cannot change safely — open Motion for details'
+        : 'Multiple motions control this value'}
+      onPointerDown={(event) => event.preventDefault()}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpen?.();
+      }}
+    >
+      {locked ? <Lock aria-hidden="true" /> : <>
+        <Link2 aria-hidden="true" />
+        <span>{ownership.candidates.length}</span>
+      </>}
+    </button>
+  );
+}
+
+function ResponsiveScopeControl({
+  property,
+  label,
+  value,
+  binding,
+  scope,
+  device,
+  onRequest,
+}) {
+  if (!scope) return null;
+  return (
+    <PropertyScopeButton
+      property={property}
+      propertyKey={scope.propertyKey}
+      label={label}
+      value={value}
+      binding={binding}
+      device={device}
+      scope={scope}
+      onRequest={onRequest}
+    />
+  );
+}
+
+function Field({
+  label,
+  defaultValue,
+  suffix,
+  onCommit,
+  type = 'text',
+  disabled = false,
+  keyframeState = null,
+  ownership = null,
+  onOwnershipOpen,
+  property = null,
+  binding = null,
+  responsiveScope = null,
+  device = null,
+  onScopeRequest,
+}) {
+  const inputRef = useRef(null);
+  const effectiveValue = responsiveScope?.effectiveValue ?? defaultValue;
+  // ⚠️ O campo NÃO pode ser remontado enquanto está sendo digitado. Antes ele
+  // tinha `key={`${label}:${effectiveValue}`}`, e o editor recebe atualizações
+  // do site o tempo todo — a cada uma o valor mudava, a chave mudava, e o React
+  // destruía e recriava o input debaixo dos dedos do usuário, apagando o que
+  // ele tinha escrito antes de confirmar. Agora a chave é estável e o valor
+  // externo só é escrito quando o campo NÃO está com o foco.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el || document.activeElement === el) return;
+    const proximo = effectiveValue ?? '';
+    if (el.value !== String(proximo)) el.value = proximo;
+  }, [effectiveValue]);
+  if (responsiveScope?.relevant === false) return null;
   return (
     <label className={styles.field}>
-      <span className={styles.controlLabel}>{label}<KeyframeMarker state={keyframeState} /></span>
+      <span className={styles.controlLabel}>
+        <span className={styles.controlLabelText}>{label}</span>
+        <KeyframeMarker state={keyframeState} />
+        <OwnershipIndicator label={label} ownership={ownership} onOpen={onOwnershipOpen} />
+        <ResponsiveScopeControl
+          property={property}
+          label={label}
+          value={effectiveValue}
+          binding={binding}
+          scope={responsiveScope}
+          device={device}
+          onRequest={onScopeRequest}
+        />
+      </span>
       <span className={styles.fieldControl}>
         <input
-          key={`${label}:${defaultValue}`}
+          ref={inputRef}
           type={type}
-          defaultValue={defaultValue ?? ''}
-          disabled={disabled}
+          defaultValue={effectiveValue ?? ''}
+          disabled={disabled || responsiveScope?.mode === 'computed' || ownership?.status === 'unsupported'}
           onBlur={(event) => onCommit?.(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') event.currentTarget.blur();
@@ -243,12 +336,41 @@ function Field({ label, defaultValue, suffix, onCommit, type = 'text', disabled 
   );
 }
 
-function SelectField({ label, value, onCommit, children, disabled = false, keyframeState = null }) {
+function SelectField({
+  label,
+  value,
+  onCommit,
+  children,
+  disabled = false,
+  keyframeState = null,
+  ownership = null,
+  onOwnershipOpen,
+  property = null,
+  binding = null,
+  responsiveScope = null,
+  device = null,
+  onScopeRequest,
+}) {
+  if (responsiveScope?.relevant === false) return null;
+  const effectiveValue = responsiveScope?.effectiveValue ?? value;
   return (
     <label className={styles.field}>
-      <span className={styles.controlLabel}>{label}<KeyframeMarker state={keyframeState} /></span>
+      <span className={styles.controlLabel}>
+        <span className={styles.controlLabelText}>{label}</span>
+        <KeyframeMarker state={keyframeState} />
+        <OwnershipIndicator label={label} ownership={ownership} onOpen={onOwnershipOpen} />
+        <ResponsiveScopeControl
+          property={property}
+          label={label}
+          value={effectiveValue}
+          binding={binding}
+          scope={responsiveScope}
+          device={device}
+          onRequest={onScopeRequest}
+        />
+      </span>
       <span className={styles.fieldControl}>
-        <select disabled={disabled} value={value} onChange={(event) => onCommit(event.currentTarget.value)}>
+        <select disabled={disabled || responsiveScope?.mode === 'computed' || ownership?.status === 'unsupported'} value={effectiveValue} onChange={(event) => onCommit(event.currentTarget.value)}>
           {children}
         </select>
       </span>
@@ -271,21 +393,50 @@ function ToggleField({ label, checked, onCommit, disabled = false }) {
   );
 }
 
-function ColorField({ label, value, onCommit, keyframeState = null }) {
-  const safeValue = /^#[0-9a-f]{6}$/i.test(value || '') ? value : '#292926';
+function ColorField({
+  label,
+  value,
+  onCommit,
+  keyframeState = null,
+  ownership = null,
+  onOwnershipOpen,
+  property = null,
+  binding = null,
+  responsiveScope = null,
+  device = null,
+  onScopeRequest,
+}) {
+  if (responsiveScope?.relevant === false) return null;
+  const effectiveValue = responsiveScope?.effectiveValue ?? value;
+  const safeValue = /^#[0-9a-f]{6}$/i.test(effectiveValue || '') ? effectiveValue : '#292926';
   return (
     <label className={styles.field}>
-      <span className={styles.controlLabel}>{label}<KeyframeMarker state={keyframeState} /></span>
+      <span className={styles.controlLabel}>
+        <span className={styles.controlLabelText}>{label}</span>
+        <KeyframeMarker state={keyframeState} />
+        <OwnershipIndicator label={label} ownership={ownership} onOpen={onOwnershipOpen} />
+        <ResponsiveScopeControl
+          property={property}
+          label={label}
+          value={effectiveValue}
+          binding={binding}
+          scope={responsiveScope}
+          device={device}
+          onRequest={onScopeRequest}
+        />
+      </span>
       <span className={styles.colorControl}>
         <input
           key={`${label}:${safeValue}`}
           type="color"
           defaultValue={safeValue}
+          disabled={responsiveScope?.mode === 'computed' || ownership?.status === 'unsupported'}
           onBlur={(event) => onCommit?.(event.currentTarget.value)}
         />
         <input
-          key={`${label}:text:${value}`}
-          defaultValue={value || ''}
+          key={`${label}:text:${effectiveValue}`}
+          defaultValue={effectiveValue || ''}
+          disabled={responsiveScope?.mode === 'computed' || ownership?.status === 'unsupported'}
           onBlur={(event) => onCommit?.(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') event.currentTarget.blur();
@@ -296,15 +447,28 @@ function ColorField({ label, value, onCommit, keyframeState = null }) {
   );
 }
 
-function TextContentField({ selected, onCommit }) {
-  const [value, setValue] = useState(selected.text || '');
-  useEffect(() => setValue(selected.text || ''), [selected.id, selected.text]);
-  const changed = value !== (selected.text || '');
+function TextContentField({ selected, onCommit, responsiveScope, device, onScopeRequest }) {
+  const effectiveValue = responsiveScope?.effectiveValue ?? selected.text ?? '';
+  const [value, setValue] = useState(effectiveValue);
+  useEffect(() => setValue(effectiveValue), [effectiveValue, selected.id]);
+  if (responsiveScope?.relevant === false) return null;
+  const changed = value !== effectiveValue;
   return (
     <label className={styles.textField}>
-      <span className={styles.controlLabel}>Text</span>
+      <span className={styles.controlLabel}>
+        <span className={styles.controlLabelText}>Text</span>
+        <ResponsiveScopeControl
+          property="text"
+          label="Text"
+          value={effectiveValue}
+          binding={{ elementId: selected.id, kind: 'text' }}
+          scope={responsiveScope}
+          device={device}
+          onRequest={onScopeRequest}
+        />
+      </span>
       <span className={styles.textEditorControl}>
-        <textarea value={value} onChange={(event) => setValue(event.currentTarget.value)} />
+        <textarea disabled={responsiveScope?.mode === 'computed'} value={value} onChange={(event) => setValue(event.currentTarget.value)} />
         <button type="button" disabled={!changed} onClick={() => onCommit(value)}>Apply text</button>
       </span>
     </label>
@@ -370,11 +534,39 @@ function InspectorEmpty() {
   );
 }
 
-function PropertiesPanel({ selected, runtime, activeMotion, timelineOffset, onStyle, onText, onAttribute }) {
+export function PropertiesPanel({
+  selected,
+  runtime,
+  activeMotion,
+  timelineOffset,
+  propertyOwnership = {},
+  onOwnershipOpen,
+  onStyle,
+  onText,
+  onAttribute,
+  device = null,
+  responsiveScopeFor = null,
+  onScopeRequest,
+}) {
   if (!selected) return <DocumentProperties runtime={runtime} />;
   const stylesValue = selected.styles || {};
+  const transform = decomposeTransform(stylesValue.transform || 'none', stylesValue.transformOrigin || '50% 50%');
   const canEditText = selected.canEditText !== false && !['img', 'video', 'canvas', 'svg', 'section'].includes(selected.tag);
   const supportsTypography = canEditText || Boolean(selected.text);
+  const ownershipFor = (property) => propertyOwnership[animationProperty(property)] || null;
+  const scopeProps = (property, fallbackValue, binding = null) => ({
+    property,
+    binding,
+    responsiveScope: responsiveScopeFor?.(property, fallbackValue, binding) || null,
+    device,
+    onScopeRequest,
+  });
+  const styleBinding = (property) => ({ elementId: selected.id, kind: 'style', property });
+  const alignmentScope = responsiveScopeFor?.(
+    'textAlign',
+    stylesValue.textAlign,
+    styleBinding('text-align'),
+  ) || null;
   const keyframeState = (property) => {
     const normalized = animationProperty(property);
     const track = activeMotion?.tracks?.find((item) => animationProperty(item.property) === normalized);
@@ -386,12 +578,19 @@ function PropertiesPanel({ selected, runtime, activeMotion, timelineOffset, onSt
     <div className={styles.panelBody}>
       <InspectorSection title="Content" meta={selected.tag}>
         {canEditText && (
-          <TextContentField selected={selected} onCommit={onText} />
+          <TextContentField
+            selected={selected}
+            onCommit={onText}
+            responsiveScope={responsiveScopeFor?.('text', selected.text, { elementId: selected.id, kind: 'text' }) || null}
+            device={device}
+            onScopeRequest={onScopeRequest}
+          />
         )}
         {selected.tag === 'img' && (
           <Field
             label="Source"
             defaultValue={selected.imageSrc}
+            {...scopeProps('attribute.src', selected.imageSrc, { elementId: selected.id, kind: 'attribute', property: 'src' })}
             onCommit={(value) => onAttribute('src', value, selected.imageSrc)}
           />
         )}
@@ -406,40 +605,234 @@ function PropertiesPanel({ selected, runtime, activeMotion, timelineOffset, onSt
         </div>
       </InspectorSection>
 
+      <InspectorSection title="Transform">
+        {transform.reliable ? <>
+          <div className={styles.controlGrid}>
+            <Field
+              label="X"
+              defaultValue={transformComponentValue(transform, 'translateX')}
+              {...scopeProps('translateX', transformComponentValue(transform, 'translateX'))}
+              ownership={ownershipFor('translateX')}
+              onOwnershipOpen={() => onOwnershipOpen?.('translateX')}
+              onCommit={(value) => onStyle('translateX', value, transformComponentValue(transform, 'translateX'))}
+            />
+            <Field
+              label="Y"
+              defaultValue={transformComponentValue(transform, 'translateY')}
+              {...scopeProps('translateY', transformComponentValue(transform, 'translateY'))}
+              ownership={ownershipFor('translateY')}
+              onOwnershipOpen={() => onOwnershipOpen?.('translateY')}
+              onCommit={(value) => onStyle('translateY', value, transformComponentValue(transform, 'translateY'))}
+            />
+          </div>
+          <div className={styles.controlGrid}>
+            <Field
+              label="Scale X"
+              defaultValue={transformComponentValue(transform, 'scaleX')}
+              {...scopeProps('scaleX', transformComponentValue(transform, 'scaleX'))}
+              ownership={ownershipFor('scaleX')}
+              onOwnershipOpen={() => onOwnershipOpen?.('scaleX')}
+              onCommit={(value) => onStyle('scaleX', value, transformComponentValue(transform, 'scaleX'))}
+            />
+            <Field
+              label="Scale Y"
+              defaultValue={transformComponentValue(transform, 'scaleY')}
+              {...scopeProps('scaleY', transformComponentValue(transform, 'scaleY'))}
+              ownership={ownershipFor('scaleY')}
+              onOwnershipOpen={() => onOwnershipOpen?.('scaleY')}
+              onCommit={(value) => onStyle('scaleY', value, transformComponentValue(transform, 'scaleY'))}
+            />
+          </div>
+          <Field
+            label="Rotate"
+            defaultValue={transformComponentValue(transform, 'rotate')}
+            {...scopeProps('rotate', transformComponentValue(transform, 'rotate'))}
+            ownership={ownershipFor('rotate')}
+            onOwnershipOpen={() => onOwnershipOpen?.('rotate')}
+            onCommit={(value) => onStyle('rotate', value, transformComponentValue(transform, 'rotate'))}
+          />
+          <div className={styles.controlGrid}>
+            <Field
+              label="Skew X"
+              defaultValue={transformComponentValue(transform, 'skewX')}
+              {...scopeProps('skewX', transformComponentValue(transform, 'skewX'))}
+              ownership={ownershipFor('skewX')}
+              onOwnershipOpen={() => onOwnershipOpen?.('skewX')}
+              onCommit={(value) => onStyle('skewX', value, transformComponentValue(transform, 'skewX'))}
+            />
+            <Field
+              label="Skew Y"
+              defaultValue={transformComponentValue(transform, 'skewY')}
+              {...scopeProps('skewY', transformComponentValue(transform, 'skewY'))}
+              ownership={ownershipFor('skewY')}
+              onOwnershipOpen={() => onOwnershipOpen?.('skewY')}
+              onCommit={(value) => onStyle('skewY', value, transformComponentValue(transform, 'skewY'))}
+            />
+          </div>
+          <div className={styles.controlGrid}>
+            <Field
+              label="Origin X"
+              defaultValue={transformComponentValue(transform, 'transformOriginX')}
+              {...scopeProps('transformOriginX', transformComponentValue(transform, 'transformOriginX'))}
+              ownership={ownershipFor('transformOriginX')}
+              onOwnershipOpen={() => onOwnershipOpen?.('transformOriginX')}
+              onCommit={(value) => onStyle('transformOriginX', value, transformComponentValue(transform, 'transformOriginX'))}
+            />
+            <Field
+              label="Origin Y"
+              defaultValue={transformComponentValue(transform, 'transformOriginY')}
+              {...scopeProps('transformOriginY', transformComponentValue(transform, 'transformOriginY'))}
+              ownership={ownershipFor('transformOriginY')}
+              onOwnershipOpen={() => onOwnershipOpen?.('transformOriginY')}
+              onCommit={(value) => onStyle('transformOriginY', value, transformComponentValue(transform, 'transformOriginY'))}
+            />
+          </div>
+        </> : (
+          <div className={styles.transformUnavailable}>
+            <p>Position and rotation are controlled by a complex motion.</p>
+            <button type="button" onClick={() => onOwnershipOpen?.('transform')}>Open Motion</button>
+          </div>
+        )}
+      </InspectorSection>
+
       <InspectorSection title="Appearance">
-        <ColorField label="Text" value={stylesValue.colorHex} keyframeState={keyframeState('color')} onCommit={(value) => onStyle('color', value, stylesValue.color)} />
-        <ColorField label="Fill" value={stylesValue.backgroundColorHex} keyframeState={keyframeState('background-color')} onCommit={(value) => onStyle('background-color', value, stylesValue.backgroundColor)} />
+        <ColorField
+          label="Text"
+          value={stylesValue.colorHex}
+          {...scopeProps('color', stylesValue.colorHex, styleBinding('color'))}
+          keyframeState={keyframeState('color')}
+          ownership={ownershipFor('color')}
+          onOwnershipOpen={() => onOwnershipOpen?.('color')}
+          onCommit={(value) => onStyle('color', value, stylesValue.color)}
+        />
+        <ColorField
+          label="Fill"
+          value={stylesValue.backgroundColorHex}
+          {...scopeProps('backgroundColor', stylesValue.backgroundColorHex, styleBinding('background-color'))}
+          keyframeState={keyframeState('background-color')}
+          ownership={ownershipFor('backgroundColor')}
+          onOwnershipOpen={() => onOwnershipOpen?.('backgroundColor')}
+          onCommit={(value) => onStyle('background-color', value, stylesValue.backgroundColor)}
+        />
         <div className={styles.controlGrid}>
-          <Field label="Opacity" defaultValue={stylesValue.opacity} keyframeState={keyframeState('opacity')} onCommit={(value) => onStyle('opacity', value, stylesValue.opacity)} />
-          <Field label="Radius" defaultValue={stylesValue.borderRadius} keyframeState={keyframeState('border-radius')} onCommit={(value) => onStyle('border-radius', value, stylesValue.borderRadius)} />
+          <Field
+            label="Opacity"
+            defaultValue={stylesValue.opacity}
+            {...scopeProps('opacity', stylesValue.opacity, styleBinding('opacity'))}
+            keyframeState={keyframeState('opacity')}
+            ownership={ownershipFor('opacity')}
+            onOwnershipOpen={() => onOwnershipOpen?.('opacity')}
+            onCommit={(value) => onStyle('opacity', value, stylesValue.opacity)}
+          />
+          <Field
+            label="Radius"
+            defaultValue={stylesValue.borderRadius}
+            {...scopeProps('borderRadius', stylesValue.borderRadius, styleBinding('border-radius'))}
+            keyframeState={keyframeState('border-radius')}
+            ownership={ownershipFor('borderRadius')}
+            onOwnershipOpen={() => onOwnershipOpen?.('borderRadius')}
+            onCommit={(value) => onStyle('border-radius', value, stylesValue.borderRadius)}
+          />
         </div>
       </InspectorSection>
 
       {supportsTypography && <InspectorSection title="Typography">
-        <Field label="Font" defaultValue={stylesValue.fontFamily} onCommit={(value) => onStyle('font-family', value, stylesValue.fontFamily)} />
+        <Field
+          label="Font"
+          defaultValue={stylesValue.fontFamily}
+          {...scopeProps('fontFamily', stylesValue.fontFamily, styleBinding('font-family'))}
+          ownership={ownershipFor('fontFamily')}
+          onOwnershipOpen={() => onOwnershipOpen?.('fontFamily')}
+          onCommit={(value) => onStyle('font-family', value, stylesValue.fontFamily)}
+        />
         <div className={styles.controlGrid}>
-          <Field label="Weight" defaultValue={stylesValue.fontWeight} keyframeState={keyframeState('font-weight')} onCommit={(value) => onStyle('font-weight', value, stylesValue.fontWeight)} />
-          <Field label="Size" defaultValue={stylesValue.fontSize} keyframeState={keyframeState('font-size')} onCommit={(value) => onStyle('font-size', value, stylesValue.fontSize)} />
+          <Field
+            label="Weight"
+            defaultValue={stylesValue.fontWeight}
+            {...scopeProps('fontWeight', stylesValue.fontWeight, styleBinding('font-weight'))}
+            keyframeState={keyframeState('font-weight')}
+            ownership={ownershipFor('fontWeight')}
+            onOwnershipOpen={() => onOwnershipOpen?.('fontWeight')}
+            onCommit={(value) => onStyle('font-weight', value, stylesValue.fontWeight)}
+          />
+          <Field
+            label="Size"
+            defaultValue={stylesValue.fontSize}
+            {...scopeProps('fontSize', stylesValue.fontSize, styleBinding('font-size'))}
+            keyframeState={keyframeState('font-size')}
+            ownership={ownershipFor('fontSize')}
+            onOwnershipOpen={() => onOwnershipOpen?.('fontSize')}
+            onCommit={(value) => onStyle('font-size', value, stylesValue.fontSize)}
+          />
         </div>
         <div className={styles.controlGrid}>
-          <Field label="Line height" defaultValue={stylesValue.lineHeight} keyframeState={keyframeState('line-height')} onCommit={(value) => onStyle('line-height', value, stylesValue.lineHeight)} />
-          <Field label="Letter spacing" defaultValue={stylesValue.letterSpacing} keyframeState={keyframeState('letter-spacing')} onCommit={(value) => onStyle('letter-spacing', value, stylesValue.letterSpacing)} />
+          <Field
+            label="Line height"
+            defaultValue={stylesValue.lineHeight}
+            {...scopeProps('lineHeight', stylesValue.lineHeight, styleBinding('line-height'))}
+            keyframeState={keyframeState('line-height')}
+            ownership={ownershipFor('lineHeight')}
+            onOwnershipOpen={() => onOwnershipOpen?.('lineHeight')}
+            onCommit={(value) => onStyle('line-height', value, stylesValue.lineHeight)}
+          />
+          <Field
+            label="Letter spacing"
+            defaultValue={stylesValue.letterSpacing}
+            {...scopeProps('letterSpacing', stylesValue.letterSpacing, styleBinding('letter-spacing'))}
+            keyframeState={keyframeState('letter-spacing')}
+            ownership={ownershipFor('letterSpacing')}
+            onOwnershipOpen={() => onOwnershipOpen?.('letterSpacing')}
+            onCommit={(value) => onStyle('letter-spacing', value, stylesValue.letterSpacing)}
+          />
         </div>
-        <div className={styles.field}>
-          <span className={styles.controlLabel}>Alignment</span>
+        {alignmentScope?.relevant !== false && <div className={styles.field}>
+          <span className={styles.controlLabel}>
+            <span className={styles.controlLabelText}>Alignment</span>
+            <OwnershipIndicator label="Alignment" ownership={ownershipFor('textAlign')} onOpen={() => onOwnershipOpen?.('textAlign')} />
+            <ResponsiveScopeControl
+              property="textAlign"
+              label="Alignment"
+              value={alignmentScope?.effectiveValue ?? stylesValue.textAlign}
+              binding={styleBinding('text-align')}
+              scope={alignmentScope}
+              device={device}
+              onRequest={onScopeRequest}
+            />
+          </span>
           <div className={styles.alignControl}>
             {[
               ['left', AlignLeft], ['center', AlignCenter], ['right', AlignRight], ['justify', AlignJustify],
             ].map(([value, Icon]) => (
-              <button key={value} type="button" aria-label={`Align ${value}`} aria-pressed={stylesValue.textAlign === value} onClick={() => onStyle('text-align', value, stylesValue.textAlign)}><Icon /></button>
+              <button
+                key={value}
+                type="button"
+                aria-label={`Align ${value}`}
+                aria-pressed={(alignmentScope?.effectiveValue ?? stylesValue.textAlign) === value}
+                disabled={alignmentScope?.mode === 'computed' || ownershipFor('textAlign')?.status === 'unsupported'}
+                onClick={() => onStyle('text-align', value, stylesValue.textAlign)}
+              ><Icon /></button>
             ))}
           </div>
-        </div>
+        </div>}
         <div className={styles.controlGrid}>
-          <SelectField label="Case" value={stylesValue.textTransform || 'none'} onCommit={(value) => onStyle('text-transform', value, stylesValue.textTransform)}>
+          <SelectField
+            label="Case"
+            value={stylesValue.textTransform || 'none'}
+            {...scopeProps('textTransform', stylesValue.textTransform || 'none', styleBinding('text-transform'))}
+            ownership={ownershipFor('textTransform')}
+            onOwnershipOpen={() => onOwnershipOpen?.('textTransform')}
+            onCommit={(value) => onStyle('text-transform', value, stylesValue.textTransform)}
+          >
             <option value="none">Original</option><option value="uppercase">Uppercase</option><option value="lowercase">Lowercase</option><option value="capitalize">Title case</option>
           </SelectField>
-          <SelectField label="Style" value={stylesValue.fontStyle || 'normal'} onCommit={(value) => onStyle('font-style', value, stylesValue.fontStyle)}>
+          <SelectField
+            label="Style"
+            value={stylesValue.fontStyle || 'normal'}
+            {...scopeProps('fontStyle', stylesValue.fontStyle || 'normal', styleBinding('font-style'))}
+            ownership={ownershipFor('fontStyle')}
+            onOwnershipOpen={() => onOwnershipOpen?.('fontStyle')}
+            onCommit={(value) => onStyle('font-style', value, stylesValue.fontStyle)}
+          >
             <option value="normal">Normal</option><option value="italic">Italic</option><option value="oblique">Oblique</option>
           </SelectField>
         </div>
@@ -457,13 +850,17 @@ const MOTION_GROUP_LABELS = {
 // Phase 0 legibility: the badge must EXPLAIN, not just style. "Sometimes it
 // works, sometimes it doesn't" came from capabilities that never said why.
 const EDITABILITY_EXPLAINED = {
-  direct: 'Editable — keyframes and timing write back natively (CSS/WAAPI)',
-  adapter: 'Adapter — timing, easing and start/end values write back through GSAP; keyframes cannot be moved or added',
-  code: 'Code-driven — this animation is controlled by site scripts and is read-only here',
+  direct: 'Editable: keyframes and timing write back natively (CSS/WAAPI)',
+  known: 'Known adapter: timing, easing and final values write back through the site runtime',
+  adapter: 'Adapter: timing, easing and start/end values write back through GSAP; keyframes cannot be moved or added',
+  declarative: 'Declarative: this value writes back through a safe site binding',
+  custom: 'Custom: this control was validated for this website',
+  code: 'Code-driven: this animation is controlled by site scripts and is read-only here',
 };
 
 export function MotionPanel({ selected, motion, activeMotionId, onMotion, onStagger }) {
   const activeMotion = motion.find((item) => item.id === activeMotionId) || null;
+  const usesKnownAdapter = ['adapter', 'known'].includes(activeMotion?.editability);
   const motionRows = useMemo(() => groupMotionClips(motion), [motion]);
   // The timeline owns the LIST of animations (Figma Motion model) — this panel
   // inspects the active one. Group context surfaces here only as the Stagger
@@ -529,9 +926,9 @@ export function MotionPanel({ selected, motion, activeMotionId, onMotion, onStag
           </div>
           <div className={styles.controlGrid}>
             <Field label="Iterations" type="number" defaultValue={activeMotion.timing.iterations} disabled={!activeMotion.capabilities.timing} onCommit={(value) => commit('timing.iterations', value, activeMotion.timing.iterations)} />
-            <Field label="Repeat delay" type="number" defaultValue={activeMotion.timing.repeatDelay} suffix="ms" disabled={activeMotion.editability !== 'adapter'} onCommit={(value) => commit('timing.repeatDelay', value, activeMotion.timing.repeatDelay)} />
+            <Field label="Repeat delay" type="number" defaultValue={activeMotion.timing.repeatDelay} suffix="ms" disabled={!usesKnownAdapter} onCommit={(value) => commit('timing.repeatDelay', value, activeMotion.timing.repeatDelay)} />
           </div>
-          <ToggleField label="Alternate direction" checked={activeMotion.timing.yoyo} disabled={activeMotion.editability !== 'adapter'} onCommit={(value) => commit('timing.yoyo', value, activeMotion.timing.yoyo)} />
+          <ToggleField label="Alternate direction" checked={activeMotion.timing.yoyo} disabled={!usesKnownAdapter} onCommit={(value) => commit('timing.yoyo', value, activeMotion.timing.yoyo)} />
           {staggerable && (
             <Field
               label="Stagger"
@@ -559,7 +956,7 @@ export function MotionPanel({ selected, motion, activeMotionId, onMotion, onStag
             <option value="ease-in">Ease in</option>
             <option value="ease-out">Ease out</option>
             <option value="ease-in-out">Ease in out</option>
-            {activeMotion.editability === 'adapter' && <><option value="power2.out">Power out</option><option value="power2.inOut">Power in out</option></>}
+            {usesKnownAdapter && <><option value="power2.out">Power out</option><option value="power2.inOut">Power in out</option></>}
           </SelectField>
           <div className={styles.curvePreview} aria-hidden="true"><i /><span /></div>
         </InspectorSection>
@@ -633,6 +1030,8 @@ export function TimelinePanel({
   page = null,
   onScrollTo,
   onScrubIntro,
+  onScrubStart,
+  onScrubEnd,
   onUnlink,
   onStripEdit,
   state,
@@ -657,6 +1056,7 @@ export function TimelinePanel({
   onDeleteKeyframe,
   onChangeKeyframeEasing,
   onChangeKeyframeValue,
+  onChangeStepValue,
 }) {
   const [draggingKeyframe, setDraggingKeyframe] = useState(null);
   const [draggingStrip, setDraggingStrip] = useState(null);
@@ -683,7 +1083,30 @@ export function TimelinePanel({
   // make the scrubber vanish whenever the user scrubs into a stretch with
   // nothing animated on screen, stranding them there.
   const scrollRuler = Boolean(page && page.maxScroll > 0);
-  const axisMax = scrollRuler ? Math.max(1, page.maxScroll) : duration;
+  // ⚠️ BUG DA RÉGUA QUE FOGE DO MOUSE. A largura da régua saía da altura VIVA da
+  // página, e arrastar a régua ROLA a página — em sites com elementos fixados a
+  // altura oscila durante a rolagem, então a régua mudava de tamanho enquanto
+  // estava sendo usada e as bordas ficavam impossíveis de clicar. Trava-se o
+  // eixo e só se aceita mudança SUBSTANCIAL, a mesma regra de 2% que o bridge já
+  // usa para não re-derivar pontos de revelação com o tremor do spacer.
+  //
+  // A trava vale SÓ para a régua de rolagem. Na régua de TEMPO, seguir a duração
+  // é o comportamento certo: quando o usuário muda a duração no painel, a régua
+  // deve acompanhar.
+  // Durante o arraste, a régua usa o valor SENDO arrastado. Antes, só a faixa
+  // arrastada se mexia e todo o resto pulava ao soltar.
+  const duracaoNoArraste = draggingStrip?.kind === 'duration' && Number.isFinite(draggingStrip.durationMs)
+    ? draggingStrip.durationMs
+    : duration;
+  const eixoVivo = scrollRuler ? Math.max(1, page.maxScroll) : duracaoNoArraste;
+  const [eixoTravado, setEixoTravado] = useState(eixoVivo);
+  useEffect(() => {
+    if (!scrollRuler) return;
+    setEixoTravado((antigo) => (
+      !antigo || Math.abs(eixoVivo - antigo) > Math.max(48, antigo * 0.02) ? eixoVivo : antigo
+    ));
+  }, [scrollRuler, eixoVivo]);
+  const axisMax = scrollRuler ? Math.max(1, eixoTravado) : duration;
   // §item-1: load-time animations (preloader, wipes, hero text) form an INTRO
   // segment BEFORE the page-scroll axis — a time sequence, laid out by the
   // page's own opening schedule, instead of a pile of strips on top of the hero.
@@ -849,14 +1272,18 @@ export function TimelinePanel({
 
   function beginKeyframeDrag(event, track, keyframe) {
     if (event.button !== 0) return;
-    if (!canAutoKeyframe && !adapterTimingDrag) return;
     const canvas = event.currentTarget.closest(`.${styles.rowTrack}`);
     if (!canvas) return;
     const offset = Number(keyframe.offset) || 0;
     event.preventDefault();
     event.stopPropagation();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    // ⚠️ SELECIONAR sempre funciona, mesmo onde ARRASTAR não é permitido. Antes
+    // a função desistia antes daqui, então o diamante não respondia a nada em
+    // trilhas travadas — e o usuário só conseguia selecionar pelas setas da
+    // linha da propriedade, que chamam isto direto.
     onSelectKeyframe({ motionId: motion.id, property: track.property, offset });
+    if (!canAutoKeyframe && !adapterTimingDrag) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     if (adapterTimingDrag) {
       const timingEdge = offset >= 0.999 ? 'duration' : offset <= 0.001 ? 'delay' : null;
       if (!timingEdge) return;
@@ -979,7 +1406,33 @@ export function TimelinePanel({
     return Math.round((percent / 100) * axisMax);
   }
 
-  function updateStripDrag(event, row) {
+  // ⚠️ SUAVIDADE: o ponteiro dispara muito mais que o vídeo desenha. Sem
+  // coalescer, cada evento força um render e o arraste fica "duro" — a mesma
+  // razão pela qual o canvas trata o gesto como caminho sagrado. Guarda-se o
+  // último evento e aplica-se UM por quadro.
+  const quadroDoArraste = useRef(null);
+  const eventoPendente = useRef(null);
+  function updateStripDrag(eventoBruto, row) {
+    const evento = { clientX: eventoBruto.clientX, clientY: eventoBruto.clientY, pointerId: eventoBruto.pointerId };
+    // O PRIMEIRO movimento do quadro é aplicado na hora — resposta instantânea.
+    // Os seguintes só guardam o último e um único quadro os aplica, para não
+    // renderizar várias vezes entre dois desenhos da tela.
+    if (!quadroDoArraste.current) {
+      aplicaArrasteDeStrip(evento, row);
+      quadroDoArraste.current = requestAnimationFrame(() => {
+        quadroDoArraste.current = null;
+        const pendente = eventoPendente.current;
+        eventoPendente.current = null;
+        if (pendente) aplicaArrasteDeStrip(pendente, row);
+      });
+      return;
+    }
+    eventoPendente.current = evento;
+  }
+
+  useEffect(() => () => { if (quadroDoArraste.current) cancelAnimationFrame(quadroDoArraste.current); }, []);
+
+  function aplicaArrasteDeStrip(event, row) {
     if (!draggingStrip || event.pointerId !== draggingStrip.pointerId) return;
     if (draggingStrip.kind === 'duration') {
       // Delta px → delta ms: stretching right = longer = slower.
@@ -1049,6 +1502,7 @@ export function TimelinePanel({
     if (event.clientX - viewportRect.left < labelsWidth) return;
     event.preventDefault(); // no text selection while dragging the playhead
     event.currentTarget.setPointerCapture?.(event.pointerId);
+    onScrubStart?.();
     setScrubbing({ pointerId: event.pointerId });
     applyScrub(event);
   }
@@ -1061,6 +1515,7 @@ export function TimelinePanel({
     if (!scrubbing || event.pointerId !== scrubbing.pointerId) return;
     event.currentTarget.releasePointerCapture?.(event.pointerId);
     setScrubbing(null);
+    onScrubEnd?.();
   }
 
   // ---- Panel resizes: top edge grows the timeline (up to 2×), the vertical
@@ -1174,6 +1629,28 @@ export function TimelinePanel({
     };
   }
 
+  // Why a track's step (keyframe) edits are locked — published by the adapter
+  // per track so the field explains itself instead of dead-ending (Sol v6).
+  const KEYFRAME_LOCK_REASONS = {
+    stagger: 'Shared by a staggered group — unchain the layer (chain icon) to edit it independently.',
+    'multi-target': 'Shared by multiple targets — unchain the layer (chain icon) to edit it independently.',
+    'css-wrapper': "This value lives in the tween's legacy css wrapper — step editing isn't supported yet.",
+    keyframes: 'Driven by GSAP keyframes — its steps cannot be edited safely yet.',
+    from: 'A gsap.from() holds the start, not the end — read-only.',
+    plugin: 'Driven by a GSAP plugin — read-only.',
+    sampling: 'This track could not be sampled — read-only.',
+  };
+  function keyframeLockText(track) {
+    return KEYFRAME_LOCK_REASONS[track?.keyframeEditReason] || "This step value can't be edited safely yet.";
+  }
+
+  // Fase-2: why ONE step diamond is locked while its track edits — the frozen
+  // trailing run belongs to the end keyframe.
+  function stepLockText(step) {
+    if (step?.reason === 'final') return 'This step holds the final value — edit the end keyframe.';
+    return KEYFRAME_LOCK_REASONS[step?.reason] || "This step value can't be edited safely yet.";
+  }
+
   function renderTrackCell(track) {
     return (
       <div className={styles.rowTrack} data-track-row={track.property}>
@@ -1190,17 +1667,28 @@ export function TimelinePanel({
               className={styles.timelineKeyframe}
               data-selected={isSelected || isDragging}
               data-duplicate={isDragging && draggingKeyframe.duplicate}
+              data-keyframe-property={track.property}
+              data-keyframe-value={String(keyframe.value ?? '')}
+              data-keyframe-offset={String(displayOffset)}
               style={{ left: `${left}%` }}
               title={canAutoKeyframe
                 ? `${track.property}: ${keyframe.value}. Drag to move, Option-drag to duplicate.`
-                : adapterTimingDrag
-                  ? `${track.property}: ${keyframe.value}. Edit the value in the label; drag the end diamond to stretch duration, the start diamond to slide delay.`
-                  : canSelectKeyframes
-                    ? `${track.property}: ${keyframe.value}. Click to select and edit its value in the label; GSAP start/end cannot be moved.`
-                    : `${track.property}: ${keyframe.value}. This track is read-only.`}
+                : !trackKeyframeEditable(track)
+                  ? `${track.property}: ${keyframe.value}. ${keyframeLockText(track)}`
+                  : adapterTimingDrag
+                    ? `${track.property}: ${keyframe.value}. Edit the value in the label; drag the end diamond to stretch duration, the start diamond to slide delay.`
+                    : canSelectKeyframes
+                      ? `${track.property}: ${keyframe.value}. Click to select and edit its value in the label; GSAP start/end cannot be moved.`
+                      : `${track.property}: ${keyframe.value}. This track is read-only.`}
               aria-label={`${track.property} keyframe at ${Math.round(offset * 100)} percent`}
               aria-pressed={isSelected}
-              disabled={!canSelectKeyframes}
+              // ⚠️ NÃO desabilitar por `canSelectKeyframes`. Essa capacidade diz
+              // se dá para ESCREVER na trilha; usá-la aqui fazia o botão inteiro
+              // ficar inerte, e um botão desabilitado não recebe evento nenhum —
+              // então em trilha somente-leitura o diamante não respondia a nada.
+              // Selecionar e inspecionar não exigem permissão de escrita; quem
+              // barra a edição é o writer, que já checa a capacidade.
+              data-readonly={!canSelectKeyframes || undefined}
               onClick={() => {
                 if (suppressKeyframeClick.current) return;
                 onSelectKeyframe({ motionId: motion.id, property: track.property, offset });
@@ -1214,6 +1702,69 @@ export function TimelinePanel({
             />
           );
         })}
+        {/* Fase-2: one diamond per addressable ENTRY (rawEntryIndex is the
+            address; offset only positions). The terminal step is hidden by
+            IDENTITY (isEnd — the end diamond above already shows it), never by
+            numeric offset: Number(null) coerces to 0 and a zero-duration shape
+            publishes null/duplicated offsets (Sol r4). A null offset falls
+            back to even spacing by order. */}
+        {(() => {
+          const renderedSteps = (track.steps || []).filter((step) => !step.isEnd);
+          // GLOBAL slot allocation (Sol r8/r9): stacked absolute buttons make
+          // the covered address unclickable, and a local per-duplicate nudge
+          // just re-collides with the NEXT occupied position ([0.50,0.50,0.52])
+          // or with the START/END diamonds (a non-terminal step at 1). Every
+          // diamond claims a slot on a 2% grid; each step takes the nearest
+          // free slot (right first, then left). The REAL offset still drives
+          // seek and selection.
+          const occupiedSlots = new Set((track.keyframes || [])
+            .map((keyframe) => (Number.isFinite(Number(keyframe.offset)) ? Number(keyframe.offset) : 0).toFixed(2)));
+          const claimSlot = (desired) => {
+            for (let distance = 0; distance <= 50; distance += 1) {
+              const rightSlot = Math.min(1, desired + distance * 0.02);
+              if (!occupiedSlots.has(rightSlot.toFixed(2))) {
+                occupiedSlots.add(rightSlot.toFixed(2));
+                return rightSlot;
+              }
+              const leftSlot = Math.max(0, desired - distance * 0.02);
+              if (!occupiedSlots.has(leftSlot.toFixed(2))) {
+                occupiedSlots.add(leftSlot.toFixed(2));
+                return leftSlot;
+              }
+            }
+            return desired;
+          };
+          return renderedSteps.map((step, index, list) => {
+            const fallback = (index + 1) / (list.length + 1);
+            const realOffset = step.offset == null ? fallback : Number(step.offset);
+            const displayOffset = claimSlot(realOffset);
+            const left = keyframeLeft(displayOffset);
+            const isSelected = selectedKeyframe?.motionId === motion.id
+              && selectedKeyframe.property === track.property
+              && selectedKeyframe.entryIndex === step.entryIndex;
+            return (
+              <button
+                type="button"
+                key={`step:${track.property}:${step.entryIndex}`}
+                className={styles.timelineKeyframe}
+                data-step
+                data-selected={isSelected}
+                data-locked={!step.editable || undefined}
+                style={{ left: `${left}%` }}
+                title={step.editable
+                  ? `${track.property} step: ${step.value}. Click to select and edit its value in the label.`
+                  : `${track.property} step: ${step.value}. ${stepLockText(step)}`}
+                aria-label={`${track.property} step ${step.entryIndex + 1}`}
+                aria-pressed={isSelected}
+                onClick={() => {
+                  if (suppressKeyframeClick.current) return;
+                  onSelectKeyframe({ motionId: motion.id, property: track.property, entryIndex: step.entryIndex, offset: realOffset });
+                  onSeek(delay + realOffset * clipDuration);
+                }}
+              />
+            );
+          });
+        })()}
       </div>
     );
   }
@@ -1231,7 +1782,14 @@ export function TimelinePanel({
     // The label's value field edits the SELECTED keyframe when one is picked on
     // this track; otherwise the keyframe under the playhead.
     const selectedOnTrack = selectedKeyframe && selectedKeyframe.motionId === motion.id && selectedKeyframe.property === track.property
+      && selectedKeyframe.entryIndex == null
       ? frames.find((keyframe) => Math.abs(Number(keyframe.offset) - Number(selectedKeyframe.offset)) < 0.0005) || null
+      : null;
+    // Fase-2: a selected STEP points the label field at the entry value —
+    // addressed by rawEntryIndex, never by its (possibly duplicated) offset.
+    const selectedStep = selectedKeyframe && selectedKeyframe.motionId === motion.id && selectedKeyframe.property === track.property
+      && selectedKeyframe.entryIndex != null
+      ? (track.steps || []).find((step) => step.entryIndex === selectedKeyframe.entryIndex) || null
       : null;
     const editSource = selectedOnTrack || valueSource;
     const nearest = atPlayhead || previous || following;
@@ -1261,7 +1819,28 @@ export function TimelinePanel({
             ><Diamond /></button>
             <button type="button" aria-label={`Next ${track.property} keyframe`} disabled={!following} onClick={() => following && jumpTo(following)}>›</button>
           </span>
-          {canSelectKeyframes && editSource ? (
+          {selectedStep ? (
+            selectedStep.editable ? (
+              <input
+                className={styles.propertyValueInput}
+                key={`${track.property}:step:${selectedStep.entryIndex}:${selectedStep.value}`}
+                defaultValue={String(selectedStep.value)}
+                title={`${track.property} step value — type to change it`}
+                aria-label={`${track.property} step value`}
+                onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }}
+                onBlur={(event) => {
+                  const next = event.currentTarget.value;
+                  if (next !== String(selectedStep.value)) {
+                    onChangeStepValue?.({ motionId: motion.id, property: track.property, entryIndex: selectedStep.entryIndex }, next);
+                  }
+                }}
+              />
+            ) : (
+              <span className={styles.propertyValue} title={stepLockText(selectedStep)}>
+                {String(selectedStep.value).slice(0, 14)}
+              </span>
+            )
+          ) : canSelectKeyframes && trackKeyframeEditable(track) && editSource ? (
             <input
               className={styles.propertyValueInput}
               key={`${track.property}:${editSource.offset}:${editSource.value}`}
@@ -1278,7 +1857,12 @@ export function TimelinePanel({
               }}
             />
           ) : (
-            <span className={styles.propertyValue} title={valueSource ? String(valueSource.value) : ''}>
+            <span
+              className={styles.propertyValue}
+              title={!trackKeyframeEditable(track)
+                ? keyframeLockText(track)
+                : (valueSource ? String(valueSource.value) : '')}
+            >
               {valueSource ? String(valueSource.value).slice(0, 14) : ''}
             </span>
           )}
@@ -1303,7 +1887,17 @@ export function TimelinePanel({
           onPointerCancel={endHeightResize}
         />
       )}
-      <header className={styles.timelineHeader}>
+      <header
+        className={styles.timelineHeader}
+        // Clicar em QUALQUER lugar da aba abre e fecha a timeline. Só os
+        // controles de verdade ficam de fora — senão apertar "play" ou trocar o
+        // zoom fecharia o painel junto.
+        onClick={(event) => {
+          if (event.target.closest('button, select, input, a, [role="slider"], [role="menu"]')) return;
+          onToggle();
+        }}
+        title={open ? 'Collapse timeline' : 'Open timeline'}
+      >
         <button type="button" className={styles.timelineDisclosure} onClick={onToggle} aria-expanded={open} title={open ? 'Collapse timeline' : 'Open timeline'}>
           <ChevronDown />
           <strong>Timeline</strong>
@@ -1401,7 +1995,7 @@ export function TimelinePanel({
                 {ticks.map((tick, index) => <span key={index} data-intro={tick.intro || undefined} style={{ left: `${tick.left}%` }}><i />{tick.label}</span>)}
                 {/* The cap lives in the STICKY ruler row, so it stays visible
                     while the row list scrolls vertically. */}
-                <i className={styles.playheadCap} data-playhead-cap aria-hidden="true" style={{ left: `${playheadPercent}%` }} />
+                <i className={styles.playheadCap} data-playhead-cap aria-hidden="true" style={{ left: `${playheadPercent}%`, transform: 'translateZ(0)' }} />
               </div>
             </div>
 
@@ -1475,6 +2069,7 @@ export function TimelinePanel({
                       >
                         <span className={styles.viewportKind}><Icon /></span>
                         <span className={styles.viewportLabel}>{row.label}</span>
+                        {row.loop && <span className={styles.timelineLoopIndicator} data-motion-loop="true">Loop</span>}
                         {row.inViewport === false && <span className={styles.offscreenMark} title="Outside the current viewport — click to scroll there" />}
                       </button>
                       {sharedLinks.length > 0 && (
@@ -1645,7 +2240,7 @@ export function TimelinePanel({
               className={styles.timelinePlayhead}
               data-timeline-playhead
               aria-hidden="true"
-              style={{ left: labelsWidth + TRACK_INSET + (playheadPercent / 100) * (timelineWidth - TRACK_INSET) }}
+              style={{ transform: `translateX(${Math.round(labelsWidth + TRACK_INSET + (playheadPercent / 100) * (timelineWidth - TRACK_INSET))}px)` }}
             />
           </div>
         </div>
@@ -1681,7 +2276,7 @@ function assetPreview(asset) {
   return '';
 }
 
-function AssetsPanel({ assets, onSelect, onReplace }) {
+export function AssetsPanel({ assets, onSelect, onReplace }) {
   const [query, setQuery] = useState('');
   const filtered = assets.filter((asset) => `${asset.label} ${asset.kind}`.toLowerCase().includes(query.toLowerCase()));
   return (
@@ -1692,12 +2287,14 @@ function AssetsPanel({ assets, onSelect, onReplace }) {
         {filtered.map((asset, index) => {
           const preview = assetPreview(asset);
           return (
-            <article key={`${asset.elementId}:${asset.kind}:${index}`} onClick={() => onSelect(asset.elementId)}>
-              <div className={styles.assetThumb}>
-                {preview ? <img src={preview} alt="" /> : asset.kind === 'video' ? <Film /> : <ImageIcon />}
-                <span>{asset.kind}</span>
-              </div>
-              <div className={styles.assetMeta}><strong>{asset.label}</strong><small>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : asset.kind}</small></div>
+            <article key={`${asset.elementId}:${asset.kind}:${index}`}>
+              <button type="button" className={styles.assetSelect} onClick={() => onSelect(asset.elementId)}>
+                <span className={styles.assetThumb}>
+                  {preview ? <img src={preview} alt="" /> : asset.kind === 'video' ? <Film /> : <ImageIcon />}
+                  <span>{asset.kind}</span>
+                </span>
+                <span className={styles.assetMeta}><strong>{asset.label}</strong><small>{asset.width && asset.height ? `${asset.width} × ${asset.height}` : asset.kind}</small></span>
+              </button>
               <label className={styles.assetReplace} title={`Replace ${asset.label}`} onClick={(event) => event.stopPropagation()}>
                 <Upload />
                 <input
@@ -1718,7 +2315,7 @@ function AssetsPanel({ assets, onSelect, onReplace }) {
   );
 }
 
-function CodePanel({ selected }) {
+export function CodePanel({ selected }) {
   if (!selected) return <InspectorEmpty />;
   return (
     <div className={styles.panelBody}>
@@ -1742,124 +2339,73 @@ function CodePanel({ selected }) {
   );
 }
 
-export default function NativeMotionEditor() {
-  const iframeRef = useRef(null);
+export default function NativeMotionEditor({
+  runtimeUrl = SOURCE,
+  persistenceAdapter = null,
+}) {
   const stageRef = useRef(null);
-  const [status, setStatus] = useState('loading');
-  const [runtime, setRuntime] = useState(null);
-  const [mode, setMode] = useState('edit');
-  const [tool, setTool] = useState('select');
-  const [device, setDevice] = useState('desktop');
-  const [selected, setSelected] = useState(null);
-  const [viewportRows, setViewportRows] = useState([]);
-  const [viewportPage, setViewportPage] = useState(null);
+  const localPersistence = useMemo(
+    () => createLocalMotionPersistenceAdapter(runtimeUrl),
+    [runtimeUrl],
+  );
   const [activeTab, setActiveTab] = useState('properties');
-  const [history, setHistory] = useState([]);
-  const [redo, setRedo] = useState([]);
-  const [speed, setSpeed] = useState(1);
-  const [saveState, setSaveState] = useState('idle');
-  const [patchError, setPatchError] = useState(null);
   const [stageSize, setStageSize] = useState({ width: 1000, height: 800 });
-  const [activeMotionId, setActiveMotionId] = useState(null);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [timelineZoom, setTimelineZoom] = useState(1);
-  const [timelineState, setTimelineState] = useState({ currentTime: 0, duration: 1000, playState: 'idle' });
-  const [autoKeyframe, setAutoKeyframe] = useState(false);
-  const [selectedKeyframe, setSelectedKeyframe] = useState(null);
-  // Per-row animation detail, fetched lazily (describe-element) or captured
-  // from selections — the timeline's sub-rows read from here.
-  const [motionDetail, setMotionDetail] = useState({});
   const [expandedLayers, setExpandedLayers] = useState(() => new Set());
   const [timelineLabelsWidth, setTimelineLabelsWidth] = useState(() => {
     if (typeof window === 'undefined') return LABELS_DEFAULT_WIDTH;
-    const stored = Number(window.localStorage.getItem('uncraft-motion-labels-w'));
-    return Number.isFinite(stored) && stored >= LABELS_MIN_WIDTH && stored <= LABELS_MAX_WIDTH ? stored : LABELS_DEFAULT_WIDTH;
+    return readLabPreference('uncraft-motion-labels-w', LABELS_DEFAULT_WIDTH, LABELS_MIN_WIDTH, LABELS_MAX_WIDTH);
   });
   const [timelineHeight, setTimelineHeight] = useState(() => {
     if (typeof window === 'undefined') return TIMELINE_MIN_HEIGHT;
-    const stored = Number(window.localStorage.getItem('uncraft-motion-timeline-h'));
-    return Number.isFinite(stored) && stored >= TIMELINE_MIN_HEIGHT && stored <= TIMELINE_MAX_HEIGHT ? stored : TIMELINE_MIN_HEIGHT;
+    return readLabPreference('uncraft-motion-timeline-h', TIMELINE_MIN_HEIGHT, TIMELINE_MIN_HEIGHT, TIMELINE_MAX_HEIGHT);
   });
-
-  // The bridge resolves which timeline row OWNS the clicked element
-  // (hostRowId) — comparing raw ids across the iframe boundary is what kept
-  // site clicks from lighting up their row.
-  const selectedRowId = selected ? (selected.hostRowId || selected.id) : null;
-  // When the click resolved to a CHILD of the animated host, the editable
-  // clips are the HOST's (fetched via describe-element) — otherwise clicking
-  // a host clip in the timeline would activate an id the inspector can't find.
-  const motionFromHost = Boolean(selected && selectedRowId && selectedRowId !== selected.id && motionDetail[selectedRowId]);
-  const motion = useMemo(() => {
-    const own = (selected?.motion || []).map(normalizeMotionClip);
-    if (motionFromHost) return motionDetail[selectedRowId];
-    return own;
-  }, [selected, motionFromHost, motionDetail, selectedRowId]);
-  const activeMotion = motion.find((item) => item.id === activeMotionId) || null;
-  // Motion patches re-inspect through this element when the runtime registry
-  // was rebuilt — it must be the element that OWNS the active clips.
-  const motionElementId = motionFromHost ? selectedRowId : selected?.id || null;
-  const motionDetailRef = useRef(motionDetail);
-  useEffect(() => { motionDetailRef.current = motionDetail; }, [motionDetail]);
-  const timelineOffset = useMemo(() => {
-    if (!activeMotion) return 0;
-    const delay = Math.max(0, activeMotion.timing.delay || 0);
-    const duration = Math.max(1, activeMotion.timing.duration || 1);
-    return Math.max(0, Math.min(1, (timelineState.currentTime - delay) / duration));
-  }, [activeMotion, timelineState.currentTime]);
-
-  useEffect(() => {
-    setActiveMotionId((current) => motion.some((item) => item.id === current) ? current : motion[0]?.id || null);
-  }, [motion]);
-
-  useEffect(() => setSelectedKeyframe(null), [activeMotionId, selected?.id]);
-
-  useEffect(() => {
-    if (!patchError) return undefined;
-    const timer = window.setTimeout(() => setPatchError(null), 4500);
-    return () => window.clearTimeout(timer);
-  }, [patchError]);
+  const controller = useNativeMotionController({
+    persistenceAdapter: persistenceAdapter || localPersistence,
+    activePanel: activeTab,
+    timelineOpen,
+  });
+  const {
+    iframeRef,
+    status,
+    runtime,
+    mode,
+    tool,
+    device: deviceConfig,
+    selected,
+    selectedRowId,
+    viewportRows,
+    viewportPage,
+    historyCount,
+    canUndo,
+    canRedo,
+    speed,
+    saveState,
+    patchError,
+    pendingTransactions,
+    activeMotionId,
+    motion,
+    activeMotion,
+    timelineState,
+    timelineOffset,
+    autoKeyframe,
+    selectedKeyframe,
+    motionDetail,
+    propertyOwnership,
+    ownershipConflict,
+    commands,
+  } = controller;
 
   useEffect(() => {
-    if (autoKeyframe && !(activeMotion?.capabilities?.keyframes && activeMotion?.editability === 'direct')) {
-      setAutoKeyframe(false);
-    }
-  }, [activeMotion, autoKeyframe]);
-
-  const deviceConfig = DEVICES[device];
-  const viewportScale = useMemo(() => {
-    const horizontal = Math.max(0.25, (stageSize.width - 80) / deviceConfig.width);
-    const vertical = Math.max(0.25, (stageSize.height - 72) / deviceConfig.height);
-    return Math.min(1, horizontal, vertical);
-  }, [deviceConfig, stageSize]);
-
-  const send = useCallback((type, payload) => {
-    iframeRef.current?.contentWindow?.postMessage(command(type, payload), '*');
-  }, []);
-
-  // Selections feed the timeline: cache the element's clips for its row,
-  // auto-expand the row that owns it, and fetch the host row's detail when
-  // the click resolved to a child of the animated host.
-  const lastAutoExpandedRef = useRef(null);
-  useEffect(() => {
-    if (!selected?.id) return;
-    setMotionDetail((current) => ({ ...current, [selected.id]: (selected.motion || []).map(normalizeMotionClip) }));
-    const rowId = selected.hostRowId || selected.id;
-    // Auto-expand only when the selection MOVED to a different row — every
-    // patch-applied refreshes `selected`, and re-expanding on each edit made
-    // the chevron's collapse impossible to keep.
-    if (lastAutoExpandedRef.current !== rowId) {
-      lastAutoExpandedRef.current = rowId;
-      setExpandedLayers((current) => {
-        if (current.has(rowId)) return current;
-        const next = new Set(current);
-        next.add(rowId);
-        return next;
-      });
-    }
-    if (rowId !== selected.id && !motionDetailRef.current[rowId] && status === 'ready') {
-      send('describe-element', { elementId: rowId });
-    }
-  }, [selected, send, status]);
+    if (!selectedRowId) return;
+    setExpandedLayers((current) => {
+      if (current.has(selectedRowId)) return current;
+      const next = new Set(current);
+      next.add(selectedRowId);
+      return next;
+    });
+  }, [selectedRowId]);
 
   useEffect(() => {
     if (!stageRef.current) return undefined;
@@ -1870,228 +2416,11 @@ export default function NativeMotionEditor() {
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    function onMessage(event) {
-      if (event.source !== iframeRef.current?.contentWindow || !isRuntimeMessage(event.data)) return;
-      const { type, payload = {} } = event.data;
-      if (type === 'runtime-ready') {
-        setRuntime(payload);
-        setStatus('ready');
-        send('set-mode', { mode });
-        send('inspect-viewport', {});
-        try {
-          const saved = JSON.parse(localStorage.getItem(storageKey(SOURCE)) || '[]');
-          if (Array.isArray(saved) && saved.length) {
-            setHistory(saved);
-            send('apply-patches', { patches: saved });
-          }
-        } catch (_) {}
-      }
-      if (type === 'viewport-motion-changed') {
-        setViewportRows(Array.isArray(payload.rows) ? payload.rows : []);
-        if (payload.page) setViewportPage(payload.page);
-      }
-      if (type === 'element-described' && payload.element?.id) {
-        setMotionDetail((current) => ({ ...current, [payload.element.id]: (payload.element.motion || []).map(normalizeMotionClip) }));
-      }
-      if (type === 'selection-changed' || type === 'patch-applied' || type === 'inline-text-edit-started') {
-        setSelected(payload.element || null);
-      }
-      if (type === 'inline-text-committed') {
-        const patch = createPatch({
-          elementId: payload.elementId,
-          kind: 'text',
-          before: payload.before,
-          value: payload.value,
-        });
-        setHistory((current) => [...current, patch]);
-        setRedo([]);
-        setSelected(payload.element || null);
-        setSaveState('idle');
-      }
-      if (type === 'inventory-changed') {
-        setRuntime((current) => current ? { ...current, assets: payload.assets || [], profile: payload.profile || current.profile } : current);
-      }
-      if (type === 'layout-intent-committed') {
-        const patch = {
-          ...createPatch({ elementId: payload.elementId, kind: 'style', property: 'translate', before: payload.before, value: payload.value }),
-          layoutIntent: { delta: payload.delta, originalRect: payload.originalRect },
-        };
-        setHistory((current) => [...current, patch]);
-        setRedo([]);
-        setSelected(payload.element || null);
-        setSaveState('idle');
-      }
-      if (type === 'patches-applied' && payload.element) setSelected(payload.element);
-      if (type === 'patch-rejected') {
-        // The runtime refused the write — a phantom entry in history would replay
-        // the same failure on every undo/save, silently.
-        setHistory((current) => removeRejectedPatch(current, payload.patch));
-        setPatchError(payload.error || 'The change could not be applied.');
-      }
-      if (type === 'playback-changed' && payload.speed) setSpeed(payload.speed);
-      if (type === 'timeline-changed') {
-        setTimelineState({
-          currentTime: Number(payload.currentTime) || 0,
-          duration: Math.max(1, Number(payload.duration) || 1),
-          playState: payload.playState || 'idle',
-        });
-      }
-    }
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [mode, send]);
-
-  useEffect(() => {
-    if (status === 'ready') send('set-mode', { mode });
-  }, [mode, send, status]);
-
-  useEffect(() => {
-    if (status === 'ready') send('set-tool', { tool });
-  }, [send, status, tool]);
-
-  useEffect(() => {
-    if (status !== 'ready') return undefined;
-    send('set-timeline-active', { motionId: timelineOpen ? activeMotionId : null });
-    return () => send('set-timeline-active', { motionId: null });
-  }, [activeMotionId, send, status, timelineOpen]);
-
-  function applyNewPatches(patches) {
-    const changed = patches.filter((patch) => !patchValuesEqual(patch.before, patch.value));
-    if (!changed.length) return;
-    const groupId = changed.length > 1
-      ? (globalThis.crypto?.randomUUID?.() || `group-${Date.now()}-${Math.random().toString(16).slice(2)}`)
-      : null;
-    const grouped = changed.map((patch) => groupId ? { ...patch, groupId } : patch);
-    if (grouped.length === 1) send('apply-patch', { patch: grouped[0] });
-    else send('apply-patches', { patches: grouped });
-    setHistory((current) => [...current, ...grouped]);
-    setRedo([]);
-    setSaveState('idle');
-    window.setTimeout(() => send('refresh-inventory'), 80);
-  }
-
-  function applyNewPatch(patch) {
-    applyNewPatches([patch]);
-  }
-
-  function applyStyle(property, value, before) {
-    if (!selected) return;
-    const stylePatch = createPatch({ elementId: selected.id, kind: 'style', property, before, value });
-    const normalized = animationProperty(property);
-    const canKeyframe = autoKeyframe && activeMotion?.capabilities?.keyframes && activeMotion?.editability === 'direct' && AUTO_KEYFRAME_PROPERTIES.has(normalized);
-    if (!canKeyframe) {
-      applyNewPatch(stylePatch);
-      return;
-    }
-    const track = activeMotion.tracks.find((item) => animationProperty(item.property) === normalized);
-    const existing = track?.keyframes?.find((keyframe) => Math.abs(Number(keyframe.offset) - timelineOffset) < 0.0005);
-    const keyframePatch = createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${normalized}`,
-      before: existing
-        ? keyframeDescriptor(existing, timelineOffset)
-        : { offset: timelineOffset, exists: false },
-      value: {
-        offset: timelineOffset,
-        value: String(value),
-        ...(existing?.easing ? { easing: existing.easing } : {}),
-        exists: true,
-      },
-    });
-    applyNewPatches([stylePatch, keyframePatch]);
-  }
-
-  function applyText(value) {
-    if (!selected) return;
-    applyNewPatch(createPatch({ elementId: selected.id, kind: 'text', before: selected.text, value }));
-  }
-
-  function applyAttribute(property, value, before) {
-    if (!selected) return;
-    applyNewPatch(createPatch({ elementId: selected.id, kind: 'attribute', property, before, value }));
-  }
-
-  function applyMotion(motion, property, value, before) {
-    if (!selected || !motion?.id) return;
-    applyNewPatch(createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: motion.id,
-      property,
-      before,
-      value,
-    }));
-  }
-
-  function applyStripEdit(row, next) {
-    if (!selected || !activeMotion) return;
-    const edits = buildStripEditPatches({ motion: activeMotion, row, next });
-    if (!edits.length) return;
-    applyNewPatches(edits.map((edit) => createPatch({
-      elementId: motionElementId, kind: 'motion', motionId: activeMotion.id, ...edit,
-    })));
-    // Redraw strips from the runtime's truth, not from the optimistic drag.
-    window.setTimeout(() => send('inspect-viewport'), 60);
-  }
-
-  function applyStagger(members, valueMs) {
-    if (!selected) return;
-    const patches = applyStaggerDelays(members, valueMs).map(({ clip, delay }) => createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: clip.id,
-      property: 'timing.delay',
-      before: clip.timing.delay,
-      value: delay,
-    }));
-    applyNewPatches(patches);
-  }
-
-  async function replaceAsset(asset, file) {
-    if (asset.kind === 'svg') {
-      const markup = await file.text();
-      applyNewPatch(createPatch({ elementId: asset.elementId, kind: 'svg', before: asset.markup || '', value: markup }));
-      return;
-    }
-    const value = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
-    if (asset.kind === 'background') {
-      applyNewPatch(createPatch({ elementId: asset.elementId, kind: 'style', property: 'background-image', before: `url("${asset.source}")`, value: `url("${value}")` }));
-    } else {
-      applyNewPatch(createPatch({ elementId: asset.elementId, kind: 'attribute', property: asset.property || 'src', before: asset.source, value }));
-    }
-  }
-
-  function undo() {
-    const patch = history.at(-1);
-    if (!patch) return;
-    let groupStart = history.length - 1;
-    if (patch.groupId) {
-      while (groupStart > 0 && history[groupStart - 1].groupId === patch.groupId) groupStart -= 1;
-    }
-    const group = history.slice(groupStart);
-    send('apply-patches', { patches: group.slice().reverse().map(invertPatch) });
-    setHistory((current) => current.slice(0, groupStart));
-    setRedo((current) => [...current, group]);
-    setSaveState('idle');
-  }
-
-  function redoPatch() {
-    const entry = redo.at(-1);
-    if (!entry) return;
-    const group = Array.isArray(entry) ? entry : [entry];
-    send('apply-patches', { patches: group });
-    setRedo((current) => current.slice(0, -1));
-    setHistory((current) => [...current, ...group]);
-    setSaveState('idle');
-  }
+  const viewportScale = useMemo(() => {
+    const horizontal = Math.max(0.25, (stageSize.width - 80) / deviceConfig.width);
+    const vertical = Math.max(0.25, (stageSize.height - 72) / deviceConfig.height);
+    return Math.min(1, horizontal, vertical);
+  }, [deviceConfig, stageSize]);
 
   function exportFramer() {
     if (!selected || !motion.length) return;
@@ -2102,165 +2431,103 @@ export default function NativeMotionEditor() {
     link.href = url;
     link.download = `${String(selected.label || 'motion').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'motion'}-framer.jsx`;
     link.click();
-    // Synchronous revoke races the download outside Chromium.
     window.setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
-  function save() {
-    localStorage.setItem(storageKey(SOURCE), JSON.stringify(history));
-    setSaveState('saved');
-    window.setTimeout(() => setSaveState('idle'), 1800);
-  }
-
-  function playback(action) {
-    send('playback', { action, speed, motionId: activeMotionId });
-  }
-
-  function changeSpeed(nextSpeed) {
-    setSpeed(nextSpeed);
-    // Re-rate only — changing speed must never start playback.
-    send('playback', { action: 'speed', speed: nextSpeed, motionId: activeMotionId });
-  }
-
   function selectMotion(motionId) {
-    setActiveMotionId(motionId);
+    commands.selectMotion(motionId);
     setTimelineOpen(true);
   }
 
-  function seekMotion(currentTime) {
-    if (!activeMotionId) return;
-    setTimelineState((current) => ({ ...current, currentTime, playState: 'paused' }));
-    send('seek-motion', { motionId: activeMotionId, currentTime });
-  }
-
-  function changePlaybackMode(nextMode) {
-    if (!activeMotion) return;
-    applyMotion(activeMotion, 'timing.playbackMode', nextMode, motionPlaybackMode(activeMotion.timing));
-  }
-
   function toggleAutoKeyframe(nextValue) {
-    if (nextValue) {
-      playback('pause');
-      setTimelineOpen(true);
+    if (nextValue) setTimelineOpen(true);
+    commands.toggleAutoKeyframe(nextValue);
+  }
+
+  // ⚠️ Botão direito em QUALQUER lugar abre menu — regra de produto: a
+  // ferramenta tem que parecer software, não site. Área de painel SEM DADOS
+  // devolve lista vazia: nada aparece, e o menu do navegador continua bloqueado.
+  const menuContexto = useContextMenu((alvo) => {
+    if (!alvo || typeof alvo.closest !== 'function') return [];
+    const copiar = (texto) => navigator.clipboard?.writeText?.(String(texto ?? '')).catch(() => {});
+
+    const kf = alvo.closest('[data-keyframe-property]');
+    if (kf) {
+      const prop = kf.getAttribute('data-keyframe-property');
+      const valor = kf.getAttribute('data-keyframe-value');
+      return [
+        // Responde a pergunta "onde altero a opacidade de um keyframe?": o campo
+        // de valor da linha da propriedade escreve no keyframe sob o ponteiro.
+        { label: 'Move playhead here', hint: 'edits the value', onSelect: () => kf.click() },
+        { separator: true },
+        { label: `Copy value`, hint: valor, onSelect: () => copiar(valor) },
+        { label: 'Copy property name', hint: prop, onSelect: () => copiar(prop) },
+      ];
     }
-    setAutoKeyframe(nextValue);
-  }
 
-  function resolveKeyframe(selection) {
-    if (!selection || !activeMotion || selection.motionId !== activeMotion.id) return null;
-    const track = activeMotion.tracks.find((item) => item.property === selection.property);
-    const keyframe = track?.keyframes?.find((item) => Math.abs(Number(item.offset) - Number(selection.offset)) < 0.0005);
-    return track && keyframe ? { track, keyframe } : null;
-  }
-
-  function availableKeyframeOffset(track, desiredOffset, ignoredOffset = null) {
-    const desired = Math.max(0, Math.min(1, Number(desiredOffset) || 0));
-    const occupied = (offset) => track.keyframes.some((keyframe) => (
-      Math.abs(Number(keyframe.offset) - offset) < 0.004
-      && (ignoredOffset == null || Math.abs(Number(keyframe.offset) - Number(ignoredOffset)) >= 0.0005)
-    ));
-    if (!occupied(desired)) return desired;
-    for (let step = 1; step <= 100; step += 1) {
-      const distance = step * 0.01;
-      const forward = desired + distance;
-      const backward = desired - distance;
-      if (forward <= 1 && !occupied(forward)) return forward;
-      if (backward >= 0 && !occupied(backward)) return backward;
+    const campo = alvo.closest('input, select');
+    if (campo) {
+      // Mesma lista e mesma ordem do menu de campo do Figma (anexo do Adilson):
+      // Undo, Redo · Cut, Copy, Paste · Select All, com os atalhos à direita.
+      const ehSelect = campo.tagName === 'SELECT';
+      const escreve = (texto) => {
+        // Pelo setter NATIVO: atribuir `.value` direto não dispara o onChange do
+        // React, e a edição sumiria no próximo render.
+        const proto = Object.getPrototypeOf(campo);
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        setter ? setter.call(campo, texto) : (campo.value = texto);
+        campo.dispatchEvent(new Event('input', { bubbles: true }));
+        campo.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      const selecionado = () => {
+        if (ehSelect) return campo.value;
+        const { selectionStart: a, selectionEnd: b } = campo;
+        return a != null && b != null && a !== b ? campo.value.slice(a, b) : campo.value;
+      };
+      return [
+        // Desabilitados como no Figma quando não há o que desfazer no campo.
+        { label: 'Undo', hint: '⌘Z', disabled: !canUndo, onSelect: () => commands.undo() },
+        { label: 'Redo', hint: '⇧⌘Z', disabled: !canRedo, onSelect: () => commands.redo() },
+        { separator: true },
+        {
+          label: 'Cut',
+          hint: '⌘X',
+          disabled: ehSelect,
+          onSelect: () => { copiar(selecionado()); escreve(''); },
+        },
+        { label: 'Copy', hint: '⌘C', onSelect: () => copiar(selecionado()) },
+        {
+          label: 'Paste',
+          hint: '⌘V',
+          disabled: ehSelect,
+          onSelect: async () => {
+            const texto = await navigator.clipboard?.readText?.().catch(() => null);
+            if (texto != null) escreve(texto);
+          },
+        },
+        { separator: true },
+        { label: 'Select All', hint: '⌘A', disabled: ehSelect, onSelect: () => campo.select?.() },
+      ];
     }
-    return desired;
-  }
 
-  function deleteKeyframe(selection) {
-    const resolved = resolveKeyframe(selection);
-    if (!resolved || !selected) return;
-    applyNewPatch(createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: keyframeDescriptor(resolved.keyframe),
-      value: keyframeDescriptor(null, resolved.keyframe.offset),
-    }));
-    setSelectedKeyframe(null);
-  }
+    const linha = alvo.closest('[data-row-kind]');
+    if (linha && linha.getAttribute('data-row-kind') !== 'empty') {
+      const rotulo = (linha.textContent || '').trim().slice(0, 40);
+      return [
+        { label: 'Select this layer', onSelect: () => linha.querySelector('button')?.click() },
+        { separator: true },
+        { label: 'Copy layer name', hint: rotulo, onSelect: () => copiar(rotulo) },
+      ];
+    }
 
-  function duplicateKeyframe(selection, requestedOffset = null) {
-    const resolved = resolveKeyframe(selection);
-    if (!resolved || !selected) return;
-    const defaultStep = Math.max(0.02, Math.min(0.12, 80 / Math.max(1, activeMotion.timing.duration)));
-    const preferred = requestedOffset == null
-      ? (Number(resolved.keyframe.offset) + defaultStep <= 1 ? Number(resolved.keyframe.offset) + defaultStep : Number(resolved.keyframe.offset) - defaultStep)
-      : requestedOffset;
-    const offset = availableKeyframeOffset(resolved.track, preferred);
-    const existing = resolved.track.keyframes.find((keyframe) => Math.abs(Number(keyframe.offset) - offset) < 0.0005);
-    applyNewPatch(createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: keyframeDescriptor(existing, offset),
-      value: keyframeDescriptor(resolved.keyframe, offset),
-    }));
-    setSelectedKeyframe({ motionId: activeMotion.id, property: resolved.track.property, offset });
-    seekMotion((activeMotion.timing.delay || 0) + offset * Math.max(1, activeMotion.timing.duration));
-  }
-
-  function moveKeyframe(selection, requestedOffset) {
-    const resolved = resolveKeyframe(selection);
-    if (!resolved || !selected) return;
-    const sourceOffset = Number(resolved.keyframe.offset) || 0;
-    const offset = availableKeyframeOffset(resolved.track, requestedOffset, sourceOffset);
-    if (Math.abs(offset - sourceOffset) < 0.0005) return;
-    const existing = resolved.track.keyframes.find((keyframe) => Math.abs(Number(keyframe.offset) - offset) < 0.0005);
-    const removeSource = createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: keyframeDescriptor(resolved.keyframe),
-      value: keyframeDescriptor(null, sourceOffset),
-    });
-    const addDestination = createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: keyframeDescriptor(existing, offset),
-      value: keyframeDescriptor(resolved.keyframe, offset),
-    });
-    applyNewPatches([removeSource, addDestination]);
-    setSelectedKeyframe({ motionId: activeMotion.id, property: resolved.track.property, offset });
-    seekMotion((activeMotion.timing.delay || 0) + offset * Math.max(1, activeMotion.timing.duration));
-  }
-
-  function changeKeyframeValue(selection, value) {
-    const resolved = resolveKeyframe(selection);
-    if (!resolved || !selected || String(resolved.keyframe.value) === String(value)) return;
-    applyNewPatch(createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: keyframeDescriptor(resolved.keyframe),
-      value: { ...keyframeDescriptor(resolved.keyframe), value: String(value) },
-    }));
-  }
-
-  function changeKeyframeEasing(selection, easing) {
-    const resolved = resolveKeyframe(selection);
-    if (!resolved || !selected || resolved.keyframe.easing === easing) return;
-    applyNewPatch(createPatch({
-      elementId: motionElementId,
-      kind: 'motion',
-      motionId: activeMotion.id,
-      property: `keyframe.${resolved.track.property}`,
-      before: { ...keyframeDescriptor(resolved.keyframe), easing: resolved.keyframe.easing || null },
-      value: { ...keyframeDescriptor(resolved.keyframe), easing },
-    }));
-  }
+    return [];
+  });
 
   return (
-    <main className={styles.editorShell}>
+    <main className={styles.editorShell} onContextMenu={menuContexto.aoAbrir}>
+      {menuContexto.menu ? (
+        <ContextMenu {...menuContexto.menu} onClose={menuContexto.fechar} />
+      ) : null}
       <header className={styles.topbar}>
         <div className={styles.topbarStart}>
           <Link href="/canvas" className={styles.iconButton} aria-label="Back to canvas"><ArrowLeft /></Link>
@@ -2272,15 +2539,16 @@ export default function NativeMotionEditor() {
         </div>
 
         <div className={styles.deviceSwitcher} aria-label="Viewport">
-          {Object.entries(DEVICES).map(([key, value]) => {
-            const Icon = value.Icon;
+          {MOTION_EDITOR_DEVICE_ORDER.map((key) => {
+            const value = MOTION_EDITOR_DEVICES[key];
+            const Icon = DEVICE_ICONS[key];
             return (
               <button
                 key={key}
                 type="button"
                 aria-label={value.label}
-                aria-pressed={device === key}
-                onClick={() => setDevice(key)}
+                aria-pressed={deviceConfig.id === key}
+                onClick={() => commands.changeDevice(key)}
               ><Icon /></button>
             );
           })}
@@ -2288,12 +2556,12 @@ export default function NativeMotionEditor() {
 
         <div className={styles.topbarEnd}>
           <div className={styles.historyControls}>
-            <button type="button" onClick={undo} disabled={!history.length} aria-label="Undo"><Undo2 /></button>
-            <button type="button" onClick={redoPatch} disabled={!redo.length} aria-label="Redo"><Redo2 /></button>
+            <button type="button" onClick={commands.undo} disabled={!canUndo || pendingTransactions > 0} aria-label="Undo"><Undo2 /></button>
+            <button type="button" onClick={commands.redo} disabled={!canRedo || pendingTransactions > 0} aria-label="Redo"><Redo2 /></button>
           </div>
           <div className={styles.modeSwitch}>
-            <button type="button" aria-pressed={mode === 'edit'} onClick={() => setMode('edit')}><MousePointer2 />Edit</button>
-            <button type="button" aria-pressed={mode === 'preview'} onClick={() => setMode('preview')}><Eye />Preview</button>
+            <button type="button" aria-pressed={mode === 'edit'} onClick={() => commands.changeMode('edit')}><MousePointer2 />Edit</button>
+            <button type="button" aria-pressed={mode === 'preview'} onClick={() => commands.changeMode('preview')}><Eye />Preview</button>
           </div>
           <button
             type="button"
@@ -2304,7 +2572,7 @@ export default function NativeMotionEditor() {
               : 'Select an animated element to export it'}
             onClick={exportFramer}
           ><Code2 />Export</button>
-          <button type="button" className={styles.saveButton} onClick={save}>
+          <button type="button" className={styles.saveButton} onClick={commands.save} disabled={pendingTransactions > 0}>
             {saveState === 'saved' ? <Check /> : <Save />}
             {saveState === 'saved' ? 'Saved' : 'Save changes'}
           </button>
@@ -2314,8 +2582,8 @@ export default function NativeMotionEditor() {
       <section className={styles.workspace}>
         <div className={styles.stage} ref={stageRef}>
           <div className={styles.toolRail}>
-            <button type="button" aria-pressed={mode === 'edit' && tool === 'select'} onClick={() => { setMode('edit'); setTool('select'); }} title="Select elements"><MousePointer2 /></button>
-            <button type="button" aria-pressed={mode === 'edit' && tool === 'move'} onClick={() => { setMode('edit'); setTool('move'); }} title="Move freely"><Move /></button>
+            <button type="button" aria-pressed={mode === 'edit' && tool === 'select'} onClick={() => { commands.changeMode('edit'); commands.changeTool('select'); }} title="Select elements"><MousePointer2 /></button>
+            <button type="button" aria-pressed={mode === 'edit' && tool === 'move'} onClick={() => { commands.changeMode('edit'); commands.changeTool('move'); }} title="Move freely"><Move /></button>
             <span />
             <button type="button" onClick={() => { setActiveTab('motion'); setTimelineOpen(true); }} title="Inspect motion"><Gauge /></button>
           </div>
@@ -2338,10 +2606,10 @@ export default function NativeMotionEditor() {
               <iframe
                 ref={iframeRef}
                 title="Native animated website runtime"
-                src={SOURCE}
+                src={runtimeUrl}
                 sandbox="allow-scripts allow-pointer-lock"
                 referrerPolicy="no-referrer"
-                onLoad={() => setStatus((current) => current === 'ready' ? current : 'bridge')}
+                onLoad={commands.markRuntimeLoaded}
               />
             </div>
           </div>
@@ -2350,7 +2618,7 @@ export default function NativeMotionEditor() {
           <div className={styles.stageStatus}>
             <span>{deviceConfig.width} × {deviceConfig.height}</span>
             <span>{Math.round(viewportScale * 100)}%</span>
-            <span>{history.length} {history.length === 1 ? 'change' : 'changes'}</span>
+            <span>{historyCount} {historyCount === 1 ? 'change' : 'changes'}</span>
           </div>
         </div>
 
@@ -2372,9 +2640,26 @@ export default function NativeMotionEditor() {
               </button>
             ))}
           </nav>
-          {activeTab === 'properties' && <PropertiesPanel selected={selected} runtime={runtime} activeMotion={activeMotion} timelineOffset={timelineOffset} onStyle={applyStyle} onText={applyText} onAttribute={applyAttribute} />}
-          {activeTab === 'assets' && <AssetsPanel assets={runtime?.assets || []} onSelect={(elementId) => send('select-element', { elementId })} onReplace={replaceAsset} />}
-          {activeTab === 'motion' && <MotionPanel selected={selected} motion={motion} activeMotionId={activeMotionId} onMotion={applyMotion} onStagger={applyStagger} />}
+          {activeTab === 'properties' && <PropertiesPanel
+            selected={selected}
+            runtime={runtime}
+            activeMotion={activeMotion}
+            timelineOffset={timelineOffset}
+            propertyOwnership={propertyOwnership}
+            onOwnershipOpen={(property) => {
+              commands.focusOwnership(property);
+              setActiveTab('motion');
+              setTimelineOpen(true);
+            }}
+            onStyle={commands.applyStyle}
+            onText={commands.applyText}
+            onAttribute={commands.applyAttribute}
+          />}
+          {activeTab === 'assets' && <AssetsPanel assets={runtime?.assets || []} onSelect={commands.selectElement} onReplace={commands.replaceAsset} />}
+          {activeTab === 'motion' && <>
+            <MotionOwnershipChoice conflict={ownershipConflict} onChoose={commands.chooseOwnership} />
+            <MotionPanel selected={selected} motion={motion} activeMotionId={activeMotionId} onMotion={commands.applyMotion} onStagger={commands.applyStagger} />
+          </>}
           {activeTab === 'code' && <CodePanel selected={selected} />}
         </aside>
 
@@ -2391,12 +2676,12 @@ export default function NativeMotionEditor() {
               else next.add(elementId);
               return next;
             });
-            if (expanding && !motionDetail[elementId] && status === 'ready') send('describe-element', { elementId });
+            if (expanding && !motionDetail[elementId] && status === 'ready') commands.describeElement(elementId);
           }}
           activeMotionId={activeMotionId}
           onActiveMotion={selectMotion}
           selectedElementId={selectedRowId}
-          onSelectElement={(elementId) => send('focus-element', { elementId })}
+          onSelectElement={commands.focusElement}
           labelsWidth={timelineLabelsWidth}
           onLabelsWidth={(width) => {
             setTimelineLabelsWidth(width);
@@ -2408,31 +2693,10 @@ export default function NativeMotionEditor() {
             try { window.localStorage.setItem('uncraft-motion-timeline-h', String(height)); } catch (_) {}
           }}
           page={viewportPage}
-          onScrollTo={(scrollY) => {
-            // Optimistic playhead — the bridge confirms via the next debounced emit.
-            setViewportPage((current) => current ? { ...current, scrollY } : current);
-            send('scroll-to', { scrollY });
-          }}
-          onScrubIntro={(timeMs) => send('scrub-intro', { timeMs })}
-          onUnlink={(row, linkIds) => {
-            const patches = (linkIds || []).map((linkId) => createPatch({
-              elementId: row.elementId,
-              kind: 'motion',
-              motionId: linkId,
-              property: 'link.detach',
-              before: { detached: false },
-              value: { detached: true },
-            }));
-            if (!patches.length) return;
-            applyNewPatches(patches);
-            // The chain broke in the runtime — redraw rows and this row's clips
-            // from the runtime's truth.
-            window.setTimeout(() => {
-              send('inspect-viewport');
-              send('describe-element', { elementId: row.elementId });
-            }, 120);
-          }}
-          onStripEdit={applyStripEdit}
+          onScrollTo={commands.scrollTo}
+          onScrubIntro={commands.scrubIntro}
+          onUnlink={commands.unlinkMotion}
+          onStripEdit={commands.applyStripEdit}
           motion={activeMotion}
           state={timelineState}
           speed={speed}
@@ -2440,18 +2704,19 @@ export default function NativeMotionEditor() {
           autoKeyframe={autoKeyframe}
           selectedKeyframe={selectedKeyframe}
           onToggle={() => setTimelineOpen((current) => !current)}
-          onPlayback={playback}
-          onSpeed={changeSpeed}
-          onSeek={seekMotion}
+          onPlayback={commands.playback}
+          onSpeed={commands.changeSpeed}
+          onSeek={commands.seekMotion}
           onZoom={setTimelineZoom}
-          onPlaybackMode={changePlaybackMode}
+          onPlaybackMode={commands.changePlaybackMode}
           onAutoKeyframe={toggleAutoKeyframe}
-          onSelectKeyframe={setSelectedKeyframe}
-          onMoveKeyframe={moveKeyframe}
-          onDuplicateKeyframe={duplicateKeyframe}
-          onDeleteKeyframe={deleteKeyframe}
-          onChangeKeyframeEasing={changeKeyframeEasing}
-          onChangeKeyframeValue={changeKeyframeValue}
+          onSelectKeyframe={commands.selectKeyframe}
+          onMoveKeyframe={commands.moveKeyframe}
+          onDuplicateKeyframe={commands.duplicateKeyframe}
+          onDeleteKeyframe={commands.deleteKeyframe}
+          onChangeKeyframeEasing={commands.changeKeyframeEasing}
+          onChangeKeyframeValue={commands.changeKeyframeValue}
+          onChangeStepValue={commands.changeStepValue}
         />
       </section>
     </main>

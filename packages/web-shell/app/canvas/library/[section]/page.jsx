@@ -60,6 +60,7 @@ export default async function WorkspaceLibraryPage({ params }) {
       userName={user.name}
       userEmail={user.email}
       userPlan={user.plan}
+      userRole={user.role || 'member'}
       view={section}
     />
   );

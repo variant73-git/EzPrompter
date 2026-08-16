@@ -425,6 +425,7 @@
   align-items: center;
   gap: 8px;
   padding: 0 8px;
+  cursor: pointer;
 }
 
 .timelineDisclosure,
@@ -470,7 +471,7 @@
 }
 
 .timelineDisclosure strong {
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -479,7 +480,7 @@
   flex: 1 1 auto;
   overflow: hidden;
   color: var(--motion-muted);
-  font-size: 9px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -500,7 +501,7 @@
   gap: 5px;
   padding: 0 7px;
   color: var(--motion-muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .keyframeActions {
@@ -540,7 +541,7 @@
   min-width: 88px;
   color: var(--motion-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 8px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -552,7 +553,7 @@
   border-radius: 5px;
   outline: none;
   background: #2f2f2c;
-  font-size: 9px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -573,7 +574,7 @@
   gap: 6px;
   padding: 0 4px;
   color: var(--motion-muted);
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .timelineZoom input {
@@ -625,7 +626,7 @@
   border-bottom: 1px solid rgba(56, 55, 51, 0.72);
   background: var(--motion-panel);
   color: var(--motion-muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .rowTrack {
@@ -651,7 +652,7 @@
 .timelineRow[data-row-kind='ruler'] .rowLabel {
   z-index: 8;
   height: 26px;
-  font-size: 8px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -671,7 +672,7 @@
   gap: 2px;
   padding-top: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 7px;
+  font-size: 11px;
   transform: translateX(4px);
 }
 
@@ -841,7 +842,7 @@
   border-radius: 9px;
   background: rgba(41, 102, 234, 0.08);
   color: #b8c9ed;
-  font-size: 8px;
+  font-size: 12px;
   cursor: pointer;
   overflow: hidden;
 }
@@ -871,7 +872,7 @@
   overflow: hidden;
   max-width: 180px;
   color: var(--motion-muted);
-  font-size: 8px;
+  font-size: 12px;
   pointer-events: none;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -917,7 +918,7 @@
   border-radius: 3px;
   background: transparent;
   color: var(--motion-muted);
-  font-size: 9px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -947,7 +948,7 @@
   overflow: hidden;
   color: var(--motion-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 8px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -963,7 +964,7 @@
   background: transparent;
   color: var(--motion-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 8px;
+  font-size: 12px;
   text-align: right;
 }
 
@@ -1100,7 +1101,16 @@
   z-index: 6; /* over strips and ruler, under the sticky label column */
   top: 0;
   bottom: 0;
-  width: 1.5px;
+  left: 0;
+  /* ⚠️ RASTRO PONTILHADO. Antes: largura fracionária (1.5px) movida por `left`.
+     Uma faixa de largura fracionária que se desloca não invalida a região
+     inteira em toda repintura, e sobra resíduo do quadro anterior — o "rastro".
+     Largura inteira + deslocamento por `transform` numa camada própria repinta
+     limpo. `will-change` fica ESTÁTICO no elemento (o que a lição 148b proíbe é
+     ligá-lo e desligá-lo durante o gesto). */
+  width: 2px;
+  margin-left: -1px;
+  will-change: transform;
   pointer-events: none;
   background: #6f95ea;
 }
@@ -1111,6 +1121,10 @@
   position: absolute;
   z-index: 2;
   top: 18px;
+  /* Posicionado em PORCENTAGEM da régua, então continua em `left`:
+     `translateX(%)` seria porcentagem da largura do PRÓPRIO elemento (10px) e
+     desalinharia o cap. A camada própria vem do translateZ(0) inline. */
+  will-change: transform;
   width: 10px;
   height: 8px;
   margin-left: -5px;
@@ -1463,6 +1477,13 @@
   white-space: nowrap;
 }
 
+.controlLabelText {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .fieldKeyframe {
   width: 8px;
   height: 8px;
@@ -1476,9 +1497,68 @@
   fill: var(--motion-accent);
 }
 
+.ownershipIndicator {
+  display: inline-flex;
+  min-width: 24px;
+  height: 18px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 4px;
+  border: 1px solid var(--motion-line);
+  border-radius: 5px;
+  color: var(--motion-secondary);
+  background: var(--motion-hover);
+  font-size: 8px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.ownershipIndicator:hover {
+  color: var(--motion-text);
+  border-color: var(--motion-line-strong);
+}
+
+.ownershipIndicator svg {
+  width: 10px;
+  height: 10px;
+}
+
+.transformUnavailable {
+  display: grid;
+  gap: 8px;
+}
+
+.transformUnavailable p {
+  margin: 0;
+  color: var(--motion-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.transformUnavailable button {
+  min-height: 28px;
+  border: 1px solid var(--motion-line);
+  border-radius: 6px;
+  color: var(--motion-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.transformUnavailable button:hover {
+  color: var(--motion-text);
+  background: var(--motion-hover);
+}
+
 .controlGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* ⚠️ Sem isto a grade ESTICA cada célula até a altura da mais alta da linha:
+     um campo com rótulo de duas linhas fazia o vizinho crescer junto, e o valor
+     ficava colado no topo de uma caixa alta demais. `start` deixa cada campo com
+     a própria altura. */
+  align-items: start;
   gap: 6px;
 }
 
@@ -1486,6 +1566,11 @@
 .colorControl {
   display: flex;
   min-width: 0;
+  /* ⚠️ O controle media 47px para um input de 29px: a grade do painel esticava
+     a célula até a altura do vizinho mais alto da linha. `align-self: start`
+     tira a célula do esticamento; a altura passa a ser a do próprio input, sem
+     precisar fixá-la — fixar deslocava o input 8px para cima. */
+  align-self: start;
   align-items: center;
   overflow: hidden;
   border: 1px solid transparent;
@@ -1503,6 +1588,11 @@
 .colorControl input {
   min-width: 0;
   width: 100%;
+  /* ⚠️ A CAUSA dos campos altos e do valor colado no topo: o input herdava
+     `margin-bottom: 16px` do reset do navegador. 29px de altura + 16 de margem
+     + 2 de borda = os 47px que a caixa media, e o texto ficava no terço de cima.
+     Zerar a margem resolve os dois de uma vez. */
+  margin: 0;
   height: 29px;
   padding: 0 7px;
   color: var(--motion-text);
@@ -1827,19 +1917,39 @@
 
 .assetList article {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   min-width: 0;
   min-height: 49px;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   padding: 4px;
   border-radius: 7px;
-  cursor: pointer;
   transition: background-color 140ms ease;
 }
 
 .assetList article:hover {
   background: var(--motion-hover);
+}
+
+.assetSelect {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assetSelect:focus-visible {
+  border-radius: 6px;
+  outline: 2px solid var(--motion-accent);
+  outline-offset: 1px;
 }
 
 .assetThumb {
@@ -2518,7 +2628,7 @@
   border: 0;
   background: transparent;
   color: rgba(255, 255, 255, 0.82);
-  font-size: 12px;
+  font-size: 15px;
   text-align: left;
   cursor: pointer;
 }
@@ -2533,9 +2643,202 @@
   align-items: center;
   gap: 5px;
   padding: 0 6px;
-  font-size: 10px;
+  font-size: 13px;
   letter-spacing: 0.02em;
   color: rgba(255, 255, 255, 0.5);
   white-space: nowrap;
 }
 .timelineScrollHint svg { width: 12px; height: 12px; stroke-width: 1.7; color: #8eaff4; }
+
+.customControlsSection {
+  border-bottom: 1px solid var(--border-frosted, #3a3935);
+  padding: 10px 12px 12px;
+}
+
+.customControlsHeading {
+  align-items: center;
+  color: var(--text-muted, #96948d);
+  display: flex;
+  font-size: 9px;
+  font-weight: 700;
+  justify-content: space-between;
+  letter-spacing: 0.1em;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+.customControlsHeading small {
+  color: var(--text-faint, rgba(241, 240, 235, 0.3));
+  font: inherit;
+}
+
+.customControlList,
+.customControlRow,
+.customControlCopy {
+  display: grid;
+}
+
+.customControlList { gap: 12px; }
+.customControlRow { gap: 7px; }
+.customControlRow[data-control-unavailable='true'] { opacity: 0.52; }
+.customControlCopy { gap: 2px; min-width: 0; }
+
+.customControlCopy strong {
+  color: var(--text-primary, #f1f0eb);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.customControlCopy small {
+  color: var(--text-muted, #96948d);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.customControlInput {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.customControlInput > select,
+.customNumericValue input {
+  background: var(--bg-frosted-solid, #292926);
+  border: 1px solid var(--border-frosted, #3a3935);
+  border-radius: 7px;
+  color: var(--text-primary, #f1f0eb);
+  font: 500 11px/1 var(--font-inter), Inter, sans-serif;
+  height: 30px;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.customControlInput > select { flex: 1 1 auto; }
+
+.customSliderControl {
+  align-items: center;
+  display: grid;
+  flex: 1 1 auto;
+  gap: 8px;
+  grid-template-columns: minmax(58px, 1fr) 78px;
+  min-width: 0;
+}
+
+.customSliderControl > input[type='range'] {
+  accent-color: var(--accent, #2966ea);
+  min-width: 0;
+  width: 100%;
+}
+
+.customNumericValue {
+  align-items: center;
+  display: flex;
+  position: relative;
+}
+
+.customNumericValue input { padding-right: 27px; width: 78px; }
+
+.customNumericValue small {
+  color: var(--text-muted, #96948d);
+  font-size: 9px;
+  pointer-events: none;
+  position: absolute;
+  right: 7px;
+}
+
+.customToggle {
+  background: var(--border-frosted-strong, #45443f);
+  border: 0;
+  border-radius: 999px;
+  height: 20px;
+  padding: 2px;
+  width: 34px;
+}
+
+.customToggle i {
+  background: var(--text-primary, #f1f0eb);
+  border-radius: 50%;
+  display: block;
+  height: 16px;
+  transform: translateX(0);
+  transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  width: 16px;
+}
+
+.customToggle[aria-checked='true'] { background: var(--accent, #2966ea); }
+.customToggle[aria-checked='true'] i { transform: translateX(14px); }
+
+.customControlReset {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text-secondary, #b5b3ac);
+  display: inline-flex;
+  flex: 0 0 30px;
+  height: 30px;
+  justify-content: center;
+  padding: 0;
+}
+
+.customControlReset:hover:not(:disabled) { background: var(--hover-bg, rgba(241, 240, 235, 0.07)); }
+.customControlReset:disabled { opacity: 0.3; }
+.customControlReset svg { height: 12px; width: 12px; }
+
+.customControlInput :focus-visible,
+.customControlReset:focus-visible,
+.customToggle:focus-visible {
+  outline: 2px solid var(--accent, #2966ea);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .customToggle i { transition: none; }
+}
+
+/* --- Menu de contexto ------------------------------------------------------
+   A ferramenta tem que parecer software: botão direito abre menu em qualquer
+   lugar. Área sem dados não abre menu, mas também não devolve o do navegador. */
+.contextMenu {
+  position: fixed;
+  z-index: 999;
+  min-width: 184px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(26, 26, 28, 0.96);
+  backdrop-filter: blur(28px) saturate(140%);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+}
+
+.contextMenuItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 13px;
+  text-align: left;
+  cursor: default;
+}
+
+.contextMenuItem:hover:not(:disabled) { background: rgba(111, 149, 234, 0.22); }
+.contextMenuItem:disabled { color: rgba(255, 255, 255, 0.32); }
+
+.contextMenuHint {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.contextMenuSeparator {
+  height: 1px;
+  margin: 4px 6px;
+  background: rgba(255, 255, 255, 0.1);
+}

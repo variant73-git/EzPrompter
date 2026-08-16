@@ -2,6 +2,7 @@ node_modules
 .next
 .env
 .env.local
+.native-bundles/
 
 # build output: editor-core synced from packages/editor-core/src/ via scripts/build-editor.sh
 public/editor-core/
