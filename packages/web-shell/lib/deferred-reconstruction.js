@@ -227,7 +227,22 @@ export async function reconstructSiteNode({
 
       if (materialized.kind === 'native') {
           const descriptor = await persistBundle({ sql, descriptor: materialized.bundleDescriptor });
-          const generated = await Promise.race([generateControls({
+          // Generated controls are an overlay on top of the clone, and they
+          // require a validator. CONFIG ABSENCE is not a failure: when neither
+          // the producer supplies a validation path nor the sandbox validator
+          // service is configured (UNCRAFT_MOTION_CONTROL_VALIDATOR_URL), this
+          // deployment simply does not sell generated controls — the clone
+          // (native bundle + live editor, which inventories the runtime
+          // directly) ships whole. When a validator IS configured, generation
+          // stays mandatory and failures keep the hard-fail + refund contract
+          // (a transient outage must never settle as a silently degraded paid
+          // state — Sol review 2026-08-17).
+          const validatorConfigured = Boolean(
+            materialized.output?.controlValidationTransport
+            || materialized.output?.validateControlCandidate
+            || process.env.UNCRAFT_MOTION_CONTROL_VALIDATOR_URL,
+          );
+          const generated = !validatorConfigured ? null : await Promise.race([generateControls({
             descriptor,
             reconstructionOutput: materialized.output,
             signal: deadline.signal,
@@ -241,17 +256,24 @@ export async function reconstructSiteNode({
               meta: { stage: 'motion-control-generation' },
             }),
           }), aborted]);
+          // Configured ⇒ a valid result is REQUIRED. Every downstream branch
+          // keys on validatorConfigured (never on generated's truthiness), so a
+          // configured-but-broken generator resolving null can never settle
+          // mislabeled as "validator_not_configured" (Sol v2 round).
+          if (validatorConfigured && !generated?.manifest) {
+            throw Object.assign(new Error('control_generation_no_output'), { code: 'no_output' });
+          }
           const baseManifest = createEmptyMotionManifest({
             baseBundleId: descriptor.bundleId,
             runtimeFingerprint: descriptor.runtimeFingerprint,
           });
-          const motionManifest = parseMotionManifest({
+          const motionManifest = validatorConfigured ? parseMotionManifest({
             ...baseManifest,
             controlManifest: generated.manifest,
           }, {
             expectedBundleId: descriptor.bundleId,
             runtimeFingerprint: descriptor.runtimeFingerprint,
-          });
+          }) : baseManifest;
           const nextMeta = {
             animatedDetected: false,
             animatedRuntime: true,
@@ -259,7 +281,11 @@ export async function reconstructSiteNode({
             reconstructionEngine: 'native-bundle',
             deferredReconstructionReason: reason,
             deferredReconstructedAt: new Date().toISOString(),
-            motionControls: generationMeta(generated),
+            motionControls: validatorConfigured ? generationMeta(generated) : {
+              status: 'skipped',
+              reason: 'validator_not_configured',
+              acceptedControls: 0,
+            },
           };
           if (deadline.signal.aborted) throw deadline.signal.reason;
           const snapshotId = await persistNativeSnapshot({
@@ -278,7 +304,7 @@ export async function reconstructSiteNode({
             edit_session_id: null,
             runtime_fingerprint: descriptor.runtimeFingerprint,
             content_hash: descriptor.contentHash,
-          }, motionControlGenerationDiagnosticEvents(generated)).catch(() => null);
+          }, validatorConfigured ? motionControlGenerationDiagnosticEvents(generated) : []).catch(() => null);
           return {
             ok: true,
             kind: 'native',
@@ -286,8 +312,8 @@ export async function reconstructSiteNode({
             snapshotId,
             bundleDescriptor: descriptor,
             motionManifest,
-            controlManifest: generated.manifest,
-            controlGeneration: generationMeta(generated),
+            controlManifest: validatorConfigured ? generated.manifest : null,
+            controlGeneration: nextMeta.motionControls,
             meta: nextMeta,
           };
       }

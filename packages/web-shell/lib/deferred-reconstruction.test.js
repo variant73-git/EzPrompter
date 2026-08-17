@@ -186,6 +186,84 @@ describe('deferred reconstruction result kinds', () => {
     })).rejects.toThrow();
   });
 
+  it('clones without generated controls when no validator is configured — config absence is not a failure', async () => {
+    // Production reality: captureNativeBundle emits no controlValidationTransport
+    // and UNCRAFT_MOTION_CONTROL_VALIDATOR_URL is unset in deployments where the
+    // sandbox validator service does not exist. The clone (native bundle + live
+    // editor) is the deliverable; generated controls are an overlay that only
+    // becomes part of the contract when a validator is CONFIGURED. Configured-
+    // but-failing keeps hard-fail + refund (covered by the tests below).
+    delete process.env.UNCRAFT_MOTION_CONTROL_VALIDATOR_URL;
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const generated = vi.fn();
+    const producer = vi.fn(async () => ({
+      kind: 'native',
+      bundle: {
+        entryPath: 'index.html',
+        runtimeFingerprint: runtimeHash,
+        assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+        reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+      },
+      // no controlValidationTransport / validateControlCandidate — mirrors production
+    }));
+
+    const result = await reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-skip-1',
+      producer,
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: generated,
+    });
+
+    expect(generated).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, kind: 'native', snapshotId: 'snap-native' });
+    expect(result.meta.motionControls).toMatchObject({ status: 'skipped', reason: 'validator_not_configured', acceptedControls: 0 });
+    expect(result.motionManifest.controlManifest).toEqual({});
+    const snapshotWrite = sql._calls.find((call) => /UPDATE snapshots/i.test(call.query));
+    expect(snapshotWrite.values).toContain(JSON.stringify(result.motionManifest));
+  });
+
+  it('hard-fails when a CONFIGURED validator yields no generation result — never mislabeled as unconfigured', async () => {
+    // Sol review 2026-08-17 (v2 round): with the config gate keyed on generated's
+    // truthiness, a configured-but-broken generator resolving null would settle
+    // as "validator_not_configured" — a degraded paid state concealing a
+    // generator regression. Configured ⇒ a valid result is REQUIRED.
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const generated = vi.fn(async () => null);
+    const producer = vi.fn(async () => ({
+      kind: 'native',
+      bundle: {
+        entryPath: 'index.html',
+        runtimeFingerprint: runtimeHash,
+        assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+        reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+      },
+      controlValidationTransport: vi.fn(),
+    }));
+
+    await expect(reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-null-gen',
+      producer,
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: generated,
+    })).rejects.toMatchObject({ code: 'no_output' });
+
+    expect(generated).toHaveBeenCalledTimes(1);
+    const snapshotWrite = sql._calls.find((call) => /UPDATE snapshots/i.test(call.query));
+    expect(snapshotWrite).toBeUndefined();
+  });
+
   it('automatically validates controls and persists the native snapshot before billing can settle', async () => {
     const store = createMemoryBundleStore();
     const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
@@ -257,6 +335,9 @@ describe('deferred reconstruction result kinds', () => {
           assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
           reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
         },
+        // validator configured — this test is about persistence failing AFTER
+        // generation ran, so generation must actually run under the config gate
+        controlValidationTransport: vi.fn(),
       })),
       bundleStore: store,
       persistBundle: vi.fn(async ({ descriptor }) => descriptor),
