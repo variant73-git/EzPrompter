@@ -757,8 +757,10 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
      radius nests concentrically inside this 10px-radius container. */
   padding: 2px;
   border-bottom: 1px solid var(--border-frosted);
-  border-top-left-radius: 10px;
-  border-top-right-radius: 10px;
+  /* Nested-radius rule (2026-08-17, project-wide): inner = outer − gap.
+     Card is 9px with 4px padding → 5px here, so the curves stay parallel. */
+  border-top-left-radius: 5px;
+  border-top-right-radius: 5px;
   line-height: 1;
 }
 .canvas-minimap-counts .canvas-counts {
@@ -10415,6 +10417,10 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
   border-top-left-radius: 12px;
   border-top-right-radius: 12px;
 }
+/* Nested-radius rule: outer card is 16px with 4px padding → EVERY inner
+   rounded surface is 12px, the svg map included (it sat at the legacy 5px —
+   the mismatched pair the product feedback pointed at). */
+.canvas-minimap-svg { border-radius: 12px; }
 .minimap-node-menu {
   border: 0;
   border-radius: 16px;
@@ -10572,7 +10578,23 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
      proportional to the measured share — not one fused strip. */
   display: flex; height: 40px; gap: 6px;
 }
-.dmd-color-bar span { display: block; min-width: 28px; border-radius: 10px; }
+.dmd-color-bar .dmd-chip {
+  display: grid; place-items: center; min-width: 28px; border-radius: 10px;
+  border: 0; padding: 0; cursor: pointer;
+}
+.dmd-chip svg { opacity: 0; transition: opacity 0.12s; }
+.dmd-chip:hover svg, .dmd-chip:focus-visible svg { opacity: 0.85; }
+.dmd-chip:active { transform: scale(0.97); }
+/* Click-to-copy feedback near the cursor (spec 2026-08-17). */
+.dmd-copy-toast {
+  position: fixed; z-index: 4000; pointer-events: none;
+  padding: 5px 9px; border-radius: 7px;
+  background: rgba(20, 20, 19, 0.94); color: #F1F0EB;
+  font: 500 11px var(--font-sans); letter-spacing: 0.01em;
+  opacity: 0; transform: translateY(3px); transition: opacity 0.15s, transform 0.15s;
+  font-variant-numeric: tabular-nums;
+}
+.dmd-copy-toast.show { opacity: 1; transform: translateY(0); }
 .dmd-color-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
 .dmd-color-legend li { display: flex; align-items: center; gap: 8px; font-size: 11px; min-width: 0; }
 .dmd-color-legend i {

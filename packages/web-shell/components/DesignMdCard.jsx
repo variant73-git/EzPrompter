@@ -1,5 +1,39 @@
 'use client';
 
+import { swatchInk } from '../lib/design-md-preview.js';
+
+// Click-to-copy feedback, anchored to the PRODUCT spec: "uma mensagem de
+// feedback próxima ao cursor do mouse". Imperative on purpose — a fixed,
+// pointer-events-none toast at the click point, removed after it fades.
+async function copyHexAtCursor(hex, event) {
+  // Capture coordinates BEFORE awaiting — React pools/neutralizes the event.
+  const x = event.clientX;
+  const y = event.clientY;
+  // writeText is a PROMISE: a sync try/catch missed permission failures and
+  // the toast lied "Copied" (Sol 2026-08-17 #2). Await it; say what happened.
+  let copied = false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(hex);
+      copied = true;
+    }
+  } catch { /* denied or unavailable */ }
+  const toast = document.createElement('div');
+  toast.className = 'dmd-copy-toast';
+  toast.textContent = copied ? `Copied ${hex}` : 'Copy failed';
+  toast.style.left = `${x + 12}px`;
+  toast.style.top = `${y - 8}px`;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 180); }, 900);
+}
+
+const CopyGlyph = ({ ink }) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+
 /**
  * DesignMdCard — the Aura-style DESIGN.MD presentation (product spec
  * 2026-08-17). ONE component, two surfaces:
@@ -34,16 +68,21 @@ export default function DesignMdCard({ model, variant = 'panel' }) {
       {colorRows.length > 0 && (
         <section className="dmd-section" aria-label="Color palette">
           <h4 className="dmd-section-title">Colors</h4>
-          <div className="dmd-color-bar" role="img" aria-label="Color proportions">
+          <div className="dmd-color-bar" aria-label="Color proportions">
             {colorRows.map((row, i) => (
-              <span
+              <button
+                type="button"
                 key={row.hex + i}
-                title={`${row.hex}${row.share != null ? ` · ${Math.round(row.share * 100)}%` : ''}`}
+                className="dmd-chip"
+                title={`${row.hex}${row.share != null ? ` · ${Math.round(row.share * 100)}%` : ''} — click to copy`}
+                onClick={(e) => copyHexAtCursor(row.hex, e)}
                 style={{
                   background: row.hex,
                   flexGrow: row.share != null ? Math.max(row.share, 0.04) : 1,
                 }}
-              />
+              >
+                <CopyGlyph ink={swatchInk(row.hex)} />
+              </button>
             ))}
           </div>
           <ul className="dmd-color-legend">

@@ -20,6 +20,7 @@ import { canUseCloneEdit } from '../lib/clone-edit-access.js';
 import { CLONE_EDIT_CREDIT_ESTIMATE } from '../lib/billing/pricing.js';
 import { isLiveUrlReference } from '../lib/url-reference.js';
 import { designPanelModel } from '../lib/design-md-preview.js';
+import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
 import DesignMdCard from './DesignMdCard.jsx';
 
 // The canvas inspector is intentionally contextual. With no selection it
@@ -235,7 +236,10 @@ function WebsiteActions({ node, onEditSite, onUpgradeRequired, plan, busy = fals
   // (capturing/cloning) OR when neither exists — a blank "Connect to…" node
   // would otherwise open a guaranteed 404 (adversarial review Codex #3).
   const openDisabled = busy || (!node.current_snapshot_id && !node.origin_url);
-  const cloneRequired = isLiveUrlReference(node);
+  // ONE predicate for label, credit disclosure, and plan gate — the same one
+  // the reconstruction policy uses to decide the billed clone (Sol 2026-08-17
+  // #1: a legacy URL-backed snapshot said "Edit" but charged as clone.edit).
+  const cloneRequired = shouldReconstructForAction({ node, role: 'edit' });
   const cloneAllowed = canUseCloneEdit(plan);
   const cloneLocked = cloneRequired && !cloneAllowed;
   const cloneLabel = cloneLocked
@@ -296,7 +300,16 @@ export default function CanvasInspector({
   useEffect(() => {
     const inspectorVisible = Boolean(node) && !collapsed;
     document.documentElement.style.setProperty('--inspector-w', inspectorVisible ? '248px' : '0px');
-    document.documentElement.style.setProperty('--minimap-top', collapsed && node ? '72px' : '62px');
+    // Collapsed → the 42px reopen control sits at shell-gutter+topbar+gap
+    // (the SHELL layout, not the legacy 15px top this 72px assumed — measured
+    // overlap of 34px). Clear its bottom edge + 12px, in the same shell terms
+    // so a gutter change can never re-collide them.
+    document.documentElement.style.setProperty(
+      '--minimap-top',
+      collapsed && node
+        ? 'calc(var(--shell-gutter, 8px) + var(--topbar-h, 46px) + var(--shell-panel-gap, 10px) + 54px)'
+        : '62px',
+    );
     document.documentElement.style.setProperty('--minimap-right', inspectorVisible ? '264px' : '15px');
     return () => {
       document.documentElement.style.removeProperty('--inspector-w');

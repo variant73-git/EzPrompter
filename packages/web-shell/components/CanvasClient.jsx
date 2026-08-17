@@ -4580,7 +4580,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     if (willEdit) {
       const node = nodes.find((n) => n.id === nodeId);
       if (!node || editPreparationRef.current.has(nodeId)) return;
-      if (isLiveUrlReference(node) && !canUseCloneEdit(user?.plan)) {
+      // Plan gate keyed on the SAME predicate that decides billing (Sol
+      // 2026-08-17 #1): the auto-upgrade path re-clones legacy URL-backed
+      // snapshots too, and the narrower live-reference check let those bypass
+      // the paid-plan gate straight into a billed clone.
+      if (shouldReconstructForAction({ node, role: 'edit' }) && !canUseCloneEdit(user?.plan)) {
         setPlansOpen(true);
         return;
       }
@@ -7264,7 +7268,8 @@ function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onP
           {/* Colar nao e' "adicionar ao quadro": e' trazer o que ja esta na
               area de transferencia. Misturado com os "Add ...", a acao some no
               meio de uma lista de coisas para CRIAR. Categoria propria. */}
-          <div className="popup-menu-sep" role="separator" />
+          {/* No separator here (2026-08-17): the category TITLE already
+              separates — a rule line on top of it is double punctuation. */}
           <div className="popup-menu-title">Clipboard</div>
           <button
             className="popup-menu-btn"

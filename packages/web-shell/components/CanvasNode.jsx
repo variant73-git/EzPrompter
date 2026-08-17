@@ -21,6 +21,7 @@ import {
 } from '../lib/node-viewport.js';
 import { NODE_EDITOR_KIND } from '../lib/node-editor-kind.js';
 import { isLiveUrlReference, shouldMountLiveReference } from '../lib/url-reference.js';
+import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
 import { playfulLoadingMessage } from '../lib/loading-messages.js';
 
 const DRAG_THRESHOLD = 4;
@@ -1299,7 +1300,11 @@ export default function CanvasNode({
               disabled={editorBusy}
             >
               {editing ? <CheckIcon /> : <EditIcon />}
-              <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : liveUrlReference ? 'Clone & Edit' : 'Edit'}</span>
+              {/* Label keyed on the SAME predicate that decides the billed
+                  clone (shouldReconstructForAction) — "Clone & Edit" iff this
+                  press will clone; an already-native node re-enters free and
+                  honestly says "Edit" (Sol 2026-08-17 #1). */}
+              <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : shouldReconstructForAction({ node, role: 'edit' }) ? 'Clone & Edit' : 'Edit'}</span>
             </button>
           )}
         </div>
