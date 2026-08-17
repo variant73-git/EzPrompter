@@ -24,6 +24,7 @@ import {
   savedWorkflowToTemplate,
 } from '../lib/workflow-templates.js';
 import { COMMUNITY_EXAMPLES } from '../lib/workspace-library.js';
+import { pillInk } from '../lib/node-origin.js';
 import CreditsPill from './CreditsPill.jsx';
 import ReferenceLibrary from './ReferenceLibrary.jsx';
 import UserPill from './UserPill.jsx';
@@ -113,7 +114,7 @@ function WorkflowMap({ workflow }) {
             const meta = NODE_KIND_META[item.kind] || NODE_KIND_META.site;
             const label = item.meta?.mediaType === 'video' ? 'Video' : meta.label;
             return (
-              <span key={item.key} style={{ '--node-color': meta.color }} title={item.label}>
+              <span key={item.key} style={{ '--node-color': meta.color, '--node-ink': pillInk(meta.color) }} title={item.label}>
                 <i />{label}
               </span>
             );

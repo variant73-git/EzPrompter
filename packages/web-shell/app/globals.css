@@ -699,8 +699,12 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
   gap: 5px;
   padding: 3px 9px;
   border-radius: 999px;
-  border: 1px solid var(--pill-colour);
-  color: var(--pill-colour);
+  /* Inverted treatment (product 2026-08-17): the category COLOUR is the
+     fill, the glyph/label go dark-gray — and no outline anywhere. The old
+     colored-outline-on-transparent read as a wireframe. */
+  border: 0;
+  background: var(--pill-colour);
+  color: var(--pill-ink, #20201E);
   font: 500 0.72rem/1 var(--font-inter), system-ui, sans-serif;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -8073,7 +8077,7 @@ body.native-motion-previewing .canvas-topbar {
   height: 42px;
   display: grid;
   place-items: center;
-  border: 1px solid #45443F;
+  border: 0;
   border-radius: var(--radius-sm);
   background: #252522;
   color: var(--text-primary);
@@ -8970,7 +8974,7 @@ body.rb-ed-left-collapsed .canvas-editor-user .user-pill-avatar {
   .cinsp-primary-action button.cinsp-clone-edit { transition: none; }
 }
 .cinsp-primary-action a,
-.cinsp-primary-action .cinsp-open-browser-disabled { margin-top: 6px; border: 1px solid #45443F; background: #292926; color: var(--text-primary); }
+.cinsp-primary-action .cinsp-open-browser-disabled { margin-top: 6px; border: 0; background: #292926; color: var(--text-primary); }
 .cinsp-primary-action a:hover { background: #30302D; text-decoration: none; }
 /* Disabled while the node is still capturing/cloning — no preview to open yet. */
 .cinsp-primary-action .cinsp-open-browser-disabled {
@@ -9281,16 +9285,18 @@ nextjs-portal { display: none !important; }
   gap: 5px;
   padding: 0 7px;
   overflow: hidden;
-  border: 1px solid color-mix(in oklab, var(--node-color) 48%, #474640);
+  /* Inverted (product 2026-08-17): colour is the FILL, glyphs go dark-gray,
+     no outline. The colored-outline-on-dark read as a wireframe. */
+  border: 0;
   border-radius: 5px;
-  background: #292926;
-  color: #B5B3AC;
+  background: var(--node-color);
+  color: var(--node-ink, #20201E);
   font-size: 7px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.hub-workflow-column > span i { width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--node-color); }
+.hub-workflow-column > span i { width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--node-ink, #20201E); opacity: 0.75; }
 .hub-workflow-arrow {
   position: absolute;
   left: calc(100% + 4px);
@@ -9368,7 +9374,9 @@ nextjs-portal { display: none !important; }
   position: relative;
   aspect-ratio: 1.55;
   overflow: hidden;
-  border: 1px solid #3A3935;
+  /* Outline sweep (product 2026-08-17): previews separate by fill alone
+     (the rule's existing background below carries it). */
+  border: 0;
   border-radius: 10px;
   background: #20201E;
   transition: border-color 150ms ease, transform 150ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -10511,7 +10519,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
 .dev-widget-pill {
   padding: 6px 12px;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--border-frosted-strong);
+  border: 0;
   background: var(--bg-frosted);
   backdrop-filter: blur(28px) saturate(140%);
   color: var(--text-secondary);
@@ -10529,7 +10537,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
   gap: 10px;
   padding: 12px 14px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--border-frosted);
+  border: 0;
   background: var(--bg-frosted);
   backdrop-filter: blur(28px) saturate(140%);
   box-shadow: var(--shadow-frost);
@@ -10541,8 +10549,8 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
 .dev-widget-seg button {
   padding: 4px 10px;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--border-frosted);
-  background: transparent;
+  border: 0;
+  background: var(--surface);
   color: var(--text-secondary);
   font-size: 11px;
   cursor: pointer;

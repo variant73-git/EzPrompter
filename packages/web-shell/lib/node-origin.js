@@ -39,3 +39,28 @@ export const ORIGIN_COLORS = {
 export function originColor(node) {
   return ORIGIN_COLORS[nodeOrigin(node)] || ORIGIN_COLORS.unknown;
 }
+
+/**
+ * Ink for a category-coloured FILL (inverted pills, 2026-08-17): dark by
+ * default, light only when real WCAG contrast of dark-on-fill falls short.
+ * Proper sRGB linearisation — the cheap luminance heuristic passed dark text
+ * on #2966EA (3.25:1) and #7951C2 (2.93:1), both AA failures (Sol).
+ */
+function channelLin(value) {
+  const c = value / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+function relLuminance(hex) {
+  const h = String(hex || '').replace('#', '');
+  if (h.length !== 6) return 0.5;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  return 0.2126 * channelLin(r) + 0.7152 * channelLin(g) + 0.0722 * channelLin(b);
+}
+const DARK_INK = '#20201E';
+const LIGHT_INK = '#F1F0EB';
+export function pillInk(fillHex) {
+  const fill = relLuminance(fillHex);
+  const dark = relLuminance(DARK_INK);
+  const contrastDark = (Math.max(fill, dark) + 0.05) / (Math.min(fill, dark) + 0.05);
+  return contrastDark >= 4.5 ? DARK_INK : LIGHT_INK;
+}
