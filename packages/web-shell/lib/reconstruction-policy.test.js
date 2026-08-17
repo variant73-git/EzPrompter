@@ -35,6 +35,38 @@ describe('deferred reconstruction policy', () => {
     expect(reconstructionReason({ node: captured, role: 'target' })).toBe('transform-target');
   });
 
+  describe('edit auto-upgrades pre-native lineage (product rule 2026-08-17)', () => {
+    // Tool fixes reach every node automatically: Edit on a node whose stored
+    // artifact predates the native engine re-clones it through the CURRENT
+    // machinery in place (history keeps the old state). Old projects must
+    // never need a new project to feel the tool's evolution.
+    it('edit upgrades a static capture even without animatedDetected', () => {
+      const legacyCapture = { ...captured, meta: { animatedDetected: false } };
+      expect(reconstructionReason({ node: legacyCapture, role: 'edit' })).toBe('edit');
+    });
+
+    it('edit upgrades a legacy saved-edit snapshot', () => {
+      const legacyEdit = { ...captured, current_snapshot_source: 'edit', meta: {} };
+      expect(reconstructionReason({ node: legacyEdit, role: 'edit' })).toBe('edit');
+    });
+
+    it('edit does NOT re-clone a node that is already native', () => {
+      const native = { ...captured, current_snapshot_source: 'native-bundle', meta: { animatedDetected: false } };
+      expect(reconstructionReason({ node: native, role: 'edit' })).toBe(null);
+    });
+
+    it('edit respects a nominal iter9 artifact (doctrine: iter9 by name stays static)', () => {
+      const iter9 = { ...captured, current_snapshot_source: 'reconstruct', meta: { reconstructionEngine: 'iter9' } };
+      expect(reconstructionReason({ node: iter9, role: 'edit' })).toBe(null);
+    });
+
+    it('the upgrade rule does not leak into target/source roles', () => {
+      const legacyCapture = { ...captured, meta: { animatedDetected: false } };
+      expect(reconstructionReason({ node: legacyCapture, role: 'target' })).toBe(null);
+      expect(reconstructionReason({ node: legacyCapture, role: 'source', edgePayload: { binding: { motion: 'preserve' } } })).toBe(null);
+    });
+  });
+
   it('reconstructs a source only for bindings that need editable runtime evidence', () => {
     expect(shouldReconstructForAction({
       node: captured,

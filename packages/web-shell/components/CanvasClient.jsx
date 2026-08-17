@@ -34,7 +34,9 @@ import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
 import { findSectionTerminals, planIncrementalRun, planRunFromNode, nodeInputSignature, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
 import { buildNodesClipboardPayload, parseNodesClipboardText, payloadToPasteItems } from '../lib/node-clipboard.js';
 import { estimateChain } from '../lib/billing/pricing.js';
-import { needsDeferredReconstruction } from '../lib/reconstruction-policy.js';
+import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
+import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
+import DevWidget from './DevWidget.jsx';
 import { canUseCloneEdit } from '../lib/clone-edit-access.js';
 import { clampToViewport } from '../lib/menu-position.js';
 import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
@@ -4562,20 +4564,29 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         setPlansOpen(true);
         return;
       }
+      // Dev widget engine selector (pre-launch): a stored choice that the node
+      // does not already satisfy becomes a nominal engine request — evaluated
+      // BEFORE the early returns, otherwise switching engines could never
+      // convert an already-editable node (Sol review 2026-08-17 #3). A match
+      // resolves to null (the selector means "which machinery", not "re-run
+      // every Edit"), letting the default fast paths below open Edit directly.
+      const engineOverride = resolveEditEngineOverride(node);
       const editorKind = editorKindForNode(node);
-      if (editorKind === NODE_EDITOR_KIND.NATIVE) {
-        enterEditMode(node, editorKind);
-        return;
-      }
-      if (!needsDeferredReconstruction(node)) {
-        enterEditMode(node, editorKind);
-        return;
+      if (!engineOverride) {
+        if (editorKind === NODE_EDITOR_KIND.NATIVE) {
+          enterEditMode(node, editorKind);
+          return;
+        }
+        if (!shouldReconstructForAction({ node, role: 'edit' })) {
+          enterEditMode(node, editorKind);
+          return;
+        }
       }
 
       editPreparationRef.current.add(nodeId);
       setNodeRunStatus(nodeId, { step: 1, label: 'Preparing editable site…', request: '' });
       try {
-        const result = await api.reconstructNode(nodeId);
+        const result = await api.reconstructNode(nodeId, { engine: engineOverride });
         flashNodeDebit(nodeId, result?.credits);
         const preparedNode = applyReconstructionResultToNode(node, result);
         setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? preparedNode : candidate));
@@ -7106,6 +7117,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           }}
         />
       )}
+
+      <DevWidget />
     </div>
     </NativeMotionEditSessionProvider>
   );

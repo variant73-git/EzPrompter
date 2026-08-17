@@ -38,7 +38,30 @@ export function edgeNeedsEditableRuntime(edgePayload) {
   });
 }
 
+/**
+ * Edit auto-upgrade (product rule 2026-08-17, pre-launch): the tool's fixes
+ * reach every node automatically. A site node whose stored artifact predates
+ * the native engine (any current snapshot that is not a native bundle) is
+ * re-cloned through the CURRENT machinery when the user enters Edit — in
+ * place, with the previous state preserved in version history. Nominal iter9
+ * artifacts are exempt (doctrine: iter9 exists BY NAME and stays static).
+ * Scoped to the edit role only: target/source roles keep the deferred policy,
+ * so /run compose semantics are untouched.
+ *
+ * Recorded dissent (Sol review 2026-08-17 #1): this also replaces legacy
+ * 'edit' snapshots (user-authored work) silently and charges for the
+ * migration. Kept by explicit product-owner rule while pre-launch (history
+ * preserves every prior state in Saved versions); a consent surface and a
+ * no-debit migration path are REQUIRED before launch.
+ */
+function editNeedsNativeUpgrade(node) {
+  if (node?.kind !== 'site' || !node?.origin_url) return false;
+  if (isIter9Reconstruction(node)) return false;
+  return node?.current_snapshot_source !== 'native-bundle';
+}
+
 export function reconstructionReason({ node, role, edgePayload } = {}) {
+  if (role === 'edit' && editNeedsNativeUpgrade(node)) return 'edit';
   if (!needsDeferredReconstruction(node)) return null;
   if (role === 'edit') return 'edit';
   if (role === 'target') return 'transform-target';
