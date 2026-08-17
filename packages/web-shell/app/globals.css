@@ -10568,9 +10568,11 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
   text-transform: uppercase; opacity: 0.5;
 }
 .dmd-color-bar {
-  display: flex; height: 34px; border-radius: 8px; overflow: hidden;
+  /* Each colour in its OWN mini container (Aura-style chips), width still
+     proportional to the measured share — not one fused strip. */
+  display: flex; height: 40px; gap: 6px;
 }
-.dmd-color-bar span { display: block; min-width: 6px; }
+.dmd-color-bar span { display: block; min-width: 28px; border-radius: 10px; }
 .dmd-color-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
 .dmd-color-legend li { display: flex; align-items: center; gap: 8px; font-size: 11px; min-width: 0; }
 .dmd-color-legend i {

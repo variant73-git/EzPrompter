@@ -51,6 +51,37 @@ describe('DESIGN.MD panel model (Aura-style, spec 2026-08-17)', () => {
   });
 });
 
+describe('palette dedupe + top-5 (product feedback 2026-08-17)', () => {
+  it('merges perceptually similar colors (summing shares) and keeps only the 5 most predominant', () => {
+    const swatches = [
+      { hex: '#101010', share: 0.30 },
+      { hex: '#131313', share: 0.20 },  // ~ #101010 → merge (share 0.50)
+      { hex: '#F5F5F5', share: 0.15 },
+      { hex: '#F2F2F2', share: 0.05 },  // ~ #F5F5F5 → merge (0.20)
+      { hex: '#2966EA', share: 0.10 },
+      { hex: '#34D399', share: 0.08 },
+      { hex: '#F97316', share: 0.06 },
+      { hex: '#A78BFA', share: 0.06 },  // 6th distinct → dropped by top-5
+    ];
+    const model = designPanelModel({ md: '', swatches });
+    expect(model.colorRows).toHaveLength(5);
+    expect(model.colorRows[0]).toMatchObject({ hex: '#101010' });
+    expect(model.colorRows[0].share).toBeCloseTo(0.50);
+    expect(model.colorRows[1].share).toBeCloseTo(0.20);
+    expect(model.colorRows.map((r) => r.hex)).not.toContain('#A78BFA');
+  });
+
+  it('keeps genuinely distinct colors apart', () => {
+    const swatches = [
+      { hex: '#000000', share: 0.5 },
+      { hex: '#FFFFFF', share: 0.3 },
+      { hex: '#FF0000', share: 0.2 },
+    ];
+    const model = designPanelModel({ md: '', swatches });
+    expect(model.colorRows).toHaveLength(3);
+  });
+});
+
 describe('client palette swatches (proportions, zero-capture-cost)', () => {
   it('measures shares from pixel data, most frequent first, summing ~1', () => {
     // 3 red pixels + 1 blue pixel, opaque, step=4 (every pixel)

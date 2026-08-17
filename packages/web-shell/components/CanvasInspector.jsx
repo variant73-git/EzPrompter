@@ -177,7 +177,7 @@ function Overview({ node }) {
             </Panel>
           ) : null;
         }
-        const model = designPanelModel({ md, name: node?.meta?.name, swatches });
+        const model = designPanelModel({ md, name: node?.meta?.name, swatches, typeSample: node?.meta?.typeSample });
         // No md and no measured swatches → fall back to the scraped palette
         // so older nodes still show their colours.
         if (!md && !(Array.isArray(swatches) && swatches.length)) {

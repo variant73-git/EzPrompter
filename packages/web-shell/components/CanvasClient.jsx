@@ -6050,22 +6050,46 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   useEffect(() => {
     const node = selectedNode;
     if (!node || node.kind !== 'site') return;
-    if (Array.isArray(node.meta?.paletteSwatches) && node.meta.paletteSwatches.length) return;
-    const shot = node.current_screenshot;
-    if (!shot || paletteBackfillRef.current.has(node.id)) return;
+    const needsColors = !(Array.isArray(node.meta?.paletteSwatches) && node.meta.paletteSwatches.length);
+    const needsType = !node.meta?.typeSample;
+    if ((!needsColors && !needsType) || paletteBackfillRef.current.has(node.id)) return;
     paletteBackfillRef.current.add(node.id);
-    import('../lib/design/palette-swatches-client.js')
-      .then(({ samplePaletteSwatches }) => samplePaletteSwatches(shot))
-      .then((paletteSwatches) => {
-        if (!paletteSwatches.length) return;
-        // Merge-only (see the capture-path note): functional local merge +
-        // atomic server-side metaMerge, never a whole meta from this closure.
-        setNodes((prev) => prev.map((n) => (
-          n.id === node.id ? { ...n, meta: { ...(n.meta || {}), paletteSwatches } } : n
-        )));
-        return api.updateNode(node.id, { metaMerge: { paletteSwatches } });
-      })
-      .catch(() => {});
+    const patches = [];
+    if (needsColors && node.current_screenshot) {
+      patches.push(import('../lib/design/palette-swatches-client.js')
+        .then(({ samplePaletteSwatches }) => samplePaletteSwatches(node.current_screenshot))
+        .then((paletteSwatches) => (paletteSwatches.length ? { paletteSwatches } : null)));
+    }
+    if (needsType) {
+      // Typography backfill: render the STORED capture in a hidden inert
+      // iframe and read computed styles — old clones gain real typography
+      // without a re-capture (colors alone made the panel read as bare).
+      // Native-bundle nodes have no html on the CURRENT snapshot; fall back
+      // to the capture snapshot still in version history.
+      const htmlSource = node.current_html
+        ? Promise.resolve(node.current_html)
+        : api.listSnapshots(node.id)
+            .then((res) => {
+              const captureSnap = (res?.snapshots || res || []).find?.((s) => s.source === 'capture');
+              return captureSnap ? api.getSnapshot(node.id, captureSnap.id).then((full) => full?.snapshot?.html || full?.html || null) : null;
+            });
+      patches.push(htmlSource
+        .then((html) => (html
+          ? import('../lib/design/type-sample-client.js').then(({ sampleTypeFromHtml }) => sampleTypeFromHtml(html))
+          : null))
+        .then((typeSample) => (typeSample ? { typeSample } : null)));
+    }
+    if (!patches.length) return;
+    Promise.all(patches.map((p) => p.catch(() => null))).then((parts) => {
+      const metaMerge = Object.assign({}, ...parts.filter(Boolean));
+      if (!Object.keys(metaMerge).length) return;
+      // Merge-only (see the capture-path note): functional local merge +
+      // atomic server-side metaMerge, never a whole meta from this closure.
+      setNodes((prev) => prev.map((n) => (
+        n.id === node.id ? { ...n, meta: { ...(n.meta || {}), ...metaMerge } } : n
+      )));
+      return api.updateNode(node.id, { metaMerge });
+    }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNode?.id]);
   const selectedSiteNode = selectedNode?.kind === 'site' ? selectedNode : null;

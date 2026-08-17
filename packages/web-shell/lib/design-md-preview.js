@@ -38,11 +38,39 @@ export function swatchInk(color) {
  */
 const SPECIMEN_CAP = 40;
 const SPECIMEN_FLOOR = 12;
+// Measured palettes: merge perceptually-similar buckets (the coarse sampler
+// splits one surface into near-identical greys) and keep the 5 most
+// predominant — a legend of lookalike hexes reads as noise, not a system.
+const SIMILAR_DIST = 36; // RGB euclidean, of ~441 max
+const MAX_MEASURED_COLORS = 5;
+
+function hexRgb(hex) {
+  const h = String(hex || '').replace('#', '');
+  if (h.length !== 6) return null;
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+}
+
+function mergeSimilarSwatches(rows) {
+  const merged = [];
+  for (const row of rows) {
+    const rgb = hexRgb(row.hex);
+    const near = rgb && merged.find((m) => {
+      const mrgb = hexRgb(m.hex);
+      if (!mrgb) return false;
+      return Math.hypot(rgb[0] - mrgb[0], rgb[1] - mrgb[1], rgb[2] - mrgb[2]) < SIMILAR_DIST;
+    });
+    if (near) near.share = (near.share || 0) + (row.share || 0);
+    else merged.push({ ...row });
+  }
+  return merged
+    .sort((a, b) => (b.share || 0) - (a.share || 0))
+    .slice(0, MAX_MEASURED_COLORS);
+}
 
 export function designPanelModel({ md = '', name = '', swatches = null, typeSample = null } = {}) {
   const base = designMdPreviewModel(md, name);
   const measured = Array.isArray(swatches) && swatches.length
-    ? swatches.map((s) => ({ hex: String(s.hex || '').toUpperCase(), share: Number(s.share) || 0, role: null }))
+    ? mergeSimilarSwatches(swatches.map((s) => ({ hex: String(s.hex || '').toUpperCase(), share: Number(s.share) || 0, role: null })))
     : null;
   const tokenRoles = [
     base.surface ? { hex: String(base.surface).toUpperCase(), share: null, role: 'Surface' } : null,
