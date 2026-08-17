@@ -772,8 +772,13 @@ export default function CanvasNode({
       // port keeps the cord origin stable — moving it mid-drag would
       // make the line whip around as the user moves the mouse.
       if (isDrafting) return;
-      // Hands off while cursor is over the port — let CSS hover take over.
-      if (e.target === port || port.contains(e.target)) return;
+      // Keep tracking even while the cursor is OVER the port. The old
+      // hands-off here caused visible stepping: near the ball, mousemove
+      // events alternate between landing on the port (frozen) and on the
+      // node (updates), so the ball advanced in little jumps — and since it
+      // chases the cursor, "near" is its normal state. Continuous updates
+      // keep it glued under the cursor (a stabler click target, not a
+      // moving one); CSS :hover still handles the scale-up.
       const rect = cnode.getBoundingClientRect();
       const scale = readCanvasScale();
       // Screen → node-local CSS coords (.cnode children live in the
