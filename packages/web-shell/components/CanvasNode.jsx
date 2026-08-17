@@ -375,7 +375,7 @@ export default function CanvasNode({
   node, selected, livePreviewActive = false, placing = false, editing = false, onEditingChange,
   editorKind = NODE_EDITOR_KIND.LEGACY,
   onSelect, onMove, onMoveStart, onMoveEnd, onResize, onDelete, onReset, onSaveEdit, onDiscardEdit,
-  onDuplicate, onDownload, onAltDuplicateDrag, onCloneIter9,
+  onDuplicate, onDownload, onAltDuplicateDrag, onCloneIter9, onCloneNative,
   onStartEdge, onSlotMouseDown, onPromptTextChange, onMetaPatch,
   onReplaceContent, onRequestUpload, onFrameZoom, onVersionRestore,
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
@@ -1931,8 +1931,11 @@ export default function CanvasNode({
           canRemoveFromSection={inSection}
           editing={editing}
           canCloneIter9={node.kind === 'site' && !!node.origin_url && !editing && !!onCloneIter9}
+          canCloneNative={node.kind === 'site' && !!node.origin_url && !editing && !!onCloneNative
+            && node.current_snapshot_source !== 'native-bundle'}
           onEdit={() => { setMenuPos(null); onEditingChange?.(!editing); }}
           onCloneIter9={() => { setMenuPos(null); onCloneIter9?.(node.id); }}
+          onCloneNative={() => { setMenuPos(null); onCloneNative?.(node.id); }}
           onDuplicate={() => { setMenuPos(null); onDuplicate?.(); }}
           onDownload={() => { setMenuPos(null); onDownload?.(); }}
           onReplace={() => { setMenuPos(null); onReplaceContent?.(node.id); }}
@@ -1947,7 +1950,7 @@ export default function CanvasNode({
   );
 }
 
-function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, canRemoveFromSection, canCloneIter9, editing, onEdit, onCloneIter9, onDuplicate, onDownload, onReplace, onReset, onRemoveFromSection, onDelete, onClose }) {
+function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, canRemoveFromSection, canCloneIter9, canCloneNative, editing, onEdit, onCloneIter9, onCloneNative, onDuplicate, onDownload, onReplace, onReset, onRemoveFromSection, onDelete, onClose }) {
   // Clamp to viewport so the menu stays fully visible. Width matches
   // .empty-drop-menu (260px) so this reads as the same family of menu.
   const W = 260, H_EST = 240;
@@ -1972,6 +1975,18 @@ function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, canRemoveFromS
       )}
       {/* Doutrina (2026-08-15): "clone" e' o ANIMADO — Edit ja o produz. O
           iter9 (clonador estatico historico) fica A DISPOSICAO por NOME. */}
+      {/* Nodes de linhagem antiga (snapshot pre-nativo): a ferramenta evolui,
+          mas o artefato clonado e' dado armazenado — oferecer o re-clone
+          nominal pela maquina atual, no lugar (historico preservado). Some
+          quando o snapshot ja e' native-bundle. */}
+      {canCloneNative && (
+        <button onClick={onCloneNative} title="Re-clone this site with the current engine — live animations, editable in the motion editor. Charges like a new clone; the previous state stays in Saved versions.">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polygon points="6 3 20 12 6 21 6 3"/>
+          </svg>
+          <span>Re-clone (animated)</span>
+        </button>
+      )}
       {canCloneIter9 && (
         <button onClick={onCloneIter9} title="Static clone of this site via the iter9 engine — no animations, HTML you can compose with.">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
