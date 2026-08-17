@@ -71,6 +71,20 @@ export async function PATCH(request, { params }) {
   const width = body.width ?? node.width;
   const height = body.height ?? node.height;
   const isMain = body.isMain ?? node.is_main;
+  // metaMerge: ATOMIC server-side jsonb merge of the given keys only. Async
+  // clients (palette sampling lands after image decode) must never send a
+  // whole meta captured earlier — a read-modify-write from a stale closure
+  // silently deletes every field written in between (Sol review 2026-08-17).
+  if (body.metaMerge && typeof body.metaMerge === 'object' && !Array.isArray(body.metaMerge)) {
+    await sql`
+      UPDATE nodes
+         SET pos_x = ${posX}, pos_y = ${posY}, width = ${width}, height = ${height},
+             is_main = ${isMain},
+             meta = COALESCE(meta, '{}'::jsonb) || ${JSON.stringify(body.metaMerge)}::jsonb
+       WHERE id = ${id}
+    `;
+    return NextResponse.json({ ok: true });
+  }
   const meta = body.meta ?? node.meta;
   await sql`
     UPDATE nodes

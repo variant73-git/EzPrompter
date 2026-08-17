@@ -2257,9 +2257,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           .then(({ samplePaletteSwatches }) => samplePaletteSwatches(cap.screenshotDataUrl))
           .then((paletteSwatches) => {
             if (!paletteSwatches.length) return;
-            const meta = { ...nextMeta, paletteSwatches };
-            updateNodeLocal(nodeId, { meta });
-            return api.updateNode(nodeId, { meta });
+            // Merge-only writes: local state merges from the CURRENT node (not
+            // this closure's meta) and the server merges atomically via
+            // metaMerge — a stale whole-meta PATCH would delete fields written
+            // while the image decoded (Sol review 2026-08-17).
+            setNodes((prev) => prev.map((n) => (
+              n.id === nodeId ? { ...n, meta: { ...(n.meta || {}), paletteSwatches } } : n
+            )));
+            return api.updateNode(nodeId, { metaMerge: { paletteSwatches } });
           })
           .catch(() => {});
       }
@@ -6053,9 +6058,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       .then(({ samplePaletteSwatches }) => samplePaletteSwatches(shot))
       .then((paletteSwatches) => {
         if (!paletteSwatches.length) return;
-        const meta = { ...(node.meta || {}), paletteSwatches };
-        updateNodeLocal(node.id, { meta });
-        return api.updateNode(node.id, { meta });
+        // Merge-only (see the capture-path note): functional local merge +
+        // atomic server-side metaMerge, never a whole meta from this closure.
+        setNodes((prev) => prev.map((n) => (
+          n.id === node.id ? { ...n, meta: { ...(n.meta || {}), paletteSwatches } } : n
+        )));
+        return api.updateNode(node.id, { metaMerge: { paletteSwatches } });
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
