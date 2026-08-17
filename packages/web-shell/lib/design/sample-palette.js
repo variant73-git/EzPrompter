@@ -101,7 +101,11 @@ export async function sampleImagePixels(imageDataUrl) {
         const minFreq = list.length ? list[0].n * 0.01 : 0;
         const accent = list.filter((c) => c.n >= minFreq && sat(c.rgb) > 0.35)
           .sort((a, b) => sat(b.rgb) - sat(a.rgb))[0]?.rgb || null;
-        return { top, bottom, palette, background, accent };
+        // Shares were always measured (bucket counts) and then thrown away —
+        // expose them so UI surfaces can draw proportional palettes for free.
+        const total = list.reduce((sum, c) => sum + c.n, 0) || 1;
+        const swatches = list.slice(0, 8).map((c) => ({ rgb: c.rgb, share: c.n / total }));
+        return { top, bottom, palette, background, accent, swatches };
       });
     } finally {
       await browser.close();

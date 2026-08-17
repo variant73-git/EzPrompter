@@ -19,6 +19,8 @@ import { originColor } from '../lib/node-origin.js';
 import { canUseCloneEdit } from '../lib/clone-edit-access.js';
 import { CLONE_EDIT_CREDIT_ESTIMATE } from '../lib/billing/pricing.js';
 import { isLiveUrlReference } from '../lib/url-reference.js';
+import { designPanelModel } from '../lib/design-md-preview.js';
+import DesignMdCard from './DesignMdCard.jsx';
 
 // The canvas inspector is intentionally contextual. With no selection it
 // disappears and returns the space to the canvas. With a selection it offers
@@ -160,17 +162,33 @@ function Overview({ node }) {
         </Panel>
       )}
 
-      {isDesign && (
-        <Panel title="Design language" icon={Palette}>
-          {palette.length ? (
-            <div className="cinsp-palette" aria-label="Extracted color palette">
-              {palette.map((color) => <span key={color} title={color} style={{ background: color }} />)}
-            </div>
-          ) : <p className="cinsp-help">Run or connect this node to extract its color and type scales.</p>}
-          <Detail label="Type scale" value={node?.meta?.typeScale || 'Modular scale'} />
-          <Detail label="Format" value="design.md" mono />
-        </Panel>
-      )}
+      {(isDesign || isSite) && (() => {
+        // DESIGN.MD panel (Aura-style, product spec 2026-08-17): replaces the
+        // old "Design language" strip. Site nodes carry measured colour
+        // shares from the capture screenshot (meta.paletteSwatches — zero
+        // LLM, sampled client-side after the capture lands); design nodes
+        // derive everything from their tokens.
+        const md = node?.current_design_md || node?.design_md || node?.meta?.designMd || '';
+        const swatches = node?.meta?.paletteSwatches;
+        if (!md && !(Array.isArray(swatches) && swatches.length) && !palette.length) {
+          return isDesign ? (
+            <Panel title="Design.md" icon={Palette}>
+              <p className="cinsp-help">Run or connect this node to extract its color and type scales.</p>
+            </Panel>
+          ) : null;
+        }
+        const model = designPanelModel({ md, name: node?.meta?.name, swatches });
+        // No md and no measured swatches → fall back to the scraped palette
+        // so older nodes still show their colours.
+        if (!md && !(Array.isArray(swatches) && swatches.length)) {
+          model.colorRows = palette.map((hex) => ({ hex: hex.toUpperCase(), share: null, role: null }));
+        }
+        return (
+          <Panel title="Design.md" icon={Palette}>
+            <DesignMdCard model={model} variant="panel" />
+          </Panel>
+        );
+      })()}
 
       {isCode && (
         <Panel title={node?.meta?.subtype === 'shader' ? 'Shader controls' : 'Code behavior'} icon={Code2}>

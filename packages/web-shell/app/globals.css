@@ -10550,3 +10550,45 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
 }
 .dev-widget-seg button:disabled { opacity: 0.5; cursor: default; }
 .dev-widget-balance { margin-left: auto; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* ── DESIGN.MD card (Aura-style, 2026-08-17) — shared by the inspector panel
+   and the .md node body. No reflexive card borders: sections separate with
+   spacing alone; metadata in the neutral UI type, tabular numerals. */
+.dmd-card { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.dmd-node { height: 100%; padding: 22px 24px; overflow: hidden; border-radius: inherit; }
+.dmd-header { display: flex; flex-direction: column; gap: 2px; margin-bottom: 2px; }
+.dmd-header span {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; opacity: 0.55;
+}
+.dmd-header strong { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.dmd-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.dmd-section-title {
+  margin: 0; font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
+  text-transform: uppercase; opacity: 0.5;
+}
+.dmd-color-bar {
+  display: flex; height: 34px; border-radius: 8px; overflow: hidden;
+}
+.dmd-color-bar span { display: block; min-width: 6px; }
+.dmd-color-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.dmd-color-legend li { display: flex; align-items: center; gap: 8px; font-size: 11px; min-width: 0; }
+.dmd-color-legend i {
+  width: 10px; height: 10px; border-radius: 3px; flex: none;
+}
+.dmd-color-legend span { opacity: 0.72; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dmd-color-legend b {
+  font-weight: 500; opacity: 0.55; font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.dmd-type-row { display: flex; flex-direction: column; gap: 3px; padding: 6px 0; min-width: 0; }
+.dmd-type-row + .dmd-type-row { margin-top: 2px; }
+.dmd-type-specimen {
+  line-height: 1.12; letter-spacing: -0.01em; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dmd-type-meta { display: flex; align-items: baseline; gap: 8px; font-size: 11px; }
+.dmd-type-meta span { opacity: 0.72; }
+.dmd-type-meta b { font-weight: 500; opacity: 0.55; font-variant-numeric: tabular-nums; }
+/* Panel variant inherits the inspector's ink; keep hexes quiet either way. */
+.dmd-panel .dmd-color-legend b, .dmd-panel .dmd-type-meta b { color: var(--text-muted); }

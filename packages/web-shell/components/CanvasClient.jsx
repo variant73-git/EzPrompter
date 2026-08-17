@@ -2248,6 +2248,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         ...(cap.animatedDetected ? { animatedDetected: true } : {}),
       };
       await api.updateNode(nodeId, { meta: nextMeta });
+      // DESIGN.MD panel data: measure colour proportions from the capture
+      // screenshot on the CLIENT (few ms on a canvas) — zero LLM, zero added
+      // capture time. Fire-and-forget; the panel simply lacks the bar until
+      // the patch lands.
+      if (cap.screenshotDataUrl) {
+        import('../lib/design/palette-swatches-client.js')
+          .then(({ samplePaletteSwatches }) => samplePaletteSwatches(cap.screenshotDataUrl))
+          .then((paletteSwatches) => {
+            if (!paletteSwatches.length) return;
+            const meta = { ...nextMeta, paletteSwatches };
+            updateNodeLocal(nodeId, { meta });
+            return api.updateNode(nodeId, { meta });
+          })
+          .catch(() => {});
+      }
       setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? {
         ...candidate,
         current_html: cap.html,
@@ -6020,6 +6035,31 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   }, [selectedSectionId, selectedNodeId, selectedNodeIds, sections, nodes]);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) || null;
+
+  // DESIGN.MD lazy backfill (product rule: old nodes upgrade automatically).
+  // Pre-feature site nodes carry a screenshot but no measured colour shares;
+  // the FIRST selection samples them client-side (few ms on a canvas) and
+  // patches meta — no LLM, no capture-time cost. Guarded per node id so a
+  // failed sample never loops.
+  const paletteBackfillRef = useRef(new Set());
+  useEffect(() => {
+    const node = selectedNode;
+    if (!node || node.kind !== 'site') return;
+    if (Array.isArray(node.meta?.paletteSwatches) && node.meta.paletteSwatches.length) return;
+    const shot = node.current_screenshot;
+    if (!shot || paletteBackfillRef.current.has(node.id)) return;
+    paletteBackfillRef.current.add(node.id);
+    import('../lib/design/palette-swatches-client.js')
+      .then(({ samplePaletteSwatches }) => samplePaletteSwatches(shot))
+      .then((paletteSwatches) => {
+        if (!paletteSwatches.length) return;
+        const meta = { ...(node.meta || {}), paletteSwatches };
+        updateNodeLocal(node.id, { meta });
+        return api.updateNode(node.id, { meta });
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNode?.id]);
   const selectedSiteNode = selectedNode?.kind === 'site' ? selectedNode : null;
   const editingNode = nodes.find((node) => node.id === editingNodeId) || null;
 
