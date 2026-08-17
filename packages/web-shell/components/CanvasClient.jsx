@@ -3511,32 +3511,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     }
   }
 
-  /**
-   * Re-clone NOMINAL pelo motor nativo (o "clone" da doutrina). Existe para
-   * nodes de linhagem antiga: os fixes da ferramenta valem para todo node,
-   * mas o ARTEFATO clonado e' dado armazenado — um snapshot estatico de uma
-   * era anterior nao vira animado sozinho. Este pedido roda o node pela
-   * maquina atual NO LUGAR (mesmo node, mesmo board); o estado anterior fica
-   * no historico de versoes. Pedido nominal vence o pulo de "ja esta pronto"
-   * (183: o early-return so vale SEM motor).
-   */
-  async function handleCloneNative(id) {
-    const node = nodes.find((n) => n.id === id);
-    if (!node?.origin_url) { toast.error('This node has no origin URL to clone.'); return; }
-    setNodeRunStatus(id, { step: 1, label: 'Re-cloning with animation…', request: '' });
-    try {
-      const result = await api.reconstructNode(id, { engine: 'native' });
-      flashNodeDebit(id, result?.credits);
-      const preparedNode = applyReconstructionResultToNode(node, result);
-      setNodes((prev) => prev.map((candidate) => (candidate.id === id ? preparedNode : candidate)));
-      toast.info('Animated clone ready — open Edit to work on it.');
-    } catch (e) {
-      if (!handleBillingError(e)) toast.error(`Animated re-clone failed: ${e.message}`);
-    } finally {
-      setNodeRunStatus(id, null);
-    }
-  }
-
   async function handleDuplicateNode(id) {
     // Node inside a multi-selection → duplicate the WHOLE selection (nodes +
     // internal cords) as a unit; the copies land offset beside the originals.
@@ -6053,7 +6027,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     handleDiscardNodeEdit,
     handleDuplicateNode,
     handleCloneIter9,
-    handleCloneNative,
     handleDownloadNode,
     startEdgeFromNode,
     onSlotMouseDown,
