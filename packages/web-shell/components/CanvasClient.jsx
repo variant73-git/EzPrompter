@@ -4834,6 +4834,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       '#rb-ed-sections-body',
       '#rb-ed-assets-body',
       '.cnode-version-menu',
+      // Native motion edit chrome (sidebar / inspector / timeline dock) owns
+      // its own overflow — wheel there must scroll, never pan/zoom the canvas.
+      '[data-native-motion-chrome]',
       '.cnode-version-ctx-menu',
       '.prompt-dock',
       '.boards-sidebar',

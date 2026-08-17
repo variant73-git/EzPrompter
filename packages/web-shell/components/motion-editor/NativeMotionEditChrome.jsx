@@ -173,9 +173,16 @@ export function NativeMotionEditSessionProvider({
       const layout = nativeMotionEditShellLayout(window.innerWidth);
       body.style.setProperty('--native-motion-left-w', `${layout.left}px`);
       body.style.setProperty('--native-motion-right-w', `${layout.right}px`);
-      body.style.setProperty('--native-motion-timeline-h', `${layout.bottom}px`);
       body.style.setProperty('--rb-layers-width', `${layout.left}px`);
       body.style.setProperty('--rb-insp-width', `${layout.right}px`);
+      // Panels anchor to the topbar's MEASURED bottom, not the --topbar-h
+      // constant: banners/offsets above the topbar (dev strip, etc.) push it
+      // down and a fixed 46px anchor leaves the panel tops clipped under it.
+      const topbar = document.querySelector('.canvas-topbar');
+      const top = topbar ? Math.round(topbar.getBoundingClientRect().bottom) : 46;
+      body.style.setProperty('--native-motion-top', `${top}px`);
+      // --native-motion-timeline-h is owned by NativeMotionTimelineDock
+      // (collapse/resize change it live); the CSS fallback covers boot.
     };
     const handleResize = () => {
       if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
@@ -193,6 +200,7 @@ export function NativeMotionEditSessionProvider({
       body.style.removeProperty('--native-motion-left-w');
       body.style.removeProperty('--native-motion-right-w');
       body.style.removeProperty('--native-motion-timeline-h');
+      body.style.removeProperty('--native-motion-top');
       body.style.removeProperty('--rb-layers-width');
       body.style.removeProperty('--rb-insp-width');
     };

@@ -180,6 +180,30 @@ function NativeEditViewportRuntime({
               background: '#191917',
             }}
           />
+          {status !== 'ready' && (
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                // The runtime iframe paints the SITE's own background while
+                // GSAP boots and the bridge negotiates — a long stretch with
+                // zero feedback. Darken the stage and keep the process's
+                // existing message up until the runtime announces ready.
+                position: 'absolute',
+                inset: 0,
+                display: 'grid',
+                placeItems: 'center',
+                padding: 24,
+                textAlign: 'center',
+                background: 'rgba(15, 15, 14, 0.78)',
+                color: '#F1F0EB',
+                font: '500 14px/1.5 var(--font-inter), Inter, sans-serif',
+                pointerEvents: 'none',
+              }}
+            >
+              {LOADING_COPY}
+            </div>
+          )}
           {controller.recoveryNotice && (
             <div
               role="status"

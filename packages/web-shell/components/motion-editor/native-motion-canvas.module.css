@@ -47,7 +47,7 @@
 }
 
 .sidebar {
-  top: var(--topbar-h, 46px);
+  top: var(--native-motion-top, var(--topbar-h, 46px));
   bottom: 0;
   left: 0;
   width: var(--native-motion-left-w, 224px);
@@ -58,7 +58,7 @@
 }
 
 .inspector {
-  top: var(--topbar-h, 46px);
+  top: var(--native-motion-top, var(--topbar-h, 46px));
   right: 0;
   bottom: 0;
   width: var(--native-motion-right-w, 248px);

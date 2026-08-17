@@ -1043,6 +1043,10 @@ export function TimelinePanel({
   onLabelsWidth,
   bodyHeight = TIMELINE_MIN_HEIGHT,
   onBodyHeight,
+  // Resize bounds are the CALLER's contract (the canvas dock uses 45% of the
+  // viewport as ceiling and a one-track floor); the lab defaults stay.
+  minBodyHeight = TIMELINE_MIN_HEIGHT,
+  maxBodyHeight = TIMELINE_MAX_HEIGHT,
   onToggle,
   onPlayback,
   onSpeed,
@@ -1530,7 +1534,7 @@ export function TimelinePanel({
   function moveHeightResize(event) {
     if (!resizingHeight || event.pointerId !== resizingHeight.pointerId) return;
     const next = resizingHeight.startHeight + (resizingHeight.startY - event.clientY);
-    onBodyHeight?.(Math.max(TIMELINE_MIN_HEIGHT, Math.min(TIMELINE_MAX_HEIGHT, Math.round(next))));
+    onBodyHeight?.(Math.max(minBodyHeight, Math.min(maxBodyHeight, Math.round(next))));
   }
 
   function endHeightResize(event) {

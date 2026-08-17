@@ -2550,6 +2550,17 @@ html, body { overscroll-behavior: none; }
   overflow: visible;
 }
 
+/* Selected: the coloured ring floats OUTSIDE the frame (gap 3px + band to
+   5px → band centre +4px; editing: gap 5px + band to 8px → centre +6.5px).
+   The connector dots must sit ON that coloured band, not on the node border
+   they normally centre on. VISUAL shift only — cord endpoints and snap
+   geometry (EdgeLayer/findSnapTarget) stay at the node edge; the dot's body
+   covers the joint. Counter-scaled like the ring (same --chrome-scale). */
+.cnode.selected .cnode-port-right { right: calc(-11px / var(--chrome-scale, 1)); }
+.cnode.selected .cnode-port-stack-left { left: calc(-11px / var(--chrome-scale, 1)); }
+.cnode.selected.editing .cnode-port-right { right: calc(-13.5px / var(--chrome-scale, 1)); }
+.cnode.selected.editing .cnode-port-stack-left { left: calc(-13.5px / var(--chrome-scale, 1)); }
+
 /* While a node is being placed (ghost tracking the cursor), every node iframe
    goes inert so the placement click reaches the window `click` listener that
    commits the drop. Without this, a click landing over an already-mounted
