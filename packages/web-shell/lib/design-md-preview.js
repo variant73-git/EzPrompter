@@ -39,7 +39,7 @@ export function swatchInk(color) {
 const SPECIMEN_CAP = 40;
 const SPECIMEN_FLOOR = 12;
 
-export function designPanelModel({ md = '', name = '', swatches = null } = {}) {
+export function designPanelModel({ md = '', name = '', swatches = null, typeSample = null } = {}) {
   const base = designMdPreviewModel(md, name);
   const measured = Array.isArray(swatches) && swatches.length
     ? swatches.map((s) => ({ hex: String(s.hex || '').toUpperCase(), share: Number(s.share) || 0, role: null }))
@@ -55,17 +55,33 @@ export function designPanelModel({ md = '', name = '', swatches = null } = {}) {
   });
   const colorRows = measured || fromTokens;
 
-  const maxSize = Math.max(...base.scale.map((item) => item.size), 1);
-  const typeRoles = base.scale.map((item) => ({
-    role: item.role,
-    label: item.role === 'H1' ? 'Display Lg' : item.role === 'H2' ? 'Display Md' : 'Body Md',
-    family: item.role === 'Body' ? base.bodyFont : base.headingFont,
-    size: item.size,
-    weight: item.weight,
+  // Typography source: design.md tokens when the node has an md; otherwise a
+  // typeSample MEASURED from the live page at capture (computed styles —
+  // deterministic, no LLM), so cloned SITE nodes show their real type too.
+  let roleSpecs;
+  if (md) {
+    roleSpecs = base.scale.map((item) => ({
+      role: item.role,
+      label: item.role === 'H1' ? 'Display Lg' : item.role === 'H2' ? 'Display Md' : 'Body Md',
+      family: item.role === 'Body' ? base.bodyFont : base.headingFont,
+      size: item.size,
+      weight: item.weight,
+    }));
+  } else if (typeSample && (typeSample.display || typeSample.body)) {
+    roleSpecs = [
+      typeSample.display ? { role: 'Display', label: 'Display Lg', ...typeSample.display } : null,
+      typeSample.body ? { role: 'Body', label: 'Body Md', ...typeSample.body } : null,
+    ].filter((spec) => spec && spec.family && spec.size > 0);
+  } else {
+    roleSpecs = [];
+  }
+  const maxSize = Math.max(...roleSpecs.map((item) => item.size), 1);
+  const typeRoles = roleSpecs.map((item) => ({
+    ...item,
     specimenPx: Math.max(SPECIMEN_FLOOR, Math.round(SPECIMEN_CAP * (item.size / maxSize))),
   }));
 
-  return { ...base, colorRows, typeRoles, hasTypography: Boolean(md) };
+  return { ...base, colorRows, typeRoles, hasTypography: typeRoles.length > 0 };
 }
 
 export function designMdPreviewModel(md, fallbackName = '') {

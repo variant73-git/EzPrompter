@@ -752,9 +752,37 @@ export async function captureSnapshot(url, opts = {}) {
       }
     }
 
+    // DESIGN.MD panel data (2026-08-17): the site's real typography, measured
+    // from computed styles while the page is still open — deterministic, no
+    // LLM, a single evaluate (~ms). Roles: the largest visible heading
+    // (display), a paragraph (body). Best-effort: capture never fails on it.
+    const typeSample = await page.evaluate(() => {
+      const pick = (selectors) => {
+        for (const sel of selectors) {
+          const el = [...document.querySelectorAll(sel)].find((cand) => {
+            const rect = cand.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && cand.textContent.trim().length > 2;
+          });
+          if (el) {
+            const cs = getComputedStyle(el);
+            return {
+              family: (cs.fontFamily.split(',')[0] || '').replace(/["']/g, '').trim(),
+              size: Math.round(parseFloat(cs.fontSize) || 0),
+              weight: Number(cs.fontWeight) || 400,
+            };
+          }
+        }
+        return null;
+      };
+      const display = pick(['h1', 'h2', '[class*="hero"] *']);
+      const body = pick(['main p', 'p', 'body']);
+      return (display || body) ? { display, body } : null;
+    }).catch(() => null);
+
     return {
       html, screenshotDataUrl, title, baseUrl: url,
       animatedDetected: detection.detected,
+      ...(typeSample ? { typeSample } : {}),
       ...(chassisEvidence ? { chassisEvidence } : {}),
       ...(classificationShadow ? { classificationShadow } : {}),
     };
