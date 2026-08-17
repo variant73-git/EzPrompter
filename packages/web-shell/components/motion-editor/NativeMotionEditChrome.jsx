@@ -178,12 +178,24 @@ export function NativeMotionEditSessionProvider({
       // Panels anchor to the topbar's MEASURED bottom, not the --topbar-h
       // constant: banners/offsets above the topbar (dev strip, etc.) push it
       // down and a fixed 46px anchor leaves the panel tops clipped under it.
-      const topbar = document.querySelector('.canvas-topbar');
-      const top = topbar ? Math.round(topbar.getBoundingClientRect().bottom) : 46;
-      body.style.setProperty('--native-motion-top', `${top}px`);
+      measureTop();
       // --native-motion-timeline-h is owned by NativeMotionTimelineDock
       // (collapse/resize change it live); the CSS fallback covers boot.
     };
+    // The strip above the topbar APPEARS AND DISAPPEARS while editing (dev
+    // build indicator, banners) — a one-shot measurement goes stale and the
+    // panel tops clip again (regressed once exactly this way). Re-measure on
+    // a light interval; one rect read per tick, var written only on change.
+    let lastTop = null;
+    const measureTop = () => {
+      const topbar = document.querySelector('.canvas-topbar');
+      const top = topbar ? Math.round(topbar.getBoundingClientRect().bottom) : 46;
+      if (top !== lastTop) {
+        lastTop = top;
+        body.style.setProperty('--native-motion-top', `${top}px`);
+      }
+    };
+    const topWatch = setInterval(measureTop, 400);
     const handleResize = () => {
       if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
       resizeFrame = window.requestAnimationFrame(applyLayout);
@@ -193,6 +205,7 @@ export function NativeMotionEditSessionProvider({
     applyLayout();
     window.addEventListener('resize', handleResize);
     return () => {
+      clearInterval(topWatch);
       if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
       window.removeEventListener('resize', handleResize);
       body.classList.remove('rb-ed-active', 'rb-ed-canvas', 'native-motion-editing');

@@ -281,6 +281,10 @@ export async function reconstructSiteNode({
             reconstructionEngine: 'native-bundle',
             deferredReconstructionReason: reason,
             deferredReconstructedAt: new Date().toISOString(),
+            // Typography measured by the producer from the LIVE page (rides
+            // the output as a sibling of bundle — the bundle itself, its
+            // hash and every existing clone stay untouched).
+            ...(materialized.output?.typeSample ? { typeSample: materialized.output.typeSample } : {}),
             motionControls: validatorConfigured ? generationMeta(generated) : {
               status: 'skipped',
               reason: 'validator_not_configured',

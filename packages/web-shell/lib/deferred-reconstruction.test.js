@@ -228,6 +228,42 @@ describe('deferred reconstruction result kinds', () => {
     expect(snapshotWrite.values).toContain(JSON.stringify(result.motionManifest));
   });
 
+  it('typeSample rides the output into meta WITHOUT touching the bundle identity — no price to pay', async () => {
+    // The no-price guarantee, proven: the same bundle with and without the
+    // sibling typeSample field registers with IDENTICAL descriptor identity
+    // (contentHash/bundleId derive from bundle content only), and the sample
+    // lands in node meta.
+    const bundle = {
+      entryPath: 'index.html',
+      runtimeFingerprint: runtimeHash,
+      assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+      reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+    };
+    const typeSample = { display: { family: 'Antique Olive', size: 64, weight: 500 }, body: { family: 'Antique Olive', size: 16, weight: 400 } };
+    const [plain, sampled] = await Promise.all([
+      materializeReconstructionOutput({ kind: 'native', bundle }, { bundleStore: createMemoryBundleStore() }),
+      materializeReconstructionOutput({ kind: 'native', bundle, typeSample }, { bundleStore: createMemoryBundleStore() }),
+    ]);
+    expect(sampled.bundleDescriptor.bundleId).toBe(plain.bundleDescriptor.bundleId);
+    expect(sampled.bundleDescriptor.contentHash).toBe(plain.bundleDescriptor.contentHash);
+
+    delete process.env.UNCRAFT_MOTION_CONTROL_VALIDATOR_URL;
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const result = await reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-type-1',
+      producer: vi.fn(async () => ({ kind: 'native', bundle, typeSample })),
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: vi.fn(),
+    });
+    expect(result.meta.typeSample).toEqual(typeSample);
+  });
+
   it('hard-fails when a CONFIGURED validator yields no generation result — never mislabeled as unconfigured', async () => {
     // Sol review 2026-08-17 (v2 round): with the config gate keyed on generated's
     // truthiness, a configured-but-broken generator resolving null would settle

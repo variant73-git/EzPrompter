@@ -216,6 +216,37 @@ export async function captureNativeBundle(url, opts = {}) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.waitForTimeout(1200);
 
+    // DESIGN.MD typography — computed-style measurement of the LIVE page
+    // (same probe as lib/snapshot.js), run BEFORE the collection settles ON
+    // PURPOSE: getComputedStyle can trigger late font fetches, and a response
+    // arriving after the purge loop would crash the destructure or mutate the
+    // supposedly immutable assets/contentHash (Sol review, reproduced). Inside
+    // the interception window, anything it triggers is collected normally.
+    // Best-effort by construction: failure yields null, capture untouched.
+    // page (same probe as lib/snapshot.js). Best-effort by construction: any
+    // failure yields null and the capture proceeds untouched. The value rides
+    // the producer OUTPUT as a sibling of `bundle` — NEVER inside it — so the
+    // bundle's content hash, runtime fingerprint, and every existing clone
+    // stay byte-identical (no price to pay).
+    const typeSample = await page.evaluate(() => {
+      const pick = (selectors) => {
+        for (const sel of selectors) {
+          let el = null;
+          try { el = [...document.querySelectorAll(sel)].find((cand) => { const r = cand.getBoundingClientRect(); return r.width > 0 && r.height > 0 && (cand.textContent || '').trim().length > 2; }); } catch { /* bad selector */ }
+          if (el) {
+            const cs = getComputedStyle(el);
+            const family = (cs.fontFamily.split(',')[0] || '').replace(/["']/g, '').trim();
+            const size = Math.round(parseFloat(cs.fontSize) || 0);
+            if (family && size > 0) return { family, size, weight: Number(cs.fontWeight) || 400 };
+          }
+        }
+        return null;
+      };
+      const display = pick(['h1', 'h2', '[class*="hero"] *']);
+      const body = pick(['main p', 'p', 'body']);
+      return (display || body) ? { display, body } : null;
+    }).catch(() => null);
+
     onProgress({ etapa: 'collecting' });
     // Espera os corpos que ainda estavam sendo lidos ANTES de montar o bundle.
     await Promise.allSettled([...emVoo]);
@@ -290,6 +321,9 @@ export async function captureNativeBundle(url, opts = {}) {
 
     return {
       kind: 'native',
+      // Sibling of `bundle` ON PURPOSE — see the measurement note above:
+      // anything added inside `bundle` would change contentHash/fingerprint.
+      ...(typeSample ? { typeSample } : {}),
       bundle: {
         entryPath,
         assets,
