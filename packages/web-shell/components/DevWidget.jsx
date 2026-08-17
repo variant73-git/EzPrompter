@@ -45,6 +45,9 @@ export default function DevWidget() {
       if (res.ok) {
         const data = await res.json();
         setState(data);
+        // The header pill listens for this event — without it the balance up
+        // top looks frozen and the lever reads as dead.
+        window.dispatchEvent(new CustomEvent('uncraft:balance', { detail: { balance: data.credits } }));
         if (reload) window.location.reload();
       }
     } finally {
@@ -52,13 +55,21 @@ export default function DevWidget() {
     }
   }
 
+  // No unselected state: the selector shows the EFFECTIVE engine (stored
+  // choice or the doctrine default, native). Picking "Animated" clears the
+  // override — same behavior, but something is always lit.
+  const effectiveEngine = engine || 'native';
   function pickEngine(value) {
-    const next = engine === value ? null : value;
+    const next = value === 'native' ? null : value;
     setDevEngine(next);
     setEngine(next);
   }
 
   const creditLabels = { infinite: '∞', starter: '500', zero: '0' };
+  const CREDIT_VALUES = { infinite: 10_000_000, starter: 500, zero: 0 };
+  // Light the preset that matches the CURRENT balance (drifts dark once an
+  // operation charges — that's honest: the balance no longer IS the preset).
+  const activePreset = Object.keys(CREDIT_VALUES).find((k) => CREDIT_VALUES[k] === state.credits) || null;
 
   return (
     <div className={`dev-widget${open ? ' open' : ''}`}>
@@ -70,7 +81,7 @@ export default function DevWidget() {
               {DEV_ENGINES.map((value) => (
                 <button
                   key={value}
-                  className={engine === value ? 'on' : ''}
+                  className={effectiveEngine === value ? 'on' : ''}
                   title={value === 'native'
                     ? 'Clones run the native engine (animated). Default doctrine.'
                     : 'Clones run the historical iter9 engine (static).'}
@@ -100,7 +111,13 @@ export default function DevWidget() {
             <span className="dev-widget-label">Credits</span>
             <div className="dev-widget-seg">
               {state.creditPresets.map((preset) => (
-                <button key={preset} disabled={busy} title={preset} onClick={() => post({ credits: preset })}>
+                <button
+                  key={preset}
+                  className={activePreset === preset ? 'on' : ''}
+                  disabled={busy}
+                  title={preset}
+                  onClick={() => post({ credits: preset })}
+                >
                   {creditLabels[preset] || preset}
                 </button>
               ))}
