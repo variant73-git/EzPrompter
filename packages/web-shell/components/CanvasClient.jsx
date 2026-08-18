@@ -6050,6 +6050,35 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   // the FIRST selection samples them client-side (few ms on a canvas) and
   // patches meta — no LLM, no capture-time cost. Guarded per node id so a
   // failed sample never loops.
+  // ── Pointer-held iframe guard ────────────────────────────────────────
+  // EVERY canvas drag (node move, edge cord, marquee, resize, placement)
+  // commits on a window `mouseup` — and a release over ANY iframe (a node's
+  // srcDoc body, a live reference, the runtime) swallows that event: the
+  // dragged thing stays glued to the cursor. Third recurrence of this class;
+  // per-drag patches kept missing siblings. ONE mechanism, by construction:
+  // while a press that STARTED in the parent document is held, all node
+  // iframes go inert. A press that starts INSIDE an iframe never reaches the
+  // parent window, so legitimate iframe interaction is untouched.
+  useEffect(() => {
+    const CLS = 'canvas-pointer-held';
+    const root = document.documentElement;
+    const down = () => root.classList.add(CLS);
+    // Multi-button: releasing ONE button while another is still held must not
+    // re-enable iframes mid-drag (Sol: right-click release during a primary
+    // drag reopened the swallow window). e.buttons is the post-release state.
+    const up = (e) => { if (!e.buttons) root.classList.remove(CLS); };
+    const clear = () => root.classList.remove(CLS);
+    window.addEventListener('mousedown', down, true);
+    window.addEventListener('mouseup', up, true);
+    window.addEventListener('blur', clear);
+    return () => {
+      root.classList.remove(CLS);
+      window.removeEventListener('mousedown', down, true);
+      window.removeEventListener('mouseup', up, true);
+      window.removeEventListener('blur', clear);
+    };
+  }, []);
+
   const paletteBackfillRef = useRef(new Set());
   useEffect(() => {
     const node = selectedNode;

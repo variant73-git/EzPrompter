@@ -2578,6 +2578,15 @@ html.canvas-placing .cnode iframe {
   pointer-events: none;
 }
 
+/* Same guard, generalized: while ANY press that started in the parent
+   document is held (html.canvas-pointer-held, toggled globally in
+   CanvasClient), node iframes are inert so the eventual window `mouseup`
+   always lands. A press starting INSIDE an iframe never reaches the parent,
+   so real iframe interaction is untouched by construction. */
+html.canvas-pointer-held .cnode iframe {
+  pointer-events: none;
+}
+
 /* Beyond 30% zoom-out: node radii −20% (kept concentric across the three
    frame layers). Toggled by .canvas-zoom-below-30 on <html>. */
 html.canvas-zoom-below-30 .cnode {
