@@ -13,6 +13,22 @@ import {
 } from './motion-editor/diagnostics.js';
 
 const CONTROL_CONVERSION_DEADLINE_MS = 90_000;
+// The iter9 producer is a vision-reasoning pass measured at ~150s with ±40%
+// variance (doctrine 183: size ceilings by measured percentile and raise the
+// stack TOGETHER — this deadline < route maxDuration 300s; the client fetch
+// has no cap). One 90s deadline for both lanes timed out most nominal iter9
+// clones with a refunded `conversion_timeout`.
+const ITER9_CONVERSION_DEADLINE_MS = 240_000;
+// 240s applies ONLY to the user's single-item lane (reason 'edit' — the
+// /reconstruct route, one reconstruction per request). The /run route can
+// chain SEVERAL reconstructions under one 300s maxDuration; giving each 240s
+// would let two items burn 480s and die mid-request with the first already
+// billed (Sol). Its lanes keep the original 90s — that pre-existing 3×90s
+// squeeze is a NAMED residual of /run, unchanged by this fix.
+export function conversionDeadlineMs(producerFn, reason) {
+  if (producerFn === captureNativeBundle) return CONTROL_CONVERSION_DEADLINE_MS;
+  return reason === 'edit' ? ITER9_CONVERSION_DEADLINE_MS : CONTROL_CONVERSION_DEADLINE_MS;
+}
 
 function generationMeta(generated) {
   return {
@@ -195,13 +211,14 @@ export async function reconstructSiteNode({
       const deadline = new AbortController();
       const deadlineError = Object.assign(new Error('control_conversion_timeout'), { code: 'control_conversion_timeout' });
       const aborted = new Promise((_, reject) => deadline.signal.addEventListener('abort', () => reject(deadline.signal.reason), { once: true }));
-      const timer = setTimeout(() => deadline.abort(deadlineError), CONTROL_CONVERSION_DEADLINE_MS);
+      const resolvedProducer = producer || chooseReconstructionProducer(reason, process.env, engine);
+      const timer = setTimeout(() => deadline.abort(deadlineError), conversionDeadlineMs(resolvedProducer, reason));
       try {
       let materialized;
       try {
         materialized = await materializeReconstructionOutput(
           await Promise.race([
-            (producer || chooseReconstructionProducer(reason, process.env, engine))(node.origin_url),
+            resolvedProducer(node.origin_url),
             aborted,
           ]),
           { bundleStore },

@@ -382,3 +382,20 @@ describe('deferred reconstruction result kinds', () => {
     expect(generateControls).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('conversion deadline per lane (conversion_timeout fix 2026-08-18)', () => {
+  it('gives the iter9 vision producer its measured ceiling and keeps native tight', async () => {
+    const { conversionDeadlineMs } = await import('./deferred-reconstruction.js');
+    const { captureNativeBundle } = await import('./native-clone/capture-bundle.js');
+    const { reconstructPage } = await import('./reconstruct.js');
+    // iter9 measures ~150s ±40% — 90s timed out most nominal runs. The wide
+    // ceiling is scoped to the single-item 'edit' lane; /run lanes chain
+    // several reconstructions under one 300s route and keep 90s each (Sol).
+    expect(conversionDeadlineMs(reconstructPage, 'edit')).toBe(240_000);
+    expect(conversionDeadlineMs(captureNativeBundle, 'edit')).toBe(90_000);
+    expect(conversionDeadlineMs(reconstructPage, 'transform-target')).toBe(90_000);
+    expect(conversionDeadlineMs(reconstructPage, 'runtime-source')).toBe(90_000);
+    // Route ceiling must stay above the biggest lane (maxDuration 300s).
+    expect(conversionDeadlineMs(reconstructPage, 'edit')).toBeLessThan(300_000);
+  });
+});

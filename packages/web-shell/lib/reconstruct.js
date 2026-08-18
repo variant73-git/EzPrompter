@@ -650,6 +650,16 @@ async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, e
     ...stopBlocks
   ];
 
+  // Reasoning effort — the SAME per-call knob the extract clone uses
+  // (UNCRAFT_CLONE_REASONING; doctrine 183: vision time is dominated by
+  // invisible reasoning — effort low cut 50-110s to 18-33s with identical
+  // output size). Without it the iter9 producer blew even a 240s deadline on
+  // heavy pages (measured 2026-08-18: >240s on the farmminerals guinea pig).
+  // Explicit per-call option, never read inside a shared helper (183: the
+  // env leaked to every vision call once).
+  const reasoning = ['low', 'medium', 'high'].includes(String(process.env.UNCRAFT_CLONE_REASONING || '').trim().toLowerCase())
+    ? { reasoning_effort: String(process.env.UNCRAFT_CLONE_REASONING).trim().toLowerCase() }
+    : {};
   const stream = await openai.chat.completions.create({
     model: 'gpt-5.5',
     messages: [
@@ -657,6 +667,7 @@ async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, e
       { role: 'user', content: userContent }
     ],
     max_completion_tokens: 32000,
+    ...reasoning,
     stream: true,
     stream_options: { include_usage: true }
   });
