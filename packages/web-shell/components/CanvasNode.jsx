@@ -717,6 +717,11 @@ export default function CanvasNode({
     // in CanvasClient, and mousemove outpaces the display refresh.
     const emit = createRafCoalescer((w, h) => onResize?.(w, h));
     function move(ev) {
+      // Self-healing release: a mousemove with NO buttons pressed means the
+      // real mouseup was swallowed somewhere (iframe, context menu, OS quirk
+      // — the glued-node bug's exact signature, whatever the mechanism).
+      // Treat it as the release instead of dragging a ghost forever.
+      if (ev.buttons === 0) { up(); return; }
       const scale = readCanvasScale();
       const dx = (ev.clientX - start.x) / scale;
       const dy = (ev.clientY - start.y) / scale;
@@ -931,6 +936,11 @@ export default function CanvasNode({
     // position (adopt/tear-out commit reads drag.lastX/lastY).
     const emit = createRafCoalescer((x, y) => onMove(x, y));
     function move(ev) {
+      // Self-healing release: a mousemove with NO buttons pressed means the
+      // real mouseup was swallowed somewhere (iframe, context menu, OS quirk
+      // — the glued-node bug's exact signature, whatever the mechanism).
+      // Treat it as the release instead of dragging a ghost forever.
+      if (ev.buttons === 0) { up(); return; }
       const scale = readCanvasScale();
       const dx = (ev.clientX - start.x) / scale;
       const dy = (ev.clientY - start.y) / scale;
