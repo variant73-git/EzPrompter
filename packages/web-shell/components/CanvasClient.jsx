@@ -6059,6 +6059,22 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   // while a press that STARTED in the parent document is held, all node
   // iframes go inert. A press that starts INSIDE an iframe never reaches the
   // parent window, so legitimate iframe interaction is untouched.
+  // Universal unstick valve: whatever mechanism leaves a drag/ghost glued to
+  // the cursor (a swallowed mouseup, a listener that outlived its gesture),
+  // Escape force-releases it — a synthetic window mouseup runs every pending
+  // `up` handler exactly as a real release would, and the held class drops.
+  // Mechanism-agnostic on purpose: this is the safety net UNDER the specific
+  // fixes, so a stuck pointer is never a reload-the-page situation again.
+  useEffect(() => {
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return;
+      window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, buttons: 0 }));
+      document.documentElement.classList.remove('canvas-pointer-held');
+    };
+    window.addEventListener('keydown', onEsc, true);
+    return () => window.removeEventListener('keydown', onEsc, true);
+  }, []);
+
   useEffect(() => {
     const CLS = 'canvas-pointer-held';
     const root = document.documentElement;
