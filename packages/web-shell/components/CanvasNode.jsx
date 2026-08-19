@@ -1581,7 +1581,16 @@ export default function CanvasNode({
               className="cnode-iframe"
               title={title}
               srcDoc={versionPreview ? versionPreview.html : html}
-              sandbox="allow-same-origin allow-scripts"
+              // Scripts run ONLY when the iframe is genuinely interactive
+              // (editing / interactive captured reference / version preview).
+              // As the resting anti-flash cover — board just opened, thumb
+              // still fetching — the srcDoc rendered WITH scripts: a GSAP
+              // site visibly animated inside a parked node and made dragging
+              // jank through that window (user report 2026-08-19). A static
+              // render covers the flash just as well.
+              sandbox={editing || interactiveCapturedReference || versionPreview
+                ? 'allow-same-origin allow-scripts'
+                : 'allow-same-origin'}
               onLoad={(e) => { setIframeReady(true); onIframeLoad(e); }}
               style={{
                 pointerEvents: editing || interactiveCapturedReference ? 'auto' : 'none',
