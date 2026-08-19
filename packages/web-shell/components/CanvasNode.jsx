@@ -834,11 +834,14 @@ export default function CanvasNode({
     offscreen: offscreenParked,
     placing,
   });
-  const interactiveCapturedReference = Boolean(
-    node.meta?.referenceMode === 'captured-auto'
-    && livePreviewActive
-    && !offscreenParked
-  );
+  // RETIRED (product 2026-08-19): a SELECTED captured-auto node used to mount
+  // its capture as an interactive iframe (browse/scroll the page at rest).
+  // That collided head-on with the canvas contract — selectable site text
+  // under the pointer, GSAP running in a parked node, and body drags dead
+  // (the exact glued/janky reports). Rest state is ALWAYS the static thumb;
+  // interacting with the page belongs to Edit. Constant kept so every gate
+  // below reads as the deliberate decision, not a lost branch.
+  const interactiveCapturedReference = false;
 
   // Static-by-default site display (perf phase 3b v2, user-directed): the
   // node is a VISUALIZATION of the site's current state — a snapshot image
@@ -1576,7 +1579,12 @@ export default function CanvasNode({
             ) : (
             <>
             <iframe
-              key={`${node._resetTick || 0}:${versionPreview?.snapshotId || 'current'}`}
+              // Interaction mode is part of the KEY on purpose: sandbox
+              // changes on a loaded iframe do not apply until navigation
+              // (HTML spec), so Edit→rest must DESTROY and recreate the
+              // frame — otherwise a script-enabled document keeps running
+              // at rest when no thumbnail covers it (Sol 2026-08-19).
+              key={`${node._resetTick || 0}:${versionPreview?.snapshotId || 'current'}:${editing || interactiveCapturedReference || versionPreview ? 'live' : 'inert'}`}
               ref={iframeRef}
               className="cnode-iframe"
               title={title}
