@@ -267,11 +267,16 @@ export async function captureNativeBundle(url, opts = {}) {
     // candidato de `srcset` que o viewport da captura escolheu e os backgrounds
     // de regras CSS que algum elemento casou. Tudo que ficar de fora permanece
     // ABSOLUTO no HTML/CSS gravado e a CSP do gateway (img-src 'self') bloqueia
-    // para sempre. Aqui os candidatos restantes são carregados DENTRO da página
-    // via `new Image()` (sem CORS), então entram pela interceptação normal —
-    // guarda de SSRF, limites e relatório se aplicam por construção.
+    // para sempre. Duas fases DE PROPÓSITO (achado P0 do Sol, 2026-08-20):
+    // (1) coletar os candidatos na página; (2) filtrar no Node com
+    // `hostEhPublico` ANTES de carregar — a guarda do handler de response só
+    // roda depois que o pedido já saiu, então os GETs que NÓS iniciamos são
+    // checados na INICIAÇÃO. Resíduo de rebind DNS (checamos por lookup, o
+    // browser re-resolve) fica igual ao da rota from-url (182). Os aprovados
+    // carregam via `new Image()` (sem CORS) e entram pela interceptação
+    // normal — limites e relatório se aplicam por construção.
     onProgress({ etapa: 'closing-refs' });
-    const refsExtras = await page.evaluate(async (cap) => {
+    const candidatosBrutos = await page.evaluate((cap) => {
       // Parser duplicado de srcsetCandidateUrls DE PROPÓSITO: page.evaluate
       // não serializa closures do Node; o teste unitário cobre o exportado.
       const parseSrcset = (value) => {
@@ -333,16 +338,26 @@ export async function captureNativeBundle(url, opts = {}) {
         const text = el.getAttribute('style') || '';
         while ((m = re.exec(text))) push(m[2]);
       }
-      const escolhidos = candidatos.slice(0, cap);
-      await Promise.all(escolhidos.map((u) => new Promise((done) => {
+      return candidatos.slice(0, cap);
+    }, 300).catch(() => []);
+    const aprovados = [];
+    for (const u of candidatosBrutos) {
+      if (cancelado) break;
+      try {
+        if (await hostEhPublico(new URL(u).hostname)) aprovados.push(u);
+        else descartados.push({ u, motivo: 'host nao publico' });
+      } catch (_) { /* URL inválida não carrega */ }
+    }
+    const refsExtras = aprovados.length === 0 ? 0 : await page.evaluate(async (urls) => {
+      await Promise.all(urls.map((u) => new Promise((done) => {
         const img = new Image();
         img.onload = done;
         img.onerror = done;
         setTimeout(done, 8000);
         img.src = u;
       })));
-      return escolhidos.length;
-    }, 300).catch(() => 0);
+      return urls.length;
+    }, aprovados).catch(() => 0);
     if (cancelado) throw Object.assign(new Error('native_bundle_aborted'), { code: 'aborted' });
     // Respostas dos candidatos ainda podem estar em voo; o allSettled do
     // 'collecting' logo abaixo as espera junto com todo o resto.
