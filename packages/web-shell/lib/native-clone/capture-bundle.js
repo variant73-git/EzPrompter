@@ -270,11 +270,16 @@ export async function captureNativeBundle(url, opts = {}) {
     // para sempre. Duas fases DE PROPÓSITO (achado P0 do Sol, 2026-08-20):
     // (1) coletar os candidatos na página; (2) filtrar no Node com
     // `hostEhPublico` ANTES de carregar — a guarda do handler de response só
-    // roda depois que o pedido já saiu, então os GETs que NÓS iniciamos são
-    // checados na INICIAÇÃO. Resíduo de rebind DNS (checamos por lookup, o
-    // browser re-resolve) fica igual ao da rota from-url (182). Os aprovados
-    // carregam via `new Image()` (sem CORS) e entram pela interceptação
-    // normal — limites e relatório se aplicam por construção.
+    // roda depois que o pedido já saiu. Isto checa a URL INICIAL dos GETs que
+    // NÓS iniciamos; NÃO é política de egress completa: um 3xx para endereço
+    // privado escapa (Sol r2 #1), e rebind DNS idem (lookup aqui, o browser
+    // re-resolve — mesmo resíduo da rota from-url, 182). Ambos exigem site
+    // adversarial, que está FORA do modelo de ameaça por decisão registrada
+    // (178/171, mesmos 7 gatilhos); a guarda de EXFILTRAÇÃO (persistir corpo)
+    // segue no handler de response, que era o P0 original do 179. Egress por
+    // request (route interception por hop) é a re-arquitetura deferida.
+    // Os aprovados carregam via `new Image()` (sem CORS) e entram pela
+    // interceptação normal — limites e relatório se aplicam por construção.
     onProgress({ etapa: 'closing-refs' });
     const candidatosBrutos = await page.evaluate((cap) => {
       // Parser duplicado de srcsetCandidateUrls DE PROPÓSITO: page.evaluate
@@ -397,6 +402,13 @@ export async function captureNativeBundle(url, opts = {}) {
     // Espera os corpos que ainda estavam sendo lidos ANTES de montar o bundle.
     await Promise.allSettled([...emVoo]);
     for (const [u, v] of [...recursos]) if (!v) { recursos.delete(u); descartados.push({ u, motivo: 'corpo nao chegou' }); }
+    // SNAPSHOT IMUTÁVEL (Sol r2 #2, 2026-08-20): daqui em diante `mapa`,
+    // reescrita e montagem leem o MESMO congelado de entradas completas. Uma
+    // resposta tardia (mais lenta que o timeout do closing-refs) que chegue
+    // após o purge muta `recursos` vivo — se ela entrasse no `mapa`, os
+    // textos seriam reescritos para um caminho cujo asset nunca entra no
+    // bundle: referência local quebrada em silêncio, pior que o crash.
+    const congelados = new Map([...recursos].filter(([, v]) => v));
     const engines = await page.evaluate(() => ({
       gsap: Boolean(window.gsap),
       scrollTrigger: Boolean(window.ScrollTrigger || (window.gsap && window.gsap.plugins && window.gsap.plugins.ScrollTrigger)),
@@ -414,8 +426,8 @@ export async function captureNativeBundle(url, opts = {}) {
     // dois lados, tentando a final antes da pedida. Achado P1 do Sol.
     const semHash = (u) => u.split('#')[0];
     const finalUrl = semHash(page.url());
-    const entradaOriginal = [...recursos.keys()].find((u) => semHash(u) === finalUrl)
-      || [...recursos.keys()].find((u) => semHash(u) === semHash(url));
+    const entradaOriginal = [...congelados.keys()].find((u) => semHash(u) === finalUrl)
+      || [...congelados.keys()].find((u) => semHash(u) === semHash(url));
     if (!entradaOriginal) throw new Error('native_bundle_entry_not_captured');
 
     // ⚠️ Caminhos podem COLIDIR (`/a%20b.js` e `/a_20b.js` normalizam igual; o
@@ -423,7 +435,7 @@ export async function captureNativeBundle(url, opts = {}) {
     // registrador aborta o clone inteiro. Desempata-se por conteúdo. Achado P1.
     const mapa = new Map();
     const usados = new Set();
-    for (const u of recursos.keys()) {
+    for (const u of congelados.keys()) {
       let caminho = bundlePathForUrl(u, page.url());
       const chave = caminho.toLowerCase();
       if (usados.has(chave)) {
@@ -447,14 +459,10 @@ export async function captureNativeBundle(url, opts = {}) {
     const entryPath = mapa.get(entradaOriginal);
 
     const assets = [];
-    for (const [u, valor] of recursos) {
-      // Uma resposta mais lenta que o timeout do closing-refs pode chegar
-      // DEPOIS do allSettled+purge e re-inserir a vaga `null` enquanto este
-      // loop itera o Map vivo — destruturar aqui derrubava o clone inteiro
-      // com TypeError (Claude review 2026-08-20 #2). Entrada sem corpo no
-      // momento da montagem é descarte nomeado, nunca crash.
+    for (const [u, valor] of congelados) {
+      // Cinto extra sobre o snapshot congelado (Claude review 2026-08-20 #2):
+      // entrada sem corpo é descarte nomeado, nunca crash de destructuring.
       if (!valor || !mapa.has(u)) {
-        recursos.delete(u);
         descartados.push({ u, motivo: !valor ? 'corpo nao chegou' : 'chegou apos a montagem' });
         continue;
       }

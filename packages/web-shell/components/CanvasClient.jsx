@@ -4629,24 +4629,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     if (willEdit) {
       const node = nodes.find((n) => n.id === nodeId);
       if (!node || editPreparationRef.current.has(nodeId)) return;
-      // Integrity guard BEFORE the plan gate (Claude review 2026-08-20 #3):
-      // an inconsistent native claim never bills — the server 409s — so a
-      // free user must see the repair message, not an upsell modal promising
-      // a charge the server will refuse.
-      if (classifyNativeLineage(node) === NATIVE_LINEAGE.INCONSISTENT
-          && !resolveEditEngineOverride(node)) {
-        toast.error('This clone needs repair — re-clone it from the node menu.');
-        return;
-      }
-      // Plan gate keyed on the SAME reason that decides billing (Sol
-      // 2026-08-17 #1): the auto-upgrade path re-clones legacy URL-backed
-      // snapshots too, and the narrower live-reference check let those bypass
-      // the paid-plan gate straight into a billed clone. Only the 'edit'
-      // reason is billable — 'native-inconsistent' is handled above.
-      if (reconstructionReason({ node, role: 'edit' }) === 'edit' && !canUseCloneEdit(user?.plan)) {
-        setPlansOpen(true);
-        return;
-      }
       // Dev widget engine selector (pre-launch): a stored choice that the node
       // does not already satisfy becomes a nominal engine request — evaluated
       // BEFORE the early returns, otherwise switching engines could never
@@ -4654,6 +4636,24 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       // resolves to null (the selector means "which machinery", not "re-run
       // every Edit"), letting the default fast paths below open Edit directly.
       const engineOverride = resolveEditEngineOverride(node);
+      // Integrity guard BEFORE the plan gate (Claude review 2026-08-20 #3):
+      // an inconsistent native claim never bills — the server 409s — so a
+      // free user must see the repair message, not an upsell modal promising
+      // a charge the server will refuse.
+      if (classifyNativeLineage(node) === NATIVE_LINEAGE.INCONSISTENT && !engineOverride) {
+        toast.error('This clone needs repair — re-clone it from the node menu.');
+        return;
+      }
+      // Plan gate keyed on what actually bills (Sol 2026-08-17 #1 + r2 #3,
+      // 2026-08-20): the 'edit' reason (auto-upgrade of legacy lineage) AND
+      // any nominal engine request — the server treats a nominal engine as an
+      // executable billed operation regardless of readiness. The server-side
+      // plan gate stays authoritative either way.
+      if ((engineOverride != null || reconstructionReason({ node, role: 'edit' }) === 'edit')
+          && !canUseCloneEdit(user?.plan)) {
+        setPlansOpen(true);
+        return;
+      }
       const editorKind = editorKindForNode(node);
       if (!engineOverride) {
         if (editorKind === NODE_EDITOR_KIND.NATIVE) {
