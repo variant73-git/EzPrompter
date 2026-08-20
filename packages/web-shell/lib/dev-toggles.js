@@ -11,6 +11,8 @@
  * NEXT_PUBLIC_* — flags compiled into the client bundle are not a boundary).
  */
 
+import { classifyNativeLineage, NATIVE_LINEAGE } from './node-editor-kind.js';
+
 export const DEV_ENGINE_KEY = 'uncraft-dev-engine';
 export const DEV_ENGINES = Object.freeze(['native', 'iter9']);
 
@@ -47,7 +49,11 @@ export function setDevEngine(engine) {
 export function resolveEditEngineOverride(node, stored = getDevEngine()) {
   if (!stored) return null;
   const source = node?.current_snapshot_source;
-  if (stored === 'native' && source === 'native-bundle') return null;
+  // "Already native" is the structural classification, not the single string
+  // 'native-bundle': a Save writes 'native-edit' and keeps the bundle, and a
+  // stored 'native' override must not turn every post-Save Edit into a
+  // nominal (billed) re-clone (defect 3, 2026-08-20).
+  if (stored === 'native' && classifyNativeLineage(node) === NATIVE_LINEAGE.READY) return null;
   if (stored === 'iter9' && (source === 'reconstruct' || node?.meta?.reconstructionEngine === 'iter9')) return null;
   return stored;
 }

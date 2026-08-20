@@ -63,6 +63,8 @@ import {
 } from '../lib/url-reference.js';
 import {
   applyReconstructionResultToNode,
+  classifyNativeLineage,
+  NATIVE_LINEAGE,
   NODE_EDITOR_KIND,
   resolveNodeEditorKind,
   snapshotEditorMetadata,
@@ -4599,6 +4601,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       if (!engineOverride) {
         if (editorKind === NODE_EDITOR_KIND.NATIVE) {
           enterEditMode(node, editorKind);
+          return;
+        }
+        // Guard rails before falling through to a billed reconstruction
+        // (defect 3, 2026-08-20): an inconsistent native claim is an integrity
+        // failure — repair is deliberate, never an automatic charge; and a
+        // ready node with the native editor unavailable must not open the
+        // legacy editor over a null snapshot.
+        const lineage = classifyNativeLineage(node);
+        if (lineage === NATIVE_LINEAGE.INCONSISTENT) {
+          toast.error('This clone needs repair — re-clone it from the node menu.');
+          return;
+        }
+        if (lineage === NATIVE_LINEAGE.READY) {
+          toast.error('Native editing is unavailable in this build.');
           return;
         }
         if (!shouldReconstructForAction({ node, role: 'edit' })) {
