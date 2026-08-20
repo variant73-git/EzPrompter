@@ -264,6 +264,54 @@ describe('deferred reconstruction result kinds', () => {
     expect(result.meta.typeSample).toEqual(typeSample);
   });
 
+  it('persists a SANITIZED capture report in meta — counts and hosts, never full URLs (defect 1b, 2026-08-20)', async () => {
+    // The producer's relatorio was assembled and then DISCARDED by this layer;
+    // missing assets vanished without a trace. It now lands in meta as counts
+    // plus discarded HOSTS only — a full URL can carry query strings/tokens
+    // (Sol advise 2026-08-20).
+    const bundle = {
+      entryPath: 'index.html',
+      runtimeFingerprint: runtimeHash,
+      assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+      reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+    };
+    const relatorio = {
+      arquivos: 1,
+      bytes: 19,
+      entryPath: 'index.html',
+      engines: { gsap: true },
+      refsExtras: 7,
+      descartados: [
+        { u: 'https://cdn.test/a.png?token=SECRET', motivo: 'grande demais' },
+        { u: 'https://cdn.test/b.png', motivo: 'limite de arquivos' },
+        { u: 'https://other.test/c.png', motivo: 'host nao publico' },
+      ],
+      totalDescartados: 3,
+    };
+    delete process.env.UNCRAFT_MOTION_CONTROL_VALIDATOR_URL;
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const result = await reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-report-1',
+      producer: vi.fn(async () => ({ kind: 'native', bundle, relatorio })),
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: vi.fn(),
+    });
+    expect(result.meta.captureReport).toEqual({
+      files: 1,
+      bytes: 19,
+      extraRefs: 7,
+      discarded: 3,
+      discardedHosts: ['cdn.test', 'other.test'],
+    });
+    expect(JSON.stringify(result.meta.captureReport)).not.toContain('SECRET');
+  });
+
   it('hard-fails when a CONFIGURED validator yields no generation result — never mislabeled as unconfigured', async () => {
     // Sol review 2026-08-17 (v2 round): with the config gate keyed on generated's
     // truthiness, a configured-but-broken generator resolving null would settle

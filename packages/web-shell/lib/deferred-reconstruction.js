@@ -30,6 +30,24 @@ export function conversionDeadlineMs(producerFn, reason) {
   return reason === 'edit' ? ITER9_CONVERSION_DEADLINE_MS : CONTROL_CONVERSION_DEADLINE_MS;
 }
 
+function sanitizeCaptureReport(relatorio) {
+  const hosts = [];
+  for (const item of Array.isArray(relatorio?.descartados) ? relatorio.descartados : []) {
+    try {
+      const host = new URL(item?.u).hostname;
+      if (host && !hosts.includes(host)) hosts.push(host);
+    } catch { /* entrada sem URL válida não vira host */ }
+    if (hosts.length >= 10) break;
+  }
+  return {
+    files: Number(relatorio?.arquivos) || 0,
+    bytes: Number(relatorio?.bytes) || 0,
+    extraRefs: Number(relatorio?.refsExtras) || 0,
+    discarded: Number(relatorio?.totalDescartados) || 0,
+    discardedHosts: hosts,
+  };
+}
+
 function generationMeta(generated) {
   return {
     status: 'ready',
@@ -302,6 +320,13 @@ export async function reconstructSiteNode({
             // the output as a sibling of bundle — the bundle itself, its
             // hash and every existing clone stay untouched).
             ...(materialized.output?.typeSample ? { typeSample: materialized.output.typeSample } : {}),
+            // Capture report, SANITIZED: the producer's relatorio was
+            // assembled and then discarded here — missing assets vanished
+            // without a trace. Persist counts and discarded HOSTS only; a
+            // full URL can carry query strings/tokens (Sol advise 2026-08-20).
+            ...(materialized.output?.relatorio ? {
+              captureReport: sanitizeCaptureReport(materialized.output.relatorio),
+            } : {}),
             motionControls: validatorConfigured ? generationMeta(generated) : {
               status: 'skipped',
               reason: 'validator_not_configured',
