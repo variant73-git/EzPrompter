@@ -7,7 +7,10 @@ vi.mock('../../../../../lib/auth.js', () => ({
 const sqlMock = vi.fn();
 vi.mock('../../../../../lib/db.js', () => ({ db: vi.fn(async () => sqlMock) }));
 vi.mock('../../../../../lib/billing/rate-limit.js', () => ({ checkOpsRate: vi.fn(async () => ({ allowed: true })) }));
-vi.mock('../../../../../lib/reconstruction-policy.js', () => ({ shouldReconstructForAction: vi.fn(() => true) }));
+vi.mock('../../../../../lib/reconstruction-policy.js', () => ({
+  reconstructionReason: vi.fn(() => 'edit'),
+  shouldReconstructForAction: vi.fn(() => true),
+}));
 // O mock devolve `true` por padrao — o que ESCONDIA o early-return engolindo o
 // pedido nominal (achado da auditoria). Os testes do motor por nome o poem em `false`.
 vi.mock('../../../../../lib/deferred-reconstruction.js', () => ({ reconstructSiteNode: vi.fn() }));
@@ -120,8 +123,8 @@ describe('POST /api/nodes/[id]/reconstruct — motor por nome', () => {
   }
 
   it('runs iter9 by name even when the snapshot is already usable', async () => {
-    const { shouldReconstructForAction } = await import('../../../../../lib/reconstruction-policy.js');
-    shouldReconstructForAction.mockReturnValue(false); // "ja esta pronto"
+    const { reconstructionReason } = await import('../../../../../lib/reconstruction-policy.js');
+    reconstructionReason.mockReturnValue(null); // "ja esta pronto"
     reconstructSiteNode.mockResolvedValue({ kind: 'iter9', html: '<html>i9</html>', snapshotId: 's2', credits: 1 });
     const res = await POST(requestCom({ engine: 'iter9' }), params);
     expect(res.status).toBe(200);
@@ -130,8 +133,8 @@ describe('POST /api/nodes/[id]/reconstruct — motor por nome', () => {
   });
 
   it('still skips the plain request when nothing needs doing', async () => {
-    const { shouldReconstructForAction } = await import('../../../../../lib/reconstruction-policy.js');
-    shouldReconstructForAction.mockReturnValue(false);
+    const { reconstructionReason } = await import('../../../../../lib/reconstruction-policy.js');
+    reconstructionReason.mockReturnValue(null);
     const res = await POST(requestCom(null), params);
     const corpo = await res.json();
     expect(corpo.skipped).toBe(true);
@@ -139,11 +142,64 @@ describe('POST /api/nodes/[id]/reconstruct — motor por nome', () => {
   });
 
   it('refuses an unknown engine loudly, even when it would otherwise skip', async () => {
-    const { shouldReconstructForAction } = await import('../../../../../lib/reconstruction-policy.js');
-    shouldReconstructForAction.mockReturnValue(false);
+    const { reconstructionReason } = await import('../../../../../lib/reconstruction-policy.js');
+    reconstructionReason.mockReturnValue(null);
     const res = await POST(requestCom({ engine: 'screenshot' }), params);
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe('unknown_clone_engine');
     expect(reconstructSiteNode).not.toHaveBeenCalled();
+  });
+});
+
+// Defeito 3 (2026-08-20): a decisao autoritativa do servidor precisa das
+// colunas do bundle e nunca pode cobrar por um estado inconsistente.
+describe('POST /api/nodes/[id]/reconstruct — linhagem nativa no servidor', () => {
+  function requestCom(corpo) {
+    return new Request('http://localhost/api/nodes/node-1/reconstruct', {
+      method: 'POST',
+      headers: { 'idempotency-key': 'ticket-2', 'content-type': 'application/json' },
+      body: corpo == null ? undefined : JSON.stringify(corpo),
+    });
+  }
+
+  it('selects the bundle columns the lineage classifier needs', async () => {
+    const { reconstructionReason } = await import('../../../../../lib/reconstruction-policy.js');
+    reconstructionReason.mockReturnValue(null);
+    await POST(requestCom(null), params);
+    const sqlText = sqlMock.mock.calls[0][0].join('?');
+    expect(sqlText).toContain('native_bundle_id AS current_native_bundle_id');
+    expect(sqlText).toContain('motion_manifest_version AS current_motion_manifest_version');
+  });
+
+  it('skips a ready node before any rate-limit or billing work', async () => {
+    const { reconstructionReason } = await import('../../../../../lib/reconstruction-policy.js');
+    const { checkOpsRate } = await import('../../../../../lib/billing/rate-limit.js');
+    checkOpsRate.mockClear();
+    reconstructionReason.mockReturnValue(null);
+    const res = await POST(requestCom(null), params);
+    expect((await res.json()).skipped).toBe(true);
+    expect(checkOpsRate).not.toHaveBeenCalled();
+    expect(reconstructSiteNode).not.toHaveBeenCalled();
+  });
+
+  it('answers native-inconsistent with a typed 409 and NO billed capture', async () => {
+    const { reconstructionReason } = await import('../../../../../lib/reconstruction-policy.js');
+    const { checkOpsRate } = await import('../../../../../lib/billing/rate-limit.js');
+    checkOpsRate.mockClear();
+    reconstructionReason.mockReturnValue('native-inconsistent');
+    const res = await POST(requestCom(null), params);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe('native_inconsistent');
+    expect(checkOpsRate).not.toHaveBeenCalled();
+    expect(reconstructSiteNode).not.toHaveBeenCalled();
+  });
+
+  it('a nominal engine is the deliberate repair path for an inconsistent node', async () => {
+    const { reconstructionReason } = await import('../../../../../lib/reconstruction-policy.js');
+    reconstructionReason.mockReturnValue('native-inconsistent');
+    reconstructSiteNode.mockResolvedValue({ kind: 'iter9', html: '<html>i9</html>', snapshotId: 's3', credits: 1 });
+    const res = await POST(requestCom({ engine: 'iter9' }), params);
+    expect(res.status).toBe(200);
+    expect(reconstructSiteNode).toHaveBeenCalledTimes(1);
   });
 });
