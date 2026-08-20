@@ -131,6 +131,44 @@ export function rewriteReferences(texto, mapa, profundidade = 0) {
 const TEXTUAL = /\.(html?|css|js|mjs|json|svg|txt|webmanifest)$/i;
 
 /**
+ * Candidatos de um valor de `srcset` (defeito 1b, 2026-08-20). A captura só
+ * salvava o candidato que o browser escolheu no viewport da captura; os outros
+ * ficavam absolutos no HTML e a CSP do gateway (img-src 'self') os bloqueia
+ * para sempre. Split cru por vírgula é proibido — data URLs contêm vírgula.
+ * Algoritmo (WHATWG simplificado): um candidato é um token sem whitespace
+ * seguido de descriptor opcional; a vírgula separadora vem DEPOIS do
+ * descriptor (ou do token). Limitação documentada: uma URL com vírgula crua
+ * seguida de espaço quebra — o formato exige que URLs assim sejam escapadas.
+ */
+export function srcsetCandidateUrls(value) {
+  if (typeof value !== 'string' || !value.trim()) return [];
+  const urls = [];
+  let rest = value.trim();
+  while (rest) {
+    const match = /^[,\s]*([^\s,]\S*)/.exec(rest);
+    if (!match) break;
+    let url = match[1];
+    // Vírgulas finais pertencem ao separador, não à URL (`a.png,b.png` não
+    // acontece: o formato exige descriptor ou espaço antes da vírgula).
+    url = url.replace(/,+$/, '');
+    if (url) urls.push(url);
+    rest = rest.slice(match.index + match[0].length);
+    // Consome o descriptor (tudo até a próxima vírgula fora de parênteses).
+    let depth = 0;
+    let i = 0;
+    while (i < rest.length) {
+      const ch = rest[i];
+      if (ch === '(') depth += 1;
+      else if (ch === ')') depth = Math.max(0, depth - 1);
+      else if (ch === ',' && depth === 0) break;
+      i += 1;
+    }
+    rest = rest.slice(i);
+  }
+  return urls;
+}
+
+/**
  * Captura uma URL como bundle nativo.
  *
  * @param {string} url
@@ -188,7 +226,16 @@ export async function captureNativeBundle(url, opts = {}) {
             recursos.delete(u); descartados.push({ u, motivo: 'grande demais (declarado)' }); return;
           }
           const bytes = await res.body().catch(() => null);
-          if (!bytes) { recursos.delete(u); return; }
+          if (!bytes) {
+            recursos.delete(u);
+            // Redirect/204/304 não têm corpo por natureza; qualquer OUTRA
+            // leitura que falhe era descartada em SILÊNCIO e a referência
+            // ficava absoluta no HTML sem entrar no relatório (achado da
+            // investigação 2026-08-20).
+            const status = res.status();
+            if (status < 300 || status >= 400) descartados.push({ u, motivo: 'corpo nao chegou' });
+            return;
+          }
           if (bytes.byteLength > MAX_ASSET_BYTES || bytesTotal + bytes.byteLength > MAX_BYTES_TOTAL) {
             recursos.delete(u); descartados.push({ u, motivo: 'grande demais' }); return;
           }
@@ -215,6 +262,90 @@ export async function captureNativeBundle(url, opts = {}) {
     if (cancelado) throw Object.assign(new Error('native_bundle_aborted'), { code: 'aborted' });
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.waitForTimeout(1200);
+
+    // FECHAMENTO DE REFERÊNCIAS (defeito 1b, 2026-08-20): o browser só pediu o
+    // candidato de `srcset` que o viewport da captura escolheu e os backgrounds
+    // de regras CSS que algum elemento casou. Tudo que ficar de fora permanece
+    // ABSOLUTO no HTML/CSS gravado e a CSP do gateway (img-src 'self') bloqueia
+    // para sempre. Aqui os candidatos restantes são carregados DENTRO da página
+    // via `new Image()` (sem CORS), então entram pela interceptação normal —
+    // guarda de SSRF, limites e relatório se aplicam por construção.
+    onProgress({ etapa: 'closing-refs' });
+    const refsExtras = await page.evaluate(async (cap) => {
+      // Parser duplicado de srcsetCandidateUrls DE PROPÓSITO: page.evaluate
+      // não serializa closures do Node; o teste unitário cobre o exportado.
+      const parseSrcset = (value) => {
+        if (typeof value !== 'string' || !value.trim()) return [];
+        const urls = [];
+        let rest = value.trim();
+        while (rest) {
+          const match = /^[,\s]*([^\s,]\S*)/.exec(rest);
+          if (!match) break;
+          const url = match[1].replace(/,+$/, '');
+          if (url) urls.push(url);
+          rest = rest.slice(match.index + match[0].length);
+          let depth = 0;
+          let i = 0;
+          while (i < rest.length) {
+            const ch = rest[i];
+            if (ch === '(') depth += 1;
+            else if (ch === ')') depth = Math.max(0, depth - 1);
+            else if (ch === ',' && depth === 0) break;
+            i += 1;
+          }
+          rest = rest.slice(i);
+        }
+        return urls;
+      };
+      const seen = new Set();
+      const candidatos = [];
+      const push = (u, base) => {
+        let abs = null;
+        try { abs = new URL(u, base || document.baseURI).href; } catch { return; }
+        if (!/^https?:/i.test(abs) || seen.has(abs)) return;
+        seen.add(abs);
+        candidatos.push(abs);
+      };
+      for (const el of document.querySelectorAll('img[srcset], source[srcset]')) {
+        for (const u of parseSrcset(el.getAttribute('srcset'))) push(u);
+      }
+      for (const el of document.querySelectorAll('[data-srcset]')) {
+        for (const u of parseSrcset(el.getAttribute('data-srcset'))) push(u);
+      }
+      for (const el of document.querySelectorAll('link[imagesrcset]')) {
+        for (const u of parseSrcset(el.getAttribute('imagesrcset'))) push(u);
+      }
+      const urlRe = () => /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
+      for (const sheet of document.styleSheets) {
+        let rules;
+        try { rules = sheet.cssRules; } catch { continue; }
+        const base = sheet.href || document.baseURI;
+        for (const rule of rules) {
+          const text = rule.cssText || '';
+          const re = urlRe();
+          let m;
+          while ((m = re.exec(text))) push(m[2], base);
+        }
+      }
+      for (const el of document.querySelectorAll('[style*="url("]')) {
+        const re = urlRe();
+        let m;
+        const text = el.getAttribute('style') || '';
+        while ((m = re.exec(text))) push(m[2]);
+      }
+      const escolhidos = candidatos.slice(0, cap);
+      await Promise.all(escolhidos.map((u) => new Promise((done) => {
+        const img = new Image();
+        img.onload = done;
+        img.onerror = done;
+        setTimeout(done, 8000);
+        img.src = u;
+      })));
+      return escolhidos.length;
+    }, 300).catch(() => 0);
+    if (cancelado) throw Object.assign(new Error('native_bundle_aborted'), { code: 'aborted' });
+    // Respostas dos candidatos ainda podem estar em voo; o allSettled do
+    // 'collecting' logo abaixo as espera junto com todo o resto.
 
     // DESIGN.MD typography — computed-style measurement of the LIVE page
     // (same probe as lib/snapshot.js), run BEFORE the collection settles ON
@@ -340,6 +471,8 @@ export async function captureNativeBundle(url, opts = {}) {
         bytes: bytesTotal,
         entryPath,
         engines,
+        // Quantos candidatos de srcset/CSS o fechamento carregou de propósito.
+        refsExtras,
         // Nada some em silêncio: o que não coube é nomeado.
         descartados: descartados.slice(0, 40),
         totalDescartados: descartados.length,
