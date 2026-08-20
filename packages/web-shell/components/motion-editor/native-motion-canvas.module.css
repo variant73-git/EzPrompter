@@ -47,9 +47,14 @@
 }
 
 .sidebar {
-  top: var(--native-motion-top, var(--topbar-h, 46px));
-  bottom: 0;
-  left: 0;
+  /* Shell parity (2026-08-20): the edit topbar sits BETWEEN the panels, so
+     they own the top corners — gutter-to-gutter with the chrome radius,
+     like the resting sidebar. The measured-topbar anchor (56px) was the
+     author of the empty corners. */
+  top: var(--shell-gutter, 10px);
+  bottom: var(--shell-gutter, 10px);
+  left: var(--shell-gutter, 10px);
+  border-radius: var(--chrome-radius, 18px);
   width: var(--native-motion-left-w, 224px);
   display: flex;
   min-width: 0;
@@ -58,9 +63,10 @@
 }
 
 .inspector {
-  top: var(--native-motion-top, var(--topbar-h, 46px));
-  right: 0;
-  bottom: 0;
+  top: var(--shell-gutter, 10px);
+  right: var(--shell-gutter, 10px);
+  bottom: var(--shell-gutter, 10px);
+  border-radius: var(--chrome-radius, 18px);
   width: var(--native-motion-right-w, 248px);
   display: flex;
   min-width: 0;
@@ -69,9 +75,10 @@
 }
 
 .timelineDock {
-  right: var(--native-motion-right-w, 248px);
-  bottom: 0;
-  left: var(--native-motion-left-w, 224px);
+  right: calc(var(--shell-gutter, 10px) + var(--native-motion-right-w, 248px) + var(--shell-panel-gap, 8px));
+  bottom: var(--shell-gutter, 10px);
+  left: calc(var(--shell-gutter, 10px) + var(--native-motion-left-w, 224px) + var(--shell-panel-gap, 8px));
+  border-radius: var(--chrome-radius, 18px);
   height: var(--native-motion-timeline-h, 200px);
   min-width: 0;
   border-top: 1px solid var(--border-frosted);

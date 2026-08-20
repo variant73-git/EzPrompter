@@ -8037,8 +8037,10 @@ body.rb-ed-active.rb-ed-canvas .canvas-minimap {
 /* Edit mode keeps a single contextual topbar between the mature editor
    panels. Resting canvas controls are replaced in React by edit actions. */
 body.rb-ed-active.rb-ed-canvas .canvas-topbar.editing {
-  left: var(--rb-layers-width, 224px);
-  right: var(--rb-insp-width, 248px);
+  /* Panels float at the shell gutter with their own radius (2026-08-20);
+     the between-panels topbar clears them plus the panel gap. */
+  left: calc(var(--shell-gutter, 10px) + var(--rb-layers-width, 224px) + var(--shell-panel-gap, 8px));
+  right: calc(var(--shell-gutter, 10px) + var(--rb-insp-width, 248px) + var(--shell-panel-gap, 8px));
   z-index: 2147483642;
   display: flex;
 }
