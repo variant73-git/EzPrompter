@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CropTab™ — Farm Minerals</title>
+<style>
+:root{
+  --beige:#F0EAE3; --beige2:#E7DFD4; --olive:#4A5526; --olive-d:#3A431E;
+  --sage1:#8A9B57; --sage2:#5E6B33; --cream:#F2ECE1; --line:#DCD3C6;
+  --ease:cubic-bezier(.2,.7,.2,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{background:var(--beige)}
+body{
+  background:var(--beige); color:var(--olive);
+  font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;
+  font-weight:400; -webkit-font-smoothing:antialiased; overflow-x:hidden;
+}
+h1,h2,h3,h4{font-weight:400}
+img,svg,canvas{display:block;max-width:100%}
+button{font:inherit;cursor:pointer}
+
+/* ---------- smooth-scroll shell ---------- */
+html.is-smooth #viewport{position:fixed;inset:0;overflow:hidden}
+#smooth{will-change:transform}
+
+/* ---------- utility type ---------- */
+.caps{font-size:11px;letter-spacing:.05em;text-transform:uppercase;line-height:1.7}
+.caps-lg{font-size:12px;letter-spacing:.05em;text-transform:uppercase;line-height:1.7}
+.stmt{font-size:clamp(40px,5vw,68px);line-height:1.06;letter-spacing:-.01em}
+.glyph{display:inline-block;font-size:12px;line-height:1;letter-spacing:0}
+.rl{display:block;overflow:hidden}
+.rl>span{display:block;transform:translateY(110%)}
+html.reduced .rl>span{transform:none}
+.rule{border:0;border-top:1px solid rgba(242,236,225,.4);width:100%}
+.rule--olive{border-top-color:var(--line)}
+
+/* ---------- pills ---------- */
+.pill{
+  display:inline-block;padding:13px 24px;border-radius:999px;border:0;
+  font-size:11px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;
+  transition:transform .6s var(--ease),background .4s;
+}
+.pill:hover{transform:scale(1.04)}
+.pill:focus-visible{outline:2px solid currentColor;outline-offset:3px}
+.pill--frost{background:rgba(242,236,225,.16);color:var(--cream);border:1px solid rgba(242,236,225,.35);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.pill--olive{background:var(--olive);color:var(--cream)}
+.pill--white{background:#fff;color:var(--olive)}
+
+/* ---------- nav ---------- */
+#nav{
+  position:fixed;top:0;left:0;right:0;z-index:900;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:18px 24px;color:#fff;mix-blend-mode:difference;pointer-events:none;
+}
+#nav a,#nav button{pointer-events:auto;color:inherit;text-decoration:none;background:none;border:0}
+#nav .n-item{font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+#nav .n-logo{display:flex;flex-direction:column;align-items:center;gap:4px}
+#nav .n-logo svg{width:16px;height:16px}
+#nav .n-logo span{font-size:11px;letter-spacing:.14em;text-transform:uppercase}
+
+/* ---------- preloader ---------- */
+#loader{position:fixed;inset:0;z-index:1000;background:var(--beige);display:grid;place-items:center}
+#loader .sq{position:absolute;border:1px solid var(--olive);opacity:.9}
+#loader .lmark{width:34px;height:34px;color:var(--olive)}
+html.reduced #loader{display:none}
+
+/* ---------- sections base ---------- */
+.sec{position:relative;min-height:100vh;padding:110px 24px 60px}
+.grid5{
+  background-image:
+    linear-gradient(var(--line),var(--line)),linear-gradient(var(--line),var(--line)),
+    linear-gradient(var(--line),var(--line)),linear-gradient(var(--line),var(--line));
+  background-size:1px 100%;background-repeat:no-repeat;
+  background-position:20% 0,40% 0,60% 0,80% 0;
+}
+.wipe{position:absolute;inset:0;display:flex;z-index:0;pointer-events:none}
+.wipe i{flex:1;background:var(--beige)}
+.wipe i + i{border-left:1px solid var(--line)}
+.sec>.inner{position:relative;z-index:1}
+
+/* ---------- hero ---------- */
+#hero{
+  height:100vh;min-height:100vh;padding:0;overflow:hidden;color:var(--cream);
+  background:linear-gradient(180deg,#2e3517 0%,#5E6B33 45%,#8A9B57 100%);
+  z-index:1;
+}
+.hero-blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.55;pointer-events:none}
+.hb1{width:60vw;height:60vw;left:-15vw;top:10vh;background:radial-gradient(circle,#9db063 0%,transparent 70%);animation:drift1 18s ease-in-out infinite alternate}
+.hb2{width:50vw;height:50vw;right:-10vw;bottom:-10vh;background:radial-gradient(circle,#77873f 0%,transparent 70%);animation:drift2 22s ease-in-out infinite alternate}
+.hb3{width:35vw;height:35vw;left:30vw;bottom:20vh;background:radial-gradient(circle,#3c451c 0%,transparent 70%);animation:drift1 26s ease-in-out infinite alternate-reverse;opacity:.4}
+@keyframes drift1{from{transform:translate(0,0) scale(1)}to{transform:translate(6vw,-4vh) scale(1.12)}}
+@keyframes drift2{from{transform:translate(0,0) scale(1)}to{transform:translate(-5vw,3vh) scale(1.08)}}
+#hero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(20,25,8,.55),transparent 40%);pointer-events:none}
+.hero-top{position:absolute;top:0;left:0;right:0;padding:70px 24px 0;z-index:3}
+.hero-title{font-size:9vw;line-height:.95;letter-spacing:-.02em;color:var(--cream)}
+.hero-titlerow{display:flex;align-items:flex-end;justify-content:space-between;gap:24px}
+.hero-rule{margin-top:18px;border-top:1px solid rgba(242,236,225,.4)}
+.hero-subrow{display:flex;justify-content:space-between;gap:24px;margin-top:12px}
+.hero-bottom{position:absolute;left:24px;bottom:36px;z-index:3;max-width:420px}
+.hero-bottom h3{font-size:clamp(22px,2.4vw,32px);margin-bottom:12px}
+.hero-bottom p{max-width:340px;opacity:.85}
+/* rotating tablet */
+.tabwrap{position:absolute;left:50%;top:54%;transform:translate(-50%,-50%);z-index:2;perspective:1200px;animation:bob 6s ease-in-out infinite}
+@keyframes bob{0%,100%{margin-top:0}50%{margin-top:-14px}}
+.tablet{width:min(40vw,340px);aspect-ratio:1/1;border-radius:16%;position:relative;
+  background:linear-gradient(145deg,#232323 0%,#0c0c0c 55%,#1c1c1c 100%);
+  box-shadow:inset 0 0 40px rgba(0,0,0,.7),inset 0 2px 2px rgba(255,255,255,.12);
+  animation:spinY 8s linear infinite;transform-style:preserve-3d;
+  display:grid;place-items:center;
+}
+.tablet--lg{width:min(46vw,420px)}
+@keyframes spinY{from{transform:rotateY(0)}to{transform:rotateY(360deg)}}
+.tablet svg{width:42%;height:42%;color:#2c2c2c;filter:drop-shadow(0 1px 0 rgba(255,255,255,.08))}
+html.reduced .tablet{animation:none}html.reduced .tabwrap{animation:none}
+
+/* ---------- section 2 / 3 beige statements ---------- */
+#s2,#s3{background:transparent}
+#s2 .inner{min-height:calc(100vh - 170px);display:flex;flex-direction:column;justify-content:center}
+#s2 .stmt{max-width:14em;margin-left:8vw}
+#s2 .side-p{align-self:flex-end;max-width:300px;margin-top:12vh;margin-right:4vw}
+#s3 .inner{min-height:calc(100vh - 170px);display:flex;flex-direction:column;justify-content:space-between}
+#s3 .stmt{max-width:11em}
+#s3 .corn{align-self:center;width:min(46vh,420px);margin:-6vh 0}
+#s3 .tail{align-self:flex-end;text-align:right}
+.corn path{stroke:var(--olive);stroke-width:1.6;fill:var(--olive);fill-opacity:0;stroke-linecap:round;stroke-linejoin:round}
+html.reduced .corn path{fill-opacity:1}
+
+/* ---------- section 4 solution ---------- */
+#s4{background:linear-gradient(160deg,#8A9B57 0%,#5E6B33 70%,#4d5829 100%);color:var(--cream);overflow:hidden}
+#s4 .inner{min-height:calc(100vh - 170px);display:flex;flex-direction:column;justify-content:space-between}
+#s4 .top{display:flex;justify-content:flex-end}
+#s4 .col-r{max-width:440px;text-align:left}
+#s4 .col-r .stmt{margin-bottom:20px}
+#s4 .col-r p{margin-bottom:22px;opacity:.9;max-width:380px}
+#s4 .tabwrap2{position:absolute;left:8%;top:50%;transform:translateY(-50%);perspective:1200px;z-index:0}
+.cards{display:flex;gap:16px;margin-top:60px;position:relative;z-index:2}
+.card{flex:1;background:var(--beige);color:var(--olive);padding:22px 22px 26px;min-height:230px;display:flex;flex-direction:column;justify-content:space-between}
+.card .glyph{color:var(--olive);margin-bottom:26px}
+.card h3{font-size:clamp(20px,1.8vw,26px);line-height:1.15;margin-bottom:14px;max-width:9em}
+html.reduced .card{opacity:1!important;transform:none!important}
+
+/* ---------- section 5 water ---------- */
+#s5{height:300vh;padding:0;background:#5E6B33}
+.water-stage{position:relative;height:100vh;overflow:hidden;background:linear-gradient(180deg,#7c8d4c 0%,#5E6B33 60%,#46521f 100%)}
+#waterCanvas{position:absolute;inset:0;width:100%;height:100%}
+.water-title{position:absolute;top:12%;left:0;right:0;text-align:center;color:var(--cream);font-size:clamp(44px,6vw,84px);z-index:3}
+.wcap{position:absolute;max-width:300px;color:var(--cream);opacity:0;z-index:3}
+.wcap h4{font-size:clamp(22px,2.2vw,30px);margin-bottom:8px}
+.wcap .glyph{margin-bottom:10px}
+.wcap hr{border:0;border-top:1px solid rgba(242,236,225,.4);margin:10px 0}
+.wcap p{font-size:11px;letter-spacing:.05em;text-transform:uppercase;line-height:1.7;opacity:.9}
+.wcap1{left:6%;top:42%}.wcap2{right:6%;top:58%}.wcap3{left:6%;top:52%}.wcap4{right:6%;top:44%}
+html.reduced .wcap{opacity:1}
+
+/* ---------- section 6 stats ---------- */
+#s6 .inner{max-width:1100px;margin-left:auto}
+#s6 .row{display:flex;align-items:baseline;justify-content:space-between;gap:24px;padding:26px 0;border-top:1px solid var(--line)}
+#s6 .row:last-of-type{border-bottom:1px solid var(--line)}
+#s6 .fig{font-size:clamp(48px,6vw,84px);line-height:1;letter-spacing:-.02em;white-space:nowrap}
+#s6 .lbl{text-align:right;max-width:280px}
+#s6 .foot{margin-top:26px;max-width:560px;margin-left:auto;text-align:right;opacity:.75}
+
+/* ---------- section 7 offset split ---------- */
+#s7{display:grid;grid-template-columns:1fr 1fr;padding:0;min-height:100vh}
+#s7 .txt{padding:120px 48px 60px;display:flex;flex-direction:column;justify-content:center;gap:28px}
+#s7 .txt p{max-width:380px}
+.photo{position:relative;overflow:hidden}
+.photo-potatoes{background:
+  radial-gradient(120px 90px at 42% 52%,#c9a05f 0%,#a97f42 60%,transparent 75%),
+  radial-gradient(90px 70px at 56% 48%,#d3ab6b 0%,#b28849 60%,transparent 75%),
+  radial-gradient(80px 60px at 50% 62%,#bf9552 0%,transparent 72%),
+  radial-gradient(60% 50% at 50% 55%,#8a6a3a 0%,#6b5a33 60%,transparent 90%),
+  radial-gradient(140% 100% at 50% 0%,#e8c987 0%,#b9a05e 35%,#7d7c44 70%,#5c6532 100%)}
+.photo-potatoes::after{content:"";position:absolute;inset:0;background:radial-gradient(60% 60% at 70% 20%,rgba(255,240,200,.5),transparent 70%)}
+.photo-cabbage{background:
+  radial-gradient(10px 10px at 30% 30%,rgba(255,255,255,.8),transparent 60%),
+  radial-gradient(8px 8px at 62% 44%,rgba(255,255,255,.75),transparent 60%),
+  radial-gradient(9px 9px at 44% 68%,rgba(255,255,255,.7),transparent 60%),
+  radial-gradient(7px 7px at 72% 74%,rgba(255,255,255,.7),transparent 60%),
+  repeating-radial-gradient(80% 120% at 10% 110%,#7fa04a 0 26px,#6c8c3c 26px 54px),
+  linear-gradient(135deg,#8fae55 0%,#5f7c33 100%)}
+.photo-cows{background:
+  radial-gradient(26px 18px at 44% 66%,#5b4a33 0%,#3f3423 70%,transparent 78%),
+  radial-gradient(22px 15px at 56% 70%,#6b5233 0%,#493823 70%,transparent 78%),
+  radial-gradient(18px 13px at 66% 63%,#4a3c28 0%,transparent 78%),
+  radial-gradient(16px 11px at 34% 62%,#5e4c32 0%,transparent 78%),
+  linear-gradient(180deg,#aecbe0 0%,#c9d8de 34%,#8ba24f 36%,#6d8440 68%,#57682f 100%)}
+.photo-cows::after{content:"";position:absolute;inset:0;background:radial-gradient(50% 40% at 78% 12%,rgba(255,248,220,.65),transparent 70%)}
+
+/* ---------- section 8 marquee + mask ---------- */
+#s8{height:260vh;padding:0;background:var(--beige)}
+.mq-stage{position:relative;height:100vh;overflow:hidden;background:var(--beige)}
+.mq-green{position:absolute;inset:0;background:linear-gradient(170deg,#5E6B33 0%,#4A5526 100%);opacity:0}
+.maskwrap{position:absolute;inset:0;display:grid;place-items:center}
+.masked{width:74vmin;height:74vmin;position:relative;overflow:hidden;
+  -webkit-mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><g fill='%23000'><circle cx='50' cy='50' r='13'/><ellipse cx='50' cy='27' rx='14' ry='23'/><ellipse cx='50' cy='27' rx='14' ry='23' transform='rotate(72 50 50)'/><ellipse cx='50' cy='27' rx='14' ry='23' transform='rotate(144 50 50)'/><ellipse cx='50' cy='27' rx='14' ry='23' transform='rotate(216 50 50)'/><ellipse cx='50' cy='27' rx='14' ry='23' transform='rotate(288 50 50)'/></g></svg>");
+  mask-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><g fill='%23000'><circle cx='50' cy='50' r='13'/><ellipse cx='50' cy='27' rx='14' ry='23'/><ellipse cx='50' cy='27' rx='14' ry='23' transform='rotate(72 50 50)'/><ellipse cx='50' cy='27' rx='14' ry='23' transform='rotate(144 50 50)'/><ellipse cx='50' cy='27' rx='14' ry='23' transform='rotate(216 50 50)'/><ellipse cx='50' cy='27' rx='14' ry='23' transform='rotate(288 50 50)'/></g></svg>");
+  -webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;
+  -webkit-mask-size:contain;mask-size:contain;
+  -webkit-mask-position:center;mask-position:center;
+}
+.pasture{position:absolute;inset:0;background:linear-gradient(180deg,#e9d9a8 0%,#c9c37a 28%,#8ba24f 32%,#6d8440 70%,#57682f 100%)}
+.pasture::before{content:"";position:absolute;inset:0;background:radial-gradient(40% 30% at 75% 12%,rgba(255,240,190,.9),transparent 70%)}
+.sheep{position:absolute;width:44px;height:26px;border-radius:50%;background:#f4efe2;box-shadow:0 3px 4px rgba(60,70,30,.3)}
+.sheep::before{content:"";position:absolute;width:12px;height:11px;border-radius:50%;background:#3a3a32;left:-6px;top:6px}
+.sheep::after{content:"";position:absolute;width:3px;height:9px;background:#3a3a32;bottom:-7px;left:10px;box-shadow:16px 0 0 #3a3a32}
+.sh1{left:24%;top:56%;animation:graze 14s ease-in-out infinite alternate}
+.sh2{left:56%;top:66%;transform:scale(.8);animation:graze 18s ease-in-out infinite alternate-reverse}
+.sh3{left:42%;top:76%;transform:scale(1.1);animation:graze 22s ease-in-out infinite alternate}
+@keyframes graze{from{margin-left:0}to{margin-left:34px}}
+.mq{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);z-index:4;
+  border-top:1px solid currentColor;border-bottom:1px solid currentColor;color:var(--olive);
+  overflow:hidden;padding:2vh 0}
+.mq-track{display:flex;white-space:nowrap;will-change:transform;animation:mq 80s linear infinite}
+.mq-track span{font-size:8vw;line-height:1.05;padding-right:6vw;letter-spacing:-.01em}
+@keyframes mq{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+html.reduced .mq-track{animation:none}
+html.reduced .sheep{animation:none}
+
+/* ---------- section 9 package over pasture ---------- */
+#s9{padding:0;height:100vh;overflow:hidden;position:relative;color:var(--cream)}
+#s9 .pasture{position:absolute;inset:0}
+#s9 .scrub-h{position:absolute;top:14%;left:0;width:100%;text-align:center;font-size:clamp(30px,3.6vw,50px);max-width:none;white-space:nowrap;z-index:2;text-shadow:0 1px 8px rgba(40,50,15,.35)}
+.pkg{position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);z-index:3;
+  width:190px;height:250px;background:linear-gradient(160deg,#5a6630 0%,#4A5526 70%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--cream);
+  animation:pkgfloat 7s ease-in-out infinite}
+@keyframes pkgfloat{0%,100%{transform:translate(-50%,-50%) rotate(-2deg)}50%{transform:translate(-50%,-52%) rotate(2deg)}}
+html.reduced .pkg{animation:none}
+.pkg .mini-tab{width:64px;height:64px;border-radius:14%;background:linear-gradient(145deg,#232323,#0c0c0c);display:grid;place-items:center}
+.pkg .mini-tab svg{width:40%;height:40%;color:#2c2c2c}
+.pkg .pname{font-size:15px;letter-spacing:.02em}
+.pkg .psub{font-size:9px;letter-spacing:.14em;text-transform:uppercase;opacity:.7}
+.chip{position:absolute;z-index:3;max-width:250px;padding:18px;border-radius:4px;
+  background:rgba(242,236,225,.14);border:1px solid rgba(242,236,225,.3);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:var(--cream)}
+.chip h4{font-size:clamp(17px,1.6vw,22px);margin-bottom:8px;line-height:1.2}
+.chip1{left:6%;top:44%}.chip2{right:6%;top:58%}
+
+/* ---------- section 10 field trials ---------- */
+#s10{display:grid;grid-template-columns:1fr 1fr;padding:0;min-height:100vh}
+#s10 .txt{padding:120px 48px 60px;display:flex;flex-direction:column;gap:24px}
+#s10 h2{font-size:clamp(36px,3.6vw,54px);max-width:8em}
+#s10 .txt>p{max-width:380px}
+.worldmap{width:100%;max-width:520px;margin-top:auto}
+.worldmap .land{fill:#DDD5C8}
+.worldmap .on{fill:var(--olive)}
+#s10 .photo{position:relative}
+.ovl-card{position:absolute;background:var(--beige);color:var(--olive);padding:18px;max-width:250px;z-index:2}
+.ovl-card h4{font-size:18px;margin-bottom:8px}
+.oc1{left:8%;top:14%}.oc2{left:14%;top:44%}
+#s10 .cta{position:absolute;left:8%;bottom:8%;z-index:2;color:var(--cream);max-width:340px;text-shadow:0 1px 8px rgba(30,40,10,.4)}
+#s10 .cta h3{font-size:clamp(22px,2.2vw,30px);margin-bottom:14px}
+
+/* ---------- section 11 interactive ---------- */
+#s11{background:linear-gradient(165deg,#75863f 0%,#5E6B33 60%,#4c5827 100%);color:var(--cream);height:100vh;overflow:hidden}
+#s11 .head{display:flex;justify-content:space-between;gap:40px}
+#s11 h2{font-size:clamp(34px,3.6vw,54px);max-width:8em}
+#s11 .note{max-width:320px;text-align:right;opacity:.9}
+.seedling-wrap{position:absolute;left:50%;top:56%;transform:translate(-50%,-50%)}
+.seedling{width:220px;height:260px;overflow:visible}
+.seedling .soil{fill:#3a431e}
+.seedling .stem{stroke:#cfe08a;stroke-width:5;fill:none;stroke-linecap:round}
+.seedling .leaf{fill:#b5cc6b}
+.grow2{opacity:0;transform-origin:110px 220px}
+.water-card{position:absolute;left:50%;bottom:5vh;transform:translateX(-50%);z-index:4;
+  display:flex;align-items:center;gap:18px;padding:18px 22px;border-radius:8px;
+  background:rgba(242,236,225,.14);border:1px solid rgba(242,236,225,.3);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.water-card h4{font-size:19px;margin-bottom:4px}
+.water-card p{font-size:11px;letter-spacing:.05em;text-transform:uppercase;opacity:.85}
+.drop-btn{width:56px;height:56px;border-radius:50%;border:1px solid rgba(242,236,225,.5);background:rgba(242,236,225,.2);display:grid;place-items:center;color:var(--cream);flex:none}
+.drop-btn:focus-visible{outline:2px solid var(--cream);outline-offset:3px}
+.drop-btn svg{width:20px;height:20px}
+
+/* ---------- section 12 formats ---------- */
+#s12{display:grid;grid-template-columns:420px 1fr;gap:40px;align-items:start}
+#s12 h2{font-size:clamp(36px,3.6vw,54px);margin-bottom:20px}
+#s12 .left p{max-width:320px;margin-bottom:24px}
+.arrows{display:flex;gap:12px;margin-top:36px}
+.arrow{width:48px;height:48px;border-radius:50%;border:1px solid var(--olive);background:transparent;color:var(--olive);font-size:16px}
+.arrow:focus-visible{outline:2px solid var(--olive);outline-offset:3px}
+.carousel{overflow:hidden}
+.car-track{display:flex;gap:24px}
+.fcard{flex:0 0 min(420px,80%);background:var(--beige2);padding:26px;display:flex;flex-direction:column;gap:18px}
+.fcard .boximg{height:260px;display:grid;place-items:center}
+.boxrender{width:150px;height:200px;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:16px 12px}
+.boxrender.npk{background:linear-gradient(160deg,#5a6630,#4A5526);color:var(--cream)}
+.boxrender.base{background:linear-gradient(160deg,#f6f1e7,#e6dfd0);color:var(--olive);border:1px solid var(--line)}
+.boxrender .bgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;width:100%}
+.boxrender .bgrid i{display:block;aspect-ratio:1;border:1px solid currentColor;opacity:.5}
+.boxrender .bar{width:70%;height:16px;background:repeating-linear-gradient(90deg,currentColor 0 2px,transparent 2px 5px);opacity:.7}
+.boxrender .bl{font-size:12px;letter-spacing:.04em}
+.fcard h3{font-size:24px}
+.fcard p{white-space:pre-line}
+
+/* ---------- section 13 final ---------- */
+#s13{padding:0;min-height:100vh;position:relative;overflow:hidden}
+#s13 .photo-cows{position:absolute;inset:0}
+#s13 .inner{position:relative;z-index:2;min-height:100vh;padding:110px 24px 60px;display:flex;flex-direction:column;justify-content:space-between}
+#s13 h2{font-size:clamp(34px,4vw,58px);color:var(--olive);max-width:11em}
+#s13 .right{align-self:flex-end;text-align:right;color:#fff;max-width:460px;margin-top:auto;margin-bottom:8vh}
+#s13 .right h3{font-size:clamp(34px,3.6vw,54px);margin-bottom:18px}
+#s13 .right p{margin-bottom:10px;text-shadow:0 1px 6px rgba(30,40,15,.35)}
+#s13 .btns{display:flex;gap:14px;justify-content:flex-end;margin-top:22px}
+
+/* ---------- scramble ---------- */
+html:not(.reduced) .scramble{opacity:0}
+.scramble .ch{opacity:0}
+html.reduced .scramble .ch{opacity:1}
+
+/* ---------- responsive ---------- */
+@media(max-width:900px){
+  .grid5{background-position:33% 0,66% 0,120% 0,140% 0}
+  #s7,#s10{grid-template-columns:1fr}
+  .photo{min-height:50vh}
+  #s12{grid-template-columns:1fr}
+  .cards{flex-direction:column}
+}
+@media(max-width:600px){
+  .hero-title{font-size:11vw}
+  .stmt{font-size:11vw}
+}
+@media(prefers-reduced-motion:reduce){
+  .hero-blob,.mq-track,.tablet,.tabwrap,.pkg,.sheep{animation:none!important}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="leafmark" viewBox="0 0 100 100">
+    <g fill="currentColor">
+      <circle cx="50" cy="50" r="12"/>
+      <ellipse cx="50" cy="27" rx="13" ry="22"/>
+      <ellipse cx="50" cy="27" rx="13" ry="22" transform="rotate(72 50 50)"/>
+      <ellipse cx="50" cy="27" rx="13" ry="22" transform="rotate(144 50 50)"/>
+      <ellipse cx="50" cy="27" rx="13" ry="22" transform="rotate(216 50 50)"/>
+      <ellipse cx="50" cy="27" rx="13" ry="22" transform="rotate(288 50 50)"/>
+    </g>
+  </symbol>
+  <symbol id="dropicon" viewBox="0 0 24 24">
+    <path fill="currentColor" d="M12 2C12 2 5 10.5 5 15a7 7 0 0 0 14 0C19 10.5 12 2 12 2z"/>
+  </symbol>
+</svg>
+
+<div id="loader" aria-hidden="true">
+  <div class="sq" style="width:300px;height:300px"></div>
+  <div class="sq" style="width:220px;height:220px;border-color:#8A9B57"></div>
+  <div class="sq" style="width:150px;height:150px"></div>
+  <div class="sq" style="width:90px;height:90px;border-color:#8A9B57"></div>
+  <svg class="lmark"><use href="#leafmark"/></svg>
+</div>
+
+<nav id="nav">
+  <button class="n-item" type="button">✕ Menu</button>
+  <a class="n-logo" href="#hero" aria-label="Farm Minerals home">
+    <svg><use href="#leafmark"/></svg>
+    <span>Farm Minerals</span>
+  </a>
+  <a class="n-item" href="#s13">Contact Us</a>
+</nav>
+
+<div id="viewport"><div id="smooth">
+
+<!-- SECTION 1 — HERO -->
+<section id="hero" class="sec">
+  <div class="hero-blob hb1"></div><div class="hero-blob hb2"></div><div class="hero-blob hb3"></div>
+  <div class="tabwrap"><div class="tablet"><svg><use href="#leafmark"/></svg></div></div>
+  <div class="hero-top">
+    <div class="hero-titlerow">
+      <h1 class="hero-title rl"><span>CropTab™</span></h1>
+      <span class="rl"><span><a class="pill pill--frost" href="#s12">• Request Access •</a></span></span>
+    </div>
+    <hr class="rule hero-rule">
+    <div class="hero-subrow caps">
+      <span>Fertilizer, reinvented.</span>
+      <span>100 kg of fertilizer — reimagined as a 13 g tablet.</span>
+    </div>
+  </div>
+  <div class="hero-bottom">
+    <h3 class="rl"><span>For Your Crops. For the Planet.</span></h3>
+    <p class="caps rl"><span>Carbon-capsule technology that delivers nutrients with zero waste and zero emissions.</span></p>
+  </div>
+</section>
+
+<!-- SECTION 2 — PROBLEM -->
+<section id="s2" class="sec" style="z-index:2">
+  <div class="wipe"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="inner">
+    <h2 class="stmt">
+      <span class="rl"><span>Most fertilizers never make it</span></span>
+      <span class="rl"><span>to your plants</span></span>
+    </h2>
+    <p class="caps side-p">Nutrients evaporate, wash away, or get locked in the soil — leaving you with fewer yields, more spraying, and higher costs.</p>
+  </div>
+</section>
+
+<!-- SECTION 3 — NITROGEN STAT -->
+<section id="s3" class="sec grid5">
+  <div class="inner">
+    <h2 class="stmt">
+      <span class="rl"><span>Up to 70% of</span></span>
+      <span class="rl"><span>nitrogen is lost</span></span>
+    </h2>
+    <svg class="corn" viewBox="0 0 200 260" aria-label="Corn plant illustration">
+      <path pathLength="1" d="M100 250 L100 70"/>
+      <path pathLength="1" d="M100 190 C70 185 45 165 40 135 C70 140 95 160 100 190 Z"/>
+      <path pathLength="1" d="M100 175 C130 170 155 150 160 120 C130 125 105 145 100 175 Z"/>
+      <path pathLength="1" d="M100 130 C75 126 55 110 52 85 C77 90 96 106 100 130 Z"/>
+      <path pathLength="1" d="M100 115 C125 111 145 95 148 70 C123 75 104 91 100 115 Z"/>
+      <path pathLength="1" d="M100 70 C92 50 92 34 100 18 C108 34 108 50 100 70 Z"/>
+      <path pathLength="1" d="M86 78 C80 66 80 55 85 45 C91 54 92 66 86 78 Z"/>
+      <path pathLength="1" d="M114 78 C120 66 120 55 115 45 C109 54 108 66 114 78 Z"/>
+      <path pathLength="1" d="M30 250 C34 238 34 230 30 222 M38 250 C42 236 42 228 38 220 M46 250 C50 240 50 232 46 226"/>
+      <path pathLength="1" d="M154 250 C158 238 158 230 154 222 M162 250 C166 236 166 228 162 220 M170 250 C174 240 174 232 170 226"/>
+      <path pathLength="1" d="M10 250 L190 250"/>
+    </svg>
+    <p class="stmt tail rl"><span>before crops can use it</span></p>
+  </div>
+</section>
+
+<!-- SECTION 4 — SOLUTION -->
+<section id="s4" class="sec">
+  <div class="tabwrap2 tabwrap"><div class="tablet tablet--lg"><svg><use href="#leafmark"/></svg></div></div>
+  <div class="inner">
+    <div class="top">
+      <div class="col-r">
+        <h2 class="stmt">
+          <span class="rl"><span>We found</span></span>
+          <span class="rl"><span>a better way</span></span>
+        </h2>
+        <p class="caps">Meet CropTab™. Powered by precision-engineered carbon capsules, it marks the first major innovation in fertilizers in over 35 years.</p>
+        <a class="pill pill--frost" href="#s5">• Learn More •</a>
+      </div>
+    </div>
+    <div class="cards">
+      <div class="card"><div><span class="glyph">✕</span><h3>Smaller than a plant cell</h3></div><p class="caps">Engineered to pass through the surface and deliver nutrients from within.</p></div>
+      <div class="card"><div><span class="glyph">✕</span><h3>Effortlessly integrative</h3></div><p class="caps">No new tools. No learning curve. Just a smarter way to get the same job done — with less waste and zero emissions.</p></div>
+      <div class="card"><div><span class="glyph">✕</span><h3>Zero manufacturing emissions</h3></div><p class="caps">We completely bypass the Haber-Bosch process — no CO₂, no NOₓ, zero compromise.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 5 — WATER DROP (pinned, scrubbed) -->
+<section id="s5">
+  <div class="water-stage">
+    <canvas id="waterCanvas"></canvas>
+    <h2 class="water-title scramble" id="waterTitle">Meet CropTab™</h2>
+    <div class="wcap wcap1"><span class="glyph">✕</span><h4>Just drop it</h4><hr><p>No new equipment needed. Just drop it into water — it dissolves evenly on its own.</p></div>
+    <div class="wcap wcap2"><span class="glyph">✕</span><h4>0 run-off</h4><hr><p>Events recorded in 12 months of monitoring. Waste eliminated.</p></div>
+    <div class="wcap wcap3"><span class="glyph">✕</span><h4>Reinventing delivery</h4><hr><p>1.000 tablets (2.500 acres) – just 29 lb / 13 kg. Fits in a courier box. Ships with FedEx, DHL, even Amazon. Thousands of acres, delivered overnight.</p></div>
+    <div class="wcap wcap4"><span class="glyph">✕</span><h4>Zero emissions</h4><hr><p>We skip energy-intensive processes entirely, cutting CO₂ at the source. Cleaner to make, better for the planet.</p></div>
+  </div>
+</section>
+
+<!-- SECTION 6 — RESULTS TABLE -->
+<section id="s6" class="sec">
+  <div class="wipe"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="inner">
+    <div class="row"><span class="fig num" data-prefix="" data-target="4" data-dec="0" data-suffix="">4</span><span class="lbl caps">Continents tested</span></div>
+    <div class="row"><span class="fig num" data-prefix="" data-target="100" data-dec="0" data-suffix="x">100x</span><span class="lbl caps">Lower transport cost</span></div>
+    <div class="row"><span class="fig num" data-prefix="" data-target="0.5" data-dec="1" data-suffix=" ton">0.5 ton</span><span class="lbl caps">CO₂ saved per acre – at no extra cost</span></div>
+    <div class="row"><span class="fig num" data-prefix="≥" data-target="5" data-dec="0" data-suffix="×">≥5×</span><span class="lbl caps">Return* on every dollar invested</span></div>
+    <p class="foot caps">*Equal to or better than the ROI published for leading NPK programs; based on side-by-side trial economics and lower freight + zero-emission practices.</p>
+  </div>
+</section>
+
+<!-- SECTION 7 — OFFSET SPLIT -->
+<section id="s7">
+  <div class="txt">
+    <p class="caps-lg">Most ag companies pay to offset their emissions. With Farm Minerals, you don't have to. Our fertilizers are made clean from the start — so you can lower your footprint without buying credits or paying compliance fees.</p>
+    <span><a class="pill pill--olive" href="#s10">• Learn More •</a></span>
+  </div>
+  <div class="photo photo-potatoes" role="img" aria-label="Farmer's hands holding fresh potatoes"></div>
+</section>
+
+<!-- SECTION 8 — MARQUEE + LOGO MASK -->
+<section id="s8">
+  <div class="mq-stage" id="mqStage">
+    <div class="mq-green" id="mqGreen">
+      <div class="maskwrap">
+        <div class="masked" id="maskedLogo">
+          <div class="pasture">
+            <span class="sheep sh1"></span><span class="sheep sh2"></span><span class="sheep sh3"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="mq" id="mqBand" aria-hidden="true">
+      <div class="mq-track">
+        <span>For Better Plants. For Healthier Animals. For Better Planet.</span>
+        <span>For Better Plants. For Healthier Animals. For Better Planet.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 9 — PACKAGE OVER PASTURE -->
+<section id="s9">
+  <div class="pasture"><span class="sheep sh1"></span><span class="sheep sh2"></span><span class="sheep sh3"></span></div>
+  <h2 class="scrub-h" id="s9head">…reserves cut the nutrient demand per acre without cutting yield</h2>
+  <div class="pkg">
+    <span class="psub">Farm Minerals</span>
+    <div class="mini-tab"><svg><use href="#leafmark"/></svg></div>
+    <span class="pname">CropTab™ NPK</span>
+  </div>
+  <div class="chip chip1"><h4>½ ton of CO₂e saved per acre</h4><p class="caps">Life-cycle analysis shows ~500–600 lb CO₂e savings per acre.</p></div>
+  <div class="chip chip2"><h4>1000x lighter logistics</h4><p class="caps">One 13 kg box replaces 25 tons of fertilizer — courier-shippable, pallet-free.</p></div>
+</section>
+
+<!-- SECTION 10 — FIELD TRIALS -->
+<section id="s10">
+  <div class="txt grid5">
+    <h2 class="rl"><span>Field Trials in Progress</span></h2>
+    <p class="caps">Our technology is in the field today, across multiple continents. The goal — a single fertilizer platform farmers can trust, anywhere in the world.</p>
+    <svg class="worldmap" viewBox="0 0 200 100" aria-label="World map with trial countries highlighted">
+      <path class="land on" d="M18 26 L46 22 L52 30 L44 42 L30 44 L20 36 Z"/>
+      <path class="land on" d="M30 46 L42 44 L44 52 L36 56 L30 52 Z"/>
+      <path class="land on" d="M44 58 L54 56 L58 74 L50 86 L44 72 Z"/>
+      <path class="land" d="M60 78 L66 76 L66 84 L61 84 Z"/>
+      <path class="land on" d="M88 20 L94 18 L96 26 L90 28 Z"/>
+      <path class="land on" d="M92 30 L100 28 L102 36 L94 38 Z"/>
+      <path class="land" d="M96 40 L120 36 L126 52 L112 60 L100 52 Z"/>
+      <path class="land on" d="M106 58 L118 56 L120 76 L110 80 Z"/>
+      <path class="land" d="M104 16 L150 12 L168 24 L156 36 L128 34 L110 26 Z"/>
+      <path class="land on" d="M130 26 L140 24 L142 32 L132 34 Z"/>
+      <path class="land on" d="M146 40 L154 38 L158 52 L150 54 Z"/>
+      <path class="land" d="M160 66 L178 62 L182 74 L166 78 Z"/>
+    </svg>
+  </div>
+  <div class="photo photo-cabbage">
+    <div class="ovl-card oc1"><h4>Why we share this</h4><p class="caps">Real data beats marketing claims. Follow the results as they come in.</p></div>
+    <div class="ovl-card oc2"><h4>Next update</h4><p class="caps">August 2026 — full-season biomass and ROI data.</p></div>
+    <div class="cta"><h3>Be first to try CropTab™. Early-access slots open for 2027 season.</h3><a class="pill pill--frost" href="#s12">• Check Eligibility •</a></div>
+  </div>
+</section>
+
+<!-- SECTION 11 — INTERACTIVE DEMO -->
+<section id="s11" class="sec">
+  <div class="inner head">
+    <h2 class="rl"><span>See the Difference for Yourself</span></h2>
+    <p class="caps note">Try it on your field. No commitment, no risk — just a chance to see how much better your fertilizer can work.</p>
+  </div>
+  <div class="seedling-wrap">
+    <svg class="seedling" viewBox="0 0 220 260">
+      <ellipse class="soil" cx="110" cy="228" rx="70" ry="14"/>
+      <g id="grow1">
+        <path class="stem" d="M110 226 C110 200 108 186 110 172"/>
+        <path class="leaf" d="M110 184 C92 180 78 168 74 150 C94 154 108 166 110 184 Z"/>
+        <path class="leaf" d="M110 176 C128 172 142 160 146 142 C126 146 112 158 110 176 Z"/>
+      </g>
+      <g class="grow2" id="grow2">
+        <path class="stem" d="M110 172 C112 140 108 118 110 96"/>
+        <path class="leaf" d="M110 138 C86 132 68 116 62 92 C88 98 106 114 110 138 Z"/>
+        <path class="leaf" d="M110 126 C134 120 152 104 158 80 C132 86 114 102 110 126 Z"/>
+        <path class="leaf" d="M110 96 C100 76 100 60 110 44 C120 60 120 76 110 96 Z"/>
+      </g>
+    </svg>
+  </div>
+  <div class="water-card">
+    <div><h4>Add more water</h4><p>It seems that a plant needs a little help.</p></div>
+    <button class="drop-btn" id="dropBtn" type="button" aria-label="Water the plant"><svg><use href="#dropicon"/></svg></button>
+  </div>
+</section>
+
+<!-- SECTION 12 — FORMATS & ACCESS -->
+<section id="s12" class="sec">
+  <div class="wipe"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="inner" style="display:contents">
+    <div class="left" style="position:relative;z-index:1">
+      <h2 class="rl"><span>Formats &amp; Access</span></h2>
+      <p class="caps">We're limiting early access to select growers and agronomy partners.</p>
+      <a class="pill pill--olive" href="#s13">• Request Access •</a>
+      <div class="arrows">
+        <button class="arrow" id="prevBtn" type="button" aria-label="Previous format">←</button>
+        <button class="arrow" id="nextBtn" type="button" aria-label="Next format">→</button>
+      </div>
+    </div>
+    <div class="carousel" style="position:relative;z-index:1">
+      <div class="car-track" id="carTrack">
+        <div class="fcard">
+          <div class="boximg"><div class="boxrender npk"><div class="bgrid"><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bl">CropTab™ NPK</span><div class="bar"></div></div></div>
+          <h3>CropTab™ NPK</h3>
+          <p class="caps">Perfect for complete nutrient replacement — 0.13kg / 1.3 kg — shelf life – 2 years — x 10/100 tablets</p>
+        </div>
+        <div class="fcard">
+          <div class="boximg"><div class="boxrender base"><div class="bgrid"><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="bl">Nutripeak™ Base</span><div class="bar"></div></div></div>
+          <h3>Nutripeak™ Base</h3>
+          <p class="caps">Perfect for crops demanding micronutrients — 0.13kg / 1.3 kg — shelf life – 2 years — x 10/100 tablets</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SECTION 13 — FINAL CTA -->
+<section id="s13">
+  <div class="photo-cows photo"></div>
+  <div class="inner">
+    <h2 class="scramble" id="finalTitle">You don't get many chances to be early</h2>
+    <div class="right">
+      <h3 class="rl"><span>To lead, not follow</span></h3>
+      <p class="caps-lg">To shape what farming becomes — not just adapt to it.</p>
+      <p class="caps-lg">CropTab™ is already in the hands of progressive growers rewriting the rules. If you're ready, we'll make room for you.</p>
+      <div class="btns">
+        <a class="pill pill--white" href="#s12">• Request a Sample •</a>
+        <a class="pill pill--frost" href="#s12">• Talk to Our Team •</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div></div>
+
+<script src="./gsap.min.js"></script>
+<script src="./ScrollTrigger.min.js"></script>
+<script>
+(function(){
+"use strict";
+var reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+if(!window.gsap || !window.ScrollTrigger){ reduced = true; }
+var docEl = document.documentElement;
+if(reduced){ docEl.classList.add("reduced"); }
+
+/* ---------- helpers ---------- */
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+function lerp(a,b,t){ return a + (b-a)*t; }
+function tri(p,c,w){ return clamp(1 - Math.abs(p-c)/w, 0, 1); }
+
+function splitScramble(el){
+  var text = el.textContent;
+  el.setAttribute("aria-label", text);
+  el.textContent = "";
+  var frag = document.createDocumentFragment();
+  for(var i=0;i<text.length;i++){
+    var s = document.createElement("span");
+    s.className = "ch";
+    s.textContent = text[i];
+    s.style.whiteSpace = "pre";
+    s.setAttribute("aria-hidden","true");
+    frag.appendChild(s);
+  }
+  el.appendChild(frag);
+  return el.querySelectorAll(".ch");
+}
+
+/* ---------- WATER CANVAS SCENE (used in both modes) ---------- */
+var canvas = document.getElementById("waterCanvas");
+var ctx = canvas ? canvas.getContext("2d") : null;
+var stage = document.querySelector(".water-stage");
+var lastP = 0;
+function rnd(i){ var x = Math.sin(i*127.1)*43758.5453; return x - Math.floor(x); }
+function sizeCanvas(){
+  if(!canvas || !stage) return;
+  canvas.width = stage.clientWidth || 1280;
+  canvas.height = stage.clientHeight || 720;
+  drawWater(lastP);
+}
+function rrect(c,x,y,w,h,r){
+  c.beginPath();
+  c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r); c.arcTo(x+w,y+h,x,y+h,r);
+  c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath();
+}
+function drawWater(p){
+  if(!ctx) return;
+  lastP = p;
+  var W = canvas.width, H = canvas.height;
+  ctx.clearRect(0,0,W,H);
+  /* sky / air */
+  var g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,"#84954e"); g.addColorStop(.55,"#6d7d3e"); g.addColorStop(1,"#54622c");
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  /* waterline rises into view */
+  var rise = clamp(p/0.2, 0, 1);
+  var waterY = H * lerp(1.12, 0.5, rise);
+  /* water body */
+  var wg = ctx.createLinearGradient(0,waterY,0,H);
+  wg.addColorStop(0,"rgba(46,58,22,.55)"); wg.addColorStop(1,"rgba(26,34,12,.9)");
+  ctx.fillStyle = wg; ctx.fillRect(0,waterY,W,H-waterY);
+  /* ripple on the line */
+  ctx.strokeStyle = "rgba(242,236,225,.55)"; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for(var x=0;x<=W;x+=8){
+    var y = waterY + Math.sin(x*0.02 + p*22)*2.2;
+    if(x===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  /* glass refraction band crossing at the boundary */
+  var bg = ctx.createLinearGradient(0,waterY-26,0,waterY+26);
+  bg.addColorStop(0,"rgba(255,255,255,0)");
+  bg.addColorStop(.5,"rgba(255,255,255,.16)");
+  bg.addColorStop(1,"rgba(255,255,255,0)");
+  ctx.fillStyle = bg; ctx.fillRect(0,waterY-26,W,52);
+  /* tablet */
+  var cx = W/2, tw = Math.min(W*0.11, 120), impact = 0.32, dropStart = 0.2;
+  var ty, underwater = false, rot;
+  if(p < impact){
+    var f = clamp((p-dropStart)/(impact-dropStart), 0, 1);
+    ty = lerp(-tw, waterY - tw*0.4, f*f);
+    rot = f * 0.25;
+    if(p < dropStart) ty = -tw*2;
+  } else {
+    underwater = true;
+    var sf = clamp((p-impact)/(1-impact), 0, 1);
+    ty = lerp(waterY - tw*0.4, H*0.8, sf);
+    rot = 0.25 + sf*0.5;
+  }
+  var dissolve = underwater ? clamp((p-impact)/(1-impact),0,1) : 0;
+  if(ty > -tw*1.5){
+    ctx.save();
+    ctx.translate(cx, ty + tw/2);
+    ctx.rotate(rot);
+    ctx.globalAlpha = underwater ? (0.95 - dissolve*0.55) : 1;
+    var tg = ctx.createLinearGradient(-tw/2,-tw/2,tw/2,tw/2);
+    tg.addColorStop(0,"#242424"); tg.addColorStop(.55,"#0b0b0b"); tg.addColorStop(1,"#1b1b1b");
+    ctx.fillStyle = tg;
+    rrect(ctx,-tw/2,-tw/2,tw,tw,tw*0.16); ctx.fill();
+    /* embossed leaf mark */
+    ctx.fillStyle = "rgba(255,255,255,.08)";
+    for(var k=0;k<5;k++){
+      ctx.save(); ctx.rotate(k*Math.PI*2/5);
+      ctx.beginPath(); ctx.ellipse(0,-tw*0.16,tw*0.08,tw*0.15,0,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+  /* splash crown at impact */
+  var s = Math.exp(-Math.pow((p-impact)/0.035,2));
+  if(s > 0.05){
+    ctx.save();
+    ctx.globalAlpha = s;
+    ctx.strokeStyle = "rgba(255,255,255,.85)";
+    ctx.lineWidth = 2;
+    for(var d=0; d<9; d++){
+      var a = -Math.PI/2 + (d-4)*0.28;
+      var len = tw*(0.5+rnd(d)*0.8)*(0.4+s);
+      var sx = cx + Math.cos(a)*tw*0.4, sy = waterY;
+      ctx.beginPath();
+      ctx.moveTo(sx,sy);
+      ctx.quadraticCurveTo(sx+Math.cos(a)*len*0.6, sy+Math.sin(a)*len, sx+Math.cos(a)*len*0.9, sy+Math.sin(a)*len*0.6);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(sx+Math.cos(a)*len*0.95, sy+Math.sin(a)*len*0.62, 2.4, 0, Math.PI*2);
+      ctx.fillStyle = "rgba(255,255,255,.9)"; ctx.fill();
+    }
+    ctx.restore();
+  }
+  /* bubbles while sinking */
+  if(underwater){
+    ctx.save();
+    for(var b=0;b<16;b++){
+      var speed = 0.5 + rnd(b)*0.9;
+      var prog = (dissolve*speed*2 + rnd(b+40)) % 1;
+      var bx = cx + (rnd(b+10)-0.5)*tw*2.2;
+      var by = ty - prog*(ty-waterY+10);
+      if(by < waterY+4) continue;
+      var br = 1.5 + rnd(b+20)*3.5;
+      ctx.globalAlpha = 0.5*(1-prog);
+      ctx.strokeStyle = "rgba(255,255,255,.8)";
+      ctx.beginPath(); ctx.arc(bx,by,br,0,Math.PI*2); ctx.stroke();
+    }
+    /* dissolve particles */
+    for(var q=0;q<24;q++){
+      var qa = rnd(q+60)*Math.PI*2, qd = dissolve*tw*(0.6+rnd(q+70));
+      ctx.globalAlpha = 0.4*dissolve*(1-dissolve*0.6);
+      ctx.fillStyle = "#dfe6c2";
+      ctx.beginPath();
+      ctx.arc(cx+Math.cos(qa)*qd, ty+tw/2+Math.sin(qa)*qd*0.6, 1.4, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+window.addEventListener("resize", sizeCanvas);
+sizeCanvas();
+
+/* ---------- watering interaction (both modes) ---------- */
+var dropBtn = document.getElementById("dropBtn");
+if(dropBtn){
+  dropBtn.addEventListener("click", function(){
+    if(dropBtn.dataset.done) return;
+    dropBtn.dataset.done = "1";
+    var g2 = document.getElementById("grow2");
+    if(reduced || !window.gsap){
+      if(g2) g2.style.opacity = "1";
+      return;
+    }
+    gsap.timeline()
+      .fromTo("#grow2",{opacity:0,scale:0.5,transformOrigin:"110px 220px"},
+        {opacity:1,scale:1,duration:1.4,ease:"power3.out"})
+      .to("#grow1",{scale:1.05,transformOrigin:"110px 226px",duration:1,ease:"power2.out"},0)
+      .fromTo(dropBtn,{scale:0.9},{scale:1,duration:0.5,ease:"power2.out"},0);
+  });
+}
+
+/* ---------- carousel (both modes) ---------- */
+var carIdx = 0;
+var carTrack = document.getElementById("carTrack");
+function carGo(i){
+  if(!carTrack) return;
+  carIdx = clamp(i, 0, carTrack.children.length-1);
+  var step = carTrack.children[0].getBoundingClientRect().width + 24;
+  if(window.gsap && !reduced){
+    gsap.to(carTrack,{x:-carIdx*step,duration:0.8,ease:"power3.out"});
+  } else {
+    carTrack.style.transform = "translateX(" + (-carIdx*step) + "px)";
+    carTrack.style.transition = "transform .4s";
+  }
+}
+var prevBtn = document.getElementById("prevBtn"), nextBtn = document.getElementById("nextBtn");
+if(prevBtn) prevBtn.addEventListener("click", function(){ carGo(carIdx-1); });
+if(nextBtn) nextBtn.addEventListener("click", function(){ carGo(carIdx+1); });
+
+/* ---------- REDUCED MODE: final states, no motion ---------- */
+if(reduced){
+  drawWater(0.55);
+  document.querySelectorAll(".wcap").forEach(function(el){ el.style.opacity = "1"; });
+  return;
+}
+
+/* ---------- FULL MOTION MODE ---------- */
+gsap.registerPlugin(ScrollTrigger);
+gsap.defaults({ease:"power3.out"});
+if("scrollRestoration" in history) history.scrollRestoration = "manual";
+
+/* Lenis-style lerped smooth scrolling on a fixed wrapper */
+var smooth = document.getElementById("smooth");
+var current = 0, target = 0;
+docEl.classList.add("is-smooth");
+function setHeight(){
+  document.body.style.height = smooth.getBoundingClientRect().height + "px";
+}
+setHeight();
+window.addEventListener("resize", function(){ setHeight(); sizeCanvas(); });
+ScrollTrigger.addEventListener("refreshInit", function(){
+  current = target = window.scrollY || 0;
+  smooth.style.transform = "translate3d(0," + (-current) + "px,0)";
+});
+gsap.ticker.add(function(){
+  target = window.scrollY || 0;
+  current += (target - current) * 0.12;
+  if(Math.abs(target-current) < 0.05) current = target;
+  smooth.style.transform = "translate3d(0," + (-current) + "px,0)";
+});
+var PIN = {pinType:"transform"};
+
+/* preloader: concentric squares step inward, then hero text rises */
+var loader = document.getElementById("loader");
+gsap.set("#loader .sq",{left:"50%",top:"50%",xPercent:-50,yPercent:-50});
+var heroSpans = gsap.utils.toArray("#hero .rl > span");
+var introTl = gsap.timeline();
+introTl
+  .to("#loader .sq",{scale:0.18,opacity:0,duration:0.9,ease:"power2.inOut",stagger:0.13})
+  .to("#loader .lmark",{scale:1.25,duration:0.4,ease:"power2.out"},"-=0.5")
+  .to(loader,{autoAlpha:0,duration:0.5,onComplete:function(){ if(loader) loader.remove(); }},"-=0.1")
+  .to(heroSpans,{y:0,duration:1.1,stagger:0.09},"-=0.35");
+
+/* line-rise reveals everywhere else */
+gsap.utils.toArray(".rl > span").forEach(function(sp){
+  if(sp.closest("#hero")) return;
+  var parent = sp.closest(".stmt") || sp.parentElement.parentElement;
+  var sibs = parent ? Array.prototype.slice.call(parent.querySelectorAll(".rl > span")) : [sp];
+  var idx = Math.max(0, sibs.indexOf(sp));
+  gsap.to(sp,{y:0,duration:1,delay:idx*0.08,
+    scrollTrigger:{trigger:sp.parentElement,start:"top 88%"}});
+});
+
+/* hero pinned under section 2's column wipe */
+ScrollTrigger.create(Object.assign({trigger:"#hero",start:"top top",end:"+=100%",pin:true,pinSpacing:false},PIN));
+
+/* column-wipe entrances */
+["#s2","#s6","#s12"].forEach(function(sel){
+  var sec = document.querySelector(sel);
+  if(!sec) return;
+  var cols = sec.querySelectorAll(".wipe i");
+  if(!cols.length) return;
+  var offs = [18,6,26,12,30];
+  gsap.fromTo(cols,
+    {yPercent:function(i){ return offs[i%5]; }},
+    {yPercent:0,ease:"none",
+     scrollTrigger:{trigger:sec,start:"top bottom",end:"top 15%",scrub:true}});
+});
+gsap.from("#s2 .inner",{opacity:0,ease:"none",
+  scrollTrigger:{trigger:"#s2",start:"top 55%",end:"top 15%",scrub:true}});
+
+/* corn illustration: line-draw then fill */
+var cornPaths = gsap.utils.toArray(".corn path");
+gsap.set(cornPaths,{strokeDasharray:1,strokeDashoffset:1,fillOpacity:0});
+gsap.timeline({scrollTrigger:{trigger:"#s3",start:"top 75%",end:"bottom 70%",scrub:true}})
+  .to(cornPaths,{strokeDashoffset:0,ease:"none",stagger:0.04})
+  .to(cornPaths,{fillOpacity:1,ease:"none",duration:0.6},">-0.15");
+
+/* section 4 staggered cards */
+gsap.from(".card",{yPercent:60,autoAlpha:0,duration:1,stagger:0.14,
+  scrollTrigger:{trigger:".cards",start:"top 88%"}});
+gsap.from("#s4 .col-r > *",{autoAlpha:0,y:24,duration:0.9,stagger:0.1,
+  scrollTrigger:{trigger:"#s4",start:"top 60%"}});
+
+/* SECTION 5 — pinned scroll-scrubbed water scene */
+var waterTitle = document.getElementById("waterTitle");
+var waterTitleDone = false;
+var caps = [
+  {el:document.querySelector(".wcap1"), c:0.32, w:0.1},
+  {el:document.querySelector(".wcap2"), c:0.52, w:0.1},
+  {el:document.querySelector(".wcap3"), c:0.70, w:0.1},
+  {el:document.querySelector(".wcap4"), c:0.88, w:0.1}
+];
+ScrollTrigger.create(Object.assign({
+  trigger:"#s5", start:"top top", end:"bottom bottom", pin:stage, scrub:true,
+  onUpdate:function(st){
+    var p = st.progress;
+    drawWater(p);
+    if(!waterTitleDone && p > 0.05){
+      waterTitleDone = true;
+      var chs = splitScramble(waterTitle);
+      waterTitle.style.opacity = "1";
+      gsap.to(chs,{opacity:1,duration:0.05,ease:"none",stagger:{each:0.035,from:"random"}});
+    }
+    if(waterTitle && waterTitleDone) waterTitle.style.opacity = p < 0.2 ? 1 : clamp(1-(p-0.2)/0.15,0,1);
+    caps.forEach(function(cp){ if(cp.el) cp.el.style.opacity = tri(p,cp.c,cp.w); });
+  }
+},PIN));
+
+/* SECTION 6 — count-up figures */
+gsap.utils.toArray(".num").forEach(function(n){
+  var t = parseFloat(n.dataset.target), dec = +n.dataset.dec;
+  var pre = n.dataset.prefix || "", suf = n.dataset.suffix || "";
+  var o = {v:0};
+  gsap.to(o,{v:t,duration:1.6,ease:"power2.out",
+    scrollTrigger:{trigger:n,start:"top 88%"},
+    onUpdate:function(){ n.textContent = pre + o.v.toFixed(dec) + suf; }});
+  gsap.from(n.closest(".row"),{y:30,autoAlpha:0,duration:0.9,
+    scrollTrigger:{trigger:n.closest(".row"),start:"top 92%"}});
+});
+
+/* SECTION 8 — sticky marquee across beige→green + growing logo mask */
+ScrollTrigger.create(Object.assign({trigger:"#s8",start:"top top",end:"bottom bottom",pin:"#mqStage"},PIN));
+gsap.timeline({scrollTrigger:{trigger:"#s8",start:"top top",end:"bottom bottom",scrub:true}})
+  .to("#mqGreen",{opacity:1,ease:"none",duration:0.35},0)
+  .to("#mqBand",{color:"#F2ECE1",ease:"none",duration:0.15},0.28)
+  .fromTo("#maskedLogo",{scale:0.4},{scale:1.1,ease:"none",duration:0.8},0.2);
+
+/* SECTION 9 — headline scrubs across */
+gsap.fromTo("#s9head",{xPercent:22},{xPercent:-22,ease:"none",
+  scrollTrigger:{trigger:"#s9",start:"top bottom",end:"bottom top",scrub:true}});
+gsap.from(".chip",{y:40,autoAlpha:0,duration:1,stagger:0.15,
+  scrollTrigger:{trigger:"#s9",start:"top 55%"}});
+
+/* SECTION 10/11/12 gentle entrances */
+gsap.from(".ovl-card",{y:30,autoAlpha:0,duration:0.9,stagger:0.15,
+  scrollTrigger:{trigger:"#s10",start:"top 55%"}});
+gsap.from(".water-card",{y:40,autoAlpha:0,duration:1,
+  scrollTrigger:{trigger:"#s11",start:"top 50%"}});
+gsap.from(".fcard",{y:50,autoAlpha:0,duration:1,stagger:0.15,
+  scrollTrigger:{trigger:"#s12",start:"top 65%"}});
+
+/* SECTION 13 — scramble-in headline */
+var finalTitle = document.getElementById("finalTitle");
+ScrollTrigger.create({trigger:"#s13",start:"top 70%",once:true,
+  onEnter:function(){
+    var chs = splitScramble(finalTitle);
+    finalTitle.style.opacity = "1";
+    gsap.to(chs,{opacity:1,duration:0.05,ease:"none",stagger:{each:0.03,from:"random"}});
+  }});
+
+/* anchor links must be resolved manually inside the transformed container */
+document.addEventListener("click", function(e){
+  var a = e.target.closest ? e.target.closest("a[href^='#']") : null;
+  if(!a) return;
+  var id = a.getAttribute("href");
+  if(id.length < 2) return;
+  var el = document.querySelector(id);
+  if(!el) return;
+  e.preventDefault();
+  var y = current + el.getBoundingClientRect().top;
+  window.scrollTo(0, Math.max(0, y));
+});
+
+/* pause marquee + hero blobs offscreen (perf) */
+var mqTrack = document.querySelector(".mq-track");
+ScrollTrigger.create({trigger:"#s8",start:"top bottom",end:"bottom top",
+  onToggle:function(st){ if(mqTrack) mqTrack.style.animationPlayState = st.isActive ? "running" : "paused"; }});
+
+setHeight();
+ScrollTrigger.refresh();
+window.addEventListener("load", function(){ setHeight(); ScrollTrigger.refresh(); });
+})();
+</script>
+</body>
+</html>

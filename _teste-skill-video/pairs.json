@@ -1,0 +1,11 @@
+[
+ {"left":"out-farm/frames/frame-073.png","right":"shots/shot-00.png","name":"01-hero"},
+ {"left":"out-farm/frames/frame-022.png","right":"shots/shot-01.png","name":"02-problem"},
+ {"left":"out-farm/frames/frame-032.png","right":"shots/shot-03.png","name":"03-cards"},
+ {"left":"out-farm/frames/frame-036.png","right":"shots/shot-05.png","name":"04-water"},
+ {"left":"out-farm/frames/frame-042.png","right":"shots/shot-06.png","name":"05-stats"},
+ {"left":"out-farm/frames/frame-052.png","right":"shots/shot-08.png","name":"06-mask"},
+ {"left":"out-farm/frames/frame-054.png","right":"shots/shot-10.png","name":"07-package"},
+ {"left":"out-farm/frames/frame-064.png","right":"shots/shot-12.png","name":"08-formats"},
+ {"left":"out-farm/frames/frame-068.png","right":"shots/shot-13.png","name":"09-final"}
+]
