@@ -18,8 +18,21 @@ build 142k ≈ **US$ 0,7–1,2 em modelo classe-Sonnet** (3–6× isso em classe
 
 ## Referência a bater (nosso native clone, item 183)
 
-24 segundos · custo de LLM **zero** · SSIM 0,987–1,000 · 156 tweens + 51
-ScrollTriggers **vivos e editáveis** · assets reais (369 arquivos).
+22–24 s (captura medida em dev, farmminerals — handoff 2026-08-10: iter9 177s ×
+native 22s) · custo de LLM **zero neste caminho** (capture-bundle.js não tem
+nenhuma chamada de modelo — interceptação Playwright pura) · SSIM 0,987–1,000 ·
+156 tweens + 51 ScrollTriggers **vivos e editáveis** · assets reais.
+
+⚠️ Retificações pós-review do Adilson (2026-08-20): (a) os **35 min** do
+experimento incluem 24 min de builder-agente isolado — custo do PROTOCOLO
+(anti-contaminação), não da skill; executada como fluxo manual (vídeo + prompt
+em 1 geração) a skill leva **~3–8 min**, competitiva com o iter9 (177s).
+(b) "custo zero de IA" vale SÓ para o produtor native; os demais caminhos de
+clone do produto pagam IA e levam minutos (iter9 ~US$0,10–0,25; estático =
+Gemini 18–110s; imagem = GPT-5.5). (c) 22–24s é o MOTOR isolado, não o fluxo
+completo do produto — native é recente e roteado por razão; quem cai no iter9
+não vê os 24s. Pendência aberta: medir o fluxo real de ponta a ponta e conferir
+o roteamento (mesma classe do achado 179: "o nó era roteamento").
 
 ## Resultado qualitativo (pares em `comparison/`)
 
