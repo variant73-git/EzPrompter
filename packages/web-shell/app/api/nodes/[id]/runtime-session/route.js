@@ -4,6 +4,7 @@ import { requireUser } from '../../../../../lib/auth.js';
 import { db } from '../../../../../lib/db.js';
 import { openOrResumeEditSession } from '../../../../../lib/motion-editor/edit-session-store.js';
 import {
+  RUNTIME_SESSION_EDIT_TTL_SECONDS,
   assertRuntimeSessionSigningConfiguration,
   issueRuntimeSessionToken,
   resolveRuntimeOrigin,
@@ -65,7 +66,7 @@ export async function POST(request, { params }) {
       bundleId: snapshot.native_bundle_id,
       sessionId: session.id,
       entryPrefix: prefix === '.' ? '' : prefix,
-    });
+    }, { ttlSeconds: RUNTIME_SESSION_EDIT_TTL_SECONDS });
     const url = new URL(runtimePath(issued.token, snapshot.entry_path), runtimeOrigin).toString();
     return NextResponse.json({
       runtime: {

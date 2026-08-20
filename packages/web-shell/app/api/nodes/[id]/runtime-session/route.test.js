@@ -15,6 +15,7 @@ const issueRuntimeSessionToken = vi.fn();
 const resolveRuntimeOrigin = vi.fn();
 const assertRuntimeSessionSigningConfiguration = vi.fn();
 vi.mock('../../../../../lib/motion-editor/runtime-session-token.js', () => ({
+  RUNTIME_SESSION_EDIT_TTL_SECONDS: 4 * 60 * 60,
   assertRuntimeSessionSigningConfiguration,
   issueRuntimeSessionToken,
   resolveRuntimeOrigin,
@@ -82,7 +83,7 @@ describe('POST /api/nodes/[id]/runtime-session', () => {
       bundleId: BUNDLE_ID,
       sessionId: SESSION_ID,
       entryPrefix: 'site',
-    }));
+    }), { ttlSeconds: 4 * 60 * 60 });
     expect(json).toMatchObject({
       runtime: {
         url: 'http://runtime.test/api/runtime/signed.runtime.token/site/index.html',

@@ -1,6 +1,8 @@
 import jwt from 'jsonwebtoken';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  RUNTIME_SESSION_DEFAULT_TTL_SECONDS,
+  RUNTIME_SESSION_EDIT_TTL_SECONDS,
   RUNTIME_SESSION_MAX_TTL_SECONDS,
   issueRuntimeSessionToken,
   resolveRuntimeOrigin,
@@ -102,6 +104,53 @@ describe('runtime session tokens', () => {
       loginSecret: LOGIN_SECRET,
       ttlSeconds: RUNTIME_SESSION_MAX_TTL_SECONDS + 1,
     })).toThrow(/ttl/i);
+  });
+
+  it('supports a session-long edit TTL (4h) while keeping the short default (defect 1, 2026-08-20)', () => {
+    // All 70 farmminerals <img> are loading=lazy: they are fetched on scroll,
+    // AFTER the old 120s token died — every image 404'd mid-session. The edit
+    // token now lives the session; revocation stays REAL because the gateway
+    // checks the edit-session row (status='active') on every asset request.
+    expect(RUNTIME_SESSION_EDIT_TTL_SECONDS).toBe(4 * 60 * 60);
+    expect(RUNTIME_SESSION_MAX_TTL_SECONDS).toBe(4 * 60 * 60);
+    expect(RUNTIME_SESSION_DEFAULT_TTL_SECONDS).toBe(2 * 60);
+
+    const issued = issueRuntimeSessionToken({
+      nodeId: NODE_ID,
+      bundleId: BUNDLE_ID,
+      sessionId: SESSION_ID,
+      nonce: 'nonce-1234567890',
+    }, {
+      secret: RUNTIME_SECRET,
+      nowSeconds: 1_800_000_000,
+      ttlSeconds: RUNTIME_SESSION_EDIT_TTL_SECONDS,
+      loginSecret: LOGIN_SECRET,
+    });
+    // Alive well past the old 2-minute ceiling…
+    const lateVerify = verifyRuntimeSessionToken(issued.token, {
+      secret: RUNTIME_SECRET,
+      nowSeconds: 1_800_000_000 + 3 * 60 * 60,
+      loginSecret: LOGIN_SECRET,
+    });
+    expect(lateVerify.error).toBeUndefined();
+    expect(lateVerify.payload.expiresAtMs - 1_800_000_000_000).toBe(RUNTIME_SESSION_EDIT_TTL_SECONDS * 1000);
+    // …and the ceiling is still enforced on BOTH sides.
+    const forged = jwt.sign({
+      type: 'uncraft.runtime-session.v1',
+      scope: 'bundle:read',
+      nodeId: NODE_ID,
+      bundleId: BUNDLE_ID,
+      sessionId: SESSION_ID,
+      nonce: 'nonce-1234567890',
+      entryPrefix: '',
+      iat: 1_800_000_000,
+      exp: 1_800_000_000 + RUNTIME_SESSION_MAX_TTL_SECONDS + 60,
+    }, RUNTIME_SECRET, { audience: 'uncraft-native-runtime', issuer: 'uncraft-web-shell' });
+    expect(verifyRuntimeSessionToken(forged, {
+      secret: RUNTIME_SECRET,
+      nowSeconds: 1_800_000_010,
+      loginSecret: LOGIN_SECRET,
+    })).toMatchObject({ error: 'invalid' });
   });
 
   it('refuses to reuse the Uncraft login secret', () => {

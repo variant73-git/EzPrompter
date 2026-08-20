@@ -9,8 +9,19 @@ const TOKEN_SCOPE = 'bundle:read';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const NONCE_PATTERN = /^[a-zA-Z0-9_-]{12,128}$/;
 
-export const RUNTIME_SESSION_MAX_TTL_SECONDS = 5 * 60;
+// DEBT (Sol advise 2026-08-20): the long-lived edit token is a bearer in the
+// URL path with CORS *. Revocation is REAL — the gateway checks the edit
+// session row (status='active', node/bundle/current-snapshot scope, and
+// expires_at) on every request, and commit/discard/expiry close it — but the
+// target design is a short entry token + a separate revocable asset lease.
+// Do not extend this TTL further without building the lease.
+export const RUNTIME_SESSION_MAX_TTL_SECONDS = 4 * 60 * 60;
 export const RUNTIME_SESSION_DEFAULT_TTL_SECONDS = 2 * 60;
+// Edit sessions need assets alive for the WHOLE session: lazy-loaded images
+// are fetched on scroll, long after a 2-minute token dies (defect: every
+// farmminerals image 404'd mid-edit). The token cannot rotate mid-session —
+// it lives in the PATH of every asset URL, so a swap would reload the iframe.
+export const RUNTIME_SESSION_EDIT_TTL_SECONDS = 4 * 60 * 60;
 
 function configuredSecret(secret, loginSecret) {
   const value = secret ?? process.env.UNCRAFT_RUNTIME_SESSION_SECRET;
