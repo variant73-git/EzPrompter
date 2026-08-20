@@ -120,6 +120,16 @@ describe('GET /api/runtime/[token]/[...path]', () => {
     expect(response.headers.get('strict-transport-security')).toContain('includeSubDomains');
   });
 
+  it('only serves sessions that have not expired server-side (defect 1, 2026-08-20)', async () => {
+    // The runtime token now lives 4h; the session row is the revocation
+    // authority, so the gateway query must also enforce expires_at.
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(new TextEncoder().encode('<html></html>'));
+    await GET(request(), context());
+    const sqlText = sqlMock.mock.calls[0][0].join('?');
+    expect(sqlText).toMatch(/expires_at\s*>\s*NOW\(\)/i);
+  });
+
   it('returns declared binary bytes unchanged with immutable hash caching', async () => {
     const bytes = new TextEncoder().encode('binary-like-/assets/must-not-be-rewritten');
     sqlMock._results = [[runtimeRow()]];

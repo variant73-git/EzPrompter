@@ -119,6 +119,22 @@ describe('native motion edit-session store', () => {
     expect(sql.calls[0].text).toMatch(/native_bundle_id\s+IS\s+NOT\s+NULL/i);
   });
 
+  it('writes a real expiry on open and extends it on resume (defect 1, 2026-08-20)', async () => {
+    // The edit runtime token now lives 4h; the session row is the revocation
+    // authority, so an abandoned session must EXPIRE on the server — expires_at
+    // was mapped but never written nor enforced (Sol advise 2026-08-20).
+    const sql = createSql([[sessionRow({ expires_at: '2026-08-20T18:00:00.000Z' })]]);
+    const opened = await openOrResumeEditSession({
+      sql, userId: 42, nodeId: NODE_ID, baseSnapshotId: SNAPSHOT_ID,
+    });
+    expect(opened.expiresAt).toBe('2026-08-20T18:00:00.000Z');
+    const text = sql.calls[0].text;
+    // INSERT sets the expiry…
+    expect(text).toMatch(/INSERT INTO native_motion_edit_sessions[\s\S]*expires_at/i);
+    // …and resuming EXTENDS it, so an active editor never dies under the user.
+    expect(text).toMatch(/UPDATE native_motion_edit_sessions[\s\S]*expires_at/i);
+  });
+
   it('does not create a session for an unowned or non-native snapshot', async () => {
     const sql = createSql([[]]);
     await expect(openOrResumeEditSession({

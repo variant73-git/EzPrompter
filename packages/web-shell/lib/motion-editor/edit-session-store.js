@@ -4,6 +4,12 @@ import {
   parseMotionManifest,
 } from './manifest.js';
 
+// Absolute lifetime of an edit session, extended on every resume. Matches
+// RUNTIME_SESSION_EDIT_TTL_SECONDS (4h): the runtime token lives the session,
+// and this row is what actually revokes it (gateway checks status AND
+// expires_at on every asset request).
+export const EDIT_SESSION_LIFETIME_HOURS = 4;
+
 export class EditSessionStoreError extends Error {
   constructor(code, message, details = {}) {
     super(message);
@@ -129,7 +135,7 @@ export async function openOrResumeEditSession({ sql, userId, nodeId, baseSnapsho
     ), inserted AS (
       INSERT INTO native_motion_edit_sessions (
         user_id, node_id, base_snapshot_id, draft_manifest,
-        draft_manifest_version, revision, status
+        draft_manifest_version, revision, status, expires_at
       )
       SELECT ${userId}, o.node_id, o.snapshot_id,
              COALESCE(
@@ -143,15 +149,27 @@ export async function openOrResumeEditSession({ sql, userId, nodeId, baseSnapsho
                  'runtimeFingerprint', o.runtime_fingerprint
                )
              ),
-             2, 0, 'active'
+             2, 0, 'active',
+             NOW() + make_interval(hours => ${EDIT_SESSION_LIFETIME_HOURS})
         FROM owned o
        WHERE NOT EXISTS (SELECT 1 FROM existing)
       ON CONFLICT DO NOTHING
       RETURNING *
+    ), refreshed AS (
+      -- Resuming EXTENDS the expiry: the session row is the revocation
+      -- authority for the (now long-lived) runtime token, so an abandoned
+      -- session must die on its own, but an active editor must not expire
+      -- under the user (Sol advise 2026-08-20).
+      UPDATE native_motion_edit_sessions e
+         SET expires_at = NOW() + make_interval(hours => ${EDIT_SESSION_LIFETIME_HOURS}),
+             updated_at = NOW()
+        FROM existing
+       WHERE e.id = existing.id
+      RETURNING e.*
     ), chosen AS (
       SELECT * FROM inserted
       UNION ALL
-      SELECT * FROM existing
+      SELECT * FROM refreshed
       LIMIT 1
     )
     SELECT c.*, s.native_bundle_id::text AS base_bundle_id,

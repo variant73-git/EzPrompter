@@ -162,6 +162,7 @@ export async function GET(request, { params }) {
        WHERE e.id = ${payload.sessionId}
          AND e.node_id = ${payload.nodeId}
          AND e.status = 'active'
+         AND e.expires_at > NOW()
          AND nb.bundle_id = ${payload.bundleId}
     `;
   } catch {
