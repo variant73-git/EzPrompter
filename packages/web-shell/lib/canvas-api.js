@@ -1,6 +1,7 @@
 // Client-side fetchers for canvas API. All requests use credentials:'include'
 // so the session cookie travels.
 import { withTicket } from './idempotency.js';
+import { devClockTime } from './dev-clock.js';
 
 const COMMON = { credentials: 'include', headers: { 'content-type': 'application/json' } };
 
@@ -106,7 +107,8 @@ export const api = {
     body: JSON.stringify({ url, boardId, name }),
   }).then(jsonOrThrow),
 
-  captureUrl: (url, nodeId = null) => fetch('/api/snapshot/capture', { ...COMMON, method: 'POST', body: JSON.stringify({ url, nodeId }) }).then(jsonOrThrow),
+  captureUrl: (url, nodeId = null) => devClockTime('capture', url, () =>
+    fetch('/api/snapshot/capture', { ...COMMON, method: 'POST', body: JSON.stringify({ url, nodeId }) }).then(jsonOrThrow)),
   checkUrlEmbed: (url) => fetch('/api/site/embed-policy', {
     ...COMMON,
     method: 'POST',
@@ -129,7 +131,7 @@ export const api = {
    *   When set, server pre-creates a placeholder node on bot-challenge so
    *   the handoff flow has a persisted target.
    */
-  captureUrlStream: async (url, nodeId = null, onProgress, placement = null) => {
+  captureUrlStream: (url, nodeId = null, onProgress, placement = null) => devClockTime('capture', url, async () => {
     const res = await fetch('/api/snapshot/capture', {
       method: 'POST',
       credentials: 'include',
@@ -172,7 +174,7 @@ export const api = {
       }
     }
     throw new Error('Stream ended without a done event');
-  },
+  }),
   saveNodeEdit: (nodeId, html) => fetch(`/api/nodes/${nodeId}/save-edit`, { ...COMMON, method: 'POST', body: JSON.stringify({ html }) }).then(jsonOrThrow),
   // Same route, content-shaped body — used by the unpopulated-node upload
   // flow to seed { html } or { designMd } into an existing node.
@@ -187,11 +189,11 @@ export const api = {
   // needs an editable runtime; strict workflow dependencies invoke the same
   // reconstruction service inside the server-side run route.
   // `engine` por NOME ('iter9' | 'native'); ausente = doutrina (o animado).
-  reconstructNode: (nodeId, { engine = null } = {}) => withTicket(`reconstruct:${nodeId}${engine ? `:${engine}` : ''}`, (ticket) =>
+  reconstructNode: (nodeId, { engine = null } = {}) => devClockTime('reconstruct', nodeId, () => withTicket(`reconstruct:${nodeId}${engine ? `:${engine}` : ''}`, (ticket) =>
     fetch(`/api/nodes/${nodeId}/reconstruct`, withIdemHeader({
       ...COMMON, method: 'POST',
       ...(engine ? { body: JSON.stringify({ engine }) } : {}),
-    }, ticket)).then(jsonOrThrow)),
+    }, ticket)).then(jsonOrThrow))),
   // Default: node row + current snapshot html (one round-trip when caller
   // actually wants content). `readyCheck:true`: tiny `{ready, snapshotId}`
   // probe used by the handoff poller — avoids transferring snapshot.html
@@ -202,8 +204,12 @@ export const api = {
       { ...COMMON, method: 'GET' }
     ).then(jsonOrThrow),
 
-  extractNode: (id, { to, posX, posY }) => withTicket(`extract:${id}:${to}`, (ticket) =>
-    fetchWithTimeout(`/api/nodes/${id}/extract`, withIdemHeader({ ...COMMON, method: 'POST', body: JSON.stringify({ to, posX, posY }) }, ticket)).then(jsonOrThrow)),
+  extractNode: (id, { to, posX, posY }) => {
+    const call = () => withTicket(`extract:${id}:${to}`, (ticket) =>
+      fetchWithTimeout(`/api/nodes/${id}/extract`, withIdemHeader({ ...COMMON, method: 'POST', body: JSON.stringify({ to, posX, posY }) }, ticket)).then(jsonOrThrow));
+    // Só clones entram no relógio do widget Dev — extract de tokens/prompt não é clone.
+    return (to === 'clone' || to === 'styleclone') ? devClockTime('extract.' + to, id, call) : call();
+  },
 
   // Version history (site nodes). listSnapshots = light metadata only; getSnapshot
   // pulls one version's html/screenshot on demand (preview + thumbnail);

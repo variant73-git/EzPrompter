@@ -265,3 +265,51 @@ describe('deferred reconstruction result kinds', () => {
     expect(generateControls).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('reconstructSiteNode — telemetria por clone (pedido 2026-08-20)', () => {
+  it('grava meta.cloneTelemetry após o settle: engine, stages, credits e retorna .telemetry', async () => {
+    const sql = makeSql({ currentId: 'snap-current', currentSource: 'capture' });
+    const node = { id: 'node-t1', board_id: 'b1', origin_url: 'https://x.com' };
+    const out = await reconstructSiteNode({ sql, userId: 42, node, reason: 'edit', idemKey: 'k-t1' });
+
+    const telUpd = sql._calls.find((c) => /UPDATE nodes SET meta/i.test(c.query) && JSON.stringify(c.values).includes('cloneTelemetry'));
+    expect(telUpd).toBeTruthy();
+    const payload = JSON.parse(telUpd.values.find((v) => typeof v === 'string' && v.includes('cloneTelemetry')));
+    expect(payload.cloneTelemetry.engine).toBe('iter9'); // o mock devolve html → normaliza como iter9
+    expect(payload.cloneTelemetry.url).toBe('https://x.com');
+    expect(payload.cloneTelemetry.reason).toBe('edit');
+    expect(payload.cloneTelemetry.credits).toBe(3); // do mock de billing
+    expect(payload.cloneTelemetry.stages).toHaveProperty('capture');
+    expect(payload.cloneTelemetry.stages).toHaveProperty('persist');
+    expect(typeof payload.cloneTelemetry.totalMs).toBe('number');
+    // e o chamador recebe o mesmo registro sem reler o banco
+    expect(out.telemetry).toEqual(payload.cloneTelemetry);
+  });
+
+  it('replay de dedup NÃO grava telemetria (não é um clone novo)', async () => {
+    const { runBilledOperation } = await import('./billing/context.js');
+    runBilledOperation.mockImplementationOnce(async () => ({
+      result: { ok: true, nodeId: 'node-t2', snapshotId: 's', html: '<html>x</html>', meta: {} },
+      credits: 0, balanceAfter: 100, deduped: true, usageMicrocents: 0,
+    }));
+    const sql = makeSql({ currentId: 'snap-current', currentSource: 'capture' });
+    const node = { id: 'node-t2', board_id: 'b1', origin_url: 'https://x.com' };
+    const out = await reconstructSiteNode({ sql, userId: 42, node, reason: 'edit', idemKey: 'k-t2' });
+
+    const telUpd = sql._calls.find((c) => JSON.stringify(c.values || []).includes('cloneTelemetry'));
+    expect(telUpd).toBeUndefined();
+    expect(out.telemetry).toBe(null);
+  });
+
+  it('usageMicrocents do billing vira costUsd no registro', async () => {
+    const { runBilledOperation } = await import('./billing/context.js');
+    runBilledOperation.mockImplementationOnce(async (_opts, fn) => ({
+      result: await fn(), credits: 215, balanceAfter: 100, deduped: false, usageMicrocents: 530_000,
+    }));
+    const sql = makeSql({ currentId: 'snap-current', currentSource: 'capture' });
+    const node = { id: 'node-t3', board_id: 'b1', origin_url: 'https://x.com' };
+    const out = await reconstructSiteNode({ sql, userId: 42, node, reason: 'edit', idemKey: 'k-t3' });
+    expect(out.telemetry.usageMicrocents).toBe(530_000);
+    expect(out.telemetry.costUsd).toBeCloseTo(0.53, 4);
+  });
+});

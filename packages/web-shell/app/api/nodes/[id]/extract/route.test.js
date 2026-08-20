@@ -15,8 +15,10 @@ vi.mock('../../../../../lib/auth.js', () => ({
 const sqlMock = vi.fn();
 sqlMock._results = [];
 sqlMock._templates = [];
-sqlMock.mockImplementation((t) => {
+sqlMock._values = [];
+sqlMock.mockImplementation((t, ...vals) => {
   sqlMock._templates.push(Array.isArray(t) ? t.join(' ') : String(t));
+  sqlMock._values.push(vals);
   return Promise.resolve(sqlMock._results.shift() || []);
 });
 vi.mock('../../../../../lib/db.js', () => ({ db: async () => sqlMock }));
@@ -62,7 +64,7 @@ const okResult = { kind: 'designmd', designMd: '# spec', meta: { name: 'x' } };
 const insertedNode = { id: 'new', board_id: 'b1', kind: 'designmd', pos_x: 0, pos_y: 0, width: 600, height: 600, meta: {}, created_at: 't' };
 
 beforeEach(() => {
-  sqlMock._results = []; sqlMock._templates = []; sqlMock.mockClear();
+  sqlMock._results = []; sqlMock._templates = []; sqlMock._values = []; sqlMock.mockClear();
   runExtractMock.mockReset();
   holdCredits.mockClear(); refundHold.mockClear(); settleOperation.mockClear();
 });
@@ -127,5 +129,37 @@ describe('POST /api/nodes/[id]/extract — route deadline', () => {
     expect(settleOperation).not.toHaveBeenCalled(); // nothing billed
     expect(runExtractMock).not.toHaveBeenCalled();  // the work never re-ran
     expect(sqlMock._templates.some((t) => /INSERT INTO nodes/i.test(t))).toBe(false); // no duplicate node
+  });
+});
+
+describe('POST /api/nodes/[id]/extract — telemetria de custo do clone (2026-08-20)', () => {
+  it('to=clone grava meta.cloneCost (credits + µ¢ + USD) no node criado, pós-settle', async () => {
+    const cloneNode = { ...insertedNode, kind: 'site' };
+    sqlMock._results = [[srcRow], [cloneNode], [{ id: 'snap' }], [], [], []];
+    runExtractMock.mockResolvedValue({ kind: 'site', html: '<html>c</html>', meta: { extractTo: 'clone' } });
+
+    const req = new Request('http://test/api/nodes/n1/extract', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ to: 'clone' }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: 'n1' }) });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // O registro volta na resposta (o canvas mostra sem reler o banco)…
+    expect(body.node.meta.cloneCost.credits).toBe(3);
+    expect(body.node.meta.cloneCost.usageMicrocents).toBe(0); // runExtract mockado não mede tokens
+    expect(body.node.meta.cloneCost.costUsd).toBe(0);
+    // …e foi persistido num UPDATE de meta com o payload cloneCost.
+    const i = sqlMock._templates.findIndex((t, idx) => /UPDATE nodes SET meta/i.test(t)
+      && JSON.stringify(sqlMock._values[idx] || []).includes('cloneCost'));
+    expect(i).toBeGreaterThan(-1);
+  });
+
+  it('to=designmd NÃO grava cloneCost (telemetria é do clone, não de todo extract)', async () => {
+    sqlMock._results = [[srcRow], [insertedNode], [{ id: 'snap' }], [], []];
+    runExtractMock.mockResolvedValue(okResult);
+    await POST(makeReq(), { params: Promise.resolve({ id: 'n1' }) });
+    expect(sqlMock._values.flat().some((v) => typeof v === 'string' && v.includes('cloneCost'))).toBe(false);
   });
 });

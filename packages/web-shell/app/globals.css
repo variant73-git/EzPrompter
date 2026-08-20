@@ -10438,3 +10438,48 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
   gap: 10px;
 }
 .cnode-loading-failed .cnode-loading-icon { color: #d97757; opacity: .9; }
+
+/* ── Dev widget (⌥D): per-clone metrics — frosted family ─────────────── */
+.dev-widget {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 90;
+  width: 340px;
+  max-height: 52vh;
+  overflow-y: auto;
+  background: var(--bg-frosted);
+  border: 1px solid var(--border-frosted);
+  border-radius: var(--radius-md, 12px);
+  backdrop-filter: blur(28px) saturate(140%);
+  box-shadow: var(--shadow-frost, 0 12px 32px rgba(0,0,0,.45));
+  color: var(--text-primary, #ece9e2);
+  font-size: 12px;
+  padding: 10px 12px 8px;
+}
+.dev-widget-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.dev-widget-title { font-weight: 600; letter-spacing: .02em; }
+.dev-widget-hint { color: var(--text-faint, #6f6c64); font-size: 10.5px; }
+.dev-widget-empty { color: var(--text-muted, #9a978f); padding: 6px 0 8px; }
+.dev-widget-row { border-top: 1px solid var(--border-frosted); padding: 7px 0 6px; }
+.dev-widget-row.is-error { opacity: .75; }
+.dev-widget-line1 { display: flex; align-items: center; gap: 8px; }
+.dev-widget-badge {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em;
+  padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border-frosted-strong);
+  color: var(--text-secondary, #a8a49a); white-space: nowrap;
+}
+.dev-widget-badge.b-native-bundle { color: #7fb069; border-color: #7fb06955; }
+.dev-widget-badge.b-iter9 { color: #2966EA; border-color: #2966EA55; }
+.dev-widget-badge.b-extractclone, .dev-widget-badge.b-extractstyleclone { color: #a78bfa; border-color: #a78bfa55; }
+.dev-widget-badge.b-capture { color: #f97316; border-color: #f9731655; }
+.dev-widget-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary, #ece9e2); }
+.dev-widget-wall { font-variant-numeric: tabular-nums; font-weight: 600; }
+.dev-widget-line2 { display: flex; gap: 12px; color: var(--text-muted, #9a978f); font-variant-numeric: tabular-nums; margin-top: 2px; }
+.dev-widget-stages { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.dev-widget-stage {
+  font-size: 10px; color: var(--text-faint, #6f6c64);
+  border: 1px solid var(--border-frosted); border-radius: 4px; padding: 0 4px;
+  font-variant-numeric: tabular-nums;
+}
+.dev-widget-err { color: #e5484d; font-size: 10.5px; margin-top: 3px; }

@@ -91,7 +91,7 @@ async function claimOrDedup({ ops, sql, userId, idemKey, op, boardId, nodeId, es
   // duplicate — inspect the existing row.
   const row = claim.row;
   if (row.status === 'settled') {
-    return { deduped: true, dedupResult: { result: unwrapResult(row.result), credits: Number(row.charge_credits || 0), balanceAfter: null, opId: row.id, deduped: true } };
+    return { deduped: true, dedupResult: { result: unwrapResult(row.result), credits: Number(row.charge_credits || 0), balanceAfter: null, opId: row.id, deduped: true, usageMicrocents: 0 } };
   }
   if (row.status === 'in_flight') throw new OperationInProgressError({ op });
 
@@ -101,7 +101,7 @@ async function claimOrDedup({ ops, sql, userId, idemKey, op, boardId, nodeId, es
   if (rc.outcome === 'insufficient') throw new InsufficientCreditsError({ estimate, balance: rc.balance, op });
   // raced: another attempt moved the row. If it settled meanwhile, replay; else busy.
   if (rc.row?.status === 'settled') {
-    return { deduped: true, dedupResult: { result: unwrapResult(rc.row.result), credits: Number(rc.row.charge_credits || 0), balanceAfter: null, opId: rc.row.id, deduped: true } };
+    return { deduped: true, dedupResult: { result: unwrapResult(rc.row.result), credits: Number(rc.row.charge_credits || 0), balanceAfter: null, opId: rc.row.id, deduped: true, usageMicrocents: 0 } };
   }
   throw new OperationInProgressError({ op });
 }
@@ -167,7 +167,7 @@ async function runOperation({ sql, userId, op, boardId = null, nodeId = null, bi
     console.error(`[billing] settle-on-success FAILED (user=${userId} op=${op} opId=${operationId} charge=${credits}) — hold stranded (reconciliation will refund):`, settleErr);
     throw settleErr;
   }
-  return { result, credits, balanceAfter, opId: operationId, deduped: false };
+  return { result, credits, balanceAfter, opId: operationId, deduped: false, usageMicrocents: totalMicrocents };
 }
 
 // Paid operation. Pass `idemKey` in opts to enable retry-dedup (the requester's

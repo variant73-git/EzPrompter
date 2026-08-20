@@ -14,6 +14,12 @@ function fakeSql(results) {
     if (/SELECT\s+n\.current_snapshot_id\s+AS\s+id/i.test(text)) {
       return Promise.resolve([{ id: 'cur-snap', source: 'capture' }]);
     }
+    // Telemetria por clone (2026-08-20): gravação de meta.cloneTelemetry é
+    // metering pós-settle — responde fora da fila para não desalinhar os
+    // row-sets roteirizados (mesmo padrão do re-read acima).
+    if (values.some((v) => typeof v === 'string' && v.includes('cloneTelemetry'))) {
+      return Promise.resolve([]);
+    }
     return Promise.resolve(results[i++] ?? []);
   };
   sql.calls = calls;

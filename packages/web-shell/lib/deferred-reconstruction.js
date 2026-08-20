@@ -1,4 +1,5 @@
 import { reconstructPage } from './reconstruct.js';
+import { startCloneTimer, buildCloneTelemetry } from './clone-telemetry.js';
 import { resolveCloneEngine, producerForEngine } from './clone-router.js';
 import { recordUsage, runBilledOperation } from './billing/context.js';
 import { createConfiguredBundleStore } from './native-clone/bundle-store.js';
@@ -189,7 +190,8 @@ export async function reconstructSiteNode({
   generateControls = generateControlsForReconstruction,
   persistBundle = persistNativeBundleDescriptor,
 }) {
-  const { result, credits, balanceAfter } = await runBilledOperation(
+  const cloneTimer = startCloneTimer();
+  const { result, credits, balanceAfter, deduped, usageMicrocents } = await runBilledOperation(
     { sql, userId, op, boardId: node.board_id, nodeId: node.id, idemKey },
     async () => {
       const deadline = new AbortController();
@@ -214,6 +216,7 @@ export async function reconstructSiteNode({
         }
         throw error;
       }
+      cloneTimer.mark('capture');
       // Read the CURRENT snapshot AUTHORITATIVELY — never trust the caller's
       // node fields. The run route builds its node without current_snapshot_id
       // (adversarial review Codex #2), and the row can change between the
@@ -241,6 +244,7 @@ export async function reconstructSiteNode({
               meta: { stage: 'motion-control-generation' },
             }),
           }), aborted]);
+          cloneTimer.mark('motion-controls');
           const baseManifest = createEmptyMotionManifest({
             baseBundleId: descriptor.bundleId,
             runtimeFingerprint: descriptor.runtimeFingerprint,
@@ -270,6 +274,7 @@ export async function reconstructSiteNode({
             current,
             meta: nextMeta,
           });
+          cloneTimer.mark('persist');
           await persistMotionDiagnosticEvents(sql, {
             user_id: userId,
             board_id: node.board_id,
@@ -346,11 +351,33 @@ export async function reconstructSiteNode({
                meta = meta || ${JSON.stringify(nextMeta)}::jsonb
          WHERE id = ${node.id}
       `;
+      cloneTimer.mark('persist');
       return { ok: true, nodeId: node.id, snapshotId: snapId, html: rec.html, meta: nextMeta };
       } finally {
         clearTimeout(timer);
       }
     },
   );
-  return { ...result, credits, balanceAfter };
+  // ⏱️💰 Telemetria por clone (pedido do Adilson, 2026-08-20): tempo por etapa
+  // + custo real de API gravados no meta DEPOIS do settle (só assim credits e
+  // µ¢ existem). Replay de dedup não é clone novo — não grava. Fail-open: a
+  // telemetria nunca derruba um clone que deu certo.
+  let telemetry = null;
+  if (!deduped && result?.ok) {
+    const { stages, totalMs } = cloneTimer.finish();
+    telemetry = buildCloneTelemetry({
+      engine: result.kind === 'native' ? 'native-bundle' : 'iter9',
+      reason,
+      url: node.origin_url || null,
+      stages,
+      totalMs,
+      credits,
+      usageMicrocents: usageMicrocents ?? null,
+    });
+    await sql`
+      UPDATE nodes SET meta = meta || ${JSON.stringify({ cloneTelemetry: telemetry })}::jsonb
+       WHERE id = ${node.id}
+    `.catch((e) => console.warn(`[clone-telemetry] gravação falhou (node=${node.id}): ${String(e?.message || e).slice(0, 120)}`));
+  }
+  return { ...result, credits, balanceAfter, telemetry };
 }

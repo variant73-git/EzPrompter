@@ -35,6 +35,7 @@ import { findSectionTerminals, planIncrementalRun, planRunFromNode, nodeInputSig
 import { buildNodesClipboardPayload, parseNodesClipboardText, payloadToPasteItems } from '../lib/node-clipboard.js';
 import { estimateChain } from '../lib/billing/pricing.js';
 import { needsDeferredReconstruction } from '../lib/reconstruction-policy.js';
+import DevWidget from './DevWidget.jsx';
 import { canUseCloneEdit } from '../lib/clone-edit-access.js';
 import { clampToViewport } from '../lib/menu-position.js';
 import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
@@ -6216,6 +6217,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
 
       <div className="canvas-zoomdock">
         <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} />
+        <DevWidget nodes={nodes} />
       </div>
 
       <CanvasInspector

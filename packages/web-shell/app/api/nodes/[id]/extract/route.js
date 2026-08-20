@@ -181,6 +181,23 @@ export async function POST(request, { params }) {
     return NextResponse.json({ error: 'extract_failed', message: String(e?.message || e) }, { status: 502 });
   }
 
+  // 💰⏱️ Telemetria do clone estático (pedido do Adilson, 2026-08-20): custo real
+  // de API + credits gravados no meta do node criado, DEPOIS do settle (só aqui
+  // µ¢ e credits existem). Complementa meta.timings/similarity que o
+  // lib/extract.js já grava. Replay de dedup não regrava (não é clone novo).
+  // Fail-open: telemetria nunca derruba um extract que deu certo.
+  if (!billed.deduped && billed.result?.node?.id && (to === 'clone' || to === 'styleclone')) {
+    const cloneCost = {
+      credits: billed.credits,
+      usageMicrocents: billed.usageMicrocents ?? null,
+      costUsd: Number.isFinite(Number(billed.usageMicrocents)) ? Number((Number(billed.usageMicrocents) / 1_000_000).toFixed(4)) : null,
+      at: new Date().toISOString(),
+    };
+    await sql`UPDATE nodes SET meta = meta || ${JSON.stringify({ cloneCost })}::jsonb WHERE id = ${billed.result.node.id}`
+      .catch((e) => console.warn(`[clone-telemetry] cloneCost falhou (node=${billed.result.node.id}): ${String(e?.message || e).slice(0, 120)}`));
+    billed.result.node.meta = { ...billed.result.node.meta, cloneCost };
+  }
+
   // billed.result is the fresh response, OR the stored response on a dedup hit.
   return NextResponse.json({ ...billed.result, credits: billed.credits, balanceAfter: billed.balanceAfter });
 }
