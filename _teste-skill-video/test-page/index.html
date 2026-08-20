@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<!-- Página de validação do harness: animações de entrada, reveals por scroll,
+     marquee e parallax simples. Serve só para provar que gravação + frames
+     funcionam neste container — NÃO é o alvo do experimento. -->
+<head>
+<meta charset="utf-8">
+<title>Harness Validation Page</title>
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  body { font-family: Georgia, serif; background: #f4f1ea; color: #1d2b1f; }
+  section { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: 8vw; }
+  .hero h1 { font-size: 72px; overflow: hidden; }
+  .hero h1 span { display: inline-block; transform: translateY(110%); animation: rise .9s cubic-bezier(.2,.7,.2,1) forwards; }
+  .hero h1 span:nth-child(2) { animation-delay: .15s; }
+  .hero h1 span:nth-child(3) { animation-delay: .3s; }
+  @keyframes rise { to { transform: translateY(0); } }
+  .dark { background: #14210f; color: #f4f1ea; }
+  .reveal { opacity: 0; transform: translateY(48px); transition: all .8s cubic-bezier(.2,.7,.2,1); }
+  .reveal.in { opacity: 1; transform: none; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 40px; }
+  .card { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.2); border-radius: 16px; padding: 32px; min-height: 220px; }
+  .light .card { background: #fff; border-color: #ddd; }
+  .marquee { overflow: hidden; white-space: nowrap; border-block: 2px solid currentColor; padding: 18px 0; }
+  .marquee div { display: inline-block; animation: slide 12s linear infinite; font-size: 40px; }
+  @keyframes slide { to { transform: translateX(-50%); } }
+  .big { font-size: 56px; max-width: 18ch; }
+</style>
+</head>
+<body>
+<section class="hero light">
+  <h1><span>Grown</span> <span>from</span> <span>soil.</span></h1>
+  <p class="reveal" style="margin-top:24px;font-size:22px">A validation page with entrance, scroll and loop motion.</p>
+</section>
+<div class="marquee"><div>MINERALS • SOIL • HARVEST • MINERALS • SOIL • HARVEST • MINERALS • SOIL • HARVEST • MINERALS • SOIL • HARVEST •&nbsp;</div></div>
+<section class="dark">
+  <h2 class="big reveal">Each section reveals as you scroll.</h2>
+  <div class="cards">
+    <div class="card reveal">Card one</div>
+    <div class="card reveal" style="transition-delay:.12s">Card two</div>
+    <div class="card reveal" style="transition-delay:.24s">Card three</div>
+  </div>
+</section>
+<section class="light">
+  <h2 class="big reveal">Final call to action rises here.</h2>
+</section>
+<script>
+  const io = new IntersectionObserver((es) => es.forEach(e => e.isIntersecting && e.target.classList.add('in')), { threshold: .3 });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+</script>
+</body>
+</html>
