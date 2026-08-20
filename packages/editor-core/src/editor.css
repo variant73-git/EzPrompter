@@ -3147,8 +3147,13 @@ body.rb-ed-light .rb-img-bar-btn.rb-dock-link-active:hover { color:#2563eb; back
    Working Table geometry and neutral palette as the resting React shell. */
 body.rb-ed-active.rb-ed-canvas #rb-editor-layers,
 body.rb-ed-active.rb-ed-canvas #rb-editor-inspector {
-  top:0;
-  height:100vh;
+  /* Below the FLOATING canvas topbar (shell-gutter..gutter+topbar-h): a
+     0-top panel had its first ~56px clipped underneath it (measured:
+     topbar 10..56, panels at 0). Extension context never sets
+     .rb-ed-canvas, so this stays canvas-only. */
+  top:calc(var(--shell-gutter, 10px) + var(--topbar-h, 46px));
+  height:auto;
+  bottom:0;
   border-radius:0;
   backdrop-filter:none;
   -webkit-backdrop-filter:none;

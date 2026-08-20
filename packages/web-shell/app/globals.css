@@ -8286,6 +8286,7 @@ body.native-motion-previewing .canvas-topbar {
    chrome (the editor mounts its own inspector). */
 body.rb-ed-active.rb-ed-canvas .canvas-inspector { display: none; }
 
+
 /* ═══════════════════════════════════════════════════════════════════════
    UNSPIRIT 1:1 VISUAL PARITY PASS
    Uses the reference implementation's exact neutral palette, Lucide icon
