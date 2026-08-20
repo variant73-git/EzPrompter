@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyReconstructionResultToNode,
+  classifyNativeLineage,
+  NATIVE_LINEAGE,
   NODE_EDITOR_KIND,
   resolveNodeEditorKind,
   snapshotEditorMetadata,
@@ -90,6 +92,45 @@ describe('node editor kind', () => {
       meta: { reconstructionEngine: 'native-bundle', motionControls: { acceptedControls: 3 } },
     });
     expect(resolveNodeEditorKind(prepared, snapshotEditorMetadata(prepared), flags)).toBe(NODE_EDITOR_KIND.NATIVE);
+  });
+
+  it('classifies native lineage structurally (Sol advise 2026-08-20)', () => {
+    // native-bundle snapshot with bundle + manifest v2 → ready
+    expect(classifyNativeLineage({
+      current_snapshot_source: 'native-bundle',
+      current_native_bundle_id: BUNDLE_ID,
+      current_motion_manifest_version: 2,
+    })).toBe(NATIVE_LINEAGE.READY);
+    // native-edit snapshot (post-Save) keeps the bundle → STILL ready. This is
+    // the defect-3 regression guard: Save must not demote the node to legacy.
+    expect(classifyNativeLineage({
+      current_snapshot_source: 'native-edit',
+      current_native_bundle_id: BUNDLE_ID,
+      current_motion_manifest_version: 2,
+    })).toBe(NATIVE_LINEAGE.READY);
+    // legacy edit snapshot without native lineage → legacy
+    expect(classifyNativeLineage({
+      current_snapshot_source: 'edit',
+      current_native_bundle_id: null,
+      current_motion_manifest_version: null,
+    })).toBe(NATIVE_LINEAGE.LEGACY);
+    // claims native but the structure does not close → inconsistent
+    expect(classifyNativeLineage({
+      current_snapshot_source: 'native-edit',
+      current_native_bundle_id: 'not-a-uuid',
+      current_motion_manifest_version: 2,
+    })).toBe(NATIVE_LINEAGE.INCONSISTENT);
+    expect(classifyNativeLineage({
+      current_snapshot_source: 'native-bundle',
+      current_native_bundle_id: BUNDLE_ID,
+      current_motion_manifest_version: 1,
+    })).toBe(NATIVE_LINEAGE.INCONSISTENT);
+    // bundle id present but a non-native source claims it → inconsistent
+    expect(classifyNativeLineage({
+      current_snapshot_source: 'edit',
+      current_native_bundle_id: BUNDLE_ID,
+      current_motion_manifest_version: 2,
+    })).toBe(NATIVE_LINEAGE.INCONSISTENT);
   });
 
   it('keeps an Iter9 conversion on the legacy path', () => {
