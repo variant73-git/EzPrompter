@@ -50,8 +50,10 @@ import { classifyDropFile, formatDropRejectMessage } from '../lib/drop-files.js'
 import { captureMoveUndo, restoreMissingEdges, restoreMovedNodes } from '../lib/canvas-undo.js';
 import {
   CANVAS_DEFAULT_SCALE,
+  CANVAS_EDIT_MIN_SCALE,
   CANVAS_MAX_SCALE,
   CANVAS_MIN_SCALE,
+  CANVAS_WHEEL_MAX_SCALE,
   clampCanvasScale,
   parseCanvasView,
 } from '../lib/canvas-view.js';
@@ -72,6 +74,7 @@ import {
 import {
   canonicalNativeEditNode,
   computeNodeEditFrame,
+  editFrameAnchor,
   nativeEditDeviceForNode,
 } from '../lib/node-viewport.js';
 import { applyNativeCommitSnapshot } from '../lib/motion-editor/native-edit-api.js';
@@ -742,7 +745,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   // vanilla JS and lives inside the host doc — it picks this up off
   // window.__uncraftZoom on demand.
   useEffect(() => {
-    const ZOOM_STEP = 1.2, MIN = editingNodeId ? 0.04 : 0.1, MAX = 2.5;
+    const ZOOM_STEP = 1.2, MIN = editingNodeId ? CANVAS_EDIT_MIN_SCALE : 0.1, MAX = CANVAS_WHEEL_MAX_SCALE;
     // Snapshot the previously-stored edit frame so we can restore it
     // after replacing the __uncraftZoom object (this effect re-runs on
     // every canvas-scale tick, otherwise the frame would be wiped).
@@ -756,10 +759,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       const rect = wrapper.getBoundingClientRect();
       let cx = rect.width / 2, cy = rect.height / 2;
       if (editingNodeId) {
+        // Same anchor as the entry framing (computeEditFrame): the pivot IS
+        // the framed center — including the bottom reserve the old hardcoded
+        // `46 + (H - 64) / 2` ignored (defect 2, 2026-08-20).
         const editingNode = nodes.find((node) => node.id === editingNodeId);
-        const { left, right } = editFrameReserves(editingNode);
-        cx = left + Math.max(320, rect.width - left - right) / 2;
-        cy = 46 + Math.max(240, rect.height - 64) / 2;
+        const reserves = editFrameReserves(editingNode);
+        const anchor = editFrameAnchor({
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          leftReserve: reserves.left,
+          rightReserve: reserves.right,
+          bottom: reserves.bottom ?? 18,
+        });
+        cx = anchor.cx;
+        cy = anchor.cy;
       }
       const state = inst.transformState || t.state || { positionX: 0, positionY: 0, scale: 1 };
       const wx = (cx - state.positionX) / state.scale;
@@ -804,10 +817,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         const inst = t.instance || t;
         const state = inst?.transformState || t.state || { positionX: 0, positionY: 0, scale: 1 };
         if (editingNodeId) {
+          // Same anchor as the entry framing — see the setAbs note above.
           const editingNode = nodes.find((node) => node.id === editingNodeId);
-          const { left, right } = editFrameReserves(editingNode);
-          cx = left + Math.max(320, window.innerWidth - left - right) / 2;
-          cy = 46 + Math.max(240, window.innerHeight - 64) / 2;
+          const reserves = editFrameReserves(editingNode);
+          const anchor = editFrameAnchor({
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight,
+            leftReserve: reserves.left,
+            rightReserve: reserves.right,
+            bottom: reserves.bottom ?? 18,
+          });
+          cx = anchor.cx;
+          cy = anchor.cy;
         }
         // Wheel-zoom sensitivity — raised from 0.0015 → 0.0025 → 0.004
         // (2026-07-03, user request ×2): more zoom travel per wheel notch /
@@ -6432,7 +6453,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       />
 
       <div className="canvas-zoomdock">
-        <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} />
+        <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} active={!editingNodeId} />
       </div>
 
       <CanvasInspector
