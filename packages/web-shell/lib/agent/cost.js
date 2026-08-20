@@ -27,11 +27,15 @@ export const MODEL_PRICES = {
   'claude-haiku-4-5-20251001': { inPerM:  1.00, outPerM:  5.00, cachedInPerM: 0.10,  cacheWritePerM:  1.25 },
   // OpenAI — 50% cached, no write surcharge
   'gpt-5.5':                   { inPerM:  5.00, outPerM: 15.00, cachedInPerM: 2.50 },
-  'gpt-5.6-terra':             { inPerM:  2.50, outPerM: 15.00, cachedInPerM: 0.25, cacheWritePerM: 3.125 },
+  // Terra repriced 2026-07-30 (OpenAI price drop): $2/$12; cache ratios kept.
+  'gpt-5.6-terra':             { inPerM:  2.00, outPerM: 12.00, cachedInPerM: 0.20, cacheWritePerM: 2.50 },
   'gpt-4o-mini':               { inPerM:  0.15, outPerM:  0.60, cachedInPerM: 0.075 },
   // Google Gemini — 25% cached (implicit caching on 2.5 family), no write surcharge
   'gemini-3.1-pro-preview':    { inPerM:  1.25, outPerM:  5.00, cachedInPerM: 0.3125 },
   'gemini-2.5-flash':          { inPerM:  0.10, outPerM:  0.40, cachedInPerM: 0.025 },
+  // Moonshot Kimi — in the picker (MODEL_ALIAS) but was MISSING here, so any
+  // picked run metered as $0 (metering hole, found 2026-08-20). Direct-API list.
+  'kimi-k2.6':                 { inPerM:  0.95, outPerM:  4.00, cachedInPerM: 0.16 },
   // DeepSeek (kept for reference; not currently used — see getAgentModel)
   'deepseek-chat':             { inPerM:  0.27, outPerM:  1.10 },
 };

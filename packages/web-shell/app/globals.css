@@ -10442,7 +10442,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
 /* ── Dev widget (⌥D): per-clone metrics — frosted family ─────────────── */
 .dev-widget {
   position: fixed;
-  left: 16px;
+  right: 16px;
   bottom: 16px;
   z-index: 90;
   width: 340px;
