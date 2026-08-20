@@ -1,3 +1,4 @@
+import { classifyNativeLineage, NATIVE_LINEAGE } from './node-editor-kind.js';
 import { isIter9Reconstruction } from './node-viewport.js';
 import { isLiveUrlReference } from './url-reference.js';
 
@@ -54,14 +55,23 @@ export function edgeNeedsEditableRuntime(edgePayload) {
  * preserves every prior state in Saved versions); a consent surface and a
  * no-debit migration path are REQUIRED before launch.
  */
-function editNeedsNativeUpgrade(node) {
-  if (node?.kind !== 'site' || !node?.origin_url) return false;
-  if (isIter9Reconstruction(node)) return false;
-  return node?.current_snapshot_source !== 'native-bundle';
-}
-
 export function reconstructionReason({ node, role, edgePayload } = {}) {
-  if (role === 'edit' && editNeedsNativeUpgrade(node)) return 'edit';
+  if (role === 'edit' && node?.kind === 'site' && node?.origin_url && !isIter9Reconstruction(node)) {
+    const lineage = classifyNativeLineage(node);
+    // Readiness short-circuits BEFORE needsDeferredReconstruction on purpose:
+    // a stale animatedDetected / live-reference flag must never re-clone a
+    // node that already carries a usable native bundle. 'native-edit' (a Save
+    // from the native editor) keeps the bundle and stays ready — comparing
+    // against the single string 'native-bundle' re-cloned (and re-charged)
+    // every node after its first Save (defect 3, 2026-08-20).
+    if (lineage === NATIVE_LINEAGE.READY) return null;
+    // A node that CLAIMS native lineage but whose structure doesn't close is
+    // an integrity failure: repair is deliberate (nominal engine), never an
+    // automatic billable capture (Sol advise 2026-08-20).
+    if (lineage === NATIVE_LINEAGE.INCONSISTENT) return 'native-inconsistent';
+    // Legacy lineage: product rule 2026-08-17 (edit auto-upgrade) unchanged.
+    return 'edit';
+  }
   if (!needsDeferredReconstruction(node)) return null;
   if (role === 'edit') return 'edit';
   if (role === 'target') return 'transform-target';
