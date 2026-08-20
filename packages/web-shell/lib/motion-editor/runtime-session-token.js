@@ -14,7 +14,13 @@ const NONCE_PATTERN = /^[a-zA-Z0-9_-]{12,128}$/;
 // session row (status='active', node/bundle/current-snapshot scope, and
 // expires_at) on every request, and commit/discard/expiry close it — but the
 // target design is a short entry token + a separate revocable asset lease.
-// Do not extend this TTL further without building the lease.
+// Do not extend this TTL further without building the lease. Known residuals
+// of this interim design (Claude review 2026-08-20 #4/#5): (a) revocation
+// only reaches NEW requests — assets already in the browser's private cache
+// (max-age up to 4h) never re-consult the server; (b) the session lifetime is
+// ABSOLUTE — drafts/commits don't extend expires_at (the JWT in every asset
+// URL can't rotate mid-session anyway), so an editor left open >4h loses
+// lazy asset serving until reopened; saves keep working (cookie-authed).
 export const RUNTIME_SESSION_MAX_TTL_SECONDS = 4 * 60 * 60;
 export const RUNTIME_SESSION_DEFAULT_TTL_SECONDS = 2 * 60;
 // Edit sessions need assets alive for the WHOLE session: lazy-loaded images

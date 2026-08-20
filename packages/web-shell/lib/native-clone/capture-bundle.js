@@ -447,7 +447,18 @@ export async function captureNativeBundle(url, opts = {}) {
     const entryPath = mapa.get(entradaOriginal);
 
     const assets = [];
-    for (const [u, { bytes, contentType }] of recursos) {
+    for (const [u, valor] of recursos) {
+      // Uma resposta mais lenta que o timeout do closing-refs pode chegar
+      // DEPOIS do allSettled+purge e re-inserir a vaga `null` enquanto este
+      // loop itera o Map vivo — destruturar aqui derrubava o clone inteiro
+      // com TypeError (Claude review 2026-08-20 #2). Entrada sem corpo no
+      // momento da montagem é descarte nomeado, nunca crash.
+      if (!valor || !mapa.has(u)) {
+        recursos.delete(u);
+        descartados.push({ u, motivo: !valor ? 'corpo nao chegou' : 'chegou apos a montagem' });
+        continue;
+      }
+      const { bytes, contentType } = valor;
       const caminho = mapa.get(u);
       const profundidade = caminho.split('/').length - 1;
       let corpo = bytes;

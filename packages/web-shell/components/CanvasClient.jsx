@@ -34,7 +34,7 @@ import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
 import { findSectionTerminals, planIncrementalRun, planRunFromNode, nodeInputSignature, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
 import { buildNodesClipboardPayload, parseNodesClipboardText, payloadToPasteItems } from '../lib/node-clipboard.js';
 import { estimateChain } from '../lib/billing/pricing.js';
-import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
+import { reconstructionReason, shouldReconstructForAction } from '../lib/reconstruction-policy.js';
 import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
 import DevWidget from './DevWidget.jsx';
 import { canUseCloneEdit } from '../lib/clone-edit-access.js';
@@ -275,12 +275,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   useEffect(() => () => {
     if (editFrameTimerRef.current) window.clearTimeout(editFrameTimerRef.current);
     if (nativeViewportFrameRafRef.current) window.cancelAnimationFrame(nativeViewportFrameRafRef.current);
-    const session = nativeEditRestoreRef.current;
-    if (!session?.camera) return;
+    // Route-change unmount mid-edit: the pre-edit camera (kept for every
+    // editor kind since 2026-08-20) is the last coherent view — edit-mode
+    // saves are suppressed, so without this write nothing else lands it.
+    const preEdit = preEditCameraRef.current;
+    if (!preEdit?.camera) return;
     try {
-      localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(session.camera));
+      localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(preEdit.camera));
     } catch { /* best-effort route-change restoration */ }
-    nativeEditRestoreRef.current = null;
+    preEditCameraRef.current = null;
   }, [CANVAS_VIEW_KEY]);
 
   useEffect(() => {
@@ -4626,11 +4629,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     if (willEdit) {
       const node = nodes.find((n) => n.id === nodeId);
       if (!node || editPreparationRef.current.has(nodeId)) return;
-      // Plan gate keyed on the SAME predicate that decides billing (Sol
+      // Integrity guard BEFORE the plan gate (Claude review 2026-08-20 #3):
+      // an inconsistent native claim never bills — the server 409s — so a
+      // free user must see the repair message, not an upsell modal promising
+      // a charge the server will refuse.
+      if (classifyNativeLineage(node) === NATIVE_LINEAGE.INCONSISTENT
+          && !resolveEditEngineOverride(node)) {
+        toast.error('This clone needs repair — re-clone it from the node menu.');
+        return;
+      }
+      // Plan gate keyed on the SAME reason that decides billing (Sol
       // 2026-08-17 #1): the auto-upgrade path re-clones legacy URL-backed
       // snapshots too, and the narrower live-reference check let those bypass
-      // the paid-plan gate straight into a billed clone.
-      if (shouldReconstructForAction({ node, role: 'edit' }) && !canUseCloneEdit(user?.plan)) {
+      // the paid-plan gate straight into a billed clone. Only the 'edit'
+      // reason is billable — 'native-inconsistent' is handled above.
+      if (reconstructionReason({ node, role: 'edit' }) === 'edit' && !canUseCloneEdit(user?.plan)) {
         setPlansOpen(true);
         return;
       }
@@ -4647,17 +4660,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           enterEditMode(node, editorKind);
           return;
         }
-        // Guard rails before falling through to a billed reconstruction
-        // (defect 3, 2026-08-20): an inconsistent native claim is an integrity
-        // failure — repair is deliberate, never an automatic charge; and a
-        // ready node with the native editor unavailable must not open the
-        // legacy editor over a null snapshot.
-        const lineage = classifyNativeLineage(node);
-        if (lineage === NATIVE_LINEAGE.INCONSISTENT) {
-          toast.error('This clone needs repair — re-clone it from the node menu.');
-          return;
-        }
-        if (lineage === NATIVE_LINEAGE.READY) {
+        // A ready node with the native editor unavailable (flag off) must not
+        // open the legacy editor over a null snapshot (defect 3, 2026-08-20).
+        // The INCONSISTENT case is handled before the plan gate above.
+        if (classifyNativeLineage(node) === NATIVE_LINEAGE.READY) {
           toast.error('Native editing is unavailable in this build.');
           return;
         }
@@ -6580,12 +6586,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           // scale range (floor 0.04) and clamping only the scale on restore
           // stranded the site outside the viewport (defect 2, 2026-08-20).
           // The pre-edit camera is written back by exitEditMode instead.
-          if (canvasViewReadyRef.current && !editingNodeIdRef.current) {
+          // The scale guard mirrors parseCanvasView: the non-edit wheel floor
+          // (0.1) sits below the canonical range too, and persisting a clamped
+          // scale with the RAW position launders the same incoherent pair
+          // (Claude review 2026-08-20 #1) — persist only coherent cameras.
+          if (canvasViewReadyRef.current && !editingNodeIdRef.current
+              && clampCanvasScale(scale) === scale) {
             clearTimeout(canvasViewSaveTimerRef.current);
             const view = {
               positionX: state.positionX || 0,
               positionY: state.positionY || 0,
-              scale: clampCanvasScale(scale),
+              scale,
             };
             canvasViewSaveTimerRef.current = setTimeout(() => {
               try { localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(view)); } catch {}

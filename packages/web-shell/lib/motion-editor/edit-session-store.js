@@ -158,8 +158,10 @@ export async function openOrResumeEditSession({ sql, userId, nodeId, baseSnapsho
     ), refreshed AS (
       -- Resuming EXTENDS the expiry: the session row is the revocation
       -- authority for the (now long-lived) runtime token, so an abandoned
-      -- session must die on its own, but an active editor must not expire
-      -- under the user (Sol advise 2026-08-20).
+      -- session must die on its own. Note the lifetime is ABSOLUTE per
+      -- opening: drafts/commits do not extend it (the runtime JWT cannot
+      -- rotate mid-session anyway) — an editor left open past the limit
+      -- loses lazy asset serving until reopened; saves keep working.
       UPDATE native_motion_edit_sessions e
          SET expires_at = NOW() + make_interval(hours => ${EDIT_SESSION_LIFETIME_HOURS}),
              updated_at = NOW()
