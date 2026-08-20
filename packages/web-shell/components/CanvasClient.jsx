@@ -227,6 +227,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   const [contextMenu, setContextMenu] = useState(null);  // {x, y, worldX, worldY} — right-click on empty canvas
   const [editingNodeId, setEditingNodeId] = useState(null);
   const nativeEditRestoreRef = useRef(null);
+  // Mirror of editingNodeId for callbacks that must not close over stale
+  // state (the camera-persistence path runs inside onTransformed).
+  const editingNodeIdRef = useRef(null);
+  // Pre-edit camera for EVERY editor kind (the native path additionally
+  // restores node geometry via nativeEditRestoreRef). Edit-mode cameras are
+  // never persisted, so exiting must put the world back where it was.
+  const preEditCameraRef = useRef(null);
   const editFrameTimerRef = useRef(null);
   const nativeViewportFrameRafRef = useRef(null);
   const [editorActionBusy, setEditorActionBusy] = useState(false);
@@ -4518,6 +4525,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
 
   function enterEditMode(node, editorKind = editorKindForNode(node)) {
     if (editFrameTimerRef.current) window.clearTimeout(editFrameTimerRef.current);
+    // Snapshot the pre-edit camera for EVERY editor kind. Edit-mode cameras
+    // are computed for a different scale range (floor 0.04) and are never
+    // persisted (defect 2, 2026-08-20) — exiting must restore this state.
+    preEditCameraRef.current = {
+      nodeId: node.id,
+      camera: window.__uncraftZoom?.getState?.() || null,
+    };
     let framedNode = node;
     if (editorKind === NODE_EDITOR_KIND.NATIVE) {
       const device = nativeEditDeviceForNode(node);
@@ -4530,13 +4544,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           width: node.width,
           height: node.height,
         },
-        camera: window.__uncraftZoom?.getState?.() || null,
+        // Camera restore moved to preEditCameraRef — shared by every editor kind.
       };
       setNodes((current) => current.map((candidate) => (
         candidate.id === node.id ? framedNode : candidate
       )));
     }
     setEditingNodeId(node.id);
+    editingNodeIdRef.current = node.id;
     editFrameTimerRef.current = window.setTimeout(() => {
       editFrameTimerRef.current = null;
       const f = computeEditFrame(framedNode);
@@ -4558,20 +4573,28 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     }
     const session = nativeEditRestoreRef.current;
     if (session?.nodeId === nodeId) {
-      if (session.camera) {
-        try {
-          localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(session.camera));
-        } catch { /* best-effort immediate restoration */ }
-      }
       nativeEditRestoreRef.current = null;
       setNodes((current) => current.map((candidate) => (
         candidate.id === nodeId
           ? { ...candidate, ...session.geometry }
           : candidate
       )));
-      if (session.camera) window.__uncraftZoom?.setState?.(session.camera, 280);
+    }
+    // Pre-edit camera restore for EVERY editor kind (the legacy editor had
+    // none, so leaving it kept whatever edit-mode framing was active — and
+    // that camera was also leaking into localStorage; defect 2, 2026-08-20).
+    const preEdit = preEditCameraRef.current;
+    if (preEdit?.nodeId === nodeId) {
+      preEditCameraRef.current = null;
+      if (preEdit.camera) {
+        try {
+          localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(preEdit.camera));
+        } catch { /* best-effort immediate restoration */ }
+        window.__uncraftZoom?.setState?.(preEdit.camera, 280);
+      }
     }
     setEditingNodeId(null);
+    editingNodeIdRef.current = null;
     if (window.__uncraftZoom) window.__uncraftZoom._editFrame = null;
     if (reason === 'runtime-unavailable') {
       toast.error("This website couldn't be opened for editing.");
@@ -6532,7 +6555,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           // viewport-readable via inverse-scale in CSS.
           const scale = state.scale || 1;
           lastTransformRef.current = { scale, x: state.positionX || 0, y: state.positionY || 0 };
-          if (canvasViewReadyRef.current) {
+          // Edit-mode cameras never persist: they are computed for a different
+          // scale range (floor 0.04) and clamping only the scale on restore
+          // stranded the site outside the viewport (defect 2, 2026-08-20).
+          // The pre-edit camera is written back by exitEditMode instead.
+          if (canvasViewReadyRef.current && !editingNodeIdRef.current) {
             clearTimeout(canvasViewSaveTimerRef.current);
             const view = {
               positionX: state.positionX || 0,
