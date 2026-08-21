@@ -43,7 +43,7 @@
     "evals:view": "promptfoo view",
     "evals:rubric": "node evals/anti-slop/build-rubric.mjs",
     "evals:rubric:check": "node evals/anti-slop/build-rubric.mjs --check",
-    "smoke:clone": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/smoke-clone.mjs"
+    "smoke:clone": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env.local scripts/smoke-clone.mjs"
   },
   "dependencies": {
     "@next/env": "15.5.15",

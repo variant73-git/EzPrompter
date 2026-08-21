@@ -34,6 +34,23 @@ import { registerNativeBundle } from '../lib/native-clone/register-bundle.js';
 import { persistNativeBundleDescriptor } from '../lib/motion-editor/edit-session-store.js';
 import { createEmptyMotionManifest } from '../lib/motion-editor/manifest.js';
 
+// O servidor de dev herda `.env.local` porque o Next o carrega; um `node`
+// puro não. Sem isto o smoke morre no passo 2 dizendo que falta DATABASE_URL
+// enquanto o servidor ao lado funciona — e a culpa parece do produto.
+// (`--env-file-if-exists` no npm script cobre o caminho normal; este bloco
+// cobre quem chama `node scripts/smoke-clone.mjs` na mão.)
+if (!process.env.DATABASE_URL) {
+  try {
+    const { readFileSync: lerArquivo } = await import('node:fs');
+    for (const linha of lerArquivo('.env.local', 'utf8').split('\n')) {
+      const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)$/.exec(linha);
+      if (!m) continue;
+      const valor = m[2].trim().replace(/^["']|["']$/g, '');
+      if (!(m[1] in process.env)) process.env[m[1]] = valor;
+    }
+  } catch { /* sem .env.local: o passo 2 dirá o que falta */ }
+}
+
 const args = process.argv.slice(2);
 const opt = (nome, padrao) => {
   const i = args.indexOf(`--${nome}`);
@@ -73,6 +90,17 @@ await passo('1. servidor de dev responde', async () => {
     throw new Error(`sem resposta em ${BASE} — o servidor está rodando? (${e.message})`);
   });
   conferir(res.status !== 404, `${BASE}/api/boards devolveu 404 — porta errada?`);
+  // ⚠️ A primeira versão deste passo aceitava QUALQUER status que não fosse
+  // 404 — e passou com HTTP 500, dizendo "ok" para um servidor quebrado.
+  // Teste que não testa: o smoke que existe para pegar isso não pode ser o
+  // primeiro a deixar passar. Sem sessão, o esperado é 401/403; 5xx é defeito.
+  if (res.status >= 500) {
+    const corpo = await res.text().catch(() => '');
+    throw new Error(`o servidor respondeu HTTP ${res.status} numa rota básica `
+      + `(/api/boards sem sessão deveria dar 401). Corpo: ${corpo.slice(0, 200) || '(vazio)'}`);
+  }
+  conferir([401, 403, 200].includes(res.status),
+    `/api/boards devolveu ${res.status}; esperado 401 sem sessão`);
   return { __detalhe: `HTTP ${res.status}` };
 });
 

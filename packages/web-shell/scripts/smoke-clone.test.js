@@ -33,6 +33,18 @@ describe('smoke:clone — contrato do porteiro', () => {
     expect(fonte).toMatch(/!MANTER/);
   });
 
+  it('reprova 5xx no passo 1 — a versão anterior dizia "ok" para HTTP 500', () => {
+    // Regressão do defeito que o PRIMEIRO uso real do smoke expôs: o passo 1
+    // só conferia "não é 404", então um servidor quebrado passava como sadio.
+    expect(fonte).toMatch(/res\.status >= 500/);
+    expect(fonte).toMatch(/\[401, 403, 200\]\.includes\(res\.status\)/);
+  });
+
+  it('carrega .env.local sozinho — o Next carrega, node puro não', () => {
+    expect(fonte).toMatch(/DATABASE_URL/);
+    expect(fonte).toMatch(/\.env\.local/);
+  });
+
   it('não sai para a internet nem chama modelo — smoke caro não é rodado', () => {
     expect(fonte).not.toMatch(/https?:\/\/(?!localhost)/);
     expect(fonte).not.toMatch(/openai|anthropic|gemini/i);
