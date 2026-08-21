@@ -25,10 +25,11 @@ import { posix } from 'node:path';
  *
  * Known limits, deliberate (Sol audit 2026-08-21) — each one costs a real
  * tokenizer or a bigger design, and none showed up in the sites measured:
- *  - URLs a script BUILDS at runtime (`'/' + name`, `fetch('/api')`) are
- *    invisible to any static rewriter; closing them needs a per-bundle
- *    virtual origin. Script bodies are skipped rather than guessed at, so
- *    ESM `import "/chunk.js"` and `<script type="importmap">` are NOT closed.
+ *  - URLs a script BUILDS or RESOLVES at runtime (`'/' + name`,
+ *    `fetch('/api')`, `new Image().src = 'rel.png'`) are invisible to any
+ *    static rewriter; closing them needs a per-bundle virtual origin. Script
+ *    bodies are skipped rather than guessed at, so ESM `import "/chunk.js"`
+ *    and `<script type="importmap">` are NOT closed.
  *  - Attribute values are matched with quotes; unquoted attributes are left
  *    alone (writing one back could break the tag).
  *  - CSS escapes (`url(foo\)bar.png)`) and entity-encoded whitespace inside
@@ -206,6 +207,16 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
   // the reference is left pointing at the live site. The tag itself is dropped
   // from the bundle: it names the ORIGINAL origin, so keeping it would send
   // every relative path we just wrote back out to the internet (Sol).
+  //
+  // SCOPE OF THE GUARANTEE (Sol, final round): dropping the tag preserves the
+  // meaning of every reference THIS SCANNER SEES — leftovers are pinned to the
+  // absolute URL they had. It does NOT cover URLs a script resolves at
+  // runtime (`new Image().src = 'rel.png'`), which follow the live document's
+  // base: those change from the original base to the bundle's own directory.
+  // There is no cheap fix — keeping the tag would repoint every path we just
+  // rewrote back to the original site, and emitting bundle-absolute paths is
+  // impossible here (the serving path carries a token minted much later). It
+  // is the same class as the runtime-built URLs already listed above.
   let effectiveBase = resourceUrl;
   let baseWasRemoved = false;
   let body = text;
