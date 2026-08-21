@@ -20,17 +20,21 @@ import { reconstructionReason } from './reconstruction-policy.js';
  * @returns {{ billable: boolean, integrityError: boolean, engineOverride: string|null }}
  */
 export function decideEditAction({ node, engineOverride = null } = {}) {
-  // The repair path IS a reconstruction, so it inherits the reconstruction's
-  // preconditions: only a site node with an origin URL can be rebuilt (the
-  // route answers 400 `no_origin_url` otherwise). `classifyNativeLineage`
-  // reads the snapshot alone, so without this gate a template/chunk carrying
-  // inconsistent native metadata would offer "Repair clone" and walk straight
-  // into a guaranteed 400 (Sol final round).
-  const repairable = node?.kind === 'site' && Boolean(node?.origin_url);
-  const integrityError = repairable
+  // Both outcomes go through the reconstruction route, so both inherit its
+  // ONE structural precondition, mirrored rather than invented: no origin URL
+  // means the route answers 400 `no_origin_url`, whatever the engine. The
+  // route does NOT filter by kind — a nominal engine on a template/chunk with
+  // an origin URL is accepted today — so gating on kind here would hide an
+  // operation the server performs. `reconstructionReason` still applies its
+  // own site-only rule to the automatic 'edit' upgrade (Sol final round: the
+  // first gate failed in BOTH directions — a nominal engine on an origin-less
+  // node still promised a charge, and valid kinds lost the action).
+  const canReconstruct = Boolean(node?.origin_url);
+  const integrityError = canReconstruct
     && engineOverride == null
     && classifyNativeLineage(node) === NATIVE_LINEAGE.INCONSISTENT;
-  const billable = !integrityError
+  const billable = canReconstruct
+    && !integrityError
     && (engineOverride != null || reconstructionReason({ node, role: 'edit' }) === 'edit');
   return { billable, integrityError, engineOverride };
 }

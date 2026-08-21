@@ -34,22 +34,37 @@ describe('deliberate repair (Sol final round #3)', () => {
   });
 });
 
-describe('repair preconditions mirror the reconstruction route', () => {
-  // The route answers 400 `no_origin_url`, and only site nodes reconstruct.
-  // Offering "Repair clone" outside those bounds promises a guaranteed error.
-  it('does not offer repair without an origin URL', () => {
-    const orphan = { ...inconsistent, origin_url: null };
-    expect(decideEditAction({ node: orphan })).toMatchObject({ billable: false, integrityError: false });
-  });
+describe('preconditions mirror the reconstruction route (kind x origin_url x engine)', () => {
+  // The route's ONE structural precondition is the origin URL (400
+  // `no_origin_url`); it does NOT filter by kind. The decision mirrors that
+  // instead of inventing a stricter rule — the first attempt failed in both
+  // directions at once (Sol final round).
+  const orphan = { ...inconsistent, origin_url: null };
 
-  it('does not offer repair for template or chunk nodes', () => {
-    for (const kind of ['template', 'chunk', 'designmd']) {
-      expect(decideEditAction({ node: { ...inconsistent, kind } }))
+  it('an origin-less node offers nothing — not even under a nominal engine', () => {
+    expect(decideEditAction({ node: orphan })).toMatchObject({ billable: false, integrityError: false });
+    for (const engine of ['native', 'iter9']) {
+      expect(decideEditAction({ node: orphan, engineOverride: engine }))
         .toMatchObject({ billable: false, integrityError: false });
     }
   });
 
-  it('still offers repair for a site node with an origin URL', () => {
+  it('a nominal engine on a non-site node with an origin URL still bills — the server accepts it', () => {
+    for (const kind of ['template', 'chunk']) {
+      expect(decideEditAction({ node: { ...ready, kind }, engineOverride: 'iter9' }))
+        .toMatchObject({ billable: true, integrityError: false });
+    }
+  });
+
+  it('the automatic upgrade stays site-only (reconstructionReason owns that rule)', () => {
+    const legacyTemplate = {
+      id: 'tpl-1', kind: 'template', origin_url: 'https://example.com',
+      current_snapshot_source: 'capture', meta: {},
+    };
+    expect(decideEditAction({ node: legacyTemplate })).toMatchObject({ billable: false });
+  });
+
+  it('a site node with an origin URL is still repairable', () => {
     expect(decideEditAction({ node: inconsistent })).toMatchObject({ integrityError: true });
   });
 });
