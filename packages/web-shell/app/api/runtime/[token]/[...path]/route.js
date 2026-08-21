@@ -72,16 +72,45 @@ function commonHeaders(request) {
   });
 }
 
+// Escapa o motivo antes de escrevê-lo no HTML de diagnóstico: ele contém um
+// valor derivado do token, e a página não pode virar veículo de injeção nem
+// em desenvolvimento.
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
 function inertFailure(request, reason, token, status = 404) {
   recordFailure(reason, token);
   const headers = commonHeaders(request);
   headers.set('Cache-Control', 'no-store');
   headers.set('Content-Type', 'text/html; charset=utf-8');
-  headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
-  return new Response('<!doctype html><meta charset="utf-8"><title>Unavailable</title><p>This website couldn\'t be opened.</p>', {
-    status,
-    headers,
-  });
+
+  // ⚠️ EM PRODUÇÃO a página é inerte E não-enquadrável de propósito: não conta
+  // ao mundo POR QUE recusou. Em DESENVOLVIMENTO isso custa horas — o Chrome
+  // recusa renderizar a página (`frame-ancestors 'none'`) e o programador vê
+  // só "localhost is blocked", sem nenhuma pista. Então, fora de produção, a
+  // página é enquadrável pela própria app e DIZ o motivo, que é a única coisa
+  // que o programador precisa saber. Adicionado em 2026-08-21, depois de o
+  // sintoma custar duas rodadas de investigação às cegas.
+  // Só `development` afrouxa. Em `test` a recusa segue idêntica à de produção —
+  // a suíte codifica o contrato "recusa é opaca" e ela tem que continuar
+  // guardando isso; foi ela que pegou o afrouxamento amplo demais desta função.
+  const desenvolvimento = process.env.NODE_ENV === 'development';
+  if (!desenvolvimento) {
+    headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+    return new Response('<!doctype html><meta charset="utf-8"><title>Unavailable</title><p>This website couldn\'t be opened.</p>', { status, headers });
+  }
+
+  headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
+  headers.set('X-Uncraft-Runtime-Failure', String(reason));
+  const corpo = `<!doctype html><meta charset="utf-8"><title>Runtime unavailable</title>`
+    + `<style>body{margin:0;padding:24px;font:13px/1.5 ui-monospace,Menlo,monospace;`
+    + `background:#1a1a18;color:#ece9e2}b{color:#f0913d}code{color:#a8a49a}</style>`
+    + `<p><b>Runtime não abriu</b> — motivo: <b>${escapeHtml(reason)}</b> (HTTP ${status}).</p>`
+    + `<p><code>Esta página só aparece fora de produção. Em produção a recusa é opaca.</code></p>`;
+  return new Response(corpo, { status, headers });
 }
 
 function descriptorFromRow(row) {

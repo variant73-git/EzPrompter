@@ -223,3 +223,37 @@ describe('GET /api/runtime/[token]/[...path]', () => {
     expect(store.read.mock.calls[1][0]).toContain(otherBundleId);
   });
 });
+
+describe('inertFailure — legível em desenvolvimento, opaca em produção', () => {
+  // O sintoma que motivou isto: o node mostrava "localhost is blocked" e o
+  // motivo ficava invisível porque o próprio Chrome recusa renderizar uma
+  // página com frame-ancestors 'none'. Fora de produção, a recusa passa a
+  // DIZER por que recusou.
+  const original = process.env.NODE_ENV;
+  afterEach(() => { process.env.NODE_ENV = original; });
+
+  it('em desenvolvimento a página é enquadrável e nomeia o motivo', async () => {
+    process.env.NODE_ENV = 'development';
+    const { GET } = await import('./route.js');
+    const res = await GET(new Request('http://localhost:3030/api/runtime/token-invalido/index.html'), {
+      params: Promise.resolve({ token: 'token-invalido', path: ['index.html'] }),
+    });
+    const csp = res.headers.get('content-security-policy');
+    expect(csp).toContain("frame-ancestors 'self'");   // o Chrome consegue exibir
+    expect(csp).not.toContain("frame-ancestors 'none'");
+    expect(res.headers.get('x-uncraft-runtime-failure')).toBeTruthy();
+    expect(await res.text()).toMatch(/motivo/i);
+  });
+
+  it.each(['production', 'test'])('em %s continua opaca — nada de contar por que recusou', async (ambiente) => {
+    process.env.NODE_ENV = ambiente;
+    const { GET } = await import('./route.js');
+    const res = await GET(new Request('http://localhost:3030/api/runtime/token-invalido/index.html'), {
+      params: Promise.resolve({ token: 'token-invalido', path: ['index.html'] }),
+    });
+    expect(res.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+    expect(res.headers.get('x-uncraft-runtime-failure')).toBe(null);
+    const corpo = await res.text();
+    expect(corpo).not.toMatch(/motivo|token_|session_/i);
+  });
+});
