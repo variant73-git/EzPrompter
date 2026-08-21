@@ -47,6 +47,25 @@ describe('rewriteDocumentReferences', () => {
     expect(out).not.toMatch(/<base/i);
   });
 
+  it('pins protocol-relative and srcset/url() leftovers too — the scheme comes from the base', () => {
+    // `//cdn.test/x.png` under an http base becomes https once the bundle is
+    // served over TLS: still a move, even if the CSP blocks both (Sol).
+    const out = rewriteDocumentReferences({
+      text: '<base href="http://origin.test/img/">'
+        + '<img src="//cdn.test/a.png">'
+        + '<img srcset="rel-a.png 1x, //cdn.test/b.png 2x">'
+        + '<div style="background:url(rel-c.png)"></div>',
+      kind: 'html',
+      resourceUrl: 'http://origin.test/index.html',
+      assetPath: 'index.html',
+      map,
+    });
+    expect(out).toContain('src="http://cdn.test/a.png"');
+    expect(out).toContain('http://origin.test/img/rel-a.png');
+    expect(out).toContain('http://cdn.test/b.png');
+    expect(out).toContain('url(http://origin.test/img/rel-c.png)');
+  });
+
   it('a comment mentioning <script> does not blind the rest of the document', () => {
     // The scan treated the mentioned tag as real and skipped everything after
     // it, leaving every later reference pointing at the live site (Sol).

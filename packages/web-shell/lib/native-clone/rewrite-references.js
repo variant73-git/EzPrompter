@@ -238,7 +238,11 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
       // original base. Pin those to the absolute URL they had, so removing the
       // tag cannot silently repoint anything (Sol). They stay external — the
       // gateway CSP blocks them either way — but they no longer LIE.
-      if (baseWasRemoved && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(withoutHash) && !withoutHash.startsWith('//')) {
+      // Anything WITHOUT an explicit scheme takes it from the base — including
+      // protocol-relative `//host/x`, which would flip http→https once the
+      // bundle is served over TLS (Sol). Only a reference that already carries
+      // its own scheme is immune.
+      if (baseWasRemoved && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(withoutHash)) {
         const pinned = `${absolute}${hash}`;
         edits.push({ start: token.start, end: token.end, value: markup ? encodeForMarkup(pinned) : pinned });
       }
