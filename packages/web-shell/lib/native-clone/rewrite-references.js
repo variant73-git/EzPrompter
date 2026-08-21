@@ -25,11 +25,15 @@ import { posix } from 'node:path';
  *
  * Known limits, deliberate (Sol audit 2026-08-21) — each one costs a real
  * tokenizer or a bigger design, and none showed up in the sites measured:
- *  - URLs a script BUILDS or RESOLVES at runtime (`'/' + name`,
- *    `fetch('/api')`, `new Image().src = 'rel.png'`) are invisible to any
- *    static rewriter; closing them needs a per-bundle virtual origin. Script
- *    bodies are skipped rather than guessed at, so ESM `import "/chunk.js"`
- *    and `<script type="importmap">` are NOT closed.
+ *  - Script-originated references are NOT processed by this scanner. Two
+ *    different things live there, and only one is truly out of reach: a URL
+ *    written as a literal (`new Image().src = 'rel.png'`, ESM
+ *    `import "/chunk.js"`, `<script type="importmap">`) is findable — a
+ *    JavaScript-aware rewriter would see it; skipping those is a deliberate
+ *    limit of THIS scanner, not an impossibility. A URL actually COMPUTED at
+ *    runtime (`'/' + name`, a template with a variable) is the one that no
+ *    static pass can close; that is what would need a per-bundle virtual
+ *    origin.
  *  - Attribute values are matched with quotes; unquoted attributes are left
  *    alone (writing one back could break the tag).
  *  - CSS escapes (`url(foo\)bar.png)`) and entity-encoded whitespace inside
@@ -210,13 +214,14 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
   //
   // SCOPE OF THE GUARANTEE (Sol, final round): dropping the tag preserves the
   // meaning of every reference THIS SCANNER SEES — leftovers are pinned to the
-  // absolute URL they had. It does NOT cover URLs a script resolves at
-  // runtime (`new Image().src = 'rel.png'`), which follow the live document's
-  // base: those change from the original base to the bundle's own directory.
-  // There is no cheap fix — keeping the tag would repoint every path we just
-  // rewrote back to the original site, and emitting bundle-absolute paths is
-  // impossible here (the serving path carries a token minted much later). It
-  // is the same class as the runtime-built URLs already listed above.
+  // absolute URL they had. References inside script bodies are not processed
+  // here, so a URL a script resolves against the document (`new Image().src =
+  // 'rel.png'`) shifts from the original base to the bundle's own directory.
+  // Keeping the tag is not the fix — it would repoint every path just
+  // rewritten back to the original site — and emitting bundle-absolute paths
+  // is impossible in the producer (the serving path carries a token minted
+  // much later). Closing it properly means teaching the scanner to read
+  // JavaScript.
   let effectiveBase = resourceUrl;
   let baseWasRemoved = false;
   let body = text;

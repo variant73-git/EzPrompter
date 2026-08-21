@@ -37,10 +37,10 @@ describe('rewriteDocumentReferences', () => {
     expect(out).not.toMatch(/<base/i);
   });
 
-  // Scope, stated on purpose: this preserves references the SCANNER sees.
-  // A URL a script resolves at runtime still follows the document's base and
-  // is not covered — same class as the other runtime-built URLs (Sol).
-  it('pins leftover relative references when <base> is dropped, so nothing static silently repoints', () => {
+  // Scope, stated on purpose: this preserves the references the scanner sees.
+  // Script bodies are not processed here, so a URL a script resolves against
+  // the document is outside the guarantee (Sol).
+  it('pins leftover relative references when <base> is dropped, so no scanner-visible reference silently repoints', () => {
     // Removing <base href="/img/"> would make an unrewritten `missing.png`
     // resolve against the bundle directory instead of the original base —
     // a silent repoint. It keeps the meaning it had (Sol).
