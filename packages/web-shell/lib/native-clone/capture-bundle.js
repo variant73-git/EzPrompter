@@ -24,6 +24,7 @@ import { createHash } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { chromium as chromiumPadrao } from 'playwright-core';
+import { referenceKindFor, rewriteDocumentReferences } from './rewrite-references.js';
 
 /**
  * SSRF — o produtor GRAVA o corpo de cada resposta num bundle que o usuário vê.
@@ -109,26 +110,6 @@ export function bundlePathForUrl(rawUrl, entryUrl) {
     .replace(/\/{2,}/g, '/')
     .replace(/[^A-Za-z0-9._/-]/g, '_');
 }
-
-/**
- * Reescreve toda referência absoluta que foi capturada para o caminho relativo
- * do bundle. Só troca URLs que EXISTEM no mapa — o que não foi capturado fica
- * como está, e o relatório diz quais são, em vez de quebrar em silêncio.
- */
-export function rewriteReferences(texto, mapa, profundidade = 0) {
-  const subir = profundidade > 0 ? '../'.repeat(profundidade) : './';
-  let saida = texto;
-  // Ordena do mais longo para o mais curto: senão uma URL que é prefixo de
-  // outra substitui primeiro e corrompe a mais longa.
-  const urls = [...mapa.keys()].sort((a, b) => b.length - a.length);
-  for (const url of urls) {
-    if (!saida.includes(url)) continue;
-    saida = saida.split(url).join(`${subir}${mapa.get(url)}`);
-  }
-  return saida;
-}
-
-const TEXTUAL = /\.(html?|css|js|mjs|json|svg|txt|webmanifest)$/i;
 
 /**
  * Candidatos de um valor de `srcset` (defeito 1b, 2026-08-20). A captura só
@@ -319,6 +300,13 @@ export async function captureNativeBundle(url, opts = {}) {
       for (const el of document.querySelectorAll('img[srcset], source[srcset]')) {
         for (const u of parseSrcset(el.getAttribute('srcset'))) push(u);
       }
+      // The plain `src` is skipped by the browser whenever a srcset candidate
+      // wins, so it never reaches the interception — and then the rewriter has
+      // nowhere to point it, leaving a broken fallback (measured 2026-08-21).
+      for (const el of document.querySelectorAll('img[src], source[src], video[poster]')) {
+        const raw = el.getAttribute('src') || el.getAttribute('poster');
+        if (raw) push(raw);
+      }
       for (const el of document.querySelectorAll('[data-srcset]')) {
         for (const u of parseSrcset(el.getAttribute('data-srcset'))) push(u);
       }
@@ -468,10 +456,21 @@ export async function captureNativeBundle(url, opts = {}) {
       }
       const { bytes, contentType } = valor;
       const caminho = mapa.get(u);
-      const profundidade = caminho.split('/').length - 1;
       let corpo = bytes;
-      if (TEXTUAL.test(caminho) || /^(text|application)\/(html|css|javascript|json|xml)/.test(contentType || '')) {
-        let texto = rewriteReferences(bytes.toString('utf8'), mapa, profundidade);
+      // Rewriting is per CONTENT TYPE and by URL position now: a stylesheet
+      // resolves its own relative URLs against ITSELF, and script bodies are
+      // never touched (see rewrite-references.js). The old blind pass only
+      // closed absolute URLs, so `src="/hero.png"` — a file on the site's own
+      // root — stayed unreachable behind the runtime gateway.
+      const kind = referenceKindFor(caminho, contentType);
+      if (kind) {
+        let texto = rewriteDocumentReferences({
+          text: bytes.toString('utf8'),
+          kind,
+          resourceUrl: u,
+          assetPath: caminho,
+          map: mapa,
+        });
         // ⚠️ Reescrever o conteúdo invalida o hash de `integrity=`, e o browser
         // passa a BLOQUEAR o próprio arquivo que acabamos de preservar — a
         // página abriria sem script nenhum. Achado P1 do Sol.

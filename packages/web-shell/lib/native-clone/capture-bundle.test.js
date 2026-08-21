@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bundlePathForUrl, rewriteReferences, srcsetCandidateUrls } from './capture-bundle.js';
+import { bundlePathForUrl, srcsetCandidateUrls } from './capture-bundle.js';
 
 describe('srcsetCandidateUrls (defect 1b, 2026-08-20)', () => {
   // The capture only saved the srcset candidate the browser happened to pick
@@ -30,15 +30,6 @@ describe('srcsetCandidateUrls (defect 1b, 2026-08-20)', () => {
     expect(srcsetCandidateUrls('  https://a/x.png   2x  ,   https://a/y.png 3x  ')).toEqual([
       'https://a/x.png', 'https://a/y.png',
     ]);
-  });
-});
-
-describe('rewriteReferences guardrails', () => {
-  it('rewrites mapped urls and leaves unmapped ones alone', () => {
-    const mapa = new Map([['https://cdn.test/app.js', '_ext/cdn.test/app.js']]);
-    const saida = rewriteReferences('<script src="https://cdn.test/app.js"></script><img src="https://cdn.test/miss.png">', mapa);
-    expect(saida).toContain('./_ext/cdn.test/app.js');
-    expect(saida).toContain('https://cdn.test/miss.png');
   });
 });
 
