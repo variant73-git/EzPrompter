@@ -22,6 +22,7 @@ import { isLiveUrlReference } from '../lib/url-reference.js';
 import { designPanelModel } from '../lib/design-md-preview.js';
 import { decideEditAction } from '../lib/edit-action-decision.js';
 import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
+import { useDevEngine } from './use-dev-engine.js';
 import DesignMdCard from './DesignMdCard.jsx';
 
 // The canvas inspector is intentionally contextual. With no selection it
@@ -243,7 +244,8 @@ function WebsiteActions({ node, onEditSite, onUpgradeRequired, plan, busy = fals
   // predicate said "Edit" for a click that costs credits), and an integrity
   // failure never charges (the old predicate sent free users to an upsell for
   // a charge the server refuses with 409).
-  const decision = decideEditAction({ node, engineOverride: resolveEditEngineOverride(node) });
+  const devEngine = useDevEngine();
+  const decision = decideEditAction({ node, engineOverride: resolveEditEngineOverride(node, devEngine) });
   const cloneRequired = decision.billable;
   const cloneAllowed = canUseCloneEdit(plan);
   const cloneLocked = cloneRequired && !cloneAllowed;

@@ -23,6 +23,7 @@ import { NODE_EDITOR_KIND } from '../lib/node-editor-kind.js';
 import { isLiveUrlReference, shouldMountLiveReference } from '../lib/url-reference.js';
 import { decideEditAction } from '../lib/edit-action-decision.js';
 import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
+import { useDevEngine } from './use-dev-engine.js';
 import { playfulLoadingMessage } from '../lib/loading-messages.js';
 
 const DRAG_THRESHOLD = 4;
@@ -1064,7 +1065,10 @@ export default function CanvasNode({
   const canEditSite = renderIframeBody && Boolean(html || liveUrlReference || nativeEditor);
   // Shared with the canvas handler and the inspector so the three surfaces
   // never disagree about what a press on Edit costs (Sol r3, 2026-08-20).
-  const editDecision = decideEditAction({ node, engineOverride: resolveEditEngineOverride(node) });
+  // The dev override arrives AFTER mount: reading storage during render would
+  // hydrate a different label than the server rendered (Sol r4).
+  const devEngine = useDevEngine();
+  const editDecision = decideEditAction({ node, engineOverride: resolveEditEngineOverride(node, devEngine) });
   const openEditorTitle = nativeEditor
     ? 'Open animated website editor'
     : liveUrlReference
