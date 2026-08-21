@@ -4636,14 +4636,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       // convert an already-editable node (Sol review 2026-08-17 #3). A match
       // resolves to null (the selector means "which machinery", not "re-run
       // every Edit"), letting the default fast paths below open Edit directly.
-      const engineOverride = resolveEditEngineOverride(node);
-      // ONE decision shared with the inspector and the node button (Sol r3,
-      // 2026-08-20): integrity failure = repair, never an upsell; billable =
-      // exactly what the server runs and charges (nominal engine, or the
-      // legacy auto-upgrade). The server-side gate stays authoritative.
+      // A deliberate repair is a NOMINAL native request: the doctrine's clone
+      // is the animated one, and the server runs (and bills) any nominal
+      // engine. Surfaces that offer "Repair clone" show the cost and the plan
+      // lock exactly like "Clone & Edit" (Sol final round #3).
+      const engineOverride = details.repair ? 'native' : resolveEditEngineOverride(node);
+      // ONE decision shared with the inspector, the node button and the node
+      // menu (Sol r3): integrity failure = repair, never an upsell; billable =
+      // exactly what the server runs and charges. The server-side gate stays
+      // authoritative.
       const decision = decideEditAction({ node, engineOverride });
       if (decision.integrityError) {
-        toast.error('This clone needs repair — re-clone it from the node menu.');
+        toast.error('This clone needs repair — use "Repair clone" to rebuild it.');
         return;
       }
       if (decision.billable && !canUseCloneEdit(user?.plan)) {
@@ -6470,7 +6474,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           || (selectedNode._loading && !selectedNode._challenge)
           || String(selectedNode.id).startsWith('temp-')
         ))}
-        onEditSite={() => selectedSiteNode && handleEditingToggle(selectedSiteNode.id, true)}
+        onEditSite={(details) => selectedSiteNode && handleEditingToggle(selectedSiteNode.id, true, details || {})}
         onUpgradeRequired={() => setPlansOpen(true)}
         onFrameChange={(id, patch) => {
           // Same path a drag/resize commit takes: optimistic local update +

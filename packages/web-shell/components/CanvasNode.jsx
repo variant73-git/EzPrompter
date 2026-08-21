@@ -24,6 +24,7 @@ import { isLiveUrlReference, shouldMountLiveReference } from '../lib/url-referen
 import { decideEditAction } from '../lib/edit-action-decision.js';
 import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
 import { useDevEngine } from './use-dev-engine.js';
+import { CLONE_EDIT_CREDIT_ESTIMATE } from '../lib/billing/pricing.js';
 import { playfulLoadingMessage } from '../lib/loading-messages.js';
 
 const DRAG_THRESHOLD = 4;
@@ -1315,7 +1316,7 @@ export default function CanvasNode({
                 e.stopPropagation();
                 if (editorBusy) return;
                 if (editing) saveAndExit();
-                else onEditingChange?.(true);
+                else onEditingChange?.(true, editDecision.integrityError ? { repair: true } : undefined);
               }}
               title={editing ? 'Save and exit edit mode' : openEditorTitle}
               disabled={editorBusy}
@@ -1326,7 +1327,7 @@ export default function CanvasNode({
                   iff this press actually bills (nominal engine, or the legacy
                   auto-upgrade), "Repair" when the clone's lineage doesn't
                   close, and a plain free "Edit" otherwise. */}
-              <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : editDecision.integrityError ? 'Repair' : editDecision.billable ? 'Clone & Edit' : 'Edit'}</span>
+              <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : editDecision.integrityError ? 'Repair clone' : editDecision.billable ? 'Clone & Edit' : 'Edit'}</span>
             </button>
           )}
         </div>
@@ -1977,7 +1978,9 @@ export default function CanvasNode({
           canRemoveFromSection={inSection}
           editing={editing}
           canCloneIter9={node.kind === 'site' && !!node.origin_url && !editing && !!onCloneIter9}
-          onEdit={() => { setMenuPos(null); onEditingChange?.(!editing); }}
+          editDecision={editDecision}
+          cloneCost={CLONE_EDIT_CREDIT_ESTIMATE}
+          onEdit={() => { setMenuPos(null); onEditingChange?.(!editing, editDecision.integrityError ? { repair: true } : undefined); }}
           onCloneIter9={() => { setMenuPos(null); onCloneIter9?.(node.id); }}
           onDuplicate={() => { setMenuPos(null); onDuplicate?.(); }}
           onDownload={() => { setMenuPos(null); onDownload?.(); }}
@@ -1993,7 +1996,7 @@ export default function CanvasNode({
   );
 }
 
-function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, canRemoveFromSection, canCloneIter9, editing, onEdit, onCloneIter9, onDuplicate, onDownload, onReplace, onReset, onRemoveFromSection, onDelete, onClose }) {
+function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, canRemoveFromSection, canCloneIter9, editing, editDecision, cloneCost, onEdit, onCloneIter9, onDuplicate, onDownload, onReplace, onReset, onRemoveFromSection, onDelete, onClose }) {
   // Clamp to viewport so the menu stays fully visible. Width matches
   // .empty-drop-menu (260px) so this reads as the same family of menu.
   const W = 260, H_EST = 240;
@@ -2011,9 +2014,19 @@ function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, canRemoveFromS
       onContextMenu={(e) => e.preventDefault()}
     >
       {canEdit && (
+        // Fourth entry point, same shared decision (Sol final round): a plain
+        // "Edit" here used to fire a billed clone (or the paywall) on a legacy
+        // node while promising nothing about cost.
         <button onClick={onEdit}>
           {editing ? <CheckIcon /> : <EditIcon />}
-          <span>{editing ? 'Done' : 'Edit'}</span>
+          <span>
+            {editing ? 'Done'
+              : editDecision?.integrityError ? 'Repair clone'
+              : editDecision?.billable ? 'Clone & Edit' : 'Edit'}
+          </span>
+          {!editing && (editDecision?.billable || editDecision?.integrityError) && cloneCost != null && (
+            <span className="cnode-menu-cost">{cloneCost} credits</span>
+          )}
         </button>
       )}
       {/* Doutrina (2026-08-15): "clone" e' o ANIMADO — Edit ja o produz. O

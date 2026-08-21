@@ -40,10 +40,21 @@ export function getDevEngine() {
   }
 }
 
+// Same-document storage writes do NOT fire the `storage` event, so surfaces
+// reading the choice would keep a stale label after the widget switches
+// engines — and the label talks about money (Sol final round). The setter
+// announces the change; `storage` still covers other tabs.
+export const DEV_ENGINE_EVENT = 'uncraft:dev-engine';
+
 export function setDevEngine(engine) {
   if (typeof localStorage === 'undefined') return;
-  if (DEV_ENGINES.includes(engine)) localStorage.setItem(DEV_ENGINE_KEY, engine);
-  else localStorage.removeItem(DEV_ENGINE_KEY);
+  try {
+    if (DEV_ENGINES.includes(engine)) localStorage.setItem(DEV_ENGINE_KEY, engine);
+    else localStorage.removeItem(DEV_ENGINE_KEY);
+  } catch { /* storage unavailable: the in-memory widget state still applies */ }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(DEV_ENGINE_EVENT));
+  }
 }
 
 /**

@@ -1,20 +1,28 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { getDevEngine } from '../lib/dev-toggles.js';
+import { useSyncExternalStore } from 'react';
+import { DEV_ENGINE_EVENT, getDevEngine } from '../lib/dev-toggles.js';
+
+function subscribe(onChange) {
+  window.addEventListener(DEV_ENGINE_EVENT, onChange);   // same document
+  window.addEventListener('storage', onChange);          // other tabs
+  return () => {
+    window.removeEventListener(DEV_ENGINE_EVENT, onChange);
+    window.removeEventListener('storage', onChange);
+  };
+}
 
 /**
- * The dev widget's engine choice, read AFTER mount.
+ * The dev widget's engine choice, kept in sync across every surface.
  *
- * The canvas is a client component but Next still renders it on the server,
- * where `localStorage` does not exist. Reading the override during render
- * would make the server emit "Edit" and the client "Clone & Edit" for the
- * same button — a hydration mismatch on a label that talks about money.
- * First paint therefore matches the server (no override); the stored choice
- * lands one tick later, which is right for a pre-launch dev-only lever.
+ * Two hazards this closes, both about a label that talks about money:
+ *  - the canvas is a client component that Next STILL renders on the server,
+ *    where `localStorage` does not exist; the server snapshot is therefore
+ *    `null`, so first paint matches and hydration cannot diverge;
+ *  - a same-document storage write fires no `storage` event, so a one-shot
+ *    read would go stale the moment the widget switches engines — the button
+ *    would say "Edit" while the click bills a clone (Sol final round).
  */
 export function useDevEngine() {
-  const [engine, setEngine] = useState(null);
-  useEffect(() => { setEngine(getDevEngine()); }, []);
-  return engine;
+  return useSyncExternalStore(subscribe, getDevEngine, () => null);
 }

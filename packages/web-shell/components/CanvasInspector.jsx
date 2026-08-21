@@ -246,13 +246,18 @@ function WebsiteActions({ node, onEditSite, onUpgradeRequired, plan, busy = fals
   // a charge the server refuses with 409).
   const devEngine = useDevEngine();
   const decision = decideEditAction({ node, engineOverride: resolveEditEngineOverride(node, devEngine) });
-  const cloneRequired = decision.billable;
+  const needsRepair = decision.integrityError;
+  // A repair rebuilds the clone through the native engine — a nominal, billed
+  // operation. It must disclose the cost and honour the plan lock exactly
+  // like "Clone & Edit"; promising "Repair" for free would be the same
+  // dishonesty in reverse (Sol final round #3).
+  const cloneRequired = decision.billable || needsRepair;
   const cloneAllowed = canUseCloneEdit(plan);
   const cloneLocked = cloneRequired && !cloneAllowed;
-  const needsRepair = decision.integrityError;
+  const actionName = needsRepair ? 'Repair clone' : 'Clone & Edit';
   const cloneLabel = cloneLocked
-    ? `Clone & Edit, paid plans only, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`
-    : `Clone & Edit, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`;
+    ? `${actionName}, paid plans only, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`
+    : `${actionName}, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`;
   return (
     <div className="cinsp-primary-action">
       <div>
@@ -263,13 +268,13 @@ function WebsiteActions({ node, onEditSite, onUpgradeRequired, plan, busy = fals
         type="button"
         className={cloneRequired ? 'cinsp-clone-edit' : undefined}
         data-subscriber-feature={cloneRequired ? (cloneLocked ? 'locked' : 'available') : undefined}
-        aria-label={needsRepair ? 'Repair clone' : cloneRequired ? cloneLabel : 'Edit'}
-        title={cloneLocked ? 'Available on paid plans' : needsRepair ? 'This clone needs repair' : undefined}
+        aria-label={cloneRequired ? cloneLabel : 'Edit'}
+        title={cloneLocked ? 'Available on paid plans' : needsRepair ? "This clone's files don't match — rebuild it" : undefined}
         disabled={busy}
-        onClick={cloneLocked ? onUpgradeRequired : onEditSite}
+        onClick={cloneLocked ? onUpgradeRequired : () => onEditSite?.(needsRepair ? { repair: true } : undefined)}
       >
         {cloneRequired ? <Zap aria-hidden="true" /> : <Pencil aria-hidden="true" />}
-        <span>{needsRepair ? 'Repair' : cloneRequired ? 'Clone & Edit' : 'Edit'}</span>
+        <span>{needsRepair ? 'Repair clone' : cloneRequired ? 'Clone & Edit' : 'Edit'}</span>
         {cloneRequired && <span className="cinsp-clone-cost">{CLONE_EDIT_CREDIT_ESTIMATE} credits</span>}
       </button>
       {openDisabled ? (
