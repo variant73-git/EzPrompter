@@ -24,6 +24,12 @@ import { createHash } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { chromium as chromiumPadrao } from 'playwright-core';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  PREVIEW_VIDEO_PATH, PREVIEW_VIDEO_MAX_BYTES, PREVIEW_VIDEO_SIZE, previewCaptureEnabled,
+} from '../preview-video.js';
 
 /**
  * SSRF — o produtor GRAVA o corpo de cada resposta num bundle que o usuário vê.
@@ -139,8 +145,40 @@ const TEXTUAL = /\.(html?|css|js|mjs|json|svg|txt|webmanifest)$/i;
  * @param {object} [opts.browser] navegador já aberto (para teste)
  * @returns {Promise<{kind:'native', bundle:object, relatorio:object}>}
  */
+/**
+ * Anexa o vídeo do preview ao bundle. Exportada porque é a parte que pode
+ * ERRAR (teto, arquivo vazio, leitura falha) e precisa de teste próprio — a
+ * gravação em si é comportamento do Playwright, provado por testemunha.
+ *
+ * Contrato: fail-open TOTAL. Qualquer problema vira uma linha em `descartados`
+ * e o clone segue inteiro; o node volta a mostrar o PNG, que é o de hoje.
+ */
+export async function anexarPreviewAoBundle({ assets, descartados, gravacao, ler = readFile }) {
+  if (!gravacao) return null;
+  try {
+    const caminho = await gravacao.path();
+    if (!caminho) { descartados.push({ u: PREVIEW_VIDEO_PATH, motivo: 'preview sem arquivo' }); return null; }
+    const bytes = await ler(caminho);
+    if (!bytes || bytes.byteLength === 0) {
+      descartados.push({ u: PREVIEW_VIDEO_PATH, motivo: 'preview vazio' });
+      return null;
+    }
+    if (bytes.byteLength > PREVIEW_VIDEO_MAX_BYTES) {
+      descartados.push({ u: PREVIEW_VIDEO_PATH, motivo: `preview grande demais (${bytes.byteLength}B)` });
+      return null;
+    }
+    const asset = { path: PREVIEW_VIDEO_PATH, body: new Uint8Array(bytes), contentType: 'video/webm' };
+    assets.push(asset);
+    return asset;
+  } catch (e) {
+    descartados.push({ u: PREVIEW_VIDEO_PATH, motivo: `preview falhou: ${String(e?.message || e).slice(0, 80)}` });
+    return null;
+  }
+}
+
 export async function captureNativeBundle(url, opts = {}) {
-  const { onProgress = () => {}, viewport = { width: 1440, height: 900 }, chromium, signal } = opts;
+  const { onProgress = () => {}, viewport = { width: 1440, height: 900 }, chromium, signal,
+    preview = previewCaptureEnabled() } = opts;
 
   // A URL de ENTRADA passa pelo mesmo bloqueio dos subrecursos.
   const alvo = new URL(url);
@@ -160,6 +198,7 @@ export async function captureNativeBundle(url, opts = {}) {
   // ⚠️ O `Promise.race` de fora rejeita, mas nada cancelava a captura — o
   // navegador seguia rolando por horas numa página gigante. Achado P0 do Sol.
   let cancelado = false;
+  let dirVideo = null;
   const aoCancelar = () => { cancelado = true; browser.close().catch(() => {}); };
   if (signal) {
     if (signal.aborted) { await browser.close().catch(() => {}); throw Object.assign(new Error('native_bundle_aborted'), { code: 'aborted' }); }
@@ -167,8 +206,18 @@ export async function captureNativeBundle(url, opts = {}) {
   }
 
   try {
-    const context = await browser.newContext({ viewport });
+    // ⏺️ PREVIEW ANIMADO — grava a passada de scroll que já acontece logo abaixo.
+    // O diretório é temporário e some no `finally`; falha aqui NUNCA derruba o
+    // clone (fail-open), o node só volta a mostrar o PNG.
+    if (preview) {
+      dirVideo = await mkdtemp(join(tmpdir(), 'uncraft-preview-')).catch(() => null);
+    }
+    const context = await browser.newContext({
+      viewport,
+      ...(dirVideo ? { recordVideo: { dir: dirVideo, size: PREVIEW_VIDEO_SIZE } } : {}),
+    });
     const page = await context.newPage();
+    const gravacao = dirVideo ? page.video() : null;
 
     page.on('response', (res) => {
       const tarefa = (async () => {
@@ -288,6 +337,10 @@ export async function captureNativeBundle(url, opts = {}) {
     await context.close();
     onProgress({ etapa: 'finalizing' });
 
+    // O arquivo só existe depois de `context.close()` — é aí que o Playwright
+    // fecha o container. Tudo aqui é fail-open: sem vídeo, o node usa o PNG.
+    await anexarPreviewAoBundle({ assets, descartados, gravacao });
+
     return {
       kind: 'native',
       bundle: {
@@ -313,5 +366,9 @@ export async function captureNativeBundle(url, opts = {}) {
     };
   } finally {
     await browser.close().catch(() => {});
+    // O diretório temporário do vídeo some SEMPRE — inclusive quando o clone
+    // falhou no meio. Em serverless o /tmp é pequeno e compartilhado entre
+    // invocações: deixar arquivo para trás enche o disco silenciosamente.
+    if (dirVideo) await rm(dirVideo, { recursive: true, force: true }).catch(() => {});
   }
 }
