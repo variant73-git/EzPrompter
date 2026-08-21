@@ -24,6 +24,15 @@ describe('srcsetCandidateUrls (defect 1b, 2026-08-20)', () => {
     ]);
   });
 
+  it('parses a first candidate with NO descriptor (the comma is the separator)', () => {
+    // `srcset="a.png, a_2x.png 2x"` is ordinary markup (Apple uses it across a
+    // whole page). The greedy scan swallowed the separating comma as part of
+    // the first token and treated the rest as its descriptor, so every later
+    // candidate was lost — and those images end up unreachable in the clone.
+    expect(srcsetCandidateUrls('/a/m.png, /a/m_2x.png 2x')).toEqual(['/a/m.png', '/a/m_2x.png']);
+    expect(srcsetCandidateUrls('x.png, y.png 2x, z.png 3x')).toEqual(['x.png', 'y.png', 'z.png']);
+  });
+
   it('tolerates whitespace-heavy and empty input', () => {
     expect(srcsetCandidateUrls('')).toEqual([]);
     expect(srcsetCandidateUrls(null)).toEqual([]);

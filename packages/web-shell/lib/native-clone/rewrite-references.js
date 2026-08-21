@@ -31,6 +31,28 @@ import { posix } from 'node:path';
 
 const HTML_URL_ATTRS = 'src|href|poster|data-src|data-original|data-bg|data-image';
 
+/**
+ * HTML attribute values carry ENTITIES: a Next.js image reference is written
+ * `_next/image?url=…&amp;w=3840`, while the captured response URL has a plain
+ * `&`. Comparing the raw text against the map therefore never matched, and
+ * every optimised image on such a site stayed unreachable (measured on a real
+ * Next site, 2026-08-21). Decode before resolving; re-encode when writing back
+ * into markup, so the document stays valid.
+ */
+function decodeEntities(value) {
+  return value
+    .replace(/&(?:amp|AMP);/g, '&')
+    .replace(/&(?:#38|#x26);/g, '&')
+    .replace(/&(?:quot|#34);/g, '"')
+    .replace(/&(?:apos|#39);/g, "'")
+    .replace(/&(?:lt|#60);/g, '<')
+    .replace(/&(?:gt|#62);/g, '>');
+}
+
+function encodeForMarkup(value) {
+  return value.replace(/&/g, '&amp;');
+}
+
 function splitFragment(value) {
   const hash = value.indexOf('#');
   return hash === -1 ? [value, ''] : [value.slice(0, hash), value.slice(hash)];
@@ -38,13 +60,22 @@ function splitFragment(value) {
 
 /** Candidate URLs inside one srcset/imagesrcset value, with their offsets. */
 function srcsetTokens(value, base) {
+  // Offsets matter here, so the scan walks the string once. A token runs to
+  // whitespace; a trailing comma means "no descriptor, next candidate now"
+  // (the same spec rule the capture side follows). Commas inside data: URLs
+  // are never at the end of a token, so they stay intact.
   const tokens = [];
-  const re = /(^|,)\s*([^\s,]+)/g;
-  let m;
-  while ((m = re.exec(value))) {
-    const raw = m[2].replace(/,+$/, '');
-    if (!raw) continue;
-    tokens.push({ start: base + m.index + m[0].length - m[2].length, end: base + m.index + m[0].length - m[2].length + raw.length, raw });
+  let i = 0;
+  while (i < value.length) {
+    while (i < value.length && /[,\s]/.test(value[i])) i += 1;
+    if (i >= value.length) break;
+    const start = i;
+    while (i < value.length && !/\s/.test(value[i])) i += 1;
+    const token = value.slice(start, i);
+    const raw = token.replace(/,+$/, '');
+    if (raw) tokens.push({ start: base + start, end: base + start + raw.length, raw });
+    if (token.endsWith(',')) continue;
+    while (i < value.length && value[i] !== ',') i += 1;
   }
   return tokens;
 }
@@ -146,8 +177,10 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
   if (!tokens.length) return text;
   const fromDir = posix.dirname(assetPath);
   const edits = [];
+  const markup = kind === 'html' || kind === 'svg';
   for (const token of tokens) {
-    const [withoutHash, hash] = splitFragment(token.raw);
+    const decoded = markup ? decodeEntities(token.raw) : token.raw;
+    const [withoutHash, hash] = splitFragment(decoded);
     if (!withoutHash || withoutHash.startsWith('data:') || withoutHash.startsWith('#')) continue;
     let absolute;
     try { absolute = new URL(withoutHash, resourceUrl).href; } catch { continue; }
@@ -155,7 +188,8 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
     if (!target) continue;
     let relative = posix.relative(fromDir === '.' ? '' : fromDir, target);
     if (!relative.startsWith('.')) relative = `./${relative}`;
-    edits.push({ start: token.start, end: token.end, value: `${relative}${hash}` });
+    const replacement = `${relative}${hash}`;
+    edits.push({ start: token.start, end: token.end, value: markup ? encodeForMarkup(replacement) : replacement });
   }
   if (!edits.length) return text;
   // Back to front: an earlier replacement can never be re-scanned or shift

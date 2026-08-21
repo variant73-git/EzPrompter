@@ -126,15 +126,22 @@ export function srcsetCandidateUrls(value) {
   const urls = [];
   let rest = value.trim();
   while (rest) {
-    const match = /^[,\s]*([^\s,]\S*)/.exec(rest);
-    if (!match) break;
-    let url = match[1];
-    // Vírgulas finais pertencem ao separador, não à URL (`a.png,b.png` não
-    // acontece: o formato exige descriptor ou espaço antes da vírgula).
-    url = url.replace(/,+$/, '');
+    rest = rest.replace(/^[,\s]+/, '');
+    if (!rest) break;
+    // A candidate runs to the next whitespace. Per the HTML spec the comma is
+    // only a separator: if the token ENDS with commas, this candidate has no
+    // descriptor and the next one starts right after. Scanning greedily past
+    // the comma (the old `\S*`) swallowed the separator and turned every
+    // later candidate into a "descriptor" — `srcset="a.png, a_2x.png 2x"`
+    // yielded ONE url, and the rest became unreachable images in the clone
+    // (measured on a real site, 2026-08-21). Commas inside a data: URL are
+    // safe because they never sit at the end of the token.
+    const token = /^\S+/.exec(rest)[0];
+    rest = rest.slice(token.length);
+    const url = token.replace(/,+$/, '');
     if (url) urls.push(url);
-    rest = rest.slice(match.index + match[0].length);
-    // Consome o descriptor (tudo até a próxima vírgula fora de parênteses).
+    if (token.endsWith(',')) continue;
+    // Otherwise skip this candidate's descriptor, up to the separating comma.
     let depth = 0;
     let i = 0;
     while (i < rest.length) {
@@ -148,6 +155,7 @@ export function srcsetCandidateUrls(value) {
   }
   return urls;
 }
+
 
 /**
  * Captura uma URL como bundle nativo.
@@ -270,11 +278,13 @@ export async function captureNativeBundle(url, opts = {}) {
         const urls = [];
         let rest = value.trim();
         while (rest) {
-          const match = /^[,\s]*([^\s,]\S*)/.exec(rest);
-          if (!match) break;
-          const url = match[1].replace(/,+$/, '');
+          rest = rest.replace(/^[,\s]+/, '');
+          if (!rest) break;
+          const token = /^\S+/.exec(rest)[0];
+          rest = rest.slice(token.length);
+          const url = token.replace(/,+$/, '');
           if (url) urls.push(url);
-          rest = rest.slice(match.index + match[0].length);
+          if (token.endsWith(',')) continue;
           let depth = 0;
           let i = 0;
           while (i < rest.length) {
@@ -313,6 +323,11 @@ export async function captureNativeBundle(url, opts = {}) {
       for (const el of document.querySelectorAll('link[imagesrcset]')) {
         for (const u of parseSrcset(el.getAttribute('imagesrcset'))) push(u);
       }
+      // Icons: the browser fetches at most the one it picks for the tab, so
+      // the alternates stay uncaptured and their references end up blocked.
+      for (const el of document.querySelectorAll('link[rel*="icon"][href], link[rel="apple-touch-icon"][href]')) {
+        push(el.getAttribute('href'));
+      }
       const urlRe = () => /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
       for (const sheet of document.styleSheets) {
         let rules;
@@ -332,7 +347,10 @@ export async function captureNativeBundle(url, opts = {}) {
         while ((m = re.exec(text))) push(m[2]);
       }
       return candidatos.slice(0, cap);
-    }, 300).catch(() => []);
+      // The budget is the BUNDLE's remaining room, not an invented number: a
+      // fixed 300 silently cut a big catalogue page's images (measured on a
+      // real site, 2026-08-21). MAX_ASSETS still bounds the whole capture.
+    }, Math.max(0, MAX_ASSETS - recursos.size)).catch(() => []);
     const aprovados = [];
     for (const u of candidatosBrutos) {
       if (cancelado) break;
