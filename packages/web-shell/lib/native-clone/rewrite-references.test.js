@@ -37,6 +37,16 @@ describe('rewriteDocumentReferences', () => {
     expect(out).not.toMatch(/<base/i);
   });
 
+  it('pins leftover relative references when <base> is dropped, so nothing silently repoints', () => {
+    // Removing <base href="/img/"> would make an unrewritten `missing.png`
+    // resolve against the bundle directory instead of the original base —
+    // a silent repoint. It keeps the meaning it had (Sol).
+    const out = html('<base href="/img/"><img src="deep.png"><img src="missing.png">');
+    expect(out).toContain('src="./img/deep.png"');
+    expect(out).toContain('src="https://s.test/img/missing.png"');
+    expect(out).not.toMatch(/<base/i);
+  });
+
   it('a comment mentioning <script> does not blind the rest of the document', () => {
     // The scan treated the mentioned tag as real and skipped everything after
     // it, leaving every later reference pointing at the live site (Sol).

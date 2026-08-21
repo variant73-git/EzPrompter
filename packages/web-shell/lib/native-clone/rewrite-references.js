@@ -33,8 +33,8 @@ import { posix } from 'node:path';
  *    alone (writing one back could break the tag).
  *  - CSS escapes (`url(foo\)bar.png)`) and entity-encoded whitespace inside
  *    srcset (`&#32;`) need real tokenizers to read; both are rare in built
- *    output, and a miss leaves the original reference untouched — never a
- *    corrupted document.
+ *    output, and a miss leaves the original reference untouched — it points
+ *    outward and the gateway CSP blocks it, but it never MOVES.
  */
 
 const HTML_URL_ATTRS = 'src|href|poster|data-src|data-original|data-bg|data-image';
@@ -207,6 +207,7 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
   // from the bundle: it names the ORIGINAL origin, so keeping it would send
   // every relative path we just wrote back out to the internet (Sol).
   let effectiveBase = resourceUrl;
+  let baseWasRemoved = false;
   let body = text;
   if (kind === 'html') {
     const baseTag = /<base\b[^>]*\bhref\s*=\s*(["'])([^"']*)\1[^>]*>/i.exec(
@@ -215,6 +216,7 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
     if (baseTag && baseTag[2]) {
       try { effectiveBase = new URL(decodeEntities(baseTag[2]), resourceUrl).href; } catch { /* keep own URL */ }
       body = `${text.slice(0, baseTag.index)}${' '.repeat(baseTag[0].length)}${text.slice(baseTag.index + baseTag[0].length)}`;
+      baseWasRemoved = true;
     }
   }
   const tokens = tokensFor(body, kind);
@@ -230,7 +232,18 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
     let absolute;
     try { absolute = new URL(withoutHash, resolveBase).href; } catch { continue; }
     const target = map.get(absolute);
-    if (!target) continue;
+    if (!target) {
+      // Dropping <base> changes what an UNREWRITTEN relative reference means:
+      // it would start resolving against the bundle directory instead of the
+      // original base. Pin those to the absolute URL they had, so removing the
+      // tag cannot silently repoint anything (Sol). They stay external — the
+      // gateway CSP blocks them either way — but they no longer LIE.
+      if (baseWasRemoved && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(withoutHash) && !withoutHash.startsWith('//')) {
+        const pinned = `${absolute}${hash}`;
+        edits.push({ start: token.start, end: token.end, value: markup ? encodeForMarkup(pinned) : pinned });
+      }
+      continue;
+    }
     let relative = posix.relative(fromDir === '.' ? '' : fromDir, target);
     if (!relative.startsWith('.')) relative = `./${relative}`;
     const replacement = `${relative}${hash}`;
