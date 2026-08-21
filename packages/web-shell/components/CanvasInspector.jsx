@@ -20,7 +20,8 @@ import { canUseCloneEdit } from '../lib/clone-edit-access.js';
 import { CLONE_EDIT_CREDIT_ESTIMATE } from '../lib/billing/pricing.js';
 import { isLiveUrlReference } from '../lib/url-reference.js';
 import { designPanelModel } from '../lib/design-md-preview.js';
-import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
+import { decideEditAction } from '../lib/edit-action-decision.js';
+import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
 import DesignMdCard from './DesignMdCard.jsx';
 
 // The canvas inspector is intentionally contextual. With no selection it
@@ -236,12 +237,17 @@ function WebsiteActions({ node, onEditSite, onUpgradeRequired, plan, busy = fals
   // (capturing/cloning) OR when neither exists — a blank "Connect to…" node
   // would otherwise open a guaranteed 404 (adversarial review Codex #3).
   const openDisabled = busy || (!node.current_snapshot_id && !node.origin_url);
-  // ONE predicate for label, credit disclosure, and plan gate — the same one
-  // the reconstruction policy uses to decide the billed clone (Sol 2026-08-17
-  // #1: a legacy URL-backed snapshot said "Edit" but charged as clone.edit).
-  const cloneRequired = shouldReconstructForAction({ node, role: 'edit' });
+  // ONE decision for label, credit disclosure and plan gate — shared with the
+  // canvas handler and the node button (Sol r3, 2026-08-20). It must be what
+  // the SERVER bills: a nominal engine charges even on a ready node (the old
+  // predicate said "Edit" for a click that costs credits), and an integrity
+  // failure never charges (the old predicate sent free users to an upsell for
+  // a charge the server refuses with 409).
+  const decision = decideEditAction({ node, engineOverride: resolveEditEngineOverride(node) });
+  const cloneRequired = decision.billable;
   const cloneAllowed = canUseCloneEdit(plan);
   const cloneLocked = cloneRequired && !cloneAllowed;
+  const needsRepair = decision.integrityError;
   const cloneLabel = cloneLocked
     ? `Clone & Edit, paid plans only, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`
     : `Clone & Edit, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`;
@@ -255,13 +261,13 @@ function WebsiteActions({ node, onEditSite, onUpgradeRequired, plan, busy = fals
         type="button"
         className={cloneRequired ? 'cinsp-clone-edit' : undefined}
         data-subscriber-feature={cloneRequired ? (cloneLocked ? 'locked' : 'available') : undefined}
-        aria-label={cloneRequired ? cloneLabel : 'Edit'}
-        title={cloneLocked ? 'Available on paid plans' : undefined}
+        aria-label={needsRepair ? 'Repair clone' : cloneRequired ? cloneLabel : 'Edit'}
+        title={cloneLocked ? 'Available on paid plans' : needsRepair ? 'This clone needs repair' : undefined}
         disabled={busy}
         onClick={cloneLocked ? onUpgradeRequired : onEditSite}
       >
         {cloneRequired ? <Zap aria-hidden="true" /> : <Pencil aria-hidden="true" />}
-        <span>{cloneRequired ? 'Clone & Edit' : 'Edit'}</span>
+        <span>{needsRepair ? 'Repair' : cloneRequired ? 'Clone & Edit' : 'Edit'}</span>
         {cloneRequired && <span className="cinsp-clone-cost">{CLONE_EDIT_CREDIT_ESTIMATE} credits</span>}
       </button>
       {openDisabled ? (

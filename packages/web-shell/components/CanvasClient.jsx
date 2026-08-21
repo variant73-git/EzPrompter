@@ -34,7 +34,8 @@ import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
 import { findSectionTerminals, planIncrementalRun, planRunFromNode, nodeInputSignature, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
 import { buildNodesClipboardPayload, parseNodesClipboardText, payloadToPasteItems } from '../lib/node-clipboard.js';
 import { estimateChain } from '../lib/billing/pricing.js';
-import { reconstructionReason, shouldReconstructForAction } from '../lib/reconstruction-policy.js';
+import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
+import { decideEditAction } from '../lib/edit-action-decision.js';
 import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
 import DevWidget from './DevWidget.jsx';
 import { canUseCloneEdit } from '../lib/clone-edit-access.js';
@@ -4636,21 +4637,16 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       // resolves to null (the selector means "which machinery", not "re-run
       // every Edit"), letting the default fast paths below open Edit directly.
       const engineOverride = resolveEditEngineOverride(node);
-      // Integrity guard BEFORE the plan gate (Claude review 2026-08-20 #3):
-      // an inconsistent native claim never bills — the server 409s — so a
-      // free user must see the repair message, not an upsell modal promising
-      // a charge the server will refuse.
-      if (classifyNativeLineage(node) === NATIVE_LINEAGE.INCONSISTENT && !engineOverride) {
+      // ONE decision shared with the inspector and the node button (Sol r3,
+      // 2026-08-20): integrity failure = repair, never an upsell; billable =
+      // exactly what the server runs and charges (nominal engine, or the
+      // legacy auto-upgrade). The server-side gate stays authoritative.
+      const decision = decideEditAction({ node, engineOverride });
+      if (decision.integrityError) {
         toast.error('This clone needs repair — re-clone it from the node menu.');
         return;
       }
-      // Plan gate keyed on what actually bills (Sol 2026-08-17 #1 + r2 #3,
-      // 2026-08-20): the 'edit' reason (auto-upgrade of legacy lineage) AND
-      // any nominal engine request — the server treats a nominal engine as an
-      // executable billed operation regardless of readiness. The server-side
-      // plan gate stays authoritative either way.
-      if ((engineOverride != null || reconstructionReason({ node, role: 'edit' }) === 'edit')
-          && !canUseCloneEdit(user?.plan)) {
+      if (decision.billable && !canUseCloneEdit(user?.plan)) {
         setPlansOpen(true);
         return;
       }

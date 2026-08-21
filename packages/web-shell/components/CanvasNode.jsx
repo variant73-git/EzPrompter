@@ -21,7 +21,8 @@ import {
 } from '../lib/node-viewport.js';
 import { NODE_EDITOR_KIND } from '../lib/node-editor-kind.js';
 import { isLiveUrlReference, shouldMountLiveReference } from '../lib/url-reference.js';
-import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
+import { decideEditAction } from '../lib/edit-action-decision.js';
+import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
 import { playfulLoadingMessage } from '../lib/loading-messages.js';
 
 const DRAG_THRESHOLD = 4;
@@ -1061,6 +1062,9 @@ export default function CanvasNode({
   const renderSkillBody = node.kind === 'skill';
   const renderAssetBody = node.kind === 'asset' || node.kind === 'image';
   const canEditSite = renderIframeBody && Boolean(html || liveUrlReference || nativeEditor);
+  // Shared with the canvas handler and the inspector so the three surfaces
+  // never disagree about what a press on Edit costs (Sol r3, 2026-08-20).
+  const editDecision = decideEditAction({ node, engineOverride: resolveEditEngineOverride(node) });
   const openEditorTitle = nativeEditor
     ? 'Open animated website editor'
     : liveUrlReference
@@ -1313,11 +1317,12 @@ export default function CanvasNode({
               disabled={editorBusy}
             >
               {editing ? <CheckIcon /> : <EditIcon />}
-              {/* Label keyed on the SAME predicate that decides the billed
-                  clone (shouldReconstructForAction) — "Clone & Edit" iff this
-                  press will clone; an already-native node re-enters free and
-                  honestly says "Edit" (Sol 2026-08-17 #1). */}
-              <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : shouldReconstructForAction({ node, role: 'edit' }) ? 'Clone & Edit' : 'Edit'}</span>
+              {/* Label from the SHARED decision (Sol r3, 2026-08-20) — the
+                  same one the handler and the inspector use: "Clone & Edit"
+                  iff this press actually bills (nominal engine, or the legacy
+                  auto-upgrade), "Repair" when the clone's lineage doesn't
+                  close, and a plain free "Edit" otherwise. */}
+              <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : editDecision.integrityError ? 'Repair' : editDecision.billable ? 'Clone & Edit' : 'Edit'}</span>
             </button>
           )}
         </div>

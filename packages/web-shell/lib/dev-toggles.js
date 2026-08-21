@@ -28,9 +28,16 @@ export function devToolsAllowed(env = process.env) {
 }
 
 export function getDevEngine() {
-  if (typeof localStorage === 'undefined') return null;
-  const value = localStorage.getItem(DEV_ENGINE_KEY);
-  return DEV_ENGINES.includes(value) ? value : null;
+  // Called during render now (the shared Edit decision), so it must survive
+  // any host: SSR (no localStorage), test environments that define a partial
+  // stub, and a storage that throws on access (Safari private mode).
+  try {
+    if (typeof localStorage === 'undefined' || typeof localStorage?.getItem !== 'function') return null;
+    const value = localStorage.getItem(DEV_ENGINE_KEY);
+    return DEV_ENGINES.includes(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export function setDevEngine(engine) {
