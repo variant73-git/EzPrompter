@@ -35,7 +35,7 @@ import { findSectionTerminals, planIncrementalRun, planRunFromNode, nodeInputSig
 import { buildNodesClipboardPayload, parseNodesClipboardText, payloadToPasteItems } from '../lib/node-clipboard.js';
 import { estimateChain } from '../lib/billing/pricing.js';
 import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
-import { decideEditAction } from '../lib/edit-action-decision.js';
+import { EDIT_ROUTE, planEditEntry } from '../lib/edit-action-decision.js';
 import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
 import DevWidget from './DevWidget.jsx';
 import { canUseCloneEdit } from '../lib/clone-edit-access.js';
@@ -4640,37 +4640,44 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       // is the animated one, and the server runs (and bills) any nominal
       // engine. Surfaces that offer "Repair clone" show the cost and the plan
       // lock exactly like "Clone & Edit" (Sol final round #3).
-      const engineOverride = details.repair ? 'native' : resolveEditEngineOverride(node);
+      const requestedEngine = details.repair ? 'native' : resolveEditEngineOverride(node);
       // ONE decision shared with the inspector, the node button and the node
       // menu (Sol r3): integrity failure = repair, never an upsell; billable =
       // exactly what the server runs and charges. The server-side gate stays
       // authoritative.
-      const decision = decideEditAction({ node, engineOverride });
-      if (decision.integrityError) {
+      // Consume the NORMALISED override from the decision: an origin-less node
+      // drops it, so a stored dev engine cannot fire a doomed 400 (Sol).
+      const editorKind = editorKindForNode(node);
+      // Pure routing (lib/edit-action-decision.planEditEntry) so the CONSUMPTION
+      // of the decision is testable without rendering the canvas — the flags
+      // alone were never the contract (Sol final round).
+      const { route, engine: engineOverride } = planEditEntry({
+        node,
+        requestedEngine,
+        plan: user?.plan,
+        canUseCloneEdit,
+        editorKind,
+        nativeEditorKind: NODE_EDITOR_KIND.NATIVE,
+        isNativeReady: classifyNativeLineage(node) === NATIVE_LINEAGE.READY,
+        needsReconstruction: shouldReconstructForAction({ node, role: 'edit' }),
+      });
+      if (route === EDIT_ROUTE.REPAIR_NEEDED) {
         toast.error('This clone needs repair — use "Repair clone" to rebuild it.');
         return;
       }
-      if (decision.billable && !canUseCloneEdit(user?.plan)) {
+      if (route === EDIT_ROUTE.PLAN_REQUIRED) {
         setPlansOpen(true);
         return;
       }
-      const editorKind = editorKindForNode(node);
-      if (!engineOverride) {
-        if (editorKind === NODE_EDITOR_KIND.NATIVE) {
-          enterEditMode(node, editorKind);
-          return;
-        }
-        // A ready node with the native editor unavailable (flag off) must not
-        // open the legacy editor over a null snapshot (defect 3, 2026-08-20).
-        // The INCONSISTENT case is handled before the plan gate above.
-        if (classifyNativeLineage(node) === NATIVE_LINEAGE.READY) {
-          toast.error('Native editing is unavailable in this build.');
-          return;
-        }
-        if (!shouldReconstructForAction({ node, role: 'edit' })) {
-          enterEditMode(node, editorKind);
-          return;
-        }
+      if (route === EDIT_ROUTE.NATIVE_UNAVAILABLE) {
+        // A ready node with the native editor off must not open the legacy
+        // editor over a null snapshot (defect 3, 2026-08-20).
+        toast.error('Native editing is unavailable in this build.');
+        return;
+      }
+      if (route === EDIT_ROUTE.OPEN) {
+        enterEditMode(node, editorKind);
+        return;
       }
 
       editPreparationRef.current.add(nodeId);

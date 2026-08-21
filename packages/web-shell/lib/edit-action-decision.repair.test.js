@@ -41,12 +41,21 @@ describe('preconditions mirror the reconstruction route (kind x origin_url x eng
   // directions at once (Sol final round).
   const orphan = { ...inconsistent, origin_url: null };
 
-  it('an origin-less node offers nothing — not even under a nominal engine', () => {
-    expect(decideEditAction({ node: orphan })).toMatchObject({ billable: false, integrityError: false });
+  it('an origin-less node offers nothing AND drops the engine, so no request can fire', () => {
+    // Reporting the raw override back would let the caller run a request the
+    // route can only answer with 400 — the flags alone are not the contract,
+    // the normalised override is (Sol final round).
+    expect(decideEditAction({ node: orphan }))
+      .toMatchObject({ billable: false, integrityError: false, engineOverride: null });
     for (const engine of ['native', 'iter9']) {
       expect(decideEditAction({ node: orphan, engineOverride: engine }))
-        .toMatchObject({ billable: false, integrityError: false });
+        .toMatchObject({ billable: false, integrityError: false, engineOverride: null });
     }
+  });
+
+  it('keeps the engine when the node CAN be reconstructed', () => {
+    expect(decideEditAction({ node: ready, engineOverride: 'iter9' }))
+      .toMatchObject({ billable: true, engineOverride: 'iter9' });
   });
 
   it('a nominal engine on a non-site node with an origin URL still bills — the server accepts it', () => {

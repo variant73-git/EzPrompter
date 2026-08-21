@@ -35,8 +35,43 @@ export function decideEditAction({ node, engineOverride = null } = {}) {
   // have. The route's one structural precondition (400 `no_origin_url`) is
   // mirrored for the nominal path, which bypasses the reason entirely.
   const reason = reconstructionReason({ node, role: 'edit' });
-  const integrityError = engineOverride == null && reason === 'native-inconsistent';
-  const billable = Boolean(node?.origin_url)
-    && (engineOverride != null || reason === 'edit');
-  return { billable, integrityError, engineOverride };
+  const canReconstruct = Boolean(node?.origin_url);
+  // The override is NORMALISED here, not just reported: without an origin the
+  // route can only answer 400, so a stored dev engine must not survive into
+  // the caller and trigger a doomed request. Callers MUST consume
+  // `decision.engineOverride` — reading their own raw value reintroduces the
+  // very mismatch this helper exists to remove (Sol final round).
+  const effectiveOverride = canReconstruct ? engineOverride : null;
+  const integrityError = effectiveOverride == null && reason === 'native-inconsistent';
+  const billable = canReconstruct && (effectiveOverride != null || reason === 'edit');
+  return { billable, integrityError, engineOverride: effectiveOverride };
+}
+
+export const EDIT_ROUTE = Object.freeze({
+  REPAIR_NEEDED: 'repair-needed',
+  PLAN_REQUIRED: 'plan-required',
+  NATIVE_UNAVAILABLE: 'native-unavailable',
+  OPEN: 'open',
+  RECONSTRUCT: 'reconstruct',
+});
+
+/**
+ * What a press on Edit actually DOES — pure, so the consumption of the
+ * decision is testable without rendering the canvas. The flags alone were not
+ * the contract: a caller reading its own raw engine override could still fire
+ * a request the route can only answer with 400 (Sol final round).
+ *
+ * @returns {{ route: string, engine: string|null }}
+ */
+export function planEditEntry({ node, requestedEngine = null, plan, canUseCloneEdit, editorKind, nativeEditorKind = 'native', isNativeReady = false, needsReconstruction = false } = {}) {
+  const decision = decideEditAction({ node, engineOverride: requestedEngine });
+  const engine = decision.engineOverride;
+  if (decision.integrityError) return { route: EDIT_ROUTE.REPAIR_NEEDED, engine: null };
+  if (decision.billable && !canUseCloneEdit?.(plan)) return { route: EDIT_ROUTE.PLAN_REQUIRED, engine: null };
+  if (!engine) {
+    if (editorKind === nativeEditorKind) return { route: EDIT_ROUTE.OPEN, engine: null };
+    if (isNativeReady) return { route: EDIT_ROUTE.NATIVE_UNAVAILABLE, engine: null };
+    if (!needsReconstruction) return { route: EDIT_ROUTE.OPEN, engine: null };
+  }
+  return { route: EDIT_ROUTE.RECONSTRUCT, engine };
 }
