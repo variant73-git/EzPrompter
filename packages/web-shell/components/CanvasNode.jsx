@@ -1063,13 +1063,18 @@ export default function CanvasNode({
   const renderPromptBody = node.kind === 'prompt';
   const renderSkillBody = node.kind === 'skill';
   const renderAssetBody = node.kind === 'asset' || node.kind === 'image';
-  const canEditSite = renderIframeBody && Boolean(html || liveUrlReference || nativeEditor);
-  // Shared with the canvas handler and the inspector so the three surfaces
-  // never disagree about what a press on Edit costs (Sol r3, 2026-08-20).
-  // The dev override arrives AFTER mount: reading storage during render would
-  // hydrate a different label than the server rendered (Sol r4).
+  // Shared with the canvas handler and the inspector so the surfaces never
+  // disagree about what a press on Edit costs (Sol r3, 2026-08-20). The dev
+  // override arrives AFTER mount: reading storage during render would hydrate
+  // a different label than the server rendered (Sol r4).
   const devEngine = useDevEngine();
   const editDecision = decideEditAction({ node, engineOverride: resolveEditEngineOverride(node, devEngine) });
+  // An inconsistent clone has html=null AND no usable native editor, so the
+  // plain eligibility hid the button in EXACTLY the state that needs repair —
+  // leaving the user no way out (Sol final round). Integrity failure keeps the
+  // action reachable; the label says "Repair clone" and shows the cost.
+  const canEditSite = renderIframeBody
+    && Boolean(html || liveUrlReference || nativeEditor || editDecision.integrityError);
   const openEditorTitle = nativeEditor
     ? 'Open animated website editor'
     : liveUrlReference
