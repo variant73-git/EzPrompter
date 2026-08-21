@@ -139,7 +139,7 @@ describe('POST /api/nodes/[id]/run billing wrapper', () => {
     expect(json.reconstructions[0]).toMatchObject({ nodeId: 'source-1', reason: 'runtime-source' });
     expect(holdMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ credits: 200 }));
     expect(holdMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ credits: 75 }));
-    expect(reconstructPageMock).toHaveBeenCalledWith('https://example.com');
+    expect(reconstructPageMock).toHaveBeenCalledWith('https://example.com', { visionModel: 'gpt-5.5' });
   });
 });
 

@@ -40,7 +40,7 @@ describe('buildCloneTelemetry', () => {
       usageMicrocents: 120_000, at: '2026-08-20T00:00:00Z',
     });
     expect(rec).toEqual({
-      engine: 'native-bundle', reason: 'edit', url: 'https://x.com',
+      engine: 'native-bundle', harness: null, reason: 'edit', url: 'https://x.com',
       stages: { capture: 19000 }, totalMs: 22000, credits: 275,
       usageMicrocents: 120_000, costUsd: 0.12, at: '2026-08-20T00:00:00Z',
     });

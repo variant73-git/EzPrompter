@@ -8,6 +8,15 @@
 // Read-only metering — renders nothing unless opened.
 import { useEffect, useMemo, useState } from 'react';
 import { devClockAll, onDevClock } from '../lib/dev-clock.js';
+import { HARNESSES, HARNESS_COOKIE, DEFAULT_HARNESS_ID } from '../lib/harness.js';
+
+function readHarnessCookie() {
+  try {
+    const m = new RegExp(`(?:^|;\\s*)${HARNESS_COOKIE}=([^;]+)`).exec(document.cookie);
+    const id = m ? decodeURIComponent(m[1]) : null;
+    return HARNESSES[id] ? id : DEFAULT_HARNESS_ID;
+  } catch { return DEFAULT_HARNESS_ID; }
+}
 
 const LS_KEY = 'uncraft-dev-widget-open';
 
@@ -44,6 +53,7 @@ export function buildRows(nodes, wall) {
       wallMs: w.wallMs ?? null,
       serverMs: tel?.totalMs ?? (meta.timings ? (meta.timings.visaoMs || 0) + (meta.timings.recorteMs || 0) : null),
       stages: tel?.stages || (meta.timings ? { vision: meta.timings.visaoMs, crop: meta.timings.recorteMs } : null),
+      harness: tel?.harness ?? meta.cloneCost?.harness ?? null,
       credits: tel?.credits ?? meta.cloneCost?.credits ?? null,
       costUsd: tel?.costUsd ?? meta.cloneCost?.costUsd ?? null,
       ssim: meta.similarity?.ssim ?? null,
@@ -54,7 +64,7 @@ export function buildRows(nodes, wall) {
     if (!tel || seenNodes.has(n.id)) continue;
     rows.push({
       key: `n-${n.id}`, at: Date.parse(tel.at) || 0, kind: tel.engine, label: hostOf(tel.url || ''),
-      ok: true, error: null, wallMs: null, serverMs: tel.totalMs, stages: tel.stages,
+      ok: true, error: null, wallMs: null, serverMs: tel.totalMs, stages: tel.stages, harness: tel.harness ?? null,
       credits: tel.credits, costUsd: tel.costUsd, ssim: n.meta?.similarity?.ssim ?? null,
     });
   }
@@ -64,10 +74,12 @@ export function buildRows(nodes, wall) {
 
 export default function DevWidget({ nodes }) {
   const [open, setOpen] = useState(false);
+  const [harnessId, setHarnessId] = useState(DEFAULT_HARNESS_ID);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
     try { setOpen(localStorage.getItem(LS_KEY) === '1'); } catch {}
+    setHarnessId(readHarnessCookie());
     const onKey = (e) => {
       if (e.altKey && (e.code === 'KeyD') && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
@@ -91,12 +103,28 @@ export default function DevWidget({ nodes }) {
         <span className="dev-widget-title">Dev · clone metrics</span>
         <span className="dev-widget-hint">⌥D to close</span>
       </div>
+      <div className="dev-widget-harness" role="group" aria-label="Model harness">
+        <span className="dev-widget-harness-label">Harness</span>
+        {Object.values(HARNESSES).map((hz) => (
+          <button
+            key={hz.id}
+            type="button"
+            className={`dev-widget-harness-btn${hz.id === harnessId ? ' is-active' : ''}`}
+            title={`cloneVision: ${hz.cloneVision}`}
+            onClick={() => {
+              try { document.cookie = `${HARNESS_COOKIE}=${hz.id}; path=/; max-age=31536000; samesite=lax`; } catch {}
+              setHarnessId(hz.id);
+            }}
+          >{hz.label}</button>
+        ))}
+      </div>
       {rows.length === 0 && <div className="dev-widget-empty">No clones this session yet. Clone a site and the numbers land here.</div>}
       {rows.map((r) => (
         <div key={r.key} className={`dev-widget-row${r.ok ? '' : ' is-error'}`}>
           <div className="dev-widget-line1">
             <span className={`dev-widget-badge b-${String(r.kind).replace(/[^a-z0-9-]/gi, '')}`}>{r.kind}</span>
             <span className="dev-widget-label" title={r.label}>{r.label || '—'}</span>
+            {r.harness && <span className="dev-widget-harness-tag">{r.harness}</span>}
             <span className="dev-widget-wall">{fmtS(r.wallMs)}</span>
           </div>
           <div className="dev-widget-line2">

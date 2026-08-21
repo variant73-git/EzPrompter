@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { harnessFromCookieHeader } from '../../../../../lib/harness.js';
 import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
 import { runExtract } from '../../../../../lib/extract.js';
@@ -89,6 +90,7 @@ export async function POST(request, { params }) {
 
   const DIMS = { designmd: { width: 600, height: 600 }, asset: { width: 600, height: 600 }, prompt: { width: 600, height: 200 }, site: { width: 1280, height: 720 } };
 
+  const harness = harnessFromCookieHeader(request.headers.get('cookie'));
   let billed;
   try {
     billed = await runBilledOperation(
@@ -100,7 +102,8 @@ export async function POST(request, { params }) {
         const out = await withDeadline(
           // Thread the deadline's signal so a mid-run abort stops LAUNCHING
           // further paid stages (styleclone's 2nd LLM call, image cropping).
-          (signal) => runExtract({ to, node: { id: src.id, kind: src.kind, html: src.html, meta: src.meta }, signal }),
+          (signal) => runExtract({ to, node: { id: src.id, kind: src.kind, html: src.html, meta: src.meta }, signal,
+            ...((to === 'clone' || to === 'styleclone') ? { model: harness.cloneVision } : {}) }),
           // Absolute budget from handler entry — pre-work (auth, lookup, hold)
           // counts against it. Floor 0 (not 1s) so if pre-work already consumed
           // the deadline the race times out immediately — a true absolute bound.
@@ -188,6 +191,7 @@ export async function POST(request, { params }) {
   // Fail-open: telemetria nunca derruba um extract que deu certo.
   if (!billed.deduped && billed.result?.node?.id && (to === 'clone' || to === 'styleclone')) {
     const cloneCost = {
+      harness: harness.id,
       credits: billed.credits,
       usageMicrocents: billed.usageMicrocents ?? null,
       costUsd: Number.isFinite(Number(billed.usageMicrocents)) ? Number((Number(billed.usageMicrocents) / 1_000_000).toFixed(4)) : null,

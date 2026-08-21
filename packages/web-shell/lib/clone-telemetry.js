@@ -35,10 +35,11 @@ export function startCloneTimer(now = Date.now) {
 }
 
 // Registro canônico gravado em node.meta.cloneTelemetry.
-export function buildCloneTelemetry({ engine, reason = null, url = null, stages = {}, totalMs = 0, credits = 0, usageMicrocents = null, at = new Date().toISOString() }) {
+export function buildCloneTelemetry({ engine, harness = null, reason = null, url = null, stages = {}, totalMs = 0, credits = 0, usageMicrocents = null, at = new Date().toISOString() }) {
   const µc = usageMicrocents == null ? null : Number(usageMicrocents);
   return {
     engine: String(engine || 'unknown'),
+    harness: harness || null,
     reason,
     url,
     stages,

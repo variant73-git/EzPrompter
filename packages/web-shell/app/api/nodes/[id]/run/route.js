@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { harnessFromCookieHeader } from '../../../../../lib/harness.js';
 import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
 import { runCompose } from '../../../../../lib/run-flow.js';
@@ -94,6 +95,7 @@ export async function POST(request, { params }) {
       if (reason) enqueueReconstruction({ node: source, reason, source });
     }
 
+    const harness = harnessFromCookieHeader(request.headers.get('cookie'));
     const reconstructions = [];
     let reconstructionCredits = 0;
     for (const item of reconstructionQueue) {
@@ -102,6 +104,7 @@ export async function POST(request, { params }) {
         userId: user.id,
         node: item.node,
         reason: item.reason,
+        harness,
         idemKey: idemKey ? `${idemKey}:reconstruct:${item.node.id}` : null,
       });
       reconstructionCredits += Number(reconstructed.credits || 0);
@@ -135,7 +138,7 @@ export async function POST(request, { params }) {
     const { result, credits, balanceAfter } = await runBilledOperation(
       { sql, userId: user.id, op: 'compose', boardId: target.board_id, nodeId: target.id, idemKey },
       async () => {
-        const composed = await runCompose({ target, sources, modelId });
+        const composed = await runCompose({ target, sources, modelId, visionFallbackModel: harness.cloneVision });
         if (!composed?.html) {
           const err = new Error('no_output');
           err.code = 'no_output';

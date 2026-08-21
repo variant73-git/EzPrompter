@@ -56,3 +56,25 @@ describe('DevWidget', () => {
     expect(screen.getByText('8.0s')).toBeTruthy();
   });
 });
+
+describe('DevWidget — harness switch (2026-08-20)', () => {
+  it('mostra os harnesses e grava o cookie ao trocar para Terra', async () => {
+    localStorage.setItem('uncraft-dev-widget-open', '1'); // abre direto — o teste anterior deixou estado
+    render(<DevWidget nodes={[]} />);
+    await act(async () => {});
+    const terraBtn = screen.getByRole('button', { name: 'GPT-5.6 Terra' });
+    expect(terraBtn.className).not.toContain('is-active');
+    await act(async () => { terraBtn.click(); });
+    expect(terraBtn.className).toContain('is-active');
+    expect(document.cookie).toContain('uncraft-harness=terra');
+  });
+
+  it('linha exibe a tag do harness vinda do meta', () => {
+    const nodes = [{ id: 'n1', meta: { cloneTelemetry: {
+      engine: 'iter9', harness: 'terra', url: 'https://x.com', stages: {}, totalMs: 1000,
+      credits: 10, costUsd: 0.1, at: '2026-08-20T00:00:00Z',
+    } } }];
+    const rows = buildRows(nodes, []);
+    expect(rows[0].harness).toBe('terra');
+  });
+});

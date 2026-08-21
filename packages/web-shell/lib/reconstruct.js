@@ -62,7 +62,7 @@ const REAL_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537
  *   baseUrl: string, stats: object}>}
  */
 export async function reconstructPage(url, opts = {}) {
-  const { onProgress = () => {} } = opts;
+  const { onProgress = () => {}, visionModel = null } = opts;
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY missing — required for reconstruction');
   }
@@ -104,7 +104,7 @@ export async function reconstructPage(url, opts = {}) {
     onProgress('thinking');
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const rawHtml = await generateHtml({
-      stopsBuffers, assets, colorsByStop, fontsByStop, elevationByStop, openai
+      stopsBuffers, assets, colorsByStop, fontsByStop, elevationByStop, openai, visionModel
     });
     if (!rawHtml || !/<html/i.test(rawHtml)) {
       throw new Error(`Vision call returned no usable HTML (${rawHtml?.length || 0} chars)`);
@@ -626,7 +626,8 @@ function buildElevationText(elevationByStop) {
   return `${shadow}\n${border}`;
 }
 
-async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, elevationByStop, openai }) {
+async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, elevationByStop, openai, visionModel = null }) {
+  const VISION_MODEL = visionModel || 'gpt-5.5';
   const stopBlocks = stopsBuffers.map((buf) => ({
     type: 'image_url',
     image_url: { url: `data:image/png;base64,${buf.toString('base64')}` }
@@ -651,7 +652,7 @@ async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, e
   ];
 
   const stream = await openai.chat.completions.create({
-    model: 'gpt-5.5',
+    model: VISION_MODEL,
     messages: [
       { role: 'system', content: VISION_SYSTEM },
       { role: 'user', content: userContent }
@@ -669,7 +670,7 @@ async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, e
     if (chunk?.usage) usage = chunk.usage;
   }
   recordUsage({
-    provider: 'openai', model: 'gpt-5.5',
+    provider: 'openai', model: VISION_MODEL,
     tokensIn: usage?.prompt_tokens || 0,
     tokensOut: usage?.completion_tokens || 0,
     cachedIn: usage?.prompt_tokens_details?.cached_tokens || 0,

@@ -10483,3 +10483,16 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
   font-variant-numeric: tabular-nums;
 }
 .dev-widget-err { color: #e5484d; font-size: 10.5px; margin-top: 3px; }
+
+/* Dev widget — harness switch */
+.dev-widget-harness { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.dev-widget-harness-label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-faint, #6f6c64); }
+.dev-widget-harness-btn {
+  font-size: 11px; padding: 2px 9px; border-radius: 999px; cursor: pointer;
+  background: transparent; border: 1px solid var(--border-frosted); color: var(--text-muted, #9a978f);
+}
+.dev-widget-harness-btn.is-active { border-color: #7fb069; color: #b8d49a; background: rgba(127, 176, 105, .12); }
+.dev-widget-harness-tag {
+  font-size: 9px; color: var(--text-faint, #6f6c64); border: 1px solid var(--border-frosted);
+  border-radius: 4px; padding: 0 4px; text-transform: uppercase; letter-spacing: .05em;
+}

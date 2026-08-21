@@ -183,6 +183,7 @@ export async function reconstructSiteNode({
   node,
   reason,
   engine = null,
+  harness = null,
   idemKey = null,
   op = 'reconstruct',
   producer = null,
@@ -203,7 +204,7 @@ export async function reconstructSiteNode({
       try {
         materialized = await materializeReconstructionOutput(
           await Promise.race([
-            (producer || chooseReconstructionProducer(reason, process.env, engine))(node.origin_url),
+            (producer || chooseReconstructionProducer(reason, process.env, engine))(node.origin_url, { visionModel: harness?.cloneVision || null }),
             aborted,
           ]),
           { bundleStore },
@@ -367,6 +368,7 @@ export async function reconstructSiteNode({
     const { stages, totalMs } = cloneTimer.finish();
     telemetry = buildCloneTelemetry({
       engine: result.kind === 'native' ? 'native-bundle' : 'iter9',
+      harness: harness?.id || null,
       reason,
       url: node.origin_url || null,
       stages,

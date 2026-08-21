@@ -269,7 +269,7 @@ export function replaceMediaPlaceholders(html, bindings = []) {
   return output;
 }
 
-export async function runCompose({ target, sources, model, modelId, systemPromptOverride, referencePlan = null, referenceEvidence = {} }) {
+export async function runCompose({ target, sources, model, modelId, systemPromptOverride, referencePlan = null, referenceEvidence = {}, visionFallbackModel = 'gpt-5.5' }) {
   // Caller can pass either the resolved provider model string (`model`)
   // or the picker's short id (`modelId`). resolveModel() maps the
   // short id to the SDK-friendly value via MODEL_ALIAS.
@@ -322,7 +322,7 @@ export async function runCompose({ target, sources, model, modelId, systemPrompt
   // the user picked a text-only model with images attached.
   let effectiveModel = resolvedModel;
   if (imageSources.length > 0 && !/^(gpt|openai|o[1-9])/i.test(effectiveModel)) {
-    effectiveModel = 'gpt-5.5';
+    effectiveModel = visionFallbackModel;
   }
 
   const { text: userPrompt, images, mediaBindings } = assemblePrompt({ targetHtml: target.current_html, buckets });

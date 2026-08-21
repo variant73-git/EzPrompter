@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { harnessFromCookieHeader } from '../../../../../lib/harness.js';
 import { db } from '../../../../../lib/db.js';
 import { requireUser } from '../../../../../lib/auth.js';
 import { InsufficientCreditsError, OperationInProgressError } from '../../../../../lib/billing/context.js';
@@ -90,6 +91,7 @@ export async function POST(request, { params }) {
       node,
       reason: 'edit',
       engine,
+      harness: harnessFromCookieHeader(request.headers.get('cookie')),
       idemKey: idemKey.trim(),
       op: 'clone.edit',
     });

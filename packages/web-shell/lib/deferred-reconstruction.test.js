@@ -99,7 +99,7 @@ describe('reconstructSiteNode — quem e chamado no Edit', () => {
     });
 
     // A rota /reconstruct chama exatamente assim: sem `producer`.
-    expect(captureNativeBundle).toHaveBeenCalledWith('https://x.com');
+    expect(captureNativeBundle).toHaveBeenCalledWith('https://x.com', { visionModel: null });
     expect(reconstructPage).not.toHaveBeenCalled();
   });
 });
