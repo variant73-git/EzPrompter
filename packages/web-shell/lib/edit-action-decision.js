@@ -20,7 +20,15 @@ import { reconstructionReason } from './reconstruction-policy.js';
  * @returns {{ billable: boolean, integrityError: boolean, engineOverride: string|null }}
  */
 export function decideEditAction({ node, engineOverride = null } = {}) {
-  const integrityError = engineOverride == null
+  // The repair path IS a reconstruction, so it inherits the reconstruction's
+  // preconditions: only a site node with an origin URL can be rebuilt (the
+  // route answers 400 `no_origin_url` otherwise). `classifyNativeLineage`
+  // reads the snapshot alone, so without this gate a template/chunk carrying
+  // inconsistent native metadata would offer "Repair clone" and walk straight
+  // into a guaranteed 400 (Sol final round).
+  const repairable = node?.kind === 'site' && Boolean(node?.origin_url);
+  const integrityError = repairable
+    && engineOverride == null
     && classifyNativeLineage(node) === NATIVE_LINEAGE.INCONSISTENT;
   const billable = !integrityError
     && (engineOverride != null || reconstructionReason({ node, role: 'edit' }) === 'edit');

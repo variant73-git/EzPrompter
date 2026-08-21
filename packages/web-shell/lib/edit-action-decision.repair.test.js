@@ -33,3 +33,23 @@ describe('deliberate repair (Sol final round #3)', () => {
     expect(decideEditAction({ node: ready })).toMatchObject({ billable: false, integrityError: false });
   });
 });
+
+describe('repair preconditions mirror the reconstruction route', () => {
+  // The route answers 400 `no_origin_url`, and only site nodes reconstruct.
+  // Offering "Repair clone" outside those bounds promises a guaranteed error.
+  it('does not offer repair without an origin URL', () => {
+    const orphan = { ...inconsistent, origin_url: null };
+    expect(decideEditAction({ node: orphan })).toMatchObject({ billable: false, integrityError: false });
+  });
+
+  it('does not offer repair for template or chunk nodes', () => {
+    for (const kind of ['template', 'chunk', 'designmd']) {
+      expect(decideEditAction({ node: { ...inconsistent, kind } }))
+        .toMatchObject({ billable: false, integrityError: false });
+    }
+  });
+
+  it('still offers repair for a site node with an origin URL', () => {
+    expect(decideEditAction({ node: inconsistent })).toMatchObject({ integrityError: true });
+  });
+});
