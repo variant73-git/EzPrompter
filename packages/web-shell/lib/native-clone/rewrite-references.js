@@ -30,10 +30,10 @@ import { posix } from 'node:path';
  *    written as a literal (`new Image().src = 'rel.png'`, ESM
  *    `import "/chunk.js"`, `<script type="importmap">`) is findable — a
  *    JavaScript-aware rewriter would see it; skipping those is a deliberate
- *    limit of THIS scanner, not an impossibility. A URL actually COMPUTED at
- *    runtime (`'/' + name`, a template with a variable) is the one that no
- *    static pass can close; that is what would need a per-bundle virtual
- *    origin.
+ *    limit of THIS scanner, not an impossibility. A URL that depends on
+ *    values unavailable statically cannot be ENUMERATED by this scanner;
+ *    preserving those takes JavaScript rewriting/instrumentation of the URL
+ *    sinks, or a per-bundle virtual origin.
  *  - Attribute values are matched with quotes; unquoted attributes are left
  *    alone (writing one back could break the tag).
  *  - CSS escapes (`url(foo\)bar.png)`) and entity-encoded whitespace inside
