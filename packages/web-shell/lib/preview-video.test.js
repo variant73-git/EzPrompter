@@ -22,13 +22,18 @@ describe('previewCaptureEnabled', () => {
 });
 
 describe('previewVideoUrl', () => {
-  it('monta a URL quando o bundle traz o arquivo', () => {
+  it('aponta para a rota POR NODE — nunca para a do laboratório local', () => {
     const d = { bundleId: 'b-1', assetIndex: [{ path: 'index.html' }, { path: PREVIEW_VIDEO_PATH }] };
-    expect(previewVideoUrl(d)).toBe(`/api/native-clone/b-1/${PREVIEW_VIDEO_PATH}`);
+    expect(previewVideoUrl(d, 'node-9')).toBe('/api/nodes/node-9/preview-video');
+    // Regressão do achado: /api/native-clone é rota de laboratório (503 em
+    // produção, ignora o bundleId) — o preview nunca pode voltar para lá.
+    expect(previewVideoUrl(d, 'node-9')).not.toContain('native-clone');
   });
-  it('null quando o bundle NÃO tem preview (node cai no PNG)', () => {
-    expect(previewVideoUrl({ bundleId: 'b-1', assetIndex: [{ path: 'index.html' }] })).toBe(null);
-    expect(previewVideoUrl(null)).toBe(null);
-    expect(previewVideoUrl({ assetIndex: [{ path: PREVIEW_VIDEO_PATH }] })).toBe(null);
+  it('null quando o bundle NÃO declara o preview (node cai no PNG)', () => {
+    expect(previewVideoUrl({ bundleId: 'b-1', assetIndex: [{ path: 'index.html' }] }, 'n1')).toBe(null);
+    expect(previewVideoUrl(null, 'n1')).toBe(null);
+  });
+  it('null sem nodeId — sem node não há rota autorizada', () => {
+    expect(previewVideoUrl({ assetIndex: [{ path: PREVIEW_VIDEO_PATH }] }, null)).toBe(null);
   });
 });

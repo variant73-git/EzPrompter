@@ -5,12 +5,14 @@ import { anexarPreviewAoBundle } from './capture-bundle.js';
 import { PREVIEW_VIDEO_PATH, PREVIEW_VIDEO_MAX_BYTES } from '../preview-video.js';
 
 const gravacaoFake = (caminho) => ({ path: async () => caminho });
+// `stat` falso padrão: tamanho dentro do teto, para os casos que não são sobre teto.
+const medirOk = async () => ({ size: 1024 });
 
 describe('anexarPreviewAoBundle', () => {
   it('anexa o vídeo como asset webm do bundle', async () => {
     const assets = []; const descartados = [];
     const out = await anexarPreviewAoBundle({
-      assets, descartados, gravacao: gravacaoFake('/tmp/x.webm'),
+      assets, descartados, gravacao: gravacaoFake('/tmp/x.webm'), medir: medirOk,
       ler: async () => Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3]),
     });
     expect(out.path).toBe(PREVIEW_VIDEO_PATH);
@@ -27,14 +29,18 @@ describe('anexarPreviewAoBundle', () => {
     expect(descartados).toHaveLength(0);
   });
 
-  it('acima do teto é DESCARTADO e NOMEADO — nunca some em silêncio', async () => {
+  it('acima do teto é descartado SEM ler o arquivo (teto antes do buffer)', async () => {
     const assets = []; const descartados = [];
+    let leu = false;
     await anexarPreviewAoBundle({
       assets, descartados, gravacao: gravacaoFake('/tmp/x.webm'),
-      ler: async () => Buffer.alloc(PREVIEW_VIDEO_MAX_BYTES + 1),
+      medir: async () => ({ size: PREVIEW_VIDEO_MAX_BYTES + 1 }),
+      ler: async () => { leu = true; return Buffer.alloc(PREVIEW_VIDEO_MAX_BYTES + 1); },
     });
     expect(assets).toHaveLength(0);
     expect(descartados[0].motivo).toMatch(/grande demais/);
+    // O ponto do achado: o arquivo gigante NUNCA entra na memória.
+    expect(leu, 'não pode bufferizar antes de checar o tamanho').toBe(false);
   });
 
   it('arquivo vazio ou ausente vira descarte, não exceção', async () => {
@@ -43,7 +49,7 @@ describe('anexarPreviewAoBundle', () => {
       [gravacaoFake(null), async () => Buffer.from([1])],
     ]) {
       const assets = []; const descartados = [];
-      await anexarPreviewAoBundle({ assets, descartados, gravacao: gr, ler });
+      await anexarPreviewAoBundle({ assets, descartados, gravacao: gr, ler, medir: medirOk });
       expect(assets).toHaveLength(0);
       expect(descartados).toHaveLength(1);
     }
@@ -52,7 +58,7 @@ describe('anexarPreviewAoBundle', () => {
   it('leitura que EXPLODE não derruba o clone (fail-open)', async () => {
     const assets = []; const descartados = [];
     const out = await anexarPreviewAoBundle({
-      assets, descartados, gravacao: gravacaoFake('/tmp/x.webm'),
+      assets, descartados, gravacao: gravacaoFake('/tmp/x.webm'), medir: medirOk,
       ler: async () => { throw new Error('EACCES disco'); },
     });
     expect(out).toBe(null);

@@ -99,7 +99,10 @@ describe('reconstructSiteNode — quem e chamado no Edit', () => {
     });
 
     // A rota /reconstruct chama exatamente assim: sem `producer`.
-    expect(captureNativeBundle).toHaveBeenCalledWith('https://x.com', { visionModel: null });
+    // O produtor recebe o signal do deadline: sem ele, uma captura que estoura
+    // o prazo continuava rodando e escrevendo vídeo em /tmp (achado da revisão).
+    expect(captureNativeBundle).toHaveBeenCalledWith('https://x.com',
+      expect.objectContaining({ visionModel: null, signal: expect.any(Object) }));
     expect(reconstructPage).not.toHaveBeenCalled();
   });
 });

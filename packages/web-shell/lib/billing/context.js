@@ -91,7 +91,7 @@ async function claimOrDedup({ ops, sql, userId, idemKey, op, boardId, nodeId, es
   // duplicate — inspect the existing row.
   const row = claim.row;
   if (row.status === 'settled') {
-    return { deduped: true, dedupResult: { result: unwrapResult(row.result), credits: Number(row.charge_credits || 0), balanceAfter: null, opId: row.id, deduped: true, usageMicrocents: 0 } };
+    return { deduped: true, dedupResult: { result: unwrapResult(row.result), credits: Number(row.charge_credits || 0), balanceAfter: null, opId: row.id, deduped: true, usageMicrocents: null } };
   }
   if (row.status === 'in_flight') throw new OperationInProgressError({ op });
 
@@ -101,7 +101,7 @@ async function claimOrDedup({ ops, sql, userId, idemKey, op, boardId, nodeId, es
   if (rc.outcome === 'insufficient') throw new InsufficientCreditsError({ estimate, balance: rc.balance, op });
   // raced: another attempt moved the row. If it settled meanwhile, replay; else busy.
   if (rc.row?.status === 'settled') {
-    return { deduped: true, dedupResult: { result: unwrapResult(rc.row.result), credits: Number(rc.row.charge_credits || 0), balanceAfter: null, opId: rc.row.id, deduped: true, usageMicrocents: 0 } };
+    return { deduped: true, dedupResult: { result: unwrapResult(rc.row.result), credits: Number(rc.row.charge_credits || 0), balanceAfter: null, opId: rc.row.id, deduped: true, usageMicrocents: null } };
   }
   throw new OperationInProgressError({ op });
 }

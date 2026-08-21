@@ -24,7 +24,7 @@ import { createHash } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { chromium as chromiumPadrao } from 'playwright-core';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -153,11 +153,20 @@ const TEXTUAL = /\.(html?|css|js|mjs|json|svg|txt|webmanifest)$/i;
  * Contrato: fail-open TOTAL. Qualquer problema vira uma linha em `descartados`
  * e o clone segue inteiro; o node volta a mostrar o PNG, que é o de hoje.
  */
-export async function anexarPreviewAoBundle({ assets, descartados, gravacao, ler = readFile }) {
+export async function anexarPreviewAoBundle({ assets, descartados, gravacao, ler = readFile, medir = stat }) {
   if (!gravacao) return null;
   try {
     const caminho = await gravacao.path();
     if (!caminho) { descartados.push({ u: PREVIEW_VIDEO_PATH, motivo: 'preview sem arquivo' }); return null; }
+    // ⚠️ O TAMANHO vem do disco ANTES de ler. Ler para depois comparar carrega
+    // o arquivo inteiro na memória — foi exatamente o P0 que o Sol pegou no
+    // `res.body()` da coleta de assets, e uma página patológica (o teto de
+    // altura permite 120000px) produz um webm bem maior que o limite.
+    const { size } = await medir(caminho);
+    if (size > PREVIEW_VIDEO_MAX_BYTES) {
+      descartados.push({ u: PREVIEW_VIDEO_PATH, motivo: `preview grande demais (${size}B)` });
+      return null;
+    }
     const bytes = await ler(caminho);
     if (!bytes || bytes.byteLength === 0) {
       descartados.push({ u: PREVIEW_VIDEO_PATH, motivo: 'preview vazio' });

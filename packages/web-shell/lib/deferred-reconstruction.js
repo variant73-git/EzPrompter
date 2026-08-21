@@ -205,7 +205,7 @@ export async function reconstructSiteNode({
       try {
         materialized = await materializeReconstructionOutput(
           await Promise.race([
-            (producer || chooseReconstructionProducer(reason, process.env, engine))(node.origin_url, { visionModel: harness?.cloneVision || null }),
+            (producer || chooseReconstructionProducer(reason, process.env, engine))(node.origin_url, { visionModel: harness?.cloneVision || null, signal: deadline.signal }),
             aborted,
           ]),
           { bundleStore },
@@ -260,7 +260,7 @@ export async function reconstructSiteNode({
           });
           // Preview ANIMADO: a URL só existe quando o bundle trouxe o arquivo.
           // Ausente = o node segue no PNG, que é o comportamento de hoje.
-          const previewUrl = previewVideoUrl(descriptor);
+          const previewUrl = previewVideoUrl(descriptor, node.id);
           const nextMeta = {
             animatedDetected: false,
             animatedRuntime: true,

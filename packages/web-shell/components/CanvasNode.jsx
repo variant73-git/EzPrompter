@@ -2,6 +2,7 @@
 
 import { useRef, useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import { usePreviewMode } from '../lib/use-preview-mode.js';
+import { shouldShowPreviewVideo } from '../lib/preview-video.js';
 import { createPortal } from 'react-dom';
 import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
 import NativeEditViewport from './motion-editor/NativeEditViewport.jsx';
@@ -867,7 +868,7 @@ export default function CanvasNode({
   //      canvas é sagrado).
   const previewMode = usePreviewMode();
   const previewVideoUrl = node.meta?.previewVideo?.url || null;
-  const showPreviewVideo = showThumb && previewMode === 'video' && !!previewVideoUrl && !offscreenParked;
+  const showPreviewVideo = shouldShowPreviewVideo({ showThumb, previewMode, previewVideoUrl, offscreenParked });
   // Anti-flash hand-off: while the live iframe is still parsing its srcDoc
   // (edit entry, version preview), the last thumb stays painted on top.
   const [iframeReady, setIframeReady] = useState(false);
@@ -892,10 +893,13 @@ export default function CanvasNode({
   // precisa do tamanho NATURAL da página. Ele vem do PNG (página inteira),
   // nunca do vídeo — a gravação é 16:9 do viewport e mentiria a altura.
   useEffect(() => {
-    if (!showPreviewVideo || contentSizeRef.current || !thumb?.url) return;
+    // O ref nasce como `{w:null,h:null}` — objeto TRUTHY. Testar o ref inteiro
+    // fazia o efeito retornar sempre (código morto). Testa-se o CONTEÚDO, como
+    // `readContentSize` já fazia. Achado da revisão adversarial.
+    if (!showPreviewVideo || (contentSizeRef.current?.w && contentSizeRef.current?.h) || !thumb?.url) return;
     const img = new Image();
     img.onload = () => {
-      if (contentSizeRef.current || !img.naturalWidth || !img.naturalHeight) return;
+      if ((contentSizeRef.current?.w && contentSizeRef.current?.h) || !img.naturalWidth || !img.naturalHeight) return;
       const w = node.width || 1280;
       contentSizeRef.current = {
         w,
@@ -1564,14 +1568,14 @@ export default function CanvasNode({
             style={{ height: (node.height || 800) + 'px' }}
           >
             {showPreviewVideo ? (
-              /* Preview animado. `poster` é o próprio PNG: nada pisca enquanto
-                 o vídeo carrega, e se ele falhar o quadro fica sendo o estático.
-                 Sem áudio, sem controles, sem interação — é uma imagem que se
-                 move, não um player. */
+              /* Preview animado: sem áudio, sem controles, sem interação — é
+                 uma imagem que se move, não um player. SEM `poster`: o PNG é a
+                 página INTEIRA (até 12000px) e o vídeo é 16:9 do viewport, então
+                 o poster dentro de um box `cover` virava um zoom duro no canto
+                 superior (achado da revisão adversarial). */
               <video
                 className="cnode-iframe cnode-thumb"
                 src={previewVideoUrl}
-                poster={thumb.url}
                 autoPlay
                 muted
                 loop

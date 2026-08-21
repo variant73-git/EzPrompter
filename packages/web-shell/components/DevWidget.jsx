@@ -15,7 +15,7 @@ function readHarnessCookie() {
   try {
     const m = new RegExp(`(?:^|;\\s*)${HARNESS_COOKIE}=([^;]+)`).exec(document.cookie);
     const id = m ? decodeURIComponent(m[1]) : null;
-    return HARNESSES[id] ? id : DEFAULT_HARNESS_ID;
+    return Object.hasOwn(HARNESSES, id || '') ? id : DEFAULT_HARNESS_ID;
   } catch { return DEFAULT_HARNESS_ID; }
 }
 
@@ -49,7 +49,7 @@ export function buildRows(nodes, wall) {
       key: `w-${w.at}-${w.nodeId || w.label}`,
       at: w.at,
       kind: tel?.engine || w.kind,
-      label: hostOf(tel?.url || meta.originUrl || w.label || ''),
+      label: hostOf(tel?.url || node?.origin_url || w.label || ''),
       ok: w.ok !== false,
       error: w.error || null,
       wallMs: w.wallMs ?? null,
@@ -85,6 +85,9 @@ export default function DevWidget({ nodes }) {
     setHarnessId(readHarnessCookie());
     try { setPreviewMode(resolvePreviewMode(localStorage.getItem(PREVIEW_LS_KEY))); } catch {}
     const onKey = (e) => {
+      // Digitando num campo, Alt+D é do campo — não do Console.
+      const alvo = e.target;
+      if (alvo && (alvo.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(alvo.tagName || ''))) return;
       if (e.altKey && (e.code === 'KeyD') && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setOpen((v) => {

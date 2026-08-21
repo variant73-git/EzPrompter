@@ -5,10 +5,10 @@ import { describe, it, expect } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import { usePreviewMode, PREVIEW_MODE_EVENT, PREVIEW_MODE_KEY } from '../lib/use-preview-mode.js';
 
-// A decisão do node, isolada — mesma expressão booleana do CanvasNode.
-function decidir({ showThumb, previewMode, previewVideoUrl, offscreenParked }) {
-  return showThumb && previewMode === 'video' && !!previewVideoUrl && !offscreenParked;
-}
+// O predicado REAL que o CanvasNode usa — importado, nunca reimplementado.
+// Testar uma cópia da expressão deixava o componente divergir sem ficar
+// vermelho (achado da revisão adversarial).
+import { shouldShowPreviewVideo as decidir } from '../lib/preview-video.js';
 const base = { showThumb: true, previewMode: 'video', previewVideoUrl: '/api/native-clone/b/_uncraft/preview.webm', offscreenParked: false };
 
 describe('quando o node mostra vídeo', () => {

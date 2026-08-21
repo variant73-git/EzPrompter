@@ -6217,7 +6217,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
 
       <div className="canvas-zoomdock">
         <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} />
-        <DevWidget nodes={nodes} />
+        {user?.role === 'admin' && <DevWidget nodes={nodes} />}
       </div>
 
       <CanvasInspector

@@ -21,4 +21,11 @@ describe('harness registry', () => {
   it('cookie adulterado com valor não-registrado nunca sai do registro', () => {
     expect(harnessFromCookieHeader('uncraft-harness=gpt-4o-mini', {}).id).toBe('baseline');
   });
+  it('chave HERDADA não fura o fail-closed (constructor devolvia a função Object)', () => {
+    for (const veneno of ['constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty']) {
+      const h = harnessFromCookieHeader(`uncraft-harness=${veneno}`, {});
+      expect(h.id, `chave ${veneno}`).toBe('baseline');
+      expect(typeof h.cloneVision, `chave ${veneno}`).toBe('string');
+    }
+  });
 });

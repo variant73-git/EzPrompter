@@ -88,3 +88,63 @@ codex --mode prose --file /tmp/uncraft-sessao.diff --timeout 1500
 - `next build` compila.
 - A gravação do vídeo tem testemunha própria: unit de anexação (5 casos,
   incluindo teto, vazio e exceção) + script de testemunha real.
+
+---
+
+# ADENDO — revisão adversarial Claude executada (2026-08-21)
+
+Rodada ANTES do Sol, por agente Claude independente, sobre o diff completo.
+**14 achados**, dos quais 2 ALTA. Todos verificados por mim lendo o código
+antes de corrigir. ⚠️ Continua NÃO substituindo o Sol (item 176).
+
+## Corrigidos nesta sessão
+
+| # | Grav. | Achado | Correção |
+|---|---|---|---|
+| 1 | ALTA | **Preview apontava para rota de LABORATÓRIO** (`/api/native-clone/...`): 503 em produção, ignora o bundleId. A feature nasceu morta e ainda gravava até 8MB por clone. | Rota nova `app/api/nodes/[id]/preview-video/route.js`, autorizada por dono do board (padrão do thumbnail); `previewVideoUrl(descriptor, nodeId)`. Teste de regressão proíbe voltar a `native-clone`. |
+| 2 | ALTA | **Console sem gate**: custo de PROVEDOR (`usageMicrocents`/`costUsd`) e o seletor de MODELO serviam a qualquer usuário. | `{user?.role === 'admin' && <DevWidget/>}`. |
+| 3 | MÉDIA | `HARNESSES[id]` lia a **cadeia de protótipos** — cookie `constructor` devolvia a função `Object`, furando o fail-closed (não explorável hoje, mas a garantia era falsa). | `Object.hasOwn` no servidor e no cliente + casos de protótipo no teste. |
+| 4 | MÉDIA | Teto do vídeo conferido **depois** de bufferizar (mesma classe do P0 do `res.body()`); e o produtor não recebia `signal`, então captura fora do prazo seguia escrevendo em /tmp. | `stat` antes do `readFile` (teste prova que não lê) + `signal: deadline.signal` no produtor. |
+| 5 | MÉDIA | Efeito de medição era **código morto**: `contentSizeRef` nasce `{w:null,h:null}` (truthy). | Guarda passa a testar o CONTEÚDO (`?.w && ?.h`). |
+| 8 | MÉDIA | **Teste testava uma cópia** do predicado — o componente podia divergir sem ficar vermelho. | `shouldShowPreviewVideo` exportado de `lib/preview-video.js`, usado pelo componente E importado pelo teste. |
+| 9 | M-BAIXA | Teste do harness afirmava mais do que cobria. | Casos `constructor`/`__proto__`/etc. |
+| 10 | BAIXA | Dedup devolvia `usageMicrocents: 0` — `0` é valor CONHECIDO e viraria `costUsd: 0` para um clone de $0.53 no primeiro caller que esquecesse o guard. | `null` (o "desconhecido" do módulo). |
+| 11 | BAIXA | `poster` com PNG de página inteira dentro de box `cover` = zoom duro no canto. | `poster` removido. |
+| 12 | BAIXA | Teto de 8MB multiplica por N nodes visíveis. | Teto para 3MB. |
+| 13 | BAIXA | Rótulo caía em `meta.originUrl`, campo que não existe. | `node.origin_url`. |
+| 14 | BAIXA | ⌥D roubava a tecla dentro de campos de texto. | Sai cedo em input/textarea/contentEditable. |
+
+## NÃO corrigido — decisão deliberada, vai para o Sol
+
+**#7 — o switch de harness NÃO alcança o clone animado.** O produtor native não
+chama modelo; a única chamada daquele caminho é a geração de controles, com
+modelo **hardcoded** (`control-generation.js:15`). Cheguei a adicionar o slot e
+**revertí**: a fiação toca 5 pontos e um deles é `normalizeUsage`, que reporta o
+modelo para o METERING — fiar às cegas, sem poder rodar o caminho, arrisca
+cobrar pelo modelo errado. A verdade ficou escrita no `lib/harness.js`.
+⚠️ **Consequência para o A/B:** o "−43% por clone" do Terra vale para iter9 e
+clone de imagem; **não é testável hoje no clone native**.
+
+**#6 — `cloneVision` alcança uma segunda chamada em `styleclone`** (o
+`generateDesignMd`), então um A/B ali mede duas trocas. Estreitar para um campo
+dirigido é follow-up.
+
+## Suspeitas do revisor que EU não consegui fechar
+- Gravar vídeo pode empurrar clones para `control_conversion_timeout` (que
+  estorna e não cria node). **Não medido** — ver abaixo.
+- O preview entra no `runtimeFingerprint` (lista de caminhos), então o mesmo
+  site fingerprinta diferente com/sem vídeo. Nenhum consumidor comparando
+  fingerprints entre capturas foi encontrado; sem dano demonstrado.
+
+## ⚠️ O QUE CONTINUA SEM MEDIÇÃO (pendência dura)
+A gravação ponta a ponta e **o custo em tempo do preview** NÃO foram medidos.
+Duas tentativas em ambientes de nuvem falharam pela mesma causa: `curl` passa
+(proxy por variável de ambiente) mas o **Chromium leva `ERR_CONNECTION_RESET`**.
+Registro em `_teste-skill-video/WITNESS-preview-video.md`. O script
+`scripts/witness-preview-video.mjs` está pronto e é uma linha na máquina local:
+```
+node scripts/witness-preview-video.mjs https://www.farmminerals.com/promo 2
+```
+Enquanto esse número não existir, a regra do Adilson ("se sacrificar
+performance, volta pro estático") está apoiada só no interruptor do Console,
+não em medida.
