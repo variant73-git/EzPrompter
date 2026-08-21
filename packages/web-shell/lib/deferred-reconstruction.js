@@ -1,5 +1,6 @@
 import { reconstructPage } from './reconstruct.js';
 import { startCloneTimer, buildCloneTelemetry } from './clone-telemetry.js';
+import { previewVideoUrl } from './preview-video.js';
 import { resolveCloneEngine, producerForEngine } from './clone-router.js';
 import { recordUsage, runBilledOperation } from './billing/context.js';
 import { createConfiguredBundleStore } from './native-clone/bundle-store.js';
@@ -257,9 +258,13 @@ export async function reconstructSiteNode({
             expectedBundleId: descriptor.bundleId,
             runtimeFingerprint: descriptor.runtimeFingerprint,
           });
+          // Preview ANIMADO: a URL só existe quando o bundle trouxe o arquivo.
+          // Ausente = o node segue no PNG, que é o comportamento de hoje.
+          const previewUrl = previewVideoUrl(descriptor);
           const nextMeta = {
             animatedDetected: false,
             animatedRuntime: true,
+            ...(previewUrl ? { previewVideo: { url: previewUrl } } : {}),
             referenceMode: 'clone',
             reconstructionEngine: 'native-bundle',
             deferredReconstructionReason: reason,

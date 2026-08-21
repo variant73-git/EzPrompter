@@ -1,5 +1,5 @@
 'use client';
-// DevWidget — per-clone metrics panel (Adilson, 2026-08-20). Toggle: ⌥D.
+// Console — per-clone metrics + switches (Adilson, 2026-08-20/21). Toggle: ⌥D.
 //
 // Merges two sources per clone:
 //  · client wall-clock (lib/dev-clock.js) — what the USER actually waited;
@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { devClockAll, onDevClock } from '../lib/dev-clock.js';
 import { HARNESSES, HARNESS_COOKIE, DEFAULT_HARNESS_ID } from '../lib/harness.js';
+import { resolvePreviewMode, DEFAULT_PREVIEW_MODE } from '../lib/preview-video.js';
 
 function readHarnessCookie() {
   try {
@@ -19,6 +20,7 @@ function readHarnessCookie() {
 }
 
 const LS_KEY = 'uncraft-dev-widget-open';
+export const PREVIEW_LS_KEY = 'uncraft-preview-mode';
 
 function fmtS(ms) {
   if (ms == null || !Number.isFinite(Number(ms))) return '—';
@@ -75,11 +77,13 @@ export function buildRows(nodes, wall) {
 export default function DevWidget({ nodes }) {
   const [open, setOpen] = useState(false);
   const [harnessId, setHarnessId] = useState(DEFAULT_HARNESS_ID);
+  const [previewMode, setPreviewMode] = useState(DEFAULT_PREVIEW_MODE);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
     try { setOpen(localStorage.getItem(LS_KEY) === '1'); } catch {}
     setHarnessId(readHarnessCookie());
+    try { setPreviewMode(resolvePreviewMode(localStorage.getItem(PREVIEW_LS_KEY))); } catch {}
     const onKey = (e) => {
       if (e.altKey && (e.code === 'KeyD') && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
@@ -100,8 +104,25 @@ export default function DevWidget({ nodes }) {
   return (
     <div className="dev-widget" data-testid="dev-widget">
       <div className="dev-widget-head">
-        <span className="dev-widget-title">Dev · clone metrics</span>
+        <span className="dev-widget-title">Console</span>
         <span className="dev-widget-hint">⌥D to close</span>
+      </div>
+      <div className="dev-widget-harness" role="group" aria-label="Node preview">
+        <span className="dev-widget-harness-label">Preview</span>
+        {[['video', 'Video'], ['static', 'Static']].map(([id, rotulo]) => (
+          <button
+            key={id}
+            type="button"
+            className={`dev-widget-harness-btn${id === previewMode ? ' is-active' : ''}`}
+            title={id === 'video' ? 'Node mostra o clone em movimento' : 'Node mostra o PNG estático (mais leve)'}
+            onClick={() => {
+              try { localStorage.setItem(PREVIEW_LS_KEY, id); } catch {}
+              setPreviewMode(id);
+              // O node lê o modo no render; avisa quem já está montado.
+              window.dispatchEvent(new CustomEvent('uncraft-preview-mode', { detail: id }));
+            }}
+          >{rotulo}</button>
+        ))}
       </div>
       <div className="dev-widget-harness" role="group" aria-label="Model harness">
         <span className="dev-widget-harness-label">Harness</span>

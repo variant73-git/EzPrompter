@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { usePreviewMode } from '../lib/use-preview-mode.js';
 import { createPortal } from 'react-dom';
 import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
 import NativeEditViewport from './motion-editor/NativeEditViewport.jsx';
@@ -857,6 +858,16 @@ export default function CanvasNode({
     return () => { alive = false; };
   }, [wantThumb, thumbKey, node.id]);
   const showThumb = wantThumb && thumb?.key === thumbKey && !interactiveCapturedReference;
+  // 🎬 PREVIEW ANIMADO — o clone native grava a passada de scroll e o node a
+  // mostra em movimento. Três guardas, nesta ordem:
+  //   1. o Console pode voltar para 'static' (regra do Adilson: performance manda);
+  //   2. só existe se o bundle trouxe o vídeo — senão é o PNG de sempre;
+  //   3. NUNCA fora da tela: `offscreenParked` desmonta o <video>, então node
+  //      fora do viewport não decodifica quadro (lição 148b — o hot path do
+  //      canvas é sagrado).
+  const previewMode = usePreviewMode();
+  const previewVideoUrl = node.meta?.previewVideo?.url || null;
+  const showPreviewVideo = showThumb && previewMode === 'video' && !!previewVideoUrl && !offscreenParked;
   // Anti-flash hand-off: while the live iframe is still parsing its srcDoc
   // (edit entry, version preview), the last thumb stays painted on top.
   const [iframeReady, setIframeReady] = useState(false);
@@ -876,6 +887,23 @@ export default function CanvasNode({
       h: Math.min(Math.round(img.naturalHeight * (w / img.naturalWidth)), 12000),
     };
   }, [node.width]);
+
+  // Em modo vídeo o <img> não é renderizado, mas o Expand floater ainda
+  // precisa do tamanho NATURAL da página. Ele vem do PNG (página inteira),
+  // nunca do vídeo — a gravação é 16:9 do viewport e mentiria a altura.
+  useEffect(() => {
+    if (!showPreviewVideo || contentSizeRef.current || !thumb?.url) return;
+    const img = new Image();
+    img.onload = () => {
+      if (contentSizeRef.current || !img.naturalWidth || !img.naturalHeight) return;
+      const w = node.width || 1280;
+      contentSizeRef.current = {
+        w,
+        h: Math.min(Math.round(img.naturalHeight * (w / img.naturalWidth)), 12000),
+      };
+    };
+    img.src = thumb.url;
+  }, [showPreviewVideo, thumb?.url, node.width]);
 
   // When a node BECOMES connected (first outgoing edge), reset the port's
   // inline top immediately so the ball snaps back to its CSS-default
@@ -1535,7 +1563,23 @@ export default function CanvasNode({
             }}
             style={{ height: (node.height || 800) + 'px' }}
           >
-            {showThumb ? (
+            {showPreviewVideo ? (
+              /* Preview animado. `poster` é o próprio PNG: nada pisca enquanto
+                 o vídeo carrega, e se ele falhar o quadro fica sendo o estático.
+                 Sem áudio, sem controles, sem interação — é uma imagem que se
+                 move, não um player. */
+              <video
+                className="cnode-iframe cnode-thumb"
+                src={previewVideoUrl}
+                poster={thumb.url}
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }}
+              />
+            ) : showThumb ? (
               /* Static site visualization — see the wantThumb note above.
                  Reuses .cnode-iframe so radius/bg match. Width-mapped,
                  top-aligned (live parity); a node taller than the capture
