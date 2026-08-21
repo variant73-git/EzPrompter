@@ -1,4 +1,3 @@
-import { classifyNativeLineage, NATIVE_LINEAGE } from './node-editor-kind.js';
 import { reconstructionReason } from './reconstruction-policy.js';
 
 /**
@@ -29,12 +28,15 @@ export function decideEditAction({ node, engineOverride = null } = {}) {
   // own site-only rule to the automatic 'edit' upgrade (Sol final round: the
   // first gate failed in BOTH directions — a nominal engine on an origin-less
   // node still promised a charge, and valid kinds lost the action).
-  const canReconstruct = Boolean(node?.origin_url);
-  const integrityError = canReconstruct
-    && engineOverride == null
-    && classifyNativeLineage(node) === NATIVE_LINEAGE.INCONSISTENT;
-  const billable = canReconstruct
-    && !integrityError
-    && (engineOverride != null || reconstructionReason({ node, role: 'edit' }) === 'edit');
+  // Derive BOTH outcomes from the single reason the route itself computes,
+  // instead of re-deriving lineage here: reading `classifyNativeLineage`
+  // directly meant a non-site node could report "needs repair" while the
+  // route answered `skipped` — the UI inventing a state the server does not
+  // have. The route's one structural precondition (400 `no_origin_url`) is
+  // mirrored for the nominal path, which bypasses the reason entirely.
+  const reason = reconstructionReason({ node, role: 'edit' });
+  const integrityError = engineOverride == null && reason === 'native-inconsistent';
+  const billable = Boolean(node?.origin_url)
+    && (engineOverride != null || reason === 'edit');
   return { billable, integrityError, engineOverride };
 }

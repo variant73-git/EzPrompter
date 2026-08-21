@@ -64,6 +64,16 @@ describe('preconditions mirror the reconstruction route (kind x origin_url x eng
     expect(decideEditAction({ node: legacyTemplate })).toMatchObject({ billable: false });
   });
 
+
+  it('a NON-site inconsistent node reports no repair — the route answers skipped, not 409', () => {
+    // The UI must not invent a state the server does not have: for a
+    // template/chunk the reason is null, so the route replies skipped/credits 0.
+    for (const kind of ['template', 'chunk']) {
+      expect(decideEditAction({ node: { ...inconsistent, kind } }))
+        .toMatchObject({ billable: false, integrityError: false });
+    }
+  });
+
   it('a site node with an origin URL is still repairable', () => {
     expect(decideEditAction({ node: inconsistent })).toMatchObject({ integrityError: true });
   });
