@@ -307,25 +307,37 @@ export async function captureNativeBundle(url, opts = {}) {
         seen.add(abs);
         candidatos.push(abs);
       };
-      for (const el of document.querySelectorAll('img[srcset], source[srcset]')) {
+      // `querySelectorAll` does not enter <template>, whose content is a
+      // separate fragment — markup that a site clones into the page later
+      // (Sol). Collect the roots first and query each of them.
+      const raizes = [document];
+      const filaTpl = [...document.querySelectorAll('template')];
+      while (filaTpl.length && raizes.length < 500) {
+        const tpl = filaTpl.shift();
+        if (!tpl.content) continue;
+        raizes.push(tpl.content);
+        filaTpl.push(...tpl.content.querySelectorAll('template'));
+      }
+      const buscarTodos = (sel) => raizes.flatMap((raiz) => [...raiz.querySelectorAll(sel)]);
+      for (const el of buscarTodos('img[srcset], source[srcset]')) {
         for (const u of parseSrcset(el.getAttribute('srcset'))) push(u);
       }
       // The plain `src` is skipped by the browser whenever a srcset candidate
       // wins, so it never reaches the interception — and then the rewriter has
       // nowhere to point it, leaving a broken fallback (measured 2026-08-21).
-      for (const el of document.querySelectorAll('img[src], source[src], video[poster]')) {
+      for (const el of buscarTodos('img[src], source[src], video[src], audio[src], video[poster]')) {
         const raw = el.getAttribute('src') || el.getAttribute('poster');
         if (raw) push(raw);
       }
-      for (const el of document.querySelectorAll('[data-srcset]')) {
+      for (const el of buscarTodos('[data-srcset]')) {
         for (const u of parseSrcset(el.getAttribute('data-srcset'))) push(u);
       }
-      for (const el of document.querySelectorAll('link[imagesrcset]')) {
+      for (const el of buscarTodos('link[imagesrcset]')) {
         for (const u of parseSrcset(el.getAttribute('imagesrcset'))) push(u);
       }
       // Icons: the browser fetches at most the one it picks for the tab, so
       // the alternates stay uncaptured and their references end up blocked.
-      for (const el of document.querySelectorAll('link[rel*="icon"][href], link[rel="apple-touch-icon"][href]')) {
+      for (const el of buscarTodos('link[rel*="icon"][href], link[rel="apple-touch-icon"][href]')) {
         push(el.getAttribute('href'));
       }
       const urlRe = () => /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
@@ -340,20 +352,23 @@ export async function captureNativeBundle(url, opts = {}) {
           while ((m = re.exec(text))) push(m[2], base);
         }
       }
-      for (const el of document.querySelectorAll('[style*="url("]')) {
+      for (const el of buscarTodos('[style*="url("]')) {
         const re = urlRe();
         let m;
         const text = el.getAttribute('style') || '';
         while ((m = re.exec(text))) push(m[2]);
       }
       return candidatos.slice(0, cap);
-      // The budget is the BUNDLE's remaining room, not an invented number: a
-      // fixed 300 silently cut a big catalogue page's images (measured on a
-      // real site, 2026-08-21). MAX_ASSETS still bounds the whole capture.
-    }, Math.max(0, MAX_ASSETS - recursos.size)).catch(() => []);
+      // Sanity ceiling only. The REAL budget is applied on the Node side,
+      // after dropping candidates already captured — cutting here would let
+      // already-present URLs at the head of the list eat the whole budget and
+      // hide the missing ones behind them (Sol).
+    }, 5000).catch(() => []);
     const aprovados = [];
+    const orcamento = Math.max(0, MAX_ASSETS - recursos.size);
     for (const u of candidatosBrutos) {
-      if (cancelado) break;
+      if (cancelado || aprovados.length >= orcamento) break;
+      if (recursos.has(u)) continue;   // já capturado: não gasta orçamento
       try {
         if (await hostEhPublico(new URL(u).hostname)) aprovados.push(u);
         else descartados.push({ u, motivo: 'host nao publico' });

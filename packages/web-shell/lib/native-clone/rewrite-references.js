@@ -23,10 +23,18 @@ import { posix } from 'node:path';
  * the responses we captured. One pass, applied back to front by offset, so no
  * replacement can be re-matched.
  *
- * Known limits, deliberate: URLs a script builds at runtime (`'/' + name`,
- * `fetch('/api')`) are invisible to any static rewriter — closing those needs
- * a per-bundle virtual origin, which is a bigger design. Script bodies are
- * skipped entirely rather than guessed at.
+ * Known limits, deliberate (Sol audit 2026-08-21) — each one costs a real
+ * tokenizer or a bigger design, and none showed up in the sites measured:
+ *  - URLs a script BUILDS at runtime (`'/' + name`, `fetch('/api')`) are
+ *    invisible to any static rewriter; closing them needs a per-bundle
+ *    virtual origin. Script bodies are skipped rather than guessed at, so
+ *    ESM `import "/chunk.js"` and `<script type="importmap">` are NOT closed.
+ *  - Attribute values are matched with quotes; unquoted attributes are left
+ *    alone (writing one back could break the tag).
+ *  - CSS escapes (`url(foo\)bar.png)`) and entity-encoded whitespace inside
+ *    srcset (`&#32;`) need real tokenizers to read; both are rare in built
+ *    output, and a miss leaves the original reference untouched — never a
+ *    corrupted document.
  */
 
 const HTML_URL_ATTRS = 'src|href|poster|data-src|data-original|data-bg|data-image';
@@ -80,12 +88,29 @@ function srcsetTokens(value, base) {
   return tokens;
 }
 
+/** Comment spans. Markup inside them is inert — and a comment that merely
+ * MENTIONS `<script>` used to make the script scan swallow the rest of the
+ * document, leaving every real reference after it unrewritten (Sol). */
+function commentRanges(html) {
+  const ranges = [];
+  const re = /<!--/g;
+  let m;
+  while ((m = re.exec(html))) {
+    const close = html.indexOf('-->', m.index + 4);
+    const end = close === -1 ? html.length : close + 3;
+    ranges.push([m.index, end]);
+    re.lastIndex = end;
+  }
+  return ranges;
+}
+
 /** Regions a rewriter must not touch: script bodies are code, not markup. */
-function scriptRanges(html) {
+function scriptRanges(html, comments) {
   const ranges = [];
   const re = /<script\b[^>]*>/gi;
   let m;
   while ((m = re.exec(html))) {
+    if (inRanges(m.index, comments)) continue;   // a mentioned tag is not a tag
     const bodyStart = m.index + m[0].length;
     const close = html.slice(bodyStart).search(/<\/script\s*>/i);
     const bodyEnd = close === -1 ? html.length : bodyStart + close;
@@ -117,7 +142,10 @@ function cssTokens(css, offset = 0) {
 }
 
 function htmlTokens(html) {
-  const skip = scriptRanges(html);
+  const comments = commentRanges(html);
+  // Both directions matter: never read a reference out of a comment, and never
+  // let a commented-out tag hide the real ones after it.
+  const skip = [...scriptRanges(html, comments), ...comments];
   const tokens = [];
   const attrRe = new RegExp(`\\s(?:${HTML_URL_ATTRS})\\s*=\\s*(["'])([^"']*)\\1`, 'gi');
   let m;
@@ -173,17 +201,34 @@ function tokensFor(text, kind) {
  * @returns {string}
  */
 export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, map }) {
-  const tokens = tokensFor(text, kind);
-  if (!tokens.length) return text;
+  // A document's references resolve against its <base href>, not against the
+  // file's own URL — resolving with the wrong base means the lookup misses and
+  // the reference is left pointing at the live site. The tag itself is dropped
+  // from the bundle: it names the ORIGINAL origin, so keeping it would send
+  // every relative path we just wrote back out to the internet (Sol).
+  let effectiveBase = resourceUrl;
+  let body = text;
+  if (kind === 'html') {
+    const baseTag = /<base\b[^>]*\bhref\s*=\s*(["'])([^"']*)\1[^>]*>/i.exec(
+      text.replace(/<!--[\s\S]*?-->/g, (c) => ' '.repeat(c.length)),
+    );
+    if (baseTag && baseTag[2]) {
+      try { effectiveBase = new URL(decodeEntities(baseTag[2]), resourceUrl).href; } catch { /* keep own URL */ }
+      body = `${text.slice(0, baseTag.index)}${' '.repeat(baseTag[0].length)}${text.slice(baseTag.index + baseTag[0].length)}`;
+    }
+  }
+  const tokens = tokensFor(body, kind);
+  if (!tokens.length) return body;
   const fromDir = posix.dirname(assetPath);
   const edits = [];
   const markup = kind === 'html' || kind === 'svg';
+  const resolveBase = effectiveBase;
   for (const token of tokens) {
     const decoded = markup ? decodeEntities(token.raw) : token.raw;
     const [withoutHash, hash] = splitFragment(decoded);
     if (!withoutHash || withoutHash.startsWith('data:') || withoutHash.startsWith('#')) continue;
     let absolute;
-    try { absolute = new URL(withoutHash, resourceUrl).href; } catch { continue; }
+    try { absolute = new URL(withoutHash, resolveBase).href; } catch { continue; }
     const target = map.get(absolute);
     if (!target) continue;
     let relative = posix.relative(fromDir === '.' ? '' : fromDir, target);
@@ -191,11 +236,11 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
     const replacement = `${relative}${hash}`;
     edits.push({ start: token.start, end: token.end, value: markup ? encodeForMarkup(replacement) : replacement });
   }
-  if (!edits.length) return text;
+  if (!edits.length) return body;
   // Back to front: an earlier replacement can never be re-scanned or shift
   // the offsets of the ones still to apply.
   edits.sort((a, b) => b.start - a.start);
-  let out = text;
+  let out = body;
   for (const edit of edits) out = out.slice(0, edit.start) + edit.value + out.slice(edit.end);
   return out;
 }
