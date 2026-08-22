@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { resolveCloneEngine } from './clone-router.js';
+import { resolveCloneEngine,
+  CLONE_ENGINES,
+  producerForEngine,
+} from './clone-router.js';
 
 // A doutrina (Adilson, 2026-08-15), presa em teste: "clone" é UM — o animado.
 // O iter9 entra SOMENTE por nome. Se alguém mudar qualquer linha disto, está
@@ -29,5 +32,26 @@ describe('resolveCloneEngine', () => {
   it('an unknown engine name is refused out loud, never silently defaulted', () => {
     expect(() => resolveCloneEngine({ requested: 'screenshot' })).toThrow(/unknown_clone_engine/);
     expect(() => resolveCloneEngine({ requested: 'ITER9' })).toThrow(/unknown_clone_engine/);
+  });
+});
+
+describe('o terceiro motor: remake', () => {
+  it('e um motor valido e so entra por nome', () => {
+    expect(CLONE_ENGINES).toContain('remake');
+    expect(resolveCloneEngine({ requested: 'remake' })).toBe('remake');
+    // Sem pedido nominal, nada muda: a doutrina segue mandando no native.
+    expect(resolveCloneEngine({ reason: 'edit' })).toBe('native');
+    expect(resolveCloneEngine({})).toBe('native');
+  });
+
+  it('tem produtor proprio, e nao cai no native', async () => {
+    const { remakeSite } = await import('./remake/produce.js');
+    expect(producerForEngine('remake')).toBe(remakeSite);
+    expect(producerForEngine('remake')).not.toBe(producerForEngine('native'));
+    expect(producerForEngine('remake')).not.toBe(producerForEngine('iter9'));
+  });
+
+  it('nome desconhecido continua lancando', () => {
+    expect(() => resolveCloneEngine({ requested: 'inventado' })).toThrow(/unknown_clone_engine/);
   });
 });

@@ -20,8 +20,20 @@
  */
 import { reconstructPage } from './reconstruct.js';
 import { captureNativeBundle } from './native-clone/capture-bundle.js';
+import { remakeSite } from './remake/produce.js';
 
-export const CLONE_ENGINES = Object.freeze(['native', 'iter9']);
+/**
+ * ⭐ `remake` — o terceiro motor (2026-08-22, pedido do Adilson).
+ *
+ * Refaz o site nas NOSSAS regras — documento único, estilo embutido, sem
+ * dependência externa —, que é o que faz o editor completo funcionar em
+ * qualquer site, E devolve o movimento, porque interroga a página viva em vez
+ * de olhar fotos paradas. É o que faltava: o legado homogeneíza e entrega zero
+ * movimento (medido); o native entrega movimento e o formato do desenvolvedor.
+ *
+ * Nunca é escolhido sozinho: entra por pedido nominal, como o legado.
+ */
+export const CLONE_ENGINES = Object.freeze(['native', 'iter9', 'remake']);
 
 /** Razões cujo consumidor lê HTML como texto — a exceção deliberada. */
 const CONSUMO_TEXTUAL = new Set(['transform-target', 'runtime-source']);
@@ -39,6 +51,11 @@ export function resolveCloneEngine({ requested = null, reason = null } = {}) {
   return 'native';
 }
 
+const PRODUTORES = { iter9: reconstructPage, remake: remakeSite, native: captureNativeBundle };
+
 export function producerForEngine(engine) {
-  return engine === 'iter9' ? reconstructPage : captureNativeBundle;
+  // Mapa explícito e não ternário encadeado: com três motores, um `else` mudo
+  // faria um nome novo cair no native em silêncio — que é exatamente a classe
+  // de erro que a doutrina veio corrigir.
+  return PRODUTORES[engine] || captureNativeBundle;
 }

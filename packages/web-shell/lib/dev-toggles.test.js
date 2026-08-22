@@ -3,6 +3,7 @@ import {
   CREDIT_PRESETS,
   DEV_ENGINES,
   devToolsAllowed,
+  getDevEngine,
   resolveEditEngineOverride,
 } from './dev-toggles.js';
 
@@ -16,7 +17,7 @@ describe('dev toggles (pre-launch developer widget)', () => {
 
   it('exposes the three credit presets the widget promises', () => {
     expect(CREDIT_PRESETS).toEqual({ infinite: 10_000_000, starter: 500, zero: 0 });
-    expect(DEV_ENGINES).toEqual(['native', 'iter9']);
+    expect(DEV_ENGINES).toEqual(['native', 'remake', 'iter9']);
   });
 
   it('engine override never forces a re-clone of a node that already matches', () => {
@@ -46,5 +47,26 @@ describe('dev toggles (pre-launch developer widget)', () => {
     // every Edit into a nominal (billed) re-clone.
     const savedNativeNode = { ...nativeNode, current_snapshot_source: 'native-edit' };
     expect(resolveEditEngineOverride(savedNativeNode, 'native')).toBe(null);
+  });
+});
+
+// O terceiro motor precisa ATRAVESSAR o guarda: uma escolha que o validador
+// nao reconhece volta como null e o usuario acha que escolheu.
+describe('o motor remake atravessa o seletor', () => {
+  // O guarda que valida a escolha guardada tem que RECONHECER o motor novo:
+  // um nome que ele nao conhece volta como nada, e o usuario acha que escolheu.
+  function comEscolha(valor, fn) {
+    const anterior = globalThis.localStorage;
+    globalThis.localStorage = { getItem: () => valor, setItem: () => {}, removeItem: () => {} };
+    try { return fn(); } finally { globalThis.localStorage = anterior; }
+  }
+
+  it('e aceito como escolha guardada', () => {
+    expect(comEscolha('remake', getDevEngine)).toBe('remake');
+    expect(comEscolha('iter9', getDevEngine)).toBe('iter9');
+  });
+
+  it('nome fora da lista continua virando nada', () => {
+    expect(comEscolha('inventado', getDevEngine)).toBe(null);
   });
 });

@@ -14,7 +14,9 @@
 import { classifyNativeLineage, NATIVE_LINEAGE } from './node-editor-kind.js';
 
 export const DEV_ENGINE_KEY = 'uncraft-dev-engine';
-export const DEV_ENGINES = Object.freeze(['native', 'iter9']);
+// `remake` = refaz o site nas nossas regras E devolve o movimento. Entra aqui
+// como terceira escolha explícita; a doutrina (native) segue sendo o padrão.
+export const DEV_ENGINES = Object.freeze(['native', 'remake', 'iter9']);
 
 export const CREDIT_PRESETS = Object.freeze({
   infinite: 10_000_000,

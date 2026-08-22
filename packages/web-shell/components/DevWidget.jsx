@@ -16,6 +16,14 @@ import { DEV_ENGINES, getDevEngine, setDevEngine } from '../lib/dev-toggles.js';
  *             re-evaluates with the new tier.
  *   Credits — balance presets (infinite / starter / zero), server-side.
  */
+// Cada motor diz o que ENTREGA, nao como se chama por dentro: quem escolhe aqui
+// precisa saber o que muda na tela.
+const ENGINE_COPY = {
+  native: { label: 'Animated', title: 'Preserves the live site — real motion, the developer\'s own markup. Default doctrine.' },
+  remake: { label: 'Remake', title: 'Rebuilds the site in our own format AND reproduces the motion it measured on the live page.' },
+  iter9: { label: 'iter9', title: 'Legacy static engine. No motion at all — kept for static pages only.' },
+};
+
 export default function DevWidget() {
   const [state, setState] = useState(null);       // null until GET succeeds
   const [open, setOpen] = useState(false);
@@ -92,12 +100,10 @@ export default function DevWidget() {
                 <button
                   key={value}
                   className={effectiveEngine === value ? 'on' : ''}
-                  title={value === 'native'
-                    ? 'Clones run the native engine (animated). Default doctrine.'
-                    : 'Clones run the historical iter9 engine (static).'}
+                  title={ENGINE_COPY[value].title}
                   onClick={() => pickEngine(value)}
                 >
-                  {value === 'native' ? 'Animated' : 'iter9'}
+                  {ENGINE_COPY[value].label}
                 </button>
               ))}
             </div>

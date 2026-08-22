@@ -62,7 +62,10 @@ const REAL_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537
  *   baseUrl: string, stats: object}>}
  */
 export async function reconstructPage(url, opts = {}) {
-  const { onProgress = () => {} } = opts;
+  // ⭐ `comMovimento` liga o motor NOVO: mesma captura de assets reais, mais a
+  // evidencia medida do que se move e a diretiva que manda reproduzi-lo. O
+  // caminho legado nao passa por aqui e continua byte-a-byte o que era.
+  const { onProgress = () => {}, comMovimento = false } = opts;
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY missing — required for reconstruction');
   }
@@ -95,8 +98,8 @@ export async function reconstructPage(url, opts = {}) {
     await page.waitForTimeout(INITIAL_SETTLE_MS);
 
     onProgress('capturing');
-    const captured = await captureStops(page, rasterDir, rasterUrlBase);
-    const { stops, assets, colorsByStop, fontsByStop, elevationByStop, title, stopsBuffers } = captured;
+    const captured = await captureStops(page, rasterDir, rasterUrlBase, { comMovimento });
+    const { stops, assets, colorsByStop, fontsByStop, elevationByStop, title, stopsBuffers, motionEvidence } = captured;
 
     onProgress('thumbnailing');
     await renderThumbnails(page, assets);
@@ -104,7 +107,8 @@ export async function reconstructPage(url, opts = {}) {
     onProgress('thinking');
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const rawHtml = await generateHtml({
-      stopsBuffers, assets, colorsByStop, fontsByStop, elevationByStop, openai
+      stopsBuffers, assets, colorsByStop, fontsByStop, elevationByStop, openai,
+      motionEvidence, comMovimento,
     });
     if (!rawHtml || !/<html/i.test(rawHtml)) {
       throw new Error(`Vision call returned no usable HTML (${rawHtml?.length || 0} chars)`);
@@ -155,7 +159,7 @@ async function launchBrowser(chromium) {
 
 // --- step 1: scroll-stops, manifest, color/font probes, rasterization -----
 
-async function captureStops(page, rasterDir, rasterUrlBase) {
+async function captureStops(page, rasterDir, rasterUrlBase, { comMovimento = false } = {}) {
   const totalScroll = await page.evaluate(() => Math.max(
     document.body.scrollHeight,
     document.documentElement.scrollHeight,
@@ -434,7 +438,23 @@ async function captureStops(page, rasterDir, rasterUrlBase) {
 
   const title = (await page.title()) || null;
 
-  return { stops, assets, colorsByStop, fontsByStop, elevationByStop, stopsBuffers, title };
+  // ⭐ O MOVIMENTO, MEDIDO. Aqui a página já rolou de ponta a ponta, então as
+  // animações disparadas por rolagem já existem — interrogar antes devolveria
+  // metade. Só é coletado quando o motor pede: o legado nunca soube de motion e
+  // continua sem saber.
+  let motionEvidence = null;
+  if (comMovimento) {
+    // Import DINÂMICO, só no ramo do motor novo: estático faria um erro de
+    // carga do módulo novo derrubar também o caminho legado, que passaria a
+    // depender de código que ele nunca usa (Sol).
+    try {
+      const { coletorNaPagina } = await import('./remake/motion-evidence.js');
+      motionEvidence = await page.evaluate(coletorNaPagina());
+    }
+    catch (e) { console.warn(`[remake] evidencia de movimento falhou: ${String(e?.message || e).slice(0, 140)}`); }
+  }
+
+  return { stops, assets, colorsByStop, fontsByStop, elevationByStop, stopsBuffers, title, motionEvidence };
 }
 
 // --- step 2: render thumbnails for each manifest entry --------------------
@@ -626,7 +646,7 @@ function buildElevationText(elevationByStop) {
   return `${shadow}\n${border}`;
 }
 
-async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, elevationByStop, openai }) {
+async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, elevationByStop, openai, motionEvidence = null, comMovimento = false }) {
   const stopBlocks = stopsBuffers.map((buf) => ({
     type: 'image_url',
     image_url: { url: `data:image/png;base64,${buf.toString('base64')}` }
@@ -639,6 +659,18 @@ async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, e
     thumbBlocks.push({ type: 'image_url', image_url: { url: a.thumbDataUrl } });
   }
 
+  // Os dois módulos do motor novo só são carregados quando ele roda.
+  let blocoDeMovimento = null;
+  let systemPrompt = VISION_SYSTEM;
+  if (comMovimento) {
+    const [{ descreverMovimento }, { systemComMovimento }] = await Promise.all([
+      import('./remake/motion-evidence.js'),
+      import('./remake/motion-directive.js'),
+    ]);
+    blocoDeMovimento = descreverMovimento(motionEvidence);
+    systemPrompt = systemComMovimento(VISION_SYSTEM, { comMovimento: true });
+  }
+
   const userContent = [
     { type: 'text', text: `ASSET MANIFEST (use these IDs in data-asset-id):\n${buildManifestText(assets)}` },
     { type: 'text', text: `\nASSET THUMBNAILS (visual preview of each manifest entry):` },
@@ -646,6 +678,7 @@ async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, e
     { type: 'text', text: `\nCOLOR PROBES (ground-truth per stop):\n${buildColorsText(colorsByStop)}` },
     { type: 'text', text: `\nTYPOGRAPHY DETECTED (use font-family AND font-style verbatim — ground truth):\n${buildFontsText(fontsByStop)}` },
     { type: 'text', text: `\nELEVATION DETECTED (ground truth — obey over the screenshot):\n${buildElevationText(elevationByStop)}` },
+    ...(blocoDeMovimento ? [{ type: 'text', text: `\n${blocoDeMovimento}` }] : []),
     { type: 'text', text: `\n${stopsBuffers.length} scroll-stop screenshots follow, in scroll order (top → bottom). Reconstruct.` },
     ...stopBlocks
   ];
@@ -663,7 +696,7 @@ async function generateHtml({ stopsBuffers, assets, colorsByStop, fontsByStop, e
   const stream = await openai.chat.completions.create({
     model: 'gpt-5.5',
     messages: [
-      { role: 'system', content: VISION_SYSTEM },
+      { role: 'system', content: systemPrompt },
       { role: 'user', content: userContent }
     ],
     max_completion_tokens: 32000,
