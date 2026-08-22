@@ -176,13 +176,27 @@ await passo('6. o runtime SERVE a página (o elo do "localhost is blocked")', as
 await passo('7. mídia do node responde o esperado', async () => {
   const thumb = await fetch(`${BASE}/api/nodes/${nodeId}/thumbnail`, { headers: { cookie } });
   conferir([200, 404].includes(thumb.status), `thumbnail devolveu ${thumb.status}`);
-  // Bundle sem preview → 404 é a resposta CERTA (o node cai no PNG).
+  // ⚠️ CUIDADO com o 404 aqui. A primeira versão exigia só `status === 404`,
+  // e isso passa DUAS vezes por motivos diferentes: a rota existindo e dizendo
+  // "não tem vídeo", ou a rota não existindo (o 404 padrão do Next). Passou
+  // verde numa máquina onde a rota nem estava instalada — asserção satisfeita
+  // pelo motivo errado, o mesmo defeito que este smoke existe para pegar.
+  // O corpo distingue: a rota responde JSON; o 404 do framework, HTML.
   const prev = await fetch(`${BASE}/api/nodes/${nodeId}/preview-video`, { headers: { cookie } });
-  conferir(prev.status === 404, `preview-video devolveu ${prev.status}; esperado 404 sem vídeo no bundle`);
-  // E a rota não pode servir mídia de node alheio.
-  const alheio = await fetch(`${BASE}/api/nodes/${randomUUID()}/preview-video`, { headers: { cookie } });
-  conferir(alheio.status === 404, `node inexistente devolveu ${alheio.status}`);
-  return { __detalhe: 'thumbnail + preview-video' };
+  const corpoPrev = await prev.text().catch(() => '');
+  const rotaExiste = prev.headers.get('content-type')?.includes('json') || corpoPrev.trim().startsWith('{');
+  let detalhePrev;
+  if (!rotaExiste && prev.status === 404) {
+    detalhePrev = 'preview-video AUSENTE (rota não instalada)';
+  } else {
+    conferir(prev.status === 404, `preview-video devolveu ${prev.status}; esperado 404 sem vídeo no bundle`);
+    conferir(/no_preview/.test(corpoPrev), `preview-video respondeu 404 sem dizer no_preview: ${corpoPrev.slice(0, 80)}`);
+    // E a rota não pode servir mídia de node alheio.
+    const alheio = await fetch(`${BASE}/api/nodes/${randomUUID()}/preview-video`, { headers: { cookie } });
+    conferir(alheio.status === 404, `node inexistente devolveu ${alheio.status}`);
+    detalhePrev = 'preview-video ok';
+  }
+  return { __detalhe: `thumbnail + ${detalhePrev}` };
 });
 
 // ── limpeza ─────────────────────────────────────────────────────────────────

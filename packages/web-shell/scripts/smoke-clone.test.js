@@ -45,6 +45,14 @@ describe('smoke:clone — contrato do porteiro', () => {
     expect(fonte).toMatch(/\.env\.local/);
   });
 
+  it('distingue rota-ausente de rota-que-diz-não — 404 sozinho passa pelos dois', () => {
+    // Segundo defeito real exposto por uso: o passo 7 dava verde numa máquina
+    // onde a rota de preview nem estava instalada (404 do framework).
+    expect(fonte).toMatch(/rotaExiste/);
+    expect(fonte).toMatch(/AUSENTE \(rota não instalada\)/);
+    expect(fonte).toMatch(/no_preview/);
+  });
+
   it('não sai para a internet nem chama modelo — smoke caro não é rodado', () => {
     expect(fonte).not.toMatch(/https?:\/\/(?!localhost)/);
     expect(fonte).not.toMatch(/openai|anthropic|gemini/i);
