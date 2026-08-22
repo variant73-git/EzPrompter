@@ -28,6 +28,13 @@ Uncraft é o único tool que **edita sites visualmente no browser** com controle
 - Decisão: **cobrar pela IA, não BYOK** (margem alvo 60-70%, zero config pro usuário).
 - Legal & ética: ferramenta de **inspiração e aprendizado** ("papel vegetal").
 
+## ⭐ A RÉGUA do clone é o verbatim em `Clone/` (não é nenhum motor do produto)
+`Clone/CLONE_PROMPT.md` (144 linhas) + o vídeo gravado + `dist/` + relatórios. Processo de AGENTE em 7 etapas: gravar vídeo → investigar o site vivo → baixar TUDO → inventariar cada animação com valores observáveis → reproduzir 1:1 sem reinterpretar → limpar vestígios → **validar com a rede desligada, lado a lado e quadro a quadro**. Provado (17/jul): **altura 20.942 = 20.942 exata**, SSIM 0,96, 369 assets, **3 refs externas** (namespaces SVG), 70 imagens locais / 0 remotas.
+⚠️ **Como se perdeu:** em 11/08 três probes confirmaram isso e mediram o produto entregando 8.960 px contra 20.942, perdendo textos; concluíram "falta o PRODUTOR". Em 12/08 construiu-se **outro** produtor (captura que preserva, 22s, grátis) — com **178 refs externas**, e por isso **72 de 80 imagens quebram dentro do nosso editor**. A troca nunca foi anunciada. Nenhum motor automático passou pela bateria de validação do verbatim; enquanto não passar, não afirmar que algum "é bom". [[decision_clone_verbatim_e_a_regua]].
+
+## ⛔ O iter9 é LEGADO — não use como referência (ordem de 2026-08-22)
+O plano do produto SEMPRE foi o clone **homogeneizar** a web: reconstruir qualquer site nas nossas regras para o editor funcionar em todos. O **iter9 é modelo legado em desuso**, que só TALVEZ sirva para site estático — nunca citá-lo como régua, comparação ou explicação de arquitetura. **Clone = o de site ANIMADO (native), e ele precisa das capacidades de EDIÇÃO do editor completo (fontes, imagens, backgrounds, efeitos), não só cor.** Em 2026-08-12 uma sessão trocou o Edit do caminho que RECONSTRÓI para o que PRESERVA sem ver que abandonava a espinha do produto; custou quase um mês. [[decision_iter9_legado]], [[decision_clone_e_o_animado]].
+
 ## Branches
 - `feat/native-motion-editor` — **frente atual** (motion editor nativo, ver seção abaixo)
 - `feat/canvas` — canvas web-shell (checkpoints 108–152: agent chat, créditos, perf, clone/transplante)
