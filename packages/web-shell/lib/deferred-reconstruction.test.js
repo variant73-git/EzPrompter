@@ -570,3 +570,34 @@ describe('relatorio de captura — a soma dos motivos nao pode fingir que explic
     expect(r.discardedReasonsPartial).toBe(true);
   });
 });
+
+// A miniatura do node vinha da captura. O primeiro clone sobrescreve aquele
+// snapshot e a foto sobrevive; o SEGUNDO clone INSERE um snapshot novo com
+// `screenshot_url = NULL` — e o card passa a mostrar o cartão vazio "Ready to
+// edit" para sempre. MEDIDO no node do dono (2026-08-22): duas clonagens,
+// nenhuma foto. Clonar não muda a aparência do site, então a foto do pai
+// continua sendo a verdade.
+describe('clonar de novo nao apaga a miniatura do node', () => {
+  const runtimeHash = `sha256:${'a'.repeat(64)}`;
+  it('o snapshot novo herda a foto do anterior', async () => {
+    const sql = makeSql({ currentId: 'snap-native-velho', currentSource: 'native-bundle' });
+    await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-foto', board_id: 'b1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: 'k-foto',
+      producer: vi.fn(async () => ({
+        kind: 'native',
+        bundle: {
+          entryPath: 'index.html', runtimeFingerprint: runtimeHash,
+          assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+          reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
+        },
+      })),
+      bundleStore: createMemoryBundleStore(),
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: vi.fn(),
+    });
+    const ins = sql._calls.find((c) => /INSERT INTO snapshots/i.test(c.query));
+    expect(ins).toBeTruthy();
+    expect(ins.query).toMatch(/SELECT screenshot_url FROM snapshots/i);
+  });
+});

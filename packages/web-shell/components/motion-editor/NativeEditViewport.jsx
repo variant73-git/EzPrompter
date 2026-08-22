@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getMotionEditorDevice } from '../../lib/motion-editor/devices.js';
 import { useNativeMotionEditSession } from './NativeMotionEditChrome.jsx';
 import { useNativeMotionController } from './useNativeMotionController.js';
+import { toast } from '../Toast.jsx';
 
 const EMPTY_PERSISTENCE = Object.freeze({
   load: async () => [],
@@ -74,6 +75,21 @@ function NativeEditViewportRuntime({
         if (!active) return;
         if (!response.ok || !body?.runtime?.url || !body?.session?.id) {
           throw new Error('runtime_session_unavailable');
+        }
+        // O clone foi refeito e um rascunho de animação do clone anterior ficou
+        // para trás. Dizer isso é obrigatório: sem a frase, a pessoa vê o clone
+        // novo sem as edições dela e lê como perda de trabalho salvo.
+        // A EXISTÊNCIA do aviso já basta: o servidor só o emite quando o
+        // rascunho aposentado tinha trabalho dentro. Condicionar à contagem
+        // deixava calado justamente o caso em que ela é zero mas a revisão não
+        // (rascunho mexido sem transações registradas) — perda silenciosa pela
+        // porta dos fundos (Sol).
+        const aposentado = body.session.supersededDraft;
+        if (aposentado) {
+          const quantas = Number(aposentado.edits) || 0;
+          toast.error(quantas > 0
+            ? `Your unsaved animation edits were made on an earlier clone of this site and could not be carried over (${quantas} change${quantas > 1 ? 's' : ''}).`
+            : 'Unsaved animation work from an earlier clone of this site could not be carried over.');
         }
         setRuntimeUrl(body.runtime.url);
         setLoadState('runtime-loading');

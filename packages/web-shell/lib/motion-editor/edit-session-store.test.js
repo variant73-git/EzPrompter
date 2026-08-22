@@ -43,11 +43,24 @@ function sessionRow(overrides = {}) {
 
 function createSql(results = []) {
   const calls = [];
+  const prelude = [];
   const sql = vi.fn((strings, ...values) => {
-    calls.push({ text: Array.isArray(strings) ? strings.join(' ') : String(strings), values });
+    const text = Array.isArray(strings) ? strings.join(' ') : String(strings);
+    // A trava e a aposentadoria da sessao de outro clone rodam SEMPRE, antes de
+    // tudo. Ficam num registro PROPRIO: nem consomem resultado combinado nem
+    // deslocam `calls[0]`, senao cada teste existente teria que saber de um
+    // passo que nao e' o assunto dele.
+    if (/base_snapshot_replaced/.test(text)
+      || /SELECT n\.current_snapshot_id, s\.native_bundle_id/.test(text)) {
+      prelude.push({ text, values });
+      return Promise.resolve([]);
+    }
+    calls.push({ text, values });
     return Promise.resolve(results.shift() || []);
   });
   sql.calls = calls;
+  sql.prelude = prelude;
+  sql.transaction = (queries) => Promise.all(queries);
   return sql;
 }
 
@@ -159,7 +172,9 @@ describe('native motion edit-session store', () => {
     });
     expect(resumed.draftManifest.schemaVersion).toBe(2);
     expect(resumed.revision).toBe(1);
-    expect(sql).toHaveBeenCalledTimes(2);
+    // Duas consultas de assunto (abrir + normalizar). A trava e a aposentadoria
+    // rodam antes de tudo e vivem em `sql.prelude`.
+    expect(sql.calls).toHaveLength(2);
   });
 
   it('rejects a stale draft write and reports the current revision read-only', async () => {
@@ -270,5 +285,74 @@ describe('native motion edit-session store', () => {
     const migration = await readFile(resolve(process.cwd(), 'migrations/2026-07-26-native-motion-editing.sql'), 'utf8');
     expect(migration).toMatch(/UNIQUE INDEX[\s\S]+node_id[\s\S]+WHERE status = 'active'/i);
     expect(migration).toMatch(/native_bundle_id[\s\S]+ON DELETE RESTRICT/i);
+  });
+});
+
+// ── Sessão presa num snapshot morto ─────────────────────────────────────────
+//
+// MEDIDO no node real do dono (2026-08-22): a sessão do editor apontava para o
+// snapshot de 18/08 e o node já estava no de 21/08 (re-clone). O gateway exige
+// que os dois sejam o mesmo, então recusava TODO arquivo — "This website
+// couldn't be opened for editing", todo dia. E como o índice único deixa uma
+// só sessão ativa por node, a velha impedia a nova: re-clonar não adiantava.
+describe('uma sessão de outro clone nunca é retomada', () => {
+  it('exige que a sessão retomada seja do snapshot ATUAL do node', async () => {
+    const sql = createSql([[sessionRow()]]);
+    await openOrResumeEditSession({ sql, userId: 42, nodeId: NODE_ID, baseSnapshotId: SNAPSHOT_ID });
+    const texto = sql.calls[sql.calls.length - 1].text;
+    // A CTE que escolhe a sessão existente tem que comparar com o snapshot da
+    // CTE `owned` — sem isso, QUALQUER sessão ativa do node serve, inclusive a
+    // de um clone que não existe mais.
+    expect(texto).toMatch(/existing AS \([\s\S]*base_snapshot_id\s*=\s*o\.snapshot_id/i);
+  });
+
+  it('aposenta a sessão incompatível para que a nova possa nascer', async () => {
+    const sql = createSql([[sessionRow()]]);
+    await openOrResumeEditSession({ sql, userId: 42, nodeId: NODE_ID, baseSnapshotId: SNAPSHOT_ID });
+    const texto = sql.prelude.map((c) => c.text).join('\n');
+    expect(texto).toMatch(/UPDATE native_motion_edit_sessions[\s\S]*status\s*=\s*'superseded'/i);
+    expect(texto).toMatch(/base_snapshot_replaced/);
+  });
+
+  it('trava a linha do node antes de decidir, para dois Edits nao se atropelarem', async () => {
+    const sql = createSql([[sessionRow()]]);
+    await openOrResumeEditSession({ sql, userId: 42, nodeId: NODE_ID, baseSnapshotId: SNAPSHOT_ID });
+    expect(sql.prelude.map((c) => c.text).join('\n')).toMatch(/FOR UPDATE/i);
+  });
+});
+
+describe('re-clone no meio do Edit', () => {
+  // Sem esta separação, quem chamou perde a corrida contra um re-clone e recebe
+  // "não encontrado" — a pessoa lê "não pôde ser aberto" sem nada errado. Abrir
+  // aqui na base nova seria pior: o token do runtime sai da leitura de QUEM
+  // CHAMOU e apontaria para o bundle errado, que é o defeito que isto fecha.
+  it('avisa que a base ficou velha, em vez de morrer como nao-encontrado', async () => {
+    const sql = vi.fn((strings) => {
+      const text = strings.join(' ');
+      if (/base_snapshot_replaced/.test(text)) return Promise.resolve([]);
+      if (/SELECT n\.current_snapshot_id, s\.native_bundle_id/.test(text)) {
+        return Promise.resolve([{ current_snapshot_id: 'snap-novo', native_bundle_id: BUNDLE_ID }]);
+      }
+      return Promise.resolve([]);   // `owned` vazio: a base pedida não é mais a atual
+    });
+    sql.transaction = (queries) => Promise.all(queries);
+    await expect(openOrResumeEditSession({
+      sql, userId: 42, nodeId: NODE_ID, baseSnapshotId: SNAPSHOT_ID,
+    })).rejects.toMatchObject({ code: 'stale_base_snapshot', currentSnapshotId: 'snap-novo' });
+  });
+
+  it('segue dizendo nao-encontrado quando o node nao tem clone nenhum', async () => {
+    const sql = vi.fn((strings) => {
+      const text = strings.join(' ');
+      if (/base_snapshot_replaced/.test(text)) return Promise.resolve([]);
+      if (/SELECT n\.current_snapshot_id, s\.native_bundle_id/.test(text)) {
+        return Promise.resolve([{ current_snapshot_id: SNAPSHOT_ID, native_bundle_id: null }]);
+      }
+      return Promise.resolve([]);
+    });
+    sql.transaction = (queries) => Promise.all(queries);
+    await expect(openOrResumeEditSession({
+      sql, userId: 42, nodeId: NODE_ID, baseSnapshotId: SNAPSHOT_ID,
+    })).rejects.toMatchObject({ code: 'not_found' });
   });
 });

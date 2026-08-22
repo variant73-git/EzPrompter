@@ -110,9 +110,93 @@ export async function persistNativeBundleDescriptor({ sql, descriptor }) {
   return stored;
 }
 
+/**
+ * ⭐ UMA SESSÃO DE OUTRO CLONE NUNCA É RETOMADA.
+ *
+ * MEDIDO no node real do dono (2026-08-22): a sessão do editor apontava para o
+ * snapshot de 18/08 enquanto o node já estava no de 21/08 (re-clone). O gateway
+ * exige que a base da sessão SEJA o snapshot atual, então recusava todo arquivo
+ * — "This website couldn't be opened for editing", dia após dia. E como só pode
+ * haver uma sessão ativa por node, a velha impedia a nova: re-clonar não
+ * adiantava, o node ficava preso para sempre.
+ *
+ * A sessão incompatível é aposentada ANTES de escolher — em transação, com a
+ * linha do node travada, porque o índice único é parcial em `status='active'` e
+ * dois Edits simultâneos disputariam a mesma vaga. Um único comando com UPDATE
+ * e INSERT juntos não serve: a ordem das CTEs não é garantida e o SELECT não
+ * enxerga o UPDATE do mesmo comando (advise do Sol).
+ *
+ * O rascunho aposentado NÃO é apagado: a linha fica com `status='superseded'` e
+ * `closed_reason`, então o trabalho segue no banco e a diferença entre "o
+ * usuário cancelou" e "o sistema trocou a base" fica escrita.
+ */
+/**
+ * Aposenta a sessão de um clone que o node não tem mais.
+ *
+ * ⚠️ Compara com o snapshot ATUAL LIDO DO BANCO, nunca com o argumento de quem
+ * chamou: um pedido atrasado carregando uma base velha aposentaria a sessão
+ * BOA e destruiria justamente o que deveria retomar (Sol). Como o critério é
+ * "≠ o atual", a decisão é correta seja qual for o argumento.
+ *
+ * O `FOR UPDATE` trava a linha do node, e a trava vale até o fim da TRANSAÇÃO —
+ * por isso este comando e a escolha da sessão viajam juntos, no mesmo
+ * `sql.transaction`. Separá-los devolveria a corrida: dois Edits simultâneos
+ * disputariam a vaga única do índice parcial.
+ */
+function retireSessionsFromAnotherClone({ sql, userId, nodeId }) {
+  return sql`
+    WITH travado AS (
+      SELECT n.current_snapshot_id
+        FROM nodes n
+        JOIN boards b ON b.id = n.board_id
+       WHERE n.id = ${nodeId} AND b.user_id = ${userId}
+         FOR UPDATE OF n
+    )
+    UPDATE native_motion_edit_sessions e
+       SET status = 'superseded',
+           closed_reason = 'base_snapshot_replaced',
+           closed_at = NOW(),
+           updated_at = NOW()
+      FROM travado
+     WHERE e.node_id = ${nodeId}
+       AND e.status = 'active'
+       AND e.base_snapshot_id IS DISTINCT FROM travado.current_snapshot_id
+    RETURNING e.id, e.revision,
+              jsonb_array_length(COALESCE(e.draft_manifest->'transactions', '[]'::jsonb)) AS edits
+  `;
+}
+
+/**
+ * Rascunho COM trabalho dentro vira aviso; rascunho limpo, não — não houve nada
+ * a perder. O silêncio faria a pessoa ver o clone novo sem as edições dela e ler
+ * como perda de trabalho salvo (Sol).
+ */
+function supersededDraftFrom(superseded) {
+  if (!superseded) return null;
+  const edits = Number(superseded.edits) || 0;
+  if (edits <= 0 && Number(superseded.revision) <= 0) return null;
+  return { sessionId: superseded.id, edits };
+}
+
 export async function openOrResumeEditSession({ sql, userId, nodeId, baseSnapshotId }) {
   assertSql(sql);
-  const rows = await sql`
+  if (typeof sql.transaction !== 'function') {
+    throw new EditSessionStoreError('sql_transaction_required', 'Opening an edit session needs a transaction.');
+  }
+  const [retired, atual, rows] = await sql.transaction([
+    retireSessionsFromAnotherClone({ sql, userId, nodeId }),
+    // O snapshot atual, lido DENTRO da transação: é ele que separa "este node
+    // não tem clone" de "você pediu um clone que o node não tem mais". Sem essa
+    // separação, uma corrida com o re-clone morre como `not_found` e a pessoa
+    // lê "não pôde ser aberto" sem que nada esteja errado (Sol).
+    sql`
+      SELECT n.current_snapshot_id, s.native_bundle_id
+        FROM nodes n
+        JOIN boards b ON b.id = n.board_id
+        LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
+       WHERE n.id = ${nodeId} AND b.user_id = ${userId}
+    `,
+    sql`
     WITH owned AS (
       SELECT n.id AS node_id, s.id AS snapshot_id, s.native_bundle_id,
              s.motion_manifest, nb.runtime_fingerprint
@@ -130,6 +214,10 @@ export async function openOrResumeEditSession({ sql, userId, nodeId, baseSnapsho
         JOIN owned o ON o.node_id = e.node_id
        WHERE e.node_id = ${nodeId} AND e.status = 'active'
          AND e.user_id = ${userId}
+         -- A sessão só serve se for DESTE clone. Sem esta linha, qualquer
+         -- sessão ativa do node era retomada, inclusive a de um clone que o
+         -- node não tem mais — e o gateway recusava tudo.
+         AND e.base_snapshot_id = o.snapshot_id
        ORDER BY e.updated_at DESC
        LIMIT 1
     ), inserted AS (
@@ -184,11 +272,29 @@ export async function openOrResumeEditSession({ sql, userId, nodeId, baseSnapsho
       FROM chosen c
       JOIN snapshots s ON s.id = c.base_snapshot_id
       JOIN native_bundles nb ON nb.bundle_id = s.native_bundle_id
-  `;
+  `,
+  ]);
+  const superseded = retired?.[0] || null;
   const session = sessionFromRow(rows[0]);
   if (!session) {
+    const agora = atual?.[0];
+    if (agora?.native_bundle_id && agora.current_snapshot_id !== baseSnapshotId) {
+      // Recuperável: quem chamou leu o node antes de um re-clone. Ele relê e
+      // tenta de novo — abrir aqui na base nova seria pior, porque o token do
+      // runtime é emitido a partir da leitura DELE e apontaria para o bundle
+      // errado, que é exatamente o defeito que esta correção fecha.
+      const stale = new EditSessionStoreError('stale_base_snapshot', 'The node was re-cloned; read it again.');
+      stale.currentSnapshotId = agora.current_snapshot_id;
+      // Esta transação já aposentou o rascunho; a releitura não vai aposentar
+      // nada. Se o aviso não viajar no erro, o trabalho some sem uma palavra
+      // exatamente na corrida (Sol).
+      stale.supersededDraft = supersededDraftFrom(superseded);
+      throw stale;
+    }
     throw new EditSessionStoreError('not_found', 'Owned native snapshot not found.');
   }
+  const aviso = supersededDraftFrom(superseded);
+  if (aviso) session.supersededDraft = aviso;
   if (rows[0].stored_manifest_version != null
       && Number(rows[0].stored_manifest_version) !== MOTION_MANIFEST_SCHEMA_VERSION) {
     return updateEditSessionDraft({

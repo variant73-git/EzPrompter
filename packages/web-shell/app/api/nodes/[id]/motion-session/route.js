@@ -19,6 +19,9 @@ function sessionJson(session) {
     revision: session.revision,
     status: session.status,
     updatedAt: session.updatedAt ?? null,
+    // O rascunho de um clone que o node não tem mais foi aposentado. Silêncio
+    // aqui faria a pessoa ver o clone novo sem as edições dela (Sol).
+    ...(session.supersededDraft ? { supersededDraft: session.supersededDraft } : {}),
   };
 }
 

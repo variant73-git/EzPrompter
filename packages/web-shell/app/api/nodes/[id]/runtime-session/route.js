@@ -26,7 +26,7 @@ function unavailable(status = 404) {
   });
 }
 
-export async function POST(request, { params }) {
+export async function POST(request, { params }, releituras = 0, avisoArrastado = null) {
   const { user, error } = await requireUser(request);
   if (error) return error;
   const { id } = await params;
@@ -79,6 +79,12 @@ export async function POST(request, { params }) {
         id: session.id,
         baseSnapshotId: session.baseSnapshotId,
         revision: session.revision,
+        // Um rascunho de um clone que o node não tem mais foi aposentado. Sem
+        // isto na resposta o aviso morre no servidor e a pessoa vê o clone novo
+        // sem as edições dela, lendo como perda silenciosa (Sol).
+        ...(session.supersededDraft || avisoArrastado
+          ? { supersededDraft: session.supersededDraft || avisoArrastado }
+          : {}),
       },
     }, {
       headers: {
@@ -87,6 +93,15 @@ export async function POST(request, { params }) {
       },
     });
   } catch (sessionError) {
+    // O node foi re-clonado entre a leitura acima e a abertura da sessão. Relê
+    // UMA vez: o token do runtime tem que sair do MESMO snapshot da sessão, e
+    // insistir na leitura velha é o defeito que esta correção fecha.
+    // UMA releitura, nunca um laço: se o node for re-clonado outra vez no meio,
+    // insistir viraria giro infinito sob a mão de quem clona.
+    if (sessionError?.code === 'stale_base_snapshot' && releituras < 1) {
+      return POST(request, { params }, releituras + 1,
+        sessionError.supersededDraft || avisoArrastado);
+    }
     if (sessionError?.code === 'not_found') return unavailable();
     return unavailable(503);
   }

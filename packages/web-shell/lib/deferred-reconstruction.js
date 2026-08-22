@@ -136,7 +136,13 @@ async function persistNativeSnapshot({ sql, node, descriptor, motionManifest, cu
           native_bundle_id, motion_manifest, motion_manifest_version
         )
         SELECT
-          ${node.id}, NULL, NULL, 'native-bundle', ${current?.id || null},
+          -- ⭐ A foto do snapshot anterior SEGUE: clonar de novo nao muda a
+          -- aparencia do site, mas gravar NULL aqui apagava a miniatura do node
+          -- para sempre (o primeiro clone sobrescreve a captura e preserva; do
+          -- segundo em diante era INSERT com NULL). Medido no node do dono.
+          ${node.id}, NULL,
+          (SELECT screenshot_url FROM snapshots WHERE id = ${current?.id || null}),
+          'native-bundle', ${current?.id || null},
           ${descriptor.bundleId}, ${JSON.stringify(motionManifest)}::jsonb, ${motionManifest.schemaVersion}
         FROM current_node
         RETURNING id

@@ -111,13 +111,41 @@ CREATE TABLE IF NOT EXISTS native_motion_edit_sessions (
   draft_manifest_version SMALLINT NOT NULL DEFAULT 2 CHECK (draft_manifest_version = 2),
   revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
   status VARCHAR(12) NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active','committed','discarded','expired')),
+    CHECK (status IN ('active','committed','discarded','expired','superseded')),
   expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   closed_at TIMESTAMPTZ,
   CHECK (jsonb_typeof(draft_manifest) = 'object')
 );
+-- 'superseded' e `closed_reason` separam "o usuário cancelou" de "o sistema
+-- trocou a base debaixo da sessão" (re-clone). Bancos anteriores se curam no
+-- boot: a trava CHECK antiga recusaria o valor novo, então ela é recriada.
+ALTER TABLE native_motion_edit_sessions ADD COLUMN IF NOT EXISTS closed_reason VARCHAR(40);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'native_motion_edit_sessions'::regclass
+       AND contype = 'c'
+       AND pg_get_constraintdef(oid) LIKE '%status%'
+       AND pg_get_constraintdef(oid) NOT LIKE '%superseded%'
+  ) THEN
+    EXECUTE (
+      SELECT format('ALTER TABLE native_motion_edit_sessions DROP CONSTRAINT %I', conname)
+        FROM pg_constraint
+       WHERE conrelid = 'native_motion_edit_sessions'::regclass
+         AND contype = 'c'
+         AND pg_get_constraintdef(oid) LIKE '%status%'
+         AND pg_get_constraintdef(oid) NOT LIKE '%superseded%'
+       LIMIT 1
+    );
+    ALTER TABLE native_motion_edit_sessions
+      ADD CONSTRAINT native_motion_edit_sessions_status_check
+      CHECK (status IN ('active','committed','discarded','expired','superseded'));
+  END IF;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS native_motion_sessions_one_active_per_node
   ON native_motion_edit_sessions(node_id) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_native_motion_sessions_user_status
