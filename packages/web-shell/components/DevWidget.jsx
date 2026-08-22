@@ -158,6 +158,18 @@ export default function DevWidget() {
                       {t?.credits != null && <span>{t.credits} cr</span>}
                       {t?.usd != null && <span>${t.usd.toFixed(4)}</span>}
                       {!t && <span className="dev-widget-faint">sem telemetria do servidor</span>}
+                      {/* Arquivo perdido na captura só vira acionável com o
+                          MOTIVO: "o site bloqueou" e "passou do tamanho" pedem
+                          remédios opostos. */}
+                      {e.captura?.discarded > 0 && (
+                        <span title={Object.entries(e.captura.discardedReasons || {}).map(([m, n]) => `${n}× ${m}`).join(' · ')}>
+                          {e.captura.discarded} perdido{e.captura.discarded > 1 ? 's' : ''}
+                          {Object.keys(e.captura.discardedReasons || {}).length
+                            ? `: ${Object.entries(e.captura.discardedReasons).map(([m, n]) => `${n}× ${m}`).join(', ')}`
+                            : ''}
+                          {e.captura.discardedReasonsPartial ? ' (amostra)' : ''}
+                        </span>
+                      )}
                     </div>
                   );
                 })}

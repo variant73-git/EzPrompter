@@ -309,6 +309,11 @@ describe('deferred reconstruction result kinds', () => {
       extraRefs: 7,
       discarded: 3,
       discardedHosts: ['cdn.test', 'other.test'],
+      // "1 descartado" sozinho nao distingue "o site bloqueou" de "passou do
+      // tamanho" — e sao remedios opostos. O MOTIVO entra contado, e o motivo
+      // e' vocabulario nosso (nunca texto do site), entao nao vaza nada.
+      discardedReasons: { 'grande demais': 1, 'limite de arquivos': 1, 'host nao publico': 1 },
+      discardedReasonsPartial: false,
     });
     expect(JSON.stringify(result.meta.captureReport)).not.toContain('SECRET');
   });
@@ -488,5 +493,80 @@ describe('reconstructSiteNode — telemetria (auditoria do Sol)', () => {
     expect(etapas).toContain('motor');
     expect(etapas).toContain('bundle');
     expect(etapas).not.toContain('captura');
+  });
+});
+
+describe('relatorio de captura — o teto de hosts nao corta os motivos', () => {
+  const runtimeHash = `sha256:${'a'.repeat(64)}`;
+  it('conta o motivo de todos os descartes, mesmo passando de 10 hosts', async () => {
+    const descartados = Array.from({ length: 14 }, (_, i) => ({ u: `https://h${i}.test/a.png`, motivo: 'corpo nao chegou' }));
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const result = await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-motivos', board_id: 'b1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: 'k-motivos',
+      producer: vi.fn(async () => ({
+        kind: 'native',
+        bundle: {
+          entryPath: 'index.html',
+          runtimeFingerprint: runtimeHash,
+          assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+          reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+        },
+        relatorio: { arquivos: 1, bytes: 19, entryPath: 'index.html', descartados, totalDescartados: 14 },
+      })),
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: vi.fn(),
+    });
+    expect(result.meta.captureReport.discardedHosts).toHaveLength(10);
+    expect(result.meta.captureReport.discardedReasons).toEqual({ 'corpo nao chegou': 14 });
+  });
+});
+
+describe('relatorio de captura — a soma dos motivos nao pode fingir que explica o total', () => {
+  const runtimeHash = `sha256:${'a'.repeat(64)}`;
+  async function relatar(relatorio) {
+    const result = await reconstructSiteNode({
+      sql: makeSql({ currentId: 'snap-native', currentSource: 'capture' }),
+      userId: 42, node: { id: 'node-soma', board_id: 'b1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: `k-${Math.random()}`,
+      producer: vi.fn(async () => ({
+        kind: 'native',
+        bundle: {
+          entryPath: 'index.html', runtimeFingerprint: runtimeHash,
+          assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+          reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
+        },
+        relatorio,
+      })),
+      bundleStore: createMemoryBundleStore(),
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: vi.fn(),
+    });
+    return result.meta.captureReport;
+  }
+
+  // A amostra guardada tem 40 itens; o total pode ser 100. Contar a amostra e
+  // apresentar como explicacao faz "100 perdidos: 40x limite" parecer completo.
+  it('usa a contagem integral quando o produtor a fornece', async () => {
+    const r = await relatar({
+      arquivos: 1, bytes: 19, entryPath: 'index.html',
+      descartados: Array.from({ length: 40 }, () => ({ u: 'https://cdn.test/a.png', motivo: 'limite de arquivos' })),
+      totalDescartados: 100,
+      motivosDescartados: { 'limite de arquivos': 90, 'corpo nao chegou': 10 },
+    });
+    expect(r.discardedReasons).toEqual({ 'limite de arquivos': 90, 'corpo nao chegou': 10 });
+    expect(r.discardedReasonsPartial).toBe(false);
+  });
+
+  it('marca como PARCIAL quando so tem a amostra', async () => {
+    const r = await relatar({
+      arquivos: 1, bytes: 19, entryPath: 'index.html',
+      descartados: Array.from({ length: 40 }, () => ({ u: 'https://cdn.test/a.png', motivo: 'limite de arquivos' })),
+      totalDescartados: 100,
+    });
+    expect(r.discardedReasons).toEqual({ 'limite de arquivos': 40 });
+    expect(r.discardedReasonsPartial).toBe(true);
   });
 });

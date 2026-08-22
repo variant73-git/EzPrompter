@@ -542,6 +542,14 @@ export async function captureNativeBundle(url, opts = {}) {
         // Nada some em silêncio: o que não coube é nomeado.
         descartados: descartados.slice(0, 40),
         totalDescartados: descartados.length,
+        // ⭐ Contagem sobre a lista INTEIRA, antes do corte da amostra. Sem
+        // ela, quem lê contaria os 40 guardados e apresentaria "100 perdidos:
+        // 40× limite de arquivos" como se fosse a explicação completa — uma
+        // amostra truncada com cara de diagnóstico fechado (Sol).
+        motivosDescartados: descartados.reduce((acc, d) => {
+          if (d?.motivo) acc[d.motivo] = (acc[d.motivo] || 0) + 1;
+          return acc;
+        }, {}),
       },
     };
   } finally {

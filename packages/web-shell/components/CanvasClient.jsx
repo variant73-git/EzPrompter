@@ -3556,10 +3556,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
    * cliente pode medi-lo. Fica em memoria para o widget de dev casar com a
    * telemetria que veio no meta do node.
    */
-  function marcarEsperaDoClone(nodeId, ms, engine, telemetry = null) {
+  function marcarEsperaDoClone(nodeId, ms, engine, telemetry = null, captura = null) {
     if (typeof window === 'undefined') return;
     const registro = (window.__uncraftCloneWallClock ||= []);
-    registro.unshift({ nodeId, wallMs: ms, engine, telemetry, at: new Date().toISOString() });
+    registro.unshift({ nodeId, wallMs: ms, engine, telemetry, captura, at: new Date().toISOString() });
     registro.length = Math.min(registro.length, 20);
     window.dispatchEvent(new CustomEvent('uncraft:clone-wallclock'));
   }
@@ -3571,7 +3571,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     try {
       const partiuIter9 = Date.now();
       const result = await api.reconstructNode(id, { engine: 'iter9' });
-      marcarEsperaDoClone(id, Date.now() - partiuIter9, 'iter9', result?.cloneTelemetry);
+      marcarEsperaDoClone(id, Date.now() - partiuIter9, 'iter9', result?.cloneTelemetry, result?.meta?.captureReport);
       flashNodeDebit(id, result?.credits);
       const preparedNode = applyReconstructionResultToNode(node, result);
       setNodes((prev) => prev.map((candidate) => (candidate.id === id ? preparedNode : candidate)));
@@ -4701,7 +4701,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       const partiuClone = Date.now();
       try {
         const result = await api.reconstructNode(nodeId, { engine: engineOverride });
-        marcarEsperaDoClone(nodeId, Date.now() - partiuClone, engineOverride || 'native', result?.cloneTelemetry);
+        marcarEsperaDoClone(nodeId, Date.now() - partiuClone, engineOverride || 'native', result?.cloneTelemetry, result?.meta?.captureReport);
         flashNodeDebit(nodeId, result?.credits);
         const preparedNode = applyReconstructionResultToNode(node, result);
         setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? preparedNode : candidate));

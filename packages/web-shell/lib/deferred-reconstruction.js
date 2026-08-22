@@ -31,21 +31,47 @@ export function conversionDeadlineMs(producerFn, reason) {
   return reason === 'edit' ? ITER9_CONVERSION_DEADLINE_MS : CONTROL_CONVERSION_DEADLINE_MS;
 }
 
+// Vocabulário FECHADO de motivos — é o que `capture-bundle.js` escreve. Contar
+// só o que está nesta lista garante que o relatório nunca carregue texto vindo
+// do site clonado, que é a razão de o relatório ser sanitizado.
+const MOTIVOS_DE_DESCARTE = new Set([
+  'host nao publico', 'limite de arquivos', 'grande demais (declarado)',
+  'grande demais', 'corpo nao chegou', 'chegou apos a montagem',
+]);
+
 function sanitizeCaptureReport(relatorio) {
   const hosts = [];
+  // ⭐ "1 descartado" sozinho não distingue "o site bloqueou o arquivo" de
+  // "o arquivo passou do tamanho" — e o remédio de um não serve para o outro.
+  // Sem o motivo, o número diz que ALGO se perdeu e não deixa agir.
+  const motivos = {};
   for (const item of Array.isArray(relatorio?.descartados) ? relatorio.descartados : []) {
     try {
       const host = new URL(item?.u).hostname;
-      if (host && !hosts.includes(host)) hosts.push(host);
+      // O teto de 10 corta a LISTA DE HOSTS, e só ela: parar o laço aqui faria
+      // os motivos pararem de ser contados junto, sem ninguém saber.
+      if (host && !hosts.includes(host) && hosts.length < 10) hosts.push(host);
     } catch { /* entrada sem URL válida não vira host */ }
-    if (hosts.length >= 10) break;
+    if (MOTIVOS_DE_DESCARTE.has(item?.motivo)) motivos[item.motivo] = (motivos[item.motivo] || 0) + 1;
   }
+  // A contagem boa é a do produtor, feita sobre a lista inteira. Sem ela sobra
+  // a amostra — que continua útil, mas vai ROTULADA como parcial: apresentar
+  // amostra como explicação completa é o mesmo defeito que o motivo veio curar.
+  const integral = relatorio?.motivosDescartados;
+  const temIntegral = integral && typeof integral === 'object';
+  const contagem = {};
+  for (const [motivo, n] of Object.entries(temIntegral ? integral : motivos)) {
+    if (MOTIVOS_DE_DESCARTE.has(motivo) && Number(n) > 0) contagem[motivo] = Number(n);
+  }
+  const somaClassificada = Object.values(contagem).reduce((s, n) => s + n, 0);
   return {
     files: Number(relatorio?.arquivos) || 0,
     bytes: Number(relatorio?.bytes) || 0,
     extraRefs: Number(relatorio?.refsExtras) || 0,
     discarded: Number(relatorio?.totalDescartados) || 0,
     discardedHosts: hosts,
+    discardedReasons: contagem,
+    discardedReasonsPartial: somaClassificada < (Number(relatorio?.totalDescartados) || 0),
   };
 }
 
