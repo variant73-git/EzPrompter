@@ -27,7 +27,20 @@
 
   // Freeze site animations via JS (not CSS, because insertCSS user-origin !important
   // cannot be overridden by inline !important for .rb-fx-active elements)
+  // ⚠️ PRESERVAR O MOVIMENTO: no clone animado do canvas, o site DEVE continuar
+  // se mexendo enquanto se edita — congelar ali é o oposto do produto. Na
+  // extensão, em site qualquer da internet, congelar segue sendo o certo, e o
+  // mesmo vale para o matador de :hover, que reescreve as regras do site.
+  //
+  // A chave NÃO é um global solto: ela viaja dentro de `__rbHost`, o objeto de
+  // boot que só os nossos injetores constroem. Um global à parte seria escrito
+  // pela própria página alvo, que assim se declararia imune ao congelamento
+  // (achado do Sol). Some-se a topologia: preservar só faz sentido quando o
+  // editor roda DENTRO do documento que edita, que é o caso do clone.
+  var preservarMovimento = !!(window.__rbHost && window.__rbHost.preserveMotion)
+    && hostWin === targetWin;
   (function freezeSiteAnimations() {
+    if (preservarMovimento) return;
     var nodes = targetDoc.querySelectorAll('*');
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
@@ -206,7 +219,7 @@
     });
   } catch(e) {}
   hoverKill.textContent = killRules;
-  targetDoc.head.appendChild(hoverKill);
+  if (!preservarMovimento) targetDoc.head.appendChild(hoverKill);
 
   // In canvas mode the iframe is its own document, so editor.css (loaded
   // into the host) doesn't reach it. Mirror the rb-ed-active class onto

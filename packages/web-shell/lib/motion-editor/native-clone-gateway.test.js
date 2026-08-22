@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { injectRuntimeBridge, rewriteRuntimePaths } from './native-clone-gateway.js';
+import { injectRuntimeBridge, rewriteRuntimePaths,
+  fullEditorEnabled,
+} from './native-clone-gateway.js';
 
 describe('native clone gateway', () => {
   it('rewrites quoted, CSS, and srcset root assets', () => {
@@ -131,5 +133,76 @@ describe('native clone gateway', () => {
     const decoyClose = result.indexOf('-->', decoyOpen);
     expect(policyAt).toBeGreaterThan(-1);
     expect(policyAt > decoyOpen && policyAt < decoyClose).toBe(false);
+  });
+});
+
+// ── O editor completo dentro do clone ───────────────────────────────────────
+describe('editor completo no clone', () => {
+  it('fica DESLIGADO por padrao', () => {
+    expect(fullEditorEnabled({})).toBe(false);
+    expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: '0' })).toBe(false);
+    expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: '1' })).toBe(true);
+    expect(injectRuntimeBridge('<html><body></body></html>')).not.toContain('editor-core');
+  });
+
+  it('entra por caminho ABSOLUTO na origem do runtime', () => {
+    // Caminho absoluto: `'self'` da CSP ja' autoriza e nenhuma fronteira de rede
+    // privada e' cruzada — foi isso que matou a sonda por interceptacao.
+    const html = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    expect(html).toContain('href="/editor-core/editor.css"');
+    expect(html).toContain('src="/editor-core/editor.js"');
+    expect(html).not.toMatch(/src="https?:\/\/[^"]*editor-core/);
+  });
+
+  it('aponta host E target para o proprio documento', () => {
+    const html = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    expect(html).toMatch(/__rbHost = \{ doc: document, win: window, preserveMotion: true \}/);
+    expect(html).toMatch(/__rbTarget = \{ doc: document, win: window \}/);
+  });
+
+  it('substitui localStorage quando a origem e opaca', () => {
+    // Origem opaca faz `localStorage` LANCAR, e tres chamadas do editor nao tem
+    // protecao — um SecurityError ali mataria a edicao inteira.
+    const html = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    expect(html).toMatch(/window\.localStorage\.getItem\('x'\)/);
+    expect(html).toMatch(/defineProperty\(window, 'localStorage'/);
+  });
+
+  it('reinjetar nao acumula copias do editor', () => {
+    const uma = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    const duas = injectRuntimeBridge(uma, null, { fullEditor: true });
+    const conta = (h) => (h.match(/data-uncraft-full-editor\b/g) || []).length;
+    expect(conta(duas)).toBe(conta(uma));
+    expect((duas.match(/data-uncraft-runtime-bridge/g) || []).length).toBe(1);
+  });
+
+  // ⚠️ O clone existe para SE MOVER. `freeze.js` pausa a timeline global, mata
+  // os tweens e destroi os ScrollTriggers — medido: relogio parado, zero tweens
+  // ativos. `rebuild.js` reescreve o documento e derrubaria a ponte.
+  it('nao carrega o congelador nem o reconstrutor', () => {
+    const html = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    expect(html).not.toContain('/editor-core/freeze.js');
+    expect(html).not.toContain('/editor-core/rebuild.js');
+    expect(html).toContain('/editor-core/editor.js');
+    expect(html).toContain('/editor-core/detect.js');
+  });
+});
+
+describe('o clone continua se mexendo enquanto se edita', () => {
+  // O editor tem congeladores PROPRIOS, independentes do freeze.js: um pausa
+  // animacoes CSS inline e outro reescreve as regras de :hover do site. Na
+  // extensao, em site qualquer, congelar e' o certo; num clone que existe para
+  // se mexer, e' o oposto do produto (Sol r2).
+  it('pede ao editor que preserve o movimento', () => {
+    const html = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    expect(html).toMatch(/__rbHost = \{ doc: document, win: window, preserveMotion: true \}/);
+  });
+
+  // A extensao e o editor legado do canvas FORCAM false — eles sao os ultimos a
+  // escrever antes do editor subir. Sem isso, um site qualquer da internet
+  // poderia declarar a chave e escapar do congelamento (Sol r3).
+  it('so o gateway do clone liga o preservador', () => {
+    const semEditor = injectRuntimeBridge('<html><body></body></html>');
+    expect(semEditor).not.toContain('preserveMotion');
   });
 });
