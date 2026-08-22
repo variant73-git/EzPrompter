@@ -3550,12 +3550,28 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
    * novo entra na frente e o estado anterior fica no historico de versoes
    * (Saved versions), de onde se restaura.
    */
+  /**
+   * O relogio que a PESSOA sente: do clique ate' a resposta chegar. E' outro
+   * numero que o do servidor — inclui rede, fila e o proprio browser — e so' o
+   * cliente pode medi-lo. Fica em memoria para o widget de dev casar com a
+   * telemetria que veio no meta do node.
+   */
+  function marcarEsperaDoClone(nodeId, ms, engine, telemetry = null) {
+    if (typeof window === 'undefined') return;
+    const registro = (window.__uncraftCloneWallClock ||= []);
+    registro.unshift({ nodeId, wallMs: ms, engine, telemetry, at: new Date().toISOString() });
+    registro.length = Math.min(registro.length, 20);
+    window.dispatchEvent(new CustomEvent('uncraft:clone-wallclock'));
+  }
+
   async function handleCloneIter9(id) {
     const node = nodes.find((n) => n.id === id);
     if (!node?.origin_url) { toast.error('This node has no origin URL to clone.'); return; }
     setNodeRunStatus(id, { step: 1, label: 'Cloning with iter9 (static)…', request: '' });
     try {
+      const partiuIter9 = Date.now();
       const result = await api.reconstructNode(id, { engine: 'iter9' });
+      marcarEsperaDoClone(id, Date.now() - partiuIter9, 'iter9', result?.cloneTelemetry);
       flashNodeDebit(id, result?.credits);
       const preparedNode = applyReconstructionResultToNode(node, result);
       setNodes((prev) => prev.map((candidate) => (candidate.id === id ? preparedNode : candidate)));
@@ -4682,8 +4698,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
 
       editPreparationRef.current.add(nodeId);
       setNodeRunStatus(nodeId, { step: 1, label: 'Preparing editable site…', request: '' });
+      const partiuClone = Date.now();
       try {
         const result = await api.reconstructNode(nodeId, { engine: engineOverride });
+        marcarEsperaDoClone(nodeId, Date.now() - partiuClone, engineOverride || 'native', result?.cloneTelemetry);
         flashNodeDebit(nodeId, result?.credits);
         const preparedNode = applyReconstructionResultToNode(node, result);
         setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? preparedNode : candidate));

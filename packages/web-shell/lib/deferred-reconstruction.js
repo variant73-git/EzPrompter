@@ -1,5 +1,6 @@
 import { reconstructPage } from './reconstruct.js';
 import { resolveCloneEngine, producerForEngine } from './clone-router.js';
+import { createCloneTimer, persistCloneTelemetry, readCloneTelemetry } from './clone-telemetry.js';
 import { recordUsage, runBilledOperation } from './billing/context.js';
 import { createConfiguredBundleStore } from './native-clone/bundle-store.js';
 import { registerNativeBundle } from './native-clone/register-bundle.js';
@@ -223,7 +224,11 @@ export async function reconstructSiteNode({
   generateControls = generateControlsForReconstruction,
   persistBundle = persistNativeBundleDescriptor,
 }) {
-  const { result, credits, balanceAfter } = await runBilledOperation(
+  // ⏱️ Onde o clone gasta tempo: o cronometro nasce ANTES do billing porque a
+  // espera da pessoa inclui a reserva de credito, nao so' o trabalho.
+  const cronometro = createCloneTimer();
+  const motorEscolhido = resolveCloneEngine({ requested: engine, reason });
+  const { result, credits, balanceAfter, microcents, deduped } = await runBilledOperation(
     { sql, userId, op, boardId: node.board_id, nodeId: node.id, idemKey },
     async () => {
       const deadline = new AbortController();
@@ -234,13 +239,19 @@ export async function reconstructSiteNode({
       try {
       let materialized;
       try {
-        materialized = await materializeReconstructionOutput(
-          await Promise.race([
-            resolvedProducer(node.origin_url),
-            aborted,
-          ]),
-          { bundleStore },
-        );
+        // ⏱️ DUAS etapas, nao uma (achado do Sol). `materializeReconstructionOutput`
+        // grava TODOS os assets do bundle no store; embrulhar isso junto com o
+        // produtor atribuiria a persistencia ao motor — um produtor de 24s com
+        // 100 uploads de 100s apareceria como "o motor demora 124s", que e'
+        // exatamente a confusao que este instrumento existe para desfazer.
+        const bruto = await cronometro.measure('motor', async () => Promise.race([
+          resolvedProducer(node.origin_url),
+          aborted,
+        ]));
+        materialized = await cronometro.measure('bundle', async () => Promise.race([
+          materializeReconstructionOutput(bruto, { bundleStore }),
+          aborted,
+        ]));
       } catch (error) {
         if (deadline.signal.aborted) {
           const timeout = new Error('control_conversion_timeout');
@@ -277,7 +288,7 @@ export async function reconstructSiteNode({
             || materialized.output?.validateControlCandidate
             || process.env.UNCRAFT_MOTION_CONTROL_VALIDATOR_URL,
           );
-          const generated = !validatorConfigured ? null : await Promise.race([generateControls({
+          const generated = !validatorConfigured ? null : await cronometro.measure('controles', async () => Promise.race([generateControls({
             descriptor,
             reconstructionOutput: materialized.output,
             signal: deadline.signal,
@@ -290,7 +301,7 @@ export async function reconstructSiteNode({
               cacheWrite: usage.cacheWriteTokens,
               meta: { stage: 'motion-control-generation' },
             }),
-          }), aborted]);
+          }), aborted]));
           // Configured ⇒ a valid result is REQUIRED. Every downstream branch
           // keys on validatorConfigured (never on generated's truthiness), so a
           // configured-but-broken generator resolving null can never settle
@@ -424,5 +435,24 @@ export async function reconstructSiteNode({
       }
     },
   );
-  return { ...result, credits, balanceAfter };
+
+  // ⏱️ DEPOIS do settle, de proposito: e' so' aqui que `credits` e `microcents`
+  // existem. E fail-open — a gravacao nunca derruba um clone que deu certo.
+  //
+  // Replay de dedup NAO grava: nao houve clone novo, e sobrescrever apagaria a
+  // medicao do clone que de fato aconteceu.
+  let cloneTelemetry = null;
+  if (deduped) {
+    // O replay nao clonou nada — o cronometro dele mediria milissegundos. Quem
+    // tem a historia verdadeira e' a medicao guardada pelo clone original, que
+    // costuma ser justamente o lento cuja resposta se perdeu (Sol).
+    cloneTelemetry = await readCloneTelemetry({ sql, nodeId: node.id, idemKey, elapsedMs: cronometro.elapsed() });
+  } else {
+    cloneTelemetry = cronometro.report({ engine: motorEscolhido, credits, microcents });
+    await persistCloneTelemetry({ sql, nodeId: node.id, report: cloneTelemetry, idemKey, elapsedMs: cronometro.elapsed() });
+  }
+  // Vai TAMBEM na resposta: o cliente ja tem o relogio de parede dele e so'
+  // consegue casar os dois numeros na hora — reler o node do banco so' para
+  // isso seria uma ida a mais por clone.
+  return { ...result, credits, balanceAfter, cloneTelemetry };
 }

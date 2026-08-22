@@ -30,6 +30,7 @@ function makeSql({ currentId = null, currentSource = null } = {}) {
     const query = strings.join('?');
     calls.push({ query, values });
     if (/SELECT\s+n\.current_snapshot_id/i.test(query)) return Promise.resolve([{ id: currentId, source: currentSource }]);
+    if (/SELECT meta FROM nodes/i.test(query)) return Promise.resolve([{ meta: { cloneTelemetry: { totalMs: 203_000, engine: 'native', idemKey: 'k-dedup' } } }]);
     if (/UPDATE snapshots/i.test(query)) return Promise.resolve([{ id: currentId }]);
     if (/INSERT INTO snapshots/i.test(query)) return Promise.resolve([{ id: 'snap-new' }]);
     return Promise.resolve([]);
@@ -445,5 +446,47 @@ describe('conversion deadline per lane (conversion_timeout fix 2026-08-18)', () 
     expect(conversionDeadlineMs(reconstructPage, 'runtime-source')).toBe(90_000);
     // Route ceiling must stay above the biggest lane (maxDuration 300s).
     expect(conversionDeadlineMs(reconstructPage, 'edit')).toBeLessThan(300_000);
+  });
+});
+
+// ── Telemetria de clone: achados do Sol ─────────────────────────────────────
+
+describe('reconstructSiteNode — telemetria (auditoria do Sol)', () => {
+  // #2: `deduped` e' IRMAO de `result` no retorno de runBilledOperation, nao
+  // propriedade dele. Ler `result.deduped` da' sempre undefined, entao o replay
+  // — que nao clonou nada — regravaria um relatorio de milissegundos POR CIMA
+  // da medicao do clone lento que de fato aconteceu.
+  it('nao regrava telemetria no replay idempotente', async () => {
+    const billing = await import('./billing/context.js');
+    billing.runBilledOperation.mockImplementationOnce(async () => ({
+      result: { snapshotId: 'snap-antigo', html: '<html>guardado</html>' },
+      credits: 3, balanceAfter: 100, deduped: true,
+    }));
+    const sql = makeSql({ currentId: 'snap-current', currentSource: 'capture' });
+    const out = await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-d', board_id: 'b1', origin_url: 'https://x.com' },
+      reason: 'edit', idemKey: 'k-dedup',
+    });
+    const gravou = sql._calls.some((c) => /UPDATE nodes/i.test(c.query) && /cloneTelemetry/.test(JSON.stringify(c.values)));
+    expect(gravou).toBe(false);
+    // ...e devolve a medicao GUARDADA pelo clone original, nao null: e' ela que
+    // conta por que o pedido demorou (Sol, segunda metade do achado #2).
+    expect(out.cloneTelemetry).toEqual({ totalMs: 203_000, engine: 'native', idemKey: 'k-dedup' });
+  });
+
+  // #3: `captura` embrulhava produtor + gravacao dos assets do bundle. Um
+  // produtor de 24s com 100 uploads de 100s aparecia como "captura: 124s" e
+  // fazia o MOTOR parecer o lento — apagando justamente a separacao que este
+  // instrumento existe para mostrar.
+  it('separa o motor da gravacao do bundle', async () => {
+    const sql = makeSql({ currentId: 'snap-current', currentSource: 'capture' });
+    const out = await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-e', board_id: 'b1', origin_url: 'https://x.com' },
+      reason: 'edit', idemKey: 'k-etapas',
+    });
+    const etapas = Object.keys(out.cloneTelemetry?.stages || {});
+    expect(etapas).toContain('motor');
+    expect(etapas).toContain('bundle');
+    expect(etapas).not.toContain('captura');
   });
 });

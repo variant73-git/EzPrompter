@@ -19,6 +19,9 @@ import { DEV_ENGINES, getDevEngine, setDevEngine } from '../lib/dev-toggles.js';
 export default function DevWidget() {
   const [state, setState] = useState(null);       // null until GET succeeds
   const [open, setOpen] = useState(false);
+  // Espera medida no CLIENTE (do clique à resposta). O servidor grava a sua
+  // telemetria no meta do node; aqui as duas se encontram.
+  const [esperas, setEsperas] = useState([]);
   const [busy, setBusy] = useState(false);
   const [engine, setEngine] = useState(null);
 
@@ -29,6 +32,13 @@ export default function DevWidget() {
       .then((data) => { if (alive && data) { setState(data); setEngine(getDevEngine()); } })
       .catch(() => {});
     return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    const ler = () => setEsperas([...(globalThis.window?.__uncraftCloneWallClock || [])]);
+    ler();
+    window.addEventListener('uncraft:clone-wallclock', ler);
+    return () => window.removeEventListener('uncraft:clone-wallclock', ler);
   }, []);
 
   if (!state) return null;
@@ -124,6 +134,36 @@ export default function DevWidget() {
             </div>
             <span className="dev-widget-balance">{state.credits.toLocaleString('en-US')}</span>
           </div>
+
+          {/* ⏱️ Onde o clone gasta tempo e dinheiro. `wall` é o que a PESSOA
+              esperou; `server` é o total medido no servidor; as etapas dizem
+              onde ele foi. `resto` é o servidor fora das etapas nomeadas —
+              sem ele a soma não fecha e ninguém sabe o que falta medir. */}
+          {esperas.length > 0 && (
+            <div className="dev-widget-row dev-widget-clones">
+              <span className="dev-widget-label">Clones</span>
+              <div className="dev-widget-clone-list">
+                {esperas.map((e) => {
+                  const t = e.telemetry || null;
+                  const seg = (ms) => `${(ms / 1000).toFixed(1)}s`;
+                  return (
+                    <div key={`${e.nodeId}-${e.at}`} className="dev-widget-clone">
+                      <b>{e.engine}</b>
+                      <span>wall {seg(e.wallMs)}</span>
+                      {t && <span>server {seg(t.totalMs)}</span>}
+                      {t && Object.entries(t.stages || {}).map(([nome, ms]) => (
+                        <span key={nome}>{nome} {seg(ms)}</span>
+                      ))}
+                      {t?.unaccountedMs > 0 && <span>resto {seg(t.unaccountedMs)}</span>}
+                      {t?.credits != null && <span>{t.credits} cr</span>}
+                      {t?.usd != null && <span>${t.usd.toFixed(4)}</span>}
+                      {!t && <span className="dev-widget-faint">sem telemetria do servidor</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
       <button

@@ -10644,3 +10644,11 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
 .dmd-type-meta b { font-weight: 500; opacity: 0.55; font-variant-numeric: tabular-nums; }
 /* Panel variant inherits the inspector's ink; keep hexes quiet either way. */
 .dmd-panel .dmd-color-legend b, .dmd-panel .dmd-type-meta b { color: var(--text-muted); }
+
+/* Telemetria de clone no widget de dev: uma linha por clone, etapas em pílulas. */
+.dev-widget-clones { align-items: flex-start; }
+.dev-widget-clone-list { display: flex; flex-direction: column; gap: 6px; max-height: 168px; overflow-y: auto; }
+.dev-widget-clone { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; color: var(--text-secondary); }
+.dev-widget-clone b { color: var(--text-primary); text-transform: uppercase; letter-spacing: .04em; }
+.dev-widget-clone span { background: var(--bg-frosted); border: 1px solid var(--border-frosted); border-radius: 4px; padding: 1px 5px; }
+.dev-widget-faint { opacity: .6; }

@@ -120,6 +120,7 @@ describe('POST /api/nodes/[id]/run billing wrapper', () => {
       [{ id: 'source-1', edge_id: 'e1', edge_payload: { binding: { motion: 'preserve' } }, source_node_id: 'source-1', kind: 'site', meta: { animatedDetected: true }, board_id: 'b1', origin_url: 'https://example.com', source_html: '<html>frozen</html>', source_design_md: null, current_snapshot_source: 'capture' }],
       [{ id: 'source-snap' }], // deferred reconstruction snapshot
       [],                      // reconstructed source metadata
+      [],                      // telemetria do clone (UPDATE nodes … cloneTelemetry)
       [{ id: 'target-snap' }], // composed target snapshot
       [],                      // target metadata
       [],                      // applied edges
