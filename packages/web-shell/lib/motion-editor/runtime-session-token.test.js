@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   RUNTIME_SESSION_DEFAULT_TTL_SECONDS,
   RUNTIME_SESSION_EDIT_TTL_SECONDS,
@@ -8,6 +8,9 @@ import {
   resolveRuntimeOrigin,
   runtimeRequestUsesConfiguredOrigin,
   verifyRuntimeSessionToken,
+  TOKEN_VERIFICATION_ERRORS,
+  tokenVerificationFailure,
+  normalizeTokenVerification,
 } from './runtime-session-token.js';
 import { sessionCookieHeader } from '../auth.js';
 
@@ -207,5 +210,79 @@ describe('runtime session tokens', () => {
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('SameSite=Lax');
     expect(cookie).not.toMatch(/(?:^|;)\s*Domain=/i);
+  });
+});
+
+// O gateway DERIVA o vocabulario de diagnostico daqui. Um motivo novo que fique
+// fora da lista sairia do cabecalho em silencio — a regressao exata que a
+// guarda promete impedir (Sol). Guardar por leitura da fonte provaria so' a
+// sintaxe escolhida, entao a checagem e' sobre o VALOR, na unica porta por onde
+// uma recusa sai.
+describe('nenhuma recusa escapa do vocabulario', () => {
+  it('aceita os motivos conhecidos', () => {
+    for (const motivo of TOKEN_VERIFICATION_ERRORS) {
+      expect(tokenVerificationFailure(motivo)).toEqual({ error: motivo });
+    }
+  });
+
+  it('estoura fora de producao para um motivo novo, em qualquer forma de escrita', () => {
+    const dinamico = ['rev', 'oked'].join('');
+    expect(() => tokenVerificationFailure(dinamico)).toThrow(/fora do vocabulario/);
+    expect(() => tokenVerificationFailure(`${dinamico}`)).toThrow(/fora do vocabulario/);
+    expect(() => tokenVerificationFailure(undefined)).toThrow(/fora do vocabulario/);
+  });
+
+  // ⭐ A classe so' fecha na FRONTEIRA: o helper checa quem o chama, mas um
+  // caminho novo poderia escrever `return { error: 'x' }` direto. A funcao
+  // exportada filtra a SAIDA, entao a forma de escrita la' dentro nao importa.
+  it('todo caminho real do verificador devolve motivo do vocabulario', () => {
+    const caminhos = [
+      verifyRuntimeSessionToken(''),
+      verifyRuntimeSessionToken('nao-e-um-jwt', { secret: 's'.repeat(32) }),
+      verifyRuntimeSessionToken('a.b.c', { secret: 's'.repeat(32) }),
+    ];
+    for (const r of caminhos) expect(TOKEN_VERIFICATION_ERRORS).toContain(r.error);
+  });
+
+  // `{ error: undefined }` e' uma recusa que se disfarca de sucesso: a rota le
+  // `if (verification.error)`, ve falso, e segue como se houvesse payload. A
+  // fronteira tem que olhar a PRESENCA da chave, nao a verdade do valor (Sol).
+  it('uma recusa sem valor nao atravessa a fronteira', () => {
+    // A fronteira e' testada DIRETAMENTE: trocar a guarda por `if (r.error)`
+    // tem que deixar isto vermelho, senao o teste nao protege nada (Sol).
+    expect(() => normalizeTokenVerification({ error: undefined })).toThrow(/fora do vocabulario/);
+    expect(() => normalizeTokenVerification({ error: 'revoked' })).toThrow(/fora do vocabulario/);
+    expect(normalizeTokenVerification({ error: 'expired' })).toEqual({ error: 'expired' });
+    const sucesso = { payload: Object.freeze({ nodeId: 'n' }) };
+    expect(normalizeTokenVerification(sucesso)).toBe(sucesso);
+
+    const anterior = process.env.NODE_ENV;
+    const gritou = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      process.env.NODE_ENV = 'production';
+      expect(normalizeTokenVerification({ error: undefined })).toEqual({ error: 'invalid' });
+    } finally {
+      process.env.NODE_ENV = anterior;
+      gritou.mockRestore();
+    }
+
+    const r = verifyRuntimeSessionToken('');
+    expect(Object.hasOwn(r, 'error')).toBe(true);
+    expect(r.error).toBeDefined();
+  });
+
+  // Em producao NAO derruba: trocar uma recusa correta por erro de servidor
+  // seria pior que perder o motivo. Grita no log e recusa conservadoramente.
+  it('em producao degrada com log alto em vez de derrubar', () => {
+    const anterior = process.env.NODE_ENV;
+    const gritou = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      process.env.NODE_ENV = 'production';
+      expect(tokenVerificationFailure('revoked')).toEqual({ error: 'invalid' });
+      expect(gritou).toHaveBeenCalled();
+    } finally {
+      process.env.NODE_ENV = anterior;
+      gritou.mockRestore();
+    }
   });
 });

@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const verifyRuntimeSessionToken = vi.fn();
 const runtimeRequestUsesConfiguredOrigin = vi.fn();
-vi.mock('../../../../../lib/motion-editor/runtime-session-token.js', () => ({
+vi.mock('../../../../../lib/motion-editor/runtime-session-token.js', async (original) => ({
   verifyRuntimeSessionToken,
   runtimeRequestUsesConfiguredOrigin,
+  // O vocabulario de erros do token e' REAL, nao dublado: o gateway deriva os
+  // motivos dele, e dublar aqui faria a guarda comparar copia com copia.
+  TOKEN_VERIFICATION_ERRORS: (await original()).TOKEN_VERIFICATION_ERRORS,
 }));
 
 const sqlMock = vi.fn();
@@ -232,4 +235,67 @@ describe('GET /api/runtime/[token]/[...path]', () => {
     expect(store.read.mock.calls[0][0]).toContain(BUNDLE_ID);
     expect(store.read.mock.calls[1][0]).toContain(otherBundleId);
   });
+});
+
+describe('a falha deixa de ser muda', () => {
+  // O caminho de SUCESSO permite que o editor emoldure a pagina; o de falha
+  // dizia `frame-ancestors 'none'`, entao a unica tela onde alguem leria a
+  // mensagem era justamente a que o navegador se recusava a desenhar. Quadro
+  // branco, sem motivo, ate o batimento desistir. A pagina segue INERTE
+  // (`default-src 'none'`) — so' deixa de ser invisivel.
+  it('a pagina de erro pode ser desenhada dentro do app', async () => {
+    verifyRuntimeSessionToken.mockReturnValueOnce({ error: 'expired' });
+    const response = await GET(request(), context());
+    const csp = response.headers.get('content-security-policy');
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).not.toContain("frame-ancestors 'none'");
+    expect(csp).toMatch(/frame-ancestors (?:'self'|https?:\/\/)/);
+  });
+
+  // O motivo e' vocabulario interno: em producao fica so' no log. Fora dela,
+  // exige opt-in EXPLICITO — nao basta "nao e' producao", que pegaria staging
+  // publico (Sol).
+  it('o motivo so viaja com opt-in explicito, e nunca em producao', async () => {
+    const anterior = process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES;
+    try {
+      delete process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES;
+      verifyRuntimeSessionToken.mockReturnValueOnce({ error: 'expired' });
+      let r = await GET(request(), context());
+      expect(r.headers.get('x-uncraft-runtime-failure')).toBe(null);
+
+      process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES = '1';
+      verifyRuntimeSessionToken.mockReturnValueOnce({ error: 'expired' });
+      r = await GET(request(), context());
+      expect(r.headers.get('x-uncraft-runtime-failure')).toBe('token_expired');
+    } finally {
+      if (anterior == null) delete process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES;
+      else process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES = anterior;
+    }
+  });
+
+  // Corpo e status identicos entre motivos: quem le a pagina nao aprende nada
+  // sobre o gateway (Sol).
+  it('o corpo nao carrega o motivo', async () => {
+    process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES = '1';
+    verifyRuntimeSessionToken.mockReturnValueOnce({ error: 'expired' });
+    const corpo = await (await GET(request(), context())).text();
+    expect(corpo).not.toContain('token_expired');
+    expect(corpo).toContain("This website couldn't be opened.");
+    delete process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES;
+  });
+});
+
+// Guarda: um motivo novo no codigo nao pode ficar fora do vocabulario sem que
+// alguem perceba — a omissao seria silenciosa, que e' o defeito que o motivo
+// veio curar.
+it('todo motivo escrito na rota esta no vocabulario fechado', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { MOTIVOS_DE_FALHA } = await import('../../../../../lib/motion-editor/runtime-failure-reasons.js');
+  const fonte = readFileSync('app/api/runtime/[token]/[...path]/route.js', 'utf8');
+  const literais = [...fonte.matchAll(/inertFailure\(request,\s*'([a-z_]+)'/g)].map((m) => m[1]);
+  expect(literais.length).toBeGreaterThan(4);
+  for (const motivo of literais) expect(MOTIVOS_DE_FALHA.has(motivo)).toBe(true);
+  // E o ramo derivado: `token_${erro}` cobre TODO erro que o verificador emite.
+  const { TOKEN_VERIFICATION_ERRORS } = await import('../../../../../lib/motion-editor/runtime-session-token.js');
+  for (const e of TOKEN_VERIFICATION_ERRORS) expect(MOTIVOS_DE_FALHA.has(`token_${e}`)).toBe(true);
 });

@@ -106,13 +106,69 @@ export function issueRuntimeSessionToken(input, options = {}) {
   };
 }
 
+/**
+ * Todo motivo de recusa que `verifyRuntimeSessionToken` sabe devolver.
+ *
+ * Existe para que o gateway derive o vocabulário dele daqui em vez de repetir a
+ * lista à mão — foi assim que `server_misconfigured` ficou de fora e viraria
+ * omissão silenciosa no diagnóstico.
+ */
+export const TOKEN_VERIFICATION_ERRORS = Object.freeze(['missing', 'server_misconfigured', 'invalid', 'expired']);
+
+/**
+ * A fronteira: TODA recusa que sai daqui passa pelo vocabulário.
+ *
+ * O helper abaixo só checa quem o chama — um caminho novo escrevendo
+ * `return { error: 'revoked' }` direto escaparia dele, que é a classe inteira
+ * (Sol). Filtrar na SAÍDA não depende de como a recusa foi escrita lá dentro:
+ * qualquer forma passa por aqui no caminho de volta.
+ */
 export function verifyRuntimeSessionToken(token, options = {}) {
-  if (typeof token !== 'string' || !token) return { error: 'missing' };
+  return normalizeTokenVerification(verificarToken(token, options));
+}
+
+/**
+ * A fronteira, separada para poder ser testada de frente.
+ *
+ * Olha a PRESENÇA da chave, não a verdade do valor: `{ error: undefined }` é uma
+ * recusa disfarçada de sucesso — quem consome lê `if (result.error)`, vê falso,
+ * e segue como se houvesse payload (Sol).
+ */
+export function normalizeTokenVerification(resultado) {
+  if (resultado && Object.hasOwn(resultado, 'error')) return tokenVerificationFailure(resultado.error);
+  return resultado;
+}
+
+/**
+ * A porta usada por dentro.
+ *
+ * Guardar o vocabulário por leitura da fonte prova a sintaxe escolhida, não a
+ * classe: `return { error: \`x\` }`, `return { error: motivo }` ou um objeto
+ * montado antes do `return` passariam batido (Sol). Aqui a checagem é sobre o
+ * VALOR, no momento em que ele nasce, então nenhuma forma de escrita escapa.
+ *
+ * Fora de produção isso ESTOURA — quem acrescentou o motivo descobre na hora.
+ * Em produção não: derrubar a verificação de um token seria trocar uma recusa
+ * correta por um erro de servidor. Degrada para a recusa mais conservadora e
+ * grita no log, que é ruidoso sem ser destrutivo.
+ */
+export function tokenVerificationFailure(motivo) {
+  if (TOKEN_VERIFICATION_ERRORS.includes(motivo)) return { error: motivo };
+  if (process.env.NODE_ENV !== 'production') {
+    throw new Error(`motivo de recusa de token fora do vocabulario: ${String(motivo)}`);
+  }
+  // eslint-disable-next-line no-console
+  console.error('motivo de recusa de token fora do vocabulario', { motivo: String(motivo) });
+  return { error: 'invalid' };
+}
+
+function verificarToken(token, options = {}) {
+  if (typeof token !== 'string' || !token) return tokenVerificationFailure('missing');
   let secret;
   try {
     secret = configuredSecret(options.secret, options.loginSecret);
   } catch {
-    return { error: 'server_misconfigured' };
+    return tokenVerificationFailure('server_misconfigured');
   }
   try {
     const payload = jwt.verify(token, secret, {
@@ -129,7 +185,7 @@ export function verifyRuntimeSessionToken(token, options = {}) {
       || !Number.isSafeInteger(payload.exp)
       || payload.exp <= payload.iat
       || payload.exp - payload.iat > RUNTIME_SESSION_MAX_TTL_SECONDS) {
-      return { error: 'invalid' };
+      return tokenVerificationFailure('invalid');
     }
     const parsed = {
       nodeId: uuid(payload.nodeId, 'nodeId'),
@@ -144,8 +200,8 @@ export function verifyRuntimeSessionToken(token, options = {}) {
     };
     return { payload: Object.freeze(parsed) };
   } catch (error) {
-    if (error?.name === 'TokenExpiredError') return { error: 'expired' };
-    return { error: 'invalid' };
+    if (error?.name === 'TokenExpiredError') return tokenVerificationFailure('expired');
+    return tokenVerificationFailure('invalid');
   }
 }
 

@@ -17,6 +17,7 @@ import {
   runtimeRequestUsesConfiguredOrigin,
   verifyRuntimeSessionToken,
 } from '../../../../../lib/motion-editor/runtime-session-token.js';
+import { MOTIVOS_DE_FALHA } from '../../../../../lib/motion-editor/runtime-failure-reasons.js';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -72,12 +73,45 @@ function commonHeaders(request) {
   });
 }
 
+
+
+/**
+ * Politica PROPRIA da falha — inerte como antes, mas nao invisivel.
+ *
+ * ⭐ O caminho de sucesso permite que o editor emoldure a pagina; o de falha
+ * dizia `frame-ancestors 'none'`, entao a pagina se proibia de aparecer
+ * justamente na unica tela onde alguem leria a mensagem. O usuario via um quadro
+ * branco, sem motivo, ate o batimento de 3,5s desistir.
+ *
+ * Do sucesso vem SO' o resolvedor de ancestral. Nada da CSP permissiva dele
+ * ('unsafe-inline'/'unsafe-eval') entra aqui: esta pagina nao executa nada.
+ */
+function failureContentSecurityPolicy(request) {
+  const runtimeOrigin = new URL(request.url).origin;
+  const appOrigin = appFrameAncestor(request);
+  const frameAncestor = runtimeOrigin === appOrigin ? "'self'" : appOrigin;
+  return [
+    "default-src 'none'", "script-src 'none'", "style-src 'none'",
+    "object-src 'none'", "base-uri 'none'", "form-action 'none'",
+    `frame-ancestors ${frameAncestor}`,
+  ].join('; ');
+}
+
 function inertFailure(request, reason, token, status = 404) {
   recordFailure(reason, token);
   const headers = commonHeaders(request);
   headers.set('Cache-Control', 'no-store');
   headers.set('Content-Type', 'text/html; charset=utf-8');
-  headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  headers.set('Content-Security-Policy', failureContentSecurityPolicy(request));
+  // O motivo e' vocabulario interno. Em producao fica so' no log; fora dela,
+  // exige opt-in EXPLICITO — "nao e' producao" sozinho pegaria staging publico.
+  if (process.env.NODE_ENV !== 'production'
+    && process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES === '1'
+    && MOTIVOS_DE_FALHA.has(reason)) {
+    headers.set('X-Uncraft-Runtime-Failure', reason);
+  }
+  // Corpo e status IDENTICOS entre motivos: a pagina nao ensina nada sobre o
+  // gateway a quem a le.
   return new Response('<!doctype html><meta charset="utf-8"><title>Unavailable</title><p>This website couldn\'t be opened.</p>', {
     status,
     headers,
