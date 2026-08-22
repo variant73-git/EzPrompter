@@ -26,7 +26,11 @@ describe('runBilledOperation', () => {
     }, deps);
     // 20k in ($0.10) + 6k out ($0.09) = 190,000 µ¢ × 3 = 57¢ → 60 credits
     expect(out.result).toBe('built');
-    expect(out.credits).toBe(60);
+    // 85, nao 60: o preco de SAIDA do gpt-5.5 na tabela estava pela metade
+    // ($15 em vez dos $30 publicos, conferido em 2026-08-22). Este numero e' a
+    // consequencia direta da correcao — o produto vinha COBRANDO MENOS do que
+    // custa em toda operacao gpt-5.5 (clone de imagem e iter9).
+    expect(out.credits).toBe(85);
     expect(out.deduped).toBe(false);
     expect(deps.claimOperation).toHaveBeenCalledOnce();
     expect(deps.settleOperation).toHaveBeenCalledOnce();
@@ -126,7 +130,7 @@ describe('nesting (innermost wins)', () => {
       return inner;
     }, deps);
     expect(outer.credits).toBe(0);                 // conversation free
-    expect(outer.result.credits).toBe(60);         // inner op charged
+    expect(outer.result.credits).toBe(85);         // inner op charged (ver nota do preco do gpt-5.5)
     // Metered outer never claims an operations row (lightweight path); only the inner paid op does.
     expect(deps.claimOperation).toHaveBeenCalledOnce();
     // outer settle got ONLY the conversation event (1), not the tool's, and no operations transition
