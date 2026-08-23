@@ -78,3 +78,13 @@ coverage/
 /skills/
 skills-lock.json
 .gstack/
+
+# Knowledge graph gerado (graphify) — ~10 MB de artefato reconstruível.
+graphify-out/
+
+# Os artefatos PESADOS do clone verbatim (300 MB de assets e vídeo, regeráveis).
+# O prompt e os relatórios — que NÃO são regeráveis — vivem versionados em
+# docs/clone-verbatim/. Ignorar aqui também protege estas pastas de um
+# `git clean -fd`, que apaga untracked mas não apaga ignorado.
+/Clone/
+/_teste-skill-video/

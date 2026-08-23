@@ -1,0 +1,82 @@
+{
+  "testedAt": "2026-07-17T02:22:02.074Z",
+  "localUrl": "http://127.0.0.1:4173/",
+  "allowedOrigin": "http://127.0.0.1:4173",
+  "initial": {
+    "title": "CropTab™ – High-Efficiency NPK Fertilizer | Farm Minerals",
+    "width": 1440,
+    "height": 1200,
+    "scrollHeight": 20942,
+    "heroVisible": true,
+    "externalSourceAttributes": []
+  },
+  "final": {
+    "scrollY": 19742,
+    "scrollHeight": 20942,
+    "footerVisible": true
+  },
+  "responsive": [
+    {
+      "name": "tablet",
+      "width": 1024,
+      "height": 900,
+      "scrollHeight": 15382,
+      "heroVisible": true,
+      "footerVisible": true
+    },
+    {
+      "name": "mobile",
+      "width": 390,
+      "height": 844,
+      "scrollHeight": 20015,
+      "heroVisible": true,
+      "footerVisible": true
+    }
+  ],
+  "externalRequests": [],
+  "failedRequests": [],
+  "consoleErrors": [],
+  "consoleWarnings": {
+    "nonCriticalSourceParity": [
+      "Invalid property force3D set to true Missing plugin? gsap.registerPlugin()"
+    ],
+    "critical": []
+  },
+  "invalidScriptResponses": [],
+  "productionAudit": {
+    "root": "/Users/adilsonporto/Documents/Clone/dist",
+    "forbiddenOccurrences": [],
+    "allowedTechnicalNamespaces": [
+      "http://www.w3.org/"
+    ],
+    "preservedVisibleCopy": [
+      {
+        "file": "index.html",
+        "classification": "visible contact copy preserved; link action neutralized locally"
+      },
+      {
+        "file": "index.html",
+        "classification": "visible contact copy preserved; link action neutralized locally"
+      }
+    ],
+    "essentialRuntimeIdentifiers": [
+      {
+        "file": "assets/9d54c997131f9021ef0aa991.js",
+        "classification": "essential local animation/runtime identifiers retained for fidelity"
+      },
+      {
+        "file": "assets/b99ae25fcf7e5a959b14ff0c.css",
+        "classification": "essential local animation/runtime identifiers retained for fidelity"
+      },
+      {
+        "file": "assets/f00635a3158a0b11a9d61f83.js",
+        "classification": "essential local animation/runtime identifiers retained for fidelity"
+      },
+      {
+        "file": "index.html",
+        "classification": "essential local animation/runtime identifiers retained for fidelity"
+      }
+    ]
+  },
+  "passed": true
+}
