@@ -88,8 +88,10 @@ describe('POST /api/nodes/[id]/run billing wrapper', () => {
     currentSql = fakeSql([
       [{ id: 'node-1', kind: 'site', meta: {}, board_id: 'b1', current_html: '<html>t</html>', current_design_md: null }],
       [{ edge_id: 'e1', edge_payload: {}, source_node_id: 's1', kind: 'prompt', meta: { prompt: 'x' }, source_html: null, source_design_md: null }],
-      [{ id: 'snap-1' }], // snapshot INSERT RETURNING
-      [],                 // UPDATE nodes
+      // Insercao do snapshot E troca do ponteiro no MESMO comando: uma sessao
+      // aberta entre os dois nao muda `current_snapshot_id`, entao dois comandos
+      // nao fechavam a corrida. Um slot so'.
+      [{ id: 'snap-1' }],
       [],                 // UPDATE edges applied
     ]);
     const res = await runPost(makeRequest(), runParams);
@@ -121,8 +123,7 @@ describe('POST /api/nodes/[id]/run billing wrapper', () => {
       [{ id: 'source-snap' }], // deferred reconstruction snapshot
       [],                      // reconstructed source metadata
       [],                      // telemetria do clone (UPDATE nodes … cloneTelemetry)
-      [{ id: 'target-snap' }], // composed target snapshot
-      [],                      // target metadata
+      [{ id: 'target-snap' }], // snapshot + ponteiro no MESMO comando atomico
       [],                      // applied edges
     ]);
 
@@ -142,8 +143,10 @@ describe('POST /api/nodes/[id]/reconstruct billing wrapper (Task 15)', () => {
   it('bills the reconstruct and returns credits', async () => {
     currentSql = fakeSql([
       [{ id: 'node-1', kind: 'site', meta: { animatedDetected: true }, board_id: 'b1', origin_url: 'https://example.com', current_snapshot_source: 'capture' }],
-      [{ id: 'snap-1' }], // snapshot INSERT RETURNING
-      [],                 // UPDATE nodes
+      // Insercao do snapshot E troca do ponteiro no MESMO comando: uma sessao
+      // aberta entre os dois nao muda `current_snapshot_id`, entao dois comandos
+      // nao fechavam a corrida. Um slot so'.
+      [{ id: 'snap-1' }],
     ]);
     const res = await reconstructPost(makeRequest(), runParams);
     const json = await res.json();

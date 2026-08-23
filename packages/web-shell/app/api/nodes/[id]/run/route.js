@@ -7,6 +7,7 @@ import { runBilledOperation, InsufficientCreditsError, OperationInProgressError 
 import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
 import { reconstructSiteNode } from '../../../../../lib/deferred-reconstruction.js';
 import { reconstructionReason } from '../../../../../lib/reconstruction-policy.js';
+import { assertRunPreconditions, STALE_CLONE_DOCUMENT, MISSING_CLONE_DOCUMENT } from '../../../../../lib/clone-document-freshness.js';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -32,13 +33,22 @@ export async function POST(request, { params }) {
     SELECT n.id, n.kind, n.meta, n.board_id, n.origin_url,
            s.html AS current_html,
            s.design_md AS current_design_md,
-           s.source AS current_snapshot_source
+           s.source AS current_snapshot_source,
+           s.native_bundle_id, s.motion_manifest,
+           n.current_snapshot_id
       FROM nodes n
       JOIN boards b ON b.id = n.board_id
       LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
      WHERE n.id = ${id} AND b.user_id = ${user.id}
   `;
   if (!target) return NextResponse.json({ error: 'not_found' }, { status: 404 });
+
+  // ⭐ Um clone animado tem DUAS autoridades: o bundle (runtime, editado por
+  // patches) e o html (documento, que o grafo consome). O documento é de antes
+  // das edições de movimento. Compor a partir dele produziria um resultado do
+  // estado PRÉ-EDIÇÃO e sobrescreveria o node — o trabalho do usuário sumiria
+  // sem uma palavra (achado do Sol). Recusa TIPADA, nunca composição errada.
+
 
   // Empty site targets (unpopulated .html node from the Connect-to flow)
   // run as blank compositions — same base the "Add blank website" node
@@ -59,12 +69,39 @@ export async function POST(request, { params }) {
            n.origin_url AS origin_url,
            s.html      AS source_html,
            s.design_md AS source_design_md,
-           s.source    AS current_snapshot_source
+           s.source    AS current_snapshot_source,
+           s.native_bundle_id, s.motion_manifest
       FROM edges e
       JOIN nodes n ON n.id = e.source_node_id
       LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
      WHERE e.target_node_id = ${id}
   `;
+  // ⭐ PORTÃO ÚNICO de operação estrutural, para o ALVO e para toda FONTE que
+  // carregue bundle. Um clone animado tem duas autoridades — o runtime, editado
+  // por patches, e o documento, que o grafo consome — e o documento é de antes
+  // das edições. Rodar aqui reconstruiria a página do estado PRÉ-EDIÇÃO e
+  // sobrescreveria o node: o trabalho sumiria sem uma palavra.
+  //
+  // A contagem do snapshot não basta: o autosave grava no rascunho da SESSÃO
+  // sem tocar nele, então quem está editando agora passaria como "em dia"
+  // (achado do Sol). O portão pergunta ao banco.
+  try {
+    await assertRunPreconditions({
+      sql,
+      nodes: [
+        // O alvo traz o documento em `current_html` (a fonte, em `source_html`) —
+        // normalizar aqui evita o portão recusar por um nome de campo.
+        { ...target, html: target.current_html, papel: 'target' },
+        ...sources.map((s2) => ({ ...s2, html: s2.source_html, papel: 'source' })),
+      ],
+    });
+  } catch (e) {
+    if (e?.code === STALE_CLONE_DOCUMENT || e?.code === MISSING_CLONE_DOCUMENT) {
+      return NextResponse.json({ error: e.code, detail: e.message, edits: e.edits, role: e.role }, { status: 409 });
+    }
+    throw e;
+  }
+
   if (sources.length === 0) {
     return NextResponse.json(
       { error: 'no_inputs', detail: 'Target has no incoming edges. Connect a source node and try again.' },
@@ -141,22 +178,58 @@ export async function POST(request, { params }) {
           err.code = 'no_output';
           throw err;
         }
-        const [snap] = await sql`
-          INSERT INTO snapshots (node_id, html, source, parent_snapshot_id)
-          VALUES (${id}, ${composed.html}, 'demarcelizer-4',
-                  (SELECT current_snapshot_id FROM nodes WHERE id = ${id}))
-          RETURNING id
-        `;
         const transplantMeta = {
           lastTransplant: composed.transplant || { engine: 'demarcelizer-4' },
           ...(composed.transplant?.motionPreserved ? { animatedRuntime: true } : {}),
         };
-        await sql`
-          UPDATE nodes
-             SET current_snapshot_id = ${snap.id},
-                 meta = meta || ${JSON.stringify(transplantMeta)}::jsonb
-           WHERE id = ${id}
+        // ⭐ COMMIT ATÔMICO. O portão foi verificado antes de uma operação que
+        // dura até 300s, e reverificar num comando à parte não fecha nada: uma
+        // sessão pode abrir entre a verificação e a escrita, e abrir sessão não
+        // muda `current_snapshot_id` (achado do Sol).
+        //
+        // Então as duas condições entram no MESMO comando que grava: o node
+        // ainda no snapshot que o portão examinou, E nenhuma sessão aberta com
+        // edição de movimento. Falhando qualquer uma, `permitido` fica vazia e
+        // NADA é escrito — nem o snapshot, nem o ponteiro.
+        //
+        // ⚠️ Precisão que eu tinha exagerado (Sol): CTE modificadora no
+        // Postgres não se desfaz sozinha. Se `inserido` gravar e `apontado`
+        // devolver zero linhas, o snapshot FICA, órfão. Aqui isso exige o node
+        // sumir no meio do comando — e o resultado é uma linha de histórico sem
+        // ponteiro, não perda de trabalho. É a única sobra, e é essa.
+        const [snap] = await sql`
+          WITH permitido AS (
+            SELECT n.id
+              FROM nodes n
+             WHERE n.id = ${id}
+               AND n.current_snapshot_id IS NOT DISTINCT FROM ${target.current_snapshot_id || null}
+               AND NOT EXISTS (
+                 SELECT 1 FROM native_motion_edit_sessions e
+                  WHERE e.node_id = n.id AND e.status = 'active'
+                    AND jsonb_array_length(COALESCE(e.draft_manifest->'transactions', '[]'::jsonb)) > 0
+               )
+               FOR UPDATE OF n
+          ), inserido AS (
+            INSERT INTO snapshots (node_id, html, source, parent_snapshot_id)
+            SELECT ${id}, ${composed.html}, 'demarcelizer-4', ${target.current_snapshot_id || null}
+              FROM permitido
+            RETURNING id
+          ), apontado AS (
+            UPDATE nodes
+               SET current_snapshot_id = inserido.id,
+                   meta = meta || ${JSON.stringify(transplantMeta)}::jsonb
+              FROM inserido
+             WHERE nodes.id = ${id}
+            RETURNING inserido.id
+          )
+          SELECT id FROM apontado
         `;
+        if (!snap) {
+          const mudou = new Error('The node changed while this run was in flight — nothing was overwritten.');
+          mudou.code = 'snapshot_changed';
+          throw mudou;
+        }
+        
         // Mark all incoming edges as applied so the UI can paint them
         // differently after a successful run.
         await sql`
@@ -181,6 +254,11 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: 'in_progress' }, { status: 409 });
     }
     if (e?.code === 'no_output') return NextResponse.json({ error: 'no_output' }, { status: 502 });
+    // A recusa do portão é resposta de PRODUTO, não falha: 409 com o motivo, e
+    // as arestas NÃO são marcadas como falhas — nada foi tentado contra elas.
+    if ([STALE_CLONE_DOCUMENT, MISSING_CLONE_DOCUMENT, 'snapshot_changed'].includes(e?.code)) {
+      return NextResponse.json({ error: e.code, detail: e.message, edits: e.edits, role: e.role }, { status: 409 });
+    }
     const msg = String(e?.message || e);
     console.error('run-flow error', msg);
     await sql`

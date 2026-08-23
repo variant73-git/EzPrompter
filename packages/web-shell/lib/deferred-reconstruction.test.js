@@ -601,3 +601,53 @@ describe('clonar de novo nao apaga a miniatura do node', () => {
     expect(ins.query).toMatch(/SELECT screenshot_url FROM snapshots/i);
   });
 });
+
+// ⭐ O CLONE PRECISA CONTINUAR SENDO UM NODE.
+//
+// Num node tool, o valor de um node e' ser componivel. Medido em 2026-08-22: um
+// snapshot de clone animado nao tem html, e as tres direcoes falham EM SILENCIO
+// — como alvo de uma aresta a rota troca por pagina em branco e compoe sem o
+// site; como fonte, `if (s.source_html)` pula; extrair .md nao tem o que ler.
+//
+// A fotocopia da captura ja' e' o documento que o grafo precisa: URLs
+// absolutizadas, folhas embutidas e `<base href>`. O clone a estava jogando
+// fora. Ele guarda o RUNTIME (bundle) — nao precisa destruir o DOCUMENTO.
+describe('o clone animado continua componivel', () => {
+  const runtimeHash = `sha256:${'a'.repeat(64)}`;
+  function produtorNativo() {
+    return vi.fn(async () => ({
+      kind: 'native',
+      bundle: {
+        entryPath: 'index.html', runtimeFingerprint: runtimeHash,
+        assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+        reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
+      },
+    }));
+  }
+
+  it('sobrescrevendo a captura, o documento SOBREVIVE', async () => {
+    const sql = makeSql({ currentId: 'snap-capture', currentSource: 'capture' });
+    await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-comp', board_id: 'b1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: 'k-comp-1',
+      producer: produtorNativo(), bundleStore: createMemoryBundleStore(),
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor), generateControls: vi.fn(),
+    });
+    const upd = sql._calls.find((c) => /UPDATE snapshots/i.test(c.query));
+    expect(upd).toBeTruthy();
+    expect(upd.query).not.toMatch(/html\s*=\s*NULL/i);
+  });
+
+  it('inserindo um snapshot novo, o documento e HERDADO do anterior', async () => {
+    const sql = makeSql({ currentId: 'snap-native-velho', currentSource: 'native-bundle' });
+    await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-comp2', board_id: 'b1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: 'k-comp-2',
+      producer: produtorNativo(), bundleStore: createMemoryBundleStore(),
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor), generateControls: vi.fn(),
+    });
+    const ins = sql._calls.find((c) => /INSERT INTO snapshots/i.test(c.query));
+    expect(ins).toBeTruthy();
+    expect(ins.query).toMatch(/SELECT html FROM snapshots/i);
+  });
+});

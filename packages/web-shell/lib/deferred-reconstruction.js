@@ -98,8 +98,9 @@ async function persistNativeSnapshot({ sql, node, descriptor, motionManifest, cu
          FOR UPDATE
       ), updated_snapshot AS (
         UPDATE snapshots
-           SET html = NULL,
-               source = 'native-bundle',
+           -- O html FICA: e' o DOCUMENTO que o grafo consome (style transfer,
+           -- extrair .md, compose). O bundle e' o RUNTIME, para o editor.
+           SET source = 'native-bundle',
                design_md = NULL,
                native_bundle_id = ${descriptor.bundleId},
                motion_manifest = ${JSON.stringify(motionManifest)}::jsonb,
@@ -140,7 +141,8 @@ async function persistNativeSnapshot({ sql, node, descriptor, motionManifest, cu
           -- aparencia do site, mas gravar NULL aqui apagava a miniatura do node
           -- para sempre (o primeiro clone sobrescreve a captura e preserva; do
           -- segundo em diante era INSERT com NULL). Medido no node do dono.
-          ${node.id}, NULL,
+          ${node.id},
+          (SELECT html FROM snapshots WHERE id = ${current?.id || null}),
           (SELECT screenshot_url FROM snapshots WHERE id = ${current?.id || null}),
           'native-bundle', ${current?.id || null},
           ${descriptor.bundleId}, ${JSON.stringify(motionManifest)}::jsonb, ${motionManifest.schemaVersion}

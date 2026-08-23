@@ -200,3 +200,43 @@ describe('runCompose — a direcao do banco de referencias chega ao modelo', () 
     }
   });
 });
+
+// ⭐ Os pixels nao vao ao modelo. Medido: a fotocopia fiel do DOM tem 96% de
+// data URI (17 MB de 18 MB), e o style transfer sobre ela volta 429.
+describe('o prompt nao carrega pixel embutido', () => {
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='.repeat(4);
+
+  it('tira o base64 do alvo e da fonte, e devolve os bytes no resultado', async () => {
+    // O modelo copia o marcador adiante, como faria com um src qualquer.
+    anthropicStream.mockReturnValueOnce({
+      finalMessage: async () => ({
+        content: [{ text: '<html><body><img src="MARCADOR"><h1>Novo</h1></body></html>' }],
+        usage: {},
+      }),
+    });
+    const alvoComPixel = { ...target, current_html: `<html><body><img src="data:image/png;base64,${PNG}"><h1>Alvo</h1></body></html>` };
+    const { html } = await runCompose({
+      target: alvoComPixel,
+      sources: [{ kind: 'html', source_html: `<div><img src="data:image/png;base64,${PNG}"></div>` }],
+    });
+
+    const enviado = JSON.stringify(anthropicStream.mock.calls.at(-1)?.[0] || {});
+    expect(enviado).not.toContain(PNG);
+    expect(enviado).toMatch(/uncraft-asset:/);
+    expect(html).toContain('Novo');
+  });
+
+  it('devolve os bytes quando o modelo repassa o marcador', async () => {
+    let marcador = '';
+    anthropicStream.mockImplementationOnce((req) => {
+      marcador = (JSON.stringify(req).match(/uncraft-asset:[a-z0-9]+;image\/png/) || [''])[0];
+      return { finalMessage: async () => ({ content: [{ text: `<html><body><img src="${marcador}"></body></html>` }], usage: {} }) };
+    });
+    const { html } = await runCompose({
+      target: { ...target, current_html: `<html><body><img src="data:image/png;base64,${PNG}"></body></html>` },
+      sources: [{ kind: 'prompt', meta: { prompt: 'deixe escuro' } }],
+    });
+    expect(marcador).toMatch(/^uncraft-asset:/);
+    expect(html).toContain(`data:image/png;base64,${PNG}`);
+  });
+});
