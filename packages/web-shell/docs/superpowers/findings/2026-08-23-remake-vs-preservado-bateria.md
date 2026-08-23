@@ -133,3 +133,117 @@ a bateria localizou a lacuna, não a precificou nem provou causa única.
 
 **Instrumentos:** `_bateria-verbatim.mjs`, `_bateria-movimento.mjs`,
 `_quem-mexe.mjs`, `_checar-congelado.mjs`. Fotos e JSON em `_bateria/`.
+
+---
+
+# Adendo, mesmo dia — o vídeo entrou, e duas correções que eu devia
+
+## Correção 1: meu instrumento serviu o remake sem as imagens dele
+
+A bateria copiou só o `index.html` do remake para a pasta servida. As oito
+rasters que ele referencia 404aram, e o número saiu de um documento capado.
+Re-medido com os arquivos no lugar (14/14 imagens carregadas, zero falha):
+
+| | capado | correto |
+|---|---|---|
+| altura | 9368px | 9414px |
+| SSIM médio | 0,539 | **0,533** |
+
+A conclusão não muda — mas o número estava medido errado, e isso vale registrar
+mais que o fato de ter dado no mesmo.
+
+## Correção 2: a repescagem que eu tinha commitado era código morto
+
+O commit de independência dizia que o que a captura perde no meio "agora é
+pedido de novo". **Não era.** A repescagem procura reservas nulas
+(`filter(([, v]) => !v)`), e o caminho de "corpo nao chegou" fazia
+`recursos.delete(u)` — apagava exatamente o que ela procura. Medido no site
+real: a etapa `retrying` **nunca disparava**.
+
+O purgo que nomeia o que faltou já roda DEPOIS da repescagem; o desenho estava
+certo e a interceptação o furava. Agora só redirect/204/304 liberam a vaga —
+esses não têm corpo por natureza. O resto fica nulo, e a repescagem acha.
+
+⚠️ Corolário: o ganho de arquivos que atribuí à repescagem no commit anterior
+veio de outro lugar (o fechamento de referências). "Guarda sem teste nasce
+morta" agora tem a quarta instância neste projeto.
+
+## O vídeo entrou — e não bastava entrar
+
+Com a repescagem viva, os três vídeos entram no pacote: **descartados 2 → 0**.
+O vídeo toca do próprio pacote e **continua tocando com a rede desligada**.
+
+Mas o SSIM aos 50% só foi de 0,762 para ~0,81–0,85, variando por rodada. A
+causa não era conteúdo: **o clone não conseguia PROCURAR quadro.** Pedir
+`currentTime = 2` deixava o tempo em zero, porque o portão do runtime servia
+todo arquivo inteiro, sem `Accept-Ranges` nem resposta 206.
+
+Isso não é detalhe de medição. O site tem um `<video class="scroll-video">`
+cuja animação inteira é o quadro seguindo a rolagem — sem faixa de bytes, essa
+coreografia não existe no clone, e nenhuma bateria de rolagem a veria porque o
+vídeo fica parado no primeiro quadro em qualquer posição.
+
+Com faixa de bytes no portão, os dois lados travam em `t=2` e a mesma parada dá:
+
+| aos 50% | SSIM |
+|---|---|
+| vídeo ausente (antes) | 0,762 |
+| vídeo presente, tempo livre | 0,806 – 0,849 (varia por rodada) |
+| vídeo presente, **mesmo instante** | **0,998** |
+
+O resíduo era temporal, não de conteúdo — agora medido, não suposto. E a
+bateria com tempo livre **não pode** chegar lá: dois vídeos tocando sem
+sincronia nunca batem quadro a quadro. O número da bateria (0,950) tem esse
+teto embutido.
+
+## O que ressuscitar código morto trouxe junto (achado do Sol)
+
+Viva, a repescagem passou a violar o que ninguém tinha checado enquanto ela não
+rodava: usava orçamento **próprio** de 60MB sem olhar o teto global de 220MB, e
+não somava ao total. Somados, o pacote podia chegar a 280MB, e o relatório
+omitia **todos** os bytes recuperados — os três vídeos, 10,7MB, invisíveis na
+telemetria.
+
+A primeira correção que fiz — orçamento da repescagem limitado ao que sobra —
+**não bastava, e o Sol mostrou por quê**: o ouvinte de respostas continua ativo
+enquanto a repescagem roda, então os dois caminhos leem "quanto sobra" cada um
+por si e gastam o mesmo espaço livre duas vezes.
+
+O que fecha é uma **contabilidade única** (`byte-ledger.js`): reservar é a única
+porta, e em JavaScript a reserva é atômica por construção — o teto não pode ser
+furado por corrida, independente da ordem em que os dois chegam. A leitura em
+fluxo reserva pedaço a pedaço e devolve o que abortou. E a contabilidade
+**fecha** quando o pacote é congelado, senão uma resposta atrasada somaria bytes
+que nunca serão empacotados.
+
+O comportamento está testado no módulo (não por expressão no fonte): reserva que
+não cabe não reserva pela metade, dois caminhos concorrentes não gastam o mesmo
+espaço livre, e fechada não aceita mais nada.
+
+## E uma diferença de 0,003% que valia investigar
+
+A prova comportamental mostrou o relatório 2.149 bytes acima da soma real dos
+corpos. Pequeno, mas "não sei por quê" não é resposta. A contagem de arquivos
+batia (365 = 365), sem vazios nem duplicados — então era um corpo que **muda
+entre contar e guardar**: a reescrita de referências encurta HTML/CSS/JS.
+
+Duas quantidades legítimas com um nome só. Agora são dois campos: `bytes` (o que
+chegou da rede, sobre o qual os tetos decidem) e `bytesNoPacote` (o que ficou
+guardado). O segundo bate exato com a soma dos corpos.
+
+## Um residual que a auditoria me fez parar de esconder
+
+Um comentário meu, antigo, dizia que conferir `content-length` antes de
+bufferizar limitava a memória. **Não limita.** O cabeçalho é opcional, pode
+mentir e pode vir comprimido; quando falta, `res.body()` carrega o arquivo
+inteiro do mesmo jeito, e a API de interceptação do Playwright não tem leitura
+em fluxo. O que aquilo faz é **rejeição antecipada no caso honesto** — útil, e
+diferente do que estava escrito.
+
+Quem tem limite de verdade durante a leitura é a repescagem, que usa `fetch`
+com `getReader()`. O residual — pico de memória de um corpo, no caminho de
+interceptação, com cabeçalho ausente ou mentiroso — está agora nomeado no
+código em vez de coberto por uma frase confiante.
+
+**Fica em aberto:** por que a captura não lê o corpo de mídia na interceptação.
+A repescagem contorna, e contornar tem custo (uma busca a mais por arquivo).

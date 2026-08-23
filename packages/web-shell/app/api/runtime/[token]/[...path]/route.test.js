@@ -59,6 +59,7 @@ function runtimeRow(overrides = {}) {
       { path: 'vendor/chunk.js', contentType: 'text/javascript; charset=utf-8', byteLength: 1, contentHash: JS_HASH },
       { path: 'media/a.webp', contentType: 'image/webp', byteLength: 1, contentHash: JS_HASH },
       { path: 'media/b.webp', contentType: 'image/webp', byteLength: 1, contentHash: JS_HASH },
+      { path: 'media/v.mp4', contentType: 'video/mp4', byteLength: 20, contentHash: JS_HASH },
     ],
     runtime_fingerprint: FINGERPRINT,
     reconstruction_capabilities: { detectedEngines: ['waapi'], candidateControls: [] },
@@ -144,6 +145,55 @@ describe('GET /api/runtime/[token]/[...path]', () => {
     expect(response.headers.get('cache-control')).toContain('immutable');
     expect(response.headers.get('etag')).toContain(JS_HASH);
     expect(response.headers.get('content-type')).toContain('image/webp');
+  });
+
+  // ⚠️ Sem faixa de bytes o <video> ATE' toca (baixa tudo e reproduz do
+  // comeco) mas nao PROCURA: `currentTime = 2` fica em zero — medido no clone
+  // real. E o site clonado tem um <video class="scroll-video"> cuja animacao
+  // inteira e' o quadro seguindo a rolagem, entao a coreografia some.
+  it('serve faixa de bytes, que e o que faz video buscar quadro', async () => {
+    const bytes = new TextEncoder().encode('0123456789abcdefghij');   // 20 bytes
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(bytes);
+    const r = await GET(request('media/v.mp4', { range: 'bytes=5-9' }), context(['media', 'v.mp4']));
+    expect(r.status).toBe(206);
+    expect(r.headers.get('content-range')).toBe('bytes 5-9/20');
+    expect(r.headers.get('accept-ranges')).toBe('bytes');
+    expect(new TextDecoder().decode(await r.arrayBuffer())).toBe('56789');
+  });
+
+  it('anuncia faixas mesmo sem pedido, e recusa a insatisfazivel com 416', async () => {
+    const bytes = new TextEncoder().encode('0123456789');
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(bytes);
+    const inteiro = await GET(request('media/v.mp4'), context(['media', 'v.mp4']));
+    // Sem `Accept-Ranges` o navegador nem TENTA procurar: anunciar e' parte
+    // da correcao, nao enfeite.
+    expect(inteiro.status).toBe(200);
+    expect(inteiro.headers.get('accept-ranges')).toBe('bytes');
+
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(bytes);
+    const fora = await GET(request('media/v.mp4', { range: 'bytes=50-60' }), context(['media', 'v.mp4']));
+    expect(fora.status).toBe(416);
+    expect(fora.headers.get('content-range')).toBe('bytes */10');
+  });
+
+  // `If-Range` que nao casa com a etiqueta significa que a representacao mudou:
+  // servir a faixa faria o cliente remontar bytes de versoes diferentes.
+  it('ignora a faixa quando If-Range nao casa com a etiqueta', async () => {
+    const bytes = new TextEncoder().encode('0123456789');
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(bytes);
+    const velho = await GET(request('media/v.mp4', { range: 'bytes=2-4', 'if-range': '"sha256:outro"' }), context(['media', 'v.mp4']));
+    expect(velho.status).toBe(200);
+    expect(new TextDecoder().decode(await velho.arrayBuffer())).toBe('0123456789');
+
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(bytes);
+    const certo = await GET(request('media/v.mp4', { range: 'bytes=2-4', 'if-range': `"${JS_HASH}"` }), context(['media', 'v.mp4']));
+    expect(certo.status).toBe(206);
+    expect(new TextDecoder().decode(await certo.arrayBuffer())).toBe('234');
   });
 
   it('rebases stylesheet and module dependencies without injecting the bridge into them', async () => {

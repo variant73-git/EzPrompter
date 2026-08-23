@@ -8,6 +8,7 @@ import {
   createConfiguredBundleStore,
   indexedAssetKey,
 } from '../../../../../lib/native-clone/bundle-store.js';
+import { parseByteRange, rangeHeaders } from '../../../../../lib/native-clone/byte-range.js';
 import { parseMotionManifest } from '../../../../../lib/motion-editor/manifest.js';
 import {
   injectRuntimeBridge,
@@ -243,6 +244,31 @@ export async function GET(request, { params }) {
   if (!isHtml && !isRewriteableText(asset.contentType)) {
     headers.set('Cache-Control', immutableCacheControl(payload.expiresAtMs));
     headers.set('ETag', `"${asset.contentHash}"`);
+    // ⚠️ FAIXA DE BYTES. Sem isto o <video> até toca — o navegador baixa o
+    // arquivo inteiro e reproduz do começo — mas não PROCURA: pedir
+    // `currentTime = 2` deixa o tempo em zero, medido no clone real. E o site
+    // clonado tem um `<video class="scroll-video">` cuja animação inteira é o
+    // quadro seguindo a rolagem, então essa coreografia some.
+    //
+    // Anunciar `Accept-Ranges` faz parte da correção: sem o anúncio o
+    // navegador nem tenta. Só corpo binário entra aqui; texto é reescrito e
+    // muda de tamanho, e faixa sobre o original apontaria para bytes errados.
+    headers.set('Accept-Ranges', 'bytes');
+    // `If-Range` que não casa com a etiqueta significa "a representação mudou":
+    // a faixa tem que ser IGNORADA e o arquivo inteiro devolvido, senão o
+    // cliente remonta bytes de versões diferentes (RFC 9110 §13.1.5). Aqui as
+    // etiquetas são hash do conteúdo, então a comparação é forte por natureza.
+    const ifRange = request.headers.get('if-range');
+    const etiqueta = `"${asset.contentHash}"`;
+    const faixaVale = !ifRange || ifRange.trim() === etiqueta;
+    const faixa = faixaVale ? parseByteRange(request.headers.get('range'), bytes.byteLength) : null;
+    const cab = rangeHeaders(faixa);
+    if (cab) {
+      headers.set('Content-Range', cab['Content-Range']);
+      if (cab.status === 416) return new Response(null, { status: 416, headers });
+      headers.set('Content-Length', cab['Content-Length']);
+      return new Response(bytes.slice(faixa.inicio, faixa.fim + 1), { status: 206, headers });
+    }
     return new Response(bytes, { headers });
   }
 

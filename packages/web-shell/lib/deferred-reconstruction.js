@@ -67,6 +67,10 @@ function sanitizeCaptureReport(relatorio) {
   return {
     files: Number(relatorio?.arquivos) || 0,
     bytes: Number(relatorio?.bytes) || 0,
+    // O que chegou da rede e o que ficou guardado são quantidades DIFERENTES —
+    // a reescrita de referências encurta HTML/CSS/JS. Levar as duas evita que a
+    // diferença apareça depois como erro de contabilidade.
+    bundleBytes: Number(relatorio?.bytesNoPacote) || 0,
     extraRefs: Number(relatorio?.refsExtras) || 0,
     discarded: Number(relatorio?.totalDescartados) || 0,
     discardedHosts: hosts,

@@ -24,6 +24,7 @@ import { createHash } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { chromium as chromiumPadrao } from 'playwright-core';
+import { criarContabilidade } from './byte-ledger.js';
 import { referenceKindFor, rewriteDocumentReferences } from './rewrite-references.js';
 
 /**
@@ -185,7 +186,10 @@ export async function captureNativeBundle(url, opts = {}) {
   onProgress({ etapa: 'launching' });
   const browser = await abrirNavegador(chromium);
   const recursos = new Map();   // url absoluta -> { bytes, contentType }
-  let bytesTotal = 0;
+  // UMA porta para os bytes: interceptação e repescagem reservam pela mesma
+  // contabilidade, então o teto global não pode ser furado por corrida entre
+  // as duas (achado do Sol).
+  const conta = criarContabilidade(MAX_BYTES_TOTAL);
   const descartados = [];
   // ⚠️ Os handlers de `response` são assíncronos e ninguém os aguardava: a
   // montagem do bundle podia rodar com corpos ainda em leitura, e eles sumiam
@@ -209,33 +213,58 @@ export async function captureNativeBundle(url, opts = {}) {
         try {
           const u = res.url();
           if (cancelado || !/^https?:/i.test(u) || recursos.has(u)) return;
-          if (!(await hostEhPublico(new URL(u).hostname))) { descartados.push({ u, motivo: 'host nao publico' }); return; }
-          // RESERVA a vaga antes do await: sem isso, N respostas simultâneas
-          // passam pelo teste de limite antes de qualquer uma gravar.
+          // ⚠️ RESERVA ANTES DE QUALQUER `await`. É o que torna a dupla
+          // `has` + `set` atômica: em JavaScript nada intercala entre as duas
+          // se não houver espera no meio. A checagem de host estava aqui e
+          // furava a guarda — duas respostas simultâneas da mesma URL passavam
+          // pelo `has` antes de qualquer uma reservar, e mídia pedida por
+          // FAIXAS é exatamente o caso que produz respostas simultâneas da
+          // mesma URL (Sol). Medir zero duplicações num clone não prova
+          // impedimento: prova que a corrida não aconteceu naquela execução.
           if (recursos.size >= MAX_ASSETS) { descartados.push({ u, motivo: 'limite de arquivos' }); return; }
           recursos.set(u, null);
-          // O tamanho é conferido pelo CABEÇALHO antes de bufferizar: `body()`
-          // carrega o arquivo inteiro na memória, então checar depois não limita
-          // nada. Achado P0 do Sol.
+          if (!(await hostEhPublico(new URL(u).hostname))) {
+            recursos.delete(u); descartados.push({ u, motivo: 'host nao publico' }); return;
+          }
+          // ⚠️ REJEIÇÃO ANTECIPADA, não proteção de memória. `content-length` é
+          // opcional, pode mentir e pode vir comprimido — quando falta ou está
+          // errado, `res.body()` carrega o arquivo inteiro do mesmo jeito, e a
+          // API de interceptação do Playwright não oferece leitura em fluxo.
+          //
+          // Ou seja: o cabeçalho poupa memória no caso comum (servidor honesto
+          // anunciando arquivo grande) e não poupa nada no caso adversário. O
+          // teto DEPOIS da leitura continua valendo, e é ele que garante que o
+          // arquivo não entre no pacote. Quem tem limite de verdade durante a
+          // leitura é a repescagem, que usa `fetch` com `getReader()` (Sol).
+          //
+          // Residual assumido: pico de memória de um corpo, no caminho de
+          // interceptação, quando o cabeçalho falta ou mente.
           const declarado = Number(res.headers()['content-length'] || 0);
-          if (declarado > MAX_ASSET_BYTES || (declarado && bytesTotal + declarado > MAX_BYTES_TOTAL)) {
+          if (declarado > MAX_ASSET_BYTES || (declarado && declarado > conta.restante())) {
             recursos.delete(u); descartados.push({ u, motivo: 'grande demais (declarado)' }); return;
           }
           const bytes = await res.body().catch(() => null);
           if (!bytes) {
-            recursos.delete(u);
-            // Redirect/204/304 não têm corpo por natureza; qualquer OUTRA
-            // leitura que falhe era descartada em SILÊNCIO e a referência
-            // ficava absoluta no HTML sem entrar no relatório (achado da
-            // investigação 2026-08-20).
             const status = res.status();
-            if (status < 300 || status >= 400) descartados.push({ u, motivo: 'corpo nao chegou' });
+            // Redirect/204/304 não têm corpo por natureza: liberam a vaga.
+            if (status >= 300 && status < 400) { recursos.delete(u); return; }
+            // ⚠️ O RESTO FICA COMO RESERVA NULA — é exatamente isso que a
+            // repescagem procura (`filter(([, v]) => !v)`). Apagar aqui fazia
+            // `faltantes` nascer sempre vazio e a repescagem virar código
+            // morto: medido no site real, a etapa `retrying` nunca disparava e
+            // os dois vídeos ficavam de fora. Quem apaga e nomeia no relatório
+            // é o purgo DEPOIS da repescagem.
+            //
+            // É o caso comum de mídia: vídeo é pedido por FAIXAS de bytes, e o
+            // corpo dessas respostas não é legível pela interceptação.
             return;
           }
-          if (bytes.byteLength > MAX_ASSET_BYTES || bytesTotal + bytes.byteLength > MAX_BYTES_TOTAL) {
+          const bilhete = bytes.byteLength > MAX_ASSET_BYTES ? null : conta.reservar(bytes.byteLength);
+          if (!bilhete) {
             recursos.delete(u); descartados.push({ u, motivo: 'grande demais' }); return;
           }
-          bytesTotal += bytes.byteLength;
+          // O corpo já está em mão: confirma na hora.
+          conta.confirmar(bilhete);
           recursos.set(u, { bytes, contentType: (res.headers()['content-type'] || '').split(';')[0].trim() });
         } catch (_) { /* resposta sem corpo (redirect, 204, 304) não é falha */ }
       })();
@@ -442,7 +471,11 @@ export async function captureNativeBundle(url, opts = {}) {
     if (faltantes.length) {
       onProgress({ etapa: 'retrying', quantos: faltantes.length });
       const fila = faltantes.slice(0, RETRY_MAX_ARQUIVOS);
-      let orcamento = RETRY_ORCAMENTO_BYTES;
+      // ⚠️ O orçamento da repescagem é o dela, mas cada byte passa pela MESMA
+      // contabilidade da interceptação — que segue viva enquanto isto roda. Um
+      // orçamento próprio calculado uma vez gastaria o mesmo espaço livre duas
+      // vezes (Sol).
+      let orcamento = Math.min(RETRY_ORCAMENTO_BYTES, conta.restante());
       const buscarUmaVez = async (u) => {
         // ⚠️ REDIRECT MANUAL, com cada salto validado. Seguir sozinho valida só
         // o primeiro host — um 302 de host público para link-local passaria por
@@ -470,6 +503,13 @@ export async function captureNativeBundle(url, opts = {}) {
             if (!resposta.ok || !resposta.body) return null;
             const pedacos = [];
             let lidos = 0;
+            // ⚠️ Reserva feita e NÃO aceita tem que voltar em TODO caminho de
+            // saída, não só no ramo de estouro: se `read()` rejeitar no meio
+            // (timeout, aborto, erro de rede), o que já foi reservado ficaria
+            // preso e o teto encolheria para sempre (Sol).
+            const bilhetes = [];
+            let aceita = false;
+            try {
             const leitor = resposta.body.getReader();
             for (;;) {
               const { done, value } = await leitor.read();
@@ -479,18 +519,33 @@ export async function captureNativeBundle(url, opts = {}) {
               // aceito: senão várias respostas grandes recusadas puxariam bytes
               // sem limite, e o orçamento agregado não limitaria nada (Sol).
               orcamento -= value.byteLength;
-              if (lidos > MAX_ASSET_BYTES || orcamento < 0) {
+              // E a reserva é feita na contabilidade compartilhada, pedaço a
+              // pedaço: é ela que impede os dois caminhos de estourar o teto.
+              const bilhete = conta.reservar(value.byteLength);
+              if (lidos > MAX_ASSET_BYTES || orcamento < 0 || !bilhete) {
+                if (bilhete) conta.devolver(bilhete);
                 await leitor.cancel().catch(() => {});
                 parada.abort();
                 return null;
               }
+              bilhetes.push(bilhete);
               pedacos.push(value);
             }
             if (!lidos) return null;
+            // Só agora o corpo entra no pacote: pendente vira confirmado.
+            for (const b of bilhetes) conta.confirmar(b);
+            aceita = true;
             return {
               bytes: Buffer.concat(pedacos.map((p) => Buffer.from(p))),
               contentType: resposta.headers.get('content-type') || 'application/octet-stream',
             };
+            } finally {
+              // Vale para TODO caminho de saída, não só o ramo de estouro: se
+              // `read()` rejeitar no meio, o pendente volta aqui. Depois do
+              // fechamento não há o que devolver — `fechar()` já descartou o
+              // que estava em voo (Sol).
+              if (!aceita) for (const b of bilhetes) conta.devolver(b);
+            }
           } finally {
             clearTimeout(relogio);
           }
@@ -506,6 +561,8 @@ export async function captureNativeBundle(url, opts = {}) {
           if (!u || orcamento <= 0) return;
           try {
             const valor = await buscarUmaVez(u);
+            // Já reservado pedaço a pedaço durante a leitura — somar aqui
+            // contaria os mesmos bytes duas vezes.
             if (valor) recursos.set(u, valor);
           } catch { /* segue faltando, e o relatório dirá */ }
         }
@@ -519,6 +576,10 @@ export async function captureNativeBundle(url, opts = {}) {
     // após o purge muta `recursos` vivo — se ela entrasse no `mapa`, os
     // textos seriam reescritos para um caminho cujo asset nunca entra no
     // bundle: referência local quebrada em silêncio, pior que o crash.
+    // ⚠️ Daqui em diante nada mais entra no pacote. Fechar a contabilidade
+    // impede que uma resposta atrasada some bytes que NUNCA serão empacotados —
+    // o relatório passaria a contar o que não existe (Sol).
+    conta.fechar();
     const congelados = new Map([...recursos].filter(([, v]) => v));
     const engines = await page.evaluate(() => ({
       gsap: Boolean(window.gsap),
@@ -624,7 +685,13 @@ export async function captureNativeBundle(url, opts = {}) {
       // mesmo faltando script ou fonte, e a falta some. Achado P1 do Sol.
       relatorio: {
         arquivos: assets.length,
-        bytes: bytesTotal,
+        // ⚠️ DUAS quantidades, não uma. `bytes` é o que chegou da rede (é
+        // sobre ele que os tetos de memória e de tráfego decidem);
+        // `bytesNoPacote` é o que ficou guardado, e é menor porque a reescrita
+        // de referências encurta HTML/CSS/JS. Com um nome só, a diferença
+        // aparecia como erro de contabilidade e não como o que é.
+        bytes: conta.gasto(),
+        bytesNoPacote: assets.reduce((total, a) => total + a.body.byteLength, 0),
         entryPath,
         engines,
         // Quantos candidatos de srcset/CSS o fechamento carregou de propósito.

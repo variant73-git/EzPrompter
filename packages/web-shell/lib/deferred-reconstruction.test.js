@@ -279,6 +279,9 @@ describe('deferred reconstruction result kinds', () => {
     const relatorio = {
       arquivos: 1,
       bytes: 19,
+      // O que ficou guardado e' MENOR que o que chegou: a reescrita de
+      // referencias encurta HTML/CSS/JS. Duas quantidades, dois campos.
+      bytesNoPacote: 17,
       entryPath: 'index.html',
       engines: { gsap: true },
       refsExtras: 7,
@@ -306,6 +309,7 @@ describe('deferred reconstruction result kinds', () => {
     expect(result.meta.captureReport).toEqual({
       files: 1,
       bytes: 19,
+      bundleBytes: 17,
       extraRefs: 7,
       discarded: 3,
       discardedHosts: ['cdn.test', 'other.test'],
