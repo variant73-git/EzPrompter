@@ -81,6 +81,13 @@ async function abrirNavegador(launcher) {
 const MAX_ASSETS = 1200;
 const MAX_BYTES_TOTAL = 220 * 1024 * 1024;
 const MAX_ASSET_BYTES = 40 * 1024 * 1024;
+// Tetos da SEGUNDA tentativa. Ela existe para recuperar o caso comum (a
+// resposta não chegou naquela passagem), não para virar um segundo download da
+// internet inteira.
+const RETRY_MAX_ARQUIVOS = 120;
+const RETRY_CONCORRENCIA = 6;
+const RETRY_MAX_SALTOS = 3;
+const RETRY_ORCAMENTO_BYTES = 60 * 1024 * 1024;
 // Página com altura absurda mantinha o navegador rolando por horas (P0 do Sol).
 const MAX_ALTURA_PX = 120000;
 
@@ -422,6 +429,89 @@ export async function captureNativeBundle(url, opts = {}) {
     onProgress({ etapa: 'collecting' });
     // Espera os corpos que ainda estavam sendo lidos ANTES de montar o bundle.
     await Promise.allSettled([...emVoo]);
+
+    // ⭐ UMA SEGUNDA TENTATIVA, pelo servidor, antes de desistir.
+    //
+    // Medido no clone real: 3 imagens ficaram de fora com "corpo nao chegou", e
+    // como o carrossel as repete, 7 quadros do site aparecem vazios. Não é
+    // lacuna de desenho — a coleta já pede o `src` simples; é a resposta que não
+    // chegou a tempo naquela passagem. Uma tentativa pelo contexto da página
+    // (mesmos cookies e cabeçalhos) recupera o caso comum, e o que continuar
+    // faltando segue nomeado no relatório.
+    const faltantes = [...recursos].filter(([, v]) => !v).map(([u]) => u);
+    if (faltantes.length) {
+      onProgress({ etapa: 'retrying', quantos: faltantes.length });
+      const fila = faltantes.slice(0, RETRY_MAX_ARQUIVOS);
+      let orcamento = RETRY_ORCAMENTO_BYTES;
+      const buscarUmaVez = async (u) => {
+        // ⚠️ REDIRECT MANUAL, com cada salto validado. Seguir sozinho valida só
+        // o primeiro host — um 302 de host público para link-local passaria por
+        // cima da guarda (mesma classe do achado de 2026-08-14).
+        //
+        // ⚠️ E LEITURA EM FLUXO, com aborto. `page.request.fetch` já baixa a
+        // resposta inteira antes de devolver, e `content-length` pode estar
+        // ausente ou mentir — um teto conferido depois disso limita o que se
+        // ACEITA, nunca a memória nem os bytes trafegados (Sol). Aqui os bytes
+        // são contados enquanto chegam e a conexão é cortada no limite.
+        let alvo = u;
+        for (let salto = 0; salto <= RETRY_MAX_SALTOS; salto += 1) {
+          if (!(await hostEhPublico(new URL(alvo).hostname))) return null;
+          const parada = new AbortController();
+          const relogio = setTimeout(() => parada.abort(), 12000);
+          try {
+            const resposta = await fetch(alvo, { redirect: 'manual', signal: parada.signal });
+            const status = resposta.status;
+            if (status >= 300 && status < 400) {
+              const destino = resposta.headers.get('location');
+              if (!destino) return null;
+              alvo = new URL(destino, alvo).toString();
+              continue;
+            }
+            if (!resposta.ok || !resposta.body) return null;
+            const pedacos = [];
+            let lidos = 0;
+            const leitor = resposta.body.getReader();
+            for (;;) {
+              const { done, value } = await leitor.read();
+              if (done) break;
+              lidos += value.byteLength;
+              // ⚠️ O orçamento é debitado do que TRAFEGOU, não do que foi
+              // aceito: senão várias respostas grandes recusadas puxariam bytes
+              // sem limite, e o orçamento agregado não limitaria nada (Sol).
+              orcamento -= value.byteLength;
+              if (lidos > MAX_ASSET_BYTES || orcamento < 0) {
+                await leitor.cancel().catch(() => {});
+                parada.abort();
+                return null;
+              }
+              pedacos.push(value);
+            }
+            if (!lidos) return null;
+            return {
+              bytes: Buffer.concat(pedacos.map((p) => Buffer.from(p))),
+              contentType: resposta.headers.get('content-type') || 'application/octet-stream',
+            };
+          } finally {
+            clearTimeout(relogio);
+          }
+        }
+        return null;
+      };
+      // Concorrência limitada: disparar tudo de uma vez é rajada de rede e pico
+      // de memória proporcional à quantidade que faltou.
+      const pendentes = [...fila];
+      await Promise.allSettled(Array.from({ length: RETRY_CONCORRENCIA }, async () => {
+        for (;;) {
+          const u = pendentes.shift();
+          if (!u || orcamento <= 0) return;
+          try {
+            const valor = await buscarUmaVez(u);
+            if (valor) recursos.set(u, valor);
+          } catch { /* segue faltando, e o relatório dirá */ }
+        }
+      }));
+    }
+
     for (const [u, v] of [...recursos]) if (!v) { recursos.delete(u); descartados.push({ u, motivo: 'corpo nao chegou' }); }
     // SNAPSHOT IMUTÁVEL (Sol r2 #2, 2026-08-20): daqui em diante `mapa`,
     // reescrita e montagem leem o MESMO congelado de entradas completas. Uma

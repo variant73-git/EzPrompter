@@ -18,6 +18,7 @@ import {
   verifyRuntimeSessionToken,
 } from '../../../../../lib/motion-editor/runtime-session-token.js';
 import { MOTIVOS_DE_FALHA } from '../../../../../lib/motion-editor/runtime-failure-reasons.js';
+import { translateRuntimeOrigins, translateRuntimeOriginsInHtml, translateRuntimeOriginsInJson, origensDoBundle } from '../../../../../lib/native-clone/translate-runtime-origins.js';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -246,11 +247,52 @@ export async function GET(request, { params }) {
   }
 
   const runtimeBase = `/api/runtime/${encodeURIComponent(token)}`;
-  const rewritten = rewriteRuntimePaths(
+  let rewritten = rewriteRuntimePaths(
     new TextDecoder().decode(bytes),
     topLevelPrefixes(descriptor),
     runtimeBase,
   );
+
+  // ⭐ A ORIGEM QUE O SITE MONTA EM RUNTIME. Reescrever referências alcança o
+  // que está escrito no documento; não alcança a URL que só existe depois que o
+  // código roda. Medido no clone real: 145 imagens de uma sequência de rolagem
+  // morriam assim, com os arquivos já dentro do bundle.
+  //
+  // Só JavaScript, só string de verdade com a origem no primeiro caractere, e
+  // só origem que o bundle CONTÉM. Leitura insegura deixa o arquivo intocado e
+  // registra a cobertura incompleta — servir o original é melhor que corromper
+  // o script que faz o site se mexer.
+  const hostsDoBundle = origensDoBundle(descriptor.assetIndex);
+  if (/^(?:text|application)\/javascript(?:;|$)/i.test(asset.contentType)) {
+    const traducao = translateRuntimeOrigins(rewritten, { hosts: hostsDoBundle, runtimeBase });
+    rewritten = traducao.texto;
+    if (!traducao.completo) {
+      // eslint-disable-next-line no-console
+      console.warn('[runtime] traducao nao aplicada num script', { motivo: traducao.motivo });
+    }
+  } else if (/^application\/json(?:;|$)/i.test(asset.contentType)) {
+    // Lottie e manifestos de mídia guardam URL absoluta, e o código do site as
+    // usa direto — medido: um SVG que existe no bundle continuava sendo pedido
+    // ao CDN porque vinha de um Lottie.
+    const traducao = translateRuntimeOriginsInJson(rewritten, { hosts: hostsDoBundle, runtimeBase });
+    rewritten = traducao.texto;
+    if (!traducao.completo) {
+      // eslint-disable-next-line no-console
+      console.warn('[runtime] traducao nao aplicada num json', { motivo: traducao.motivo });
+    }
+  } else if (isHtml) {
+    // Medido: a origem aparece 164 vezes no documento de entrada e o DOM tem 4
+    // atributos apontando para lá — o resto vive em script EMBUTIDO, que monta
+    // a sequência de frames com `Image()`.
+    const traducao = translateRuntimeOriginsInHtml(rewritten, { hosts: hostsDoBundle, runtimeBase });
+    rewritten = traducao.texto;
+    if (traducao.incompletos > 0) {
+      // eslint-disable-next-line no-console
+      console.warn('[runtime] blocos de script sem traducao', {
+        incompletos: traducao.incompletos, de: traducao.blocos,
+      });
+    }
+  }
   if (!isHtml) {
     headers.set('Cache-Control', immutableCacheControl(payload.expiresAtMs));
     headers.set('ETag', responseEtag(rewritten));
