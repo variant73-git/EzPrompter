@@ -142,7 +142,9 @@ describe('editor completo no clone', () => {
     expect(fullEditorEnabled({})).toBe(false);
     expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: '0' })).toBe(false);
     expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: '1' })).toBe(true);
-    expect(injectRuntimeBridge('<html><body></body></html>')).not.toContain('editor-core');
+    // O contrato e' que os ARQUIVOS nao entrem — a string solta agora aparece
+    // num comentario da ponte, e assertar nela mediria a prosa, nao a injecao.
+    expect(injectRuntimeBridge('<html><body></body></html>')).not.toContain('/editor-core/');
   });
 
   it('entra por caminho ABSOLUTO na origem do runtime', () => {

@@ -7477,6 +7477,31 @@
     'flexDirection','flexWrap','justifyContent','alignItems','gap','gridTemplateColumns',
     'gridTemplateRows','float','clear']);
 
+  // Mensagem por motivo — o usuário precisa saber POR QUE não pegou, na hora.
+  var RECUSA_DO_CLONE = {
+    motion_owned: 'This property is driven by an animation — edit it in the Motion tab.',
+    unsupported_kind: 'This kind of change cannot be saved on a cloned site yet.',
+    unsupported_attribute: 'Only an existing image or link can be changed this way.',
+    no_identity: 'This element has no stable identity, so the change could not be saved.',
+    unstable_identity: 'This element has no id of its own, so the change would not survive a reload. Give it an ID first, or edit its parent.',
+    ambiguous_identity: 'More than one element shares this id, so the change could not be brought back after a reload.',
+    motion_uninspectable: 'An animation on this element could not be read, so editing it here is not safe yet.',
+    priority_conflict: 'The site marks this property as !important, so the change would not survive a reload.',
+    priority_check_failed: 'This change could not be verified as reloadable, so it was not applied.',
+    not_wired_yet: 'Saving this kind of change on a cloned site is not connected yet.',
+    needs_preflight: 'This change was not checked before being applied, so it was not saved.',
+    transition_in_flight: 'This element is mid-transition. Wait a moment and try again.',
+    no_element: 'The change could not be saved: the element is gone.',
+    missing_property: 'The change could not be saved: no property was named.',
+  };
+  function reportarRecusaDoClone(resultado, prop) {
+    var texto = RECUSA_DO_CLONE[resultado.reason] || 'This change could not be saved on a cloned site.';
+    try {
+      if (typeof showToast === 'function') showToast(texto);
+      else console.warn('[uncraft] ' + texto + ' (' + prop + ')');
+    } catch (e) { /* aviso é best-effort; a recusa em si já aconteceu */ }
+  }
+
   function applyStyle(el, prop, value) {
     // Range-scoped typography: if the user selected a word/phrase while in text
     // edit mode, route typography writes to that range only (wrap in a <span>).
@@ -7494,6 +7519,27 @@
     }
     var cssName = cssProp(prop);
     var wrapped = isTextWrapper(el);
+    // O valor de ANTES tem que sair daqui: depois da escrita ele já se foi, e um
+    // patch sem `before` não sabe desfazer.
+    var antesDaEscrita = '';
+    try { antesDaEscrita = getCS(el).getPropertyValue(cssName) || ''; } catch (e) { antesDaEscrita = ''; }
+    var aprovacaoDoClone = null;
+
+    // ⭐ PERGUNTA ANTES DE ESCREVER. Dentro do clone, uma edição que não pode ser
+    // salva não pode nem aparecer: recusar depois deixaria a mudança recusada na
+    // tela, para sumir no salvar — que é o defeito que esta porta veio impedir.
+    if (typeof targetWin.__uncraftEditorCommit === 'function') {
+      var preflight = targetWin.__uncraftEditorCommit(el, {
+        kind: 'style', property: cssName, before: antesDaEscrita, value: value,
+      }, { dryRun: true });
+      if (preflight && preflight.ok === false && preflight.reason !== 'no_change') {
+        reportarRecusaDoClone(preflight, cssName);
+        return;
+      }
+      // O bilhete da consulta viaja até o registro: sem ele a porta recusa, e é
+      // assim que nenhuma escrita entra no histórico sem ter sido consultada.
+      aprovacaoDoClone = preflight && preflight.approval;
+    }
 
     // Collect every element we'll mutate so we can snapshot cssText (for undo)
     // BEFORE applying changes. A single __cascade undo entry restores all at once.
@@ -7538,6 +7584,27 @@
     }
 
     pushUndo({ prop: '__cascade', affected: affected });
+
+    // ⭐ PERSISTIR NO CLONE. Escrever no DOM não sobrevive a um recarregamento:
+    // o que sobrevive são as TRANSAÇÕES do manifesto, reaplicadas pela ponte.
+    // Quando este editor roda DENTRO do clone animado, a escrita confirmada
+    // atravessa a porta da ponte e vira transação. Fora do clone (extensão,
+    // canvas legado) a porta não existe e nada muda.
+    //
+    // A recusa é ALTA: uma propriedade que uma animação dirige não aceita style
+    // patch, e o usuário precisa saber disso na hora — não descobrir no salvar.
+    if (typeof targetWin.__uncraftEditorCommit === 'function') {
+      // O preflight ja' aprovou; aqui e' so' o registro. Uma recusa nesta altura
+      // significa que o mundo mudou entre as duas chamadas — raro, e o aviso
+      // ainda e' melhor que silencio.
+      var resultado = targetWin.__uncraftEditorCommit(el, {
+        kind: 'style', property: cssName, before: antesDaEscrita, value: value,
+        approval: aprovacaoDoClone,
+      });
+      if (resultado && resultado.ok === false && resultado.reason !== 'no_change') {
+        reportarRecusaDoClone(resultado, cssName);
+      }
+    }
 
     // Auto-resize for typography changes
     var typoProps = ['fontSize','fontFamily','fontWeight','lineHeight','letterSpacing'];

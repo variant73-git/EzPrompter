@@ -15728,3 +15728,181 @@ describe('native motion runtime bridge', () => {
   });
 
 });
+
+// ⭐ A PORTA DO EDITOR COMPLETO. Ele roda dentro do documento do clone e escreve
+// no DOM; sozinho isso nao persiste — o que sobrevive ao recarregamento sao as
+// TRANSACOES do manifesto. A porta transforma a edicao dele em transacao e a
+// manda pelo canal que ja' existe, sem historico paralelo (advise do Sol).
+describe('porta do editor completo', () => {
+  const fonte = getRuntimeBridgeSource();
+
+  it('so aceita o que esta LIGADO ao editor hoje', () => {
+    // Tokens, nao sintaxe: o transform do vitest reformata a fonte. Hoje so'
+    // `style` tem chamador; anunciar mais seria capacidade sem uso — o editor
+    // escreveria, a porta diria ok, e nada persistiria (Sol).
+    expect(fonte).toMatch(/unsupported_kind/);
+    expect(fonte).toMatch(/not_wired_yet/);
+  });
+
+  it('recusa escrever em propriedade que uma animacao dirige', () => {
+    // Sem isso o tween vivo pisoteia a escrita e o usuario ve a edicao sumir.
+    expect(fonte).toMatch(/motion_owned/);
+    expect(fonte).toMatch(/inspectMotion\(element\)/);
+  });
+
+  it('usa o canal que ja existe, e nao um historico paralelo', () => {
+    expect(fonte).toMatch(/transaction-committed/);
+    expect(fonte).toMatch(/originatedByRuntime/);
+    expect(fonte).toMatch(/committedTransactions/);
+  });
+
+  it('recusa sem identidade e sem mudanca', () => {
+    expect(fonte).toMatch(/no_identity/);
+    expect(fonte).toMatch(/no_change/);
+  });
+});
+
+// ⭐ O replay so' reencontra elemento salvo por `id`/`data-w-id` AUTORAIS.
+// Identidade derivada do caminho no DOM nao sobrevive (item 180). Aceitar um
+// patch nesses elementos gravaria o que nunca volta: a pessoa veria a edicao,
+// salvaria, recarregaria, e ela teria sumido sem erro nenhum.
+describe('a porta so aceita identidade que sobrevive ao recarregamento', () => {
+  const fonte = getRuntimeBridgeSource();
+  it('recusa quando a semente e derivada do caminho no DOM', () => {
+    expect(fonte).toMatch(/unstable_identity/);
+    expect(fonte).toMatch(/webflow:\|id:/);
+  });
+});
+
+// Achados da auditoria do Sol sobre a porta.
+describe('a porta pergunta antes de escrever, e falha fechada', () => {
+  const fonte = getRuntimeBridgeSource();
+
+  // Recusar DEPOIS da escrita deixa a mudanca recusada na tela para sumir no
+  // salvar — o defeito que a porta veio impedir.
+  it('tem modo de consulta previa', () => {
+    expect(fonte).toMatch(/dryRun/);
+    expect(fonte).toMatch(/bilhete/);
+    expect(fonte).toMatch(/approval/);
+  });
+
+  // Um track `x`/`rotation` escreve `transform`: comparar nomes soltos deixava
+  // uma edicao em `transform` passar por cima da animacao.
+  it('conhece quem contribui para transform', () => {
+    // `xPercent`/`yPercent` sao vocabulario do GSAP e tambem escrevem transform;
+    // faltavam, e uma edicao em `transform` passava por cima da animacao.
+    for (const membro of ['rotation', 'scalex', 'translatey', 'skew', 'xpercent', 'ypercent', 'perspective']) {
+      expect(fonte).toMatch(new RegExp(`['"]${membro}['"]`));
+    }
+  });
+
+  // Clip animado sem tracks legiveis e' ownership NAO-inspecionavel: falha
+  // fechada, nunca aberta.
+  it('clip sem tracks legiveis falha FECHADO', () => {
+    expect(fonte).toMatch(/motion_uninspectable/);
+    expect(fonte).toMatch(/if \(!tracks\.length\) return recusa/);
+  });
+
+  // Dois elementos com o mesmo id fazem o replay recusar por ambiguidade — se a
+  // porta aceitasse, a edicao sumiria no reload sem erro.
+  it('recusa identidade ambigua', () => {
+    expect(fonte).toMatch(/ambiguous_identity/);
+  });
+
+  // Regra autoral com !important vence o replay, que escreve sem prioridade.
+  it('recusa quando o site marca a propriedade como important', () => {
+    expect(fonte).toMatch(/priority_conflict/);
+  });
+
+  // Anunciar capacidade sem chamador faz o editor escrever, a porta dizer ok, e
+  // nada persistir.
+  it('nao anuncia o que ainda nao esta ligado', () => {
+    expect(fonte).toMatch(/not_wired_yet/);
+  });
+});
+
+// O risco esta' ACEITO e escrito, nao escondido: a porta expoe capacidade nova
+// (o escopo lexico da ponte nao e' alcancavel pela pagina; esta funcao e').
+// Fica pela decisao de 2026-08-09 de que site adversarial esta' fora do modelo
+// de ameaca — aceitacao explicita, nao equivalencia tecnica.
+describe('o risco da porta esta registrado no codigo', () => {
+  it('diz que expoe capacidade nova e por que fica', () => {
+    const fonte = getRuntimeBridgeSource();
+    expect(fonte).toMatch(/RISCO ACEITO/);
+    expect(fonte).toMatch(/fora do modelo de amea/i);
+  });
+});
+
+// ⚠️ A validacao de prioridade vale SO' na consulta previa: na chamada de
+// registro o DOM ja' mudou, e repetir o teste sobre o estado alterado devolvia
+// recusa FALSA — a edicao ficava na tela e sumia no reload, o defeito que a
+// porta veio impedir (Sol r4). O registro apresenta a APROVACAO da consulta.
+describe('a aprovacao da consulta amarra o registro', () => {
+  const fonte = getRuntimeBridgeSource();
+  it('o registro exige o bilhete da consulta', () => {
+    expect(fonte).toMatch(/needs_preflight/);
+    expect(fonte).toMatch(/aprovacoesDeEscrita/);
+  });
+  it('o bilhete amarra elemento, propriedade E valor', () => {
+    expect(fonte).toMatch(/elementId\}\|\$\{property\}\|\$\{normalizarValor\(edit\.value\)\}/);
+  });
+  it('o caderno de bilhetes tem teto', () => {
+    expect(fonte).toMatch(/aprovacoesDeEscrita\.size > 64/);
+  });
+});
+
+// Com `transition` na propriedade o computado nao muda logo apos a escrita, e a
+// sondagem leria isso como prioridade alheia — recusando edicao persistivel.
+// Num clone animado esse e' o caso comum (Sol r5).
+describe('a sondagem de prioridade neutraliza transicao', () => {
+  const fonte = getRuntimeBridgeSource();
+  it('desliga a transicao antes de medir', () => {
+    expect(fonte).toMatch(/setProperty\(["']transition["'], ["']none["'], ["']important["']\)/);
+  });
+  it('restaura SEMPRE, inclusive a transicao', () => {
+    expect(fonte).toMatch(/finally \{[\s\S]{0,400}removeProperty\(["']transition["']\)/);
+  });
+  it('sondagem que falha RECUSA, nao deixa passar', () => {
+    expect(fonte).toMatch(/sondagemFalhou/);
+    expect(fonte).toMatch(/if \(sondagemFalhou\) return recusa/);
+  });
+});
+
+// `getPropertyValue('transition')` volta vazio quando so' ha' longhands inline
+// (um `transition-duration` sozinho), e remover o shorthand na restauracao
+// apagaria esses — a sondagem mudaria a animacao do clone mesmo em consulta.
+describe('a sondagem restaura longhand por longhand', () => {
+  const fonte = getRuntimeBridgeSource();
+  it('conhece os cinco longhands', () => {
+    for (const nome of ['transition-property', 'transition-duration',
+      'transition-timing-function', 'transition-delay', 'transition-behavior']) {
+      expect(fonte).toContain(nome);
+    }
+  });
+  it('guarda valor E prioridade de cada um', () => {
+    expect(fonte).toMatch(/LONGHANDS_TRANSICAO/);
+    expect(fonte).toMatch(/prioridade: element\.style\.getPropertyPriority\(nome\)/);
+  });
+});
+
+// `transition: none` cancela a transicao em curso, e restaurar os longhands nao
+// devolve o progresso dela — a consulta mudaria visivelmente a animacao do
+// clone. Recusar e' mais honesto que perturbar (Sol r8).
+describe('transicao em curso nao e sondada', () => {
+  const fonte = getRuntimeBridgeSource();
+  it('recusa quando ha CSSTransition rodando', () => {
+    expect(fonte).toMatch(/transition_in_flight/);
+    expect(fonte).toMatch(/CSSTransition/);
+    // O criterio e' por EXCLUSAO: `playState` nao tem `pending` (e' campo
+    // proprio), e uma transicao PAUSADA segue ativa e tambem seria cancelada.
+    expect(fonte).toMatch(/playState !== ['"]idle['"]/);
+    expect(fonte).toMatch(/playState !== ['"]finished['"]/);
+    expect(fonte).toMatch(/a\.pending/);
+  });
+
+  // Nao dar para perguntar nao e' o mesmo que nao haver transicao: assumir
+  // ausencia reabre o risco de cancelar uma em curso.
+  it('API ausente falha FECHADO', () => {
+    expect(fonte).toMatch(/typeof element\.getAnimations !== ['"]function['"]/);
+  });
+});
