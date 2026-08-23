@@ -356,3 +356,47 @@ describe('re-clone no meio do Edit', () => {
     })).rejects.toMatchObject({ code: 'not_found' });
   });
 });
+
+// CTE modificadora roda INTEIRA, independente do resto: incrementar o token de
+// edicao numa CTE solta o mexeria mesmo com o autosave recusado (revisao
+// obsoleta, sessao fechada, dono errado) — conflito estrutural falso, e com um
+// nodeId qualquer mexeria no token de OUTRO node (Sol).
+describe('o token de edicao so sobe quando o autosave salva', () => {
+  it('o incremento depende da linha salva, e a trava nao incrementa', async () => {
+    const sql = createSql([[{ id: SESSION_ID, node_id: NODE_ID, user_id: 42, revision: 1,
+      draft_manifest: manifest(), status: 'active', base_snapshot_id: SNAPSHOT_ID, base_bundle_id: BUNDLE_ID }]]);
+    await updateEditSessionDraft({
+      sql, userId: 42, nodeId: NODE_ID, sessionId: SESSION_ID, expectedRevision: 0, draftManifest: manifest(),
+    });
+    const texto = sql.calls[sql.calls.length - 1].text;
+    // A CTE que trava NAO escreve.
+    expect(texto).toMatch(/travado AS \([\s\S]*?SELECT n\.id FROM nodes n[\s\S]*?FOR UPDATE\s*\)/);
+    // E o incremento sai DE `salvo`.
+    expect(texto).toMatch(/UPDATE nodes SET edit_revision = edit_revision \+ 1\s*FROM salvo/);
+    expect(texto).toMatch(/WHERE nodes\.id = salvo\.node_id/);
+  });
+});
+
+// O aviso de rascunho aposentado viaja no objeto `session`, e o ramo de
+// migracao de manifesto devolve OUTRO objeto. Sem reaplicar, o trabalho perdido
+// sumiria calado exatamente quando a sessao escolhida precisa migrar (Sol).
+describe('o aviso sobrevive a migracao de manifesto', () => {
+  it('reaplica supersededDraft no objeto migrado', async () => {
+    const legado = { schemaVersion: 1, baseBundleId: BUNDLE_ID, runtimeFingerprint: RUNTIME_FINGERPRINT, patches: [] };
+    const sql = vi.fn((strings) => {
+      const text = strings.join(' ');
+      if (/base_snapshot_replaced/.test(text)) {
+        // aposenta um rascunho COM trabalho
+        return Promise.resolve([{ id: 'sess-velha', revision: 2, edits: 3 }]);
+      }
+      if (/SELECT n\.current_snapshot_id, s\.native_bundle_id/.test(text)) return Promise.resolve([]);
+      if (/UPDATE native_motion_edit_sessions/.test(text) && /draft_manifest =/.test(text)) {
+        return Promise.resolve([sessionRow({ draft_manifest: manifest(), revision: 1, stored_manifest_version: 2 })]);
+      }
+      return Promise.resolve([sessionRow({ draft_manifest: legado, stored_manifest_version: 1 })]);
+    });
+    sql.transaction = (queries) => Promise.all(queries);
+    const aberta = await openOrResumeEditSession({ sql, userId: 42, nodeId: NODE_ID, baseSnapshotId: SNAPSHOT_ID });
+    expect(aberta.supersededDraft).toMatchObject({ sessionId: 'sess-velha', edits: 3 });
+  });
+});

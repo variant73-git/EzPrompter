@@ -297,7 +297,10 @@ export async function openOrResumeEditSession({ sql, userId, nodeId, baseSnapsho
   if (aviso) session.supersededDraft = aviso;
   if (rows[0].stored_manifest_version != null
       && Number(rows[0].stored_manifest_version) !== MOTION_MANIFEST_SCHEMA_VERSION) {
-    return updateEditSessionDraft({
+    // ⚠️ O aviso viaja no objeto `session`, e este ramo devolve OUTRO objeto —
+    // o da migração. Sem reaplicar, um rascunho aposentado COM trabalho sumiria
+    // calado justamente quando a sessão escolhida precisa migrar (Sol).
+    const migrada = await updateEditSessionDraft({
       sql,
       userId,
       nodeId,
@@ -305,6 +308,8 @@ export async function openOrResumeEditSession({ sql, userId, nodeId, baseSnapsho
       expectedRevision: session.revision,
       draftManifest: session.draftManifest,
     });
+    if (aviso && migrada) migrada.supersededDraft = aviso;
+    return migrada;
   }
   return session;
 }
@@ -372,25 +377,47 @@ export async function updateEditSessionDraft({
   assertSql(sql);
   assertRevision(expectedRevision);
   const manifest = parseMotionManifest(draftManifest);
+  // ⭐ TRAVA COMUM POR NODE. O commit de uma operação estrutural (rota /run e
+  // ferramenta do agente) trava a linha do node e checa se há sessão com
+  // rascunho. Sem o autosave disputar a MESMA trava, ele grava por baixo dessa
+  // checagem e o trabalho vivo é sobrescrito (Sol). Aqui os dois serializam.
   const rows = await sql`
-    UPDATE native_motion_edit_sessions e
-       SET draft_manifest = ${JSON.stringify(manifest)}::jsonb,
-           draft_manifest_version = ${MOTION_MANIFEST_SCHEMA_VERSION},
-           revision = e.revision + 1,
-           updated_at = NOW()
-      FROM snapshots s, nodes n, boards b
-     WHERE e.id = ${sessionId}
-       AND e.node_id = ${nodeId}
-       AND e.user_id = ${userId}
-       AND e.status = 'active'
-       AND e.revision = ${expectedRevision}
-       AND s.id = e.base_snapshot_id
-       AND s.native_bundle_id::text = ${manifest.baseBundleId}
-       AND n.id = e.node_id
-       AND n.current_snapshot_id = e.base_snapshot_id
-       AND b.id = n.board_id
-       AND b.user_id = ${userId}
-    RETURNING e.*, s.native_bundle_id::text AS base_bundle_id
+    WITH travado AS (
+      -- SÓ trava. Incrementar aqui rodaria mesmo quando o autosave é recusado
+      -- (revisão obsoleta, sessão fechada, dono errado): CTE modificadora roda
+      -- inteira, independente do resultado do resto. Isso viraria conflito
+      -- estrutural falso — e, com um nodeId qualquer, mexeria no token de outro
+      -- node (Sol).
+      SELECT n.id FROM nodes n WHERE n.id = ${nodeId} FOR UPDATE
+    ), salvo AS (
+      UPDATE native_motion_edit_sessions e
+         SET draft_manifest = ${JSON.stringify(manifest)}::jsonb,
+             draft_manifest_version = ${MOTION_MANIFEST_SCHEMA_VERSION},
+             revision = e.revision + 1,
+             updated_at = NOW()
+        FROM snapshots s, nodes n, boards b, travado
+       WHERE e.id = ${sessionId}
+         AND travado.id = n.id
+         AND e.node_id = ${nodeId}
+         AND e.user_id = ${userId}
+         AND e.status = 'active'
+         AND e.revision = ${expectedRevision}
+         AND s.id = e.base_snapshot_id
+         AND s.native_bundle_id::text = ${manifest.baseBundleId}
+         AND n.id = e.node_id
+         AND n.current_snapshot_id = e.base_snapshot_id
+         AND b.id = n.board_id
+         AND b.user_id = ${userId}
+      RETURNING e.*, s.native_bundle_id::text AS base_bundle_id
+    ), tocado AS (
+      -- O incremento DEPENDE de uma linha efetivamente salva: sem a CTE salvo,
+      -- esta aqui nao tem de onde tirar linha e nao toca em nada.
+      UPDATE nodes SET edit_revision = edit_revision + 1
+        FROM salvo
+       WHERE nodes.id = salvo.node_id
+      RETURNING nodes.id
+    )
+    SELECT salvo.* FROM salvo LEFT JOIN tocado ON true
   `;
   if (rows[0]) return sessionFromRow(rows[0]);
   const conflict = await readEditSessionConflict({ sql, userId, nodeId, sessionId, expectedRevision });

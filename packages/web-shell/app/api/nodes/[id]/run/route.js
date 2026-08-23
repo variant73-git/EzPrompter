@@ -35,7 +35,7 @@ export async function POST(request, { params }) {
            s.design_md AS current_design_md,
            s.source AS current_snapshot_source,
            s.native_bundle_id, s.motion_manifest,
-           n.current_snapshot_id
+           n.current_snapshot_id, n.edit_revision
       FROM nodes n
       JOIN boards b ON b.id = n.board_id
       LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
@@ -203,6 +203,10 @@ export async function POST(request, { params }) {
               FROM nodes n
              WHERE n.id = ${id}
                AND n.current_snapshot_id IS NOT DISTINCT FROM ${target.current_snapshot_id || null}
+               -- Condicao na linha TRAVADA: re-avaliada apos o lock, ao
+               -- contrario da checagem de sessao abaixo, que olha outra tabela
+               -- sob o snapshot anterior ao lock (Sol).
+               AND n.edit_revision IS NOT DISTINCT FROM ${Number(target.edit_revision) || 0}
                AND NOT EXISTS (
                  SELECT 1 FROM native_motion_edit_sessions e
                   WHERE e.node_id = n.id AND e.status = 'active'

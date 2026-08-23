@@ -94,6 +94,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
 -- boot inteiro com `column "native_bundle_id" does not exist`. As travas de
 -- integridade (chave estrangeira e formato do manifesto) vem na migracao
 -- 2026-07-26-native-motion-editing.sql, que so precisa rodar uma vez.
+-- ⭐ Token de revisão de EDIÇÃO, na própria linha do node. O autosave o
+-- incrementa; a escrita estrutural (compose, style transfer) exige o valor que
+-- o portão examinou. Como a condição vive na linha TRAVADA, o Postgres a
+-- re-avalia depois de adquirir a trava — o que uma condição em outra tabela
+-- (`NOT EXISTS` sobre sessões) não garante: o snapshot da instrução é anterior
+-- ao lock, e uma edição salva na espera passaria batida.
+ALTER TABLE nodes ADD COLUMN IF NOT EXISTS edit_revision BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS native_bundle_id UUID;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS motion_manifest JSONB;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS motion_manifest_version SMALLINT;
