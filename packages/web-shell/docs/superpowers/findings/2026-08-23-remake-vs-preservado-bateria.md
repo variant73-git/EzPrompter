@@ -268,3 +268,66 @@ falso; `Location` presente não prova que o navegador seguiu. A regra final usa
 o veredito do próprio navegador (`request().redirectedTo()`, medido no ponto
 exato da decisão): libera 204/304 e quem redirecionou DE FATO; o resto fica
 nulo, a repescagem tenta, e falha entra nomeada no relatório.
+
+
+---
+
+# Adendo 2026-08-24 — independência DECLARADA, pelos critérios completos
+
+O documento acima dizia: "independência exige as dependências necessárias
+zeradas E a bateria offline repetida com paridade de função — nenhuma das duas
+coisas foi feita". Agora foram, para o preservado.
+
+**Dependências zeradas.** A última referência própria quebrada (o logo do
+rodapé, num atributo `data-icon` que a reescrita não cobria) foi fechada. Toda
+falha restante do clone falha **no site vivo também** — são 2 scripts de SEO
+quebrados do próprio farmminerals.
+
+**A bateria offline, com paridade de função** (`scripts/bateria-offline-clone.mjs`):
+o mesmo clone em dois braços — online e com TODA rede fora do gateway local
+cortada antes de qualquer pedido —, comparando função, não só pixels.
+
+| critério | online | SEM INTERNET | |
+|---|---|---|---|
+| altura | 20942 | 20942 | ✓ |
+| imagens carregadas | 43/70 elementos | 43/70 elementos | ✓ |
+| …paridade por ELEMENTO (índice a índice) | 70 elementos | **0 divergem** | ✓ |
+| relógio de animação anda | sim | sim | ✓ |
+| gatilhos de rolagem | 51 | 51 | ✓ |
+| vídeo toca | sim | sim | ✓ |
+| vídeo **busca** t=2 | sim (2,0) | sim (2,0) | ✓ |
+| coreografia entre braços (SSIM, 5 paradas) | — | **0,991** | nível do controle |
+| pedidos que chegaram à rede externa | — | **0** | |
+
+**Contagem igual não prova conjunto igual; conjunto perde multiplicidade;
+ordem não se assume; e entre dois carregamentos não há identidade persistente
+de elemento (Sol, quatro rodadas até a redação exata)** — a comparação final
+é por **posição estrutural**: em cada um dos 70 índices, o caminho no DOM
+(tag + posição em cada nível), a chave do arquivo (sem o token da sessão), o
+estado de carga e a visibilidade são idênticos nos dois braços. **Zero
+divergências.** A conclusão se limita a isso — "as mesmas posições
+estruturais, com os mesmos campos" — que é a identidade máxima que existe
+entre carregamentos independentes. E a linha conclui **paridade dos campos
+observados**, não "função" em geral: função é o que a bateria cobre no
+CONJUNTO das linhas (altura, relógio de animação, gatilhos, vídeo tocar e
+buscar, coreografia), cada uma no seu alcance — listeners, navegação e
+estados interativos seguem declaradamente fora.
+
+E os 27 elementos não carregados, um a um: **nenhum arquivo com cópia visível
+falta** — parte são cópias duplicadas de arquivos já carregados em outro ponto
+da página; os **11 arquivos órfãos** (nenhuma cópia carregada) são todos de
+**estados escondidos** — slides de carrossel (Croprab K/N/P/NPK), ícones de
+menu fechado (cross, seta, logo branco). Idênticos nos dois braços. E todos os
+11 **estão no pacote e o portão os serve com corpo (11/11 medido)** — qualquer
+interação que os revele carrega, offline inclusive.
+
+⚠️ **Uma correção de instrumento no caminho:** a primeira versão contava
+tentativas externas na camada de rede e deu zero — mas o CSP do portão bloqueia
+script externo ANTES da rede, então o contador media o lugar errado. O contador
+honesto (`requestfailed`, que vê os bloqueios) mostra 2 bloqueados em CADA
+braço, idênticos: os scripts quebrados do próprio site.
+
+**Alcance da declaração:** vale para este clone, neste viewport e trajeto, nos
+critérios da tabela — os mesmos do prompt verbatim (rede, altura, coreografia)
+mais função de vídeo. Navegação entre páginas e formulários seguem fora, como
+o documento principal já declara.
