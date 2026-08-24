@@ -42,7 +42,20 @@ import { posix } from 'node:path';
  *    outward and the gateway CSP blocks it, but it never MOVES.
  */
 
-const HTML_URL_ATTRS = 'src|href|poster|data-src|data-original|data-bg|data-image';
+// Atributos cuja semântica de URL é DE SPEC — o navegador resolve sozinho.
+const HTML_URL_ATTRS = 'src|href|poster';
+// ⚠️ `data-*` é PADRÃO, não lista: o rodapé do farmminerals guarda o logo em
+// `data-icon` (um script lê e injeta o <img>), e cada site inventa o seu nome.
+// Enumerar é jogo perdido. Mas `data-*` não tem semântica de spec — quem
+// consome é o script do site, e uma URL ali pode ser IDENTIDADE (canônico,
+// share-url, endpoint), não recurso (Sol). A fronteira: só se troca quando o
+// valor bate exatamente com resposta capturada E o alvo é ASSET ESTÁTICO
+// reconhecido pela extensão; documento (HTML, PDF — coisas que se compartilham
+// por URL) e sem-extensão ficam absolutos.
+// `data-srcset` fora porque tem tokenizador próprio (duas passadas trocariam
+// offsets).
+const HTML_DATA_ATTRS = 'data-(?!srcset\\b)[a-z0-9_-]+';
+const DATA_ATTR_ASSET_EXT = /\.(?:svg|png|jpe?g|webp|avif|gif|ico|css|js|mjs|json|woff2?|ttf|otf|eot|mp4|webm|ogv|mp3|ogg|wav|lottie|riv)$/i;
 
 /**
  * HTML attribute values carry ENTITIES: a Next.js image reference is written
@@ -159,6 +172,12 @@ function htmlTokens(html) {
     const rawStart = m.index + m[0].length - 1 - m[2].length;
     tokens.push({ start: rawStart, end: rawStart + m[2].length, raw: m[2] });
   }
+  const dataRe = new RegExp(`\\s(?:${HTML_DATA_ATTRS})\\s*=\\s*(["'])([^"']*)\\1`, 'gi');
+  while ((m = dataRe.exec(html))) {
+    if (inRanges(m.index, skip) || !m[2]) continue;
+    const rawStart = m.index + m[0].length - 1 - m[2].length;
+    tokens.push({ start: rawStart, end: rawStart + m[2].length, raw: m[2], apenasAsset: true });
+  }
   const setRe = /\s(?:srcset|imagesrcset|data-srcset)\s*=\s*(["'])([^"']*)\1/gi;
   while ((m = setRe.exec(html))) {
     if (inRanges(m.index, skip) || !m[2]) continue;
@@ -248,6 +267,9 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
     let absolute;
     try { absolute = new URL(withoutHash, resolveBase).href; } catch { continue; }
     const target = map.get(absolute);
+    // data-* só aponta para asset estático reconhecido; alvo documento ou
+    // sem extensão pode ser identidade para o script do site — fica absoluto.
+    if (target && token.apenasAsset && !DATA_ATTR_ASSET_EXT.test(target)) continue;
     if (!target) {
       // Dropping <base> changes what an UNREWRITTEN relative reference means:
       // it would start resolving against the bundle directory instead of the

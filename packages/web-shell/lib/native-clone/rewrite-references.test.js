@@ -111,3 +111,56 @@ describe('rewriteDocumentReferences', () => {
     expect(referenceKindFor('a/b.js', 'application/javascript')).toBe(null);
   });
 });
+// ⚠️ Enumerar nomes de data-* e' jogo perdido: o rodape' do farmminerals guarda
+// o logo em `data-icon` (um script le e injeta <img>), e o proximo site inventa
+// outro nome. QUALQUER data-* vira candidato — a seguranca ja' esta' na
+// construcao: so' troca quando o valor bate exatamente com resposta capturada;
+// valor que nao e' URL capturada nao casa e fica intacto.
+describe('atributos data-* arbitrarios', () => {
+  const mapa = new Map([
+    ['https://cdn.test/x/logo%20icon.svg', '_ext/cdn.test/x/logo_20icon.svg'],
+    ['https://s.test/a.png', 'a.png'],
+  ]);
+  const roda = (text) => rewriteDocumentReferences({
+    text, kind: 'html', resourceUrl: 'https://s.test/index.html', assetPath: 'index.html', map: mapa,
+  });
+
+  it('reescreve data-icon (o caso medido no farmminerals)', () => {
+    const saida = roda('<div data-icon="https://cdn.test/x/logo%20icon.svg" class="w-embed"></div>');
+    expect(saida).toContain('data-icon="./_ext/cdn.test/x/logo_20icon.svg"');
+    expect(saida).not.toContain('cdn.test/x/logo%20icon');
+  });
+
+  it('data-* que nao e URL capturada fica intacto', () => {
+    const texto = '<div data-wf-domain="s.test" data-anything="42" data-note="ver https://outra.coisa/x"></div>';
+    expect(roda(texto)).toBe(texto);
+  });
+
+  it('data-srcset continua no tokenizador de srcset, sem passar duas vezes', () => {
+    expect(roda('<img data-srcset="https://s.test/a.png 1x">')).toBe('<img data-srcset="./a.png 1x">');
+  });
+
+  // ⚠️ A fronteira do Sol: data-* sem semantica de spec pode carregar URL como
+  // IDENTIDADE (share-url, canonico, endpoint), nao recurso. Alvo DOCUMENTO
+  // capturado fica absoluto mesmo estando no mapa; so asset estatico troca.
+  it('data-* apontando para DOCUMENTO capturado fica absoluto', () => {
+    const mapa2 = new Map([
+      ['https://s.test/index.html', 'index.html'],
+      ['https://s.test/pagina', '_paginas/pagina'],
+      ['https://s.test/anim.json', 'anim.json'],
+    ]);
+    const roda2 = (text) => rewriteDocumentReferences({
+      text, kind: 'html', resourceUrl: 'https://s.test/index.html', assetPath: 'index.html', map: mapa2,
+    });
+    const texto = '<div data-share-url="https://s.test/index.html" data-page="https://s.test/pagina"></div>';
+    expect(roda2(texto)).toBe(texto);
+    // PDF tambem e' documento que se compartilha por URL: fica absoluto
+    const mapa3 = new Map([['https://s.test/whitepaper.pdf', 'whitepaper.pdf']]);
+    const pdf = '<a data-download="https://s.test/whitepaper.pdf">';
+    expect(rewriteDocumentReferences({ text: pdf, kind: 'html', resourceUrl: 'https://s.test/index.html', assetPath: 'index.html', map: mapa3 })).toBe(pdf);
+    // e o mesmo alvo em HREF (semantica de spec) continua trocando
+    expect(roda2('<a href="https://s.test/index.html">')).toBe('<a href="./index.html">');
+    // json de animacao (Lottie) e' asset: troca
+    expect(roda2('<div data-animation-src="https://s.test/anim.json">')).toBe('<div data-animation-src="./anim.json">');
+  });
+});
