@@ -8535,37 +8535,78 @@ function nativeMotionRuntimeBridge() {
     // `dryRun` existe porque a recusa TEM que vir antes da escrita: recusar
     // depois deixa a mudança recusada visível na tela, que é exatamente o
     // "aceito na tela para sumir no salvar" que esta porta veio impedir (Sol).
-    window.__uncraftEditorCommit = function editorCommit(element, edit, options) {
-      const dryRun = !!(options && options.dryRun);
+    // SONDA DE PRIORIDADE (consulta): escreve sem prioridade, compara o
+    // COMPUTADO, e restaura tudo — transição neutralizada longhand a longhand,
+    // transição em curso recusa em vez de perturbar. Movida para função própria
+    // para o validador puro e o caminho unitário usarem a MESMA sonda.
+    function sondarPrioridade(element, propriedadeCss, valor) {
+      const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
+      try {
+        if (typeof element.getAnimations !== 'function') {
+          return recusa('priority_check_failed', propriedadeCss);
+        }
+        const emCurso = element.getAnimations().some((a) => {
+          if (String(a && a.constructor && a.constructor.name) !== 'CSSTransition') return false;
+          if (a.pending) return true;
+          return a.playState !== 'idle' && a.playState !== 'finished';
+        });
+        if (emCurso) return recusa('transition_in_flight', propriedadeCss);
+      } catch (_) { return recusa('priority_check_failed', propriedadeCss); }
+
+      const LONGHANDS_TRANSICAO = ['transition-property', 'transition-duration',
+        'transition-timing-function', 'transition-delay', 'transition-behavior'];
+      const transicaoAntes = LONGHANDS_TRANSICAO.map((nome) => ({
+        nome,
+        valor: element.style.getPropertyValue(nome),
+        prioridade: element.style.getPropertyPriority(nome),
+      }));
+      const inlineAntes = element.style.getPropertyValue(propriedadeCss);
+      const prioridadeAntes = element.style.getPropertyPriority(propriedadeCss);
+      let conflito = false;
+      let sondagemFalhou = false;
+      try {
+        element.style.setProperty('transition', 'none', 'important');
+        const computadoAntes = getComputedStyle(element).getPropertyValue(propriedadeCss);
+        element.style.setProperty(propriedadeCss, String(valor == null ? '' : valor));
+        const computadoDepois = getComputedStyle(element).getPropertyValue(propriedadeCss);
+        conflito = normalizarValor(computadoAntes) === normalizarValor(computadoDepois)
+          && normalizarValor(computadoAntes) !== normalizarValor(valor);
+      } catch (_) {
+        sondagemFalhou = true;
+      } finally {
+        try {
+          if (inlineAntes) element.style.setProperty(propriedadeCss, inlineAntes, prioridadeAntes);
+          else element.style.removeProperty(propriedadeCss);
+          element.style.removeProperty('transition');
+          for (const item of transicaoAntes) {
+            if (item.valor) element.style.setProperty(item.nome, item.valor, item.prioridade);
+            else element.style.removeProperty(item.nome);
+          }
+        } catch (_) { sondagemFalhou = true; }
+      }
+      if (sondagemFalhou) return recusa('priority_check_failed', propriedadeCss);
+      if (conflito) return recusa('priority_conflict', propriedadeCss);
+      return { ok: true };
+    }
+
+    // VALIDADOR PURO das guardas de escrita de estilo — NENHUM efeito no
+    // caderno de aprovações. Extraído para o lote validar pelas MESMAS regras
+    // sem emitir bilhete unitário: a versão anterior re-consultava membro a
+    // membro no commit do lote e cada consulta emitia bilhete no caderno de
+    // teto 64 — um lote grande expulsava o PRÓPRIO bilhete de lote antes da
+    // conferência (Sol). A sonda de prioridade restaura tudo que toca.
+    function validarEscritaDeEstilo(element, edit) {
       const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
       if (!(element instanceof Element)) return recusa('no_element');
-      const kind = edit && edit.kind;
-      // Só `style` está LIGADO ao editor hoje. Aceitar `text`/`attribute` aqui
-      // seria anunciar uma capacidade sem chamador: o editor escreveria no DOM,
-      // a porta diria ok, e nada persistiria (Sol). Quando o caminho for ligado,
-      // estes entram com teste próprio.
-      if (kind === 'text' || kind === 'attribute') return recusa('not_wired_yet', String(kind));
-      if (kind !== 'style') return recusa('unsupported_kind', String(kind || ''));
-      const property = edit.property == null ? null : String(edit.property);
+      const property = edit && edit.property == null ? null : String(edit && edit.property);
       if (!property) return recusa('missing_property');
-
+      const propriedadeCss = property.startsWith('--')
+        ? property
+        : property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
       const elementId = ensureElementId(element);
       if (!elementId) return recusa('no_identity');
-
-      // ⚠️ IDENTIDADE QUE SOBREVIVE AO RECARREGAMENTO, ou nada.
-      //
-      // O replay reencontra um elemento salvo só por `id` ou `data-w-id`
-      // AUTORAIS — identidade derivada do caminho no DOM não sobrevive (a
-      // posição muda entre cargas; item 180). Aceitar aqui gravaria um patch
-      // que nunca volta: o usuário veria a edição na tela, salvaria, recarregaria
-      // e ela teria sumido — sem erro nenhum. Recusar é a resposta honesta.
       const semente = elementIdSeed(element);
-      if (!/^(?:webflow:|id:)/.test(String(semente))) {
-        return recusa('unstable_identity');
-      }
-      // Identidade AMBÍGUA também não volta: o replay exige candidato único, e
-      // dois elementos com o mesmo `id` (ou `data-w-id`) fazem a busca recusar
-      // depois do reload — silenciosamente, se a gente aceitasse aqui (Sol).
+      if (!/^(?:webflow:|id:)/.test(String(semente))) return recusa('unstable_identity');
       try {
         const iguais = document.querySelectorAll(
           semente.slice(0, 8) === 'webflow:'
@@ -8576,16 +8617,6 @@ function nativeMotionRuntimeBridge() {
       } catch (_) {
         return recusa('ambiguous_identity');
       }
-
-      // Propriedade que uma animação dirige NÃO aceita style patch: o tween
-      // vivo pisotearia a escrita e o usuário veria a edição desaparecer.
-      //
-      // Duas correções sobre a primeira versão (Sol): um track `x`/`rotation`
-      // escreve `transform`, então comparar nomes soltos deixava uma edição em
-      // `transform` passar; e clip animado SEM tracks legíveis é ownership
-      // não-inspecionável, que precisa falhar FECHADO, não aberto.
-      // Vocabulário do GSAP, não só os nomes CSS: `xPercent`/`yPercent` também
-      // escrevem `transform`, e faltavam na primeira versão (Sol r2).
       const CONTRIBUEM_PARA = {
         transform: ['x', 'y', 'z', 'xpercent', 'ypercent',
           'translatex', 'translatey', 'translatez', 'translate',
@@ -8595,7 +8626,7 @@ function nativeMotionRuntimeBridge() {
           'perspective', 'transformorigin', 'transform'],
       };
       const canal = (nome) => {
-        const n = String(semanticProperty(nome) || '').toLowerCase();
+        const n = String(semanticProperty(nome) || '').toLowerCase().replace(/-/g, '');
         for (const [alvoCanal, membros] of Object.entries(CONTRIBUEM_PARA)) {
           if (membros.indexOf(n) !== -1) return alvoCanal;
         }
@@ -8610,108 +8641,45 @@ function nativeMotionRuntimeBridge() {
           if (canal(track.property) === canalDaEscrita) return recusa('motion_owned', canalDaEscrita);
         }
       }
+      const sondagem = sondarPrioridade(element, propriedadeCss, edit.value);
+      if (!sondagem.ok) return sondagem;
+      return { ok: true, elementId, propriedadeCss };
+    }
 
-      // Uma regra autoral com `!important` vence o replay, que escreve sem
-      // prioridade: a edição apareceria agora, seria salva, e deixaria de valer
-      // depois do reload (Sol). Detecta-se comparando o efeito COMPUTADO de uma
-      // escrita sem prioridade — se não pega, recusa.
-      // Compara COMPUTADO com COMPUTADO, nunca computado com o texto que o
-      // usuário digitou: `#fff` e `rgb(255, 255, 255)` são o mesmo valor, e
-      // comparar texto produzia recusa falsa (Sol). Se o computado NÃO MUDA ao
-      // escrever sem prioridade, alguém com prioridade maior está vencendo — e
-      // é isso que o replay vai enfrentar.
-      //
-      // O erro aqui RECUSA, não deixa passar: uma validação que falha aberta
-      // desmente a garantia que ela existe para dar.
-      // ⚠️ A validação de prioridade vale SÓ na consulta prévia. Na chamada de
-      // registro o DOM já mudou, e repetir o teste sobre o estado alterado
-      // devolvia `priority_conflict` falso — a edição ficava na tela e sumia no
-      // reload, o defeito que isto veio impedir (Sol). Por isso o commit não
-      // repete o teste: ele apresenta a APROVAÇÃO que a consulta emitiu.
-      if (!dryRun) {
-        const chave = `${elementId}|${property}|${normalizarValor(edit.value)}`;
-        const aprovacao = edit.approval == null ? null : String(edit.approval);
-        if (!aprovacao || aprovacoesDeEscrita.get(chave) !== aprovacao) {
-          return recusa('needs_preflight', property);
-        }
-        aprovacoesDeEscrita.delete(chave);
-      }
-
-      let conflito = false;
-      let sondagemFalhou = false;
-      if (dryRun) {
-        // ⚠️ TRANSIÇÃO NEUTRALIZADA durante a sondagem. Com `transition` na
-        // propriedade, o computado NÃO muda logo após a escrita — e a sondagem
-        // leria isso como prioridade alheia, recusando uma edição perfeitamente
-        // persistível. Num clone animado é o caso comum, não a exceção (Sol).
-        // LONGHAND POR LONGHAND: `getPropertyValue('transition')` volta vazio
-        // quando só há longhands inline (um `transition-duration` sozinho), e o
-        // `removeProperty('transition')` da restauração apagaria esses — a
-        // sondagem mudaria a animação do clone mesmo em consulta (Sol).
-        // ⚠️ TRANSIÇÃO EM CURSO não se sonda. `transition: none` cancela a que
-        // está rodando, e restaurar os longhands depois não devolve o progresso
-        // dela — a consulta mudaria visivelmente a animação do clone (Sol).
-        // Recusar é mais honesto que perturbar: o usuário tenta de novo quando
-        // a transição terminar.
-        try {
-          // API ausente = FALHA FECHADA. Assumir "não há transição" porque não
-          // dá para perguntar reabre o risco de cancelar uma em curso (Sol).
-          if (typeof element.getAnimations !== 'function') {
-            return recusa('priority_check_failed', property);
-          }
-          // `playState` não tem `pending` — os valores são idle/running/paused/
-          // finished, e `pending` é campo próprio. Uma transição PAUSADA segue
-          // ativa e também é cancelada pela sondagem, então o critério é por
-          // exclusão: qualquer coisa que não seja idle nem finished (Sol).
-          const emCurso = element.getAnimations().some((a) => {
-            if (String(a && a.constructor && a.constructor.name) !== 'CSSTransition') return false;
-            if (a.pending) return true;
-            return a.playState !== 'idle' && a.playState !== 'finished';
-          });
-          if (emCurso) return recusa('transition_in_flight', property);
-        } catch (_) { return recusa('priority_check_failed', property); }
-
-        const LONGHANDS_TRANSICAO = ['transition-property', 'transition-duration',
-          'transition-timing-function', 'transition-delay', 'transition-behavior'];
-        const transicaoAntes = LONGHANDS_TRANSICAO.map((nome) => ({
-          nome,
-          valor: element.style.getPropertyValue(nome),
-          prioridade: element.style.getPropertyPriority(nome),
-        }));
-        const inlineAntes = element.style.getPropertyValue(property);
-        const prioridadeAntes = element.style.getPropertyPriority(property);
-        try {
-          element.style.setProperty('transition', 'none', 'important');
-          const computadoAntes = getComputedStyle(element).getPropertyValue(property);
-          element.style.setProperty(property, String(edit.value == null ? '' : edit.value));
-          const computadoDepois = getComputedStyle(element).getPropertyValue(property);
-          conflito = normalizarValor(computadoAntes) === normalizarValor(computadoDepois)
-            && normalizarValor(computadoAntes) !== normalizarValor(edit.value);
-        } catch (_) {
-          sondagemFalhou = true;
-        } finally {
-          // Restaurar SEMPRE: a sondagem não pode deixar rastro no documento.
-          try {
-            if (inlineAntes) element.style.setProperty(property, inlineAntes, prioridadeAntes);
-            else element.style.removeProperty(property);
-            // Limpa o shorthand que a sondagem escreveu e devolve cada longhand
-            // como estava — presença, valor e prioridade.
-            element.style.removeProperty('transition');
-            for (const item of transicaoAntes) {
-              if (item.valor) element.style.setProperty(item.nome, item.valor, item.prioridade);
-              else element.style.removeProperty(item.nome);
-            }
-          } catch (_) { sondagemFalhou = true; }
-        }
-        if (sondagemFalhou) return recusa('priority_check_failed', property);
-        if (conflito) return recusa('priority_conflict', property);
-      }
+    window.__uncraftEditorCommit = function editorCommit(element, edit, options) {
+      const dryRun = !!(options && options.dryRun);
+      const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
+      if (!(element instanceof Element)) return recusa('no_element');
+      const kind = edit && edit.kind;
+      // Só `style` está LIGADO ao editor hoje. Aceitar `text`/`attribute` aqui
+      // seria anunciar uma capacidade sem chamador: o editor escreveria no DOM,
+      // a porta diria ok, e nada persistiria (Sol). Quando o caminho for ligado,
+      // estes entram com teste próprio.
+      if (kind === 'text' || kind === 'attribute') return recusa('not_wired_yet', String(kind));
+      if (kind !== 'style') return recusa('unsupported_kind', String(kind || ''));
+      const property = edit.property == null ? null : String(edit.property);
+      if (!property) return recusa('missing_property');
+      // ⚠️ O editor manda camelCase (`fontFamily`) e `style.setProperty` exige
+      // hífen (`font-family`) — com camelCase a sonda era NO-OP, o computado
+      // não mudava, e TODA propriedade de mais de uma palavra caía em
+      // priority_conflict FALSO. Era exatamente o "só troca cor". Normaliza-se
+      // UMA vez na fronteira e o nome css vale em sonda, chave de aprovação e
+      // patch gravado (o replay aplica com o mesmo setProperty). Propriedade
+      // custom (--x) fica como está.
+      const propriedadeCss = property.startsWith('--')
+        ? property
+        : property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
       if (dryRun) {
-        // A aprovação amarra ESTE elemento, ESTA propriedade e ESTE valor. Sem
-        // ela o registro não acontece, então nenhuma escrita entra no histórico
-        // sem ter passado pela porta de consulta.
-        const chave = `${elementId}|${property}|${normalizarValor(edit.value)}`;
+        // As guardas vivem no VALIDADOR PURO (identidade estável e única,
+        // canal de animação, sonda de prioridade) — compartilhado com o lote,
+        // sem efeito no caderno. A aprovação amarra elemento+propriedade+valor.
+        const v = validarEscritaDeEstilo(element, { property, value: edit.value });
+        if (!v.ok) return v;
+        // `before` entra na chave, e a serialização é INJETIVA: concatenar
+        // com `|` colide quando um valor contém `|` ("a|b"+"c" == "a"+"b|c"),
+        // reabrindo a troca de estado sob o mesmo bilhete (Sol, 2 rodadas).
+        const chave = JSON.stringify([v.elementId, v.propriedadeCss, normalizarValor(edit.before), normalizarValor(edit.value)]);
         const bilhete = randomIdentity('approval');
         aprovacoesDeEscrita.set(chave, bilhete);
         if (aprovacoesDeEscrita.size > 64) {
@@ -8719,6 +8687,18 @@ function nativeMotionRuntimeBridge() {
         }
         return { ok: true, dryRun: true, approval: bilhete };
       }
+
+      // ⚠️ O registro NÃO repete a validação: o DOM já mudou (o editor escreve
+      // entre a consulta e o registro) e re-sondar sobre o estado alterado
+      // devolvia `priority_conflict` falso (Sol). Ele apresenta a APROVAÇÃO.
+      const elementId = ensureElementId(element);
+      if (!elementId) return recusa('no_identity');
+      const chave = JSON.stringify([elementId, propriedadeCss, normalizarValor(edit.before), normalizarValor(edit.value)]);
+      const aprovacao = edit.approval == null ? null : String(edit.approval);
+      if (!aprovacao || aprovacoesDeEscrita.get(chave) !== aprovacao) {
+        return recusa('needs_preflight', property);
+      }
+      aprovacoesDeEscrita.delete(chave);
 
       const transaction = {
         id: randomIdentity('transaction'),
@@ -8730,7 +8710,7 @@ function nativeMotionRuntimeBridge() {
           id: randomIdentity('patch'),
           elementId,
           kind,
-          property: kind === 'style' ? property : (kind === 'attribute' ? property : null),
+          property: kind === 'style' ? propriedadeCss : (kind === 'attribute' ? property : null),
           motionId: null,
           before: edit.before == null ? null : String(edit.before),
           value: edit.value == null ? null : String(edit.value),
@@ -8747,6 +8727,83 @@ function nativeMotionRuntimeBridge() {
         element: describe(element),
       }, { protocol: PROTOCOL_V2, requestId: transaction.requestId });
       return { ok: true, transactionId: transaction.id };
+    };
+
+    // ⚠️ LOTE ATÔMICO. O caminho wrapper→descendentes com id do editor
+    // precisava de N consultas + N registros — e o caderno de aprovações tem
+    // teto de 64: acima disso os primeiros bilhetes eram expulsos e o commit
+    // devolvia needs_preflight DEPOIS do DOM já escrito — mudança parcial na
+    // tela que não persiste, exatamente o estado que a porta existe para
+    // impedir (Sol). Aqui: TODAS as entradas validam pelas MESMAS guardas, um
+    // bilhete só para o lote, UMA transação com N patches — ou nada.
+    window.__uncraftEditorCommitBatch = function editorCommitBatch(entries, options) {
+      const dryRun = !!(options && options.dryRun);
+      const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
+      if (!Array.isArray(entries) || !entries.length) return recusa('empty_batch');
+      if (entries.length > 200) return recusa('batch_too_large', String(entries.length));
+      const validadas = [];
+      for (let i = 0; i < entries.length; i += 1) {
+        const e = entries[i] || {};
+        // As MESMAS guardas do caminho unitário, pelo VALIDADOR PURO — sem
+        // emitir bilhete unitário nenhum. A primeira versão consultava a porta
+        // membro a membro e cada consulta enchia o caderno de teto 64: um lote
+        // grande expulsava o PRÓPRIO bilhete do lote antes da conferência, e
+        // ainda expulsava aprovações de operações sem relação (Sol).
+        const v = validarEscritaDeEstilo(e.element, { property: e.property, value: e.value });
+        if (!v.ok) {
+          return recusa('batch_member_refused', `${i}:${v.reason || 'unknown'}`);
+        }
+        validadas.push({
+          element: e.element,
+          elementId: v.elementId,
+          // UM nome para o campo canonico nos dois caminhos — a chave unitaria
+          // usa `propriedadeCss` e o lote usava `property`: mesmo conteudo,
+          // nomes diferentes, um convite ao stringify de undefined (Sol).
+          propriedadeCss: v.propriedadeCss,
+          before: e.before == null ? null : String(e.before),
+          value: e.value == null ? null : String(e.value),
+        });
+      }
+      // Serialização canônica da entrada INTEIRA (com `before`): aprovar um
+      // lote e registrar outro com o mesmo bilhete não pode existir (Sol).
+      const chaveLote = JSON.stringify(validadas.map((v) => [v.elementId, v.propriedadeCss, normalizarValor(v.before), normalizarValor(v.value)]));
+      if (dryRun) {
+        const bilhete = randomIdentity('batch-approval');
+        aprovacoesDeEscrita.set(`batch:${chaveLote}`, bilhete);
+        if (aprovacoesDeEscrita.size > 256) {
+          aprovacoesDeEscrita.delete(aprovacoesDeEscrita.keys().next().value);
+        }
+        return { ok: true, dryRun: true, approval: bilhete, entries: validadas.length };
+      }
+      const aprovacao = options && options.approval == null ? null : String(options.approval);
+      if (!aprovacao || aprovacoesDeEscrita.get(`batch:${chaveLote}`) !== aprovacao) {
+        return recusa('needs_preflight', 'batch');
+      }
+      aprovacoesDeEscrita.delete(`batch:${chaveLote}`);
+      const transaction = {
+        id: randomIdentity('transaction'),
+        requestId: randomIdentity('runtime-gesture'),
+        source: 'properties',
+        createdAt: new Date().toISOString(),
+        runtimeGeneration,
+        patches: validadas.map((v) => ({
+          id: randomIdentity('patch'),
+          elementId: v.elementId,
+          kind: 'style',
+          property: v.propriedadeCss,
+          motionId: null,
+          before: v.before,
+          value: v.value,
+        })),
+      };
+      committedTransactions.set(transaction.id, transaction);
+      emit('transaction-committed', {
+        transaction,
+        operation: 'runtime-gesture',
+        originatedByRuntime: true,
+        element: describe(validadas[0].element),
+      }, { protocol: PROTOCOL_V2, requestId: transaction.requestId });
+      return { ok: true, transactionId: transaction.id, patches: transaction.patches.length };
     };
 
     announce();

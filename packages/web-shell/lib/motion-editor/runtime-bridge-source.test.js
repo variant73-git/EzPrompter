@@ -15814,6 +15814,50 @@ describe('a porta pergunta antes de escrever, e falha fechada', () => {
     expect(fonte).toMatch(/priority_conflict/);
   });
 
+  // ⚠️ O editor manda camelCase (`fontFamily`) e `style.setProperty` exige
+  // hifen (`font-family`) — com camelCase a sonda era NO-OP, o computado nao
+  // mudava, e TODA propriedade de mais de uma palavra caia em
+  // priority_conflict FALSO. Era exatamente o "so troca cor": color/opacity
+  // (uma palavra) passavam, fontFamily/backgroundColor nao. Medido no clone
+  // real. A porta normaliza na FRONTEIRA e usa o nome css em sonda, chave de
+  // aprovacao e patch gravado (o replay usa o mesmo setProperty).
+  // ⚠️ O caminho wrapper→descendentes precisava de N consultas + N registros,
+  // e o caderno de aprovacoes tem teto — acima dele os primeiros bilhetes
+  // eram expulsos e o commit falhava DEPOIS do DOM escrito: mudanca parcial
+  // que nao persiste. O lote valida TODAS as entradas pelas MESMAS guardas
+  // (via a propria porta unitaria em consulta), um bilhete so, UMA transacao
+  // com N patches — ou nada.
+  it('lote atomico: validador PURO, um bilhete, uma transacao', () => {
+    const lote = fonte.slice(fonte.indexOf('function editorCommitBatch'), fonte.indexOf('function editorSave'));
+    expect(lote.length).toBeGreaterThan(100);
+    // valida CADA entrada pelo VALIDADOR PURO — nunca pela porta unitaria, que
+    // emitiria bilhete por membro e encheria o caderno de teto 64 (um lote
+    // grande expulsava o proprio bilhete do lote antes da conferencia)
+    expect(lote).toMatch(/validarEscritaDeEstilo\(e\.element/);
+    expect(lote).not.toMatch(/__uncraftEditorCommit\(e\.element/);
+    // recusa NOMEIA o membro que caiu
+    expect(lote).toMatch(/batch_member_refused/);
+    // um bilhete para o LOTE, e uma transacao com N patches
+    expect(lote).toMatch(/batch:\$\{chaveLote\}/);
+    expect(lote).toMatch(/chaveLote = JSON\.stringify\([^;]*normalizarValor\(v\.before\)[^;]*normalizarValor\(v\.value\)[^;]*\)/);
+    expect(lote).toMatch(/patches: validadas\.map/);
+    // e o validador em si NAO toca o caderno de aprovacoes
+    const validador = fonte.slice(fonte.indexOf('function validarEscritaDeEstilo'), fonte.indexOf('window.__uncraftEditorCommit ='));
+    expect(validador).not.toMatch(/aprovacoesDeEscrita/);
+  });
+
+  it('normaliza camelCase para o nome css na fronteira da porta', () => {
+    const porta = fonte.slice(fonte.indexOf('function editorCommit'), fonte.indexOf('function editorSave'));
+    expect(porta).toMatch(/replace\(\/\[A-Z\]\/g/);
+    // a sonda usa o nome css, nunca o camel cru (agora em funcao propria)
+    const sonda = fonte.slice(fonte.indexOf('function sondarPrioridade'), fonte.indexOf('function validarEscritaDeEstilo'));
+    expect(sonda).toMatch(/setProperty\(propriedadeCss/);
+    expect(sonda).not.toMatch(/setProperty\(property[,)]/);
+    // e o patch gravado carrega o nome css (o replay aplica com setProperty)
+    // aspas agnosticas: o esbuild do vitest normaliza 'style' para "style"
+    expect(porta).toMatch(/property: kind === ["']style["'] \? propriedadeCss/);
+  });
+
   // Anunciar capacidade sem chamador faz o editor escrever, a porta dizer ok, e
   // nada persistir.
   it('nao anuncia o que ainda nao esta ligado', () => {
@@ -15844,7 +15888,13 @@ describe('a aprovacao da consulta amarra o registro', () => {
     expect(fonte).toMatch(/aprovacoesDeEscrita/);
   });
   it('o bilhete amarra elemento, propriedade E valor', () => {
-    expect(fonte).toMatch(/elementId\}\|\$\{property\}\|\$\{normalizarValor\(edit\.value\)\}/);
+    // a chave usa o NOME CSS normalizado — camel e hifen do mesmo campo nao
+    // podem gerar bilhetes diferentes
+    // a chave amarra tambem o BEFORE, e a serializacao e' INJETIVA (JSON de
+    // tupla; concatenar com | colide quando um valor contem |)
+    // regex por CONTEUDO (o transform do vitest reformata o fonte): a chave e'
+    // JSON de tupla contendo id, nome css, before e value normalizados
+    expect(fonte).toMatch(/chave = JSON\.stringify\(\[[^\]]*elementId[^\]]*propriedadeCss[^\]]*normalizarValor\(edit\.before\)[^\]]*normalizarValor\(edit\.value\)[^\]]*\]\)/);
   });
   it('o caderno de bilhetes tem teto', () => {
     expect(fonte).toMatch(/aprovacoesDeEscrita\.size > 64/);

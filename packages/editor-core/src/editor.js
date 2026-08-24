@@ -724,8 +724,38 @@
       }
     }
 
-    var fonts = WEB_SAFE_FONTS.slice();
-    if (currentFont && fonts.indexOf(currentFont) < 0) fonts.unshift(currentFont);
+    // ⚠️ As fontes do PRÓPRIO SITE vêm primeiro — são as que o designer quer
+    // combinar, e dentro do clone são as únicas web fonts que existem de
+    // verdade (CSP bloqueia fonte externa). `document.fonts` do ALVO lista o
+    // que está carregado; `check()` corta da lista de sistema o que não
+    // renderizaria (escolher "Inter" sem Inter instalada trocava nada em
+    // silêncio — mentira de UI).
+    var siteFonts = [];
+    try {
+      var vistos = {};
+      targetDoc.fonts.forEach(function(face) {
+        var nome = String(face.family || '').replace(/^["']|["']$/g, '').trim();
+        // Icon font em picker de TEXTO vira lixo visual (glifos no lugar de
+        // letras) — webflow-icons, FontAwesome, Material Icons ficam fora.
+        if (/icon|awesome|glyph/i.test(nome)) return;
+        if (nome && !vistos[nome]) { vistos[nome] = 1; siteFonts.push(nome); }
+      });
+      siteFonts.sort();
+    } catch (_) { siteFonts = []; }
+    var fonts = siteFonts.slice();
+    WEB_SAFE_FONTS.forEach(function(nome) {
+      if (vistoNaLista(fonts, nome)) return;
+      var disponivel = nome === 'system-ui';
+      if (!disponivel) {
+        try { disponivel = targetDoc.fonts.check('12px "' + nome + '"'); } catch (_) { disponivel = true; }
+      }
+      if (disponivel) fonts.push(nome);
+    });
+    function vistoNaLista(lista, nome) {
+      for (var i = 0; i < lista.length; i++) if (lista[i].toLowerCase() === nome.toLowerCase()) return true;
+      return false;
+    }
+    if (currentFont && !vistoNaLista(fonts, currentFont)) fonts.unshift(currentFont);
     function render(filter) {
       list.innerHTML = '';
       var f = (filter || '').toLowerCase().trim();
@@ -7533,6 +7563,54 @@
         kind: 'style', property: cssName, before: antesDaEscrita, value: value,
       }, { dryRun: true });
       if (preflight && preflight.ok === false && preflight.reason !== 'no_change') {
+        // ⭐ WRAPPER SEM ID, FOLHAS COM ID: o caso comum de site real — o
+        // usuário clica o parágrafo, a seleção resolve para o wrapper do
+        // cartão (sem identidade autoral), e as FOLHAS de texto têm id. A
+        // edição vira commits POR FOLHA: cada folha consulta a porta; todas
+        // passam ou nada muda (parcial deixaria metade do texto numa fonte).
+        if (preflight.reason === 'unstable_identity' && wrapped && !NEVER_CASCADE_TO_LEAVES.has(prop)) {
+          // As unidades de commit sao os DESCENDENTES COM IDENTIDADE AUTORAL
+          // (id/data-w-id do site), nunca as folhas de texto cruas: num site
+          // com SplitText as folhas sao letras <span> efemeras — sem id, e a
+          // identidade morreria no primeiro re-split. So' o TOPO de cada
+          // subarvore com id entra (commitar pai e filho duplicaria o patch).
+          var comId = Array.prototype.slice.call(el.querySelectorAll('[id],[data-w-id]'))
+            .filter(function(d) {
+              if (isEditorEl(d) || /^rb-/.test(d.id || '')) return false;
+              return (d.textContent || '').replace(/\s+/g, '').length > 0;
+            });
+          var folhas = comId.filter(function(d) {
+            for (var an = d.parentElement; an && an !== el; an = an.parentElement) {
+              if (comId.indexOf(an) >= 0) return false;
+            }
+            return true;
+          });
+          // LOTE ATÔMICO na ponte: uma consulta para o conjunto inteiro, um
+          // bilhete, UMA transação com N patches — e o DOM só é tocado depois
+          // do aceite do lote. Consultas soltas + escritas no meio deixavam
+          // mudança parcial na tela acima de 64 unidades (teto do caderno de
+          // aprovações da ponte) — o estado que a porta existe pra impedir.
+          if (typeof targetWin.__uncraftEditorCommitBatch === 'function' && folhas.length) {
+            var entradas = folhas.map(function(le) {
+              var antesLe = '';
+              try { antesLe = getCS(le).getPropertyValue(cssName) || ''; } catch (e2) { antesLe = ''; }
+              return { element: le, property: cssName, before: antesLe, value: value };
+            });
+            var loteDry = targetWin.__uncraftEditorCommitBatch(entradas, { dryRun: true });
+            if (loteDry && loteDry.ok) {
+              var afetadas = folhas.map(function(le) { return { el: le, oldCss: le.getAttribute('style') || '' }; });
+              var loteReg = targetWin.__uncraftEditorCommitBatch(entradas, { approval: loteDry.approval });
+              if (loteReg && loteReg.ok) {
+                folhas.forEach(function(le) { le.style.setProperty(cssName, value, 'important'); });
+                pushUndo({ prop: '__cascade', affected: afetadas });
+                requestAnimationFrame(function() { if (selectedEl) updateSelBox(selectedEl); });
+                return;
+              }
+              reportarRecusaDoClone(loteReg || {}, cssName);
+              return;
+            }
+          }
+        }
         reportarRecusaDoClone(preflight, cssName);
         return;
       }
