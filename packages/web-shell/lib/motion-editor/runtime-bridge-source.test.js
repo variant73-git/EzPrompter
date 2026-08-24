@@ -15846,6 +15846,28 @@ describe('a porta pergunta antes de escrever, e falha fechada', () => {
     expect(validador).not.toMatch(/aprovacoesDeEscrita/);
   });
 
+  // ⚠️ O TOKEN DA SESSAO VIVE NO CAMINHO dos assets e rotaciona quando a
+  // sessao troca (supersede/fechamento). Uma url() ABSOLUTA gravada num patch
+  // aponta para token morto na sessao seguinte — medido com controle: na
+  // sessao nova a absoluta QUEBRADA, a relativa CARREGA. A porta normaliza
+  // url() da PROPRIA sessao para './…' no value E no before (o undo
+  // restauraria o token morto), nos dois caminhos (unitario e lote).
+  it('normaliza url() da propria sessao para relativo, em value e before', () => {
+    expect(fonte).toMatch(/function normalizarUrlsDeSessao/);
+    const fn = fonte.slice(fonte.indexOf('function normalizarUrlsDeSessao'), fonte.indexOf('function sondarPrioridade'));
+    expect(fn).toMatch(/new URL\(['"]\.['"], location\.href\)/);
+    expect(fn).toMatch(/startsWith\(prefixo\)/);
+    // sem url() devolve o VALOR original (tipo preservado), nunca String(valor)
+    expect(fn).toMatch(/=== -1\) return valor/);
+    // aplicada na fronteira das DUAS portas
+    const unit = fonte.slice(fonte.indexOf('function editorCommit('), fonte.indexOf('function editorCommitBatch'));
+    expect(unit).toMatch(/normalizarUrlsDeSessao\(edit\.value\)/);
+    expect(unit).toMatch(/normalizarUrlsDeSessao\(edit\.before\)/);
+    const lote = fonte.slice(fonte.indexOf('function editorCommitBatch'), fonte.indexOf('function editorSave'));
+    expect(lote).toMatch(/normalizarUrlsDeSessao\(e\.value\)/);
+    expect(lote).toMatch(/normalizarUrlsDeSessao\(e\.before\)/);
+  });
+
   it('normaliza camelCase para o nome css na fronteira da porta', () => {
     const porta = fonte.slice(fonte.indexOf('function editorCommit'), fonte.indexOf('function editorSave'));
     expect(porta).toMatch(/replace\(\/\[A-Z\]\/g/);

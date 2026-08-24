@@ -8535,6 +8535,31 @@ function nativeMotionRuntimeBridge() {
     // `dryRun` existe porque a recusa TEM que vir antes da escrita: recusar
     // depois deixa a mudança recusada visível na tela, que é exatamente o
     // "aceito na tela para sumir no salvar" que esta porta veio impedir (Sol).
+    // ⚠️ O TOKEN DA SESSÃO VIVE NO CAMINHO dos assets e rotaciona quando a
+    // sessão troca. Uma url() ABSOLUTA gravada num patch aponta para token
+    // morto na sessão seguinte — medido com controle: na sessão nova a
+    // absoluta QUEBRADA, a relativa CARREGA. Normaliza-se url() da PRÓPRIA
+    // sessão para './…' relativo ao documento; url de fora fica intacta.
+    function normalizarUrlsDeSessao(valor) {
+      if (valor == null) return valor;
+      const texto = String(valor);
+      // Sem url() não há nada a normalizar: devolve o VALOR ORIGINAL, com o
+      // tipo original — stringificar um número aqui mudaria o contrato dos
+      // patches fora do caso de assets (Sol).
+      if (texto.indexOf('url(') === -1) return valor;
+      let prefixo;
+      try { prefixo = new URL('.', location.href).href; } catch (_) { return valor; }
+      return texto.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (tudo, aspas, bruto) => {
+        try {
+          const abs = new URL(bruto, location.href);
+          if (abs.href.startsWith(prefixo)) {
+            return `url(${aspas}./${abs.href.slice(prefixo.length)}${aspas})`;
+          }
+        } catch (_) { /* url ilegível fica como está */ }
+        return tudo;
+      });
+    }
+
     // SONDA DE PRIORIDADE (consulta): escreve sem prioridade, compara o
     // COMPUTADO, e restaura tudo — transição neutralizada longhand a longhand,
     // transição em curso recusa em vez de perturbar. Movida para função própria
@@ -8669,6 +8694,9 @@ function nativeMotionRuntimeBridge() {
       const propriedadeCss = property.startsWith('--')
         ? property
         : property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+      // valor e before normalizados ANTES de tudo: sonda, chave e patch veem
+      // o mesmo texto — url() da sessão vira relativa aqui.
+      edit = { ...edit, value: normalizarUrlsDeSessao(edit.value), before: normalizarUrlsDeSessao(edit.before) };
 
       if (dryRun) {
         // As guardas vivem no VALIDADOR PURO (identidade estável e única,
@@ -8743,12 +8771,13 @@ function nativeMotionRuntimeBridge() {
       if (entries.length > 200) return recusa('batch_too_large', String(entries.length));
       const validadas = [];
       for (let i = 0; i < entries.length; i += 1) {
-        const e = entries[i] || {};
+        let e = entries[i] || {};
         // As MESMAS guardas do caminho unitário, pelo VALIDADOR PURO — sem
         // emitir bilhete unitário nenhum. A primeira versão consultava a porta
         // membro a membro e cada consulta enchia o caderno de teto 64: um lote
         // grande expulsava o PRÓPRIO bilhete do lote antes da conferência, e
         // ainda expulsava aprovações de operações sem relação (Sol).
+        e = { ...e, value: normalizarUrlsDeSessao(e.value), before: normalizarUrlsDeSessao(e.before) };
         const v = validarEscritaDeEstilo(e.element, { property: e.property, value: e.value });
         if (!v.ok) {
           return recusa('batch_member_refused', `${i}:${v.reason || 'unknown'}`);
