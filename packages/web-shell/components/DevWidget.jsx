@@ -162,6 +162,10 @@ export default function DevWidget() {
                       ))}
                       {t?.unaccountedMs > 0 && <span>resto {seg(t.unaccountedMs)}</span>}
                       {t?.credits != null && <span>{t.credits} cr</span>}
+                      {/* SSIM against the live page at capture time — drift
+                          detector between clones of the SAME url, not a grade
+                          (live animation costs a few points by phase alone). */}
+                      {e.captura?.similarity != null && <span title="SSIM vs live page at capture">SSIM {e.captura.similarity.toFixed(3)}</span>}
                       {t?.usd != null && <span>${t.usd.toFixed(4)}</span>}
                       {!t && <span className="dev-widget-faint">sem telemetria do servidor</span>}
                       {/* Arquivo perdido na captura só vira acionável com o

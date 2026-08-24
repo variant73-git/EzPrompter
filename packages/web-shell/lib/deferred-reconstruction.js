@@ -71,6 +71,10 @@ function sanitizeCaptureReport(relatorio) {
     // a reescrita de referências encurta HTML/CSS/JS. Levar as duas evita que a
     // diferença apareça depois como erro de contabilidade.
     bundleBytes: Number(relatorio?.bytesNoPacote) || 0,
+    // SSIM medido na captura, arredondado — número puro, nunca screenshot/URL.
+    ...(Number.isFinite(relatorio?.similarity?.ssim)
+      ? { similarity: Math.round(relatorio.similarity.ssim * 1000) / 1000 }
+      : {}),
     extraRefs: Number(relatorio?.refsExtras) || 0,
     discarded: Number(relatorio?.totalDescartados) || 0,
     discardedHosts: hosts,

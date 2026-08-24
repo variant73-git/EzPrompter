@@ -24,6 +24,7 @@ import { createHash } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { chromium as chromiumPadrao } from 'playwright-core';
+import { measureBundleSimilarity } from '../clone-similarity.js';
 import { criarContabilidade } from './byte-ledger.js';
 import { parseContentRange } from './byte-range.js';
 import { referenceKindFor, rewriteDocumentReferences } from './rewrite-references.js';
@@ -318,6 +319,15 @@ export async function captureNativeBundle(url, opts = {}) {
     if (cancelado) throw Object.assign(new Error('native_bundle_aborted'), { code: 'aborted' });
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.waitForTimeout(1200);
+
+    // A referência do SSIM permanente: o site VIVO, topo, assentado — tirada
+    // AQUI porque depois desta linha a página ainda muda (fechamento dispara
+    // buscas) e o browser fecha antes de qualquer medição externa. Fail-open.
+    let screenshotVivo = null;
+    try {
+      const png = await page.screenshot({ type: 'png' });
+      screenshotVivo = `data:image/png;base64,${png.toString('base64')}`;
+    } catch (_) { /* sem referência = sem medida, nunca sem clone */ }
 
     // FECHAMENTO DE REFERÊNCIAS (defeito 1b, 2026-08-20): o browser só pediu o
     // candidato de `srcset` que o viewport da captura escolheu e os backgrounds
@@ -698,6 +708,20 @@ export async function captureNativeBundle(url, opts = {}) {
     await context.close();
     onProgress({ etapa: 'finalizing' });
 
+    // SSIM do clone recém-montado contra o vivo (pedido antigo: tracking
+    // permanente). Fail-open: falha vira null e loga; nunca derruba o clone.
+    let similarity = null;
+    if (screenshotVivo) {
+      try {
+        similarity = await measureBundleSimilarity({
+          browser, assets, entryPath, screenshotDataUrl: screenshotVivo, signal,
+        });
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn(`[native-clone] similarity falhou: ${String(e?.message || e).slice(0, 120)}`);
+      }
+    }
+
     return {
       kind: 'native',
       // Sibling of `bundle` ON PURPOSE — see the measurement note above:
@@ -716,6 +740,7 @@ export async function captureNativeBundle(url, opts = {}) {
       // mesmo faltando script ou fonte, e a falta some. Achado P1 do Sol.
       relatorio: {
         arquivos: assets.length,
+        similarity,
         // ⚠️ DUAS quantidades, não uma. `bytes` é o que chegou da rede (é
         // sobre ele que os tetos de memória e de tráfego decidem);
         // `bytesNoPacote` é o que ficou guardado, e é menor porque a reescrita
