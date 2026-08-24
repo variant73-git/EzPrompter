@@ -171,6 +171,15 @@ async function prepareAssets(producerOutput) {
   return prepared;
 }
 
+/** Colisão de identidade imutável: um id já guarda outro executável. `code` estável para o consumidor. */
+export class NativeBundleDescriptorConflictError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'NativeBundleDescriptorConflictError';
+    this.code = 'immutable_bundle_conflict';
+  }
+}
+
 export async function registerNativeBundle(producerOutput, { store } = {}) {
   if (!producerOutput || typeof producerOutput !== 'object') throw new TypeError('Native bundle producer output is required');
   if (!store || typeof store.putImmutable !== 'function' || typeof store.head !== 'function' || typeof store.read !== 'function') {
@@ -185,7 +194,15 @@ export async function registerNativeBundle(producerOutput, { store } = {}) {
     throw new Error('Native bundle content hash mismatch');
   }
 
-  const bundleId = producerOutput.bundleId || deterministicUuid(contentHash);
+  // ⚠️ O id DERIVA do conteúdo, sempre. `producerOutput.bundleId ||` aceitava
+  // qualquer id do produtor: o mesmo conteúdo podia ganhar ids diferentes, e
+  // um id podia apontar para conteúdos diferentes (Sol). Id fornecido só entra
+  // se for EXATAMENTE o derivado — o que também mata por construção o caso
+  // "bytes diferentes sob o mesmo id".
+  const bundleId = deterministicUuid(contentHash);
+  if (producerOutput.bundleId && String(producerOutput.bundleId).toLowerCase() !== bundleId) {
+    throw new Error('Native bundle id must derive from the content hash');
+  }
   const storageKey = `native-bundles/v1/${bundleId}`;
   const descriptorKey = `${storageKey}/descriptor.json`;
   const descriptor = parseNativeBundleDescriptor({
@@ -201,7 +218,19 @@ export async function registerNativeBundle(producerOutput, { store } = {}) {
   const existingMetadata = await store.head(descriptorKey);
   if (existingMetadata) {
     const existing = parseNativeBundleDescriptor(JSON.parse(new TextDecoder().decode(await store.read(descriptorKey))));
-    if (existing.contentHash !== contentHash) throw new Error(`Immutable bundle ID already contains different content: ${bundleId}`);
+    // ⚠️ O reuso compara o descriptor INTEIRO, não só o hash de assets: a
+    // identidade deriva dos assets, então assets idênticos com `entryPath`,
+    // `runtimeFingerprint` ou capabilities DIFERENTES caem no mesmo id — e a
+    // comparação por contentHash devolvia os metadados antigos em silêncio
+    // (Sol reproduziu: pediu other.html com outro fingerprint e recebeu
+    // index.html com o fingerprint anterior). entryPath muda o documento
+    // executado; fingerprint ancora a compatibilidade dos controles.
+    // Divergência é erro tipado, nunca troca de executável.
+    const canonico = (d) => JSON.stringify([d.schemaVersion, d.contentHash, d.entryPath,
+      d.runtimeFingerprint, d.reconstructionCapabilities]);
+    if (canonico(existing) !== canonico(descriptor)) {
+      throw new NativeBundleDescriptorConflictError(`Immutable bundle ID already contains a different descriptor: ${bundleId}`);
+    }
     return existing;
   }
 

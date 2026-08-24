@@ -400,3 +400,41 @@ describe('o aviso sobrevive a migracao de manifesto', () => {
     expect(aberta.supersededDraft).toMatchObject({ sessionId: 'sess-velha', edits: 3 });
   });
 });
+// A guarda de reuso JA EXISTIA (sameDescriptor + immutable_bundle_conflict) —
+// a auditoria alegou 'reuso silencioso' e nao procede; este teste FIXA o
+// comportamento para a classe nunca regredir: mesmo id com content_hash
+// divergente e' erro tipado, nunca troca silenciosa.
+describe('persistNativeBundleDescriptor confere os campos imutaveis no reuso', () => {
+  it('recusa reuso quando o content_hash diverge sob o mesmo bundle_id', async () => {
+    const bundleId = '33333333-3333-5333-8333-333333333333';
+    const base = {
+      bundleId,
+      schemaVersion: 1,
+      storageKey: `native-bundles/v1/${bundleId}`,
+      contentHash: `sha256:${'a'.repeat(64)}`,
+      entryPath: 'index.html',
+      runtimeFingerprint: `sha256:${'b'.repeat(64)}`,
+      assetIndex: [{ path: 'index.html', contentType: 'text/html', byteLength: 10, contentHash: `sha256:${'c'.repeat(64)}` }],
+      reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
+    };
+    const linhas = [];
+    const sql = (strings, ...values) => {
+      const texto = Array.isArray(strings) ? strings.join('?') : String(strings);
+      if (/INSERT INTO native_bundles/i.test(texto)) { return Promise.resolve([]); }
+      if (/SELECT \* FROM native_bundles/i.test(texto)) {
+        // a linha JA EXISTENTE tem outro content_hash
+        return Promise.resolve([{
+          bundle_id: bundleId, schema_version: 1, storage_key: base.storageKey,
+          content_hash: `sha256:${'f'.repeat(64)}`, entry_path: 'index.html',
+          runtime_fingerprint: base.runtimeFingerprint,
+          asset_index: base.assetIndex, reconstruction_capabilities: base.reconstructionCapabilities,
+        }]);
+      }
+      linhas.push(texto);
+      return Promise.resolve([]);
+    };
+    await expect(persistNativeBundleDescriptor({ sql, descriptor: base }))
+      .rejects.toThrow(/different descriptor|immutable_bundle_conflict/i);
+  });
+});
+
