@@ -107,6 +107,37 @@ describe('a captura tenta de novo antes de desistir', () => {
     expect(guarda).not.toMatch(/recursos\.delete/);
   });
 
+  // ⚠️ Midia e' o caso onde content-length mentir DOI: video de dezenas de MB
+  // bufferizado inteiro pelo body() so para ser recusado. E body() de midia
+  // costuma falhar de toda forma (206/streaming). Regra: midia NUNCA passa
+  // pelo body() da interceptacao — reserva fica nula e a repescagem, que tem
+  // teto DURANTE a leitura, busca o arquivo inteiro.
+  it('midia vai direto para a repescagem, sem bufferizar na interceptacao', () => {
+    const ouvinte = fonte.slice(fonte.indexOf("page.on('response'"), fonte.indexOf("emVoo.add(tarefa)"));
+    // ordem: reserva ANTES do desvio de midia, desvio ANTES do body()
+    const iReserva = ouvinte.indexOf('recursos.set(u, null)');
+    const iMidia = ouvinte.indexOf("resourceType() === 'media'");
+    const iBody = ouvinte.indexOf('await res.body()');
+    expect(iReserva).toBeGreaterThan(-1);
+    expect(iMidia).toBeGreaterThan(iReserva);
+    // e vale tambem para video servido por fetch/XHR: o desvio olha o
+    // content-type da RESPOSTA, nao so quem iniciou o pedido
+    expect(ouvinte).toMatch(/\^\(\?:video\|audio\)\\\//);
+    expect(iBody).toBeGreaterThan(iMidia);
+    // e o desvio e' um return SECO na mesma linha: sai sem apagar a reserva
+    expect(ouvinte.slice(iMidia, ouvinte.indexOf('\n', iMidia))).toMatch(/return;/);
+  });
+
+  it('mede o recebido ANTES de materializar, mesmo sem content-length', () => {
+    const ouvinte = fonte.slice(fonte.indexOf("page.on('response'"), fonte.indexOf("emVoo.add(tarefa)"));
+    const iSizes = ouvinte.indexOf('sizes()');
+    const iBody = ouvinte.indexOf('await res.body()');
+    expect(iSizes).toBeGreaterThan(-1);
+    expect(iSizes).toBeLessThan(iBody);
+    expect(ouvinte).toMatch(/responseBodySize/);
+    expect(ouvinte).toMatch(/grande demais \(recebido\)/);
+  });
+
   it('refaz o pedido com leitura em fluxo', () => {
     expect(fonte).toMatch(/etapa: 'retrying'/);
     expect(fonte).toMatch(/resposta\.body\.getReader\(\)/);

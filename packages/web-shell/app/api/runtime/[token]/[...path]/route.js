@@ -161,6 +161,22 @@ function responseEtag(body) {
   return `"sha256:${createHash('sha256').update(body).digest('hex')}"`;
 }
 
+/**
+ * Cache imutável com vida ≤ sessão — e o RESIDUAL exato disso, nomeado.
+ *
+ * `private` mantém cache compartilhado (proxy/CDN) fora: o token de acesso
+ * vive no CAMINHO destas URLs, e um cache público as tornaria conteúdo
+ * endereçável por qualquer um. `max-age` é o tempo RESTANTE da sessão, nunca
+ * mais.
+ *
+ * O que sobra (dívida deliberada de 2026-08-20, não escondida): uma sessão
+ * REVOGADA antes de expirar não alcança o cache do navegador — o mesmo perfil
+ * que já teve acesso pode reler do disco o que já baixou, até o expiry.
+ * Alcance real: mesmo perfil, mesmo browser, só o que já foi baixado, teto de
+ * 4h. Rotacionar o token não fecha isso (mudaria toda URL no meio da sessão,
+ * decisão de 2026-08-20); encurtar o max-age só move o teto, cobrando
+ * revalidação de ~70 assets por página no caminho feliz.
+ */
 function immutableCacheControl(expiresAtMs) {
   const remainingSeconds = Number.isFinite(expiresAtMs)
     ? Math.max(0, Math.floor((expiresAtMs - Date.now()) / 1000))

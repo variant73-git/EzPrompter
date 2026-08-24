@@ -228,6 +228,17 @@ export async function captureNativeBundle(url, opts = {}) {
           if (!(await hostEhPublico(new URL(u).hostname))) {
             recursos.delete(u); descartados.push({ u, motivo: 'host nao publico' }); return;
           }
+          // ⚠️ MÍDIA NÃO PASSA PELO `body()`. É o caso onde cabeçalho mentir
+          // DÓI de verdade — vídeo de dezenas de MB bufferizado inteiro só
+          // para ser recusado — e o `body()` de mídia costuma falhar de toda
+          // forma (faixas 206, buffer que o Chromium não guarda). A reserva
+          // fica NULA e a repescagem, que tem teto DURANTE a leitura, busca o
+          // arquivo completo. Fecha o grosso do residual de memória.
+          // Duas leituras somadas: `resourceType` classifica quem INICIOU o
+          // pedido (o <video>), e um vídeo baixado por fetch/XHR chega como
+          // 'fetch' — só o content-type da RESPOSTA o entrega (Sol).
+          const tipoResposta = (res.headers()['content-type'] || '').split(';')[0].trim();
+          if (res.request().resourceType() === 'media' || /^(?:video|audio)\//i.test(tipoResposta)) return;
           // ⚠️ REJEIÇÃO ANTECIPADA, não proteção de memória. `content-length` é
           // opcional, pode mentir e pode vir comprimido — quando falta ou está
           // errado, `res.body()` carrega o arquivo inteiro do mesmo jeito, e a
@@ -239,11 +250,24 @@ export async function captureNativeBundle(url, opts = {}) {
           // arquivo não entre no pacote. Quem tem limite de verdade durante a
           // leitura é a repescagem, que usa `fetch` com `getReader()` (Sol).
           //
-          // Residual assumido: pico de memória de um corpo, no caminho de
-          // interceptação, quando o cabeçalho falta ou mente.
+          // Residual assumido, agora estreito: pico de memória de UM corpo
+          // NÃO-mídia com cabeçalho ausente ou mentiroso — limitado ao que o
+          // navegador já baixou, num site que o modelo de ameaça assume
+          // honesto (decisão de 2026-08-09).
           const declarado = Number(res.headers()['content-length'] || 0);
           if (declarado > MAX_ASSET_BYTES || (declarado && declarado > conta.restante())) {
             recursos.delete(u); descartados.push({ u, motivo: 'grande demais (declarado)' }); return;
+          }
+          // SEGUNDA BARREIRA (Sol): sem content-length ainda dá para saber o
+          // tamanho ANTES de materializar — `finished()` + `sizes()` entrega
+          // os bytes RECEBIDOS (codificados). Rejeitar aqui evita o body() de
+          // um corpo grande sem cabeçalho. Conservador com compressão: o
+          // decodificado pode ser maior; o teto DEPOIS do body() segue sendo
+          // a autoridade final.
+          await res.finished().catch(() => {});
+          const medidos = await res.request().sizes().then((t) => t.responseBodySize, () => null);
+          if (Number.isFinite(medidos) && (medidos > MAX_ASSET_BYTES || medidos > conta.restante())) {
+            recursos.delete(u); descartados.push({ u, motivo: 'grande demais (recebido)' }); return;
           }
           const bytes = await res.body().catch(() => null);
           if (!bytes) {
