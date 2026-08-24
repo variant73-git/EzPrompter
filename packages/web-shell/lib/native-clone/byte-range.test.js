@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseByteRange, rangeHeaders } from './byte-range.js';
+import { parseByteRange, parseContentRange, rangeHeaders } from './byte-range.js';
 
 describe('faixas de bytes — o que faz video buscar quadro', () => {
   it('le a forma comum que o navegador manda', () => {
@@ -44,5 +44,25 @@ describe('faixas de bytes — o que faz video buscar quadro', () => {
       status: 416, 'Content-Range': 'bytes */1000',
     });
     expect(rangeHeaders(null)).toBe(null);
+  });
+});
+
+// O outro lado do espelho: LER um Content-Range de resposta 206. A pergunta
+// que importa e' uma so' — este corpo e' o arquivo INTEIRO? Medido no site
+// real: 206 parciais do meio do arquivo chegam com corpo legivel, e guardar
+// um deles como o arquivo inteiro corrompe o pacote.
+describe('parseContentRange — este 206 cobre o arquivo inteiro?', () => {
+  it('le a forma comum', () => {
+    expect(parseContentRange('bytes 0-938608/938609')).toEqual({ inicio: 0, fim: 938608, total: 938609 });
+    expect(parseContentRange('bytes 622592-2914473/2914474')).toEqual({ inicio: 622592, fim: 2914473, total: 2914474 });
+  });
+
+  it('total desconhecido ou forma estranha viram null — nunca "completo"', () => {
+    expect(parseContentRange('bytes 0-99/*')).toBe(null);
+    expect(parseContentRange('bytes */938609')).toBe(null);
+    expect(parseContentRange('')).toBe(null);
+    expect(parseContentRange(undefined)).toBe(null);
+    expect(parseContentRange('items 0-99/1000')).toBe(null);
+    expect(parseContentRange('bytes 99-0/1000')).toBe(null);
   });
 });

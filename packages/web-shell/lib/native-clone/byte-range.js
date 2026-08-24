@@ -54,3 +54,24 @@ export function rangeHeaders(faixa) {
     'Content-Length': String(faixa.fim - faixa.inicio + 1),
   };
 }
+
+/**
+ * O outro lado do espelho: LER o `Content-Range` de uma resposta 206.
+ *
+ * A pergunta que importa é uma só — este corpo é o arquivo INTEIRO? Medido no
+ * site real: 206 parciais do meio do arquivo chegam com corpo legível pela
+ * interceptação, e guardar um deles como o arquivo inteiro corrompe o pacote.
+ * Total desconhecido (`/*`) ou forma estranha viram null: sem prova de
+ * completude, trata-se como parcial.
+ */
+export function parseContentRange(cabecalho) {
+  if (typeof cabecalho !== 'string') return null;
+  const m = /^\s*bytes\s+(\d+)-(\d+)\/(\d+)\s*$/i.exec(cabecalho);
+  if (!m) return null;
+  const inicio = Number(m[1]);
+  const fim = Number(m[2]);
+  const total = Number(m[3]);
+  if (!Number.isFinite(inicio) || !Number.isFinite(fim) || !Number.isFinite(total)) return null;
+  if (fim < inicio) return null;
+  return { inicio, fim, total };
+}

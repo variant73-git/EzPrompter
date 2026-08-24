@@ -64,10 +64,13 @@ describe('a captura tenta de novo antes de desistir', () => {
     const interceptacao = fonte.slice(fonte.indexOf("page.on('response'"), fonte.indexOf("onProgress({ etapa: 'navigating' })"));
     const semCorpo = interceptacao.slice(interceptacao.indexOf('if (!bytes)'), interceptacao.indexOf('const bilhete ='));
     // redirect/204/304 nao tem corpo por natureza: esses SIM liberam a vaga
-    expect(semCorpo).toMatch(/status >= 300 && status < 400[\s\S]{0,80}recursos\.delete\(u\)/);
+    // Libera a vaga so' quem nao e' conteudo (204/304) ou redirecionou DE FATO
+    // (Location presente); 3xx sem destino fica nulo para a repescagem tentar.
+    expect(semCorpo).toMatch(/status >= 300 && status < 400 && Boolean\(res\.request\(\)\.redirectedTo\(\)\)/);
+    expect(semCorpo).toMatch(/status === 204 \|\| status === 304 \|\| redirecionou[\s\S]{0,60}recursos\.delete\(u\)/);
     // e o resto fica NULO para a repescagem achar
     expect(semCorpo).not.toMatch(/descartados\.push/);
-    const depois = semCorpo.replace(/status >= 300 && status < 400[\s\S]{0,120}?\n/, '');
+    const depois = semCorpo.replace(/status === 204 \|\| status === 304 \|\| redirecionou[^\n]*\n/, '');
     expect(depois).not.toMatch(/recursos\.delete\(u\)/);
   });
 
@@ -84,6 +87,24 @@ describe('a captura tenta de novo antes de desistir', () => {
     expect(janela).not.toMatch(/\bawait\b/);
     // e o host segue verificado — depois da reserva, liberando a vaga se recusar
     expect(ouvinte).toMatch(/recursos\.set\(u, null\);[\s\S]{0,200}hostEhPublico[\s\S]{0,120}recursos\.delete\(u\)/);
+  });
+
+  // ⚠️ Um 206 PARCIAL com corpo legivel existe — medido no site real
+  // (bytes=622592- chegou legivel com 2,3MB de um arquivo de 2,9MB). Guardar
+  // esse corpo como o arquivo inteiro poe um PEDACO DO MEIO do video no lugar
+  // do video. So' se guarda 206 cujo Content-Range cobre o arquivo inteiro e
+  // cujo corpo tem exatamente esse tamanho; o resto fica nulo e a repescagem
+  // busca o arquivo completo, sem Range.
+  it('nunca guarda corpo de 206 parcial como arquivo inteiro', () => {
+    const ouvinte = fonte.slice(fonte.indexOf("page.on('response'"), fonte.indexOf("emVoo.add(tarefa)"));
+    const guarda = ouvinte.slice(ouvinte.indexOf('res.status() === 206'), ouvinte.indexOf('const bilhete'));
+    expect(guarda).toMatch(/parseContentRange/);
+    expect(guarda).toMatch(/inicio === 0/);
+    expect(guarda).toMatch(/fim === cobertura\.total - 1/);
+    expect(guarda).toMatch(/bytes\.byteLength === cobertura\.total/);
+    // parcial NAO descarta: deixa a reserva nula para a repescagem achar
+    expect(guarda).not.toMatch(/descartados\.push/);
+    expect(guarda).not.toMatch(/recursos\.delete/);
   });
 
   it('refaz o pedido com leitura em fluxo', () => {

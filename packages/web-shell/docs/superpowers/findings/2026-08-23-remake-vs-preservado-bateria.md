@@ -245,5 +245,26 @@ com `getReader()`. O residual — pico de memória de um corpo, no caminho de
 interceptação, com cabeçalho ausente ou mentiroso — está agora nomeado no
 código em vez de coberto por uma frase confiante.
 
-**Fica em aberto:** por que a captura não lê o corpo de mídia na interceptação.
-A repescagem contorna, e contornar tem custo (uma busca a mais por arquivo).
+## O aberto, fechado no dia seguinte — com um perigo no meio
+
+**Por que a interceptação não lê mídia, medido:** vídeo chega por FAIXAS (206),
+e o Chromium ora não guarda o buffer ("No data found for resource"), ora ainda
+está baixando quando a página fecha. A repescagem (busca sem Range → 200
+inteiro) é o caminho DESIGNADO para mídia, não contorno.
+
+**O perigo que a medida revelou:** dois 206 **parciais do meio do arquivo**
+chegaram com corpo legível (`bytes=622592-` trouxe 2,3MB de um arquivo de
+2,9MB). A interceptação guardava qualquer corpo legível como o arquivo inteiro
+— se a primeira resposta vista fosse uma dessas, o pacote teria **um pedaço do
+meio do vídeo no lugar do vídeo**. Hoje a ordem das respostas salva; ordem não
+é garantia. Fechado: 206 só entra se o `Content-Range` cobre o arquivo inteiro
+E o corpo tem exatamente esse tamanho; o resto fica nulo para a repescagem.
+Provado com servidor adversarial local: parcial do meio na frente → repescagem
+dispara → arquivo inteiro byte a byte no pacote.
+
+**E quatro rodadas do Sol até a fronteira certa do "libera a vaga":** o
+comentário prometia 204 e o código só liberava 3xx; "3xx não tem corpo" é
+falso; `Location` presente não prova que o navegador seguiu. A regra final usa
+o veredito do próprio navegador (`request().redirectedTo()`, medido no ponto
+exato da decisão): libera 204/304 e quem redirecionou DE FATO; o resto fica
+nulo, a repescagem tenta, e falha entra nomeada no relatório.

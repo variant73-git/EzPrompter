@@ -25,6 +25,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { chromium as chromiumPadrao } from 'playwright-core';
 import { criarContabilidade } from './byte-ledger.js';
+import { parseContentRange } from './byte-range.js';
 import { referenceKindFor, rewriteDocumentReferences } from './rewrite-references.js';
 
 /**
@@ -246,8 +247,23 @@ export async function captureNativeBundle(url, opts = {}) {
           const bytes = await res.body().catch(() => null);
           if (!bytes) {
             const status = res.status();
-            // Redirect/204/304 não têm corpo por natureza: liberam a vaga.
-            if (status >= 300 && status < 400) { recursos.delete(u); return; }
+            // 204/304 não têm corpo por natureza. Redirect PODE ter corpo
+            // (uma página "Moved") — mas esse corpo nunca é conteúdo: o
+            // navegador não o renderiza, segue para o destino, e o destino
+            // chega como resposta PRÓPRIA, com URL própria, capturada por si.
+            // Guardar a vaga faria a repescagem buscar a URL do redirect e
+            // duplicar o destino sob outro nome.
+            //
+            // Mas "redirecionou de fato" é veredito do NAVEGADOR, não
+            // inferência por cabeçalho: `Location` presente não prova que foi
+            // seguido (um 300 carrega Location e o navegador fica). O fato é
+            // `request().redirectedTo()` — medido no ponto exato desta
+            // decisão: 301 seguido aponta o sucessor, 300 parado vem nulo.
+            // Quem não redirecionou fica como reserva nula: a repescagem
+            // tenta, e se também não conseguir, a URL entra NOMEADA no
+            // relatório em vez de sumir calada (Sol, 4 rodadas até aqui).
+            const redirecionou = status >= 300 && status < 400 && Boolean(res.request().redirectedTo());
+            if (status === 204 || status === 304 || redirecionou) { recursos.delete(u); return; }
             // ⚠️ O RESTO FICA COMO RESERVA NULA — é exatamente isso que a
             // repescagem procura (`filter(([, v]) => !v)`). Apagar aqui fazia
             // `faltantes` nascer sempre vazio e a repescagem virar código
@@ -258,6 +274,21 @@ export async function captureNativeBundle(url, opts = {}) {
             // É o caso comum de mídia: vídeo é pedido por FAIXAS de bytes, e o
             // corpo dessas respostas não é legível pela interceptação.
             return;
+          }
+          // ⚠️ 206 PARCIAL com corpo legível EXISTE — medido no site real
+          // (`bytes=622592-` chegou legível com 2,3MB de um arquivo de 2,9MB).
+          // Guardá-lo como o arquivo inteiro poria um pedaço do MEIO do vídeo
+          // no lugar do vídeo; hoje a ordem das respostas salva, e ordem não é
+          // garantia. Só entra 206 cujo Content-Range cobre o arquivo inteiro
+          // E cujo corpo tem exatamente esse tamanho; o resto fica como
+          // reserva nula, e a repescagem busca o arquivo completo, sem Range.
+          if (res.status() === 206) {
+            const cobertura = parseContentRange(res.headers()['content-range']);
+            const completo = cobertura
+              && cobertura.inicio === 0
+              && cobertura.fim === cobertura.total - 1
+              && bytes.byteLength === cobertura.total;
+            if (!completo) return;
           }
           const bilhete = bytes.byteLength > MAX_ASSET_BYTES ? null : conta.reservar(bytes.byteLength);
           if (!bilhete) {
