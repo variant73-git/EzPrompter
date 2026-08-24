@@ -15736,12 +15736,10 @@ describe('native motion runtime bridge', () => {
 describe('porta do editor completo', () => {
   const fonte = getRuntimeBridgeSource();
 
-  it('so aceita o que esta LIGADO ao editor hoje', () => {
-    // Tokens, nao sintaxe: o transform do vitest reformata a fonte. Hoje so'
-    // `style` tem chamador; anunciar mais seria capacidade sem uso — o editor
-    // escreveria, a porta diria ok, e nada persistiria (Sol).
-    expect(fonte).toMatch(/unsupported_kind/);
-    expect(fonte).toMatch(/not_wired_yet/);
+  it('recusa kind desconhecido; text e attribute agora sao LIGADOS', () => {
+    const porta = fonte.slice(fonte.indexOf('function editorCommit('), fonte.indexOf('function editorCommitBatch'));
+    expect(porta).toMatch(/unsupported_kind/);
+    expect(porta).not.toMatch(/not_wired_yet/);
   });
 
   it('recusa escrever em propriedade que uma animacao dirige', () => {
@@ -15827,6 +15825,16 @@ describe('a porta pergunta antes de escrever, e falha fechada', () => {
   // que nao persiste. O lote valida TODAS as entradas pelas MESMAS guardas
   // (via a propria porta unitaria em consulta), um bilhete so, UMA transacao
   // com N patches — ou nada.
+  // O UNDO precisa reverter src+srcset (e N estilos de cascata) numa
+  // transacao SO — o lote generaliza para style E attribute e text, cada
+  // entrada validada pelas regras do seu kind, sem bilhete unitario.
+  it('lote aceita style, attribute e text — validacao por kind', () => {
+    const lote = fonte.slice(fonte.indexOf('function editorCommitBatch'), fonte.indexOf('function editorSave'));
+    expect(lote).toMatch(/e\.kind/);
+    expect(lote).toMatch(/validarIdentidade\(e\.element/);
+    expect(lote).toMatch(/ATRIBUTOS_PERMITIDOS_LOTE|validarAtributo/);
+  });
+
   it('lote atomico: validador PURO, um bilhete, uma transacao', () => {
     const lote = fonte.slice(fonte.indexOf('function editorCommitBatch'), fonte.indexOf('function editorSave'));
     expect(lote.length).toBeGreaterThan(100);
@@ -15861,11 +15869,15 @@ describe('a porta pergunta antes de escrever, e falha fechada', () => {
     expect(fn).toMatch(/=== -1\) return valor/);
     // aplicada na fronteira das DUAS portas
     const unit = fonte.slice(fonte.indexOf('function editorCommit('), fonte.indexOf('function editorCommitBatch'));
-    expect(unit).toMatch(/normalizarUrlsDeSessao\(edit\.value\)/);
-    expect(unit).toMatch(/normalizarUrlsDeSessao\(edit\.before\)/);
+    // via normalizarPorKind: url() para style, URL NUA para src/href/poster
+    expect(unit).toMatch(/normalizarPorKind\(edit\.value\)/);
+    expect(unit).toMatch(/normalizarPorKind\(edit\.before\)/);
+    expect(fonte).toMatch(/function normalizarUrlNuaDeSessao/);
     const lote = fonte.slice(fonte.indexOf('function editorCommitBatch'), fonte.indexOf('function editorSave'));
-    expect(lote).toMatch(/normalizarUrlsDeSessao\(e\.value\)/);
-    expect(lote).toMatch(/normalizarUrlsDeSessao\(e\.before\)/);
+    // por kind: normE escolhe url() (style) ou URL NUA (attribute de url)
+    expect(lote).toMatch(/normE\(e\.value\)/);
+    expect(lote).toMatch(/normE\(e\.before\)/);
+    expect(lote).toMatch(/normalizarUrlNuaDeSessao/);
   });
 
   it('normaliza camelCase para o nome css na fronteira da porta', () => {
@@ -15882,8 +15894,42 @@ describe('a porta pergunta antes de escrever, e falha fechada', () => {
 
   // Anunciar capacidade sem chamador faz o editor escrever, a porta dizer ok, e
   // nada persistir.
-  it('nao anuncia o que ainda nao esta ligado', () => {
-    expect(fonte).toMatch(/not_wired_yet/);
+  // O replay SEMPRE soube aplicar text e attribute (applyPatchOrThrow trata
+  // os dois, incluindo split-text com marcador de rebind) — so' a porta
+  // recusava. Agora ela valida e registra pelos MESMOS ritos do style:
+  // identidade estavel+unica, bilhete de consulta, chave injetiva COM kind.
+  // Um patch kind:text replay-a como textContent — markup autoral (links,
+  // strong) seria ACHATADO. Filho de elemento que nao e' artefato de split =
+  // rich_text recusado; artefatos de split podem (o replay ja' trata: escreve
+  // textContent e planta o marcador de rebind).
+  it('texto rico recusa; split-text passa (o replay ja sabe)', () => {
+    const porta = fonte.slice(fonte.indexOf('function editorCommit('), fonte.indexOf('function editorCommitBatch'));
+    expect(porta).toMatch(/rich_text/);
+    expect(porta).toMatch(/SPLIT_TOKEN/);
+  });
+
+  it('text passa pela porta com identidade e bilhete', () => {
+    const porta = fonte.slice(fonte.indexOf('function editorCommit('), fonte.indexOf('function editorCommitBatch'));
+    expect(porta).not.toMatch(/kind === ['"]text['"].*not_wired_yet/);
+    // texto vira patch kind text com property null e no_change guard
+    expect(porta).toMatch(/kind === ['"]text['"]/);
+  });
+
+  it('attribute passa so na LISTA (src/srcset/href/alt/poster), com url normalizada', () => {
+    // as regras vivem em validarAtributo, compartilhada entre porta e lote
+    const regras = fonte.slice(fonte.indexOf('function validarAtributo'), fonte.indexOf('function validarIdentidade'));
+    expect(regras).toMatch(/ATRIBUTOS_PERMITIDOS/);
+    for (const attr of ['src', 'srcset', 'href', 'alt', 'poster']) {
+      expect(regras).toMatch(new RegExp(`['"]${attr}['"]`));
+    }
+    expect(regras).toMatch(/attribute_not_allowed/);
+    // srcset com VALOR: aceito SEM url de sessao (undo restaurando o original
+    // do site); com url de sessao dentro, recusa ate existir parser
+    expect(regras).toMatch(/srcset com url de sessao/);
+  });
+
+  it('a chave do bilhete inclui o KIND', () => {
+    expect(fonte).toMatch(/chave = JSON\.stringify\(\[[^\]]*kind[^\]]*elementId/);
   });
 });
 

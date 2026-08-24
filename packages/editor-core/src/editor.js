@@ -6833,9 +6833,8 @@
         window.__rbFillPopup.openImage(imgSwatch, inspector, root, el, sig, {
           applyImage: function(targetEl, dataUrl) {
             if (visualEl && visualEl.tagName === 'IMG') {
-              // Replace existing img src
-              pushUndo({el: visualEl, prop: 'src', old: visualEl.src});
-              visualEl.src = dataUrl;
+              // Replace existing img src (no clone: transação primeiro)
+              if (!trocarSrcDaImagem(visualEl, dataUrl)) return;
             } else {
               // Insert a new <img> inside the div — site element, target doc.
               var newImg = (targetEl.ownerDocument || targetDoc).createElement('img');
@@ -7532,6 +7531,41 @@
     } catch (e) { /* aviso é best-effort; a recusa em si já aconteceu */ }
   }
 
+  // ⭐ TROCA DE IMAGEM NO CLONE: o src novo vira transação kind:attribute
+  // ANTES de tocar o DOM (recusa = nada muda + motivo na tela). O srcset é
+  // LIMPO junto — senão o navegador o prefere ao src novo e a troca não
+  // aparece. Fora do clone (sem porta), escreve direto como sempre.
+  function trocarSrcDaImagem(imgEl, novoSrc) {
+    if (typeof targetWin.__uncraftEditorCommit !== 'function') {
+      pushUndo({el: imgEl, prop: '__src', old: imgEl.src});
+      imgEl.src = novoSrc;
+      return true;
+    }
+    var beforeSrc = imgEl.getAttribute('src') || '';
+    var drySrc = targetWin.__uncraftEditorCommit(imgEl, { kind: 'attribute', property: 'src', before: beforeSrc, value: novoSrc }, { dryRun: true });
+    if (!drySrc || drySrc.ok !== true) {
+      if (drySrc && drySrc.reason !== 'no_change') reportarRecusaDoClone(drySrc || {}, 'src');
+      return false;
+    }
+    var temSrcset = imgEl.hasAttribute('srcset');
+    var drySet = null;
+    if (temSrcset) {
+      drySet = targetWin.__uncraftEditorCommit(imgEl, { kind: 'attribute', property: 'srcset', before: imgEl.getAttribute('srcset'), value: '' }, { dryRun: true });
+      if (!drySet || drySet.ok !== true) { reportarRecusaDoClone(drySet || {}, 'srcset'); return false; }
+    }
+    var regSrc = targetWin.__uncraftEditorCommit(imgEl, { kind: 'attribute', property: 'src', before: beforeSrc, value: novoSrc, approval: drySrc.approval }, {});
+    if (!regSrc || regSrc.ok !== true) { reportarRecusaDoClone(regSrc || {}, 'src'); return false; }
+    if (temSrcset) {
+      targetWin.__uncraftEditorCommit(imgEl, { kind: 'attribute', property: 'srcset', before: imgEl.getAttribute('srcset'), value: '', approval: drySet.approval }, {});
+    }
+    var patchesU = [{ el: imgEl, kind: 'attribute', property: 'src', before: beforeSrc, value: novoSrc }];
+    if (temSrcset) patchesU.push({ el: imgEl, kind: 'attribute', property: 'srcset', before: imgEl.getAttribute('srcset'), value: '' });
+    pushUndo({ prop: '__clonePatch', el: imgEl, patches: patchesU });
+    if (temSrcset) imgEl.removeAttribute('srcset');
+    imgEl.src = novoSrc;
+    return true;
+  }
+
   function applyStyle(el, prop, value) {
     // Range-scoped typography: if the user selected a word/phrase while in text
     // edit mode, route typography writes to that range only (wrap in a <span>).
@@ -7602,7 +7636,10 @@
               var loteReg = targetWin.__uncraftEditorCommitBatch(entradas, { approval: loteDry.approval });
               if (loteReg && loteReg.ok) {
                 folhas.forEach(function(le) { le.style.setProperty(cssName, value, 'important'); });
-                pushUndo({ prop: '__cascade', affected: afetadas });
+                pushUndo({ prop: '__clonePatch', el: el,
+                  patches: entradas.map(function(en) {
+                    return { el: en.element, kind: 'style', property: cssName, before: en.before, value: value };
+                  }) });
                 requestAnimationFrame(function() { if (selectedEl) updateSelBox(selectedEl); });
                 return;
               }
@@ -7661,7 +7698,14 @@
       });
     }
 
-    pushUndo({ prop: '__cascade', affected: affected });
+    if (typeof targetWin.__uncraftEditorCommit === 'function') {
+      // No clone a entrada de undo carrega os dados EXATOS de reversão — o
+      // snapshot de cssText não diz qual transação reverter.
+      pushUndo({ prop: '__clonePatch', el: el,
+        patches: [{ el: el, kind: 'style', property: cssName, before: antesDaEscrita, value: value }] });
+    } else {
+      pushUndo({ prop: '__cascade', affected: affected });
+    }
 
     // ⭐ PERSISTIR NO CLONE. Escrever no DOM não sobrevive a um recarregamento:
     // o que sobrevive são as TRANSAÇÕES do manifesto, reaplicadas pela ponte.
@@ -7867,6 +7911,40 @@
           });
         }
       }
+    } else if (u.prop === '__clonePatch') {
+      // ⭐ UNDO/REDO NO CLONE emite transação REVERSA (undo) ou DIRETA (redo)
+      // pela porta ANTES de tocar o DOM — desfazer só na tela deixava a
+      // transação persistida viva, e o reload RESSUSCITAVA a edição
+      // "desfeita" (Sol). Lote atômico (src+srcset, N estilos de cascata
+      // juntos); recusa = nada muda + motivo na tela.
+      if (typeof targetWin.__uncraftEditorCommitBatch === 'function') {
+        var entradasU = u.patches.map(function(pp) {
+          return forward
+            ? { element: pp.el, kind: pp.kind, property: pp.property, before: pp.before, value: pp.value }
+            : { element: pp.el, kind: pp.kind, property: pp.property, before: pp.value, value: pp.before };
+        });
+        var dryU = targetWin.__uncraftEditorCommitBatch(entradasU, { dryRun: true });
+        var regU = dryU && dryU.ok
+          ? targetWin.__uncraftEditorCommitBatch(entradasU, { approval: dryU.approval })
+          : dryU;
+        if (!regU || regU.ok !== true) {
+          reportarRecusaDoClone(regU || {}, forward ? 'redo' : 'undo');
+          return;
+        }
+      }
+      u.patches.forEach(function(pp) {
+        var alvoV = forward ? pp.value : pp.before;
+        if (pp.kind === 'style') {
+          if (alvoV) pp.el.style.setProperty(pp.property, alvoV, 'important');
+          else pp.el.style.removeProperty(pp.property);
+        } else if (pp.kind === 'attribute') {
+          if (alvoV === '' || alvoV == null) pp.el.removeAttribute(pp.property);
+          else pp.el.setAttribute(pp.property, alvoV);
+        } else if (pp.kind === 'text') {
+          if (pp.el.matches && pp.el.matches('input,textarea')) pp.el.value = alvoV;
+          else pp.el.textContent = alvoV;
+        }
+      });
     } else if (u.prop === '__src') {
       var now = u.el.src;
       u.el.src = forward ? u.newSrc : u.old;
@@ -8412,9 +8490,22 @@
   // changes and push a single undo entry on exit instead of flooding the
   // undoStack with per-keystroke mutations.
   var textEditOriginalHTML = null;
+  var textEditOriginalText = null;
   var textEditTarget = null;
 
   function enterTextEdit(el) {
+    // ⭐ DENTRO DO CLONE, pergunta ANTES de deixar digitar: uma edição de texto
+    // que não pode ser salva não pode nem começar (mesma doutrina do style).
+    // dry com o texto ATUAL: `no_change` = guardas passaram; qualquer outra
+    // recusa (identidade instável, texto rico) bloqueia com o motivo na tela.
+    if (typeof targetWin.__uncraftEditorCommit === 'function') {
+      var atual = el.matches && el.matches('input,textarea') ? el.value : el.textContent;
+      var gate = targetWin.__uncraftEditorCommit(el, { kind: 'text', before: atual, value: atual }, { dryRun: true });
+      if (gate && gate.ok === false && gate.reason !== 'no_change') {
+        reportarRecusaDoClone(gate, 'text');
+        return;
+      }
+    }
     el.contentEditable = 'true';
     el.setAttribute('data-rb-editing', '');
     el.classList.remove('rb-ed-movable');
@@ -8422,6 +8513,7 @@
     isTextEditing = true;
     textEditTarget = el;
     textEditOriginalHTML = el.innerHTML;
+    textEditOriginalText = el.matches && el.matches('input,textarea') ? el.value : el.textContent;
     // No scroll lock — causes too many issues on custom scroll sites
     el.focus();
     try {
@@ -8440,15 +8532,42 @@
     if (textEditTarget && textEditOriginalHTML !== null) {
       var newHTML = textEditTarget.innerHTML;
       if (newHTML !== textEditOriginalHTML) {
-        pushUndo({
-          el: textEditTarget,
-          prop: '__textEdit',
-          old: textEditOriginalHTML
-        });
+        if (typeof targetWin.__uncraftEditorCommit === 'function') {
+          pushUndo({ prop: '__clonePatch', el: textEditTarget,
+            patches: [{ el: textEditTarget, kind: 'text', property: null,
+              before: textEditOriginalText,
+              value: (textEditTarget.matches && textEditTarget.matches('input,textarea')) ? textEditTarget.value : textEditTarget.textContent }] });
+        } else {
+          pushUndo({
+            el: textEditTarget,
+            prop: '__textEdit',
+            old: textEditOriginalHTML
+          });
+        }
+        // ⭐ PERSISTIR NO CLONE: o texto novo vira transação kind:text (replay
+        // = textContent; split ganha marcador de rebind na ponte). Recusa
+        // TARDIA (o mundo mudou entre entrar e sair) reverte o DOM na hora —
+        // deixar o texto recusado na tela é o defeito que a porta impede.
+        if (typeof targetWin.__uncraftEditorCommit === 'function') {
+          var elT = textEditTarget;
+          var antesT = textEditOriginalText;
+          var novoT = elT.matches && elT.matches('input,textarea') ? elT.value : elT.textContent;
+          if (novoT !== antesT) {
+            var dryT = targetWin.__uncraftEditorCommit(elT, { kind: 'text', before: antesT, value: novoT }, { dryRun: true });
+            var regT = dryT && dryT.ok
+              ? targetWin.__uncraftEditorCommit(elT, { kind: 'text', before: antesT, value: novoT, approval: dryT.approval }, {})
+              : dryT;
+            if (regT && regT.ok === false && regT.reason !== 'no_change') {
+              elT.innerHTML = textEditOriginalHTML;
+              reportarRecusaDoClone(regT, 'text');
+            }
+          }
+        }
       }
     }
     textEditTarget = null;
     textEditOriginalHTML = null;
+    textEditOriginalText = null;
     isTextEditing = false;
     __pendingTextRange = null;
     // Text dock is a text-edit-session affordance — kill it when the session
@@ -9137,9 +9256,7 @@
       var f = ev.target.files[0]; if (!f) return;
       var reader = new FileReader();
       reader.onload = function() {
-        pushUndo({el: img, prop: '__src', old: img.src});
-        img.src = reader.result;
-        removeImgMenu();
+        if (trocarSrcDaImagem(img, reader.result)) removeImgMenu();
       };
       reader.readAsDataURL(f);
     });
@@ -9981,6 +10098,25 @@
         // click always agree); fall back to container resolution otherwise.
         var el = hoverTarget || resolveContainer(rawEl);
         if (!isValid(el)) return;
+        // ⭐ NO CLONE, identidade decide: se a resolução escolheu um wrapper
+        // SEM id autoral e o ponto clicado atravessa um descendente COM id,
+        // seleciona o MAIS FUNDO com id — é o único que a porta salva, e é o
+        // que o usuário quis ("cliquei no texto, mude o texto"). Fora do
+        // clone, nada muda.
+        if (typeof targetWin.__uncraftEditorCommit === 'function'
+            && !(el.id || el.getAttribute('data-w-id'))) {
+          var pilha = targetDoc.elementsFromPoint(e.clientX, e.clientY);
+          for (var pi = 0; pi < pilha.length; pi++) {
+            var cand = pilha[pi];
+            if (isEditorEl(cand) || !el.contains(cand) || cand === el) continue;
+            var comIdPonto = cand.closest('[id],[data-w-id]');
+            if (comIdPonto && comIdPonto !== el && el.contains(comIdPonto)
+                && !isEditorEl(comIdPonto) && isValid(comIdPonto)) {
+              el = comIdPonto;
+              break;
+            }
+          }
+        }
         selectionDepth = 0;
         selectionAncestor = el;
 

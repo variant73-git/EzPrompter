@@ -8560,6 +8560,20 @@ function nativeMotionRuntimeBridge() {
       });
     }
 
+    // A MESMA rotação de token, para atributo que carrega a URL NUA (src,
+    // href, poster): absoluta da própria sessão vira './…'; de fora, intacta.
+    function normalizarUrlNuaDeSessao(valor) {
+      if (valor == null || valor === '') return valor;
+      const texto = String(valor);
+      let prefixo;
+      try { prefixo = new URL('.', location.href).href; } catch (_) { return valor; }
+      try {
+        const abs = new URL(texto, location.href);
+        if (abs.href.startsWith(prefixo)) return `./${abs.href.slice(prefixo.length)}`;
+      } catch (_) { /* não-URL (alt de texto livre) fica como está */ }
+      return valor;
+    }
+
     // SONDA DE PRIORIDADE (consulta): escreve sem prioridade, compara o
     // COMPUTADO, e restaura tudo — transição neutralizada longhand a longhand,
     // transição em curso recusa em vez de perturbar. Movida para função própria
@@ -8614,20 +8628,34 @@ function nativeMotionRuntimeBridge() {
       return { ok: true };
     }
 
-    // VALIDADOR PURO das guardas de escrita de estilo — NENHUM efeito no
-    // caderno de aprovações. Extraído para o lote validar pelas MESMAS regras
-    // sem emitir bilhete unitário: a versão anterior re-consultava membro a
-    // membro no commit do lote e cada consulta emitia bilhete no caderno de
-    // teto 64 — um lote grande expulsava o PRÓPRIO bilhete de lote antes da
-    // conferência (Sol). A sonda de prioridade restaura tudo que toca.
-    function validarEscritaDeEstilo(element, edit) {
+    // Atributo entra por LISTA: cada nome novo é semântica nova (url que
+    // rotaciona, srcset com parser próprio) e entra com prova própria.
+    // `srcset` com VALOR só é aceito quando NÃO contém url da própria sessão
+    // (o caso do UNDO restaurando o srcset ORIGINAL do site — que nunca é
+    // tokenizado); com url de sessão dentro, exige o parser de candidatos
+    // (lição 185) e recusa até existir um.
+    function validarAtributo(property, valor) {
       const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
-      if (!(element instanceof Element)) return recusa('no_element');
-      const property = edit && edit.property == null ? null : String(edit && edit.property);
+      const ATRIBUTOS_PERMITIDOS = ['src', 'srcset', 'href', 'alt', 'poster'];
       if (!property) return recusa('missing_property');
-      const propriedadeCss = property.startsWith('--')
-        ? property
-        : property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+      if (ATRIBUTOS_PERMITIDOS.indexOf(String(property).toLowerCase()) === -1) {
+        return recusa('attribute_not_allowed', String(property));
+      }
+      if (String(property).toLowerCase() === 'srcset' && valor != null && String(valor) !== '') {
+        let prefixo = null;
+        try { prefixo = new URL('.', location.href).href; } catch (_) { prefixo = null; }
+        if (prefixo && String(valor).indexOf(prefixo) !== -1) {
+          return recusa('attribute_not_allowed', 'srcset com url de sessao exige parser de candidatos');
+        }
+      }
+      return { ok: true };
+    }
+
+    // IDENTIDADE QUE SOBREVIVE AO RELOAD, extraída para os três kinds: só
+    // id/data-w-id AUTORAIS voltam (posição não sobrevive; item 180), e
+    // ambiguidade também não volta (o replay exige candidato único).
+    function validarIdentidade(element) {
+      const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
       const elementId = ensureElementId(element);
       if (!elementId) return recusa('no_identity');
       const semente = elementIdSeed(element);
@@ -8642,6 +8670,26 @@ function nativeMotionRuntimeBridge() {
       } catch (_) {
         return recusa('ambiguous_identity');
       }
+      return { ok: true, elementId };
+    }
+
+    // VALIDADOR PURO das guardas de escrita de estilo — NENHUM efeito no
+    // caderno de aprovações. Extraído para o lote validar pelas MESMAS regras
+    // sem emitir bilhete unitário: a versão anterior re-consultava membro a
+    // membro no commit do lote e cada consulta emitia bilhete no caderno de
+    // teto 64 — um lote grande expulsava o PRÓPRIO bilhete de lote antes da
+    // conferência (Sol). A sonda de prioridade restaura tudo que toca.
+    function validarEscritaDeEstilo(element, edit) {
+      const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
+      if (!(element instanceof Element)) return recusa('no_element');
+      const property = edit && edit.property == null ? null : String(edit && edit.property);
+      if (!property) return recusa('missing_property');
+      const propriedadeCss = property.startsWith('--')
+        ? property
+        : property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+      const idn = validarIdentidade(element);
+      if (!idn.ok) return idn;
+      const elementId = idn.elementId;
       const CONTRIBUEM_PARA = {
         transform: ['x', 'y', 'z', 'xpercent', 'ypercent',
           'translatex', 'translatey', 'translatez', 'translate',
@@ -8676,14 +8724,32 @@ function nativeMotionRuntimeBridge() {
       const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
       if (!(element instanceof Element)) return recusa('no_element');
       const kind = edit && edit.kind;
-      // Só `style` está LIGADO ao editor hoje. Aceitar `text`/`attribute` aqui
-      // seria anunciar uma capacidade sem chamador: o editor escreveria no DOM,
-      // a porta diria ok, e nada persistiria (Sol). Quando o caminho for ligado,
-      // estes entram com teste próprio.
-      if (kind === 'text' || kind === 'attribute') return recusa('not_wired_yet', String(kind));
-      if (kind !== 'style') return recusa('unsupported_kind', String(kind || ''));
+      // Os três kinds que o REPLAY sempre soube aplicar (applyPatchOrThrow
+      // trata style/text/attribute, incluindo split-text com marcador de
+      // rebind) — a porta valida e registra pelos MESMOS ritos.
+      if (kind !== 'style' && kind !== 'text' && kind !== 'attribute') {
+        return recusa('unsupported_kind', String(kind || ''));
+      }
       const property = edit.property == null ? null : String(edit.property);
-      if (!property) return recusa('missing_property');
+      if (kind === 'style' && !property) return recusa('missing_property');
+      if (kind === 'attribute') {
+        const va = validarAtributo(property, edit.value);
+        if (!va.ok) return va;
+      }
+      if (kind === 'text' && property) return recusa('unsupported_kind', 'text nao tem property');
+      if (kind === 'text') {
+        // Um patch text replay-a como textContent — markup AUTORAL (link,
+        // strong) seria achatado. Filho que não é artefato de split = recusa;
+        // artefatos de split PODEM (o replay já trata: textContent + marcador
+        // de rebind + aria-label). gsap_split_* cobre o split observado no
+        // clone real, fora do SPLIT_TOKEN padrão.
+        const artefatoDeSplit = (el2) => {
+          try { return el2.matches(SPLIT_TOKEN) || /(^|\s)gsap_split/.test(String(el2.className || '')); } catch (_) { return false; }
+        };
+        for (const filho of element.children) {
+          if (!artefatoDeSplit(filho)) return recusa('rich_text', filho.tagName.toLowerCase());
+        }
+      }
       // ⚠️ O editor manda camelCase (`fontFamily`) e `style.setProperty` exige
       // hífen (`font-family`) — com camelCase a sonda era NO-OP, o computado
       // não mudava, e TODA propriedade de mais de uma palavra caía em
@@ -8691,23 +8757,40 @@ function nativeMotionRuntimeBridge() {
       // UMA vez na fronteira e o nome css vale em sonda, chave de aprovação e
       // patch gravado (o replay aplica com o mesmo setProperty). Propriedade
       // custom (--x) fica como está.
-      const propriedadeCss = property.startsWith('--')
-        ? property
-        : property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+      const propriedadeCss = kind === 'style'
+        ? (property.startsWith('--') ? property : property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`))
+        : null;   // text não tem property; attribute usa o nome da lista como veio
       // valor e before normalizados ANTES de tudo: sonda, chave e patch veem
-      // o mesmo texto — url() da sessão vira relativa aqui.
-      edit = { ...edit, value: normalizarUrlsDeSessao(edit.value), before: normalizarUrlsDeSessao(edit.before) };
+      // o mesmo texto — url() da sessão vira relativa aqui. Atributos de URL
+      // carregam a URL NUA (sem `url()`): normalização própria.
+      const normalizarPorKind = (v) => {
+        if (kind === 'attribute' && ['src', 'href', 'poster'].indexOf(property.toLowerCase()) !== -1) {
+          return normalizarUrlNuaDeSessao(v);
+        }
+        return normalizarUrlsDeSessao(v);
+      };
+      edit = { ...edit, value: normalizarPorKind(edit.value), before: normalizarPorKind(edit.before) };
 
       if (dryRun) {
-        // As guardas vivem no VALIDADOR PURO (identidade estável e única,
-        // canal de animação, sonda de prioridade) — compartilhado com o lote,
-        // sem efeito no caderno. A aprovação amarra elemento+propriedade+valor.
-        const v = validarEscritaDeEstilo(element, { property, value: edit.value });
-        if (!v.ok) return v;
+        // style: VALIDADOR PURO completo (identidade, canal de animação, sonda
+        // de prioridade). text/attribute: guarda de IDENTIDADE — não há canal
+        // de estilo para sondar, e o replay já sabe aplicar os dois (o caso
+        // split-text inclusive, com o marcador de rebind que o applyPatch
+        // planta). A aprovação amarra kind+elemento+propriedade+before+valor.
+        let elementIdAprovado;
+        if (kind === 'style') {
+          const v = validarEscritaDeEstilo(element, { property, value: edit.value });
+          if (!v.ok) return v;
+          elementIdAprovado = v.elementId;
+        } else {
+          const idn = validarIdentidade(element);
+          if (!idn.ok) return idn;
+          elementIdAprovado = idn.elementId;
+        }
         // `before` entra na chave, e a serialização é INJETIVA: concatenar
         // com `|` colide quando um valor contém `|` ("a|b"+"c" == "a"+"b|c"),
         // reabrindo a troca de estado sob o mesmo bilhete (Sol, 2 rodadas).
-        const chave = JSON.stringify([v.elementId, v.propriedadeCss, normalizarValor(edit.before), normalizarValor(edit.value)]);
+        const chave = JSON.stringify([kind, elementIdAprovado, kind === 'style' ? propriedadeCss : property, normalizarValor(edit.before), normalizarValor(edit.value)]);
         const bilhete = randomIdentity('approval');
         aprovacoesDeEscrita.set(chave, bilhete);
         if (aprovacoesDeEscrita.size > 64) {
@@ -8721,7 +8804,7 @@ function nativeMotionRuntimeBridge() {
       // devolvia `priority_conflict` falso (Sol). Ele apresenta a APROVAÇÃO.
       const elementId = ensureElementId(element);
       if (!elementId) return recusa('no_identity');
-      const chave = JSON.stringify([elementId, propriedadeCss, normalizarValor(edit.before), normalizarValor(edit.value)]);
+      const chave = JSON.stringify([kind, elementId, kind === 'style' ? propriedadeCss : property, normalizarValor(edit.before), normalizarValor(edit.value)]);
       const aprovacao = edit.approval == null ? null : String(edit.approval);
       if (!aprovacao || aprovacoesDeEscrita.get(chave) !== aprovacao) {
         return recusa('needs_preflight', property);
@@ -8772,30 +8855,44 @@ function nativeMotionRuntimeBridge() {
       const validadas = [];
       for (let i = 0; i < entries.length; i += 1) {
         let e = entries[i] || {};
-        // As MESMAS guardas do caminho unitário, pelo VALIDADOR PURO — sem
-        // emitir bilhete unitário nenhum. A primeira versão consultava a porta
-        // membro a membro e cada consulta enchia o caderno de teto 64: um lote
-        // grande expulsava o PRÓPRIO bilhete do lote antes da conferência, e
-        // ainda expulsava aprovações de operações sem relação (Sol).
-        e = { ...e, value: normalizarUrlsDeSessao(e.value), before: normalizarUrlsDeSessao(e.before) };
-        const v = validarEscritaDeEstilo(e.element, { property: e.property, value: e.value });
-        if (!v.ok) {
-          return recusa('batch_member_refused', `${i}:${v.reason || 'unknown'}`);
+        // As MESMAS guardas do caminho unitário, pelo VALIDADOR PURO por KIND
+        // — sem emitir bilhete unitário nenhum (a versão por-membro enchia o
+        // caderno de teto 64 e expulsava o próprio bilhete do lote; Sol).
+        // O lote aceita style, attribute e text: é o que o UNDO precisa para
+        // reverter src+srcset (ou N estilos de cascata) numa transação SÓ.
+        const kindE = e.kind || 'style';
+        const normE = (v2) => (kindE === 'attribute'
+          && ['src', 'href', 'poster'].indexOf(String(e.property || '').toLowerCase()) !== -1)
+          ? normalizarUrlNuaDeSessao(v2)
+          : normalizarUrlsDeSessao(v2);
+        e = { ...e, value: normE(e.value), before: normE(e.before) };
+        let membro;
+        if (kindE === 'style') {
+          const v = validarEscritaDeEstilo(e.element, { property: e.property, value: e.value });
+          if (!v.ok) return recusa('batch_member_refused', `${i}:${v.reason || 'unknown'}`);
+          membro = { elementId: v.elementId, propriedadeCss: v.propriedadeCss };
+        } else if (kindE === 'attribute' || kindE === 'text') {
+          if (kindE === 'attribute') {
+            const va = validarAtributo(e.property, e.value);
+            if (!va.ok) return recusa('batch_member_refused', `${i}:${va.reason || 'unknown'}`);
+          }
+          if (kindE === 'text' && e.property) return recusa('batch_member_refused', `${i}:unsupported_kind`);
+          const idn = validarIdentidade(e.element);
+          if (!idn.ok) return recusa('batch_member_refused', `${i}:${idn.reason || 'unknown'}`);
+          membro = { elementId: idn.elementId, propriedadeCss: kindE === 'attribute' ? String(e.property) : null };
+        } else {
+          return recusa('batch_member_refused', `${i}:unsupported_kind`);
         }
         validadas.push({
           element: e.element,
-          elementId: v.elementId,
-          // UM nome para o campo canonico nos dois caminhos — a chave unitaria
-          // usa `propriedadeCss` e o lote usava `property`: mesmo conteudo,
-          // nomes diferentes, um convite ao stringify de undefined (Sol).
-          propriedadeCss: v.propriedadeCss,
+          kind: kindE,
+          elementId: membro.elementId,
+          propriedadeCss: membro.propriedadeCss,
           before: e.before == null ? null : String(e.before),
           value: e.value == null ? null : String(e.value),
         });
       }
-      // Serialização canônica da entrada INTEIRA (com `before`): aprovar um
-      // lote e registrar outro com o mesmo bilhete não pode existir (Sol).
-      const chaveLote = JSON.stringify(validadas.map((v) => [v.elementId, v.propriedadeCss, normalizarValor(v.before), normalizarValor(v.value)]));
+      const chaveLote = JSON.stringify(validadas.map((v) => [v.kind, v.elementId, v.propriedadeCss, normalizarValor(v.before), normalizarValor(v.value)]));
       if (dryRun) {
         const bilhete = randomIdentity('batch-approval');
         aprovacoesDeEscrita.set(`batch:${chaveLote}`, bilhete);
@@ -8818,7 +8915,7 @@ function nativeMotionRuntimeBridge() {
         patches: validadas.map((v) => ({
           id: randomIdentity('patch'),
           elementId: v.elementId,
-          kind: 'style',
+          kind: v.kind,
           property: v.propriedadeCss,
           motionId: null,
           before: v.before,
