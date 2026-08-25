@@ -144,8 +144,15 @@ const EDITOR_CORE_FILES = [
   'fill-popup.js', 'editor.js',
 ];
 
+/**
+ * ⭐ LIGADO POR PADRÃO (decisão de produto do Adilson, 2026-08-25): o editor
+ * completo É o produto do clone — fontes, texto, imagem, fundo, com
+ * persistência e undo honestos, cada um provado no clone real. Desligar é
+ * opt-out explícito ('0'/'off'), para depurar ou comparar.
+ */
 export function fullEditorEnabled(env = process.env) {
-  return String(env.UNCRAFT_CLONE_FULL_EDITOR || '').trim() === '1';
+  const valor = String(env.UNCRAFT_CLONE_FULL_EDITOR || '').trim().toLowerCase();
+  return valor !== '0' && valor !== 'off' && valor !== 'false';
 }
 
 function fullEditorTags() {

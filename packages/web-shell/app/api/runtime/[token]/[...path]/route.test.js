@@ -22,7 +22,7 @@ vi.mock('../../../../../lib/native-clone/bundle-store.js', () => ({
   indexedAssetKey: (root, path) => `${root}/assets/${path}`,
 }));
 
-const { GET } = await import('./route.js');
+const { GET, POST, OPTIONS } = await import('./route.js');
 
 const NODE_ID = '11111111-1111-4111-8111-111111111111';
 const BUNDLE_ID = '22222222-2222-4222-8222-222222222222';
@@ -349,3 +349,80 @@ it('todo motivo escrito na rota esta no vocabulario fechado', async () => {
   const { TOKEN_VERIFICATION_ERRORS } = await import('../../../../../lib/motion-editor/runtime-session-token.js');
   for (const e of TOKEN_VERIFICATION_ERRORS) expect(MOTIVOS_DE_FALHA.has(`token_${e}`)).toBe(true);
 });
+// ── UPLOAD de imagem NOVA, por no' ───────────────────────────────────────────
+// O editor vive numa origem opaca sem cookies: a UNICA credencial dele e' o
+// token da sessao no caminho. O upload entra por POST no portao, guardado POR
+// NO' (sobrevive a rotacao de sessao e ao re-clone), nome por HASH do conteudo,
+// e so' raster FAREJADO pelos bytes magicos — o tipo declarado pelo cliente e'
+// desejo, nao fato; e SVG fica fora (carrega script).
+describe('POST _uploads — imagem nova para o clone', () => {
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82]);
+  function postReq(body, headers = {}) {
+    return new Request('http://runtime.test/api/runtime/signed-token/_uploads', {
+      method: 'POST', headers: { 'content-type': 'application/octet-stream', ...headers }, body,
+    });
+  }
+  it('token invalido e recusado inerte, como no GET', async () => {
+    verifyRuntimeSessionToken.mockReturnValueOnce({ error: 'expired' });
+    const r = await POST(postReq(PNG), context(['_uploads']));
+    expect(r.status).toBe(404);
+  });
+  it('farejamento decide: png entra com nome por hash; texto vestido de png nao', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    store.putImmutable = vi.fn(async () => ({}));
+    const ok = await POST(postReq(PNG, { 'content-type': 'image/png' }), context(['_uploads']));
+    expect(ok.status).toBe(200);
+    const json = await ok.json();
+    expect(json.path).toMatch(/^\.\/_uploads\/[0-9a-f]{16,}\.png$/);
+
+    sqlMock._results = [[runtimeRow()]];
+    const lixo = await POST(postReq(new TextEncoder().encode('<svg onload=alert(1)>'), { 'content-type': 'image/png' }), context(['_uploads']));
+    expect(lixo.status).toBe(415);
+  });
+  it('teto de tamanho recusa com 413', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    const grande = new Uint8Array(9 * 1024 * 1024);
+    grande.set(PNG.subarray(0, 8), 0);
+    const r = await POST(postReq(grande, { 'content-type': 'image/png' }), context(['_uploads']));
+    expect(r.status).toBe(413);
+  });
+});
+
+// A origem do editor e' OPACA: todo fetch dele chega com Origin: null e um
+// POST de Blob image/* dispara preflight. Sem OPTIONS + ACAO a resposta nem
+// e' legivel e o upload sempre cairia no fallback (Sol). Sem credenciais no
+// cabecalho (a capacidade E' o token no caminho), ACAO '*' e' seguro.
+describe('CORS do _uploads — origem opaca fala com o portao', () => {
+  it('OPTIONS responde o preflight', async () => {
+    const r = await OPTIONS(new Request('http://runtime.test/api/runtime/signed-token/_uploads', { method: 'OPTIONS' }), context(['_uploads']));
+    expect(r.status).toBe(204);
+    expect(r.headers.get('access-control-allow-origin')).toBe('*');
+    expect(r.headers.get('access-control-allow-methods')).toContain('POST');
+    expect(r.headers.get('access-control-allow-headers')).toContain('content-type');
+  });
+  it('POST e respostas de erro carregam ACAO (senao o frame nao LE o status)', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    store.putImmutable = vi.fn(async () => ({}));
+    const PNG2 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+    const ok = await POST(new Request('http://runtime.test/api/runtime/signed-token/_uploads', { method: 'POST', body: PNG2 }), context(['_uploads']));
+    expect(ok.headers.get('access-control-allow-origin')).toBe('*');
+    sqlMock._results = [[runtimeRow()]];
+    const lixo = await POST(new Request('http://runtime.test/api/runtime/signed-token/_uploads', { method: 'POST', body: 'texto' }), context(['_uploads']));
+    expect(lixo.status).toBe(415);
+    expect(lixo.headers.get('access-control-allow-origin')).toBe('*');
+  });
+});
+
+describe('GET _uploads — o portao serve o upload do no', () => {
+  it('serve pelo caminho _uploads com cache imutavel', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    const corpo = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    store.read.mockResolvedValueOnce(corpo);
+    const r = await GET(request('_uploads/abcdef0123456789.png'), context(['_uploads', 'abcdef0123456789.png']));
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-type')).toBe('image/png');
+    expect(r.headers.get('cache-control')).toContain('immutable');
+    expect(Array.from(new Uint8Array(await r.arrayBuffer()))).toEqual(Array.from(corpo));
+  });
+});
+

@@ -7535,6 +7535,27 @@
   // ANTES de tocar o DOM (recusa = nada muda + motivo na tela). O srcset é
   // LIMPO junto — senão o navegador o prefere ao src novo e a troca não
   // aparece. Fora do clone (sem porta), escreve direto como sempre.
+  // ⭐ IMAGEM NOVA sobe pro NÓ pelo próprio portão (POST ./_uploads, mesma
+  // credencial-token de todo GET): volta um caminho relativo pequeno e
+  // permanente, em vez de um data-url de megabytes dentro do manifesto. Falha
+  // de upload cai no data-url — funciona igual, só pesa mais.
+  function subirImagemNova(file, aoTerminar) {
+    if (typeof targetWin.__uncraftEditorCommit !== 'function' || !targetWin.fetch) {
+      var r0 = new FileReader();
+      r0.onload = function() { aoTerminar(r0.result); };
+      r0.readAsDataURL(file);
+      return;
+    }
+    targetWin.fetch('./_uploads', { method: 'POST', body: file })
+      .then(function(res) { return res.ok ? res.json() : Promise.reject(new Error('upload ' + res.status)); })
+      .then(function(json) { aoTerminar(json.path); })
+      .catch(function() {
+        var r1 = new FileReader();
+        r1.onload = function() { aoTerminar(r1.result); };
+        r1.readAsDataURL(file);
+      });
+  }
+
   function trocarSrcDaImagem(imgEl, novoSrc) {
     if (typeof targetWin.__uncraftEditorCommit !== 'function') {
       pushUndo({el: imgEl, prop: '__src', old: imgEl.src});
@@ -9254,11 +9275,9 @@
     finp.type = 'file'; finp.accept = 'image/*'; finp.style.display = 'none';
     finp.addEventListener('change', function(ev) {
       var f = ev.target.files[0]; if (!f) return;
-      var reader = new FileReader();
-      reader.onload = function() {
-        if (trocarSrcDaImagem(img, reader.result)) removeImgMenu();
-      };
-      reader.readAsDataURL(f);
+      subirImagemNova(f, function(srcNovo) {
+        if (trocarSrcDaImagem(img, srcNovo)) removeImgMenu();
+      });
     });
     repBtn.addEventListener('mousedown', function(e) { e.stopImmediatePropagation(); finp.click(); }, {capture: true});
 

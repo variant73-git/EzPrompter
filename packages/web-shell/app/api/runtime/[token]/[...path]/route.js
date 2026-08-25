@@ -184,6 +184,111 @@ function immutableCacheControl(expiresAtMs) {
   return `private, max-age=${remainingSeconds}, immutable`;
 }
 
+// ── UPLOAD de imagem NOVA, por nó ────────────────────────────────────────────
+// O editor vive numa origem opaca sem cookies: a única credencial dele é o
+// token da sessão no caminho — o mesmo que autoriza cada GET. O upload é
+// guardado POR NÓ (sobrevive à rotação de sessão e ao re-clone), com nome por
+// HASH do conteúdo, e só raster FAREJADO pelos bytes mágicos: o content-type
+// do cliente é desejo, não fato; SVG fica fora (carrega script).
+const UPLOAD_MAX_BYTES = 8 * 1024 * 1024;
+const UPLOAD_TIPOS = [
+  { ext: 'png', mime: 'image/png', magica: (b2) => b2.length > 7 && b2[0] === 0x89 && b2[1] === 0x50 && b2[2] === 0x4e && b2[3] === 0x47 },
+  { ext: 'jpg', mime: 'image/jpeg', magica: (b2) => b2.length > 2 && b2[0] === 0xff && b2[1] === 0xd8 && b2[2] === 0xff },
+  { ext: 'gif', mime: 'image/gif', magica: (b2) => b2.length > 5 && b2[0] === 0x47 && b2[1] === 0x49 && b2[2] === 0x46 && b2[3] === 0x38 },
+  { ext: 'webp', mime: 'image/webp', magica: (b2) => b2.length > 11 && b2[0] === 0x52 && b2[1] === 0x49 && b2[2] === 0x46 && b2[3] === 0x46 && b2[8] === 0x57 && b2[9] === 0x45 && b2[10] === 0x42 && b2[11] === 0x50 },
+  { ext: 'avif', mime: 'image/avif', magica: (b2) => b2.length > 11 && b2[4] === 0x66 && b2[5] === 0x74 && b2[6] === 0x79 && b2[7] === 0x70 && b2[8] === 0x61 && b2[9] === 0x76 && b2[10] === 0x69 && b2[11] === 0x66 },
+];
+const UPLOAD_MIME_POR_EXT = Object.fromEntries(UPLOAD_TIPOS.map((t) => [t.ext, t.mime]));
+const uploadStorageKey = (nodeId, nome) => `native-node-uploads/v1/${nodeId}/${nome}`;
+
+async function autorizarPorToken(request, resolved) {
+  const token = resolved?.token;
+  if (!runtimeRequestUsesConfiguredOrigin(request.url)) {
+    return { falha: inertFailure(request, 'wrong_runtime_origin', token) };
+  }
+  const verification = verifyRuntimeSessionToken(token);
+  if (verification.error) return { falha: inertFailure(request, `token_${verification.error}`, token) };
+  return { token, payload: verification.payload };
+}
+
+
+async function store_uploads_read(nodeId, nome) {
+  const store = createConfiguredBundleStore();
+  return Buffer.from(await store.read(uploadStorageKey(nodeId, nome)));
+}
+
+// A origem do editor é OPACA: todo fetch dele chega com Origin: null, e um
+// POST de Blob image/* dispara preflight. Sem OPTIONS + ACAO a resposta nem é
+// LEGÍVEL do lado de lá (o upload cairia sempre no fallback). Sem credencial
+// em cabeçalho — a capacidade É o token no caminho — ACAO '*' é seguro.
+const CORS_UPLOADS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'content-type',
+};
+function comCors(resposta) {
+  for (const [k, v] of Object.entries(CORS_UPLOADS)) resposta.headers.set(k, v);
+  return resposta;
+}
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS_UPLOADS });
+}
+
+export async function POST(request, { params }) {
+  const resolved = await params;
+  const auth = await autorizarPorToken(request, resolved);
+  if (auth.falha) return auth.falha;
+  const { token, payload } = auth;
+  const caminho = Array.isArray(resolved?.path) ? resolved.path.join('/') : String(resolved?.path || '');
+  if (caminho !== '_uploads') return inertFailure(request, 'asset_unavailable', token);
+
+  let sql;
+  try { sql = await db(); } catch { return inertFailure(request, 'database_unavailable', token, 503); }
+  let rows;
+  try {
+    rows = await sql`
+      SELECT e.id AS session_id, e.node_id
+        FROM native_motion_edit_sessions e
+       WHERE e.id = ${payload.sessionId}
+         AND e.node_id = ${payload.nodeId}
+         AND e.status = 'active'
+         AND e.expires_at > NOW()
+    `;
+  } catch { return inertFailure(request, 'database_unavailable', token, 503); }
+  if (!rows[0]) return inertFailure(request, 'session_scope_mismatch', token);
+
+  // Teto ANTES de materializar quando o cabeçalho existe; e sempre depois.
+  const declarado = Number(request.headers.get('content-length') || 0);
+  if (declarado > UPLOAD_MAX_BYTES) return comCors(new Response(null, { status: 413 }));
+  let corpo;
+  try { corpo = new Uint8Array(await request.arrayBuffer()); } catch { return comCors(new Response(null, { status: 400 })); }
+  if (!corpo.length) return comCors(new Response(null, { status: 400 }));
+  if (corpo.length > UPLOAD_MAX_BYTES) return comCors(new Response(null, { status: 413 }));
+  const tipo = UPLOAD_TIPOS.find((t) => t.magica(corpo));
+  if (!tipo) return comCors(new Response(JSON.stringify({ error: 'unsupported_image' }), { status: 415, headers: { 'content-type': 'application/json' } }));
+
+  const hash = createHash('sha256').update(corpo).digest('hex').slice(0, 32);
+  const nome = `${hash}.${tipo.ext}`;
+  const store = createConfiguredBundleStore();
+  try {
+    // putImmutable: mesmo conteúdo sob o mesmo nome é no-op idempotente (e o
+    // nome É o hash do conteúdo, então colisão de nome com bytes diferentes
+    // não existe por construção).
+    await store.putImmutable({
+      storageKey: uploadStorageKey(payload.nodeId, nome),
+      body: corpo,
+      contentType: tipo.mime,
+      contentHash: `sha256:${createHash('sha256').update(corpo).digest('hex')}`,
+    });
+  } catch (e) {
+    return comCors(new Response(null, { status: 500 }));
+  }
+  return comCors(new Response(JSON.stringify({ path: `./_uploads/${nome}` }), {
+    status: 200, headers: { 'content-type': 'application/json' },
+  }));
+}
+
 export async function GET(request, { params }) {
   const resolved = await params;
   const token = resolved?.token;
@@ -222,6 +327,24 @@ export async function GET(request, { params }) {
   }
   const row = rows[0];
   if (!row) return inertFailure(request, 'session_scope_mismatch', token);
+
+  // Upload do nó: caminho reservado `_uploads/<hash>.<ext>`, servido do store
+  // por nó — nunca colide com o bundle (o produtor não emite `_uploads/`).
+  const caminhoPedido = Array.isArray(resolved?.path) ? resolved.path.join('/') : String(resolved?.path || '');
+  if (/^_uploads\/[0-9a-f]{16,64}\.(?:png|jpe?g|gif|webp|avif)$/.test(caminhoPedido)) {
+    const nomeUp = caminhoPedido.slice('_uploads/'.length);
+    let corpoUp;
+    try {
+      corpoUp = await store_uploads_read(row.node_id, nomeUp);
+    } catch {
+      return inertFailure(request, 'asset_unavailable', token);
+    }
+    const headersUp = commonHeaders(request);
+    headersUp.set('Content-Type', UPLOAD_MIME_POR_EXT[nomeUp.split('.').pop() === 'jpeg' ? 'jpg' : nomeUp.split('.').pop()] || 'application/octet-stream');
+    headersUp.set('Cache-Control', immutableCacheControl(payload.expiresAtMs));
+    headersUp.set('Accept-Ranges', 'bytes');
+    return new Response(corpoUp, { headers: headersUp });
+  }
 
   let descriptor;
   let manifest;

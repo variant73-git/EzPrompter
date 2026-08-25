@@ -138,13 +138,14 @@ describe('native clone gateway', () => {
 
 // ── O editor completo dentro do clone ───────────────────────────────────────
 describe('editor completo no clone', () => {
-  it('fica DESLIGADO por padrao', () => {
-    expect(fullEditorEnabled({})).toBe(false);
+  // ⭐ LIGADO POR PADRAO (decisao de produto do Adilson, 2026-08-25): o editor
+  // completo E' o produto do clone — fontes, texto, imagem, fundo, tudo com
+  // persistencia e undo honestos, provados. Desligar vira opt-out ('0'/'off').
+  it('fica LIGADO por padrao, com opt-out explicito', () => {
+    expect(fullEditorEnabled({})).toBe(true);
     expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: '0' })).toBe(false);
+    expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: 'off' })).toBe(false);
     expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: '1' })).toBe(true);
-    // O contrato e' que os ARQUIVOS nao entrem — a string solta agora aparece
-    // num comentario da ponte, e assertar nela mediria a prosa, nao a injecao.
-    expect(injectRuntimeBridge('<html><body></body></html>')).not.toContain('/editor-core/');
   });
 
   it('entra por caminho ABSOLUTO na origem do runtime', () => {
@@ -203,8 +204,17 @@ describe('o clone continua se mexendo enquanto se edita', () => {
   // A extensao e o editor legado do canvas FORCAM false — eles sao os ultimos a
   // escrever antes do editor subir. Sem isso, um site qualquer da internet
   // poderia declarar a chave e escapar do congelamento (Sol r3).
-  it('so o gateway do clone liga o preservador', () => {
-    const semEditor = injectRuntimeBridge('<html><body></body></html>');
-    expect(semEditor).not.toContain('preserveMotion');
+  it('so o gateway do clone liga o preservador — e o opt-out desliga junto', () => {
+    // padrao = editor ligado = preservador junto
+    expect(injectRuntimeBridge('<html><body></body></html>')).toContain('preserveMotion');
+    // opt-out do editor tira o preservador tambem
+    const antes = process.env.UNCRAFT_CLONE_FULL_EDITOR;
+    process.env.UNCRAFT_CLONE_FULL_EDITOR = '0';
+    try {
+      expect(injectRuntimeBridge('<html><body></body></html>')).not.toContain('preserveMotion');
+    } finally {
+      if (antes === undefined) delete process.env.UNCRAFT_CLONE_FULL_EDITOR;
+      else process.env.UNCRAFT_CLONE_FULL_EDITOR = antes;
+    }
   });
 });
