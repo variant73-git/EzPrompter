@@ -260,8 +260,9 @@ function WebsiteActions({ node, onEditSite, onUpgradeRequired, plan, busy = fals
     : `${actionName}, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`;
   return (
     <div className="cinsp-primary-action">
+      {/* Sem título: a tag de tipo logo acima já diz "website" — repetir era
+          ruído (pedido de 2026-08-25). O corpo explicativo fica. */}
       <div>
-        <span>Website</span>
         <p>Open the visual editor or inspect the current result in a clean browser tab.</p>
       </div>
       <button
@@ -364,7 +365,7 @@ export default function CanvasInspector({
       </div>
 
       <div className="cinsp-selection">
-        <span className="cinsp-type-chip" style={{ color, borderColor: `${color}66`, background: `${color}18` }}>{readableKind(node)}</span>
+        <span className="cinsp-type-chip" style={{ color: '#fff', borderColor: color, background: color }}>{readableKind(node)}</span>
         <span className="cinsp-selection-name" title={nodeLabel(node)}>{nodeLabel(node)}</span>
       </div>
 

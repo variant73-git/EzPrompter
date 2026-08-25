@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { placeStackDown, placeRightOfSources, resolvePlacement, planSectionDeoverlap, clampFrameToNeighbors, clampMoveToNeighbors, planChainLayout, placeChainOnBoard } from './canvas-layout.js';
+import { placeStackDown, placeRightOfSources, resolvePlacement, planSectionDeoverlap, clampFrameToNeighbors, clampMoveToNeighbors, planChainLayout, placeChainOnBoard, resolveNodeDropPosition } from './canvas-layout.js';
 
 // The placement helpers call `sql` as a tagged template and return rows.
 // A fake that ignores the template and resolves to a fixed row set is enough.
@@ -462,3 +462,61 @@ describe('placeChainOnBoard (whole-chain area reserved before insert)', () => {
     expect(pos).toEqual({ x: 0, y: 0 });
   });
 });
+// ── Pouso sem toque: nodes soltos nunca terminam sobrepostos ─────────────────
+// Pedido do Adilson (2026-08-25): nodes nao se tocam nem se sobrepoem. O
+// resolvedor age NO DROP, movendo SO o node solto para o ponto livre mais
+// proximo com folga — nunca empurra os outros (mexer no que o usuario nao
+// tocou e' surpresa).
+describe('resolveNodeDropPosition', () => {
+  const NO = (x, y, w = 100, h = 80) => ({ x, y, w, h });
+
+  it('sem conflito, devolve a posicao pedida', () => {
+    const r = resolveNodeDropPosition(NO(0, 0), [NO(500, 500)], 16);
+    expect(r).toEqual({ x: 0, y: 0 });
+  });
+
+  it('sobreposicao resolve pelo menor empurrao, com a folga incluida', () => {
+    // candidato encavalado 20px na esquerda do obstaculo → sai pela esquerda
+    const r = resolveNodeDropPosition(NO(420, 0), [NO(500, 0)], 16);
+    expect(r.y).toBe(0);
+    expect(r.x).toBe(500 - 100 - 16);   // encostado com folga, lado mais perto
+  });
+
+  it('tocar sem sobrepor tambem resolve — a folga e obrigatoria', () => {
+    const r = resolveNodeDropPosition(NO(400, 0), [NO(500, 0)], 16);
+    expect(r.x).toBe(500 - 100 - 16);
+  });
+
+  it('dois obstaculos em L: iterativo ate ficar livre dos DOIS', () => {
+    const obst = [NO(500, 0), NO(384, 96)];
+    const r = resolveNodeDropPosition(NO(440, 40), obst, 16);
+    for (const o of obst) {
+      const semFolga = r.x + 100 + 16 <= o.x || o.x + o.w + 16 <= r.x
+        || r.y + 80 + 16 <= o.y || o.y + o.h + 16 <= r.y;
+      expect(semFolga).toBe(true);
+    }
+  });
+
+  // O caso do Sol: 201 obstaculos empilhados — o teto fixo (200) devolvia em
+  // cima do ultimo. Monotonico com teto N+1: sempre termina LIVRE de todos.
+  it('201 obstaculos empilhados terminam livres — sem teto fixo furavel', () => {
+    const obst = Array.from({ length: 201 }, (_, i) => NO(0, i * 26, 10, 10));
+    const r = resolveNodeDropPosition(NO(0, 0, 10, 10), obst, 16);
+    for (const o of obst) {
+      const livre = r.x + 10 + 16 <= o.x || o.x + o.w + 16 <= r.x
+        || r.y + 10 + 16 <= o.y || o.y + o.h + 16 <= r.y;
+      expect(livre).toBe(true);
+    }
+  });
+
+  it('cercado por todos os lados nao trava: cai no empurrao para baixo', () => {
+    const obst = [NO(340, 40), NO(560, 40), NO(450, -60), NO(450, 140)];
+    const r = resolveNodeDropPosition(NO(450, 40), obst, 16);
+    for (const o of obst) {
+      const livre = r.x + 100 + 16 <= o.x || o.x + o.w + 16 <= r.x
+        || r.y + 80 + 16 <= o.y || o.y + o.h + 16 <= r.y;
+      expect(livre).toBe(true);
+    }
+  });
+});
+

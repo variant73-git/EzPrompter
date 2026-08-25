@@ -506,3 +506,48 @@ export async function placeChainAtAnchor(boardId, anchorNodeId, w, h, sql) {
   const candidateY = Math.round((anchor.pos_y ?? 0) + (anchor.height ?? 0) / 2 - h / 2);
   return resolveDownCollision(x, candidateY, w, h, obstacles, clearGapFor(rows.length));
 }
+
+
+// ── Pouso sem toque ──────────────────────────────────────────────────────────
+// Pedido do Adilson (2026-08-25): nodes não se tocam nem se sobrepõem. Este
+// resolvedor age NO DROP, movendo SÓ o node solto para o ponto livre mais
+// próximo com folga — nunca empurra os outros: mexer no que o usuário não
+// tocou é surpresa. Iterativo (sair de um obstáculo pode entrar noutro),
+// com teto de passos; se cercado, cai no empurrão para baixo — a mesma
+// direção que a colocação de nós novos já usa, então nunca trava.
+export const NODE_DROP_GAP = 16;
+
+export function resolveNodeDropPosition(candidato, obstaculos, gap = NODE_DROP_GAP) {
+  let { x, y } = candidato;
+  const { w, h } = candidato;
+  const conflita = (ox) => !(x + w + gap <= ox.x || ox.x + ox.w + gap <= x
+    || y + h + gap <= ox.y || ox.y + ox.h + gap <= y);
+  for (let passo = 0; passo < 24; passo += 1) {
+    const alvo = (obstaculos || []).find(conflita);
+    if (!alvo) return { x, y };
+    // menor empurrão que separa do alvo COM a folga, eixo a eixo
+    const paraEsquerda = (x + w) - alvo.x + gap;          // mover -x isto
+    const paraDireita = (alvo.x + alvo.w) - x + gap;      // mover +x isto
+    const paraCima = (y + h) - alvo.y + gap;              // mover -y isto
+    const paraBaixo = (alvo.y + alvo.h) - y + gap;        // mover +y isto
+    const menor = Math.min(paraEsquerda, paraDireita, paraCima, paraBaixo);
+    if (menor === paraEsquerda) x -= paraEsquerda;
+    else if (menor === paraDireita) x += paraDireita;
+    else if (menor === paraCima) y -= paraCima;
+    else y += paraBaixo;
+  }
+  // Cercado (o laço não assentou): empurra direto para baixo até limpar tudo —
+  // determinístico e alinhado com a colocação de nós novos.
+  let baixoY = candidato.y;
+  // Cada passo salta para BAIXO do obstáculo que conflita — progressão
+  // estritamente monotônica: com N obstáculos, N+1 passos bastam (depois do
+  // fundo mais baixo não há mais conflito possível). Teto fixo (200) devolvia
+  // em cima do 201º obstáculo num canvas patológico (Sol).
+  for (let passo = 0; passo <= (obstaculos ? obstaculos.length : 0); passo += 1) {
+    const alvo = (obstaculos || []).find((ox) => !(candidato.x + w + gap <= ox.x
+      || ox.x + ox.w + gap <= candidato.x || baixoY + h + gap <= ox.y || ox.y + ox.h + gap <= baixoY));
+    if (!alvo) break;
+    baixoY = alvo.y + alvo.h + gap;
+  }
+  return { x: candidato.x, y: baixoY };
+}

@@ -109,3 +109,23 @@ describe('CanvasInspector', () => {
     expect(screen.getByRole('link', { name: 'Open in Browser' }).getAttribute('href')).toBe('/preview/site-1');
   });
 });
+// Ajustes de UX de 2026-08-25 (com o print do Adilson como referencia):
+// a tag de tipo ja diz "website" — o titulo repetido saiu; e a tag e
+// PREENCHIDA com a cor da categoria, texto branco (era outline).
+describe('inspector sem redundancia e com tag preenchida', () => {
+  it('nao repete o titulo "Website" no bloco de acao', () => {
+    render(<CanvasInspector node={site} plan="pro" />);
+    const acoes = document.querySelector('.cinsp-primary-action');
+    expect(acoes).toBeTruthy();
+    expect(acoes.querySelector('div > span')).toBeNull();
+    expect(acoes.textContent).toContain('Open the visual editor');
+  });
+  it('a tag de tipo e preenchida com a cor da categoria e texto branco', () => {
+    render(<CanvasInspector node={site} plan="pro" />);
+    const chip = document.querySelector('.cinsp-type-chip');
+    expect(chip.style.color).toBe('rgb(255, 255, 255)');
+    expect(chip.style.background).not.toBe('');
+    expect(chip.style.background).toBe(chip.style.borderColor);
+  });
+});
+

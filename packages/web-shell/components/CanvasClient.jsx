@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } fr
 import { createPortal } from 'react-dom';
 import { Check, CloudCheck, Monitor, Smartphone, Tablet, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { nodeOrigin, originColor } from '../lib/node-origin.js';
+import { resolveNodeDropPosition } from '../lib/canvas-layout.js';
 import { imageUrlFromPastedHtml, looksLikeImageUrl } from '../lib/pasted-image.js';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
@@ -1432,6 +1433,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   }
 
   async function handleNodeMoveEnd(node, moved) {
+    const eraDragDeGrupo = Boolean(groupDragRef.current && groupDragRef.current.anchorId === node.id && groupDragRef.current.members?.length);
     groupDragRef.current = null;
     // Unfreeze membership — from here the next render re-derives sections from
     // live positions (the node has settled), so adoption/release lands once.
@@ -1462,8 +1464,29 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     }
 
     if (!moved || !drag || drag.nodeId !== node.id) return;
-    const finalX = drag.lastX;
-    const finalY = drag.lastY;
+    let finalX = drag.lastX;
+    let finalY = drag.lastY;
+    // ⭐ POUSO SEM TOQUE (pedido de 2026-08-25): um node solto nunca termina
+    // sobreposto nem encostado noutro — resolve para o ponto livre mais
+    // próximo com folga, mexendo SÓ no que o usuário arrastou. Vale para o
+    // drop LIVRE; drop em seção segue as regras da seção (adoção logo abaixo).
+    // (v1: drag de GRUPO fica fora — resolver membro a membro quebraria o
+    // arranjo interno do grupo; iteração própria se o uso pedir.)
+    if (!eraDragDeGrupo && !(preview && preview.nodeId === node.id)) {
+      const comoCaixa = (r) => ({ x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top });
+      const rectSolto = comoCaixa(nodeWorldRect(node, finalX, finalY));
+      const obst = nodes
+        .filter((o) => o.id !== node.id)
+        .map((o) => comoCaixa(nodeWorldRect(o, o.pos_x, o.pos_y)));
+      const pousado = resolveNodeDropPosition(rectSolto, obst);
+      const dx = pousado.x - rectSolto.x;
+      const dy = pousado.y - rectSolto.y;
+      if (dx || dy) {
+        finalX += dx;
+        finalY += dy;
+        updateNodeLocal(node.id, { pos_x: finalX, pos_y: finalY });
+      }
+    }
 
     // Combined position+meta PATCH for both commit paths below — the
     // debounced position PATCH must be cancelled first, otherwise its
