@@ -22,7 +22,7 @@ vi.mock('../../../../../lib/native-clone/bundle-store.js', () => ({
   indexedAssetKey: (root, path) => `${root}/assets/${path}`,
 }));
 
-const { GET, POST, OPTIONS } = await import('./route.js');
+const { GET, POST, OPTIONS, __limparCacheDeSessaoParaTestes, __tamanhoDoCacheParaTestes } = await import('./route.js');
 
 const NODE_ID = '11111111-1111-4111-8111-111111111111';
 const BUNDLE_ID = '22222222-2222-4222-8222-222222222222';
@@ -76,6 +76,7 @@ function context(path = ['index.html'], token = 'signed-token') {
 }
 
 beforeEach(() => {
+  __limparCacheDeSessaoParaTestes();
   verifyRuntimeSessionToken.mockReset();
   verifyRuntimeSessionToken.mockReturnValue({
     payload: {
@@ -425,4 +426,56 @@ describe('GET _uploads — o portao serve o upload do no', () => {
     expect(Array.from(new Uint8Array(await r.arrayBuffer()))).toEqual(Array.from(corpo));
   });
 });
+// ── O CUSTO DO PORTAO: uma pergunta ao banco POR ARQUIVO ─────────────────────
+// Cada pedido de asset consultava a linha da sessao INTEIRA — com asset_index
+// (365 itens, ~70-100KB) e draft_manifest — toda vez. Um clone aberto ≈ 370
+// consultas ≈ dezenas de MB de trafego de banco POR ABERTURA; foi isso que
+// estourou a cota do Neon em dois dias de provas. Cache por TOKEN com TTL
+// CURTO: a primeira consulta paga, as ~369 seguintes leem da memoria.
+// ⚠️ TRADEOFF DECLARADO: a revogacao (status/expires na linha, decisao de
+// 2026-08-20) passa a valer em ate TTL segundos — 20s contra um token de 4h.
+describe('cache curto da sessao no portao', () => {
+  it('N pedidos do mesmo token = UMA consulta ao banco dentro do TTL', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    const antes = sqlMock.mock.calls.length;
+    const bytes = new TextEncoder().encode('x');
+    store.read.mockResolvedValue(bytes);
+    await GET(request('media/a.webp'), context(['media', 'a.webp']));
+    await GET(request('media/b.webp'), context(['media', 'b.webp']));
+    await GET(request('media/a.webp'), context(['media', 'a.webp']));
+    const consultas = sqlMock.mock.calls.length - antes;
+    expect(consultas).toBe(1);
+  });
+  it('hit no cache serve MESMO com o banco fora (e para isso o cache existe)', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    const bytes = new TextEncoder().encode('x');
+    store.read.mockResolvedValue(bytes);
+    await GET(request('media/a.webp'), context(['media', 'a.webp']));   // popula
+    sqlMock.mockImplementationOnce(() => Promise.reject(new Error('quota')));
+    const r = await GET(request('media/b.webp'), context(['media', 'b.webp']));
+    expect(r.status).toBe(200);   // hit: nem tocou o banco
+  });
+
+  it('o teto de 64 expulsa o mais antigo — o cache nao cresce sem fim', async () => {
+    const bytes = new TextEncoder().encode('x');
+    store.read.mockResolvedValue(bytes);
+    for (let i = 0; i < 70; i += 1) {
+      sqlMock._results = [[runtimeRow()]];
+      await GET(new Request(`http://runtime.test/api/runtime/token-${i}/media/a.webp`),
+        { params: Promise.resolve({ token: `token-${i}`, path: ['media', 'a.webp'] }) });
+    }
+    expect(__tamanhoDoCacheParaTestes()).toBeLessThanOrEqual(64);
+  });
+
+  it('token DIFERENTE nao le o cache alheio', async () => {
+    sqlMock._results = [[runtimeRow()], [runtimeRow()]];
+    const antes = sqlMock.mock.calls.length;
+    const bytes = new TextEncoder().encode('x');
+    store.read.mockResolvedValue(bytes);
+    await GET(request('media/a.webp'), context(['media', 'a.webp']));
+    await GET(new Request('http://runtime.test/api/runtime/outro-token/media/a.webp'), { params: Promise.resolve({ token: 'outro-token', path: ['media', 'a.webp'] }) });
+    expect(sqlMock.mock.calls.length - antes).toBe(2);
+  });
+});
+
 

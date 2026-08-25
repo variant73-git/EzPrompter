@@ -289,6 +289,41 @@ export async function POST(request, { params }) {
   }));
 }
 
+// ⚠️ O CUSTO DO PORTÃO: uma consulta ao banco POR ARQUIVO — e a resposta
+// carregava a linha INTEIRA (asset_index de centenas de itens + manifesto)
+// toda vez. Um clone aberto ≈ 370 consultas ≈ dezenas de MB de tráfego POR
+// ABERTURA; foi isso que estourou a cota do Neon em dois dias de provas.
+// Cache por TOKEN com TTL curto: a 1ª consulta paga, as demais leem daqui.
+//
+// TRADEOFF DECLARADO: a revogação (status/expires na LINHA, decisão de
+// 2026-08-20) passa a valer em até TTL segundos — 20s contra um token de 4h,
+// na mesma classe do cache do navegador que já não a via. Falha NÃO entra no
+// cache (miss recusado volta ao banco no pedido seguinte).
+const CACHE_SESSAO_TTL_MS = 20_000;
+const CACHE_SESSAO_MAX = 64;
+const cacheDeSessao = new Map();   // token -> { row, at }
+function lerSessaoDoCache(token) {
+  const hit = cacheDeSessao.get(token);
+  if (!hit) return null;
+  if (Date.now() - hit.at > CACHE_SESSAO_TTL_MS) { cacheDeSessao.delete(token); return null; }
+  return hit.row;
+}
+/** Só para testes: o cache é de módulo e vazaria entre casos. */
+export function __limparCacheDeSessaoParaTestes() {
+  cacheDeSessao.clear();
+}
+/** Só para testes: prova do teto sem expor o Map. */
+export function __tamanhoDoCacheParaTestes() {
+  return cacheDeSessao.size;
+}
+
+function guardarSessaoNoCache(token, row) {
+  cacheDeSessao.set(token, { row, at: Date.now() });
+  if (cacheDeSessao.size > CACHE_SESSAO_MAX) {
+    cacheDeSessao.delete(cacheDeSessao.keys().next().value);
+  }
+}
+
 export async function GET(request, { params }) {
   const resolved = await params;
   const token = resolved?.token;
@@ -299,15 +334,15 @@ export async function GET(request, { params }) {
   if (verification.error) return inertFailure(request, `token_${verification.error}`, token);
   const payload = verification.payload;
 
-  let sql;
-  try {
-    sql = await db();
-  } catch {
-    return inertFailure(request, 'database_unavailable', token, 503);
-  }
+  const emCache = lerSessaoDoCache(token);
+  // Hit no cache NÃO toca o banco — nem o handle: pegar `db()` no hit fazia
+  // um hit falhar 503 com banco fora, e o cache existe exatamente para o
+  // pedido não depender do banco (Sol).
   let rows;
   try {
-    rows = await sql`
+    let sql;
+    if (!emCache) sql = await db();
+    rows = emCache ? [emCache] : await sql`
       SELECT e.id AS session_id, e.node_id, e.status AS session_status, e.draft_manifest,
              nb.bundle_id, nb.schema_version, nb.storage_key, nb.content_hash,
              nb.entry_path, nb.asset_index, nb.runtime_fingerprint,
@@ -327,6 +362,7 @@ export async function GET(request, { params }) {
   }
   const row = rows[0];
   if (!row) return inertFailure(request, 'session_scope_mismatch', token);
+  if (!emCache) guardarSessaoNoCache(token, row);
 
   // Upload do nó: caminho reservado `_uploads/<hash>.<ext>`, servido do store
   // por nó — nunca colide com o bundle (o produtor não emite `_uploads/`).
