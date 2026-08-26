@@ -125,6 +125,25 @@ describe('GET /api/runtime/[token]/[...path]', () => {
     expect(response.headers.get('strict-transport-security')).toContain('includeSubDomains');
   });
 
+  it('refuses any request carrying Service-Worker: script (registration fetch) with 403 no-store', async () => {
+    // Enforcement, não intenção (spec §4): com allow-same-origin o script
+    // capturado pode tentar registrar SW; o fetch de registro carrega este
+    // header e é o ponto de recusa determinístico. worker-src não serve —
+    // não distingue Worker legítimo de ServiceWorker.
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(new TextEncoder().encode('// sw'));
+    const response = await GET(request('assets/app.js', { 'service-worker': 'script' }), context(['assets', 'app.js']));
+    expect(response.status).toBe(403);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('the same path WITHOUT the Service-Worker header serves normally (control arm)', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(new TextEncoder().encode('plain-text-body'));
+    const response = await GET(request('media/a.webp', {}), context(['media', 'a.webp']));
+    expect(response.status).toBe(200);
+  });
+
   it('only serves sessions that have not expired server-side (defect 1, 2026-08-20)', async () => {
     // The runtime token now lives 4h; the session row is the revocation
     // authority, so the gateway query must also enforce expires_at.

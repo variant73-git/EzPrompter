@@ -210,6 +210,18 @@ export async function serveRuntimeAsset({
 }) {
   const corsOptions = { corsWildcard };
 
+  // RECUSA de service worker por ENFORCEMENT, não intenção (spec §4): o fetch
+  // de registro de SW carrega `Service-Worker: script` — recusar AQUI vale
+  // para os dois caminhos (no legado de origem opaca é inalcançável hoje; com
+  // `allow-same-origin` o script capturado pode tentar). `worker-src` não
+  // serve de fronteira: não distingue Worker legítimo de ServiceWorker.
+  if (request.headers.get('service-worker')) {
+    recordFailure('service_worker_refused', credential);
+    const headers = commonHeaders(request, corsOptions);
+    headers.set('Cache-Control', 'no-store');
+    return new Response(null, { status: 403, headers });
+  }
+
   // Upload do nó: caminho reservado `_uploads/<hash>.<ext>`, servido do store
   // por nó — nunca colide com o bundle (o produtor não emite `_uploads/`).
   const caminhoPedido = Array.isArray(pathSegments) ? pathSegments.join('/') : String(pathSegments || '');
