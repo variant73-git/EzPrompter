@@ -2012,6 +2012,26 @@ export function useNativeMotionController({
       code,
       controlId: runtimeRecoveryRef.current?.controlId || pendingControlRecoveryRef.current?.controlId || null,
     }),
+    // Reload pedido pelo HUMANO na máscara: orçamento de recuperação zerado
+    // (a exaustão automática não pune o clique) e uma requisição fresca de
+    // reabertura — o viewport re-POSTa a sessão e remonta o iframe; sucesso
+    // anuncia runtime-ready (RELOADING -> ativo), falha re-esgota e a máquina
+    // devolve MASKED, nunca teardown.
+    reloadRuntime: () => {
+      if (editState.value !== EDIT_STATES.MASKED) return;
+      transitionEditor({ type: 'runtime-reload-requested' });
+      recoveryPolicyRef.current = createRecoveryPolicy();
+      setPatchError(null);
+      const request = {
+        requestId: ++recoverySequenceRef.current,
+        attempt: 0,
+        code: 'user_reload',
+        exhausted: false,
+      };
+      runtimeRecoveryRef.current = request;
+      setRuntimeRecovery(request);
+      setStatus('recovering');
+    },
     send,
     describeElement: (elementId) => send('describe-element', { elementId }),
     selectElement: (elementId) => send('select-element', { elementId }),

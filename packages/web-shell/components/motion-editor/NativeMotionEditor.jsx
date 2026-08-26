@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { ContextMenu, useContextMenu } from './ContextMenu.jsx';
+import RuntimeMask from './RuntimeMask.jsx';
 import Link from 'next/link';
 import {
   AlignCenter,
@@ -2353,6 +2354,7 @@ export default function NativeMotionEditor({
     [runtimeUrl],
   );
   const [activeTab, setActiveTab] = useState('properties');
+  const [labReloadTick, setLabReloadTick] = useState(0);
   const [stageSize, setStageSize] = useState({ width: 1000, height: 800 });
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [timelineZoom, setTimelineZoom] = useState(1);
@@ -2607,14 +2609,25 @@ export default function NativeMotionEditor({
                 transform: `scale(${viewportScale})`,
               }}
             >
-              <iframe
-                ref={iframeRef}
-                title="Native animated website runtime"
-                src={runtimeUrl}
-                sandbox="allow-scripts allow-pointer-lock"
-                referrerPolicy="no-referrer"
-                onLoad={commands.markRuntimeLoaded}
-              />
+              {/* Paridade com o viewport do produto: MASKED desmonta o iframe
+                  (mata o documento morto); aqui o src é fixture estática, então
+                  o reload é remontagem por key. */}
+              {controller.editState?.value === 'masked' ? (
+                <RuntimeMask onReload={() => {
+                  setLabReloadTick((tick) => tick + 1);
+                  commands.reloadRuntime?.();
+                }} />
+              ) : (
+                <iframe
+                  key={labReloadTick}
+                  ref={iframeRef}
+                  title="Native animated website runtime"
+                  src={runtimeUrl}
+                  sandbox="allow-scripts allow-pointer-lock"
+                  referrerPolicy="no-referrer"
+                  onLoad={commands.markRuntimeLoaded}
+                />
+              )}
             </div>
           </div>
 

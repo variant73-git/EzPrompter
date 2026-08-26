@@ -5,11 +5,13 @@ const changeDevice = vi.fn();
 const markRuntimeLoaded = vi.fn();
 const resetSession = vi.fn();
 const reportRuntimeRecoveryFailure = vi.fn();
+const reloadRuntime = vi.fn();
 const iframeRef = { current: null };
 let controllerStatus = 'loading';
 let runtimeRecovery = null;
 let recoveryNotice = null;
 let patchError = null;
+let editState = { value: 'navigating' };
 
 vi.mock('./useNativeMotionController.js', () => ({
   useNativeMotionController: vi.fn(() => ({
@@ -19,8 +21,8 @@ vi.mock('./useNativeMotionController.js', () => ({
     recoveryNotice,
     patchError,
     mode: 'edit',
-    editState: { value: 'navigating' },
-    commands: { changeDevice, markRuntimeLoaded, resetSession, reportRuntimeRecoveryFailure },
+    editState,
+    commands: { changeDevice, markRuntimeLoaded, resetSession, reportRuntimeRecoveryFailure, reloadRuntime },
   })),
 }));
 
@@ -45,11 +47,13 @@ beforeEach(() => {
   markRuntimeLoaded.mockReset();
   resetSession.mockReset();
   reportRuntimeRecoveryFailure.mockReset();
+  reloadRuntime.mockReset();
   iframeRef.current = null;
   controllerStatus = 'loading';
   runtimeRecovery = null;
   recoveryNotice = null;
   patchError = null;
+  editState = { value: 'navigating' };
   vi.stubGlobal('fetch', vi.fn(async (url) => runtimeResponse(String(url).split('/')[3])));
 });
 
@@ -149,6 +153,48 @@ describe('NativeEditViewport', () => {
     rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
     expect(screen.getByRole('alert').textContent).toBe("This change couldn't be applied. The previous value was restored.");
     expect(screen.queryByText(/retry|repair|regenerate/i)).toBeNull();
+  });
+
+  it('masks in place on mid-edit failure: no teardown report, iframe unmounted, work message shown', async () => {
+    const onUnavailable = vi.fn();
+    const { rerender } = render(
+      <NativeEditViewport nodeId="node-a" deviceId="desktop" onUnavailable={onUnavailable} />,
+    );
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+
+    controllerStatus = 'unavailable';
+    runtimeRecovery = { requestId: 2, attempt: 2, exhausted: true };
+    editState = { value: 'masked', code: 'runtime_recovery_exhausted' };
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" onUnavailable={onUnavailable} />);
+
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    expect(screen.getByText(/your edits are safe/i)).toBeTruthy();
+    expect(screen.queryByTitle('Native animated website runtime')).toBeNull();
+    expect(onUnavailable).not.toHaveBeenCalled();
+  });
+
+  it('the mask reload button asks the controller to reload the runtime', async () => {
+    const { rerender } = render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+
+    controllerStatus = 'unavailable';
+    runtimeRecovery = { requestId: 2, attempt: 2, exhausted: true };
+    editState = { value: 'masked', code: 'x' };
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    fireEvent.click(screen.getByRole('button', { name: /reload/i }));
+    expect(reloadRuntime).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the mask up while a reload attempt is in flight (RELOADING renders the mask, button disabled)', async () => {
+    const { rerender } = render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+
+    controllerStatus = 'recovering';
+    runtimeRecovery = { requestId: 3, attempt: 0, exhausted: false };
+    editState = { value: 'reloading', code: 'x' };
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /reloading/i }).disabled).toBe(true);
   });
 
   it('returns a failed automatic reopen to the controller instead of exposing recovery choices', async () => {

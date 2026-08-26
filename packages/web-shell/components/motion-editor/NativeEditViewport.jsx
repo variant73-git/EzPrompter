@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { getMotionEditorDevice } from '../../lib/motion-editor/devices.js';
+import { EDIT_STATES } from '../../lib/motion-editor/edit-state-machine.js';
 import { useNativeMotionEditSession } from './NativeMotionEditChrome.jsx';
 import { useNativeMotionController } from './useNativeMotionController.js';
+import RuntimeMask from './RuntimeMask.jsx';
 import { toast } from '../Toast.jsx';
 
 const EMPTY_PERSISTENCE = Object.freeze({
@@ -47,11 +49,25 @@ function NativeEditViewportRuntime({
     commands.changeDevice(device.id);
   }, [commands, device.id]);
 
+  // O ESTADO da máquina decide máscara×teardown, não este componente: com o
+  // runtime já anunciado neste mount, a exaustão vira MASKED (editor fica de
+  // pé, trabalho preservado) e NADA é reportado ao canvas — reportar era
+  // exatamente o caminho que desmontava tudo com toast. UNAVAILABLE (falha de
+  // ABERTURA, sem trabalho a poupar) mantém o teardown de sempre.
+  const machineValue = controller.editState?.value;
+  const masked = machineValue === EDIT_STATES.MASKED;
+  const reloadingRuntime = machineValue === EDIT_STATES.RELOADING;
+
   useEffect(() => {
+    if (masked || reloadingRuntime) return;
     if (status === 'unavailable' && controller.runtimeRecovery?.exhausted) {
       reportUnavailable('runtime_recovery_exhausted');
     }
-  }, [controller.runtimeRecovery?.exhausted, status]);
+  }, [controller.runtimeRecovery?.exhausted, status, masked, reloadingRuntime]);
+
+  useEffect(() => {
+    if (masked) busyRef.current?.(false);
+  }, [masked]);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -161,7 +177,11 @@ function NativeEditViewportRuntime({
         background: '#191917',
       }}
     >
-      {loadState === 'unavailable' ? (
+      {masked ? (
+        // Terminal: iframe DESMONTADO de propósito — mata o JS e a rede do
+        // documento morto; um Reload monta um documento FRESCO de URL nova.
+        <RuntimeMask onReload={() => commands.reloadRuntime?.()} />
+      ) : loadState === 'unavailable' ? (
         <div
           role="alert"
           style={{
@@ -259,7 +279,14 @@ function NativeEditViewportRuntime({
               {controller.patchError}
             </div>
           )}
+          {reloadingRuntime && (
+            // Durante o reload o iframe PRECISA estar montado (é ele que carrega
+            // a URL nova e anuncia ready) — a máscara fica por cima, desarmada.
+            <RuntimeMask reloading onReload={() => {}} />
+          )}
         </>
+      ) : reloadingRuntime ? (
+        <RuntimeMask reloading onReload={() => {}} />
       ) : (
         <div
           role="status"
