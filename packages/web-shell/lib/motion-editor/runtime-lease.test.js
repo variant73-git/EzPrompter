@@ -1,10 +1,18 @@
+import { createHash } from 'node:crypto';
 import jwt from 'jsonwebtoken';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BOOTSTRAP_BADGE_TTL_SECONDS,
   LEASE_TTL_SECONDS,
+  createLeaseFromBadge,
+  leaseCookieHeader,
+  leaseCookieName,
   mintBootstrapBadge,
+  reapExpiredLeases,
+  renewLease,
+  revokeLeasesForSession,
   verifyBootstrapBadge,
+  verifyLease,
 } from './runtime-lease.js';
 import { issueRuntimeSessionToken, verifyRuntimeSessionToken } from './runtime-session-token.js';
 
@@ -108,5 +116,142 @@ describe('bootstrap badge (one-shot, session:bootstrap)', () => {
 
   it('lease TTL constant matches the sliding design (4h, renewed by the app)', () => {
     expect(LEASE_TTL_SECONDS).toBe(4 * 60 * 60);
+  });
+});
+
+function sha256hex(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function createSql(results = []) {
+  const calls = [];
+  const sql = vi.fn((strings, ...values) => {
+    const text = Array.isArray(strings) ? strings.join(' ') : String(strings);
+    calls.push({ text, values });
+    return Promise.resolve(results.shift() || []);
+  });
+  sql.calls = calls;
+  return sql;
+}
+
+function badgePayload(overrides = {}) {
+  const { badge } = mintBootstrapBadge(INPUT, OPTIONS);
+  return { ...verifyBootstrapBadge(badge, OPTIONS).payload, ...overrides };
+}
+
+function leaseRow(overrides = {}) {
+  return {
+    id: '55555555-5555-4555-8555-555555555555',
+    edit_session_id: SESSION_ID,
+    node_id: NODE_ID,
+    bundle_id: BUNDLE_ID,
+    hostname: HOSTNAME,
+    status: 'active',
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    ...overrides,
+  };
+}
+
+describe('lease CRUD', () => {
+  it('createLeaseFromBadge: revoke is guarded by unconsumed jti, insert consumes atomically', async () => {
+    const payload = badgePayload();
+    const sql = createSql([[], [leaseRow()]]);
+    const result = await createLeaseFromBadge({ sql, payload });
+    expect(result.error).toBeUndefined();
+    expect(result.lease).toBeTruthy();
+
+    const revoke = sql.calls[0];
+    expect(revoke.text).toMatch(/UPDATE native_runtime_leases/);
+    expect(revoke.text).toMatch(/status = 'revoked'/);
+    // Replay-safe por construção: o revoke SÓ acontece se o jti ainda não foi
+    // consumido — senão um badge replicado revogaria a lease viva da sessão.
+    expect(revoke.text).toMatch(/NOT EXISTS/);
+    expect(revoke.values).toContain(payload.jti);
+
+    const insert = sql.calls[1];
+    expect(insert.text).toMatch(/INSERT INTO native_runtime_leases/);
+    expect(insert.text).toMatch(/ON CONFLICT \(badge_jti\) DO NOTHING/);
+    expect(insert.values).toContain(payload.jti);
+  });
+
+  it('cookieValue is 32 random bytes base64url and only its sha256 reaches the DB', async () => {
+    const payload = badgePayload();
+    const sql = createSql([[], [leaseRow()]]);
+    const { cookieValue } = await createLeaseFromBadge({ sql, payload });
+    expect(cookieValue).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const insert = sql.calls[1];
+    expect(insert.values).toContain(sha256hex(cookieValue));
+    expect(insert.values).not.toContain(cookieValue);
+  });
+
+  it('a consumed badge yields {error:"badge_used"} and mutates nothing', async () => {
+    const payload = badgePayload();
+    const sql = createSql([[], []]); // insert returns no row -> conflict
+    const result = await createLeaseFromBadge({ sql, payload });
+    expect(result.error).toBe('badge_used');
+    expect(result.cookieValue).toBeUndefined();
+  });
+
+  it('verifyLease: happy path checks hash, host, session and expiry', async () => {
+    const sql = createSql([[leaseRow()]]);
+    const result = await verifyLease({ sql, cookieValue: 'v'.repeat(43), hostname: HOSTNAME, sessionId: SESSION_ID });
+    expect(result.error).toBeUndefined();
+    expect(result.lease.hostname).toBe(HOSTNAME);
+    expect(sql.calls[0].values).toContain(sha256hex('v'.repeat(43)));
+  });
+
+  it('verifyLease: exact lowercase host equality — mismatch refuses', async () => {
+    const sql = createSql([[leaseRow()]]);
+    const result = await verifyLease({ sql, cookieValue: 'v'.repeat(43), hostname: 'other.rt.uncraft.test', sessionId: SESSION_ID });
+    expect(result.error).toBe('host_mismatch');
+  });
+
+  it('verifyLease: session mismatch, expiry, revocation and absence are typed', async () => {
+    expect((await verifyLease({ sql: createSql([[leaseRow()]]), cookieValue: 'v'.repeat(43), hostname: HOSTNAME, sessionId: NODE_ID })).error).toBe('invalid');
+    expect((await verifyLease({ sql: createSql([[leaseRow({ expires_at: new Date(Date.now() - 1000).toISOString() })]]), cookieValue: 'v'.repeat(43), hostname: HOSTNAME, sessionId: SESSION_ID })).error).toBe('expired');
+    expect((await verifyLease({ sql: createSql([[leaseRow({ status: 'revoked' })]]), cookieValue: 'v'.repeat(43), hostname: HOSTNAME, sessionId: SESSION_ID })).error).toBe('revoked');
+    expect((await verifyLease({ sql: createSql([[]]), cookieValue: 'v'.repeat(43), hostname: HOSTNAME, sessionId: SESSION_ID })).error).toBe('invalid');
+    expect((await verifyLease({ sql: createSql([[]]), cookieValue: '', hostname: HOSTNAME, sessionId: SESSION_ID })).error).toBe('missing');
+  });
+
+  it('renewLease slides expires_at ONLY on active, unexpired rows (fenced transition)', async () => {
+    const sql = createSql([[{ expires_at: '2026-08-26T14:00:00.000Z' }]]);
+    const result = await renewLease({ sql, sessionId: SESSION_ID });
+    expect(result.renewed).toBe(true);
+    const update = sql.calls[0];
+    expect(update.text).toMatch(/status = 'active'/);
+    expect(update.text).toMatch(/expires_at > NOW\(\)/);
+    expect(update.values).toContain(SESSION_ID);
+  });
+
+  it('renewLease on a dead session renews nothing', async () => {
+    const result = await renewLease({ sql: createSql([[]]), sessionId: SESSION_ID });
+    expect(result.renewed).toBe(false);
+  });
+
+  it('revokeLeasesForSession revokes only active rows; reapExpiredLeases expires the overdue', async () => {
+    const sqlRevoke = createSql([[]]);
+    await revokeLeasesForSession({ sql: sqlRevoke, sessionId: SESSION_ID });
+    expect(sqlRevoke.calls[0].text).toMatch(/SET status = 'revoked'/);
+    expect(sqlRevoke.calls[0].text).toMatch(/status = 'active'/);
+
+    const sqlReap = createSql([[]]);
+    await reapExpiredLeases({ sql: sqlReap });
+    expect(sqlReap.calls[0].text).toMatch(/SET status = 'expired'/);
+    expect(sqlReap.calls[0].text).toMatch(/expires_at <= NOW\(\)/);
+  });
+
+  it('the lease cookie is a SESSION cookie: no Max-Age, no Expires', () => {
+    const header = leaseCookieHeader('value123');
+    expect(header).toBe('__Host-rt=value123; Secure; HttpOnly; SameSite=None; Partitioned; Path=/');
+    expect(header).not.toMatch(/Max-Age|Expires/i);
+  });
+
+  it('dev over plain http downgrades the cookie NAME, never the semantics', () => {
+    expect(leaseCookieName()).toBe('__Host-rt');
+    expect(leaseCookieName({ secure: false })).toBe('uncraft_rt');
+    const header = leaseCookieHeader('v', { secure: false });
+    expect(header).toBe('uncraft_rt=v; HttpOnly; SameSite=Lax; Path=/');
+    expect(header).not.toMatch(/Max-Age|Expires/i);
   });
 });
