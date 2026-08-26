@@ -279,3 +279,24 @@ export function leaseCookieHeader(cookieValue, { secure = true } = {}) {
   if (!secure) return `uncraft_rt=${cookieValue}; HttpOnly; SameSite=Lax; Path=/`;
   return `__Host-rt=${cookieValue}; Secure; HttpOnly; SameSite=None; Partitioned; Path=/`;
 }
+
+// ── Hostname por sessão ──────────────────────────────────────────────────────
+// 32 hex = 128 bits: reuso por colisão é desprezível POR CONSTRUÇÃO (o UNIQUE
+// do banco é cinto, com retry de unique_violation no chamador). Mintado UMA
+// vez por sessão de edição e PERSISTIDO nela — resume/F5 reusa o mesmo host,
+// senão cada reabertura mudaria a partição e destruiria o cache (Sol r3 #2).
+export function mintRuntimeHostname({ suffix } = {}) {
+  if (typeof suffix !== 'string' || !HOSTNAME_PATTERN.test(suffix)) {
+    throw new TypeError('Runtime host suffix must be a pure lowercase hostname without port');
+  }
+  return `${randomBytes(16).toString('hex')}.${suffix}`;
+}
+
+/** Igualdade de HOSTNAME puro (minúsculo, sem porta) — nunca sufixo/endsWith. */
+export function runtimeRequestUsesSessionHost(requestUrl, expectedHostname) {
+  try {
+    return new URL(requestUrl).hostname.toLowerCase() === String(expectedHostname || '').toLowerCase();
+  } catch {
+    return false;
+  }
+}

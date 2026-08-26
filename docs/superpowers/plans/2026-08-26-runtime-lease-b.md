@@ -385,7 +385,7 @@ it('header and meta serialize from the SAME structured policy', () => {
 
 ### Task 10: Hostname/authority + host guard `[DB-free]`
 
-**Files:** Modify `lib/motion-editor/runtime-session-token.js`; Create `middleware.js` + `middleware.test.js`
+**Files (AJUSTADO na execução):** Modify `lib/motion-editor/runtime-lease.js` (mint/usesSessionHost — coesão com a identidade de host da lease); Create `lib/runtime-host-guard.js` (decisão PURA, livre de node:crypto — middleware roda em edge e não pode importar o módulo da lease) + `middleware.js` + testes
 
 **Interfaces:**
 - Produces: `mintRuntimeHostname({ suffix })` → `'<32-hex>.'+suffix` (128 bits; label de 32 chars < teto de 63 do DNS) — **suffix é HOSTNAME puro** (`rt.localtest.me`, `rt.uncraft.app`); porta/esquema vivem em `UNCRAFT_RUNTIME_AUTHORITY_TEMPLATE` (dev `https://{host}:3443`, prod `https://{host}`) usado só na CONSTRUÇÃO de URL (Sol r3 #4: identidade validada nunca carrega porta); `runtimeRequestUsesSessionHost(requestUrl, expectedHostname)` compara `new URL(u).hostname` (sem porta) em lowercase; middleware (Next 15 — convenção vigente NESTE repo; refutada a alegação de rename): host casa `*.<sufixo>` → só `/api/rt/`, `/api/runtime-bootstrap/`, `/api/runtime/`; resto 404; em produção, host do APP não serve `/api/rt/*`.

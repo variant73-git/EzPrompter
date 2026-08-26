@@ -255,3 +255,27 @@ describe('lease CRUD', () => {
     expect(header).not.toMatch(/Max-Age|Expires/i);
   });
 });
+
+describe('per-session hostname', () => {
+  it('mints <32-hex>.<suffix> — 128 bits, DNS label under 63 chars', async () => {
+    const { mintRuntimeHostname } = await import('./runtime-lease.js');
+    const minted = mintRuntimeHostname({ suffix: 'rt.uncraft.test' });
+    expect(minted).toMatch(/^[0-9a-f]{32}\.rt\.uncraft\.test$/);
+    expect(mintRuntimeHostname({ suffix: 'rt.uncraft.test' })).not.toBe(minted);
+  });
+
+  it('refuses an empty suffix or a suffix carrying a port', async () => {
+    const { mintRuntimeHostname } = await import('./runtime-lease.js');
+    expect(() => mintRuntimeHostname({ suffix: '' })).toThrow();
+    expect(() => mintRuntimeHostname({ suffix: 'rt.uncraft.test:3030' })).toThrow();
+    expect(() => mintRuntimeHostname({})).toThrow();
+  });
+
+  it('runtimeRequestUsesSessionHost compares pure lowercase hostnames, never ports', async () => {
+    const { runtimeRequestUsesSessionHost } = await import('./runtime-lease.js');
+    expect(runtimeRequestUsesSessionHost('https://abc.rt.uncraft.test:3443/api/rt/s/x', 'abc.rt.uncraft.test')).toBe(true);
+    expect(runtimeRequestUsesSessionHost('https://ABC.RT.UNCRAFT.TEST/api/rt/s/x', 'abc.rt.uncraft.test')).toBe(true);
+    expect(runtimeRequestUsesSessionHost('https://other.rt.uncraft.test/api/rt/s/x', 'abc.rt.uncraft.test')).toBe(false);
+    expect(runtimeRequestUsesSessionHost('not a url', 'abc.rt.uncraft.test')).toBe(false);
+  });
+});
