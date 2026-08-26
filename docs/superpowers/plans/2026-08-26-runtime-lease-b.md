@@ -34,6 +34,22 @@
 
 **Spec:** `docs/superpowers/handoffs/2026-08-25-runtime-lease-b-antes-de-a-handoff.md` + `2026-08-25-sol-audit-runtime-r1.md`/`-r2.md`. Executores leem os três.
 
+## Status de execução (2026-08-26, branch `feat/runtime-lease-b`)
+
+| Task | Estado | Commit |
+|---|---|---|
+| 1 (MASKED/RELOADING) | ✅ | `9d09ec05` |
+| 2 (RuntimeMask no produto) | ✅ (prova ao vivo PENDENTE do banco) | `c0956def` |
+| 4 (badge one-shot) | ✅ | `5166919f` |
+| 5 (lease CRUD) | ✅ | `f37b413f` |
+| 6 (extração do core, 30=30) | ✅ | `57ceea80` |
+| 9 (CSP fonte única + detector) | ✅ (passo do produtor AJUSTADO — ver task) | `191bccfd` |
+| 10 (hostname + host guard, provado live) | ✅ | `aaf7b5c5` |
+| 11 (recusa de SW) | ✅ | `1b5e2e51` |
+| 3, 7, 8, 12, 13, 14 | ⏳ `[DB]` — esperam Neon/Postgres | — |
+
+Suíte no fechamento: **2302 passed | 28 skipped**; `next build` OK (middleware no build).
+
 ## Global Constraints
 
 - **bun, não npm**; Vitest; suíte roda de `packages/web-shell/`.
