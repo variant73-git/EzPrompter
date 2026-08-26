@@ -1,4 +1,5 @@
 import { getRuntimeBridgeSource } from './runtime-bridge-source.js';
+import { runtimeCspMeta } from './runtime-csp.js';
 
 export function rewriteRuntimePaths(source, prefixes = ['assets'], runtimeBase = '/api/native-clone') {
   // Clone bundles reference their own top-level directories root-absolutely
@@ -198,19 +199,9 @@ export function injectRuntimeBridge(html, runtimeConfig = null, options = {}) {
   const source = getRuntimeBridgeSource().replace(/<\/script/gi, '<\\/script');
   const fullEditor = options.fullEditor ?? fullEditorEnabled();
   const script = `<script data-uncraft-runtime-bridge>${source}</script>${fullEditor ? fullEditorTags() : ''}`;
-  const policy = [
-    "default-src 'self' data: blob:",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "media-src 'self' data: blob:",
-    "connect-src 'self'",
-    "form-action 'none'",
-    "object-src 'none'",
-    "base-uri 'none'",
-  ].join('; ');
-  const securityMeta = `<meta data-uncraft-runtime-policy http-equiv="Content-Security-Policy" content="${policy}">`;
+  // A política vem da fonte ÚNICA (runtime-csp.js), a mesma que gera o header
+  // — era aqui que a lista à mão tinha DIVERGIDO (faltava worker-src, spec §5).
+  const securityMeta = `<meta data-uncraft-runtime-policy http-equiv="Content-Security-Policy" content="${runtimeCspMeta()}">`;
   const config = runtimeConfig && typeof runtimeConfig === 'object'
     ? `<script type="application/json" data-uncraft-runtime-config>${safeJson(runtimeConfig)}</script>`
     : '';

@@ -10,6 +10,7 @@ import {
 import { parseByteRange, rangeHeaders } from '../native-clone/byte-range.js';
 import { parseMotionManifest } from './manifest.js';
 import { injectRuntimeBridge, rewriteRuntimePaths } from './native-clone-gateway.js';
+import { htmlCarriesAuthoredCspMeta, runtimeCspHeader } from './runtime-csp.js';
 import { MOTIVOS_DE_FALHA } from './runtime-failure-reasons.js';
 import {
   translateRuntimeOrigins,
@@ -48,20 +49,9 @@ function contentSecurityPolicy(request) {
   const runtimeOrigin = new URL(request.url).origin;
   const appOrigin = appFrameAncestor(request);
   const frameAncestor = runtimeOrigin === appOrigin ? "'self'" : appOrigin;
-  return [
-    "default-src 'self' data: blob:",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "media-src 'self' data: blob:",
-    "connect-src 'self'",
-    "worker-src 'self' blob:",
-    "form-action 'none'",
-    "object-src 'none'",
-    "base-uri 'none'",
-    `frame-ancestors ${frameAncestor}`,
-  ].join('; ');
+  // A política vem da fonte ÚNICA (runtime-csp.js) — a meta injetada no HTML
+  // serializa do mesmo objeto, então header×meta não podem divergir de novo.
+  return runtimeCspHeader({ frameAncestor });
 }
 
 export function commonHeaders(request, { corsWildcard = true } = {}) {
@@ -356,6 +346,12 @@ export async function serveRuntimeAsset({
   }
 
   headers.set('Cache-Control', 'no-store');
+  if (htmlCarriesAuthoredCspMeta(rewritten) && process.env.NODE_ENV !== 'test') {
+    // eslint-disable-next-line no-console
+    console.warn('[runtime] HTML do bundle carrega meta CSP autoral — politicas se intersectam e podem bloquear o bridge', {
+      bundleId: row.bundle_id,
+    });
+  }
   const body = injectRuntimeBridge(rewritten, {
     initialManifest: manifest,
     bundleId: descriptor.bundleId,
