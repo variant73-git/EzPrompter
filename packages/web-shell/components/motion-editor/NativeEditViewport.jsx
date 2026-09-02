@@ -55,6 +55,25 @@ function NativeEditViewportRuntime({
     commands.changeDevice(device.id);
   }, [commands, device.id]);
 
+  // Ponte de upload (Task 12): o parent (com cookie de login) recebe os bytes do
+  // editor completo do clone e chama a rota app-authed. Só o parent conhece o
+  // nodeId, por isso o handler mora aqui.
+  useEffect(() => {
+    commands.setUploadHandler?.(async (bytes, name) => {
+      try {
+        const res = await fetch(`/api/nodes/${encodeURIComponent(nodeId)}/native-uploads`, {
+          method: 'POST', credentials: 'include', body: bytes,
+        });
+        if (res.ok) return await res.json();
+        const body = await res.json().catch(() => ({}));
+        return { error: body.error || 'upload_failed' };
+      } catch {
+        return { error: 'upload_failed' };
+      }
+    });
+    return () => commands.setUploadHandler?.(null);
+  }, [nodeId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // O ESTADO da máquina decide máscara×teardown, não este componente: com o
   // runtime já anunciado neste mount, a exaustão vira MASKED (editor fica de
   // pé, trabalho preservado) e NADA é reportado ao canvas — reportar era

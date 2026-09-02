@@ -7546,6 +7546,21 @@
       r0.readAsDataURL(file);
       return;
     }
+    // Modo lease (origem própria): a lease recusa POST e o clone não tem cookie
+    // de login — sobe pela PONTE do parent (Task 12). Legado (origem opaca) cai
+    // no POST ./_uploads de sempre. Qualquer falha volta ao data-url.
+    if (typeof targetWin.__uncraftRuntimeUpload === 'function') {
+      var voltarDataUrl = function() {
+        var rf = new FileReader();
+        rf.onload = function() { aoTerminar(rf.result); };
+        rf.readAsDataURL(file);
+      };
+      file.arrayBuffer()
+        .then(function(buf) { return targetWin.__uncraftRuntimeUpload(new Uint8Array(buf), file.name || ''); })
+        .then(function(result) { if (result && result.path) { aoTerminar(result.path); } else { voltarDataUrl(); } })
+        .catch(voltarDataUrl);
+      return;
+    }
     targetWin.fetch('./_uploads', { method: 'POST', body: file })
       .then(function(res) { return res.ok ? res.json() : Promise.reject(new Error('upload ' + res.status)); })
       .then(function(json) { aoTerminar(json.path); })

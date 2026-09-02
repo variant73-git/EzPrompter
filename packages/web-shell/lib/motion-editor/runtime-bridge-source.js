@@ -46,6 +46,7 @@ function nativeMotionRuntimeBridge() {
   let heartbeatTimer = null;
   const processedRequests = new Map();
   const committedTransactions = new Map();
+  const pendingUploads = new Map(); // ponte de upload do editor completo (Task 12)
   const activeGestures = new Map();
   const SELECTABLE = [
     '[data-w-id]', '[data-wf-target]',
@@ -135,6 +136,28 @@ function nativeMotionRuntimeBridge() {
       requestId: message?.requestId,
     });
   }
+
+  // Ponte de upload (Task 12): SÓ em modo lease (origem real, não opaca). O
+  // editor completo do clone chama isto em vez de `fetch('./_uploads')` — a
+  // lease recusa POST e o clone não tem cookie de login, então o parent (que
+  // tem) faz o upload app-authed e devolve o caminho. Em legado (origem opaca
+  // 'null') a função NÃO existe, e o editor cai no fetch de sempre.
+  try {
+    if (window.origin && window.origin !== 'null') {
+      window.__uncraftRuntimeUpload = function uncraftRuntimeUpload(bytes, name) {
+        return new Promise((resolve) => {
+          if (!(bytes instanceof Uint8Array) || !bytes.length) { resolve({ error: 'invalid' }); return; }
+          const uploadId = randomIdentity('upload');
+          pendingUploads.set(uploadId, resolve);
+          const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+          emit('upload-request', { uploadId, name: String(name || ''), bytes: buffer });
+          setTimeout(() => {
+            if (pendingUploads.has(uploadId)) { pendingUploads.delete(uploadId); resolve({ error: 'timeout' }); }
+          }, 30000);
+        });
+      };
+    }
+  } catch (_) { /* window.origin pode lançar em contextos exóticos — sem ponte */ }
 
   function hash(value) {
     let result = 2166136261;
@@ -8086,6 +8109,16 @@ function nativeMotionRuntimeBridge() {
     }
     const payload = message.payload || {};
 
+    if (message.type === 'upload-result') {
+      // Resposta da ponte de upload (Task 12): o parent devolveu o caminho (ou
+      // erro) do arquivo que o editor completo pediu para subir.
+      const resolver = pendingUploads.get(payload.uploadId);
+      if (resolver) {
+        pendingUploads.delete(payload.uploadId);
+        resolver(payload.path ? { path: payload.path } : { error: payload.error || 'upload_failed' });
+      }
+      return;
+    }
     if (message.type === 'apply-transaction') {
       commitTransaction(message, payload.transaction, 'apply');
     } else if (message.type === 'rollback-transaction') {
