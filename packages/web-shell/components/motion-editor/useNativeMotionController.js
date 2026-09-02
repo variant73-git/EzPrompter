@@ -8,6 +8,7 @@ import {
   invertPatch,
   isRuntimeMessage,
   matchesRuntimeContext,
+  runtimeMessageTargetOrigin,
   MOTION_EDITOR_PROTOCOL,
   MOTION_EDITOR_PROTOCOL_V2,
   removeRejectedPatch,
@@ -505,7 +506,8 @@ export function useNativeMotionController({
     const message = context?.protocol === MOTION_EDITOR_PROTOCOL_V2
       ? commandV2(type, payload, { ...context, requestId: nextRequestId })
       : command(type, payload);
-    iframeRef.current?.contentWindow?.postMessage(message, '*');
+    // Alveja a origem REAL da sessão quando conhecida (lease); opaca → '*'.
+    iframeRef.current?.contentWindow?.postMessage(message, runtimeMessageTargetOrigin(context?.origin));
     return nextRequestId;
   }, [iframeRef]);
 
@@ -1011,7 +1013,7 @@ export function useNativeMotionController({
             runtimeGeneration: context.runtimeGeneration,
             bundleId: context.bundleId,
             sessionId: context.sessionId,
-          }, '*');
+          }, runtimeMessageTargetOrigin(context.origin));
         } else {
           runtimeContextRef.current = { protocol: MOTION_EDITOR_PROTOCOL, origin: event.origin, sessionId: 'motion-lab-session' };
           setStatus(runtimeRecoveryRef.current ? 'recovering' : 'ready');
@@ -2031,6 +2033,14 @@ export function useNativeMotionController({
       runtimeRecoveryRef.current = request;
       setRuntimeRecovery(request);
       setStatus('recovering');
+    },
+    // Renovação da lease falhou de forma TERMINAL (revogada/sessão morta/
+    // ownership perdido) ou a lease está prestes a vencer: máscara direta. Com
+    // o runtime já anunciado, a máquina vira MASKED (não teardown). O laço vive
+    // no viewport (é ele que sabe nodeId+expiry); aqui só a transição.
+    failRuntime: (code = 'lease_unavailable') => {
+      transitionEditor({ type: 'runtime-unavailable', code });
+      setStatus('unavailable');
     },
     send,
     describeElement: (elementId) => send('describe-element', { elementId }),
