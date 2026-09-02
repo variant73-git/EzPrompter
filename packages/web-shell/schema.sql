@@ -162,6 +162,42 @@ CREATE INDEX IF NOT EXISTS idx_native_motion_sessions_node
 CREATE INDEX IF NOT EXISTS idx_native_motion_sessions_base_snapshot
   ON native_motion_edit_sessions(base_snapshot_id);
 
+-- Lease B (2026-09-02): hostname persistido por sessão — mintado UMA vez,
+-- reusado em todo resume (sem isto cada reabertura mudaria a origem e
+-- destruiria o cache). Bancos anteriores se curam no boot.
+ALTER TABLE native_motion_edit_sessions ADD COLUMN IF NOT EXISTS runtime_hostname TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_native_motion_sessions_runtime_hostname
+  ON native_motion_edit_sessions(runtime_hostname) WHERE runtime_hostname IS NOT NULL;
+
+-- Lease opaca revogável do runtime (plano lease B): o banco guarda só o
+-- sha256 do valor do cookie; expiração SLIDING vive na linha (o cookie de
+-- sessão não tem idade própria); badge_jti UNIQUE = consumo atômico do
+-- badge one-shot; lease única ativa por sessão.
+CREATE TABLE IF NOT EXISTS native_runtime_leases (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lease_hash CHAR(64) NOT NULL UNIQUE,
+  badge_jti VARCHAR(64) NOT NULL UNIQUE,
+  edit_session_id UUID NOT NULL REFERENCES native_motion_edit_sessions(id) ON DELETE CASCADE,
+  node_id UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  bundle_id UUID NOT NULL,
+  hostname TEXT NOT NULL,
+  status VARCHAR(12) NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked','expired')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  renewed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_native_runtime_leases_session
+  ON native_runtime_leases(edit_session_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_native_runtime_leases_one_active
+  ON native_runtime_leases(edit_session_id) WHERE status = 'active';
+
+-- Quota agregada de upload por nó, reservada por UPDATE condicional ANTES do
+-- putImmutable (contar-depois-gravar é TOCTOU).
+CREATE TABLE IF NOT EXISTS native_node_upload_quota (
+  node_id UUID PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+  bytes_used BIGINT NOT NULL DEFAULT 0 CHECK (bytes_used >= 0)
+);
+
 -- Sanitized motion diagnostics are separate from agent traces. Linked events
 -- expire after 30 days. Only anonymous groups of at least 10 events survive
 -- for 12 months; raw page content, prompts, selectors, URLs, and stack paths

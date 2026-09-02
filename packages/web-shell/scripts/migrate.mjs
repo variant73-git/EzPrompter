@@ -17,9 +17,39 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { splitSqlStatements } from '../lib/sql-statements.js';
 
+// Cada migracao carrega o PROPRIO predicado de falta — a licao de 02/09: as
+// listas fixas de uma correcao anterior deixavam o script dizer "em dia" com
+// uma migracao nova inteira faltando (verificado direto no banco). So o
+// arquivo cuja falta existe e' aplicado.
 const MIGRACOES = [
-  'migrations/2026-07-26-native-motion-editing.sql',
-  'migrations/2026-07-26-motion-diagnostics.sql',
+  {
+    arquivo: 'migrations/2026-07-26-native-motion-editing.sql',
+    falta: (r) => ({
+      colunas: ['native_bundle_id', 'motion_manifest', 'motion_manifest_version']
+        .filter((coluna) => !r.snapshots.includes(coluna)),
+      tabelas: ['native_motion_edit_sessions'].filter((t) => !r.tabelas.includes(t)),
+      travas: ['snapshots_native_bundle_fk', 'snapshots_native_manifest_shape']
+        .filter((trava) => !r.travas.includes(trava)),
+    }),
+  },
+  {
+    arquivo: 'migrations/2026-07-26-motion-diagnostics.sql',
+    falta: (r) => ({
+      colunas: [],
+      tabelas: ['motion_diagnostic_events', 'motion_diagnostic_daily_aggregates']
+        .filter((t) => !r.tabelas.includes(t)),
+      travas: [],
+    }),
+  },
+  {
+    arquivo: 'migrations/2026-09-02-runtime-leases.sql',
+    falta: (r) => ({
+      colunas: ['runtime_hostname'].filter((coluna) => !r.sessoes.includes(coluna)),
+      tabelas: ['native_runtime_leases', 'native_node_upload_quota']
+        .filter((t) => !r.tabelas.includes(t)),
+      travas: [],
+    }),
+  },
 ];
 
 const isolado = process.argv.includes('--isolated');
@@ -51,31 +81,35 @@ async function retrato() {
   return {
     tabelas: [...porTabela.keys()].sort(),
     snapshots: [...(porTabela.get('snapshots') || [])].sort(),
+    sessoes: [...(porTabela.get('native_motion_edit_sessions') || [])].sort(),
     travas: travas.map((t) => t.conname).sort(),
   };
 }
 
+function temFalta(f) {
+  return f.colunas.length || f.tabelas.length || f.travas.length;
+}
+
 const antes = await retrato();
-const esperadas = ['native_bundle_id', 'motion_manifest', 'motion_manifest_version'];
-const faltando = {
-  colunas: esperadas.filter((coluna) => !antes.snapshots.includes(coluna)),
-  tabelas: ['native_motion_edit_sessions', 'motion_diagnostic_events', 'motion_diagnostic_daily_aggregates']
-    .filter((tabela) => !antes.tabelas.includes(tabela)),
-  travas: ['snapshots_native_bundle_fk', 'snapshots_native_manifest_shape']
-    .filter((trava) => !antes.travas.includes(trava)),
-};
-console.log(JSON.stringify({ alvo, isolado, faltando }, null, 2));
+const pendentes = MIGRACOES
+  .map((m) => ({ ...m, faltando: m.falta(antes) }))
+  .filter((m) => temFalta(m.faltando));
+console.log(JSON.stringify({
+  alvo,
+  isolado,
+  pendentes: pendentes.map((m) => ({ arquivo: m.arquivo, faltando: m.faltando })),
+}, null, 2));
 
 if (soListar) process.exit(0);
-if (!faltando.colunas.length && !faltando.tabelas.length && !faltando.travas.length) {
+if (!pendentes.length) {
   console.log('nada a aplicar — o banco ja esta em dia');
   process.exit(0);
 }
 
-for (const caminho of MIGRACOES) {
-  const conteudo = await readFile(path.resolve(caminho), 'utf8');
+for (const { arquivo } of pendentes) {
+  const conteudo = await readFile(path.resolve(arquivo), 'utf8');
   const comandos = splitSqlStatements(conteudo);
-  console.log(`\n${caminho}: ${comandos.length} comandos`);
+  console.log(`\n${arquivo}: ${comandos.length} comandos`);
   for (const comando of comandos) {
     const rotulo = comando.replace(/\s+/g, ' ').slice(0, 90);
     try {
@@ -90,7 +124,7 @@ for (const caminho of MIGRACOES) {
 
 const depois = await retrato();
 console.log(`\n${JSON.stringify({
-  colunasDeSnapshots: esperadas.filter((coluna) => depois.snapshots.includes(coluna)),
-  tabelasCriadas: faltando.tabelas.filter((tabela) => depois.tabelas.includes(tabela)),
-  travasCriadas: faltando.travas.filter((trava) => depois.travas.includes(trava)),
+  aindaFaltando: MIGRACOES
+    .map((m) => ({ arquivo: m.arquivo, faltando: m.falta(depois) }))
+    .filter((m) => temFalta(m.faltando)),
 }, null, 2)}`);
