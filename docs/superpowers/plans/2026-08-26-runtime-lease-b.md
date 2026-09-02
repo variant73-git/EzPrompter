@@ -51,8 +51,20 @@
 | 8 (emissão + renew + revoke no fecho) | ✅ | `edf72c9f` |
 | 13 (sandbox same-origin + renew loop + postMessage alvejado) | ✅ | `ccb8d7b0` |
 | — audit P1/P2a das rotas 7+8 | ✅ | `192ebefb` |
-| 12 (upload bridge pelo parent) | ⏳ próxima — precisa de prova ao vivo (editor real) | — |
-| 14 (aceite de bytes antes×depois) | ⏳ BLOQUEADA em infra: HTTPS local (mkcert) + Chrome de marca | — |
+| 12 (upload bridge pelo parent) | ✅ (rota provada 401 ao vivo; cross-window precisa de editor logado) | `21d28d22` |
+| 14 (harness de aceite) | ✅ harness escrito; **EXECUÇÃO precisa do seu ambiente** (cookie+node+HTTPS local) | `ad66990d` |
+
+**Todas as tasks de CÓDIGO shipadas.** Falta só a EXECUÇÃO do aceite (Task 14),
+que precisa de infra sua:
+1. `brew install mkcert` (não instalado) + cert coringa `*.rt.localtest.me` +
+   proxy TLS local (ex. Caddy) — o cookie `__Host-`/`Partitioned` exige Secure.
+2. Env do dev server: `UNCRAFT_RUNTIME_LEASE=1`,
+   `UNCRAFT_RUNTIME_HOST_SUFFIX=rt.localtest.me`,
+   `UNCRAFT_RUNTIME_AUTHORITY_TEMPLATE=https://{host}:<porta-tls>`.
+3. Rodar `scripts/medir-entrega-runtime.mjs` (flag off e on) com um cookie de
+   login e um node nativo.
+Infra de PRODUÇÃO quando ligar de verdade: wildcard DNS `*.rt.<domínio>` +
+domínio/cert coringa no Vercel, SEPARADO do eTLD+1 do app (Sol r4 #2).
 
 Suíte de runtime no fechamento da Task 8: **749 passed**; `next build` OK.
 
