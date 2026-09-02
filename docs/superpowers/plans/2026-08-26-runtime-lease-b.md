@@ -49,7 +49,10 @@
 | 3 (migração aplicada ao Neon) | ✅ | `e896a1e8` |
 | 7 (bootstrap + /api/rt cookie-authed) | ✅ | `adbb2763` |
 | 8 (emissão + renew + revoke no fecho) | ✅ | `edf72c9f` |
-| 12, 13, 14 | ⏳ próximas (12 upload bridge, 13 iframe/postMessage/renew loop, 14 aceite) | — |
+| 13 (sandbox same-origin + renew loop + postMessage alvejado) | ✅ | `ccb8d7b0` |
+| — audit P1/P2a das rotas 7+8 | ✅ | `192ebefb` |
+| 12 (upload bridge pelo parent) | ⏳ próxima — precisa de prova ao vivo (editor real) | — |
+| 14 (aceite de bytes antes×depois) | ⏳ BLOQUEADA em infra: HTTPS local (mkcert) + Chrome de marca | — |
 
 Suíte de runtime no fechamento da Task 8: **749 passed**; `next build` OK.
 
