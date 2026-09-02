@@ -51,22 +51,39 @@ function writeCache(cookieValue, entry) {
 /** Só para testes: o cache é de módulo e vazaria entre casos. */
 export function __clearLeaseGatewayCacheForTests() { cache.clear(); }
 
-// Rate limit por sessão (Sol r3/r4 #6): teto de REQUESTS numa janela deslizante.
+// Rate limit (Sol r3/r4 #6): teto de REQUESTS numa janela deslizante.
 // ⚠️ DÍVIDA NOMEADA: o balde é por PROCESSO — numa implantação multi-instância
 // cada uma concede o próprio orçamento (contador compartilhado = infra do
 // launch, [[launch_cost_optimizations_deferred]]); o teto real interino é
 // N instâncias × este teto. Um clone real abre ~370 assets UMA vez.
-const RL_MAX = 600;
-const RL_WINDOW_MS = 60_000;
-const buckets = new Map(); // sessionId -> { count, resetAt }
-function rateLimited(sessionId) {
+//
+// ⭐ A CHAVE é o COOKIE, não o sessionId da URL, e SÓ depois do cookie existir
+// (P1, audit 2026-09-02): um sessionId cru e ilimitado no path deixava um
+// atacante SEM cookie semear um bucket permanente por valor distinto → OOM.
+// Agora: sem cookie não semeia nada, e o Map tem TETO com evicção FIFO como o
+// cache — o cookie também é atacante-controlado, então o teto é a trava real.
+let RL_MAX = 600;
+let RL_WINDOW_MS = 60_000;
+let RL_MAX_KEYS = 4096;
+const buckets = new Map(); // cookieValue -> { count, resetAt }
+function rateLimited(cookieValue) {
   const now = Date.now();
-  const b = buckets.get(sessionId);
-  if (!b || now > b.resetAt) { buckets.set(sessionId, { count: 1, resetAt: now + RL_WINDOW_MS }); return false; }
+  const b = buckets.get(cookieValue);
+  if (!b || now > b.resetAt) {
+    buckets.set(cookieValue, { count: 1, resetAt: now + RL_WINDOW_MS });
+    if (buckets.size > RL_MAX_KEYS) buckets.delete(buckets.keys().next().value);
+    return false;
+  }
   b.count += 1;
   return b.count > RL_MAX;
 }
 export function __clearLeaseRateLimitForTests() { buckets.clear(); }
+export function __leaseRateLimitSizeForTests() { return buckets.size; }
+export function __setLeaseRateLimitForTests({ max, windowMs, maxKeys } = {}) {
+  if (Number.isFinite(max)) RL_MAX = max;
+  if (Number.isFinite(windowMs)) RL_WINDOW_MS = windowMs;
+  if (Number.isFinite(maxKeys)) RL_MAX_KEYS = maxKeys;
+}
 
 async function loadBundleRow(sql, lease) {
   const rows = await sql`
@@ -111,14 +128,23 @@ export async function GET(request, { params }) {
     });
   }
 
-  if (rateLimited(sessionId)) {
+  // Sem cookie: falha inerte ANTES do rate limit — um pedido sem credencial
+  // não pode semear bucket (P1). O rate limit é por COOKIE, com teto de chaves.
+  const cookieValue = readCookie(request, leaseCookieName({ secure: url.protocol === 'https:' }));
+  if (!cookieValue) return inertFailure(request, 'lease_missing', null, 404, LEASE);
+  if (rateLimited(cookieValue)) {
     return new Response(null, { status: 429, headers: { 'Cache-Control': 'no-store' } });
   }
 
-  const cookieValue = readCookie(request, leaseCookieName({ secure: url.protocol === 'https:' }));
-  if (!cookieValue) return inertFailure(request, 'lease_missing', null, 404, LEASE);
-
   let session = readCache(cookieValue);
+  // P2a (audit 2026-09-02): no HIT do cache, o sessionId da URL e o host ainda
+  // têm que casar com a lease atada ao cookie — senão as duas guardas de
+  // defesa em profundidade lapsariam por 20s. É auto-conteúdo (cache por
+  // cookie), mas o descasamento é anômalo → recusa inerte.
+  if (session && (String(session.lease.edit_session_id) !== String(sessionId)
+    || !runtimeRequestUsesSessionHost(request.url, session.lease.hostname))) {
+    return inertFailure(request, 'lease_scope_mismatch', cookieValue, 404, LEASE);
+  }
   if (!session) {
     let sql;
     try { sql = await db(); } catch { return inertFailure(request, 'database_unavailable', cookieValue, 503, LEASE); }

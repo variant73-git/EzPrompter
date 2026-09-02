@@ -17,7 +17,7 @@ vi.mock('../../../../../lib/native-clone/bundle-store.js', () => ({
   indexedAssetKey: (root, path) => `${root}/assets/${path}`,
 }));
 
-const { GET, POST, __clearLeaseGatewayCacheForTests } = await import('./route.js');
+const { GET, POST, __clearLeaseGatewayCacheForTests, __clearLeaseRateLimitForTests, __leaseRateLimitSizeForTests, __setLeaseRateLimitForTests } = await import('./route.js');
 
 const NODE_ID = '11111111-1111-4111-8111-111111111111';
 const BUNDLE_ID = '22222222-2222-4222-8222-222222222222';
@@ -69,6 +69,8 @@ beforeEach(() => {
   sqlMock._results = [[bundleRow()]];
   store.read.mockReset();
   __clearLeaseGatewayCacheForTests();
+  __clearLeaseRateLimitForTests();
+  __setLeaseRateLimitForTests({ max: 600, windowMs: 60_000, maxKeys: 64 });
 });
 afterEach(() => {
   delete process.env.UNCRAFT_RUNTIME_LEASE;
@@ -146,5 +148,50 @@ describe('GET /api/rt/[sessionId]/[...path]', () => {
     store.read.mockResolvedValue(new TextEncoder().encode('// sw'));
     const res = await GET(req('media/a.webp', { headers: { 'service-worker': 'script' } }), ctx(['media', 'a.webp']));
     expect(res.status).toBe(403);
+  });
+
+  it('a request WITHOUT a cookie never seeds a rate-limit bucket (P1 DoS guard)', async () => {
+    for (let i = 0; i < 50; i += 1) {
+      await GET(req('index.html', { cookie: '' }), ctx(['index.html'], `forged-${i}`));
+    }
+    expect(__leaseRateLimitSizeForTests()).toBe(0);
+  });
+
+  it('the rate-limit map is bounded — distinct cookies cannot grow it without limit (P1 DoS guard)', async () => {
+    __setLeaseRateLimitForTests({ max: 600, windowMs: 60_000, maxKeys: 8 });
+    store.read.mockResolvedValue(new TextEncoder().encode('<html></html>'));
+    for (let i = 0; i < 100; i += 1) {
+      __clearLeaseGatewayCacheForTests();
+      verifyLease.mockResolvedValue(leaseOk());
+      sqlMock._results = [[bundleRow()]];
+      await GET(req('index.html', { cookie: `__Host-rt=distinct-${i}` }), ctx());
+    }
+    expect(__leaseRateLimitSizeForTests()).toBeLessThanOrEqual(8);
+  });
+
+  it('exceeding the per-cookie request cap returns 429 no-store', async () => {
+    __setLeaseRateLimitForTests({ max: 3, windowMs: 60_000, maxKeys: 64 });
+    store.read.mockResolvedValue(new TextEncoder().encode('<html></html>'));
+    let last;
+    for (let i = 0; i < 5; i += 1) {
+      __clearLeaseGatewayCacheForTests();
+      verifyLease.mockResolvedValue(leaseOk());
+      sqlMock._results = [[bundleRow()]];
+      last = await GET(req('index.html'), ctx());
+    }
+    expect(last.status).toBe(429);
+    expect(last.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('a cache hit still refuses a URL sessionId that does not match the cached lease (P2a re-validation)', async () => {
+    store.read.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    // First request seeds the cache for this cookie under the real session.
+    await GET(req('media/a.webp'), ctx(['media', 'a.webp']));
+    // Same cookie, but the URL now claims a different session → inert, not served.
+    const res = await GET(
+      new Request(`https://${HOST}/api/rt/99999999-9999-4999-8999-999999999999/media/a.webp`, { headers: { host: HOST, cookie: '__Host-rt=COOKIEVAL' } }),
+      ctx(['media', 'a.webp'], '99999999-9999-4999-8999-999999999999'),
+    );
+    expect(res.status).toBe(404);
   });
 });

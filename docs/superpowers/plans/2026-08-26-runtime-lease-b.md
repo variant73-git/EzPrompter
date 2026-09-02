@@ -46,9 +46,36 @@
 | 9 (CSP fonte única + detector) | ✅ (passo do produtor AJUSTADO — ver task) | `191bccfd` |
 | 10 (hostname + host guard, provado live) | ✅ | `aaf7b5c5` |
 | 11 (recusa de SW) | ✅ | `1b5e2e51` |
-| 3, 7, 8, 12, 13, 14 | ⏳ `[DB]` — esperam Neon/Postgres | — |
+| 3 (migração aplicada ao Neon) | ✅ | `e896a1e8` |
+| 7 (bootstrap + /api/rt cookie-authed) | ✅ | `adbb2763` |
+| 8 (emissão + renew + revoke no fecho) | ✅ | `edf72c9f` |
+| 12, 13, 14 | ⏳ próximas (12 upload bridge, 13 iframe/postMessage/renew loop, 14 aceite) | — |
 
-Suíte no fechamento: **2302 passed | 28 skipped**; `next build` OK (middleware no build).
+Suíte de runtime no fechamento da Task 8: **749 passed**; `next build` OK.
+
+### Auditoria das rotas 7+8 (2026-09-02)
+Codex/Sol estourou o teto de 600s (exploração de repo — indisponível nesta
+passada); revisão adversarial Claude independente com acesso ao repo. Veredito:
+**sem P0 de dinheiro** (nada cobrado no serve/bootstrap, confirmado por grep).
+- **P1 CORRIGIDO** (`fix`): rate-limit `buckets` sem teto, chaveado por
+  `sessionId` cru da URL e ANTES do cookie → OOM sem autenticação. Agora chave
+  = COOKIE, só após o cookie existir (sem cookie não semeia), Map com teto +
+  evicção FIFO. Teste com `__setLeaseRateLimitForTests`.
+- **P2a CORRIGIDO**: hit do cache revalida `sessionId`↔lease e host (as duas
+  guardas lapsavam 20s). Descasamento → `lease_scope_mismatch` inerte.
+- **P2d fechado**: o cookie de login do app é `SameSite=Lax` (`lib/auth.js:68`)
+  → o clone (cross-site) não cavalga o cookie até `/renew`. Contrato p/ Task 13:
+  o nonce NÃO é segredo contra o clone (ele lê o próprio config); a fronteira
+  dura é `origin + event.source`.
+- **Residuais ACEITOS**: badge no path do bootstrap vai a log de proxy (mitigado
+  por one-shot 60s host-bound; alternativa = POST body); `loadBundleRow` não
+  reconfere `boards.user_id` (transferência de board mid-sessão serviria até o
+  TTL; deleção de node já cascateia a lease); janela de 20s do cache (conteúdo
+  próprio, não cobrado).
+- **Fechados sem mudança** (camada existente): forja/alg-confusion do badge,
+  open-redirect 303/301, oráculo de ordem no verifyLease, path traversal, CAS
+  do hostname, CSRF (só GET de bootstrap é gated por capacidade), legado
+  byte-idêntico.
 
 ## Global Constraints
 
