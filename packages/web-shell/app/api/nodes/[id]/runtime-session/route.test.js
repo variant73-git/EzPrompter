@@ -126,3 +126,65 @@ describe('POST /api/nodes/[id]/runtime-session', () => {
     expect(openOrResumeEditSession).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /api/nodes/[id]/runtime-session — lease mode (flag on)', () => {
+  const SECRET = 'runtime-only-secret-with-at-least-32-characters';
+  const HOST = 'a1b2c3d4e5f60718293a4b5c6d7e8f90.rt.uncraft.test';
+
+  beforeEach(() => {
+    process.env.UNCRAFT_RUNTIME_LEASE = '1';
+    process.env.UNCRAFT_RUNTIME_SESSION_SECRET = SECRET;
+    process.env.UNCRAFT_RUNTIME_HOST_SUFFIX = 'rt.uncraft.test';
+    process.env.UNCRAFT_RUNTIME_AUTHORITY_TEMPLATE = 'https://{host}';
+    requireUser.mockResolvedValue({ user: { id: 42 } });
+    assertRuntimeSessionSigningConfiguration.mockReturnValue(true);
+    openOrResumeEditSession.mockResolvedValue({ id: SESSION_ID, baseSnapshotId: SNAPSHOT_ID, revision: 3, status: 'active' });
+  });
+
+  it('emits a bootstrap URL on the persisted per-session hostname, not a token URL', async () => {
+    // 1) snapshot SELECT, 2) CAS UPDATE claims the hostname
+    sqlMock._results = [
+      [{ node_id: NODE_ID, snapshot_id: SNAPSHOT_ID, native_bundle_id: BUNDLE_ID, entry_path: 'site/index.html', runtime_fingerprint: FINGERPRINT }],
+      [{ runtime_hostname: HOST }],
+    ];
+    const response = await POST(request(), context);
+    const json = await response.json();
+    expect(response.status).toBe(200);
+    expect(json.runtime.mode).toBe('lease');
+    expect(json.runtime.origin).toBe(`https://${HOST}`);
+    expect(json.runtime.url).toMatch(new RegExp(`^https://${HOST.replace(/\./g, '\\.')}/api/runtime-bootstrap/`));
+    expect(json.runtime.url).not.toContain('/api/runtime/'); // legacy token path gone
+    expect(json.runtime.nonce).toMatch(/^[a-zA-Z0-9_-]{12,128}$/);
+    expect(issueRuntimeSessionToken).not.toHaveBeenCalled();
+    expect(json.session).toMatchObject({ id: SESSION_ID, revision: 3 });
+  });
+
+  it('reuses the hostname already persisted on the session (resume returns the same host)', async () => {
+    // CAS UPDATE claims nothing (row exists) -> SELECT returns the persisted host
+    sqlMock._results = [
+      [{ node_id: NODE_ID, snapshot_id: SNAPSHOT_ID, native_bundle_id: BUNDLE_ID, entry_path: 'site/index.html', runtime_fingerprint: FINGERPRINT }],
+      [], // UPDATE ... WHERE runtime_hostname IS NULL RETURNING -> no row
+      [{ runtime_hostname: HOST }], // SELECT persisted
+    ];
+    const response = await POST(request(), context);
+    const json = await response.json();
+    expect(json.runtime.origin).toBe(`https://${HOST}`);
+  });
+
+  it('flag on without a host suffix is a misconfig -> 503, no token fallback', async () => {
+    delete process.env.UNCRAFT_RUNTIME_HOST_SUFFIX;
+    sqlMock._results = [
+      [{ node_id: NODE_ID, snapshot_id: SNAPSHOT_ID, native_bundle_id: BUNDLE_ID, entry_path: 'site/index.html', runtime_fingerprint: FINGERPRINT }],
+    ];
+    const response = await POST(request(), context);
+    expect(response.status).toBe(503);
+    expect(issueRuntimeSessionToken).not.toHaveBeenCalled();
+  });
+
+  afterEach(() => {
+    delete process.env.UNCRAFT_RUNTIME_LEASE;
+    delete process.env.UNCRAFT_RUNTIME_SESSION_SECRET;
+    delete process.env.UNCRAFT_RUNTIME_HOST_SUFFIX;
+    delete process.env.UNCRAFT_RUNTIME_AUTHORITY_TEMPLATE;
+  });
+});

@@ -220,11 +220,16 @@ describe('native motion edit-session store', () => {
       sql, userId: 42, nodeId: NODE_ID, sessionId: SESSION_ID, expectedRevision: 2,
     });
     expect(committed).toMatchObject({ status: 'committed', nodeId: NODE_ID });
-    expect(sql).toHaveBeenCalledTimes(1);
+    // O COMMIT em si é UM statement atômico (snapshot + node + sessão);
     const statement = sql.calls[0].text;
     expect(statement).toContain('INSERT INTO snapshots');
     expect(statement).toContain('UPDATE nodes');
     expect(statement).toContain('UPDATE native_motion_edit_sessions');
+    // e a revogação da lease é um follow-up SEPARADO (não faz parte do átomo
+    // de commit — o gateway já para de servir pelo status da sessão).
+    expect(sql).toHaveBeenCalledTimes(2);
+    expect(sql.calls[1].text).toMatch(/UPDATE native_runtime_leases SET status = 'revoked'/);
+    expect(sql.calls[1].values).toContain(SESSION_ID);
   });
 
   it('can save a version while keeping the same session active on the new base', async () => {

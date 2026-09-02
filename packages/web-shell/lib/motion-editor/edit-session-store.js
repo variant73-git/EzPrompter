@@ -3,6 +3,22 @@ import {
   MOTION_MANIFEST_SCHEMA_VERSION,
   parseMotionManifest,
 } from './manifest.js';
+import { revokeLeasesForSession } from './runtime-lease.js';
+
+// A sessão que deixa de estar ativa (commit/discard/expire/supersede) NÃO deve
+// mais autorizar o runtime: a linha da lease vira 'revoked'. Defesa em
+// profundidade — o gateway já exige `status='active'` na sessão para servir,
+// mas revogar mantém a lease honesta (verifyLease recusa) e o reaper limpo.
+// Best-effort: uma falha de revogação NUNCA derruba o fecho, que é o que de
+// fato importa (o gateway já para de servir pelo status da sessão).
+async function revokeSessionLeases(sql, sessionId) {
+  if (!sessionId) return;
+  try {
+    await revokeLeasesForSession({ sql, sessionId });
+  } catch {
+    // O status da sessão já barra o serviço; o reaper recolhe a lease órfã.
+  }
+}
 
 // Absolute lifetime of an edit session, extended on every resume. Matches
 // RUNTIME_SESSION_EDIT_TTL_SECONDS (4h): the runtime token lives the session,
@@ -275,6 +291,7 @@ export async function openOrResumeEditSession({ sql, userId, nodeId, baseSnapsho
   `,
   ]);
   const superseded = retired?.[0] || null;
+  if (superseded?.id) await revokeSessionLeases(sql, superseded.id);
   const session = sessionFromRow(rows[0]);
   if (!session) {
     const agora = atual?.[0];
@@ -537,6 +554,7 @@ export async function commitEditSession({
     const conflict = await readEditSessionConflict({ sql, userId, nodeId, sessionId, expectedRevision });
     throw conflictError(conflict);
   }
+  await revokeSessionLeases(sql, row.session_id);
   return {
     sessionId: row.session_id,
     snapshotId: row.snapshot_id,
@@ -566,6 +584,7 @@ async function closeEditSession({ sql, userId, nodeId, sessionId, status }) {
   `;
   const session = sessionFromRow(rows[0]);
   if (!session) throw new EditSessionStoreError('not_found', 'Owned active edit session not found.');
+  await revokeSessionLeases(sql, session.id);
   return session;
 }
 
