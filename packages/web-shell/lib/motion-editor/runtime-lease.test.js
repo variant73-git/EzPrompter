@@ -256,6 +256,24 @@ describe('lease CRUD', () => {
   });
 });
 
+describe('lease session nonce (derived, not stored)', () => {
+  it('is stable for a session, URL-safe, and matches the bridge nonce shape', async () => {
+    const { deriveLeaseNonce } = await import('./runtime-lease.js');
+    const n = deriveLeaseNonce(SESSION_ID, { secret: RUNTIME_SECRET });
+    expect(n).toMatch(/^[a-zA-Z0-9_-]{12,128}$/);
+    expect(deriveLeaseNonce(SESSION_ID, { secret: RUNTIME_SECRET })).toBe(n);
+  });
+
+  it('differs per session and per secret (unpredictable from the URL alone)', async () => {
+    const { deriveLeaseNonce } = await import('./runtime-lease.js');
+    const a = deriveLeaseNonce(SESSION_ID, { secret: RUNTIME_SECRET });
+    const b = deriveLeaseNonce('44444444-4444-4444-8444-444444444444', { secret: RUNTIME_SECRET });
+    const c = deriveLeaseNonce(SESSION_ID, { secret: 'another-secret-with-at-least-32-characters!!' });
+    expect(a).not.toBe(b);
+    expect(a).not.toBe(c);
+  });
+});
+
 describe('per-session hostname', () => {
   it('mints <32-hex>.<suffix> — 128 bits, DNS label under 63 chars', async () => {
     const { mintRuntimeHostname } = await import('./runtime-lease.js');

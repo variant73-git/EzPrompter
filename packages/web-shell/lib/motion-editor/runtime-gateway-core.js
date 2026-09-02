@@ -57,15 +57,24 @@ function contentSecurityPolicy(request) {
 export function commonHeaders(request, { corsWildcard = true } = {}) {
   const headers = new Headers({
     'Content-Security-Policy': contentSecurityPolicy(request),
-    'Cross-Origin-Resource-Policy': 'cross-origin',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
     'Referrer-Policy': 'no-referrer',
     'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
     'X-Content-Type-Options': 'nosniff',
   });
-  // O caminho lease é same-origin por construção: não precisa de CORS, e
-  // `*` combinado com cookie seria veneno — só o legado (origem opaca) o leva.
-  if (corsWildcard) headers.set('Access-Control-Allow-Origin', '*');
+  if (corsWildcard) {
+    // Legado: origem OPACA — o editor busca com Origin: null e precisa de CORS
+    // aberto; a capacidade é o token no caminho, então `*` é seguro AQUI. CORP
+    // cross-origin porque o embutido é de outra origem.
+    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
+  } else {
+    // Lease: same-origin por construção — sem CORS (`*` com cookie é veneno);
+    // CORP same-origin tranca leitura por outra origem, e Origin-Agent-Cluster
+    // mata `document.domain` entre runtimes do mesmo eTLD+1 (Sol r4 #2).
+    headers.set('Cross-Origin-Resource-Policy', 'same-origin');
+    headers.set('Origin-Agent-Cluster', '?1');
+  }
   return headers;
 }
 

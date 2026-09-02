@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { normalizeBundlePath } from '../native-clone/bundle-contract.js';
 
@@ -290,6 +290,18 @@ export function mintRuntimeHostname({ suffix } = {}) {
     throw new TypeError('Runtime host suffix must be a pure lowercase hostname without port');
   }
   return `${randomBytes(16).toString('hex')}.${suffix}`;
+}
+
+// ── Nonce da sessão (DERIVADO, não guardado) ─────────────────────────────────
+// O bridge injetado precisa de um nonce por sessão; a lease não o guarda (a
+// migração já foi aplicada, e o valor não precisa de linha). HMAC do segredo
+// sobre o sessionId: estável, computável no /api/rt E na emissão (Task 8),
+// e IMPREVISÍVEL a partir da URL (que expõe o sessionId cru) — sem o segredo
+// ninguém reproduz o nonce. Defesa em profundidade; a fronteira dura do
+// postMessage em modo lease é origem+event.source (Task 13).
+export function deriveLeaseNonce(sessionId, { secret, loginSecret } = {}) {
+  const key = configuredSecret(secret, loginSecret);
+  return createHmac('sha256', key).update(`lease-nonce:${sessionId}`).digest('base64url').slice(0, 32);
 }
 
 /** Igualdade de HOSTNAME puro (minúsculo, sem porta) — nunca sufixo/endsWith. */
