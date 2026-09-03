@@ -69,10 +69,15 @@ export function commonHeaders(request, { corsWildcard = true } = {}) {
     headers.set('Access-Control-Allow-Origin', '*');
     headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
   } else {
-    // Lease: same-origin por construção — sem CORS (`*` com cookie é veneno);
-    // CORP same-origin tranca leitura por outra origem, e Origin-Agent-Cluster
-    // mata `document.domain` entre runtimes do mesmo eTLD+1 (Sol r4 #2).
-    headers.set('Cross-Origin-Resource-Policy', 'same-origin');
+    // Lease: o app embute o runtime de OUTRA origem (site separado, por
+    // desenho) — então o documento PRECISA ser carregável cross-origin. CORP
+    // `same-origin` bloqueava o próprio embed (ERR_BLOCKED_BY_RESPONSE, medido
+    // ao vivo 2026-09-03). A fronteira real de leitura cross-tenant NÃO é o
+    // CORP: é o cookie da lease (Partitioned + host-scoped + HttpOnly — outra
+    // origem não o carrega) e a AUSÊNCIA de ACAO (fetch cross-origin recebe
+    // resposta opaca, ilegível). CORP `cross-origin` permite o embed sem abrir
+    // leitura. Origin-Agent-Cluster segue matando `document.domain`.
+    headers.set('Cross-Origin-Resource-Policy', 'cross-origin');
     headers.set('Origin-Agent-Cluster', '?1');
   }
   return headers;

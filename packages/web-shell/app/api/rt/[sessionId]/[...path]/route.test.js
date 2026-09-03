@@ -78,13 +78,17 @@ afterEach(() => {
 });
 
 describe('GET /api/rt/[sessionId]/[...path]', () => {
-  it('serves a cookie-authed asset same-origin: no ACAO, CORP same-origin, Origin-Agent-Cluster ?1, clean rewrite base', async () => {
+  it('serves a cookie-authed asset embeddable cross-origin: no ACAO, CORP cross-origin, Origin-Agent-Cluster ?1, clean rewrite base', async () => {
     store.read.mockResolvedValue(new TextEncoder().encode('<html><body><img src="/media/a.webp"></body></html>'));
     const res = await GET(req(), ctx());
     const body = await res.text();
     expect(res.status).toBe(200);
     expect(res.headers.get('access-control-allow-origin')).toBeNull();
-    expect(res.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+    // O app embute o runtime de OUTRA origem: CORP tem que permitir o embed
+    // (same-origin bloqueava — ERR_BLOCKED_BY_RESPONSE medido ao vivo). A
+    // fronteira de leitura é o cookie particionado + ausência de ACAO.
+    expect(res.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
     expect(res.headers.get('origin-agent-cluster')).toBe('?1');
     expect(body).toContain(`/api/rt/${SESSION_ID}/`);
     expect(body).toContain('data-uncraft-runtime-bridge');
