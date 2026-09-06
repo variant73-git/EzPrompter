@@ -35,6 +35,19 @@ function recordFailure(reason, credential) {
   console.warn('Native runtime gateway load failed', { reason, tokenDigest: tokenDigest(credential) });
 }
 
+// ⚠️ `next dev` reporta `request.url` com origin SEMPRE `localhost` (lição 167)
+// — a verdade do host é o HEADER, como o middleware já lê. Sem isto, em dev
+// `runtimeOrigin === appOrigin` por artefato e o frame-ancestors saía `'self'`
+// (= a origem do iframe), e o app NUNCA conseguia emoldurar o runtime
+// (medido 2026-09-06 nas duas instâncias). Sem header, cai no `request.url`
+// de antes — produção (host real) fica byte-idêntica.
+function runtimeRequestOrigin(request) {
+  const host = request.headers.get('host');
+  if (!host) return new URL(request.url).origin;
+  const proto = request.headers.get('x-forwarded-proto') || new URL(request.url).protocol.replace(':', '');
+  return `${proto}://${host}`;
+}
+
 function appFrameAncestor(request) {
   const configured = process.env.NEXT_PUBLIC_APP_URL;
   if (!configured) return new URL(request.url).origin;
@@ -46,7 +59,7 @@ function appFrameAncestor(request) {
 }
 
 function contentSecurityPolicy(request) {
-  const runtimeOrigin = new URL(request.url).origin;
+  const runtimeOrigin = runtimeRequestOrigin(request);
   const appOrigin = appFrameAncestor(request);
   const frameAncestor = runtimeOrigin === appOrigin ? "'self'" : appOrigin;
   // A política vem da fonte ÚNICA (runtime-csp.js) — a meta injetada no HTML
@@ -95,7 +108,7 @@ export function commonHeaders(request, { corsWildcard = true } = {}) {
  * ('unsafe-inline'/'unsafe-eval') entra aqui: esta pagina nao executa nada.
  */
 function failureContentSecurityPolicy(request) {
-  const runtimeOrigin = new URL(request.url).origin;
+  const runtimeOrigin = runtimeRequestOrigin(request);
   const appOrigin = appFrameAncestor(request);
   const frameAncestor = runtimeOrigin === appOrigin ? "'self'" : appOrigin;
   return [

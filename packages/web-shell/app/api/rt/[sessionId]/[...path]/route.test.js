@@ -95,6 +95,22 @@ describe('GET /api/rt/[sessionId]/[...path]', () => {
     expect(res.headers.get('cache-control')).toBe('no-store'); // HTML entry never cached
   });
 
+  it('frame-ancestors names the APP origin from the Host header, not next-dev\'s localhost request.url (lição 167)', async () => {
+    // Em dev `request.url` reporta sempre localhost → sem ler o Host, o runtime
+    // "parecia" ser o app e o CSP caía em 'self', bloqueando o embed do app.
+    process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3031';
+    try {
+      store.read.mockResolvedValue(new Uint8Array([1, 2, 3]));
+      const res = await GET(new Request(`http://localhost:3031/api/rt/${SESSION_ID}/media/a.webp`, {
+        headers: { host: `${HOST}:3444`, 'x-forwarded-proto': 'https', cookie: '__Host-rt=COOKIEVAL' },
+      }), ctx(['media', 'a.webp']));
+      expect(res.headers.get('content-security-policy')).toContain('frame-ancestors http://localhost:3031');
+      expect(res.headers.get('content-security-policy')).not.toContain("frame-ancestors 'self'");
+    } finally {
+      delete process.env.NEXT_PUBLIC_APP_URL;
+    }
+  });
+
   it('a binary asset carries the immutable lease cache-control and an ETag', async () => {
     store.read.mockResolvedValue(new Uint8Array([1, 2, 3]));
     const res = await GET(req('media/a.webp'), ctx(['media', 'a.webp']));
