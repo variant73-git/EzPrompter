@@ -60,47 +60,75 @@ function paginaPaiUrl(runtimeUrl, mode) {
   return u.toString();
 }
 
-// 3) Mede bytes de rede (encodedDataLength via CDP) num intervalo nomeado.
-async function medir(page, cdp, rotulo, fase) {
-  const antes = fase.total;
-  await rotulo();
-  await page.waitForTimeout(2500);
-  return fase.total - antes;
+// A pergunta do aceite é uma só: RECARREGAR re-paga o pacote? Mede-se com CDP
+// NO FRAME do runtime (o iframe é OOPIF — o CDP do topo não o vê, foi o erro da
+// 1ª versão), recarregando o iframe NO LUGAR (identidade do frame preservada,
+// a sessão CDP sobrevive). `encodedDataLength` são os bytes REAIS no fio;
+// `fromDiskCache` distingue "não pediu" de "pediu de novo".
+async function medirRecarga(ctx, frame) {
+  const cdp = await ctx.newCDPSession(frame);
+  const fase = { bytes: 0, req: 0, cache: 0 };
+  await cdp.send('Network.enable');
+  cdp.on('Network.loadingFinished', (e) => { fase.bytes += e.encodedDataLength || 0; });
+  cdp.on('Network.responseReceived', (e) => {
+    const r = e.response || {};
+    if (r.fromDiskCache || r.fromPrefetchCache) fase.cache += 1; else fase.req += 1;
+  });
+  cdp.on('Network.requestServedFromCache', () => { fase.cache += 1; });
+
+  await frame.evaluate(() => new Promise((res) => { location.reload(); setTimeout(res, 200); })).catch(() => {});
+  await frame.waitForLoadState('load').catch(() => {});
+  await new Promise((r) => setTimeout(r, 3500));
+  return {
+    rede_kb: (fase.bytes / 1024).toFixed(1),
+    req_do_servidor: fase.req,
+    req_do_cache: fase.cache,
+  };
 }
 
 async function run() {
   const sessao = await abrirSessao();
-
   const perfil = mkdtempSync(join(tmpdir(), 'aceite-lease-'));
   const ctx = await chromium.launchPersistentContext(perfil, { headless: true, channel: 'chrome' });
   const page = await ctx.newPage();
-  const cdp = await ctx.newCDPSession(page);
-  await cdp.send('Network.enable');
-  const fase = { total: 0 };
-  cdp.on('Network.loadingFinished', (e) => { fase.total += e.encodedDataLength || 0; });
 
-  const abrir = () => page.goto(paginaPaiUrl(sessao.url, sessao.mode), { waitUntil: 'load' });
-  const rolar = async () => {
-    const f = page.frameLocator('#rt');
-    await f.locator('body').evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
-  };
-  const recarregar = () => page.reload({ waitUntil: 'load' });
+  // Abertura FRIA: carrega o pai + o iframe do runtime (isto aquece o cache de
+  // disco na origem própria; na opaca, nada é guardado).
+  await page.goto(paginaPaiUrl(sessao.url, sessao.mode), { waitUntil: 'load' });
+  const frame = await page.waitForSelector('#rt').then((h) => h.contentFrame());
+  await frame.waitForLoadState('load').catch(() => {});
+  await new Promise((r) => setTimeout(r, 4000));
 
-  const bytesAbrir = await medir(page, cdp, abrir, fase);
-  const bytesRolar = await medir(page, cdp, rolar, fase);
-  const bytesReload = await medir(page, cdp, recarregar, fase);
+  // Prova POSITIVA de render (senão "0 bytes" seria "não carregou", lição 177).
+  let render = null;
+  try {
+    render = await frame.evaluate(() => ({
+      imgs: document.images.length,
+      decoded: [...document.images].filter((i) => i.complete && i.naturalWidth > 0).length,
+      bridge: !!document.querySelector('[data-uncraft-runtime-bridge]'),
+      scripts: document.scripts.length,
+    }));
+  } catch { /* opaco pode recusar evaluate no cross-origin */ }
 
+  // RECARGA: o pacote é re-pago ou vem do cache?
+  const reload = await medirRecarga(ctx, frame);
   await ctx.close();
 
-  const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
+  // O critério é BYTES no fio, não contagem de requisições: uma revalidação
+  // 304 bate no servidor (Edge Request, barato) mas transfere ~0 bytes — o
+  // corpo vem do cache. O custo que a conta econômica mede é Data Transfer.
+  // Na concessão o reload transfere ~1 MB (o HTML de sessão no-store + 304s);
+  // no legado opaco, dezenas de MB (re-baixa o pacote). Teto de 2 MB.
+  const KB = Number(reload.rede_kb);
   console.log(JSON.stringify({
     modo: sessao.mode,
-    abrir_sem_rolar: kb(bytesAbrir),
-    rolar_ate_o_fim: kb(bytesRolar),
-    reload: kb(bytesReload),
-    veredito_reload: sessao.mode === 'lease'
-      ? (bytesReload < bytesAbrir * 0.1 ? 'OK — reload ≈ 0 (cache da origem própria)' : 'FALHA — reload ainda paga; investigar')
-      : 'linha de base (legado) — reload deve re-pagar o pacote inteiro',
+    render_no_iframe: render,
+    reload: reload,
+    veredito: sessao.mode === 'lease'
+      ? (KB < 2048
+        ? `OK — reload transfere ${reload.rede_kb} KB (o HTML de sessão + 304s); os assets vêm do cache, NÃO re-baixam`
+        : `FALHA — reload re-pagou ${reload.rede_kb} KB de bytes; investigar`)
+      : `linha de base (legado, opaco) — reload transfere ${reload.rede_kb} KB (re-paga o pacote inteiro)`,
   }, null, 2));
 }
 
