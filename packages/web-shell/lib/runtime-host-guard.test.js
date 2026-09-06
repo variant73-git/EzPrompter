@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  requestHostname,
+  requestOrigin,
   decideHostRouting,
   isRuntimeHost,
   runtimeSuffixSharesRegistrableDomain,
@@ -63,5 +65,24 @@ describe('runtimeSuffixSharesRegistrableDomain (startup separation check)', () =
 
   it('fails closed on garbage app URLs', () => {
     expect(runtimeSuffixSharesRegistrableDomain('rt.uncraft.app', 'not a url')).toBe(true);
+  });
+});
+
+describe('requestHostname / requestOrigin — the host is the HEADER (lição 167)', () => {
+  const req = (url, headers = {}) => new Request(url, { headers });
+  it('prefers x-forwarded-host, then host, stripping the port', () => {
+    expect(requestHostname(req('http://localhost:3031/x', { 'x-forwarded-host': 'abc.rt.uncraft.test:3444', host: 'localhost:3031' }))).toBe('abc.rt.uncraft.test');
+    expect(requestHostname(req('http://localhost:3031/x', { host: 'ABC.RT.UNCRAFT.TEST:3444' }))).toBe('abc.rt.uncraft.test');
+  });
+  it('falls back to request.url only when no header is present (production shape)', () => {
+    expect(requestHostname(req('https://abc.rt.uncraft.test/x'))).toBe('abc.rt.uncraft.test');
+  });
+  it('takes the FIRST value of a comma-joined forwarded list', () => {
+    expect(requestHostname(req('http://localhost:3031/x', { 'x-forwarded-host': 'abc.rt.uncraft.test:3444, proxy2' }))).toBe('abc.rt.uncraft.test');
+  });
+  it('requestOrigin composes forwarded proto + header host; falls back to request.url', () => {
+    expect(requestOrigin(req('http://localhost:3031/x', { host: 'abc.rt.uncraft.test:3444', 'x-forwarded-proto': 'https' }))).toBe('https://abc.rt.uncraft.test:3444');
+    expect(requestOrigin(req('http://localhost:3031/x', { host: 'abc.rt.uncraft.test:3444' }))).toBe('http://abc.rt.uncraft.test:3444');
+    expect(requestOrigin(req('https://app.example/x'))).toBe('https://app.example');
   });
 });

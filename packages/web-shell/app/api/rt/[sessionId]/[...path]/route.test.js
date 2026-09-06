@@ -215,3 +215,20 @@ describe('GET /api/rt/[sessionId]/[...path]', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('dev shape: request.url is localhost, the Host header is the session host (lição 167)', () => {
+  it('serves the asset — the lease host check reads the HEADER, not request.url', async () => {
+    process.env.UNCRAFT_RUNTIME_LEASE = '1';
+    process.env.UNCRAFT_RUNTIME_SESSION_SECRET = SECRET;
+    __clearLeaseGatewayCacheForTests();
+    verifyLease.mockResolvedValue(leaseOk());
+    sqlMock._results = [[bundleRow()]];
+    store.read.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    const res = await GET(new Request(`http://localhost:3031/api/rt/${SESSION_ID}/media/a.webp`, {
+      headers: { host: `${HOST}:3444`, 'x-forwarded-proto': 'https', cookie: '__Host-rt=COOKIEVAL' },
+    }), ctx(['media', 'a.webp']));
+    expect(res.status).toBe(200);
+    // and verifyLease was asked about the HEADER host, not 'localhost'
+    expect(verifyLease.mock.calls.at(-1)[0].hostname).toBe(HOST);
+  });
+});

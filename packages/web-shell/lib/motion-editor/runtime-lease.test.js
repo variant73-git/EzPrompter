@@ -297,3 +297,16 @@ describe('per-session hostname', () => {
     expect(runtimeRequestUsesSessionHost('not a url', 'abc.rt.uncraft.test')).toBe(false);
   });
 });
+
+describe('runtimeRequestUsesSessionHost accepts the REQUEST (dev: request.url is localhost)', () => {
+  it('matches the session host from the Host header even when request.url says localhost', async () => {
+    const { runtimeRequestUsesSessionHost } = await import('./runtime-lease.js');
+    const request = new Request('http://localhost:3031/api/rt/s/x', { headers: { host: 'abc.rt.uncraft.test:3444' } });
+    expect(runtimeRequestUsesSessionHost(request, 'abc.rt.uncraft.test')).toBe(true);
+    expect(runtimeRequestUsesSessionHost(request, 'other.rt.uncraft.test')).toBe(false);
+  });
+  it('keeps the string form working (compatibility)', async () => {
+    const { runtimeRequestUsesSessionHost } = await import('./runtime-lease.js');
+    expect(runtimeRequestUsesSessionHost('https://abc.rt.uncraft.test:3443/x', 'abc.rt.uncraft.test')).toBe(true);
+  });
+});

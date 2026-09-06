@@ -1,4 +1,5 @@
 import { db } from '../../../../lib/db.js';
+import { requestOrigin } from '../../../../lib/runtime-host-guard.js';
 import { inertFailure } from '../../../../lib/motion-editor/runtime-gateway-core.js';
 import {
   createLeaseFromBadge,
@@ -17,7 +18,9 @@ function leaseEnabled() {
 }
 
 function isSecure(request) {
-  return new URL(request.url).protocol === 'https:';
+  // Mesma fonte que /api/rt usa para LER o cookie (x-forwarded-proto →
+  // request.url): quem grava e quem lê têm que concordar no nome do cookie.
+  return requestOrigin(request).startsWith('https://');
 }
 
 function readCookie(request, name) {
@@ -61,7 +64,7 @@ export async function GET(request, { params }) {
   const payload = verification.payload;
 
   // O host DEVE ser o hostname da sessão — nunca cria lease para outro host.
-  if (!runtimeRequestUsesSessionHost(request.url, payload.hostname)) {
+  if (!runtimeRequestUsesSessionHost(request, payload.hostname)) {
     return inertFailure(request, 'bootstrap_host_mismatch', badge);
   }
 

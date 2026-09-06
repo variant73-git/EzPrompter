@@ -13,6 +13,36 @@ function hostWithoutPort(host) {
   return String(host || '').toLowerCase().replace(/:\d+$/, '');
 }
 
+// ⚠️ A VERDADE DO HOST É O HEADER. Em `next dev`, `request.url` reporta origin
+// SEMPRE `localhost` (lição 167; provado em laboratório 2026-09-06: o handler
+// vê Host/X-Forwarded-Host reais e `request.url` = localhost). Todo lugar que
+// tirava host de `request.url` comparava `localhost` com o host da sessão e
+// recusava (bootstrap 404, verifyLease host_mismatch, frame-ancestors 'self').
+// Uma fonte só: x-forwarded-host (proxy) → host → request.url (fallback, que é
+// o comportamento de produção, onde request.url é o host real).
+function firstHeaderValue(request, name) {
+  const raw = request?.headers?.get?.(name);
+  return raw ? String(raw).split(',')[0].trim() : '';
+}
+
+export function requestHostname(request) {
+  const header = firstHeaderValue(request, 'x-forwarded-host') || firstHeaderValue(request, 'host');
+  if (header) return hostWithoutPort(header);
+  try { return new URL(request.url).hostname.toLowerCase(); } catch { return ''; }
+}
+
+export function requestOrigin(request) {
+  const header = firstHeaderValue(request, 'x-forwarded-host') || firstHeaderValue(request, 'host');
+  if (!header) {
+    try { return new URL(request.url).origin; } catch { return ''; }
+  }
+  let proto = firstHeaderValue(request, 'x-forwarded-proto');
+  if (!proto) {
+    try { proto = new URL(request.url).protocol.replace(':', ''); } catch { proto = 'http'; }
+  }
+  return `${proto}://${header.toLowerCase()}`;
+}
+
 export function isRuntimeHost(host, suffix) {
   if (typeof suffix !== 'string' || !suffix) return false;
   const bare = hostWithoutPort(host);

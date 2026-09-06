@@ -1,4 +1,5 @@
 import { db } from '../../../../../lib/db.js';
+import { requestHostname, requestOrigin } from '../../../../../lib/runtime-host-guard.js';
 import { inertFailure, serveRuntimeAsset } from '../../../../../lib/motion-editor/runtime-gateway-core.js';
 import {
   deriveLeaseNonce,
@@ -130,7 +131,11 @@ export async function GET(request, { params }) {
 
   // Sem cookie: falha inerte ANTES do rate limit — um pedido sem credencial
   // não pode semear bucket (P1). O rate limit é por COOKIE, com teto de chaves.
-  const cookieValue = readCookie(request, leaseCookieName({ secure: url.protocol === 'https:' }));
+  // `secure` pela MESMA fonte que o bootstrap usa ao gravar o cookie
+  // (x-forwarded-proto → request.url): decidir pelo request.url aqui e pelo
+  // proxy lá faria a rota procurar `uncraft_rt` onde o bootstrap gravou
+  // `__Host-rt` → lease_missing.
+  const cookieValue = readCookie(request, leaseCookieName({ secure: requestOrigin(request).startsWith('https://') }));
   if (!cookieValue) return inertFailure(request, 'lease_missing', null, 404, LEASE);
   if (rateLimited(cookieValue)) {
     return new Response(null, { status: 429, headers: { 'Cache-Control': 'no-store' } });
@@ -142,7 +147,7 @@ export async function GET(request, { params }) {
   // defesa em profundidade lapsariam por 20s. É auto-conteúdo (cache por
   // cookie), mas o descasamento é anômalo → recusa inerte.
   if (session && (String(session.lease.edit_session_id) !== String(sessionId)
-    || !runtimeRequestUsesSessionHost(request.url, session.lease.hostname))) {
+    || !runtimeRequestUsesSessionHost(request,session.lease.hostname))) {
     return inertFailure(request, 'lease_scope_mismatch', cookieValue, 404, LEASE);
   }
   if (!session) {
@@ -150,12 +155,14 @@ export async function GET(request, { params }) {
     try { sql = await db(); } catch { return inertFailure(request, 'database_unavailable', cookieValue, 503, LEASE); }
     let check;
     try {
-      check = await verifyLease({ sql, cookieValue, hostname: new URL(request.url).hostname, sessionId });
+      // Host pelo HEADER: `request.url` é localhost em dev (lição 167) e
+      // comparava `localhost` com o host da sessão → host_mismatch inerte.
+      check = await verifyLease({ sql, cookieValue, hostname: requestHostname(request), sessionId });
     } catch { return inertFailure(request, 'database_unavailable', cookieValue, 503, LEASE); }
     if (check.error) return inertFailure(request, `lease_${check.error}`, cookieValue, 404, LEASE);
     // O host da lease tem que ser o host do request (defesa em profundidade —
     // verifyLease já compara, e o guard de middleware também).
-    if (!runtimeRequestUsesSessionHost(request.url, check.lease.hostname)) {
+    if (!runtimeRequestUsesSessionHost(request,check.lease.hostname)) {
       return inertFailure(request, 'lease_host_mismatch', cookieValue, 404, LEASE);
     }
     let row;

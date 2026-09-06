@@ -11,6 +11,7 @@ import { parseByteRange, rangeHeaders } from '../native-clone/byte-range.js';
 import { parseMotionManifest } from './manifest.js';
 import { injectRuntimeBridge, rewriteRuntimePaths } from './native-clone-gateway.js';
 import { htmlCarriesAuthoredCspMeta, runtimeCspHeader } from './runtime-csp.js';
+import { requestOrigin } from '../runtime-host-guard.js';
 import { MOTIVOS_DE_FALHA } from './runtime-failure-reasons.js';
 import {
   translateRuntimeOrigins,
@@ -42,10 +43,9 @@ function recordFailure(reason, credential) {
 // (medido 2026-09-06 nas duas instâncias). Sem header, cai no `request.url`
 // de antes — produção (host real) fica byte-idêntica.
 function runtimeRequestOrigin(request) {
-  const host = request.headers.get('host');
-  if (!host) return new URL(request.url).origin;
-  const proto = request.headers.get('x-forwarded-proto') || new URL(request.url).protocol.replace(':', '');
-  return `${proto}://${host}`;
+  // Fonte ÚNICA do host (x-forwarded-host → host → request.url) — a mesma que
+  // bootstrap/lease usam, para a classe inteira fechar de uma vez.
+  return requestOrigin(request);
 }
 
 function appFrameAncestor(request) {

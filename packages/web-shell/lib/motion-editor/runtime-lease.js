@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { normalizeBundlePath } from '../native-clone/bundle-contract.js';
+import { requestHostname } from '../runtime-host-guard.js';
 
 // ── Badge de bootstrap (one-shot) ────────────────────────────────────────────
 // NÃO é o token legado de sessão: tipo/audience/escopo PRÓPRIOS (o legado é
@@ -304,10 +305,17 @@ export function deriveLeaseNonce(sessionId, { secret, loginSecret } = {}) {
   return createHmac('sha256', key).update(`lease-nonce:${sessionId}`).digest('base64url').slice(0, 32);
 }
 
-/** Igualdade de HOSTNAME puro (minúsculo, sem porta) — nunca sufixo/endsWith. */
-export function runtimeRequestUsesSessionHost(requestUrl, expectedHostname) {
+/**
+ * Igualdade de HOSTNAME puro (minúsculo, sem porta) — nunca sufixo/endsWith.
+ * Aceita o REQUEST (host pelo header — `request.url` é localhost em dev,
+ * lição 167) ou uma URL em string (compatibilidade).
+ */
+export function runtimeRequestUsesSessionHost(requestOrUrl, expectedHostname) {
   try {
-    return new URL(requestUrl).hostname.toLowerCase() === String(expectedHostname || '').toLowerCase();
+    const hostname = typeof requestOrUrl === 'string'
+      ? new URL(requestOrUrl).hostname.toLowerCase()
+      : requestHostname(requestOrUrl);
+    return Boolean(hostname) && hostname === String(expectedHostname || '').toLowerCase();
   } catch {
     return false;
   }
