@@ -203,3 +203,22 @@ describe('POST /api/nodes/[id]/reconstruct — linhagem nativa no servidor', () 
     expect(reconstructSiteNode).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('POST /api/nodes/[id]/reconstruct — bot-challenge interstitial (2026-09-06)', () => {
+  it('maps the producer\'s ChallengeRequiredError to a typed 409 the modal can consume', async () => {
+    // O describe anterior deixa a razão em 'native-inconsistent' (não há reset
+    // no beforeEach); aqui a linhagem é limpa e o produtor é quem recusa.
+    const { reconstructionReason } = await import('../../../../../lib/reconstruction-policy.js');
+    reconstructionReason.mockReturnValue('edit');
+    reconstructSiteNode.mockRejectedValueOnce(Object.assign(new Error('challenge_required: cloudflare'), {
+      code: 'challenge_required', kind: 'cloudflare', url: 'https://example.com', signals: ['title:Just a moment...'],
+    }));
+    const response = await POST(new Request('http://test/api/nodes/node-1/reconstruct', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': 'reconstruct-challenge' },
+    }), params);
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: 'challenge_required', kind: 'cloudflare', url: 'https://example.com' });
+  });
+});

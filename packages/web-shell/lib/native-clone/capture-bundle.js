@@ -25,6 +25,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { chromium as chromiumPadrao } from 'playwright-core';
 import { measureBundleSimilarity } from '../clone-similarity.js';
+import { ChallengeRequiredError, detectChallengePage } from '../snapshot.js';
 import { criarContabilidade } from './byte-ledger.js';
 import { parseContentRange } from './byte-range.js';
 import { referenceKindFor, rewriteDocumentReferences } from './rewrite-references.js';
@@ -93,6 +94,14 @@ const RETRY_MAX_SALTOS = 3;
 const RETRY_ORCAMENTO_BYTES = 60 * 1024 * 1024;
 // Página com altura absurda mantinha o navegador rolando por horas (P0 do Sol).
 const MAX_ALTURA_PX = 120000;
+// Teto da espera pelos corpos em voo na etapa 'collecting' (ver lá). Bem
+// abaixo do prazo de 90s da rota; corpos já recebidos resolvem na hora. O env
+// existe para o teste de corrida (resposta tardia × repescagem) rodar em
+// segundos; fora de teste fica o padrão.
+const COLETA_TETO_MS = Math.max(200, Number(process.env.UNCRAFT_CAPTURE_COLLECT_CAP_MS) || 20_000);
+// Quanto tempo uma interstitial de challenge tem para se limpar sozinha antes
+// de ser recusada (ver o detector na captura).
+const CHALLENGE_TOLERANCIA_MS = 5_000;
 
 const sha256 = (bytes) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 
@@ -197,6 +206,13 @@ export async function captureNativeBundle(url, opts = {}) {
   // montagem do bundle podia rodar com corpos ainda em leitura, e eles sumiam
   // sem sequer entrar em `descartados`. Achado P1 do Sol.
   const emVoo = new Set();
+  // URL de cada corpo ainda em leitura: quem estiver aqui quando o teto da
+  // coleta morder é "não terminou", e a repescagem NÃO deve gastar mais 12s
+  // re-pedindo exatamente o que acabou de travar (Claude review r1 #3).
+  const lendo = new Map(); // url -> quantos handlers ainda leem (refcount: Astra r2 #3)
+  // Geração do documento principal por URL (ver o handler): recarregar a
+  // mesma URL substitui o documento anterior mesmo com o corpo dele em voo.
+  const geracao = new Map();
   // ⚠️ O `Promise.race` de fora rejeita, mas nada cancelava a captura — o
   // navegador seguia rolando por horas numa página gigante. Achado P0 do Sol.
   let cancelado = false;
@@ -212,9 +228,32 @@ export async function captureNativeBundle(url, opts = {}) {
 
     page.on('response', (res) => {
       const tarefa = (async () => {
+        const u = res.url();
+        let registrei = false;
         try {
-          const u = res.url();
-          if (cancelado || !/^https?:/i.test(u) || recursos.has(u)) return;
+          if (cancelado || !/^https?:/i.test(u)) return;
+          // Documento PRINCIPAL recarregado na MESMA URL substitui o anterior
+          // (Astra r1 #1, 2026-09-06): uma interstitial de challenge que limpa
+          // e recarrega U deixaria o dedup por URL descartar o documento REAL,
+          // o detector veria a página boa e o pacote sairia com a interstitial.
+          // O último documento navegado é o que o navegador está mostrando.
+          // Os bytes do anterior ficam contados na contabilidade — sobra
+          // conservadora, nunca fura o teto.
+          const req = res.request();
+          const documentoPrincipal = req.resourceType() === 'document' && req.isNavigationRequest() && req.frame() === page.mainFrame();
+          if (recursos.has(u) && !documentoPrincipal) return;
+          // GERAÇÃO por URL: o recarregamento pode chegar enquanto o handler da
+          // interstitial ainda lê o corpo (vaga ainda nula) — substituir "só
+          // vaga preenchida" descartava o documento real por timing (oscilou
+          // no teste). O último documento navegado é o dono; depois de esperar,
+          // quem não for mais o dono sai calado.
+          const geracaoMinha = (geracao.get(u) || 0) + 1;
+          geracao.set(u, geracaoMinha);
+          // Só quem REGISTROU desregistra, e por contagem: uma resposta
+          // duplicada que sai cedo (ou uma geração antiga terminando) não
+          // pode apagar o marcador de quem ainda lê (Astra r2 #3).
+          lendo.set(u, (lendo.get(u) || 0) + 1);
+          registrei = true;
           // ⚠️ RESERVA ANTES DE QUALQUER `await`. É o que torna a dupla
           // `has` + `set` atômica: em JavaScript nada intercala entre as duas
           // se não houver espera no meio. A checagem de host estava aqui e
@@ -270,6 +309,13 @@ export async function captureNativeBundle(url, opts = {}) {
             recursos.delete(u); descartados.push({ u, motivo: 'grande demais (recebido)' }); return;
           }
           const bytes = await res.body().catch(() => null);
+          // ⚠️ DEPOIS de esperar, a reserva pode não ser mais minha (Astra r1
+          // #3): com a coleta limitada, uma resposta original que só termina
+          // depois do teto encontra a vaga já PREENCHIDA pela repescagem — ou
+          // já PURGADA. Mexer nela apagaria um asset bom (`delete` no ramo de
+          // teto) ou o contaria duas vezes (`confirmar` + `set`). Só quem ainda
+          // segura a reserva nula decide; os outros saem calados.
+          if (recursos.get(u) !== null || geracao.get(u) !== geracaoMinha) return;
           if (!bytes) {
             const status = res.status();
             // 204/304 não têm corpo por natureza. Redirect PODE ter corpo
@@ -317,12 +363,24 @@ export async function captureNativeBundle(url, opts = {}) {
           }
           const bilhete = bytes.byteLength > MAX_ASSET_BYTES ? null : conta.reservar(bytes.byteLength);
           if (!bilhete) {
-            recursos.delete(u); descartados.push({ u, motivo: 'grande demais' }); return;
+            // Contabilidade FECHADA não é "grande demais": é corpo que chegou
+            // depois da montagem (a página viva ainda pede coisas entre o
+            // fechamento e o retorno). O rótulo fabricado ia parar no
+            // relatório do usuário (Claude review r1 #1).
+            recursos.delete(u);
+            descartados.push({ u, motivo: conta.estaFechada() ? 'chegou apos a montagem' : 'grande demais' });
+            return;
           }
           // O corpo já está em mão: confirma na hora.
           conta.confirmar(bilhete);
           recursos.set(u, { bytes, contentType: (res.headers()['content-type'] || '').split(';')[0].trim() });
         } catch (_) { /* resposta sem corpo (redirect, 204, 304) não é falha */ }
+        finally {
+          if (registrei) {
+            const n = (lendo.get(u) || 1) - 1;
+            if (n <= 0) lendo.delete(u); else lendo.set(u, n);
+          }
+        }
       })();
       emVoo.add(tarefa);
       tarefa.finally(() => emVoo.delete(tarefa));
@@ -331,6 +389,46 @@ export async function captureNativeBundle(url, opts = {}) {
     onProgress({ etapa: 'navigating' });
     await page.goto(url, { waitUntil: 'load', timeout: 90000 });
     await page.waitForTimeout(2500);
+
+    // Interstitial de bot-protection (Cloudflare "Just a moment…", hCaptcha,
+    // Akamai, PerimeterX): a captura de referência já recusa e entrega o
+    // handoff humano; este produtor NÃO recusava e empacotaria a interstitial
+    // COMO o site (medido no amigosecreto, 2026-09-06). Mesmo detector, mesmo
+    // erro tipado — a rota devolve 409 e a UI reaproveita o fluxo do modal.
+    //
+    // Com TOLERÂNCIA: uma interstitial pode se limpar sozinha e recarregar a
+    // mesma URL (é o que a "managed challenge" faz num navegador comum), e o
+    // veredito tem que ser sobre o documento ESTÁVEL — medido no teste: o
+    // recarregamento já tinha sido servido e o detector ainda via a
+    // interstitial porque o navegador não tinha trocado o documento. Re-checa
+    // por até CHALLENGE_TOLERANCIA_MS; só recusa o que PERSISTE (o site real
+    // medido persistiu 45s+ — recusa em 5s em vez de estourar 90s).
+    //
+    // ⚠️ O detector é FAIL-OPEN (exceção → null): um contexto destruído por
+    // navegação NO MEIO da re-checagem viraria "limpou" (Astra r2 #1). Por
+    // isso o veredito que libera é sempre o de um documento CARREGADO — depois
+    // de qualquer null, espera o load e checa de novo dentro do prazo.
+    // Modo ESTRITO: `null` = olhei e está limpo (libera); objeto = challenge;
+    // `undefined` = não consegui olhar (NÃO libera — segue tentando no prazo).
+    let veredito = await detectChallengePage(page, { strict: true });
+    if (veredito !== null) {
+      const limite = Date.now() + CHALLENGE_TOLERANCIA_MS;
+      let ultimo = veredito || null;
+      for (;;) {
+        if (Date.now() >= limite || cancelado) {
+          const k = ultimo || { kind: 'generic_challenge', signals: ['uninspectable'] };
+          throw new ChallengeRequiredError(k.kind, url, k.signals);
+        }
+        await page.waitForTimeout(500);
+        // Documento que não terminou de carregar também é "não consegui
+        // olhar" — um veredito limpo só vale sobre documento carregado
+        // (Astra r3; defesa em profundidade, site hostil está fora do modelo).
+        const carregou = await page.waitForLoadState('load', { timeout: 2000 }).then(() => true, () => false);
+        veredito = carregou ? await detectChallengePage(page, { strict: true }) : undefined;
+        if (veredito === null) break;
+        if (veredito) ultimo = veredito;
+      }
+    }
 
     // Percorre a página inteira: recurso preguiçoso só é pedido quando entra na
     // tela, e sem isso o bundle sairia sem metade das imagens.
@@ -521,8 +619,24 @@ export async function captureNativeBundle(url, opts = {}) {
     }).catch(() => null);
 
     onProgress({ etapa: 'collecting' });
-    // Espera os corpos que ainda estavam sendo lidos ANTES de montar o bundle.
-    await Promise.allSettled([...emVoo]);
+    // Espera os corpos que ainda estavam sendo lidos ANTES de montar o bundle —
+    // COM TETO. Medido em site real (amigosecreto, 2026-09-06): um beacon da
+    // Cloudflare (`fetch` 204) cujo `finished()` NUNCA resolvia segurou esta
+    // espera por 45s+, o prazo de 90s da rota estourou e a captura inteira
+    // virou 504 + reembolso, com a página já toda em mãos. Uma resposta que
+    // não termina não pode ser refém da coleta: passado o teto, o que ainda
+    // está em voo fica como reserva nula e o purgo abaixo o NOMEIA no
+    // relatório ('corpo nao chegou'). Um corpo já recebido resolve na hora,
+    // então o teto só morde quem de fato não terminou.
+    await Promise.race([
+      Promise.allSettled([...emVoo]),
+      new Promise((resolve) => setTimeout(resolve, COLETA_TETO_MS)),
+    ]);
+    // Quem ainda estava lendo quando o teto mordeu NÃO vai à repescagem: o
+    // navegador não terminou em COLETA_TETO_MS, e pedir de novo pelo Node
+    // custaria mais 12s por arquivo em cima do mesmo endpoint travado. Fica
+    // como reserva nula e o purgo o nomeia ('corpo nao chegou').
+    const presos = new Set(lendo.keys());
 
     // ⭐ UMA SEGUNDA TENTATIVA, pelo servidor, antes de desistir.
     //
@@ -532,7 +646,7 @@ export async function captureNativeBundle(url, opts = {}) {
     // chegou a tempo naquela passagem. Uma tentativa pelo contexto da página
     // (mesmos cookies e cabeçalhos) recupera o caso comum, e o que continuar
     // faltando segue nomeado no relatório.
-    const faltantes = [...recursos].filter(([, v]) => !v).map(([u]) => u);
+    const faltantes = [...recursos].filter(([u, v]) => !v && !presos.has(u)).map(([u]) => u);
     if (faltantes.length) {
       onProgress({ etapa: 'retrying', quantos: faltantes.length });
       const fila = faltantes.slice(0, RETRY_MAX_ARQUIVOS);
@@ -542,6 +656,11 @@ export async function captureNativeBundle(url, opts = {}) {
       // vezes (Sol).
       let orcamento = Math.min(RETRY_ORCAMENTO_BYTES, conta.restante());
       const buscarUmaVez = async (u) => {
+        // Geração no INÍCIO da repescagem: se o navegador recarregar U no meio
+        // (documento principal → geração nova, vaga nula nova), os bytes
+        // antigos desta repescagem não podem vencer o documento mais novo
+        // (Astra r2 #2). Exige-se a mesma geração ao confirmar e ao publicar.
+        const geracaoNoInicio = geracao.get(u) || 0;
         // ⚠️ REDIRECT MANUAL, com cada salto validado. Seguir sozinho valida só
         // o primeiro host — um 302 de host público para link-local passaria por
         // cima da guarda (mesma classe do achado de 2026-08-14).
@@ -597,12 +716,20 @@ export async function captureNativeBundle(url, opts = {}) {
               pedacos.push(value);
             }
             if (!lidos) return null;
+            // A vaga ainda é minha? A resposta ORIGINAL pode ter terminado
+            // enquanto eu lia (a coleta agora tem teto) e já preenchido a
+            // vaga — confirmar aqui contaria o mesmo corpo duas vezes e o
+            // `set` de fora sobrescreveria um asset bom (Claude review r1 #4).
+            if (recursos.get(u) !== null || (geracao.get(u) || 0) !== geracaoNoInicio) return null;
             // Só agora o corpo entra no pacote: pendente vira confirmado.
             for (const b of bilhetes) conta.confirmar(b);
             aceita = true;
             return {
               bytes: Buffer.concat(pedacos.map((p) => Buffer.from(p))),
               contentType: resposta.headers.get('content-type') || 'application/octet-stream',
+              // Quem publica confere de novo: entre este `return` e o `set`
+              // de fora há um microtask, e a geração pode virar nele.
+              geracao: geracaoNoInicio,
             };
             } finally {
               // Vale para TODO caminho de saída, não só o ramo de estouro: se
@@ -623,12 +750,19 @@ export async function captureNativeBundle(url, opts = {}) {
       await Promise.allSettled(Array.from({ length: RETRY_CONCORRENCIA }, async () => {
         for (;;) {
           const u = pendentes.shift();
-          if (!u || orcamento <= 0) return;
+          // `cancelado`: o prazo da rota já estourou e reembolsou — a
+          // repescagem (até 120 arquivos × 12s em 6 filas) não pode seguir
+          // trabalhando à toa depois disso (Astra r1 #2).
+          if (!u || orcamento <= 0 || cancelado) return;
           try {
             const valor = await buscarUmaVez(u);
             // Já reservado pedaço a pedaço durante a leitura — somar aqui
             // contaria os mesmos bytes duas vezes.
-            if (valor) recursos.set(u, valor);
+            // Publicar exige a vaga ainda nula E a mesma geração (Astra r3:
+            // o `await` acima é um microtask — a checagem de dentro não basta).
+            if (valor && recursos.get(u) === null && (geracao.get(u) || 0) === valor.geracao) {
+              recursos.set(u, { bytes: valor.bytes, contentType: valor.contentType });
+            }
           } catch { /* segue faltando, e o relatório dirá */ }
         }
       }));

@@ -77,6 +77,9 @@ export class ChallengeRequiredError extends Error {
   constructor(kind, url, signals = []) {
     super(`challenge_required: ${kind} on ${url}`);
     this.name = 'ChallengeRequiredError';
+    // `code` é o que as rotas que mapeiam erro do produtor por código (ex.:
+    // /reconstruct) leem; `instanceof` continua valendo para quem já usava.
+    this.code = 'challenge_required';
     this.kind = kind;
     this.url = url;
     this.signals = signals;
@@ -87,7 +90,12 @@ export class ChallengeRequiredError extends Error {
 // interstitial is detected; null otherwise. Kept defensive — any throw
 // becomes "no challenge" so detection is fail-open (real sites never
 // get blocked by a detector bug).
-async function detectChallengePage(page) {
+// `strict`: distinguishes "inspected and clean" (null) from "could not inspect"
+// (undefined — e.g. the execution context was destroyed by a navigation mid-
+// evaluate). The native producer needs that: on a self-reloading interstitial
+// a failed observation must NOT count as clearance (Astra r2 #1, 2026-09-06).
+// Default stays fail-open for the reference capture.
+export async function detectChallengePage(page, { strict = false } = {}) {
   try {
     return await page.evaluate(() => {
       const signals = [];
@@ -141,7 +149,7 @@ async function detectChallengePage(page) {
       return kind ? { kind, signals } : null;
     });
   } catch (e) {
-    return null;
+    return strict ? undefined : null;
   }
 }
 

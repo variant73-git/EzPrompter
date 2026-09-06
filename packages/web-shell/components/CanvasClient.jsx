@@ -4732,7 +4732,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         enterEditMode(preparedNode, editorKindForNode(preparedNode));
       } catch (e) {
         setNodeRunStatus(nodeId, null);
-        if (!handleBillingError(e)) toast.error(`Could not prepare this site for editing: ${e.message}`);
+        if (e?.challenge) {
+          // Bot-protection interstitial in front of the site (typed 409 from
+          // /reconstruct, nothing billed). Same modal as the capture path; no
+          // placeholderId → Cancel only closes, the existing node stays.
+          setChallenge({ ...e.challenge, nodeId, placeholderId: null });
+        } else if (!handleBillingError(e)) {
+          toast.error(`Could not prepare this site for editing: ${e.message}`);
+        }
       } finally {
         editPreparationRef.current.delete(nodeId);
       }

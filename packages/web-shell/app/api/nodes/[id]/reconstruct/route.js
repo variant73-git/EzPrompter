@@ -116,6 +116,13 @@ export async function POST(request, { params }) {
     if (e instanceof OperationInProgressError) {
       return NextResponse.json({ error: 'in_progress' }, { status: 409 });
     }
+    // Interstitial de bot-protection na frente do site: o produtor recusa
+    // (nunca empacota a interstitial como o site) e a UI reaproveita o fluxo
+    // do handoff humano. Erro tipado, sem cobrança — a operação lançou antes
+    // de produzir. `kind`/`url` são os que o modal já consome.
+    if (e?.code === 'challenge_required') {
+      return NextResponse.json({ error: 'challenge_required', kind: e.kind || 'generic_challenge', url: e.url || node.origin_url }, { status: 409 });
+    }
     if (e?.code === 'no_output') return NextResponse.json({ error: 'no_output' }, { status: 502 });
     if (['control_conversion_timeout', 'provider_timeout'].includes(e?.code)) {
       return NextResponse.json({ error: 'conversion_timeout' }, { status: 504 });

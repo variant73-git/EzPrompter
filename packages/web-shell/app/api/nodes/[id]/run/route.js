@@ -257,6 +257,11 @@ export async function POST(request, { params }) {
     if (e instanceof OperationInProgressError) {
       return NextResponse.json({ error: 'in_progress' }, { status: 409 });
     }
+    // Mesmo contrato do /reconstruct: interstitial de bot-protection é 409
+    // tipado, nunca `run_failed` com a mensagem crua (Claude review r1 #6).
+    if (e?.code === 'challenge_required') {
+      return NextResponse.json({ error: 'challenge_required', kind: e.kind || 'generic_challenge', url: e.url || null }, { status: 409 });
+    }
     if (e?.code === 'no_output') return NextResponse.json({ error: 'no_output' }, { status: 502 });
     // A recusa do portão é resposta de PRODUTO, não falha: 409 com o motivo, e
     // as arestas NÃO são marcadas como falhas — nada foi tentado contra elas.

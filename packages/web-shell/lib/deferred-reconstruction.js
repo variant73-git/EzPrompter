@@ -286,8 +286,11 @@ export async function reconstructSiteNode({
         // produtor atribuiria a persistencia ao motor — um produtor de 24s com
         // 100 uploads de 100s apareceria como "o motor demora 124s", que e'
         // exatamente a confusao que este instrumento existe para desfazer.
+        // O sinal do prazo VAI para o produtor (Astra r1 #2 / Claude r1 #3,
+        // 2026-09-06): sem ele, o prazo rejeitava e reembolsava, mas o
+        // navegador da captura seguia rolando/baixando depois do 504.
         const bruto = await cronometro.measure('motor', async () => Promise.race([
-          resolvedProducer(node.origin_url),
+          resolvedProducer(node.origin_url, { signal: deadline.signal }),
           aborted,
         ]));
         materialized = await cronometro.measure('bundle', async () => Promise.race([

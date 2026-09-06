@@ -32,6 +32,9 @@ async function jsonOrThrow(r) {
     // navegador com um cancelamento do servidor.
     err.code = j?.error || err.code;
     err.refunded = j?.refunded === true;
+    // Mesma forma que o caminho SSE da captura usa (`err.challenge`): quem
+    // chama roteia para o modal de verificação humana sem ler mensagem.
+    if (j?.error === 'challenge_required') err.challenge = { kind: j.kind, url: j.url };
     throw err;
   }
   if (j?.balanceAfter != null && typeof window !== 'undefined') {

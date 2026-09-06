@@ -100,7 +100,7 @@ describe('reconstructSiteNode — quem e chamado no Edit', () => {
     });
 
     // A rota /reconstruct chama exatamente assim: sem `producer`.
-    expect(captureNativeBundle).toHaveBeenCalledWith('https://x.com');
+    expect(captureNativeBundle).toHaveBeenCalledWith('https://x.com', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(reconstructPage).not.toHaveBeenCalled();
   });
 });
@@ -657,5 +657,34 @@ describe('o clone animado continua componivel', () => {
     const ins = sql._calls.find((c) => /INSERT INTO snapshots/i.test(c.query));
     expect(ins).toBeTruthy();
     expect(ins.query).toMatch(/SELECT html FROM snapshots/i);
+  });
+});
+
+describe('deadline signal reaches the producer (Astra r1 #2 / Claude r1 #3, 2026-09-06)', () => {
+  it('passes an AbortSignal so the capture browser stops when the route deadline fires', async () => {
+    delete process.env.UNCRAFT_MOTION_CONTROL_VALIDATOR_URL;
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const producer = vi.fn(async (_url, opts) => {
+      expect(opts?.signal).toBeInstanceOf(AbortSignal);
+      expect(opts.signal.aborted).toBe(false);
+      return {
+        kind: 'native',
+        bundle: {
+          entryPath: 'index.html',
+          runtimeFingerprint: `sha256:${'c'.repeat(64)}`,
+          assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+          reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
+        },
+      };
+    });
+    const result = await reconstructSiteNode({
+      sql, userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: 'clone-native-signal-1', producer, bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor), generateControls: vi.fn(),
+    });
+    expect(result.ok).toBe(true);
+    expect(producer).toHaveBeenCalledWith('https://example.com', expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 });
