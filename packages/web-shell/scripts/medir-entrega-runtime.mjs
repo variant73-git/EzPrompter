@@ -26,7 +26,6 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import http from 'node:http';
 import { chromium } from '../node_modules/playwright-core/index.mjs';
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3030';
@@ -49,12 +48,16 @@ async function abrirSessao() {
   return { url: body.runtime.url, mode: body.runtime.mode === 'lease' ? 'lease' : 'legacy' };
 }
 
-// 2) Página-pai local que embute o runtime num iframe com o sandbox do modo —
-//    é o que reproduz a origem (opaca × própria) que decide o cache.
-function paginaPai(runtimeUrl, mode) {
-  const sandbox = mode === 'lease' ? 'allow-scripts allow-same-origin' : 'allow-scripts';
-  return `<!doctype html><meta charset=utf-8><style>html,body{margin:0}</style>
-<iframe id=rt sandbox="${sandbox}" src="${runtimeUrl}" style="width:1280px;height:800px;border:0"></iframe>`;
+// 2) Página-pai servida PELA ORIGEM DO APP (public/_aceite-lease-parent.html):
+//    o runtime só aceita ser emoldurado por essa origem (frame-ancestors) —
+//    um servidor local próprio em outra porta era bloqueado, e o aceite
+//    falharia pelo motivo errado (medido 2026-09-06). O sandbox do modo
+//    (opaco × própria origem) é o que reproduz o cache que se quer medir.
+function paginaPaiUrl(runtimeUrl, mode) {
+  const u = new URL('/_aceite-lease-parent.html', BASE_URL);
+  u.searchParams.set('runtime', runtimeUrl);
+  u.searchParams.set('mode', mode);
+  return u.toString();
 }
 
 // 3) Mede bytes de rede (encodedDataLength via CDP) num intervalo nomeado.
@@ -67,12 +70,6 @@ async function medir(page, cdp, rotulo, fase) {
 
 async function run() {
   const sessao = await abrirSessao();
-  const PORTA = 45720;
-  const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
-    res.end(paginaPai(sessao.url, sessao.mode));
-  });
-  await new Promise((r) => server.listen(PORTA, '127.0.0.1', r));
 
   const perfil = mkdtempSync(join(tmpdir(), 'aceite-lease-'));
   const ctx = await chromium.launchPersistentContext(perfil, { headless: true, channel: 'chrome' });
@@ -82,7 +79,7 @@ async function run() {
   const fase = { total: 0 };
   cdp.on('Network.loadingFinished', (e) => { fase.total += e.encodedDataLength || 0; });
 
-  const abrir = () => page.goto(`http://127.0.0.1:${PORTA}/`, { waitUntil: 'load' });
+  const abrir = () => page.goto(paginaPaiUrl(sessao.url, sessao.mode), { waitUntil: 'load' });
   const rolar = async () => {
     const f = page.frameLocator('#rt');
     await f.locator('body').evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
@@ -94,7 +91,6 @@ async function run() {
   const bytesReload = await medir(page, cdp, recarregar, fase);
 
   await ctx.close();
-  server.close();
 
   const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
   console.log(JSON.stringify({

@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Uncraft — aceite do lease B (página-pai)</title>
+<!--
+  Página-pai do HARNESS de aceite do lease B (scripts/medir-entrega-runtime.mjs).
+  Vive em public/ para ser servida PELA ORIGEM DO APP (localhost:3030): o runtime
+  só aceita ser emoldurado por essa origem (frame-ancestors) — um pai em outra
+  porta/host seria bloqueado, e o aceite falharia pelo motivo errado.
+  Só aceita embutir hosts de RUNTIME (sufixo .rt. ou localhost) — nunca vira
+  vetor para emoldurar URL arbitrária sob a origem do app.
+-->
+<style>html,body{margin:0;background:#191917}#rt{width:1280px;height:800px;border:0;display:block}</style>
+<iframe id="rt" referrerpolicy="no-referrer"></iframe>
+<script>
+  const q = new URLSearchParams(location.search);
+  const runtime = q.get('runtime') || '';
+  const mode = q.get('mode') === 'lease' ? 'lease' : 'legacy';
+  // Inerte fora de dev POR CONSTRUÇÃO: este fixture vive em public/ e vai para
+  // produção; só emolda quando a PRÓPRIA página está em localhost.
+  const dev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  let ok = false;
+  try {
+    const h = new URL(runtime).hostname.toLowerCase();
+    ok = dev && (h === 'localhost' || h === '127.0.0.1' || /\.rt\.[a-z0-9.-]+$/.test(h));
+  } catch (_) { ok = false; }
+  const f = document.getElementById('rt');
+  if (ok) {
+    f.setAttribute('sandbox', mode === 'lease' ? 'allow-scripts allow-same-origin' : 'allow-scripts');
+    f.src = runtime;
+  } else {
+    document.body.textContent = 'runtime URL recusada: só hosts de runtime (.rt.) ou localhost';
+  }
+</script>
