@@ -475,19 +475,28 @@ function ensureBaseTag(html, baseUrl) {
  */
 export async function captureSnapshot(url, opts = {}) {
   const viewport = opts.viewport || { width: 1280, height: 800 };
-  const { onProgress = () => {} } = opts;
+  const { onProgress = () => {}, session = null } = opts;
+  // Sessão EMPRESTADA (spec 2026-09-08 §4.4): usa a página já verificada e
+  // não fecha o que não é seu. Sem `session`, comportamento idêntico.
+  const emprestada = Boolean(session && session.page);
   let browser, context, page;
+  let publicNetworkRoute = null;
   try {
-    browser = await launchBrowser();
-    context = await browser.newContext({
-      viewport,
-      userAgent: REAL_UA,
-      locale: 'en-US',
-      timezoneId: 'America/Sao_Paulo'
-    });
+    if (emprestada) {
+      browser = session.browser; context = session.context; page = session.page;
+      await page.setViewportSize(viewport).catch(() => {});
+    } else {
+      browser = await launchBrowser();
+      context = await browser.newContext({
+        viewport,
+        userAgent: REAL_UA,
+        locale: 'en-US',
+        timezoneId: 'America/Sao_Paulo'
+      });
+    }
     if (opts.publicNetworkOnly) {
       const hostChecks = new Map();
-      await context.route('**/*', async (route) => {
+      publicNetworkRoute = async (route) => {
         const requestUrl = route.request().url();
         let parsed;
         try { parsed = new URL(requestUrl); } catch { return route.abort('blockedbyclient'); }
@@ -499,9 +508,10 @@ export async function captureSnapshot(url, opts = {}) {
         } catch {
           return route.abort('blockedbyclient');
         }
-      });
+      };
+      await context.route('**/*', publicNetworkRoute);
     }
-    page = await context.newPage();
+    if (!emprestada) page = await context.newPage();
     await page.goto(url, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT_MS }).catch(async () => {
       // networkidle can hang on chatty sites; fall back to load.
       await page.goto(url, { waitUntil: 'load', timeout: NAV_TIMEOUT_MS });
@@ -795,8 +805,15 @@ export async function captureSnapshot(url, opts = {}) {
       ...(classificationShadow ? { classificationShadow } : {}),
     };
   } finally {
-    if (page) await page.close().catch(() => {});
-    if (context) await context.close().catch(() => {});
-    if (browser) await browser.close().catch(() => {});
+    if (emprestada) {
+      // Página/contexto/navegador são de OUTREM: não fechar (Astra 2026-09-08 #1).
+      // Remover só a PRÓPRIA rota, pela referência exata — `unroute('**/*')` sem
+      // callback derrubaria handlers que o dono tenha instalado (Astra #3).
+      if (publicNetworkRoute && context) await context.unroute('**/*', publicNetworkRoute).catch(() => {});
+    } else {
+      if (page) await page.close().catch(() => {});
+      if (context) await context.close().catch(() => {});
+      if (browser) await browser.close().catch(() => {});
+    }
   }
 }

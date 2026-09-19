@@ -185,8 +185,68 @@ export function srcsetCandidateUrls(value) {
  * @param {object} [opts.browser] navegador já aberto (para teste)
  * @returns {Promise<{kind:'native', bundle:object, relatorio:object}>}
  */
+// Adaptador: a resposta do `context.request.fetch` (Playwright) com a MESMA
+// forma que a repescagem lê do `fetch` do Node — status, headers.get, ok e um
+// body com getReader() de um pedaço só. `maxRedirects: 0` devolve o 3xx para
+// o salto ser validado aqui, como no caminho do Node.
+async function pedirPeloNavegador(context, alvo) {
+  const r = await context.request.fetch(alvo, { maxRedirects: 0, timeout: 12000 });
+  const h = r.headers();
+  const status = r.status();
+  const ok = r.ok();
+  const get = (k) => (h[String(k).toLowerCase()] ?? null);
+  // Redirect: devolve o 3xx para o salto ser validado pelo chamador; a
+  // resposta não carrega corpo, mas ainda ocupa memória no processo do
+  // Playwright até `dispose()` — libera já.
+  if (status >= 300 && status < 400) {
+    await r.dispose().catch(() => {});
+    return { status, ok, headers: { get }, body: null };
+  }
+  // ⚠️ `context.request` BUFFERIZA o corpo inteiro antes de devolver (não há
+  // leitura em fluxo por esta API), então o teto de tamanho tem que morder
+  // ANTES da alocação: content-length acima do teto por-arquivo = recusa sem
+  // baixar (Astra 2026-09-08 #4). Cabeçalho ausente/mentiroso no site honesto
+  // do modelo de ameaça é o resíduo já aceito da interceptação.
+  const declarado = Number(get('content-length') || 0);
+  if (!ok || declarado > MAX_ASSET_BYTES) {
+    await r.dispose().catch(() => {});
+    return { status, ok, headers: { get }, body: null };
+  }
+  const bytes = await r.body();
+  // O corpo já está em mão: descarta o handle do vendor para não acumular
+  // respostas não liberadas até o fim da captura (Astra #4).
+  await r.dispose().catch(() => {});
+  return {
+    status,
+    ok,
+    headers: { get },
+    body: {
+      getReader() {
+        let entregue = false;
+        return {
+          async read() {
+            if (entregue) return { done: true, value: undefined };
+            entregue = true;
+            return { done: false, value: new Uint8Array(bytes) };
+          },
+          async cancel() { /* corpo já bufferizado e handle já liberado */ },
+        };
+      },
+    },
+  };
+}
+
 export async function captureNativeBundle(url, opts = {}) {
-  const { onProgress = () => {}, viewport = { width: 1440, height: 900 }, chromium, signal } = opts;
+  const {
+    onProgress = () => {}, viewport = { width: 1440, height: 900 }, chromium, signal,
+    // Sessão EMPRESTADA (spec 2026-09-08 §4.4): navegador/contexto/página já
+    // verificados por outro (o job de challenge). O produtor usa a página
+    // dada — a liberação da verificação vive nela — e NÃO fecha o que não é
+    // dele. Sem `session`, comportamento idêntico ao de sempre.
+    session = null,
+    challengeToleranceMs = CHALLENGE_TOLERANCIA_MS,
+  } = opts;
+  const emprestada = Boolean(session && session.page);
 
   // A URL de ENTRADA passa pelo mesmo bloqueio dos subrecursos.
   const alvo = new URL(url);
@@ -195,7 +255,8 @@ export async function captureNativeBundle(url, opts = {}) {
   }
 
   onProgress({ etapa: 'launching' });
-  const browser = await abrirNavegador(chromium);
+  const browser = emprestada ? session.browser : await abrirNavegador(chromium);
+  const fecharSePropria = async () => { if (!emprestada) await browser.close().catch(() => {}); };
   const recursos = new Map();   // url absoluta -> { bytes, contentType }
   // UMA porta para os bytes: interceptação e repescagem reservam pela mesma
   // contabilidade, então o teto global não pode ser furado por corrida entre
@@ -216,15 +277,16 @@ export async function captureNativeBundle(url, opts = {}) {
   // ⚠️ O `Promise.race` de fora rejeita, mas nada cancelava a captura — o
   // navegador seguia rolando por horas numa página gigante. Achado P0 do Sol.
   let cancelado = false;
-  const aoCancelar = () => { cancelado = true; browser.close().catch(() => {}); };
+  const aoCancelar = () => { cancelado = true; fecharSePropria(); };
   if (signal) {
-    if (signal.aborted) { await browser.close().catch(() => {}); throw Object.assign(new Error('native_bundle_aborted'), { code: 'aborted' }); }
+    if (signal.aborted) { await fecharSePropria(); throw Object.assign(new Error('native_bundle_aborted'), { code: 'aborted' }); }
     signal.addEventListener('abort', aoCancelar, { once: true });
   }
 
   try {
-    const context = await browser.newContext({ viewport });
-    const page = await context.newPage();
+    const context = emprestada ? session.context : await browser.newContext({ viewport });
+    const page = emprestada ? session.page : await context.newPage();
+    if (emprestada) await page.setViewportSize(viewport).catch(() => {});
 
     page.on('response', (res) => {
       const tarefa = (async () => {
@@ -412,7 +474,7 @@ export async function captureNativeBundle(url, opts = {}) {
     // `undefined` = não consegui olhar (NÃO libera — segue tentando no prazo).
     let veredito = await detectChallengePage(page, { strict: true });
     if (veredito !== null) {
-      const limite = Date.now() + CHALLENGE_TOLERANCIA_MS;
+      const limite = Date.now() + challengeToleranceMs;
       let ultimo = veredito || null;
       for (;;) {
         if (Date.now() >= limite || cancelado) {
@@ -676,7 +738,20 @@ export async function captureNativeBundle(url, opts = {}) {
           const parada = new AbortController();
           const relogio = setTimeout(() => parada.abort(), 12000);
           try {
-            const resposta = await fetch(alvo, { redirect: 'manual', signal: parada.signal });
+            // Com sessão emprestada a repescagem usa o JAR de cookies da
+            // sessão verificada (`context.request` compartilha os cookies do
+            // contexto) — o fetch do Node não os tem. ⚠️ RESÍDUO NOMEADO
+            // (Astra 2026-09-08 #2): `context.request` roda no processo LOCAL
+            // do Playwright, NÃO pelo egress do navegador remoto; um
+            // cf_clearance amarrado ao IP da sessão NÃO valida nesta
+            // repescagem. A captura PRIMÁRIA (os pedidos do navegador real)
+            // não é afetada; um asset atrás de challenge que faltou na 1ª
+            // passagem fica NOMEADO como ausente, nunca corrompe. Sem
+            // streaming aqui: `body()` bufferiza, então o adaptador rejeita
+            // ANTES pelo content-length e a resposta é sempre descartada.
+            const resposta = emprestada
+              ? await pedirPeloNavegador(context, alvo)
+              : await fetch(alvo, { redirect: 'manual', signal: parada.signal });
             const status = resposta.status;
             if (status >= 300 && status < 400) {
               const destino = resposta.headers.get('location');
@@ -863,13 +938,15 @@ export async function captureNativeBundle(url, opts = {}) {
       assets.push({ path: caminho, body: new Uint8Array(corpo), contentType: contentType || undefined });
     }
 
-    await context.close();
+    if (!emprestada) await context.close();
     onProgress({ etapa: 'finalizing' });
 
     // SSIM do clone recém-montado contra o vivo (pedido antigo: tracking
     // permanente). Fail-open: falha vira null e loga; nunca derruba o clone.
     let similarity = null;
-    if (screenshotVivo) {
+    // Com sessão emprestada não se abre página nova no navegador de outrem:
+    // a similaridade fica null (fail-open já existente).
+    if (screenshotVivo && !emprestada) {
       try {
         similarity = await measureBundleSimilarity({
           browser, assets, entryPath, screenshotDataUrl: screenshotVivo, signal,
@@ -924,6 +1001,6 @@ export async function captureNativeBundle(url, opts = {}) {
       },
     };
   } finally {
-    await browser.close().catch(() => {});
+    await fecharSePropria();
   }
 }

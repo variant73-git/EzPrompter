@@ -183,6 +183,6 @@ describe('a captura tenta de novo antes de desistir', () => {
   });
 
   it('o que continuar faltando segue nomeado no relatorio', () => {
-    expect(fonte).toMatch(/retrying[\s\S]{0,7000}motivo: 'corpo nao chegou'/);
+    expect(fonte).toMatch(/retrying[\s\S]{0,9000}motivo: 'corpo nao chegou'/);
   });
 });
