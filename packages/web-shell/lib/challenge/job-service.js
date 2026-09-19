@@ -182,9 +182,12 @@ export async function cancelJob({ sql, userId, jobId, env = process.env, deps = 
 // da PÁGINA (segredo portador), nunca a resposta de debug inteira.
 export async function liveViewFor({ job, env = process.env, deps = defaultDeps(env) }) {
   if (String(env.UNCRAFT_CHALLENGE_HUMAN || '') !== '1') return null;
-  if (job?.status !== 'needs_human' || !job.bb_session_id) return null;
+  // Exige sessão E página atribuída: nada de fallback para "a primeira página"
+  // (Astra 2026-09-08 #t89) — expor uma página que não é a do job entregaria
+  // uma URL portadora de outra página da sessão.
+  if (job?.status !== 'needs_human' || !job.bb_session_id || !job.bb_page_id) return null;
   const live = await deps.browserbase.liveUrls(job.bb_session_id).catch(() => null);
-  const page = live?.pages?.find((p) => p.id === job.bb_page_id) || live?.pages?.[0];
+  const page = live?.pages?.find((p) => p.id === job.bb_page_id);
   return page?.debuggerFullscreenUrl ? { url: page.debuggerFullscreenUrl } : null;
 }
 

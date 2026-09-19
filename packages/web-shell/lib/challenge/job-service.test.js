@@ -108,6 +108,10 @@ describe('job service', () => {
     expect(await liveViewFor({ job: { status: 'needs_human', bb_session_id: 'sess', bb_page_id: 'p' }, env: { UNCRAFT_CHALLENGE_HUMAN: '1' }, deps: d })).toEqual({ url: 'https://live/p' });
     expect(await liveViewFor({ job: { status: 'needs_human', bb_session_id: 'sess', bb_page_id: 'p' }, env: {}, deps: d })).toBeNull();
     expect(await liveViewFor({ job: { status: 'ready', bb_session_id: 'sess' }, env: { UNCRAFT_CHALLENGE_HUMAN: '1' }, deps: d })).toBeNull();
+    // No page match → null (never fall back to another page of the session).
+    expect(await liveViewFor({ job: { status: 'needs_human', bb_session_id: 'sess', bb_page_id: 'GONE' }, env: { UNCRAFT_CHALLENGE_HUMAN: '1' }, deps: d })).toBeNull();
+    // Missing page id → null.
+    expect(await liveViewFor({ job: { status: 'needs_human', bb_session_id: 'sess', bb_page_id: null }, env: { UNCRAFT_CHALLENGE_HUMAN: '1' }, deps: d })).toBeNull();
   });
 
   it('sweepExpiredJobs releases vendor sessions and marks expired', async () => {
