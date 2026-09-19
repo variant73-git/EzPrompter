@@ -195,6 +195,18 @@ export const api = {
       ...COMMON, method: 'POST',
       ...(engine ? { body: JSON.stringify({ engine }) } : {}),
     }, ticket)).then(jsonOrThrow)),
+
+  // Sites com verificação de bot (spec 2026-09-08): abre um job de challenge no
+  // navegador remoto. O ticket de idempotência do Edit viaja aqui e é reusado
+  // na captura (dedup do pagamento).
+  startChallenge: (nodeId, { purpose }) => withTicket(`challenge:${nodeId}:${purpose}`, (ticket) =>
+    fetch(`/api/nodes/${nodeId}/challenge`, withIdemHeader({
+      ...COMMON, method: 'POST', body: JSON.stringify({ purpose }),
+    }, ticket)).then(jsonOrThrow)),
+  getChallengeJob: (jobId) => fetch(`/api/challenge-jobs/${jobId}`, { ...COMMON, method: 'GET' }).then(jsonOrThrow),
+  checkChallengeJob: (jobId) => fetch(`/api/challenge-jobs/${jobId}/check`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
+  captureChallengeJob: (jobId) => fetch(`/api/challenge-jobs/${jobId}/capture`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
+  cancelChallengeJob: (jobId) => fetch(`/api/challenge-jobs/${jobId}/cancel`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
   // Default: node row + current snapshot html (one round-trip when caller
   // actually wants content). `readyCheck:true`: tiny `{ready, snapshotId}`
   // probe used by the handoff poller — avoids transferring snapshot.html
