@@ -1745,3 +1745,26 @@ Roda **somente** com `BROWSERBASE_API_KEY`/`PROJECT_ID`:
 - **Cobertura da spec:** §2 decisões → Tasks 10/11 (aviso/OK, sem extensão, sem sair do canvas), 6/7/8 (cobrança só no sucesso, pré-checagem); §4.1 escada → Task 3 (verdict), 7 (`startJob`), 4 (tolerância 40s); §4.2 job/sessão → Tasks 1, 2, 5, 7, 9 (varredura); §4.3 rotas → Task 8; §4.4 sessão emprestada → Task 4; §4.5 cotas → Task 6; §4.6 visualizador/portão → Tasks 2 (só URLs de página), 7 (`liveViewFor` gated), 8 (no-store), 10 (sandbox), 13 (probe); §4.7 canvas → Tasks 10/11; §5 prova → Tasks 3/4 (integração real), 13 (viva). §6 resíduos: fila durável — o `lease_until` + varredura cobre o worker morto (Task 5/9).
 - **Placeholders:** nenhum "TBD"; a Task 11 descreve a cola por localização exata e a Task 12 é remoção guiada por grep.
 - **Consistência de nomes:** `withBorrowedSession`, `verifyTarget`, `startJob/checkJob/captureJob/cancelJob/liveViewFor/sweepExpiredJobs/publicJobView`, `checkChallengeQuota`, `createJob/getOwnedJob/transition/acquireLease/releaseLease/listExpired/count*`, `captureNativeBundle(url,{session,challengeToleranceMs})`, `captureSnapshot(url,{session})`, `persistReferenceSnapshot`, `api.startChallenge/getChallengeJob/checkChallengeJob/captureChallengeJob/cancelChallengeJob`, `useChallengeJob` — usados com os mesmos nomes em todas as tarefas.
+
+---
+
+## Status de execução (2026-09-08, inline)
+
+| Task | Estado | Commit |
+|---|---|---|
+| 1 challenge_jobs | ✅ | migração aplicada no dev |
+| 2 Browserbase client | ✅ | 6 testes |
+| 3 borrowed session + verify | ✅ | 3 integração (Chromium real) |
+| 4 producers borrowed session | ✅ | Astra 4 High corrigidos |
+| 5 job store | ✅ | 6 testes |
+| 6 quotas | ✅ | 5 testes |
+| 7 job service | ✅ | Astra #1 corrigido, #2 residual nomeado; 9+3 testes |
+| 8 rotas | ✅ | 8 testes |
+| 9 cron sweep + ready_check | ✅ | Astra liveViewFor match exato; 3+8 testes |
+| 10 cliente (API/aviso/viewer/hook) | ✅ | hook 4 + notice 1 |
+| 11 canvas wiring | ✅ | next build OK, 232 componentes |
+| 12 extensão (retirar handoff) | ✅ parcial | listener inerte removido; callout do panel = follow-up (carregar no Chrome) |
+| 13 revogação + prova viva | ⛔ BLOQUEADO | probe pronto; falta BROWSERBASE_API_KEY |
+| 14 fechamento | ✅ | suíte 2452 verde (1 flake de contenção Chromium, passa isolado); build OK |
+
+**Pendências nomeadas:** (a) prova viva + veredito de revogação (Task 13) — falta a chave; até passar, `UNCRAFT_CHALLENGE_HUMAN=0` (seguro por omissão); (b) remoção do callout "Complete capture" do panel.js/background.js — dead code inerte, follow-up com a extensão carregada; (c) egress da repescagem em sessão emprestada (Astra #2) — usa nosso IP, resíduo nomeado; (d) fila durável de limpeza de sessão (Astra #2 do serviço) — vendor timeout 600s é o backstop.
