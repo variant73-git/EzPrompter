@@ -29,7 +29,9 @@ import {
   NativeMotionEditTopbarControls,
   nativeMotionEditShellLayout,
 } from './motion-editor/NativeMotionEditChrome.jsx';
-import ChallengeModal from './ChallengeModal.jsx';
+import ChallengeNotice from './ChallengeNotice.jsx';
+import ChallengeLiveView from './ChallengeLiveView.jsx';
+import { useChallengeJob } from './useChallengeJob.js';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
 import { findSectionTerminals, planIncrementalRun, planRunFromNode, nodeInputSignature, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
@@ -321,11 +323,57 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   // reads + clears so the end-of-run camera frame can fit the entire
   // workflow at once instead of jumping per-node mid-run.
   const agentRunNewNodesRef = useRef(new Map());
-  // Bot-protection interstitial state. When captureSnapshot returns 409
-  // challenge_required, we stash {kind, url, signals, placeholderId} here
-  // so <ChallengeModal /> mounts. placeholderId lets the modal's cancel /
-  // open-site handlers clean up the temp node from the canvas.
-  const [challenge, setChallenge] = useState(null);
+  // Aviso "verificação rápida" (spec 2026-09-08): quando a captura/Edit acha
+  // um interstitial de bot, guarda {nodeId, host, purpose} e o job roda no
+  // navegador remoto via useChallengeJob.
+  const [challengeNotice, setChallengeNotice] = useState(null);
+  const challengeJob = useChallengeJob({
+    api,
+    onSucceeded: async (nodeId, purpose, result) => {
+      setChallengeNotice(null);
+      if (purpose === 'edit') {
+        let prepared = null;
+        setNodes((prev) => prev.map((n) => {
+          if (n.id !== nodeId) return n;
+          prepared = applyReconstructionResultToNode(n, result);
+          return prepared;
+        }));
+        setNodeRunStatus(nodeId, null);
+        flashNodeDebit(nodeId, result?.credits);
+        if (prepared) enterEditMode(prepared, editorKindForNode(prepared));
+      } else {
+        try {
+          const { node, snapshot } = await api.getNode(nodeId);
+          setNodes((prev) => prev.map((n) => (n.id === nodeId ? {
+            ...n, ...node,
+            current_html: snapshot?.html,
+            current_screenshot: snapshot?.screenshot_url || null,
+            _loading: false, _loadingLabel: undefined, _challenge: false, _handoffPending: false,
+          } : n)));
+        } catch { /* poller de outra aba pega */ }
+      }
+    },
+    onFailed: (nodeId, code) => {
+      setChallengeNotice(null);
+      updateNodeLocal(nodeId, { _loading: false, _loadingStage: undefined, _loadingError: code !== 'cancelled', _challenge: false, _handoffPending: false, _loadingLabel: undefined });
+      if (code === 'cancelled') return;
+      const msg = ({
+        unsupported: 'This site blocks automated capture.',
+        expired: 'Verification timed out — try again.',
+        not_found: 'Verification cancelled.',
+      })[code] || 'Capture failed — nothing was charged.';
+      toast.error(msg);
+    },
+    onNodeState: (nodeId, { stage } = {}) => {
+      const label = ({
+        verifying: 'Verifying site…',
+        needs_human: 'Waiting for you to pass the check…',
+        capturing: 'Preparing editable site…',
+        committing: 'Preparing editable site…',
+      })[stage] || 'Verifying site…';
+      updateNodeLocal(nodeId, { _loading: true, _challenge: true, _loadingStage: undefined, _loadingLabel: label });
+    },
+  });
   // Active section selection — the workflow the user is currently operating
   // on. When set, the PromptDock surfaces a ContextPill, the section frame
   // gets an accent border, and the agent receives section context with every
@@ -2053,84 +2101,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     }
   }
 
-  // Poll a handoff-pending node for the snapshot the extension will
-  // POST to /api/snapshot/handoff. Stops when the snapshot lands or
-  // after ~10 minutes (token TTL is 5 min; we give the user some
-  // extra slack to actually click the banner). Polling registry on
-  // the ref prevents duplicate intervals if the user retries.
-  const handoffPollersRef = useRef(new Map());
-  function startHandoffPolling(nodeId) {
-    if (!nodeId) return;
-    const existing = handoffPollersRef.current.get(nodeId);
-    if (existing) return; // already polling
-    const startedAt = Date.now();
-    const intervalMs = 3000;
-    const giveUpAfterMs = 10 * 60 * 1000;
-    const tick = async () => {
-      try {
-        // Cheap probe — ~30 bytes vs ~85KB when the route streams snapshot.html
-        // on every 3s tick. We only do the full GET once `ready:true` lands.
-        const probe = await api.getNode(nodeId, { readyCheck: true });
-        if (probe?.ready) {
-          const { node, snapshot } = await api.getNode(nodeId);
-          if (snapshot?.html) {
-            // Handoff landed — render it.
-            setNodes((prev) => prev.map((n) =>
-              n.id === nodeId ? {
-                ...n,
-                ...node,
-                current_html: snapshot.html,
-                current_screenshot: snapshot.screenshot_url || null,
-                _loading: false, _loadingLabel: undefined,
-                _challenge: false, _handoffPending: false
-              } : n
-            ));
-            stopHandoffPolling(nodeId);
-            return;
-          }
-        }
-      } catch (e) {
-        // 404 → node was deleted; abandon the poller. Other errors
-        // are transient (network blip, dev-server restart) — keep
-        // trying until the timeout.
-        if (/404|not_found/i.test(String(e?.message || ''))) {
-          stopHandoffPolling(nodeId);
-          return;
-        }
-      }
-      if (Date.now() - startedAt > giveUpAfterMs) {
-        stopHandoffPolling(nodeId);
-        // Surface a soft failure in the placeholder so the user knows
-        // the wait timed out — they can delete the node manually.
-        setNodes((prev) => prev.map((n) =>
-          n.id === nodeId ? {
-            ...n, _loadingLabel: 'Verification timed out',
-            _handoffPending: false
-          } : n
-        ));
-      }
-    };
-    const handle = setInterval(tick, intervalMs);
-    handoffPollersRef.current.set(nodeId, handle);
-    // First tick immediately so we don't wait 3s before checking.
-    tick();
-  }
-  function stopHandoffPolling(nodeId) {
-    const h = handoffPollersRef.current.get(nodeId);
-    if (h) {
-      clearInterval(h);
-      handoffPollersRef.current.delete(nodeId);
-    }
-  }
-  // Cleanup on unmount — without this, intervals keep firing during
-  // dev-server HMR and pollute the network tab forever.
-  useEffect(() => {
-    const map = handoffPollersRef.current;
-    return () => {
-      for (const h of map.values()) clearInterval(h);
-      map.clear();
-    };
-  }, []);
+  // (handoff polling da extensão removido — spec 2026-09-08: verificação no
+  // navegador remoto via useChallengeJob acima.)
+
 
   /**
    * Uma imagem colada por ENDEREÇO. Quem busca é o servidor: o navegador
@@ -2338,15 +2311,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       } : candidate));
     } catch (e) {
       if (e?.challenge) {
-        updateNodeLocal(nodeId, {
-          _loading: true,
-          _loadingStage: undefined,
-          _loadingLabel: 'This website needs a quick word with you.',
-          _challenge: true,
-          _handoffPending: true,
-        });
-        startHandoffPolling(nodeId);
-        setChallenge({ ...e.challenge, placeholderId: nodeId });
+        let host = 'this site';
+        try { host = new URL(e.challenge.url || '').hostname.replace(/^www\./, ''); } catch { /* keep default */ }
+        updateNodeLocal(nodeId, { _loading: true, _challenge: true, _loadingStage: undefined, _loadingLabel: 'Quick check needed' });
+        setChallengeNotice({ nodeId, host, purpose: 'reference' });
         return;
       }
       updateNodeLocal(nodeId, {
@@ -3145,7 +3113,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     if (ev.button !== 0) return;            // left click only
     if (spaceDown) return; // temporary pan mode owns the gesture
     if (editingNodeId) return;
-    if (challenge) return;
+    if (challengeNotice) return;
     if (emptyDropMenu || contextMenu) return;
     if (draftEdge) return;
     const t = ev.target;
@@ -4733,10 +4701,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       } catch (e) {
         setNodeRunStatus(nodeId, null);
         if (e?.challenge) {
-          // Bot-protection interstitial in front of the site (typed 409 from
-          // /reconstruct, nothing billed). Same modal as the capture path; no
-          // placeholderId → Cancel only closes, the existing node stays.
-          setChallenge({ ...e.challenge, nodeId, placeholderId: null });
+          // Interstitial de bot na frente do site (409 tipado do /reconstruct,
+          // nada cobrado). Aviso → job no navegador remoto (spec 2026-09-08).
+          let host = 'this site';
+          try { host = new URL(e.challenge.url || node?.origin_url || '').hostname.replace(/^www\./, ''); } catch { /* keep default */ }
+          setChallengeNotice({ nodeId, host, purpose: 'edit' });
         } else if (!handleBillingError(e)) {
           toast.error(`Could not prepare this site for editing: ${e.message}`);
         }
@@ -7343,34 +7312,33 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         onCancel={() => setMergeConfirm(null)}
       />
 
-      {challenge && (
-        <ChallengeModal
-          challenge={challenge}
-          onCancel={() => {
-            // User opted out — drop the placeholder locally AND from
-            // the server (the route pre-created it). DELETE is fire-
-            // and-forget; if it fails the polling-timeout cleanup
-            // catches the orphan eventually.
-            const pid = challenge.placeholderId;
-            if (pid) {
-              stopHandoffPolling(pid);
-              setNodes((prev) => prev.filter((n) => n.id !== pid));
-              if (challenge.node) {
-                fetch(`/api/nodes/${pid}`, { method: 'DELETE', credentials: 'include' })
-                  .catch((err) => console.warn('challenge cancel delete failed', err));
-              }
-            }
-            setChallenge(null);
+      {challengeNotice && (
+        <ChallengeNotice
+          host={challengeNotice.host}
+          onOk={() => {
+            const { nodeId, purpose } = challengeNotice;
+            setChallengeNotice(null);
+            challengeJob.start(nodeId, purpose).catch((e) => {
+              updateNodeLocal(nodeId, { _loading: false, _challenge: false, _loadingLabel: undefined });
+              if (!handleBillingError(e)) toast.error(e?.message || 'Could not start verification.');
+            });
           }}
-          onOpenSite={() => {
-            // Keep the placeholder + polling alive — the extension will
-            // POST the verified DOM to /api/snapshot/handoff once the
-            // user solves the challenge in the new tab, and the poll
-            // loop swaps it for the real node.
-            setChallenge(null);
+          onCancel={() => {
+            const { nodeId } = challengeNotice;
+            setChallengeNotice(null);
+            challengeJob.cancel(nodeId);
+            updateNodeLocal(nodeId, { _loading: false, _challenge: false, _loadingLabel: undefined });
           }}
         />
       )}
+
+      {[...challengeJob.jobs.entries()].map(([nodeId, j]) => (j?.liveView ? (
+        <div key={`lv-${nodeId}`} className="popup-overlay" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="popup-card" style={{ width: 'min(900px, 92vw)', height: 'min(640px, 80vh)', padding: 0, overflow: 'hidden' }}>
+            <ChallengeLiveView url={j.liveView} onDisconnected={() => {}} />
+          </div>
+        </div>
+      ) : null))}
 
       <DevWidget />
     </div>
