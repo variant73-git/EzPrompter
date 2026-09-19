@@ -50,6 +50,14 @@ const MIGRACOES = [
       travas: [],
     }),
   },
+  {
+    arquivo: 'migrations/2026-09-08-challenge-jobs.sql',
+    falta: (r) => ({
+      colunas: [],
+      tabelas: ['challenge_jobs'].filter((t) => !r.tabelas.includes(t)),
+      travas: [],
+    }),
+  },
 ];
 
 const isolado = process.argv.includes('--isolated');
