@@ -4,7 +4,7 @@
 // dentro de captureJob (nada de caminho novo de dinheiro).
 import { createJob, getOwnedJob, transition, acquireLease, releaseLease, listExpired, TERMINAL } from './job-store.js';
 import { checkChallengeQuota } from './quotas.js';
-import { browserbaseFromEnv } from './browserbase-client.js';
+import { challengeVendorFromEnv, connectUrlForSession as vendorConnectUrl } from './vendor.js';
 import { withBorrowedSession } from './borrowed-session.js';
 import { verifyTarget } from './verify.js';
 import { captureNativeBundle } from '../native-clone/capture-bundle.js';
@@ -28,7 +28,7 @@ export class ChallengeJobError extends Error {
 
 function defaultDeps(env) {
   return {
-    browserbase: browserbaseFromEnv(env),
+    browserbase: challengeVendorFromEnv(env),  // fornecedor corrente (browserbase|steel)
     withSession: withBorrowedSession,
     verify: verifyTarget,
     captureNative: captureNativeBundle,
@@ -49,9 +49,9 @@ async function releaseQuiet(deps, job) {
 }
 
 // A connectUrl NUNCA é persistida (segredo portador). Quem reconecta pede ao
-// vendor pela sessão: o Browserbase aceita conexão por sessionId.
+// fornecedor corrente pela sessão (browserbase|steel).
 export function connectUrlForSession(sessionId, env = process.env) {
-  return `wss://connect.browserbase.com?apiKey=${encodeURIComponent(env.BROWSERBASE_API_KEY || '')}&sessionId=${encodeURIComponent(sessionId)}`;
+  return vendorConnectUrl(sessionId, env);
 }
 
 export async function startJob({ sql, userId, node, purpose, idemKey = null, env = process.env, deps = defaultDeps(env) }) {

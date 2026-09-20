@@ -38,6 +38,10 @@ export function createBrowserbaseClient({ apiKey, projectId, fetchImpl = fetch }
   if (!apiKey || !projectId) throw new BrowserbaseError('not_configured');
   const headers = { 'x-bb-api-key': apiKey, 'content-type': 'application/json' };
 
+  function connectUrl(sessionId) {
+    return `wss://connect.browserbase.com?apiKey=${encodeURIComponent(apiKey)}&sessionId=${encodeURIComponent(sessionId)}`;
+  }
+
   async function call(path, init) {
     let res;
     try {
@@ -51,6 +55,7 @@ export function createBrowserbaseClient({ apiKey, projectId, fetchImpl = fetch }
   }
 
   return {
+    connectUrl,
     async createSession({ targetUrl, proxy = false, jobId = null }) {
       const body = {
         projectId,
