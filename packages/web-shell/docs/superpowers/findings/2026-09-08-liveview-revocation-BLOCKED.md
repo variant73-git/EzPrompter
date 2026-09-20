@@ -1,4 +1,4 @@
-# Portão de revogação do visualizador ao vivo — BLOQUEADO (falta a chave Browserbase)
+# Portão de revogação do visualizador ao vivo — BLOQUEADO (falta a chave do fornecedor)
 
 **Spec:** `docs/superpowers/specs/2026-09-08-challenge-remote-browser-design.md` §4.6 (raiz do repo)
 **Plano:** Task 13.
@@ -8,7 +8,7 @@
 BLOQUEADO. O probe (`packages/web-shell/scripts/probe-liveview-revocation.mjs`) e
 todo o fluxo de challenge estão construídos e testados (Tasks 1–12, suíte verde,
 `next build` OK), mas a prova ao vivo e o veredito de revogação exigem
-`BROWSERBASE_API_KEY` + `BROWSERBASE_PROJECT_ID`, ainda não fornecidos.
+a chave do fornecedor (Steel `STEEL_API_KEY` ou Browserbase), ainda não fornecida.
 
 ## O que o probe decide (quando a chave existir)
 Se um visualizador JÁ ABERTO continua controlando a sessão depois de (A) uma
@@ -25,5 +25,11 @@ via gateway de controle autenticado ou equivalente). O default do código já é
    job (`SELECT COUNT(*) FROM challenge_jobs` inalterado).
 
 ## Como desbloquear
-Pôr as duas variáveis no `.env.local` do web-shell (Developer plan, US$20/mês,
-solver automático) e rodar o probe + a prova viva.
+Pôr a chave no `.env.local` do web-shell e rodar o probe + a prova viva.
+- **Steel** (recomendado): `UNCRAFT_CHALLENGE_VENDOR=steel` + `STEEL_API_KEY=` —
+  100 horas grátis/mês, solver de captcha incluído, viewer interativo. ⭐ Nota:
+  o viewer do Steel aceita `?interactive=false` (só leitura) — pode ser a
+  meia-revogação (tirar o controle sem matar a sessão) que o portão procura;
+  testar isso É parte do probe.
+- **Browserbase**: `UNCRAFT_CHALLENGE_VENDOR=browserbase` + `BROWSERBASE_API_KEY`
+  + `BROWSERBASE_PROJECT_ID` (Developer, US$20/mês).

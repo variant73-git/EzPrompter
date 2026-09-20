@@ -6,12 +6,11 @@
 // Roda SÓ com BROWSERBASE_API_KEY + BROWSERBASE_PROJECT_ID no ambiente.
 // Uso: node scripts/probe-liveview-revocation.mjs
 import { chromium } from 'playwright-core';
-import { createBrowserbaseClient } from '../lib/challenge/browserbase-client.js';
+import { challengeVendorFromEnv } from '../lib/challenge/vendor.js';
 
-const { BROWSERBASE_API_KEY: KEY, BROWSERBASE_PROJECT_ID: PROJ } = process.env;
-if (!KEY || !PROJ) { console.error('BLOQUEADO: faltam BROWSERBASE_API_KEY/PROJECT_ID.'); process.exit(2); }
-
-const client = createBrowserbaseClient({ apiKey: KEY, projectId: PROJ });
+// Funciona com qualquer fornecedor (UNCRAFT_CHALLENGE_VENDOR=browserbase|steel).
+const client = challengeVendorFromEnv(process.env);
+if (!client) { console.error('BLOQUEADO: nenhum fornecedor configurado (defina UNCRAFT_CHALLENGE_VENDOR + a chave: STEEL_API_KEY, ou BROWSERBASE_API_KEY+PROJECT_ID).'); process.exit(2); }
 const log = (...a) => console.log(...a);
 
 const session = await client.createSession({ targetUrl: 'https://example.com/', jobId: 'probe-revocation' });
