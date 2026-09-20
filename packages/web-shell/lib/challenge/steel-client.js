@@ -1,60 +1,68 @@
 // Cliente REST do Steel (steel.dev), substituto do Browserbase atrás de
-// UNCRAFT_CHALLENGE_VENDOR=steel. Mesma interface do browserbase-client:
-// createSession / liveUrls / releaseSession / connectUrl. Spec 2026-09-08.
+// UNCRAFT_CHALLENGE_VENDOR=steel. Interface: createSession/liveUrls/
+// releaseSession/connectUrl. Spec 2026-09-08.
 //
-// Fatos da doc (docs.steel.dev/llms.txt, 2026-09): header `steel-api-key`,
-// base `https://api.steel.dev`, CDP construído como
-// `wss://connect.steel.dev?apiKey=<key>&sessionId=<id>` (NÃO usar
-// session.websocketUrl direto), viewer interativo = `${debugUrl}?interactive=true`
-// (não-autenticado por design → segredo portador, mesmo tratamento no-store/gated).
+// Fatos MEDIDOS na API viva (2026-09-20): header `steel-api-key`, base
+// `https://api.steel.dev`, `POST /v1/sessions` com `timeout` (ms) + `dimensions`;
+// resposta traz `id`, `websocketUrl`, `debugUrl` (= .../player). CDP reconstruído
+// como `wss://connect.steel.dev?apiKey=<key>&sessionId=<id>` (doc). Viewer
+// interativo = `${debugUrl}?interactive=true` (NÃO-autenticado por design →
+// segredo portador, mesmo gating no-store).
+//
+// ⚠️ CAMADA GRÁTIS: `solveCaptcha` e `useProxy` retornam 403 ("requires at least
+// $10 in paid balance") — as 100h grátis navegam SEM solver/proxy. Por isso o
+// solver é OPT-IN (UNCRAFT_CHALLENGE_SOLVER=on) e só deve ser ligado com saldo.
 const API = 'https://api.steel.dev';
 const SESSION_TIMEOUT_MS = 600_000; // humano (≤5 min) + partida + captura (~3 min)
 
 export class SteelError extends Error {
-  constructor(code, status) { super(`steel_${code}`); this.name = 'SteelError'; this.code = code; this.status = status; }
+  constructor(code, status, detail) { super(`steel_${code}`); this.name = 'SteelError'; this.code = code; this.status = status; this.detail = detail; }
 }
 
-export function createSteelClient({ apiKey, fetchImpl = fetch } = {}) {
+export function createSteelClient({ apiKey, fetchImpl = fetch, solveCaptcha = false } = {}) {
   if (!apiKey) throw new SteelError('not_configured');
   const headers = { 'steel-api-key': apiKey, 'content-type': 'application/json' };
+
+  function connectUrl(sessionId) {
+    return `wss://connect.steel.dev?apiKey=${encodeURIComponent(apiKey)}&sessionId=${encodeURIComponent(sessionId)}`;
+  }
 
   async function call(path, init) {
     let res;
     try { res = await fetchImpl(`${API}${path}`, { ...init, headers }); }
     catch { throw new SteelError('vendor_unavailable'); }
     if (res.status >= 500 || res.status === 429) throw new SteelError('vendor_unavailable', res.status);
-    if (!res.ok) throw new SteelError('vendor_rejected', res.status);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      // 403 de saldo ("requires at least $10 …") = recurso pago não liberado.
+      const paid = res.status === 403 && /paid balance|CAPTCHA solving|proxies/i.test(body?.message || '');
+      throw new SteelError(paid ? 'paid_feature_required' : 'vendor_rejected', res.status, body?.message);
+    }
     return res.json().catch(() => ({}));
-  }
-
-  function connectUrl(sessionId) {
-    return `wss://connect.steel.dev?apiKey=${encodeURIComponent(apiKey)}&sessionId=${encodeURIComponent(sessionId)}`;
   }
 
   return {
     connectUrl,
     async createSession({ targetUrl, proxy = false, jobId = null }) { // eslint-disable-line no-unused-vars
       const body = {
-        sessionTimeout: SESSION_TIMEOUT_MS,
-        solveCaptcha: true,
-        blockAds: false,
+        timeout: SESSION_TIMEOUT_MS,
         dimensions: { width: 1440, height: 900 },
-        useProxy: Boolean(proxy),
+        // Só pede recursos pagos quando explicitamente ligados (senão 403 na
+        // conta grátis). proxy vem do job (UNCRAFT_CHALLENGE_PROXY/BROWSERBASE_PROXY).
+        ...(solveCaptcha ? { solveCaptcha: true } : {}),
+        ...(proxy ? { useProxy: true } : {}),
       };
       const j = await call('/v1/sessions', { method: 'POST', body: JSON.stringify(body) });
-      const expiresAt = j.expiresAt || j.expireAt
-        || new Date(Date.now() + SESSION_TIMEOUT_MS).toISOString();
-      // A URL de conexão é construída (a doc é explícita: não usar websocketUrl direto).
+      const expiresAt = j.expiresAt || new Date(Date.now() + (j.timeout || SESSION_TIMEOUT_MS)).toISOString();
       return { id: j.id, connectUrl: connectUrl(j.id), expiresAt };
     },
     async liveUrls(sessionId) {
-      // Steel dá UMA página por sessão (headful WebRTC); o viewer é o debugUrl.
+      // Steel dá UMA página por sessão; o viewer é o debugUrl (.../player).
       const j = await call(`/v1/sessions/${encodeURIComponent(sessionId)}`, { method: 'GET' });
       const debug = j.debugUrl ? `${j.debugUrl}?interactive=true` : null;
       return { pages: debug ? [{ id: sessionId, url: j.url || null, debuggerFullscreenUrl: debug }] : [] };
     },
     async releaseSession(sessionId) {
-      // Espelha o SDK `sessions.release(id)`.
       await call(`/v1/sessions/${encodeURIComponent(sessionId)}/release`, { method: 'POST', body: '{}' });
     },
   };
@@ -62,5 +70,6 @@ export function createSteelClient({ apiKey, fetchImpl = fetch } = {}) {
 
 export function steelFromEnv(env = process.env) {
   if (!env.STEEL_API_KEY) return null;
-  return createSteelClient({ apiKey: env.STEEL_API_KEY });
+  // solver e proxy são pagos no Steel — só ligam por opção explícita.
+  return createSteelClient({ apiKey: env.STEEL_API_KEY, solveCaptcha: String(env.UNCRAFT_CHALLENGE_SOLVER || '') === 'on' });
 }

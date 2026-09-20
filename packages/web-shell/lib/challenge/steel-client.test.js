@@ -17,18 +17,29 @@ describe('steel client', () => {
     expect(calls[0].url).toBe('https://api.steel.dev/v1/sessions');
     expect(calls[0].init.headers['steel-api-key']).toBe('k');
     const body = JSON.parse(calls[0].init.body);
-    expect(body).toMatchObject({ sessionTimeout: 600000, solveCaptcha: true, blockAds: false, dimensions: { width: 1440, height: 900 }, useProxy: false });
+    // Campo real é `timeout` (ms); NÃO manda solveCaptcha/useProxy por padrão
+    // (403 na conta grátis).
+    expect(body).toMatchObject({ timeout: 600000, dimensions: { width: 1440, height: 900 } });
+    expect(body.solveCaptcha).toBeUndefined();
+    expect(body.useProxy).toBeUndefined();
     expect(s.id).toBe('sess_1');
     expect(s.connectUrl).toBe('wss://connect.steel.dev?apiKey=k&sessionId=sess_1');
     expect(s.connectUrl).not.toContain('DO-NOT-USE');
     expect(typeof s.expiresAt).toBe('string');
   });
 
-  it('useProxy only when asked', async () => {
+  it('sends solveCaptcha only when enabled, useProxy only when asked', async () => {
     const calls = [];
-    const client = createSteelClient({ apiKey: 'k', fetchImpl: fakeFetch((url, init) => { calls.push(init); return { body: { id: 's' } }; }) });
+    const client = createSteelClient({ apiKey: 'k', solveCaptcha: true, fetchImpl: fakeFetch((url, init) => { calls.push(init); return { body: { id: 's' } }; }) });
     await client.createSession({ targetUrl: 'https://a/', proxy: true });
-    expect(JSON.parse(calls[0].body).useProxy).toBe(true);
+    const body = JSON.parse(calls[0].body);
+    expect(body.solveCaptcha).toBe(true);
+    expect(body.useProxy).toBe(true);
+  });
+
+  it('maps the free-tier paid-balance 403 to a typed error', async () => {
+    const client = createSteelClient({ apiKey: 'k', solveCaptcha: true, fetchImpl: fakeFetch(() => ({ status: 403, body: { message: 'Launch requires at least $10 in paid balance to use CAPTCHA solving or Steel proxies.' } })) });
+    await expect(client.createSession({ targetUrl: 'https://a/' })).rejects.toMatchObject({ code: 'paid_feature_required', status: 403 });
   });
 
   it('liveUrls returns the interactive debug URL as a single page', async () => {
